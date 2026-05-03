@@ -1,0 +1,155 @@
+/**
+ * @file Icon exports for Office Editor
+ *
+ * Re-exports lucide-react icons with semantic names for the editor.
+ * Using named exports ensures tree-shaking works correctly.
+ */
+
+import { MousePointer2 } from "lucide-react";
+
+/**
+ * Icon component type — derived from the actual icon value in this module,
+ * not from lucide-react's LucideIcon type directly.
+ * This avoids type resolution issues when lucide-react resolves to
+ * different paths in the bun module cache.
+ */
+export type IconComponent = typeof MousePointer2;
+
+export {
+  // Selection
+  MousePointer2 as SelectIcon,
+
+  // Basic shapes
+  Frame as FrameIcon,
+  Square as RectIcon,
+  RectangleHorizontal as RoundRectIcon,
+  Circle as EllipseIcon,
+  Triangle as TriangleIcon,
+  Diamond as DiamondIcon,
+  Star as StarIcon,
+
+  // Arrows
+  ArrowRight as RightArrowIcon,
+  ArrowLeft as LeftArrowIcon,
+  ArrowUp as ArrowUpIcon,
+  ArrowDown as ArrowDownIcon,
+
+  // Lines
+  Minus as LineIcon,
+  Link2 as ConnectorIcon,
+
+  // Path drawing
+  PenTool as PenIcon,
+  Pencil as PencilIcon,
+
+  // Text
+  Type as TextBoxIcon,
+
+  // Actions
+  Undo2 as UndoIcon,
+  Redo2 as RedoIcon,
+  Trash2 as TrashIcon,
+  Trash2 as DeleteIcon,
+  Copy as CopyIcon,
+  Clipboard as PasteIcon,
+  Scissors as CutIcon,
+
+  // Layer ordering
+  Layers as BringToFrontIcon,
+  LayersIcon as SendToBackIcon,
+  MoveUp as BringForwardIcon,
+  MoveDown as SendBackwardIcon,
+
+  // Grouping
+  Group as GroupIcon,
+  Ungroup as UngroupIcon,
+  Folder as FolderIcon,
+
+  // Objects
+  Image as PictureIcon,
+  Table as TableIcon,
+  TableCellsMerge as MergeCellsIcon,
+  TableCellsSplit as UnmergeCellsIcon,
+  BarChart3 as ChartIcon,
+  GitBranch as DiagramIcon,
+  FileBox as OleObjectIcon,
+  Shapes as UnknownShapeIcon,
+
+  // Media types
+  Image as ImageIcon,
+  Music as AudioIcon,
+  Video as VideoIcon,
+  File as FileIcon,
+
+  // View modes
+  LayoutGrid as TileViewIcon,
+  List as ListViewIcon,
+
+  // UI elements
+  Plus as AddIcon,
+  Maximize2 as EnterFullscreenIcon,
+  Minimize2 as ExitFullscreenIcon,
+  Play as PlayIcon,
+  Pause as PauseIcon,
+  Square as StopIcon,
+  SkipForward as SkipForwardIcon,
+  SkipBack as SkipBackIcon,
+  RotateCcw as RotateCcwIcon,
+  Loader as LoaderIcon,
+  Download as DownloadIcon,
+  Upload as UploadIcon,
+  X as CloseIcon,
+  Replace as ReplaceIcon,
+  ReplaceAll as ReplaceAllIcon,
+  ChevronRight as ChevronRightIcon,
+  ChevronDown as ChevronDownIcon,
+  ChevronUp as ChevronUpIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ArrowRight as ArrowRightIcon,
+  Check as CheckIcon,
+  MoreHorizontal as MoreIcon,
+  Settings as SettingsIcon,
+  Sparkles as FxIcon,
+  SquarePen as EditIcon,
+  PanelLeft as SidebarIcon,
+  GalleryVertical as GalleryVerticalIcon,
+  LayoutGrid as GridIcon,
+  Shield as ShieldIcon,
+  Share2 as ShareIcon,
+  Eye as VisibleIcon,
+  EyeOff as HiddenIcon,
+  Lock as LockIcon,
+  Unlock as UnlockIcon,
+
+  // Text formatting
+  Bold as BoldIcon,
+  Italic as ItalicIcon,
+  Underline as UnderlineIcon,
+  Strikethrough as StrikethroughIcon,
+  Superscript as SuperscriptIcon,
+  Subscript as SubscriptIcon,
+
+  // Alignment
+  AlignLeft as AlignLeftIcon,
+  AlignCenter as AlignCenterIcon,
+  AlignRight as AlignRightIcon,
+  AlignJustify as AlignJustifyIcon,
+  AlignVerticalJustifyStart as AlignTopIcon,
+  AlignVerticalJustifyCenter as AlignMiddleIcon,
+  AlignVerticalJustifyEnd as AlignBottomIcon,
+
+  // Lists & indentation
+  List as ListIcon,
+  ListOrdered as ListOrderedIcon,
+  IndentIncrease as IndentIncreaseIcon,
+  IndentDecrease as IndentDecreaseIcon,
+
+  // Text wrap
+  TextWrap as WrapTextIcon,
+
+  // Font / color
+  Type as TypeIcon,
+  Baseline as BaselineIcon,
+  Highlighter as HighlighterIcon,
+  Palette as PaletteIcon,
+} from "lucide-react";

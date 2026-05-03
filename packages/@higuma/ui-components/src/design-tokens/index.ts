@@ -1,0 +1,38 @@
+/**
+ * @file Design tokens module
+ *
+ * Centralized design system for Office Editor UI components.
+ */
+
+export {
+  tokens,
+  colorTokens,
+  shadowTokens,
+  radiusTokens,
+  spacingTokens,
+  fontTokens,
+  iconTokens,
+  editorLayoutTokens,
+  editorShellTokens,
+  fieldLabelTokens,
+  fieldContainerTokens,
+  inspectorTokens,
+  type Tokens,
+  type ColorTokens,
+  type ShadowTokens,
+  type RadiusTokens,
+  type SpacingTokens,
+  type FontTokens,
+  type IconTokens,
+  type FieldLabelTokens,
+  type FieldContainerTokens,
+  type EditorShellTokens,
+} from "./tokens";
+
+export {
+  injectCSSVariables,
+  removeCSSVariables,
+  generateCSSVariables,
+  cssVar,
+  CSS_VAR_MAP,
+} from "./inject";
