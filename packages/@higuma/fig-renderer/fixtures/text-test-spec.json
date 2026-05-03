@@ -1,0 +1,1573 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-02-02T11:14:19.372Z",
+  "description": "Comprehensive text rendering test cases for Figma renderer",
+  "defaultFrameSize": {
+    "width": 200,
+    "height": 100
+  },
+  "defaultFont": {
+    "family": "Inter",
+    "weight": "Regular"
+  },
+  "categories": [
+    {
+      "name": "horizontal-alignment",
+      "description": "Text horizontal alignment (LEFT, CENTER, RIGHT, JUSTIFIED)",
+      "cases": [
+        {
+          "name": "h-align-left",
+          "category": "horizontal-alignment",
+          "description": "Horizontal alignment: LEFT",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignHorizontal": "LEFT",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "h-align-center",
+          "category": "horizontal-alignment",
+          "description": "Horizontal alignment: CENTER",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignHorizontal": "CENTER",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "h-align-right",
+          "category": "horizontal-alignment",
+          "description": "Horizontal alignment: RIGHT",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignHorizontal": "RIGHT",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "h-align-justified",
+          "category": "horizontal-alignment",
+          "description": "Horizontal alignment: JUSTIFIED",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignHorizontal": "JUSTIFIED",
+            "textAutoResize": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "vertical-alignment",
+      "description": "Text vertical alignment (TOP, CENTER, BOTTOM)",
+      "cases": [
+        {
+          "name": "v-align-top",
+          "category": "vertical-alignment",
+          "description": "Vertical alignment: TOP",
+          "text": "Lorem ipsum dolor sit amet",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignVertical": "TOP",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "v-align-center",
+          "category": "vertical-alignment",
+          "description": "Vertical alignment: CENTER",
+          "text": "Lorem ipsum dolor sit amet",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignVertical": "CENTER",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "v-align-bottom",
+          "category": "vertical-alignment",
+          "description": "Vertical alignment: BOTTOM",
+          "text": "Lorem ipsum dolor sit amet",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAlignVertical": "BOTTOM",
+            "textAutoResize": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "combined-alignment",
+      "description": "Combined horizontal and vertical alignment",
+      "cases": [
+        {
+          "name": "align-left-top",
+          "category": "combined-alignment",
+          "description": "Combined: H=LEFT, V=TOP",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "LEFT",
+            "textAlignVertical": "TOP",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-left-center",
+          "category": "combined-alignment",
+          "description": "Combined: H=LEFT, V=CENTER",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "LEFT",
+            "textAlignVertical": "CENTER",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-left-bottom",
+          "category": "combined-alignment",
+          "description": "Combined: H=LEFT, V=BOTTOM",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "LEFT",
+            "textAlignVertical": "BOTTOM",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-center-top",
+          "category": "combined-alignment",
+          "description": "Combined: H=CENTER, V=TOP",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "CENTER",
+            "textAlignVertical": "TOP",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-center-center",
+          "category": "combined-alignment",
+          "description": "Combined: H=CENTER, V=CENTER",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "CENTER",
+            "textAlignVertical": "CENTER",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-center-bottom",
+          "category": "combined-alignment",
+          "description": "Combined: H=CENTER, V=BOTTOM",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "CENTER",
+            "textAlignVertical": "BOTTOM",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-right-top",
+          "category": "combined-alignment",
+          "description": "Combined: H=RIGHT, V=TOP",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "RIGHT",
+            "textAlignVertical": "TOP",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-right-center",
+          "category": "combined-alignment",
+          "description": "Combined: H=RIGHT, V=CENTER",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "RIGHT",
+            "textAlignVertical": "CENTER",
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "align-right-bottom",
+          "category": "combined-alignment",
+          "description": "Combined: H=RIGHT, V=BOTTOM",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAlignHorizontal": "RIGHT",
+            "textAlignVertical": "BOTTOM",
+            "textAutoResize": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "font-size",
+      "description": "Various font sizes",
+      "cases": [
+        {
+          "name": "font-size-8",
+          "category": "font-size",
+          "description": "Font size: 8px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 8,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-10",
+          "category": "font-size",
+          "description": "Font size: 10px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 10,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-12",
+          "category": "font-size",
+          "description": "Font size: 12px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 12,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-14",
+          "category": "font-size",
+          "description": "Font size: 14px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-16",
+          "category": "font-size",
+          "description": "Font size: 16px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 16,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-18",
+          "category": "font-size",
+          "description": "Font size: 18px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 18,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-20",
+          "category": "font-size",
+          "description": "Font size: 20px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 20,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-24",
+          "category": "font-size",
+          "description": "Font size: 24px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 24,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-32",
+          "category": "font-size",
+          "description": "Font size: 32px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 64
+          },
+          "properties": {
+            "fontSize": 32,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-48",
+          "category": "font-size",
+          "description": "Font size: 48px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 96
+          },
+          "properties": {
+            "fontSize": 48,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-size-72",
+          "category": "font-size",
+          "description": "Font size: 72px",
+          "text": "Aa Bb Cc 123",
+          "frameSize": {
+            "width": 200,
+            "height": 144
+          },
+          "properties": {
+            "fontSize": 72,
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "font-weight",
+      "description": "Font weights (Thin to Black)",
+      "cases": [
+        {
+          "name": "font-weight-thin",
+          "category": "font-weight",
+          "description": "Font weight: Thin",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "Thin",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-light",
+          "category": "font-weight",
+          "description": "Font weight: Light",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "Light",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-regular",
+          "category": "font-weight",
+          "description": "Font weight: Regular",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "Regular",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-medium",
+          "category": "font-weight",
+          "description": "Font weight: Medium",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "Medium",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-semibold",
+          "category": "font-weight",
+          "description": "Font weight: SemiBold",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "SemiBold",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-bold",
+          "category": "font-weight",
+          "description": "Font weight: Bold",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "Bold",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-extrabold",
+          "category": "font-weight",
+          "description": "Font weight: ExtraBold",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "ExtraBold",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "font-weight-black",
+          "category": "font-weight",
+          "description": "Font weight: Black",
+          "text": "The quick brown fox",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "fontWeight": "Black",
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "line-height",
+      "description": "Line height (pixels, percent, auto)",
+      "cases": [
+        {
+          "name": "line-height-12px",
+          "category": "line-height",
+          "description": "Line height: 12px",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 12,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-16px",
+          "category": "line-height",
+          "description": "Line height: 16px",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 16,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-20px",
+          "category": "line-height",
+          "description": "Line height: 20px",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 20,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-24px",
+          "category": "line-height",
+          "description": "Line height: 24px",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 24,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-32px",
+          "category": "line-height",
+          "description": "Line height: 32px",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 32,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-48px",
+          "category": "line-height",
+          "description": "Line height: 48px",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 48,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-100pct",
+          "category": "line-height",
+          "description": "Line height: 100%",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 100,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-120pct",
+          "category": "line-height",
+          "description": "Line height: 120%",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 120,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-150pct",
+          "category": "line-height",
+          "description": "Line height: 150%",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 150,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-200pct",
+          "category": "line-height",
+          "description": "Line height: 200%",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 200,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "line-height-auto",
+          "category": "line-height",
+          "description": "Line height: Auto",
+          "text": "Lorem ipsum\ndolor sit amet,\nconsectetur adipiscing elit",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "lineHeight": {
+              "value": 0,
+              "unit": "AUTO"
+            },
+            "textAutoResize": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "letter-spacing",
+      "description": "Letter spacing (pixels, percent)",
+      "cases": [
+        {
+          "name": "letter-spacing-neg2px",
+          "category": "letter-spacing",
+          "description": "Letter spacing: -2px",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": -2,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-neg1px",
+          "category": "letter-spacing",
+          "description": "Letter spacing: -1px",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": -1,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-0px",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 0px",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 0,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-1px",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 1px",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 1,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-2px",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 2px",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 2,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-5px",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 5px",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 5,
+              "unit": "PIXELS"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-neg10pct",
+          "category": "letter-spacing",
+          "description": "Letter spacing: -10%",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": -10,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-neg5pct",
+          "category": "letter-spacing",
+          "description": "Letter spacing: -5%",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": -5,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-0pct",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 0%",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 0,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-5pct",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 5%",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 5,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-10pct",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 10%",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 10,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "letter-spacing-20pct",
+          "category": "letter-spacing",
+          "description": "Letter spacing: 20%",
+          "text": "LETTER SPACING TEST",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "letterSpacing": {
+              "value": 20,
+              "unit": "PERCENT"
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "text-decoration",
+      "description": "Text decorations (underline, strikethrough)",
+      "cases": [
+        {
+          "name": "text-decoration-none",
+          "category": "text-decoration",
+          "description": "Text decoration: NONE",
+          "text": "Decorated Text Sample",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "textDecoration": "NONE",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "text-decoration-underline",
+          "category": "text-decoration",
+          "description": "Text decoration: UNDERLINE",
+          "text": "Decorated Text Sample",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "textDecoration": "UNDERLINE",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "text-decoration-strikethrough",
+          "category": "text-decoration",
+          "description": "Text decoration: STRIKETHROUGH",
+          "text": "Decorated Text Sample",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 16,
+            "textDecoration": "STRIKETHROUGH",
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "text-case",
+      "description": "Text case transformations",
+      "cases": [
+        {
+          "name": "text-case-original",
+          "category": "text-case",
+          "description": "Text case: ORIGINAL",
+          "text": "The Quick Brown Fox Jumps Over The Lazy Dog",
+          "frameSize": {
+            "width": 300,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 14,
+            "textCase": "ORIGINAL",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "text-case-upper",
+          "category": "text-case",
+          "description": "Text case: UPPER",
+          "text": "The Quick Brown Fox Jumps Over The Lazy Dog",
+          "frameSize": {
+            "width": 300,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 14,
+            "textCase": "UPPER",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "text-case-lower",
+          "category": "text-case",
+          "description": "Text case: LOWER",
+          "text": "The Quick Brown Fox Jumps Over The Lazy Dog",
+          "frameSize": {
+            "width": 300,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 14,
+            "textCase": "LOWER",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "text-case-title",
+          "category": "text-case",
+          "description": "Text case: TITLE",
+          "text": "The Quick Brown Fox Jumps Over The Lazy Dog",
+          "frameSize": {
+            "width": 300,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 14,
+            "textCase": "TITLE",
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "text-case-small-caps",
+          "category": "text-case",
+          "description": "Text case: SMALL_CAPS",
+          "text": "The Quick Brown Fox Jumps Over The Lazy Dog",
+          "frameSize": {
+            "width": 300,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 14,
+            "textCase": "SMALL_CAPS",
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "auto-resize",
+      "description": "Text auto resize modes",
+      "cases": [
+        {
+          "name": "auto-resize-none",
+          "category": "auto-resize",
+          "description": "Auto resize: NONE",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+          "frameSize": {
+            "width": 200,
+            "height": 150
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "auto-resize-height",
+          "category": "auto-resize",
+          "description": "Auto resize: HEIGHT",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+          "frameSize": {
+            "width": 200,
+            "height": 150
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "auto-resize-width-and-height",
+          "category": "auto-resize",
+          "description": "Auto resize: WIDTH_AND_HEIGHT",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
+          "frameSize": {
+            "width": 200,
+            "height": 150
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "WIDTH_AND_HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "paragraph",
+      "description": "Paragraph spacing and indentation",
+      "cases": [
+        {
+          "name": "paragraph-spacing-0",
+          "category": "paragraph",
+          "description": "Paragraph spacing: 0px",
+          "text": "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphSpacing": 0,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-spacing-8",
+          "category": "paragraph",
+          "description": "Paragraph spacing: 8px",
+          "text": "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphSpacing": 8,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-spacing-16",
+          "category": "paragraph",
+          "description": "Paragraph spacing: 16px",
+          "text": "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphSpacing": 16,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-spacing-24",
+          "category": "paragraph",
+          "description": "Paragraph spacing: 24px",
+          "text": "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphSpacing": 24,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-indent-0",
+          "category": "paragraph",
+          "description": "Paragraph indent: 0px",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphIndent": 0,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-indent-16",
+          "category": "paragraph",
+          "description": "Paragraph indent: 16px",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphIndent": 16,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-indent-32",
+          "category": "paragraph",
+          "description": "Paragraph indent: 32px",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphIndent": 32,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "paragraph-indent-48",
+          "category": "paragraph",
+          "description": "Paragraph indent: 48px",
+          "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "paragraphIndent": 48,
+            "textAutoResize": "NONE"
+          }
+        }
+      ]
+    },
+    {
+      "name": "color",
+      "description": "Text fill colors",
+      "cases": [
+        {
+          "name": "color-black",
+          "category": "color",
+          "description": "Text color: black",
+          "text": "Colored Text",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 24,
+            "fillColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "color-white",
+          "category": "color",
+          "description": "Text color: white",
+          "text": "Colored Text",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 24,
+            "fillColor": {
+              "r": 1,
+              "g": 1,
+              "b": 1,
+              "a": 1
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "color-red",
+          "category": "color",
+          "description": "Text color: red",
+          "text": "Colored Text",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 24,
+            "fillColor": {
+              "r": 1,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "color-green",
+          "category": "color",
+          "description": "Text color: green",
+          "text": "Colored Text",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 24,
+            "fillColor": {
+              "r": 0,
+              "g": 0.8,
+              "b": 0,
+              "a": 1
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "color-blue",
+          "category": "color",
+          "description": "Text color: blue",
+          "text": "Colored Text",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 24,
+            "fillColor": {
+              "r": 0,
+              "g": 0,
+              "b": 1,
+              "a": 1
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "color-semi-transparent",
+          "category": "color",
+          "description": "Text color: semi-transparent",
+          "text": "Colored Text",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 24,
+            "fillColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0,
+              "a": 0.5
+            },
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "mixed-styles",
+      "description": "Mixed styles within text (requires manual styling)",
+      "cases": [
+        {
+          "name": "mixed-bold-in-text",
+          "category": "mixed-styles",
+          "description": "Text with bold segment (requires manual styling)",
+          "text": "Normal text with BOLD part and normal again",
+          "frameSize": {
+            "width": 300,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "mixed-colors",
+          "category": "mixed-styles",
+          "description": "Text with multiple colors (requires manual styling)",
+          "text": "Red Blue Green mixed",
+          "frameSize": {
+            "width": 200,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 16,
+            "textAutoResize": "HEIGHT"
+          }
+        },
+        {
+          "name": "mixed-sizes",
+          "category": "mixed-styles",
+          "description": "Text with different sizes (requires manual styling)",
+          "text": "Big and small text",
+          "frameSize": {
+            "width": 200,
+            "height": 80
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "HEIGHT"
+          }
+        }
+      ]
+    },
+    {
+      "name": "edge-cases",
+      "description": "Edge cases and special scenarios",
+      "cases": [
+        {
+          "name": "empty-text",
+          "category": "edge-cases",
+          "description": "Empty text node",
+          "text": "",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14
+          }
+        },
+        {
+          "name": "single-char",
+          "category": "edge-cases",
+          "description": "Single character",
+          "text": "A",
+          "frameSize": {
+            "width": 50,
+            "height": 50
+          },
+          "properties": {
+            "fontSize": 24
+          }
+        },
+        {
+          "name": "whitespace-only",
+          "category": "edge-cases",
+          "description": "Whitespace only",
+          "text": "   ",
+          "frameSize": {
+            "width": 200,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14
+          }
+        },
+        {
+          "name": "very-long-word",
+          "category": "edge-cases",
+          "description": "Very long word without spaces",
+          "text": "Supercalifragilisticexpialidocious",
+          "frameSize": {
+            "width": 100,
+            "height": 100
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "unicode-emoji",
+          "category": "edge-cases",
+          "description": "Unicode and emoji",
+          "text": "Hello 世界 🌍 مرحبا",
+          "frameSize": {
+            "width": 200,
+            "height": 60
+          },
+          "properties": {
+            "fontSize": 16
+          }
+        },
+        {
+          "name": "newlines",
+          "category": "edge-cases",
+          "description": "Multiple newlines",
+          "text": "Line 1\n\n\nLine 2\n\n\n\nLine 3",
+          "frameSize": {
+            "width": 300,
+            "height": 200
+          },
+          "properties": {
+            "fontSize": 14,
+            "textAutoResize": "NONE"
+          }
+        },
+        {
+          "name": "tabs",
+          "category": "edge-cases",
+          "description": "Tab characters",
+          "text": "Col1\tCol2\tCol3\nA\tB\tC",
+          "frameSize": {
+            "width": 200,
+            "height": 80
+          },
+          "properties": {
+            "fontSize": 14
+          }
+        }
+      ]
+    }
+  ]
+}

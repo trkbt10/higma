@@ -1,0 +1,278 @@
+/**
+ * @file Convert Figma paints to scene graph fills
+ *
+ * Consumes shared paint interpretation functions from paint/interpret.ts (the SoT)
+ * to ensure parity with the SVG string renderer's fill handling.
+ */
+
+import type { FigPaint, FigColor, FigGradientPaint } from "@higuma/fig/types";
+import type { FigImage } from "@higuma/fig/parser";
+import {
+  getPaintType,
+  asGradientPaint,
+  asImagePaint,
+  asSolidPaint,
+} from "@higuma/fig/color";
+import {
+  getGradientStops,
+  getGradientDirection,
+  getRadialGradientCenterAndRadius,
+  getAngularGradientParams,
+  getDiamondGradientParams,
+  getImageRef,
+  getImageTransform,
+  getScaleMode,
+  getScalingFactor,
+} from "../../paint";
+import type { Fill, Color, GradientStop, BlendMode, AffineMatrix } from "../types";
+import { convertFigmaBlendMode } from "./blend-mode";
+
+/**
+ * Convert FigColor to scene graph Color
+ */
+export function figColorToSceneColor(color: FigColor): Color {
+  return { r: color.r, g: color.g, b: color.b, a: color.a };
+}
+
+/**
+ * Convert gradient stops to scene graph format
+ */
+function convertGradientStops(stops: readonly { color: FigColor; position: number }[]): GradientStop[] {
+  return stops.map((s) => ({
+    position: s.position,
+    color: figColorToSceneColor(s.color),
+  }));
+}
+
+/**
+ * Returns true when every gradient stop has alpha == 0. Such gradients
+ * are visually identity — they leave the backdrop untouched — and Figma's
+ * own SVG exporter omits them. Emitting them adds no visible pixels but
+ * does add an extra <rect>+<radialGradient> definition into our output,
+ * which has been observed to nudge resvg-js's rendering of subsequent
+ * blend-mode layers (notably the `mix-blend-mode:hue` overlay used by
+ * card-style backgrounds) and inflate diff metrics. Match the exporter's behavior
+ * by skipping fully-transparent gradient stops at convert time.
+ */
+function isFullyTransparentGradient(
+  stops: readonly { color: FigColor; position: number }[],
+): boolean {
+  if (stops.length === 0) { return true; }
+  for (const s of stops) {
+    if (s.color.a > 0) { return false; }
+  }
+  return true;
+}
+
+/**
+ * Convert hash array to hex string
+ */
+function _uint8ArrayToBase64(data: Uint8Array): string {
+  const binary = Array.from(data, (byte) => String.fromCharCode(byte)).join("");
+  return btoa(binary);
+}
+
+/**
+ * Convert a single Figma paint to a scene graph Fill
+ *
+ * @param paint - Figma paint
+ * @param images - Image lookup map
+ * @returns Scene graph Fill, or null if unsupported
+ */
+/**
+ * Extract paint-level blend mode from a FigPaint.
+ * The blendMode field is typed `string | KiwiEnumValue` on FigPaintBase;
+ * `convertFigmaBlendMode` accepts both shapes.
+ */
+function extractPaintBlendMode(paint: FigPaint): BlendMode | undefined {
+  return convertFigmaBlendMode(paint.blendMode);
+}
+
+/**
+ * Extract gradient transform matrix from a Figma gradient paint.
+ * Returns undefined if no transform or identity transform.
+ */
+function extractGradientTransform(gradientPaint: FigGradientPaint): AffineMatrix | undefined {
+  const t = gradientPaint.transform;
+  if (!t) { return undefined; }
+  const m: AffineMatrix = {
+    m00: t.m00 ?? 1,
+    m01: t.m01 ?? 0,
+    m02: t.m02 ?? 0,
+    m10: t.m10 ?? 0,
+    m11: t.m11 ?? 1,
+    m12: t.m12 ?? 0,
+  };
+  // Skip identity
+  if (m.m00 === 1 && m.m01 === 0 && m.m02 === 0 && m.m10 === 0 && m.m11 === 1 && m.m12 === 0) {
+    return undefined;
+  }
+  return m;
+}
+
+export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, FigImage>): Fill | null {
+  const opacity = paint.opacity ?? 1;
+  const paintType = getPaintType(paint);
+  const blendMode = extractPaintBlendMode(paint);
+
+  switch (paintType) {
+    case "SOLID": {
+      const solidPaint = asSolidPaint(paint);
+      if (!solidPaint) { return null; }
+      return {
+        type: "solid",
+        color: figColorToSceneColor(solidPaint.color),
+        opacity,
+        blendMode,
+      };
+    }
+
+    case "GRADIENT_LINEAR": {
+      const gradientPaint = asGradientPaint(paint);
+      if (!gradientPaint) { return null; }
+      const rawStops = getGradientStops(gradientPaint);
+      if (isFullyTransparentGradient(rawStops)) { return null; }
+      const { start, end } = getGradientDirection(gradientPaint);
+      const stops = convertGradientStops(rawStops);
+      return {
+        type: "linear-gradient",
+        start,
+        end,
+        stops,
+        opacity,
+        blendMode,
+        gradientTransform: extractGradientTransform(gradientPaint),
+      };
+    }
+
+    case "GRADIENT_RADIAL": {
+      const gradientPaint = asGradientPaint(paint);
+      if (!gradientPaint) { return null; }
+      const rawStops = getGradientStops(gradientPaint);
+      if (isFullyTransparentGradient(rawStops)) { return null; }
+      const { center, radius } = getRadialGradientCenterAndRadius(gradientPaint);
+      const stops = convertGradientStops(rawStops);
+      return {
+        type: "radial-gradient",
+        center,
+        radius,
+        stops,
+        opacity,
+        blendMode,
+        gradientTransform: extractGradientTransform(gradientPaint),
+      };
+    }
+
+    case "GRADIENT_ANGULAR": {
+      const gradientPaint = asGradientPaint(paint);
+      if (!gradientPaint) { return null; }
+      const rawStops = getGradientStops(gradientPaint);
+      if (isFullyTransparentGradient(rawStops)) { return null; }
+      // The angular-gradient centre is NOT `(m02, m12)` of paint.transform:
+      // the Kiwi matrix maps object→gradient space, and `(m02, m12) =
+      // T·(0,0)` is the gradient-space image of the object-space origin,
+      // which for a rotated paint lies far outside the element (see
+      // `getAngularGradientParams` for the derivation). For conic
+      // gradients the centre in object space is always `(0.5, 0.5)`;
+      // only the rotation angle varies.
+      const { center, startAngle } = getAngularGradientParams(gradientPaint);
+      const stops = convertGradientStops(rawStops);
+      return {
+        type: "angular-gradient",
+        center,
+        stops,
+        opacity,
+        blendMode,
+        rotation: startAngle,
+      };
+    }
+
+    case "GRADIENT_DIAMOND": {
+      const gradientPaint = asGradientPaint(paint);
+      if (!gradientPaint) { return null; }
+      const rawStops = getGradientStops(gradientPaint);
+      if (isFullyTransparentGradient(rawStops)) { return null; }
+      // Diamond gradients, like angular, are centred on the object —
+      // delegating to the dedicated helper keeps the convention
+      // explicit and consistent with angular.
+      const { center } = getDiamondGradientParams(gradientPaint);
+      const stops = convertGradientStops(rawStops);
+      return {
+        type: "diamond-gradient",
+        center,
+        stops,
+        opacity,
+        blendMode,
+      };
+    }
+
+    case "IMAGE": {
+      const imagePaint = asImagePaint(paint);
+      if (!imagePaint) { return null; }
+      const imageRef = getImageRef(imagePaint);
+      if (!imageRef) { return null; }
+
+      const figImage = images.get(imageRef);
+      if (!figImage) { return null; }
+
+      // Extract image transform if present
+      let imageTransform: AffineMatrix | undefined;
+      const sourceImageTransform = getImageTransform(imagePaint);
+      if (sourceImageTransform) {
+        const t = sourceImageTransform;
+        imageTransform = {
+          m00: t.m00 ?? 1,
+          m01: t.m01 ?? 0,
+          m02: t.m02 ?? 0,
+          m10: t.m10 ?? 0,
+          m11: t.m11 ?? 1,
+          m12: t.m12 ?? 0,
+        };
+      }
+
+      return {
+        type: "image",
+        imageRef,
+        data: figImage.data,
+        mimeType: figImage.mimeType,
+        scaleMode: getScaleMode(imagePaint),
+        opacity,
+        blendMode,
+        scalingFactor: getScalingFactor(imagePaint),
+        imageTransform,
+      };
+    }
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Convert Figma paints array to scene graph fills
+ *
+ * Returns all visible fills in Figma's stacking order (bottom to top).
+ * The renderer should draw them in array order, compositing each on top.
+ */
+export function convertPaintsToFills(
+  paints: readonly FigPaint[] | undefined,
+  images: ReadonlyMap<string, FigImage>,
+): Fill[] {
+  if (!paints || paints.length === 0) {
+    return [];
+  }
+
+  const visiblePaints = paints.filter((p) => p.visible !== false);
+  if (visiblePaints.length === 0) {
+    return [];
+  }
+
+  const fills: Fill[] = [];
+  for (const paint of visiblePaints) {
+    const fill = convertPaintToFill(paint, images);
+    if (fill) {
+      fills.push(fill);
+    }
+  }
+  return fills;
+}

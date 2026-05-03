@@ -1,0 +1,9 @@
+# Generated test artifacts — produced each test run, never checked in.
+# Snapshot baselines live under fixtures/<case>/snapshots/ (and baseline/) and are tracked.
+fixtures/**/__diff__/
+fixtures/**/__output__/
+fixtures/**/__debug__/
+fixtures/**/actual/
+
+# Fonts downloaded at runtime by font-drivers tests.
+__fonts__/

@@ -1,0 +1,160 @@
+{
+  "fixture": "constraint-edge-cases",
+  "generatedAt": "2026-02-05T08:02:42.781Z",
+  "pages": [
+    {
+      "name": "Nested Constraints",
+      "file": "Nested-Constraints.svg",
+      "elements": [
+        {
+          "name": "NestInner",
+          "file": "Nested-Constraints--NestInner--1-100.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "NestOuter",
+          "file": "Nested-Constraints--NestOuter--1-102.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "nested-stretch-grow",
+          "file": "Nested-Constraints--nested-stretch-grow--1-104.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "nested-stretch-shrink",
+          "file": "Nested-Constraints--nested-stretch-shrink--1-106.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "nested-same-size",
+          "file": "Nested-Constraints--nested-same-size--1-108.svg",
+          "type": "FRAME"
+        }
+      ]
+    },
+    {
+      "name": "Variant + Resize",
+      "file": "Variant-Resize.svg",
+      "elements": [
+        {
+          "name": "VarBtnDefault",
+          "file": "Variant-Resize--VarBtnDefault--1-110.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "VarBtnActive",
+          "file": "Variant-Resize--VarBtnActive--1-112.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "variant-resize-default",
+          "file": "Variant-Resize--variant-resize-default--1-114.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "variant-resize-override",
+          "file": "Variant-Resize--variant-resize-override--1-116.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "variant-resize-both",
+          "file": "Variant-Resize--variant-resize-both--1-118.svg",
+          "type": "FRAME"
+        }
+      ]
+    },
+    {
+      "name": "Ellipse Constraints",
+      "file": "Ellipse-Constraints.svg",
+      "elements": [
+        {
+          "name": "EllipseBox",
+          "file": "Ellipse-Constraints--EllipseBox--1-121.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "EllipseScaleBox",
+          "file": "Ellipse-Constraints--EllipseScaleBox--1-124.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "ellipse-center-stretch-grow",
+          "file": "Ellipse-Constraints--ellipse-center-stretch-grow--1-126.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "ellipse-center-stretch-shrink",
+          "file": "Ellipse-Constraints--ellipse-center-stretch-shrink--1-128.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "ellipse-scale",
+          "file": "Ellipse-Constraints--ellipse-scale--1-130.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "ellipse-same-size",
+          "file": "Ellipse-Constraints--ellipse-same-size--1-132.svg",
+          "type": "FRAME"
+        }
+      ]
+    },
+    {
+      "name": "Asymmetric STRETCH",
+      "file": "Asymmetric-STRETCH.svg",
+      "elements": [
+        {
+          "name": "AsymBox",
+          "file": "Asymmetric-STRETCH--AsymBox--1-134.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "AsymBoxWide",
+          "file": "Asymmetric-STRETCH--AsymBoxWide--1-136.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "AsymMultiChild",
+          "file": "Asymmetric-STRETCH--AsymMultiChild--1-138.svg",
+          "type": "SYMBOL"
+        },
+        {
+          "name": "asym-stretch-grow",
+          "file": "Asymmetric-STRETCH--asym-stretch-grow--1-141.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "asym-stretch-shrink",
+          "file": "Asymmetric-STRETCH--asym-stretch-shrink--1-143.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "asym-wide-grow",
+          "file": "Asymmetric-STRETCH--asym-wide-grow--1-145.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "asym-wide-shrink",
+          "file": "Asymmetric-STRETCH--asym-wide-shrink--1-147.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "asym-multi-grow",
+          "file": "Asymmetric-STRETCH--asym-multi-grow--1-149.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "asym-multi-shrink",
+          "file": "Asymmetric-STRETCH--asym-multi-shrink--1-151.svg",
+          "type": "FRAME"
+        },
+        {
+          "name": "asym-same-size",
+          "file": "Asymmetric-STRETCH--asym-same-size--1-153.svg",
+          "type": "FRAME"
+        }
+      ]
+    }
+  ]
+}

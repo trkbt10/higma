@@ -1,0 +1,288 @@
+/**
+ * @file Scene graph diffing
+ *
+ * Computes the minimal set of operations to transform one scene graph into another.
+ * Uses SceneNodeId for stable identity matching (React-style keyed reconciliation).
+ */
+
+import type { SceneGraph, SceneNode, SceneNodeId, GroupNode, FrameNode } from "./types";
+
+// =============================================================================
+// Diff Operation Types
+// =============================================================================
+
+export type AddOp = {
+  readonly type: "add";
+  readonly parentId: SceneNodeId;
+  readonly node: SceneNode;
+  readonly index: number;
+};
+
+export type RemoveOp = {
+  readonly type: "remove";
+  readonly parentId: SceneNodeId;
+  readonly nodeId: SceneNodeId;
+};
+
+/**
+ * Per-node-type update: the discriminator (`nodeType`) lets consumers
+ * narrow `changes` to the matching `Partial<T>` without an `as` cast.
+ *
+ * Distributive over `SceneNode` so the union resolves to e.g.
+ * `{ nodeType: "rect"; changes: Partial<RectNode> } | …`.
+ */
+export type UpdateOp = SceneNode extends infer T
+  ? T extends SceneNode
+    ? {
+        readonly type: "update";
+        readonly nodeId: SceneNodeId;
+        readonly nodeType: T["type"];
+        readonly changes: Partial<T>;
+      }
+    : never
+  : never;
+
+/**
+ * Build a per-node-type UpdateOp from the source node and its diff
+ * payload. The runtime value of `nodeType` matches `node.type`, which
+ * is what consumers switch on to recover the variant statically.
+ *
+ * The single cast here is the bridge between the structural diff
+ * (which produced `Partial<SceneNode>` after dynamic key comparison)
+ * and the discriminated `UpdateOp` shape. The `nodeType` runtime tag
+ * we attach guarantees the cast lines up — comparison only emitted
+ * keys that exist on `node`'s variant.
+ */
+function makeUpdateOp(node: SceneNode, changes: Partial<SceneNode>): UpdateOp {
+  return {
+    type: "update",
+    nodeId: node.id,
+    nodeType: node.type,
+    changes,
+  } as UpdateOp;
+}
+
+export type ReorderOp = {
+  readonly type: "reorder";
+  readonly parentId: SceneNodeId;
+  readonly nodeId: SceneNodeId;
+  readonly newIndex: number;
+};
+
+export type DiffOp = AddOp | RemoveOp | UpdateOp | ReorderOp;
+
+export type SceneGraphDiff = {
+  readonly ops: readonly DiffOp[];
+  readonly versionFrom: number;
+  readonly versionTo: number;
+};
+
+// =============================================================================
+// Node Comparison
+// =============================================================================
+
+/**
+ * View an object value as a string-keyed record for property
+ * enumeration.
+ *
+ * TypeScript doesn't narrow `unknown` to `Record<string, unknown>`
+ * even after `typeof v === "object" && v !== null`, and the caller
+ * only ever uses the result for `Object.keys` + indexed access —
+ * both of which are safe on any non-null object. This helper isolates
+ * the unavoidable type widening into one place so the comparison
+ * functions below never sprinkle `as Record<string, unknown>` casts
+ * around their bodies.
+ */
+function asRecord(v: object): Record<string, unknown> {
+  return v as Record<string, unknown>;
+}
+
+/**
+ * Check if two values are shallowly equal
+ */
+function shallowEqual(a: unknown, b: unknown): boolean {
+  if (a === b) {return true;}
+  if (a == null || b == null) {return a === b;}
+  if (typeof a !== typeof b) {return false;}
+
+  if (typeof a !== "object") {return a === b;}
+
+  // For arrays, compare length and elements
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) {return false;}
+    return a.every((v, i) => v === b[i]);
+  }
+
+  // For objects, compare own keys
+  const aObj = asRecord(a);
+  const bObj = asRecord(b);
+  const aKeys = Object.keys(aObj);
+  const bKeys = Object.keys(bObj);
+  if (aKeys.length !== bKeys.length) {return false;}
+  return aKeys.every((key) => aObj[key] === bObj[key]);
+}
+
+/**
+ * Get children of a node (if it has them).
+ *
+ * The `type` discriminant narrows `node` to `GroupNode | FrameNode`,
+ * both of which declare `children`. No cast needed.
+ */
+function getChildren(node: SceneNode): readonly SceneNode[] | undefined {
+  if (node.type === "group" || node.type === "frame") {
+    return node.children;
+  }
+  return undefined;
+}
+
+/**
+ * Compare two nodes and return changes (ignoring children)
+ */
+function compareNodeProperties(prev: SceneNode, next: SceneNode): Partial<SceneNode> | null {
+  if (prev.type !== next.type) {
+    // Type changed - treat as full replacement
+    return next;
+  }
+
+  const changes: Record<string, unknown> = {};
+  const hasChangesRef = { value: false };
+
+  // Compare all properties except id, type, and children
+  const nextObj = asRecord(next);
+  const prevObj = asRecord(prev);
+
+  for (const key of Object.keys(nextObj)) {
+    if (key === "id" || key === "type" || key === "children") {continue;}
+
+    if (!shallowEqual(prevObj[key], nextObj[key])) {
+      changes[key] = nextObj[key];
+      hasChangesRef.value = true;
+    }
+  }
+
+  // Check for removed properties
+  for (const key of Object.keys(prevObj)) {
+    if (key === "id" || key === "type" || key === "children") {continue;}
+    if (!(key in nextObj)) {
+      changes[key] = undefined;
+      hasChangesRef.value = true;
+    }
+  }
+
+  return hasChangesRef.value ? (changes as Partial<SceneNode>) : null;
+}
+
+// =============================================================================
+// Recursive Diffing
+// =============================================================================
+
+/**
+ * Diff two arrays of children with stable ID matching
+ */
+function diffChildren(
+  { parentId, prevChildren, nextChildren, ops }: { parentId: SceneNodeId; prevChildren: readonly SceneNode[]; nextChildren: readonly SceneNode[]; ops: DiffOp[]; }
+): void {
+  // Build index maps by ID
+  const prevById = new Map<string, { node: SceneNode; index: number }>();
+  for (let i = 0; i < prevChildren.length; i++) {
+    prevById.set(prevChildren[i].id, { node: prevChildren[i], index: i });
+  }
+
+  const nextById = new Map<string, { node: SceneNode; index: number }>();
+  for (let i = 0; i < nextChildren.length; i++) {
+    nextById.set(nextChildren[i].id, { node: nextChildren[i], index: i });
+  }
+
+  // Find removed nodes
+  for (const [id] of prevById) {
+    if (!nextById.has(id)) {
+      ops.push({
+        type: "remove",
+        parentId,
+        nodeId: id as SceneNodeId,
+      });
+    }
+  }
+
+  // Find added and updated nodes
+  for (let i = 0; i < nextChildren.length; i++) {
+    const nextChild = nextChildren[i];
+    const prevEntry = prevById.get(nextChild.id);
+
+    if (!prevEntry) {
+      // New node
+      ops.push({
+        type: "add",
+        parentId,
+        node: nextChild,
+        index: i,
+      });
+    } else {
+      // Existing node - check for property changes
+      const changes = compareNodeProperties(prevEntry.node, nextChild);
+      if (changes) {
+        // The op's `nodeType` discriminator carries the variant tag so
+        // consumers (e.g. WebGL state mutator) can narrow the changes
+        // payload to its matching `Partial<T>` without `as` casts.
+        ops.push(makeUpdateOp(nextChild, changes));
+      }
+
+      // Check for reorder
+      if (prevEntry.index !== i) {
+        ops.push({
+          type: "reorder",
+          parentId,
+          nodeId: nextChild.id,
+          newIndex: i,
+        });
+      }
+
+      // Recursively diff children
+      const prevChildChildren = getChildren(prevEntry.node);
+      const nextChildChildren = getChildren(nextChild);
+
+      if (prevChildChildren && nextChildChildren) {
+        diffChildren({ parentId: nextChild.id, prevChildren: prevChildChildren, nextChildren: nextChildChildren, ops });
+      }
+    }
+  }
+}
+
+// =============================================================================
+// Public API
+// =============================================================================
+
+/**
+ * Compute the diff between two scene graphs
+ *
+ * @param prev - Previous scene graph
+ * @param next - Next scene graph
+ * @returns Diff operations to transform prev into next
+ */
+export function diffSceneGraphs(
+  prev: SceneGraph,
+  next: SceneGraph
+): SceneGraphDiff {
+  const ops: DiffOp[] = [];
+
+  // Diff root children
+  diffChildren({
+    parentId: prev.root.id,
+    prevChildren: prev.root.children,
+    nextChildren: next.root.children,
+    ops,
+  });
+
+  return {
+    ops,
+    versionFrom: prev.version,
+    versionTo: next.version,
+  };
+}
+
+/**
+ * Check if a diff has any operations
+ */
+export function hasDiffOps(diff: SceneGraphDiff): boolean {
+  return diff.ops.length > 0;
+}

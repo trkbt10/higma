@@ -1,0 +1,110 @@
+/**
+ * @file WebGL test harness entry point
+ *
+ * Minimal browser entry that exposes a render function for Puppeteer.
+ * Receives a SceneGraph JSON, renders it via WebGLFigmaRenderer,
+ * and returns a PNG data URL of the canvas.
+ */
+
+import type { SceneGraph } from "../../../../src/scene-graph/types";
+import { createWebGLFigmaRenderer } from "../../../../src/webgl/renderer";
+
+type WindowWithRenderSceneGraph = Window & {
+  renderSceneGraph: (json: string) => Promise<string>;
+};
+
+const canvas = document.getElementById("canvas") as HTMLCanvasElement;
+
+// Pre-create WebGL context with preserveDrawingBuffer so toDataURL works
+// after FBO operations. This must be done before any renderer creates the context,
+// because getContext returns the same context if already created.
+const preCtx = canvas.getContext("webgl", {
+  antialias: true,
+  alpha: true,
+  premultipliedAlpha: false,
+  stencil: true,
+  preserveDrawingBuffer: true,
+});
+if (preCtx) {
+  console.warn("[harness] WebGL context preserveDrawingBuffer:",
+    preCtx.getContextAttributes()?.preserveDrawingBuffer);
+}
+
+/**
+ * Restore Uint8Array fields that were base64-encoded for JSON transport.
+ * Walks the scene graph and converts `{ __base64: "..." }` back to Uint8Array.
+ */
+function restoreUint8Arrays(node: Record<string, unknown>): void {
+  for (const key of Object.keys(node)) {
+    const val = node[key];
+    if (val && typeof val === "object") {
+      const obj = val as Record<string, unknown>;
+      if (typeof obj.__base64 === "string") {
+        // Decode base64 to Uint8Array
+        const binary = atob(obj.__base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        node[key] = bytes;
+      } else if (Array.isArray(val)) {
+        for (const item of val) {
+          if (item && typeof item === "object") {
+            restoreUint8Arrays(item as Record<string, unknown>);
+          }
+        }
+      } else {
+        restoreUint8Arrays(obj);
+      }
+    }
+  }
+}
+
+/** Type guard that extends window to include the render function */
+function isRenderableWindow(w: unknown): w is WindowWithRenderSceneGraph {
+  return typeof w === "object" && w !== null;
+}
+
+/** Type guard for converting parsed JSON to a record for Uint8Array restoration */
+function isRecord(obj: unknown): obj is Record<string, unknown> {
+  return typeof obj === "object" && obj !== null;
+}
+
+if (isRenderableWindow(window)) {
+  window.renderSceneGraph = async (json: string): Promise<string> => {
+    const sceneGraph = JSON.parse(json) as SceneGraph;
+
+    // Restore Uint8Array fields from base64
+    const sceneRecord = isRecord(sceneGraph) ? sceneGraph : {};
+    restoreUint8Arrays(sceneRecord);
+
+    canvas.width = sceneGraph.width;
+    canvas.height = sceneGraph.height;
+    canvas.style.width = `${sceneGraph.width}px`;
+    canvas.style.height = `${sceneGraph.height}px`;
+
+    // Create a fresh renderer for each frame to prevent state contamination.
+    // If one frame's effects shader fails, the next frame starts clean.
+    const renderer = createWebGLFigmaRenderer({
+      canvas,
+      pixelRatio: 1,
+      antialias: true,
+      backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
+    });
+
+    try {
+      await renderer.prepareScene(sceneGraph);
+      renderer.render(sceneGraph);
+
+    } catch (err) {
+      console.error("WebGL render error:", (err as Error).message);
+    } finally {
+      renderer.dispose();
+    }
+
+    return canvas.toDataURL("image/png");
+  };
+}
+
+// Signal readiness
+document.title = "ready";
