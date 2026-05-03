@@ -2,20 +2,20 @@
  * @file Custom rule: prohibit re-exports from external workspace packages.
  *
  * Disallows patterns like:
- *   export type { Foo } from "@monorepo/core/dto"
- *   export { bar } from "@monorepo/core/domain"
- *   export * from "@monorepo/core"
+ *   export type { Foo } from "@higuma/core/dto"
+ *   export { bar } from "@higuma/core/domain"
+ *   export * from "@higuma/core"
  *
  * Also disallows indirect re-exports:
- *   import type { Foo } from "@monorepo/core/dto"
+ *   import type { Foo } from "@higuma/core/dto"
  *   export type { Foo }               // ← prohibited
  *
- *   import { bar } from "@monorepo/core/domain"
+ *   import { bar } from "@higuma/core/domain"
  *   export { bar }                    // ← prohibited
  *   export default bar                // ← prohibited
  *
  * Configurable:
- *   - packagePrefixes: string[] (default: ["@monorepo/"]) - package prefixes to disallow re-exports from
+ *   - packagePrefixes: string[] (default: ["@higuma/"]) - package prefixes to disallow re-exports from
  */
 
 /**
@@ -72,7 +72,7 @@ export default {
   meta: {
     type: "problem",
     docs: {
-      description: "Disallow re-exports from external packages within the same monorepo",
+      description: "Disallow re-exports from external packages within the same higuma",
       recommended: true,
     },
     schema: [
@@ -82,7 +82,7 @@ export default {
           packagePrefixes: {
             type: "array",
             items: { type: "string" },
-            default: ["@monorepo/"],
+            default: ["@higuma/"],
           },
         },
         additionalProperties: false,
@@ -106,7 +106,7 @@ export default {
 
   create(context) {
     const options = context.options[0] || {};
-    const packagePrefixes = options.packagePrefixes ?? ["@monorepo/"];
+    const packagePrefixes = options.packagePrefixes ?? ["@higuma/"];
 
     /** @type {Map<string, ExternalImportInfo>} */
     const externalImports = new Map();

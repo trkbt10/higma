@@ -36,9 +36,7 @@ function toSourcePaths(exportPath) {
     return [base];
   }
 
-  const normalized = base
-    .replace(/^dist\//, "src/")
-    .replace(/\.(js|mjs|cjs)$/, "");
+  const normalized = base.replace(/^dist\//, "src/").replace(/\.(js|mjs|cjs)$/, "");
   return [normalized + ".ts", normalized + ".tsx"];
 }
 
@@ -68,15 +66,14 @@ export default {
     },
     schema: [],
     messages: {
-      noReexport:
-        "Re-export is only allowed in entry point files (src/index.ts(x) or package.json exports).",
+      noReexport: "Re-export is only allowed in entry point files (src/index.ts(x) or package.json exports).",
     },
   },
   create(context) {
     const filename = context.filename;
     const fileDir = dirname(filename);
 
-    // Find the nearest package.json (handles monorepo packages)
+    // Find the nearest package.json (handles higuma packages)
     const packageRoot = findPackageRoot(fileDir);
     if (!packageRoot) {
       return {};
@@ -92,9 +89,7 @@ export default {
     // Collect allowed source paths from package.json exports
     const allowedPaths = new Set();
     try {
-      const pkg = JSON.parse(
-        readFileSync(resolve(packageRoot, "package.json"), "utf8"),
-      );
+      const pkg = JSON.parse(readFileSync(resolve(packageRoot, "package.json"), "utf8"));
       if (pkg.exports) {
         for (const ep of collectExportPaths(pkg.exports)) {
           for (const sp of toSourcePaths(ep)) {

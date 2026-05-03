@@ -14,7 +14,7 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       reportsDirectory: "coverage",
-      include: ["packages/*/src/**/*.{ts,tsx}"],
+      include: ["packages/@higuma/*/src/**/*.{ts,tsx}"],
     },
   },
 });

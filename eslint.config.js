@@ -1,5 +1,5 @@
 /**
- * @file ESLint flat config for the monorepo.
+ * @file ESLint flat config for the higuma.
  */
 
 import js from "@eslint/js";
@@ -77,12 +77,7 @@ export default tseslint.config(
 
   // Tests-only: allow global test APIs so imports are unnecessary
   {
-    files: [
-      "**/*.spec.ts",
-      "**/*.spec.tsx",
-      "**/*.test.ts",
-      "**/*.test.tsx",
-    ],
+    files: ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
     languageOptions: {
       globals: {
         describe: "readonly",
@@ -111,19 +106,29 @@ export default tseslint.config(
       "custom/no-reexport-outside-entry": "off",
       "custom/enforce-index-import": "off",
       "custom/no-cross-package-reexport": "off",
-      "custom/no-core-barrel-import": "off",
-      "custom/no-core-reverse-dependency": "off",
+      "custom/no-layer-violation": "off",
       "custom/no-subpath-bypass": "off",
       "no-restricted-syntax": "off",
     },
   },
 
   // ──────────────────────────────────────────────────────────────────────
-  // Monorepo boundary rules
+  // higuma fig-stack boundary rules
+  //
+  // Layer direction (low → high). A package in a given layer must not import
+  // from any package above it.
+  //
+  //   L0 — leaf utilities (no inter-package higuma deps):
+  //         @higuma/buffer, @higuma/zip, @higuma/png,
+  //         @higuma/ui-components, @higuma/editor-core
+  //   L1 — fig domain core:        @higuma/fig
+  //   L2 — fig operations:         @higuma/fig-builder, @higuma/fig-renderer
+  //   L3 — editor primitives:      @higuma/editor-controls
+  //   L4 — top-level app:          @higuma/fig-editor
+  //
   // ──────────────────────────────────────────────────────────────────────
 
-  // 1. Prohibit re-exports from other workspace packages.
-  //    Consumers must import directly from the source package.
+  // Re-export hygiene — same rules across all packages.
   {
     files: ["packages/**/*.ts", "packages/**/*.tsx"],
     ignores: ["**/*.spec.ts", "**/*.test.ts"],
@@ -131,56 +136,131 @@ export default tseslint.config(
       "custom/no-cross-package-reexport": [
         "error",
         {
-          packagePrefixes: ["@monorepo/"],
+          packagePrefixes: ["@higuma/"],
         },
       ],
-    },
-  },
-
-  // 2. Prohibit barrel imports from @monorepo/core/dto and @monorepo/core/domain.
-  //    Import from specific modules instead (e.g., @monorepo/core/dto/user).
-  {
-    files: ["packages/**/*.ts", "packages/**/*.tsx"],
-    rules: {
-      "custom/no-core-barrel-import": [
-        "error",
-        {
-          barrelPaths: ["@monorepo/core/dto", "@monorepo/core/domain"],
-        },
-      ],
-    },
-  },
-
-  // 3. Prohibit core from importing api or web (reverse dependency).
-  //    Dependency direction: api -> core <- web
-  {
-    files: ["packages/core/src/**/*.ts"],
-    rules: {
-      "custom/no-core-reverse-dependency": [
-        "error",
-        {
-          disallowedPackages: ["@monorepo/api", "@monorepo/web"],
-        },
-      ],
-    },
-  },
-
-  // 4. Prohibit re-exports that traverse parent directories (../).
-  {
-    files: ["packages/**/*.ts", "packages/**/*.tsx"],
-    ignores: ["**/*.spec.ts", "**/*.test.ts"],
-    rules: {
       "custom/no-cross-boundary-export": "error",
     },
   },
 
-  // 5. Enforce subpath export consistency.
-  //    If exports has "./domain/*" wildcard, "./domain" barrel must not exist.
-  //    If exports has "./domain" barrel, "./domain/*" wildcard must not exist.
+  // Subpath export consistency.
   {
     files: ["packages/**/*.ts", "packages/**/*.tsx"],
     rules: {
       "custom/no-subpath-bypass": "error",
     },
   },
+
+  // L0 — leaf utilities. No higuma packages may be imported.
+  {
+    files: [
+      "packages/@higuma/buffer/src/**/*.{ts,tsx}",
+      "packages/@higuma/zip/src/**/*.{ts,tsx}",
+      "packages/@higuma/png/src/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "custom/no-layer-violation": [
+        "error",
+        {
+          disallowedPackages: [
+            "@higuma/fig",
+            "@higuma/fig-builder",
+            "@higuma/fig-renderer",
+            "@higuma/editor-core",
+            "@higuma/editor-controls",
+            "@higuma/ui-components",
+            "@higuma/fig-editor",
+          ],
+        },
+      ],
+    },
+  },
+
+  // L0 — UI / editor primitives. May not import any other higuma package.
+  {
+    files: [
+      "packages/@higuma/ui-components/src/**/*.{ts,tsx}",
+      "packages/@higuma/editor-core/src/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "custom/no-layer-violation": [
+        "error",
+        {
+          disallowedPackages: [
+            "@higuma/buffer",
+            "@higuma/zip",
+            "@higuma/png",
+            "@higuma/fig",
+            "@higuma/fig-builder",
+            "@higuma/fig-renderer",
+            "@higuma/editor-controls",
+            "@higuma/fig-editor",
+          ],
+        },
+      ],
+    },
+  },
+
+  // L1 — @higuma/fig domain core. May depend only on L0 leaf utilities
+  // (buffer, zip, png). Must not see fig-builder/renderer or any UI layer.
+  {
+    files: ["packages/@higuma/fig/src/**/*.{ts,tsx}"],
+    rules: {
+      "custom/no-layer-violation": [
+        "error",
+        {
+          disallowedPackages: [
+            "@higuma/fig-builder",
+            "@higuma/fig-renderer",
+            "@higuma/editor-core",
+            "@higuma/editor-controls",
+            "@higuma/ui-components",
+            "@higuma/fig-editor",
+          ],
+        },
+      ],
+    },
+  },
+
+  // L2 — fig operations. May depend on L0/L1 (fig + leaf utilities).
+  // Must not see editor primitives or the app layer.
+  {
+    files: [
+      "packages/@higuma/fig-builder/src/**/*.{ts,tsx}",
+      "packages/@higuma/fig-renderer/src/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "custom/no-layer-violation": [
+        "error",
+        {
+          disallowedPackages: [
+            "@higuma/editor-core",
+            "@higuma/editor-controls",
+            "@higuma/ui-components",
+            "@higuma/fig-editor",
+          ],
+        },
+      ],
+    },
+  },
+
+  // L3 — editor primitives. May depend on L0 UI/editor primitives and L1 fig
+  // (used as a tree utility source). Must not see fig operations or the app.
+  {
+    files: ["packages/@higuma/editor-controls/src/**/*.{ts,tsx}"],
+    rules: {
+      "custom/no-layer-violation": [
+        "error",
+        {
+          disallowedPackages: [
+            "@higuma/fig-builder",
+            "@higuma/fig-renderer",
+            "@higuma/fig-editor",
+          ],
+        },
+      ],
+    },
+  },
+
+  // L4 — @higuma/fig-editor is the top of the stack and may import anything.
 );

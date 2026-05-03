@@ -11,8 +11,7 @@ import noCrossBoundaryExport from "./rules/no-cross-boundary-export.js";
 import noReexportOutsideEntry from "./rules/no-reexport-outside-entry.js";
 import enforceIndexImport from "./rules/enforce-index-import.js";
 import noCrossPackageReexport from "./rules/no-cross-package-reexport.js";
-import noCoreBarrelImport from "./rules/no-core-barrel-import.js";
-import noCoreReverseDependency from "./rules/no-core-reverse-dependency.js";
+import noLayerViolation from "./rules/no-layer-violation.js";
 import noSubpathBypass from "./rules/no-subpath-bypass.js";
 
 export default {
@@ -27,8 +26,7 @@ export default {
     "no-reexport-outside-entry": noReexportOutsideEntry,
     "enforce-index-import": enforceIndexImport,
     "no-cross-package-reexport": noCrossPackageReexport,
-    "no-core-barrel-import": noCoreBarrelImport,
-    "no-core-reverse-dependency": noCoreReverseDependency,
+    "no-layer-violation": noLayerViolation,
     "no-subpath-bypass": noSubpathBypass,
   },
 };
