@@ -1,0 +1,66 @@
+{
+  "version": "1",
+  "page_states": {
+    "overview": {
+      "page_hash": "28b02508429f27d74ae5dddf4a5bbad1",
+      "source_hashes": {}
+    },
+    "getting-started": {
+      "page_hash": "dccb9b362dcd12b3b99a0b42fa71aa0b",
+      "source_hashes": {
+        "package.json": "c7a36525ea01f94c3add6f964ef51a25",
+        "AGENTS.md": "3733fadf3c9efb9c59a65a427b504622"
+      }
+    },
+    "core-concepts": {
+      "page_hash": "eba710931e3fff6fbe42040d60a26961",
+      "source_hashes": {
+        "packages/@higuma/fig/src/types.ts": "5c5bd6781f7d249e254e06365a24e3c9"
+      }
+    },
+    "architecture": {
+      "page_hash": "5238994dfbd0cc1bde58ca8970ab3417",
+      "source_hashes": {}
+    },
+    "fig-package": {
+      "page_hash": "a6e58914438c10cc3d10a698d8e3884d",
+      "source_hashes": {}
+    },
+    "fig-builder-package": {
+      "page_hash": "47c3c61e4bbc392b95811bd9ba9533f6",
+      "source_hashes": {}
+    },
+    "fig-renderer-package": {
+      "page_hash": "28a470dcf0c3647291df9f8f0d56cbbf",
+      "source_hashes": {}
+    },
+    "fig-editor-package": {
+      "page_hash": "824498385bc1fb17d3dda0e6c79c4b2e",
+      "source_hashes": {}
+    },
+    "editor-controls-package": {
+      "page_hash": "58e0a0601df2363000437da360377889",
+      "source_hashes": {}
+    },
+    "editor-core-package": {
+      "page_hash": "54e19e29588b899a9c175144763a91db",
+      "source_hashes": {}
+    },
+    "ui-components-package": {
+      "page_hash": "525f79ae77a009aaa591dddad2b008a2",
+      "source_hashes": {}
+    },
+    "buffer-package": {
+      "page_hash": "331a94eeaac254438652f935e76490ee",
+      "source_hashes": {}
+    },
+    "png-package": {
+      "page_hash": "a7d2c55c0afd87288394852301d79b3b",
+      "source_hashes": {}
+    },
+    "zip-package": {
+      "page_hash": "f4c94e486b8cf961fc4c9fe43ac3041d",
+      "source_hashes": {}
+    }
+  }
+}

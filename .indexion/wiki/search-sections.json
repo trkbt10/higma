@@ -1,0 +1,1839 @@
+{
+  "provider": {
+    "kind": "tfidf",
+    "dim": 256
+  },
+  "next_vid": "184",
+  "entries": [
+    {
+      "section": {
+        "id": "overview",
+        "title": "Higuma Overview",
+        "content": "\nHiguma は Figma の `.fig` ファイルをパース、レンダリング、編集するためのTypeScriptモノレポです。\n\n",
+        "page_id": "overview",
+        "level": 1
+      },
+      "vid": "1"
+    },
+    {
+      "section": {
+        "id": "overview#-2",
+        "title": "プロジェクトの目的",
+        "content": "\n- **パース** — `.fig` バイナリファイルをTypeScriptオブジェクトとして解析\n- **レンダリング** — Figmaドキュメントを**SVG**としてレンダリング\n- **編集** — React ベースのビジュアルエディターでドキュメントを編集\n- **ビルド** — `FigDesignDocument` モデルでプログラム的にドキュメントを構築\n\n",
+        "page_id": "overview",
+        "level": 2
+      },
+      "vid": "2"
+    },
+    {
+      "section": {
+        "id": "overview#-3",
+        "title": "アーキテクチャ概要",
+        "content": "\n```\n┌─────────────────────────────────────────────────────────────────┐\n│                        fig-editor                               │\n│              (React ベースビジュアルエディター)                  │\n│   FigEditor, FigEditorProvider, useFigEditor                    │\n├─────────────────────────────────────────────────────────────────┤\n│    editor-controls    │    editor-core    │    ui-components    │\n│  (EditorShell, Zoom)  │ (history, selection)│ (Button, Input)   │\n├───────────────────────┴───────────────────┴─────────────────────┤\n│                       fig-renderer                              │\n│              (SVGレンダリング - FigSvgRenderContext)            │\n├─────────────────────────────────────────────────────────────────┤\n│                        fig-builder                              │\n│     (FigDesignDocument モデル、addNode, removeNode, exportFig)  │\n├─────────────────────────────────────────────────────────────────┤\n│                            fig                                  │\n│   (コアドメイン: parseFigFile, Kiwi codec, tree-builder)        │\n├──────────────────────┬──────────────────────┬───────────────────┤\n│        buffer        │         png          │        zip        │\n│   (base64, DataURL)  │  (encodeRgbaToPng)   │  (loadZipPackage) │\n└──────────────────────┴──────────────────────┴───────────────────┘\n```\n\n",
+        "page_id": "overview",
+        "level": 2
+      },
+      "vid": "3"
+    },
+    {
+      "section": {
+        "id": "overview#-4",
+        "title": "パッケージ概要",
+        "content": "\n| パッケージ | 用途 |\n|---------|---------|\n| wiki://fig-package | コアドメイン: `parseFigFile`, Kiwiスキーマ, ツリー操作 |\n| wiki://fig-builder-package | `FigDesignDocument` モデル、CRUD操作、エクスポート |\n| wiki://fig-renderer-package | SVGレンダリングエンジン |\n| wiki://fig-editor-package | Reactベースビジュアルエディター |\n| wiki://editor-controls-package | EditorShell、Zoom、フォント選択 |\n| wiki://editor-core-package | 選択、履歴、ドラッグ、ジオメトリ |\n| wiki://ui-components-package | 共通UIコンポーネント |\n| wiki://buffer-package | Base64、DataURL変換 |\n| wiki://png-package | PNGエンコード/デコード |\n| wiki://zip-package | ZIPファイル操作 |\n\n",
+        "page_id": "overview",
+        "level": 2
+      },
+      "vid": "4"
+    },
+    {
+      "section": {
+        "id": "overview#see-also-5",
+        "title": "See Also",
+        "content": "\n- wiki://getting-started — インストールとセットアップ\n- wiki://core-concepts — 主要な抽象概念\n- wiki://architecture — 詳細アーキテクチャ\n",
+        "page_id": "overview",
+        "level": 2
+      },
+      "vid": "5"
+    },
+    {
+      "section": {
+        "id": "getting-started",
+        "title": "Getting Started",
+        "content": "\n",
+        "page_id": "getting-started",
+        "level": 1
+      },
+      "vid": "6"
+    },
+    {
+      "section": {
+        "id": "getting-started#prerequisites-2",
+        "title": "Prerequisites",
+        "content": "\n- **Bun** v1.3.13+ (パッケージマネージャー兼ランタイム)\n- **Node.js** v18+ (一部の依存関係用)\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "7"
+    },
+    {
+      "section": {
+        "id": "getting-started#-3",
+        "title": "インストール",
+        "content": "\n```bash\ngit clone <repository-url>\ncd higuma\nbun install\n```\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "8"
+    },
+    {
+      "section": {
+        "id": "getting-started#-4",
+        "title": "利用可能なスクリプト",
+        "content": "\n| コマンド | 説明 |\n|---------|------|\n| `bun run lint` | 全パッケージでESLintを実行 |\n| `bun run lint:fix` | 自動修正可能なlint問題を修正 |\n| `bun run typecheck` | 全パッケージの型チェック |\n| `bun run test` | 全パッケージのテスト実行 |\n| `bun run build` | 全パッケージをビルド |\n| `bun run dev` | 開発サーバー起動 |\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "9"
+    },
+    {
+      "section": {
+        "id": "getting-started#-5",
+        "title": "基本的な使い方",
+        "content": "\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "10"
+    },
+    {
+      "section": {
+        "id": "getting-started#fig-6",
+        "title": ".figファイルのパース",
+        "content": "\n```typescript\nimport { parseFigFile } from \"@higuma/fig/parser\";\n\nconst buffer = await Bun.file(\"design.fig\").arrayBuffer();\nconst parsed = await parseFigFile(new Uint8Array(buffer));\n\n// ノードツリーを構築\nimport { buildNodeTree } from \"@higuma/fig/parser\";\nconst tree = buildNodeTree(parsed.nodeChanges);\n```\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "11"
+    },
+    {
+      "section": {
+        "id": "getting-started#figdesigndocument-7",
+        "title": "FigDesignDocumentでの操作",
+        "content": "\n```typescript\nimport { \n  createFigDesignDocument, \n  addNode, \n  exportFig \n} from \"@higuma/fig-builder\";\n\n// ドキュメント作成\nconst doc = createFigDesignDocument();\n\n// ノード追加\nconst updated = addNode(doc, pageId, nodeSpec);\n\n// .figファイルにエクスポート\nconst figData = await exportFig(updated);\n```\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "12"
+    },
+    {
+      "section": {
+        "id": "getting-started#svg-8",
+        "title": "SVGレンダリング",
+        "content": "\n```typescript\nimport { FigSvgRenderContext } from \"@higuma/fig-renderer\";\n// SVGレンダリングコンテキストを使用\n```\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "13"
+    },
+    {
+      "section": {
+        "id": "getting-started#-9",
+        "title": "開発ワークフロー",
+        "content": "\n1. 混乱したら関連ファイルを読む（推測を避ける）\n2. 開発中は lint, typecheck, test を実行\n3. ユニットテストは実装と同じ場所に配置 (`[name].spec.ts`)\n4. lintルールを厳守: 常にブレースを使用、`&&` を三項演算子として使わない\n\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "14"
+    },
+    {
+      "section": {
+        "id": "getting-started#see-also-10",
+        "title": "See Also",
+        "content": "\n- wiki://overview — プロジェクト概要\n- wiki://fig-package — パーサーの詳細\n- wiki://fig-builder-package — ドキュメント操作API\n",
+        "page_id": "getting-started",
+        "level": 2
+      },
+      "vid": "15"
+    },
+    {
+      "section": {
+        "id": "core-concepts",
+        "title": "Core Concepts",
+        "content": "\n",
+        "page_id": "core-concepts",
+        "level": 1
+      },
+      "vid": "16"
+    },
+    {
+      "section": {
+        "id": "core-concepts#fig-2",
+        "title": "Figファイルフォーマット",
+        "content": "\nFigmaファイルは**Kiwi**と呼ばれるバイナリシリアライゼーション形式を使用します。`.fig`ファイルは実際には**ZIPアーカイブ**です。\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "17"
+    },
+    {
+      "section": {
+        "id": "core-concepts#-3",
+        "title": "ファイル構造",
+        "content": "\n```\n.fig (ZIPアーカイブ)\n├── thumbnail.png      # サムネイル（必須）\n├── canvas.fig         # メインドキュメントデータ\n└── images/            # 埋め込み画像リソース\n```\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "18"
+    },
+    {
+      "section": {
+        "id": "core-concepts#canvasfig--4",
+        "title": "canvas.fig の構造",
+        "content": "\n```\n┌──────────────────────────────────────────┐\n│ Header (16 bytes)                        │\n│ ├─ Magic: \"fig-kiwi\"                     │\n│ ├─ Version: '0'                          │\n│ └─ Payload size                          │\n├──────────────────────────────────────────┤\n│ Compressed Payload (zstd/deflate)        │\n│ ├─ Schema (Kiwiスキーマ定義)             │\n│ ├─ NodeChanges (ノードデータ配列)         │\n│ └─ Blobs (バイナリデータ: パス、画像等)   │\n└──────────────────────────────────────────┘\n```\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "19"
+    },
+    {
+      "section": {
+        "id": "core-concepts#nodechanges--blobs-5",
+        "title": "NodeChanges と Blobs",
+        "content": "\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "20"
+    },
+    {
+      "section": {
+        "id": "core-concepts#nodechanges-6",
+        "title": "NodeChanges",
+        "content": "\nドキュメント内の各ノード（FRAME, RECTANGLE, TEXT等）は `NodeChanges` 配列に格納されます。\n\n```typescript\n// パース結果\nconst parsed = await parseFigFile(buffer);\nparsed.nodeChanges;  // ノードデータの配列\nparsed.blobs;        // バイナリBlob配列\n```\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "21"
+    },
+    {
+      "section": {
+        "id": "core-concepts#blobs-7",
+        "title": "Blobs",
+        "content": "\nジオメトリデータ（パスコマンド）や画像データは `blobs` 配列に格納され、インデックスで参照されます。\n\n```typescript\n// ノードのfillGeometryからBlob参照\nconst fillGeo = node.fillGeometry?.[0];\nconst blobIndex = fillGeo.commandsBlob;\nconst blobData = parsed.blobs[blobIndex].bytes;\n\n// BlobをSVGパスに変換\nimport { decodeBlobToSvgPath } from \"@higuma/fig/parser\";\nconst pathD = decodeBlobToSvgPath(blobData);\n// → \"M0,0 L100,0 L100,80 L0,80 L0,0\"\n```\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "22"
+    },
+    {
+      "section": {
+        "id": "core-concepts#-8",
+        "title": "ノードタイプ",
+        "content": "\n| カテゴリ | タイプ |\n|----------|-------|\n| ドキュメント | DOCUMENT, CANVAS |\n| コンテナ | FRAME, GROUP, SECTION, COMPONENT, COMPONENT_SET |\n| 図形 | RECTANGLE, ELLIPSE, POLYGON, STAR, LINE, VECTOR |\n| コンテンツ | TEXT, SLICE, STICKY |\n| インスタンス | INSTANCE |\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "23"
+    },
+    {
+      "section": {
+        "id": "core-concepts#-9",
+        "title": "座標系",
+        "content": "\n- **原点**: 左上\n- **Y軸**: 下向きが正\n- **Transform**: 2x3 アフィン行列 (m00, m01, m02, m10, m11, m12)\n- **子ノードの座標**: 親に対する相対座標\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "24"
+    },
+    {
+      "section": {
+        "id": "core-concepts#-10",
+        "title": "レンダリングパイプライン",
+        "content": "\n```\n.fig ファイル\n    ↓\nparseFigFile() [@higuma/fig/parser]\n    ↓\nNodeChanges + Blobs\n    ↓\nrenderFigNode() [@higuma/fig-renderer]\n    ↓\nSVG 文字列\n```\n\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "25"
+    },
+    {
+      "section": {
+        "id": "core-concepts#see-also-11",
+        "title": "See Also",
+        "content": "\n- wiki://fig-package — パーサーの詳細\n- wiki://fig-renderer-package — レンダリングの詳細\n",
+        "page_id": "core-concepts",
+        "level": 2
+      },
+      "vid": "26"
+    },
+    {
+      "section": {
+        "id": "architecture",
+        "title": "Architecture",
+        "content": "\n",
+        "page_id": "architecture",
+        "level": 1
+      },
+      "vid": "27"
+    },
+    {
+      "section": {
+        "id": "architecture#-2",
+        "title": "レイヤードアーキテクチャ",
+        "content": "\n```\nLayer 4: アプリケーション\n├── fig-editor (ビジュアルエディター)\n\nLayer 3: UI & コントロール\n├── editor-controls (EditorShell, ZoomControls, FontSelect)\n├── editor-core (history, selection, drag-state, geometry)\n├── ui-components (Button, Input, Panel, ContextMenu)\n\nLayer 2: レンダリング\n├── fig-renderer (SVGレンダリング)\n\nLayer 1: ドメイン\n├── fig-builder (FigDesignDocument, CRUD, export)\n├── fig (parseFigFile, Kiwi codec, tree-builder)\n\nLayer 0: インフラ\n├── buffer (base64, DataURL)\n├── png (encodeRgbaToPng, parsePng)\n├── zip (loadZipPackage)\n```\n\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "28"
+    },
+    {
+      "section": {
+        "id": "architecture#-3",
+        "title": "パッケージ依存関係",
+        "content": "\n```\nfig-editor\n├── fig-renderer\n│   └── fig\n├── fig-builder\n│   └── fig\n├── editor-controls\n│   ├── editor-core\n│   └── ui-components\n└── ui-components\n\nfig-builder\n└── fig\n\nfig-renderer\n└── fig\n\npng\n└── buffer\n\nzip (fflate使用、独立)\nbuffer (独立)\n```\n\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "29"
+    },
+    {
+      "section": {
+        "id": "architecture#-4",
+        "title": "主要な設計判断",
+        "content": "\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "30"
+    },
+    {
+      "section": {
+        "id": "architecture#api-5",
+        "title": "関数ベースAPI",
+        "content": "\nクラスベースではなく、純粋関数ベースのAPIを採用:\n\n```typescript\n// 正しい使い方\nimport { createHistory, pushHistory, undoHistory } from \"@higuma/editor-core\";\nlet history = createHistory(initialState);\nhistory = pushHistory(history, newState);\nhistory = undoHistory(history);\n```\n\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "31"
+    },
+    {
+      "section": {
+        "id": "architecture#-6",
+        "title": "明示的な依存性",
+        "content": "\n「No Magic Policy」に従い、全ての依存は明示的。環境変数や暗黙の設定なし。\n\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "32"
+    },
+    {
+      "section": {
+        "id": "architecture#-7",
+        "title": "コロケーションテスト",
+        "content": "\nユニットテスト (`*.spec.ts`) は実装と同じ場所に配置。統合テストは `spec/` に配置。\n\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "33"
+    },
+    {
+      "section": {
+        "id": "architecture#-8",
+        "title": "拡張ポイント",
+        "content": "\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "34"
+    },
+    {
+      "section": {
+        "id": "architecture#di-9",
+        "title": "フォントローダーDI",
+        "content": "\nフォントローダーは依存性注入で環境非依存:\n\n```typescript\nimport { font } from \"@higuma/fig-renderer\";\n\n// Node.js環境\nconst loader = font.createNodeFontLoader();\n\n// カスタムディレクトリ\nconst loader = font.createNodeFontLoader({\n  fontDirs: [\"./assets/fonts\"],\n});\n\n// キャッシュ付き\nconst cachingLoader = new font.CachingFontLoader(loader);\n```\n\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "35"
+    },
+    {
+      "section": {
+        "id": "architecture#see-also-10",
+        "title": "See Also",
+        "content": "\n- wiki://overview — プロジェクト概要\n- wiki://core-concepts — 主要概念\n",
+        "page_id": "architecture",
+        "level": 2
+      },
+      "vid": "36"
+    },
+    {
+      "section": {
+        "id": "fig-package",
+        "title": "@higuma/fig Package",
+        "content": "\nFigma .fig ファイルのパース、Kiwiスキーマのエンコード/デコード、ツリー操作を行うコアパッケージ。\n\n",
+        "page_id": "fig-package",
+        "level": 1
+      },
+      "vid": "37"
+    },
+    {
+      "section": {
+        "id": "fig-package#-2",
+        "title": "パーサー機能",
+        "content": "\nこのパッケージは parseFigFile と parseFigFileSync でファイルをパースします。parseFigHeader でヘッダーのみを高速に解析でき、isFigFile でマジック判定、isFigmaZipFile でZIP形式判定を行います。\n\n解凍には decompress, decompressZstd, decompressDeflate, decompressDeflateRaw を使用します。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "38"
+    },
+    {
+      "section": {
+        "id": "fig-package#-3",
+        "title": "ツリー操作",
+        "content": "\nbuildNodeTree で NodeChanges をツリー構造に変換します。findNodesByType でタイプ検索、findNodeByGuid でGUID検索、getNodeType でノードタイプ取得、safeChildren で子ノード取得が可能です。\n\nguidToString と parseGuidString でGUID変換を行います。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "39"
+    },
+    {
+      "section": {
+        "id": "fig-package#blob-4",
+        "title": "Blob解析",
+        "content": "\ndecodeBlobToSvgPath でBlobをSVGパス文字列に変換、decodePathCommands でパスコマンド配列に変換します。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "40"
+    },
+    {
+      "section": {
+        "id": "fig-package#-5",
+        "title": "型定義",
+        "content": "\nFigNodeType, FigMatrix, FigColor, FigGuid などの型を提供します。\n\nNodeType, BlendMode, PaintType, EffectType, StrokeCap, StrokeJoin, StrokeAlign, WindingRule などの列挙型があります。\n\nノードデータ型として FrameNodeData, RectangleNodeData, EllipseNodeData, TextNodeData, VectorNodeData, LineNodeData, StarNodeData, PolygonNodeData, GroupNodeData, SectionNodeData, InstanceNodeData, SymbolNodeData があります。\n\nエフェクト関連で EffectData, BaseEffectData, BlurEffectData, ShadowEffectData を提供します。\n\nペイント関連で ImagePaint, GradientStop, GradientHandles, solidPaint, solidStroke があります。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "41"
+    },
+    {
+      "section": {
+        "id": "fig-package#-6",
+        "title": "バリデーション",
+        "content": "\nValidationError, ValidationResult で検証結果を表現し、FigParseError でパースエラーを表現します。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "42"
+    },
+    {
+      "section": {
+        "id": "fig-package#-7",
+        "title": "ビルダー状態",
+        "content": "\nFrameBuilderState, TextBuilderState, StrokeBuilderState, SymbolBuilderState, InstanceBuilderState でビルダー状態を管理します。\n\nDropShadowBuilderState, InnerShadowBuilderState でシャドウ、SolidPaintBuilderState, ImagePaintBuilderState, LinearGradientBuilderState, RadialGradientBuilderState, AngularGradientBuilderState, DiamondGradientBuilderState でペイントを構築します。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "43"
+    },
+    {
+      "section": {
+        "id": "fig-package#-8",
+        "title": "テキスト関連",
+        "content": "\nTextCase, TextDecoration, TextAutoResize, TextAlignVertical, TextAlignHorizontal, NumberUnits, ValueWithUnits を提供します。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "44"
+    },
+    {
+      "section": {
+        "id": "fig-package#-9",
+        "title": "レイアウト関連",
+        "content": "\nStackMode, StackAlign, StackSizing, StackPositioning, StackPadding, ConstraintType を提供します。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "45"
+    },
+    {
+      "section": {
+        "id": "fig-package#-10",
+        "title": "その他",
+        "content": "\nByteBuffer でバッファ操作、encodeFloat32LE でエンコード、readVarUint で可変長整数読み取り、compareBytes でバイト比較を行います。\n\nisKiwiEnumValue, getTypeName, isZstd, isZipFile, getCompressionType などのユーティリティがあります。\n\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "46"
+    },
+    {
+      "section": {
+        "id": "fig-package#see-also-11",
+        "title": "See Also",
+        "content": "\n- wiki://core-concepts — ファイルフォーマットの詳細\n- wiki://fig-builder-package — 高レベルAPI\n- wiki://fig-renderer-package — レンダリング\n",
+        "page_id": "fig-package",
+        "level": 2
+      },
+      "vid": "47"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package",
+        "title": "@higuma/fig-builder Package",
+        "content": "\nFigDesignDocument モデルを中心とした高レベルAPI。CRUD操作とエクスポート機能を提供。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 1
+      },
+      "vid": "48"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#-2",
+        "title": "ドキュメント作成",
+        "content": "\ncreateFigDesignDocument で新規ドキュメント作成、createFigDesignDocumentFromLoaded でパース済みデータから作成、createEmptyFigDesignDocument で空ドキュメントを作成します。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "49"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#-3",
+        "title": "ページ操作",
+        "content": "\naddPage でページ追加、removePage で削除、reorderPage で並び替え、duplicatePage で複製、renamePage でリネームを行います。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "50"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#-4",
+        "title": "ノード操作",
+        "content": "\naddNode でノード追加、removeNode で削除、updateNode で更新、reorderNode で並び替え、moveNodeToPage でページ間移動を行います。createNodeFromSpec でスペックからノードを作成します。\n\nAddNodeOptions, UpdateNodeOptions, ReorderNodeOptions, AddNewNodesOptions, MoveNodeToPageOptions, InsertNodeInTreeOptions, FlattenPageOptions でオプションを指定します。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "51"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#-5",
+        "title": "ノードスペック",
+        "content": "\nNodeSpec, BaseNodeSpec が基本型です。\n\n図形スペックとして LineNodeSpec, RectNodeSpec, StarNodeSpec, VectorNodeSpec, EllipseNodeSpec, PolygonNodeSpec, RoundedRectNodeSpec があります。\n\nShapeType で図形タイプを指定します。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "52"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#-6",
+        "title": "エクスポート",
+        "content": "\nexportFig で .fig ファイルにエクスポート、exportFigRoundtrip でラウンドトリップテストを行います。FigExportOptions, FigExportResult で設定と結果を表現します。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "53"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#-7",
+        "title": "ユーティリティ",
+        "content": "\nguid でGUID生成、nodeIdToGuid でID変換、symbolNode, vectorNode でノード作成、isFigVector で判定を行います。\n\ncreateFrameNode, createCanvasNode, createIDCounter, createParentIndex, findAllNodes, makeFrameRaw などの内部ユーティリティがあります。\n\nextractSolidColor で色抽出、applyTypeSpecificFields でフィールド適用、componentPropertyValueToFig で変換を行います。\n\ncreateLoaded でロード済みドキュメント作成を行います。\n\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "54"
+    },
+    {
+      "section": {
+        "id": "fig-builder-package#see-also-8",
+        "title": "See Also",
+        "content": "\n- wiki://fig-package — パーサー\n- wiki://fig-editor-package — ビジュアルエディター\n",
+        "page_id": "fig-builder-package",
+        "level": 2
+      },
+      "vid": "55"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package",
+        "title": "@higuma/fig-renderer Package",
+        "content": "\nFigmaノードの SVG レンダリングを行うパッケージ。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 1
+      },
+      "vid": "56"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-2",
+        "title": "レンダリングコンテキスト",
+        "content": "\nFigSvgRenderContext, FigSvgRenderContextConfig, FigSvgRenderResult でSVGレンダリングを管理します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "57"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-3",
+        "title": "ノードレンダリング",
+        "content": "\nrenderFrameNode, renderRectNode, renderEllipseNode, renderTextNode, renderVectorNode, renderLineNode, renderStarNode, renderPolygonNode で各ノードをレンダリングします。\n\nrenderTextNodeAsPath でテキストをパスとしてレンダリングします。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "58"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-4",
+        "title": "シーングラフ",
+        "content": "\nSceneNodeId でノード識別、makeSceneGraph でシーングラフ構築、findSceneNode でノード検索、SceneGraphDiff で差分を表現します。\n\nRenderTreeResolver, RenderTreeCacheEntry, WebGLRenderTreeCache でレンダーツリーを管理します。\n\nRenderNodeComponentImpl, RenderPathNodeComponentImpl, RenderRectNodeComponentImpl, RenderTextNodeComponentImpl, RenderFrameNodeComponentImpl, RenderGroupNodeComponentImpl, RenderImageNodeComponentImpl, RenderEllipseNodeComponentImpl で各コンポーネントを実装します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "59"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-5",
+        "title": "ジオメトリ",
+        "content": "\nAffineMatrix でアフィン変換、Bounds で境界、Point で座標を表現します。\n\nrectPoints, ellipsePoints, roundedRectPoints, rectCenterlinePoints で頂点生成、samePoint で比較を行います。\n\nPathBbox でパス境界、CubicSegment で3次曲線、Segment でセグメントを表現します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "60"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-6",
+        "title": "ストローク",
+        "content": "\nPathStrokeOptions, StrokeDashOptions, RectStrokeAlign でストローク設定を行います。\n\ntessellateSharpRectAlignedStroke, tessellateRoundedRectAlignedStroke, tessellateDashedRectStroke でテッセレーションを行います。\n\nindicesToVertices でインデックス変換、thickenDashedPolyline で太線化、splitPolylineByDashPattern で分割、appendDrawnDashPoint, pushCompletedDashSegment, normalizeDashPattern でダッシュ処理を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "61"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-7",
+        "title": "ペイント",
+        "content": "\nresolveFillResult, resolveTopFillResult でフィル解決、PaintProps, GeometryProps, EffectsProps でプロパティを表現します。\n\nGradientStop, GradientDirection でグラデーション、AngularGradientFillParams, DiamondGradientFillParams, RadialGradientParams でパラメータを指定します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "62"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-8",
+        "title": "イメージ",
+        "content": "\nImageDimensions, ImagePatternLayout, ImageTextureResource, ImageTransformParts でイメージを管理します。\n\ncomputeImagePatternLayout, createImagePatternDef でパターン処理、TiledImagePatternParams, ScaledImagePatternParams でタイリングを設定します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "63"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-9",
+        "title": "エフェクト",
+        "content": "\nShadowParams でシャドウ、ResolvedEffectStack でエフェクトスタック、ShapeEffectStackParams, VertexShapeEffectParams でパラメータを指定します。\n\nEffectRendererCapability, WebGLEffectRendering, WebGLEffectRenderingParams でWebGLエフェクトを管理します。\n\nEffectRequirement, EffectRequirementKey, EffectCoverageGap でエフェクト要件を表現します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "64"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-10",
+        "title": "テキスト",
+        "content": "\nFontWeight, TextAnchor でフォント設定、GlyphRecord, GlyphGenResult でグリフを管理します。\n\nFontNameRecord でフォント名、textRequiresGlyph で判定、fontSupportsText でサポート確認を行います。\n\nnormalizeFontStyle でスタイル正規化、loadPrimaryOrFallbackFont でフォント読み込み、CachedTextFontSource でキャッシュを管理します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "65"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-11",
+        "title": "テクスチャ",
+        "content": "\nTextureEntry, TextureResource, TextureResourceId でテクスチャを管理、makeTextureResourceId でID生成を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "66"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-12",
+        "title": "ブレンド",
+        "content": "\nblendModeStyle, convertBlendMode でブレンドモード変換を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "67"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#svg-13",
+        "title": "SVG",
+        "content": "\nSvgArcParams, SvgStrokeCap, SvgStrokeJoin でSVGパラメータ、getSvgSize でサイズ取得、formatClipPathShape, formatFilterPrimitive でフォーマットを行います。\n\ncollectDefIds, collectFillDef でdef収集を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "68"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#boolean-14",
+        "title": "Boolean演算",
+        "content": "\nBooleanPathInput, BooleanOperationType, BooleanEvaluationResult, BooleanEvaluationError でBoolean演算を管理、isBooleanOperationName で判定、resolveNextPath, errorToMessage でパス解決を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "69"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-15",
+        "title": "ビューポート",
+        "content": "\nViewportRect, ViewportCullOptions でビューポートを管理、requireSceneViewport でビューポート要求を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "70"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#webgl-16",
+        "title": "WebGL",
+        "content": "\nGLContext, ShaderSources, ShaderProgramName でシェーダーを管理、matrixToGLUniform で行列変換、DrawStencilFillParams でステンシル描画を行います。\n\nWebGLViewportPixelRatioInput, WindowWithRenderSceneGraph でWebGL設定を管理します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "71"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-17",
+        "title": "コーナー",
+        "content": "\nclampRadius で半径クランプ、normalizeCornerRadii, pushRoundedCornerPoints でコーナー処理、roundedRectFillPoints でフィル頂点、GenerateRoundedRectContourOptions でオプションを指定します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "72"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-18",
+        "title": "ユーティリティ",
+        "content": "\nhexToRgb, hexToColor, rgbToColor で色変換、quantizeUp で量子化、finitePositiveOrOne, requireFinitePositive で検証を行います。\n\nresolveStrokeAlign でストローク位置解決、resolveWrapper, makeResolvedPath でパス解決を行います。\n\nsanitizeFilename でファイル名サニタイズ、createPngDataUri, createJpegDataUriWithLateSof でDataURI作成を行います。\n\ncreateSvgExportSettings でエクスポート設定、createPathRenderContext でパスコンテキスト作成を行います。\n\nIndividualStrokeWeights で個別ストローク幅を指定します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "73"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-19",
+        "title": "フィクスチャ生成",
+        "content": "\nFrameData, FrameInfo, FrameMeta, FrameOptions, FrameFixture でフレームを管理します。\n\nFillChild, ShapeChild, EffectChild, ChildData, Child, Parent でノード階層を管理します。\n\nFillFrameData, ShapeFrameData, EffectFrameData で特化フレームを表現します。\n\nFixtureData, ParsedFixture, ParsedData でフィクスチャデータを管理します。\n\ncreateGUID, getNextID, createEnumValue, createTransform でデータ生成、createRectNode, createFrameNode, createTextNode, makeTextNode, makeWrappingTextNode でノード作成を行います。\n\ncreateSolidPaint, createSolidRed, createSolidBlue, createSolidGreen, createSolid50Opacity でソリッドペイント作成を行います。\n\ncreateLinear45, createLinearVertical, createLinearHorizontal, createLinearMultiStop でリニアグラデーション作成を行います。\n\ncreateRadialCentered, createRadialOffset でラジアルグラデーション作成を行います。\n\naddDiamondGradient, addAngularGradientRect, addAngularGradientBasic でグラデーション追加を行います。\n\naddImageFillBasic, addImageFillMulti, addImageFillCircle, addImageFillRounded, addImageFillWithEffect, addImageFillWithShadow でイメージフィル追加を行います。\n\ngradientSunset, gradientVertical, gradientRadialGlow, gradientBlueToGreen でプリセットグラデーントを使用します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "74"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-20",
+        "title": "テスト",
+        "content": "\ncomparePngs, compareSvgs, CompareResult, ComparePngsParams で比較を行います。\n\nsvgToPng でSVG変換、loadFigFile, loadFixture, loadFixtures でロード、ensureDirs, ensureDebugDir でディレクトリ作成を行います。\n\nsafeName, getActualSvgFiles, selectFixturePages でファイル操作を行います。\n\nhasFilter, hasClipPath, hasGradient で判定、countShapeElements, extractShapeElements で要素処理を行います。\n\nLayerInfo でレイヤー情報、RectOptions でオプションを表現します。\n\ncreateFakeFont, createFakeFontLoader でフェイクフォント作成、getFontLoader でローダー取得を行います。\n\ngenerateSnapshots でスナップショット生成を行います。\n\ngenerateFillFixtures, generateShapeFixtures, generateTextFixtures, generateEffectFixtures, generateLayoutFixtures, generateClipFixtures, generateComponentFixtures, generateCompositeFixtures, generateImageFillFixtures, generatePaintAdvancedFixtures, generateVectorWindingFixtures, generateDecorationComboFixtures でフィクスチャ生成を行います。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "75"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#-21",
+        "title": "ハーネス",
+        "content": "\nWebGLHarness でWebGLテスト、IDAllocator でID割り当て、FigFile, Color でデータを表現します。\n\ngetParsedData, findDesignByName でパースデータ操作を行います。\n\nmakeRect, makeRoot, makeProps, makeScene で構造作成、paintWith でペイント適用、WrapperProps, BaseProps, SizeProps でプロパティを表現します。\n\nMultiFillRectLayers, MultiFillRectLayersProps, MultiFillEllipseLayers, MultiFillEllipseLayersProps でマルチフィルを管理、makeEllipseWithOutsideStroke で外部ストローク楕円を作成します。\n\nAddOp, RemoveOp, DiffOp, ReorderOp でオペレーション、AddFrameOptions でオプションを指定します。\n\nElementSize, ElementBounds でサイズ境界を表現します。\n\nSvgPathContoursParams でパスコンツールパラメータを指定します。\n\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "76"
+    },
+    {
+      "section": {
+        "id": "fig-renderer-package#see-also-22",
+        "title": "See Also",
+        "content": "\n- wiki://fig-package — パーサー\n- wiki://core-concepts — レンダリングパイプライン\n",
+        "page_id": "fig-renderer-package",
+        "level": 2
+      },
+      "vid": "77"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package",
+        "title": "@higuma/fig-editor Package",
+        "content": "\nFigmaドキュメント用のReactベースビジュアルエディター。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 1
+      },
+      "vid": "78"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-2",
+        "title": "エディターコンポーネント",
+        "content": "\nFigEditor がメインエディター、FigEditorCanvas がキャンバス、FigPageRenderer でページレンダリング、FigEditorToolbar でツールバーを提供します。\n\nFigEditorRendererKind でレンダラー種別を指定します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "79"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-3",
+        "title": "コンテキストとフック",
+        "content": "\nFigEditorProvider でコンテキスト提供、useFigEditor, useFigEditorOptional でコンテキスト取得、useFigDrag でドラッグ状態を取得します。\n\nuseExportFig でエクスポート、useFigFileLoad でファイル読み込みを行います。\n\nFigEditorContextValue, FigEditorProviderProps でコンテキストを表現します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "80"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-4",
+        "title": "状態管理",
+        "content": "\nFigEditorState, FigEditorAction で状態とアクションを表現します。\n\nFigCreationMode でクリエーションモード、createSelectMode, isSelectMode で選択モードを管理します。\n\nFigTextEditState でテキスト編集状態、FigClipboardContent でクリップボードを表現します。\n\nfigEditorReducer でリデューサー、createFigEditorState で初期状態を作成します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "81"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-5",
+        "title": "パネル",
+        "content": "\nPropertyPanel でプロパティ、PageListPanel でページ一覧、LayerPanel でレイヤーを表示します。\n\nFigInspectorPanel, FigInspectorPanelProps でインスペクター、FigInspectorDetailsPanel, FigInspectorDetailsPanelProps, DetailSectionRenderer, FIG_DETAIL_SECTIONS, DetailSection, DetailRow, DetailSwatch で詳細セクションを管理します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "82"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-6",
+        "title": "インスペクター",
+        "content": "\nFIG_NODE_CATEGORY_REGISTRY, FIG_LEGEND_ORDER でカテゴリ登録を行います。\n\ngetRootNormalizationTransform で変換取得、collectFigBoxes, collectDesignBoxes でボックス収集、figNodeToInspectorTree, designNodeToInspectorTree でツリー変換を行います。\n\nFigInspectorOverlay, FigInspectorOverlayProps でオーバーレイ、FigInspectorProvider, useFigInspectorContextOptional でコンテキストを提供します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "83"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-7",
+        "title": "キャンバス操作",
+        "content": "\nCanvasTargetMode, CanvasTargetBounds でターゲット、CanvasInteractionPolicy でポリシーを管理します。\n\nsyncCanvasCssSize でサイズ同期、countCanvasHitAreas でヒットエリア、countSelectionRects で選択矩形を数えます。\n\nfocusCanvasTextarea, getCanvasTextareaValue, canvasTextareaSelection でテキストエリアを操作、isCanvasTextEditActive でテキスト編集判定を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "84"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-8",
+        "title": "ノード操作",
+        "content": "\nNodeSpec でノード仕様、nodeId でノードID、getNodeParentId で親ID取得を行います。\n\nNodeBounds でノード境界、nodeScreenRect, nodeScreenPoint でスクリーン座標を取得します。\n\npointToLocal で座標変換、findAbsoluteBounds で絶対境界、computeGroupBounds でグループ境界、computeCombinedBounds で結合境界、computeAbsoluteNodeBoundsInner で内部境界を計算します。\n\nclickNode, clickNodeAt, clickNodeAtPagePosition, clickPagePoint でクリック、shiftClickNode でシフトクリック、doubleClickNode でダブルクリックを行います。\n\ntopmostAt で最上位ノード取得、buildNodeSelection で選択構築を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "85"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-9",
+        "title": "ベクターパス",
+        "content": "\nVectorPathDraft でドラフト、VectorPathPoint でポイント、VectorPathBounds で境界、VectorPathHandle でハンドル、VectorPathDragState でドラッグ状態を管理します。\n\nVectorPathControlLine でコントロールライン、VectorPathSegmentLine でセグメントラインを表現します。\n\ncanEnterVectorPathEdit で編集可能判定、findNearestVectorHandle で最近接ハンドル検索を行います。\n\nEditableVectorPathSource, EditableVectorPathOverlay, EditableVectorPathOperation でパス編集を管理します。\n\ncollectVectorPathHandles でハンドル収集、collectVectorPathControlLines でコントロールライン収集、collectEditableVectorPathOverlays でオーバーレイ収集を行います。\n\nresolveContextVectorHandle, resolveEditableVectorPaths で解決を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "86"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-10",
+        "title": "ベクターパスドラフト",
+        "content": "\nVectorPathDraftHandle でハンドル、VectorPathDraftParent で親、VectorPathDraftSegment でセグメント、VectorPathDraftSession でセッションを管理します。\n\nVectorPathDraftOperation, VectorPathDraftOperationResult で操作を表現します。\n\nVectorPathDraftControlLine, VectorPathDraftLineSegment, VectorPathDraftCubicSegment でラインを管理します。\n\nVectorPathDraftHandleIntent で意図、VectorPathDraftPointerStart でポインター開始を表現します。\n\ndraftControlLineCount, draftAnchorHandleCount, draftControlHandleCount でカウント、draftAnchorHandleCenter, draftControlHandleCenter で中心、draftSegmentStrokeWidth, draftControlLineStrokeWidth で太さを取得します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "87"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-11",
+        "title": "パス編集",
+        "content": "\nEditableCommand, EditableCommandType でコマンド、EditablePathPoint でポイント、EditablePathCommand でパスコマンドを管理します。\n\nfirstEditablePathData でデータ取得、editablePathScreenPoint でスクリーン座標を取得します。\n\nEditableAutoLayout でオートレイアウト、EditableInsertionTarget で挿入ターゲットを管理します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "88"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-12",
+        "title": "ハンドル操作",
+        "content": "\ncontrolLineCount, anchorHandleCount, vectorHandleCount でカウント、anchorHandleCenter, controlHandleCenter, firstAnchorHandleCenter で中心を取得します。\n\nrightClickAnchorHandle で右クリック、handleCenterByAriaLabelPrefix でラベル検索、nearestAnchorHandleDistance で距離計算を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "89"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-13",
+        "title": "テキスト",
+        "content": "\ncountCarets でキャレット数、countTextEditFrameOutlines でアウトライン数を取得します。\n\nLetterSpacing で文字間隔、mergeLetterSpacing でマージ、mergeLineHeight で行高マージを行います。\n\ntextNodeFontOptions, collectTextFontOptions, collectTextFontOptionsFromNode でフォントオプションを取得します。\n\nFigTextAutoResize でオートリサイズを管理します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "90"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-14",
+        "title": "ペイント操作",
+        "content": "\nPaintListKind でリスト種別、PaintOperation, PaintListOperation でペイント操作、EffectOperation, EffectListOperation でエフェクト操作を管理します。\n\ngetPaintColor で色取得、getPaintOpacity で透明度取得を行います。\n\nAppearanceOperation で外観操作、applyAppearanceOperation で適用を行います。\n\nPaintEditorConfig でエディター設定、resolveStrokeWeightAfterPaintOperation でストローク幅解決を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "91"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-15",
+        "title": "エクスポート",
+        "content": "\nExportFormat でフォーマット、FigDownloadUrl でURL、FigDownloadAnchor でアンカー、FigDownloadDocument でドキュメントを管理します。\n\nDownloadEnvironment で環境、stripFigExtension で拡張子削除、sanitizeFilenameBase でサニタイズを行います。\n\nisInvalidFilenameCharacter で無効文字判定、removeInvalidFilenameCharacters で削除、replaceInvalidFilenameCharacter で置換を行います。\n\nresolveExportFormat でフォーマット解決、resolveExportScale でスケール解決、makeExportImageType でイメージタイプ作成、resolveImageExtension で拡張子解決を行います。\n\nUseExportFigResult, UseFigFileLoadResult で結果を表現、UseFigSceneGraphParams でパラメータを指定します。\n\ncreateDefaultExportSetting でデフォルト設定作成を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "92"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-16",
+        "title": "ドラッグ",
+        "content": "\nFigDragContextValue でドラッグコンテキスト、FigUserIntent, FigUserIntentKind でユーザー意図、FigUserOperation, FigUserOperationDomain で操作を管理します。\n\nApplyDragOptions でオプション、applyDragToDocument でドキュメント適用を行います。\n\nResolveFigUserIntentOptions, ResolveCanvasInteractionTargetOptions で解決オプションを指定します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "93"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-17",
+        "title": "コンポーネント",
+        "content": "\nmakeComponent でコンポーネント作成、makeComponentSet でセット作成、makeInstance でインスタンス作成を行います。\n\nfindVariantSpec でバリアント検索、updateVariantSpec で更新、updateVariantDefName で名前更新を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "94"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-18",
+        "title": "レイヤー",
+        "content": "\nLayerNodeBadge でバッジ、LayerNodePresentation でプレゼンテーションを管理、getStandaloneBadge でスタンドアロンバッジ、getStandaloneRowStyle でスタイルを取得します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "95"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-19",
+        "title": "ユーティリティ",
+        "content": "\nmakeNode, makeFrame, makeSection, makeVector, makeVectorNode, makeTextNode, makeRectangle, makeDocument でノード作成を行います。\n\nmakePath, linePath, rectPath, ellipsePath, roundedRectPath でパス作成を行います。\n\nmakeKiwiEnum, enumName, kiwiName, windingName で列挙作成を行います。\n\nmakeTransform, _makeRotatedTransform で変換作成、BuildRotatedTransformOptions, BuildRotatedTransformAtWorldCenterOptions でオプションを指定します。\n\ngetSiblingList, replaceSiblingList で兄弟リスト操作、flattenRecursive でフラット化を行います。\n\nsupportsOutline でアウトラインサポート判定、resolveAllowedOperations で許可操作解決を行います。\n\nselectionBoxPageBounds で選択ボックス境界、CornerRadiusIndex でコーナー半径インデックスを管理します。\n\nPropertyMutationTarget で変更ターゲット、BuildNodeSpecFromCreationModeOptions でビルドオプションを指定します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "96"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-20",
+        "title": "ファイル操作",
+        "content": "\nFileDropZone でドロップゾーン、renderDropZoneContent でコンテンツレンダリング、resolveDropZoneStateStyle でスタイル解決を行います。\n\nrejectFilesMatching でファイル拒否、requireExactDirectories, requireAllowedDirectFiles で検証を行います。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "97"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#-21",
+        "title": "テスト",
+        "content": "\nDevMode でDevモード、openEditor, waitForEditor でエディター操作を行います。\n\nTestNodeOptions, TestDesignNodeOverrides でテストオプション、createTestDesignNode でテストノード作成を行います。\n\nrenderedSvgMarkup でSVGマークアップ取得、renderSceneAsync でシーンレンダリングを行います。\n\npagePointToScreenPoint でスクリーン座標変換、activeElementDiagnostics で診断を行います。\n\ncommittedPathUnitSummary, committedVectorPathStrokeCount でコミット済み情報を取得します。\n\nsvgToDataUrl, hashBytes でユーティリティ、ItemBounds でアイテム境界を表現します。\n\nfontKey, createBadge でバッジ作成、normalizeStyle でスタイル正規化を行います。\n\nformatEffectLabel, getEffectTypeName でエフェクトラベルを取得します。\n\nmakeScaleConstraint でスケール制約作成を行います。\n\nVectorPathSectionProps でセクションプロパティ、UseFigTextFontResolverParams でリゾルバーパラメータを指定します。\n\nCreateFigImageAssetParams で画像アセットパラメータを指定します。\n\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "98"
+    },
+    {
+      "section": {
+        "id": "fig-editor-package#see-also-22",
+        "title": "See Also",
+        "content": "\n- wiki://fig-renderer-package — レンダリングエンジン\n- wiki://editor-controls-package — UIコントロール\n- wiki://editor-core-package — エディタープリミティブ\n",
+        "page_id": "fig-editor-package",
+        "level": 2
+      },
+      "vid": "99"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package",
+        "title": "@higuma/editor-controls Package",
+        "content": "\nエディターUIコントロール: レイアウト、ズーム、フォント選択、インスペクター。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 1
+      },
+      "vid": "100"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-2",
+        "title": "フォーマットアダプター",
+        "content": "\nFormattingAdapter でフォーマットアダプターを表現します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "101"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-3",
+        "title": "混合状態",
+        "content": "\nMixedContext で混合コンテキスト、isMixedField で混合フィールド判定を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "102"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-4",
+        "title": "テキストエディター",
+        "content": "\nTextFormattingEditor, TextFormattingEditorProps でテキストフォーマットエディターを提供します。\n\nParagraphFormattingEditor, ParagraphFormattingEditorProps で段落フォーマットエディターを提供します。\n\nTextFormatting, TextFormattingFeatures でテキストフォーマット、HorizontalAlignment で水平配置を表現します。\n\nParagraphFormatting, ParagraphFormattingFeatures で段落フォーマットを表現します。\n\nAlignmentValue で配置値を表現します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "103"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-5",
+        "title": "テーブルエディター",
+        "content": "\nTableStyleBandsEditor, TableStyleBandsEditorProps でテーブルスタイルバンドエディターを提供します。\n\nTableStyleBands, TableBandFeatures, BandKey でテーブルスタイルを管理します。\n\nTableCellGridProps でセルグリッドプロパティ、TableStructureToolbarProps で構造ツールバープロパティを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "104"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-6",
+        "title": "フォント",
+        "content": "\nFontFamilySelect, FontFamilySelectProps でフォントファミリー選択を提供します。\n\nuseDocumentFontFamilies でドキュメントフォントファミリー取得を行います。\n\nUseLocalFontsResult でローカルフォント結果、LocalFontsStatus でステータスを表現します。\n\nFontFaceSetHandler でフォントフェイスセットハンドラー、HandlerSnapshot でスナップショットを管理します。\n\nMultiplexer でマルチプレクサー、getFontFamilies でファミリー取得、areSameStringArray で配列比較、normalizeFamilyName でファミリー名正規化、subscribeToFontChanges で変更購読を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "105"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-7",
+        "title": "ズームコントロール",
+        "content": "\nZoomControls でズームコントロールを提供します。\n\nZoomMode, ZoomControlsProps でズーム設定を指定します。\n\nZOOM_STEPS でステップ、FIT_ZOOM_VALUE でフィット値を定義します。\n\ngetClosestZoomIndex で最近接インデックス取得、getNextZoomValue で次の値取得、getZoomOptions でオプション取得、isFitMode でフィットモード判定を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "106"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-8",
+        "title": "エディターシェル",
+        "content": "\nEditorShell でエディターシェル、CanvasArea でキャンバスエリアを提供します。\n\nEditorLayoutMode, EditorLayoutBreakpoints でレイアウトモード、EditorPanel でパネル、EditorShellProps でプロパティを指定します。\n\nEditorShellSchema, EditorShellSchemaInput でスキーマを管理します。\n\nresolveEditorLayoutMode でモード解決、DEFAULT_EDITOR_LAYOUT_BREAKPOINTS でデフォルトブレークポイントを定義します。\n\nuseContainerWidth でコンテナ幅取得、editorContainerStyle でコンテナスタイル、toolbarStyle でツールバースタイル、gridContainerStyle でグリッドコンテナスタイルを取得します。\n\nCanvasAreaProps でキャンバスエリアプロパティを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "107"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-9",
+        "title": "レイアウト配置",
+        "content": "\ngridPlacement でグリッド配置、LayerPlacement でレイヤー配置を管理します。\n\ndrawerPlacement でドロワー配置、DrawerPlacementOptions でオプションを指定します。\n\nresolveMobile, resolveTablet, resolveDesktop で各デバイス解決を行います。\n\nresolveMobileLeftPlacement, resolveMobileRightPlacement, resolveTabletRightPlacement で配置解決を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "108"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#ui-10",
+        "title": "UIコンポーネント",
+        "content": "\nOptionalPropertySection, OptionalPropertySectionProps でオプショナルプロパティセクションを提供します。\n\nresolveStyle でスタイル解決、createOnChange で変更ハンドラー作成、resolveAddGroupStyle でグループスタイル解決を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "109"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-11",
+        "title": "キャンバス選択コンポーネント",
+        "content": "\nSelectionBox, SelectionBoxProps で選択ボックス、SelectionBoxVariant でバリアントを提供します。\n\nCanvasResizeHandle, CanvasResizeHandleProps でリサイズハンドル、CanvasRotateHandle, CanvasRotateHandleProps で回転ハンドルを提供します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "110"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-12",
+        "title": "インスペクターコンポーネント",
+        "content": "\nBoundingBoxOverlay, BoundingBoxOverlayProps でバウンディングボックスオーバーレイを提供します。\n\nInspectorTreePanel, InspectorTreePanelProps でインスペクターツリーパネル、TreeNodeInternalProps で内部プロパティを管理します。\n\nCategoryLegend, CategoryLegendProps でカテゴリ凡例を提供します。\n\nNodeTooltip, NodeTooltipProps でノードツールチップを提供します。\n\nInspectorCanvasOverlay, InspectorCanvasOverlayProps でキャンバスオーバーレイを提供します。\n\nInspectorTab でインスペクタータブ、InspectorPanelWithTabsProps でタブパネルプロパティを指定します。\n\nfindAncestorIds で祖先ID検索、collectInitialExpanded で初期展開収集を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "111"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-13",
+        "title": "エディターグリッド",
+        "content": "\nEditorGridConfigOptions でグリッド設定オプションを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "112"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-14",
+        "title": "ページサイズ",
+        "content": "\nPageSizeEditorProps でページサイズエディタープロパティを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "113"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-15",
+        "title": "テキスト合成",
+        "content": "\nUseTextCompositionArgs で引数、UseTextCompositionResult で結果を表現します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "114"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-16",
+        "title": "範囲",
+        "content": "\nExtents で範囲、updateExtentsFromBounds で境界から更新を行います。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "115"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-17",
+        "title": "リボン",
+        "content": "\nRibbonMenuProps でリボンメニュープロパティ、RibbonGroupProps でグループプロパティを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "116"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#undoredo-18",
+        "title": "Undo/Redo",
+        "content": "\nUndoRedoGroupProps でUndoRedoグループプロパティを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "117"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-19",
+        "title": "カスタマイズ",
+        "content": "\nCustomizeSheetProps でカスタマイズシートプロパティを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "118"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-20",
+        "title": "スライド",
+        "content": "\nSlideCanvasBackgroundParams でスライドキャンバス背景パラメータを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "119"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#-21",
+        "title": "サムネイル",
+        "content": "\nThumbnailContainerStyleOptions でサムネイルコンテナスタイルオプションを指定します。\n\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "120"
+    },
+    {
+      "section": {
+        "id": "editor-controls-package#see-also-22",
+        "title": "See Also",
+        "content": "\n- wiki://fig-editor-package — このパッケージを使用するエディター\n- wiki://ui-components-package — 基本UIコンポーネント\n",
+        "page_id": "editor-controls-package",
+        "level": 2
+      },
+      "vid": "121"
+    },
+    {
+      "section": {
+        "id": "editor-core-package",
+        "title": "@higuma/editor-core Package",
+        "content": "\nエディタープリミティブ: 選択、履歴、ドラッグ状態、ジオメトリ計算。\n\n",
+        "page_id": "editor-core-package",
+        "level": 1
+      },
+      "vid": "122"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-2",
+        "title": "履歴管理",
+        "content": "\nUndoRedoHistory で履歴を表現します。\n\ncreateHistory で履歴作成、pushHistory で状態追加、undoHistory でUndo、redoHistory でRedoを行います。\n\ncanUndo, canRedo で可能判定、undoCount, redoCount でカウント取得を行います。\n\nclearHistory で履歴クリア、replacePresent で現在状態置換を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "123"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-3",
+        "title": "選択管理",
+        "content": "\nSelectionState で選択状態、SelectionPrimaryFallback でフォールバック、getFallbackPrimaryId でID取得を行います。\n\ncreateEmptySelection で空選択、createSingleSelection で単一選択、createMultiSelection で複数選択を作成します。\n\naddToSelection で追加、removeFromSelection で削除、toggleSelection でトグルを行います。\n\nisSelected で選択判定、isSelectionEmpty で空判定を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "124"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-4",
+        "title": "クリップボード",
+        "content": "\nClipboardContent でクリップボード内容を表現します。\n\ncreateClipboardContent で作成、incrementPasteCount でペーストカウント増加、markAsCopy でコピーマーク、markAsCut でカットマークを行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "125"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-5",
+        "title": "ドラッグ状態",
+        "content": "\nDragState でドラッグ状態を表現します。\n\nIdleDragState でアイドル、MoveDragState で移動、ResizeDragState でリサイズ、RotateDragState で回転、CreateDragState で作成、MarqueeDragState でマーキーを表現します。\n\nPendingMoveDragState, PendingResizeDragState, PendingRotateDragState でペンディング状態を表現します。\n\nPreviewDelta でプレビュー差分を表現します。\n\ncreateIdleDragState でアイドル作成を行います。\n\nisDragIdle, isDragMove, isDragResize, isDragRotate, isDragCreate, isDragMarquee で状態判定を行います。\n\nisDragPendingMove, isDragPendingResize, isDragPendingRotate, isDragPending でペンディング判定を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "126"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-6",
+        "title": "ドラッグユーティリティ",
+        "content": "\nDRAG_THRESHOLD_PX でしきい値、isDragThresholdExceeded で超過判定を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "127"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-7",
+        "title": "ポインターユーティリティ",
+        "content": "\nPrimaryMouseEventLike, PrimaryPointerEventLike でイベント型、TextareaSelectionLike でテキストエリア選択を表現します。\n\nisPrimaryMouseAction, isPrimaryPointerAction でプライマリ判定を行います。\n\napplySelectionRange で選択範囲適用、getSelectionAnchor でアンカー取得を行います。\n\nTextSelectionDirection でテキスト選択方向を表現します。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "128"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-8",
+        "title": "ジオメトリ型",
+        "content": "\nPoint で座標、SimpleBounds で単純境界、RotatedBoundsInput で回転境界入力、RotationResult で回転結果を表現します。\n\nResizeHandlePosition でリサイズハンドル位置、ResizeBounds でリサイズ境界、ResizeOptions でリサイズオプション、ResizeDimensionsInput でリサイズ次元入力を表現します。\n\nExtents で範囲を表現します。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "129"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-9",
+        "title": "回転",
+        "content": "\nnormalizeAngle で角度正規化、degreesToRadians でラジアン変換、radiansToDegrees で度変換を行います。\n\ncalculateAngleFromCenter で中心からの角度計算を行います。\n\nDEFAULT_SNAP_ANGLES, DEFAULT_SNAP_THRESHOLD でスナップ設定、snapAngle でスナップを行います。\n\nrotatePointAroundCenter で中心周り回転、calculateShapeCenter で中心計算、getRotatedCorners でコーナー取得を行います。\n\ngetSvgRotationTransform, getSvgRotationTransformForBounds でSVG変換を取得します。\n\nrotateShapeAroundCenter で図形回転、calculateRotationDelta で回転差分計算を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "130"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-10",
+        "title": "リサイズ",
+        "content": "\ncalculateAspectDelta でアスペクト差分、applyMinConstraints で最小制約適用を行います。\n\nresizeFromNW, resizeFromN, resizeFromNE, resizeFromE, resizeFromSE, resizeFromS, resizeFromSW, resizeFromW で各方向リサイズを行います。\n\ncalculateResizeBounds でリサイズ境界計算、calculateScaleFactors でスケール係数計算を行います。\n\ncalculateRelativePosition で相対位置計算、calculateMultiResizeBounds で複数リサイズ境界計算を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "131"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-11",
+        "title": "境界",
+        "content": "\ngetCombinedBoundsWithRotation で回転付き結合境界を取得します。\n\ngetPointsForBounds でポイント取得を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "132"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-12",
+        "title": "座標",
+        "content": "\nclientToCanvasCoords でクライアント座標変換を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "133"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-13",
+        "title": "ドラッグプレビュー",
+        "content": "\nMoveDragPreviewInput, ResizeDragPreviewInput, RotateDragPreviewInput でプレビュー入力を表現します。\n\ncalculateResizedDimensions でリサイズ次元計算を行います。\n\napplyMovePreview で移動プレビュー、applyResizePreview でリサイズプレビュー、applyRotatePreview で回転プレビュー、applyDragPreview でドラッグプレビューを適用します。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "134"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-14",
+        "title": "アダプター型",
+        "content": "\nTextStyle でテキストスタイル、FontData でフォントデータ、FontMetricsData でフォントメトリクスを表現します。\n\nCaseTransformData でケース変換、TextJustifyData でテキスト揃え、ParagraphSpacingData で段落間隔を表現します。\n\nIndentData でインデント、ListData でリスト、PositionData で位置、SizeData でサイズを表現します。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "135"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-15",
+        "title": "インスペクター型",
+        "content": "\nNodeCategoryConfig, NodeCategoryRegistry でカテゴリ設定を表現します。\n\nAffineTransform でアフィン変換、IDENTITY_TRANSFORM で単位変換を表現します。\n\nInspectorBoxInfo でボックス情報、InspectorTreeNode でツリーノードを表現します。\n\nresolveNodeColor でノード色解決、resolveNodeLabel でノードラベル解決、affineToSvgTransform でSVG変換を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "136"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#-16",
+        "title": "テスト",
+        "content": "\nDemoDrag でデモドラッグ、TestItem でテストアイテム、createTestItems でテストアイテム作成を行います。\n\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "137"
+    },
+    {
+      "section": {
+        "id": "editor-core-package#see-also-17",
+        "title": "See Also",
+        "content": "\n- wiki://fig-editor-package — このパッケージを使用するエディター\n- wiki://editor-controls-package — UIコントロール\n",
+        "page_id": "editor-core-package",
+        "level": 2
+      },
+      "vid": "138"
+    },
+    {
+      "section": {
+        "id": "ui-components-package",
+        "title": "@higuma/ui-components Package",
+        "content": "\n共有UIコンポーネントライブラリ。\n\n",
+        "page_id": "ui-components-package",
+        "level": 1
+      },
+      "vid": "139"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-2",
+        "title": "型",
+        "content": "\nEditorProps, EditorState, EditorAction でエディターを表現します。\n\nInputType で入力タイプ、ButtonVariant でボタンバリアント、SelectOption で選択オプションを表現します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "140"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-3",
+        "title": "デザイントークン",
+        "content": "\ntokens でトークン全体、colorTokens で色、radiusTokens で半径、spacingTokens で間隔、fontTokens でフォント、iconTokens でアイコン、shadowTokens で影を取得します。\n\nTokens, ColorTokens, RadiusTokens, SpacingTokens, FontTokens, IconTokens, ShadowTokens で型を表現します。\n\nFontTokens, IconTokens, RadiusTokens, ShadowTokens, SpacingTokens, FieldLabelTokens, EditorShellTokens, FieldContainerTokens でトークン設定を管理します。\n\ninjectCSSVariables で注入、removeCSSVariables で削除、generateCSSVariables で生成、cssVar で変数取得、CSS_VAR_MAP でマップを参照します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "141"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-4",
+        "title": "アイコン",
+        "content": "\nAddIcon, ArrowRightIcon, AlignBottomIcon, AlignCenterIcon, AlignJustifyIcon, AlignLeftIcon, AlignMiddleIcon, AlignRightIcon, AlignTopIcon でアイコンを提供します。\n\nArrowDownIcon, ArrowUpIcon, AudioIcon, BoldIcon, BringForwardIcon, BringToFrontIcon でアイコンを提供します。\n\nChartIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, CloseIcon でアイコンを提供します。\n\nConnectorIcon, CopyIcon, CutIcon, DeleteIcon, DiagramIcon, DiamondIcon, DownloadIcon, EditIcon でアイコンを提供します。\n\nEllipseIcon, EnterFullscreenIcon, ExitFullscreenIcon, FileIcon, FolderIcon, FxIcon, GridIcon, GroupIcon でアイコンを提供します。\n\nHiddenIcon, ImageIcon, ItalicIcon, LeftArrowIcon, LineIcon, ListViewIcon, LoaderIcon, LockIcon でアイコンを提供します。\n\nMergeCellsIcon, MoreIcon, OleObjectIcon, PasteIcon, PauseIcon, PenIcon, PencilIcon, PictureIcon でアイコンを提供します。\n\nPlayIcon, RectIcon, RedoIcon, ReplaceIcon, ReplaceAllIcon, RightArrowIcon, RotateCcwIcon, RoundRectIcon でアイコンを提供します。\n\nSelectIcon, SendBackwardIcon, SendToBackIcon, SettingsIcon, ShareIcon, ShieldIcon, SidebarIcon でアイコンを提供します。\n\nSkipBackIcon, SkipForwardIcon, StarIcon, StopIcon, TableIcon, TextBoxIcon, TileViewIcon, TrashIcon, ClearIcon, SearchIcon でアイコンを提供します。\n\nTriangleIcon, UnderlineIcon, UndoIcon, UngroupIcon, UnlockIcon, UnknownShapeIcon, UnmergeCellsIcon, UploadIcon, VideoIcon, VisibleIcon でアイコンを提供します。\n\nIconComponent でアイコンコンポーネント型を表現します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "142"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-5",
+        "title": "プリミティブ",
+        "content": "\nButton, ButtonProps, ButtonSize でボタンを提供します。\n\nIconButton, IconButtonProps, IconButtonSize でアイコンボタンを提供します。\n\nInput, InputProps で入力を提供します。\n\nPopover, PopoverProps でポップオーバーを提供します。\n\nSelect, SelectProps で選択を提供します。\n\nSearchableSelect, SearchableSelectProps, SearchableSelectOption, SearchableSelectItemProps で検索可能選択を提供します。\n\nSlider, SliderProps でスライダーを提供します。\n\nTabs, TabsProps, TabItem, BasicTabs, TabsWithDisabled, InteractiveTabs でタブを提供します。\n\nToggleButton, ToggleButtonProps でトグルボタン、Toggle, ToggleProps でトグルを提供します。\n\nCursorCaret, CursorCaretProps でカーソルキャレットを提供します。\n\nToolbarButton, ToolbarButtonProps, ToolbarButtonSize, TOOLBAR_BUTTON_ICON_SIZE でツールバーボタンを提供します。\n\nToolbarSeparator, ToolbarSeparatorProps でツールバーセパレーターを提供します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "143"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-6",
+        "title": "フック",
+        "content": "\nuseCursorBlink でカーソル点滅を使用します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "144"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-7",
+        "title": "スクロール/仮想化",
+        "content": "\nVirtualScroll, VirtualScrollProps で仮想スクロールを提供します。\n\nuseVirtualScroll, useVirtualScrollContext で仮想スクロールフックを使用します。\n\nUseVirtualScrollOptions, UseVirtualScrollReturn で型を表現します。\n\nViewportRect でビューポート矩形を表現します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "145"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-8",
+        "title": "コンテキストメニュー",
+        "content": "\nContextMenu, ContextMenuProps でコンテキストメニューを提供します。\n\nContextMenuItem, ContextMenuItemProps でアイテム、ContextMenuSeparator でセパレーター、ContextMenuSubmenu, ContextMenuSubmenuProps でサブメニューを提供します。\n\nMenuItemId, MenuItem, MenuSubmenu, MenuSeparator, MenuEntry でメニュー型を表現します。\n\nisSeparator, isSubmenu, isMenuItem で判定を行います。\n\nDefaultSeparator でデフォルトセパレーターを提供します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "146"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-9",
+        "title": "ポップオーバー位置",
+        "content": "\nclamp でクランプ、canFit でフィット判定、CanFitInput, ClampRangeInput で入力を表現します。\n\nPopoverSide で辺、PopoverSize でサイズ、PopoverAlign で配置、PopoverViewport でビューポートを表現します。\n\nresolveSide で辺解決、getOppositeSide で反対辺取得、getAvailableSpaces で利用可能スペース取得を行います。\n\ngetAlignedTop で上配置、getAlignedLeft で左配置を取得します。\n\nAlignedPositionInput, PopoverPositionInput, PopoverPositionResult で位置計算を表現します。\n\nAdjustPositionInput, AdjustVerticalInput, AdjustHorizontalInput で調整入力を表現します。\n\ngetAdjustedPosition, getAdjustedVerticalPosition, getAdjustedHorizontalPosition で調整位置を取得します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "147"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-10",
+        "title": "グリッド",
+        "content": "\nclampRange でレンジクランプ、computePrefixSums でプレフィックスサム計算、findIndexAtOffset でオフセット検索を行います。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "148"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-11",
+        "title": "レイアウト",
+        "content": "\nFieldGroup, FieldGroupProps でフィールドグループを提供します。\n\nFieldRow, FieldRowProps でフィールド行を提供します。\n\nPanel, PanelProps でパネルを提供します。\n\nSection, SectionProps でセクションを提供します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "149"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-12",
+        "title": "グループリスト",
+        "content": "\nGroupedList, GroupedListProps でグループリストを提供します。\n\nGroupedListItem, GroupedListItemProps でアイテム、GroupedListGroup, GroupedListGroupProps でグループを提供します。\n\nGroupedListContextMenu, GroupedListContextMenuProps でコンテキストメニューを提供します。\n\nGroupedListItemId, GroupedListGroupId でID型、GroupedListItemData, GroupedListGroupData でデータ型を表現します。\n\nGroupedListSelectionState で選択状態、GroupedListContextMenuState でコンテキストメニュー状態、GroupedListEditState で編集状態、GroupedListDragState でドラッグ状態を表現します。\n\nDropTargetPosition でドロップターゲット位置、CollapsedGroupsState で折りたたみ状態を表現します。\n\nGroupedListMode でモード、GroupedListActionId でアクションID、GroupedListMenuContext でメニューコンテキストを表現します。\n\ncreateEmptySelection, createSingleSelection, createClosedContextMenu, createIdleEditState, createIdleDragState で初期状態作成を行います。\n\nGROUPED_LIST_ACTIONS でアクション定義を参照します。\n\nuseGroupedListContextMenu, UseGroupedListContextMenuReturn でコンテキストメニューフックを使用します。\n\nuseGroupedListKeyboard, UseGroupedListKeyboardOptions でキーボードフックを使用します。\n\nuseGroupedListDragDrop, UseGroupedListDragDropOptions, UseGroupedListDragDropReturn でドラッグドロップフックを使用します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "150"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-13",
+        "title": "プレイヤー",
+        "content": "\nPlayer, PlayerProps でプレイヤーを提供します。\n\nPlayerControls, PlayerControlsProps でコントロール、PlayerDisplay, PlayerDisplayProps でディスプレイを提供します。\n\nPlayerState で状態、PlayerMedia でメディア、PlayerAction でアクション、PlayerError でエラー、PlayerVariant でバリアント、MainButtonMode でボタンモードを表現します。\n\nPLAY_BUTTON_SIZE, ACTION_BUTTON_SIZE, PLAY_ICON_SIZE, ACTION_ICON_SIZE でサイズ定数を定義します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "151"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-14",
+        "title": "エディター",
+        "content": "\nBreadcrumb, BreadcrumbProps でパンくず、BreadcrumbItem でアイテムを提供します。\n\nConsolePanel, ConsolePanelProps でコンソールパネル、ConsoleMessage, ConsoleMessageType でメッセージを表現します。\n\nEditorLayout, EditorLayoutProps でエディターレイアウトを提供します。\n\nEditorStatusBar, EditorStatusBarProps でステータスバー、CursorPosition でカーソル位置を提供します。\n\nFilterInput, FilterInputProps でフィルター入力を提供します。\n\nNavigatorTabs, NavigatorTabsProps でナビゲータータブ、NavigatorTab, InteractiveNav でタブを提供します。\n\nformatTimestamp でタイムスタンプフォーマットを行います。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "152"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-15",
+        "title": "スライダー",
+        "content": "\ngetThumbStyle でサムスタイル、getTrackStyle でトラックスタイル、getThumbBackgroundColor でサム背景色、getTrackBackgroundColor でトラック背景色を取得します。\n\nSliderWithSuffix, SliderWithoutValue でスライダーバリアントを提供します。\n\nInteractiveSlider でインタラクティブスライダーを提供します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "153"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-16",
+        "title": "トグル",
+        "content": "\nInteractiveToggle でインタラクティブトグルを提供します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "154"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-17",
+        "title": "入力",
+        "content": "\nInteractiveInput, InteractiveProps でインタラクティブ入力を提供します。\n\nTextInputDemo, NumberInputDemo でデモを提供します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "155"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-18",
+        "title": "リサイズ",
+        "content": "\nResizeDirection でリサイズ方向を表現します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "156"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-19",
+        "title": "スクロールバー",
+        "content": "\nScrollbarProps でスクロールバープロパティを指定します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "157"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-20",
+        "title": "サイドバー",
+        "content": "\nSidebarProps でサイドバープロパティを指定します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "158"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-21",
+        "title": "コントロール",
+        "content": "\nControlsProps でコントロールプロパティ、renderControl でレンダリングを行います。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "159"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-22",
+        "title": "ナビゲーション",
+        "content": "\nNavigationControlsVariant でナビゲーションコントロールバリアントを表現します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "160"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-23",
+        "title": "位置インジケーター",
+        "content": "\nPositionIndicatorVariant で位置インジケーターバリアントを表現します。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "161"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#-24",
+        "title": "その他",
+        "content": "\nTestMeta でテストメタ、Debugger でデバッガー、SettingsExample で設定例を提供します。\n\nupdateUrl でURL更新を行います。\n\nfindBackdrop でバックドロップ検索、isWheelEvent でホイールイベント判定を行います。\n\ngetInitialSelection で初期選択取得、stubBoundingClientRect でスタブ矩形、createResizeObserverEntry でオブザーバーエントリー作成を行います。\n\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "162"
+    },
+    {
+      "section": {
+        "id": "ui-components-package#see-also-25",
+        "title": "See Also",
+        "content": "\n- wiki://editor-controls-package — 高レベルエディターコントロール\n",
+        "page_id": "ui-components-package",
+        "level": 2
+      },
+      "vid": "163"
+    },
+    {
+      "section": {
+        "id": "buffer-package",
+        "title": "@higuma/buffer Package",
+        "content": "\nバッファユーティリティ: Base64、DataURL変換。\n\n",
+        "page_id": "buffer-package",
+        "level": 1
+      },
+      "vid": "164"
+    },
+    {
+      "section": {
+        "id": "buffer-package#base64-2",
+        "title": "Base64",
+        "content": "\nbase64ArrayBuffer でArrayBufferをBase64文字列に変換します。\n\nbase64ToArrayBuffer でBase64文字列をArrayBufferに変換します。\n\n",
+        "page_id": "buffer-package",
+        "level": 2
+      },
+      "vid": "165"
+    },
+    {
+      "section": {
+        "id": "buffer-package#dataurl-3",
+        "title": "DataURL",
+        "content": "\ntoDataUrl でバイナリをDataURLに変換します。\n\nparseDataUrl でDataURLをパースします。\n\nParsedDataUrl でパース結果型を表現します。\n\n",
+        "page_id": "buffer-package",
+        "level": 2
+      },
+      "vid": "166"
+    },
+    {
+      "section": {
+        "id": "buffer-package#-4",
+        "title": "ユーティリティ",
+        "content": "\nformatSize でバイト数を人間可読文字列にフォーマットします。\n\n",
+        "page_id": "buffer-package",
+        "level": 2
+      },
+      "vid": "167"
+    },
+    {
+      "section": {
+        "id": "buffer-package#see-also-5",
+        "title": "See Also",
+        "content": "\n- wiki://png-package — このパッケージを使用\n",
+        "page_id": "buffer-package",
+        "level": 2
+      },
+      "vid": "168"
+    },
+    {
+      "section": {
+        "id": "png-package",
+        "title": "@higuma/png Package",
+        "content": "\n純粋TypeScript実装のPNGエンコーダー/デコーダー。\n\n",
+        "page_id": "png-package",
+        "level": 1
+      },
+      "vid": "169"
+    },
+    {
+      "section": {
+        "id": "png-package#-2",
+        "title": "エンコード",
+        "content": "\nencodeRgbaToPng でRGBAをPNGに変換、encodeRgbaToPngDataUrl でDataURLとして取得します。\n\npackPng, encodePng で低レベルパッキングを行います。\n\nPackerOptions でパッカーオプション、DeflateLevel で圧縮レベルを指定します。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "170"
+    },
+    {
+      "section": {
+        "id": "png-package#-3",
+        "title": "デコード",
+        "content": "\nparsePng でPNGパース、parseChunks でチャンクパースを行います。\n\nParseResult でパース結果、ParseOptions, ParserOptions でオプションを指定します。\n\nParserDependencies でパーサー依存、resolveOptions でオプション解決を行います。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "171"
+    },
+    {
+      "section": {
+        "id": "png-package#-4",
+        "title": "検出",
+        "content": "\nisPng でPNG判定、PNG_SIGNATURE で署名を参照します。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "172"
+    },
+    {
+      "section": {
+        "id": "png-package#api-5",
+        "title": "高レベルAPI",
+        "content": "\ncreatePngImage でPngImage作成、readPng で読み込み、writePng で書き込みを行います。\n\nPngData, PngImage, PngMetadata でデータ型を表現します。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "173"
+    },
+    {
+      "section": {
+        "id": "png-package#-6",
+        "title": "フィルター",
+        "content": "\nFilterFn でフィルター関数型、FilterArgs, FilterSumArgs, FilterDataArgs で引数を表現します。\n\nfilterNone, filterSub, filterUp, filterAvg, filterPaeth でフィルター適用を行います。\n\nfilterSumNone, filterSumSub, filterSumUp, filterSumAvg, filterSumPaeth でフィルターサムを計算します。\n\nFilterSumFn でサム関数型、FilterOptions でオプション、FilterDependencies で依存を表現します。\n\nresolveFilterTypes でフィルタータイプ解決、unfilter でフィルター解除を行います。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "174"
+    },
+    {
+      "section": {
+        "id": "png-package#-7",
+        "title": "ビットパッカー",
+        "content": "\nRGBA でRGBA型、readRGBA で読み込み、writeRGBA で書き込みを行います。\n\nBitmapInfo でビットマップ情報、BitPackerOptions でオプションを指定します。\n\ncomputeInBpp で入力bpp計算、computeOutBpp で出力bpp計算を行います。\n\ncheckBigEndian でビッグエンディアン判定、extractRawRGBA で生RGBA抽出を行います。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "175"
+    },
+    {
+      "section": {
+        "id": "png-package#-8",
+        "title": "フォーマット正規化",
+        "content": "\nImageInfo, ImagePass でイメージ情報を表現します。\n\ndePalette でパレット解除、scaleDepth でデプススケールを行います。\n\nPixelBufferArgs, PixelMapper, PixelCustomMapper でピクセルマッピングを表現します。\n\ncheckTransparent で透明チェック、replaceTransparentColor で透明色置換、normalizeRgbaData でRGBAデータ正規化を行います。\n\nNormaliseImageData で正規化データを表現します。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "176"
+    },
+    {
+      "section": {
+        "id": "png-package#-9",
+        "title": "読み込み",
+        "content": "\nReadRequest で読み込みリクエスト、ResolvedOptions で解決済みオプション、getByteWidth でバイト幅取得を行います。\n\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "177"
+    },
+    {
+      "section": {
+        "id": "png-package#see-also-10",
+        "title": "See Also",
+        "content": "\n- wiki://buffer-package — Base64/DataURL変換\n- wiki://fig-renderer-package — 画像エクスポートで使用\n",
+        "page_id": "png-package",
+        "level": 2
+      },
+      "vid": "178"
+    },
+    {
+      "section": {
+        "id": "zip-package",
+        "title": "@higuma/zip Package",
+        "content": "\nZIPファイル操作。.fig ファイルはZIPアーカイブなのでこのパッケージを使用。\n\n",
+        "page_id": "zip-package",
+        "level": 1
+      },
+      "vid": "179"
+    },
+    {
+      "section": {
+        "id": "zip-package#-2",
+        "title": "パッケージ操作",
+        "content": "\nloadZipPackage でZIPロード、createEmptyZipPackage で空パッケージ作成を行います。\n\nZipPackage でパッケージ型、ZipEntries でエントリー型を表現します。\n\n",
+        "page_id": "zip-package",
+        "level": 2
+      },
+      "vid": "180"
+    },
+    {
+      "section": {
+        "id": "zip-package#-3",
+        "title": "生成オプション",
+        "content": "\nZipGenerateOptions で生成オプション、ZipWriterOptions でライターオプションを指定します。\n\nCompressionLevel で圧縮レベル、normalizeCompressionLevel でレベル正規化を行います。\n\n",
+        "page_id": "zip-package",
+        "level": 2
+      },
+      "vid": "181"
+    },
+    {
+      "section": {
+        "id": "zip-package#-4",
+        "title": "ユーティリティ",
+        "content": "\nisBinaryFile でバイナリファイル判定を行います。\n\ntoUint8Array でUint8Array変換、u8ToArrayBuffer でArrayBuffer変換を行います。\n\ncreateZipPackageFromEntries でエントリーからパッケージ作成を行います。\n\ncreateTestZipBytes でテストZIPバイト作成を行います。\n\n",
+        "page_id": "zip-package",
+        "level": 2
+      },
+      "vid": "182"
+    },
+    {
+      "section": {
+        "id": "zip-package#see-also-5",
+        "title": "See Also",
+        "content": "\n- wiki://fig-package — ZIPから抽出したデータをパース\n- wiki://fig-builder-package — ZIPとしてエクスポート\n",
+        "page_id": "zip-package",
+        "level": 2
+      },
+      "vid": "183"
+    }
+  ]
+}

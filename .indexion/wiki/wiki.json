@@ -1,0 +1,161 @@
+{
+  "title": "Wiki",
+  "pages": [
+    {
+      "id": "overview",
+      "title": "Higuma Overview",
+      "file": "overview.md",
+      "sources": [
+        "packages/@higuma/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "getting-started",
+      "title": "Getting Started",
+      "file": "getting-started.md",
+      "sources": [
+        "package.json",
+        "AGENTS.md"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "core-concepts",
+      "title": "Core Concepts",
+      "file": "core-concepts.md",
+      "sources": [
+        "packages/@higuma/fig/src/types.ts",
+        "packages/@higuma/fig/src/parser/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "architecture",
+      "title": "Architecture",
+      "file": "architecture.md",
+      "sources": [
+        "packages/@higuma/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "fig-package",
+      "title": "@higuma/fig Package",
+      "file": "fig-package.md",
+      "sources": [
+        "packages/@higuma/fig/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "fig-builder-package",
+      "title": "@higuma/fig-builder Package",
+      "file": "fig-builder-package.md",
+      "sources": [
+        "packages/@higuma/fig-builder/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "fig-renderer-package",
+      "title": "@higuma/fig-renderer Package",
+      "file": "fig-renderer-package.md",
+      "sources": [
+        "packages/@higuma/fig-renderer/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "fig-editor-package",
+      "title": "@higuma/fig-editor Package",
+      "file": "fig-editor-package.md",
+      "sources": [
+        "packages/@higuma/fig-editor/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "editor-controls-package",
+      "title": "@higuma/editor-controls Package",
+      "file": "editor-controls-package.md",
+      "sources": [
+        "packages/@higuma/editor-controls/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "editor-core-package",
+      "title": "@higuma/editor-core Package",
+      "file": "editor-core-package.md",
+      "sources": [
+        "packages/@higuma/editor-core/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "ui-components-package",
+      "title": "@higuma/ui-components Package",
+      "file": "ui-components-package.md",
+      "sources": [
+        "packages/@higuma/ui-components/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "buffer-package",
+      "title": "@higuma/buffer Package",
+      "file": "buffer-package.md",
+      "sources": [
+        "packages/@higuma/buffer/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "png-package",
+      "title": "@higuma/png Package",
+      "file": "png-package.md",
+      "sources": [
+        "packages/@higuma/png/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    },
+    {
+      "id": "zip-package",
+      "title": "@higuma/zip Package",
+      "file": "zip-package.md",
+      "sources": [
+        "packages/@higuma/zip/src/"
+      ],
+      "children": [],
+      "provenance": "synthesized",
+      "last_actor": "agent:claude"
+    }
+  ]
+}
