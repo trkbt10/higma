@@ -1,10 +1,11 @@
 /** @file Variant property metadata controls. */
 
-import type { FigDesignNode, FigNodeId, VariantPropSpec } from "@higuma/fig/domain";
+import type { FigDesignNode } from "@higuma/fig/domain";
 import { Input } from "@higuma/ui-components/primitives/Input";
 import { FieldGroup } from "@higuma/ui-components/layout";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
+import { updateVariantSpec } from "./variant-domain";
 
 type VariantPropertiesSectionProps = {
   readonly node: FigDesignNode;
@@ -33,11 +34,11 @@ export function VariantPropertiesSection({ node, target, dispatch }: VariantProp
                 target,
                 updater: (current) => ({
                   ...current,
-                  variantPropSpecs: updateVariantPropSpec({
-                    specs: current.variantPropSpecs ?? [],
-                    propDefId: spec.propDefId,
-                    value: String(value),
-                  }),
+                  variantPropSpecs: updateVariantSpec(
+                    current.variantPropSpecs ?? [],
+                    spec.propDefId,
+                    String(value),
+                  ),
                 }),
               }));
             }}
@@ -46,21 +47,4 @@ export function VariantPropertiesSection({ node, target, dispatch }: VariantProp
       ))}
     </div>
   );
-}
-
-function updateVariantPropSpec({
-  specs,
-  propDefId,
-  value,
-}: {
-  readonly specs: readonly VariantPropSpec[];
-  readonly propDefId: FigNodeId;
-  readonly value: string;
-}): FigDesignNode["variantPropSpecs"] {
-  return specs.map((spec) => {
-    if (spec.propDefId === propDefId) {
-      return { ...spec, value };
-    }
-    return spec;
-  });
 }

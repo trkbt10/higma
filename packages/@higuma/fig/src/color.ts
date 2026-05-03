@@ -44,6 +44,20 @@ export function figColorToRgba(color: FigColor): string {
   return `rgba(${r}, ${g}, ${b}, ${color.a})`;
 }
 
+/**
+ * Parse a CSS hex color (`#RRGGBB`) into a FigColor (0-1 range).
+ * The leading `#` is optional. Alpha defaults to 1 when omitted.
+ */
+export function hexToFigColor(hex: string, alpha = 1): FigColor {
+  const h = hex.replace("#", "");
+  return {
+    r: parseInt(h.substring(0, 2), 16) / 255,
+    g: parseInt(h.substring(2, 4), 16) / 255,
+    b: parseInt(h.substring(4, 6), 16) / 255,
+    a: alpha,
+  };
+}
+
 // =============================================================================
 // Paint Type Helper
 // =============================================================================

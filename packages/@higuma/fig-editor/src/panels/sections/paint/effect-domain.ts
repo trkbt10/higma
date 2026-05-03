@@ -1,6 +1,7 @@
 /** @file Effect editing domain consumed by the effect property section. */
 /* eslint-disable jsdoc/require-jsdoc -- Exported operation names form the effect mutation contract and are covered by colocated specs. */
 
+import { hexToFigColor } from "@higuma/fig/color";
 import type { BlendMode, FigColor, FigEffect, FigEffectType } from "@higuma/fig/types";
 
 export type EffectOperation =
@@ -20,6 +21,29 @@ export type EffectListOperation =
   | { readonly type: "remove"; readonly index: number }
   | { readonly type: "update"; readonly index: number; readonly operation: EffectOperation };
 
+// =============================================================================
+// Operation Factories (SoT for operation creation)
+// =============================================================================
+
+export const EffectOp = {
+  setVisible: (visible: boolean): EffectOperation => ({ type: "set-visible", visible }),
+  setType: (effectType: FigEffectType): EffectOperation => ({ type: "set-type", effectType }),
+  setRadius: (radius: number): EffectOperation => ({ type: "set-radius", radius }),
+  setBlendMode: (blendMode: BlendMode): EffectOperation => ({ type: "set-blend-mode", blendMode }),
+  setOffsetX: (x: number): EffectOperation => ({ type: "set-offset-x", x }),
+  setOffsetY: (y: number): EffectOperation => ({ type: "set-offset-y", y }),
+  setSpread: (spread: number): EffectOperation => ({ type: "set-spread", spread }),
+  setColor: (hex: string): EffectOperation => ({ type: "set-color", hex }),
+  setOpacity: (opacity: number): EffectOperation => ({ type: "set-opacity", opacity }),
+  setShadowBehindNode: (showShadowBehindNode: boolean): EffectOperation => ({ type: "set-shadow-behind-node", showShadowBehindNode }),
+} as const;
+
+export const EffectListOp = {
+  add: (effectType: FigEffectType): EffectListOperation => ({ type: "add", effectType }),
+  remove: (index: number): EffectListOperation => ({ type: "remove", index }),
+  update: (index: number, operation: EffectOperation): EffectListOperation => ({ type: "update", index, operation }),
+} as const;
+
 export function getEffectTypeName(effect: FigEffect): FigEffectType {
   const type = effect.type;
   if (typeof type === "string") { return type; }
@@ -38,13 +62,6 @@ export function formatEffectLabel(typeName: string): string {
     case "BACKGROUND_BLUR": return "Background Blur";
     default: return typeName;
   }
-}
-
-export function effectColorToHex(color: FigColor): string {
-  const r = Math.round(color.r * 255).toString(16).padStart(2, "0");
-  const g = Math.round(color.g * 255).toString(16).padStart(2, "0");
-  const b = Math.round(color.b * 255).toString(16).padStart(2, "0");
-  return `#${r}${g}${b}`;
 }
 
 export function createDefaultEffect(type: FigEffectType): FigEffect {
@@ -99,7 +116,7 @@ export function applyEffectOperation(effect: FigEffect, operation: EffectOperati
     case "set-spread":
       return { ...effect, spread: operation.spread };
     case "set-color":
-      return { ...effect, color: hexToColor(operation.hex, effect.color?.a ?? 0.25) };
+      return { ...effect, color: hexToFigColor(operation.hex, effect.color?.a ?? 0.25) };
     case "set-opacity":
       return { ...effect, color: { ...(effect.color ?? defaultShadowColor), a: operation.opacity } };
     case "set-shadow-behind-node":
@@ -123,12 +140,3 @@ function createEffectTypeEnum(type: FigEffectType): FigEffect["type"] {
   }
 }
 
-function hexToColor(hex: string, alpha = 1): FigColor {
-  const h = hex.replace("#", "");
-  return {
-    r: parseInt(h.substring(0, 2), 16) / 255,
-    g: parseInt(h.substring(2, 4), 16) / 255,
-    b: parseInt(h.substring(4, 6), 16) / 255,
-    a: alpha,
-  };
-}

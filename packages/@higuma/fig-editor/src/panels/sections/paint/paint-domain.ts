@@ -1,6 +1,7 @@
 /** @file Paint editing domain shared by fill and stroke property sections. */
 /* eslint-disable jsdoc/require-jsdoc -- Exported operation names form the paint mutation contract and are covered by colocated specs. */
 
+import { hexToFigColor } from "@higuma/fig/color";
 import type { FigColor, FigImageScaleMode, FigPaint, FigPaintType } from "@higuma/fig/types";
 
 export type PaintListKind = "fill" | "stroke";
@@ -20,21 +21,30 @@ export type PaintListOperation =
   | { readonly type: "remove"; readonly index: number }
   | { readonly type: "add"; readonly kind: PaintListKind };
 
-export const paintTypeOptions = [
-  { value: "SOLID", label: "Solid" },
-  { value: "GRADIENT_LINEAR", label: "Linear" },
-  { value: "GRADIENT_RADIAL", label: "Radial" },
-  { value: "GRADIENT_ANGULAR", label: "Angular" },
-  { value: "GRADIENT_DIAMOND", label: "Diamond" },
-  { value: "IMAGE", label: "Image" },
-] as const;
+// =============================================================================
+// Operation Factories (SoT for operation creation)
+// =============================================================================
 
-export function colorToHex(color: FigColor): string {
-  const r = Math.round(color.r * 255).toString(16).padStart(2, "0");
-  const g = Math.round(color.g * 255).toString(16).padStart(2, "0");
-  const b = Math.round(color.b * 255).toString(16).padStart(2, "0");
-  return `#${r}${g}${b}`;
-}
+export const PaintOp = {
+  setColor: (hex: string): PaintOperation => ({ type: "set-color", hex }),
+  setOpacity: (opacity: number): PaintOperation => ({ type: "set-opacity", opacity }),
+  setType: (paintType: FigPaint["type"], kind: PaintListKind): PaintOperation => ({ type: "set-type", paintType, kind }),
+  setImageRef: (imageRef: string): PaintOperation => ({ type: "set-image-ref", imageRef }),
+  setImageScaleMode: (scaleMode: FigImageScaleMode): PaintOperation => ({ type: "set-image-scale-mode", scaleMode }),
+  setImageScale: (scale: number): PaintOperation => ({ type: "set-image-scale", scale }),
+  setImageRotationDeg: (rotationDeg: number): PaintOperation => ({ type: "set-image-rotation-deg", rotationDeg }),
+  replace: (paint: FigPaint): PaintOperation => ({ type: "replace", paint }),
+} as const;
+
+export const PaintListOp = {
+  add: (kind: PaintListKind): PaintListOperation => ({ type: "add", kind }),
+  remove: (index: number): PaintListOperation => ({ type: "remove", index }),
+  update: (index: number, operation: PaintOperation): PaintListOperation => ({ type: "update", index, operation }),
+} as const;
+
+// =============================================================================
+// Paint Accessors
+// =============================================================================
 
 export function getPaintColor(paint: FigPaint): FigColor | undefined {
   if ("color" in paint && paint.color) {
@@ -83,7 +93,7 @@ export function applyPaintOperation(paint: FigPaint, operation: PaintOperation):
         return paint;
       }
       const alpha = getPaintColor(paint)?.a ?? 1;
-      return { ...paint, color: hexToColor(operation.hex, alpha) };
+      return { ...paint, color: hexToFigColor(operation.hex, alpha) };
     }
     case "set-opacity":
       return { ...paint, opacity: operation.opacity };
@@ -156,12 +166,3 @@ function createDefaultImagePaint(): FigPaint {
   };
 }
 
-function hexToColor(hex: string, alpha = 1): FigColor {
-  const h = hex.replace("#", "");
-  return {
-    r: parseInt(h.substring(0, 2), 16) / 255,
-    g: parseInt(h.substring(2, 4), 16) / 255,
-    b: parseInt(h.substring(4, 6), 16) / 255,
-    a: alpha,
-  };
-}

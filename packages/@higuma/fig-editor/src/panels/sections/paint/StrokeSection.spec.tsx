@@ -2,36 +2,23 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { FigDesignNode, FigNodeId } from "@higuma/fig/domain";
 import { StrokeSection } from "./StrokeSection";
 import { createPropertyMutationTarget } from "../../properties/property-mutation-target";
-
-function makeNode(strokes: FigDesignNode["strokes"]): FigDesignNode {
-  return {
-    id: "node" as FigNodeId,
-    type: "RECTANGLE",
-    name: "Rectangle",
-    visible: true,
-    opacity: 1,
-    transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    size: { x: 100, y: 100 },
-    fills: [],
-    strokes,
-    strokeWeight: 2,
-    effects: [],
-  };
-}
+import { createTestDesignNode } from "../../../../spec/unit/shared/test-fixtures";
 
 describe("StrokeSection", () => {
   it("renders gradient stroke controls", () => {
-    const node = makeNode([{
-      type: "GRADIENT_RADIAL",
-      opacity: 0.8,
-      gradientStops: [
-        { position: 0, color: { r: 0, g: 1, b: 0, a: 1 } },
-        { position: 1, color: { r: 0, g: 0, b: 0, a: 1 } },
-      ],
-    }]);
+    const node = createTestDesignNode({
+      strokeWeight: 2,
+      strokes: [{
+        type: "GRADIENT_RADIAL",
+        opacity: 0.8,
+        gradientStops: [
+          { position: 0, color: { r: 0, g: 1, b: 0, a: 1 } },
+          { position: 1, color: { r: 0, g: 0, b: 0, a: 1 } },
+        ],
+      }],
+    });
     const html = renderToStaticMarkup(createElement(StrokeSection, {
       node,
       target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),
@@ -49,14 +36,17 @@ describe("StrokeSection", () => {
   });
 
   it("renders image stroke scale controls", () => {
-    const node = makeNode([{
-      type: "IMAGE",
-      opacity: 1,
-      imageRef: "stroke-image",
-      scaleMode: "TILE",
-      scalingFactor: 0.75,
-      rotation: Math.PI,
-    }]);
+    const node = createTestDesignNode({
+      strokeWeight: 2,
+      strokes: [{
+        type: "IMAGE",
+        opacity: 1,
+        imageRef: "stroke-image",
+        scaleMode: "TILE",
+        scalingFactor: 0.75,
+        rotation: Math.PI,
+      }],
+    });
     const html = renderToStaticMarkup(createElement(StrokeSection, {
       node,
       target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),

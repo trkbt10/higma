@@ -239,11 +239,20 @@ export async function firstAnchorHandleCenter(page: Page): Promise<{ readonly x:
 
 
 export async function anchorHandleCenter(page: Page, index: number): Promise<{ readonly x: number; readonly y: number }> {
-  const handle = page.locator("circle[role='button'][aria-label^='Vector path anchor handle']").nth(index);
+  return handleCenterByAriaLabelPrefix(page, "Vector path anchor handle", "Vector anchor", index);
+}
+
+async function handleCenterByAriaLabelPrefix(
+  page: Page,
+  ariaLabelPrefix: string,
+  errorLabel: string,
+  index: number,
+): Promise<{ readonly x: number; readonly y: number }> {
+  const handle = page.locator(`circle[role='button'][aria-label^='${ariaLabelPrefix}']`).nth(index);
   await expect(handle).toBeVisible();
   const bounds = await handle.boundingBox();
   if (!bounds) {
-    throw new Error("Vector anchor handle had no visible bounding box");
+    throw new Error(`${errorLabel} handle had no visible bounding box`);
   }
   return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
 }
@@ -276,13 +285,7 @@ export async function nearestAnchorHandleDistance(
 
 
 export async function controlHandleCenter(page: Page, index: number): Promise<{ readonly x: number; readonly y: number }> {
-  const handle = page.locator("circle[role='button'][aria-label^='Vector path control handle']").nth(index);
-  await expect(handle).toBeVisible();
-  const bounds = await handle.boundingBox();
-  if (!bounds) {
-    throw new Error("Vector control handle had no visible bounding box");
-  }
-  return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  return handleCenterByAriaLabelPrefix(page, "Vector path control handle", "Vector control", index);
 }
 
 
@@ -340,13 +343,7 @@ export async function draftSegmentStrokeWidth(page: Page): Promise<string> {
 
 
 export async function draftAnchorHandleCenter(page: Page, index: number): Promise<{ readonly x: number; readonly y: number }> {
-  const handle = page.locator("circle[role='button'][aria-label^='Draft vector path anchor handle']").nth(index);
-  await expect(handle).toBeVisible();
-  const bounds = await handle.boundingBox();
-  if (!bounds) {
-    throw new Error("Draft vector anchor handle had no visible bounding box");
-  }
-  return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  return handleCenterByAriaLabelPrefix(page, "Draft vector path anchor handle", "Draft vector anchor", index);
 }
 
 
@@ -355,13 +352,7 @@ export async function draftAnchorHandleCenter(page: Page, index: number): Promis
 
 
 export async function draftControlHandleCenter(page: Page, index: number): Promise<{ readonly x: number; readonly y: number }> {
-  const handle = page.locator("circle[role='button'][aria-label^='Draft vector path control handle']").nth(index);
-  await expect(handle).toBeVisible();
-  const bounds = await handle.boundingBox();
-  if (!bounds) {
-    throw new Error("Draft vector control handle had no visible bounding box");
-  }
-  return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+  return handleCenterByAriaLabelPrefix(page, "Draft vector path control handle", "Draft vector control", index);
 }
 
 

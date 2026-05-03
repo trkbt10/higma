@@ -11,13 +11,16 @@ import { colorTokens, fontTokens } from "@higuma/ui-components/design-tokens";
 import { AddIcon, CloseIcon } from "@higuma/ui-components/icons";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 import { Toggle } from "@higuma/ui-components/primitives/Toggle";
+import { figColorToHex } from "@higuma/fig/color";
 import {
-  effectColorToHex,
   formatEffectLabel,
   getEffectTypeName,
+  EffectOp,
+  EffectListOp,
   type EffectOperation,
 } from "./effect-domain";
-import { applyAppearanceOperation } from "./appearance-domain";
+import { applyAppearanceOperation, AppearanceOp } from "./appearance-domain";
+import { addButtonStyle, removeButtonStyle } from "./paint-section-styles";
 
 type EffectsSectionProps = {
   readonly node: FigDesignNode;
@@ -76,29 +79,6 @@ const emptyStyle: CSSProperties = {
   color: colorTokens.text.tertiary,
 };
 
-const addButtonStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 4,
-  border: `1px dashed ${colorTokens.border.primary}`,
-  background: "none",
-  borderRadius: 4,
-  padding: "4px 8px",
-  color: colorTokens.text.secondary,
-  cursor: "pointer",
-  fontSize: fontTokens.size.sm,
-};
-
-const removeButtonStyle: CSSProperties = {
-  border: "none",
-  background: "none",
-  color: colorTokens.text.tertiary,
-  cursor: "pointer",
-  lineHeight: 0,
-  padding: 2,
-};
-
 /** Panel section for viewing and editing visual effects on a Figma node. */
 export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) {
   const effects = node.effects;
@@ -107,10 +87,7 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
     (index: number, operation: EffectOperation) => {
       dispatch(createPropertyTargetUpdateAction({
         target,
-        updater: (n) => applyAppearanceOperation(n, {
-          type: "effects",
-          operation: { type: "update", index, operation },
-        }),
+        updater: (n) => applyAppearanceOperation(n, AppearanceOp.effects(EffectListOp.update(index, operation))),
       }));
     },
     [dispatch, target],
@@ -119,20 +96,14 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
   const addEffect = useCallback(() => {
     dispatch(createPropertyTargetUpdateAction({
       target,
-      updater: (n) => applyAppearanceOperation(n, {
-        type: "effects",
-        operation: { type: "add", effectType: "DROP_SHADOW" },
-      }),
+      updater: (n) => applyAppearanceOperation(n, AppearanceOp.effects(EffectListOp.add("DROP_SHADOW"))),
     }));
   }, [dispatch, target]);
 
   const removeEffect = useCallback((index: number) => {
     dispatch(createPropertyTargetUpdateAction({
       target,
-      updater: (n) => applyAppearanceOperation(n, {
-        type: "effects",
-        operation: { type: "remove", index },
-      }),
+      updater: (n) => applyAppearanceOperation(n, AppearanceOp.effects(EffectListOp.remove(index))),
     }));
   }, [dispatch, target]);
 
@@ -149,12 +120,12 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
             <div style={effectHeaderStyle}>
               <Toggle
                 checked={effect.visible !== false}
-                onChange={(checked) => applyEffectOperationAt(i, { type: "set-visible", visible: checked })}
+                onChange={(checked) => applyEffectOperationAt(i, EffectOp.setVisible(checked))}
                 ariaLabel={`Effect visible ${i + 1}`}
               />
               <Select<FigEffectType>
                 value={typeName}
-                onChange={(type) => applyEffectOperationAt(i, { type: "set-type", effectType: type })}
+                onChange={(type) => applyEffectOperationAt(i, EffectOp.setType(type))}
                 options={effectTypeOptions}
                 ariaLabel={`Effect type ${i + 1}`}
               />
@@ -167,14 +138,14 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
                 type="number"
                 ariaLabel={`${formatEffectLabel(typeName)} radius`}
                 value={effect.radius ?? 0}
-                onChange={(v) => applyEffectOperationAt(i, { type: "set-radius", radius: v as number })}
+                onChange={(v) => applyEffectOperationAt(i, EffectOp.setRadius(v as number))}
                 suffix="r"
               />
               {isShadow && (
                 <>
                   <Select<BlendMode>
                     value={effect.blendMode ?? "NORMAL"}
-                    onChange={(value) => applyEffectOperationAt(i, { type: "set-blend-mode", blendMode: value })}
+                    onChange={(value) => applyEffectOperationAt(i, EffectOp.setBlendMode(value))}
                     options={blendModeOptions}
                     ariaLabel={`${formatEffectLabel(typeName)} blend mode`}
                   />
@@ -182,28 +153,28 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
                     type="number"
                     ariaLabel={`${formatEffectLabel(typeName)} offset x`}
                     value={effect.offset?.x ?? 0}
-                    onChange={(v) => applyEffectOperationAt(i, { type: "set-offset-x", x: v as number })}
+                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setOffsetX(v as number))}
                     suffix="x"
                   />
                   <Input
                     type="number"
                     ariaLabel={`${formatEffectLabel(typeName)} offset y`}
                     value={effect.offset?.y ?? 0}
-                    onChange={(v) => applyEffectOperationAt(i, { type: "set-offset-y", y: v as number })}
+                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setOffsetY(v as number))}
                     suffix="y"
                   />
                   <Input
                     type="number"
                     ariaLabel={`${formatEffectLabel(typeName)} spread`}
                     value={effect.spread ?? 0}
-                    onChange={(v) => applyEffectOperationAt(i, { type: "set-spread", spread: v as number })}
+                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setSpread(v as number))}
                     suffix="s"
                   />
                   <input
                     type="color"
-                    value={effectColorToHex(color)}
+                    value={figColorToHex(color)}
                     aria-label={`${formatEffectLabel(typeName)} color`}
-                    onChange={(e) => applyEffectOperationAt(i, { type: "set-color", hex: e.target.value })}
+                    onChange={(e) => applyEffectOperationAt(i, EffectOp.setColor(e.target.value))}
                     style={{ width: "100%", height: 28, padding: 0, border: `1px solid ${colorTokens.border.strong}`, borderRadius: 4 }}
                   />
                   <Input
@@ -212,12 +183,12 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
                     value={Math.round(color.a * 100)}
                     min={0}
                     max={100}
-                    onChange={(v) => applyEffectOperationAt(i, { type: "set-opacity", opacity: (v as number) / 100 })}
+                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setOpacity((v as number) / 100))}
                     suffix="%"
                   />
                   <Toggle
                     checked={effect.showShadowBehindNode !== false}
-                    onChange={(checked) => applyEffectOperationAt(i, { type: "set-shadow-behind-node", showShadowBehindNode: checked })}
+                    onChange={(checked) => applyEffectOperationAt(i, EffectOp.setShadowBehindNode(checked))}
                     label="Behind"
                     ariaLabel={`${formatEffectLabel(typeName)} show behind node`}
                   />

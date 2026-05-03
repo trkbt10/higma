@@ -2,29 +2,13 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { FigDesignNode, FigNodeId } from "@higuma/fig/domain";
 import { EffectsSection } from "./EffectsSection";
 import { createPropertyMutationTarget } from "../../properties/property-mutation-target";
-
-function makeNode(effects: FigDesignNode["effects"] = []): FigDesignNode {
-  return {
-    id: "node" as FigNodeId,
-    type: "RECTANGLE",
-    name: "Rectangle",
-    visible: true,
-    opacity: 1,
-    transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    size: { x: 100, y: 100 },
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects,
-  };
-}
+import { createTestDesignNode } from "../../../../spec/unit/shared/test-fixtures";
 
 describe("EffectsSection", () => {
   it("renders add effect controls for nodes without effects", () => {
-    const node = makeNode();
+    const node = createTestDesignNode();
     const html = renderToStaticMarkup(createElement(EffectsSection, {
       node,
       target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),
@@ -36,14 +20,16 @@ describe("EffectsSection", () => {
   });
 
   it("renders editable controls for shadow effects", () => {
-    const node = makeNode([{
-      type: { value: 1, name: "DROP_SHADOW" },
-      visible: true,
-      offset: { x: 3, y: 4 },
-      radius: 8,
-      spread: 2,
-      color: { r: 0, g: 0, b: 0, a: 0.5 },
-    }]);
+    const node = createTestDesignNode({
+      effects: [{
+        type: { value: 1, name: "DROP_SHADOW" },
+        visible: true,
+        offset: { x: 3, y: 4 },
+        radius: 8,
+        spread: 2,
+        color: { r: 0, g: 0, b: 0, a: 0.5 },
+      }],
+    });
     const html = renderToStaticMarkup(createElement(EffectsSection, {
       node,
       target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),

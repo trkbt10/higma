@@ -1,9 +1,16 @@
 /** @file Shared gradient paint editor controls for fill and stroke paints. */
 
+import type { CSSProperties } from "react";
+import { figColorToHex, hexToFigColor } from "@higuma/fig/color";
 import type { FigGradientPaint, FigGradientStop, FigPaint, FigVector } from "@higuma/fig/types";
 import { Input } from "@higuma/ui-components/primitives/Input";
-import { colorTokens, fontTokens } from "@higuma/ui-components/design-tokens";
 import { AddIcon, CloseIcon } from "@higuma/ui-components/icons";
+import {
+  paintInlineStyle,
+  swatchStyle,
+  addButtonStyle,
+  removeButtonStyle,
+} from "./paint-section-styles";
 
 type GradientPaintControlsProps = {
   readonly labelPrefix: string;
@@ -12,53 +19,13 @@ type GradientPaintControlsProps = {
   readonly onChange: (paint: FigPaint) => void;
 };
 
-const rowStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  width: "100%",
-} as const;
-
-const stopRowStyle = {
+const stopRowStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "28px minmax(0, 1fr) 58px 58px 22px",
   alignItems: "center",
   gap: 4,
   width: "100%",
-} as const;
-
-const swatchStyle = {
-  width: 24,
-  height: 24,
-  border: `1px solid ${colorTokens.border.strong}`,
-  borderRadius: 4,
-  cursor: "pointer",
-  padding: 0,
-  flexShrink: 0,
-} as const;
-
-const addButtonStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 4,
-  background: "none",
-  border: `1px dashed ${colorTokens.border.primary}`,
-  borderRadius: 4,
-  cursor: "pointer",
-  padding: "4px 8px",
-  color: colorTokens.text.secondary,
-  fontSize: fontTokens.size.sm,
-  justifyContent: "center",
-} as const;
-
-const removeButtonStyle = {
-  background: "none",
-  border: "none",
-  cursor: "pointer",
-  padding: 2,
-  color: colorTokens.text.tertiary,
-  lineHeight: 0,
-} as const;
+};
 
 /** Render a complete gradient editor: stops, stop alpha/position, and handle/origin controls. */
 export function GradientPaintControls({ labelPrefix, paintIndex, paint, onChange }: GradientPaintControlsProps) {
@@ -78,10 +45,10 @@ export function GradientPaintControls({ labelPrefix, paintIndex, paint, onChange
           <input
             aria-label={`${controlLabel} stop ${stopIndex + 1} color ${ordinal}`}
             type="color"
-            value={colorToHex(stop.color)}
+            value={figColorToHex(stop.color)}
             onChange={(event) => onChange(updateGradientStop(paint, stopIndex, {
               ...stop,
-              color: hexToColor(event.target.value, stop.color.a),
+              color: hexToFigColor(event.target.value, stop.color.a),
             }))}
             style={swatchStyle}
           />
@@ -132,7 +99,7 @@ export function GradientPaintControls({ labelPrefix, paintIndex, paint, onChange
         <AddIcon size={12} />
         Add stop
       </button>
-      <div style={rowStyle}>
+      <div style={paintInlineStyle}>
         {handles.map((handle, handleIndex) => (
           <span key={handleIndex} style={{ display: "contents" }}>
             <Input
@@ -252,23 +219,6 @@ function interpolateStopColor(stops: readonly FigGradientStop[], position: numbe
     g: previous.color.g + (next.color.g - previous.color.g) * t,
     b: previous.color.b + (next.color.b - previous.color.b) * t,
     a: previous.color.a + (next.color.a - previous.color.a) * t,
-  };
-}
-
-function colorToHex(color: FigGradientStop["color"]): string {
-  const r = Math.round(color.r * 255).toString(16).padStart(2, "0");
-  const g = Math.round(color.g * 255).toString(16).padStart(2, "0");
-  const b = Math.round(color.b * 255).toString(16).padStart(2, "0");
-  return `#${r}${g}${b}`;
-}
-
-function hexToColor(hex: string, alpha: number): FigGradientStop["color"] {
-  const h = hex.replace("#", "");
-  return {
-    r: parseInt(h.substring(0, 2), 16) / 255,
-    g: parseInt(h.substring(2, 4), 16) / 255,
-    b: parseInt(h.substring(4, 6), 16) / 255,
-    a: alpha,
   };
 }
 

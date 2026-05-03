@@ -16,6 +16,21 @@ export type AppearanceOperation =
   | { readonly type: "stroke-dashes"; readonly strokeDashes: readonly number[] | undefined }
   | { readonly type: "effects"; readonly operation: EffectListOperation };
 
+// =============================================================================
+// Operation Factories (SoT for operation creation)
+// =============================================================================
+
+export const AppearanceOp = {
+  fillPaints: (operation: PaintListOperation): AppearanceOperation => ({ type: "fill-paints", operation }),
+  strokePaints: (operation: PaintListOperation): AppearanceOperation => ({ type: "stroke-paints", operation }),
+  strokeWeight: (weight: number): AppearanceOperation => ({ type: "stroke-weight", weight }),
+  strokeAlign: (strokeAlign: FigStrokeAlign): AppearanceOperation => ({ type: "stroke-align", strokeAlign }),
+  strokeCap: (strokeCap: FigStrokeCap): AppearanceOperation => ({ type: "stroke-cap", strokeCap }),
+  strokeJoin: (strokeJoin: FigStrokeJoin): AppearanceOperation => ({ type: "stroke-join", strokeJoin }),
+  strokeDashes: (strokeDashes: readonly number[] | undefined): AppearanceOperation => ({ type: "stroke-dashes", strokeDashes }),
+  effects: (operation: EffectListOperation): AppearanceOperation => ({ type: "effects", operation }),
+} as const;
+
 export function applyAppearanceOperation(node: FigDesignNode, operation: AppearanceOperation): FigDesignNode {
   switch (operation.type) {
     case "fill-paints":

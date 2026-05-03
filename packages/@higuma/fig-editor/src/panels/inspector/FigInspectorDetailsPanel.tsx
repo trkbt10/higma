@@ -15,6 +15,7 @@
  */
 /* eslint-disable jsdoc/require-jsdoc -- Small exported detail UI primitives are intentionally documented by prop names and usage. */
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { figColorToHex } from "@higuma/fig/color";
 import type { FigDesignNode } from "@higuma/fig/domain";
 import type { FigColor, FigEffect, FigPaint, KiwiEnumValue } from "@higuma/fig/types";
 import { colorTokens, fontTokens, spacingTokens, radiusTokens } from "@higuma/ui-components/design-tokens";
@@ -64,11 +65,6 @@ function colorToCss(color: FigColor, alphaOverride?: number): string {
   return `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`;
 }
 
-function colorToHex(color: FigColor): string {
-  const to2 = (v: number) => Math.round(v * 255).toString(16).padStart(2, "0");
-  return `#${to2(color.r)}${to2(color.g)}${to2(color.b)}`;
-}
-
 function formatNumber(value: number, fractionDigits = 2): string {
   if (Number.isInteger(value)) {
     return String(value);
@@ -87,7 +83,7 @@ function describePaint(paint: FigPaint): { readonly label: string; readonly swat
     const color = solid.color;
     if (color) {
       return {
-        label: `${prefix}${colorToHex(color).toUpperCase()}`,
+        label: `${prefix}${figColorToHex(color).toUpperCase()}`,
         swatch: colorToCss(color, opacity * color.a),
         detail: opacity < 1 ? `opacity ${formatNumber(opacity)}` : undefined,
       };
@@ -98,7 +94,7 @@ function describePaint(paint: FigPaint): { readonly label: string; readonly swat
   if (typeName.startsWith("GRADIENT_")) {
     const grad = paint as FigPaint & { readonly stops?: readonly { readonly color: FigColor }[]; readonly gradientStops?: readonly { readonly color: FigColor }[] };
     const stops = grad.stops ?? grad.gradientStops ?? [];
-    const stopColors = stops.slice(0, 3).map((s) => colorToHex(s.color)).join(" → ");
+    const stopColors = stops.slice(0, 3).map((s) => figColorToHex(s.color)).join(" → ");
     return {
       label: `${prefix}${typeName.replace("GRADIENT_", "").toLowerCase()} gradient`,
       detail: stopColors || undefined,
@@ -132,7 +128,7 @@ function describeEffect(effect: FigEffect): { readonly label: string; readonly d
     parts.push(`offset ${formatNumber(effect.offset.x)},${formatNumber(effect.offset.y)}`);
   }
   if (effect.color) {
-    parts.push(colorToHex(effect.color).toUpperCase());
+    parts.push(figColorToHex(effect.color).toUpperCase());
   }
   return {
     label: `${prefix}${typeName.replace(/_/g, " ").toLowerCase()}`,

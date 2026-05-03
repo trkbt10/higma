@@ -2,36 +2,22 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { FigDesignNode, FigNodeId } from "@higuma/fig/domain";
 import { FillSection } from "./FillSection";
 import { createPropertyMutationTarget } from "../../properties/property-mutation-target";
-
-function makeNode(fills: FigDesignNode["fills"]): FigDesignNode {
-  return {
-    id: "node" as FigNodeId,
-    type: "RECTANGLE",
-    name: "Rectangle",
-    visible: true,
-    opacity: 1,
-    transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    size: { x: 100, y: 100 },
-    fills,
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-  };
-}
+import { createTestDesignNode } from "../../../../spec/unit/shared/test-fixtures";
 
 describe("FillSection", () => {
   it("renders gradient paint controls", () => {
-    const node = makeNode([{
-      type: "GRADIENT_LINEAR",
-      opacity: 1,
-      gradientStops: [
-        { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
-        { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
-      ],
-    }]);
+    const node = createTestDesignNode({
+      fills: [{
+        type: "GRADIENT_LINEAR",
+        opacity: 1,
+        gradientStops: [
+          { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
+          { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
+        ],
+      }],
+    });
     const html = renderToStaticMarkup(createElement(FillSection, {
       node,
       target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),
@@ -48,14 +34,16 @@ describe("FillSection", () => {
   });
 
   it("renders image paint scale controls", () => {
-    const node = makeNode([{
-      type: "IMAGE",
-      opacity: 1,
-      imageRef: "image-hash",
-      scaleMode: "FIT",
-      scalingFactor: 1.5,
-      rotation: Math.PI / 2,
-    }]);
+    const node = createTestDesignNode({
+      fills: [{
+        type: "IMAGE",
+        opacity: 1,
+        imageRef: "image-hash",
+        scaleMode: "FIT",
+        scalingFactor: 1.5,
+        rotation: Math.PI / 2,
+      }],
+    });
     const html = renderToStaticMarkup(createElement(FillSection, {
       node,
       target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),

@@ -1,10 +1,11 @@
 /** @file COMPONENT_SET variant authoring controls. */
 
-import type { ComponentPropertyDef, FigDesignNode, FigNodeId, VariantPropSpec } from "@higuma/fig/domain";
+import type { ComponentPropertyDef, FigDesignNode, FigNodeId } from "@higuma/fig/domain";
 import { Input } from "@higuma/ui-components/primitives/Input";
 import { FieldGroup, FieldRow } from "@higuma/ui-components/layout";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
+import { updateVariantSpec, findVariantSpec } from "./variant-domain";
 
 type ComponentSetVariantsSectionProps = {
   readonly node: FigDesignNode;
@@ -101,26 +102,8 @@ function updateChildVariantValue({
       }
       return {
         ...child,
-        variantPropSpecs: updateVariantSpecs(child.variantPropSpecs ?? [], propDefId, value),
+        variantPropSpecs: updateVariantSpec(child.variantPropSpecs ?? [], propDefId, value),
       };
     }),
   };
-}
-
-function updateVariantSpecs(
-  specs: readonly VariantPropSpec[],
-  propDefId: FigNodeId,
-  value: string,
-): readonly VariantPropSpec[] {
-  const exists = specs.some((spec) => spec.propDefId === propDefId);
-  if (!exists) {
-    return [...specs, { propDefId, value }];
-  }
-  return specs.map((spec) => (
-    spec.propDefId === propDefId ? { ...spec, value } : spec
-  ));
-}
-
-function findVariantSpec(specs: readonly VariantPropSpec[], propDefId: FigNodeId): VariantPropSpec | undefined {
-  return specs.find((spec) => spec.propDefId === propDefId);
 }
