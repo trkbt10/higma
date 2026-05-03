@@ -26,17 +26,17 @@
         "vitest": "^4.1.5",
       },
     },
-    "packages/@higuma/buffer": {
-      "name": "@higuma/buffer",
+    "packages/@higma/buffer": {
+      "name": "@higma/buffer",
       "version": "0.12.2",
     },
-    "packages/@higuma/editor-controls": {
-      "name": "@higuma/editor-controls",
+    "packages/@higma/editor-controls": {
+      "name": "@higma/editor-controls",
       "version": "0.12.2",
       "dependencies": {
-        "@higuma/editor-core": "workspace:*",
-        "@higuma/fig": "workspace:*",
-        "@higuma/ui-components": "workspace:*",
+        "@higma/editor-core": "workspace:*",
+        "@higma/fig": "workspace:*",
+        "@higma/ui-components": "workspace:*",
         "react-editor-ui": "^0.4.0",
         "react-panel-layout": "^0.7.1",
       },
@@ -45,18 +45,18 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higuma/editor-core": {
-      "name": "@higuma/editor-core",
+    "packages/@higma/editor-core": {
+      "name": "@higma/editor-core",
       "version": "0.12.2",
       "peerDependencies": {
         "react": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higuma/fig": {
-      "name": "@higuma/fig",
+    "packages/@higma/fig": {
+      "name": "@higma/fig",
       "version": "0.12.2",
       "dependencies": {
-        "@higuma/zip": "workspace:*",
+        "@higma/zip": "workspace:*",
         "fzstd": "^0.1.1",
         "pako": "^2.1.0",
         "zstd-codec": "^0.1.5",
@@ -65,23 +65,23 @@
         "@types/pako": "^2.0.4",
       },
     },
-    "packages/@higuma/fig-builder": {
-      "name": "@higuma/fig-builder",
+    "packages/@higma/fig-builder": {
+      "name": "@higma/fig-builder",
       "version": "0.12.2",
       "dependencies": {
-        "@higuma/fig": "workspace:*",
+        "@higma/fig": "workspace:*",
       },
     },
-    "packages/@higuma/fig-editor": {
-      "name": "@higuma/fig-editor",
+    "packages/@higma/fig-editor": {
+      "name": "@higma/fig-editor",
       "version": "0.12.2",
       "dependencies": {
-        "@higuma/editor-controls": "workspace:*",
-        "@higuma/editor-core": "workspace:*",
-        "@higuma/fig": "workspace:*",
-        "@higuma/fig-builder": "workspace:*",
-        "@higuma/fig-renderer": "workspace:*",
-        "@higuma/ui-components": "workspace:*",
+        "@higma/editor-controls": "workspace:*",
+        "@higma/editor-core": "workspace:*",
+        "@higma/fig": "workspace:*",
+        "@higma/fig-builder": "workspace:*",
+        "@higma/fig-renderer": "workspace:*",
+        "@higma/ui-components": "workspace:*",
         "react-editor-ui": "^0.4.0",
       },
       "peerDependencies": {
@@ -89,13 +89,13 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higuma/fig-renderer": {
-      "name": "@higuma/fig-renderer",
+    "packages/@higma/fig-renderer": {
+      "name": "@higma/fig-renderer",
       "version": "0.12.2",
       "dependencies": {
-        "@higuma/fig": "workspace:*",
-        "@higuma/fig-builder": "workspace:*",
-        "@higuma/zip": "workspace:*",
+        "@higma/fig": "workspace:*",
+        "@higma/fig-builder": "workspace:*",
+        "@higma/zip": "workspace:*",
         "earcut": "^3.0.2",
         "opentype.js": "^1.3.4",
       },
@@ -109,16 +109,16 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higuma/png": {
-      "name": "@higuma/png",
+    "packages/@higma/png": {
+      "name": "@higma/png",
       "version": "0.12.2",
       "dependencies": {
-        "@higuma/buffer": "workspace:*",
+        "@higma/buffer": "workspace:*",
         "pako": "^2.1.0",
       },
     },
-    "packages/@higuma/ui-components": {
-      "name": "@higuma/ui-components",
+    "packages/@higma/ui-components": {
+      "name": "@higma/ui-components",
       "version": "0.12.2",
       "dependencies": {
         "lucide-react": "^0.577.0",
@@ -128,8 +128,8 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higuma/zip": {
-      "name": "@higuma/zip",
+    "packages/@higma/zip": {
+      "name": "@higma/zip",
       "version": "0.12.2",
       "dependencies": {
         "fflate": "^0.8.2",
@@ -194,25 +194,25 @@
 
     "@exodus/bytes": ["@exodus/bytes@1.15.0", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ=="],
 
-    "@higuma/buffer": ["@higuma/buffer@workspace:packages/@higuma/buffer"],
+    "@higma/buffer": ["@higma/buffer@workspace:packages/@higma/buffer"],
 
-    "@higuma/editor-controls": ["@higuma/editor-controls@workspace:packages/@higuma/editor-controls"],
+    "@higma/editor-controls": ["@higma/editor-controls@workspace:packages/@higma/editor-controls"],
 
-    "@higuma/editor-core": ["@higuma/editor-core@workspace:packages/@higuma/editor-core"],
+    "@higma/editor-core": ["@higma/editor-core@workspace:packages/@higma/editor-core"],
 
-    "@higuma/fig": ["@higuma/fig@workspace:packages/@higuma/fig"],
+    "@higma/fig": ["@higma/fig@workspace:packages/@higma/fig"],
 
-    "@higuma/fig-builder": ["@higuma/fig-builder@workspace:packages/@higuma/fig-builder"],
+    "@higma/fig-builder": ["@higma/fig-builder@workspace:packages/@higma/fig-builder"],
 
-    "@higuma/fig-editor": ["@higuma/fig-editor@workspace:packages/@higuma/fig-editor"],
+    "@higma/fig-editor": ["@higma/fig-editor@workspace:packages/@higma/fig-editor"],
 
-    "@higuma/fig-renderer": ["@higuma/fig-renderer@workspace:packages/@higuma/fig-renderer"],
+    "@higma/fig-renderer": ["@higma/fig-renderer@workspace:packages/@higma/fig-renderer"],
 
-    "@higuma/png": ["@higuma/png@workspace:packages/@higuma/png"],
+    "@higma/png": ["@higma/png@workspace:packages/@higma/png"],
 
-    "@higuma/ui-components": ["@higuma/ui-components@workspace:packages/@higuma/ui-components"],
+    "@higma/ui-components": ["@higma/ui-components@workspace:packages/@higma/ui-components"],
 
-    "@higuma/zip": ["@higuma/zip@workspace:packages/@higuma/zip"],
+    "@higma/zip": ["@higma/zip@workspace:packages/@higma/zip"],
 
     "@humanfs/core": ["@humanfs/core@0.19.1", "", {}, "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA=="],
 

@@ -53,7 +53,7 @@ const blobIndex = fillGeo.commandsBlob;
 const blobData = parsed.blobs[blobIndex].bytes;
 
 // BlobをSVGパスに変換
-import { decodeBlobToSvgPath } from "@higuma/fig/parser";
+import { decodeBlobToSvgPath } from "@higma/fig/parser";
 const pathD = decodeBlobToSvgPath(blobData);
 // → "M0,0 L100,0 L100,80 L0,80 L0,0"
 ```
@@ -80,11 +80,11 @@ const pathD = decodeBlobToSvgPath(blobData);
 ```
 .fig ファイル
     ↓
-parseFigFile() [@higuma/fig/parser]
+parseFigFile() [@higma/fig/parser]
     ↓
 NodeChanges + Blobs
     ↓
-renderFigNode() [@higuma/fig-renderer]
+renderFigNode() [@higma/fig-renderer]
     ↓
 SVG 文字列
 ```

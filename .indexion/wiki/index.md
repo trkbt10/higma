@@ -12,16 +12,16 @@ For specific topics, browse the **Categories** section.
 
 Most-linked pages that serve as knowledge hubs:
 
-- [@higuma/fig Package](wiki://fig-package) — 6 incoming links
-- [@higuma/fig-renderer Package](wiki://fig-renderer-package) — 5 incoming links
-- [@higuma/fig-builder Package](wiki://fig-builder-package) — 4 incoming links
-- [@higuma/fig-editor Package](wiki://fig-editor-package) — 4 incoming links
-- [@higuma/editor-controls Package](wiki://editor-controls-package) — 4 incoming links
+- [@higma/fig Package](wiki://fig-package) — 6 incoming links
+- [@higma/fig-renderer Package](wiki://fig-renderer-package) — 5 incoming links
+- [@higma/fig-builder Package](wiki://fig-builder-package) — 4 incoming links
+- [@higma/fig-editor Package](wiki://fig-editor-package) — 4 incoming links
+- [@higma/editor-controls Package](wiki://editor-controls-package) — 4 incoming links
 - [Core Concepts](wiki://core-concepts) — 4 incoming links
-- [@higuma/editor-core Package](wiki://editor-core-package) — 2 incoming links
-- [@higuma/ui-components Package](wiki://ui-components-package) — 2 incoming links
-- [@higuma/buffer Package](wiki://buffer-package) — 2 incoming links
-- [@higuma/png Package](wiki://png-package) — 2 incoming links
+- [@higma/editor-core Package](wiki://editor-core-package) — 2 incoming links
+- [@higma/ui-components Package](wiki://ui-components-package) — 2 incoming links
+- [@higma/buffer Package](wiki://buffer-package) — 2 incoming links
+- [@higma/png Package](wiki://png-package) — 2 incoming links
 
 ## Categories
 
@@ -30,16 +30,16 @@ Most-linked pages that serve as knowledge hubs:
 - [Higuma Overview](wiki://overview)
 - [Core Concepts](wiki://core-concepts)
 - [Architecture](wiki://architecture)
-- [@higuma/fig Package](wiki://fig-package)
-- [@higuma/fig-builder Package](wiki://fig-builder-package)
-- [@higuma/fig-renderer Package](wiki://fig-renderer-package)
-- [@higuma/fig-editor Package](wiki://fig-editor-package)
-- [@higuma/editor-controls Package](wiki://editor-controls-package)
-- [@higuma/editor-core Package](wiki://editor-core-package)
-- [@higuma/ui-components Package](wiki://ui-components-package)
-- [@higuma/buffer Package](wiki://buffer-package)
-- [@higuma/png Package](wiki://png-package)
-- [@higuma/zip Package](wiki://zip-package)
+- [@higma/fig Package](wiki://fig-package)
+- [@higma/fig-builder Package](wiki://fig-builder-package)
+- [@higma/fig-renderer Package](wiki://fig-renderer-package)
+- [@higma/fig-editor Package](wiki://fig-editor-package)
+- [@higma/editor-controls Package](wiki://editor-controls-package)
+- [@higma/editor-core Package](wiki://editor-core-package)
+- [@higma/ui-components Package](wiki://ui-components-package)
+- [@higma/buffer Package](wiki://buffer-package)
+- [@higma/png Package](wiki://png-package)
+- [@higma/zip Package](wiki://zip-package)
 
 ### Uncategorized
 

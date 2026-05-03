@@ -1,4 +1,4 @@
-# @higuma/png
+# @higma/png
 
 純粋TypeScript実装のPNGエンコーダー/デコーダー。
 

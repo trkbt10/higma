@@ -6,7 +6,7 @@
       "title": "Higuma Overview",
       "file": "overview.md",
       "sources": [
-        "packages/@higuma/"
+        "packages/@higma/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -29,8 +29,8 @@
       "title": "Core Concepts",
       "file": "core-concepts.md",
       "sources": [
-        "packages/@higuma/fig/src/types.ts",
-        "packages/@higuma/fig/src/parser/"
+        "packages/@higma/fig/src/types.ts",
+        "packages/@higma/fig/src/parser/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -41,7 +41,7 @@
       "title": "Architecture",
       "file": "architecture.md",
       "sources": [
-        "packages/@higuma/"
+        "packages/@higma/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -49,10 +49,10 @@
     },
     {
       "id": "fig-package",
-      "title": "@higuma/fig Package",
+      "title": "@higma/fig Package",
       "file": "fig-package.md",
       "sources": [
-        "packages/@higuma/fig/src/"
+        "packages/@higma/fig/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -60,10 +60,10 @@
     },
     {
       "id": "fig-builder-package",
-      "title": "@higuma/fig-builder Package",
+      "title": "@higma/fig-builder Package",
       "file": "fig-builder-package.md",
       "sources": [
-        "packages/@higuma/fig-builder/src/"
+        "packages/@higma/fig-builder/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -71,10 +71,10 @@
     },
     {
       "id": "fig-renderer-package",
-      "title": "@higuma/fig-renderer Package",
+      "title": "@higma/fig-renderer Package",
       "file": "fig-renderer-package.md",
       "sources": [
-        "packages/@higuma/fig-renderer/src/"
+        "packages/@higma/fig-renderer/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -82,10 +82,10 @@
     },
     {
       "id": "fig-editor-package",
-      "title": "@higuma/fig-editor Package",
+      "title": "@higma/fig-editor Package",
       "file": "fig-editor-package.md",
       "sources": [
-        "packages/@higuma/fig-editor/src/"
+        "packages/@higma/fig-editor/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -93,10 +93,10 @@
     },
     {
       "id": "editor-controls-package",
-      "title": "@higuma/editor-controls Package",
+      "title": "@higma/editor-controls Package",
       "file": "editor-controls-package.md",
       "sources": [
-        "packages/@higuma/editor-controls/src/"
+        "packages/@higma/editor-controls/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -104,10 +104,10 @@
     },
     {
       "id": "editor-core-package",
-      "title": "@higuma/editor-core Package",
+      "title": "@higma/editor-core Package",
       "file": "editor-core-package.md",
       "sources": [
-        "packages/@higuma/editor-core/src/"
+        "packages/@higma/editor-core/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -115,10 +115,10 @@
     },
     {
       "id": "ui-components-package",
-      "title": "@higuma/ui-components Package",
+      "title": "@higma/ui-components Package",
       "file": "ui-components-package.md",
       "sources": [
-        "packages/@higuma/ui-components/src/"
+        "packages/@higma/ui-components/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -126,10 +126,10 @@
     },
     {
       "id": "buffer-package",
-      "title": "@higuma/buffer Package",
+      "title": "@higma/buffer Package",
       "file": "buffer-package.md",
       "sources": [
-        "packages/@higuma/buffer/src/"
+        "packages/@higma/buffer/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -137,10 +137,10 @@
     },
     {
       "id": "png-package",
-      "title": "@higuma/png Package",
+      "title": "@higma/png Package",
       "file": "png-package.md",
       "sources": [
-        "packages/@higuma/png/src/"
+        "packages/@higma/png/src/"
       ],
       "children": [],
       "provenance": "synthesized",
@@ -148,10 +148,10 @@
     },
     {
       "id": "zip-package",
-      "title": "@higuma/zip Package",
+      "title": "@higma/zip Package",
       "file": "zip-package.md",
       "sources": [
-        "packages/@higuma/zip/src/"
+        "packages/@higma/zip/src/"
       ],
       "children": [],
       "provenance": "synthesized",

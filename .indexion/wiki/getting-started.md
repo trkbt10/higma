@@ -9,7 +9,7 @@
 
 ```bash
 git clone <repository-url>
-cd higuma
+cd higma
 bun install
 ```
 
@@ -29,13 +29,13 @@ bun install
 ### .figファイルのパース
 
 ```typescript
-import { parseFigFile } from "@higuma/fig/parser";
+import { parseFigFile } from "@higma/fig/parser";
 
 const buffer = await Bun.file("design.fig").arrayBuffer();
 const parsed = await parseFigFile(new Uint8Array(buffer));
 
 // ノードツリーを構築
-import { buildNodeTree } from "@higuma/fig/parser";
+import { buildNodeTree } from "@higma/fig/parser";
 const tree = buildNodeTree(parsed.nodeChanges);
 ```
 
@@ -46,7 +46,7 @@ import {
   createFigDesignDocument, 
   addNode, 
   exportFig 
-} from "@higuma/fig-builder";
+} from "@higma/fig-builder";
 
 // ドキュメント作成
 const doc = createFigDesignDocument();
@@ -61,7 +61,7 @@ const figData = await exportFig(updated);
 ### SVGレンダリング
 
 ```typescript
-import { FigSvgRenderContext } from "@higuma/fig-renderer";
+import { FigSvgRenderContext } from "@higma/fig-renderer";
 // SVGレンダリングコンテキストを使用
 ```
 

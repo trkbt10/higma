@@ -7,10 +7,8 @@ function isJsdocBlock(comment) {
   return comment.type === "Block" && typeof comment.value === "string" && comment.value.startsWith("*");
 }
 
+/** Checks if a JSDoc comment's content is empty (only whitespace and asterisk markers). */
 function isEmptyJsdocContent(rawValue) {
-  // rawValue is the text inside /* ... */ — for JSDoc it starts with '*'
-  // Treat it as empty if, after stripping leading '*' and surrounding whitespace on each line,
-  // the concatenated content is empty.
   const content = rawValue
     .split(/\r?\n/)
     .map((line) => {

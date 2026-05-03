@@ -1,4 +1,4 @@
-# @higuma/buffer
+# @higma/buffer
 
 バッファユーティリティ: Base64、DataURL変換。
 

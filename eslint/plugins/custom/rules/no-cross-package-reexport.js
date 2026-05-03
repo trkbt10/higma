@@ -2,20 +2,20 @@
  * @file Custom rule: prohibit re-exports from external workspace packages.
  *
  * Disallows patterns like:
- *   export type { Foo } from "@higuma/core/dto"
- *   export { bar } from "@higuma/core/domain"
- *   export * from "@higuma/core"
+ *   export type { Foo } from "@higma/core/dto"
+ *   export { bar } from "@higma/core/domain"
+ *   export * from "@higma/core"
  *
  * Also disallows indirect re-exports:
- *   import type { Foo } from "@higuma/core/dto"
+ *   import type { Foo } from "@higma/core/dto"
  *   export type { Foo }               // ← prohibited
  *
- *   import { bar } from "@higuma/core/domain"
+ *   import { bar } from "@higma/core/domain"
  *   export { bar }                    // ← prohibited
  *   export default bar                // ← prohibited
  *
  * Configurable:
- *   - packagePrefixes: string[] (default: ["@higuma/"]) - package prefixes to disallow re-exports from
+ *   - packagePrefixes: string[] (default: ["@higma/"]) - package prefixes to disallow re-exports from
  */
 
 /**
@@ -72,7 +72,7 @@ export default {
   meta: {
     type: "problem",
     docs: {
-      description: "Disallow re-exports from external packages within the same higuma",
+      description: "Disallow re-exports from external packages within the same higma",
       recommended: true,
     },
     schema: [
@@ -82,7 +82,7 @@ export default {
           packagePrefixes: {
             type: "array",
             items: { type: "string" },
-            default: ["@higuma/"],
+            default: ["@higma/"],
           },
         },
         additionalProperties: false,
@@ -106,7 +106,7 @@ export default {
 
   create(context) {
     const options = context.options[0] || {};
-    const packagePrefixes = options.packagePrefixes ?? ["@higuma/"];
+    const packagePrefixes = options.packagePrefixes ?? ["@higma/"];
 
     /** @type {Map<string, ExternalImportInfo>} */
     const externalImports = new Map();

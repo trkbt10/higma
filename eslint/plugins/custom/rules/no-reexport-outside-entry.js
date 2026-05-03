@@ -73,7 +73,7 @@ export default {
     const filename = context.filename;
     const fileDir = dirname(filename);
 
-    // Find the nearest package.json (handles higuma packages)
+    // Find the nearest package.json (handles higma packages)
     const packageRoot = findPackageRoot(fileDir);
     if (!packageRoot) {
       return {};

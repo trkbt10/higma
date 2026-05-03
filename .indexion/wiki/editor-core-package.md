@@ -1,4 +1,4 @@
-# @higuma/editor-core
+# @higma/editor-core
 
 エディタープリミティブ: 選択、履歴、ドラッグ状態、ジオメトリ計算。
 

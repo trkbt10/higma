@@ -1,4 +1,4 @@
-# @higuma/fig-builder
+# @higma/fig-builder
 
 FigDesignDocument モデルを中心とした高レベルAPI。CRUD操作とエクスポート機能を提供。
 

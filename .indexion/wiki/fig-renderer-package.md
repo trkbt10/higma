@@ -1,4 +1,4 @@
-# @higuma/fig-renderer
+# @higma/fig-renderer
 
 Figmaノードの SVG レンダリングを行うパッケージ。
 

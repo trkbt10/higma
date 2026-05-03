@@ -1,4 +1,4 @@
-# @higuma/ui-components
+# @higma/ui-components
 
 共有UIコンポーネントライブラリ。
 

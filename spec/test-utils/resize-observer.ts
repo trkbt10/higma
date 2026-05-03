@@ -2,6 +2,7 @@
  * @file ResizeObserver mock utilities for tests
  */
 
+/** Internal type holding the callback and observer instance for each registered mock. */
 type MockObserverEntry = {
   readonly callback: ResizeObserverCallback;
   readonly observer: ResizeObserver;

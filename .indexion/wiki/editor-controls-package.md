@@ -1,4 +1,4 @@
-# @higuma/editor-controls
+# @higma/editor-controls
 
 エディターUIコントロール: レイアウト、ズーム、フォント選択、インスペクター。
 

@@ -1,4 +1,4 @@
-# @higuma/fig-editor
+# @higma/fig-editor
 
 Figmaドキュメント用のReactベースビジュアルエディター。
 

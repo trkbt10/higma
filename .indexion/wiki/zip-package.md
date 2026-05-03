@@ -1,4 +1,4 @@
-# @higuma/zip
+# @higma/zip
 
 ZIPファイル操作。.fig ファイルはZIPアーカイブなのでこのパッケージを使用。
 

@@ -15,7 +15,7 @@
     "core-concepts": {
       "page_hash": "eba710931e3fff6fbe42040d60a26961",
       "source_hashes": {
-        "packages/@higuma/fig/src/types.ts": "5c5bd6781f7d249e254e06365a24e3c9"
+        "packages/@higma/fig/src/types.ts": "5c5bd6781f7d249e254e06365a24e3c9"
       }
     },
     "architecture": {

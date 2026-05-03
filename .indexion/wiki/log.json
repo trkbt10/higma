@@ -43,7 +43,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/fig Package",
+    "summary": "Added page: @higma/fig Package",
     "details": {},
     "affected_pages": [
       "fig-package"
@@ -53,7 +53,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/fig-builder Package",
+    "summary": "Added page: @higma/fig-builder Package",
     "details": {},
     "affected_pages": [
       "fig-builder-package"
@@ -63,7 +63,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/fig-renderer Package",
+    "summary": "Added page: @higma/fig-renderer Package",
     "details": {},
     "affected_pages": [
       "fig-renderer-package"
@@ -73,7 +73,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/fig-editor Package",
+    "summary": "Added page: @higma/fig-editor Package",
     "details": {},
     "affected_pages": [
       "fig-editor-package"
@@ -83,7 +83,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/editor-controls Package",
+    "summary": "Added page: @higma/editor-controls Package",
     "details": {},
     "affected_pages": [
       "editor-controls-package"
@@ -93,7 +93,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/editor-core Package",
+    "summary": "Added page: @higma/editor-core Package",
     "details": {},
     "affected_pages": [
       "editor-core-package"
@@ -103,7 +103,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/ui-components Package",
+    "summary": "Added page: @higma/ui-components Package",
     "details": {},
     "affected_pages": [
       "ui-components-package"
@@ -113,7 +113,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/buffer Package",
+    "summary": "Added page: @higma/buffer Package",
     "details": {},
     "affected_pages": [
       "buffer-package"
@@ -123,7 +123,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/png Package",
+    "summary": "Added page: @higma/png Package",
     "details": {},
     "affected_pages": [
       "png-package"
@@ -133,7 +133,7 @@
     "timestamp": "0",
     "operation": "pages add",
     "actor": "agent:claude",
-    "summary": "Added page: @higuma/zip Package",
+    "summary": "Added page: @higma/zip Package",
     "details": {},
     "affected_pages": [
       "zip-package"

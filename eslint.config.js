@@ -1,5 +1,5 @@
 /**
- * @file ESLint flat config for the higuma.
+ * @file ESLint flat config for the higma.
  */
 
 import js from "@eslint/js";
@@ -113,18 +113,18 @@ export default tseslint.config(
   },
 
   // ──────────────────────────────────────────────────────────────────────
-  // higuma fig-stack boundary rules
+  // higma fig-stack boundary rules
   //
   // Layer direction (low → high). A package in a given layer must not import
   // from any package above it.
   //
-  //   L0 — leaf utilities (no inter-package higuma deps):
-  //         @higuma/buffer, @higuma/zip, @higuma/png,
-  //         @higuma/ui-components, @higuma/editor-core
-  //   L1 — fig domain core:        @higuma/fig
-  //   L2 — fig operations:         @higuma/fig-builder, @higuma/fig-renderer
-  //   L3 — editor primitives:      @higuma/editor-controls
-  //   L4 — top-level app:          @higuma/fig-editor
+  //   L0 — leaf utilities (no inter-package higma deps):
+  //         @higma/buffer, @higma/zip, @higma/png,
+  //         @higma/ui-components, @higma/editor-core
+  //   L1 — fig domain core:        @higma/fig
+  //   L2 — fig operations:         @higma/fig-builder, @higma/fig-renderer
+  //   L3 — editor primitives:      @higma/editor-controls
+  //   L4 — top-level app:          @higma/fig-editor
   //
   // ──────────────────────────────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ export default tseslint.config(
       "custom/no-cross-package-reexport": [
         "error",
         {
-          packagePrefixes: ["@higuma/"],
+          packagePrefixes: ["@higma/"],
         },
       ],
       "custom/no-cross-boundary-export": "error",
@@ -151,71 +151,71 @@ export default tseslint.config(
     },
   },
 
-  // L0 — leaf utilities. No higuma packages may be imported.
+  // L0 — leaf utilities. No higma packages may be imported.
   {
     files: [
-      "packages/@higuma/buffer/src/**/*.{ts,tsx}",
-      "packages/@higuma/zip/src/**/*.{ts,tsx}",
-      "packages/@higuma/png/src/**/*.{ts,tsx}",
+      "packages/@higma/buffer/src/**/*.{ts,tsx}",
+      "packages/@higma/zip/src/**/*.{ts,tsx}",
+      "packages/@higma/png/src/**/*.{ts,tsx}",
     ],
     rules: {
       "custom/no-layer-violation": [
         "error",
         {
           disallowedPackages: [
-            "@higuma/fig",
-            "@higuma/fig-builder",
-            "@higuma/fig-renderer",
-            "@higuma/editor-core",
-            "@higuma/editor-controls",
-            "@higuma/ui-components",
-            "@higuma/fig-editor",
+            "@higma/fig",
+            "@higma/fig-builder",
+            "@higma/fig-renderer",
+            "@higma/editor-core",
+            "@higma/editor-controls",
+            "@higma/ui-components",
+            "@higma/fig-editor",
           ],
         },
       ],
     },
   },
 
-  // L0 — UI / editor primitives. May not import any other higuma package.
+  // L0 — UI / editor primitives. May not import any other higma package.
   {
     files: [
-      "packages/@higuma/ui-components/src/**/*.{ts,tsx}",
-      "packages/@higuma/editor-core/src/**/*.{ts,tsx}",
+      "packages/@higma/ui-components/src/**/*.{ts,tsx}",
+      "packages/@higma/editor-core/src/**/*.{ts,tsx}",
     ],
     rules: {
       "custom/no-layer-violation": [
         "error",
         {
           disallowedPackages: [
-            "@higuma/buffer",
-            "@higuma/zip",
-            "@higuma/png",
-            "@higuma/fig",
-            "@higuma/fig-builder",
-            "@higuma/fig-renderer",
-            "@higuma/editor-controls",
-            "@higuma/fig-editor",
+            "@higma/buffer",
+            "@higma/zip",
+            "@higma/png",
+            "@higma/fig",
+            "@higma/fig-builder",
+            "@higma/fig-renderer",
+            "@higma/editor-controls",
+            "@higma/fig-editor",
           ],
         },
       ],
     },
   },
 
-  // L1 — @higuma/fig domain core. May depend only on L0 leaf utilities
+  // L1 — @higma/fig domain core. May depend only on L0 leaf utilities
   // (buffer, zip, png). Must not see fig-builder/renderer or any UI layer.
   {
-    files: ["packages/@higuma/fig/src/**/*.{ts,tsx}"],
+    files: ["packages/@higma/fig/src/**/*.{ts,tsx}"],
     rules: {
       "custom/no-layer-violation": [
         "error",
         {
           disallowedPackages: [
-            "@higuma/fig-builder",
-            "@higuma/fig-renderer",
-            "@higuma/editor-core",
-            "@higuma/editor-controls",
-            "@higuma/ui-components",
-            "@higuma/fig-editor",
+            "@higma/fig-builder",
+            "@higma/fig-renderer",
+            "@higma/editor-core",
+            "@higma/editor-controls",
+            "@higma/ui-components",
+            "@higma/fig-editor",
           ],
         },
       ],
@@ -226,18 +226,18 @@ export default tseslint.config(
   // Must not see editor primitives or the app layer.
   {
     files: [
-      "packages/@higuma/fig-builder/src/**/*.{ts,tsx}",
-      "packages/@higuma/fig-renderer/src/**/*.{ts,tsx}",
+      "packages/@higma/fig-builder/src/**/*.{ts,tsx}",
+      "packages/@higma/fig-renderer/src/**/*.{ts,tsx}",
     ],
     rules: {
       "custom/no-layer-violation": [
         "error",
         {
           disallowedPackages: [
-            "@higuma/editor-core",
-            "@higuma/editor-controls",
-            "@higuma/ui-components",
-            "@higuma/fig-editor",
+            "@higma/editor-core",
+            "@higma/editor-controls",
+            "@higma/ui-components",
+            "@higma/fig-editor",
           ],
         },
       ],
@@ -247,20 +247,20 @@ export default tseslint.config(
   // L3 — editor primitives. May depend on L0 UI/editor primitives and L1 fig
   // (used as a tree utility source). Must not see fig operations or the app.
   {
-    files: ["packages/@higuma/editor-controls/src/**/*.{ts,tsx}"],
+    files: ["packages/@higma/editor-controls/src/**/*.{ts,tsx}"],
     rules: {
       "custom/no-layer-violation": [
         "error",
         {
           disallowedPackages: [
-            "@higuma/fig-builder",
-            "@higuma/fig-renderer",
-            "@higuma/fig-editor",
+            "@higma/fig-builder",
+            "@higma/fig-renderer",
+            "@higma/fig-editor",
           ],
         },
       ],
     },
   },
 
-  // L4 — @higuma/fig-editor is the top of the stack and may import anything.
+  // L4 — @higma/fig-editor is the top of the stack and may import anything.
 );

@@ -1,0 +1,46 @@
+{
+  "name": "@higma/fig-editor",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "@higma/fig": "workspace:*",
+    "@higma/fig-builder": "workspace:*",
+    "@higma/fig-renderer": "workspace:*",
+    "@higma/editor-core": "workspace:*",
+    "@higma/editor-controls": "workspace:*",
+    "@higma/ui-components": "workspace:*",
+    "react-editor-ui": "^0.4.0"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "scripts": {
+    "lint": "bun run lint:architecture && eslint src dev spec/e2e",
+    "lint:architecture": "bun scripts/check-architecture.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma/fig-editor/src'",
+    "e2e": "playwright test",
+    "dev": "vite --config dev/vite.config.ts --open"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./context": {
+      "types": "./src/context/FigEditorContext.tsx",
+      "default": "./src/context/FigEditorContext.tsx"
+    },
+    "./canvas": {
+      "types": "./src/canvas/FigEditorCanvas.tsx",
+      "default": "./src/canvas/FigEditorCanvas.tsx"
+    },
+    "./inspector": {
+      "types": "./src/inspector/index.ts",
+      "default": "./src/inspector/index.ts"
+    }
+  }
+}

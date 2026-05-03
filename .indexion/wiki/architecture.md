@@ -58,7 +58,7 @@ buffer (独立)
 
 ```typescript
 // 正しい使い方
-import { createHistory, pushHistory, undoHistory } from "@higuma/editor-core";
+import { createHistory, pushHistory, undoHistory } from "@higma/editor-core";
 let history = createHistory(initialState);
 history = pushHistory(history, newState);
 history = undoHistory(history);
@@ -79,7 +79,7 @@ history = undoHistory(history);
 フォントローダーは依存性注入で環境非依存:
 
 ```typescript
-import { font } from "@higuma/fig-renderer";
+import { font } from "@higma/fig-renderer";
 
 // Node.js環境
 const loader = font.createNodeFontLoader();

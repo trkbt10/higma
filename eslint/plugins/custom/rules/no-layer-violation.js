@@ -1,7 +1,7 @@
 /**
  * @file Custom rule: prohibit a package from importing higher-layer packages.
  *
- * Used to enforce the inter-layer dependency direction in the higuma fig
+ * Used to enforce the inter-layer dependency direction in the higma fig
  * stack. Each layer configures the set of higher-layer packages it must not
  * import from.
  *
@@ -41,7 +41,7 @@ export default {
     messages: {
       layerViolation:
         "Layer violation: this package must not import from '{{source}}'. " +
-        "Imports must flow from lower layers to higher layers in the higuma stack.",
+        "Imports must flow from lower layers to higher layers in the higma stack.",
     },
   },
 

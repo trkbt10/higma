@@ -1,4 +1,4 @@
-# @higuma/fig
+# @higma/fig
 
 Figma .fig ファイルのパース、Kiwiスキーマのエンコード/デコード、ツリー操作を行うコアパッケージ。
 

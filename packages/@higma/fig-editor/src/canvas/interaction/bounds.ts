@@ -1,0 +1,285 @@
+/**
+ * @file Node bounds calculation
+ *
+ * Extracts position, size, and rotation from FigDesignNode transform + size.
+ * Used for hit testing and selection overlay positioning.
+ *
+ * Figma uses 2x3 affine transform matrices. A child node's transform is
+ * relative to its parent, so to get absolute (page-space) bounds we must
+ * compose the parent chain: M_abs = M_parent * M_child.
+ *
+ * The composition is standard 2x3 affine matrix multiplication:
+ *   [a' b' tx']   [a1 b1 tx1]   [a2 b2 tx2]
+ *   [c' d' ty'] = [c1 d1 ty1] * [c2 d2 ty2]
+ *   [0  0   1 ]   [ 0  0   1]   [ 0  0   1]
+ */
+
+import type { FigDesignNode, FigNodeId } from "@higma/fig/domain";
+import type { FigMatrix } from "@higma/fig/types";
+import { dfsById } from "@higma/fig/tree";
+import { extractRotationDeg as extractRotationDegSoT, computePreRotationTopLeft } from "../../context/fig-editor/rotation";
+import { IDENTITY_MATRIX, composeTransforms } from "../../context/fig-editor/matrix";
+
+/**
+ * Bounds representation for editor canvas items.
+ */
+export type NodeBounds = {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly rotation: number;
+};
+
+/** Axis-aligned page-space bounds. */
+export type BoundsLike = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+};
+
+/** Page-space point. */
+export type PointLike = {
+  readonly x: number;
+  readonly y: number;
+};
+
+/** Return whether a point is inside or on the edge of an axis-aligned bounds. */
+export function containsPointInBounds(bounds: BoundsLike, point: PointLike): boolean {
+  return (
+    point.x >= bounds.x &&
+    point.y >= bounds.y &&
+    point.x <= bounds.x + bounds.width &&
+    point.y <= bounds.y + bounds.height
+  );
+}
+
+/** Return the topmost/deepest bounds containing a point, optionally filtered. */
+export function findDeepestBoundsAtPoint<T extends BoundsLike>(
+  boundsList: readonly T[],
+  point: PointLike,
+  predicate: (bounds: T) => boolean = () => true,
+): T | undefined {
+  for (let index = boundsList.length - 1; index >= 0; index -= 1) {
+    const bounds = boundsList[index]!;
+    if (containsPointInBounds(bounds, point) && predicate(bounds)) {
+      return bounds;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Calculate bounds for a single design node using an absolute transform.
+ *
+ * Uses the rotation SoT to derive the "pre-rotation top-left" position.
+ * See rotation.ts for why (x, y) cannot simply be (m02, m12).
+ */
+function getNodeBoundsWithAbsoluteTransform(node: FigDesignNode, absoluteTransform: FigMatrix): NodeBounds {
+  const { x, y } = computePreRotationTopLeft(absoluteTransform, node.size.x, node.size.y);
+  return {
+    id: node.id,
+    x,
+    y,
+    width: node.size.x,
+    height: node.size.y,
+    rotation: extractRotationDegSoT(absoluteTransform),
+  };
+}
+
+/**
+ * Calculate bounds for a single design node (top-level, no parent transform).
+ *
+ * Position comes from the transform's translation (m02, m12).
+ * Size comes from the node's size vector.
+ * Rotation is extracted from the transform matrix.
+ */
+export function getNodeBoundsForCanvas(node: FigDesignNode): NodeBounds {
+  return getNodeBoundsWithAbsoluteTransform(node, node.transform);
+}
+
+/**
+ * Calculate bounds for all top-level nodes in a page.
+ *
+ * Returns a flat array of bounds for EditorCanvas's itemBounds prop.
+ * Only includes direct children (not deeply nested nodes).
+ */
+export function getPageNodeBounds(nodes: readonly FigDesignNode[]): readonly NodeBounds[] {
+  return nodes.map(getNodeBoundsForCanvas);
+}
+
+/**
+ * Recursively flatten all nodes in the tree into a flat array of
+ * absolute-coordinate bounds.
+ *
+ * The traversal is pre-order (parent before children). Since EditorCanvas
+ * renders hit-area rects in array order, children's hit areas overlap and
+ * sit above their parents in the SVG z-stack. This means clicking at a
+ * position occupied by a leaf node will hit the leaf — not the ancestor
+ * frame — matching Figma's "click-through to deepest element" behavior.
+ *
+ * Every visible node gets a hit area, including containers (frames,
+ * groups). When the user needs to select a frame itself (rather than a
+ * child inside it), the frame's hit area still exists beneath its
+ * children's hit areas. Clicking an empty region inside the frame (where
+ * no child covers) will therefore select the frame.
+ *
+ * @param nodes - Page's direct children (root of the design tree)
+ * @returns Flat array of NodeBounds in pre-order, with absolute coordinates
+ */
+export function flattenAllNodeBounds(
+  nodes: readonly FigDesignNode[],
+): readonly NodeBounds[] {
+  const result: NodeBounds[] = [];
+  flattenRecursive(nodes, IDENTITY_MATRIX, result);
+  return result;
+}
+
+function flattenRecursive(
+  nodes: readonly FigDesignNode[],
+  parentTransform: FigMatrix,
+  out: NodeBounds[],
+): void {
+  for (const node of nodes) {
+    if (!node.visible) {
+      continue;
+    }
+    const absTransform = composeTransforms(parentTransform, node.transform);
+    out.push(getNodeBoundsWithAbsoluteTransform(node, absTransform));
+    if (node.children && node.children.length > 0) {
+      flattenRecursive(node.children, absTransform, out);
+    }
+  }
+}
+
+/**
+ * Compute the absolute transform for a node identified by its ID.
+ *
+ * Walks the tree from root, composing transforms along the path.
+ * Returns undefined if the node is not found.
+ */
+export function computeAbsoluteTransform(
+  nodes: readonly FigDesignNode[],
+  targetId: FigNodeId,
+  parentTransform: FigMatrix = IDENTITY_MATRIX,
+): FigMatrix | undefined {
+  /* eslint-disable custom/no-inline-dfs-by-id -- this is a path-accumulating
+   walk (returns composed transform, not node) and cannot be expressed as a
+   plain `dfsById` lookup: the result depends on the chain of parent
+   transforms along the found path, which the DFS SoT does not track. */
+  for (const node of nodes) {
+    const nodeAbsTransform = composeTransforms(parentTransform, node.transform);
+    if (node.id === targetId) {
+      return nodeAbsTransform;
+    }
+    if (node.children) {
+      const found = computeAbsoluteTransform(node.children, targetId, nodeAbsTransform);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  /* eslint-enable custom/no-inline-dfs-by-id -- This exported tree geometry primitive owns recursive node lookup. */
+  return undefined;
+}
+
+/**
+ * Compute absolute bounds for a node anywhere in the tree.
+ *
+ * This is used when a node is selected from the layer panel (which can
+ * select any node regardless of drill-down scope). The bounds are
+ * computed by walking the tree to find the node, composing ancestor
+ * transforms along the path, and then applying the node's own size.
+ *
+ * Returns undefined if the node is not found.
+ */
+export function computeAbsoluteNodeBounds(
+  nodes: readonly FigDesignNode[],
+  targetId: FigNodeId,
+): NodeBounds | undefined {
+  return computeAbsoluteNodeBoundsInner(nodes, targetId, IDENTITY_MATRIX);
+}
+
+function computeAbsoluteNodeBoundsInner(
+  nodes: readonly FigDesignNode[],
+  targetId: FigNodeId,
+  parentTransform: FigMatrix,
+): NodeBounds | undefined {
+  /* eslint-disable custom/no-inline-dfs-by-id -- path-accumulating walk:
+   combines ancestor transforms along the path to the match to produce
+   absolute bounds. `dfsById` returns only the node, not the composed
+   transform chain, so this remains a bespoke walker. */
+  for (const node of nodes) {
+    const nodeAbsTransform = composeTransforms(parentTransform, node.transform);
+    if (node.id === targetId) {
+      return getNodeBoundsWithAbsoluteTransform(node, nodeAbsTransform);
+    }
+    if (node.children) {
+      const found = computeAbsoluteNodeBoundsInner(node.children, targetId, nodeAbsTransform);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  /* eslint-enable custom/no-inline-dfs-by-id -- This exported tree geometry primitive owns recursive node lookup. */
+  return undefined;
+}
+
+/**
+ * Find the direct parent of a node in the tree.
+ *
+ * Returns the parent node's ID, or undefined if the target is a top-level
+ * node or not found.
+ */
+export function findParentId(
+  nodes: readonly FigDesignNode[],
+  targetId: FigNodeId,
+): FigNodeId | undefined {
+  const parentRef: { value: FigNodeId | undefined } = { value: undefined };
+  dfsById(nodes, targetId, {
+    getId: (n) => n.id,
+    getChildren: (n) => n.children ?? [],
+    onVisit: (n) => {
+      const children = n.children;
+      if (children && children.some((c) => c.id === targetId)) {
+        parentRef.value = n.id as FigNodeId;
+      }
+    },
+  });
+  return parentRef.value;
+}
+
+/**
+ * Filter marquee hits so container ancestors do not get selected together
+ * with their descendants.
+ *
+ * A marquee rect can intersect a FRAME/COMPONENT and one or more children at
+ * the same time. For editing, the child hit is the first-class selection; the
+ * ancestor container remains selectable by dragging only over its empty area.
+ */
+export function filterMarqueeSelectionByHierarchy(
+  nodes: readonly FigDesignNode[],
+  itemIds: readonly string[],
+): readonly string[] {
+  const selected = new Set(itemIds);
+  const ancestorsWithSelectedDescendant = new Set<string>();
+
+  const visit = (node: FigDesignNode, ancestors: readonly string[]) => {
+    if (selected.has(node.id)) {
+      for (const ancestor of ancestors) {
+        ancestorsWithSelectedDescendant.add(ancestor);
+      }
+    }
+    for (const child of node.children ?? []) {
+      visit(child, [...ancestors, node.id]);
+    }
+  };
+
+  for (const node of nodes) {
+    visit(node, []);
+  }
+
+  return itemIds.filter((id) => !ancestorsWithSelectedDescendant.has(id));
+}

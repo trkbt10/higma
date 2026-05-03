@@ -1,0 +1,78 @@
+{
+  "root": {
+    "template": ".indexion/readme/template.md",
+    "output": "README.md"
+  },
+  "packages": [
+    {
+      "path": "packages/@higma/fig",
+      "title": "@higma/fig",
+      "description": "Parser and builder for .fig files. Kiwi schema encoding/decoding",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/fig-builder",
+      "title": "@higma/fig-builder",
+      "description": "High-level API. FigDesignDocument model with CRUD operations",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/fig-renderer",
+      "title": "@higma/fig-renderer",
+      "description": "SVG rendering for Figma nodes",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/fig-editor",
+      "title": "@higma/fig-editor",
+      "description": "React-based visual editor",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/editor-core",
+      "title": "@higma/editor-core",
+      "description": "Editor primitives (selection, history, drag, geometry)",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/editor-controls",
+      "title": "@higma/editor-controls",
+      "description": "Editor UI controls",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/ui-components",
+      "title": "@higma/ui-components",
+      "description": "Shared UI components (buttons, icons, panels, etc.)",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/buffer",
+      "title": "@higma/buffer",
+      "description": "Buffer utilities (base64, DataURL)",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/png",
+      "title": "@higma/png",
+      "description": "PNG encoding/decoding",
+      "include_in_root": true,
+      "sections": []
+    },
+    {
+      "path": "packages/@higma/zip",
+      "title": "@higma/zip",
+      "description": "ZIP file handling (.fig files are ZIP archives)",
+      "include_in_root": true,
+      "sections": []
+    }
+  ]
+}

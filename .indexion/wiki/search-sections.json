@@ -79,7 +79,7 @@
       "section": {
         "id": "getting-started#-3",
         "title": "インストール",
-        "content": "\n```bash\ngit clone <repository-url>\ncd higuma\nbun install\n```\n\n",
+        "content": "\n```bash\ngit clone <repository-url>\ncd higma\nbun install\n```\n\n",
         "page_id": "getting-started",
         "level": 2
       },
@@ -109,7 +109,7 @@
       "section": {
         "id": "getting-started#fig-6",
         "title": ".figファイルのパース",
-        "content": "\n```typescript\nimport { parseFigFile } from \"@higuma/fig/parser\";\n\nconst buffer = await Bun.file(\"design.fig\").arrayBuffer();\nconst parsed = await parseFigFile(new Uint8Array(buffer));\n\n// ノードツリーを構築\nimport { buildNodeTree } from \"@higuma/fig/parser\";\nconst tree = buildNodeTree(parsed.nodeChanges);\n```\n\n",
+        "content": "\n```typescript\nimport { parseFigFile } from \"@higma/fig/parser\";\n\nconst buffer = await Bun.file(\"design.fig\").arrayBuffer();\nconst parsed = await parseFigFile(new Uint8Array(buffer));\n\n// ノードツリーを構築\nimport { buildNodeTree } from \"@higma/fig/parser\";\nconst tree = buildNodeTree(parsed.nodeChanges);\n```\n\n",
         "page_id": "getting-started",
         "level": 2
       },
@@ -119,7 +119,7 @@
       "section": {
         "id": "getting-started#figdesigndocument-7",
         "title": "FigDesignDocumentでの操作",
-        "content": "\n```typescript\nimport { \n  createFigDesignDocument, \n  addNode, \n  exportFig \n} from \"@higuma/fig-builder\";\n\n// ドキュメント作成\nconst doc = createFigDesignDocument();\n\n// ノード追加\nconst updated = addNode(doc, pageId, nodeSpec);\n\n// .figファイルにエクスポート\nconst figData = await exportFig(updated);\n```\n\n",
+        "content": "\n```typescript\nimport { \n  createFigDesignDocument, \n  addNode, \n  exportFig \n} from \"@higma/fig-builder\";\n\n// ドキュメント作成\nconst doc = createFigDesignDocument();\n\n// ノード追加\nconst updated = addNode(doc, pageId, nodeSpec);\n\n// .figファイルにエクスポート\nconst figData = await exportFig(updated);\n```\n\n",
         "page_id": "getting-started",
         "level": 2
       },
@@ -129,7 +129,7 @@
       "section": {
         "id": "getting-started#svg-8",
         "title": "SVGレンダリング",
-        "content": "\n```typescript\nimport { FigSvgRenderContext } from \"@higuma/fig-renderer\";\n// SVGレンダリングコンテキストを使用\n```\n\n",
+        "content": "\n```typescript\nimport { FigSvgRenderContext } from \"@higma/fig-renderer\";\n// SVGレンダリングコンテキストを使用\n```\n\n",
         "page_id": "getting-started",
         "level": 2
       },
@@ -219,7 +219,7 @@
       "section": {
         "id": "core-concepts#blobs-7",
         "title": "Blobs",
-        "content": "\nジオメトリデータ（パスコマンド）や画像データは `blobs` 配列に格納され、インデックスで参照されます。\n\n```typescript\n// ノードのfillGeometryからBlob参照\nconst fillGeo = node.fillGeometry?.[0];\nconst blobIndex = fillGeo.commandsBlob;\nconst blobData = parsed.blobs[blobIndex].bytes;\n\n// BlobをSVGパスに変換\nimport { decodeBlobToSvgPath } from \"@higuma/fig/parser\";\nconst pathD = decodeBlobToSvgPath(blobData);\n// → \"M0,0 L100,0 L100,80 L0,80 L0,0\"\n```\n\n",
+        "content": "\nジオメトリデータ（パスコマンド）や画像データは `blobs` 配列に格納され、インデックスで参照されます。\n\n```typescript\n// ノードのfillGeometryからBlob参照\nconst fillGeo = node.fillGeometry?.[0];\nconst blobIndex = fillGeo.commandsBlob;\nconst blobData = parsed.blobs[blobIndex].bytes;\n\n// BlobをSVGパスに変換\nimport { decodeBlobToSvgPath } from \"@higma/fig/parser\";\nconst pathD = decodeBlobToSvgPath(blobData);\n// → \"M0,0 L100,0 L100,80 L0,80 L0,0\"\n```\n\n",
         "page_id": "core-concepts",
         "level": 2
       },
@@ -249,7 +249,7 @@
       "section": {
         "id": "core-concepts#-10",
         "title": "レンダリングパイプライン",
-        "content": "\n```\n.fig ファイル\n    ↓\nparseFigFile() [@higuma/fig/parser]\n    ↓\nNodeChanges + Blobs\n    ↓\nrenderFigNode() [@higuma/fig-renderer]\n    ↓\nSVG 文字列\n```\n\n",
+        "content": "\n```\n.fig ファイル\n    ↓\nparseFigFile() [@higma/fig/parser]\n    ↓\nNodeChanges + Blobs\n    ↓\nrenderFigNode() [@higma/fig-renderer]\n    ↓\nSVG 文字列\n```\n\n",
         "page_id": "core-concepts",
         "level": 2
       },
@@ -309,7 +309,7 @@
       "section": {
         "id": "architecture#api-5",
         "title": "関数ベースAPI",
-        "content": "\nクラスベースではなく、純粋関数ベースのAPIを採用:\n\n```typescript\n// 正しい使い方\nimport { createHistory, pushHistory, undoHistory } from \"@higuma/editor-core\";\nlet history = createHistory(initialState);\nhistory = pushHistory(history, newState);\nhistory = undoHistory(history);\n```\n\n",
+        "content": "\nクラスベースではなく、純粋関数ベースのAPIを採用:\n\n```typescript\n// 正しい使い方\nimport { createHistory, pushHistory, undoHistory } from \"@higma/editor-core\";\nlet history = createHistory(initialState);\nhistory = pushHistory(history, newState);\nhistory = undoHistory(history);\n```\n\n",
         "page_id": "architecture",
         "level": 2
       },
@@ -349,7 +349,7 @@
       "section": {
         "id": "architecture#di-9",
         "title": "フォントローダーDI",
-        "content": "\nフォントローダーは依存性注入で環境非依存:\n\n```typescript\nimport { font } from \"@higuma/fig-renderer\";\n\n// Node.js環境\nconst loader = font.createNodeFontLoader();\n\n// カスタムディレクトリ\nconst loader = font.createNodeFontLoader({\n  fontDirs: [\"./assets/fonts\"],\n});\n\n// キャッシュ付き\nconst cachingLoader = new font.CachingFontLoader(loader);\n```\n\n",
+        "content": "\nフォントローダーは依存性注入で環境非依存:\n\n```typescript\nimport { font } from \"@higma/fig-renderer\";\n\n// Node.js環境\nconst loader = font.createNodeFontLoader();\n\n// カスタムディレクトリ\nconst loader = font.createNodeFontLoader({\n  fontDirs: [\"./assets/fonts\"],\n});\n\n// キャッシュ付き\nconst cachingLoader = new font.CachingFontLoader(loader);\n```\n\n",
         "page_id": "architecture",
         "level": 2
       },
@@ -368,7 +368,7 @@
     {
       "section": {
         "id": "fig-package",
-        "title": "@higuma/fig Package",
+        "title": "@higma/fig Package",
         "content": "\nFigma .fig ファイルのパース、Kiwiスキーマのエンコード/デコード、ツリー操作を行うコアパッケージ。\n\n",
         "page_id": "fig-package",
         "level": 1
@@ -478,7 +478,7 @@
     {
       "section": {
         "id": "fig-builder-package",
-        "title": "@higuma/fig-builder Package",
+        "title": "@higma/fig-builder Package",
         "content": "\nFigDesignDocument モデルを中心とした高レベルAPI。CRUD操作とエクスポート機能を提供。\n\n",
         "page_id": "fig-builder-package",
         "level": 1
@@ -558,7 +558,7 @@
     {
       "section": {
         "id": "fig-renderer-package",
-        "title": "@higuma/fig-renderer Package",
+        "title": "@higma/fig-renderer Package",
         "content": "\nFigmaノードの SVG レンダリングを行うパッケージ。\n\n",
         "page_id": "fig-renderer-package",
         "level": 1
@@ -778,7 +778,7 @@
     {
       "section": {
         "id": "fig-editor-package",
-        "title": "@higuma/fig-editor Package",
+        "title": "@higma/fig-editor Package",
         "content": "\nFigmaドキュメント用のReactベースビジュアルエディター。\n\n",
         "page_id": "fig-editor-package",
         "level": 1
@@ -998,7 +998,7 @@
     {
       "section": {
         "id": "editor-controls-package",
-        "title": "@higuma/editor-controls Package",
+        "title": "@higma/editor-controls Package",
         "content": "\nエディターUIコントロール: レイアウト、ズーム、フォント選択、インスペクター。\n\n",
         "page_id": "editor-controls-package",
         "level": 1
@@ -1218,7 +1218,7 @@
     {
       "section": {
         "id": "editor-core-package",
-        "title": "@higuma/editor-core Package",
+        "title": "@higma/editor-core Package",
         "content": "\nエディタープリミティブ: 選択、履歴、ドラッグ状態、ジオメトリ計算。\n\n",
         "page_id": "editor-core-package",
         "level": 1
@@ -1388,7 +1388,7 @@
     {
       "section": {
         "id": "ui-components-package",
-        "title": "@higuma/ui-components Package",
+        "title": "@higma/ui-components Package",
         "content": "\n共有UIコンポーネントライブラリ。\n\n",
         "page_id": "ui-components-package",
         "level": 1
@@ -1638,7 +1638,7 @@
     {
       "section": {
         "id": "buffer-package",
-        "title": "@higuma/buffer Package",
+        "title": "@higma/buffer Package",
         "content": "\nバッファユーティリティ: Base64、DataURL変換。\n\n",
         "page_id": "buffer-package",
         "level": 1
@@ -1688,7 +1688,7 @@
     {
       "section": {
         "id": "png-package",
-        "title": "@higuma/png Package",
+        "title": "@higma/png Package",
         "content": "\n純粋TypeScript実装のPNGエンコーダー/デコーダー。\n\n",
         "page_id": "png-package",
         "level": 1
@@ -1788,7 +1788,7 @@
     {
       "section": {
         "id": "zip-package",
-        "title": "@higuma/zip Package",
+        "title": "@higma/zip Package",
         "content": "\nZIPファイル操作。.fig ファイルはZIPアーカイブなのでこのパッケージを使用。\n\n",
         "page_id": "zip-package",
         "level": 1
