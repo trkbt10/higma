@@ -1,0 +1,56 @@
+/**
+ * @file Node type constants for Figma fig format
+ */
+
+/** Node type values matching Figma's schema (from figma-schema.json NodeType enum) */
+export const NODE_TYPE_VALUES = {
+  NONE: 0,
+  DOCUMENT: 1,
+  CANVAS: 2,
+  GROUP: 3,
+  FRAME: 4,
+  BOOLEAN_OPERATION: 5,
+  VECTOR: 6,
+  STAR: 7,
+  LINE: 8,
+  ELLIPSE: 9,
+  RECTANGLE: 10,
+  REGULAR_POLYGON: 11,
+  ROUNDED_RECTANGLE: 12,
+  TEXT: 13,
+  SLICE: 14,
+  SYMBOL: 15,
+  INSTANCE: 16,
+  STICKY: 17,
+  SHAPE_WITH_TEXT: 18,
+  CONNECTOR: 19,
+  CODE_BLOCK: 20,
+  WIDGET: 21,
+  STAMP: 22,
+  MEDIA: 23,
+  HIGHLIGHT: 24,
+  SECTION: 25,
+  SECTION_OVERLAY: 26,
+  WASHI_TAPE: 27,
+  VARIABLE: 28,
+  TABLE: 29,
+  TABLE_CELL: 30,
+  VARIABLE_SET: 31,
+  SLIDE: 32,
+} as const;
+
+export type NodeType = keyof typeof NODE_TYPE_VALUES;
+
+/** Shape node type values (subset of NODE_TYPE_VALUES) */
+export const SHAPE_NODE_TYPES = {
+  BOOLEAN_OPERATION: NODE_TYPE_VALUES.BOOLEAN_OPERATION,
+  VECTOR: NODE_TYPE_VALUES.VECTOR,
+  STAR: NODE_TYPE_VALUES.STAR,
+  LINE: NODE_TYPE_VALUES.LINE,
+  ELLIPSE: NODE_TYPE_VALUES.ELLIPSE,
+  RECTANGLE: NODE_TYPE_VALUES.RECTANGLE,
+  REGULAR_POLYGON: NODE_TYPE_VALUES.REGULAR_POLYGON,
+  ROUNDED_RECTANGLE: NODE_TYPE_VALUES.ROUNDED_RECTANGLE,
+} as const;
+
+export type ShapeNodeType = keyof typeof SHAPE_NODE_TYPES;
