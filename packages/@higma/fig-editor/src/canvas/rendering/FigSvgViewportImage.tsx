@@ -3,9 +3,11 @@
 import { useMemo } from "react";
 import type { SceneGraph } from "@higma/fig-renderer/scene-graph";
 import { renderSceneGraphToSvg } from "@higma/fig-renderer/svg";
+import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "./viewport-render-plan";
 
 type FigSvgViewportImageProps = {
   readonly sceneGraph: SceneGraph;
+  readonly placement?: ViewportLayerPlacement;
 };
 
 function svgToDataUrl(svg: string): string {
@@ -13,9 +15,9 @@ function svgToDataUrl(svg: string): string {
 }
 
 /** Render the SVG backend as an inert viewport-aligned image layer. */
-export function FigSvgViewportImage({ sceneGraph }: FigSvgViewportImageProps) {
+export function FigSvgViewportImage({ sceneGraph, placement = "world" }: FigSvgViewportImageProps) {
   const href = useMemo(() => svgToDataUrl(renderSceneGraphToSvg(sceneGraph) as string), [sceneGraph]);
-  const viewport = sceneGraph.viewport ?? { x: 0, y: 0 };
+  const frame = resolveViewportLayerFrame({ sceneGraph, placement });
 
   return (
     <img
@@ -24,11 +26,11 @@ export function FigSvgViewportImage({ sceneGraph }: FigSvgViewportImageProps) {
       draggable={false}
       style={{
         position: "absolute",
-        left: viewport.x,
-        top: viewport.y,
+        left: frame.left,
+        top: frame.top,
         display: "block",
-        width: sceneGraph.width,
-        height: sceneGraph.height,
+        width: frame.width,
+        height: frame.height,
         userSelect: "none",
       }}
     />

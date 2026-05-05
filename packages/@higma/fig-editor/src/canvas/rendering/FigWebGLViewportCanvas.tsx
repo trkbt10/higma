@@ -7,11 +7,13 @@ import {
   resolveWebGLViewportPixelRatio,
   type WebGLFigmaRendererInstance,
 } from "@higma/fig-renderer/webgl";
+import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "./viewport-render-plan";
+import { getWebGLSceneResourceKey, isWebGLSceneResourceKeyEqual, type WebGLSceneResourceKey } from "./webgl-scene-resource-key";
 
 type FigWebGLViewportCanvasProps = {
   readonly sceneGraph: SceneGraph;
   readonly viewportScale: number;
-  readonly placement?: "world" | "screen";
+  readonly placement?: ViewportLayerPlacement;
 };
 
 /** Render the WebGL backend as an inert viewport-aligned canvas layer. */
@@ -22,8 +24,9 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
   const prepareRunningRef = useRef(false);
   const pendingPrepareRef = useRef<{ readonly scene: SceneGraph; readonly pixelRatio: number } | null>(null);
   const latestRenderRef = useRef<{ readonly scene: SceneGraph; readonly pixelRatio: number } | null>(null);
+  const preparedResourceKeyRef = useRef<WebGLSceneResourceKey | null>(null);
   const [devicePixelRatio, setDevicePixelRatio] = useState(() => typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
-  const viewport = sceneGraph.viewport ?? { x: 0, y: 0 };
+  const frame = resolveViewportLayerFrame({ sceneGraph, placement });
   const effectivePixelRatio = resolveWebGLViewportPixelRatio({
     devicePixelRatio,
     viewportScale,
@@ -85,8 +88,10 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       }
       pendingPrepareRef.current = null;
       prepareRunningRef.current = true;
+      const resourceKey = getWebGLSceneResourceKey(next.scene);
       void renderer.prepareScene(next.scene).then(() => {
         prepareRunningRef.current = false;
+        preparedResourceKeyRef.current = resourceKey;
         const latest = latestRenderRef.current;
         if (latest?.scene === next.scene && latest.pixelRatio === next.pixelRatio) {
           renderer.setPixelRatio(next.pixelRatio);
@@ -96,8 +101,11 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       });
     };
 
-    pendingPrepareRef.current = { scene: sceneGraph, pixelRatio: effectivePixelRatio };
-    runPrepareQueue();
+    const resourceKey = getWebGLSceneResourceKey(sceneGraph);
+    if (!isWebGLSceneResourceKeyEqual(preparedResourceKeyRef.current, resourceKey)) {
+      pendingPrepareRef.current = { scene: sceneGraph, pixelRatio: effectivePixelRatio };
+      runPrepareQueue();
+    }
 
     return () => {
       if (renderFrameRef.current !== null && typeof window !== "undefined") {
@@ -115,6 +123,7 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       }
       pendingPrepareRef.current = null;
       latestRenderRef.current = null;
+      preparedResourceKeyRef.current = null;
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
@@ -135,11 +144,11 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       height={Math.ceil(sceneGraph.height * effectivePixelRatio)}
       style={{
         position: "absolute",
-        left: placement === "world" ? viewport.x : 0,
-        top: placement === "world" ? viewport.y : 0,
+        left: frame.left,
+        top: frame.top,
         display: "block",
-        width: sceneGraph.width,
-        height: sceneGraph.height,
+        width: frame.width,
+        height: frame.height,
       }}
     />
   );

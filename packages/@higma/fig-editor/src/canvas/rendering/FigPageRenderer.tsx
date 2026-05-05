@@ -14,6 +14,7 @@ import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";
 import { FigSvgViewportImage } from "./FigSvgViewportImage";
 import type { FigEditorRendererKind } from "./renderer-kind";
 import type { TextFontResolver } from "@higma/fig-renderer/text";
+import type { ViewportLayerPlacement } from "./viewport-render-plan";
 
 // =============================================================================
 // Types
@@ -44,7 +45,8 @@ type FigPageRendererProps = {
   readonly viewportWidth?: number;
   readonly viewportHeight?: number;
   readonly viewportScale?: number;
-  readonly webglPlacement?: "world" | "screen";
+  readonly viewportPlacement?: ViewportLayerPlacement;
+  readonly webglPlacement?: ViewportLayerPlacement;
   readonly textFontResolver?: TextFontResolver;
 };
 
@@ -76,6 +78,7 @@ export function FigPageRenderer({
   viewportWidth,
   viewportHeight,
   viewportScale = 1,
+  viewportPlacement,
   webglPlacement = "world",
   textFontResolver,
 }: FigPageRendererProps) {
@@ -101,8 +104,8 @@ export function FigPageRenderer({
 
   switch (renderer) {
     case "svg":
-      return <FigSvgViewportImage sceneGraph={sceneGraph} />;
+      return <FigSvgViewportImage sceneGraph={sceneGraph} placement={viewportPlacement ?? "world"} />;
     case "webgl":
-      return <FigWebGLViewportCanvas sceneGraph={sceneGraph} viewportScale={viewportScale} placement={webglPlacement} />;
+      return <FigWebGLViewportCanvas sceneGraph={sceneGraph} viewportScale={viewportScale} placement={viewportPlacement ?? webglPlacement} />;
   }
 }

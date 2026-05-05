@@ -64,4 +64,31 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
     const html = renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "webgl" });
     expect(html).toContain("<canvas");
   });
+
+  it("keeps the SVG viewport image screen-aligned when a viewport window is supplied", () => {
+    const page = doc.pages[0];
+    const html = renderToStaticMarkup(
+      createElement(FigPageRenderer, {
+        page,
+        canvasWidth: 980,
+        canvasHeight: 700,
+        images: doc.images,
+        blobs: doc.blobs,
+        symbolMap: doc.components,
+        styleRegistry: doc.styleRegistry,
+        renderer: "svg",
+        viewportX: 125,
+        viewportY: -50,
+        viewportWidth: 490,
+        viewportHeight: 350,
+        viewportPlacement: "screen",
+      }),
+    );
+
+    expect(html).toContain("left:0");
+    expect(html).toContain("top:0");
+    expect(html).toContain("width:980px");
+    expect(html).toContain("height:700px");
+    expect(decodeURIComponent(html)).toContain('viewBox="125 -50 490 350"');
+  });
 });

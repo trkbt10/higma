@@ -49,9 +49,11 @@ import {
   type RenderTextNode,
   type RenderImageNode,
   type RenderNodeBase,
+  type ResolvedFillResult,
   type StrokeRendering,
   type StrokeShape,
   type RenderClipPathDef,
+  type RenderTextLines,
 } from "../scene-graph/render-tree";
 import type { ResolvedFillDef } from "../scene-graph/render/fill";
 
@@ -73,7 +75,7 @@ import {
 import { createTextureCache } from "./texture-cache";
 import { imageTextureResource } from "./texture-resource";
 import { IDENTITY_MATRIX, multiplyMatrices } from "@higma/fig/matrix";
-import { beginStencilClip, endStencilClip } from "./clip-mask";
+import { rebuildStencilClipStack, type StencilClipEntry } from "./clip-mask";
 import {
   tessellateRectStroke,
   tessellateRectAlignedStroke,
@@ -94,6 +96,7 @@ import {
 import type { CornerRadius } from "../scene-graph/types";
 import { svgPathDToContours } from "./path-contours";
 import { flattenPathCommands } from "./tessellation";
+import { syncWebGLCanvasRenderSurface } from "./render-surface";
 
 /** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
 function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
@@ -157,6 +160,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   const clipActive = { value: false };
   const clipStencilValid = { value: false };
   const renderTreeCache = createWebGLRenderTreeCache();
+  const clipStack: StencilClipEntry[] = [];
+  const textLineTextureCache = new Map<string, TextLineTexture>();
 
   const buffer = gl.createBuffer();
   if (!buffer) {
@@ -198,6 +203,22 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   type TextGlyphGeometry = {
     readonly contours: readonly PathContour[];
     readonly vertices: Float32Array;
+  };
+
+  type StencilFillRule = "evenodd" | "nonzero";
+
+  type StencilPreparedGeometry = NonNullable<ReturnType<typeof prepareFanTriangles>>;
+
+  type TextLineTexture = {
+    readonly texture: WebGLTexture;
+    readonly width: number;
+    readonly height: number;
+  };
+
+  type PathFillInstruction = {
+    readonly contours: readonly PathContour[];
+    readonly fillRule: StencilFillRule;
+    readonly fills: readonly Fill[];
   };
 
   const maxGeometryCacheEntries = 2048;
@@ -251,8 +272,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       const usesEvenOddFill = parsedContours.some((contour) => contour.windingRule === "evenodd");
       return {
         parsedContours,
-        prepared: usesEvenOddFill ? prepareFanTriangles(parsedContours) : null,
-        pathVertices: usesEvenOddFill ? new Float32Array(0) : tessellateContours(parsedContours, 0.25, true),
+        prepared: prepareFanTriangles(parsedContours, 0.25, !usesEvenOddFill),
+        pathVertices: new Float32Array(0),
         backgroundMaskVertices: tessellateContours(parsedContours, 0.25, true),
       };
     });
@@ -266,6 +287,127 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         vertices: tessellateContours(contours, 0.1, true),
       };
     });
+  }
+
+  function textLinesTextureCacheKey(node: RenderTextNode, content: RenderTextLines): string {
+    return JSON.stringify({
+      id: node.id,
+      width: node.width,
+      height: node.height,
+      color: node.sourceFillColor,
+      opacity: node.sourceFillOpacity,
+      layout: content.layout,
+    });
+  }
+
+  function cssColor({ color, opacity }: { readonly color: Color; readonly opacity: number }): string {
+    const r = Math.round(color.r * 255);
+    const g = Math.round(color.g * 255);
+    const b = Math.round(color.b * 255);
+    const a = color.a * opacity;
+    return `rgba(${r}, ${g}, ${b}, ${a})`;
+  }
+
+  function buildCanvasFont(layout: RenderTextLines["layout"]): string {
+    const style = layout.fontStyle ?? "normal";
+    const weight = layout.fontWeight ?? 400;
+    return `${style} ${weight} ${layout.fontSize}px ${layout.fontFamily}`;
+  }
+
+  function drawTextWithLetterSpacing({
+    ctx,
+    text,
+    x,
+    y,
+    letterSpacing,
+    textAnchor,
+  }: {
+    readonly ctx: CanvasRenderingContext2D;
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+    readonly letterSpacing: number;
+    readonly textAnchor: CanvasTextAlign;
+  }): void {
+    if (letterSpacing === 0 || text.length <= 1) {
+      ctx.textAlign = textAnchor;
+      ctx.fillText(text, x, y);
+      return;
+    }
+
+    const measured = ctx.measureText(text).width + letterSpacing * (text.length - 1);
+    const startX = alignedTextStartX({ textAnchor, x, measured });
+    const cursorRef = { value: startX };
+    ctx.textAlign = "left";
+    for (const char of text) {
+      ctx.fillText(char, cursorRef.value, y);
+      cursorRef.value += ctx.measureText(char).width + letterSpacing;
+    }
+  }
+
+  function alignedTextStartX({ textAnchor, x, measured }: { readonly textAnchor: CanvasTextAlign; readonly x: number; readonly measured: number }): number {
+    if (textAnchor === "center") { return x - measured / 2; }
+    if (textAnchor === "right" || textAnchor === "end") { return x - measured; }
+    return x;
+  }
+
+  function canvasTextAnchor(anchor: RenderTextLines["layout"]["textAnchor"]): CanvasTextAlign {
+    if (anchor === "middle") { return "center"; }
+    if (anchor === "end") { return "right"; }
+    return "left";
+  }
+
+  function createTextLineTexture(node: RenderTextNode, content: RenderTextLines): TextLineTexture | undefined {
+    const textureWidth = Math.max(1, Math.ceil(node.width));
+    const textureHeight = Math.max(1, Math.ceil(node.height));
+    if (typeof document === "undefined") { return undefined; }
+    const canvas = document.createElement("canvas");
+    canvas.width = textureWidth;
+    canvas.height = textureHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { return undefined; }
+
+    const layout = content.layout;
+    ctx.clearRect(0, 0, textureWidth, textureHeight);
+    ctx.font = buildCanvasFont(layout);
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = cssColor({ color: node.sourceFillColor, opacity: node.sourceFillOpacity });
+
+    const textAnchor = canvasTextAnchor(layout.textAnchor);
+    for (const line of layout.lines) {
+      drawTextWithLetterSpacing({
+        ctx,
+        text: line.text,
+        x: line.x,
+        y: line.y,
+        letterSpacing: layout.letterSpacing ?? 0,
+        textAnchor,
+      });
+    }
+
+    const texture = gl.createTexture();
+    if (!texture) { return undefined; }
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
+    return { texture, width: textureWidth, height: textureHeight };
+  }
+
+  function getTextLineTexture(node: RenderTextNode, content: RenderTextLines): TextLineTexture | undefined {
+    const key = textLinesTextureCacheKey(node, content);
+    const cached = textLineTextureCache.get(key);
+    if (cached) { return cached; }
+    const created = createTextLineTexture(node, content);
+    if (created) {
+      textLineTextureCache.set(key, created);
+    }
+    return created;
   }
 
   // =========================================================================
@@ -299,6 +441,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       transform,
       viewport: currentViewportRect(),
     });
+  }
+
+  function rebuildClipStencil(): void {
+    rebuildStencilClipStack({ gl, clips: clipStack });
+    clipActive.value = clipStack.length > 0;
+    clipStencilValid.value = clipStack.length > 0;
   }
 
   async function walkForImages(node: RenderNode, parentTransform: AffineMatrix): Promise<void> {
@@ -411,13 +559,19 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function drawStencilFill(
-    { fanVertices, coverQuad, transform, opacity, elementSize, fills }: {
-      fanVertices: Float32Array; coverQuad: Float32Array; transform: AffineMatrix;
+    { prepared, fanVertices: providedFanVertices, coverQuad, transform, opacity, elementSize, fills, fillRule }: {
+      prepared?: StencilPreparedGeometry;
+      fanVertices?: Float32Array;
+      coverQuad: Float32Array; transform: AffineMatrix;
       opacity: number; elementSize: { width: number; height: number }; fills: readonly Fill[];
+      fillRule?: StencilFillRule;
     }
   ): void {
+    const fanVertices = prepared?.fanVertices ?? providedFanVertices;
+    if (!fanVertices) { return; }
     const useClipAwareMode = clipActive.value && clipStencilValid.value;
     const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+    const resolvedFillRule = fillRule ?? "evenodd";
 
     gl.enable(gl.STENCIL_TEST);
     gl.colorMask(false, false, false, false);
@@ -427,7 +581,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       gl.stencilFunc(gl.ALWAYS, 0, 0xff);
     }
 
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+    if (resolvedFillRule === "nonzero") {
+      gl.stencilOpSeparate(gl.FRONT, gl.KEEP, gl.KEEP, gl.INCR_WRAP);
+      gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.KEEP, gl.DECR_WRAP);
+    } else {
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+    }
 
     drawSolidFill({ ctx: getGlContext(), vertices: fanVertices, color: white, transform, opacity: 1 });
 
@@ -566,24 +725,40 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
   }
 
+  function fillOverrideToFills(fillOverride: ResolvedFillResult | undefined, fallback: readonly Fill[]): readonly Fill[] {
+    if (!fillOverride) { return fallback; }
+    const gradientFill = resolvedGradientDefToFill(fillOverride.def);
+    if (gradientFill) { return [gradientFill]; }
+    const fill = fillOverride.attrs.fill;
+    if (fill === "none") { return []; }
+    if (fill.startsWith("#")) {
+      return [{
+        type: "solid",
+        color: hexToColor(fill),
+        opacity: fillOverride.attrs.fillOpacity ?? 1,
+      }];
+    }
+    return fallback;
+  }
+
+  function pathFillInstructions(node: RenderPathNode): readonly PathFillInstruction[] {
+    return node.paths.map((pathContour) => {
+      const fillRule: StencilFillRule = pathContour.fillRule === "evenodd" ? "evenodd" : "nonzero";
+      return {
+        contours: svgPathDToContours({ d: pathContour.d, windingRule: fillRule }),
+        fillRule,
+        fills: fillOverrideToFills(pathContour.fillOverride, node.sourceFills),
+      };
+    });
+  }
+
   function pathContoursElementSize(contours: readonly PathContour[]): { readonly width: number; readonly height: number } {
     const coordinates = contours.flatMap((contour) => flattenPathCommands(contour.commands));
     if (coordinates.length < 2) {
       return { width: 1, height: 1 };
     }
-    let minX = Number.POSITIVE_INFINITY;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    let maxY = Number.NEGATIVE_INFINITY;
-    for (let i = 0; i < coordinates.length - 1; i += 2) {
-      const x = coordinates[i] ?? 0;
-      const y = coordinates[i + 1] ?? 0;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    }
-    return { width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
+    const bounds = computeCoordinateBounds(coordinates);
+    return { width: Math.max(1, bounds.maxX - bounds.minX), height: Math.max(1, bounds.maxY - bounds.minY) };
   }
 
   function strokeShapeElementSize(shape: StrokeShape): { readonly width: number; readonly height: number } {
@@ -1166,8 +1341,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     // Children with clip — use RenderTree's clip-path def (which may be expanded
     // by child stroke overhang to prevent stroke clipping at frame edges)
-    const wasClipActive = clipActive.value;
-    const wasClipStencilValid = clipStencilValid.value;
     if (node.childClipId) {
       // Find the clip-path def for this child clip
       const clipDef = node.defs.find(
@@ -1175,11 +1348,14 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
           d.type === "clip-path" && d.id === node.childClipId
       );
       const clipData = getFrameClipData({ clipDef, node, transform });
-      beginStencilClip({ gl, clip: clipData.clip, _positionBuffer: positionBuffer, drawVertices: (verts) => {
-        drawSolidFill({ ctx: getGlContext(), vertices: verts, color: { r: 0, g: 0, b: 0, a: 1 }, transform: clipData.transform, opacity: 1 });
-      } });
-      clipActive.value = true;
-      clipStencilValid.value = true;
+      const entry: StencilClipEntry = {
+        clip: clipData.clip,
+        drawVertices: (verts) => {
+          drawSolidFill({ ctx: getGlContext(), vertices: verts, color: { r: 0, g: 0, b: 0, a: 1 }, transform: clipData.transform, opacity: 1 });
+        },
+      };
+      clipStack.push(entry);
+      rebuildClipStencil();
     }
 
     for (const child of node.children) {
@@ -1187,9 +1363,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
 
     if (node.childClipId) {
-      endStencilClip(gl);
-      clipActive.value = wasClipActive;
-      clipStencilValid.value = wasClipActive ? false : wasClipStencilValid;
+      clipStack.pop();
+      rebuildClipStencil();
     }
   }
 
@@ -1371,16 +1546,23 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       },
       renderContent: () => {
         if (node.sourceFills.length === 0) { return; }
-        if (prepared) {
-          const { fanVertices, bounds } = prepared;
-          const coverQuad = generateCoverQuad(bounds);
-          const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
-          drawStencilFill({ fanVertices, coverQuad, transform, opacity, elementSize, fills: node.sourceFills });
-          return;
-        }
-        if (pathVertices.length > 0) {
-          const elementSize = computeBoundingBox(pathVertices);
-          drawAllFills({ vertices: pathVertices, fills: node.sourceFills, transform, opacity, elementSize });
+        for (const instruction of pathFillInstructions(node)) {
+          if (instruction.fills.length === 0) { continue; }
+          const singlePathPrepared = prepareFanTriangles(instruction.contours, 0.25, instruction.fillRule === "nonzero");
+          if (singlePathPrepared) {
+            const { bounds } = singlePathPrepared;
+            const coverQuad = generateCoverQuad(bounds);
+            const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
+            drawStencilFill({
+              prepared: singlePathPrepared,
+              coverQuad,
+              transform,
+              opacity,
+              elementSize,
+              fills: instruction.fills,
+              fillRule: instruction.fillRule,
+            });
+          }
         }
       },
       renderInnerShadows: (sourceEffects) => {
@@ -1402,33 +1584,41 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // Use RenderTree content as the single source of truth.
     // Both SVG and WebGL consume the same content representation.
     if (node.content.mode === "glyphs") {
-      // Glyph path: parse the SVG path d string (SoT) and tessellate
+      // Glyph path: parse the SVG path d string (SoT) and render via stencil.
       if (node.content.d.length === 0) { return; }
 
-      const { contours: glyphContours, vertices } = getTextGlyphGeometry(node.content.d);
-      if (vertices.length > 0) {
-        drawSolidFill({ ctx, vertices, color, transform, opacity: opacity * fillOpacity });
-      } else {
-        // Fallback to stencil fill for complex glyph paths
-        const prepared = prepareFanTriangles(glyphContours, 0.1);
-        if (prepared) {
-          const { fanVertices, bounds } = prepared;
-          const coverQuad = generateCoverQuad(bounds);
-          const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
-          drawStencilFill({
-            fanVertices, coverQuad, transform, opacity: opacity * fillOpacity,
-            elementSize, fills: [{ type: "solid", color, opacity: 1 }],
-          });
-        }
+      const { contours: glyphContours } = getTextGlyphGeometry(node.content.d);
+      const prepared = prepareFanTriangles(glyphContours, 0.1);
+      if (prepared) {
+        const { bounds } = prepared;
+        const coverQuad = generateCoverQuad(bounds);
+        const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
+        drawStencilFill({
+          prepared, coverQuad, transform, opacity: opacity * fillOpacity,
+          elementSize, fills: [{ type: "solid", color, opacity: 1 }],
+          fillRule: "evenodd",
+        });
       }
       return;
     }
 
-    // Lines mode is not a WebGL rendering contract. Text must arrive as
-    // glyph contours for GPU rendering; Canvas2D texture substitution hides
-    // missing glyph data and diverges from fig as the source of truth.
     if (node.content.mode === "lines") {
-      throw new Error(`WebGL text renderer requires glyph contours for text node ${node.id}`);
+      const textTexture = getTextLineTexture(node, node.content);
+      if (!textTexture) { return; }
+      const vertices = getRectVertices(node.width, node.height);
+      drawImageFill({
+        ctx,
+        vertices,
+        texture: textTexture.texture,
+        transform,
+        opacity,
+        elementSize: { width: node.width, height: node.height },
+        options: {
+          imageWidth: textTexture.width,
+          imageHeight: textTexture.height,
+          scaleMode: "STRETCH",
+        },
+      });
     }
   }
 
@@ -1468,10 +1658,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error("WebGL renderer: gl.canvas is not an HTMLCanvasElement (OffscreenCanvas not supported)");
       }
-      canvas.width = Math.ceil(scene.width * pixelRatioRef.value);
-      canvas.height = Math.ceil(scene.height * pixelRatioRef.value);
-      canvas.style.width = `${scene.width}px`;
-      canvas.style.height = `${scene.height}px`;
+      syncWebGLCanvasRenderSurface({
+        canvas,
+        width: scene.width,
+        height: scene.height,
+        pixelRatio: pixelRatioRef.value,
+      });
 
       gl.viewport(0, 0, canvas.width, canvas.height);
 
@@ -1481,6 +1673,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
       clipActive.value = false;
       clipStencilValid.value = false;
+      clipStack.length = 0;
 
       const renderTree = renderTreeCache.get(scene);
       const viewportTransform = viewportToSurfaceTransform(renderTree);
@@ -1500,6 +1693,10 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       shaders.dispose();
       textureCache.dispose();
       effectsRenderer.dispose();
+      for (const texture of textLineTextureCache.values()) {
+        gl.deleteTexture(texture.texture);
+      }
+      textLineTextureCache.clear();
       renderTreeCache.clear();
       geometryCache.rectVertices.clear();
       geometryCache.ellipseVertices.clear();
@@ -1514,27 +1711,32 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 // Helpers
 // =============================================================================
 
-function computeBoundingBox(vertices: Float32Array): { x: number; y: number; width: number; height: number } {
-  if (vertices.length === 0) { return { x: 0, y: 0, width: 0, height: 0 }; }
-
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-
-  for (let i = 0; i < vertices.length; i += 2) {
-    const x = vertices[i];
-    const y = vertices[i + 1];
-    if (x < minX) { minX = x; }
-    if (x > maxX) { maxX = x; }
-    if (y < minY) { minY = y; }
-    if (y > maxY) { maxY = y; }
-  }
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX,
-    height: maxY - minY,
-  };
+function computeCoordinateBounds(coordinates: ArrayLike<number>): {
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+} {
+  return Array.from(coordinates).reduce(
+    (acc, value, index) => {
+      if (index % 2 === 0) {
+        return {
+          ...acc,
+          minX: Math.min(acc.minX, value),
+          maxX: Math.max(acc.maxX, value),
+        };
+      }
+      return {
+        ...acc,
+        minY: Math.min(acc.minY, value),
+        maxY: Math.max(acc.maxY, value),
+      };
+    },
+    {
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+    },
+  );
 }

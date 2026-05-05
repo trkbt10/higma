@@ -40,6 +40,7 @@ import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
 import { useFigSceneGraph } from "./rendering/use-fig-scene-graph";
 import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
+import { resolveViewportRenderWindow } from "./rendering/viewport-render-plan";
 import { computeAbsoluteTransform, filterMarqueeSelectionByHierarchy, flattenAllNodeBounds } from "./interaction/bounds";
 import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
 import { resolveCanvasInteractionTarget, type CanvasTargetMode } from "./interaction/target-resolution";
@@ -149,34 +150,6 @@ function computeCanvasBoundsFromNodes(nodes: readonly FigDesignNode[]): {
     renderY: extremes.minTop - CANVAS_PADDING,
     renderWidth: Math.max(MIN_CANVAS_SIZE, extremes.maxRight - extremes.minLeft + CANVAS_PADDING * 2),
     renderHeight: Math.max(MIN_CANVAS_SIZE, extremes.maxBottom - extremes.minTop + CANVAS_PADDING * 2),
-  };
-}
-
-function computeViewportRenderWindow({
-  context,
-}: {
-  readonly context: EditorCanvasViewportContentContext | null;
-}): {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-  readonly surfaceWidth: number;
-  readonly surfaceHeight: number;
-} | null {
-  if (!context || context.viewportSize.width <= 0 || context.viewportSize.height <= 0 || context.viewport.scale <= 0) {
-    return null;
-  }
-
-  const usableWidth = Math.max(MIN_RENDER_WINDOW_SIZE, context.viewportSize.width - context.rulerThickness);
-  const usableHeight = Math.max(MIN_RENDER_WINDOW_SIZE, context.viewportSize.height - context.rulerThickness);
-  return {
-    x: -context.viewport.translateX / context.viewport.scale,
-    y: -context.viewport.translateY / context.viewport.scale,
-    width: usableWidth / context.viewport.scale,
-    height: usableHeight / context.viewport.scale,
-    surfaceWidth: usableWidth,
-    surfaceHeight: usableHeight,
   };
 }
 
@@ -351,7 +324,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
     [activePage],
   );
   const renderWindow = useMemo(
-    () => computeViewportRenderWindow({ context: viewportRenderContext }),
+    () => resolveViewportRenderWindow({ context: viewportRenderContext }),
     [viewportRenderContext],
   );
   const textFontResolver = useFigTextFontResolver({ page: activePage, fontLoader });
@@ -1598,31 +1571,8 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
     });
   }, [nodeSelection.selectedIds, activePage]);
 
-  const viewportContent = useMemo(() => {
-    if (renderer === "webgl" || !activePage || !sceneGraph || !renderWindow) {
-      return undefined;
-    }
-    return (
-      <FigPageRenderer
-        page={activePage}
-        canvasWidth={renderWindow.width}
-        canvasHeight={renderWindow.height}
-        images={document.images}
-        blobs={document.blobs}
-        symbolMap={document.components}
-        styleRegistry={document.styleRegistry}
-        renderer={renderer}
-        sceneGraph={sceneGraph}
-        viewportX={renderWindow.x}
-        viewportY={renderWindow.y}
-        viewportScale={viewportScale}
-        textFontResolver={textFontResolver}
-      />
-    );
-  }, [activePage, sceneGraph, renderer, renderWindow, document.images, document.blobs, document.components, document.styleRegistry, viewportScale, textFontResolver]);
-
   const screenViewportContent = useMemo(() => {
-    if (renderer !== "webgl" || !activePage || !sceneGraph || !renderWindow) {
+    if (!activePage || !sceneGraph || !renderWindow) {
       return undefined;
     }
     return (
@@ -1641,6 +1591,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
         viewportWidth={renderWindow.width}
         viewportHeight={renderWindow.height}
         viewportScale={viewportScale}
+        viewportPlacement="screen"
         webglPlacement="screen"
         textFontResolver={textFontResolver}
       />
@@ -1829,7 +1780,6 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
         enableMarquee={interactionPolicy.marqueeEnabled}
         onMarqueeSelect={handleMarqueeSelect}
         viewportOverlay={textEditOverlay}
-        viewportContent={viewportContent}
         screenViewportContent={screenViewportContent}
         interactionOverlay={pathInteractionOverlay}
       >
