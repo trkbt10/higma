@@ -2,21 +2,34 @@
  * @file Custom rule: prohibit re-exports from external workspace packages.
  *
  * Disallows patterns like:
- *   export type { Foo } from "@higma/core/dto"
- *   export { bar } from "@higma/core/domain"
- *   export * from "@higma/core"
+ *   export type { Foo } from "@higma-document-models/fig/domain"
+ *   export { bar } from "@higma-primitives/tree"
+ *   export * from "@higma-document-io/fig"
  *
  * Also disallows indirect re-exports:
- *   import type { Foo } from "@higma/core/dto"
+ *   import type { Foo } from "@higma-document-models/fig/domain"
  *   export type { Foo }               // ← prohibited
  *
- *   import { bar } from "@higma/core/domain"
+ *   import { bar } from "@higma-primitives/tree"
  *   export { bar }                    // ← prohibited
  *   export default bar                // ← prohibited
  *
  * Configurable:
- *   - packagePrefixes: string[] (default: ["@higma/"]) - package prefixes to disallow re-exports from
+ *   - packagePrefixes: string[] - package prefixes to disallow re-exports from
  */
+
+const DEFAULT_PACKAGE_PREFIXES = [
+  "@higma-primitives/",
+  "@higma-codecs/",
+  "@higma-figma-schema/",
+  "@higma-figma-containers/",
+  "@higma-document-models/",
+  "@higma-document-io/",
+  "@higma-document-renderers/",
+  "@higma-document-editors/",
+  "@higma-editor-kernel/",
+  "@higma-editor-surfaces/",
+];
 
 /**
  * Check if a path matches any of the disallowed package prefixes
@@ -82,7 +95,7 @@ export default {
           packagePrefixes: {
             type: "array",
             items: { type: "string" },
-            default: ["@higma/"],
+            default: DEFAULT_PACKAGE_PREFIXES,
           },
         },
         additionalProperties: false,
@@ -106,7 +119,7 @@ export default {
 
   create(context) {
     const options = context.options[0] || {};
-    const packagePrefixes = options.packagePrefixes ?? ["@higma/"];
+    const packagePrefixes = options.packagePrefixes ?? DEFAULT_PACKAGE_PREFIXES;
 
     /** @type {Map<string, ExternalImportInfo>} */
     const externalImports = new Map();
@@ -187,6 +200,32 @@ export default {
       }
     }
 
+    function checkExportedVariableDeclaration(node) {
+      if (node.declaration?.type !== "VariableDeclaration") {
+        return;
+      }
+
+      for (const declaration of node.declaration.declarations || []) {
+        if (declaration.id?.type !== "Identifier" || declaration.init?.type !== "Identifier") {
+          continue;
+        }
+
+        const importInfo = externalImports.get(declaration.init.name);
+        if (!importInfo) {
+          continue;
+        }
+
+        context.report({
+          node: declaration.id,
+          messageId: "indirectReexport",
+          data: {
+            name: declaration.id.name,
+            source: importInfo.source,
+          },
+        });
+      }
+    }
+
     function checkExportDefaultDeclaration(node) {
       if (node.declaration?.type === "Identifier") {
         const name = node.declaration.name;
@@ -210,6 +249,7 @@ export default {
       ExportNamedDeclaration(node) {
         checkDirectReexport(node);
         checkIndirectReexport(node);
+        checkExportedVariableDeclaration(node);
       },
       ExportDefaultDeclaration: checkExportDefaultDeclaration,
     };

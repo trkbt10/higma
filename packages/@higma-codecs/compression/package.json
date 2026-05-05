@@ -1,0 +1,48 @@
+{
+  "name": "@higma-codecs/compression",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "fzstd": "^0.1.1",
+    "pako": "^2.1.0",
+    "zstd-codec": "^0.1.5"
+  },
+  "devDependencies": {
+    "@types/pako": "^2.0.4"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-codecs/compression/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./deflate": {
+      "types": "./src/deflate.ts",
+      "default": "./src/deflate.ts"
+    },
+    "./zstd": {
+      "types": "./src/zstd.ts",
+      "default": "./src/zstd.ts"
+    },
+    "./detect": {
+      "types": "./src/detect.ts",
+      "default": "./src/detect.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 1,
+      "family": "codec"
+    }
+  }
+}

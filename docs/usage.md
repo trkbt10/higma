@@ -3,7 +3,7 @@
 ### Parse a .fig file
 
 ```typescript
-import { parseFigFile, buildNodeTree } from "@higma/fig/parser";
+import { parseFigFile, buildNodeTree } from "@higma-document-models/fig/parser";
 
 const fileData = await Bun.file("design.fig").arrayBuffer();
 const parsed = await parseFigFile(new Uint8Array(fileData));
@@ -30,7 +30,7 @@ import {
   addPage,
   addNode,
   exportFig,
-} from "@higma/fig-builder";
+} from "@higma-document-io/fig";
 
 // Create a new document
 const doc = createEmptyFigDesignDocument("My Design");
@@ -53,8 +53,8 @@ await Bun.write("output.fig", result.data);
 ### Render to SVG
 
 ```typescript
-import { parseFigFile, buildNodeTree } from "@higma/fig/parser";
-import { renderCanvas } from "@higma/fig-renderer/svg";
+import { parseFigFile, buildNodeTree } from "@higma-document-models/fig/parser";
+import { renderCanvas } from "@higma-document-renderers/fig/svg";
 
 const parsed = await parseFigFile(fileData);
 const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
@@ -78,8 +78,8 @@ if (page) {
 
 ```tsx
 import { useState } from "react";
-import { FigEditor, FigEditorProvider, useFigFileLoad } from "@higma/fig-editor";
-import type { FigDesignDocument } from "@higma/fig/domain";
+import { FigEditor, FigEditorProvider, useFigFileLoad } from "@higma-document-editors/fig";
+import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 
 function App() {
   const [document, setDocument] = useState<FigDesignDocument | null>(null);

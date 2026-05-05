@@ -1,0 +1,77 @@
+{
+  "name": "@higma-document-renderers/fig",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-primitives/tree": "workspace:*",
+    "earcut": "^3.0.2",
+    "opentype.js": "^1.3.4"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-renderers/fig/src'",
+    "snapshot:generate": "bun run scripts/generate-snapshots.ts",
+    "test:webgl": "vitest run --config ../../../vitest.config.ts spec/renderer/webgl/comparison.spec.ts spec/renderer/webgl/background-blur.spec.ts spec/renderer/webgl/effect-attributes.spec.ts",
+    "test:webgl:update": "vitest run --config ../../../vitest.config.ts spec/renderer/webgl/comparison.spec.ts spec/renderer/webgl/background-blur.spec.ts spec/renderer/webgl/effect-attributes.spec.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./svg": {
+      "types": "./src/svg/index.ts",
+      "default": "./src/svg/index.ts"
+    },
+    "./react": {
+      "types": "./src/react/index.ts",
+      "default": "./src/react/index.ts"
+    },
+    "./font": {
+      "types": "./src/font/index.ts",
+      "default": "./src/font/index.ts"
+    },
+    "./font-drivers/node": {
+      "types": "./src/font-drivers/node/index.ts",
+      "default": "./src/font-drivers/node/index.ts"
+    },
+    "./font-drivers/browser": {
+      "types": "./src/font-drivers/browser/index.ts",
+      "default": "./src/font-drivers/browser/index.ts"
+    },
+    "./text": {
+      "types": "./src/text/index.ts",
+      "default": "./src/text/index.ts"
+    },
+    "./scene-graph": {
+      "types": "./src/scene-graph/index.ts",
+      "default": "./src/scene-graph/index.ts"
+    },
+    "./webgl": {
+      "types": "./src/webgl/index.ts",
+      "default": "./src/webgl/index.ts"
+    }
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/earcut": "^3.0.0",
+    "@types/opentype.js": "^1.3.9",
+    "pixelmatch": "^7.2.0",
+    "puppeteer": "^24.42.0"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 6,
+      "family": "document-renderer",
+      "product": "fig"
+    }
+  }
+}

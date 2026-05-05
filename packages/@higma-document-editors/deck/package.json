@@ -1,0 +1,31 @@
+{
+  "name": "@higma-document-editors/deck",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-editors/deck/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-document-models/deck": "workspace:*",
+    "@higma-document-io/deck": "workspace:*",
+    "@higma-document-renderers/deck": "workspace:*",
+    "@higma-editor-surfaces/sessions": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "document-editor",
+      "product": "deck"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "name": "@higma-figma-containers/package",
+  "dependencies": {
+    "@higma-primitives/zip": "workspace:*"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-figma-containers/package/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package": {
+      "types": "./src/package.ts",
+      "default": "./src/package.ts"
+    },
+    "./metadata": {
+      "types": "./src/metadata.ts",
+      "default": "./src/metadata.ts"
+    },
+    "./image": {
+      "types": "./src/image.ts",
+      "default": "./src/image.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 3,
+      "family": "figma-container"
+    }
+  }
+}

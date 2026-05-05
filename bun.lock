@@ -26,38 +26,10 @@
         "vitest": "^4.1.5",
       },
     },
-    "packages/@higma/buffer": {
-      "name": "@higma/buffer",
-      "version": "0.12.2",
-    },
-    "packages/@higma/editor-controls": {
-      "name": "@higma/editor-controls",
+    "packages/@higma-codecs/compression": {
+      "name": "@higma-codecs/compression",
       "version": "0.12.2",
       "dependencies": {
-        "@higma/editor-core": "workspace:*",
-        "@higma/fig": "workspace:*",
-        "@higma/ui-components": "workspace:*",
-        "react-editor-ui": "^0.4.0",
-        "react-panel-layout": "^0.7.1",
-      },
-      "peerDependencies": {
-        "react": "^18.0.0 || ^19.0.0",
-        "react-dom": "^18.0.0 || ^19.0.0",
-      },
-    },
-    "packages/@higma/editor-core": {
-      "name": "@higma/editor-core",
-      "version": "0.12.2",
-      "peerDependencies": {
-        "react": "^18.0.0 || ^19.0.0",
-      },
-    },
-    "packages/@higma/fig": {
-      "name": "@higma/fig",
-      "version": "0.12.2",
-      "dependencies": {
-        "@higma/kiwi": "workspace:*",
-        "@higma/zip": "workspace:*",
         "fzstd": "^0.1.1",
         "pako": "^2.1.0",
         "zstd-codec": "^0.1.5",
@@ -66,24 +38,55 @@
         "@types/pako": "^2.0.4",
       },
     },
-    "packages/@higma/fig-builder": {
-      "name": "@higma/fig-builder",
+    "packages/@higma-codecs/kiwi": {
+      "name": "@higma-codecs/kiwi",
       "version": "0.12.2",
       "dependencies": {
-        "@higma/fig": "workspace:*",
-        "@higma/kiwi": "workspace:*",
+        "pako": "^2.1.0",
+      },
+      "devDependencies": {
+        "@types/pako": "^2.0.4",
       },
     },
-    "packages/@higma/fig-editor": {
-      "name": "@higma/fig-editor",
+    "packages/@higma-codecs/png": {
+      "name": "@higma-codecs/png",
       "version": "0.12.2",
       "dependencies": {
-        "@higma/editor-controls": "workspace:*",
-        "@higma/editor-core": "workspace:*",
-        "@higma/fig": "workspace:*",
-        "@higma/fig-builder": "workspace:*",
-        "@higma/fig-renderer": "workspace:*",
-        "@higma/ui-components": "workspace:*",
+        "@higma-primitives/buffer": "workspace:*",
+        "pako": "^2.1.0",
+      },
+    },
+    "packages/@higma-document-editors/buzz": {
+      "name": "@higma-document-editors/buzz",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-io/buzz": "workspace:*",
+        "@higma-document-models/buzz": "workspace:*",
+        "@higma-document-renderers/buzz": "workspace:*",
+        "@higma-editor-surfaces/sessions": "workspace:*",
+      },
+    },
+    "packages/@higma-document-editors/deck": {
+      "name": "@higma-document-editors/deck",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-io/deck": "workspace:*",
+        "@higma-document-models/deck": "workspace:*",
+        "@higma-document-renderers/deck": "workspace:*",
+        "@higma-editor-surfaces/sessions": "workspace:*",
+      },
+    },
+    "packages/@higma-document-editors/fig": {
+      "name": "@higma-document-editors/fig",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-io/fig": "workspace:*",
+        "@higma-document-models/fig": "workspace:*",
+        "@higma-document-renderers/fig": "workspace:*",
+        "@higma-editor-kernel/core": "workspace:*",
+        "@higma-editor-kernel/ui": "workspace:*",
+        "@higma-editor-surfaces/controls": "workspace:*",
+        "@higma-primitives/tree": "workspace:*",
         "react-editor-ui": "^0.4.0",
       },
       "peerDependencies": {
@@ -91,13 +94,124 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higma/fig-renderer": {
-      "name": "@higma/fig-renderer",
+    "packages/@higma-document-editors/site": {
+      "name": "@higma-document-editors/site",
       "version": "0.12.2",
       "dependencies": {
-        "@higma/fig": "workspace:*",
-        "@higma/fig-builder": "workspace:*",
-        "@higma/zip": "workspace:*",
+        "@higma-document-io/site": "workspace:*",
+        "@higma-document-models/site": "workspace:*",
+        "@higma-document-renderers/site": "workspace:*",
+        "@higma-editor-surfaces/sessions": "workspace:*",
+      },
+    },
+    "packages/@higma-document-io/buzz": {
+      "name": "@higma-document-io/buzz",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-models/buzz": "workspace:*",
+        "@higma-figma-analysis/format-insights": "workspace:*",
+        "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+    },
+    "packages/@higma-document-io/deck": {
+      "name": "@higma-document-io/deck",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-models/deck": "workspace:*",
+        "@higma-figma-analysis/format-insights": "workspace:*",
+        "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+    },
+    "packages/@higma-document-io/fig": {
+      "name": "@higma-document-io/fig",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-codecs/compression": "workspace:*",
+        "@higma-codecs/kiwi": "workspace:*",
+        "@higma-document-models/fig": "workspace:*",
+        "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-primitives/tree": "workspace:*",
+        "@higma-primitives/zip": "workspace:*",
+      },
+    },
+    "packages/@higma-document-io/site": {
+      "name": "@higma-document-io/site",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-models/site": "workspace:*",
+        "@higma-figma-analysis/format-insights": "workspace:*",
+        "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+    },
+    "packages/@higma-document-models/buzz": {
+      "name": "@higma-document-models/buzz",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-figma-analysis/format-insights": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+        "@higma-figma-schema/profiles": "workspace:*",
+      },
+    },
+    "packages/@higma-document-models/deck": {
+      "name": "@higma-document-models/deck",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-figma-analysis/format-insights": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+        "@higma-figma-schema/profiles": "workspace:*",
+      },
+    },
+    "packages/@higma-document-models/fig": {
+      "name": "@higma-document-models/fig",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-codecs/compression": "workspace:*",
+        "@higma-codecs/kiwi": "workspace:*",
+        "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-figma-containers/package": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-primitives/tree": "workspace:*",
+        "@higma-primitives/zip": "workspace:*",
+      },
+    },
+    "packages/@higma-document-models/site": {
+      "name": "@higma-document-models/site",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-figma-analysis/format-insights": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+        "@higma-figma-schema/profiles": "workspace:*",
+      },
+    },
+    "packages/@higma-document-renderers/buzz": {
+      "name": "@higma-document-renderers/buzz",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-models/buzz": "workspace:*",
+      },
+    },
+    "packages/@higma-document-renderers/deck": {
+      "name": "@higma-document-renderers/deck",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-models/deck": "workspace:*",
+      },
+    },
+    "packages/@higma-document-renderers/fig": {
+      "name": "@higma-document-renderers/fig",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-document-models/fig": "workspace:*",
+        "@higma-primitives/tree": "workspace:*",
         "earcut": "^3.0.2",
         "opentype.js": "^1.3.4",
       },
@@ -113,26 +227,22 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higma/kiwi": {
-      "name": "@higma/kiwi",
+    "packages/@higma-document-renderers/site": {
+      "name": "@higma-document-renderers/site",
       "version": "0.12.2",
       "dependencies": {
-        "pako": "^2.1.0",
-      },
-      "devDependencies": {
-        "@types/pako": "^2.0.4",
+        "@higma-document-models/site": "workspace:*",
       },
     },
-    "packages/@higma/png": {
-      "name": "@higma/png",
+    "packages/@higma-editor-kernel/core": {
+      "name": "@higma-editor-kernel/core",
       "version": "0.12.2",
-      "dependencies": {
-        "@higma/buffer": "workspace:*",
-        "pako": "^2.1.0",
+      "peerDependencies": {
+        "react": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higma/ui-components": {
-      "name": "@higma/ui-components",
+    "packages/@higma-editor-kernel/ui": {
+      "name": "@higma-editor-kernel/ui",
       "version": "0.12.2",
       "dependencies": {
         "lucide-react": "^0.577.0",
@@ -142,12 +252,91 @@
         "react-dom": "^18.0.0 || ^19.0.0",
       },
     },
-    "packages/@higma/zip": {
-      "name": "@higma/zip",
+    "packages/@higma-editor-surfaces/controls": {
+      "name": "@higma-editor-surfaces/controls",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-editor-kernel/core": "workspace:*",
+        "@higma-editor-kernel/ui": "workspace:*",
+        "@higma-primitives/tree": "workspace:*",
+        "react-editor-ui": "^0.4.0",
+        "react-panel-layout": "^0.7.1",
+      },
+      "peerDependencies": {
+        "react": "^18.0.0 || ^19.0.0",
+        "react-dom": "^18.0.0 || ^19.0.0",
+      },
+    },
+    "packages/@higma-editor-surfaces/sessions": {
+      "name": "@higma-editor-surfaces/sessions",
+      "version": "0.12.2",
+    },
+    "packages/@higma-figma-analysis/format-insights": {
+      "name": "@higma-figma-analysis/format-insights",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-codecs/kiwi": "workspace:*",
+        "@higma-figma-containers/package": "workspace:*",
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+    },
+    "packages/@higma-figma-analysis/schema-diff": {
+      "name": "@higma-figma-analysis/schema-diff",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-codecs/kiwi": "workspace:*",
+      },
+    },
+    "packages/@higma-figma-containers/canvas": {
+      "name": "@higma-figma-containers/canvas",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-figma-schema/profiles": "workspace:*",
+      },
+    },
+    "packages/@higma-figma-containers/package": {
+      "name": "@higma-figma-containers/package",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-primitives/zip": "workspace:*",
+      },
+    },
+    "packages/@higma-figma-runtime/kiwi-canvas": {
+      "name": "@higma-figma-runtime/kiwi-canvas",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-codecs/compression": "workspace:*",
+        "@higma-codecs/kiwi": "workspace:*",
+        "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-figma-containers/package": "workspace:*",
+      },
+    },
+    "packages/@higma-figma-runtime/node-summary": {
+      "name": "@higma-figma-runtime/node-summary",
+      "version": "0.12.2",
+    },
+    "packages/@higma-figma-schema/node-types": {
+      "name": "@higma-figma-schema/node-types",
+      "version": "0.12.2",
+    },
+    "packages/@higma-figma-schema/profiles": {
+      "name": "@higma-figma-schema/profiles",
+      "version": "0.12.2",
+    },
+    "packages/@higma-primitives/buffer": {
+      "name": "@higma-primitives/buffer",
+      "version": "0.12.2",
+    },
+    "packages/@higma-primitives/tree": {
+      "name": "@higma-primitives/tree",
+      "version": "0.12.2",
+    },
+    "packages/@higma-primitives/zip": {
+      "name": "@higma-primitives/zip",
       "version": "0.12.2",
       "dependencies": {
         "fflate": "^0.8.2",
-        "jpeg-js": "^0.4.4",
       },
     },
   },
@@ -208,27 +397,73 @@
 
     "@exodus/bytes": ["@exodus/bytes@1.15.0", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ=="],
 
-    "@higma/buffer": ["@higma/buffer@workspace:packages/@higma/buffer"],
+    "@higma-codecs/compression": ["@higma-codecs/compression@workspace:packages/@higma-codecs/compression"],
 
-    "@higma/editor-controls": ["@higma/editor-controls@workspace:packages/@higma/editor-controls"],
+    "@higma-codecs/kiwi": ["@higma-codecs/kiwi@workspace:packages/@higma-codecs/kiwi"],
 
-    "@higma/editor-core": ["@higma/editor-core@workspace:packages/@higma/editor-core"],
+    "@higma-codecs/png": ["@higma-codecs/png@workspace:packages/@higma-codecs/png"],
 
-    "@higma/fig": ["@higma/fig@workspace:packages/@higma/fig"],
+    "@higma-document-editors/buzz": ["@higma-document-editors/buzz@workspace:packages/@higma-document-editors/buzz"],
 
-    "@higma/fig-builder": ["@higma/fig-builder@workspace:packages/@higma/fig-builder"],
+    "@higma-document-editors/deck": ["@higma-document-editors/deck@workspace:packages/@higma-document-editors/deck"],
 
-    "@higma/fig-editor": ["@higma/fig-editor@workspace:packages/@higma/fig-editor"],
+    "@higma-document-editors/fig": ["@higma-document-editors/fig@workspace:packages/@higma-document-editors/fig"],
 
-    "@higma/fig-renderer": ["@higma/fig-renderer@workspace:packages/@higma/fig-renderer"],
+    "@higma-document-editors/site": ["@higma-document-editors/site@workspace:packages/@higma-document-editors/site"],
 
-    "@higma/kiwi": ["@higma/kiwi@workspace:packages/@higma/kiwi"],
+    "@higma-document-io/buzz": ["@higma-document-io/buzz@workspace:packages/@higma-document-io/buzz"],
 
-    "@higma/png": ["@higma/png@workspace:packages/@higma/png"],
+    "@higma-document-io/deck": ["@higma-document-io/deck@workspace:packages/@higma-document-io/deck"],
 
-    "@higma/ui-components": ["@higma/ui-components@workspace:packages/@higma/ui-components"],
+    "@higma-document-io/fig": ["@higma-document-io/fig@workspace:packages/@higma-document-io/fig"],
 
-    "@higma/zip": ["@higma/zip@workspace:packages/@higma/zip"],
+    "@higma-document-io/site": ["@higma-document-io/site@workspace:packages/@higma-document-io/site"],
+
+    "@higma-document-models/buzz": ["@higma-document-models/buzz@workspace:packages/@higma-document-models/buzz"],
+
+    "@higma-document-models/deck": ["@higma-document-models/deck@workspace:packages/@higma-document-models/deck"],
+
+    "@higma-document-models/fig": ["@higma-document-models/fig@workspace:packages/@higma-document-models/fig"],
+
+    "@higma-document-models/site": ["@higma-document-models/site@workspace:packages/@higma-document-models/site"],
+
+    "@higma-document-renderers/buzz": ["@higma-document-renderers/buzz@workspace:packages/@higma-document-renderers/buzz"],
+
+    "@higma-document-renderers/deck": ["@higma-document-renderers/deck@workspace:packages/@higma-document-renderers/deck"],
+
+    "@higma-document-renderers/fig": ["@higma-document-renderers/fig@workspace:packages/@higma-document-renderers/fig"],
+
+    "@higma-document-renderers/site": ["@higma-document-renderers/site@workspace:packages/@higma-document-renderers/site"],
+
+    "@higma-editor-kernel/core": ["@higma-editor-kernel/core@workspace:packages/@higma-editor-kernel/core"],
+
+    "@higma-editor-kernel/ui": ["@higma-editor-kernel/ui@workspace:packages/@higma-editor-kernel/ui"],
+
+    "@higma-editor-surfaces/controls": ["@higma-editor-surfaces/controls@workspace:packages/@higma-editor-surfaces/controls"],
+
+    "@higma-editor-surfaces/sessions": ["@higma-editor-surfaces/sessions@workspace:packages/@higma-editor-surfaces/sessions"],
+
+    "@higma-figma-analysis/format-insights": ["@higma-figma-analysis/format-insights@workspace:packages/@higma-figma-analysis/format-insights"],
+
+    "@higma-figma-analysis/schema-diff": ["@higma-figma-analysis/schema-diff@workspace:packages/@higma-figma-analysis/schema-diff"],
+
+    "@higma-figma-containers/canvas": ["@higma-figma-containers/canvas@workspace:packages/@higma-figma-containers/canvas"],
+
+    "@higma-figma-containers/package": ["@higma-figma-containers/package@workspace:packages/@higma-figma-containers/package"],
+
+    "@higma-figma-runtime/kiwi-canvas": ["@higma-figma-runtime/kiwi-canvas@workspace:packages/@higma-figma-runtime/kiwi-canvas"],
+
+    "@higma-figma-runtime/node-summary": ["@higma-figma-runtime/node-summary@workspace:packages/@higma-figma-runtime/node-summary"],
+
+    "@higma-figma-schema/node-types": ["@higma-figma-schema/node-types@workspace:packages/@higma-figma-schema/node-types"],
+
+    "@higma-figma-schema/profiles": ["@higma-figma-schema/profiles@workspace:packages/@higma-figma-schema/profiles"],
+
+    "@higma-primitives/buffer": ["@higma-primitives/buffer@workspace:packages/@higma-primitives/buffer"],
+
+    "@higma-primitives/tree": ["@higma-primitives/tree@workspace:packages/@higma-primitives/tree"],
+
+    "@higma-primitives/zip": ["@higma-primitives/zip@workspace:packages/@higma-primitives/zip"],
 
     "@humanfs/core": ["@humanfs/core@0.19.1", "", {}, "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA=="],
 
@@ -719,8 +954,6 @@
     "isarray": ["isarray@2.0.5", "", {}, "sha512-xHjhDr3cNBK0BzdUJSPXZntQUx/mwMS5Rw4A7lPJ90XGAO6ISP/ePDNuo0vhqOZU+UD5JoodwCAAoZQd3FeAKw=="],
 
     "isexe": ["isexe@2.0.0", "", {}, "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="],
-
-    "jpeg-js": ["jpeg-js@0.4.4", "", {}, "sha512-WZzeDOEtTOBK4Mdsar0IqEU5sMr3vSV2RqkAIzUEV2BHnUfKGyswWFPFwK5EeDo93K3FohSHbLAjj0s1Wzd+dg=="],
 
     "js-tokens": ["js-tokens@4.0.0", "", {}, "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ=="],
 

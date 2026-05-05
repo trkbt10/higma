@@ -1,0 +1,27 @@
+{
+  "name": "@higma-primitives/zip",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-primitives/zip/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 0,
+      "family": "primitive"
+    }
+  }
+}

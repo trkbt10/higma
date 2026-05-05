@@ -1,0 +1,78 @@
+{
+  "name": "@higma-document-models/fig",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-models/fig/src'"
+  },
+  "exports": {
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "default": "./src/errors.ts"
+    },
+    "./parser": {
+      "types": "./src/parser/index.ts",
+      "default": "./src/parser/index.ts"
+    },
+    "./validator": {
+      "types": "./src/validator/index.ts",
+      "default": "./src/validator/index.ts"
+    },
+    "./constants": {
+      "types": "./src/constants/index.ts",
+      "default": "./src/constants/index.ts"
+    },
+    "./color": {
+      "types": "./src/color.ts",
+      "default": "./src/color.ts"
+    },
+    "./matrix": {
+      "types": "./src/matrix.ts",
+      "default": "./src/matrix.ts"
+    },
+    "./symbols": {
+      "types": "./src/symbols/index.ts",
+      "default": "./src/symbols/index.ts"
+    },
+    "./domain": {
+      "types": "./src/domain/index.ts",
+      "default": "./src/domain/index.ts"
+    },
+    "./roundtrip": {
+      "types": "./src/roundtrip/index.ts",
+      "default": "./src/roundtrip/index.ts"
+    },
+    "./diagnostics": {
+      "types": "./src/diagnostics/index.ts",
+      "default": "./src/diagnostics/index.ts"
+    },
+    "./diagnostics/defensive": {
+      "types": "./src/diagnostics/defensive.ts",
+      "default": "./src/diagnostics/defensive.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+    "@higma-codecs/compression": "workspace:*",
+    "@higma-figma-containers/canvas": "workspace:*",
+    "@higma-codecs/kiwi": "workspace:*",
+    "@higma-primitives/tree": "workspace:*",
+    "@higma-primitives/zip": "workspace:*",
+    "@higma-figma-containers/package": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 5,
+      "family": "document-model",
+      "product": "fig"
+    }
+  }
+}

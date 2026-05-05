@@ -181,7 +181,7 @@ export default {
         return;
       }
 
-      // Get the subpath (e.g., "@higma/core/domain/user" -> "./domain/user")
+      // Get the subpath (e.g., "@higma-document-models/fig/domain/user" -> "./domain/user")
       const subpath = "./" + importPath.slice(packageName.length + 1);
 
       for (const [base, info] of groups) {

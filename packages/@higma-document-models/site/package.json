@@ -1,0 +1,31 @@
+{
+  "name": "@higma-document-models/site",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-models/site/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-figma-analysis/format-insights": "workspace:*",
+    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+    "@higma-figma-runtime/node-summary": "workspace:*",
+    "@higma-figma-schema/profiles": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 5,
+      "family": "document-model",
+      "product": "site"
+    }
+  }
+}

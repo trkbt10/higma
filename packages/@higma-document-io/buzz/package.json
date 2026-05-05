@@ -1,0 +1,32 @@
+{
+  "name": "@higma-document-io/buzz",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-io/buzz/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-figma-analysis/format-insights": "workspace:*",
+    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+    "@higma-figma-runtime/node-summary": "workspace:*",
+    "@higma-document-models/buzz": "workspace:*",
+    "@higma-figma-containers/canvas": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 6,
+      "family": "document-io",
+      "product": "buzz"
+    }
+  }
+}

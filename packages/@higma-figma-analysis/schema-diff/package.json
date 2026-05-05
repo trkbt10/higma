@@ -1,0 +1,27 @@
+{
+  "name": "@higma-figma-analysis/schema-diff",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "@higma-codecs/kiwi": "workspace:*"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-figma-analysis/schema-diff/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 4,
+      "family": "figma-analysis"
+    }
+  }
+}

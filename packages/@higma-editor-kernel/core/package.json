@@ -1,0 +1,95 @@
+{
+  "name": "@higma-editor-kernel/core",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-editor-kernel/core/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./history": {
+      "types": "./src/history.ts",
+      "default": "./src/history.ts"
+    },
+    "./selection": {
+      "types": "./src/selection.ts",
+      "default": "./src/selection.ts"
+    },
+    "./clipboard": {
+      "types": "./src/clipboard.ts",
+      "default": "./src/clipboard.ts"
+    },
+    "./drag-state": {
+      "types": "./src/drag-state.ts",
+      "default": "./src/drag-state.ts"
+    },
+    "./pointer-utils": {
+      "types": "./src/pointer-utils.ts",
+      "default": "./src/pointer-utils.ts"
+    },
+    "./geometry": {
+      "types": "./src/geometry/index.ts",
+      "default": "./src/geometry/index.ts"
+    },
+    "./drag-utils": {
+      "types": "./src/drag-utils.ts",
+      "default": "./src/drag-utils.ts"
+    },
+    "./text-edit": {
+      "types": "./src/text-edit.ts",
+      "default": "./src/text-edit.ts"
+    },
+    "./item-selection": {
+      "types": "./src/item-selection.ts",
+      "default": "./src/item-selection.ts"
+    },
+    "./table-selection": {
+      "types": "./src/table-selection.ts",
+      "default": "./src/table-selection.ts"
+    },
+    "./alignment": {
+      "types": "./src/alignment.ts",
+      "default": "./src/alignment.ts"
+    },
+    "./keyboard": {
+      "types": "./src/keyboard.ts",
+      "default": "./src/keyboard.ts"
+    },
+    "./adapter-types": {
+      "types": "./src/adapter-types.ts",
+      "default": "./src/adapter-types.ts"
+    },
+    "./viewport": {
+      "types": "./src/viewport/index.ts",
+      "default": "./src/viewport/index.ts"
+    },
+    "./list-dnd": {
+      "types": "./src/list-dnd.ts",
+      "default": "./src/list-dnd.ts"
+    },
+    "./table-operations": {
+      "types": "./src/table-operations.ts",
+      "default": "./src/table-operations.ts"
+    },
+    "./inspector-types": {
+      "types": "./src/inspector-types.ts",
+      "default": "./src/inspector-types.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 0,
+      "family": "editor-kernel"
+    }
+  }
+}

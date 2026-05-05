@@ -25,8 +25,7 @@ export default {
         ":not(ForStatement > VariableDeclaration)" +
         ":not(ForInStatement > VariableDeclaration)" +
         ":not(ForOfStatement > VariableDeclaration)",
-      message:
-        "Use of let is prohibited. If you need to branch, create a separate function and use its return value. If absolutely necessary for performance issues, explicitly use // eslint-disable-next-line.",
+      message: "Use of let is prohibited. If you need to branch, create a separate function and use its return value.",
     },
     {
       selector: "TSAsExpression TSAnyKeyword",

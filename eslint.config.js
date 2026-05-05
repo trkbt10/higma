@@ -106,40 +106,51 @@ export default tseslint.config(
       "custom/no-reexport-outside-entry": "off",
       "custom/enforce-index-import": "off",
       "custom/no-cross-package-reexport": "off",
-      "custom/no-layer-violation": "off",
       "custom/no-subpath-bypass": "off",
+      "custom/enforce-package-boundaries": "off",
       "no-restricted-syntax": "off",
     },
   },
 
   // ──────────────────────────────────────────────────────────────────────
-  // higma fig-stack boundary rules
+  // higma package boundary rules
   //
-  // Layer direction (low → high). A package in a given layer must not import
-  // from any package above it.
-  //
-  //   L0 — leaf utilities (no inter-package higma deps):
-  //         @higma/buffer, @higma/zip, @higma/png, @higma/kiwi,
-  //         @higma/ui-components, @higma/editor-core
-  //   L1 — fig domain core:        @higma/fig
-  //   L2 — fig operations:         @higma/fig-builder, @higma/fig-renderer
-  //   L3 — editor primitives:      @higma/editor-controls
-  //   L4 — top-level app:          @higma/fig-editor
+  // The dependency policy is declared in each package.json under
+  // higma.boundary. ESLint reads that metadata and enforces these rules for
+  // every package uniformly:
+  //   - sibling packages in the same scope may not import each other
+  //   - imports may not flow to a higher layer
+  //   - packages in the same document-product layer may not import each other
+  //   - fig/deck/buzz/site products may not import peer products
+  //   - product-free editor packages are visible only to editor packages and
+  //     document editors
   //
   // ──────────────────────────────────────────────────────────────────────
 
-  // Re-export hygiene — same rules across all packages.
+  // Re-export hygiene and package boundary enforcement across all packages.
   {
     files: ["packages/**/*.ts", "packages/**/*.tsx"],
-    ignores: ["**/*.spec.ts", "**/*.test.ts"],
+    ignores: ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
     rules: {
       "custom/no-cross-package-reexport": [
         "error",
         {
-          packagePrefixes: ["@higma/"],
+          packagePrefixes: [
+            "@higma-primitives/",
+            "@higma-codecs/",
+            "@higma-figma-schema/",
+            "@higma-figma-containers/",
+            "@higma-document-models/",
+            "@higma-document-io/",
+            "@higma-document-renderers/",
+            "@higma-document-editors/",
+            "@higma-editor-kernel/",
+            "@higma-editor-surfaces/",
+          ],
         },
       ],
       "custom/no-cross-boundary-export": "error",
+      "custom/enforce-package-boundaries": "error",
     },
   },
 
@@ -150,119 +161,4 @@ export default tseslint.config(
       "custom/no-subpath-bypass": "error",
     },
   },
-
-  // L0 — leaf utilities. No higma packages may be imported.
-  {
-    files: [
-      "packages/@higma/buffer/src/**/*.{ts,tsx}",
-      "packages/@higma/zip/src/**/*.{ts,tsx}",
-      "packages/@higma/png/src/**/*.{ts,tsx}",
-      "packages/@higma/kiwi/src/**/*.{ts,tsx}",
-    ],
-    rules: {
-      "custom/no-layer-violation": [
-        "error",
-        {
-          disallowedPackages: [
-            "@higma/fig",
-            "@higma/fig-builder",
-            "@higma/fig-renderer",
-            "@higma/editor-core",
-            "@higma/editor-controls",
-            "@higma/ui-components",
-            "@higma/fig-editor",
-          ],
-        },
-      ],
-    },
-  },
-
-  // L0 — UI / editor primitives. May not import any other higma package.
-  {
-    files: [
-      "packages/@higma/ui-components/src/**/*.{ts,tsx}",
-      "packages/@higma/editor-core/src/**/*.{ts,tsx}",
-    ],
-    rules: {
-      "custom/no-layer-violation": [
-        "error",
-        {
-          disallowedPackages: [
-            "@higma/buffer",
-            "@higma/zip",
-            "@higma/png",
-            "@higma/kiwi",
-            "@higma/fig",
-            "@higma/fig-builder",
-            "@higma/fig-renderer",
-            "@higma/editor-controls",
-            "@higma/fig-editor",
-          ],
-        },
-      ],
-    },
-  },
-
-  // L1 — @higma/fig domain core. May depend only on L0 leaf utilities
-  // (buffer, zip, png, kiwi). Must not see fig-builder/renderer or any UI layer.
-  {
-    files: ["packages/@higma/fig/src/**/*.{ts,tsx}"],
-    rules: {
-      "custom/no-layer-violation": [
-        "error",
-        {
-          disallowedPackages: [
-            "@higma/fig-builder",
-            "@higma/fig-renderer",
-            "@higma/editor-core",
-            "@higma/editor-controls",
-            "@higma/ui-components",
-            "@higma/fig-editor",
-          ],
-        },
-      ],
-    },
-  },
-
-  // L2 — fig operations. May depend on L0/L1 (fig + leaf utilities).
-  // Must not see editor primitives or the app layer.
-  {
-    files: [
-      "packages/@higma/fig-builder/src/**/*.{ts,tsx}",
-      "packages/@higma/fig-renderer/src/**/*.{ts,tsx}",
-    ],
-    rules: {
-      "custom/no-layer-violation": [
-        "error",
-        {
-          disallowedPackages: [
-            "@higma/editor-core",
-            "@higma/editor-controls",
-            "@higma/ui-components",
-            "@higma/fig-editor",
-          ],
-        },
-      ],
-    },
-  },
-
-  // L3 — editor primitives. May depend on L0 UI/editor primitives and L1 fig
-  // (used as a tree utility source). Must not see fig operations or the app.
-  {
-    files: ["packages/@higma/editor-controls/src/**/*.{ts,tsx}"],
-    rules: {
-      "custom/no-layer-violation": [
-        "error",
-        {
-          disallowedPackages: [
-            "@higma/fig-builder",
-            "@higma/fig-renderer",
-            "@higma/fig-editor",
-          ],
-        },
-      ],
-    },
-  },
-
-  // L4 — @higma/fig-editor is the top of the stack and may import anything.
 );

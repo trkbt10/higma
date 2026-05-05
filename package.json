@@ -4,7 +4,20 @@
   "private": true,
   "type": "module",
   "packageManager": "bun@1.3.13",
-  "workspaces": ["packages/@higma/*"],
+  "workspaces": [
+    "packages/@higma-primitives/*",
+    "packages/@higma-codecs/*",
+    "packages/@higma-figma-schema/*",
+    "packages/@higma-figma-containers/*",
+    "packages/@higma-document-models/*",
+    "packages/@higma-document-io/*",
+    "packages/@higma-document-renderers/*",
+    "packages/@higma-document-editors/*",
+    "packages/@higma-editor-kernel/*",
+    "packages/@higma-editor-surfaces/*",
+    "packages/@higma-figma-runtime/*",
+    "packages/@higma-figma-analysis/*"
+  ],
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

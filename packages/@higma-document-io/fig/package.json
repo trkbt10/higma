@@ -1,0 +1,101 @@
+{
+  "name": "@higma-document-io/fig",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "@higma-codecs/compression": "workspace:*",
+    "@higma-figma-containers/canvas": "workspace:*",
+    "@higma-primitives/tree": "workspace:*",
+    "@higma-primitives/zip": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-codecs/kiwi": "workspace:*"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-io/fig/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./types": {
+      "types": "./src/types/index.ts",
+      "default": "./src/types/index.ts"
+    },
+    "./context": {
+      "types": "./src/context/index.ts",
+      "default": "./src/context/index.ts"
+    },
+    "./export": {
+      "types": "./src/export/index.ts",
+      "default": "./src/export/index.ts"
+    },
+    "./page-ops": {
+      "types": "./src/page-ops/index.ts",
+      "default": "./src/page-ops/index.ts"
+    },
+    "./node-ops": {
+      "types": "./src/node-ops/index.ts",
+      "default": "./src/node-ops/index.ts"
+    },
+    "./builders": {
+      "types": "./src/builders/index.ts",
+      "default": "./src/builders/index.ts"
+    },
+    "./fig-file": {
+      "types": "./src/fig-file/index.ts",
+      "default": "./src/fig-file/index.ts"
+    },
+    "./fig-file/effect": {
+      "types": "./src/fig-file/effect/index.ts",
+      "default": "./src/fig-file/effect/index.ts"
+    },
+    "./fig-file/frame": {
+      "types": "./src/fig-file/frame/index.ts",
+      "default": "./src/fig-file/frame/index.ts"
+    },
+    "./fig-file/geometry": {
+      "types": "./src/fig-file/geometry/index.ts",
+      "default": "./src/fig-file/geometry/index.ts"
+    },
+    "./fig-file/node": {
+      "types": "./src/fig-file/node/index.ts",
+      "default": "./src/fig-file/node/index.ts"
+    },
+    "./fig-file/paint": {
+      "types": "./src/fig-file/paint/index.ts",
+      "default": "./src/fig-file/paint/index.ts"
+    },
+    "./fig-file/schema": {
+      "types": "./src/fig-file/schema/index.ts",
+      "default": "./src/fig-file/schema/index.ts"
+    },
+    "./fig-file/shape": {
+      "types": "./src/fig-file/shape/index.ts",
+      "default": "./src/fig-file/shape/index.ts"
+    },
+    "./fig-file/symbol": {
+      "types": "./src/fig-file/symbol/index.ts",
+      "default": "./src/fig-file/symbol/index.ts"
+    },
+    "./fig-file/text": {
+      "types": "./src/fig-file/text/index.ts",
+      "default": "./src/fig-file/text/index.ts"
+    },
+    "./fig-file/types": {
+      "types": "./src/fig-file/types/index.ts",
+      "default": "./src/fig-file/types/index.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 6,
+      "family": "document-io",
+      "product": "fig"
+    }
+  }
+}

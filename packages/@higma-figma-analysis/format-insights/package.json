@@ -1,0 +1,30 @@
+{
+  "name": "@higma-figma-analysis/format-insights",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "@higma-codecs/kiwi": "workspace:*",
+    "@higma-figma-containers/package": "workspace:*",
+    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+    "@higma-figma-runtime/node-summary": "workspace:*"
+  },
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-figma-analysis/format-insights/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 4,
+      "family": "figma-analysis"
+    }
+  }
+}

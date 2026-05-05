@@ -11,8 +11,8 @@ import noCrossBoundaryExport from "./rules/no-cross-boundary-export.js";
 import noReexportOutsideEntry from "./rules/no-reexport-outside-entry.js";
 import enforceIndexImport from "./rules/enforce-index-import.js";
 import noCrossPackageReexport from "./rules/no-cross-package-reexport.js";
-import noLayerViolation from "./rules/no-layer-violation.js";
 import noSubpathBypass from "./rules/no-subpath-bypass.js";
+import enforcePackageBoundaries from "./rules/enforce-package-boundaries.js";
 
 export default {
   rules: {
@@ -26,7 +26,7 @@ export default {
     "no-reexport-outside-entry": noReexportOutsideEntry,
     "enforce-index-import": enforceIndexImport,
     "no-cross-package-reexport": noCrossPackageReexport,
-    "no-layer-violation": noLayerViolation,
     "no-subpath-bypass": noSubpathBypass,
+    "enforce-package-boundaries": enforcePackageBoundaries,
   },
 };
