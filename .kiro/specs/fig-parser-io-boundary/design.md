@@ -38,7 +38,7 @@ points used by readers, exporters, renderers, and editors.
 
 ## Drift Gates
 
-- `indexion spec align diff .kiro/specs/fig-parser-io-boundary/requirements.md packages/@higma-document-models/fig packages/@higma-document-io/fig --format markdown --threshold 0.3`
-- `indexion spec align status .kiro/specs/fig-parser-io-boundary/requirements.md packages/@higma-document-models/fig packages/@higma-document-io/fig --threshold 0.3 --fail-on any`
+- `indexion spec align diff .kiro/specs/fig-parser-io-boundary/requirements.md packages --format markdown --threshold 0.3`
+- `indexion spec align status .kiro/specs/fig-parser-io-boundary/requirements.md packages --threshold 0.3 --fail-on any`
 - Boundary ESLint output must contain zero package-boundary violations.
 - No inline ESLint suppression comment may be introduced.

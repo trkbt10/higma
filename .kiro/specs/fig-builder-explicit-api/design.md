@@ -39,6 +39,6 @@ editor surface, or UI packages.
 
 ## Drift Gates
 
-- `indexion spec align diff .kiro/specs/fig-builder-explicit-api/requirements.md packages/@higma-document-io/fig/src/node-ops packages/@higma-document-io/fig/src/page-ops packages/@higma-document-io/fig/src/types --format markdown --threshold 0.3`
-- `indexion spec align status .kiro/specs/fig-builder-explicit-api/requirements.md packages/@higma-document-io/fig/src/node-ops packages/@higma-document-io/fig/src/page-ops packages/@higma-document-io/fig/src/types --threshold 0.3 --fail-on any`
+- `indexion spec align diff .kiro/specs/fig-builder-explicit-api/requirements.md packages/@higma-document-io/fig/src --format markdown --threshold 0.3`
+- `indexion spec align status .kiro/specs/fig-builder-explicit-api/requirements.md packages/@higma-document-io/fig/src --threshold 0.3 --fail-on any`
 - No inline ESLint suppression comment may be introduced.
