@@ -5,7 +5,7 @@
  */
 
 export { type CompressionType, ZSTD_MAGIC } from "./types";
-export { detectCompression } from "./detect";
+export { detectCompression, isZstdCompressed } from "./detect";
 export {
   compressDeflate,
   decompressDeflate,

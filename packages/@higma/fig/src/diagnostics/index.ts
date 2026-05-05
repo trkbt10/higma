@@ -7,5 +7,5 @@ export {
   defensiveMark,
   getDefensiveCounters,
   resetDefensiveCounters,
-  setDefensiveTrace,
+  DefensiveBranchError,
 } from "./defensive";

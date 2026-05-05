@@ -10,6 +10,7 @@ import {
   decompressDeflateRaw as baseDecompressDeflateRaw,
   decompressZstd as baseDecompressZstd,
 } from "../compression";
+import type { CompressionType } from "../compression";
 import { FigDecompressError } from "../errors";
 
 /**
@@ -68,16 +69,15 @@ export function decompressZstd(data: Uint8Array): Uint8Array {
 }
 
 /**
- * Decompress data using the appropriate algorithm.
- * Automatically detects the compression type.
+ * Decompress data using an explicit or header-detectable compression type.
  *
  * @param data - Compressed data
  * @returns Decompressed data
  * @throws FigDecompressError if decompression fails
  */
-export function decompress(data: Uint8Array): Uint8Array {
+export function decompress(data: Uint8Array, type?: CompressionType): Uint8Array {
   try {
-    return baseDecompress(data);
+    return baseDecompress(data, type);
   } catch (error) {
     throw new FigDecompressError(
       "Failed to decompress data",

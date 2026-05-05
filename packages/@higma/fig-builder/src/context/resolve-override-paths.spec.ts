@@ -75,14 +75,10 @@ function instanceNode(
 }
 
 describe("resolveOverridePaths — SSoT for override path resolution", () => {
-  it("overrides that resolve to reachable slots are kept; phantoms are dropped", () => {
+  it("throws when an override path references an unreachable guid", () => {
     // SSoT invariant: `resolveOverridePaths` rewrites guid paths into
-    // the SYMBOL-descendant namespace and drops entries that have no
-    // reachable target anywhere in the file's symbolMap. Figma's own
-    // renderer silently skips such phantom overrides (authoring
-    // residue from deleted slots or rewritten TEXT rich-text ranges),
-    // and so does the resolver — the scene-graph builder never sees
-    // structurally-unresolvable entries.
+    // the SYMBOL-descendant namespace. Entries with no reachable
+    // target are invalid input and must be visible immediately.
     const logoRaw = vectorNode(100, "Logo");
     const brandSym = symbolNode(10, "Brand", [logoRaw]);
     const symbolMap = new Map<string, FigNode>([
@@ -99,9 +95,8 @@ describe("resolveOverridePaths — SSoT for override path resolution", () => {
     ]);
 
     const components = new Map<string, FigDesignNode>();
-    const node = convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []);
-    expect(node.overrides?.length).toBe(1);
-    expect(node.overrides![0].guidPath?.guids[0]).toEqual(guid(10, 100));
+    expect(() => convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []))
+      .toThrow("Override path references unreachable guid 999:999");
   });
 
   it("non-INSTANCE nodes carry raw overrides / dsd untouched", () => {

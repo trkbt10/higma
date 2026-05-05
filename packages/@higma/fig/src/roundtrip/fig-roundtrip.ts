@@ -8,7 +8,7 @@
  */
 
 import { compressZstd, compressDeflateRaw } from "../compression";
-import { decompressDeflateRaw, decompressZstd, detectCompression } from "../compression";
+import { decompressDeflateRaw, decompressZstd, isZstdCompressed } from "../compression";
 import type { KiwiSchema, FigNode } from "../types";
 import type { FigBlob as ParserFigBlob } from "../parser/blob-decoder";
 import type { FigImage } from "../parser/fig-file";
@@ -90,8 +90,7 @@ function isZipFile(data: Uint8Array): boolean {
 }
 
 function decompressFigChunk(data: Uint8Array): Uint8Array {
-  const compressionType = detectCompression(data);
-  return compressionType === "zstd" ? decompressZstd(data) : decompressDeflateRaw(data);
+  return isZstdCompressed(data) ? decompressZstd(data) : decompressDeflateRaw(data);
 }
 
 function getMimeTypeFromContent(data: Uint8Array): string {

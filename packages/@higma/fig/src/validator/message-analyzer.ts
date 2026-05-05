@@ -7,7 +7,7 @@
 
 import { unzipSync } from "fflate";
 import { readFileSync } from "node:fs";
-import { decompress, detectCompression } from "../compression";
+import { decompress, isZstdCompressed } from "../compression";
 
 export type FieldInfo = {
   fieldId: number;
@@ -66,7 +66,7 @@ function skipToNextField(data: Uint8Array, startOffset: number): number {
  * Analyze message data structure
  */
 export function analyzeMessageData(compressedData: Uint8Array): MessageAnalysis {
-  const compressionType = detectCompression(compressedData);
+  const compressionType = isZstdCompressed(compressedData) ? "zstd" : "deflate";
   const compression = compressionType === "zstd" ? "zstd" : "deflate-raw";
   const data = decompress(compressedData, compressionType);
 

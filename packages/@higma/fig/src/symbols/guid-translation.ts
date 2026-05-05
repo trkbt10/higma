@@ -710,7 +710,7 @@ export function buildGuidTranslationMap(
   // instead of re-deriving them per call. `directOverrideKeyMap` is the
   // overrideKey → descendant GUID lookup the Figma authoring uses for
   // stable cross-INSTANCE addressing; `localIdToDescendant` is the
-  // localID-only fallback used by Phase 1's offset heuristics.
+  // localID-only lookup used by Phase 1's offset heuristics.
   const directOverrideKeyMap = bundle.directOverrideKeyMap;
   const localIdToDescendant = bundle.localIdToDescendant;
   // Single SoT for "descendant by guidStr" — straight off the bundle.
@@ -766,11 +766,6 @@ export function buildGuidTranslationMap(
   // overrideKey matches), entries that don't map stay untranslated and
   // descend naturally to the deeper INSTANCE that owns them.
   if (descendants.length <= 3) {
-    defensiveMark("guid-translation:small-descendant-short-circuit", {
-      descendantCount: descendants.length,
-      overrideCount: overrideGuids.size,
-      phaseZeroResolved: result.size,
-    });
     return result;
   }
 

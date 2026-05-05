@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { inflateRaw } from "pako";
 import { loadZipPackage } from "@higma/zip";
 import { isFigFile, parseFigHeader, getPayload, decompressDeflateRaw, decompressZstd } from "../src/parser";
-import { detectCompression } from "../src/compression";
+import { isZstdCompressed } from "../src/compression";
 import { buildFigHeader } from "../src/builder";
 import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "../src/kiwi/decoder";
 import { StreamingFigEncoder } from "../src/kiwi/stream";
@@ -232,12 +232,9 @@ describe("fig file parsing (sample-file.fig)", () => {
     expect(chunks.schema.length).toBe(header.payloadSize);
     expect(chunks.data.length).toBeGreaterThan(0);
 
-    // Schema uses raw deflate, data may use ZSTD or raw deflate
+    // Schema uses raw deflate, data may use ZSTD or raw deflate.
     const schemaData = decompressDeflateRaw(chunks.schema);
-    const dataCompression = detectCompression(chunks.data);
-    const decompressChunkData = (data: Uint8Array, compression: string): Uint8Array =>
-      compression === "zstd" ? decompressZstd(data) : decompressDeflateRaw(data);
-    const msgData = decompressChunkData(chunks.data, dataCompression);
+    const msgData = isZstdCompressed(chunks.data) ? decompressZstd(chunks.data) : decompressDeflateRaw(chunks.data);
 
     expect(schemaData.length).toBeGreaterThan(0);
     expect(msgData.length).toBeGreaterThan(0);

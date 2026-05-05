@@ -6,7 +6,7 @@ import type { FigNode, KiwiSchema } from "../types";
 import { parseFigHeader, getPayload, isFigFile } from "./header";
 import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "../kiwi/decoder";
 import { decompressDeflateRaw, decompressZstd } from "./decompress";
-import { detectCompression } from "../compression";
+import { isZstdCompressed } from "../compression";
 import { loadZipPackage } from "@higma/zip";
 import type { FigBlob } from "./blob-decoder";
 import { normaliseNodeChanges, asBlobArray } from "./normalize";
@@ -184,14 +184,10 @@ async function extractFromZip(data: Uint8Array): Promise<ZipExtractResult> {
  * Fig files typically use raw deflate, but may use zstd.
  */
 function decompressFigChunk(data: Uint8Array): Uint8Array {
-  // Check for zstd first (has magic header)
-  const compressionType = detectCompression(data);
-  if (compressionType === "zstd") {
+  if (isZstdCompressed(data)) {
     return decompressZstd(data);
   }
 
-  // Otherwise try raw deflate (no header to detect)
-  // This is what fig-kiwi files typically use
   return decompressDeflateRaw(data);
 }
 

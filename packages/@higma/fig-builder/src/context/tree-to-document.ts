@@ -768,17 +768,9 @@ function resolveOverridePaths(
       if (!g) return true;
       if (guidExistsInFile(ctx, g, symbolMap)) return true;
       if (ghostSessions.has(g.sessionID)) {
-        defensiveMark("tree-to-document:ghost-session-filter:passed", {
-          sessionID: g.sessionID,
-          firstGuid: ctx.guidString(g),
-        });
         return true;
       }
-      defensiveMark("tree-to-document:ghost-session-filter:dropped", {
-        sessionID: g.sessionID,
-        firstGuid: ctx.guidString(g),
-      });
-      return false;
+      throw new Error(`Override path references unreachable guid ${ctx.guidString(g)}`);
     });
     // Re-route self-override entries' paths to the SYMBOL root before
     // running the translation primitive so they don't get pulled into
