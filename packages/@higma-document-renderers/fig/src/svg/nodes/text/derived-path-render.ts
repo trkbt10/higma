@@ -8,7 +8,7 @@
 
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { DerivedTextData, DerivedGlyph, DerivedDecoration } from "@higma-document-models/fig/domain";
-import { decodePathCommands, type FigBlob, type PathCommand } from "@higma-document-models/fig/parser";
+import { decodePathCommands, type FigBlob, type PathCommand } from "@higma-document-models/fig/domain";
 import type { FigSvgRenderContext } from "../../../types";
 import { path, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";

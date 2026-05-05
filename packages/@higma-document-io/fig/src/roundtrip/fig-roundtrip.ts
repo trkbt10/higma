@@ -17,15 +17,8 @@ import type {
   LoadedFigFile as DomainLoadedFigFile,
 } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import {
-  normaliseNodeChanges,
-  denormaliseNodeForEncode,
-} from "@higma-document-models/fig/parser";
-import {
-  buildFigCanvasHeader,
-  getFigCanvasPayload,
-  parseFigCanvasHeader,
-} from "@higma-figma-containers/canvas";
+import { normaliseNodeChanges, denormaliseNodeForEncode } from "@higma-document-io/fig/parser";
+import { buildFigCanvasHeader, getFigCanvasPayload, parseFigCanvasHeader } from "@higma-figma-containers/canvas";
 import {
   buildFigPackageMetadataJson,
   createFigPackage,

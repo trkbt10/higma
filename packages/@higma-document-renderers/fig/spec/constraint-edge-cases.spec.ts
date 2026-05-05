@@ -18,14 +18,14 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
+import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  parseFigFile,
   buildNodeTree,
   findNodesByType,
   getNodeType,
   type FigBlob,
   type FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 import { preResolveSymbols } from "@higma-document-models/fig/symbols";
@@ -127,7 +127,10 @@ function svgToPng(svg: string, width?: number): Buffer {
 }
 
 function compareSvgs(
-  actualSvg: string, renderedSvg: string, frameName: string, options: { threshold?: number; maxDiffPercent?: number; saveDiff?: boolean } = {},
+  actualSvg: string,
+  renderedSvg: string,
+  frameName: string,
+  options: { threshold?: number; maxDiffPercent?: number; saveDiff?: boolean } = {},
 ): CompareResult {
   const { threshold = 0.1, maxDiffPercent = 5.0, saveDiff = false } = options;
 
@@ -204,7 +207,9 @@ type ParsedData = {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {return parsedDataCache;}
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
 
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
@@ -273,7 +278,9 @@ describe("Constraint Edge Cases", () => {
   // --------------------------------------------------------------------------
 
   it("fixture has 4 canvases with expected symbols and frames", async () => {
-    if (!fs.existsSync(FIG_FILE)) {return;}
+    if (!fs.existsSync(FIG_FILE)) {
+      return;
+    }
     const data = await loadFigFile();
 
     expect(data.canvases.length).toBe(4);
@@ -304,7 +311,9 @@ describe("Constraint Edge Cases", () => {
   // --------------------------------------------------------------------------
 
   it("preResolveSymbols generates cache without circular dependency warnings", async () => {
-    if (!fs.existsSync(FIG_FILE)) {return;}
+    if (!fs.existsSync(FIG_FILE)) {
+      return;
+    }
     const data = await loadFigFile();
 
     const warnings: string[] = [];
@@ -322,7 +331,9 @@ describe("Constraint Edge Cases", () => {
   // --------------------------------------------------------------------------
 
   it("all canvases render without unresolved SYMBOL warnings", { timeout: 60_000 }, async () => {
-    if (!fs.existsSync(FIG_FILE)) {return;}
+    if (!fs.existsSync(FIG_FILE)) {
+      return;
+    }
     const data = await loadFigFile();
 
     const totalUnresolvedRef = { value: 0 };
@@ -423,17 +434,23 @@ describe("Constraint Edge Cases", () => {
   // --------------------------------------------------------------------------
 
   it("summary of all frames", { timeout: 120_000 }, async () => {
-    if (!fs.existsSync(FIG_FILE)) {return;}
+    if (!fs.existsSync(FIG_FILE)) {
+      return;
+    }
     const data = await loadFigFile();
 
     const results: CompareResult[] = [];
 
     for (const [frameName] of Object.entries(TEST_FRAMES)) {
       const layer = data.layers.get(frameName);
-      if (!layer) {continue;}
+      if (!layer) {
+        continue;
+      }
 
       const actualPath = path.join(ACTUAL_DIR, `${frameName}.svg`);
-      if (!fs.existsSync(actualPath)) {continue;}
+      if (!fs.existsSync(actualPath)) {
+        continue;
+      }
 
       const wrapperCanvas: FigNode = {
         type: "CANVAS",
@@ -468,15 +485,20 @@ describe("Constraint Edge Cases", () => {
 
     for (const r of results) {
       const status = r.diffPercent < 10 ? "PASS" : "FAIL";
-      if (r.diffPercent < 10) {passedRef.value++;}
-      else {failedRef.value++;}
+      if (r.diffPercent < 10) {
+        passedRef.value++;
+      } else {
+        failedRef.value++;
+      }
       totalDiffRef.value += r.diffPercent;
       console.log(r.frameName.padEnd(35) + `${r.diffPercent.toFixed(2)}%`.padStart(10) + `  ${status}`);
     }
 
     const avgDiff = results.length > 0 ? totalDiffRef.value / results.length : 0;
     console.log("-".repeat(57));
-    console.log(`Total: ${results.length} frames, ${passedRef.value} pass, ${failedRef.value} fail, avg ${avgDiff.toFixed(2)}% diff`);
+    console.log(
+      `Total: ${results.length} frames, ${passedRef.value} pass, ${failedRef.value} fail, avg ${avgDiff.toFixed(2)}% diff`,
+    );
 
     expect(failedRef.value).toBe(0);
   });

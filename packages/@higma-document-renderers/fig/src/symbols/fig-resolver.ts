@@ -17,7 +17,7 @@
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { FigGuid, FigBlob } from "@higma-document-models/fig/parser";
+import type { FigGuid, FigBlob } from "@higma-document-models/fig/domain";
 import {
   resolveInstanceNode,
   resolveInstanceReferences,

@@ -2,7 +2,7 @@
  * @file Branded ID types for fig design documents
  *
  * IDs are encoded as "sessionID:localID" strings matching the
- * guidToString() format from @higma-document-models/fig/parser. The conversion
+ * guidToString() format from @higma-document-models/fig/domain. The conversion
  * helpers below delegate to that primitive — never inline the format
  * here or anywhere else (the brand cast is the only addition).
  *
@@ -10,7 +10,7 @@
  * FigDesignNode / FigDesignDocument and are consumed by renderer,
  * builder, and editor packages alike.
  */
-import { guidToString, parseGuidString, type FigGuid } from "../parser";
+import { guidToString, parseGuidString, type FigGuid } from "./raw-node-tree";
 
 // =============================================================================
 // Branded ID Types

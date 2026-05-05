@@ -9,9 +9,8 @@
 
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree } from "@higma-document-models/fig/parser";
 import type { FigDesignDocument, FigPage } from "@higma-document-models/fig/domain";
-import { DEFAULT_PAGE_BACKGROUND, EMPTY_FIG_STYLE_REGISTRY, toPageId } from "@higma-document-models/fig/domain";
+import { buildNodeTree, DEFAULT_PAGE_BACKGROUND, EMPTY_FIG_STYLE_REGISTRY, toPageId } from "@higma-document-models/fig/domain";
 import { treeToDocument } from "./tree-to-document";
 
 // =============================================================================

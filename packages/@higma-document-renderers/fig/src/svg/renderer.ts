@@ -26,14 +26,13 @@
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { FigBlob, FigImage } from "@higma-document-models/fig/parser";
+import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
 import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
 import type { FontLoader } from "../font";
 import type { FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
-import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
+import { convertFigNode, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { buildFigStyleRegistry } from "@higma-document-models/fig/symbols";
-import { convertFigNode } from "@higma-document-io/fig/context";
 import { buildSceneGraph } from "../scene-graph/builder";
 import { resolveRenderTree } from "../scene-graph/render-tree";
 import { formatRenderTreeToSvg } from "./scene-renderer";
@@ -171,17 +170,23 @@ export async function renderFigToSvg(
   // references to authoritative paints during convertFigNode, and is also
   // passed to buildSceneGraph for per-path vector style overrides.
   const rawSymbolMap = options.symbolMap;
-  const styleRegistry: FigStyleRegistry = rawSymbolMap
-    ? buildFigStyleRegistry(rawSymbolMap)
-    : EMPTY_FIG_STYLE_REGISTRY;
+  const styleRegistry: FigStyleRegistry = (() => {
+    if (rawSymbolMap) {
+      return buildFigStyleRegistry(rawSymbolMap);
+    }
+    return EMPTY_FIG_STYLE_REGISTRY;
+  })();
 
   // Convert all parser nodes (including symbol definitions) into domain
   // objects. `components` is populated as a side-effect by convertFigNode
   // whenever it encounters a COMPONENT/COMPONENT_SET/SYMBOL.
   const components = new Map<string, FigDesignNode>();
-  const designSymbolMap = rawSymbolMap
-    ? convertSymbolMap(rawSymbolMap, components, styleRegistry, blobs)
-    : new Map<string, FigDesignNode>();
+  const designSymbolMap = (() => {
+    if (rawSymbolMap) {
+      return convertSymbolMap(rawSymbolMap, components, styleRegistry, blobs);
+    }
+    return new Map<string, FigDesignNode>();
+  })();
 
   const designNodes: FigDesignNode[] = nodes.map((n) => convertFigNode(n, components, styleRegistry, rawSymbolMap, blobs));
 
@@ -197,12 +202,13 @@ export async function renderFigToSvg(
   // raw FigNode transforms (pre-conversion); apply the same offset to each
   // corresponding converted FigDesignNode. Both arrays are in the same
   // order because `designNodes` is produced by `nodes.map(convertFigNode)`.
-  const normalizedNodes = options.normalizeRootTransform
-    ? (() => {
+  const normalizedNodes = (() => {
+    if (options.normalizeRootTransform) {
       const offset = getRootFrameOffset(nodes);
       return designNodes.map((n) => normalizeDesignNodeTransform(n, offset));
-    })()
-    : designNodes;
+    }
+    return designNodes;
+  })();
 
   const sceneGraph = buildSceneGraph(normalizedNodes, {
     blobs,
@@ -295,16 +301,14 @@ export async function renderCanvas(
   const explicitW = options.width;
   const explicitH = options.height;
 
-  let width: number;
-  let height: number;
-  if (explicitW !== undefined && explicitH !== undefined) {
-    width = explicitW;
-    height = explicitH;
-  } else {
+  const canvasSize = (() => {
+    if (explicitW !== undefined && explicitH !== undefined) {
+      return { width: explicitW, height: explicitH };
+    }
     const bounds = calculateCanvasBounds(children);
-    width = explicitW ?? bounds.width;
-    height = explicitH ?? bounds.height;
-  }
+    return { width: explicitW ?? bounds.width, height: explicitH ?? bounds.height };
+  })();
+  const { width, height } = canvasSize;
 
   return renderFigToSvg(children, {
     ...options,

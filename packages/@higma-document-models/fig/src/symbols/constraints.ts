@@ -12,7 +12,7 @@
 
 import type { FigNode, FigMatrix, MutableFigNode } from "@higma-document-models/fig/types";
 import { CONSTRAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
-import { guidToString } from "@higma-document-models/fig/parser";
+import { guidToString } from "@higma-document-models/fig/domain";
 import { getConstraintValue, resolveChildConstraints } from "@higma-document-models/fig/symbols";
 import type { FigDerivedSymbolData } from "./symbol-resolver";
 

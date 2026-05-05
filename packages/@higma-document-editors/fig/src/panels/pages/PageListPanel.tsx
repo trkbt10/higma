@@ -46,8 +46,8 @@ export function PageListPanel() {
     if (!canEditPage) {
       return;
     }
-    dispatch({ type: "ADD_PAGE" });
-  }, [canEditPage, dispatch]);
+    dispatch({ type: "ADD_PAGE", name: `Page ${document.pages.length + 1}` });
+  }, [canEditPage, dispatch, document.pages.length]);
 
   return (
     <OptionalPropertySection title="Pages" badge={document.pages.length} defaultExpanded>

@@ -12,7 +12,7 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { createDemoFigDesignDocument } from "@higma-document-io/fig/context";
+import { createDemoFigDesignDocument } from "../testing/demo-document";
 import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "../scene-graph/builder";
 import { FigSceneRenderer } from "./FigSceneRenderer";

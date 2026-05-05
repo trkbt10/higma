@@ -5,7 +5,7 @@
  * These paths achieve exact visual match (0% diff) with Figma's export.
  */
 
-import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/parser";
+import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
 import type { PathCommand } from "../../font/types";
 import type { PathContour, DecorationRect, TextPathResult } from "./types";
 import type {

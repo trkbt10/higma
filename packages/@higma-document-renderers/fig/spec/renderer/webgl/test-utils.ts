@@ -15,7 +15,7 @@ import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { createServer, type ViteDevServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree } from "@higma-document-models/fig/parser";
+import { buildNodeTree } from "@higma-document-io/fig/parser";
 import { treeToDocument } from "@higma-document-io/fig/context";
 import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "../../../src/scene-graph/builder";
@@ -110,9 +110,7 @@ export function svgToPng(svg: string, width?: number): Buffer {
 // =============================================================================
 
 /** Compare two PNG buffers and return difference percentage */
-export function comparePngs(
-  { actual, rendered, frameName, diffPath }: ComparePngsParams,
-): CompareResult {
+export function comparePngs({ actual, rendered, frameName, diffPath }: ComparePngsParams): CompareResult {
   const imgA = readPng(actual);
   const imgBRef = { value: readPng(rendered) };
   // Resize if dimensions don't match
@@ -149,9 +147,13 @@ export function comparePngs(
   };
 }
 
-function selectFixturePages(
-  { document, canvasFilter }: { document: FigDesignDocument; canvasFilter?: string },
-): readonly FigDesignDocument["pages"][number][] {
+function selectFixturePages({
+  document,
+  canvasFilter,
+}: {
+  document: FigDesignDocument;
+  canvasFilter?: string;
+}): readonly FigDesignDocument["pages"][number][] {
   if (!canvasFilter) {
     return document.pages;
   }
@@ -199,7 +201,9 @@ export async function loadFigFixture(figPath: string, canvasFilter?: string): Pr
  * Normalize a root frame's transform to (0,0) for consistent rendering.
  */
 function normalizeRootNode(node: FigDesignNode): FigDesignNode {
-  if (!node.transform) { return node; }
+  if (!node.transform) {
+    return node;
+  }
   return {
     ...node,
     transform: { ...node.transform, m02: 0, m12: 0 },
@@ -276,7 +280,7 @@ export async function startHarness(harnessConfigPath: string): Promise<WebGLHarn
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
   const page = await browser.newPage();
-  page.on("console", msg => {
+  page.on("console", (msg) => {
     if (msg.type() === "error" || msg.type() === "warn") {
       console.error(`  [browser ${msg.type()}] ${msg.text()}`);
     }
@@ -307,7 +311,9 @@ export function printCategorySummary(title: string, categoryResults: Map<string,
   console.log(`\n=== ${title} ===\n`);
   const allResults: CompareResult[] = [];
   for (const [category, results] of categoryResults) {
-    if (results.length === 0) { continue; }
+    if (results.length === 0) {
+      continue;
+    }
     const avg = results.reduce((sum, r) => sum + r.diffPercent, 0) / results.length;
     const max = Math.max(...results.map((r) => r.diffPercent));
     const min = Math.min(...results.map((r) => r.diffPercent));

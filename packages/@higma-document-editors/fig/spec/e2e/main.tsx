@@ -24,7 +24,7 @@ import type {
   FigPageId,
 } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 import type { FigMatrix, KiwiEnumValue } from "@higma-document-models/fig/types";
 import {
   createCachingFontLoader,

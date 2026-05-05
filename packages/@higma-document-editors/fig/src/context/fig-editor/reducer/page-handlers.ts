@@ -7,6 +7,7 @@ import { createEmptySelection } from "@higma-editor-kernel/core/selection";
 import { addPage, removePage, reorderPage, renamePage } from "@higma-document-io/fig/page-ops";
 import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { HandlerMap } from "./handler-types";
+import { createEditorFigBuilderState } from "./builder-state";
 
 export const PAGE_HANDLERS: HandlerMap = {
   SELECT_PAGE(state, action) {
@@ -22,7 +23,7 @@ export const PAGE_HANDLERS: HandlerMap = {
 
   ADD_PAGE(state, action) {
     const doc = state.documentHistory.present;
-    const result = addPage(doc, action.name);
+    const result = addPage({ state: createEditorFigBuilderState(doc), doc, name: action.name });
     return {
       ...state,
       documentHistory: pushHistory(state.documentHistory, result.doc),

@@ -26,7 +26,7 @@ import {
 } from "@higma-document-models/fig/domain";
 import type { FigPaint, FigVectorPath } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
-import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/parser";
+import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/domain";
 import { styleRefKeys, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
 import { dfsById } from "@higma-primitives/tree";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
@@ -147,7 +147,7 @@ export type BuildSceneGraphOptions = {
  * not read raw FigNode, does not translate override guid paths, and
  * does not perform GUID translation. All such work is the
  * responsibility of the domain-convert layer
- * (`@higma-document-io/fig/context`).
+ * (`@higma-document-models/fig/domain`).
  */
 /**
  * Mutable design node augmented with scene-graph-internal bookkeeping
@@ -503,8 +503,7 @@ function mutableChildren(
  * The targeted INSTANCE has its `symbolId` replaced with the variant
  * and its `children` re-cloned from the new variant's SYMBOL. The
  * domain-convert layer has already re-keyed each multi-level override's
- * tail guids into the variant's namespace (see `translateEntryFull` in
- * `@higma-document-io/fig/context`), so Pass 2 finds its targets
+ * tail guids into the variant's namespace, so Pass 2 finds its targets
  * directly against the freshly cloned children.
  *
  * Pass 2: property overrides. Each non-variant override locates its

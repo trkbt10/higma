@@ -6,13 +6,15 @@ import { pushHistory } from "@higma-editor-kernel/core/history";
 import { createSingleSelection, createMultiSelection, createEmptySelection } from "@higma-editor-kernel/core/selection";
 import { addNode, removeNode, updateNode, reorderNode, findNodeById, findParentNode, insertNodeInTree, updateNodeInTree } from "@higma-document-io/fig/node-ops";
 import type { FigNodeId, FigDesignNode } from "@higma-document-models/fig/domain";
-import { nextNodeId, createIdCounter } from "@higma-document-io/fig/types";
+import { nextNodeId } from "@higma-document-io/fig/types";
+import type { FigBuilderState } from "@higma-document-io/fig/types";
 import type { HandlerMap } from "./handler-types";
 import { getActivePage } from "../node-geometry";
 import type { SelectionState } from "@higma-editor-kernel/core/selection";
 import type { FigEditorState } from "../types";
 import { outlineNode } from "./outline-node";
 import { createBooleanOperationEnum, type BooleanOperationType } from "@higma-document-renderers/fig/scene-graph";
+import { createEditorFigBuilderState } from "./builder-state";
 
 function buildNodeSelection(newIds: FigNodeId[]): SelectionState<FigNodeId> {
   if (newIds.length === 1) {
@@ -59,11 +61,13 @@ function wrapSelectedSiblings({
   selectedIds,
   wrapperType,
   operation,
+  builderState,
 }: {
   readonly pageChildren: readonly FigDesignNode[];
   readonly selectedIds: readonly FigNodeId[];
   readonly wrapperType: "GROUP" | "COMPONENT" | "SYMBOL" | "BOOLEAN_OPERATION";
   readonly operation?: BooleanOperationType;
+  readonly builderState: FigBuilderState;
 }): { readonly children: readonly FigDesignNode[]; readonly wrapper: FigDesignNode } | null {
   if (selectedIds.length === 0) {
     return null;
@@ -84,8 +88,7 @@ function wrapSelectedSiblings({
   }
 
   const bounds = computeGroupBounds(selectedNodes);
-  const counter = createIdCounter(Date.now());
-  const wrapperId = nextNodeId(counter);
+  const wrapperId = nextNodeId(builderState.nodeIdCounter);
   const firstSelected = selectedNodes[0]!;
   const wrapper: FigDesignNode = {
     id: wrapperId,
@@ -146,7 +149,8 @@ export const NODE_HANDLERS: HandlerMap = {
     }
 
     const doc = state.documentHistory.present;
-    const result = addNode({ doc, pageId, parentId: action.parentId ?? null, spec: action.spec });
+    const builderState = createEditorFigBuilderState(doc);
+    const result = addNode({ state: builderState, doc, pageId, parentId: action.parentId ?? null, spec: action.spec });
 
     return {
       ...state,
@@ -218,10 +222,7 @@ export const NODE_HANDLERS: HandlerMap = {
       return state;
     }
 
-    // Use Date.now() as session ID to ensure uniqueness across duplicate operations.
-    // Each invocation gets a distinct timestamp, so IDs never collide even if the user
-    // duplicates rapidly. The localID counter starts at 1 within each session.
-    const counter = createIdCounter(Date.now());
+    const builderState = createEditorFigBuilderState(doc);
     const duplicateOffset = 10;
     const newIds: FigNodeId[] = [];
 
@@ -230,7 +231,7 @@ export const NODE_HANDLERS: HandlerMap = {
      * Offsets the root node's position.
      */
     function cloneWithNewIds(node: FigDesignNode, isRoot: boolean): FigDesignNode {
-      const newId = nextNodeId(counter);
+      const newId = nextNodeId(builderState.nodeIdCounter);
       const offsetTransform = { ...node.transform, m02: node.transform.m02 + duplicateOffset, m12: node.transform.m12 + duplicateOffset };
       const cloned: FigDesignNode = {
         ...node,
@@ -371,6 +372,7 @@ function wrapSelection(
     pageChildren: page.children,
     selectedIds: state.nodeSelection.selectedIds,
     wrapperType,
+    builderState: createEditorFigBuilderState(doc),
   });
   if (!wrapped) {
     return state;
@@ -408,6 +410,7 @@ function wrapBooleanOperationSelection(
     selectedIds: state.nodeSelection.selectedIds,
     wrapperType: "BOOLEAN_OPERATION",
     operation,
+    builderState: createEditorFigBuilderState(doc),
   });
   if (!wrapped) {
     return state;

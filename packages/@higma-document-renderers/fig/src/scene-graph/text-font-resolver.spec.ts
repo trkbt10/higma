@@ -31,6 +31,7 @@ const FONT: AbstractFont = {
 };
 
 function makeTextNode(): FigDesignNode {
+  const lineHeight = 24;
   return {
     id: "text" as FigNodeId,
     type: "TEXT",
@@ -47,13 +48,31 @@ function makeTextNode(): FigDesignNode {
       characters: "Hello",
       fontSize: 20,
       fontName: { family: "Unit Test Sans", style: "Regular" },
+      lineHeight: { value: 24, units: { name: "PIXELS", value: 0 } },
       textAlignHorizontal: { name: "LEFT", value: 0 },
       textAlignVertical: { name: "TOP", value: 0 },
+    },
+    derivedTextData: {
+      baselines: [{
+        position: { x: 0, y: 0 },
+        width: 200,
+        lineY: 0,
+        lineHeight,
+        lineAscent: 18,
+        firstCharacter: 0,
+        endCharacter: 5,
+      }],
+      fontMetaData: [{
+        key: { family: "Unit Test Sans", style: "Regular" },
+        fontLineHeight: lineHeight / 20,
+        fontWeight: 400,
+      }],
     },
   };
 }
 
 function makeWrappingTextNode(): FigDesignNode {
+  const lineHeight = 20;
   return {
     ...makeTextNode(),
     id: "wrapping-text" as FigNodeId,
@@ -62,9 +81,26 @@ function makeWrappingTextNode(): FigDesignNode {
       characters: "Hello World Wide",
       fontSize: 16,
       fontName: { family: "Unit Test Sans", style: "Regular" },
+      lineHeight: { value: lineHeight, units: { name: "PIXELS", value: 0 } },
       textAlignHorizontal: { name: "LEFT", value: 0 },
       textAlignVertical: { name: "TOP", value: 0 },
       textAutoResize: { name: "NONE", value: 2 },
+    },
+    derivedTextData: {
+      baselines: [{
+        position: { x: 0, y: 0 },
+        width: 60,
+        lineY: 0,
+        lineHeight,
+        lineAscent: 15,
+        firstCharacter: 0,
+        endCharacter: 16,
+      }],
+      fontMetaData: [{
+        key: { family: "Unit Test Sans", style: "Regular" },
+        fontLineHeight: lineHeight / 16,
+        fontWeight: 400,
+      }],
     },
   };
 }

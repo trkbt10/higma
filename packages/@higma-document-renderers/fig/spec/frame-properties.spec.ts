@@ -16,11 +16,8 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, createPngImage } from "@higma-codecs/png";
-import {
-  parseFigFile,
-  buildNodeTree,
-  findNodesByType,
-} from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -46,7 +43,7 @@ async function loadFixture(): Promise<ParsedFixture> {
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
       `Fixture file not found: ${FIG_FILE}\n` +
-      `Run: bun packages/@higma-document-renderers/fig/scripts/generate-frame-properties-fixtures.ts`,
+        `Run: bun packages/@higma-document-renderers/fig/scripts/generate-frame-properties-fixtures.ts`,
     );
   }
   const data = fs.readFileSync(FIG_FILE);
@@ -57,7 +54,9 @@ async function loadFixture(): Promise<ParsedFixture> {
   const frames = new Map<string, FrameFixture>();
   for (const canvas of canvases) {
     for (const child of canvas.children ?? []) {
-      if (child.type?.name !== "FRAME") {continue;}
+      if (child.type?.name !== "FRAME") {
+        continue;
+      }
       const name = child.name ?? "unnamed";
       const size = child.size;
       frames.set(name, {
@@ -229,7 +228,9 @@ describe("FRAME decoration pixel-parity with Figma export", () => {
         throw new Error(`Missing Figma actual export: ${actualPath}`);
       }
       const frame = fixture.frames.get(name);
-      if (!frame) {throw new Error(`Frame ${name} missing from fixture`);}
+      if (!frame) {
+        throw new Error(`Frame ${name} missing from fixture`);
+      }
       const ourSvg = await renderFrame(fixture, name);
       const actualSvg = fs.readFileSync(actualPath, "utf-8");
 
@@ -239,7 +240,9 @@ describe("FRAME decoration pixel-parity with Figma export", () => {
       expect(ourPng.height).toBe(actualPng.height);
 
       const diff = createPngImage({ width: ourPng.width, height: ourPng.height });
-      const diffPx = pixelmatch(ourPng.data, actualPng.data, diff.data, ourPng.width, ourPng.height, { threshold: 0.1 });
+      const diffPx = pixelmatch(ourPng.data, actualPng.data, diff.data, ourPng.width, ourPng.height, {
+        threshold: 0.1,
+      });
       const totalPx = ourPng.width * ourPng.height;
       const pct = (diffPx / totalPx) * 100;
       expect(pct, `${name}: ${diffPx}/${totalPx} px differ (${pct.toFixed(2)}%)`).toBeLessThan(1);

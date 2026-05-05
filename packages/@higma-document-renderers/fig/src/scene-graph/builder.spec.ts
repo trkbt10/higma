@@ -6,7 +6,7 @@
  */
 
 
-import { createDemoFigDesignDocument } from "@higma-document-io/fig/context";
+import { createDemoFigDesignDocument } from "../testing/demo-document";
 import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg/scene-renderer";

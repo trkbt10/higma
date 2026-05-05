@@ -15,6 +15,7 @@ import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { HandlerMap } from "./handler-types";
+import { createEditorFigBuilderState } from "./builder-state";
 import { createSelectMode, type FigCreationMode } from "../types";
 import { IDENTITY_MATRIX, composeTransforms } from "../matrix";
 
@@ -186,7 +187,13 @@ export const CREATION_HANDLERS: HandlerMap = {
       };
     }
 
-    const result = addNode({ doc, pageId, parentId: parent?.nodeId ?? null, spec });
+    const result = addNode({
+      state: createEditorFigBuilderState(doc),
+      doc,
+      pageId,
+      parentId: parent?.nodeId ?? null,
+      spec,
+    });
 
     return {
       ...state,

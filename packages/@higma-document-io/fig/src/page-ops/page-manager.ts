@@ -6,54 +6,38 @@
  */
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigPageId } from "@higma-document-models/fig/domain";
-import { DEFAULT_PAGE_BACKGROUND, toPageId } from "@higma-document-models/fig/domain";
-import { nextPageId, createIdCounter } from "../types/node-id";
-
-// =============================================================================
-// ID Generation
-// =============================================================================
-
-/**
- * Shared counter for generating page IDs.
- * Uses session 0 (structural nodes).
- */
-let pageCounter = createIdCounter(0, 100);
-
-/**
- * Reset the page counter (useful for testing).
- */
-export function resetPageIdCounter(startLocalID = 100): void {
-  pageCounter = createIdCounter(0, startLocalID);
-}
-
-/**
- * Generate a new unique page ID.
- */
-function generatePageId(): FigPageId {
-  return nextPageId(pageCounter);
-}
+import { DEFAULT_PAGE_BACKGROUND } from "@higma-document-models/fig/domain";
+import { nextNodeId, nextPageId } from "../types/node-id";
+import type { FigBuilderState } from "../types/node-id";
 
 // =============================================================================
 // Add Page
 // =============================================================================
 
 /**
+ * AddPageOptions carries explicit builder state, document, and page name input.
+ */
+type AddPageOptions = {
+  readonly state: FigBuilderState;
+  readonly doc: FigDesignDocument;
+  readonly name: string;
+};
+
+/**
  * Add a new empty page to the document.
  *
- * @param doc - Current document
- * @param name - Page name (defaults to "Page N" based on current count)
  * @returns Updated document and the new page's ID
  */
 export function addPage(
-  doc: FigDesignDocument,
-  name?: string,
+  { state, doc, name }: AddPageOptions,
 ): { readonly doc: FigDesignDocument; readonly pageId: FigPageId } {
-  const pageId = generatePageId();
-  const pageName = name ?? `Page ${doc.pages.length + 1}`;
+  assertBuilderState(state, "addPage");
+  assertNonEmptyString(name, "addPage name");
+  const pageId = nextPageId(state.pageIdCounter);
 
   const page: FigPage = {
     id: pageId,
-    name: pageName,
+    name,
     backgroundColor: DEFAULT_PAGE_BACKGROUND,
     children: [],
   };
@@ -122,30 +106,40 @@ export function reorderPage(
 // =============================================================================
 
 /**
+ * DuplicatePageOptions carries explicit builder state, document, source page identifier, and duplicate page name input.
+ */
+type DuplicatePageOptions = {
+  readonly state: FigBuilderState;
+  readonly doc: FigDesignDocument;
+  readonly pageId: FigPageId;
+  readonly name: string;
+};
+
+/**
  * Duplicate a page and all its contents.
  *
  * The duplicated page is inserted immediately after the original.
  * All node IDs in the duplicate are regenerated to ensure uniqueness.
  */
 export function duplicatePage(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
+  { state, doc, pageId, name }: DuplicatePageOptions,
 ): { readonly doc: FigDesignDocument; readonly newPageId: FigPageId } {
+  assertBuilderState(state, "duplicatePage");
+  assertNonEmptyString(name, "duplicatePage name");
   const sourceIndex = doc.pages.findIndex((p) => p.id === pageId);
   if (sourceIndex === -1) {
-    // Page not found; return unchanged with a placeholder ID
-    return { doc, newPageId: toPageId("0:0") };
+    throw new Error(`duplicatePage failed: page ${pageId} was not found`);
   }
 
   const source = doc.pages[sourceIndex];
-  const newPageId = generatePageId();
+  const newPageId = nextPageId(state.pageIdCounter);
 
   // Deep clone children with new IDs
-  const clonedChildren = deepCloneNodes(source.children);
+  const clonedChildren = deepCloneNodes(state, source.children);
 
   const newPage: FigPage = {
     id: newPageId,
-    name: `${source.name} (copy)`,
+    name,
     backgroundColor: source.backgroundColor,
     children: clonedChildren,
   };
@@ -181,21 +175,38 @@ export function renamePage(
 // Deep Clone Helpers
 // =============================================================================
 
-import { nextNodeId } from "../types/node-id";
-
 /**
  * Deep clone a list of design nodes, regenerating all IDs.
  */
 function deepCloneNodes(
+  state: FigBuilderState,
   nodes: readonly FigDesignNode[],
 ): FigDesignNode[] {
   return nodes.map((node) => {
-    const newId = nextNodeId(pageCounter);
+    const newId = nextNodeId(state.nodeIdCounter);
     return {
       ...node,
       id: newId,
-      children: node.children ? deepCloneNodes(node.children) : undefined,
+      children: node.children ? deepCloneNodes(state, node.children) : undefined,
       _raw: undefined, // Clone loses raw data (different IDs)
     };
   });
+}
+
+/**
+ * assertBuilderState rejects missing explicit builder state for page operations.
+ */
+function assertBuilderState(state: FigBuilderState, caller: string): void {
+  if (!state) {
+    throw new Error(`${caller} requires explicit builder state`);
+  }
+}
+
+/**
+ * assertNonEmptyString rejects missing required page name input.
+ */
+function assertNonEmptyString(value: string, name: string): void {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
 }

@@ -1,6 +1,6 @@
 /** @file Fig image asset helpers for fill/stroke editors. */
 
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 
 export type CreateFigImageAssetParams = {
   readonly data: Uint8Array;

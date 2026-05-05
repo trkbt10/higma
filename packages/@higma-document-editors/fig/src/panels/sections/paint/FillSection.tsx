@@ -6,7 +6,7 @@
  */
 
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import type { PropertyMutationTarget } from "../../properties/property-mutation-target";
 import { AddIcon } from "@higma-editor-kernel/ui/icons";

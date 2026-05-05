@@ -10,7 +10,7 @@
  */
 
 import type { FigNode, FigComponentPropAssignment } from "@higma-document-models/fig/types";
-import { getNodeType, parseGuidString, decodePathCommands, type FigGuid, type FigBlob, type PathCommand } from "@higma-document-models/fig/parser";
+import { getNodeType, parseGuidString, decodePathCommands, type FigGuid, type FigBlob, type PathCommand } from "@higma-document-models/fig/domain";
 import type { FigKiwiSymbolOverride } from "@higma-document-models/fig/types";
 import { createFigResolveContext, type FigResolveContext, type SymbolDescendant } from "./resolve-context";
 import { walkTree } from "@higma-primitives/tree";

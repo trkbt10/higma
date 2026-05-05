@@ -8,13 +8,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectFeatures, countShapeElements, getSvgSize } from "./helpers/svg-feature-detect";
-import {
-  parseFigFile,
-  buildNodeTree,
-  findNodesByType,
-  type FigBlob,
-  type FigImage,
-} from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -31,7 +26,6 @@ const FRAME_MAP: Record<string, string> = {
   "image-fill-multi": "image-fill-multi.svg",
 };
 
-
 type LayerInfo = { name: string; node: FigNode; size: { width: number; height: number } };
 type ParsedData = {
   layers: Map<string, LayerInfo>;
@@ -43,7 +37,9 @@ type ParsedData = {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) { return parsedDataCache; }
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
   const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
@@ -64,7 +60,9 @@ describe("Image Fill Rendering", () => {
   beforeAll(async () => {
     expect(fs.existsSync(FIG_FILE), `Fixture not found: ${FIG_FILE}`).toBe(true);
     await loadFigFile();
-    if (!fs.existsSync(SNAPSHOTS_DIR)) { fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true }); }
+    if (!fs.existsSync(SNAPSHOTS_DIR)) {
+      fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    }
   });
 
   for (const [frameName, fileName] of Object.entries(FRAME_MAP)) {
@@ -72,17 +70,22 @@ describe("Image Fill Rendering", () => {
       const data = await loadFigFile();
       const layer = data.layers.get(frameName);
       expect(layer, `Frame "${frameName}" not found`).toBeDefined();
-      if (!layer) { return; }
+      if (!layer) {
+        return;
+      }
 
       const actualPath = path.join(ACTUAL_DIR, fileName);
       expect(fs.existsSync(actualPath), `Actual SVG not found: ${actualPath}. Export from Figma first.`).toBe(true);
       const actualSvg = fs.readFileSync(actualPath, "utf-8");
       const refSize = getSvgSize(actualSvg);
 
-      const result = await renderCanvas(
-        { type: "CANVAS", name: frameName, children: [layer.node] } as FigNode,
-        { width: refSize.width, height: refSize.height, blobs: data.blobs, images: data.images, symbolMap: data.nodeMap },
-      );
+      const result = await renderCanvas({ type: "CANVAS", name: frameName, children: [layer.node] } as FigNode, {
+        width: refSize.width,
+        height: refSize.height,
+        blobs: data.blobs,
+        images: data.images,
+        symbolMap: data.nodeMap,
+      });
 
       fs.writeFileSync(path.join(SNAPSHOTS_DIR, fileName), result.svg);
 

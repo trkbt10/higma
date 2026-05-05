@@ -6,8 +6,8 @@ import {
   type FigDesignNode,
   type FigNodeId,
   type SymbolOverride,
+  guidToString,
 } from "@higma-document-models/fig/domain";
-import { guidToString } from "@higma-document-models/fig/parser";
 import { Input } from "@higma-editor-kernel/ui/primitives/Input";
 import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
 import type { FigEditorAction } from "../../../context/fig-editor/types";

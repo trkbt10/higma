@@ -9,6 +9,12 @@
 export type {
   NodeSpec,
   BaseNodeSpec,
+  FigBuilderState,
+} from "./types";
+
+export {
+  createFigBuilderState,
+  createFigBuilderStateFromDocument,
 } from "./types";
 
 // Context

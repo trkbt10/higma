@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
-import { parseFigFile, buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
@@ -99,7 +100,10 @@ function svgToPng(svg: string, width?: number): Buffer {
  * Compare two SVGs visually
  */
 function compareSvgs(
-  actualSvg: string, renderedSvg: string, frameName: string, options: { threshold?: number; maxDiffPercent?: number; saveDiff?: boolean } = {},
+  actualSvg: string,
+  renderedSvg: string,
+  frameName: string,
+  options: { threshold?: number; maxDiffPercent?: number; saveDiff?: boolean } = {},
 ): CompareResult {
   const { threshold = 0.1, maxDiffPercent = 5.0, saveDiff = false } = options;
 
@@ -295,7 +299,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`renders ${alignment} correctly`, async () => {
         const frame = dataRef.value.frames.get(alignment);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${alignment}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -325,7 +331,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`renders ${lh} correctly`, async () => {
         const frame = dataRef.value.frames.get(lh);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${lh}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -353,7 +361,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`renders ${ls} correctly`, async () => {
         const frame = dataRef.value.frames.get(ls);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${ls}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -381,7 +391,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`renders ${color} correctly`, async () => {
         const frame = dataRef.value.frames.get(color);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${color}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -414,7 +426,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`renders ${size} correctly`, async () => {
         const frame = dataRef.value.frames.get(size);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${size}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -434,7 +448,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`renders ${ml} correctly`, async () => {
         const frame = dataRef.value.frames.get(ml);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${ml}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -453,7 +469,9 @@ describe("text-comprehensive visual comparison", () => {
       it(`handles ${ec}`, async () => {
         const frame = dataRef.value.frames.get(ec);
         expect(frame).toBeDefined();
-        if (!frame) {return;}
+        if (!frame) {
+          return;
+        }
 
         const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${ec}.svg`), "utf-8");
         const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);
@@ -470,7 +488,9 @@ describe("text-comprehensive visual comparison", () => {
 
     for (const fileName of actualFilesRef.value) {
       const frame = dataRef.value.frames.get(fileName);
-      if (!frame) {continue;}
+      if (!frame) {
+        continue;
+      }
 
       const actualSvg = fs.readFileSync(path.join(ACTUAL_SVG_DIR, `${fileName}.svg`), "utf-8");
       const renderedSvg = await renderFrame(frame, dataRef.value.blobs, dataRef.value.nodeMap);

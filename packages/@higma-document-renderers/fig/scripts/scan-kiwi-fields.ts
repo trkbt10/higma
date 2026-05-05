@@ -10,7 +10,8 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseFigFile, buildNodeTree } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree } from "@higma-document-models/fig/domain";
 
 async function main(): Promise<void> {
   const figPath = process.argv[2];

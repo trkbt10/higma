@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, createPngImage } from "@higma-codecs/png";
-import { parseFigFile, buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
 import { createCachingFontLoader, type CachingFontLoader } from "../src/font";
@@ -66,10 +67,17 @@ function comparePngs(actual: Buffer, rendered: Buffer): { diffPercent: number } 
   }
 
   const diff = createPngImage({ width: actualPng.width, height: actualPng.height });
-  const diffPixels = pixelmatch(actualPng.data, renderedPngRef.value.data, diff.data, actualPng.width, actualPng.height, {
-    threshold: 0.1,
-    includeAA: false,
-  });
+  const diffPixels = pixelmatch(
+    actualPng.data,
+    renderedPngRef.value.data,
+    diff.data,
+    actualPng.width,
+    actualPng.height,
+    {
+      threshold: 0.1,
+      includeAA: false,
+    },
+  );
 
   const totalPixels = actualPng.width * actualPng.height;
   return { diffPercent: (diffPixels / totalPixels) * 100 };
@@ -133,7 +141,9 @@ describe("Path-based text rendering", () => {
   it("renders LEFT-TOP with path-based approach", async () => {
     const frame = dataRef.value.frames.get("LEFT-TOP");
     expect(frame).toBeDefined();
-    if (!frame || !frame.textNode) {return;}
+    if (!frame || !frame.textNode) {
+      return;
+    }
 
     // Check if actual SVG exists
     const actualPath = path.join(ACTUAL_SVG_DIR, "LEFT-TOP.svg");
@@ -181,10 +191,14 @@ ${pathSvg}
   it("compares text-based vs path-based for size-64", async () => {
     const frame = dataRef.value.frames.get("size-64");
     expect(frame).toBeDefined();
-    if (!frame || !frame.textNode) {return;}
+    if (!frame || !frame.textNode) {
+      return;
+    }
 
     const actualPath = path.join(ACTUAL_SVG_DIR, "size-64.svg");
-    if (!fs.existsSync(actualPath)) {return;}
+    if (!fs.existsSync(actualPath)) {
+      return;
+    }
 
     const ctx = createFigSvgRenderContext({
       canvasSize: { width: frame.size.width, height: frame.size.height },

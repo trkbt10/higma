@@ -2,7 +2,8 @@
  * @file Tests for raw FigNode to FigDesignNode conversion
  */
 
-import { convertFigNode, treeToDocument } from "./tree-to-document";
+import { treeToDocument } from "./tree-to-document";
+import { convertFigNode } from "@higma-document-models/fig/domain";
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
 

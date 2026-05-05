@@ -6,14 +6,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  parseFigFile,
   buildNodeTree,
   findNodesByType,
   getNodeType,
   type FigBlob,
   type FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -60,7 +60,9 @@ type ParsedData = {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {return parsedDataCache;}
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
 
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
@@ -163,7 +165,9 @@ describe("Fill Rendering", () => {
       const hasActual = fs.existsSync(actualPath);
 
       const actualSizeRef = { value: layer.size };
-      const actualFillInfoRef = { value: { solidFills: [], gradientDefs: 0, strokeColors: [], strokeWidths: [], dashArrays: [] } };
+      const actualFillInfoRef = {
+        value: { solidFills: [], gradientDefs: 0, strokeColors: [], strokeWidths: [], dashArrays: [] },
+      };
 
       if (hasActual) {
         const actualSvg = fs.readFileSync(actualPath, "utf-8");
@@ -200,7 +204,9 @@ describe("Fill Rendering", () => {
         console.log(
           `Solid fills: actual=${actualFillInfoRef.value.solidFills.length}, rendered=${renderedFillInfo.solidFills.length}`,
         );
-        console.log(`Gradients: actual=${actualFillInfoRef.value.gradientDefs}, rendered=${renderedFillInfo.gradientDefs}`);
+        console.log(
+          `Gradients: actual=${actualFillInfoRef.value.gradientDefs}, rendered=${renderedFillInfo.gradientDefs}`,
+        );
         console.log(
           `Strokes: actual=${actualFillInfoRef.value.strokeColors.length}, rendered=${renderedFillInfo.strokeColors.length}`,
         );

@@ -2,7 +2,7 @@
  * @file Figma renderer types (renderer-specific only)
  */
 
-import type { FigBlob, FigImage } from "@higma-document-models/fig/parser";
+import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 
 import type { FontLoader } from "./font";

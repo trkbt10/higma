@@ -11,14 +11,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  parseFigFile,
   buildNodeTree,
   findNodesByType,
   getNodeType,
   type FigBlob,
   type FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 

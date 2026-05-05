@@ -7,6 +7,7 @@
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "../types/spec-types";
+import type { FigBuilderState } from "../types/node-id";
 import { createNodeFromSpec } from "./node-factory";
 import {
   findNodeById,
@@ -46,6 +47,7 @@ function updatePage(
 // =============================================================================
 
 type AddNodeOptions = {
+  readonly state: FigBuilderState;
   readonly doc: FigDesignDocument;
   readonly pageId: FigPageId;
   readonly parentId: FigNodeId | null;
@@ -58,9 +60,9 @@ type AddNodeOptions = {
  * @returns Updated document and the new node's ID
  */
 export function addNode(
-  { doc, pageId, parentId, spec }: AddNodeOptions,
+  { state, doc, pageId, parentId, spec }: AddNodeOptions,
 ): { readonly doc: FigDesignDocument; readonly nodeId: FigNodeId } {
-  const node = createNodeFromSpec(spec);
+  const node = createNodeFromSpec({ state, spec });
 
   const updatedDoc = updatePage(doc, pageId, (page) => ({
     ...page,

@@ -8,7 +8,7 @@
  * those guids need to land in the new variant's namespace.
  *
  * This is the domain-tree-aware companion to `resolveOverridePaths`
- * in `@higma-document-io/fig/context`. Both share the same primitive:
+ * in the FigNode conversion layer. Both share the same primitive:
  * `buildGuidTranslationMap` in this package — the single SoT for
  * "map override guid strings to SYMBOL descendant guid strings".
  *
@@ -21,7 +21,7 @@
  */
 
 import type { FigKiwiSymbolOverride, FigComponentPropAssignment, FigPaint, FigVector, FigNodeType, FigNode, KiwiEnumValue } from "../types";
-import { guidToString, parseGuidString, type FigBlob } from "../parser";
+import { guidToString, parseGuidString, type FigBlob } from "../domain";
 import { buildGuidTranslationMap, type GuidTranslationMap } from "./guid-translation";
 
 /**

@@ -21,7 +21,7 @@ import type {
 import type { LoadedFigFile, FigImage, FigMetadata } from "./roundtrip-state";
 import type { FigNodeId, FigPageId } from "./node-id";
 import { guidToNodeId } from "./node-id";
-import { guidToString } from "../parser";
+import { guidToString } from "./raw-node-tree";
 
 // =============================================================================
 // AutoLayout Types

@@ -9,7 +9,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { parseFigFile, buildNodeTree, findNodesByType, getNodeType } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, getNodeType } from "@higma-document-models/fig/domain";
 import type { FigNode, FigGuid } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 

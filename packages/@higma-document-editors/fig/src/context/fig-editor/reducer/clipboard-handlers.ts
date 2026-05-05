@@ -7,6 +7,7 @@ import { createSingleSelection } from "@higma-editor-kernel/core/selection";
 import { addNode } from "@higma-document-io/fig/node-ops";
 import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { HandlerMap } from "./handler-types";
+import { createEditorFigBuilderState } from "./builder-state";
 import { findNodesByIds } from "../node-geometry";
 
 export const CLIPBOARD_HANDLERS: HandlerMap = {
@@ -40,9 +41,11 @@ export const CLIPBOARD_HANDLERS: HandlerMap = {
     }
 
     const offset = (state.clipboard.pasteCount + 1) * 10;
+    const builderState = createEditorFigBuilderState(state.documentHistory.present);
     const { doc, newIds } = state.clipboard.nodes.reduce(
       (acc, node) => {
         const result = addNode({
+          state: builderState,
           doc: acc.doc,
           pageId,
           parentId: null,

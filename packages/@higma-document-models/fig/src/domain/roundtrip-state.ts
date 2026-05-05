@@ -3,13 +3,14 @@
  */
 
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
-import type { FigPackageMetadata } from "@higma-figma-containers/package";
+import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-containers/package";
 
-import type { FigBlob, FigImage } from "../parser";
+import type { FigBlob } from "./blob-path";
 import type { FigNode } from "../types";
 
 /** Metadata from a loaded fig-family package. */
 export type FigMetadata = FigPackageMetadata;
+export type FigImage = FigPackageImage;
 
 /** Loaded fig-family file state preserved on a domain document for export. */
 export type LoadedFigFile = {
@@ -23,5 +24,3 @@ export type LoadedFigFile = {
   readonly thumbnail: Uint8Array | null;
   readonly messageHeader: Record<string, unknown>;
 };
-
-export type { FigImage };

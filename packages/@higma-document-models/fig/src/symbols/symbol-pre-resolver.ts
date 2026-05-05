@@ -9,7 +9,7 @@
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren } from "@higma-document-models/fig/parser";
+import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
 import { walkTree as walkTreeGeneric } from "@higma-primitives/tree";
 import { resolveInstanceReferences } from "./symbol-resolver";
 

@@ -10,10 +10,11 @@
  */
 
 import { buildSceneGraph, type BuildSceneGraphOptions } from "./builder";
-import type { FrameNode, GroupNode } from "./types";
+import type { FrameNode } from "./types";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import { toNodeId, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { FigPaint, FigEffect } from "@higma-document-models/fig/types";
+import type { AbstractFont, FontPath } from "../font/types";
 
 // =============================================================================
 // Test Helpers
@@ -21,6 +22,27 @@ import type { FigPaint, FigEffect } from "@higma-document-models/fig/types";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 const DEFAULT_SIZE = { x: 100, y: 50 };
+const RECT_PATH: FontPath = {
+  commands: [
+    { type: "M", x: 0, y: 0 },
+    { type: "L", x: 10, y: 0 },
+    { type: "L", x: 10, y: 10 },
+    { type: "L", x: 0, y: 10 },
+    { type: "Z" },
+  ],
+  toPathData: () => "M0 0L10 0L10 10L0 10Z",
+};
+const TEST_FONT: AbstractFont = {
+  unitsPerEm: 1000,
+  ascender: 800,
+  descender: -200,
+  charToGlyph: () => ({
+    index: 1,
+    advanceWidth: 500,
+    getPath: () => RECT_PATH,
+  }),
+  getPath: () => RECT_PATH,
+};
 
 const RED_FILL: FigPaint = {
   type: "SOLID" as const,
@@ -86,7 +108,7 @@ function buildWithSymbols(
     styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
     showHiddenNodes: false,
     warnings: [],
-    textFontResolver: undefined,
+    textFontResolver: () => TEST_FONT,
   };
   return buildSceneGraph(nodes, options);
 }
@@ -460,6 +482,7 @@ describe("INSTANCE resolution — child overrides", () => {
 
 describe("INSTANCE resolution — component property assignments", () => {
   it("applies text content override via CPA", () => {
+    const lineHeight = 20;
     const textChild = makeNode({
       id: "0:10",
       type: "TEXT",
@@ -469,6 +492,23 @@ describe("INSTANCE resolution — component property assignments", () => {
         characters: "Original",
         fontSize: 16,
         fontName: { family: "Inter", style: "Regular" },
+        lineHeight: { value: lineHeight, units: { name: "PIXELS", value: 0 } },
+      },
+      derivedTextData: {
+        baselines: [{
+          position: { x: 0, y: 0 },
+          width: 80,
+          lineY: 0,
+          lineHeight,
+          lineAscent: 15,
+          firstCharacter: 0,
+          endCharacter: 8,
+        }],
+        fontMetaData: [{
+          key: { family: "Inter", style: "Regular" },
+          fontLineHeight: lineHeight / 16,
+          fontWeight: 400,
+        }],
       },
       componentPropertyRefs: [
         { defId: nid("0:100"), nodeField: "TEXT_DATA" },

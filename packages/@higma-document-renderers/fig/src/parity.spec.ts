@@ -13,7 +13,7 @@
 
 import type {
   FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type {
   FigGradientPaint,
   FigSolidPaint,

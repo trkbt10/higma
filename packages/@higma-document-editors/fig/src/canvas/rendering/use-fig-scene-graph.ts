@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 import { buildSceneGraph, type BuildSceneGraphOptions } from "@higma-document-renderers/fig/scene-graph";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 

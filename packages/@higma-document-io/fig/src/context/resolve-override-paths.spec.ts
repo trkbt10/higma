@@ -22,7 +22,7 @@
  *     Mastodon override gets routed to Amazon's logo guid.
  */
 
-import { convertFigNode } from "./tree-to-document";
+import { convertFigNode } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import type { FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";

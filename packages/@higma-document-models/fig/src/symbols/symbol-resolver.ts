@@ -3,7 +3,7 @@
  */
 
 import type { FigNode, MutableFigNode, FigKiwiSymbolData, FigKiwiSymbolOverride, FigGuidPath, FigComponentPropAssignment, FigDerivedTextData } from "@higma-document-models/fig/types";
-import { guidToString, getNodeType, safeChildren, type FigGuid, type FigBlob } from "@higma-document-models/fig/parser";
+import { guidToString, getNodeType, safeChildren, type FigGuid, type FigBlob } from "@higma-document-models/fig/domain";
 import { walkTree } from "@higma-primitives/tree";
 import { extractSymbolIDPair } from "@higma-document-models/fig/symbols";
 import { buildGuidTranslationMap, translateOverrides } from "./guid-translation";
@@ -989,7 +989,7 @@ export function resolveInstanceNode(
   // FRAME 15:837 and rename it to "Contact", corrupting downstream
   // walks that match by `node.name === "Contact"`. Mirrors the same
   // fix in domain-side
-  // resolveOverridePaths (`@higma-document-io/fig:tree-to-document.ts`).
+  // resolveOverridePaths in the FigNode conversion layer.
   const symRootGuid = symNode.guid;
   const rerouteSelfOverrides = <T extends FigKiwiSymbolOverride>(entries: readonly T[] | undefined): readonly T[] | undefined => {
     if (!entries || !symRootGuid) return entries;

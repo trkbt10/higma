@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
-import { parseFigFile, buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
 import { createCachingFontLoader, type CachingFontLoader } from "../src/font";
@@ -103,7 +104,9 @@ describe("Multi-line text debugging", () => {
   it("analyzes size-64 in detail", async () => {
     const frame = dataRef.value.frames.get("size-64");
     expect(frame).toBeDefined();
-    if (!frame || !frame.textNode) {return;}
+    if (!frame || !frame.textNode) {
+      return;
+    }
 
     // Extract text props
     const props = extractTextProps(frame.textNode);

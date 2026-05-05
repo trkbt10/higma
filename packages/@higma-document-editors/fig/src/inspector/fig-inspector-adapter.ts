@@ -5,8 +5,7 @@
 
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigMatrix } from "@higma-document-models/fig/types";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import { guidToString, getNodeType } from "@higma-document-models/fig/parser";
+import { getNodeType, guidToString, type FigDesignNode } from "@higma-document-models/fig/domain";
 import { IDENTITY_MATRIX, multiplyMatrices, createTranslationMatrix } from "@higma-document-models/fig/matrix";
 import type { AffineTransform, InspectorBoxInfo, InspectorTreeNode } from "@higma-editor-kernel/core/inspector-types";
 

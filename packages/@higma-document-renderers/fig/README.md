@@ -15,7 +15,8 @@ FigNode[] → SceneGraph → RenderTree → SVG string / React / WebGL
 Render a canvas (page) to SVG. Derives dimensions from canvas children.
 
 ```typescript
-import { parseFigFile, buildNodeTree } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree } from "@higma-document-models/fig/domain";
 import { renderCanvas } from "@higma-document-renderers/fig/svg";
 
 const parsed = await parseFigFile(fileData);

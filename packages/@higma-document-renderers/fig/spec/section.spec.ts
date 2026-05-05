@@ -9,14 +9,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  parseFigFile,
   buildNodeTree,
   findNodesByType,
   getNodeType,
   type FigBlob,
   type FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -42,7 +42,9 @@ type ParsedData = {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {return parsedDataCache;}
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
 
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(`Fixture file not found: ${FIG_FILE}`);
@@ -146,12 +148,18 @@ describe("Section Parsing", () => {
     // Find sections that have child frames
     for (const canvas of data.canvases) {
       for (const child of canvas.children ?? []) {
-        if (getNodeType(child) !== "SECTION") {continue;}
-        if (!child.children?.length) {continue;}
+        if (getNodeType(child) !== "SECTION") {
+          continue;
+        }
+        if (!child.children?.length) {
+          continue;
+        }
 
         // Try to render each child frame inside the section
         for (const sectionChild of child.children) {
-          if (getNodeType(sectionChild) !== "FRAME") {continue;}
+          if (getNodeType(sectionChild) !== "FRAME") {
+            continue;
+          }
 
           const nodeData = sectionChild as Record<string, unknown>;
           const size = nodeData.size as { x?: number; y?: number } | undefined;
@@ -202,7 +210,9 @@ describe("Section Node Structure Debug", () => {
 
     console.log("\n=== Full node tree ===");
     for (const canvas of data.canvases) {
-      if ((canvas as Record<string, unknown>).internalOnly) {continue;}
+      if ((canvas as Record<string, unknown>).internalOnly) {
+        continue;
+      }
       console.log(`CANVAS: "${canvas.name}"`);
       dumpTree(canvas.children ?? [], "  ");
     }

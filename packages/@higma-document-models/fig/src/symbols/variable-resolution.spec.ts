@@ -23,7 +23,7 @@ import type {
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
-import { guidToString } from "../parser";
+import { guidToString } from "../domain";
 
 function guid(sessionID: number, localID: number): FigGuid {
   return { sessionID, localID };

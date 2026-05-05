@@ -10,8 +10,18 @@
 
 export {
   createIdCounter,
+  createFigBuilderState,
+  createFigBuilderStateFromDocument,
   nextNodeId,
   nextPageId,
+} from "./node-id";
+
+export type {
+  CreateFigBuilderStateFromDocumentOptions,
+  CreateFigBuilderStateOptions,
+  CreateIdCounterOptions,
+  FigBuilderState,
+  IdCounter,
 } from "./node-id";
 
 export type {

@@ -35,6 +35,8 @@ export type {
   FigDesignBlob,
 } from "./document";
 export type { FigImage, FigMetadata, LoadedFigFile } from "./roundtrip-state";
+export type { FigGuid, NodeTreeResult } from "./raw-node-tree";
+export type { FigBlob, PathCommand, SvgPathOptions } from "./blob-path";
 
 export {
   DEFAULT_PAGE_BACKGROUND,
@@ -45,3 +47,21 @@ export {
   overrideFieldKeys,
   applyOverrideToNode,
 } from "./document";
+
+export { collectFigRawFields, convertFigNode } from "./conversion";
+
+export {
+  buildNodeTree,
+  guidToString,
+  parseGuidString,
+  getNodeType,
+  findNodesByType,
+  findNodeByGuid,
+  safeChildren,
+} from "./raw-node-tree";
+
+export {
+  decodePathCommands,
+  pathCommandsToSvgPath,
+  decodeBlobToSvgPath,
+} from "./blob-path";

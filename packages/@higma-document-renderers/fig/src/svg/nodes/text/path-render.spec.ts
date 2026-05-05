@@ -8,7 +8,7 @@ import {
   type PathRenderContext,
 } from "./path-render";
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { FigBlob } from "@higma-document-models/fig/parser";
+import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { AbstractFont, FontLoader, FontLoadOptions, LoadedFont } from "../../../font";
 
 function createFakeFont(supportedChars: string): AbstractFont {

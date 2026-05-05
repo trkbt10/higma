@@ -37,7 +37,7 @@
  */
 
 import type { FigNode, FigPaint } from "../types";
-import { getNodeType, guidToString, safeChildren, type FigGuid } from "../parser";
+import { getNodeType, guidToString, safeChildren, type FigGuid } from "../domain";
 import { getEffectiveSymbolID } from "./effective-symbol-id";
 import { resolveSymbolGuidStr } from "./symbol-map-lookup";
 
@@ -135,7 +135,7 @@ export type FigResolveContext = {
  * Implementation note: this module is **caching only**. The actual
  * "what does safeChildren / guidToString return" is owned by the
  * parser primitives (`safeChildren`, `guidToString` in
- * `@higma-document-models/fig/parser`); we delegate to them on cache miss. That
+ * `@higma-document-models/fig/domain`); we delegate to them on cache miss. That
  * keeps the SoT for those operations in one place — change the
  * primitive and every caller (cached or not) sees the new behaviour.
  */

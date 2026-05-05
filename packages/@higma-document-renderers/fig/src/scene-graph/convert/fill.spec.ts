@@ -13,7 +13,7 @@ import type {
   FigSolidPaint,
   FigGradientPaint,
 } from "@higma-document-models/fig/types";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 
 const NO_IMAGES: ReadonlyMap<string, FigImage> = new Map();
 

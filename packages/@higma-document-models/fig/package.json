@@ -18,14 +18,6 @@
       "types": "./src/errors.ts",
       "default": "./src/errors.ts"
     },
-    "./parser": {
-      "types": "./src/parser/index.ts",
-      "default": "./src/parser/index.ts"
-    },
-    "./validator": {
-      "types": "./src/validator/index.ts",
-      "default": "./src/validator/index.ts"
-    },
     "./constants": {
       "types": "./src/constants/index.ts",
       "default": "./src/constants/index.ts"
@@ -56,12 +48,9 @@
     }
   },
   "dependencies": {
-    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
     "@higma-codecs/compression": "workspace:*",
-    "@higma-figma-containers/canvas": "workspace:*",
     "@higma-codecs/kiwi": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
-    "@higma-primitives/zip": "workspace:*",
     "@higma-figma-containers/package": "workspace:*"
   },
   "higma": {

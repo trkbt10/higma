@@ -13,13 +13,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  parseFigFile,
-  buildNodeTree,
-  findNodesByType,
-  type FigBlob,
-  type FigImage,
-} from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 import { detectFeatures, countShapeElements, getSvgSize } from "./helpers/svg-feature-detect";
@@ -103,14 +98,13 @@ describe("Advanced Paint Rendering", () => {
       const data = await loadFigFile();
       const layer = data.layers.get(frameName);
       expect(layer, `Frame "${frameName}" not found in fixture`).toBeDefined();
-      if (!layer) { return; }
+      if (!layer) {
+        return;
+      }
 
       // Actual SVG from Figma export is required
       const actualPath = path.join(ACTUAL_DIR, fileName);
-      expect(
-        fs.existsSync(actualPath),
-        `Actual SVG not found: ${actualPath}. Export from Figma first.`,
-      ).toBe(true);
+      expect(fs.existsSync(actualPath), `Actual SVG not found: ${actualPath}. Export from Figma first.`).toBe(true);
       const actualSvg = fs.readFileSync(actualPath, "utf-8");
       const refSize = getSvgSize(actualSvg);
 
@@ -148,10 +142,7 @@ describe("Advanced Paint Rendering", () => {
 
       // Every feature in Figma export must be in rendered output
       for (const f of actualFeatures) {
-        expect(
-          renderedFeatures,
-          `Feature "${f}" present in Figma export but missing in rendered output`,
-        ).toContain(f);
+        expect(renderedFeatures, `Feature "${f}" present in Figma export but missing in rendered output`).toContain(f);
       }
 
       if (result.warnings.length > 0) {

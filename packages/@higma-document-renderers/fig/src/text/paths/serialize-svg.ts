@@ -1,11 +1,11 @@
 /**
  * @file SVG path data serialization
  *
- * Re-exports pathCommandsToSvgPath from @higma-document-models/fig/parser for SVG rendering,
+ * Re-exports pathCommandsToSvgPath from @higma-document-models/fig/domain for SVG rendering,
  * and provides text-specific helpers (decoration rects, text path results).
  */
 
-import { pathCommandsToSvgPath } from "@higma-document-models/fig/parser";
+import { pathCommandsToSvgPath } from "@higma-document-models/fig/domain";
 import type { PathCommand } from "../../font/types";
 import type { DecorationRect } from "./types";
 

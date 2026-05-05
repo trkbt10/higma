@@ -7,7 +7,7 @@
  */
 
 import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 import type { BuildSceneGraphOptions, SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { useFigSceneGraph } from "./use-fig-scene-graph";
 import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";

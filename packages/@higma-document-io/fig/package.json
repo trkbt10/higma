@@ -27,6 +27,14 @@
       "types": "./src/types/index.ts",
       "default": "./src/types/index.ts"
     },
+    "./parser": {
+      "types": "./src/parser/index.ts",
+      "default": "./src/parser/index.ts"
+    },
+    "./validator": {
+      "types": "./src/validator/index.ts",
+      "default": "./src/validator/index.ts"
+    },
     "./context": {
       "types": "./src/context/index.ts",
       "default": "./src/context/index.ts"

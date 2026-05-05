@@ -5,7 +5,7 @@
  */
 
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigBlob } from "@higma-document-models/fig/parser";
+import type { FigBlob } from "@higma-document-models/fig/domain";
 import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
 import { textAlignHorizontalToAnchor } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";

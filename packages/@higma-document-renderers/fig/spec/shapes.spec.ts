@@ -6,14 +6,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  parseFigFile,
   buildNodeTree,
   findNodesByType,
   getNodeType,
   type FigBlob,
   type FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -66,7 +66,9 @@ type ParsedData = {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {return parsedDataCache;}
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
 
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
@@ -170,7 +172,9 @@ describe("Shape Rendering", () => {
       const hasActual = fs.existsSync(actualPath);
 
       const actualSizeRef = { value: layer.size };
-      const actualShapesRef = { value: { ellipses: 0, lines: 0, paths: 0, polygons: 0, rects: 0, circles: 0, total: 0 } };
+      const actualShapesRef = {
+        value: { ellipses: 0, lines: 0, paths: 0, polygons: 0, rects: 0, circles: 0, total: 0 },
+      };
 
       if (hasActual) {
         const actualSvg = fs.readFileSync(actualPath, "utf-8");

@@ -26,7 +26,7 @@
 
 import type { FigNode, MutableFigNode, FigPaint, FigStyleId } from "../types";
 import type { FigStyleRegistry } from "../domain/document";
-import { guidToString } from "@higma-document-models/fig/parser";
+import { guidToString } from "@higma-document-models/fig/domain";
 
 // =============================================================================
 // Construction

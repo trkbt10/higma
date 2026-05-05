@@ -10,7 +10,7 @@
  * turning single-side accents into full 4-sided borders.
  */
 
-import { convertFigNode } from "./tree-to-document";
+import { convertFigNode } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 
 function makeFrameRaw(partial: Partial<FigNode>): FigNode {

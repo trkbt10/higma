@@ -15,7 +15,7 @@
  */
 
 import type { FigNode } from "../types";
-import { guidToString, type FigGuid } from "../parser";
+import { guidToString, type FigGuid } from "../domain";
 
 export type SymbolMapResolution = {
   readonly node: FigNode;

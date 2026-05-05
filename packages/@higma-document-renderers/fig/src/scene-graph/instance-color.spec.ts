@@ -2,7 +2,7 @@
  * @file Verify INSTANCE color inheritance through scene graph
  */
 
-import { createDemoFigDesignDocument } from "@higma-document-io/fig/context";
+import { createDemoFigDesignDocument } from "../testing/demo-document";
 import { buildSceneGraph } from "./builder";
 import type { SceneNode, FrameNode } from "./types";
 

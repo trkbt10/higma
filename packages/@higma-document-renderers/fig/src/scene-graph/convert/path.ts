@@ -4,7 +4,7 @@
  * Winding rule mapping delegates to geometry/interpret.ts (the SoT).
  */
 
-import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/parser";
+import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigFillGeometry, FigVectorPath } from "@higma-document-models/fig/types";
 import { mapWindingRule } from "../../geometry";
 import type { PathCommand, PathContour } from "../types";

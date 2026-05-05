@@ -44,7 +44,7 @@ import type {
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
-import { getNodeType, guidToString } from "../parser/tree-builder";
+import { getNodeType, guidToString } from "../domain/raw-node-tree";
 
 // =============================================================================
 // Kiwi → discriminated union projection

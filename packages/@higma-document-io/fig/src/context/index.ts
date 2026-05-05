@@ -10,6 +10,6 @@ export {
 
 export { createDemoFigDesignDocument } from "./demo-document";
 
-export { treeToDocument, convertFigNode } from "./tree-to-document";
+export { treeToDocument } from "./tree-to-document";
 
 export { documentToTree, type DocumentToTreeResult } from "./document-to-tree";

@@ -6,9 +6,10 @@
  */
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
+import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "../types/spec-types";
-import { nextNodeId, createIdCounter } from "../types/node-id";
+import { nextNodeId } from "../types/node-id";
+import type { FigBuilderState } from "../types/node-id";
 
 
 // =============================================================================
@@ -78,43 +79,28 @@ const DEFAULT_FRAME_FILL: readonly FigPaint[] = [
 ];
 
 // =============================================================================
-// ID Generation
-// =============================================================================
-
-/**
- * Shared counter for generating node IDs.
- * Uses session 1 for user-created nodes (session 0 is structural).
- */
-let sharedCounter = createIdCounter(1, 1000);
-
-/**
- * Reset the shared counter (useful for testing).
- */
-export function resetNodeIdCounter(startLocalID = 1000): void {
-  sharedCounter = createIdCounter(1, startLocalID);
-}
-
-/**
- * Generate a new unique node ID.
- */
-export function generateNodeId(): FigNodeId {
-  return nextNodeId(sharedCounter);
-}
-
-// =============================================================================
 // Factory
 // =============================================================================
 
 /**
+ * CreateNodeFromSpecOptions provides explicit builder state and node spec input for createNodeFromSpec.
+ */
+export type CreateNodeFromSpecOptions = {
+  readonly state: FigBuilderState;
+  readonly spec: NodeSpec;
+};
+
+/**
  * Create a FigDesignNode from a NodeSpec.
  *
- * Generates a unique ID and applies appropriate defaults based on node type.
+ * Allocates the node ID from the caller-provided builder state.
  *
  * @param spec - Declarative spec describing the node to create
- * @param id - Optional pre-generated ID (defaults to auto-generated)
  */
-export function createNodeFromSpec(spec: NodeSpec, id?: FigNodeId): FigDesignNode {
-  const nodeId = id ?? generateNodeId();
+export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigDesignNode {
+  assertCreateNodeOptions(options);
+  const { state, spec } = options;
+  const nodeId = nextNodeId(state.nodeIdCounter);
   const transform = createTransform(spec.x, spec.y, spec.rotation);
   const size = { x: spec.width, y: spec.height };
 
@@ -135,10 +121,28 @@ export function createNodeFromSpec(spec: NodeSpec, id?: FigNodeId): FigDesignNod
   return applyTypeSpecificFields(base, spec);
 }
 
+/**
+ * assertCreateNodeOptions rejects missing explicit builder state or node spec input.
+ */
+function assertCreateNodeOptions(options: CreateNodeFromSpecOptions): void {
+  if (!options) {
+    throw new Error("createNodeFromSpec requires options");
+  }
+  if (!options.state) {
+    throw new Error("createNodeFromSpec requires explicit builder state");
+  }
+  if (!options.spec) {
+    throw new Error("createNodeFromSpec requires a node spec");
+  }
+}
+
 // =============================================================================
 // Type-Specific Fields
 // =============================================================================
 
+/**
+ * applyTypeSpecificFields applies node-kind-specific fields after identifier allocation.
+ */
 function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesignNode {
   switch (spec.type) {
     case "FRAME":

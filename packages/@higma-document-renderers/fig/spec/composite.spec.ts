@@ -13,13 +13,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  parseFigFile,
-  buildNodeTree,
-  findNodesByType,
-  type FigBlob,
-  type FigImage,
-} from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -117,7 +112,7 @@ async function loadFigFile(): Promise<ParsedData> {
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
       `Fixture file not found: ${FIG_FILE}\n` +
-      `Run: bun packages/@higma-document-renderers/fig/scripts/generate-composite-fixtures.ts`,
+        `Run: bun packages/@higma-document-renderers/fig/scripts/generate-composite-fixtures.ts`,
     );
   }
   const data = fs.readFileSync(FIG_FILE);
@@ -158,9 +153,7 @@ describe("Composite (Boolean Operation) Rendering", () => {
       const data = await loadFigFile();
       const layer = data.layers.get(frameName);
       if (!layer) {
-        console.log(
-          `SKIP: Frame "${frameName}" not found. Available: ${[...data.layers.keys()].join(", ")}`,
-        );
+        console.log(`SKIP: Frame "${frameName}" not found. Available: ${[...data.layers.keys()].join(", ")}`);
         return;
       }
 
@@ -199,8 +192,12 @@ describe("Composite (Boolean Operation) Rendering", () => {
       const actualShapes = countShapeElements(actualSvg);
 
       console.log(`\n=== ${frameName} ===`);
-      console.log(`  Actual shapes:   ${actualShapes.total} (paths=${actualShapes.paths}, rects=${actualShapes.rects}, ellipses=${actualShapes.ellipses})`);
-      console.log(`  Rendered shapes: ${renderedShapes.total} (paths=${renderedShapes.paths}, rects=${renderedShapes.rects}, ellipses=${renderedShapes.ellipses})`);
+      console.log(
+        `  Actual shapes:   ${actualShapes.total} (paths=${actualShapes.paths}, rects=${actualShapes.rects}, ellipses=${actualShapes.ellipses})`,
+      );
+      console.log(
+        `  Rendered shapes: ${renderedShapes.total} (paths=${renderedShapes.paths}, rects=${renderedShapes.rects}, ellipses=${renderedShapes.ellipses})`,
+      );
 
       // The rendered output should have a similar number of shape elements.
       // Figma's export typically has 1-2 shapes (background rect + merged path).
@@ -208,14 +205,12 @@ describe("Composite (Boolean Operation) Rendering", () => {
       if (renderedShapes.total > actualShapes.total * 2) {
         console.warn(
           `  ⚠ MISMATCH: Rendered has ${renderedShapes.total} shapes vs actual ${actualShapes.total}.` +
-          ` Boolean operation may not be using pre-computed geometry.`,
+            ` Boolean operation may not be using pre-computed geometry.`,
         );
       }
 
       // Verify shape count matches Figma export
-      expect(renderedShapes.total).toBeLessThanOrEqual(
-        actualShapes.total * 2 + 1,
-      );
+      expect(renderedShapes.total).toBeLessThanOrEqual(actualShapes.total * 2 + 1);
 
       if (result.warnings.length > 0) {
         console.log(`  Warnings: ${result.warnings.slice(0, 5).join("; ")}`);

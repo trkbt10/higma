@@ -11,13 +11,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  parseFigFile,
-  buildNodeTree,
-  findNodesByType,
-  type FigBlob,
-  type FigImage,
-} from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 import { hasCornerRadius, countShapeElements, getSvgSize } from "./helpers/svg-feature-detect";
@@ -97,7 +92,7 @@ async function loadFigFile(): Promise<ParsedData> {
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
       `Fixture file not found: ${FIG_FILE}\n` +
-      `Run: bun packages/@higma-document-renderers/fig/scripts/generate-decoration-combo-fixtures.ts`,
+        `Run: bun packages/@higma-document-renderers/fig/scripts/generate-decoration-combo-fixtures.ts`,
     );
   }
   const data = fs.readFileSync(FIG_FILE);
@@ -138,9 +133,7 @@ describe("Decoration Combination Rendering", () => {
       const data = await loadFigFile();
       const layer = data.layers.get(frameName);
       if (!layer) {
-        console.log(
-          `SKIP: Frame "${frameName}" not found. Available: ${[...data.layers.keys()].join(", ")}`,
-        );
+        console.log(`SKIP: Frame "${frameName}" not found. Available: ${[...data.layers.keys()].join(", ")}`);
         return;
       }
 
@@ -176,23 +169,43 @@ describe("Decoration Combination Rendering", () => {
 
       // Feature detection — log what was rendered
       const features: string[] = [];
-      if (hasGradient(result.svg)) { features.push("gradient"); }
-      if (hasFilter(result.svg)) { features.push("filter/effect"); }
-      if (hasClipPath(result.svg)) { features.push("clip-path"); }
-      if (hasCornerRadius(result.svg)) { features.push("corner-radius"); }
-      if (result.svg.includes("stroke=") && !result.svg.includes('stroke="none"')) { features.push("stroke"); }
+      if (hasGradient(result.svg)) {
+        features.push("gradient");
+      }
+      if (hasFilter(result.svg)) {
+        features.push("filter/effect");
+      }
+      if (hasClipPath(result.svg)) {
+        features.push("clip-path");
+      }
+      if (hasCornerRadius(result.svg)) {
+        features.push("corner-radius");
+      }
+      if (result.svg.includes("stroke=") && !result.svg.includes('stroke="none"')) {
+        features.push("stroke");
+      }
 
       console.log(`\n=== ${frameName} ===`);
-      console.log(`  Shapes: ${shapes.total} (paths=${shapes.paths}, rects=${shapes.rects}, ellipses=${shapes.ellipses})`);
+      console.log(
+        `  Shapes: ${shapes.total} (paths=${shapes.paths}, rects=${shapes.rects}, ellipses=${shapes.ellipses})`,
+      );
       console.log(`  Features: ${features.join(", ") || "none"}`);
 
       // Compare with actual
       const actualShapes = countShapeElements(actualSvg);
       const actualFeatures: string[] = [];
-      if (hasGradient(actualSvg)) { actualFeatures.push("gradient"); }
-      if (hasFilter(actualSvg)) { actualFeatures.push("filter/effect"); }
-      if (hasClipPath(actualSvg)) { actualFeatures.push("clip-path"); }
-      if (hasCornerRadius(actualSvg)) { actualFeatures.push("corner-radius"); }
+      if (hasGradient(actualSvg)) {
+        actualFeatures.push("gradient");
+      }
+      if (hasFilter(actualSvg)) {
+        actualFeatures.push("filter/effect");
+      }
+      if (hasClipPath(actualSvg)) {
+        actualFeatures.push("clip-path");
+      }
+      if (hasCornerRadius(actualSvg)) {
+        actualFeatures.push("corner-radius");
+      }
 
       console.log(`  Actual shapes: ${actualShapes.total}`);
       console.log(`  Actual features: ${actualFeatures.join(", ")}`);

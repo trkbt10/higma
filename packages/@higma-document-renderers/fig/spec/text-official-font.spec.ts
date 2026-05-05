@@ -9,7 +9,8 @@ import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, createPngImage } from "@higma-codecs/png";
 import { parse as parseFont } from "opentype.js";
-import { parseFigFile, buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FontLoader, FontLoadOptions, LoadedFont } from "../src/svg/nodes/text/font/loader";
 import { renderTextNodeAsPath, type PathRenderContext } from "../src/svg/nodes/text/path-render";
@@ -125,10 +126,14 @@ describe("Official Inter font tests", () => {
   it("tests size-64 with official Inter font", async () => {
     const frame = dataRef.value.frames.get("size-64");
     expect(frame).toBeDefined();
-    if (!frame || !frame.textNode) {return;}
+    if (!frame || !frame.textNode) {
+      return;
+    }
 
     const actualPath = path.join(ACTUAL_SVG_DIR, "size-64.svg");
-    if (!fs.existsSync(actualPath)) {return;}
+    if (!fs.existsSync(actualPath)) {
+      return;
+    }
 
     const ctx = createFigSvgRenderContext({
       canvasSize: { width: frame.size.width, height: frame.size.height },
@@ -173,10 +178,14 @@ ${pathSvg}
   it("tests LEFT-TOP with official Inter font", async () => {
     const frame = dataRef.value.frames.get("LEFT-TOP");
     expect(frame).toBeDefined();
-    if (!frame || !frame.textNode) {return;}
+    if (!frame || !frame.textNode) {
+      return;
+    }
 
     const actualPath = path.join(ACTUAL_SVG_DIR, "LEFT-TOP.svg");
-    if (!fs.existsSync(actualPath)) {return;}
+    if (!fs.existsSync(actualPath)) {
+      return;
+    }
 
     const ctx = createFigSvgRenderContext({
       canvasSize: { width: frame.size.width, height: frame.size.height },
@@ -221,10 +230,14 @@ ${pathSvg}
   it("tests 2-lines with official Inter font", async () => {
     const frame = dataRef.value.frames.get("2-lines");
     expect(frame).toBeDefined();
-    if (!frame || !frame.textNode) {return;}
+    if (!frame || !frame.textNode) {
+      return;
+    }
 
     const actualPath = path.join(ACTUAL_SVG_DIR, "2-lines.svg");
-    if (!fs.existsSync(actualPath)) {return;}
+    if (!fs.existsSync(actualPath)) {
+      return;
+    }
 
     const ctx = createFigSvgRenderContext({
       canvasSize: { width: frame.size.width, height: frame.size.height },

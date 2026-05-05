@@ -18,14 +18,14 @@ import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
+import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  parseFigFile,
   buildNodeTree,
   findNodesByType,
   getNodeType,
   type FigBlob,
   type FigImage,
-} from "@higma-document-models/fig/parser";
+} from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -72,7 +72,9 @@ type CompareResult = {
 
 function ensureDirs(dirs: string[]): void {
   for (const dir of dirs) {
-    if (!fs.existsSync(dir)) {fs.mkdirSync(dir, { recursive: true });}
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
 }
 
@@ -95,9 +97,7 @@ function svgToPng(svg: string, width?: number): Buffer {
   return Buffer.from(pngData.asPng());
 }
 
-function comparePngs(
-  a: Buffer, b: Buffer, frameName: string, diffPath?: string,
-): CompareResult {
+function comparePngs(a: Buffer, b: Buffer, frameName: string, diffPath?: string): CompareResult {
   const imgA = readPng(a);
   const imgBRef = { value: readPng(b) };
 
@@ -148,7 +148,9 @@ function safeName(name: string): string {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {return parsedDataCache;}
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
 
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(`Fixture file not found: ${FIG_FILE}`);
@@ -162,7 +164,9 @@ async function loadFigFile(): Promise<ParsedData> {
 
   const layers = new Map<string, LayerInfo>();
   for (const canvas of canvases) {
-    if ((canvas as Record<string, unknown>).internalOnly) {continue;}
+    if ((canvas as Record<string, unknown>).internalOnly) {
+      continue;
+    }
     for (const child of canvas.children ?? []) {
       const name = child.name ?? "unnamed";
       const nodeData = child as Record<string, unknown>;

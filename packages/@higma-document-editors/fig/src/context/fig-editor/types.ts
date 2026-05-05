@@ -6,7 +6,7 @@
  */
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { BooleanOperationType } from "@higma-document-renderers/fig/scene-graph";
 import type { UndoRedoHistory } from "@higma-editor-kernel/core/history";
@@ -115,7 +115,7 @@ export type FigEditorAction =
 
   // Page management
   | { readonly type: "SELECT_PAGE"; readonly pageId: FigPageId }
-  | { readonly type: "ADD_PAGE"; readonly name?: string }
+  | { readonly type: "ADD_PAGE"; readonly name: string }
   | { readonly type: "DELETE_PAGE"; readonly pageId: FigPageId }
   | { readonly type: "MOVE_PAGE"; readonly pageId: FigPageId; readonly toIndex: number }
   | { readonly type: "RENAME_PAGE"; readonly pageId: FigPageId; readonly name: string }

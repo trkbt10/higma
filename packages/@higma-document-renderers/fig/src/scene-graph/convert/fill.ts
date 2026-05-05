@@ -6,7 +6,7 @@
  */
 
 import type { FigPaint, FigColor, FigGradientPaint } from "@higma-document-models/fig/types";
-import type { FigImage } from "@higma-document-models/fig/parser";
+import type { FigImage } from "@higma-document-models/fig/domain";
 import {
   getPaintType,
   asGradientPaint,

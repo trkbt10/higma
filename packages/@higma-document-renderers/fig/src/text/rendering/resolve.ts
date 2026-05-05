@@ -8,7 +8,7 @@
  * previously lived in each renderer.
  */
 
-import type { FigBlob } from "@higma-document-models/fig/parser";
+import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { DerivedTextData } from "@higma-document-models/fig/domain";
 import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData } from "@higma-document-models/fig/types";
 import { defensiveMark } from "@higma-document-models/fig/diagnostics/defensive";

@@ -6,7 +6,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseFigFile, buildNodeTree, type FigBlob, type FigImage } from "@higma-document-models/fig/parser";
+import { parseFigFile } from "@higma-document-io/fig/parser";
+import { buildNodeTree, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -49,7 +50,9 @@ type ParsedData = {
 let parsedDataCache: ParsedData | null = null;
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {return parsedDataCache;}
+  if (parsedDataCache) {
+    return parsedDataCache;
+  }
 
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
@@ -129,14 +132,20 @@ function extractRectPositions(svg: string): Array<{ id: string; x: number; y: nu
   const parseRoundedRectPath = (d: string): { x: number; y: number; width: number; height: number } | undefined => {
     // Match the M command to find origin, and the L w h-br line (third L)
     // for width/height. Path must end with Z.
-    if (!d.endsWith("Z")) { return undefined; }
+    if (!d.endsWith("Z")) {
+      return undefined;
+    }
     // M tlX tlY pattern (first move-to)
     const mMatch = d.match(/^M\s*([-\d.]+)\s+([-\d.]+)/);
-    if (!mMatch) { return undefined; }
+    if (!mMatch) {
+      return undefined;
+    }
     // Find all L commands. The first L after M is the top edge; the last
     // L (before final Z) is along the left edge back up.
     const lMatches = Array.from(d.matchAll(/L\s*([-\d.]+)\s+([-\d.]+)/g));
-    if (lMatches.length < 4) { return undefined; }
+    if (lMatches.length < 4) {
+      return undefined;
+    }
     // Top-left corner is at (origin.x, origin.y). The right edge X is
     // the second L's first number (L w h-br). The bottom edge Y is the
     // third L's second number (L bl h).
@@ -154,7 +163,9 @@ function extractRectPositions(svg: string): Array<{ id: string; x: number; y: nu
   while ((matchRef.value = tokenRegex.exec(svg)) !== null) {
     const tok = matchRef.value[0];
     if (tok.startsWith("</g>")) {
-      if (stack.length > 1) { stack.pop(); }
+      if (stack.length > 1) {
+        stack.pop();
+      }
       continue;
     }
     if (tok.startsWith("<g")) {
@@ -171,9 +182,13 @@ function extractRectPositions(svg: string): Array<{ id: string; x: number; y: nu
 
     if (tok.startsWith("<path")) {
       const dMatch = tok.match(/\bd="([^"]*)"/);
-      if (!dMatch) { continue; }
+      if (!dMatch) {
+        continue;
+      }
       const parsed = parseRoundedRectPath(dMatch[1]);
-      if (!parsed) { continue; } // not a rounded-rect path, skip
+      if (!parsed) {
+        continue;
+      } // not a rounded-rect path, skip
       results.push({
         id,
         x: parsed.x + ancestor.tx + local.tx,
