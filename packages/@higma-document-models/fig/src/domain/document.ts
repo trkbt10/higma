@@ -18,7 +18,7 @@ import type {
   FigVectorPath, FigVectorData, FigStyleId, FigFillGeometry, FigGuid, FigExportSetting,
   BlendMode,
 } from "../types";
-import type { LoadedFigFile, FigImage, FigMetadata } from "../roundtrip";
+import type { LoadedFigFile, FigImage, FigMetadata } from "./roundtrip-state";
 import type { FigNodeId, FigPageId } from "./node-id";
 import { guidToNodeId } from "./node-id";
 import { guidToString } from "../parser";

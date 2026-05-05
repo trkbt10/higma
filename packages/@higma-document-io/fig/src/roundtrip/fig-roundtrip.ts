@@ -9,15 +9,18 @@
 
 import { compressZstd, compressDeflateRaw } from "@higma-codecs/compression";
 import { decompressDeflateRaw, decompressZstd, isZstdCompressed } from "@higma-codecs/compression";
-import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import { StreamingFigEncoder } from "@higma-codecs/kiwi/stream";
 import { splitFigChunks, decodeFigSchema, decodeFigMessage } from "@higma-codecs/kiwi/decoder";
-import type { FigNode } from "../types";
-import type { FigBlob as ParserFigBlob, FigImage as ParserFigImage } from "../parser";
+import type {
+  FigImage as DomainFigImage,
+  FigMetadata as DomainFigMetadata,
+  LoadedFigFile as DomainLoadedFigFile,
+} from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 import {
   normaliseNodeChanges,
   denormaliseNodeForEncode,
-} from "../parser";
+} from "@higma-document-models/fig/parser";
 import {
   buildFigCanvasHeader,
   getFigCanvasPayload,
@@ -28,44 +31,12 @@ import {
   createFigPackage,
   extractFigPackageContents,
   isZipPackage,
-  type FigPackageMetadata,
 } from "@higma-figma-containers/package";
 import { encodeFigSchema } from "./schema-encoder";
 
-// =============================================================================
-// Types
-// =============================================================================
-
-/** Metadata from the .fig file */
-export type FigMetadata = FigPackageMetadata;
-
-// FigImage is the SoT type from the parser. Re-export the same identity so
-// callers that consume the roundtrip loader's `images` field and callers
-// that consume the parser's `images` field hand around the same type —
-// that erases the need for `as FigImage` casts at integration points.
-export type FigImage = ParserFigImage;
-
-/** Loaded .fig file data */
-export type LoadedFigFile = {
-  /** Original schema (for roundtrip) */
-  readonly schema: KiwiSchema;
-  /** Compressed schema bytes (for exact roundtrip) */
-  readonly compressedSchema: Uint8Array;
-  /** Header version character */
-  readonly version: string;
-  /** Node changes (raw Kiwi format) */
-  readonly nodeChanges: FigNode[];
-  /** Blobs */
-  readonly blobs: readonly ParserFigBlob[];
-  /** Images from ZIP */
-  readonly images: ReadonlyMap<string, FigImage>;
-  /** Metadata from meta.json */
-  readonly metadata: FigMetadata | null;
-  /** Thumbnail data */
-  readonly thumbnail: Uint8Array | null;
-  /** Message header fields (type, sessionID, etc.) */
-  readonly messageHeader: Record<string, unknown>;
-};
+export type FigImage = DomainFigImage;
+export type FigMetadata = DomainFigMetadata;
+export type LoadedFigFile = DomainLoadedFigFile;
 
 // =============================================================================
 // Helper Functions
@@ -148,7 +119,7 @@ export async function loadFigFile(data: Uint8Array): Promise<LoadedFigFile> {
   const nodeChanges = [...normaliseNodeChanges(rawNodes)];
 
   // Extract blobs
-  const blobs = (message.blobs ?? []) as readonly ParserFigBlob[];
+  const blobs = (message.blobs ?? []) as LoadedFigFile["blobs"];
 
   // Extract message header (non-node fields, non-blob fields)
   const messageHeader: Record<string, unknown> = {};

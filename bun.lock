@@ -138,6 +138,7 @@
         "@higma-codecs/kiwi": "workspace:*",
         "@higma-document-models/fig": "workspace:*",
         "@higma-figma-containers/canvas": "workspace:*",
+        "@higma-figma-containers/package": "workspace:*",
         "@higma-primitives/tree": "workspace:*",
         "@higma-primitives/zip": "workspace:*",
       },

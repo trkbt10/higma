@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, useCallback, type CSSProperties, type ReactNode } from "react";
 import type { ParsedFigFile } from "@higma-document-models/fig/parser";
 import { parseFigFile, buildNodeTree, findNodesByType } from "@higma-document-models/fig/parser";
-import { loadFigFile } from "@higma-document-models/fig/roundtrip";
+import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import { treeToDocument } from "@higma-document-io/fig/context";
 import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";

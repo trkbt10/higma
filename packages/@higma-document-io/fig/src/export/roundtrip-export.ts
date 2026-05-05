@@ -6,8 +6,8 @@
  * over the roundtrip process.
  */
 
-import { saveFigFile } from "@higma-document-models/fig/roundtrip";
-import type { LoadedFigFile } from "@higma-document-models/fig/roundtrip";
+import { saveFigFile } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 import type { FigExportResult, FigExportOptions } from "./fig-exporter";
 import { documentToTree } from "../context/document-to-tree";

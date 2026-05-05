@@ -7,6 +7,7 @@
   "dependencies": {
     "@higma-codecs/compression": "workspace:*",
     "@higma-figma-containers/canvas": "workspace:*",
+    "@higma-figma-containers/package": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-primitives/zip": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
@@ -33,6 +34,10 @@
     "./export": {
       "types": "./src/export/index.ts",
       "default": "./src/export/index.ts"
+    },
+    "./roundtrip": {
+      "types": "./src/roundtrip/index.ts",
+      "default": "./src/roundtrip/index.ts"
     },
     "./page-ops": {
       "types": "./src/page-ops/index.ts",

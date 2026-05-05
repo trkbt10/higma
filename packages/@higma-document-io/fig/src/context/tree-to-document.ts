@@ -33,7 +33,7 @@ import {
 } from "@higma-document-models/fig/symbols";
 import type { GuidTranslationMap, FigResolveContext } from "@higma-document-models/fig/symbols";
 import { defensiveMark } from "@higma-document-models/fig/diagnostics/defensive";
-import type { LoadedFigFile } from "@higma-document-models/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
 import type {
   FigDesignDocument, FigDesignNode, FigPage, AutoLayoutProps, LayoutConstraints, TextData, TextStyleOverride, SymbolOverride,
   DerivedTextData,

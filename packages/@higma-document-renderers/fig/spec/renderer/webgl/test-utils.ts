@@ -14,7 +14,7 @@ import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { createServer, type ViteDevServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer";
-import { loadFigFile } from "@higma-document-models/fig/roundtrip";
+import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import { buildNodeTree } from "@higma-document-models/fig/parser";
 import { treeToDocument } from "@higma-document-io/fig/context";
 import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";

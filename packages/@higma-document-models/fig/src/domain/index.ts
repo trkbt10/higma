@@ -34,6 +34,7 @@ export type {
   FigStyleRegistry,
   FigDesignBlob,
 } from "./document";
+export type { FigImage, FigMetadata, LoadedFigFile } from "./roundtrip-state";
 
 export {
   DEFAULT_PAGE_BACKGROUND,

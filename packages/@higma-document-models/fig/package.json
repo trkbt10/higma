@@ -46,10 +46,6 @@
       "types": "./src/domain/index.ts",
       "default": "./src/domain/index.ts"
     },
-    "./roundtrip": {
-      "types": "./src/roundtrip/index.ts",
-      "default": "./src/roundtrip/index.ts"
-    },
     "./diagnostics": {
       "types": "./src/diagnostics/index.ts",
       "default": "./src/diagnostics/index.ts"

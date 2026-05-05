@@ -2,7 +2,7 @@
  * @file Browser download helpers for fig exports.
  */
 
-import type { FigMetadata } from "@higma-document-models/fig/roundtrip";
+import type { FigMetadata } from "@higma-document-io/fig/roundtrip";
 import type { FigExportResult } from "@higma-document-io/fig/export";
 
 type FigDownloadAnchor = {

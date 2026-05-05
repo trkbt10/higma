@@ -1,6 +1,6 @@
 /** @file Fig export download helper tests. */
 
-import type { FigMetadata } from "@higma-document-models/fig/roundtrip";
+import type { FigMetadata } from "@higma-document-io/fig/roundtrip";
 import {
   createFigExportBlob,
   downloadFigExport,

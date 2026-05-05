@@ -4,7 +4,7 @@
 
 import { convertFigNode, treeToDocument } from "./tree-to-document";
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-models/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
 
 const RED_PAINT: FigPaint = {
   type: "SOLID",
