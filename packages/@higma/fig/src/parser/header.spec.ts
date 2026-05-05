@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isFigFile, parseFigHeader, getPayload } from "./header";
-import { buildFigHeader, buildFigFile } from "../builder/header";
+import { buildFigHeader, buildFigFile } from "./header";
 
 describe("isFigFile", () => {
   it("returns true for valid fig file", () => {

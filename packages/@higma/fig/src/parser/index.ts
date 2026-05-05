@@ -9,7 +9,7 @@ export {
   decompressZstd,
 } from "./decompress";
 
-export { isFigFile, parseFigHeader, getPayload } from "./header";
+export { isFigFile, parseFigHeader, getPayload, buildFigHeader, buildFigFile } from "./header";
 
 export {
   parseFigFile,
@@ -38,3 +38,9 @@ export {
 } from "./blob-decoder";
 
 export type { FigBlob, PathCommand, SvgPathOptions } from "./blob-decoder";
+
+export {
+  normaliseNodeChanges,
+  denormaliseNodeForEncode,
+  asBlobArray,
+} from "./normalize";

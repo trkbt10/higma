@@ -119,7 +119,7 @@ export default tseslint.config(
   // from any package above it.
   //
   //   L0 — leaf utilities (no inter-package higma deps):
-  //         @higma/buffer, @higma/zip, @higma/png,
+  //         @higma/buffer, @higma/zip, @higma/png, @higma/kiwi,
   //         @higma/ui-components, @higma/editor-core
   //   L1 — fig domain core:        @higma/fig
   //   L2 — fig operations:         @higma/fig-builder, @higma/fig-renderer
@@ -157,6 +157,7 @@ export default tseslint.config(
       "packages/@higma/buffer/src/**/*.{ts,tsx}",
       "packages/@higma/zip/src/**/*.{ts,tsx}",
       "packages/@higma/png/src/**/*.{ts,tsx}",
+      "packages/@higma/kiwi/src/**/*.{ts,tsx}",
     ],
     rules: {
       "custom/no-layer-violation": [
@@ -190,6 +191,7 @@ export default tseslint.config(
             "@higma/buffer",
             "@higma/zip",
             "@higma/png",
+            "@higma/kiwi",
             "@higma/fig",
             "@higma/fig-builder",
             "@higma/fig-renderer",
@@ -202,7 +204,7 @@ export default tseslint.config(
   },
 
   // L1 — @higma/fig domain core. May depend only on L0 leaf utilities
-  // (buffer, zip, png). Must not see fig-builder/renderer or any UI layer.
+  // (buffer, zip, png, kiwi). Must not see fig-builder/renderer or any UI layer.
   {
     files: ["packages/@higma/fig/src/**/*.{ts,tsx}"],
     rules: {

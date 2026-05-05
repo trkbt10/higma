@@ -32,7 +32,7 @@ import {
   effects,
   linearGradient,
   radialGradient,
-} from "@higma/fig/builder";
+} from "@higma/fig-builder/fig-file";
 import type { FigDesignDocument } from "@higma/fig/domain";
 import { createFigDesignDocument } from "./fig-context";
 
@@ -464,9 +464,10 @@ function buildTypographyPage(
     { label: "Caption — Smaller text for labels and annotations", size: 12, weight: "Regular" as const },
   ];
 
-  // eslint-disable-next-line no-restricted-syntax -- mutable accumulator for vertical positioning in a loop
-  let yPos = 64;
-  for (const entry of sizes) {
+  const rowTop = (index: number): number =>
+    64 + sizes.slice(0, index).reduce((sum, entry) => sum + entry.size + 20, 0);
+
+  for (const [index, entry] of sizes.entries()) {
     figFile.addTextNode(
       textNode(id.next(), fontFrameID)
         .name(entry.label)
@@ -475,11 +476,12 @@ function buildTypographyPage(
         .fontSize(entry.size)
         .color(DARK)
         .size(440, entry.size + 12)
-        .position(24, yPos)
+        .position(24, rowTop(index))
         .build(),
     );
-    yPos += entry.size + 20;
   }
+
+  const paragraphY = rowTop(sizes.length) + 8;
 
   // Multi-line paragraph
   figFile.addTextNode(
@@ -494,7 +496,7 @@ function buildTypographyPage(
       .fontSize(13)
       .color(GRAY)
       .size(440, 60)
-      .position(24, yPos + 8)
+      .position(24, paragraphY)
       .alignHorizontal("LEFT")
       .autoResize("HEIGHT")
       .lineHeight(150, "PERCENT")

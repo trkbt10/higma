@@ -20,7 +20,7 @@ import {
   frameNode,
   ellipseNode,
   roundedRectNode,
-} from "@higma/fig/builder";
+} from "@higma/fig-builder/fig-file";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/vector-winding");

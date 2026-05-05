@@ -6,12 +6,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { inflateRaw } from "pako";
 import { loadZipPackage } from "@higma/zip";
-import { isFigFile, parseFigHeader, getPayload, decompressDeflateRaw, decompressZstd } from "../src/parser";
+import { isFigFile, parseFigHeader, getPayload, decompressDeflateRaw, decompressZstd, buildFigHeader } from "../src/parser";
 import { isZstdCompressed } from "../src/compression";
-import { buildFigHeader } from "../src/builder";
-import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "../src/kiwi/decoder";
-import { StreamingFigEncoder } from "../src/kiwi/stream";
-import { createTestSchema, createTestNode, buildTestFigFile, createSampleFigFile } from "../src/kiwi/test-helpers";
+import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "@higma/kiwi/decoder";
+import { StreamingFigEncoder } from "@higma/kiwi/stream";
+import { createTestSchema, createTestNode, buildTestFigFile, createSampleFigFile } from "@higma/kiwi/test-helpers";
 
 describe("fig file parsing (generated data)", () => {
   it("validates header", () => {

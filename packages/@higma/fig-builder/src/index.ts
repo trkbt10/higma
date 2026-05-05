@@ -44,3 +44,15 @@ export {
   type FigExportOptions,
   type FigExportResult,
 } from "./export";
+
+// Low-level fig file construction
+export {
+  createFigFile,
+  frameNode,
+  textNode,
+  rectNode,
+  roundedRectNode,
+  ellipseNode,
+  symbolNode,
+  instanceNode,
+} from "./fig-file";

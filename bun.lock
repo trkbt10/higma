@@ -56,6 +56,7 @@
       "name": "@higma/fig",
       "version": "0.12.2",
       "dependencies": {
+        "@higma/kiwi": "workspace:*",
         "@higma/zip": "workspace:*",
         "fzstd": "^0.1.1",
         "pako": "^2.1.0",
@@ -70,6 +71,7 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma/fig": "workspace:*",
+        "@higma/kiwi": "workspace:*",
       },
     },
     "packages/@higma/fig-editor": {
@@ -109,6 +111,16 @@
       "peerDependencies": {
         "react": "^18.0.0 || ^19.0.0",
         "react-dom": "^18.0.0 || ^19.0.0",
+      },
+    },
+    "packages/@higma/kiwi": {
+      "name": "@higma/kiwi",
+      "version": "0.12.2",
+      "dependencies": {
+        "pako": "^2.1.0",
+      },
+      "devDependencies": {
+        "@types/pako": "^2.0.4",
       },
     },
     "packages/@higma/png": {
@@ -209,6 +221,8 @@
     "@higma/fig-editor": ["@higma/fig-editor@workspace:packages/@higma/fig-editor"],
 
     "@higma/fig-renderer": ["@higma/fig-renderer@workspace:packages/@higma/fig-renderer"],
+
+    "@higma/kiwi": ["@higma/kiwi@workspace:packages/@higma/kiwi"],
 
     "@higma/png": ["@higma/png@workspace:packages/@higma/png"],
 

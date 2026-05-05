@@ -12,7 +12,7 @@
  */
 
 import type { Font, Glyph, PathCommand } from "opentype.js";
-import type { FigBlob, DerivedBaselineData } from "@higma/fig/builder";
+import type { FigBlob, DerivedBaselineData } from "@higma/fig-builder/fig-file";
 
 export type GlyphRecord = {
   commandsBlob: number;

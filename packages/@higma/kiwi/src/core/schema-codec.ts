@@ -1,0 +1,61 @@
+/**
+ * @file Schema encoding and decoding
+ */
+
+import type { KiwiSchema, KiwiDefinition, KiwiField } from "../types";
+import type { KiwiFormat } from "./types";
+import { ByteBuffer } from "../byte-buffer";
+import { resolveTypeName, resolveKindName } from "../schema";
+
+/** Options for schema decoding */
+export type DecodeSchemaOptions = {
+  readonly buffer: ByteBuffer;
+  readonly format: KiwiFormat;
+};
+
+/** Get string reader for format */
+function getStringReader(buffer: ByteBuffer, format: KiwiFormat): () => string {
+  if (format === "standard") {
+    return () => buffer.readString();
+  }
+  return () => buffer.readNullString();
+}
+
+
+
+
+
+
+/** Decode a Kiwi schema from a byte buffer */
+export function decodeSchemaFromBuffer(options: DecodeSchemaOptions): KiwiSchema {
+  const { buffer, format } = options;
+  const readString = getStringReader(buffer, format);
+
+  const definitionCount = buffer.readVarUint();
+  const definitions: KiwiDefinition[] = [];
+
+  Array.from({ length: definitionCount }, () => {
+    const name = readString();
+    const kind = resolveKindName(buffer.readByte());
+    const fieldCount = buffer.readVarUint();
+
+    const fields: KiwiField[] = Array.from({ length: fieldCount }, () => {
+      const fieldName = readString();
+      const typeId = buffer.readVarInt();
+      const isArray = buffer.readByte() !== 0;
+      const value = buffer.readVarUint();
+
+      return {
+        name: fieldName,
+        type: resolveTypeName(typeId, definitions),
+        typeId,
+        isArray,
+        value,
+      };
+    });
+
+    definitions.push({ name, kind, fields });
+  });
+
+  return { definitions };
+}

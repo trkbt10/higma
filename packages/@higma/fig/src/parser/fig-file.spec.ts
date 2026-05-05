@@ -8,7 +8,7 @@ import {
   isFigmaZipFile,
 } from "./fig-file";
 import { isFigFile } from "./header";
-import { createSampleFigFile } from "../kiwi/test-helpers";
+import { createSampleFigFile } from "@higma/kiwi/test-helpers";
 
 describe("fig-file", () => {
   describe("isFigFile", () => {

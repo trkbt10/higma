@@ -21,8 +21,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFigFile, frameNode, symbolNode, instanceNode, roundedRectNode, ellipseNode } from "@higma/fig/builder";
-import type { Color } from "@higma/fig/builder";
+import { createFigFile, frameNode, symbolNode, instanceNode, roundedRectNode, ellipseNode } from "@higma/fig-builder/fig-file";
+import type { Color } from "@higma/fig-builder/fig-file";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/constraints");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "constraints.fig");

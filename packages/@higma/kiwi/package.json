@@ -1,0 +1,48 @@
+{
+  "name": "@higma/kiwi",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma/kiwi/src'"
+  },
+  "exports": {
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
+    },
+    "./byte-buffer": {
+      "types": "./src/byte-buffer.ts",
+      "default": "./src/byte-buffer.ts"
+    },
+    "./schema": {
+      "types": "./src/schema.ts",
+      "default": "./src/schema.ts"
+    },
+    "./decoder": {
+      "types": "./src/decoder.ts",
+      "default": "./src/decoder.ts"
+    },
+    "./encoder": {
+      "types": "./src/encoder.ts",
+      "default": "./src/encoder.ts"
+    },
+    "./stream": {
+      "types": "./src/stream.ts",
+      "default": "./src/stream.ts"
+    },
+    "./test-helpers": {
+      "types": "./src/test-helpers.ts",
+      "default": "./src/test-helpers.ts"
+    }
+  },
+  "dependencies": {
+    "pako": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/pako": "^2.0.4"
+  }
+}

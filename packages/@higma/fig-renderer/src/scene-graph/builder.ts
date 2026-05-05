@@ -1847,6 +1847,10 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
 
     case "FRAME":
     case "SECTION":
+    case "SLIDE":
+    case "SLIDE_GRID":
+    case "SLIDE_ROW":
+    case "INTERACTIVE_SLIDE_ELEMENT":
     case "COMPONENT":
     case "COMPONENT_SET":
     case "SYMBOL": {

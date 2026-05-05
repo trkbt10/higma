@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import opentype from "opentype.js";
-import { createFigFile, frameNode, textNode, roundedRectNode, ellipseNode } from "@higma/fig/builder";
+import { createFigFile, frameNode, textNode, roundedRectNode, ellipseNode } from "@higma/fig-builder/fig-file";
 import {
   generateTextGlyphs,
   generateMultilineTextGlyphs,

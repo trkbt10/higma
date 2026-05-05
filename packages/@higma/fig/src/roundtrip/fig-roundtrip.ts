@@ -9,16 +9,20 @@
 
 import { compressZstd, compressDeflateRaw } from "../compression";
 import { decompressDeflateRaw, decompressZstd, isZstdCompressed } from "../compression";
-import type { KiwiSchema, FigNode } from "../types";
-import type { FigBlob as ParserFigBlob } from "../parser/blob-decoder";
-import type { FigImage } from "../parser/fig-file";
-import { StreamingFigEncoder } from "../kiwi/stream";
-import { parseFigHeader, getPayload } from "../parser/header";
-import { splitFigChunks, decodeFigSchema, decodeFigMessage } from "../kiwi/decoder";
-import { normaliseNodeChanges, denormaliseNodeForEncode } from "../parser/normalize";
+import type { KiwiSchema } from "@higma/kiwi/types";
+import { StreamingFigEncoder } from "@higma/kiwi/stream";
+import { splitFigChunks, decodeFigSchema, decodeFigMessage } from "@higma/kiwi/decoder";
+import type { FigNode } from "../types";
+import type { FigBlob as ParserFigBlob, FigImage as ParserFigImage } from "../parser";
+import {
+  parseFigHeader,
+  getPayload,
+  normaliseNodeChanges,
+  denormaliseNodeForEncode,
+  buildFigHeader,
+} from "../parser";
 import { loadZipPackage, createEmptyZipPackage } from "@higma/zip";
-import { buildFigHeader } from "../builder/header";
-import { encodeFigSchema } from "../builder/node/schema-encoder";
+import { encodeFigSchema } from "./schema-encoder";
 
 // =============================================================================
 // Types
@@ -43,7 +47,7 @@ export type FigMetadata = {
 // callers that consume the roundtrip loader's `images` field and callers
 // that consume the parser's `images` field hand around the same type —
 // that erases the need for `as FigImage` casts at integration points.
-export type { FigImage } from "../parser/fig-file";
+export type FigImage = ParserFigImage;
 
 /** Loaded .fig file data */
 export type LoadedFigFile = {

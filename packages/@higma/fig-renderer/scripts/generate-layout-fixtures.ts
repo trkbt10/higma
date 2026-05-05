@@ -10,7 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { loadFigFile, saveFigFile } from "@higma/fig/builder";
+import { loadFigFile, saveFigFile } from "@higma/fig/roundtrip";
 import type { FigNode } from "@higma/fig/types";
 
 const TEMPLATE_FILE = path.join(import.meta.dir, "../../../@higma/fig/samples/sample-file.fig");

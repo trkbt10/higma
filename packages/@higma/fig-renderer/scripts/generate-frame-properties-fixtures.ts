@@ -27,7 +27,7 @@ import {
   solidPaint,
   type EffectData,
   type Paint,
-} from "@higma/fig/builder";
+} from "@higma/fig-builder/fig-file";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/frame-properties");

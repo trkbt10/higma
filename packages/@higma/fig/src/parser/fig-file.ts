@@ -2,9 +2,10 @@
  * @file High-level fig file parsing API
  */
 
-import type { FigNode, KiwiSchema } from "../types";
+import type { KiwiSchema } from "@higma/kiwi/types";
+import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "@higma/kiwi/decoder";
+import type { FigNode } from "../types";
 import { parseFigHeader, getPayload, isFigFile } from "./header";
-import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "../kiwi/decoder";
 import { decompressDeflateRaw, decompressZstd } from "./decompress";
 import { isZstdCompressed } from "../compression";
 import { loadZipPackage } from "@higma/zip";

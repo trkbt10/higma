@@ -5,7 +5,8 @@
   "type": "module",
   "sideEffects": false,
   "dependencies": {
-    "@higma/fig": "workspace:*"
+    "@higma/fig": "workspace:*",
+    "@higma/kiwi": "workspace:*"
   },
   "scripts": {
     "lint": "eslint src",
@@ -40,6 +41,54 @@
     "./builders": {
       "types": "./src/builders/index.ts",
       "default": "./src/builders/index.ts"
+    },
+    "./fig-file": {
+      "types": "./src/fig-file/index.ts",
+      "default": "./src/fig-file/index.ts"
+    },
+    "./fig-file/effect": {
+      "types": "./src/fig-file/effect/index.ts",
+      "default": "./src/fig-file/effect/index.ts"
+    },
+    "./fig-file/frame": {
+      "types": "./src/fig-file/frame/index.ts",
+      "default": "./src/fig-file/frame/index.ts"
+    },
+    "./fig-file/geometry": {
+      "types": "./src/fig-file/geometry/index.ts",
+      "default": "./src/fig-file/geometry/index.ts"
+    },
+    "./fig-file/header": {
+      "types": "./src/fig-file/header/index.ts",
+      "default": "./src/fig-file/header/index.ts"
+    },
+    "./fig-file/node": {
+      "types": "./src/fig-file/node/index.ts",
+      "default": "./src/fig-file/node/index.ts"
+    },
+    "./fig-file/paint": {
+      "types": "./src/fig-file/paint/index.ts",
+      "default": "./src/fig-file/paint/index.ts"
+    },
+    "./fig-file/schema": {
+      "types": "./src/fig-file/schema/index.ts",
+      "default": "./src/fig-file/schema/index.ts"
+    },
+    "./fig-file/shape": {
+      "types": "./src/fig-file/shape/index.ts",
+      "default": "./src/fig-file/shape/index.ts"
+    },
+    "./fig-file/symbol": {
+      "types": "./src/fig-file/symbol/index.ts",
+      "default": "./src/fig-file/symbol/index.ts"
+    },
+    "./fig-file/text": {
+      "types": "./src/fig-file/text/index.ts",
+      "default": "./src/fig-file/text/index.ts"
+    },
+    "./fig-file/types": {
+      "types": "./src/fig-file/types/index.ts",
+      "default": "./src/fig-file/types/index.ts"
     }
   }
 }

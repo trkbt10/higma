@@ -2,16 +2,26 @@
  * @file Fig format types
  */
 
+import type {
+  KiwiDefinition as CodecKiwiDefinition,
+  KiwiDefinitionKind as CodecKiwiDefinitionKind,
+  KiwiField as CodecKiwiField,
+  KiwiPrimitiveType as CodecKiwiPrimitiveType,
+  KiwiSchema as CodecKiwiSchema,
+} from "@higma/kiwi/types";
 import type { CompressionType } from "./compression";
 
 // =============================================================================
 // File Header Types
 // =============================================================================
 
+/** Supported raw fig canvas magic headers. */
+export type FigFileMagic = "fig-kiwi" | "fig-deck" | "fig-buzz";
+
 /** .fig file header structure */
 export type FigHeader = {
-  /** Magic header "fig-kiwi" */
-  readonly magic: "fig-kiwi";
+  /** Magic header identifying the raw fig canvas container */
+  readonly magic: FigFileMagic;
   /** Version character (typically '0') */
   readonly version: string;
   /** Payload size in bytes */
@@ -24,44 +34,27 @@ export const FIG_HEADER_SIZE = 16;
 /** Magic header string */
 export const FIG_MAGIC = "fig-kiwi";
 
+/** Raw canvas magic headers used by Figma-adjacent ZIP packages. */
+export const FIG_MAGIC_VALUES: readonly FigFileMagic[] = ["fig-kiwi", "fig-deck", "fig-buzz"];
+
 // =============================================================================
 // Kiwi Schema Types
 // =============================================================================
 
 /** Kiwi primitive types */
-export type KiwiPrimitiveType =
-  | "bool"
-  | "byte"
-  | "int"
-  | "uint"
-  | "float"
-  | "string"
-  | "int64"
-  | "uint64";
+export type KiwiPrimitiveType = CodecKiwiPrimitiveType;
 
 /** Kiwi definition kinds */
-export type KiwiDefinitionKind = "ENUM" | "STRUCT" | "MESSAGE";
+export type KiwiDefinitionKind = CodecKiwiDefinitionKind;
 
 /** Kiwi field definition */
-export type KiwiField = {
-  readonly name: string;
-  readonly type: KiwiPrimitiveType | string;
-  readonly typeId: number;
-  readonly isArray: boolean;
-  readonly value: number;
-};
+export type KiwiField = CodecKiwiField;
 
 /** Kiwi definition (enum, struct, or message) */
-export type KiwiDefinition = {
-  readonly name: string;
-  readonly kind: KiwiDefinitionKind;
-  readonly fields: readonly KiwiField[];
-};
+export type KiwiDefinition = CodecKiwiDefinition;
 
 /** Kiwi schema */
-export type KiwiSchema = {
-  readonly definitions: readonly KiwiDefinition[];
-};
+export type KiwiSchema = CodecKiwiSchema;
 
 // =============================================================================
 // Parsed Fig File Types
