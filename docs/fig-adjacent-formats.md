@@ -149,6 +149,85 @@ SYMBOL
 These are content patterns, not exclusive capabilities. Any product package must
 preserve unknown schema fields and node families that it does not interpret.
 
+## Coverage Matrix
+
+Status values:
+
+| Status | Meaning |
+|---|---|
+| Done | Implemented and covered by a focused contract test or boundary check. |
+| Partial | A generic or pass-through implementation exists, but product-specific semantics are not complete. |
+| Planned | The package boundary exists, but the domain behavior has not been implemented yet. |
+| N/A | The capability does not belong in that product package. |
+
+Format and container coverage:
+
+| Capability | Shared layer | `.fig` | `.deck` | `.buzz` | `.site` | Notes |
+|---|---|---|---|---|---|---|
+| Product magic/profile | `@higma-figma-schema/profiles` | Done | Done | Done | Done | Product identity is schema/profile data, not Kiwi codec data. |
+| Raw canvas header parse/build | `@higma-figma-containers/canvas` | Done | Done | Done | Done | Header mechanics stay product-free. |
+| ZIP package extraction | `@higma-figma-containers/package` | Done | Done | Done | Done | Package entries and metadata are shared fig-family container concerns. |
+| Kiwi schema/message decode | `@higma-codecs/kiwi` and `@higma-figma-runtime/kiwi-canvas` | Done | Done | Done | Done | Product packages consume decoded runtime data. |
+| Schema and metadata facts | `@higma-figma-analysis/*` | Done | Done | Done | Done | Facts are product-free and exposed through product models. |
+| Unknown field preservation | Product model and IO layers | Partial | Partial | Partial | Partial | Decoded raw canvas data is retained; semantic roundtrip coverage is still product-specific work. |
+
+Product pipeline coverage:
+
+| Product | Model | IO/load result | Renderer plan | Editor workspace | Builder/export | Current implementation note |
+|---|---|---|---|---|---|---|
+| `.fig` | Partial | Done | Partial | Partial | Partial | The design-domain packages are split, but parser/roundtrip still remain in the model package, renderer still has at least one IO dependency, and editor work still depends heavily on IO and renderer APIs. |
+| `.deck` | Done | Done | Partial | Partial | Planned | The package can decode product documents and expose editor workspace facts; presentation-specific render/editor/builder behavior remains domain work. |
+| `.buzz` | Done | Done | Partial | Partial | Planned | The package can decode product documents and expose editor workspace facts; social/template-specific render/editor/builder behavior remains domain work. |
+| `.site` | Done | Done | Partial | Partial | Planned | The package can decode product documents and expose editor workspace facts; site/layout-specific render/editor/builder behavior remains domain work. |
+
+Editor and builder work can be assigned per product because the package graph has
+separate product packages. A domain task should write only within its product
+package set unless it extracts genuinely shared behavior to a lower,
+product-free layer.
+
+| Workstream | `.fig` packages | `.deck` packages | `.buzz` packages | `.site` packages | Shared packages allowed |
+|---|---|---|---|---|---|
+| Model/domain semantics | `@higma-document-models/fig` | `@higma-document-models/deck` | `@higma-document-models/buzz` | `@higma-document-models/site` | `@higma-figma-schema/*`, `@higma-figma-analysis/*` |
+| IO and builder/export | `@higma-document-io/fig` | `@higma-document-io/deck` | `@higma-document-io/buzz` | `@higma-document-io/site` | `@higma-figma-containers/*`, `@higma-figma-runtime/*`, `@higma-codecs/*`, `@higma-primitives/*` |
+| Rendering | `@higma-document-renderers/fig` | `@higma-document-renderers/deck` | `@higma-document-renderers/buzz` | `@higma-document-renderers/site` | Product-free renderer utilities only after a real shared need exists. |
+| Editor integration | `@higma-document-editors/fig` | `@higma-document-editors/deck` | `@higma-document-editors/buzz` | `@higma-document-editors/site` | `@higma-editor-kernel/*`, `@higma-editor-surfaces/*` |
+
+Schema capability coverage:
+
+| Capability group | Preserve | Parse facts | Render semantics | Editor semantics | Builder/export semantics | Owner |
+|---|---|---|---|---|---|---|
+| Presentation nodes: `SLIDE_GRID`, `SLIDE_ROW`, `SLIDE` | Partial | Done | Planned | Planned | Planned | `.deck` domain packages |
+| Interactive presentation nodes | Partial | Done | Planned | Planned | Planned | `.deck` domain packages |
+| Site/layout nodes: `CMS_RICH_TEXT`, `REPEATER`, `RESPONSIVE_SET` | Partial | Done | Planned | Planned | Planned | `.site` domain packages |
+| Symbol/vector-heavy template content | Partial | Done | Partial | Planned | Planned | `.buzz` domain packages |
+| 3D/timeline/tooling/source-control schema fields | Partial | Done | N/A | Planned | Planned | Product package that gives the field semantics |
+| Generic metadata: `client_meta`, thumbnails, preview coordinates, export metadata | Done | Done | Partial | Done | Partial | Container, analysis, and product packages |
+
+## Domain Work Readiness
+
+The package split allows domain work to be assigned independently by product,
+including to separate sub-agents, but readiness is not the same as completion.
+The current state is:
+
+| Domain | Independent package set exists | Editor work can be assigned | Builder/export work can be assigned | Blocking notes |
+|---|---|---|---|---|
+| `.fig` | Yes | Partial | Partial | Existing editor work crosses into IO and renderer APIs; parser and roundtrip still live in model; builder/export is concentrated in IO and still has implicit defaults/stateful ID generation. |
+| `.deck` | Yes | Yes | Yes | Product packages exist and editor workspace/open APIs exist; domain-specific commands, UI behavior, renderer semantics, and builder/export contracts are still planned. |
+| `.buzz` | Yes | Yes | Yes | Product packages exist and editor workspace/open APIs exist; domain-specific commands, UI behavior, renderer semantics, and builder/export contracts are still planned. |
+| `.site` | Yes | Yes | Yes | Product packages exist and editor workspace/open APIs exist; domain-specific commands, UI behavior, renderer semantics, and builder/export contracts are still planned. |
+
+For future sub-agent work, assign ownership by product and layer, for example:
+
+| Assignment | Write scope |
+|---|---|
+| Deck editor behavior | `@higma-document-editors/deck`, plus lower shared editor packages only if the behavior is product-free. |
+| Deck builder/export | `@higma-document-io/deck`, plus lower fig-family container/runtime/codecs only for shared file mechanics. |
+| Buzz editor behavior | `@higma-document-editors/buzz`, plus lower shared editor packages only if the behavior is product-free. |
+| Buzz builder/export | `@higma-document-io/buzz`, plus lower fig-family container/runtime/codecs only for shared file mechanics. |
+| Site editor behavior | `@higma-document-editors/site`, plus lower shared editor packages only if the behavior is product-free. |
+| Site builder/export | `@higma-document-io/site`, plus lower fig-family container/runtime/codecs only for shared file mechanics. |
+| Fig responsibility cleanup | Move remaining parser/roundtrip IO out of `@higma-document-models/fig`, remove renderer-to-IO imports, and make builder APIs explicit and state injection based. |
+
 ## Package Boundaries
 
 Keep the package layout aligned to abstraction axes, not to the current `.fig`
