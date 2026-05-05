@@ -6,60 +6,60 @@
       "source_hashes": {}
     },
     "getting-started": {
-      "page_hash": "dccb9b362dcd12b3b99a0b42fa71aa0b",
+      "page_hash": "9dd7343927269c206feceb4c1d786408",
       "source_hashes": {
-        "package.json": "c7a36525ea01f94c3add6f964ef51a25",
+        "package.json": "6a227e3b873a478e4b52fcb4f02807de",
         "AGENTS.md": "3733fadf3c9efb9c59a65a427b504622"
       }
     },
     "core-concepts": {
-      "page_hash": "eba710931e3fff6fbe42040d60a26961",
+      "page_hash": "1fbcde9119cb3e81efefc7b8458c76f2",
       "source_hashes": {
-        "packages/@higma/fig/src/types.ts": "5c5bd6781f7d249e254e06365a24e3c9"
+        "packages/@higma/fig/src/types.ts": "e53accab42642edda96c82b18a1f4b00"
       }
     },
     "architecture": {
-      "page_hash": "5238994dfbd0cc1bde58ca8970ab3417",
+      "page_hash": "02a9d10636fc7f95bb777ebdc47c753f",
       "source_hashes": {}
     },
     "fig-package": {
-      "page_hash": "a6e58914438c10cc3d10a698d8e3884d",
+      "page_hash": "63e3e45c65f34d0a67592b7bf6820110",
       "source_hashes": {}
     },
     "fig-builder-package": {
-      "page_hash": "47c3c61e4bbc392b95811bd9ba9533f6",
+      "page_hash": "8db45222aa39766c3292699163724ae8",
       "source_hashes": {}
     },
     "fig-renderer-package": {
-      "page_hash": "28a470dcf0c3647291df9f8f0d56cbbf",
+      "page_hash": "0945887f111b53aea9ee12ff7d80dc5e",
       "source_hashes": {}
     },
     "fig-editor-package": {
-      "page_hash": "824498385bc1fb17d3dda0e6c79c4b2e",
+      "page_hash": "2c1c09e2c817ec1d8e721dba130db44e",
       "source_hashes": {}
     },
     "editor-controls-package": {
-      "page_hash": "58e0a0601df2363000437da360377889",
+      "page_hash": "5d7b324602c84a08fa1d63e277994089",
       "source_hashes": {}
     },
     "editor-core-package": {
-      "page_hash": "54e19e29588b899a9c175144763a91db",
+      "page_hash": "898abd066f5493f29fd92497ec03b741",
       "source_hashes": {}
     },
     "ui-components-package": {
-      "page_hash": "525f79ae77a009aaa591dddad2b008a2",
+      "page_hash": "ddae3349b950f8db0f467be5c7476524",
       "source_hashes": {}
     },
     "buffer-package": {
-      "page_hash": "331a94eeaac254438652f935e76490ee",
+      "page_hash": "53f82ec46b97b9ecf4a58b01a9504e53",
       "source_hashes": {}
     },
     "png-package": {
-      "page_hash": "a7d2c55c0afd87288394852301d79b3b",
+      "page_hash": "04f82be0da9f35bf259523a74e79f8dd",
       "source_hashes": {}
     },
     "zip-package": {
-      "page_hash": "f4c94e486b8cf961fc4c9fe43ac3041d",
+      "page_hash": "2809562b2c5176a932e30ac420199f2f",
       "source_hashes": {}
     }
   }

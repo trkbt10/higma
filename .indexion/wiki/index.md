@@ -47,18 +47,18 @@ Most-linked pages that serve as knowledge hubs:
 
 ## Recent Changes
 
-- pages update: buffer-package
 - pages update: zip-package
 - pages update: png-package
+- pages update: buffer-package
 - pages update: ui-components-package
-- pages update: editor-controls-package
 - pages update: editor-core-package
+- pages update: editor-controls-package
 - pages update: fig-editor-package
 - pages update: fig-renderer-package
 - pages update: fig-builder-package
 - pages update: fig-package
-- pages update: overview
 - pages update: architecture
+- pages update: overview
 - pages update: core-concepts
 - pages update: getting-started
 
