@@ -7,8 +7,14 @@ import { createBuzzDocument } from "@higma-document-models/buzz";
 import { createBuzzEditorWorkspace } from ".";
 
 const summary: Parameters<typeof createBuzzDocument>[1] = {
-  totalNodes: 4,
-  nodeTypes: new Map([["VECTOR", 4]]),
+  totalNodes: 6,
+  nodeTypes: new Map([
+    ["SLIDE_GRID", 1],
+    ["SLIDE_ROW", 1],
+    ["SYMBOL", 1],
+    ["BOOLEAN_OPERATION", 1],
+    ["VECTOR", 2],
+  ]),
   topLevelFields: new Map([["type", 4]]),
 };
 
@@ -49,11 +55,20 @@ describe("createBuzzEditorWorkspace", () => {
 
     expect(workspace.session.insights).toBe(insights);
     expect(workspace.renderPlan.insights).toBe(insights);
+    expect(workspace.renderPlan.domainSummary.templateNodeCount).toBe(6);
     expect(workspace.overview).toEqual({
-      nodeCount: 4,
+      nodeCount: 6,
       schemaDefinitionCount: 5,
       metadataKeys: ["client_meta"],
       clientMetaKeys: ["render_coordinates"],
+      domainSummary: {
+        slideGridCount: 1,
+        slideRowCount: 1,
+        symbolCount: 1,
+        vectorCount: 2,
+        booleanOperationCount: 1,
+        templateNodeCount: 6,
+      },
     });
   });
 });

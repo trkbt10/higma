@@ -7,9 +7,14 @@ import { createDeckDocument } from "@higma-document-models/deck";
 import { createDeckEditorWorkspace } from ".";
 
 const summary: Parameters<typeof createDeckDocument>[1] = {
-  totalNodes: 2,
-  nodeTypes: new Map([["SLIDE", 1]]),
-  topLevelFields: new Map([["type", 2]]),
+  totalNodes: 4,
+  nodeTypes: new Map([
+    ["SLIDE_GRID", 1],
+    ["SLIDE_ROW", 1],
+    ["SLIDE", 1],
+    ["INTERACTIVE_SLIDE_ELEMENT", 1],
+  ]),
+  topLevelFields: new Map([["type", 4]]),
 };
 
 const canvas: Parameters<typeof createDeckDocument>[0] = {
@@ -49,11 +54,19 @@ describe("createDeckEditorWorkspace", () => {
 
     expect(workspace.session.insights).toBe(insights);
     expect(workspace.renderPlan.insights).toBe(insights);
+    expect(workspace.renderPlan.domainSummary.presentationNodeCount).toBe(4);
     expect(workspace.overview).toEqual({
-      nodeCount: 2,
+      nodeCount: 4,
       schemaDefinitionCount: 3,
       metadataKeys: ["client_meta"],
       clientMetaKeys: ["thumbnail_size"],
+      domainSummary: {
+        slideGridCount: 1,
+        slideRowCount: 1,
+        slideCount: 1,
+        interactiveElementCount: 1,
+        presentationNodeCount: 4,
+      },
     });
   });
 });

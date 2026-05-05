@@ -2,7 +2,7 @@
  * @file Deck document editor boundary.
  */
 
-import type { DeckDocument } from "@higma-document-models/deck";
+import { createDeckDomainSummary, type DeckDocument, type DeckDomainSummary } from "@higma-document-models/deck";
 import { loadDeckDocumentResult } from "@higma-document-io/deck";
 import { createDeckRenderPlan, type DeckRenderPlan } from "@higma-document-renderers/deck";
 import { createEditorSession, type EditorSession } from "@higma-editor-surfaces/sessions";
@@ -14,6 +14,7 @@ export type DeckEditorOverview = {
   readonly schemaDefinitionCount: number;
   readonly metadataKeys: readonly string[];
   readonly clientMetaKeys: readonly string[];
+  readonly domainSummary: DeckDomainSummary;
 };
 
 export type DeckEditorWorkspace = {
@@ -28,6 +29,7 @@ function createDeckEditorOverview(document: DeckDocument): DeckEditorOverview {
     schemaDefinitionCount: document.insights.schema.definitionCount,
     metadataKeys: document.insights.metadata.rawKeys,
     clientMetaKeys: document.insights.metadata.clientMetaKeys,
+    domainSummary: createDeckDomainSummary(document),
   };
 }
 

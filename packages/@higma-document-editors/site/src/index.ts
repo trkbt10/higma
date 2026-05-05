@@ -2,7 +2,7 @@
  * @file Site document editor boundary.
  */
 
-import type { SiteDocument } from "@higma-document-models/site";
+import { createSiteDomainSummary, type SiteDocument, type SiteDomainSummary } from "@higma-document-models/site";
 import { loadSiteDocumentResult } from "@higma-document-io/site";
 import { createSiteRenderPlan, type SiteRenderPlan } from "@higma-document-renderers/site";
 import { createEditorSession, type EditorSession } from "@higma-editor-surfaces/sessions";
@@ -14,6 +14,7 @@ export type SiteEditorOverview = {
   readonly schemaDefinitionCount: number;
   readonly metadataKeys: readonly string[];
   readonly clientMetaKeys: readonly string[];
+  readonly domainSummary: SiteDomainSummary;
 };
 
 export type SiteEditorWorkspace = {
@@ -28,6 +29,7 @@ function createSiteEditorOverview(document: SiteDocument): SiteEditorOverview {
     schemaDefinitionCount: document.insights.schema.definitionCount,
     metadataKeys: document.insights.metadata.rawKeys,
     clientMetaKeys: document.insights.metadata.clientMetaKeys,
+    domainSummary: createSiteDomainSummary(document),
   };
 }
 

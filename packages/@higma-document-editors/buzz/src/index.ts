@@ -2,7 +2,7 @@
  * @file Buzz document editor boundary.
  */
 
-import type { BuzzDocument } from "@higma-document-models/buzz";
+import { createBuzzDomainSummary, type BuzzDocument, type BuzzDomainSummary } from "@higma-document-models/buzz";
 import { loadBuzzDocumentResult } from "@higma-document-io/buzz";
 import { createBuzzRenderPlan, type BuzzRenderPlan } from "@higma-document-renderers/buzz";
 import { createEditorSession, type EditorSession } from "@higma-editor-surfaces/sessions";
@@ -14,6 +14,7 @@ export type BuzzEditorOverview = {
   readonly schemaDefinitionCount: number;
   readonly metadataKeys: readonly string[];
   readonly clientMetaKeys: readonly string[];
+  readonly domainSummary: BuzzDomainSummary;
 };
 
 export type BuzzEditorWorkspace = {
@@ -28,6 +29,7 @@ function createBuzzEditorOverview(document: BuzzDocument): BuzzEditorOverview {
     schemaDefinitionCount: document.insights.schema.definitionCount,
     metadataKeys: document.insights.metadata.rawKeys,
     clientMetaKeys: document.insights.metadata.clientMetaKeys,
+    domainSummary: createBuzzDomainSummary(document),
   };
 }
 

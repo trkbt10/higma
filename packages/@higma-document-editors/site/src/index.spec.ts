@@ -8,7 +8,13 @@ import { createSiteEditorWorkspace } from ".";
 
 const summary: Parameters<typeof createSiteDocument>[1] = {
   totalNodes: 6,
-  nodeTypes: new Map([["RESPONSIVE_SET", 2]]),
+  nodeTypes: new Map([
+    ["CMS_RICH_TEXT", 1],
+    ["REPEATER", 1],
+    ["RESPONSIVE_SET", 2],
+    ["SYMBOL", 1],
+    ["INSTANCE", 1],
+  ]),
   topLevelFields: new Map([["type", 6]]),
 };
 
@@ -49,11 +55,20 @@ describe("createSiteEditorWorkspace", () => {
 
     expect(workspace.session.insights).toBe(insights);
     expect(workspace.renderPlan.insights).toBe(insights);
+    expect(workspace.renderPlan.domainSummary.layoutNodeCount).toBe(6);
     expect(workspace.overview).toEqual({
       nodeCount: 6,
       schemaDefinitionCount: 7,
       metadataKeys: ["client_meta"],
       clientMetaKeys: ["background_color"],
+      domainSummary: {
+        cmsRichTextCount: 1,
+        repeaterCount: 1,
+        responsiveSetCount: 2,
+        symbolCount: 1,
+        instanceCount: 1,
+        layoutNodeCount: 6,
+      },
     });
   });
 });
