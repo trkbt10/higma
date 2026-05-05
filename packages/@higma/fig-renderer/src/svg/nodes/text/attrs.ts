@@ -4,7 +4,7 @@
 
 import type { text } from "../../primitives";
 import type { ExtractedTextProps } from "../../../text/layout/types";
-import { getAlignedX, getAlignedY } from "../../../text/layout/alignment";
+import { getAlignedX } from "../../../text/layout/alignment";
 import { getTextAnchor } from "./alignment";
 
 /**
@@ -25,21 +25,13 @@ export type SvgTextAttrs = Parameters<typeof text>[0];
  * @returns Attributes for SVG text element
  */
 export function buildTextAttrs(
-  { props, fillColor, fillOpacity, lineCount }: { props: ExtractedTextProps; fillColor: string; fillOpacity: number; lineCount: number; }
+  { props, fillColor, fillOpacity }: { props: ExtractedTextProps; fillColor: string; fillOpacity: number; }
 ): SvgTextAttrs {
   const textAnchor = getTextAnchor(props.textAlignHorizontal);
   const x = getAlignedX(props.textAlignHorizontal, props.size?.width);
-  const y = getAlignedY({
-    align: props.textAlignVertical,
-    height: props.size?.height,
-    fontSize: props.fontSize,
-    lineCount,
-    lineHeight: props.lineHeight,
-  });
 
   return {
     x,
-    y,
     fill: fillColor,
     "fill-opacity": fillOpacity < 1 ? fillOpacity : undefined,
     "font-family": props.fontFamily,

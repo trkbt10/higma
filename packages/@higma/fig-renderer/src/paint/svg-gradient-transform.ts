@@ -86,9 +86,9 @@ export type ElementBounds = {
 // Transform extraction
 // =============================================================================
 
-function m(t: FigGradientTransform | undefined, field: keyof FigGradientTransform, fallback: number): number {
+function m(t: FigGradientTransform | undefined, field: keyof FigGradientTransform, defaultValue: number): number {
   const v = t?.[field];
-  return typeof v === "number" ? v : fallback;
+  return typeof v === "number" ? v : defaultValue;
 }
 
 // =============================================================================
@@ -122,7 +122,7 @@ function m(t: FigGradientTransform | undefined, field: keyof FigGradientTransfor
  *
  * Returns `undefined` when the paint has no transform — callers use the
  * objectBoundingBox (0%..100%) form as the authoritative no-transform
- * behaviour, not as a fallback for failed math.
+ * behaviour, not as a recovery path for failed math.
  *
  * Throws on a non-invertible 2×2 upper block. A zero determinant means
  * `grad_x` does not depend on object position (grad_x is constant

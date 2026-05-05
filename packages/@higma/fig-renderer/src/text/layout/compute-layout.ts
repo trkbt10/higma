@@ -86,15 +86,10 @@ export type ComputeLayoutOptions = {
   /** Explicit line array (from text wrapping). If not provided, splits by \n */
   readonly lines?: readonly string[];
   /** Ascender ratio from font metrics (for accurate baseline positioning) */
-  readonly ascenderRatio?: number;
+  readonly ascenderRatio: number;
   /** Override line height (e.g., from font metrics for 100% line height) */
   readonly lineHeight?: number;
 };
-
-/**
- * Default ascender ratio when font metrics are not available
- */
-const DEFAULT_ASCENDER_RATIO = 0.96875;
 
 /**
  * Average character width as a fraction of font size.
@@ -226,7 +221,10 @@ function resolveLinesWithParagraph(
  * @returns Computed text layout
  */
 export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
-  const { props, ascenderRatio = DEFAULT_ASCENDER_RATIO } = options;
+  const { props, ascenderRatio } = options;
+  if (!Number.isFinite(ascenderRatio) || ascenderRatio <= 0) {
+    throw new Error("computeTextLayout requires a positive ascenderRatio from font metrics");
+  }
   const lineHeight = options.lineHeight ?? props.lineHeight;
 
   // Get lines with paragraph origin tracking.
@@ -326,15 +324,13 @@ export type CursorLayoutResult = {
  * coordinate arithmetic.
  *
  * @param layout - Result of computeTextLayout()
- * @param getLineTextWidth - Optional function to measure actual text width
- *   per line (e.g., via canvas.measureText). If not provided, falls back to
- *   LayoutLine.estimatedWidth. Callers with browser access should provide this
- *   for accurate cursor placement.
+ * @param getLineTextWidth - Function to measure actual text width per line
+ *   (e.g., via canvas.measureText).
  * @returns Cursor layout result suitable for editor-core's coordinate-to-cursor functions
  */
 export function textLayoutToCursorLayout(
   layout: TextLayout,
-  getLineTextWidth?: (text: string) => number,
+  getLineTextWidth: (text: string) => number,
 ): CursorLayoutResult {
   return computeCursorLayout(layout, getLineTextWidth);
 }
@@ -352,7 +348,7 @@ function computeLeftX(anchorX: number, textWidth: number, alignH: string): numbe
 
 function computeCursorLayout(
   layout: TextLayout,
-  getLineTextWidth?: (text: string) => number,
+  getLineTextWidth: (text: string) => number,
 ): CursorLayoutResult {
   // Group layout lines by paragraphIndex.
   // A single source paragraph (\n-delimited) may produce multiple visual lines
@@ -367,7 +363,10 @@ function computeCursorLayout(
   const grouped = new Map<number, CursorLayoutLine[]>();
 
   for (const line of layout.lines) {
-    const textWidth = getLineTextWidth ? getLineTextWidth(line.text) : line.estimatedWidth;
+    const textWidth = getLineTextWidth(line.text);
+    if (!Number.isFinite(textWidth) || textWidth < 0) {
+      throw new Error(`Text layout cursor measurement returned invalid width for "${line.text}"`);
+    }
 
     // Convert SVG text-anchor x to left-edge x
     const leftX = computeLeftX(line.x, textWidth, layout.alignH);

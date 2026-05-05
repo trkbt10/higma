@@ -199,7 +199,7 @@ function buildDiamondGradientCSS(d: ResolvedDiamondGradient): string {
   const edge = stopParts[stopParts.length - 1] ?? "transparent";
 
   // Four triangular regions from center, each with a linear gradient
-  // This creates a diamond-like fallback. True diamond needs a shader.
+  // This creates a diamond-like approximation. True diamond needs a shader.
   return `radial-gradient(ellipse 50% 50% at ${d.cx} ${d.cy}, ${center}, ${edge})`;
 }
 

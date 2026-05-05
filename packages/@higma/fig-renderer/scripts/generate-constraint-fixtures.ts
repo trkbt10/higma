@@ -288,4 +288,7 @@ async function generate(): Promise<void> {
   console.log(`Written: ${OUTPUT_FILE}`);
   console.log(`Size: ${(figData.byteLength / 1024).toFixed(1)} KB`);
 }
-generate().catch(console.error);
+generate().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

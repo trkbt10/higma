@@ -27,12 +27,14 @@ import type { AbstractFont } from "../../font/types";
  * from the explicit lineHeight/fontSize on the node.
  */
 export type ResolvedFontMetrics = {
-  /** Font family recorded by Figma (useful for fallback resolution). */
+  /** Font family recorded by Figma (useful for font resolution). */
   readonly fontFamily: string | undefined;
   /** Font weight recorded by Figma. */
   readonly fontWeight: number | undefined;
   /** Multiplier: line height in ems (e.g. 1.32). Never 0. */
   readonly fontLineHeight: number;
+  /** Ascender ratio used for baseline placement. */
+  readonly ascenderRatio: number;
 };
 
 /**

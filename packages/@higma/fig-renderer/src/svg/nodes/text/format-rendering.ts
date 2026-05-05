@@ -107,7 +107,6 @@ export function formatTextRenderingToSvg(rendering: TextRendering): SvgString {
     props,
     fillColor,
     fillOpacity,
-    lineCount: layout.lines.length,
   });
 
   if (layout.lines.length === 1) {

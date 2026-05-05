@@ -10,7 +10,6 @@ import * as path from "node:path";
 import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "../../font/loader";
 import type { FontLoadOptions, LoadedFont } from "../../font/types";
-import { CJK_FALLBACK_FONTS } from "../../font/helpers";
 
 type FontNameRecord = Record<string, { en?: string } | undefined>;
 
@@ -120,17 +119,13 @@ export type NodeFontLoaderInstance = FontLoader & {
   listFontFamilies(): Promise<readonly string[]>;
   /** Add a custom font file */
   addFontFile(fontPath: string): Promise<void>;
-  /** Load a fallback font for CJK characters */
-  loadFallbackFont(options: FontLoadOptions): Promise<LoadedFont | undefined>;
 };
 
 /**
  * Check if file is a font file
  *
- * Note: .ttc (TrueType Collection) files are NOT supported by opentype.js
- * so they are excluded. This affects CJK fallback on macOS which uses TTC files
- * for Hiragino and other system fonts. Consider installing @fontsource CJK
- * font packages for CJK support.
+ * Note: .ttc (TrueType Collection) files are NOT supported by opentype.js,
+ * so they are excluded.
  */
 function isFontFile(filename: string): boolean {
   const ext = path.extname(filename).toLowerCase();
@@ -154,44 +149,35 @@ function readFontFile(fontPath: string): ReturnType<typeof parseFont> {
 }
 
 async function getFontInfo(fontPath: string): Promise<FontFileInfo | null> {
-  try {
-    const font = readFontFile(fontPath);
+  const font = readFontFile(fontPath);
 
-    // Get font family name - try standard name first, fall back to preferredFamily
-    const names = toNameRecord(font.names);
-    const family = font.names.fontFamily?.en ?? names.preferredFamily?.en ?? "";
-    const subfamily = font.names.fontSubfamily?.en ?? "";
-    const postscriptName = font.names.postScriptName?.en;
+  // Get font family name - try standard name first, then preferredFamily.
+  const names = toNameRecord(font.names);
+  const family = font.names.fontFamily?.en ?? names.preferredFamily?.en ?? "";
+  const subfamily = font.names.fontSubfamily?.en ?? "";
+  const postscriptName = font.names.postScriptName?.en;
 
-    if (!family) {return null;}
+  if (!family) {return null;}
 
-    return {
-      path: fontPath,
-      family,
-      weight: getWeightFromName(subfamily || family),
-      style: getStyleFromName(subfamily || family),
-      postscriptName,
-    };
-  } catch (error) {
-    console.debug("Caught error:", error);
-    return null;
-  }
+  return {
+    path: fontPath,
+    family,
+    weight: getWeightFromName(subfamily || family),
+    style: getStyleFromName(subfamily || family),
+    postscriptName,
+  };
 }
 
-/** Attempt to index a single font file, silently skipping on failure */
+/** Attempt to index a single font file. */
 async function tryIndexFontFile(
   fullPath: string,
   index: Map<string, FontFileInfo[]>
 ): Promise<void> {
-  try {
-    const info = await getFontInfo(fullPath);
-    if (info) {
-      const familyLower = info.family.toLowerCase();
-      const existing = index.get(familyLower) ?? [];
-      index.set(familyLower, [...existing, info]);
-    }
-  } catch (error) {
-    console.debug("Skip unreadable fonts" + ":", error);
+  const info = await getFontInfo(fullPath);
+  if (info) {
+    const familyLower = info.family.toLowerCase();
+    const existing = index.get(familyLower) ?? [];
+    index.set(familyLower, [...existing, info]);
   }
 }
 
@@ -204,20 +190,16 @@ async function indexDirectory(
 ): Promise<void> {
   if (!fs.existsSync(dir)) {return;}
 
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
 
-      if (entry.isDirectory()) {
-        await indexDirectory(fullPath, index);
-      } else if (isFontFile(entry.name)) {
-        await tryIndexFontFile(fullPath, index);
-      }
+    if (entry.isDirectory()) {
+      await indexDirectory(fullPath, index);
+    } else if (isFontFile(entry.name)) {
+      await tryIndexFontFile(fullPath, index);
     }
-  } catch (error) {
-    console.debug("Skip unreadable directories" + ":", error);
   }
 }
 
@@ -291,21 +273,16 @@ export function createNodeFontLoader(
     const bestMatch = sorted[0];
     if (!bestMatch) {return undefined;}
 
-    // Load the font
-    try {
-      const font = toLoadedFontType(readFontFile(bestMatch.path));
+    // Load the font.
+    const font = toLoadedFontType(readFontFile(bestMatch.path));
 
-      return {
-        font,
-        family: bestMatch.family,
-        weight: bestMatch.weight,
-        style: bestMatch.style,
-        postscriptName: bestMatch.postscriptName,
-      };
-    } catch (error) {
-      console.debug("Caught error:", error);
-      return undefined;
-    }
+    return {
+      font,
+      family: bestMatch.family,
+      weight: bestMatch.weight,
+      style: bestMatch.style,
+      postscriptName: bestMatch.postscriptName,
+    };
   }
 
   return {
@@ -333,23 +310,6 @@ export function createNodeFontLoader(
       }
     },
 
-    async loadFallbackFont(options: FontLoadOptions): Promise<LoadedFont | undefined> {
-      const platform = process.platform as keyof typeof CJK_FALLBACK_FONTS;
-      const fallbackFonts = CJK_FALLBACK_FONTS[platform] ?? [];
-
-      for (const family of fallbackFonts) {
-        const font = await loadFont({
-          family,
-          weight: options.weight,
-          style: options.style,
-        });
-        if (font) {
-          return font;
-        }
-      }
-
-      return undefined;
-    },
   };
 }
 
@@ -364,16 +324,12 @@ export function createNodeFontLoaderWithFontsource(): NodeFontLoaderInstance {
   // Look for @fontsource packages in node_modules
   const nodeModulesPath = path.resolve(process.cwd(), "node_modules/@fontsource");
   if (fs.existsSync(nodeModulesPath)) {
-    try {
-      const packages = fs.readdirSync(nodeModulesPath);
-      for (const pkg of packages) {
-        const filesDir = path.join(nodeModulesPath, pkg, "files");
-        if (fs.existsSync(filesDir)) {
-          fontsourceDirs.push(filesDir);
-        }
+    const packages = fs.readdirSync(nodeModulesPath);
+    for (const pkg of packages) {
+      const filesDir = path.join(nodeModulesPath, pkg, "files");
+      if (fs.existsSync(filesDir)) {
+        fontsourceDirs.push(filesDir);
       }
-    } catch (error) {
-      console.debug("Fontsource directory scan error:", error);
     }
   }
 

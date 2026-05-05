@@ -131,11 +131,7 @@ const WRITE_SNAPSHOTS = true;
 
 describe("Component Rendering", () => {
   beforeAll(async () => {
-    try {
-      await loadFigFile();
-    } catch (error) {
-      console.log("Skipping tests:", error instanceof Error ? error.message : "fixture file not found");
-    }
+    await loadFigFile();
 
     if (WRITE_SNAPSHOTS && !fs.existsSync(SNAPSHOTS_DIR)) {
       fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });

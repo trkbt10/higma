@@ -2,7 +2,7 @@
  * @file Text node renderer module
  *
  * Provides SVG rendering for Figma TEXT nodes with support for:
- * - Font resolution and fallbacks
+ * - Font resolution
  * - Font styling (family, weight, style)
  * - Text alignment (horizontal and vertical)
  * - Line height and letter spacing
@@ -21,8 +21,7 @@ export { getTextAnchor, type SvgTextAnchor } from "./alignment";
 // Attribute building
 export { buildTextAttrs } from "./attrs";
 
-// Path-based text rendering using opentype.js (font-driver fallback).
-// Still needed for the lines-mode branch where no derived glyphs exist.
+// Path-based text rendering through the shared text SoT.
 export {
   renderTextNodeAsPath,
   batchRenderTextNodesAsPaths,
@@ -35,7 +34,6 @@ export {
 // `resolveTextRendering(node, { blobs })` + `formatTextRenderingToSvg(rendering)`.
 export {
   renderTextNodeFromDerivedData,
-  renderTextNodeWithDerivedFallback,
   hasDerivedPathData,
   type DerivedPathRenderContext,
 } from "./derived-path-render";

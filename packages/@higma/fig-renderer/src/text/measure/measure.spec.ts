@@ -11,7 +11,6 @@ import {
 } from "./line-break";
 import {
   createTextMeasurer,
-  createFallbackMeasurementProvider,
 } from "./";
 import type { MeasurementProvider, FontSpec } from "./types";
 
@@ -164,7 +163,7 @@ describe("auto line breaking", () => {
     expect(lines[1].text).toBe("World");
   });
 
-  it("falls back to char break for long words", () => {
+  it("uses char break for long words", () => {
     const text = "ABCDEFGHIJ";
     const charWidths = Array(10).fill(10);
 
@@ -228,67 +227,26 @@ describe("breakLines function", () => {
   });
 });
 
-describe("FallbackMeasurementProvider", () => {
-  const provider = createFallbackMeasurementProvider();
-  const font: FontSpec = { fontFamily: "sans-serif", fontSize: 16 };
-
-  it("measures text width", () => {
-    const result = provider.measureText("Hello", font);
-
-    expect(result.width).toBeGreaterThan(0);
-    expect(result.height).toBeGreaterThan(0);
-  });
-
-  it("includes ascent and descent", () => {
-    const result = provider.measureText("Hg", font);
-
-    expect(result.ascent).toBeGreaterThan(0);
-    expect(result.descent).toBeGreaterThan(0);
-  });
-
-  it("measures character widths", () => {
-    const widths = provider.measureCharWidths!("ABC", font);
-
-    expect(widths).toHaveLength(3);
-    expect(widths.every((w) => w > 0)).toBe(true);
-  });
-
-  it("uses fixed width for monospace fonts", () => {
-    const monoFont: FontSpec = { fontFamily: "Courier", fontSize: 16 };
-    const widths = provider.measureCharWidths!("ABC", monoFont);
-
-    // All characters should have the same width
-    expect(widths[0]).toBe(widths[1]);
-    expect(widths[1]).toBe(widths[2]);
-  });
-
-  it("accounts for letter spacing", () => {
-    const fontWithSpacing: FontSpec = {
-      fontFamily: "sans-serif",
-      fontSize: 16,
-      letterSpacing: 2,
-    };
-    const withSpacing = provider.measureText("Hello", fontWithSpacing);
-    const withoutSpacing = provider.measureText("Hello", font);
-
-    expect(withSpacing.width).toBeGreaterThan(withoutSpacing.width);
-  });
-});
-
 describe("TextMeasurer", () => {
   const mockProviderRef = { value: undefined as MeasurementProvider | undefined };
   const measurerRef = { value: undefined as ReturnType<typeof createTextMeasurer> | undefined };
+  const measureTextCallsRef = { value: [] as readonly { readonly text: string; readonly font: FontSpec }[] };
 
   beforeEach(() => {
+    measureTextCallsRef.value = [];
     mockProviderRef.value = {
-      measureText: vi.fn(() => ({
-        width: 50,
-        height: 20,
-        ascent: 16,
-        descent: 4,
-      })),
-      measureCharWidths: vi.fn((text: string) =>
-        Array(text.length).fill(10)),
+      measureText(text: string, font: FontSpec) {
+        measureTextCallsRef.value = [...measureTextCallsRef.value, { text, font }];
+        return {
+          width: 50,
+          height: 20,
+          ascent: 16,
+          descent: 4,
+        };
+      },
+      measureCharWidths(text: string) {
+        return Array(text.length).fill(10);
+      },
     };
     measurerRef.value = createTextMeasurer({ provider: mockProviderRef.value! });
   });
@@ -298,7 +256,7 @@ describe("TextMeasurer", () => {
     const result = measurerRef.value!.measureText("Hello", font);
 
     expect(result.width).toBe(50);
-    expect(mockProviderRef.value!.measureText).toHaveBeenCalledWith("Hello", font);
+    expect(measureTextCallsRef.value).toEqual([{ text: "Hello", font }]);
   });
 
   it("measures multi-line text with line breaking", () => {
@@ -361,14 +319,23 @@ describe("TextMeasurer", () => {
 
 describe("createTextMeasurer", () => {
   it("creates a text measurer with default config", () => {
-    const measurer = createTextMeasurer();
+    const measurer = createTextMeasurer({
+      provider: {
+        measureText: () => ({ width: 1, height: 1, ascent: 1, descent: 0 }),
+      },
+    });
 
     expect(measurer).toBeDefined();
     expect(typeof measurer.measureText).toBe("function");
   });
 
   it("accepts custom line break mode", () => {
-    const measurer = createTextMeasurer({ defaultLineBreakMode: "word" });
+    const measurer = createTextMeasurer({
+      defaultLineBreakMode: "word",
+      provider: {
+        measureText: () => ({ width: 1, height: 1, ascent: 1, descent: 0 }),
+      },
+    });
 
     expect(measurer).toBeDefined();
     expect(typeof measurer.measureText).toBe("function");
@@ -376,9 +343,6 @@ describe("createTextMeasurer", () => {
 });
 
 describe("CJK text handling", () => {
-  const _provider = createFallbackMeasurementProvider();
-  const _font: FontSpec = { fontFamily: "sans-serif", fontSize: 16 };
-
   it("breaks at CJK character boundaries", () => {
     const text = "日本語テスト";
     const charWidths = Array(6).fill(16); // CJK chars are typically full-width

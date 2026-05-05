@@ -10,25 +10,28 @@ import type {
 } from "./types";
 import { detectWeight, FONT_WEIGHTS } from "./weight";
 import { detectStyle } from "./style";
-import { COMMON_FONT_MAPPINGS, getDefaultFallbacks } from "./mappings";
-import { defensiveMark } from "@higma/fig/diagnostics/defensive";
+import { COMMON_FONT_MAPPINGS, getDefaultFontStack, isGenericCssFontFamily } from "./mappings";
 
 /**
  * Default font resolver configuration
  */
-const DEFAULT_CONFIG: Required<FontResolverConfig> = {
+type ResolvedFontResolverConfig = {
+  readonly fontMappings: ReadonlyMap<string, readonly string[]>;
+  readonly defaultFontStack: readonly string[];
+  readonly availabilityChecker: FontAvailabilityChecker;
+};
+
+const DEFAULT_FONT_STACK: readonly string[] = [];
+
+const DEFAULT_CONFIG = {
   fontMappings: COMMON_FONT_MAPPINGS,
-  defaultFallbacks: ["sans-serif"],
-  availabilityChecker: {
-    isAvailable: () => true, // Assume all fonts are available by default
-  },
 };
 
 /**
  * Font resolver class
  *
- * Resolves Figma font references to CSS font stacks with appropriate
- * fallbacks based on font availability and mappings.
+ * Resolves Figma font references to CSS font stacks based on font
+ * availability and mappings.
  */
 /** Resolve an availability check that may be synchronous or async */
 async function resolveAvailability(result: boolean | Promise<boolean>): Promise<boolean> {
@@ -48,16 +51,16 @@ export type FontResolverInstance = {
   clearCache(): void;
 };
 
-/** Resolves Figma font names to CSS font stacks with fallbacks */
-export function createFontResolver(config?: FontResolverConfig): FontResolverInstance {
-  const resolvedConfig: Required<FontResolverConfig> = {
-    fontMappings: config?.fontMappings ?? DEFAULT_CONFIG.fontMappings,
-    defaultFallbacks: config?.defaultFallbacks ?? DEFAULT_CONFIG.defaultFallbacks,
-    availabilityChecker: config?.availabilityChecker ?? DEFAULT_CONFIG.availabilityChecker,
+/** Resolves Figma font names to CSS font stacks */
+export function createFontResolver(config: FontResolverConfig): FontResolverInstance {
+  const resolvedConfig: ResolvedFontResolverConfig = {
+    fontMappings: config.fontMappings ?? DEFAULT_CONFIG.fontMappings,
+    defaultFontStack: config.defaultFontStack ?? DEFAULT_FONT_STACK,
+    availabilityChecker: config.availabilityChecker,
   };
   const cache = new Map<string, ResolvedFont>();
 
-  function buildFallbackChain(family: string): readonly string[] {
+  function buildFontFamilyChain(family: string): readonly string[] {
     // Check custom mappings first
     const mapped = resolvedConfig.fontMappings.get(family);
     if (mapped) {
@@ -70,27 +73,23 @@ export function createFontResolver(config?: FontResolverConfig): FontResolverIns
       return common;
     }
 
-    // Build generic fallback chain
-    const genericFallbacks = getDefaultFallbacks(family);
-    return [family, ...genericFallbacks];
+    const genericFontStack = getDefaultFontStack(family);
+    return [family, ...genericFontStack, ...resolvedConfig.defaultFontStack];
   }
 
   function checkAvailability(family: string): boolean {
     const result = resolvedConfig.availabilityChecker.isAvailable(family);
-    // Handle both sync and async (for sync, Promise.resolve wraps it)
     if (typeof result === "boolean") {
       return result;
     }
-    // For async, we can't wait - return true optimistically
-    // Caller should use resolveAsync for accurate results
-    return true;
+    throw new Error(`Font resolver resolve() received async availability for ${family}; use resolveAsync()`);
   }
 
   function buildFontFamilyString(chain: readonly string[]): string {
     return chain
       .map((f) => {
         // Don't quote generic family names
-        if (isGenericFamily(f)) {
+        if (isGenericCssFontFamily(f)) {
           return f;
         }
         // Quote family names that contain spaces or special characters
@@ -109,12 +108,11 @@ export function createFontResolver(config?: FontResolverConfig): FontResolverIns
     const fontWeight = detectWeight(style) ?? FONT_WEIGHTS.REGULAR;
     const fontStyle = detectStyle(style);
 
-    // Build fallback chain
-    const fallbackChain = buildFallbackChain(family);
+    const fontFamilyChain = buildFontFamilyChain(family);
     const isExactMatch = checkAvailability(family);
 
     // Build CSS font-family string
-    const fontFamily = buildFontFamilyString(fallbackChain);
+    const fontFamily = buildFontFamilyString(fontFamilyChain);
 
     return {
       fontFamily,
@@ -122,7 +120,7 @@ export function createFontResolver(config?: FontResolverConfig): FontResolverIns
       fontStyle,
       isExactMatch,
       source: fontRef,
-      fallbackChain,
+      fontFamilyChain,
     };
   }
 
@@ -144,13 +142,16 @@ export function createFontResolver(config?: FontResolverConfig): FontResolverIns
 
       const fontWeight = detectWeight(style) ?? FONT_WEIGHTS.REGULAR;
       const fontStyle = detectStyle(style);
-      const fallbackChain = buildFallbackChain(family);
+      const fontFamilyChain = buildFontFamilyChain(family);
 
       // Check availability asynchronously
+      if (!resolvedConfig.availabilityChecker) {
+        throw new Error(`Font resolver requires an explicit availabilityChecker for ${family}`);
+      }
       const availabilityResult = resolvedConfig.availabilityChecker.isAvailable(family);
       const isExactMatch = await resolveAvailability(availabilityResult);
 
-      const fontFamily = buildFontFamilyString(fallbackChain);
+      const fontFamily = buildFontFamilyString(fontFamilyChain);
 
       return {
         fontFamily,
@@ -158,7 +159,7 @@ export function createFontResolver(config?: FontResolverConfig): FontResolverIns
         fontStyle,
         isExactMatch,
         source: fontRef,
-        fallbackChain,
+        fontFamilyChain,
       };
     },
 
@@ -169,40 +170,13 @@ export function createFontResolver(config?: FontResolverConfig): FontResolverIns
 }
 
 /**
- * Generic CSS font family keywords
- */
-const GENERIC_FAMILIES = new Set([
-  "serif",
-  "sans-serif",
-  "monospace",
-  "cursive",
-  "fantasy",
-  "system-ui",
-  "ui-serif",
-  "ui-sans-serif",
-  "ui-monospace",
-  "ui-rounded",
-  "math",
-  "emoji",
-  "fangsong",
-]);
-
-/**
- * Check if a font family name is a generic CSS keyword
- */
-function isGenericFamily(family: string): boolean {
-  return GENERIC_FAMILIES.has(family);
-}
-
-/**
  * Browser font availability checker using CSS Font Loading API
  */
 export function createBrowserAvailabilityChecker(): FontAvailabilityChecker {
   return {
     isAvailable(family: string): boolean | Promise<boolean> {
       if (typeof document === "undefined" || !document.fonts) {
-        defensiveMark("font-resolver:browser-availability:no-document-fonts");
-        return true; // Can't check, assume available
+        throw new Error("Browser font availability requires document.fonts");
       }
 
       // Check if font is already loaded

@@ -265,4 +265,7 @@ async function generate(): Promise<void> {
   console.log("3. Run comparison test");
 }
 
-generate().catch(console.error);
+generate().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

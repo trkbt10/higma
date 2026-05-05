@@ -652,4 +652,7 @@ async function generatePaintAdvancedFixtures(): Promise<void> {
   console.log(`3. Run: npx vitest run packages/@higma/fig-renderer/spec/paint-advanced.spec.ts`);
 }
 
-generatePaintAdvancedFixtures().catch(console.error);
+generatePaintAdvancedFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

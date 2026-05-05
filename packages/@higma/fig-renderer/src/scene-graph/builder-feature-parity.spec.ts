@@ -273,7 +273,7 @@ describe("Render feature parity", () => {
     ["fills",        "fillPaints → SVG fill",            "fills array on shape nodes"],
     ["strokes",      "strokePaints → SVG stroke",        "stroke on shape nodes"],
     ["textOutlines",  "hasDerivedPathData()",            "glyphContours on TextNode"],
-    ["textFallback", "renderTextNode()",                 "textLineLayout on TextNode"],
+    ["textLineLayout", "renderTextNode()",                 "textLineLayout on TextNode"],
   ] as const;
 
   for (const [feature, oldPath, newPath] of FEATURE_MAP) {

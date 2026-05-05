@@ -318,4 +318,7 @@ async function main(): Promise<void> {
   for (const b of builders) { console.log(`  - ${b.name}`); }
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

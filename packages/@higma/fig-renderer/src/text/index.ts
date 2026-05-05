@@ -22,7 +22,6 @@ export {
   extractTextProps,
   getValueWithUnits,
   getAlignedX,
-  getAlignedY,
   getAlignedYWithMetrics,
   type AlignYOptions,
   textAlignHorizontalToAnchor,
@@ -59,6 +58,7 @@ export type {
 // Unified text rendering SoT
 export {
   resolveTextRendering,
+  resolveTextAscenderRatio,
   createCachedTextFontResolver,
   type CachedTextFontSource,
 } from "./rendering";

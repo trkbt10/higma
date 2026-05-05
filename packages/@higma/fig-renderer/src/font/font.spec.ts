@@ -4,8 +4,12 @@
 
 import { detectWeight, normalizeWeight, getWeightName } from "./weight";
 import { detectStyle, isItalic, isOblique, isSlanted } from "./style";
-import { detectFontCategory, getDefaultFallbacks, COMMON_FONT_MAPPINGS } from "./mappings";
+import { detectFontCategory, getDefaultFontStack, COMMON_FONT_MAPPINGS, isGenericCssFontFamily } from "./mappings";
 import { createFontResolver } from "./resolver";
+
+const availableChecker = {
+  isAvailable: () => true,
+};
 
 describe("weight detection", () => {
   it("detects common weight names", () => {
@@ -142,16 +146,26 @@ describe("font category detection", () => {
   });
 });
 
-describe("default fallbacks", () => {
-  it("returns appropriate fallbacks by category", () => {
-    const mono = getDefaultFallbacks("Roboto Mono");
+describe("generic CSS font family SoT", () => {
+  it("detects generic CSS font families from mappings", () => {
+    expect(isGenericCssFontFamily("sans-serif")).toBe(true);
+    expect(isGenericCssFontFamily("Inter")).toBe(false);
+  });
+});
+
+describe("default font stacks", () => {
+  it("returns appropriate font stacks by category", () => {
+    const mono = getDefaultFontStack("Roboto Mono");
     expect(mono).toContain("monospace");
 
-    const serif = getDefaultFallbacks("Georgia");
+    const serif = getDefaultFontStack("Georgia");
     expect(serif).toContain("serif");
 
-    const sans = getDefaultFallbacks("Helvetica");
+    const sans = getDefaultFontStack("Helvetica");
     expect(sans).toContain("sans-serif");
+
+    const unknown = getDefaultFontStack("MyCustomFont");
+    expect(unknown).toEqual([]);
   });
 });
 
@@ -162,7 +176,7 @@ describe("common font mappings", () => {
     expect(COMMON_FONT_MAPPINGS.has("SF Pro")).toBe(true);
   });
 
-  it("includes fallbacks in mappings", () => {
+  it("includes font stack entries in mappings", () => {
     const inter = COMMON_FONT_MAPPINGS.get("Inter");
     expect(inter).toBeDefined();
     expect(inter![0]).toBe("Inter");
@@ -172,7 +186,7 @@ describe("common font mappings", () => {
 
 describe("FontResolver", () => {
   it("resolves Figma font reference", () => {
-    const resolver = createFontResolver();
+    const resolver = createFontResolver({ availabilityChecker: availableChecker });
     const result = resolver.resolve({
       family: "Inter",
       style: "Bold",
@@ -181,11 +195,11 @@ describe("FontResolver", () => {
     expect(result.fontWeight).toBe(700);
     expect(result.fontStyle).toBe("normal");
     expect(result.fontFamily).toContain("Inter");
-    expect(result.fallbackChain[0]).toBe("Inter");
+    expect(result.fontFamilyChain[0]).toBe("Inter");
   });
 
   it("handles italic styles", () => {
-    const resolver = createFontResolver();
+    const resolver = createFontResolver({ availabilityChecker: availableChecker });
     const result = resolver.resolve({
       family: "Roboto",
       style: "Bold Italic",
@@ -195,20 +209,19 @@ describe("FontResolver", () => {
     expect(result.fontStyle).toBe("italic");
   });
 
-  it("provides fallbacks for unknown fonts", () => {
-    const resolver = createFontResolver();
+  it("provides font stack entries for unknown fonts", () => {
+    const resolver = createFontResolver({ availabilityChecker: availableChecker });
     const result = resolver.resolve({
       family: "MyCustomFont",
       style: "Regular",
     });
 
-    expect(result.fallbackChain[0]).toBe("MyCustomFont");
-    expect(result.fallbackChain.length).toBeGreaterThan(1);
-    expect(result.fallbackChain).toContain("sans-serif");
+    expect(result.fontFamilyChain[0]).toBe("MyCustomFont");
+    expect(result.fontFamilyChain).toEqual(["MyCustomFont"]);
   });
 
   it("caches resolved fonts", () => {
-    const resolver = createFontResolver();
+    const resolver = createFontResolver({ availabilityChecker: availableChecker });
     const ref = { family: "Inter", style: "Bold" };
 
     const first = resolver.resolve(ref);
@@ -218,7 +231,7 @@ describe("FontResolver", () => {
   });
 
   it("formats font-family string correctly", () => {
-    const resolver = createFontResolver();
+    const resolver = createFontResolver({ availabilityChecker: availableChecker });
     const result = resolver.resolve({
       family: "SF Pro",
       style: "Regular",
@@ -237,6 +250,7 @@ describe("FontResolver", () => {
 
     const resolver = createFontResolver({
       fontMappings: customMappings,
+      availabilityChecker: availableChecker,
     });
 
     const result = resolver.resolve({
@@ -244,7 +258,18 @@ describe("FontResolver", () => {
       style: "Regular",
     });
 
-    expect(result.fallbackChain[0]).toBe("MyBrandFont");
-    expect(result.fallbackChain[1]).toBe("Helvetica");
+    expect(result.fontFamilyChain[0]).toBe("MyBrandFont");
+    expect(result.fontFamilyChain[1]).toBe("Helvetica");
+  });
+
+  it("throws when sync resolution receives async availability", () => {
+    const resolver = createFontResolver({
+      availabilityChecker: {
+        isAvailable: async () => true,
+      },
+    });
+
+    expect(() => resolver.resolve({ family: "Inter", style: "Regular" }))
+      .toThrow("Font resolver resolve() received async availability for Inter; use resolveAsync()");
   });
 });

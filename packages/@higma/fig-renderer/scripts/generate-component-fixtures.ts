@@ -340,4 +340,7 @@ async function generateComponentFixtures(): Promise<void> {
 }
 
 // Run
-generateComponentFixtures().catch(console.error);
+generateComponentFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

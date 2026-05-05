@@ -58,9 +58,11 @@ export {
   SERIF_STACK,
   SANS_SERIF_STACK,
   COMMON_FONT_MAPPINGS,
-  GENERIC_FALLBACKS,
+  GENERIC_FONT_STACKS,
+  GENERIC_CSS_FONT_FAMILIES,
   detectFontCategory,
-  getDefaultFallbacks,
+  getDefaultFontStack,
+  isGenericCssFontFamily,
 } from "./mappings";
 
 // =============================================================================
@@ -79,4 +81,4 @@ export { createFontCache, type FontCache, createCachingFontLoader, type CachingF
 // Helpers
 // =============================================================================
 
-export { CJK_FALLBACK_FONTS, fontHasGlyph, isCJKCharacter } from "./helpers";
+export { fontHasGlyph } from "./helpers";

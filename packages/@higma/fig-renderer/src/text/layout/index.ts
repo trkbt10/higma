@@ -25,7 +25,6 @@ export { extractTextProps, getValueWithUnits } from "./extract-props";
 // Alignment
 export {
   getAlignedX,
-  getAlignedY,
   getAlignedYWithMetrics,
   type AlignYOptions,
 } from "./alignment";

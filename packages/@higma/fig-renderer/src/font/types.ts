@@ -128,7 +128,7 @@ export type FigmaFontRef = {
  * Resolved font information
  */
 export type ResolvedFont = {
-  /** CSS font-family value (with fallbacks) */
+  /** CSS font-family value */
   readonly fontFamily: string;
   /** Numeric font weight (100-900) */
   readonly fontWeight: number;
@@ -138,8 +138,8 @@ export type ResolvedFont = {
   readonly isExactMatch: boolean;
   /** Original Figma font reference */
   readonly source: FigmaFontRef;
-  /** Fallback chain used */
-  readonly fallbackChain: readonly string[];
+  /** CSS font-family chain used */
+  readonly fontFamilyChain: readonly string[];
 };
 
 /**
@@ -166,10 +166,10 @@ export type FontVariant = {
 export type FontResolverConfig = {
   /** Custom font mappings (Figma family -> CSS font stack) */
   readonly fontMappings?: ReadonlyMap<string, readonly string[]>;
-  /** Default fallback fonts */
-  readonly defaultFallbacks?: readonly string[];
+  /** Default CSS generic font stack */
+  readonly defaultFontStack?: readonly string[];
   /** Font availability checker */
-  readonly availabilityChecker?: FontAvailabilityChecker;
+  readonly availabilityChecker: FontAvailabilityChecker;
 };
 
 /**

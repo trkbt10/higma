@@ -410,4 +410,7 @@ async function generateEffectFixtures(): Promise<void> {
 }
 
 // Run
-generateEffectFixtures().catch(console.error);
+generateEffectFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -14,6 +14,7 @@ import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData } from "@higma/
 import { defensiveMark } from "@higma/fig/diagnostics/defensive";
 import { extractTextProps } from "../layout/extract-props";
 import type { TextNodeInput } from "../layout/extract-props";
+import type { ExtractedTextProps } from "../layout/types";
 import { getFillColorAndOpacity } from "../layout/fill";
 import { computeTextLayout } from "../layout/compute-layout";
 import { extractDerivedTextPathData, hasDerivedGlyphs } from "../paths/derived-paths";
@@ -151,11 +152,38 @@ function resolveFontMetrics(dtd: FigDerivedTextData | undefined): ResolvedFontMe
     ? m.fontLineHeight
     : undefined;
   if (lh === undefined) return undefined;
+  const baseline = dtd?.baselines?.[0];
+  if (!baseline || typeof baseline.lineAscent !== "number" || baseline.lineAscent <= 0) {
+    return undefined;
+  }
   return {
     fontFamily: m.key?.family,
     fontWeight: m.fontWeight,
     fontLineHeight: lh,
+    ascenderRatio: baseline.lineAscent / (baseline.lineHeight / lh),
   };
+}
+
+export function resolveTextAscenderRatio(
+  node: TextNodeInput,
+  props: ExtractedTextProps,
+  ctx: ResolveTextContext,
+): number {
+  const dtd = node.derivedTextData as FigDerivedTextData | undefined;
+  const metrics = resolveFontMetrics(dtd);
+  if (metrics) {
+    return metrics.ascenderRatio;
+  }
+  const font = ctx.fontResolver?.({
+    props,
+    fontFamily: props.fontFamily,
+    fontWeight: props.fontWeight,
+    fontStyle: props.fontStyle,
+  });
+  if (font) {
+    return font.ascender / font.unitsPerEm;
+  }
+  throw new Error(`Text layout requires ascender metrics for font "${props.fontFamily}"`);
 }
 
 /**
@@ -303,6 +331,7 @@ export function resolveTextRendering(
   // Font metrics from fontMetaData — used by line-mode to compute accurate
   // baselines when a font loader is absent.
   const fontMetrics = resolveFontMetrics(dtd);
+  const ascenderRatio = resolveTextAscenderRatio(node, props, ctx);
 
   // Glyph-mode when pre-outlined paths are available and we can decode them.
   // Figma has already applied truncation to the glyph positions, so we pass
@@ -316,7 +345,7 @@ export function resolveTextRendering(
     );
     const pathData = extractDerivedTextPathData(dtd!, ctx.blobs, alignmentOffset);
     if (pathData.glyphContours.length > 0 || pathData.decorations.length > 0) {
-      const layout = computeTextLayout({ props });
+      const layout = computeTextLayout({ props, ascenderRatio });
       const glyphs: TextRenderingGlyphs = {
         kind: "glyphs",
         glyphContours: pathData.glyphContours,
@@ -346,6 +375,7 @@ export function resolveTextRendering(
   const layout = computeTextLayout({
     props: displayProps,
     lines: explicitLines,
+    ascenderRatio,
   });
 
   const fontGlyphs = resolveFontGlyphRendering({

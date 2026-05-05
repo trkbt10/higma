@@ -5,7 +5,7 @@
  * Format-agnostic - works with any canvas that uses percentage-based positioning.
  *
  * When `showTextSelection` is enabled, the component internally tracks
- * the textarea's selection range and renders a proportional highlight overlay
+ * the textarea's selection range and renders a measured highlight overlay
  * with a blinking caret. This is suitable for flat (single-style) text editing
  * (e.g., PDF text elements). Rich text editors (e.g., PPTX TextEditController)
  * should use the `children` slot for custom selection rendering instead.
@@ -30,8 +30,6 @@ import {
   offsetToCursorPosition,
   cursorPositionToCoordinates,
   selectionToRects,
-  DEFAULT_ASCENDER_RATIO,
-  DEFAULT_CURSOR_CONTEXT,
   type CursorCalculationContext,
 } from "@higma/editor-core/text-edit";
 import { colorTokens } from "@higma/ui-components/design-tokens";
@@ -70,9 +68,9 @@ export type TextEditInputFrameProps = {
     readonly size: number;
     readonly weight?: string;
     readonly style?: string;
-    /** Font ascender in 1/1000 em units (default: 800). Used for baseline position. */
+    /** Font ascender in 1/1000 em units. Used for baseline position. */
     readonly ascender?: number;
-    /** Font descender in 1/1000 em units (default: -200). Used for baseline position. */
+    /** Font descender in 1/1000 em units. Used for baseline position. */
     readonly descender?: number;
   };
   readonly children: ReactNode;
@@ -253,30 +251,33 @@ const CARET_BLINK_KEYFRAMES = `@keyframes _tso-blink{0%,100%{opacity:1}50%{opaci
 /** Shared offscreen canvas for text measurement. */
 const measureCtxCache = { ctx: null as CanvasRenderingContext2D | null };
 
-function getCanvasCtx(): CanvasRenderingContext2D | null {
+function getCanvasCtx(): CanvasRenderingContext2D {
   if (!measureCtxCache.ctx) {
-    try {
-      measureCtxCache.ctx = document.createElement("canvas").getContext("2d");
-    } catch (error) {
-      // SSR: canvas is not available in server-side environments
-      if (error instanceof Error) { measureCtxCache.ctx = null; }
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!ctx) {
+      throw new Error("TextEditInputFrame requires CanvasRenderingContext2D for text selection measurement");
     }
+    measureCtxCache.ctx = ctx;
   }
   return measureCtxCache.ctx;
 }
 
-function computeAscRatio(font?: TextEditInputFrameProps["textFont"]): number {
-  if (font?.ascender != null && font?.descender != null) {
-    return font.ascender / (font.ascender - font.descender);
+function requireTextFont(font: TextEditInputFrameProps["textFont"]): NonNullable<TextEditInputFrameProps["textFont"]> {
+  if (!font) {
+    throw new Error("TextEditInputFrame showTextSelection requires textFont");
   }
-  return DEFAULT_ASCENDER_RATIO;
+  return font;
 }
 
-function buildFontString(font?: TextEditInputFrameProps["textFont"]): string {
-  if (font) {
-    return `${font.style ?? "normal"} ${font.weight ?? "normal"} ${font.size}px ${font.family}`;
+function computeAscRatio(font: NonNullable<TextEditInputFrameProps["textFont"]>): number {
+  if (font.ascender == null || font.descender == null) {
+    throw new Error("TextEditInputFrame textFont requires ascender and descender for selection measurement");
   }
-  return `normal normal ${DEFAULT_CURSOR_CONTEXT.defaultFontSizePt}px sans-serif`;
+  return font.ascender / (font.ascender - font.descender);
+}
+
+function buildFontString(font: NonNullable<TextEditInputFrameProps["textFont"]>): string {
+  return `${font.style ?? "normal"} ${font.weight ?? "normal"} ${font.size}px ${font.family}`;
 }
 
 /**
@@ -290,9 +291,9 @@ function buildLayoutResult({ text, boundsWidth, boundsHeight, font }: {
   readonly text: string;
   readonly boundsWidth: number;
   readonly boundsHeight: number;
-  readonly font?: TextEditInputFrameProps["textFont"];
+  readonly font: NonNullable<TextEditInputFrameProps["textFont"]>;
 }): LayoutResultLike {
-  const fontSize = font?.size ?? DEFAULT_CURSOR_CONTEXT.defaultFontSizePt;
+  const fontSize = font.size;
   // Baseline position within bounds: ascender portion of total height.
   // ascender/descender MUST be provided by the caller (resolved via format-specific SoT).
   const ascRatio = computeAscRatio(font);
@@ -312,6 +313,8 @@ function buildLayoutResult({ text, boundsWidth, boundsHeight, font }: {
         x: 0,
         y: baselineY,
         height: boundsHeight,
+        sourceStart: 0,
+        sourceEnd: text.length,
       }],
     }],
   };
@@ -325,17 +328,17 @@ function buildLayoutResult({ text, boundsWidth, boundsHeight, font }: {
  * By measuring the full span text and computing the ratio, we ensure
  * substring positions are proportionally consistent with span.width.
  */
-function buildCursorContext(font?: TextEditInputFrameProps["textFont"]): CursorCalculationContext {
+function buildCursorContext(font: NonNullable<TextEditInputFrameProps["textFont"]>): CursorCalculationContext {
   const canvasCtx = getCanvasCtx();
   const fontStr = buildFontString(font);
 
   const measureSpanTextWidth = (span: LayoutSpanLike, substring: string): number => {
-    if (!canvasCtx || span.text.length === 0 || substring.length === 0) {return 0;}
+    if (span.text.length === 0 || substring.length === 0) {return 0;}
     canvasCtx.font = fontStr;
     const fullWidth = canvasCtx.measureText(span.text).width;
-    if (fullWidth <= 0) {return 0;}
-    // Scale canvas measurement to match span.width (from SVG bounds)
-    // This ensures cursor positions are consistent with the rendered text width
+    if (fullWidth <= 0) {
+      throw new Error("TextEditInputFrame text measurement returned zero width for a non-empty text span");
+    }
     return (canvasCtx.measureText(substring).width / fullWidth) * span.width;
   };
 
@@ -345,7 +348,7 @@ function buildCursorContext(font?: TextEditInputFrameProps["textFont"]): CursorC
     measureSpanTextWidth,
     getAscenderRatio: () => cursorAscRatio,
     ptToPx: 1, // bounds are already in display units
-    defaultFontSizePt: font?.size ?? DEFAULT_CURSOR_CONTEXT.defaultFontSizePt,
+    emptyLineFontSizePt: font.size,
   };
 }
 
@@ -387,13 +390,14 @@ function TextSelectionOverlay({
   readonly boundsHeight: number;
 }) {
   if (text.length === 0 || boundsWidth <= 0 || boundsHeight <= 0) {return null;}
+  const requiredTextFont = requireTextFont(textFont);
 
   const layoutResult = useMemo(
-    () => buildLayoutResult({ text, boundsWidth, boundsHeight, font: textFont }),
-    [text, boundsWidth, boundsHeight, textFont],
+    () => buildLayoutResult({ text, boundsWidth, boundsHeight, font: requiredTextFont }),
+    [text, boundsWidth, boundsHeight, requiredTextFont],
   );
 
-  const cursorCtx = useMemo(() => buildCursorContext(textFont), [textFont]);
+  const cursorCtx = useMemo(() => buildCursorContext(requiredTextFont), [requiredTextFont]);
 
   // Use editor-core SoT: offset → CursorPosition → visual coords
   const textBody = useMemo(() => ({

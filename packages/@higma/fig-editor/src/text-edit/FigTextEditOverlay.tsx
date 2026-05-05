@@ -33,7 +33,6 @@ import {
   coordinatesToCursorPosition,
   cursorPositionToOffset,
   selectionToRects,
-  proportionalTextWidth,
   type CompositionState,
   type CursorCalculationContext,
   type LayoutSpanLike,
@@ -44,6 +43,7 @@ import {
   extractTextProps,
   computeTextLayout,
   textLayoutToCursorLayout,
+  resolveTextAscenderRatio,
 } from "@higma/fig-renderer/text";
 import { colorTokens } from "@higma/ui-components/design-tokens";
 
@@ -127,7 +127,7 @@ function buildFigCursorContext(
 
   const measureSpanTextWidth = (span: LayoutSpanLike, substring: string): number => {
     if (span.text.length === 0 || substring.length === 0) {
-      return proportionalTextWidth(span, substring);
+      return 0;
     }
     canvasCtx.font = fontStr;
     const fullWidth = canvasCtx.measureText(span.text).width;
@@ -142,7 +142,7 @@ function buildFigCursorContext(
     measureSpanTextWidth,
     getAscenderRatio: () => ascenderRatio,
     ptToPx: 1, // fig uses pixels directly
-    defaultFontSizePt: fontSize,
+    emptyLineFontSizePt: fontSize,
   };
 }
 
@@ -197,9 +197,13 @@ export function FigTextEditOverlay({
   );
 
   // --- Compute layout using the SAME function as SVG renderer ---
+  const ascenderRatio = useMemo(
+    () => resolveTextAscenderRatio(node, textProps, {}),
+    [node, textProps],
+  );
   const textLayout = useMemo(
-    () => computeTextLayout({ props: textProps }),
-    [textProps],
+    () => computeTextLayout({ props: textProps, ascenderRatio }),
+    [textProps, ascenderRatio],
   );
 
   // --- Convert to cursor layout via SoT function ---
@@ -331,7 +335,7 @@ export function FigTextEditOverlay({
 
   // --- IME composition ---
   const initialComposition = createInitialCompositionState();
-  const [_composition, setComposition] = useState<CompositionState>(initialComposition);
+  const [, setComposition] = useState<CompositionState>(initialComposition);
   const {
     handleCompositionStart,
     handleCompositionUpdate,

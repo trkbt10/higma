@@ -67,13 +67,7 @@ export function useFigTextFontResolver({
     }
     const cancelledRef = { value: false };
     void Promise.all(fontOptions.map(async (options) => {
-      const font = await fontLoader.loadFont(options);
-      if (font) {
-        return;
-      }
-      if (fontLoader.loadFallbackFont) {
-        await fontLoader.loadFallbackFont(options);
-      }
+      await fontLoader.loadFont(options);
     })).then(() => {
       if (!cancelledRef.value) {
         setLoadedVersion((version) => version + 1);

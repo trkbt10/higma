@@ -276,4 +276,7 @@ async function generateVectorWindingFixtures(): Promise<void> {
   for (const b of builders) { console.log(`  - ${b.name}`); }
 }
 
-generateVectorWindingFixtures().catch(console.error);
+generateVectorWindingFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -144,8 +144,8 @@ describe("Scene graph builder - demo document", () => {
       for (const tn of textNodes) {
         const text = tn as TextNode;
         const hasGlyphs = text.glyphContours && text.glyphContours.length > 0;
-        const hasFallback = text.textLineLayout && text.textLineLayout.lines.length > 0;
-        expect(hasGlyphs || hasFallback).toBe(true);
+        const hasLineLayout = text.textLineLayout && text.textLineLayout.lines.length > 0;
+        expect(hasGlyphs || hasLineLayout).toBe(true);
       }
     });
 
@@ -156,10 +156,10 @@ describe("Scene graph builder - demo document", () => {
 
       // Debug: check what the text nodes contain
       for (const t of textNodes) {
-        const hasFallback = t.textLineLayout !== undefined;
+        const hasLineLayout = t.textLineLayout !== undefined;
         const hasGlyphs = t.glyphContours && t.glyphContours.length > 0;
         // At least one rendering path should be available
-        expect(hasFallback || hasGlyphs).toBe(true);
+        expect(hasLineLayout || hasGlyphs).toBe(true);
       }
 
       // Check domain textData on original nodes

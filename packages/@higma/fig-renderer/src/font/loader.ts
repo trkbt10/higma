@@ -38,11 +38,4 @@ export type FontLoader = {
    */
   listFontFamilies?(): Promise<readonly string[]>;
 
-  /**
-   * Load a fallback font for CJK characters
-   *
-   * @param options - Font loading options (weight/style from original request)
-   * @returns Loaded fallback font or undefined if none available
-   */
-  loadFallbackFont?(options: FontLoadOptions): Promise<LoadedFont | undefined>;
 }

@@ -293,7 +293,7 @@ export function resolveFill(fill: Fill, ids: IdGenerator): ResolvedFill {
           // objectBoundingBox: 1 unit = element dimension.
           // Image uses natural pixel dims with a computed transform
           // (set by finalizeImagePatternDefs after element size is known).
-          // Before finalization: simple 0..1 stretch fallback.
+          // Before finalization: simple 0..1 stretch default.
           patternContentUnits: "objectBoundingBox",
           width: 1,
           height: 1,

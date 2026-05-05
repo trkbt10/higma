@@ -1,619 +1,75 @@
 /**
- * @file Path-based text rendering using opentype.js
+ * @file Path-based text rendering through the shared TextRendering SoT.
  *
- * Converts text to SVG paths for pixel-perfect rendering.
- * This matches Figma's export behavior where text is outlined.
+ * This module is kept as the legacy async entry point for callers that need
+ * `renderTextNodeAsPath`, but it no longer owns font selection, line layout,
+ * or glyph outline extraction. Those decisions live in `text/rendering`.
  */
 
 import type { FigNode } from "@higma/fig/types";
 import type { FigSvgRenderContext } from "../../../types";
-import { path, g, type SvgString, EMPTY_SVG } from "../../primitives";
-import { buildTransformAttr } from "../../transform";
+import type { FontLoader, AbstractFont } from "../../../font";
+import { fontHasGlyph } from "../../../font";
 import { extractTextProps } from "../../../text/layout/extract-props";
-import { getFillColorAndOpacity } from "../../../text/layout/fill";
-import { getAlignedX, getAlignedYWithMetrics } from "../../../text/layout/alignment";
-import type { FontLoader, LoadedFont, AbstractFont } from "../../../font";
-import { fontHasGlyph, isCJKCharacter } from "../../../font";
-import type { ExtractedTextProps } from "../../../text/layout/types";
+import { resolveTextRendering, type TextFontResolver } from "../../../text/rendering";
+import { formatTextRenderingToSvg } from "./format-rendering";
+import type { SvgString } from "../../primitives";
 
-/**
- * Path render context
- */
+/** Path render context. */
 export type PathRenderContext = FigSvgRenderContext & {
-  fontLoader: FontLoader;
+  readonly fontLoader: FontLoader;
 };
 
-function textRequiresGlyph(char: string): boolean {
-  return char.trim().length > 0;
+function visibleCharacters(textValue: string): readonly string[] {
+  return [...textValue].filter((char) => char.trim().length > 0);
 }
 
-function fontSupportsText(font: AbstractFont, textValue: string): boolean {
-  for (const char of textValue) {
-    if (textRequiresGlyph(char) && !fontHasGlyph(font, char)) {
-      return false;
-    }
-  }
-  return true;
+function fontSupportsVisibleText(font: AbstractFont, textValue: string): boolean {
+  return visibleCharacters(textValue).every((char) => fontHasGlyph(font, char));
 }
 
-async function loadPrimaryOrFallbackFont(
-  props: ExtractedTextProps,
-  fontLoader: FontLoader,
-): Promise<{ readonly primary: LoadedFont; readonly fallback?: LoadedFont }> {
-  const request = {
+async function createTextFontResolver(node: FigNode, fontLoader: FontLoader): Promise<TextFontResolver> {
+  const props = extractTextProps(node);
+  const loaded = await fontLoader.loadFont({
     family: props.fontFamily,
     weight: props.fontWeight,
-    style: props.fontStyle === "italic" ? "italic" as const : "normal" as const,
-  };
-  const loaded = await fontLoader.loadFont(request);
-  const fallback = fontLoader.loadFallbackFont ? await fontLoader.loadFallbackFont(request) : undefined;
+    style: props.fontStyle === "italic" ? "italic" : "normal",
+  });
 
   if (!loaded) {
-    if (fallback && fontSupportsText(fallback.font, props.characters)) {
-      return { primary: fallback, fallback };
-    }
-    throw new Error(`SVG path text renderer requires font ${props.fontFamily} ${props.fontWeight}`);
+    throw new Error(`Shared text renderer requires primary font ${props.fontFamily} ${props.fontWeight}`);
+  }
+  if (!fontSupportsVisibleText(loaded.font, props.characters)) {
+    throw new Error(`Shared text renderer primary font ${props.fontFamily} cannot cover text node ${node.id}`);
   }
 
-  return { primary: loaded, fallback };
+  return () => loaded.font;
 }
 
 /**
- * Check if text wrapping is needed
- */
-function needsTextWrapping(props: ExtractedTextProps): boolean {
-  return props.textAutoResize !== "WIDTH_AND_HEIGHT" && props.size !== undefined && props.size.width > 0;
-}
-
-/**
- * Break text into lines based on width using opentype.js font metrics
- */
-function breakTextWithFont({
-  text,
-  font,
-  fontSize,
-  maxWidth,
-  letterSpacing,
-}: {
-  text: string;
-  font: AbstractFont;
-  fontSize: number;
-  maxWidth: number;
-  letterSpacing?: number;
-}): readonly string[] {
-  const scale = fontSize / font.unitsPerEm;
-  const spacing = letterSpacing ?? 0;
-  const lines: string[] = [];
-  const currentLineRef = { value: "" };
-  const currentWidthRef = { value: 0 };
-
-  const words = text.split(/(\s+)/); // Keep whitespace as separate items
-
-  for (const word of words) {
-    // Calculate word width
-    const wordWidthRef = { value: 0 };
-    for (let i = 0; i < word.length; i++) {
-      const glyph = font.charToGlyph(word[i]);
-      const advanceWidth = glyph.advanceWidth ?? 0;
-      wordWidthRef.value += advanceWidth * scale;
-      if (i < word.length - 1) {
-        wordWidthRef.value += spacing;
-      }
-    }
-
-    // Check if adding this word would exceed max width
-    if (currentLineRef.value && currentWidthRef.value + wordWidthRef.value > maxWidth) {
-      // Start new line
-      lines.push(currentLineRef.value.trimEnd());
-      currentLineRef.value = word.trimStart();
-      // Recalculate width for trimmed word
-      currentWidthRef.value = 0;
-      for (let i = 0; i < currentLineRef.value.length; i++) {
-        const glyph = font.charToGlyph(currentLineRef.value[i]);
-        const advanceWidth = glyph.advanceWidth ?? 0;
-        currentWidthRef.value += advanceWidth * scale;
-        if (i < currentLineRef.value.length - 1) {
-          currentWidthRef.value += spacing;
-        }
-      }
-    } else {
-      currentLineRef.value += word;
-      currentWidthRef.value += wordWidthRef.value;
-    }
-  }
-
-  if (currentLineRef.value) {
-    lines.push(currentLineRef.value.trimEnd());
-  }
-
-  return lines.length > 0 ? lines : [""];
-}
-
-/**
- * Get lines for path rendering with text wrapping support
- */
-function getTextLinesForPath(props: ExtractedTextProps, font: AbstractFont): readonly string[] {
-  const characters = props.characters;
-  const explicitLines = characters.split("\n");
-
-  if (!needsTextWrapping(props)) {
-    return explicitLines;
-  }
-
-  const maxWidth = props.size!.width;
-  const allLines: string[] = [];
-
-  for (const explicitLine of explicitLines) {
-    if (!explicitLine) {
-      allLines.push("");
-      continue;
-    }
-
-    const brokenLines = breakTextWithFont({
-      text: explicitLine,
-      font,
-      fontSize: props.fontSize,
-      maxWidth,
-      letterSpacing: props.letterSpacing,
-    });
-
-    for (const line of brokenLines) {
-      allLines.push(line);
-    }
-  }
-
-  return allLines;
-}
-
-/**
- * Render text node as SVG path
- *
- * Uses opentype.js to convert text to paths.
+ * Render a text node as SVG using the shared text rendering resolver.
  */
 export async function renderTextNodeAsPath(node: FigNode, ctx: PathRenderContext): Promise<SvgString> {
   const props = extractTextProps(node);
-
-  if (!props.characters) {
-    return EMPTY_SVG;
+  if (props.characters.length === 0) {
+    return formatTextRenderingToSvg(resolveTextRendering(node, { blobs: ctx.blobs }));
   }
 
-  const fontResolution = await loadPrimaryOrFallbackFont(props, ctx.fontLoader);
-
-  const transformStr = buildTransformAttr(props.transform);
-  const { color: fillColor, opacity: fillOpacity } = getFillColorAndOpacity(props.fillPaints);
-
-  // Get font metrics for accurate baseline and line height calculation
-  const font = fontResolution.primary.font;
-  const ascenderRatio = font.ascender / font.unitsPerEm;
-
-  // Calculate the natural line height from font metrics
-  // Figma's 100% line height = fontSize * (ascender + |descender|) / unitsPerEm
-  // Note: There may be small differences (~0.2px at 64px) due to Figma's internal
-  // line height calculation, but the main source of visual diff is glyph outline
-  // differences between font versions (e.g., @fontsource vs system fonts).
-  const naturalLineHeight = (props.fontSize * (font.ascender + Math.abs(font.descender))) / font.unitsPerEm;
-
-  // If props.lineHeight equals fontSize, it was set to 100% in Figma
-  // In that case, use the natural line height from font metrics
-  const lineHeight = Math.abs(props.lineHeight - props.fontSize) < 0.01 ? naturalLineHeight : props.lineHeight;
-
-  // Get lines with text wrapping applied
-  const lines = getTextLinesForPath(props, font);
-
-  // Calculate text position using actual font metrics
-  const x = getAlignedX(props.textAlignHorizontal, props.size?.width);
-  const baseY = getAlignedYWithMetrics({
-    align: props.textAlignVertical,
-    height: props.size?.height,
-    fontSize: props.fontSize,
-    lineCount: lines.length,
-    lineHeight,
-    ascenderRatio,
+  const fontResolver = await createTextFontResolver(node, ctx.fontLoader);
+  const rendering = resolveTextRendering(node, {
+    blobs: ctx.blobs,
+    fontResolver,
   });
 
-  // Render each line as a path
-  const pathElements: SvgString[] = [];
-  const underlinePaths: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineText = lines[i];
-    if (!lineText) {
-      continue;
-    }
-
-    const y = baseY + i * lineHeight;
-    const linePath = renderLineAsPathWithFallback({
-      text: lineText,
-      primaryFont: font,
-      fallbackFont: fontResolution.fallback?.font,
-      fontSize: props.fontSize,
-      x,
-      y,
-      align: props.textAlignHorizontal,
-      letterSpacing: props.letterSpacing,
-    });
-
-    if (!linePath && lineText.trim().length > 0) {
-      throw new Error(`SVG path text renderer produced no path for non-empty line in text node ${node.id}`);
-    }
-
-    if (linePath) {
-      pathElements.push(
-        path({
-          d: linePath,
-          fill: fillColor,
-          "fill-opacity": fillOpacity < 1 ? fillOpacity : undefined,
-        }),
-      );
-    }
-    // Render underline if needed
-    if (props.textDecoration === "UNDERLINE") {
-      const underlinePath = renderUnderlinePath({
-        text: lineText,
-        font,
-        fontSize: props.fontSize,
-        x,
-        y,
-        align: props.textAlignHorizontal,
-        letterSpacing: props.letterSpacing,
-      });
-      if (underlinePath) {
-        underlinePaths.push(underlinePath);
-      }
-    }
+  if (rendering.kind === "lines") {
+    throw new Error(`Shared text renderer did not produce glyph contours for text node ${node.id}`);
   }
 
-  // Combine all underlines into a single path element
-  if (underlinePaths.length > 0) {
-    pathElements.push(
-      path({
-        d: underlinePaths.join(""),
-        fill: fillColor,
-        "fill-opacity": fillOpacity < 1 ? fillOpacity : undefined,
-      }),
-    );
-  }
-
-  if (pathElements.length === 0) {
-    if (props.characters.trim().length > 0) {
-      throw new Error(`SVG path text renderer produced no visible paths for non-empty text node ${node.id}`);
-    }
-    return EMPTY_SVG;
-  }
-
-  // Wrap in group if transform or opacity needed
-  if (transformStr || props.opacity < 1 || pathElements.length > 1) {
-    return g(
-      {
-        transform: transformStr || undefined,
-        opacity: props.opacity < 1 ? props.opacity : undefined,
-      },
-      ...pathElements,
-    );
-  }
-
-  return pathElements[0];
+  return formatTextRenderingToSvg(rendering);
 }
 
 /**
- * Text segment with associated font
- */
-type TextSegment = {
-  text: string;
-  font: AbstractFont;
-  useFallback: boolean;
-};
-
-/**
- * Segment text by font capability
- *
- * Groups consecutive characters that can be rendered by the same font.
- */
-function segmentTextByFont(
-  text: string,
-  primaryFont: AbstractFont,
-  fallbackFont: AbstractFont | undefined,
-): readonly TextSegment[] {
-  if (!fallbackFont) {
-    if (!fontSupportsText(primaryFont, text)) {
-      throw new Error("SVG path text renderer requires a fallback font for unsupported glyphs");
-    }
-    return [{ text, font: primaryFont, useFallback: false }];
-  }
-
-  const segments: TextSegment[] = [];
-  const currentTextRef = { value: "" };
-  const currentUseFallbackRef = { value: false };
-
-  for (const char of text) {
-    const needsFallback = isCJKCharacter(char) && !fontHasGlyph(primaryFont, char);
-
-    if (segments.length === 0 && currentTextRef.value === "") {
-      // First character
-      currentUseFallbackRef.value = needsFallback;
-      currentTextRef.value = char;
-    } else if (needsFallback === currentUseFallbackRef.value) {
-      // Same font as current segment
-      currentTextRef.value += char;
-    } else {
-      // Different font - save current segment and start new one
-      segments.push({
-        text: currentTextRef.value,
-        font: currentUseFallbackRef.value ? fallbackFont : primaryFont,
-        useFallback: currentUseFallbackRef.value,
-      });
-      currentTextRef.value = char;
-      currentUseFallbackRef.value = needsFallback;
-    }
-  }
-
-  // Add final segment
-  if (currentTextRef.value) {
-    segments.push({
-      text: currentTextRef.value,
-      font: currentUseFallbackRef.value ? fallbackFont : primaryFont,
-      useFallback: currentUseFallbackRef.value,
-    });
-  }
-
-  return segments;
-}
-
-/**
- * Calculate width of a text segment
- */
-function calculateSegmentWidth({
-  text,
-  font,
-  fontSize,
-  letterSpacing,
-}: {
-  text: string;
-  font: AbstractFont;
-  fontSize: number;
-  letterSpacing?: number;
-}): number {
-  const scale = fontSize / font.unitsPerEm;
-  const widthRef = { value: 0 };
-  for (let i = 0; i < text.length; i++) {
-    const glyph = font.charToGlyph(text[i]);
-    const advanceWidth = glyph.advanceWidth ?? 0;
-    widthRef.value += advanceWidth * scale;
-    if (letterSpacing && i < text.length - 1) {
-      widthRef.value += letterSpacing;
-    }
-  }
-  return widthRef.value;
-}
-
-/**
- * Render a single line of text as SVG path data with font fallback
- */
-function renderLineAsPathWithFallback({
-  text,
-  primaryFont,
-  fallbackFont,
-  fontSize,
-  x,
-  y,
-  align,
-  letterSpacing,
-}: {
-  text: string;
-  primaryFont: AbstractFont;
-  fallbackFont: AbstractFont | undefined;
-  fontSize: number;
-  x: number;
-  y: number;
-  align: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
-  letterSpacing?: number;
-}): string | undefined {
-  const segments = segmentTextByFont(text, primaryFont, fallbackFont);
-
-  if (segments.length === 0) {
-    if (text.length > 0) {
-      throw new Error("SVG path text renderer failed to segment a non-empty text line");
-    }
-    return undefined;
-  }
-
-  // Calculate total width for alignment
-  const totalWidthRef2 = { value: 0 };
-  for (const segment of segments) {
-    totalWidthRef2.value += calculateSegmentWidth({ text: segment.text, font: segment.font, fontSize, letterSpacing });
-  }
-
-  // Adjust starting X for alignment
-  const adjustedXRef = { value: x };
-  if (align === "CENTER") {
-    adjustedXRef.value = x - totalWidthRef2.value / 2;
-  } else if (align === "RIGHT") {
-    adjustedXRef.value = x - totalWidthRef2.value;
-  }
-
-  // Render each segment
-  const paths: string[] = [];
-  const currentXRef2 = { value: adjustedXRef.value };
-
-  for (const segment of segments) {
-    const openTypePath = segment.font.getPath(segment.text, currentXRef2.value, y, fontSize, {
-      letterSpacing: letterSpacing ?? 0,
-    });
-
-    const pathData = convertQuadraticToCubic(openTypePath, 5);
-    if (pathData) {
-      paths.push(pathData);
-    }
-
-    // Move to next position
-    currentXRef2.value += calculateSegmentWidth({ text: segment.text, font: segment.font, fontSize, letterSpacing });
-  }
-
-  const joined = paths.join("");
-  if (!joined && text.trim().length > 0) {
-    throw new Error("SVG path text renderer produced empty outlines for a non-empty text line");
-  }
-  return joined || undefined;
-}
-
-/**
- * Render underline as SVG path data
- *
- * Figma renders underlines as rectangles positioned below the text baseline.
- * The underline thickness and position are calculated based on font metrics.
- */
-function renderUnderlinePath({
-  text,
-  font,
-  fontSize,
-  x,
-  y,
-  align,
-  letterSpacing,
-}: {
-  text: string;
-  font: AbstractFont;
-  fontSize: number;
-  x: number;
-  y: number;
-  align: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
-  letterSpacing?: number;
-}): string | null {
-  if (!text.trim()) {
-    return null;
-  }
-
-  const scale = fontSize / font.unitsPerEm;
-
-  // Calculate text width for the underline
-  const totalWidthRef = { value: 0 };
-  for (let i = 0; i < text.length; i++) {
-    const glyph = font.charToGlyph(text[i]);
-    const advanceWidth = glyph.advanceWidth ?? 0;
-    totalWidthRef.value += advanceWidth * scale;
-    if (letterSpacing && i < text.length - 1) {
-      totalWidthRef.value += letterSpacing;
-    }
-  }
-
-  // Calculate underline position and thickness
-  // Figma positions underline at approximately fontSize * 0.19 below baseline
-  // Underline thickness is approximately fontSize * 0.068
-  const underlineOffset = fontSize * 0.19;
-  const underlineThickness = fontSize * 0.068;
-
-  // Round to match Figma's precision
-  const round = (n: number) => Math.round(n * 10000) / 10000;
-
-  // Calculate underline X position based on alignment
-  const underlineXRef = { value: x };
-  if (align === "CENTER") {
-    underlineXRef.value = x - totalWidthRef.value / 2;
-  } else if (align === "RIGHT") {
-    underlineXRef.value = x - totalWidthRef.value;
-  }
-
-  // Calculate underline Y position (below baseline)
-  const underlineY = y + underlineOffset;
-
-  // Create rectangle path for underline
-  // M x y H (x+width) V (y+height) H x V y Z
-  return `M${round(underlineXRef.value)} ${round(underlineY)}H${round(underlineXRef.value + totalWidthRef.value)}V${round(underlineY + underlineThickness)}H${round(underlineXRef.value)}V${round(underlineY)}Z`;
-}
-
-/**
- * Convert path with quadratic beziers to cubic beziers
- *
- * Figma exports all curves as cubic beziers even for TrueType fonts.
- * This conversion matches Figma's behavior.
- *
- * Mathematical conversion:
- * Q(P0, P1, P2) → C(P0, P0 + 2/3*(P1-P0), P2 + 2/3*(P1-P2), P2)
- */
-function convertQuadraticToCubic(
-  path: {
-    commands: ReadonlyArray<{
-      type: string;
-      x?: number;
-      y?: number;
-      x1?: number;
-      y1?: number;
-      x2?: number;
-      y2?: number;
-    }>;
-  },
-  precision: number,
-): string {
-  const parts: string[] = [];
-  const currentXRef = { value: 0 };
-  const currentYRef = { value: 0 };
-
-  const round = (n: number) => {
-    const factor = Math.pow(10, precision);
-    return Math.round(n * factor) / factor;
-  };
-
-  for (const cmd of path.commands) {
-    switch (cmd.type) {
-      case "M":
-        currentXRef.value = cmd.x ?? 0;
-        currentYRef.value = cmd.y ?? 0;
-        parts.push(`M${round(currentXRef.value)} ${round(currentYRef.value)}`);
-        break;
-
-      case "L":
-        currentXRef.value = cmd.x ?? 0;
-        currentYRef.value = cmd.y ?? 0;
-        parts.push(`L${round(currentXRef.value)} ${round(currentYRef.value)}`);
-        break;
-
-      case "Q": {
-        // Convert quadratic to cubic
-        // P0 = current point, P1 = (x1, y1), P2 = (x, y)
-        const p0x = currentXRef.value;
-        const p0y = currentYRef.value;
-        const p1x = cmd.x1 ?? 0;
-        const p1y = cmd.y1 ?? 0;
-        const p2x = cmd.x ?? 0;
-        const p2y = cmd.y ?? 0;
-
-        // Cubic control points:
-        // CP1 = P0 + 2/3 * (P1 - P0)
-        // CP2 = P2 + 2/3 * (P1 - P2)
-        const cp1x = p0x + (2 / 3) * (p1x - p0x);
-        const cp1y = p0y + (2 / 3) * (p1y - p0y);
-        const cp2x = p2x + (2 / 3) * (p1x - p2x);
-        const cp2y = p2y + (2 / 3) * (p1y - p2y);
-
-        parts.push(`C${round(cp1x)} ${round(cp1y)} ${round(cp2x)} ${round(cp2y)} ${round(p2x)} ${round(p2y)}`);
-
-        currentXRef.value = p2x;
-        currentYRef.value = p2y;
-        break;
-      }
-
-      case "C":
-        // Already cubic, keep as is
-        parts.push(
-          `C${round(cmd.x1 ?? 0)} ${round(cmd.y1 ?? 0)} ${round(cmd.x2 ?? 0)} ${round(cmd.y2 ?? 0)} ${round(cmd.x ?? 0)} ${round(cmd.y ?? 0)}`,
-        );
-        currentXRef.value = cmd.x ?? 0;
-        currentYRef.value = cmd.y ?? 0;
-        break;
-
-      case "Z":
-        parts.push("Z");
-        break;
-    }
-  }
-
-  return parts.join("");
-}
-
-/**
- * Batch render multiple text nodes as paths
- *
- * More efficient when rendering multiple nodes with same fonts.
+ * Batch render multiple text nodes as SVG.
  */
 export async function batchRenderTextNodesAsPaths(
   nodes: readonly FigNode[],
@@ -629,29 +85,22 @@ export async function batchRenderTextNodesAsPaths(
   return results;
 }
 
-/**
- * Get font metrics from loaded font
- */
+/** Get font metrics from a loaded font. */
 export function getFontMetricsFromFont(font: AbstractFont): {
-  unitsPerEm: number;
-  ascender: number;
-  descender: number;
-  lineGap: number;
+  readonly unitsPerEm: number;
+  readonly ascender: number;
+  readonly descender: number;
+  readonly lineGap: number;
 } {
   return {
     unitsPerEm: font.unitsPerEm,
     ascender: font.ascender,
     descender: font.descender,
-    // lineGap is not directly available in opentype.js, estimate from hhea table
     lineGap: (font.tables?.hhea?.lineGap as number) ?? 0,
   };
 }
 
-/**
- * Calculate baseline offset for proper vertical positioning
- *
- * Figma uses specific baseline rules that we need to match.
- */
+/** Calculate baseline offset for proper vertical positioning. */
 export function calculateBaselineOffset(
   font: AbstractFont,
   fontSize: number,
@@ -664,15 +113,10 @@ export function calculateBaselineOffset(
 
   switch (verticalAlign) {
     case "TOP":
-      // Baseline positioned so ascender touches top
       return ascender;
     case "CENTER":
-      // Baseline positioned at center of text
       return ascender - lineHeight / 2 + fontSize / 2;
     case "BOTTOM":
-      // Baseline positioned so descender touches bottom
       return fontSize - descender;
-    default:
-      return ascender;
   }
 }

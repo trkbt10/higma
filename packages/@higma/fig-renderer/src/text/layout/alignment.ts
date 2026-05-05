@@ -5,14 +5,6 @@
 import type { TextAlignHorizontal, TextAlignVertical } from "./types";
 
 /**
- * Default ascender ratio used when font metrics are not available
- *
- * Inter font has ascender ratio of 0.96875 (1984/2048).
- * For accurate positioning, use getAlignedYWithMetrics() with actual font metrics.
- */
-const DEFAULT_ASCENDER_RATIO = 0.96875;
-
-/**
  * Get x position based on horizontal alignment
  *
  * @param align - Figma horizontal alignment
@@ -48,7 +40,7 @@ export type AlignYOptions = {
   /** Line height in pixels */
   lineHeight: number;
   /** Ascender ratio (ascender / unitsPerEm) from font metrics */
-  ascenderRatio?: number;
+  ascenderRatio: number;
 };
 
 /**
@@ -68,8 +60,11 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
     fontSize,
     lineCount,
     lineHeight,
-    ascenderRatio = DEFAULT_ASCENDER_RATIO,
+    ascenderRatio,
   } = options;
+  if (!Number.isFinite(ascenderRatio) || ascenderRatio <= 0) {
+    throw new Error("getAlignedYWithMetrics requires a positive ascenderRatio from font metrics");
+  }
 
   // Baseline offset from top of text box
   // ascenderRatio determines where baseline sits relative to top of em square
@@ -91,21 +86,4 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
     default:
       return baselineOffset;
   }
-}
-
-/**
- * Calculate starting y position based on vertical alignment (legacy API)
- *
- * @deprecated Use getAlignedYWithMetrics() for accurate font-aware positioning
- */
-export function getAlignedY(
-  { align, height, fontSize, lineCount, lineHeight }: { align: TextAlignVertical; height: number | undefined; fontSize: number; lineCount: number; lineHeight: number; }
-): number {
-  return getAlignedYWithMetrics({
-    align,
-    height,
-    fontSize,
-    lineCount,
-    lineHeight,
-  });
 }

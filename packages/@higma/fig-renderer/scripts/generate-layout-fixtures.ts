@@ -530,4 +530,7 @@ async function generateLayoutFixtures() {
   console.log(`\nTest cases: ${TEST_CASES.length}`);
 }
 
-generateLayoutFixtures().catch(console.error);
+generateLayoutFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

@@ -1,7 +1,7 @@
 /**
- * @file Font family mappings and fallbacks
+ * @file Font family mappings
  *
- * Maps Figma font families to CSS font stacks with appropriate fallbacks.
+ * Maps Figma font families to CSS font stacks.
  */
 
 /**
@@ -110,9 +110,9 @@ export const COMMON_FONT_MAPPINGS: ReadonlyMap<string, readonly string[]> = new 
 ]);
 
 /**
- * Generic font family keywords to fallback stacks
+ * Generic font family keywords to CSS font stacks
  */
-export const GENERIC_FALLBACKS: ReadonlyMap<string, readonly string[]> = new Map([
+export const GENERIC_FONT_STACKS: ReadonlyMap<string, readonly string[]> = new Map([
   ["sans-serif", [...SANS_SERIF_STACK]],
   ["serif", [...SERIF_STACK]],
   ["monospace", [...MONOSPACE_STACK]],
@@ -120,6 +120,28 @@ export const GENERIC_FALLBACKS: ReadonlyMap<string, readonly string[]> = new Map
   ["cursive", ["Brush Script MT", "cursive"]],
   ["fantasy", ["Papyrus", "fantasy"]],
 ]);
+
+/** Generic CSS font family keywords. */
+export const GENERIC_CSS_FONT_FAMILIES = new Set([
+  "serif",
+  "sans-serif",
+  "monospace",
+  "cursive",
+  "fantasy",
+  "system-ui",
+  "ui-serif",
+  "ui-sans-serif",
+  "ui-monospace",
+  "ui-rounded",
+  "math",
+  "emoji",
+  "fangsong",
+]);
+
+/** Check if a font family name is a generic CSS keyword. */
+export function isGenericCssFontFamily(family: string): boolean {
+  return GENERIC_CSS_FONT_FAMILIES.has(family);
+}
 
 /**
  * Detect font category from family name
@@ -178,9 +200,9 @@ export function detectFontCategory(
 }
 
 /**
- * Get default fallback stack for a font family
+ * Get default CSS font stack for a font family
  */
-export function getDefaultFallbacks(family: string): readonly string[] {
+export function getDefaultFontStack(family: string): readonly string[] {
   const category = detectFontCategory(family);
 
   switch (category) {
@@ -190,7 +212,8 @@ export function getDefaultFallbacks(family: string): readonly string[] {
       return SERIF_STACK;
     case "sans-serif":
     case "display":
-    default:
       return SANS_SERIF_STACK;
+    case "unknown":
+      return [];
   }
 }

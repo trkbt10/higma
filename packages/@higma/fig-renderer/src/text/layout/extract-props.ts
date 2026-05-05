@@ -11,7 +11,6 @@ import type {
   FigPaint,
   FigMatrix,
   FigVector,
-  FigFontName,
   FigValueWithUnits,
   KiwiEnumValue,
   FigNode,
@@ -61,7 +60,7 @@ export type TextNodeInput = {
   readonly size?: FigVector;
   /** Structured text data (FigDesignNode.textData or compatible) */
   readonly textData?: TextDataFields;
-  /** Raw parser data for fallback field access (FigDesignNode._raw) */
+  /** Raw parser data for compatibility field access (FigDesignNode._raw) */
   readonly _raw?: TextDataFields;
   /** Domain fill paints (FigDesignNode.fills) */
   readonly fills?: readonly FigPaint[];
@@ -145,7 +144,7 @@ function applyTextCase(characters: string, textCase: TextCase): string {
  * Extract text properties from a FigDesignNode or FigNode.
  *
  * For FigDesignNode: reads typed `textData` field, falls back to `_raw`.
- * For FigNode: `textData`/`_raw` are undefined, so all fields fall through
+ * For FigNode: `textData`/`_raw` are undefined, so all fields resolve
  * to direct property access via the index signature.
  *
  * @param node - FigDesignNode or FigNode (structural match via TextNodeInput)
@@ -160,15 +159,25 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   // node itself (which carries the same fields via FigNode type).
   const raw = node._raw ?? node as TextDataFields;
 
-  // Characters
   const characters = td?.characters ?? raw?.characters ?? "";
+  const textCase = getEnumName<TextCase>(
+    td?.textCase ?? raw?.textCase,
+    "ORIGINAL",
+  );
+  const transformedCharacters = applyTextCase(characters, textCase);
+  const hasVisibleText = transformedCharacters.length > 0;
 
-  // Font size
-  const fontSize = td?.fontSize ?? raw?.fontSize ?? 16;
+  const fontSizeValue = td?.fontSize ?? raw?.fontSize;
+  if (hasVisibleText && typeof fontSizeValue !== "number") {
+    throw new Error("TEXT node requires fontSize for non-empty characters");
+  }
+  const fontSize = typeof fontSizeValue === "number" ? fontSizeValue : 0;
 
-  // Font name
   const fontName = td?.fontName ?? raw?.fontName;
-  const fontFamily = fontName?.family ?? "sans-serif";
+  if (hasVisibleText && !fontName?.family) {
+    throw new Error("TEXT node requires fontName.family for non-empty characters");
+  }
+  const fontFamily = fontName?.family ?? "";
   const fontWeight = detectWeight(fontName?.style) ?? FONT_WEIGHTS.REGULAR;
   const fontStyle = isItalic(fontName?.style) ? "italic" : undefined;
 
@@ -176,9 +185,11 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   const letterSpacingRaw = td?.letterSpacing ?? raw?.letterSpacing;
   const letterSpacing = getValueWithUnits(letterSpacingRaw, 0, fontSize);
 
-  // Line height (default: 1.2x font size)
   const lineHeightRaw = td?.lineHeight ?? raw?.lineHeight;
-  const lineHeight = getValueWithUnits(lineHeightRaw, fontSize * 1.2, fontSize);
+  if (hasVisibleText && lineHeightRaw === undefined) {
+    throw new Error("TEXT node requires lineHeight for non-empty characters");
+  }
+  const lineHeight = getValueWithUnits(lineHeightRaw, 0, fontSize);
 
   // Text alignment
   const textAlignHorizontal = getEnumName<TextAlignHorizontal>(
@@ -204,16 +215,6 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
     td?.textDecoration ?? raw?.textDecoration,
     "NONE",
   );
-
-  // Text case transformation (UPPER, LOWER, TITLE, etc.)
-  const textCase = getEnumName<TextCase>(
-    td?.textCase ?? raw?.textCase,
-    "ORIGINAL",
-  );
-
-  // Apply textCase to the extracted characters.
-  // The .fig file stores the original text; textCase controls display.
-  const transformedCharacters = applyTextCase(characters, textCase);
 
   return {
     transform,

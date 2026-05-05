@@ -572,4 +572,7 @@ async function generateShapeFixtures(): Promise<void> {
 }
 
 // Run
-generateShapeFixtures().catch(console.error);
+generateShapeFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

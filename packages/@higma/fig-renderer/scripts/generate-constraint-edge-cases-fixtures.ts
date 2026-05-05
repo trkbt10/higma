@@ -779,4 +779,7 @@ async function generate(): Promise<void> {
   console.log(`   17. asym-same-size — AsymBox at original (baseline)`);
 }
 
-generate().catch(console.error);
+generate().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

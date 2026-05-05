@@ -3,7 +3,7 @@
  *
  * Provides font loading for browser environments using:
  * - Local Font Access API (preferred, requires permission)
- * - CSS Font Loading API (fallback, availability check only)
+ * - CSS Font Loading API (availability check only)
  */
 
 export { createBrowserFontLoader, isBrowserFontLoaderSupported } from "./browser-loader";

@@ -1053,4 +1053,7 @@ async function generateDecorationComboFixtures(): Promise<void> {
   console.log(`3. Run: npx vitest run packages/@higma/fig-renderer/spec/decoration-combo.spec.ts`);
 }
 
-generateDecorationComboFixtures().catch(console.error);
+generateDecorationComboFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

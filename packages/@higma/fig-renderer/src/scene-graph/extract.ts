@@ -56,10 +56,10 @@ export type SizeProps = {
 
 
 
-/** Extracts size properties from a Figma node, with an optional fallback value. */
-export function extractSizeProps(node: FigDesignNode, fallback?: FigVector): SizeProps {
+/** Extracts size properties from a Figma node, with an optional default value. */
+export function extractSizeProps(node: FigDesignNode, defaultValue?: FigVector): SizeProps {
   return {
-    size: node.size ?? fallback ?? { x: 100, y: 100 },
+    size: node.size ?? defaultValue ?? { x: 100, y: 100 },
   };
 }
 

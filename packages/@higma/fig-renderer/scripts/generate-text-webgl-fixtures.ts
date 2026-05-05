@@ -678,4 +678,7 @@ async function generateTextFixtures(): Promise<void> {
   }
 }
 
-generateTextFixtures().catch(console.error);
+generateTextFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

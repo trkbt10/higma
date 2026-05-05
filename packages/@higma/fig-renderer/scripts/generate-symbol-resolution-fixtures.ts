@@ -1539,4 +1539,7 @@ async function generate(): Promise<void> {
   console.log(`    34. variant-all-states — all 3 variants side by side`);
 }
 
-generate().catch(console.error);
+generate().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

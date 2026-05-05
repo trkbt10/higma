@@ -152,7 +152,7 @@ function buildDiamondGradientCSS(d: ResolvedDiamondGradient): string {
   return `radial-gradient(ellipse 50% 50% at ${d.cx} ${d.cy}, ${center}, ${edge})`;
 }
 
-// Stop colour sampling shared with the SVG-native sectored fallback.
+// Stop colour sampling shared with the SVG-native sectored renderer.
 // See svg/scene-renderer.ts::sampleGradientAt for the full contract; this
 // JS-side copy exists because the React renderer must emit native React
 // elements, not SvgString primitives.

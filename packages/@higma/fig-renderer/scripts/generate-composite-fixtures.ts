@@ -1079,4 +1079,7 @@ async function generateCompositeFixtures(): Promise<void> {
   console.log(`3. Run: npx vitest run packages/@higma/fig-renderer/spec/composite.spec.ts`);
 }
 
-generateCompositeFixtures().catch(console.error);
+generateCompositeFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

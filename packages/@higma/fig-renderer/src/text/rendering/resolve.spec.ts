@@ -37,6 +37,7 @@ const BASE_TEXT_NODE = {
   textData: {
     characters: "Hello",
     fontSize: 20,
+    lineHeight: { value: 24, units: { value: 0, name: "PIXELS" } },
     fontName: { family: "Unit Test Sans", style: "Regular" },
     textAlignHorizontal: { value: 0, name: "LEFT" },
     textAlignVertical: { value: 0, name: "TOP" },
@@ -54,10 +55,9 @@ const BASE_TEXT_NODE = {
 } as const;
 
 describe("resolveTextRendering font outlines", () => {
-  it("keeps line rendering visible when no explicit font resolver is supplied", () => {
-    const rendering = resolveTextRendering(BASE_TEXT_NODE, { blobs: [] });
-
-    expect(rendering.kind).toBe("lines");
+  it("throws when non-empty text has no explicit font metrics source", () => {
+    expect(() => resolveTextRendering(BASE_TEXT_NODE, { blobs: [] }))
+      .toThrow('Text layout requires ascender metrics for font "Unit Test Sans"');
   });
 
   it("uses an explicit font resolver to produce shared glyph contours", () => {

@@ -231,4 +231,7 @@ async function generateImageFillFixtures(): Promise<void> {
   console.log(`3. Run: npx vitest run packages/@higma/fig-renderer/spec/image-fill.spec.ts`);
 }
 
-generateImageFillFixtures().catch(console.error);
+generateImageFillFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

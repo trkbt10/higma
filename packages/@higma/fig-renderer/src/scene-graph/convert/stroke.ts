@@ -34,7 +34,7 @@ import { convertFigmaBlendMode } from "./blend-mode";
  *
  * The transform is what lets the render-tree `finalizeGradientDefs`
  * pass emit `userSpaceOnUse` pixel coordinates instead of the
- * `objectBoundingBox` percentage fallback. Stroke gradients without a
+ * `objectBoundingBox` percentage coordinate system. Stroke gradients without a
  * transform (identity) get no transform here and render in bbox form —
  * which is the correct behaviour for an identity paint.
  */

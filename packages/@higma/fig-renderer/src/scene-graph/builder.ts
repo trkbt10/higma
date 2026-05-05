@@ -263,7 +263,7 @@ function extractCornerRadius(node: FigDesignNode): CornerRadius | undefined {
 function resolveClipsContent(node: FigDesignNode): boolean {
   // clipsContent is pre-resolved at domain construction time
   // (tree-to-document.ts normalizes frameMaskDisabled → clipsContent).
-  // Fallback to shared resolver only if domain didn't resolve it.
+  // Use the shared resolver only when the domain did not provide a value.
   if (node.clipsContent !== undefined) { return node.clipsContent; }
   return sharedResolveClipsContent(
     undefined,
@@ -685,7 +685,7 @@ function applyPropsRecursive(
             // string (common for variant INSTANCEs whose CPA redeclares
             // the SYMBOL's default), clearing dtd throws away a
             // perfectly valid pre-computed glyph path — and we have no
-            // way to recompute it without opentype.js fallback, which
+            // way to recompute it without opentype.js outlines, which
             // produces a different glyph (viewfinder vs person.2 for
             // U+10026C). Preserving dtd when the characters match is
             // correct because dsd won't re-supply the dtd for a leaf
@@ -1915,9 +1915,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       if (resultPaths && resultPaths.length > 0) {
         return buildBooleanOperationNode(node, ctx, resultPaths);
       }
-      // 3. Fallback: render children as group
-      const childNodes = buildChildren(children, ctx);
-      return buildGroupNode(node, ctx, childNodes);
+      throw new Error(`Boolean operation  has neither merged geometry nor computable child paths`);
     }
 
     case "RECTANGLE":

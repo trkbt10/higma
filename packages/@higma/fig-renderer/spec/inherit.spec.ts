@@ -277,11 +277,7 @@ describe("Inherit Visual Regression", () => {
   const MAX_DIFF_PERCENT = 15;
 
   beforeAll(async () => {
-    try {
-      await loadFigFile();
-    } catch (error) {
-      console.log("Skipping tests:", error instanceof Error ? error.message : "fixture file not found");
-    }
+    await loadFigFile();
     ensureDirs([SNAPSHOTS_DIR, OUTPUT_DIR, DIFF_DIR]);
   });
 

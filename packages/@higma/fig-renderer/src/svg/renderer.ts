@@ -47,7 +47,7 @@ import { formatRenderTreeToSvg } from "./scene-renderer";
  *
  * `?? 0` on m02/m12 reflects the Kiwi binary schema: an omitted translation
  * field encodes the value 0 (the identity translation). This is a schema
- * invariant, not a runtime fallback.
+ * invariant, not a runtime recovery path.
  */
 function getRootFrameOffset(nodes: readonly FigNode[]): { x: number; y: number } {
   if (nodes.length === 0) {

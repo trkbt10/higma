@@ -157,72 +157,6 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
 }
 
 /**
- * Average character width ratios for different font categories
- */
-const WIDTH_RATIOS: Record<string, number> = {
-  monospace: 0.6,
-  serif: 0.5,
-  "sans-serif": 0.5,
-  default: 0.5,
-};
-
-/**
- * Detect font category from font family string
- */
-function detectCategory(fontFamily: string): string {
-  const lower = fontFamily.toLowerCase();
-  if (lower.includes("mono") || lower.includes("courier")) {
-    return "monospace";
-  }
-  if (lower.includes("serif") && !lower.includes("sans")) {
-    return "serif";
-  }
-  return "default";
-}
-
-/**
- * Create a fallback measurement provider for environments without Canvas
- *
- * Uses estimated character widths based on font metrics.
- * Less accurate but works everywhere.
- */
-export function createFallbackMeasurementProvider(): MeasurementProvider {
-  return {
-    measureText(text: string, font: FontSpec): TextMeasurement {
-      const category = detectCategory(font.fontFamily);
-      const widthRatio = WIDTH_RATIOS[category];
-
-      const widthRef = { value: text.length * font.fontSize * widthRatio };
-
-      if (font.letterSpacing && text.length > 1) {
-        widthRef.value += font.letterSpacing * (text.length - 1);
-      }
-
-      const ascent = font.fontSize * 0.8;
-      const descent = font.fontSize * 0.2;
-
-      return {
-        width: widthRef.value,
-        height: ascent + descent,
-        ascent,
-        descent,
-      };
-    },
-
-    measureCharWidths(text: string, font: FontSpec): readonly number[] {
-      const category = detectCategory(font.fontFamily);
-      const widthRatio = WIDTH_RATIOS[category];
-      const charWidth = font.fontSize * widthRatio;
-      const letterSpacing = font.letterSpacing ?? 0;
-
-      return Array.from(text).map((_, i) =>
-        i < text.length - 1 ? charWidth + letterSpacing : charWidth
-      );
-    },
-  };
-}
-
-/**
  * Create appropriate measurement provider for the current environment
  */
 export function createMeasurementProvider(): MeasurementProvider {
@@ -231,16 +165,11 @@ export function createMeasurementProvider(): MeasurementProvider {
     typeof document !== "undefined" ||
     typeof OffscreenCanvas !== "undefined"
   ) {
-    try {
-      const provider = createCanvasMeasurementProvider();
-      // Test if it works
-      provider.measureText("test", { fontFamily: "sans-serif", fontSize: 12 });
-      return provider;
-    } catch (error) {
-      console.debug("Fall through to fallback" + ":", error);
-    }
+    const provider = createCanvasMeasurementProvider();
+    // Test if it works
+    provider.measureText("test", { fontFamily: "sans-serif", fontSize: 12 });
+    return provider;
   }
 
-  // Use fallback provider
-  return createFallbackMeasurementProvider();
+  throw new Error("Canvas measurement provider is unavailable; pass an explicit measurement provider");
 }

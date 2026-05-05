@@ -1,9 +1,9 @@
 /**
  * @file CSS Font Loading API based font loader
  *
- * A fallback font loader that only checks font availability
- * using the CSS Font Loading API. Does not support path-based
- * text rendering since it cannot load font files.
+ * A CSS font loader that only checks font availability using the CSS Font
+ * Loading API. Does not support path-based text rendering since it cannot
+ * load font files.
  */
 
 import type { FontLoader } from "../../font/loader";
@@ -20,8 +20,6 @@ export function isCssFontLoaderSupported(): boolean {
  * Create a CSS font loader
  *
  * This loader can only check font availability, not load font files.
- * Use this as a fallback when Local Font Access API is not available.
- *
  * Path-based text rendering (`renderTextNodeAsPath`) will not work
  * with this loader since it cannot provide font files.
  */
@@ -44,10 +42,6 @@ export function createCssFontLoader(): FontLoader {
 
     async listFontFamilies(): Promise<readonly string[]> {
       return [];
-    },
-
-    async loadFallbackFont(_options: FontLoadOptions): Promise<LoadedFont | undefined> {
-      return undefined;
     },
   };
 }

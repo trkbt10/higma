@@ -7,7 +7,6 @@ import type { TextFontResolver } from "./types";
 
 export type CachedTextFontSource = {
   readonly getCachedFont: (options: FontLoadOptions) => LoadedFont | undefined;
-  readonly getCachedFallbackFont?: (options: FontLoadOptions) => LoadedFont | undefined;
 };
 
 function normalizeFontStyle(style: string | undefined): "normal" | "italic" | "oblique" {
@@ -25,6 +24,6 @@ export function createCachedTextFontResolver(source: CachedTextFontSource): Text
       weight: request.fontWeight,
       style: normalizeFontStyle(request.fontStyle),
     };
-    return source.getCachedFont(options)?.font ?? source.getCachedFallbackFont?.(options)?.font;
+    return source.getCachedFont(options)?.font;
   };
 }

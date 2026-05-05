@@ -51,8 +51,6 @@ export function createFontCache(): FontCache {
 export type CachingFontLoader = FontLoader & {
   /** Read a loaded font without triggering I/O or permission prompts. */
   getCachedFont(options: FontLoadOptions): LoadedFont | undefined;
-  /** Read a loaded fallback font without triggering I/O or permission prompts. */
-  getCachedFallbackFont(options: FontLoadOptions): LoadedFont | undefined;
   /** Clear the font cache */
   clearCache(): void;
 };
@@ -60,7 +58,6 @@ export type CachingFontLoader = FontLoader & {
 /** Create a caching wrapper for a font loader */
 export function createCachingFontLoader(innerLoader: FontLoader): CachingFontLoader {
   const fontCache = createFontCache();
-  const fallbackCache = createFontCache();
 
   return {
     async loadFont(options) {
@@ -88,35 +85,12 @@ export function createCachingFontLoader(innerLoader: FontLoader): CachingFontLoa
       return [];
     },
 
-    async loadFallbackFont(options) {
-      const fallbackKey = { family: "__CJK_FALLBACK__", weight: options.weight, style: options.style };
-      const cached = fallbackCache.get(fallbackKey);
-      if (cached) {
-        return cached;
-      }
-
-      if (innerLoader.loadFallbackFont) {
-        const font = await innerLoader.loadFallbackFont(options);
-        if (font) {
-          fallbackCache.set(fallbackKey, font);
-        }
-        return font;
-      }
-
-      return undefined;
-    },
-
     getCachedFont(options) {
       return fontCache.get(options);
     },
 
-    getCachedFallbackFont(options) {
-      return fallbackCache.get({ family: "__CJK_FALLBACK__", weight: options.weight, style: options.style });
-    },
-
     clearCache() {
       fontCache.clear();
-      fallbackCache.clear();
     },
   };
 }

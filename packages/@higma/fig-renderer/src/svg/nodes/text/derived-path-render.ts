@@ -215,21 +215,3 @@ export function hasDerivedPathData(node: FigNode): boolean {
   const dtd = node.derivedTextData;
   return !!(dtd?.glyphs && dtd.glyphs.length > 0);
 }
-
-/**
- * Render text node with automatic fallback
- *
- * Uses derived path data if available, otherwise falls back to the provided
- * fallback renderer (e.g., opentype.js based rendering).
- */
-export async function renderTextNodeWithDerivedFallback(
-  node: FigNode,
-  ctx: DerivedPathRenderContext,
-  fallbackRenderer: (node: FigNode, ctx: FigSvgRenderContext) => Promise<SvgString>,
-): Promise<SvgString> {
-  if (hasDerivedPathData(node)) {
-    return renderTextNodeFromDerivedData(node, ctx);
-  }
-
-  return fallbackRenderer(node, ctx);
-}

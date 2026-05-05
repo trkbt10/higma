@@ -18,7 +18,7 @@ import {
   selectionToRects,
   getLineTextLength,
   getXPositionInLine,
-  DEFAULT_CURSOR_CONTEXT,
+  type CursorCalculationContext,
   type TextBodyLike,
   type LayoutResultLike,
   type TextSelection,
@@ -47,6 +47,18 @@ const textBodyWithBreak: TextBodyLike = {
   ],
 };
 
+const TEST_CURSOR_CONTEXT: CursorCalculationContext = {
+  measureSpanTextWidth(span, substring) {
+    if (span.text.length === 0) { return 0; }
+    return (span.width / span.text.length) * substring.length;
+  },
+  getAscenderRatio() {
+    return 0.8;
+  },
+  ptToPx: 96 / 72,
+  emptyLineFontSizePt: 12,
+};
+
 // Simple layout with one paragraph, one line, two spans
 const simpleLayout: LayoutResultLike = {
   paragraphs: [
@@ -60,6 +72,8 @@ const simpleLayout: LayoutResultLike = {
           x: 10,
           y: 20,
           height: 16,
+          sourceStart: 0,
+          sourceEnd: 11,
         },
       ],
     },
@@ -76,6 +90,8 @@ const twoParagraphLayout: LayoutResultLike = {
           x: 10,
           y: 20,
           height: 16,
+          sourceStart: 0,
+          sourceEnd: 5,
         },
       ],
     },
@@ -86,6 +102,8 @@ const twoParagraphLayout: LayoutResultLike = {
           x: 10,
           y: 40,
           height: 16,
+          sourceStart: 0,
+          sourceEnd: 5,
         },
       ],
     },
@@ -271,20 +289,20 @@ describe("getLineTextLength", () => {
 describe("getXPositionInLine", () => {
   it("returns line x at offset 0", () => {
     const line = simpleLayout.paragraphs[0].lines[0];
-    expect(getXPositionInLine(line, 0, DEFAULT_CURSOR_CONTEXT)).toBe(10);
+    expect(getXPositionInLine(line, 0, TEST_CURSOR_CONTEXT)).toBe(10);
   });
 
   it("returns proportional position within span", () => {
     const line = simpleLayout.paragraphs[0].lines[0];
     // "Hello" has width 50, each char ~10px. Offset 3 = 10 + 30 = 40
-    const x = getXPositionInLine(line, 3, DEFAULT_CURSOR_CONTEXT);
+    const x = getXPositionInLine(line, 3, TEST_CURSOR_CONTEXT);
     expect(x).toBeCloseTo(40, 0);
   });
 
   it("returns position past first span", () => {
     const line = simpleLayout.paragraphs[0].lines[0];
     // Past "Hello" (50px), into " World" span
-    const x = getXPositionInLine(line, 6, DEFAULT_CURSOR_CONTEXT);
+    const x = getXPositionInLine(line, 6, TEST_CURSOR_CONTEXT);
     // 10 + 50 + (1/6 * 60) = 70
     expect(x).toBeCloseTo(70, 0);
   });
@@ -296,26 +314,26 @@ describe("getXPositionInLine", () => {
 
 describe("cursorPositionToCoordinates", () => {
   it("returns coordinates for position in first paragraph", () => {
-    const coords = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 0 }, simpleLayout, DEFAULT_CURSOR_CONTEXT);
+    const coords = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 0 }, simpleLayout, TEST_CURSOR_CONTEXT);
     expect(coords).toBeDefined();
     expect(coords!.x).toBe(10); // line.x
   });
 
   it("returns coordinates for second paragraph", () => {
-    const coords = cursorPositionToCoordinates({ paragraphIndex: 1, charOffset: 0 }, twoParagraphLayout, DEFAULT_CURSOR_CONTEXT);
+    const coords = cursorPositionToCoordinates({ paragraphIndex: 1, charOffset: 0 }, twoParagraphLayout, TEST_CURSOR_CONTEXT);
     expect(coords).toBeDefined();
     expect(coords!.x).toBe(10);
   });
 
-  it("returns undefined-like fallback for empty layout", () => {
-    const coords = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 0 }, { paragraphs: [] }, DEFAULT_CURSOR_CONTEXT);
+  it("returns origin coordinates for empty layout", () => {
+    const coords = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 0 }, { paragraphs: [] }, TEST_CURSOR_CONTEXT);
     expect(coords).toBeDefined();
     expect(coords!.x).toBe(0);
   });
 
   it("uses visual-line source ranges instead of concatenating wrapped line text", () => {
-    const endOfFirstLine = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 5 }, wrappedSourceRangeLayout, DEFAULT_CURSOR_CONTEXT);
-    const startOfSecondLine = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 6 }, wrappedSourceRangeLayout, DEFAULT_CURSOR_CONTEXT);
+    const endOfFirstLine = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 5 }, wrappedSourceRangeLayout, TEST_CURSOR_CONTEXT);
+    const startOfSecondLine = cursorPositionToCoordinates({ paragraphIndex: 0, charOffset: 6 }, wrappedSourceRangeLayout, TEST_CURSOR_CONTEXT);
 
     expect(endOfFirstLine).toBeDefined();
     expect(startOfSecondLine).toBeDefined();
@@ -327,22 +345,22 @@ describe("cursorPositionToCoordinates", () => {
 
 describe("coordinatesToCursorPosition", () => {
   it("maps coordinates to nearest line", () => {
-    const pos = coordinatesToCursorPosition({ layoutResult: simpleLayout, x: 10, y: 20, ctx: DEFAULT_CURSOR_CONTEXT });
+    const pos = coordinatesToCursorPosition({ layoutResult: simpleLayout, x: 10, y: 20, ctx: TEST_CURSOR_CONTEXT });
     expect(pos.paragraphIndex).toBe(0);
   });
 
   it("returns start for empty layout", () => {
-    const pos = coordinatesToCursorPosition({ layoutResult: { paragraphs: [] }, x: 0, y: 0, ctx: DEFAULT_CURSOR_CONTEXT });
+    const pos = coordinatesToCursorPosition({ layoutResult: { paragraphs: [] }, x: 0, y: 0, ctx: TEST_CURSOR_CONTEXT });
     expect(pos).toEqual({ paragraphIndex: 0, charOffset: 0 });
   });
 
   it("maps to second paragraph when y is closer", () => {
-    const pos = coordinatesToCursorPosition({ layoutResult: twoParagraphLayout, x: 10, y: 40, ctx: DEFAULT_CURSOR_CONTEXT });
+    const pos = coordinatesToCursorPosition({ layoutResult: twoParagraphLayout, x: 10, y: 40, ctx: TEST_CURSOR_CONTEXT });
     expect(pos.paragraphIndex).toBe(1);
   });
 
   it("returns source offsets for wrapped visual lines", () => {
-    const pos = coordinatesToCursorPosition({ layoutResult: wrappedSourceRangeLayout, x: 10, y: 40, ctx: DEFAULT_CURSOR_CONTEXT });
+    const pos = coordinatesToCursorPosition({ layoutResult: wrappedSourceRangeLayout, x: 10, y: 40, ctx: TEST_CURSOR_CONTEXT });
     expect(pos).toEqual({ paragraphIndex: 0, charOffset: 6 });
   });
 });
@@ -354,26 +372,26 @@ describe("coordinatesToCursorPosition", () => {
 describe("selectionToRects", () => {
   it("returns empty for empty layout", () => {
     const sel: TextSelection = { start: { paragraphIndex: 0, charOffset: 0 }, end: { paragraphIndex: 0, charOffset: 5 } };
-    const rects = selectionToRects(sel, { paragraphs: [] }, DEFAULT_CURSOR_CONTEXT);
+    const rects = selectionToRects(sel, { paragraphs: [] }, TEST_CURSOR_CONTEXT);
     expect(rects.length).toBe(0);
   });
 
   it("returns single rect for single-line selection", () => {
     const sel: TextSelection = { start: { paragraphIndex: 0, charOffset: 0 }, end: { paragraphIndex: 0, charOffset: 5 } };
-    const rects = selectionToRects(sel, simpleLayout, DEFAULT_CURSOR_CONTEXT);
+    const rects = selectionToRects(sel, simpleLayout, TEST_CURSOR_CONTEXT);
     expect(rects.length).toBe(1);
     expect(rects[0].width).toBeGreaterThan(0);
   });
 
   it("returns multiple rects for cross-paragraph selection", () => {
     const sel: TextSelection = { start: { paragraphIndex: 0, charOffset: 0 }, end: { paragraphIndex: 1, charOffset: 5 } };
-    const rects = selectionToRects(sel, twoParagraphLayout, DEFAULT_CURSOR_CONTEXT);
+    const rects = selectionToRects(sel, twoParagraphLayout, TEST_CURSOR_CONTEXT);
     expect(rects.length).toBe(2);
   });
 
   it("selects wrapped source ranges on their visual line", () => {
     const sel: TextSelection = { start: { paragraphIndex: 0, charOffset: 6 }, end: { paragraphIndex: 0, charOffset: 11 } };
-    const rects = selectionToRects(sel, wrappedSourceRangeLayout, DEFAULT_CURSOR_CONTEXT);
+    const rects = selectionToRects(sel, wrappedSourceRangeLayout, TEST_CURSOR_CONTEXT);
     expect(rects).toHaveLength(1);
     expect(rects[0].x).toBe(10);
     expect(rects[0].width).toBe(50);
@@ -381,7 +399,7 @@ describe("selectionToRects", () => {
 
   it("does not draw a highlight for whitespace suppressed by wrapping", () => {
     const sel: TextSelection = { start: { paragraphIndex: 0, charOffset: 5 }, end: { paragraphIndex: 0, charOffset: 6 } };
-    const rects = selectionToRects(sel, wrappedSourceRangeLayout, DEFAULT_CURSOR_CONTEXT);
+    const rects = selectionToRects(sel, wrappedSourceRangeLayout, TEST_CURSOR_CONTEXT);
     expect(rects).toHaveLength(0);
   });
 });

@@ -541,4 +541,7 @@ async function generateFillFixtures(): Promise<void> {
 }
 
 // Run
-generateFillFixtures().catch(console.error);
+generateFillFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

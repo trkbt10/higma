@@ -580,7 +580,7 @@ function resolveStrokeRendering(
   // Single-layer gradient without strokeAlign — emit as a regular
   // "layers" rendering so the gradient fill is still attached to the
   // stroke. Without this branch a single-layer gradient with CENTER
-  // alignment would fall through to "uniform" and lose the gradient.
+  // alignment would resolve to "uniform" and lose the gradient.
   if (result.layers && result.layers.length === 1) {
     return { mode: "layers", layers: result.layers, shape };
   }

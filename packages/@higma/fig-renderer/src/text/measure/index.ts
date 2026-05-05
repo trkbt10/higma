@@ -8,7 +8,7 @@
  * - Character-level width measurement
  * - Word-based and character-based line breaking
  * - CJK text handling
- * - Multiple measurement providers (Canvas, fallback)
+ * - Explicit measurement providers
  */
 
 // Types
@@ -27,7 +27,6 @@ export type {
 // Measurement provider
 export {
   createCanvasMeasurementProvider,
-  createFallbackMeasurementProvider,
   createMeasurementProvider,
 } from "./provider";
 

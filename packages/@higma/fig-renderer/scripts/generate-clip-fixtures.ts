@@ -388,4 +388,7 @@ async function generateClipFixtures(): Promise<void> {
   }
 }
 
-generateClipFixtures().catch(console.error);
+generateClipFixtures().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

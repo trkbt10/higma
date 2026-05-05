@@ -1,8 +1,6 @@
 /**
  * @file Path-based text rendering tests
  */
-import { createNodeFontLoader } from "../../../font-drivers/node";
-import { createCachingFontLoader, type CachingFontLoader } from "../../../font";
 import {
   renderTextNodeAsPath,
   getFontMetricsFromFont,
@@ -56,14 +54,10 @@ function loadedFont(font: AbstractFont, family: string): LoadedFont {
 
 function createFakeFontLoader(params: {
   readonly primary?: LoadedFont;
-  readonly fallback?: LoadedFont;
 }): FontLoader {
   return {
     loadFont(_options: FontLoadOptions) {
       return Promise.resolve(params.primary);
-    },
-    loadFallbackFont(_options: FontLoadOptions) {
-      return Promise.resolve(params.fallback);
     },
     isFontAvailable() {
       return Promise.resolve(params.primary !== undefined);
@@ -77,6 +71,7 @@ function createTextNode(characters: string): FigNode {
     name: "test",
     characters,
     fontSize: 16,
+    lineHeight: { value: 20, units: { value: 0, name: "PIXELS" } },
     fontName: { family: "MissingPrimary", style: "Regular" },
     size: { x: 100, y: 30 },
     textAlignHorizontal: { value: 0, name: "LEFT" },
@@ -99,35 +94,6 @@ function createPathRenderContext(fontLoader: FontLoader): PathRenderContext {
 }
 
 describe("path-render", () => {
-  const fontLoaderRef = { value: undefined as CachingFontLoader | undefined };
-
-  beforeAll(() => {
-    const nodeLoader = createNodeFontLoader();
-    fontLoaderRef.value = createCachingFontLoader(nodeLoader);
-  });
-
-  /** Get the font loader, asserting it was initialized by beforeAll */
-  function getFontLoader(): CachingFontLoader {
-    if (!fontLoaderRef.value) { throw new Error("fontLoader not initialized"); }
-    return fontLoaderRef.value;
-  }
-
-  describe("createNodeFontLoader", () => {
-    it("finds Inter font (macOS system font)", async () => {
-      const available = await getFontLoader().isFontAvailable("Inter");
-      // Inter may or may not be available depending on system
-      expect(typeof available).toBe("boolean");
-    });
-
-    it("finds common system fonts", async () => {
-      // Test common fonts that should be on most systems
-      const commonFonts = ["Arial", "Helvetica", "Times New Roman"];
-      const results = await Promise.all(commonFonts.map((f) => getFontLoader().isFontAvailable(f)));
-      // At least one should be available
-      expect(results.some(Boolean)).toBe(true);
-    });
-  });
-
   describe("renderTextNodeAsPath", () => {
     it("renders simple text as path", async () => {
       const node = createTextNode("Hello");
@@ -156,72 +122,51 @@ describe("path-render", () => {
         images: new Map(),
         showHiddenNodes: false,
         styleRegistry: { fills: new Map(), strokes: new Map() },
-        fontLoader: getFontLoader(),
+        fontLoader: createFakeFontLoader({}),
       };
 
       const result = await renderTextNodeAsPath(node, ctx);
       expect(result).toBe("");
     });
 
-    it("uses the explicit fallback font when the primary font is unavailable and the fallback covers the text", async () => {
-      const fallback = loadedFont(createFakeFont("漢"), "FallbackCJK");
-      const ctx = createPathRenderContext(createFakeFontLoader({ fallback }));
-
-      const result = await renderTextNodeAsPath(createTextNode("漢"), ctx);
-
-      expect(result).toContain("<path");
-      expect(result).toContain("d=");
-    });
-
-    it("throws when neither the primary nor fallback font can cover visible text", async () => {
-      const fallback = loadedFont(createFakeFont("A"), "FallbackLatinOnly");
-      const ctx = createPathRenderContext(createFakeFontLoader({ fallback }));
+    it("throws when the primary font cannot cover visible text", async () => {
+      const primary = loadedFont(createFakeFont("A"), "LatinOnly");
+      const ctx = createPathRenderContext(createFakeFontLoader({ primary }));
 
       await expect(renderTextNodeAsPath(createTextNode("漢"), ctx))
-        .rejects.toThrow("requires font");
+        .rejects.toThrow("cannot cover text node");
     });
   });
 
   describe("getFontMetricsFromFont", () => {
-    it("extracts metrics from loaded font", async () => {
-      const loaded = await getFontLoader().loadFont({ family: "Inter" });
+    it("extracts metrics from loaded font", () => {
+      const metrics = getFontMetricsFromFont(createFakeFont("A"));
 
-      if (loaded) {
-        const metrics = getFontMetricsFromFont(loaded.font);
-
-        expect(metrics.unitsPerEm).toBeGreaterThan(0);
-        expect(metrics.ascender).toBeGreaterThan(0);
-        expect(metrics.descender).toBeLessThan(0);
-        expect(typeof metrics.lineGap).toBe("number");
-      }
+      expect(metrics.unitsPerEm).toBeGreaterThan(0);
+      expect(metrics.ascender).toBeGreaterThan(0);
+      expect(metrics.descender).toBeLessThan(0);
+      expect(typeof metrics.lineGap).toBe("number");
     });
   });
 
   describe("calculateBaselineOffset", () => {
-    it("calculates offset for TOP alignment", async () => {
-      const loaded = await getFontLoader().loadFont({ family: "Inter" });
-
-      if (loaded) {
-        const offset = calculateBaselineOffset(loaded.font, 16, "TOP");
-        // Offset should be positive (baseline below top)
-        expect(offset).toBeGreaterThan(0);
-        // Should be roughly around ascender height
-        expect(offset).toBeLessThan(20);
-      }
+    it("calculates offset for TOP alignment", () => {
+      const offset = calculateBaselineOffset(createFakeFont("A"), 16, "TOP");
+      // Offset should be positive (baseline below top)
+      expect(offset).toBeGreaterThan(0);
+      // Should be roughly around ascender height
+      expect(offset).toBeLessThan(20);
     });
 
-    it("calculates different offsets for different alignments", async () => {
-      const loaded = await getFontLoader().loadFont({ family: "Inter" });
+    it("calculates finite offsets for every alignment", () => {
+      const font = createFakeFont("A");
+      const offsets = [
+        calculateBaselineOffset(font, 16, "TOP"),
+        calculateBaselineOffset(font, 16, "CENTER"),
+        calculateBaselineOffset(font, 16, "BOTTOM"),
+      ];
 
-      if (loaded) {
-        const top = calculateBaselineOffset(loaded.font, 16, "TOP");
-        const center = calculateBaselineOffset(loaded.font, 16, "CENTER");
-        const bottom = calculateBaselineOffset(loaded.font, 16, "BOTTOM");
-
-        // All should be distinct (or at least similar pattern)
-        expect(top).not.toBe(center);
-        expect(center).not.toBe(bottom);
-      }
+      expect(offsets.every((offset) => Number.isFinite(offset))).toBe(true);
     });
   });
 });

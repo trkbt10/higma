@@ -243,15 +243,8 @@ export type LayoutLineLike = {
   readonly x: number;
   readonly y: number;
   readonly height: number;
-  /**
-   * Optional source paragraph range for this visual line.
-   *
-   * Fig text layout provides this as the SoT for wrapped lines. Consumers must
-   * not reconstruct source offsets by concatenating rendered line text because
-   * wrapping can suppress boundary whitespace.
-   */
-  readonly sourceStart?: number;
-  readonly sourceEnd?: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
 };
 
 /**
@@ -280,18 +273,9 @@ export type LayoutResultLike = {
  *
  * @param span - The layout span
  * @param substring - The text substring to measure
- * @returns Measured width, or 0 if measurement is unavailable (falls back to proportional)
+ * @returns Measured width in the same unit as span.width
  */
 export type MeasureSpanTextWidth = (span: LayoutSpanLike, substring: string) => number;
-
-/**
- * Default proportional text width estimation (no measurement engine).
- * Distributes span width evenly across characters.
- */
-export function proportionalTextWidth(span: LayoutSpanLike, substring: string): number {
-  if (span.text.length === 0) { return 0; }
-  return (span.width / span.text.length) * substring.length;
-}
 
 // =============================================================================
 // Ascender Ratio
@@ -300,21 +284,8 @@ export function proportionalTextWidth(span: LayoutSpanLike, substring: string): 
 /**
  * Function to get the ascender ratio for a font family.
  * The ascender ratio determines how much of the font size is above the baseline.
- * Default implementations can return a constant (e.g., 0.8).
  */
 export type GetAscenderRatio = (fontFamily?: string) => number;
-
-/**
- * Default ascender ratio (typical for Latin fonts).
- */
-export const DEFAULT_ASCENDER_RATIO = 0.8;
-
-/**
- * Default implementation that returns a constant ascender ratio.
- */
-export function defaultGetAscenderRatio(_fontFamily?: string): number {
-  return DEFAULT_ASCENDER_RATIO;
-}
 
 // =============================================================================
 // Cursor Calculation Context
@@ -328,20 +299,10 @@ export type CursorCalculationContext = {
   readonly measureSpanTextWidth: MeasureSpanTextWidth;
   /** Get ascender ratio for a font family */
   readonly getAscenderRatio: GetAscenderRatio;
-  /** Points-to-pixels conversion factor (default: 96/72 = 1.333...) */
+  /** Points-to-pixels conversion factor */
   readonly ptToPx: number;
-  /** Default font size in points when no span is available */
-  readonly defaultFontSizePt: number;
-};
-
-/**
- * Default cursor calculation context (proportional width, standard ascender).
- */
-export const DEFAULT_CURSOR_CONTEXT: CursorCalculationContext = {
-  measureSpanTextWidth: proportionalTextWidth,
-  getAscenderRatio: defaultGetAscenderRatio,
-  ptToPx: 96 / 72,
-  defaultFontSizePt: 12,
+  /** Font size in points for an empty line with no spans */
+  readonly emptyLineFontSizePt: number;
 };
 
 // =============================================================================
@@ -416,34 +377,17 @@ export function getLineTextLength(line: LayoutLineLike): number {
   return line.spans.reduce((sum, span) => sum + span.text.length, 0);
 }
 
-function hasLineSourceRange(line: LayoutLineLike): boolean {
-  return typeof line.sourceStart === "number" && typeof line.sourceEnd === "number";
-}
-
-function getLineSourceStart(line: LayoutLineLike, fallback: number): number {
-  return typeof line.sourceStart === "number" ? line.sourceStart : fallback;
-}
-
-function getLineSourceEnd(line: LayoutLineLike, fallback: number): number {
-  return typeof line.sourceEnd === "number" ? line.sourceEnd : fallback + getLineTextLength(line);
-}
-
 function getLineLocalOffsetForSourceOffset(line: LayoutLineLike, sourceOffset: number): number {
   const lineLength = getLineTextLength(line);
-  if (!hasLineSourceRange(line)) {
-    return Math.min(Math.max(sourceOffset, 0), lineLength);
-  }
-  return Math.min(Math.max(sourceOffset - (line.sourceStart ?? 0), 0), lineLength);
+  return Math.min(Math.max(sourceOffset - line.sourceStart, 0), lineLength);
 }
 
 function getOffsetBeforeVisualLine(para: LayoutParagraphLike, lineIndex: number): number {
   const line = para.lines[lineIndex];
-  if (line && typeof line.sourceStart === "number") {
-    return line.sourceStart;
+  if (!line) {
+    throw new Error(`Text edit layout line ${lineIndex} is missing`);
   }
-  return para.lines
-    .slice(0, lineIndex)
-    .reduce((sum, candidate) => sum + getLineTextLength(candidate), 0);
+  return line.sourceStart;
 }
 
 /**
@@ -458,10 +402,10 @@ function getTextWidthForChars(
   if (charCount >= span.text.length) { return span.width; }
 
   const measured = ctx.measureSpanTextWidth(span, span.text.slice(0, charCount));
-  if (measured > 0) { return measured; }
-
-  // Fallback to proportional estimation
-  return (span.width / span.text.length) * charCount;
+  if (!Number.isFinite(measured) || measured < 0) {
+    throw new Error(`Text edit measurement returned invalid width for "${span.text}"`);
+  }
+  return measured;
 }
 
 /**
@@ -470,7 +414,7 @@ function getTextWidthForChars(
 export function getXPositionInLine(
   line: LayoutLineLike,
   charOffset: number,
-  ctx: CursorCalculationContext = DEFAULT_CURSOR_CONTEXT,
+  ctx: CursorCalculationContext,
 ): number {
   // eslint-disable-next-line no-restricted-syntax -- mutable x-coordinate accumulator across spans
   let x = line.x;
@@ -503,10 +447,10 @@ function fontSizeToPixels(fontSizePt: number, ptToPx: number): number {
 }
 
 /**
- * Get the effective font size for a line (max span size or default).
+ * Get the effective font size for a line.
  */
-function getLineFontSize(line: LayoutLineLike, defaultFontSizePt: number): number {
-  if (line.spans.length === 0) { return defaultFontSizePt; }
+function getLineFontSize(line: LayoutLineLike, emptyLineFontSizePt: number): number {
+  if (line.spans.length === 0) { return emptyLineFontSizePt; }
   return line.spans.reduce((max, span) => Math.max(max, span.fontSize), 0);
 }
 
@@ -535,7 +479,7 @@ function getTextVisualBounds(args: {
 }
 
 function getLineVisualBounds(line: LayoutLineLike, ctx: CursorCalculationContext): TextVisualBounds {
-  const fontSizePt = getLineFontSize(line, ctx.defaultFontSizePt);
+  const fontSizePt = getLineFontSize(line, ctx.emptyLineFontSizePt);
   const fontFamily = line.spans[0]?.fontFamily;
   return getTextVisualBounds({ baselineY: line.y, fontSizePt, ctx, fontFamily });
 }
@@ -587,7 +531,7 @@ function getVisualBoundsForRange(args: {
 export function cursorPositionToCoordinates(
   position: CursorPosition,
   layoutResult: LayoutResultLike,
-  ctx: CursorCalculationContext = DEFAULT_CURSOR_CONTEXT,
+  ctx: CursorCalculationContext,
 ): CursorCoordinates | undefined {
   const { paragraphIndex, charOffset } = position;
 
@@ -600,17 +544,12 @@ export function cursorPositionToCoordinates(
     return getEmptyParagraphCoordinates(paragraphIndex, layoutResult, ctx);
   }
 
-  // eslint-disable-next-line no-restricted-syntax -- mutable fallback offset for layouts without source ranges
-  let fallbackOffset = 0;
-
   for (const line of para.lines) {
-    const lineTextLength = getLineTextLength(line);
-    const lineStart = getLineSourceStart(line, fallbackOffset);
-    const lineEnd = getLineSourceEnd(line, fallbackOffset);
+    const lineStart = line.sourceStart;
+    const lineEnd = line.sourceEnd;
     if (charOffset <= lineEnd) {
       return getCursorInLineCoordinates(line, getLineLocalOffsetForSourceOffset(line, charOffset), ctx);
     }
-    fallbackOffset += lineTextLength;
     if (charOffset < lineStart) {
       return getCursorInLineCoordinates(line, 0, ctx);
     }
@@ -649,7 +588,7 @@ function getEmptyParagraphCoordinates(
   layoutResult: LayoutResultLike,
   ctx: CursorCalculationContext,
 ): CursorCoordinates | undefined {
-  const defaultHeight = fontSizeToPixels(ctx.defaultFontSizePt, ctx.ptToPx);
+  const defaultHeight = fontSizeToPixels(ctx.emptyLineFontSizePt, ctx.ptToPx);
 
   for (let i = paragraphIndex - 1; i >= 0; i--) {
     const prevPara = layoutResult.paragraphs[i];
@@ -675,7 +614,7 @@ function getEndOfTextCoordinates(
     }
   }
 
-  const defaultHeight = fontSizeToPixels(ctx.defaultFontSizePt, ctx.ptToPx);
+  const defaultHeight = fontSizeToPixels(ctx.emptyLineFontSizePt, ctx.ptToPx);
   return { x: 0, y: 0, height: defaultHeight };
 }
 
@@ -686,10 +625,10 @@ export function coordinatesToCursorPosition(args: {
   layoutResult: LayoutResultLike;
   x: number;
   y: number;
-  ctx?: CursorCalculationContext;
+  ctx: CursorCalculationContext;
 }): CursorPosition {
   const { layoutResult, x, y } = args;
-  const ctx = args.ctx ?? DEFAULT_CURSOR_CONTEXT;
+  const { ctx } = args;
   if (layoutResult.paragraphs.length === 0) {
     return { paragraphIndex: 0, charOffset: 0 };
   }
@@ -798,7 +737,7 @@ function getCharOffsetInSpan(span: LayoutSpanLike, targetX: number, ctx: CursorC
 export function selectionToRects(
   selection: TextSelection,
   layoutResult: LayoutResultLike,
-  ctx: CursorCalculationContext = DEFAULT_CURSOR_CONTEXT,
+  ctx: CursorCalculationContext,
 ): readonly SelectionRect[] {
   const normalized = normalizeTextSelection(selection);
   const rects: SelectionRect[] = [];
@@ -840,13 +779,9 @@ function getSelectionRectsInParagraph(args: {
   ctx: CursorCalculationContext;
 }): SelectionRect[] {
   const rects: SelectionRect[] = [];
-  // eslint-disable-next-line no-restricted-syntax -- mutable offset accumulator across lines
-  let currentOffset = 0;
-
   for (const line of args.para.lines) {
-    const lineLength = getLineTextLength(line);
-    const lineStart = getLineSourceStart(line, currentOffset);
-    const lineEnd = getLineSourceEnd(line, currentOffset);
+    const lineStart = line.sourceStart;
+    const lineEnd = line.sourceEnd;
 
     if (args.startOffset < lineEnd && args.endOffset > lineStart) {
       const selStart = getLineLocalOffsetForSourceOffset(line, args.startOffset);
@@ -864,15 +799,11 @@ function getSelectionRectsInParagraph(args: {
       });
     }
 
-    currentOffset += lineLength;
   }
 
   return rects;
 }
 
 function getParagraphTextLengthFromLayout(para: LayoutParagraphLike): number {
-  if (para.lines.some(hasLineSourceRange)) {
-    return para.lines.reduce((max, line) => Math.max(max, line.sourceEnd ?? 0), 0);
-  }
-  return para.lines.reduce((sum, line) => sum + getLineTextLength(line), 0);
+  return para.lines.reduce((max, line) => Math.max(max, line.sourceEnd), 0);
 }

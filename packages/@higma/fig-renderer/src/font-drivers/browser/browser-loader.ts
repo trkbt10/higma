@@ -2,7 +2,7 @@
  * @file Browser font loader implementation using Local Font Access API
  *
  * Uses the Local Font Access API to enumerate and load system fonts.
- * Falls back to CSS Font Loading API for availability checks.
+ * Uses CSS Font Loading API for availability checks when Local Font Access is unavailable.
  *
  * @see https://developer.chrome.com/docs/capabilities/web-apis/local-fonts
  */
@@ -10,7 +10,6 @@
 import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "../../font/loader";
 import type { AbstractFont, FontLoadOptions, LoadedFont } from "../../font/types";
-import { CJK_FALLBACK_FONTS } from "../../font/helpers";
 
 /**
  * Parse font data and return as AbstractFont.
@@ -160,27 +159,7 @@ export type BrowserFontLoaderInstance = FontLoader & {
   hasPermission(): boolean;
   /** List available font families */
   listFontFamilies(): Promise<readonly string[]>;
-  /** Load a fallback font for CJK characters */
-  loadFallbackFont(options: FontLoadOptions): Promise<LoadedFont | undefined>;
 };
-
-/**
- * Detect platform from user agent
- */
-function detectPlatform(): "darwin" | "win32" | "linux" {
-  if (typeof navigator === "undefined") {
-    return "darwin";
-  }
-
-  const ua = navigator.userAgent.toLowerCase();
-  if (ua.includes("mac")) {
-    return "darwin";
-  }
-  if (ua.includes("win")) {
-    return "win32";
-  }
-  return "linux";
-}
 
 /**
  * Create a browser font loader using Local Font Access API
@@ -199,26 +178,21 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
       return;
     }
 
-    try {
-      const fonts = await window.queryLocalFonts();
-      permissionGrantedRef.value = true;
+    const fonts = await window.queryLocalFonts();
+    permissionGrantedRef.value = true;
 
-      // Index by family name (lowercase)
-      const index = new Map<string, FontData[]>();
-      for (const font of fonts) {
-        if (!isLoadableFontData(font)) {
-          continue;
-        }
-        const familyLower = font.family.toLowerCase();
-        const existing = index.get(familyLower) ?? [];
-        index.set(familyLower, [...existing, font]);
+    // Index by family name (lowercase)
+    const index = new Map<string, FontData[]>();
+    for (const font of fonts) {
+      if (!isLoadableFontData(font)) {
+        continue;
       }
-
-      fontIndexRef.value = index;
-    } catch (error) {
-      console.debug("Font access API error:", error);
-      fontIndexRef.value = new Map();
+      const familyLower = font.family.toLowerCase();
+      const existing = index.get(familyLower) ?? [];
+      index.set(familyLower, [...existing, font]);
     }
+
+    fontIndexRef.value = index;
   }
 
   async function ensureIndex(): Promise<Map<string, FontData[]>> {
@@ -271,22 +245,17 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
     }
 
     // Load the font data
-    try {
-      const blob = await bestMatch.blob();
-      const arrayBuffer = await blob.arrayBuffer();
-      const font = parseOpentypeAsAbstractFont(arrayBuffer);
+    const blob = await bestMatch.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const font = parseOpentypeAsAbstractFont(arrayBuffer);
 
-      return {
-        font,
-        family: bestMatch.family,
-        weight: getWeightFromStyle(bestMatch.style),
-        style: getFontStyleFromName(bestMatch.style),
-        postscriptName: bestMatch.postscriptName,
-      };
-    } catch (error) {
-      console.debug("Font loading failed - intentionally ignored" + ":", error);
-      return undefined;
-    }
+    return {
+      font,
+      family: bestMatch.family,
+      weight: getWeightFromStyle(bestMatch.style),
+      style: getFontStyleFromName(bestMatch.style),
+      postscriptName: bestMatch.postscriptName,
+    };
   }
 
   async function isFontAvailable(family: string): Promise<boolean> {
@@ -296,7 +265,6 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
       return true;
     }
 
-    // Fall back to CSS Font Loading API
     if (typeof document !== "undefined" && document.fonts) {
       return document.fonts.check(`16px "${family}"`);
     }
@@ -310,30 +278,10 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
     return Array.from(index.values()).map((variants) => variants[0].family);
   }
 
-  async function loadFallbackFont(options: FontLoadOptions): Promise<LoadedFont | undefined> {
-    // Detect platform (best effort in browser)
-    const platform = detectPlatform();
-    const fallbackFonts = CJK_FALLBACK_FONTS[platform] ?? CJK_FALLBACK_FONTS.darwin;
-
-    for (const family of fallbackFonts) {
-      const font = await loadFont({
-        family,
-        weight: options.weight,
-        style: options.style,
-      });
-      if (font) {
-        return font;
-      }
-    }
-
-    return undefined;
-  }
-
   return {
     loadFont,
     isFontAvailable,
     listFontFamilies,
-    loadFallbackFont,
     hasPermission(): boolean {
       return permissionGrantedRef.value;
     },

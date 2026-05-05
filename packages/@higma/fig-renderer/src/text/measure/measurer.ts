@@ -71,7 +71,7 @@ export function createTextMeasurer(
       return font.fontSize * emHeight;
     }
 
-    // Fall back to default multiplier
+    // Use the explicit default multiplier when the provider has no metrics API.
     return font.fontSize * DEFAULT_LINE_HEIGHT_MULTIPLIER;
   }
 
