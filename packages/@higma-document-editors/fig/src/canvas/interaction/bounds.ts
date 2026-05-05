@@ -16,7 +16,7 @@
 
 import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import type { FigMatrix } from "@higma-document-models/fig/types";
-import { dfsById } from "@higma-primitives/tree";
+import { dfsById, dfsByIdWithContext } from "@higma-primitives/tree";
 import { extractRotationDeg as extractRotationDegSoT, computePreRotationTopLeft } from "../../context/fig-editor/rotation";
 import { IDENTITY_MATRIX, composeTransforms } from "../../context/fig-editor/matrix";
 
@@ -165,24 +165,12 @@ export function computeAbsoluteTransform(
   targetId: FigNodeId,
   parentTransform: FigMatrix = IDENTITY_MATRIX,
 ): FigMatrix | undefined {
-  /* eslint-disable custom/no-inline-dfs-by-id -- this is a path-accumulating
-   walk (returns composed transform, not node) and cannot be expressed as a
-   plain `dfsById` lookup: the result depends on the chain of parent
-   transforms along the found path, which the DFS SoT does not track. */
-  for (const node of nodes) {
-    const nodeAbsTransform = composeTransforms(parentTransform, node.transform);
-    if (node.id === targetId) {
-      return nodeAbsTransform;
-    }
-    if (node.children) {
-      const found = computeAbsoluteTransform(node.children, targetId, nodeAbsTransform);
-      if (found) {
-        return found;
-      }
-    }
-  }
-  /* eslint-enable custom/no-inline-dfs-by-id -- This exported tree geometry primitive owns recursive node lookup. */
-  return undefined;
+  return dfsByIdWithContext(nodes, targetId, {
+    getId: (node) => node.id,
+    getChildren: (node) => node.children ?? [],
+    initialContext: parentTransform,
+    deriveContext: (node, context) => composeTransforms(context, node.transform),
+  })?.context;
 }
 
 /**
@@ -207,24 +195,16 @@ function computeAbsoluteNodeBoundsInner(
   targetId: FigNodeId,
   parentTransform: FigMatrix,
 ): NodeBounds | undefined {
-  /* eslint-disable custom/no-inline-dfs-by-id -- path-accumulating walk:
-   combines ancestor transforms along the path to the match to produce
-   absolute bounds. `dfsById` returns only the node, not the composed
-   transform chain, so this remains a bespoke walker. */
-  for (const node of nodes) {
-    const nodeAbsTransform = composeTransforms(parentTransform, node.transform);
-    if (node.id === targetId) {
-      return getNodeBoundsWithAbsoluteTransform(node, nodeAbsTransform);
-    }
-    if (node.children) {
-      const found = computeAbsoluteNodeBoundsInner(node.children, targetId, nodeAbsTransform);
-      if (found) {
-        return found;
-      }
-    }
+  const found = dfsByIdWithContext(nodes, targetId, {
+    getId: (node) => node.id,
+    getChildren: (node) => node.children ?? [],
+    initialContext: parentTransform,
+    deriveContext: (node, context) => composeTransforms(context, node.transform),
+  });
+  if (!found) {
+    return undefined;
   }
-  /* eslint-enable custom/no-inline-dfs-by-id -- This exported tree geometry primitive owns recursive node lookup. */
-  return undefined;
+  return getNodeBoundsWithAbsoluteTransform(found.node, found.context);
 }
 
 /**

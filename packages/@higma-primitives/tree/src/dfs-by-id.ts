@@ -37,6 +37,18 @@ export type DfsByIdOptions<TNode> = {
   readonly onVisit?: (node: TNode) => void;
 };
 
+export type DfsByIdWithContextOptions<TNode, TContext> = {
+  readonly getId: (node: TNode) => string;
+  readonly getChildren: (node: TNode) => readonly TNode[];
+  readonly initialContext: TContext;
+  readonly deriveContext: (node: TNode, parentContext: TContext) => TContext;
+};
+
+export type DfsByIdWithContextResult<TNode, TContext> = {
+  readonly node: TNode;
+  readonly context: TContext;
+};
+
 /**
  * DFS over `roots` and their descendants, returning the first node
  * whose `getId(node)` equals `id`. Returns `undefined` when no node
@@ -53,6 +65,40 @@ export function dfsById<TNode>(
     const children = opts.getChildren(root);
     if (children.length > 0) {
       const found = dfsById(children, id, opts);
+      if (found) { return found; }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * DFS over `roots` and their descendants, returning the first node
+ * whose `getId(node)` equals `id` together with the context derived
+ * for that node. Use this when callers need path-accumulated state
+ * such as composed transforms; plain node lookup must use `dfsById`.
+ */
+export function dfsByIdWithContext<TNode, TContext>(
+  roots: readonly TNode[],
+  id: string,
+  opts: DfsByIdWithContextOptions<TNode, TContext>,
+): DfsByIdWithContextResult<TNode, TContext> | undefined {
+  return dfsByIdWithContextInner(roots, id, opts, opts.initialContext);
+}
+
+function dfsByIdWithContextInner<TNode, TContext>(
+  roots: readonly TNode[],
+  id: string,
+  opts: DfsByIdWithContextOptions<TNode, TContext>,
+  parentContext: TContext,
+): DfsByIdWithContextResult<TNode, TContext> | undefined {
+  for (const root of roots) {
+    const context = opts.deriveContext(root, parentContext);
+    if (opts.getId(root) === id) {
+      return { node: root, context };
+    }
+    const children = opts.getChildren(root);
+    if (children.length > 0) {
+      const found = dfsByIdWithContextInner(children, id, opts, context);
       if (found) { return found; }
     }
   }

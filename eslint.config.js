@@ -65,6 +65,7 @@ export default tseslint.config(
       "custom/no-cross-boundary-export": "error",
       "custom/no-reexport-outside-entry": "error",
       "custom/enforce-index-import": "error",
+      "custom/no-inline-dfs-by-id": "error",
 
       // Spread from modular groups
       ...rulesJSDoc,
@@ -108,6 +109,7 @@ export default tseslint.config(
       "custom/no-cross-package-reexport": "off",
       "custom/no-subpath-bypass": "off",
       "custom/enforce-package-boundaries": "off",
+      "custom/no-inline-dfs-by-id": "off",
       "no-restricted-syntax": "off",
     },
   },

@@ -32,28 +32,39 @@ function isIdComparison(node) {
   );
 }
 
-function containsIdComparison(node) {
+function containsIdComparison(node, seen = new WeakSet()) {
   if (!node || typeof node !== "object") {
     return false;
   }
+  if (seen.has(node)) {
+    return false;
+  }
+  seen.add(node);
   if (isIdComparison(node)) {
     return true;
   }
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value) && value.some(containsIdComparison)) {
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "parent") {
+      continue;
+    }
+    if (Array.isArray(value) && value.some((child) => containsIdComparison(child, seen))) {
       return true;
     }
-    if (value && typeof value === "object" && containsIdComparison(value)) {
+    if (value && typeof value === "object" && containsIdComparison(value, seen)) {
       return true;
     }
   }
   return false;
 }
 
-function containsRecursiveDescent(node, currentFunctionName) {
+function containsRecursiveDescent(node, currentFunctionName, seen = new WeakSet()) {
   if (!node || typeof node !== "object" || !currentFunctionName) {
     return false;
   }
+  if (seen.has(node)) {
+    return false;
+  }
+  seen.add(node);
   if (
     node.type === "CallExpression" &&
     node.callee &&
@@ -62,11 +73,14 @@ function containsRecursiveDescent(node, currentFunctionName) {
   ) {
     return true;
   }
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value) && value.some((child) => containsRecursiveDescent(child, currentFunctionName))) {
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "parent") {
+      continue;
+    }
+    if (Array.isArray(value) && value.some((child) => containsRecursiveDescent(child, currentFunctionName, seen))) {
       return true;
     }
-    if (value && typeof value === "object" && containsRecursiveDescent(value, currentFunctionName)) {
+    if (value && typeof value === "object" && containsRecursiveDescent(value, currentFunctionName, seen)) {
       return true;
     }
   }

@@ -8,6 +8,7 @@ import type { FigDesignNode, FigNodeId, FigPageId, FigDesignDocument, FigPage } 
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { SimpleBounds } from "@higma-editor-kernel/core/geometry";
 import { findNodeById as findInTree } from "@higma-document-io/fig/node-ops";
+import { dfsByIdWithContext } from "@higma-primitives/tree";
 import { extractRotationDeg, computePreRotationTopLeft } from "./rotation";
 import { IDENTITY_MATRIX, composeTransforms } from "./matrix";
 
@@ -50,31 +51,23 @@ function findAbsoluteBounds(
   targetId: FigNodeId,
   parentTransform: FigMatrix,
 ): (SimpleBounds & { readonly rotation: number }) | undefined {
-  /* eslint-disable custom/no-inline-dfs-by-id -- path-accumulating walk:
-   composes ancestor transforms along the path to produce absolute bounds
-   for the found node. `dfsById` returns only the node, not the composed
-   transform chain, so this cannot be expressed as a plain lookup. */
-  for (const node of nodes) {
-    const absTransform = composeTransforms(parentTransform, node.transform);
-    if (node.id === targetId) {
-      const { x, y } = computePreRotationTopLeft(absTransform, node.size.x, node.size.y);
-      return {
-        x,
-        y,
-        width: node.size.x,
-        height: node.size.y,
-        rotation: extractRotationDeg(absTransform),
-      };
-    }
-    if (node.children) {
-      const found = findAbsoluteBounds(node.children, targetId, absTransform);
-      if (found) {
-        return found;
-      }
-    }
+  const found = dfsByIdWithContext(nodes, targetId, {
+    getId: (node) => node.id,
+    getChildren: (node) => node.children ?? [],
+    initialContext: parentTransform,
+    deriveContext: (node, context) => composeTransforms(context, node.transform),
+  });
+  if (!found) {
+    return undefined;
   }
-  /* eslint-enable custom/no-inline-dfs-by-id -- Node geometry lookup is the local SoT for reducer bounds updates. */
-  return undefined;
+  const { x, y } = computePreRotationTopLeft(found.context, found.node.size.x, found.node.size.y);
+  return {
+    x,
+    y,
+    width: found.node.size.x,
+    height: found.node.size.y,
+    rotation: extractRotationDeg(found.context),
+  };
 }
 
 /**

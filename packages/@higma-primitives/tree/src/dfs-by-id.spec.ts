@@ -9,7 +9,7 @@
  * `custom/no-inline-dfs-by-id` ESLint rule).
  */
 
-import { dfsById } from "./dfs-by-id";
+import { dfsById, dfsByIdWithContext } from "./dfs-by-id";
 
 type Node = { id: string; children?: readonly Node[] };
 
@@ -94,4 +94,20 @@ describe("dfsById — SoT for tree lookup by identifier", () => {
     });
     expect(found?.key).toBe(2);
   });
+
+  it("returns the path-derived context for the matched node", () => {
+    const nodes: Node[] = [
+      { id: "a", children: [{ id: "b", children: [{ id: "c" }] }] },
+    ];
+    const found = dfsByIdWithContext(nodes, "c", {
+      ...opts(),
+      initialContext: "",
+      deriveContext: (node, parentPath) => `${parentPath}/${node.id}`,
+    });
+    expect(found).toEqual({
+      node: { id: "c" },
+      context: "/a/b/c",
+    });
+  });
+
 });

@@ -6,7 +6,7 @@
  */
 
 import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import { dfsById, walkTree } from "@higma-primitives/tree";
+import { dfsById, removeById, walkTree } from "@higma-primitives/tree";
 
 // =============================================================================
 // Find
@@ -110,34 +110,12 @@ export function removeNodeFromTree(
   nodes: readonly FigDesignNode[],
   id: FigNodeId,
 ): readonly FigDesignNode[] {
-  let changed = false;
-  const result: FigDesignNode[] = [];
-
-  /* eslint-disable custom/no-inline-dfs-by-id -- structural tree transform
-   (produces a new tree with the target node excised), not a slot lookup.
-   The `dfsById` SoT returns a single node; the transform here walks every
-   branch building a rebuilt tree with structural sharing. Different
-   contract from find-style lookup. */
-  for (const node of nodes) {
-    if (node.id === id) {
-      changed = true;
-      continue; // Skip this node (remove it)
-    }
-
-    if (node.children) {
-      const updatedChildren = removeNodeFromTree(node.children, id);
-      if (updatedChildren !== node.children) {
-        changed = true;
-        result.push({ ...node, children: updatedChildren });
-        continue;
-      }
-    }
-
-    result.push(node);
-  }
-  /* eslint-enable custom/no-inline-dfs-by-id */
-
-  return changed ? result : nodes;
+  const result = removeById(nodes, id, {
+    getId: (node) => node.id,
+    getChildren: (node) => node.children,
+    withChildren: (node, children) => ({ ...node, children }),
+  });
+  return result.removed ? result.nodes : nodes;
 }
 
 // =============================================================================
