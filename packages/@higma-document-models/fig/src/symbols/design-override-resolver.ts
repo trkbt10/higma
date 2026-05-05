@@ -113,9 +113,7 @@ export function reresolveOverridesForVariant(args: {
   const descendantsAsRaw = variantSymbolChildren.map((n) => designNodeToRawShape(n));
   const rawOverrides = overrides.map((o) => toRawOverride(o));
   const rawDsd = ownDerivedSymbolData?.map((o) => toRawOverride(o));
-  const cpa = ownComponentPropertyAssignments
-    ? ownComponentPropertyAssignments.map((a) => designCPAToRawShape(a))
-    : undefined;
+  const cpa = rawComponentPropertyAssignments(ownComponentPropertyAssignments);
 
   // The translation primitive keys its SYMBOL-side cache on a SYMBOL
   // root FigNode. This caller has only the variant SYMBOL's children
@@ -207,9 +205,7 @@ function designNodeToRawShape(node: DesignNodeShape): FigNode {
     cornerRadius: node.cornerRadius,
     rectangleCornerRadii: node.rectangleCornerRadii,
     characters: node.textData?.characters,
-    textData: node.textData
-      ? { characters: node.textData.characters }
-      : undefined,
+    textData: rawTextDataFromDesignNode(node),
     componentPropRefs: node.componentPropertyRefs?.map((r) => ({
       nodeField: { value: 0, name: r.nodeField },
       defID: parseGuid(r.defId),
@@ -232,14 +228,37 @@ function designCPAToRawShape(
     value: {
       boolValue: a.value.boolValue,
       textValue: a.value.textValue,
-      referenceValue: a.value.referenceValue
-        ? parseGuid(a.value.referenceValue)
-        : undefined,
+      referenceValue: rawReferenceValueFromAssignment(a),
     },
   };
+}
+
+function rawComponentPropertyAssignments(
+  assignments: readonly DesignComponentPropertyAssignmentShape[] | undefined,
+): readonly FigComponentPropAssignment[] | undefined {
+  if (!assignments) {
+    return undefined;
+  }
+  return assignments.map((assignment) => designCPAToRawShape(assignment));
 }
 
 function parseGuid(id: string): { sessionID: number; localID: number } {
   const [sessionStr, localStr] = id.split(":");
   return { sessionID: Number(sessionStr), localID: Number(localStr) };
+}
+
+function rawTextDataFromDesignNode(node: DesignNodeShape): { readonly characters: string } | undefined {
+  if (!node.textData) {
+    return undefined;
+  }
+  return { characters: node.textData.characters };
+}
+
+function rawReferenceValueFromAssignment(
+  assignment: DesignComponentPropertyAssignmentShape,
+): { readonly sessionID: number; readonly localID: number } | undefined {
+  if (!assignment.value.referenceValue) {
+    return undefined;
+  }
+  return parseGuid(assignment.value.referenceValue);
 }

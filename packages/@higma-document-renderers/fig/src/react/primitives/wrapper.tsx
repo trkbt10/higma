@@ -18,6 +18,19 @@ type WrapperProps = {
   readonly children: ReactNode;
 };
 
+function buildBlendModeStyle(wrapper: ResolvedWrapperAttrs): React.CSSProperties | undefined {
+  if (!wrapper.blendMode) { return undefined; }
+  return { mixBlendMode: wrapper.blendMode as React.CSSProperties["mixBlendMode"] };
+}
+
+function buildFinalStyle(wrapper: ResolvedWrapperAttrs): React.CSSProperties | undefined {
+  const style = buildBlendModeStyle(wrapper);
+  if (wrapper.filterAttr && !wrapper.blendMode) {
+    return { ...(style ?? {}), isolation: "isolate" as const };
+  }
+  return style;
+}
+
 /**
  * Render a wrapping <g> element with all resolved wrapper attributes.
  *
@@ -26,10 +39,6 @@ type WrapperProps = {
  * MUST express wrapper attributes through the same set of fields.
  */
 export function RenderWrapper({ wrapper, mask, children }: WrapperProps) {
-  const style: React.CSSProperties | undefined = wrapper.blendMode
-    ? { mixBlendMode: wrapper.blendMode as React.CSSProperties["mixBlendMode"] }
-    : undefined;
-
   // Stacking-context isolation matches the SVG renderer's behaviour
   // (see `scene-renderer.ts:wrapperAttrs`). We isolate filter-only
   // wrappers but NOT a wrapper that carries `mix-blend-mode` because
@@ -38,10 +47,7 @@ export function RenderWrapper({ wrapper, mask, children }: WrapperProps) {
   // own descendants and silently void the blend (a HUE-blended overlay
   // rendered solid because the underlying pattern from the grandparent
   // never reached the blend's backdrop).
-  const needsIsolation = wrapper.filterAttr && !wrapper.blendMode;
-  const finalStyle: React.CSSProperties | undefined = needsIsolation
-    ? { ...(style ?? {}), isolation: "isolate" as const }
-    : style;
+  const finalStyle = buildFinalStyle(wrapper);
 
   return (
     <g

@@ -12,12 +12,13 @@ import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg/scene-renderer";
 import type { SceneGraph, SceneNode, RectNode, EllipseNode, PathNode, TextNode, FrameNode, Fill } from "./types";
 
-let doc: FigDesignDocument;
-let sceneGraphs: SceneGraph[];
+const docRef = { value: undefined as FigDesignDocument | undefined };
+const sceneGraphsRef = { value: [] as SceneGraph[] };
 
 beforeAll(async () => {
-  doc = await createDemoFigDesignDocument();
-  sceneGraphs = doc.pages.map((page) =>
+  const doc = await createDemoFigDesignDocument();
+  docRef.value = doc;
+  sceneGraphsRef.value = doc.pages.map((page) =>
     buildSceneGraph(page.children, {
       blobs: doc.blobs,
       images: doc.images,
@@ -32,17 +33,6 @@ beforeAll(async () => {
   );
 });
 
-function _findNodeByName(nodes: readonly SceneNode[], name: string): SceneNode | undefined {
-  for (const node of nodes) {
-    if (node.name === name) {return node;}
-    if ("children" in node && node.children) {
-      const found = _findNodeByName(node.children, name);
-      if (found) {return found;}
-    }
-  }
-  return undefined;
-}
-
 function findAllByType(nodes: readonly SceneNode[], type: string): SceneNode[] {
   const result: SceneNode[] = [];
   for (const node of nodes) {
@@ -56,12 +46,12 @@ function findAllByType(nodes: readonly SceneNode[], type: string): SceneNode[] {
 
 describe("Scene graph builder - demo document", () => {
   it("builds scene graphs for all pages (3 visible + 1 internal)", () => {
-    expect(sceneGraphs.length).toBeGreaterThanOrEqual(3);
+    expect(sceneGraphsRef.value.length).toBeGreaterThanOrEqual(3);
   });
 
   describe("Page 1: Shapes & Fills", () => {
     it("produces rect nodes for rectangles", () => {
-      const sg = sceneGraphs[0];
+      const sg = sceneGraphsRef.value[0];
       const rects = findAllByType(sg.root.children, "rect");
       expect(rects.length).toBeGreaterThan(0);
       const rectWithFill = rects.find((r) => (r as RectNode).fills.length > 0);
@@ -69,7 +59,7 @@ describe("Scene graph builder - demo document", () => {
     });
 
     it("produces ellipse nodes", () => {
-      const sg = sceneGraphs[0];
+      const sg = sceneGraphsRef.value[0];
       const ellipses = findAllByType(sg.root.children, "ellipse");
       expect(ellipses.length).toBeGreaterThan(0);
       const ellipse = ellipses[0] as EllipseNode;
@@ -77,7 +67,7 @@ describe("Scene graph builder - demo document", () => {
     });
 
     it("produces path nodes with contours for star/polygon", () => {
-      const sg = sceneGraphs[0];
+      const sg = sceneGraphsRef.value[0];
       const paths = findAllByType(sg.root.children, "path");
       // Star and polygon should produce paths with synthesized geometry
       expect(paths.length).toBeGreaterThan(0);
@@ -91,7 +81,7 @@ describe("Scene graph builder - demo document", () => {
     });
 
     it("produces gradient fills in Gradient Fills artboard", () => {
-      const sg = sceneGraphs[0];
+      const sg = sceneGraphsRef.value[0];
       const allFills: Fill[] = [];
 
       function collectFills(nodes: readonly SceneNode[]) {
@@ -133,7 +123,7 @@ describe("Scene graph builder - demo document", () => {
 
   describe("Page 2: Typography", () => {
     it("produces text nodes with textLineLayout text data", () => {
-      const sg = sceneGraphs[1];
+      const sg = sceneGraphsRef.value[1];
       const textNodes = findAllByType(sg.root.children, "text");
       expect(textNodes.length).toBeGreaterThan(0);
 
@@ -147,7 +137,7 @@ describe("Scene graph builder - demo document", () => {
     });
 
     it("text nodes have non-empty textLineLayout text content", () => {
-      const sg = sceneGraphs[1];
+      const sg = sceneGraphsRef.value[1];
       const textNodes = findAllByType(sg.root.children, "text") as TextNode[];
       expect(textNodes.length).toBeGreaterThan(0);
 
@@ -160,7 +150,7 @@ describe("Scene graph builder - demo document", () => {
       }
 
       // Check domain textData on original nodes
-      const page = doc.pages[1];
+      const page = docRef.value!.pages[1];
       function collectTextNodes(nodes: readonly FigDesignNode[]): FigDesignNode[] {
         const result: FigDesignNode[] = [];
         for (const n of nodes) {
@@ -181,13 +171,13 @@ describe("Scene graph builder - demo document", () => {
 
   describe("Page 3: Components & Effects", () => {
     it("produces frame nodes for component instances", () => {
-      const sg = sceneGraphs[2];
+      const sg = sceneGraphsRef.value[2];
       const frames = findAllByType(sg.root.children, "frame");
       expect(frames.length).toBeGreaterThan(0);
     });
 
     it("produces nodes with effects", () => {
-      const sg = sceneGraphs[2];
+      const sg = sceneGraphsRef.value[2];
       const allNodes: SceneNode[] = [];
       function collect(nodes: readonly SceneNode[]) {
         for (const n of nodes) {
@@ -223,7 +213,7 @@ describe("Scene graph builder - demo document", () => {
       // Page 0 "Shapes & Fills" has FRAMEs built with .background(WHITE) —
       // each artboard FRAME calls .background(WHITE) in demo-document.ts.
       // If fills drop between builder and scene graph, this test fails.
-      const sg = sceneGraphs[0];
+      const sg = sceneGraphsRef.value[0];
       const frames = collectFrames(sg.root.children);
       expect(frames.length).toBeGreaterThan(0);
 
@@ -239,7 +229,7 @@ describe("Scene graph builder - demo document", () => {
     it("FRAME decoration survives through to SVG output", () => {
       // End-to-end: the SVG string must contain the FRAME's fill colour.
       // .background(WHITE) emits r=g=b=1 → "#ffffff" or "rgb(255,255,255)".
-      const sg = sceneGraphs[0];
+      const sg = sceneGraphsRef.value[0];
       const svg = renderSceneGraphToSvg(sg);
       const frames = collectFrames(sg.root.children);
       const whiteFrame = frames.find((f) =>

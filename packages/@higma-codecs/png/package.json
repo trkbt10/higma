@@ -17,6 +17,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./pngjs": {
+      "types": "./src/pngjs/index.ts",
+      "default": "./src/pngjs/index.ts"
     }
   },
   "higma": {

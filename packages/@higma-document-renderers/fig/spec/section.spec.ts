@@ -27,7 +27,6 @@ function toFigNodes(nodes: readonly Record<string, unknown>[]): FigNode[] {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "../fixtures/section");
-const _ACTUAL_DIR = path.join(FIXTURES_DIR, "actual");
 const SNAPSHOTS_DIR = path.join(FIXTURES_DIR, "snapshots");
 const FIG_FILE = path.join(FIXTURES_DIR, "section.fig");
 
@@ -39,11 +38,11 @@ type ParsedData = {
   nodeMap: ReadonlyMap<string, FigNode>;
 };
 
-let parsedDataCache: ParsedData | null = null;
+const parsedDataCacheRef = { value: null as ParsedData | null };
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {
-    return parsedDataCache;
+  if (parsedDataCacheRef.value) {
+    return parsedDataCacheRef.value;
   }
 
   if (!fs.existsSync(FIG_FILE)) {
@@ -55,14 +54,14 @@ async function loadFigFile(): Promise<ParsedData> {
   const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
   const canvases = findNodesByType(roots, "CANVAS");
 
-  parsedDataCache = {
+  parsedDataCacheRef.value = {
     canvases,
     allNodes: toFigNodes(parsed.nodeChanges),
     blobs: parsed.blobs,
     images: parsed.images,
     nodeMap,
   };
-  return parsedDataCache;
+  return parsedDataCacheRef.value;
 }
 
 describe("Section Parsing", () => {

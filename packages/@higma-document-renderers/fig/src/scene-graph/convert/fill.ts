@@ -65,14 +65,6 @@ function isFullyTransparentGradient(
 }
 
 /**
- * Convert hash array to hex string
- */
-function _uint8ArrayToBase64(data: Uint8Array): string {
-  const binary = Array.from(data, (byte) => String.fromCharCode(byte)).join("");
-  return btoa(binary);
-}
-
-/**
  * Convert a single Figma paint to a scene graph Fill
  *
  * @param paint - Figma paint

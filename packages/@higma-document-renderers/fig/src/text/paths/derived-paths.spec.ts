@@ -12,7 +12,6 @@
  * 44×44 layout) rendered 13 px left of their correct centered position.
  */
 
-import { describe, it, expect } from "vitest";
 import { transformGlyphCommands, extractDerivedTextPathData } from "./derived-paths";
 import type { PathCommand } from "../../font/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
@@ -54,7 +53,9 @@ describe("transformGlyphCommands", () => {
     // screen_y = baseline − normalized_y · fontSize
     // = 41 − (−0.03662) · 17 = 41 + 0.62254 ≈ 41.6226
     const m = out[0];
-    if (m.type !== "M") throw new Error("expected M");
+    if (m.type !== "M") {
+      throw new Error("expected M");
+    }
     expect(m.y).toBeCloseTo(41.6226, 3);
   });
 });

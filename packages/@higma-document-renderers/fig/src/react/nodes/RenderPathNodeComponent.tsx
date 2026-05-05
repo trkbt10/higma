@@ -10,6 +10,20 @@ import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/st
 
 type Props = { readonly node: RenderPathNode };
 
+function renderPathElements(node: RenderPathNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  return node.paths.map((p, i) => {
+    const fa = p.fillOverride ?? node.fill;
+    return <path key={i} d={p.d} fillRule={p.fillRule} fill={fa.attrs.fill} fillOpacity={fa.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+  });
+}
+
+function renderPathFillContent(node: RenderPathNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  if (node.fillLayers) {
+    return <MultiFillPathLayers layers={node.fillLayers} paths={node.paths} stroke={uniformStroke} />;
+  }
+  return renderPathElements(node, uniformStroke);
+}
+
 function RenderPathNodeComponentImpl({ node }: Props) {
   if (node.paths.length === 0) { return null; }
 
@@ -19,22 +33,13 @@ function RenderPathNodeComponentImpl({ node }: Props) {
   if (node.fillLayers || sr) {
     return (
       <ShapeShell wrapper={node.wrapper} defs={node.defs} backgroundBlur={node.backgroundBlur} mask={node.mask}>
-        {node.fillLayers
-          ? <MultiFillPathLayers layers={node.fillLayers} paths={node.paths} stroke={uniformStroke} />
-          : node.paths.map((p, i) => {
-              const fa = p.fillOverride ?? node.fill;
-              return <path key={i} d={p.d} fillRule={p.fillRule} fill={fa.attrs.fill} fillOpacity={fa.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
-            })
-        }
+        {renderPathFillContent(node, uniformStroke)}
         {sr && <StrokeRenderingElements sr={sr} />}
       </ShapeShell>
     );
   }
 
-  const pathElements = node.paths.map((p, i) => {
-    const fa = p.fillOverride ?? node.fill;
-    return <path key={i} d={p.d} fillRule={p.fillRule} fill={fa.attrs.fill} fillOpacity={fa.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
-  });
+  const pathElements = renderPathElements(node, uniformStroke);
 
   if (node.needsWrapper) {
     return <ShapeShell wrapper={node.wrapper} defs={node.defs} backgroundBlur={node.backgroundBlur} mask={node.mask}>{pathElements}</ShapeShell>;

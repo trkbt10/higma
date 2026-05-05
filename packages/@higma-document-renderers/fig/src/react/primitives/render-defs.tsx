@@ -19,7 +19,7 @@ import type {
   ClipPathShape,
 } from "../../scene-graph/render-tree";
 import { RenderNodeComponent } from "../nodes/RenderNodeComponent";
-import type { ResolvedFilterPrimitive, ResolvedGradientStop, ResolvedAngularGradient, ResolvedDiamondGradient } from "../../scene-graph/render";
+import type { ResolvedFilterPrimitive, ResolvedGradientStop } from "../../scene-graph/render";
 
 // =============================================================================
 // Gradient Stops
@@ -111,45 +111,6 @@ function formatGradientDef(def: RenderLinearGradientDef | RenderRadialGradientDe
         </radialGradient>
       );
   }
-}
-
-/**
- * Build CSS conic-gradient string from angular gradient def.
- */
-function buildConicGradientCSS(d: ResolvedAngularGradient): string {
-  const fromDeg = (d.rotation * 180) / Math.PI;
-  const stopParts = d.stops.map((s) => {
-    const opacity = s.stopOpacity !== undefined ? s.stopOpacity : 1;
-    const hex = s.stopColor;
-    if (opacity < 1) {
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      return `rgba(${r},${g},${b},${opacity}) ${s.offset}`;
-    }
-    return `${hex} ${s.offset}`;
-  });
-  return `conic-gradient(from ${fromDeg}deg at ${d.cx} ${d.cy}, ${stopParts.join(", ")})`;
-}
-
-/**
- * Build CSS for diamond gradient approximation.
- */
-function buildDiamondGradientCSS(d: ResolvedDiamondGradient): string {
-  const stopParts = d.stops.map((s) => {
-    const opacity = s.stopOpacity !== undefined ? s.stopOpacity : 1;
-    const hex = s.stopColor;
-    if (opacity < 1) {
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      return `rgba(${r},${g},${b},${opacity})`;
-    }
-    return hex;
-  });
-  const center = stopParts[0] ?? "transparent";
-  const edge = stopParts[stopParts.length - 1] ?? "transparent";
-  return `radial-gradient(ellipse 50% 50% at ${d.cx} ${d.cy}, ${center}, ${edge})`;
 }
 
 // Stop colour sampling shared with the SVG-native sectored renderer.

@@ -2,7 +2,7 @@
  * @file Symbol resolution for INSTANCE nodes
  */
 
-import type { FigNode, MutableFigNode, FigKiwiSymbolData, FigKiwiSymbolOverride, FigGuidPath, FigComponentPropAssignment, FigDerivedTextData } from "@higma-document-models/fig/types";
+import type { FigNode, MutableFigNode, FigKiwiSymbolOverride, FigComponentPropAssignment, FigDerivedTextData } from "@higma-document-models/fig/types";
 import { guidToString, getNodeType, safeChildren, type FigGuid, type FigBlob } from "@higma-document-models/fig/domain";
 import { walkTree } from "@higma-primitives/tree";
 import { extractSymbolIDPair } from "@higma-document-models/fig/symbols";

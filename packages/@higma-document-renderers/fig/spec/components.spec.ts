@@ -48,11 +48,11 @@ type ParsedData = {
   nodeMap: ReadonlyMap<string, FigNode>;
 };
 
-let parsedDataCache: ParsedData | null = null;
+const parsedDataCacheRef = { value: null as ParsedData | null };
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {
-    return parsedDataCache;
+  if (parsedDataCacheRef.value) {
+    return parsedDataCacheRef.value;
   }
 
   if (!fs.existsSync(FIG_FILE)) {
@@ -92,16 +92,8 @@ async function loadFigFile(): Promise<ParsedData> {
     }
   }
 
-  parsedDataCache = { canvases, layers, symbols, blobs: parsed.blobs, images: parsed.images, nodeMap };
-  return parsedDataCache;
-}
-
-/** Count instances in SVG (by looking for pattern) */
-function _countInstances(svg: string): number {
-  // Instances are typically rendered as groups
-  // Count main content groups (excluding defs and clip paths)
-  const groupMatches = svg.match(/<g[^>]*>/g) || [];
-  return groupMatches.length;
+  parsedDataCacheRef.value = { canvases, layers, symbols, blobs: parsed.blobs, images: parsed.images, nodeMap };
+  return parsedDataCacheRef.value;
 }
 
 /** Extract element counts from SVG */

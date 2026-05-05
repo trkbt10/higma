@@ -37,11 +37,10 @@ export type PaintEditorCallbacks = {
 };
 
 export function usePaintEditor(config: PaintEditorConfig): PaintEditorCallbacks {
-  const { node, target, images, dispatch, kind } = config;
+  const { target, images, dispatch, kind } = config;
   const uploadTargetRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const paints = kind === "fill" ? node.fills : node.strokes;
   const appearanceOp = kind === "fill" ? AppearanceOp.fillPaints : AppearanceOp.strokePaints;
 
   const imageOptions = [

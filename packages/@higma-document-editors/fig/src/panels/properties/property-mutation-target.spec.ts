@@ -2,8 +2,11 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import { createPropertyMutationTarget, createPropertyTargetUpdateAction } from "./property-mutation-target";
+
+const specDir = fileURLToPath(new URL(".", import.meta.url));
 
 function makeNode(id: string): FigDesignNode {
   return {
@@ -46,7 +49,7 @@ describe("property mutation target", () => {
   });
 
   it("keeps property-panel sections from dispatching raw node update actions", () => {
-    const sectionsDir = join(import.meta.dir, "../sections");
+    const sectionsDir = join(specDir, "../sections");
     const sectionFiles = readdirSync(sectionsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .flatMap((entry) => {

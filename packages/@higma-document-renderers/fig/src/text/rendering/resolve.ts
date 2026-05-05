@@ -66,21 +66,29 @@ function computeDerivedAlignmentOffset(
   // Only shift when the box is larger than the resolved run. A smaller box
   // than the run means the run overflows; Figma's raw glyph positions in
   // that case already reflect the clipped layout, so don't add an offset.
-  const offsetX = dx <= 0
-    ? 0
-    : textAlignH === "CENTER"
-      ? dx / 2
-      : textAlignH === "RIGHT"
-        ? dx
-        : 0;
-  const offsetY = dy <= 0
-    ? 0
-    : textAlignV === "CENTER"
-      ? dy / 2
-      : textAlignV === "BOTTOM"
-        ? dy
-        : 0;
+  const offsetX = computeHorizontalAlignmentOffset(dx, textAlignH);
+  const offsetY = computeVerticalAlignmentOffset(dy, textAlignV);
   return { x: offsetX, y: offsetY };
+}
+
+function computeHorizontalAlignmentOffset(
+  delta: number,
+  textAlignH: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED" | undefined,
+): number {
+  if (delta <= 0) { return 0; }
+  if (textAlignH === "CENTER") { return delta / 2; }
+  if (textAlignH === "RIGHT") { return delta; }
+  return 0;
+}
+
+function computeVerticalAlignmentOffset(
+  delta: number,
+  textAlignV: "TOP" | "CENTER" | "BOTTOM" | undefined,
+): number {
+  if (delta <= 0) { return 0; }
+  if (textAlignV === "CENTER") { return delta / 2; }
+  if (textAlignV === "BOTTOM") { return delta; }
+  return 0;
 }
 
 /**
@@ -148,9 +156,7 @@ function resolveFontMetrics(dtd: FigDerivedTextData | undefined): ResolvedFontMe
   const list = dtd?.fontMetaData;
   if (!Array.isArray(list) || list.length === 0) return undefined;
   const m: FigFontMetaData = list[0];
-  const lh = typeof m.fontLineHeight === "number" && m.fontLineHeight > 0
-    ? m.fontLineHeight
-    : undefined;
+  const lh = readPositiveFontLineHeight(m.fontLineHeight);
   if (lh === undefined) return undefined;
   const baseline = dtd?.baselines?.[0];
   if (!baseline || typeof baseline.lineAscent !== "number" || baseline.lineAscent <= 0) {
@@ -199,6 +205,21 @@ function applyTruncation(source: string, truncation: TextTruncation): string {
   const cps = [...source];
   if (truncation.startIndex >= cps.length) return source;
   return cps.slice(0, truncation.startIndex).join("") + truncation.ellipsis;
+}
+
+function resolveDisplayProps(
+  props: ExtractedTextProps,
+  truncation: TextTruncation | undefined,
+): ExtractedTextProps {
+  if (!truncation) { return props; }
+  return { ...props, characters: applyTruncation(props.characters, truncation) };
+}
+
+function readPositiveFontLineHeight(fontLineHeight: unknown): number | undefined {
+  if (typeof fontLineHeight === "number" && fontLineHeight > 0) {
+    return fontLineHeight;
+  }
+  return undefined;
 }
 
 /**
@@ -364,9 +385,7 @@ export function resolveTextRendering(
 
   // Lines mode source: if truncation applies, rewrite characters before
   // layout so renderers emit the cut-and-ellipsized string directly.
-  const displayProps = truncation
-    ? { ...props, characters: applyTruncation(props.characters, truncation) }
-    : props;
+  const displayProps = resolveDisplayProps(props, truncation);
 
   // Prefer Figma's own per-line breakdown when available — more accurate
   // than the heuristic splitter in compute-layout. Skip when truncation

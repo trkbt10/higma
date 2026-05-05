@@ -14,7 +14,7 @@
   "scripts": {
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-editor-kernel/ui/src",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts --environment jsdom ../../../packages/@higma-editor-kernel/ui/src",
     "dev": "vite --config dev/vite.config.ts --open"
   },
   "exports": {
@@ -97,6 +97,18 @@
     "./hooks": {
       "types": "./src/hooks/index.ts",
       "default": "./src/hooks/index.ts"
+    },
+    "./editor": {
+      "types": "./src/editor/index.ts",
+      "default": "./src/editor/index.ts"
+    },
+    "./grouped-list": {
+      "types": "./src/grouped-list/index.ts",
+      "default": "./src/grouped-list/index.ts"
+    },
+    "./grouped-list/hooks": {
+      "types": "./src/grouped-list/hooks/index.ts",
+      "default": "./src/grouped-list/hooks/index.ts"
     },
     "./primitives/CursorCaret": {
       "types": "./src/primitives/CursorCaret.tsx",

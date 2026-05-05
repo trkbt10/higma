@@ -23,13 +23,11 @@ import { fileURLToPath } from "node:url";
 import {
   createFigFile,
   frameNode,
-  rectNode,
   roundedRectNode,
   ellipseNode,
   booleanNode,
   symbolNode,
   instanceNode,
-  solidPaint,
   linearGradient,
   radialGradient,
   dropShadow,
@@ -37,7 +35,6 @@ import {
   layerBlur,
   effects,
   type GradientPaint,
-  type EffectData,
 } from "@higma-document-io/fig/fig-file";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -99,7 +96,6 @@ const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
 const DARK: Color = { r: 0.15, g: 0.15, b: 0.15, a: 1 };
 const BLUE: Color = { r: 0.2, g: 0.4, b: 0.9, a: 1 };
 const RED: Color = { r: 0.9, g: 0.2, b: 0.2, a: 1 };
-const GREEN: Color = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
 const LIGHT_GRAY: Color = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 
 // =============================================================================

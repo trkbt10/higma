@@ -19,7 +19,6 @@
  * `StretchParent` / `StretchChild` interfaces — no casts.
  */
 
-import { describe, it, expect } from "vitest";
 import { applyCounterAxisStretch, type StretchParent, type StretchChild } from "./builder";
 
 type Parent = StretchParent;
@@ -30,12 +29,10 @@ function parent(
   mode?: "VERTICAL" | "HORIZONTAL" | "NONE",
   stackPadding?: number | { top: number; right: number; bottom: number; left: number },
 ): Parent {
-  return {
-    size,
-    autoLayout: mode
-      ? { stackMode: { name: mode }, stackPadding }
-      : undefined,
-  };
+  if (mode === undefined) {
+    return { size, autoLayout: undefined };
+  }
+  return { size, autoLayout: { stackMode: { name: mode }, stackPadding } };
 }
 
 function child(

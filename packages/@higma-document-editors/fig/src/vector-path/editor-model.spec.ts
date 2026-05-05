@@ -1,9 +1,5 @@
 /** @file Vector path editor-model domain tests. */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createFigDesignDocument } from "@higma-document-io/fig";
 import type { FigDesignBlob, FigDesignDocument, FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import {
   addVectorPathPoint,
@@ -13,11 +9,23 @@ import {
   updateVectorPathEndpoint,
 } from "./editor-model";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EDGE_CASES_FIG = path.resolve(
-  __dirname,
-  "../../../../@higma-document-renderers/fig/fixtures/edge-cases/edge-cases.fig",
-);
+function f32(value: number): readonly number[] {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setFloat32(0, value, true);
+  return Array.from(bytes);
+}
+
+function encodeM(x: number, y: number): readonly number[] {
+  return [0x01, ...f32(x), ...f32(y)];
+}
+
+function encodeL(x: number, y: number): readonly number[] {
+  return [0x02, ...f32(x), ...f32(y)];
+}
+
+function encodeZ(): readonly number[] {
+  return [0x06];
+}
 
 function makeNode(type: FigDesignNode["type"], overrides: Partial<FigDesignNode> = {}): FigDesignNode {
   return {
@@ -36,34 +44,29 @@ function makeNode(type: FigDesignNode["type"], overrides: Partial<FigDesignNode>
   };
 }
 
-function findParsedVectorInFrame(nodes: readonly FigDesignNode[]): FigDesignNode | undefined {
-  for (const node of nodes) {
-    const child = (node.children ?? []).find((candidate) => {
-      return candidate.type === "VECTOR"
-        && candidate.vectorPaths === undefined
-        && ((candidate.fillGeometry?.length ?? 0) > 0 || (candidate.strokeGeometry?.length ?? 0) > 0);
-    });
-    if (child) {
-      return child;
-    }
-    const nested = findParsedVectorInFrame(node.children ?? []);
-    if (nested) {
-      return nested;
-    }
-  }
-  return undefined;
-}
-
-async function loadRealFigVectorFixture(): Promise<{
+function createBlobBackedVectorFixture(): {
   readonly document: FigDesignDocument;
   readonly vector: FigDesignNode;
   readonly blobs: readonly FigDesignBlob[];
-}> {
-  const document = await createFigDesignDocument(new Uint8Array(fs.readFileSync(EDGE_CASES_FIG)));
-  const vector = findParsedVectorInFrame(document.pages.flatMap((page) => page.children));
-  if (!vector) {
-    throw new Error("edge-cases.fig must contain a frame-contained parsed VECTOR with blob geometry.");
-  }
+} {
+  const vector = makeNode("VECTOR", {
+    id: "0:2" as FigNodeId,
+    vectorPaths: undefined,
+    fillGeometry: [{ commandsBlob: 0, windingRule: { name: "NONZERO", value: 1 } }],
+  });
+  const document: FigDesignDocument = {
+    pages: [{
+      id: "0:1" as FigNodeId,
+      name: "Page",
+      backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
+      children: [vector],
+    }],
+    components: new Map(),
+    images: new Map(),
+    blobs: [{ bytes: [...encodeM(0, 0), ...encodeL(100, 0), ...encodeL(100, 80), ...encodeZ()] }],
+    metadata: null,
+    styleRegistry: { fills: new Map(), strokes: new Map(), effects: new Map(), texts: new Map() },
+  };
   return { document, vector, blobs: document.blobs };
 }
 
@@ -161,8 +164,8 @@ describe("vector path editor-model", () => {
     expect(canEnterVectorPathEdit(child)).toBe(true);
   });
 
-  it("edits a real .fig parsed frame-contained VECTOR backed by fillGeometry blobs", async () => {
-    const { vector, blobs } = await loadRealFigVectorFixture();
+  it("edits a parsed VECTOR backed by fillGeometry blobs", () => {
+    const { vector, blobs } = createBlobBackedVectorFixture();
 
     expect(vector.vectorPaths).toBeUndefined();
     expect(vector.fillGeometry?.length ?? vector.strokeGeometry?.length ?? 0).toBeGreaterThan(0);

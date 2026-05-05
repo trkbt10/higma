@@ -8,8 +8,7 @@
  * to verify the scene-graph builder also supports it.
  */
 
-import { describe, it, expect } from "vitest";
-import type { SceneNodeBase, GroupNode, SceneNode } from "./types";
+import type { SceneNodeBase, GroupNode } from "./types";
 
 // =============================================================================
 // 1. Node Type Coverage

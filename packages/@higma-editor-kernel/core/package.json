@@ -41,6 +41,18 @@
       "types": "./src/geometry/index.ts",
       "default": "./src/geometry/index.ts"
     },
+    "./geometry/bounds": {
+      "types": "./src/geometry/bounds.ts",
+      "default": "./src/geometry/bounds.ts"
+    },
+    "./geometry/resize": {
+      "types": "./src/geometry/resize.ts",
+      "default": "./src/geometry/resize.ts"
+    },
+    "./geometry/rotate": {
+      "types": "./src/geometry/rotate.ts",
+      "default": "./src/geometry/rotate.ts"
+    },
     "./drag-utils": {
       "types": "./src/drag-utils.ts",
       "default": "./src/drag-utils.ts"

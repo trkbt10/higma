@@ -312,8 +312,11 @@ export function resolveFill(fill: Fill, ids: IdGenerator): ResolvedFill {
   // TypeScript exhaustiveness check: if a new Fill type is added to the union,
   // this line will produce a compile error.
    
-  const _exhaustive: never = fill;
-  return { attrs: { fill: "none" } };
+  return unsupportedFill(fill);
+}
+
+function unsupportedFill(fill: never): ResolvedFill {
+  throw new Error(`Unsupported fill: ${JSON.stringify(fill)}`);
 }
 
 /**

@@ -38,7 +38,6 @@ import type {
   FigVariableAnyValue,
   FigVariableExpression,
   FigVariableID,
-  FigVariableMap,
   FigVariableMapEntry,
   FigKiwiVariableDataMap,
   FigNode,

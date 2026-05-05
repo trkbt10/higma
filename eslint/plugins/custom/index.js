@@ -13,6 +13,7 @@ import enforceIndexImport from "./rules/enforce-index-import.js";
 import noCrossPackageReexport from "./rules/no-cross-package-reexport.js";
 import noSubpathBypass from "./rules/no-subpath-bypass.js";
 import enforcePackageBoundaries from "./rules/enforce-package-boundaries.js";
+import noInlineDfsById from "./rules/no-inline-dfs-by-id.js";
 
 export default {
   rules: {
@@ -28,5 +29,6 @@ export default {
     "no-cross-package-reexport": noCrossPackageReexport,
     "no-subpath-bypass": noSubpathBypass,
     "enforce-package-boundaries": enforcePackageBoundaries,
+    "no-inline-dfs-by-id": noInlineDfsById,
   },
 };

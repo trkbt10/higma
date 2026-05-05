@@ -18,6 +18,11 @@ function wrapHyperlink(content: ReactNode, href: string | undefined): ReactNode 
   return <a href={href}>{content}</a>;
 }
 
+function wrapTextClip(content: ReactNode, textClipId: string | undefined): ReactNode {
+  if (!textClipId) { return content; }
+  return <g clipPath={`url(#${textClipId})`}>{content}</g>;
+}
+
 function RenderTextNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
 
@@ -39,9 +44,7 @@ function RenderTextNodeComponentImpl({ node }: Props) {
     return (
       <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
         {defsEl}
-        {node.textClipId
-          ? <g clipPath={`url(#${node.textClipId})`}>{glyphContent}</g>
-          : glyphContent}
+        {wrapTextClip(glyphContent, node.textClipId)}
       </RenderWrapper>
     );
   }
@@ -63,9 +66,7 @@ function RenderTextNodeComponentImpl({ node }: Props) {
   return (
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
       {defsEl}
-      {node.textClipId
-        ? <g clipPath={`url(#${node.textClipId})`}>{textContent}</g>
-        : textContent}
+      {wrapTextClip(textContent, node.textClipId)}
     </RenderWrapper>
   );
 }

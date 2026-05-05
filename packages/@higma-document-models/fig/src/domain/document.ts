@@ -369,6 +369,41 @@ export function* overrideFieldKeys(override: SymbolOverride): Generator<SymbolOv
   }
 }
 
+function cornerRadiusIndex(key: SymbolOverrideFieldKey): number {
+  if (key === "rectangleTopLeftCornerRadius") {
+    return 0;
+  }
+  if (key === "rectangleTopRightCornerRadius") {
+    return 1;
+  }
+  if (key === "rectangleBottomRightCornerRadius") {
+    return 2;
+  }
+  return 3;
+}
+
+function strokeWeightSide(key: SymbolOverrideFieldKey): keyof NonNullable<MutableFigDesignNode["individualStrokeWeights"]> {
+  if (key === "borderTopWeight") {
+    return "top";
+  }
+  if (key === "borderRightWeight") {
+    return "right";
+  }
+  if (key === "borderBottomWeight") {
+    return "bottom";
+  }
+  return "left";
+}
+
+function rectangleCornerRadiiForOverride(target: MutableFigDesignNode): [number, number, number, number] {
+  if (target.rectangleCornerRadii) {
+    const [topLeft, topRight, bottomRight, bottomLeft] = target.rectangleCornerRadii;
+    return [topLeft, topRight, bottomRight, bottomLeft];
+  }
+  const cornerRadius = target.cornerRadius ?? 0;
+  return [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
+}
+
 // The previous `overrideEntries` iterator yielded `[key, value]` pairs
 // and lost the key→value correlation through Object.entries, forcing
 // callers into `value as <FieldType>` casts. It was replaced by
@@ -526,13 +561,8 @@ export function applyOverrideToNode(
       case "rectangleBottomRightCornerRadius": {
         const v = override[key];
         if (typeof v !== "number") break;
-        const radii = target.rectangleCornerRadii
-          ? [...target.rectangleCornerRadii]
-          : [target.cornerRadius ?? 0, target.cornerRadius ?? 0, target.cornerRadius ?? 0, target.cornerRadius ?? 0];
-        const idx = key === "rectangleTopLeftCornerRadius" ? 0
-          : key === "rectangleTopRightCornerRadius" ? 1
-          : key === "rectangleBottomRightCornerRadius" ? 2
-          : 3;
+        const radii = rectangleCornerRadiiForOverride(target);
+        const idx = cornerRadiusIndex(key);
         radii[idx] = v;
         target.rectangleCornerRadii = radii;
         break;
@@ -546,10 +576,7 @@ export function applyOverrideToNode(
         if (typeof v !== "number") break;
         const base = uniformStrokeWeight(target.strokeWeight);
         const sw = target.individualStrokeWeights ?? { top: base, right: base, bottom: base, left: base };
-        const side = key === "borderTopWeight" ? "top"
-          : key === "borderRightWeight" ? "right"
-          : key === "borderBottomWeight" ? "bottom"
-          : "left";
+        const side = strokeWeightSide(key);
         target.individualStrokeWeights = { ...sw, [side]: v };
         break;
       }

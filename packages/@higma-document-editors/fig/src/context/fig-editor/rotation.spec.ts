@@ -15,13 +15,6 @@ function makeTransform(x: number, y: number): FigMatrix {
   return { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y };
 }
 
-function _makeRotatedTransform(angleDeg: number, x: number, y: number): FigMatrix {
-  const rad = (angleDeg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  return { m00: cos, m01: -sin, m02: x, m10: sin, m11: cos, m12: y };
-}
-
 describe("extractRotationDeg", () => {
   it("returns 0 for identity matrix", () => {
     expect(extractRotationDeg({ m00: 1, m10: 0 })).toBeCloseTo(0);

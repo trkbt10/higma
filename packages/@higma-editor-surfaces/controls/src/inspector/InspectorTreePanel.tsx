@@ -126,6 +126,30 @@ type TreeNodeInternalProps = {
   readonly showHiddenNodes: boolean;
 };
 
+function resolveVisibleChildren(
+  node: InspectorTreeNode,
+  showHiddenNodes: boolean,
+): readonly InspectorTreeNode[] {
+  if (showHiddenNodes) {
+    return node.children;
+  }
+  return node.children.filter((child) => child.visible);
+}
+
+function resolveTreeRowBackground(args: {
+  readonly isHighlighted: boolean;
+  readonly isHovered: boolean;
+  readonly color: string;
+}): string {
+  if (args.isHighlighted) {
+    return `color-mix(in srgb, ${args.color} 15%, transparent)`;
+  }
+  if (args.isHovered) {
+    return `color-mix(in srgb, ${args.color} 8%, transparent)`;
+  }
+  return "transparent";
+}
+
 function TreeNodeRow({
   node,
   depth,
@@ -146,18 +170,13 @@ function TreeNodeRow({
   const isHidden = !node.visible;
 
   const visibleChildren = useMemo(() => {
-    if (showHiddenNodes) return node.children;
-    return node.children.filter((c) => c.visible);
+    return resolveVisibleChildren(node, showHiddenNodes);
   }, [node.children, showHiddenNodes]);
 
   const rowStyle: React.CSSProperties = {
     ...treeStyles.row,
     paddingLeft: depth * 16 + 8,
-    background: isHighlighted
-      ? `color-mix(in srgb, ${color} 15%, transparent)`
-      : isHovered
-        ? `color-mix(in srgb, ${color} 8%, transparent)`
-        : "transparent",
+    background: resolveTreeRowBackground({ isHighlighted, isHovered, color }),
     borderLeftColor: isHighlighted ? color : "transparent",
   };
 

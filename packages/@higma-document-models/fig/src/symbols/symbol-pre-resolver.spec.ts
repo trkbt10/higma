@@ -75,34 +75,6 @@ function makeInstanceTopLevel(localID: number, symbolLocalID: number, name?: str
   return node;
 }
 
-/** Create a SYMBOL node with a specific sessionID (for testing sessionID mismatch) */
-function makeSymbolWithSession(
-  { sessionID, localID, children, name}: {
-    sessionID: number;
-    localID: number;
-    children: readonly (FigNode | null | undefined)[];
-    name?: string;
-  }
-): FigNode {
-  return {
-    guid: { sessionID, localID },
-    phase: PHASE_CREATED,
-    type: nodeType("SYMBOL"),
-    name: name ?? `Symbol-${localID}`,
-    children,
-  };
-}
-
-/** Create an INSTANCE that references a symbolID with a different sessionID */
-function makeInstanceMismatch(
-  { localID, refSessionID, symbolLocalID, name}: { localID: number; refSessionID: number; symbolLocalID: number; name?: string; }
-): FigNode {
-  return makeNode(localID, "INSTANCE", {
-    name: name ?? `Instance-${localID}`,
-    symbolData: { symbolID: { sessionID: refSessionID, localID: symbolLocalID } },
-  });
-}
-
 function makeRect(localID: number, name?: string): FigNode {
   return makeNode(localID, "RECTANGLE", { name });
 }

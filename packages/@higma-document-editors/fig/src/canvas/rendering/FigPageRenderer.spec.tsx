@@ -8,24 +8,40 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { createDemoFigDesignDocument } from "@higma-document-io/fig/context";
-import type { FigDesignDocument, FigPage } from "@higma-document-models/fig/domain";
+import type { FigPage } from "@higma-document-models/fig/domain";
 import { FigPageRenderer } from "./FigPageRenderer";
 import type { FigEditorRendererKind } from "./renderer-kind";
+import type { AbstractFont } from "@higma-document-renderers/fig/font";
 
-let doc: FigDesignDocument;
+const docPromise = createDemoFigDesignDocument();
 
-beforeAll(async () => {
-  doc = await createDemoFigDesignDocument();
-});
+const testFont: AbstractFont = {
+  unitsPerEm: 1000,
+  ascender: 800,
+  descender: -200,
+  charToGlyph(char) {
+    return {
+      index: char.codePointAt(0) ?? 0,
+      advanceWidth: 600,
+      getPath() {
+        return { commands: [], toPathData: () => "" };
+      },
+    };
+  },
+  getPath() {
+    return { commands: [], toPathData: () => "" };
+  },
+};
 
-function renderPage(
+async function renderPage(
   { page, width, height, renderer }: {
     readonly page: FigPage;
     readonly width: number;
     readonly height: number;
     readonly renderer?: FigEditorRendererKind;
   },
-): string {
+): Promise<string> {
+  const doc = await docPromise;
   return renderToStaticMarkup(
     createElement(FigPageRenderer, {
       page,
@@ -36,35 +52,41 @@ function renderPage(
       symbolMap: doc.components,
       styleRegistry: doc.styleRegistry,
       renderer,
+      textFontResolver: () => testFont,
     }),
   );
 }
 
 describe("FigPageRenderer — selectable renderer backend shell", () => {
-  it("defaults to the SVG backend layer", () => {
-    const html = renderPage({ page: doc.pages[0], width: 1200, height: 800 });
+  it("defaults to the SVG backend layer", async () => {
+    const doc = await docPromise;
+    const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800 });
     expect(html).toContain("<img");
     expect(html).toContain("data:image/svg+xml");
   });
 
-  it("does not emit a React SVG scene tree in the editor renderer shell", () => {
-    const html = renderPage({ page: doc.pages[0], width: 1200, height: 800 });
+  it("does not emit a React SVG scene tree in the editor renderer shell", async () => {
+    const doc = await docPromise;
+    const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800 });
     expect(html).not.toMatch(/<rect[^>]+fill="#ffffff"/i);
     expect(html).not.toMatch(/<(linearGradient|radialGradient)\b/);
   });
 
-  it("can explicitly render through the SVG backend layer", () => {
-    const html = renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "svg" });
+  it("can explicitly render through the SVG backend layer", async () => {
+    const doc = await docPromise;
+    const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "svg" });
     expect(html).toContain("<img");
     expect(html).toContain("data:image/svg+xml");
   });
 
-  it("can render through the WebGL backend layer shell", () => {
-    const html = renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "webgl" });
+  it("can render through the WebGL backend layer shell", async () => {
+    const doc = await docPromise;
+    const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "webgl" });
     expect(html).toContain("<canvas");
   });
 
-  it("keeps the SVG viewport image screen-aligned when a viewport window is supplied", () => {
+  it("keeps the SVG viewport image screen-aligned when a viewport window is supplied", async () => {
+    const doc = await docPromise;
     const page = doc.pages[0];
     const html = renderToStaticMarkup(
       createElement(FigPageRenderer, {
@@ -81,6 +103,7 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
         viewportWidth: 490,
         viewportHeight: 350,
         viewportPlacement: "screen",
+        textFontResolver: () => testFont,
       }),
     );
 

@@ -2,7 +2,6 @@
  * @file Unit tests for the strokeGeometry → centerline reconstructor.
  */
 
-import { describe, expect, it } from "vitest";
 import { reconstructStrokeCenterline } from "./stroke-geometry-centerline";
 import type { DecodedContour } from "./path";
 

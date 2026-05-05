@@ -15,7 +15,7 @@ import type {
 } from "@higma-document-models/fig/types";
 import { getPaintType, asGradientPaint, asSolidPaint } from "@higma-document-models/fig/color";
 import { resolveStrokeWeight, mapStrokeCap, mapStrokeJoin } from "../../stroke";
-import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, AffineMatrix } from "../types";
+import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, AffineMatrix, Color } from "../types";
 import { figColorToSceneColor } from "./fill";
 import {
   getGradientStops,
@@ -136,6 +136,40 @@ function buildStrokeLayer(paint: FigPaint): StrokeLayer {
   return { color: DEFAULT_COLOR, opacity: paint.opacity ?? 1, blendMode };
 }
 
+function primaryStrokeColor(paint: FigPaint): Color {
+  const primarySolid = asSolidPaint(paint);
+  if (primarySolid) {
+    return figColorToSceneColor(primarySolid.color);
+  }
+  return { r: 0, g: 0, b: 0, a: 1 };
+}
+
+function shouldBuildStrokeLayers(
+  visiblePaints: readonly FigPaint[],
+  hasGradientPaint: boolean,
+  hasNonNormalBlend: boolean,
+): boolean {
+  return visiblePaints.length > 1 || hasGradientPaint || hasNonNormalBlend;
+}
+
+function buildOptionalStrokeLayers(
+  visiblePaints: readonly FigPaint[],
+  hasGradientPaint: boolean,
+  hasNonNormalBlend: boolean,
+): readonly StrokeLayer[] | undefined {
+  if (!shouldBuildStrokeLayers(visiblePaints, hasGradientPaint, hasNonNormalBlend)) {
+    return undefined;
+  }
+  return visiblePaints.map(buildStrokeLayer);
+}
+
+function resolveDashPattern(dashPattern: readonly number[] | undefined): readonly number[] | undefined {
+  if (!dashPattern || dashPattern.length === 0) {
+    return undefined;
+  }
+  return dashPattern;
+}
+
 /**
  * Convert Figma stroke paints to scene graph Stroke.
  *
@@ -164,11 +198,7 @@ export function convertStrokeToSceneStroke(
 
   // Primary layer (first visible paint)
   const primary = visiblePaints[0];
-  const DEFAULT_COLOR = { r: 0, g: 0, b: 0, a: 1 };
-  const primarySolid = asSolidPaint(primary);
-  const primaryColor = primarySolid
-    ? figColorToSceneColor(primarySolid.color)
-    : DEFAULT_COLOR;
+  const primaryColor = primaryStrokeColor(primary);
 
   // Multi-paint layers (when >1 visible paint), single gradient paint
   // (gradient stroke requires layers because the primary color/opacity alone
@@ -188,9 +218,7 @@ export function convertStrokeToSceneStroke(
     const bm = convertFigmaBlendMode(p.blendMode);
     return bm !== undefined;
   });
-  const layers = (visiblePaints.length > 1 || hasGradientPaint || hasNonNormalBlend)
-    ? visiblePaints.map(buildStrokeLayer)
-    : undefined;
+  const layers = buildOptionalStrokeLayers(visiblePaints, hasGradientPaint, hasNonNormalBlend);
 
   const align = resolveStrokeAlign(options?.strokeAlign);
 
@@ -200,7 +228,7 @@ export function convertStrokeToSceneStroke(
     opacity: primary.opacity ?? 1,
     linecap: mapStrokeCap(options?.strokeCap),
     linejoin: mapStrokeJoin(options?.strokeJoin),
-    dashPattern: options?.dashPattern?.length ? options.dashPattern : undefined,
+    dashPattern: resolveDashPattern(options?.dashPattern),
     layers,
     align,
   };

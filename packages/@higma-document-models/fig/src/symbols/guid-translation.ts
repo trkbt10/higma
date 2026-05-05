@@ -438,26 +438,6 @@ type GlyphSummary = {
 // `Map.set` loop at its single use site.
 
 /**
- * Extract CPA character counts keyed by defID.
- * Used to compute a local descendant's expected Title character count.
- */
-function extractCpaCharCounts(
-  ctx: FigResolveContext,
-  assignments: readonly FigComponentPropAssignment[] | undefined,
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  if (!assignments) return counts;
-  for (const a of assignments) {
-    if (!a.defID) continue;
-    const chars = a.value?.textValue?.characters;
-    if (typeof chars === "string") {
-      counts.set(ctx.guidString(a.defID), [...chars].length);
-    }
-  }
-  return counts;
-}
-
-/**
  * Compute each local INSTANCE descendant's max-characters signature based on
  * its own CPA assignments. For each local INSTANCE that carries CPAs,
  * determine the largest character-count value among its text assignments.
@@ -745,7 +725,7 @@ export function buildGuidTranslationMap(
   // before evicting or overwriting an entry — Phase Zero pairings are
   // exact and must survive every later heuristic.
   const lockedKeys = new Set<string>();
-  for (const [guidStr, _] of overrideGuids) {
+  for (const guidStr of overrideGuids.keys()) {
     if (result.has(guidStr)) continue;
     const directDescendant = directOverrideKeyMap.get(guidStr);
     if (directDescendant) {

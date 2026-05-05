@@ -16,7 +16,6 @@
  * white-outlined rendering where Figma exports a filled black logo.
  */
 
-import { describe, it, expect } from "vitest";
 import {
   buildFigStyleRegistry,
   resolveNodeStyleIds,

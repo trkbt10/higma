@@ -21,8 +21,7 @@ const FIXTURES_DIR = path.join(__dirname, "../fixtures/text-comprehensive");
 const FIG_FILE = path.join(FIXTURES_DIR, "text-comprehensive.fig");
 const ACTUAL_SVG_DIR = path.join(FIXTURES_DIR, "actual");
 
-// Official Inter font path
-const OFFICIAL_INTER_PATH = "/tmp/inter-font/extras/ttf/Inter-Regular.ttf";
+const OFFICIAL_INTER_PATH = path.join(FIXTURES_DIR, "official-fonts/Inter-Regular.ttf");
 
 type FrameInfo = {
   name: string;

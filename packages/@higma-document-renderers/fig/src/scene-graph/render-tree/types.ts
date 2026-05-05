@@ -45,7 +45,6 @@
 
 import type {
   SceneNodeId,
-  AffineMatrix,
   Fill,
   Stroke,
   PathContour,
@@ -59,9 +58,7 @@ import type {
   PathNode,
   TextNode,
   ImageNode,
-  Effect,
   BlendMode,
-  MaskNode,
   CornerRadius,
 } from "../types";
 

@@ -5,7 +5,7 @@
  * Uses SceneNodeId for stable identity matching (React-style keyed reconciliation).
  */
 
-import type { SceneGraph, SceneNode, SceneNodeId, GroupNode, FrameNode } from "./types";
+import type { SceneGraph, SceneNode, SceneNodeId } from "./types";
 
 // =============================================================================
 // Diff Operation Types

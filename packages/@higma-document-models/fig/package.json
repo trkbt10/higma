@@ -38,6 +38,10 @@
       "types": "./src/domain/index.ts",
       "default": "./src/domain/index.ts"
     },
+    "./domain/conversion": {
+      "types": "./src/domain/conversion/index.ts",
+      "default": "./src/domain/conversion/index.ts"
+    },
     "./diagnostics": {
       "types": "./src/diagnostics/index.ts",
       "default": "./src/diagnostics/index.ts"

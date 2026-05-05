@@ -33,7 +33,6 @@ const GREEN: Color = { r: 0.204, g: 0.78, b: 0.349, a: 1 };
 const RED: Color = { r: 1, g: 0.231, b: 0.188, a: 1 };
 const ORANGE: Color = { r: 1, g: 0.584, b: 0, a: 1 };
 const CONSTRAINTS = ["MIN", "CENTER", "MAX", "STRETCH", "SCALE"] as const;
-type _Constraint = (typeof CONSTRAINTS)[number];
 // === Shared dimensions (must match spec expectations) ===
 // Single constraint frames
 const SYM_W = 100,

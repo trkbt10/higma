@@ -24,7 +24,7 @@ import {
   applyOverrideToNode,
   overrideFieldKeys,
 } from "@higma-document-models/fig/domain";
-import type { FigPaint, FigVectorPath } from "@higma-document-models/fig/types";
+import type { FigPaint } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/domain";
 import { styleRefKeys, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
@@ -37,7 +37,7 @@ import {
   extractGeometryProps,
   extractEffectsProps,
 } from "./extract";
-import { applyAutoLayoutPrimaryAxis } from "./autolayout-primary";
+import { applyAutoLayoutPrimaryAxis, type PrimaryAxisChild, type PrimaryAxisParent } from "./autolayout-primary";
 import type {
   SceneGraph,
   SceneNode,
@@ -57,9 +57,9 @@ import { convertEffectsToScene } from "./convert/effects";
 import { decodeGeometryToContours, convertVectorPathsToContours, parseSvgPathD, type DecodedContour } from "./convert/path";
 import { reconstructStrokeCenterline } from "./convert/stroke-geometry-centerline";
 import { generateEllipseContour, generateLineContour, generatePolygonContour, generateRectContour, generateStarContour } from "./convert/shape-geometry";
-import { extractUniformCornerRadius as sharedExtractUniformCornerRadius, resolveClipsContent as sharedResolveClipsContent } from "../geometry";
+import { resolveClipsContent as sharedResolveClipsContent } from "../geometry";
 import { convertTextNode } from "./convert/text";
-import type { Fill, PathContour, BlendMode, MaskNode, CornerRadius, ArcData } from "./types";
+import type { Fill, PathContour, BlendMode, CornerRadius, ArcData } from "./types";
 import { convertFigmaBlendMode } from "./convert/blend-mode";
 import { resolveChildConstraints } from "@higma-document-models/fig/symbols";
 import type { TextAutoResize } from "../text/layout/types";
@@ -90,6 +90,40 @@ function selectPaintsForFills(
 ): Fill[] {
   const source = isStrokeGeometry ? paints.strokePaints : paints.fillPaints;
   return convertPaintsToFills(source, images);
+}
+
+function resolveScalarStrokeWeight(strokeWeight: FigDesignNode["strokeWeight"] | undefined): number {
+  if (typeof strokeWeight === "number") {
+    return strokeWeight;
+  }
+  if (strokeWeight !== undefined) {
+    return Math.max(strokeWeight.top, strokeWeight.right, strokeWeight.bottom, strokeWeight.left);
+  }
+  return 0;
+}
+
+function resolveVectorFills(
+  reconstructed: boolean,
+  treatAsFill: boolean,
+  strokePaints: readonly FigPaint[] | undefined,
+  fillPaints: readonly FigPaint[] | undefined,
+  images: ReadonlyMap<string, FigImage>,
+): Fill[] {
+  if (reconstructed) { return []; }
+  return selectPaintsForFills(treatAsFill, { strokePaints, fillPaints }, images);
+}
+
+function resolveVectorStroke(
+  treatAsFill: boolean,
+  strokePaints: readonly FigPaint[] | undefined,
+  strokeWeight: FigDesignNode["strokeWeight"] | undefined,
+  strokeCap: FigDesignNode["strokeCap"],
+  strokeJoin: FigDesignNode["strokeJoin"],
+  strokeDashes: FigDesignNode["strokeDashes"],
+  strokeAlign: FigDesignNode["strokeAlign"],
+) {
+  if (treatAsFill) { return undefined; }
+  return convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign });
 }
 
 // =============================================================================
@@ -1481,11 +1515,7 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
   // Figma's SVG exporter emits the centerline directly, so we reverse the
   // expansion when the strokeGeometry matches the documented thin-stroke
   // pattern. Falls back to fill-the-outline when reconstruction fails.
-  const scalarWeight = typeof strokeWeight === "number"
-    ? strokeWeight
-    : strokeWeight !== undefined
-      ? Math.max(strokeWeight.top, strokeWeight.right, strokeWeight.bottom, strokeWeight.left)
-      : 0;
+  const scalarWeight = resolveScalarStrokeWeight(strokeWeight);
   const reconstructedRef = { value: false };
   if (isStrokeGeometryRef.value && strokeAlign === "CENTER" && scalarWeight > 0 && scalarWeight <= 1.5) {
     const centerline = reconstructStrokeCenterline(contoursRef.value, scalarWeight);
@@ -1504,12 +1534,8 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
   // case the strokeGeometry is gone and we render the centerline as a
   // proper stroke.
   const treatAsFill = isStrokeGeometryRef.value && !reconstructedRef.value;
-  const fills = reconstructedRef.value
-    ? []
-    : selectPaintsForFills(treatAsFill, { strokePaints, fillPaints }, ctx.images);
-  const stroke = treatAsFill
-    ? undefined
-    : convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign });
+  const fills = resolveVectorFills(reconstructedRef.value, treatAsFill, strokePaints, fillPaints, ctx.images);
+  const stroke = resolveVectorStroke(treatAsFill, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign);
 
   const { size } = extractSizeProps(node);
   return {
@@ -1774,6 +1800,17 @@ export type StretchChild = {
   };
 };
 
+function resizeCounterAxis(
+  size: { readonly x: number; readonly y: number },
+  counterContent: number,
+  counterAxis: "x" | "y",
+): { readonly x: number; readonly y: number } {
+  if (counterAxis === "x") {
+    return { x: counterContent, y: size.y };
+  }
+  return { x: size.x, y: counterContent };
+}
+
 export function applyCounterAxisStretch<C extends StretchChild>(
   parent: StretchParent,
   children: readonly C[],
@@ -1813,13 +1850,28 @@ export function applyCounterAxisStretch<C extends StretchChild>(
       out.push(child);
       continue;
     }
-    const newSize = counterAxis === "x"
-      ? { x: counterContent, y: child.size.y }
-      : { x: child.size.x, y: counterContent };
+    const newSize = resizeCounterAxis(child.size, counterContent, counterAxis);
     out.push({ ...child, size: newSize });
     changed = true;
   }
   return changed ? out : children;
+}
+
+function cloneOwnInstanceChildren(children: readonly FigDesignNode[]): MutableFigDesignNode[] {
+  if (children.length === 0) { return []; }
+  return children.map(deepCloneDesignNode);
+}
+
+function positionResolvedInstanceChildren<C extends PrimaryAxisChild>(
+  sizeChanged: boolean,
+  dsdPinsTransform: boolean,
+  parent: PrimaryAxisParent,
+  children: readonly C[],
+): readonly C[] {
+  if (sizeChanged && !dsdPinsTransform) {
+    return applyAutoLayoutPrimaryAxis(parent, children);
+  }
+  return children;
 }
 
 // =============================================================================
@@ -1867,9 +1919,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       // tree, which is read-only and shared with the input. Clone here
       // so the resolver may safely mutate. Empty input is handled
       // inside the resolver (clones from `symbol.children`).
-      const ownChildren = children.length > 0
-        ? children.map(deepCloneDesignNode)
-        : [];
+      const ownChildren = cloneOwnInstanceChildren(children);
       const resolved = resolveDesignInstance(node, ownChildren, ctx);
       const stretched = applyCounterAxisStretch(resolved.effectiveNode, resolved.children);
       // Primary-axis re-solve gate (SoT for "when does our layout solver
@@ -1892,9 +1942,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       const dsdPinsTransform = (node.derivedSymbolData ?? []).some((e) =>
         e.transform !== undefined && (e.guidPath?.guids?.length ?? 0) === 1,
       );
-      const positioned = (sizeChanged && !dsdPinsTransform)
-        ? applyAutoLayoutPrimaryAxis(resolved.effectiveNode, stretched)
-        : stretched;
+      const positioned = positionResolvedInstanceChildren(sizeChanged, dsdPinsTransform, resolved.effectiveNode, stretched);
       const childNodes = buildChildren(positioned, ctx);
       return buildFrameNode(resolved.effectiveNode, ctx, childNodes);
     }

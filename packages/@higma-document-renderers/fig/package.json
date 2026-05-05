@@ -51,9 +51,57 @@
       "types": "./src/text/index.ts",
       "default": "./src/text/index.ts"
     },
+    "./text/layout": {
+      "types": "./src/text/layout/index.ts",
+      "default": "./src/text/layout/index.ts"
+    },
+    "./text/measure": {
+      "types": "./src/text/measure/index.ts",
+      "default": "./src/text/measure/index.ts"
+    },
+    "./text/paths": {
+      "types": "./src/text/paths/index.ts",
+      "default": "./src/text/paths/index.ts"
+    },
+    "./text/rendering": {
+      "types": "./src/text/rendering/index.ts",
+      "default": "./src/text/rendering/index.ts"
+    },
     "./scene-graph": {
       "types": "./src/scene-graph/index.ts",
       "default": "./src/scene-graph/index.ts"
+    },
+    "./scene-graph/convert": {
+      "types": "./src/scene-graph/convert/index.ts",
+      "default": "./src/scene-graph/convert/index.ts"
+    },
+    "./scene-graph/render": {
+      "types": "./src/scene-graph/render/index.ts",
+      "default": "./src/scene-graph/render/index.ts"
+    },
+    "./scene-graph/render-tree": {
+      "types": "./src/scene-graph/render-tree/index.ts",
+      "default": "./src/scene-graph/render-tree/index.ts"
+    },
+    "./effects": {
+      "types": "./src/effects/index.ts",
+      "default": "./src/effects/index.ts"
+    },
+    "./geometry": {
+      "types": "./src/geometry/index.ts",
+      "default": "./src/geometry/index.ts"
+    },
+    "./paint": {
+      "types": "./src/paint/index.ts",
+      "default": "./src/paint/index.ts"
+    },
+    "./stroke": {
+      "types": "./src/stroke/index.ts",
+      "default": "./src/stroke/index.ts"
+    },
+    "./svg/nodes/text": {
+      "types": "./src/svg/nodes/text/index.ts",
+      "default": "./src/svg/nodes/text/index.ts"
     },
     "./webgl": {
       "types": "./src/webgl/index.ts",

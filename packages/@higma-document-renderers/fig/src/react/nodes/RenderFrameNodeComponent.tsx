@@ -14,6 +14,14 @@ import { RenderNodeComponent } from "./RenderNodeComponent";
 
 type Props = { readonly node: RenderFrameNode };
 
+function renderFrameChildren(node: RenderFrameNode): ReactNode {
+  const childElements = node.children.map((child) => <RenderNodeComponent key={child.id} node={child} />);
+  if (node.childClipId && childElements.length > 0) {
+    return <g clipPath={`url(#${node.childClipId})`}>{childElements}</g>;
+  }
+  return <>{childElements}</>;
+}
+
 function RenderFrameNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
   const sr = node.background?.strokeRendering;
@@ -29,10 +37,7 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
     }
   }
 
-  const childElements = node.children.map((child) => <RenderNodeComponent key={child.id} node={child} />);
-  const childrenContent = node.childClipId && childElements.length > 0
-    ? <g clipPath={`url(#${node.childClipId})`}>{childElements}</g>
-    : <>{childElements}</>;
+  const childrenContent = renderFrameChildren(node);
 
   return (
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>

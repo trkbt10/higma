@@ -29,11 +29,8 @@ import {
   radialGradient,
   angularGradient,
   diamondGradient,
-  imagePaint,
   dropShadow,
-  innerShadow,
   effects,
-  type GradientPaint,
 } from "@higma-document-io/fig/fig-file";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,28 +47,6 @@ type FigFile = ReturnType<typeof createFigFile>;
 
 const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
 const LIGHT_GRAY: Color = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
-
-// =============================================================================
-// Test image: 4x4 pixel PNG (red/blue checkerboard) as base64
-// =============================================================================
-
-/**
- * Create a small test image for IMAGE fill testing.
- * This is a 4x4 pixel PNG with a simple pattern.
- */
-function createTestImageData(): { data: Uint8Array; mimeType: string } {
-  // Minimal valid 4x4 PNG — red/blue checkerboard
-  // Generated programmatically to avoid external file dependencies
-  const base64 =
-    "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAF0lEQVQI12P4z8DAwMDAxAAG" +
-    "jP///wMAGQMF/UqW8h8AAAAASUVORK5CYII=";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return { data: bytes, mimeType: "image/png" };
-}
 
 // =============================================================================
 // 1. Angular (conic) gradient
@@ -273,110 +248,6 @@ function addMultiFillGradient(
 }
 
 // =============================================================================
-// 4. IMAGE fill
-// =============================================================================
-
-function addImageFillBasic(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-basic")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  // Add image as blob
-  const imgData = createTestImageData();
-  const imageRef = "test-image-001";
-  figFile.addImage(imageRef, imgData.data, imgData.mimeType);
-
-  const shapeID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(shapeID, frameID)
-      .name("image-rect")
-      .size(120, 80)
-      .position(20, 20)
-      .cornerRadius(8)
-      .fill(imagePaint(imageRef).build())
-      .build(),
-  );
-}
-
-function addImageFillWithEffect(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-effect")
-      .size(180, 140)
-      .position(frameX, frameY)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const imgData = createTestImageData();
-  const imageRef = "test-image-002";
-  figFile.addImage(imageRef, imgData.data, imgData.mimeType);
-
-  const shapeID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(shapeID, frameID)
-      .name("image-shadowed")
-      .size(120, 80)
-      .position(30, 30)
-      .cornerRadius(12)
-      .fill(imagePaint(imageRef).build())
-      .effects(effects(
-        dropShadow().offset(0, 4).blur(8).color({ r: 0, g: 0, b: 0, a: 0.25 }),
-      ))
-      .build(),
-  );
-}
-
-function addImageFillRounded(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-rounded")
-      .size(120, 120)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const imgData = createTestImageData();
-  const imageRef = "test-image-003";
-  figFile.addImage(imageRef, imgData.data, imgData.mimeType);
-
-  // Circle with image fill (avatar-like)
-  const shapeID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(shapeID, frameID)
-      .name("image-circle")
-      .size(80, 80)
-      .position(20, 20)
-      .fill(imagePaint(imageRef).build())
-      .build(),
-  );
-}
-
-// =============================================================================
 // 5. MASK layer
 // =============================================================================
 
@@ -543,47 +414,6 @@ function addAngularGradientWithEffect(
       ))
       .build(),
   );
-}
-
-/**
- * Multiple fills: solid + image overlay
- */
-function addMultiFillImage(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("multi-fill-image")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const imgData = createTestImageData();
-  const imageRef = "test-image-004";
-  figFile.addImage(imageRef, imgData.data, imgData.mimeType);
-
-  const shapeID = nextID.value++;
-  const shapeData = roundedRectNode(shapeID, frameID)
-    .name("solid-plus-image")
-    .size(120, 80)
-    .position(20, 20)
-    .cornerRadius(8)
-    .fill({ r: 0.5, g: 0.5, b: 0.5, a: 1 })
-    .build();
-
-  figFile.addRoundedRectangle({
-    ...shapeData,
-    fillPaints: [
-      solidPaint({ r: 0.2, g: 0.3, b: 0.8, a: 1 }).build(),  // bottom: solid blue
-      imagePaint(imageRef).opacity(0.5).build(),  // top: semi-transparent image
-    ],
-  });
 }
 
 // =============================================================================

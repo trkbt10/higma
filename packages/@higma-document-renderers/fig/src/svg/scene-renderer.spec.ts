@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+/** @file SceneGraph SVG renderer viewport tests. */
 import { renderSceneGraphToSvg } from "./scene-renderer";
 import type { SceneGraph } from "../scene-graph/types";
 import { createNodeId } from "../scene-graph/types";

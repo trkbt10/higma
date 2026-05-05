@@ -218,7 +218,6 @@ class QuadTree {
  */
 // [vendored] Removed process.env references for browser compatibility.
 // Dev assertions are disabled in this vendored build.
-false;
 // Caps for subdivision/refinement to avoid hangs on adversarial inputs
 const MAX_SUBDIVISION_ITERS = 128;
 const MAX_SUBSEGMENTS_PER_ORIG_SEGMENT = 1024;
@@ -1391,6 +1390,12 @@ function subdivideIntersectionSegment(intSeg) {
         },
     ];
 }
+function intersectionSubdivisionSegments(seg, isLinear) {
+    if (isLinear) {
+        return [seg];
+    }
+    return subdivideIntersectionSegment(seg);
+}
 function pathSegmentToLineSegment(seg) {
     switch (seg[0]) {
         case "L":
@@ -1560,12 +1565,8 @@ function pathSegmentIntersection(seg0, seg1, eps) {
                 pushLineSegmentIntersection(seg0, seg1);
             }
             else {
-                const subdivided0 = isLinear0
-                    ? [seg0]
-                    : subdivideIntersectionSegment(seg0);
-                const subdivided1 = isLinear1
-                    ? [seg1]
-                    : subdivideIntersectionSegment(seg1);
+                const subdivided0 = intersectionSubdivisionSegments(seg0, isLinear0);
+                const subdivided1 = intersectionSubdivisionSegments(seg1, isLinear1);
                 for (const seg0 of subdivided0) {
                     for (const seg1 of subdivided1) {
                         if (intersectionSegmentsOverlap(seg0, seg1, eps)) {
@@ -2027,12 +2028,18 @@ function removeDanglingEdges(graph) {
     }
     graph.edges = graph.edges.filter(keepEdge);
 }
+function tangentSampleParameter(directionFlag, t0, dt) {
+    if (directionFlag) {
+        return Math.max(0, t0 - dt);
+    }
+    return Math.min(1, t0 + dt);
+}
 function getIncidenceAngle({ directionFlag, segments }) {
     const seg = segments[0]; // TODO: explain in comment why this is always the incident one in both fwd and bwd
     const t0 = directionFlag ? 1 : 0;
     let dt = EPS$1.param;
     const p0 = samplePathSegmentAt(seg, t0);
-    const t1 = directionFlag ? Math.max(0, t0 - dt) : Math.min(1, t0 + dt);
+    const t1 = tangentSampleParameter(directionFlag, t0, dt);
     const p1 = samplePathSegmentAt(seg, t1);
     let dx = p1[0] - p0[0];
     let dy = p1[1] - p0[1];
@@ -2050,9 +2057,7 @@ function getIncidenceAngle({ directionFlag, segments }) {
     if (lenSq < TANGENT_MIN_LEN_SQ) {
         dt = EPS$1.param;
         for (let i = 0; i < MAX_TANGENT_SAMPLE_ITERS; i++) {
-            const tNext = directionFlag
-                ? Math.max(0, t0 - dt)
-                : Math.min(1, t0 + dt);
+            const tNext = tangentSampleParameter(directionFlag, t0, dt);
             const pNext = samplePathSegmentAt(seg, tNext);
             dx = pNext[0] - p0[0];
             dy = pNext[1] - p0[1];
@@ -2815,7 +2820,7 @@ function* pathToCommands(segments, eps = 1e-4) {
  */
 const eof = Symbol();
 function* commandsFromPathData(d) {
-    const reFloat = /(-?\d*(?:\d\.|\.\d|\d)\d*(?:[eE][+\-]?\d+)?)/y;
+    const reFloat = /(-?\d*(?:\d\.|\.\d|\d)\d*(?:[eE][+-]?\d+)?)/y;
     const reCmd = /([MLCSQTAZHVmlhvcsqtaz])/y;
     const reBool = /([01])/y;
     const reWS = /\s*,?\s*/y;

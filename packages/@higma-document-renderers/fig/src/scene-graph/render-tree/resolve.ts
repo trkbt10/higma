@@ -123,6 +123,45 @@ function clampRadius(
   return clamped;
 }
 
+function cornerRadiusScalar(radius: CornerRadius | undefined): number {
+  if (typeof radius === "number") { return radius; }
+  if (radius) {
+    return Math.max(radius[0], radius[1], radius[2], radius[3]);
+  }
+  return 0;
+}
+
+function resolveOptionalStrokeRendering(
+  stroke: Stroke | undefined,
+  ids: IdGenerator,
+  defs: RenderDef[],
+  shape: StrokeShape,
+  maskShape: ClipPathShape,
+): StrokeRendering | undefined {
+  if (!stroke) { return undefined; }
+  return resolveStrokeRendering(stroke, ids, defs, shape, maskShape);
+}
+
+function resolveOptionalBackgroundBlur(
+  effectStack: ResolvedEffectStack,
+  bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | undefined,
+  ids: IdGenerator,
+  defs: RenderDef[],
+  shape: ClipPathShape,
+): RenderBackgroundBlur | undefined {
+  if (!bounds) { return undefined; }
+  return resolveBackgroundBlur(effectStack, bounds, ids, defs, shape);
+}
+
+function resolvePathBounds(node: PathNode) {
+  const pathBbox = computePathContoursBbox(node.contours);
+  if (pathBbox) { return pathBbox; }
+  if (node.width && node.height) {
+    return { x: 0, y: 0, width: node.width, height: node.height };
+  }
+  return undefined;
+}
+
 // =============================================================================
 // Helper: CornerRadius → uniform number (for SVG rx/ry)
 // =============================================================================
@@ -464,6 +503,16 @@ function resolveTopFillResult(fills: readonly Fill[], ids: IdGenerator, defs: Re
   };
 }
 
+function resolveFrameBackgroundFill(
+  hasFills: boolean,
+  fills: readonly Fill[],
+  ids: IdGenerator,
+  defs: RenderDef[],
+): ResolvedFillResult {
+  if (!hasFills) { return { attrs: { fill: "none" as const } }; }
+  return resolveFillResult(fills[fills.length - 1], ids, defs);
+}
+
 /**
  * Resolve all fills in the array as stacked fill layers.
  * Returns undefined if there are fewer than 2 fills (no multi-paint needed).
@@ -644,11 +693,7 @@ function resolveFrameNode(node: FrameNode, ids: IdGenerator): RenderFrameNode {
     // drawn area inside the union of all four corner arcs (no over-
     // paint outside the rounded rect) at the cost of slightly under-
     // clipping the smaller corners — acceptable approximation.
-    const cornerScalar = typeof clampedRadius === "number"
-      ? clampedRadius
-      : clampedRadius
-        ? Math.max(clampedRadius[0], clampedRadius[1], clampedRadius[2], clampedRadius[3])
-        : 0;
+    const cornerScalar = cornerRadiusScalar(clampedRadius);
     strokeRendering = {
       mode: "individual",
       sides: node.individualStrokeWeights,
@@ -666,9 +711,7 @@ function resolveFrameNode(node: FrameNode, ids: IdGenerator): RenderFrameNode {
 
   let background: RenderFrameBackground | null = null;
   if (hasFills || strokeRendering) {
-    const fillResult = hasFills
-      ? resolveFillResult(node.fills[node.fills.length - 1], ids, defs)
-      : { attrs: { fill: "none" as const } };
+    const fillResult = resolveFrameBackgroundFill(hasFills, node.fills, ids, defs);
     const fillLayers = hasFills ? resolveAllFillLayers(node.fills, ids, defs) : undefined;
 
     background = {
@@ -742,9 +785,7 @@ function resolveRectNode(node: RectNode, ids: IdGenerator): RenderRectNode {
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs);
   const maskClipShape = buildClipShape(node.width, node.height, clampedRadius);
   const rectStrokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius };
-  const strokeRendering = node.stroke
-    ? resolveStrokeRendering(node.stroke, ids, defs, rectStrokeShape, maskClipShape)
-    : undefined;
+  const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, rectStrokeShape, maskClipShape);
 
   finalizeDefs(defs, { width: node.width, height: node.height });
 
@@ -789,9 +830,7 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator): RenderEllipseN
   const ellipseMaskShape: ClipPathShape = {
     kind: "ellipse", cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry,
   };
-  const strokeRendering = node.stroke
-    ? resolveStrokeRendering(node.stroke, ids, defs, ellipseStrokeShape, ellipseMaskShape)
-    : undefined;
+  const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, ellipseStrokeShape, ellipseMaskShape);
 
   const ellipseSize = { width: node.rx * 2, height: node.ry * 2 };
 
@@ -882,9 +921,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator): RenderPathNode {
     kind: "path",
     d: paths.map((p) => p.d).join(" "),
   };
-  const strokeRendering = node.stroke
-    ? resolveStrokeRendering(node.stroke, ids, defs, pathStrokeShape, pathMaskShape)
-    : undefined;
+  const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, pathStrokeShape, pathMaskShape);
 
   // For VECTOR / boolean-op paths the contour origin in node-local
   // coordinates can be offset from (0, 0) — Figma's vector network
@@ -894,19 +931,14 @@ function resolvePathNode(node: PathNode, ids: IdGenerator): RenderPathNode {
   // (e.g. world-map-style dots: their gradient should colour
   // the visible continents, not an off-frame region above the path).
   // Falls back to (0, 0) origin when contours can't be measured.
-  const pathBbox = computePathContoursBbox(node.contours);
-  const pathBounds = pathBbox
-    ? pathBbox
-    : (node.width && node.height ? { x: 0, y: 0, width: node.width, height: node.height } : undefined);
+  const pathBounds = resolvePathBounds(node);
   if (pathBounds) {
     finalizeDefs(defs, pathBounds);
   }
 
   // Pass path shape so backdrop-filter clips to the actual contour, not
   // the node's bounding rect (matches ELLIPSE/FRAME behaviour).
-  const backgroundBlur = pathBounds
-    ? resolveBackgroundBlur(effectStack, pathBounds, ids, defs, pathMaskShape)
-    : undefined;
+  const backgroundBlur = resolveOptionalBackgroundBlur(effectStack, pathBounds, ids, defs, pathMaskShape);
   const mask = resolveMask(node, ids, defs);
 
   const needsWrapper = !!(

@@ -10,6 +10,7 @@ function nodeId(id: string): FigNodeId {
 
 type TestNodeOptions = {
   readonly id: string;
+  readonly name: string;
   readonly type: FigDesignNode["type"];
   readonly x: number;
   readonly y: number;
@@ -18,11 +19,11 @@ type TestNodeOptions = {
   readonly children?: readonly FigDesignNode[];
 };
 
-function makeNode({ id, type, x, y, width, height, children }: TestNodeOptions): FigDesignNode {
+function makeNode({ id, name, type, x, y, width, height, children }: TestNodeOptions): FigDesignNode {
   return {
     id: nodeId(id),
     type,
-    name: id,
+    name,
     visible: true,
     opacity: 1,
     transform: { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y },
@@ -38,7 +39,7 @@ function makeNode({ id, type, x, y, width, height, children }: TestNodeOptions):
 function makeDocument(children: readonly FigDesignNode[]): FigDesignDocument {
   return {
     pages: [{
-      id: "page:1" as FigPageId,
+      id: "0:100" as FigPageId,
       name: "Page 1",
       backgroundColor: DEFAULT_PAGE_BACKGROUND,
       children,
@@ -53,7 +54,7 @@ function makeDocument(children: readonly FigDesignNode[]): FigDesignDocument {
 
 describe("creation handlers", () => {
   it("creates a new node inside the deepest containing frame with local coordinates", () => {
-    const frame = makeNode({ id: "frame", type: "FRAME", x: 100, y: 100, width: 300, height: 200, children: [] });
+    const frame = makeNode({ id: "0:1", name: "frame", type: "FRAME", x: 100, y: 100, width: 300, height: 200, children: [] });
     const state = createFigEditorState(makeDocument([frame]));
     const creating = figEditorReducer(state, { type: "SET_CREATION_MODE", mode: { type: "rectangle" } });
     const next = figEditorReducer(creating, {
@@ -75,8 +76,8 @@ describe("creation handlers", () => {
   });
 
   it("creates a new node inside the deepest containing symbol with local coordinates", () => {
-    const symbol = makeNode({ id: "symbol", type: "SYMBOL", x: 80, y: 90, width: 300, height: 200, children: [] });
-    const component = makeNode({ id: "component", type: "COMPONENT", x: 20, y: 30, width: 360, height: 260, children: [symbol] });
+    const symbol = makeNode({ id: "0:2", name: "symbol", type: "SYMBOL", x: 80, y: 90, width: 300, height: 200, children: [] });
+    const component = makeNode({ id: "0:1", name: "component", type: "COMPONENT", x: 20, y: 30, width: 360, height: 260, children: [symbol] });
     const state = createFigEditorState(makeDocument([component]));
     const creating = figEditorReducer(state, { type: "SET_CREATION_MODE", mode: { type: "ellipse" } });
     const next = figEditorReducer(creating, {

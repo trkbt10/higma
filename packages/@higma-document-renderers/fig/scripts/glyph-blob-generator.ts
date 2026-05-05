@@ -139,7 +139,6 @@ export function generateTextGlyphs(params: {
 }): GlyphGenResult {
   const { text, font, fontSize, baselineX, baselineY, letterSpacing = 0 } = params;
   const unitsPerEm = font.unitsPerEm;
-  const _scale = fontSize / unitsPerEm;
 
   const glyphs: GlyphRecord[] = [];
   const blobs: FigBlob[] = [];

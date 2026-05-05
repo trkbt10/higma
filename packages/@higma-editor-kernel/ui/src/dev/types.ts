@@ -23,6 +23,10 @@ export type ControlDef<T> = {
   readonly defaultValue: T;
 };
 
+type StoryRender<Props extends Record<string, unknown>> = {
+  bivarianceHack(props: Props): ReactNode;
+}["bivarianceHack"];
+
 /**
  * Story definition
  */
@@ -30,7 +34,7 @@ export type Story<Props extends Record<string, unknown> = Record<string, unknown
   /** Story display name */
   readonly name: string;
   /** Render function */
-  readonly render: (props: Props) => ReactNode;
+  readonly render: StoryRender<Props>;
   /** Props controls */
   readonly controls?: { readonly [K in keyof Props]?: ControlDef<Props[K]> };
   /** Default props */
@@ -48,7 +52,7 @@ export type ComponentEntry = {
   /** Component description */
   readonly description?: string;
   /** Stories for this component */
-  readonly stories: readonly Story<any>[];
+  readonly stories: readonly Story[];
 };
 
 /**

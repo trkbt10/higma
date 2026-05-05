@@ -11,6 +11,17 @@ import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/st
 
 type Props = { readonly node: RenderRectNode };
 
+function renderRectShape(node: RenderRectNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  return <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} fill={node.fill.attrs.fill} fillOpacity={node.fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+}
+
+function renderRectFillContent(node: RenderRectNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  if (node.fillLayers) {
+    return <MultiFillRectLayers layers={node.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} stroke={uniformStroke} />;
+  }
+  return renderRectShape(node, uniformStroke);
+}
+
 function RenderRectNodeComponentImpl({ node }: Props) {
   const sr = node.strokeRendering;
   const uniformStroke = getUniformStrokeAttrs(sr);
@@ -18,16 +29,13 @@ function RenderRectNodeComponentImpl({ node }: Props) {
   if (node.fillLayers || sr) {
     return (
       <ShapeShell wrapper={node.wrapper} defs={node.defs} backgroundBlur={node.backgroundBlur} mask={node.mask}>
-        {node.fillLayers
-          ? <MultiFillRectLayers layers={node.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} stroke={uniformStroke} />
-          : <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} fill={node.fill.attrs.fill} fillOpacity={node.fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />
-        }
+        {renderRectFillContent(node, uniformStroke)}
         {sr && <StrokeRenderingElements sr={sr} />}
       </ShapeShell>
     );
   }
 
-  const rectEl = <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} fill={node.fill.attrs.fill} fillOpacity={node.fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+  const rectEl = renderRectShape(node, uniformStroke);
 
   if (node.needsWrapper) {
     return <ShapeShell wrapper={node.wrapper} defs={node.defs} backgroundBlur={node.backgroundBlur} mask={node.mask}>{rectEl}</ShapeShell>;

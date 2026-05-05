@@ -2,4 +2,6 @@
  * @file FigNode to FigDesignNode conversion exports
  */
 
-export { collectFigRawFields, convertFigNode } from "./fig-node-conversion";
+import { collectFigRawFields, convertFigNode } from "./fig-node-conversion";
+
+export { collectFigRawFields, convertFigNode };

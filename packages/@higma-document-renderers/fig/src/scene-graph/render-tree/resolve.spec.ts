@@ -19,7 +19,6 @@ import type {
   EllipseNode,
   PathNode,
   FrameNode,
-  SceneNodeId,
   AffineMatrix,
   Fill,
   Stroke,

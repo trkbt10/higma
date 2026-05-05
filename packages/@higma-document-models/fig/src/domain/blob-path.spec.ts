@@ -11,7 +11,6 @@
  * equalled the move-to point, yielding a visibly different glyph outline.
  */
 
-import { describe, it, expect } from "vitest";
 import { decodePathCommands, type FigBlob, type PathCommand } from "./blob-path";
 
 function buildBlob(bytes: number[]): FigBlob {
@@ -50,7 +49,9 @@ describe("blob-decoder: 0x03 quadratic elevation", () => {
     expect(commands[0]).toEqual<PathCommand>({ type: "M", x: 0, y: 0 });
 
     const cubic = commands[1];
-    if (cubic.type !== "C") throw new Error("expected C");
+    if (cubic.type !== "C") {
+      throw new Error("expected C");
+    }
     expect(cubic.x1).toBeCloseTo(2 / 3, 6);
     expect(cubic.y1).toBeCloseTo(2 / 3, 6);
     expect(cubic.x2).toBeCloseTo(4 / 3, 6);
@@ -74,7 +75,9 @@ describe("blob-decoder: 0x03 quadratic elevation", () => {
 
     expect(commands).toHaveLength(3);
     const second = commands[2];
-    if (second.type !== "C") throw new Error("expected C");
+    if (second.type !== "C") {
+      throw new Error("expected C");
+    }
     expect(second.x1).toBeCloseTo(8 / 3, 6);
     expect(second.y1).toBeCloseTo(-2 / 3, 6);
     expect(second.x2).toBeCloseTo(10 / 3, 6);
@@ -113,7 +116,9 @@ describe("blob-decoder: 0x03 quadratic elevation", () => {
 
     expect(commands).toHaveLength(2);
     const cubic = commands[1];
-    if (cubic.type !== "C") throw new Error("expected C");
+    if (cubic.type !== "C") {
+      throw new Error("expected C");
+    }
     expect(cubic.x1).toBe(1);
     expect(cubic.y1).toBe(0);
     expect(cubic.x2).toBe(2);

@@ -75,16 +75,6 @@ function getSvgSize(svg: string): { width: number; height: number } {
   };
 }
 
-/**
- * Check if a color hex string appears in the SVG as a fill.
- * Searches for fill="..." or fill: ... patterns.
- */
-function hasFillColor(svg: string, hexColor: string): boolean {
-  const upper = hexColor.toUpperCase();
-  const lower = hexColor.toLowerCase();
-  return svg.includes(`fill="${upper}"`) || svg.includes(`fill="${lower}"`);
-}
-
 // =============================================================================
 // Fixture Loading
 // =============================================================================
@@ -103,11 +93,11 @@ type ParsedData = {
   nodeMap: ReadonlyMap<string, FigNode>;
 };
 
-let parsedDataCache: ParsedData | null = null;
+const parsedDataCacheRef = { value: null as ParsedData | null };
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {
-    return parsedDataCache;
+  if (parsedDataCacheRef.value) {
+    return parsedDataCacheRef.value;
   }
   if (!fs.existsSync(FIG_FILE)) {
     throw new Error(
@@ -132,8 +122,8 @@ async function loadFigFile(): Promise<ParsedData> {
       });
     }
   }
-  parsedDataCache = { canvases, layers, blobs: parsed.blobs, images: parsed.images, nodeMap };
-  return parsedDataCache;
+  parsedDataCacheRef.value = { canvases, layers, blobs: parsed.blobs, images: parsed.images, nodeMap };
+  return parsedDataCacheRef.value;
 }
 
 // =============================================================================

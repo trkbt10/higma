@@ -75,6 +75,20 @@ function readPadding(sp: number | { readonly top: number; readonly right: number
   return { top: 0, right: 0, bottom: 0, left: 0 };
 }
 
+function resizePrimaryAxisIfChanged(
+  size: { readonly x: number; readonly y: number } | undefined,
+  newSizeAxis: number,
+  horizontal: boolean,
+): { readonly x: number; readonly y: number } | undefined {
+  if (!size) { return undefined; }
+  if (horizontal) {
+    if (Math.abs(size.x - newSizeAxis) <= 0.5) { return size; }
+    return { x: newSizeAxis, y: size.y };
+  }
+  if (Math.abs(size.y - newSizeAxis) <= 0.5) { return size; }
+  return { x: size.x, y: newSizeAxis };
+}
+
 /**
  * Distribute the children's positions along the parent's primary axis.
  *
@@ -137,7 +151,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
 
   // Compute starting offset and inter-item gap based on alignment.
   const flowSizeSum = flow.reduce((s, e) => s + e.primarySize, 0);
-  let startOffset = padPrimaryStart;
+  let startOffset: number;
   let gap = spacing;
   switch (align) {
     case "CENTER": {
@@ -195,14 +209,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
     const newM02 = horizontal ? cursor : oldT.m02;
     const newM12 = horizontal ? oldT.m12 : cursor;
     const newSizeAxis = f.primarySize;
-    const newSize = original.size && (
-      (horizontal && Math.abs(original.size.x - newSizeAxis) > 0.5) ||
-      (!horizontal && Math.abs(original.size.y - newSizeAxis) > 0.5)
-    )
-      ? (horizontal
-          ? { x: newSizeAxis, y: original.size.y }
-          : { x: original.size.x, y: newSizeAxis })
-      : original.size;
+    const newSize = resizePrimaryAxisIfChanged(original.size, newSizeAxis, horizontal);
     const updated = {
       ...original,
       transform: { ...oldT, m02: newM02, m12: newM12 },

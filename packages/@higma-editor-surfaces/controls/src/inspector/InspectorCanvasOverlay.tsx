@@ -10,7 +10,7 @@
  * (hover / click) is reported via callbacks so the host editor can thread
  * it into its own selection or inspection state.
  */
-import { useMemo } from "react";
+import { useMemo, type MouseEventHandler } from "react";
 import type {
   InspectorBoxInfo,
   NodeCategoryRegistry,
@@ -46,6 +46,20 @@ const interactiveRectStyle: React.CSSProperties = {
   cursor: "pointer",
   pointerEvents: "all",
 };
+
+function overlayClickHandler(
+  interactive: boolean,
+  nodeId: string,
+  onNodeClick: ((nodeId: string) => void) | undefined,
+): MouseEventHandler<SVGRectElement> | undefined {
+  if (!interactive) {
+    return undefined;
+  }
+  return (event) => {
+    event.stopPropagation();
+    onNodeClick?.(nodeId);
+  };
+}
 
 /**
  * Pure SVG bounding-box overlay for the host EditorCanvas page space.
@@ -100,14 +114,7 @@ export function InspectorCanvasOverlay({
             style={rectStyle}
             onPointerEnter={interactive ? () => onNodeHover?.(box.nodeId) : undefined}
             onPointerLeave={interactive ? () => onNodeHover?.(null) : undefined}
-            onClick={
-              interactive
-                ? (e) => {
-                    e.stopPropagation();
-                    onNodeClick?.(box.nodeId);
-                  }
-                : undefined
-            }
+            onClick={overlayClickHandler(interactive, box.nodeId, onNodeClick)}
           />
         );
       })}

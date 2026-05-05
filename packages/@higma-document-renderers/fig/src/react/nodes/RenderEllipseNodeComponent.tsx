@@ -10,23 +10,30 @@ import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/st
 
 type Props = { readonly node: RenderEllipseNode };
 
+function renderEllipseShape(node: RenderEllipseNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  const fillAttrs = { fill: node.fill.attrs.fill, fillOpacity: node.fill.attrs.fillOpacity };
+  if (node.rx === node.ry) {
+    return <circle cx={node.cx} cy={node.cy} r={node.rx} {...fillAttrs} {...(uniformStroke ?? {})} />;
+  }
+  return <ellipse cx={node.cx} cy={node.cy} rx={node.rx} ry={node.ry} {...fillAttrs} {...(uniformStroke ?? {})} />;
+}
+
+function renderEllipseFillContent(node: RenderEllipseNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  if (node.fillLayers) {
+    return <MultiFillEllipseLayers layers={node.fillLayers} cx={node.cx} cy={node.cy} rx={node.rx} ry={node.ry} stroke={uniformStroke} />;
+  }
+  return renderEllipseShape(node, uniformStroke);
+}
+
 function RenderEllipseNodeComponentImpl({ node }: Props) {
   const sr = node.strokeRendering;
   const uniformStroke = getUniformStrokeAttrs(sr);
-  const isCircle = node.rx === node.ry;
-
-  const fillAttrs = { fill: node.fill.attrs.fill, fillOpacity: node.fill.attrs.fillOpacity };
-  const shapeEl = isCircle
-    ? <circle cx={node.cx} cy={node.cy} r={node.rx} {...fillAttrs} {...(uniformStroke ?? {})} />
-    : <ellipse cx={node.cx} cy={node.cy} rx={node.rx} ry={node.ry} {...fillAttrs} {...(uniformStroke ?? {})} />;
+  const shapeEl = renderEllipseShape(node, uniformStroke);
 
   if (node.fillLayers || sr) {
     return (
       <ShapeShell wrapper={node.wrapper} defs={node.defs} backgroundBlur={node.backgroundBlur} mask={node.mask}>
-        {node.fillLayers
-          ? <MultiFillEllipseLayers layers={node.fillLayers} cx={node.cx} cy={node.cy} rx={node.rx} ry={node.ry} stroke={uniformStroke} />
-          : shapeEl
-        }
+        {renderEllipseFillContent(node, uniformStroke)}
         {sr && <StrokeRenderingElements sr={sr} />}
       </ShapeShell>
     );

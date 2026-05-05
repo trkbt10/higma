@@ -19,7 +19,6 @@ import {
   createFigFile,
   frameNode,
   ellipseNode,
-  roundedRectNode,
 } from "@higma-document-io/fig/fig-file";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

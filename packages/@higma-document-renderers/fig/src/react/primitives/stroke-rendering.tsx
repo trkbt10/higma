@@ -32,8 +32,14 @@ export function getUniformStrokeAttrs(
   sr: StrokeRendering | undefined,
 ): UniformStrokeDomAttrs | undefined {
   if (!sr || sr.mode !== "uniform") { return undefined; }
-  const { strokeAlign: _ignored, ...domAttrs } = sr.attrs;
-  return domAttrs;
+  return {
+    stroke: sr.attrs.stroke,
+    strokeWidth: sr.attrs.strokeWidth,
+    strokeOpacity: sr.attrs.strokeOpacity,
+    strokeLinecap: sr.attrs.strokeLinecap,
+    strokeLinejoin: sr.attrs.strokeLinejoin,
+    strokeDasharray: sr.attrs.strokeDasharray,
+  };
 }
 
 /**
@@ -53,9 +59,10 @@ function StrokedShape({ shape, stroke }: { shape: StrokeShape; stroke: ResolvedS
     case "rect":
       return <RectShape width={shape.width} height={shape.height} cornerRadius={shape.cornerRadius} fill="none" {...sAttrs} />;
     case "ellipse":
-      return shape.rx === shape.ry
-        ? <circle cx={shape.cx} cy={shape.cy} r={shape.rx} fill="none" {...sAttrs} />
-        : <ellipse cx={shape.cx} cy={shape.cy} rx={shape.rx} ry={shape.ry} fill="none" {...sAttrs} />;
+      if (shape.rx === shape.ry) {
+        return <circle cx={shape.cx} cy={shape.cy} r={shape.rx} fill="none" {...sAttrs} />;
+      }
+      return <ellipse cx={shape.cx} cy={shape.cy} rx={shape.rx} ry={shape.ry} fill="none" {...sAttrs} />;
     case "path":
       return (
         <>

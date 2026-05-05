@@ -9,7 +9,6 @@
  * `projectVariableAnyValue` test does cover the projection itself.
  */
 
-import { describe, it, expect } from "vitest";
 import {
   projectVariableAnyValue,
   findVariableConsumptionExpression,

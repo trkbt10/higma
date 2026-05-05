@@ -23,7 +23,7 @@
  */
 
 import type { AffineMatrix } from "../types";
-import type { ResolvedFillDef, ResolvedLinearGradient, ResolvedRadialGradient } from "./fill";
+import type { ResolvedLinearGradient, ResolvedRadialGradient } from "./fill";
 import type { RenderDef } from "../render-tree/types";
 import {
   linearGradientAttrs as svgLinearGradientAttrs,

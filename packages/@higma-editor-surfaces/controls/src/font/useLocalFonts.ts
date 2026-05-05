@@ -35,10 +35,15 @@ export type UseLocalFontsResult = {
   readonly isSupported: boolean;
 };
 
-declare global {
-  interface Window {
-    queryLocalFonts?: () => Promise<LocalFontData[]>;
+type WindowWithLocalFonts = Window & {
+  readonly queryLocalFonts?: () => Promise<LocalFontData[]>;
+};
+
+function localFontQuery(): (() => Promise<LocalFontData[]>) | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
   }
+  return (window as WindowWithLocalFonts).queryLocalFonts;
 }
 
 function groupFontsByFamily(fonts: readonly LocalFontData[]): LocalFontFamily[] {
@@ -68,7 +73,7 @@ export function useLocalFonts(): UseLocalFontsResult {
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
-  const isSupported = typeof window !== "undefined" && typeof window.queryLocalFonts === "function";
+  const isSupported = typeof localFontQuery() === "function";
 
   useEffect(() => {
     mountedRef.current = true;
@@ -76,7 +81,8 @@ export function useLocalFonts(): UseLocalFontsResult {
   }, []);
 
   const requestFonts = useCallback(async () => {
-    if (!window.queryLocalFonts) {
+    const queryLocalFonts = localFontQuery();
+    if (!queryLocalFonts) {
       setStatus("not-supported");
       setError("Local Font Access API is not supported in this browser");
       return;
@@ -84,7 +90,7 @@ export function useLocalFonts(): UseLocalFontsResult {
     setStatus("requesting");
     setError(null);
     try {
-      const localFonts = await window.queryLocalFonts();
+      const localFonts = await queryLocalFonts();
       if (!mountedRef.current) { return; }
       setFamilies(groupFontsByFamily(localFonts));
       setStatus("granted");

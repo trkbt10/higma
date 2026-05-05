@@ -20,7 +20,6 @@ import {
   createFigFile,
   frameNode,
   rectNode,
-  roundedRectNode,
   ellipseNode,
   linearGradient,
 } from "@higma-document-io/fig/fig-file";

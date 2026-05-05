@@ -11,17 +11,18 @@ function nodeId(id: string): FigNodeId {
 
 type TestNodeOptions = {
   readonly id: string;
+  readonly name: string;
   readonly type: FigDesignNode["type"];
   readonly x: number;
   readonly y: number;
   readonly children?: readonly FigDesignNode[];
 };
 
-function makeNode({ id, type, x, y, children }: TestNodeOptions): FigDesignNode {
+function makeNode({ id, name, type, x, y, children }: TestNodeOptions): FigDesignNode {
   return {
     id: nodeId(id),
     type,
-    name: id,
+    name,
     visible: true,
     opacity: 1,
     transform: { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y },
@@ -37,7 +38,7 @@ function makeNode({ id, type, x, y, children }: TestNodeOptions): FigDesignNode 
 function makeDocument(children: readonly FigDesignNode[]): FigDesignDocument {
   return {
     pages: [{
-      id: "page:1" as FigPageId,
+      id: "0:100" as FigPageId,
       name: "Page 1",
       backgroundColor: DEFAULT_PAGE_BACKGROUND,
       children,
@@ -80,11 +81,11 @@ describe("node handlers", () => {
 
   it("updates multiple selected nodes in one property mutation", () => {
     const first = {
-      ...makeNode({ id: "first", type: "RECTANGLE", x: 10, y: 20 }),
+      ...makeNode({ id: "0:1", name: "first", type: "RECTANGLE", x: 10, y: 20 }),
       fills: [{ type: "SOLID" as const, visible: true, opacity: 1, color: { r: 0, g: 0, b: 0, a: 1 } }],
     };
     const second = {
-      ...makeNode({ id: "second", type: "RECTANGLE", x: 90, y: 20 }),
+      ...makeNode({ id: "0:2", name: "second", type: "RECTANGLE", x: 90, y: 20 }),
       fills: [{ type: "SOLID" as const, visible: true, opacity: 1, color: { r: 0, g: 0, b: 0, a: 1 } }],
     };
     const state = createFigEditorState(makeDocument([first, second]));
@@ -105,9 +106,9 @@ describe("node handlers", () => {
   });
 
   it("groups selected siblings inside nested Frame/Component containers", () => {
-    const first = makeNode({ id: "first", type: "RECTANGLE", x: 10, y: 20 });
-    const second = makeNode({ id: "second", type: "ELLIPSE", x: 140, y: 40 });
-    const frame = makeNode({ id: "frame", type: "FRAME", x: 200, y: 300, children: [first, second] });
+    const first = makeNode({ id: "0:1", name: "first", type: "RECTANGLE", x: 10, y: 20 });
+    const second = makeNode({ id: "0:2", name: "second", type: "ELLIPSE", x: 140, y: 40 });
+    const frame = makeNode({ id: "0:3", name: "frame", type: "FRAME", x: 200, y: 300, children: [first, second] });
     const state = createFigEditorState(makeDocument([frame]));
 
     const selected = figEditorReducer(state, {
@@ -129,8 +130,8 @@ describe("node handlers", () => {
   });
 
   it("registers component wrappers created from nested selections", () => {
-    const child = makeNode({ id: "child", type: "RECTANGLE", x: 10, y: 20 });
-    const frame = makeNode({ id: "frame", type: "FRAME", x: 0, y: 0, children: [child] });
+    const child = makeNode({ id: "0:1", name: "child", type: "RECTANGLE", x: 10, y: 20 });
+    const frame = makeNode({ id: "0:2", name: "frame", type: "FRAME", x: 0, y: 0, children: [child] });
     const state = createFigEditorState(makeDocument([frame]));
     const selected = figEditorReducer(state, {
       type: "SELECT_NODE",
@@ -145,8 +146,8 @@ describe("node handlers", () => {
   });
 
   it("registers symbol wrappers created from nested selections", () => {
-    const child = makeNode({ id: "child", type: "RECTANGLE", x: 10, y: 20 });
-    const component = makeNode({ id: "component", type: "COMPONENT", x: 0, y: 0, children: [child] });
+    const child = makeNode({ id: "0:1", name: "child", type: "RECTANGLE", x: 10, y: 20 });
+    const component = makeNode({ id: "0:2", name: "component", type: "COMPONENT", x: 0, y: 0, children: [child] });
     const state = createFigEditorState(makeDocument([component]));
     const selected = figEditorReducer(state, {
       type: "SELECT_NODE",
@@ -164,7 +165,7 @@ describe("node handlers", () => {
   });
 
   it("outlines selected shape nodes into explicit vector paths", () => {
-    const rect = makeNode({ id: "rect", type: "RECTANGLE", x: 10, y: 20 });
+    const rect = makeNode({ id: "0:1", name: "rect", type: "RECTANGLE", x: 10, y: 20 });
     const state = createFigEditorState(makeDocument([rect]));
     const selected = figEditorReducer(state, {
       type: "SELECT_NODE",
@@ -181,8 +182,8 @@ describe("node handlers", () => {
   });
 
   it("creates boolean operation wrappers from selected siblings", () => {
-    const first = makeNode({ id: "first", type: "RECTANGLE", x: 10, y: 20 });
-    const second = makeNode({ id: "second", type: "ELLIPSE", x: 80, y: 40 });
+    const first = makeNode({ id: "0:1", name: "first", type: "RECTANGLE", x: 10, y: 20 });
+    const second = makeNode({ id: "0:2", name: "second", type: "ELLIPSE", x: 80, y: 40 });
     const state = createFigEditorState(makeDocument([first, second]));
     const selected = figEditorReducer(state, {
       type: "SELECT_MULTIPLE_NODES",

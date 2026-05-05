@@ -4,12 +4,21 @@
  * Each package has its own vitest.config.ts. This file exists for
  * running tests from the root via `bun run test`.
  */
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+
+function rootPath(path: string): string {
+  return fileURLToPath(new URL(path, import.meta.url));
+}
 
 export default defineConfig({
   test: {
     globals: true,
     environment: "node",
+    setupFiles: [
+      rootPath("./packages/@higma-editor-kernel/ui/src/test/setup.ts"),
+      rootPath("./packages/@higma-editor-surfaces/controls/src/test/setup.ts"),
+    ],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
