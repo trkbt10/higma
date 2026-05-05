@@ -16,11 +16,13 @@
     }
   },
   "dependencies": {
+    "@higma-figma-analysis/document-facts": "workspace:*",
     "@higma-figma-analysis/format-insights": "workspace:*",
-    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
-    "@higma-figma-runtime/node-summary": "workspace:*",
     "@higma-document-models/deck": "workspace:*",
     "@higma-figma-containers/canvas": "workspace:*"
+  },
+  "devDependencies": {
+    "@higma-codecs/kiwi": "workspace:*"
   },
   "higma": {
     "boundary": {

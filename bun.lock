@@ -109,10 +109,12 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-document-models/buzz": "workspace:*",
+        "@higma-figma-analysis/document-facts": "workspace:*",
         "@higma-figma-analysis/format-insights": "workspace:*",
         "@higma-figma-containers/canvas": "workspace:*",
-        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
-        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+      "devDependencies": {
+        "@higma-codecs/kiwi": "workspace:*",
       },
     },
     "packages/@higma-document-io/deck": {
@@ -120,10 +122,12 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-document-models/deck": "workspace:*",
+        "@higma-figma-analysis/document-facts": "workspace:*",
         "@higma-figma-analysis/format-insights": "workspace:*",
         "@higma-figma-containers/canvas": "workspace:*",
-        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
-        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+      "devDependencies": {
+        "@higma-codecs/kiwi": "workspace:*",
       },
     },
     "packages/@higma-document-io/fig": {
@@ -143,10 +147,12 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-document-models/site": "workspace:*",
+        "@higma-figma-analysis/document-facts": "workspace:*",
         "@higma-figma-analysis/format-insights": "workspace:*",
         "@higma-figma-containers/canvas": "workspace:*",
-        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
-        "@higma-figma-runtime/node-summary": "workspace:*",
+      },
+      "devDependencies": {
+        "@higma-codecs/kiwi": "workspace:*",
       },
     },
     "packages/@higma-document-models/buzz": {
@@ -270,6 +276,15 @@
     "packages/@higma-editor-surfaces/sessions": {
       "name": "@higma-editor-surfaces/sessions",
       "version": "0.12.2",
+    },
+    "packages/@higma-figma-analysis/document-facts": {
+      "name": "@higma-figma-analysis/document-facts",
+      "version": "0.1.0",
+      "dependencies": {
+        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+        "@higma-figma-runtime/node-summary": "workspace:*",
+        "@higma-figma-schema/profiles": "workspace:*",
+      },
     },
     "packages/@higma-figma-analysis/format-insights": {
       "name": "@higma-figma-analysis/format-insights",
@@ -442,6 +457,8 @@
     "@higma-editor-surfaces/controls": ["@higma-editor-surfaces/controls@workspace:packages/@higma-editor-surfaces/controls"],
 
     "@higma-editor-surfaces/sessions": ["@higma-editor-surfaces/sessions@workspace:packages/@higma-editor-surfaces/sessions"],
+
+    "@higma-figma-analysis/document-facts": ["@higma-figma-analysis/document-facts@workspace:packages/@higma-figma-analysis/document-facts"],
 
     "@higma-figma-analysis/format-insights": ["@higma-figma-analysis/format-insights@workspace:packages/@higma-figma-analysis/format-insights"],
 
