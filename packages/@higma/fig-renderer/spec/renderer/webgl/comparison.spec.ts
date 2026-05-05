@@ -67,14 +67,13 @@ function resolveFixturePath(file: string): string {
   return path.join(FIXTURES_DIR, file);
 }
 
-function svgToPngOrNull(
+function svgToPngStrict(
   { svgString, frameName, width }: { svgString: string; frameName: string; width: number },
-): Buffer | null {
+): Buffer {
   try {
     return svgToPng(svgString, width);
   } catch (resvgErr) {
-    console.error(`  SKIP ${frameName}: resvg crash — ${(resvgErr as Error).message?.substring(0, 80)}`);
-    return null;
+    throw new Error(`resvg failed for ${frameName}: ${(resvgErr as Error).message}`, { cause: resvgErr });
   }
 }
 
@@ -127,12 +126,9 @@ describe("WebGL↔SVG pixel comparison", () => {
           try {
             const sceneGraph = buildFrameSceneGraph(frame, data);
 
-            // SVG reference — resvg may crash on complex filters, catch gracefully
+            // SVG reference — failures must fail the frame, not skip it.
             const svgString = renderSceneGraphToSvg(sceneGraph) as string;
-            const svgPng = svgToPngOrNull({ svgString, frameName, width: Math.round(frame.width) });
-            if (!svgPng) {
-              continue;
-            }
+            const svgPng = svgToPngStrict({ svgString, frameName, width: Math.round(frame.width) });
 
             // WebGL actual
             const webglPng = await captureWebGL(harnessRef.value!.page, sceneGraph);

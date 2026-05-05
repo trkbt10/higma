@@ -98,6 +98,7 @@ if (isRenderableWindow(window)) {
 
     } catch (err) {
       console.error("WebGL render error:", (err as Error).message);
+      throw err;
     } finally {
       renderer.dispose();
     }

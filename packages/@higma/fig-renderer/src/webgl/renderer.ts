@@ -49,11 +49,9 @@ import {
   type RenderTextNode,
   type RenderImageNode,
   type RenderNodeBase,
-  type ResolvedFillResult,
   type StrokeRendering,
   type StrokeShape,
   type RenderClipPathDef,
-  type RenderTextLines,
 } from "../scene-graph/render-tree";
 import type { ResolvedFillDef } from "../scene-graph/render/fill";
 
@@ -97,6 +95,7 @@ import type { CornerRadius } from "../scene-graph/types";
 import { svgPathDToContours } from "./path-contours";
 import { flattenPathCommands } from "./tessellation";
 import { syncWebGLCanvasRenderSurface } from "./render-surface";
+import { createWebGLPathFillPlan, type WebGLPathFillRule } from "./render-path-fill-plan";
 
 /** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
 function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
@@ -161,7 +160,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   const clipStencilValid = { value: false };
   const renderTreeCache = createWebGLRenderTreeCache();
   const clipStack: StencilClipEntry[] = [];
-  const textLineTextureCache = new Map<string, TextLineTexture>();
 
   const buffer = gl.createBuffer();
   if (!buffer) {
@@ -205,21 +203,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     readonly vertices: Float32Array;
   };
 
-  type StencilFillRule = "evenodd" | "nonzero";
+  type StencilFillRule = WebGLPathFillRule;
 
   type StencilPreparedGeometry = NonNullable<ReturnType<typeof prepareFanTriangles>>;
-
-  type TextLineTexture = {
-    readonly texture: WebGLTexture;
-    readonly width: number;
-    readonly height: number;
-  };
-
-  type PathFillInstruction = {
-    readonly contours: readonly PathContour[];
-    readonly fillRule: StencilFillRule;
-    readonly fills: readonly Fill[];
-  };
 
   const maxGeometryCacheEntries = 2048;
 
@@ -287,127 +273,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         vertices: tessellateContours(contours, 0.1, true),
       };
     });
-  }
-
-  function textLinesTextureCacheKey(node: RenderTextNode, content: RenderTextLines): string {
-    return JSON.stringify({
-      id: node.id,
-      width: node.width,
-      height: node.height,
-      color: node.sourceFillColor,
-      opacity: node.sourceFillOpacity,
-      layout: content.layout,
-    });
-  }
-
-  function cssColor({ color, opacity }: { readonly color: Color; readonly opacity: number }): string {
-    const r = Math.round(color.r * 255);
-    const g = Math.round(color.g * 255);
-    const b = Math.round(color.b * 255);
-    const a = color.a * opacity;
-    return `rgba(${r}, ${g}, ${b}, ${a})`;
-  }
-
-  function buildCanvasFont(layout: RenderTextLines["layout"]): string {
-    const style = layout.fontStyle ?? "normal";
-    const weight = layout.fontWeight ?? 400;
-    return `${style} ${weight} ${layout.fontSize}px ${layout.fontFamily}`;
-  }
-
-  function drawTextWithLetterSpacing({
-    ctx,
-    text,
-    x,
-    y,
-    letterSpacing,
-    textAnchor,
-  }: {
-    readonly ctx: CanvasRenderingContext2D;
-    readonly text: string;
-    readonly x: number;
-    readonly y: number;
-    readonly letterSpacing: number;
-    readonly textAnchor: CanvasTextAlign;
-  }): void {
-    if (letterSpacing === 0 || text.length <= 1) {
-      ctx.textAlign = textAnchor;
-      ctx.fillText(text, x, y);
-      return;
-    }
-
-    const measured = ctx.measureText(text).width + letterSpacing * (text.length - 1);
-    const startX = alignedTextStartX({ textAnchor, x, measured });
-    const cursorRef = { value: startX };
-    ctx.textAlign = "left";
-    for (const char of text) {
-      ctx.fillText(char, cursorRef.value, y);
-      cursorRef.value += ctx.measureText(char).width + letterSpacing;
-    }
-  }
-
-  function alignedTextStartX({ textAnchor, x, measured }: { readonly textAnchor: CanvasTextAlign; readonly x: number; readonly measured: number }): number {
-    if (textAnchor === "center") { return x - measured / 2; }
-    if (textAnchor === "right" || textAnchor === "end") { return x - measured; }
-    return x;
-  }
-
-  function canvasTextAnchor(anchor: RenderTextLines["layout"]["textAnchor"]): CanvasTextAlign {
-    if (anchor === "middle") { return "center"; }
-    if (anchor === "end") { return "right"; }
-    return "left";
-  }
-
-  function createTextLineTexture(node: RenderTextNode, content: RenderTextLines): TextLineTexture | undefined {
-    const textureWidth = Math.max(1, Math.ceil(node.width));
-    const textureHeight = Math.max(1, Math.ceil(node.height));
-    if (typeof document === "undefined") { return undefined; }
-    const canvas = document.createElement("canvas");
-    canvas.width = textureWidth;
-    canvas.height = textureHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) { return undefined; }
-
-    const layout = content.layout;
-    ctx.clearRect(0, 0, textureWidth, textureHeight);
-    ctx.font = buildCanvasFont(layout);
-    ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = cssColor({ color: node.sourceFillColor, opacity: node.sourceFillOpacity });
-
-    const textAnchor = canvasTextAnchor(layout.textAnchor);
-    for (const line of layout.lines) {
-      drawTextWithLetterSpacing({
-        ctx,
-        text: line.text,
-        x: line.x,
-        y: line.y,
-        letterSpacing: layout.letterSpacing ?? 0,
-        textAnchor,
-      });
-    }
-
-    const texture = gl.createTexture();
-    if (!texture) { return undefined; }
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-
-    return { texture, width: textureWidth, height: textureHeight };
-  }
-
-  function getTextLineTexture(node: RenderTextNode, content: RenderTextLines): TextLineTexture | undefined {
-    const key = textLinesTextureCacheKey(node, content);
-    const cached = textLineTextureCache.get(key);
-    if (cached) { return cached; }
-    const created = createTextLineTexture(node, content);
-    if (created) {
-      textLineTextureCache.set(key, created);
-    }
-    return created;
   }
 
   // =========================================================================
@@ -660,14 +525,14 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     return pattern;
   }
 
-  function parseSvgCoordinate(value: string | undefined, fallback: number): number {
-    if (!value) { return fallback; }
+  function parseSvgCoordinate(value: string | undefined, defaultValue: number): number {
+    if (!value) { return defaultValue; }
     if (value.endsWith("%")) {
       const parsed = Number(value.slice(0, -1));
-      return Number.isFinite(parsed) ? parsed / 100 : fallback;
+      return Number.isFinite(parsed) ? parsed / 100 : defaultValue;
     }
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+    return Number.isFinite(parsed) ? parsed : defaultValue;
   }
 
   function parseStopOffset(value: string): number {
@@ -723,33 +588,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       case "image":
         return undefined;
     }
-  }
-
-  function fillOverrideToFills(fillOverride: ResolvedFillResult | undefined, fallback: readonly Fill[]): readonly Fill[] {
-    if (!fillOverride) { return fallback; }
-    const gradientFill = resolvedGradientDefToFill(fillOverride.def);
-    if (gradientFill) { return [gradientFill]; }
-    const fill = fillOverride.attrs.fill;
-    if (fill === "none") { return []; }
-    if (fill.startsWith("#")) {
-      return [{
-        type: "solid",
-        color: hexToColor(fill),
-        opacity: fillOverride.attrs.fillOpacity ?? 1,
-      }];
-    }
-    return fallback;
-  }
-
-  function pathFillInstructions(node: RenderPathNode): readonly PathFillInstruction[] {
-    return node.paths.map((pathContour) => {
-      const fillRule: StencilFillRule = pathContour.fillRule === "evenodd" ? "evenodd" : "nonzero";
-      return {
-        contours: svgPathDToContours({ d: pathContour.d, windingRule: fillRule }),
-        fillRule,
-        fills: fillOverrideToFills(pathContour.fillOverride, node.sourceFills),
-      };
-    });
   }
 
   function pathContoursElementSize(contours: readonly PathContour[]): { readonly width: number; readonly height: number } {
@@ -1546,7 +1384,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       },
       renderContent: () => {
         if (node.sourceFills.length === 0) { return; }
-        for (const instruction of pathFillInstructions(node)) {
+        for (const instruction of createWebGLPathFillPlan(node)) {
           if (instruction.fills.length === 0) { continue; }
           const singlePathPrepared = prepareFanTriangles(instruction.contours, 0.25, instruction.fillRule === "nonzero");
           if (singlePathPrepared) {
@@ -1577,7 +1415,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderTextFromTree(node: RenderTextNode, transform: AffineMatrix, opacity: number): void {
-    const ctx = getGlContext();
     const color = node.sourceFillColor;
     const fillOpacity = node.sourceFillOpacity;
 
@@ -1603,22 +1440,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
 
     if (node.content.mode === "lines") {
-      const textTexture = getTextLineTexture(node, node.content);
-      if (!textTexture) { return; }
-      const vertices = getRectVertices(node.width, node.height);
-      drawImageFill({
-        ctx,
-        vertices,
-        texture: textTexture.texture,
-        transform,
-        opacity,
-        elementSize: { width: node.width, height: node.height },
-        options: {
-          imageWidth: textTexture.width,
-          imageHeight: textTexture.height,
-          scaleMode: "STRETCH",
-        },
-      });
+      throw new Error(`WebGL text renderer requires glyph contours for text node ${node.id}`);
     }
   }
 
@@ -1693,10 +1515,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       shaders.dispose();
       textureCache.dispose();
       effectsRenderer.dispose();
-      for (const texture of textLineTextureCache.values()) {
-        gl.deleteTexture(texture.texture);
-      }
-      textLineTextureCache.clear();
       renderTreeCache.clear();
       geometryCache.rectVertices.clear();
       geometryCache.ellipseVertices.clear();
