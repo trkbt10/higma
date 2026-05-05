@@ -11,9 +11,18 @@ export type DeckEditorSession = EditorSession<DeckDocument, "deck", DeckDocument
 
 export type DeckEditorOverview = {
   readonly nodeCount: number;
+  readonly renderUnitCount: number;
   readonly schemaDefinitionCount: number;
+  readonly schemaDefinitionNames: readonly string[];
+  readonly nodeTypeNames: readonly string[];
   readonly metadataKeys: readonly string[];
   readonly clientMetaKeys: readonly string[];
+  readonly metadataFlags: {
+    readonly hasRenderCoordinates: boolean;
+    readonly hasThumbnailSize: boolean;
+    readonly hasDeveloperRelatedLinks: boolean;
+    readonly hasExportTimestamp: boolean;
+  };
   readonly domainSummary: DeckDomainSummary;
 };
 
@@ -23,12 +32,21 @@ export type DeckEditorWorkspace = {
   readonly overview: DeckEditorOverview;
 };
 
-function createDeckEditorOverview(document: DeckDocument): DeckEditorOverview {
+function createDeckEditorOverview(document: DeckDocument, renderPlan: DeckRenderPlan): DeckEditorOverview {
   return {
     nodeCount: document.summary.totalNodes,
+    renderUnitCount: renderPlan.renderOutline.entries.length,
     schemaDefinitionCount: document.insights.schema.definitionCount,
+    schemaDefinitionNames: document.insights.schema.definitionNames,
+    nodeTypeNames: [...document.summary.nodeTypes.keys()].sort(),
     metadataKeys: document.insights.metadata.rawKeys,
     clientMetaKeys: document.insights.metadata.clientMetaKeys,
+    metadataFlags: {
+      hasRenderCoordinates: document.insights.metadata.hasRenderCoordinates,
+      hasThumbnailSize: document.insights.metadata.hasThumbnailSize,
+      hasDeveloperRelatedLinks: document.insights.metadata.hasDeveloperRelatedLinks,
+      hasExportTimestamp: document.insights.metadata.hasExportTimestamp,
+    },
     domainSummary: createDeckDomainSummary(document),
   };
 }
@@ -40,10 +58,11 @@ export function createDeckEditorSession(document: DeckDocument): DeckEditorSessi
 
 /** Create the editor-facing deck workspace from a decoded product document. */
 export function createDeckEditorWorkspace(document: DeckDocument): DeckEditorWorkspace {
+  const renderPlan = createDeckRenderPlan(document);
   return {
     session: createDeckEditorSession(document),
-    renderPlan: createDeckRenderPlan(document),
-    overview: createDeckEditorOverview(document),
+    renderPlan,
+    overview: createDeckEditorOverview(document, renderPlan),
   };
 }
 

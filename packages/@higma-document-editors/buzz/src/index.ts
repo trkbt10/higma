@@ -11,9 +11,18 @@ export type BuzzEditorSession = EditorSession<BuzzDocument, "buzz", BuzzDocument
 
 export type BuzzEditorOverview = {
   readonly nodeCount: number;
+  readonly renderUnitCount: number;
   readonly schemaDefinitionCount: number;
+  readonly schemaDefinitionNames: readonly string[];
+  readonly nodeTypeNames: readonly string[];
   readonly metadataKeys: readonly string[];
   readonly clientMetaKeys: readonly string[];
+  readonly metadataFlags: {
+    readonly hasRenderCoordinates: boolean;
+    readonly hasThumbnailSize: boolean;
+    readonly hasDeveloperRelatedLinks: boolean;
+    readonly hasExportTimestamp: boolean;
+  };
   readonly domainSummary: BuzzDomainSummary;
 };
 
@@ -23,12 +32,21 @@ export type BuzzEditorWorkspace = {
   readonly overview: BuzzEditorOverview;
 };
 
-function createBuzzEditorOverview(document: BuzzDocument): BuzzEditorOverview {
+function createBuzzEditorOverview(document: BuzzDocument, renderPlan: BuzzRenderPlan): BuzzEditorOverview {
   return {
     nodeCount: document.summary.totalNodes,
+    renderUnitCount: renderPlan.renderOutline.entries.length,
     schemaDefinitionCount: document.insights.schema.definitionCount,
+    schemaDefinitionNames: document.insights.schema.definitionNames,
+    nodeTypeNames: [...document.summary.nodeTypes.keys()].sort(),
     metadataKeys: document.insights.metadata.rawKeys,
     clientMetaKeys: document.insights.metadata.clientMetaKeys,
+    metadataFlags: {
+      hasRenderCoordinates: document.insights.metadata.hasRenderCoordinates,
+      hasThumbnailSize: document.insights.metadata.hasThumbnailSize,
+      hasDeveloperRelatedLinks: document.insights.metadata.hasDeveloperRelatedLinks,
+      hasExportTimestamp: document.insights.metadata.hasExportTimestamp,
+    },
     domainSummary: createBuzzDomainSummary(document),
   };
 }
@@ -40,10 +58,11 @@ export function createBuzzEditorSession(document: BuzzDocument): BuzzEditorSessi
 
 /** Create the editor-facing buzz workspace from a decoded product document. */
 export function createBuzzEditorWorkspace(document: BuzzDocument): BuzzEditorWorkspace {
+  const renderPlan = createBuzzRenderPlan(document);
   return {
     session: createBuzzEditorSession(document),
-    renderPlan: createBuzzRenderPlan(document),
-    overview: createBuzzEditorOverview(document),
+    renderPlan,
+    overview: createBuzzEditorOverview(document, renderPlan),
   };
 }
 

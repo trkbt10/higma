@@ -16,7 +16,8 @@
     }
   },
   "dependencies": {
-    "@higma-document-models/deck": "workspace:*"
+    "@higma-document-models/deck": "workspace:*",
+    "@higma-figma-analysis/render-outline": "workspace:*"
   },
   "higma": {
     "boundary": {

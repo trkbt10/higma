@@ -1,0 +1,17 @@
+{
+  "feature": "adjacent-editor-workspaces",
+  "approvals": {
+    "requirements": {
+      "generated": false,
+      "approved": true
+    },
+    "design": {
+      "generated": false,
+      "approved": true
+    },
+    "tasks": {
+      "generated": false,
+      "approved": true
+    }
+  }
+}

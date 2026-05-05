@@ -21,7 +21,17 @@ const canvas: Parameters<typeof createDeckDocument>[0] = {
   header: { magic: "fig-deck", version: "0", payloadSize: 0 },
   schema: { definitions: [] },
   message: {},
-  nodeChanges: [],
+  nodeChanges: [
+    { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 }, name: "Document" },
+    { type: "SLIDE_GRID", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "SLIDE_ROW", guid: { sessionID: 0, localID: 2 }, parentIndex: { guid: { sessionID: 0, localID: 1 } } },
+    { type: "SLIDE", guid: { sessionID: 0, localID: 3 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    {
+      type: "INTERACTIVE_SLIDE_ELEMENT",
+      guid: { sessionID: 0, localID: 4 },
+      parentIndex: { guid: { sessionID: 0, localID: 3 } },
+    },
+  ],
   blobs: [],
   images: new Map(),
   metadata: null,
@@ -31,7 +41,7 @@ const canvas: Parameters<typeof createDeckDocument>[0] = {
 const insights: Parameters<typeof createDeckDocument>[2] = {
   schema: {
     definitionCount: 3,
-    definitionNames: [],
+    definitionNames: ["Message", "NodeChange", "NodeType"],
     messageFields: [],
     nodeChangeFields: [],
     nodeTypeEnumValues: [],
@@ -57,9 +67,18 @@ describe("createDeckEditorWorkspace", () => {
     expect(workspace.renderPlan.domainSummary.presentationNodeCount).toBe(4);
     expect(workspace.overview).toEqual({
       nodeCount: 4,
+      renderUnitCount: 4,
       schemaDefinitionCount: 3,
+      schemaDefinitionNames: ["Message", "NodeChange", "NodeType"],
+      nodeTypeNames: ["INTERACTIVE_SLIDE_ELEMENT", "SLIDE", "SLIDE_GRID", "SLIDE_ROW"],
       metadataKeys: ["client_meta"],
       clientMetaKeys: ["thumbnail_size"],
+      metadataFlags: {
+        hasRenderCoordinates: false,
+        hasThumbnailSize: true,
+        hasDeveloperRelatedLinks: false,
+        hasExportTimestamp: false,
+      },
       domainSummary: {
         slideGridCount: 1,
         slideRowCount: 1,

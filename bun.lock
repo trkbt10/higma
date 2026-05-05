@@ -182,11 +182,8 @@
       "dependencies": {
         "@higma-codecs/compression": "workspace:*",
         "@higma-codecs/kiwi": "workspace:*",
-        "@higma-figma-containers/canvas": "workspace:*",
         "@higma-figma-containers/package": "workspace:*",
-        "@higma-figma-runtime/kiwi-canvas": "workspace:*",
         "@higma-primitives/tree": "workspace:*",
-        "@higma-primitives/zip": "workspace:*",
       },
     },
     "packages/@higma-document-models/site": {
@@ -204,6 +201,7 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-document-models/buzz": "workspace:*",
+        "@higma-figma-analysis/render-outline": "workspace:*",
       },
     },
     "packages/@higma-document-renderers/deck": {
@@ -211,6 +209,7 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-document-models/deck": "workspace:*",
+        "@higma-figma-analysis/render-outline": "workspace:*",
       },
     },
     "packages/@higma-document-renderers/fig": {
@@ -239,6 +238,7 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-document-models/site": "workspace:*",
+        "@higma-figma-analysis/render-outline": "workspace:*",
       },
     },
     "packages/@higma-editor-kernel/core": {
@@ -296,6 +296,10 @@
         "@higma-figma-runtime/kiwi-canvas": "workspace:*",
         "@higma-figma-runtime/node-summary": "workspace:*",
       },
+    },
+    "packages/@higma-figma-analysis/render-outline": {
+      "name": "@higma-figma-analysis/render-outline",
+      "version": "0.12.2",
     },
     "packages/@higma-figma-analysis/schema-diff": {
       "name": "@higma-figma-analysis/schema-diff",
@@ -462,6 +466,8 @@
     "@higma-figma-analysis/document-facts": ["@higma-figma-analysis/document-facts@workspace:packages/@higma-figma-analysis/document-facts"],
 
     "@higma-figma-analysis/format-insights": ["@higma-figma-analysis/format-insights@workspace:packages/@higma-figma-analysis/format-insights"],
+
+    "@higma-figma-analysis/render-outline": ["@higma-figma-analysis/render-outline@workspace:packages/@higma-figma-analysis/render-outline"],
 
     "@higma-figma-analysis/schema-diff": ["@higma-figma-analysis/schema-diff@workspace:packages/@higma-figma-analysis/schema-diff"],
 

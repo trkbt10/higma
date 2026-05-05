@@ -22,7 +22,15 @@ const canvas: Parameters<typeof createSiteDocument>[0] = {
   header: { magic: "fig-site", version: "0", payloadSize: 0 },
   schema: { definitions: [] },
   message: {},
-  nodeChanges: [],
+  nodeChanges: [
+    { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 }, name: "Document" },
+    { type: "CMS_RICH_TEXT", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "REPEATER", guid: { sessionID: 0, localID: 2 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 3 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 4 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "SYMBOL", guid: { sessionID: 0, localID: 5 }, parentIndex: { guid: { sessionID: 0, localID: 3 } } },
+    { type: "INSTANCE", guid: { sessionID: 0, localID: 6 }, parentIndex: { guid: { sessionID: 0, localID: 5 } } },
+  ],
   blobs: [],
   images: new Map(),
   metadata: null,
@@ -32,7 +40,7 @@ const canvas: Parameters<typeof createSiteDocument>[0] = {
 const insights: Parameters<typeof createSiteDocument>[2] = {
   schema: {
     definitionCount: 7,
-    definitionNames: [],
+    definitionNames: ["Message", "NodeChange", "NodeType", "CmsRichText", "Repeater", "ResponsiveSet", "Symbol"],
     messageFields: [],
     nodeChangeFields: [],
     nodeTypeEnumValues: [],
@@ -58,9 +66,18 @@ describe("createSiteEditorWorkspace", () => {
     expect(workspace.renderPlan.domainSummary.layoutNodeCount).toBe(6);
     expect(workspace.overview).toEqual({
       nodeCount: 6,
+      renderUnitCount: 6,
       schemaDefinitionCount: 7,
+      schemaDefinitionNames: ["Message", "NodeChange", "NodeType", "CmsRichText", "Repeater", "ResponsiveSet", "Symbol"],
+      nodeTypeNames: ["CMS_RICH_TEXT", "INSTANCE", "REPEATER", "RESPONSIVE_SET", "SYMBOL"],
       metadataKeys: ["client_meta"],
       clientMetaKeys: ["background_color"],
+      metadataFlags: {
+        hasRenderCoordinates: false,
+        hasThumbnailSize: false,
+        hasDeveloperRelatedLinks: false,
+        hasExportTimestamp: false,
+      },
       domainSummary: {
         cmsRichTextCount: 1,
         repeaterCount: 1,

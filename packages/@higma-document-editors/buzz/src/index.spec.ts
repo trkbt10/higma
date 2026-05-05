@@ -22,7 +22,15 @@ const canvas: Parameters<typeof createBuzzDocument>[0] = {
   header: { magic: "fig-buzz", version: "0", payloadSize: 0 },
   schema: { definitions: [] },
   message: {},
-  nodeChanges: [],
+  nodeChanges: [
+    { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 }, name: "Document" },
+    { type: "SLIDE_GRID", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "SLIDE_ROW", guid: { sessionID: 0, localID: 2 }, parentIndex: { guid: { sessionID: 0, localID: 1 } } },
+    { type: "SYMBOL", guid: { sessionID: 0, localID: 3 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "BOOLEAN_OPERATION", guid: { sessionID: 0, localID: 4 }, parentIndex: { guid: { sessionID: 0, localID: 3 } } },
+    { type: "VECTOR", guid: { sessionID: 0, localID: 5 }, parentIndex: { guid: { sessionID: 0, localID: 4 } } },
+    { type: "VECTOR", guid: { sessionID: 0, localID: 6 }, parentIndex: { guid: { sessionID: 0, localID: 4 } } },
+  ],
   blobs: [],
   images: new Map(),
   metadata: null,
@@ -32,7 +40,7 @@ const canvas: Parameters<typeof createBuzzDocument>[0] = {
 const insights: Parameters<typeof createBuzzDocument>[2] = {
   schema: {
     definitionCount: 5,
-    definitionNames: [],
+    definitionNames: ["Message", "NodeChange", "NodeType", "Paint", "VectorPath"],
     messageFields: [],
     nodeChangeFields: [],
     nodeTypeEnumValues: [],
@@ -58,9 +66,18 @@ describe("createBuzzEditorWorkspace", () => {
     expect(workspace.renderPlan.domainSummary.templateNodeCount).toBe(6);
     expect(workspace.overview).toEqual({
       nodeCount: 6,
+      renderUnitCount: 6,
       schemaDefinitionCount: 5,
+      schemaDefinitionNames: ["Message", "NodeChange", "NodeType", "Paint", "VectorPath"],
+      nodeTypeNames: ["BOOLEAN_OPERATION", "SLIDE_GRID", "SLIDE_ROW", "SYMBOL", "VECTOR"],
       metadataKeys: ["client_meta"],
       clientMetaKeys: ["render_coordinates"],
+      metadataFlags: {
+        hasRenderCoordinates: true,
+        hasThumbnailSize: false,
+        hasDeveloperRelatedLinks: false,
+        hasExportTimestamp: false,
+      },
       domainSummary: {
         slideGridCount: 1,
         slideRowCount: 1,

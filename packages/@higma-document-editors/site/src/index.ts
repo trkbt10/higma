@@ -11,9 +11,18 @@ export type SiteEditorSession = EditorSession<SiteDocument, "site", SiteDocument
 
 export type SiteEditorOverview = {
   readonly nodeCount: number;
+  readonly renderUnitCount: number;
   readonly schemaDefinitionCount: number;
+  readonly schemaDefinitionNames: readonly string[];
+  readonly nodeTypeNames: readonly string[];
   readonly metadataKeys: readonly string[];
   readonly clientMetaKeys: readonly string[];
+  readonly metadataFlags: {
+    readonly hasRenderCoordinates: boolean;
+    readonly hasThumbnailSize: boolean;
+    readonly hasDeveloperRelatedLinks: boolean;
+    readonly hasExportTimestamp: boolean;
+  };
   readonly domainSummary: SiteDomainSummary;
 };
 
@@ -23,12 +32,21 @@ export type SiteEditorWorkspace = {
   readonly overview: SiteEditorOverview;
 };
 
-function createSiteEditorOverview(document: SiteDocument): SiteEditorOverview {
+function createSiteEditorOverview(document: SiteDocument, renderPlan: SiteRenderPlan): SiteEditorOverview {
   return {
     nodeCount: document.summary.totalNodes,
+    renderUnitCount: renderPlan.renderOutline.entries.length,
     schemaDefinitionCount: document.insights.schema.definitionCount,
+    schemaDefinitionNames: document.insights.schema.definitionNames,
+    nodeTypeNames: [...document.summary.nodeTypes.keys()].sort(),
     metadataKeys: document.insights.metadata.rawKeys,
     clientMetaKeys: document.insights.metadata.clientMetaKeys,
+    metadataFlags: {
+      hasRenderCoordinates: document.insights.metadata.hasRenderCoordinates,
+      hasThumbnailSize: document.insights.metadata.hasThumbnailSize,
+      hasDeveloperRelatedLinks: document.insights.metadata.hasDeveloperRelatedLinks,
+      hasExportTimestamp: document.insights.metadata.hasExportTimestamp,
+    },
     domainSummary: createSiteDomainSummary(document),
   };
 }
@@ -40,10 +58,11 @@ export function createSiteEditorSession(document: SiteDocument): SiteEditorSessi
 
 /** Create the editor-facing site workspace from a decoded product document. */
 export function createSiteEditorWorkspace(document: SiteDocument): SiteEditorWorkspace {
+  const renderPlan = createSiteRenderPlan(document);
   return {
     session: createSiteEditorSession(document),
-    renderPlan: createSiteRenderPlan(document),
-    overview: createSiteEditorOverview(document),
+    renderPlan,
+    overview: createSiteEditorOverview(document, renderPlan),
   };
 }
 
