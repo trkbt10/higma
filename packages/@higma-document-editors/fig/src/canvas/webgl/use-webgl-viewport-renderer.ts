@@ -7,7 +7,6 @@ import {
   resolveWebGLViewportPixelRatio,
   type WebGLFigmaRendererInstance,
 } from "@higma-document-renderers/fig/webgl";
-import { getWebGLSceneResourceKey, isWebGLSceneResourceKeyEqual, type WebGLSceneResourceKey } from "./webgl-scene-resource-key";
 import {
   getWebGLViewportPreparationStatus,
   type WebGLViewportPreparationStatus,
@@ -50,7 +49,6 @@ export function useWebGLViewportRenderer({
   const prepareRunningRef = useRef(false);
   const pendingPrepareRef = useRef<PendingPrepare | null>(null);
   const latestRenderRef = useRef<LatestRender | null>(null);
-  const preparedResourceKeyRef = useRef<WebGLSceneResourceKey | null>(null);
   const disposedRef = useRef(false);
   const [status, setStatus] = useState(() => getWebGLViewportPreparationStatus("scheduled"));
   const [devicePixelRatio, setDevicePixelRatio] = useState(() => typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
@@ -152,11 +150,9 @@ export function useWebGLViewportRenderer({
       pendingPrepareRef.current = null;
       prepareRunningRef.current = true;
       setPhase("preparing-resources");
-      const resourceKey = getWebGLSceneResourceKey(next.scene);
       void renderer.prepareScene(next.scene).then(
         () => {
           prepareRunningRef.current = false;
-          preparedResourceKeyRef.current = resourceKey;
           writeMetrics(renderer);
           const latest = latestRenderRef.current;
           if (latest?.scene === next.scene && latest.pixelRatio === next.pixelRatio) {
@@ -176,8 +172,7 @@ export function useWebGLViewportRenderer({
     };
 
     const renderWithResources = (renderer: WebGLFigmaRendererInstance) => {
-      const resourceKey = getWebGLSceneResourceKey(sceneGraph);
-      if (!isWebGLSceneResourceKeyEqual(preparedResourceKeyRef.current, resourceKey)) {
+      if (!renderer.isScenePrepared(sceneGraph)) {
         setPhase("scheduled");
         pendingPrepareRef.current = { scene: sceneGraph, pixelRatio };
         runPrepareQueue(renderer);
@@ -229,7 +224,6 @@ export function useWebGLViewportRenderer({
       }
       pendingPrepareRef.current = null;
       latestRenderRef.current = null;
-      preparedResourceKeyRef.current = null;
       setStatus(getWebGLViewportPreparationStatus("scheduled"));
       rendererRef.current?.dispose();
       rendererRef.current = null;

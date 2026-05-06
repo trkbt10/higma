@@ -2,10 +2,14 @@
 
 import type { SceneGraph } from "../scene-graph/types";
 import { resolveRenderTree, type RenderTree } from "../scene-graph/render-tree";
+import {
+  createWebGLSceneResourceIdentityStore,
+  type WebGLSceneResourceIdentityStore,
+  type WebGLSceneResourceKey,
+} from "./resource-identity";
 
 type RenderTreeCacheEntry = {
-  readonly root: SceneGraph["root"];
-  readonly version: number;
+  readonly resourceKey: WebGLSceneResourceKey;
   readonly tree: RenderTree;
 };
 
@@ -24,19 +28,23 @@ export type WebGLRenderTreeCache = {
 };
 
 /** Create a cache that reuses resolved RenderTree nodes across viewport-only changes. */
-export function createWebGLRenderTreeCache(resolve: RenderTreeResolver = resolveRenderTree): WebGLRenderTreeCache {
+export function createWebGLRenderTreeCache(
+  resolve: RenderTreeResolver = resolveRenderTree,
+  sceneResources: WebGLSceneResourceIdentityStore = createWebGLSceneResourceIdentityStore(),
+): WebGLRenderTreeCache {
   const current = { value: null as RenderTreeCacheEntry | null };
 
   return {
     get(scene: SceneGraph): RenderTree {
       const viewport = requireSceneViewport(scene);
       const cached = current.value;
-      if (cached && cached.root === scene.root && cached.version === scene.version) {
+      const resourceKey = sceneResources.get(scene);
+      if (cached && sceneResources.isEqual(cached.resourceKey, resourceKey)) {
         return { ...cached.tree, width: scene.width, height: scene.height, viewport };
       }
 
       const tree = resolve(scene);
-      current.value = { root: scene.root, version: scene.version, tree };
+      current.value = { resourceKey, tree };
       return tree;
     },
 

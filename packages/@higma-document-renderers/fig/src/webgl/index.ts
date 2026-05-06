@@ -12,6 +12,11 @@ export {
   type WebGLFigmaRendererMetrics,
 } from "./renderer";
 export { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "./resource-context";
+export {
+  createWebGLSceneResourceIdentityStore,
+  type WebGLSceneResourceIdentityStore,
+  type WebGLSceneResourceKey,
+} from "./resource-identity";
 
 // Tessellation
 export {

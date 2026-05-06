@@ -133,6 +133,7 @@ export type WebGLFigmaRendererMetrics = {
 
 /** WebGL renderer instance for Figma scene graphs */
 export type WebGLFigmaRendererInstance = {
+  isScenePrepared(scene: SceneGraph): boolean;
   prepareScene(scene: SceneGraph): Promise<void>;
   precompileResources(): void;
   render(scene: SceneGraph): void;
@@ -169,6 +170,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   const clipActive = { value: false };
   const clipStencilValid = { value: false };
   const renderTreeCache = resourceContext.renderTrees;
+  const sceneResources = resourceContext.sceneResources;
+  const preparedSceneResourceKey = { value: null as ReturnType<typeof sceneResources.get> | null };
   const metrics = {
     prepareCount: 0,
     renderCount: 0,
@@ -1438,7 +1441,15 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   return {
+    isScenePrepared(scene: SceneGraph): boolean {
+      return sceneResources.isEqual(preparedSceneResourceKey.value, sceneResources.get(scene));
+    },
+
     async prepareScene(scene: SceneGraph): Promise<void> {
+      const resourceKey = sceneResources.get(scene);
+      if (sceneResources.isEqual(preparedSceneResourceKey.value, resourceKey)) {
+        return;
+      }
       const start = performance.now();
       width.value = scene.width;
       height.value = scene.height;
@@ -1447,6 +1458,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       await Promise.all(renderTree.children.map((child) => walkForImages(child, viewportTransform)));
       metrics.prepareCount += 1;
       metrics.lastPrepareMs = performance.now() - start;
+      preparedSceneResourceKey.value = resourceKey;
     },
 
     precompileResources(): void {
@@ -1506,6 +1518,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     dispose(): void {
       resourceContext.dispose();
+      preparedSceneResourceKey.value = null;
       effectsRenderer.dispose();
       geometryCache.dispose();
       gl.deleteBuffer(positionBuffer);

@@ -3,11 +3,13 @@
 import { createShaderCache, type ShaderCache } from "./shaders";
 import { createTextureCache, type TextureCache } from "./texture-cache";
 import { createWebGLRenderTreeCache, type WebGLRenderTreeCache } from "./render-tree-cache";
+import { createWebGLSceneResourceIdentityStore, type WebGLSceneResourceIdentityStore } from "./resource-identity";
 
 export type WebGLFigmaResourceContext = {
   readonly shaders: ShaderCache;
   readonly textures: TextureCache;
   readonly renderTrees: WebGLRenderTreeCache;
+  readonly sceneResources: WebGLSceneResourceIdentityStore;
   readonly precompile: () => void;
   readonly dispose: () => void;
 };
@@ -16,12 +18,14 @@ export type WebGLFigmaResourceContext = {
 export function createWebGLFigmaResourceContext(gl: WebGLRenderingContext): WebGLFigmaResourceContext {
   const shaders = createShaderCache(gl);
   const textures = createTextureCache(gl);
-  const renderTrees = createWebGLRenderTreeCache();
+  const sceneResources = createWebGLSceneResourceIdentityStore();
+  const renderTrees = createWebGLRenderTreeCache(undefined, sceneResources);
 
   return {
     shaders,
     textures,
     renderTrees,
+    sceneResources,
     precompile(): void {
       shaders.precompileAll();
     },
