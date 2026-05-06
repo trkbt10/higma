@@ -640,11 +640,15 @@ function resolveStrokeRendering(
 // Node Resolvers
 // =============================================================================
 
-function resolveGroupNode(node: GroupNode, ids: IdGenerator): RenderGroupNode {
+function resolveGroupNode(
+  node: GroupNode,
+  ids: IdGenerator,
+  resolvedChildren: readonly RenderNode[] | undefined = undefined,
+): RenderGroupNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
 
-  const children = resolveChildren(node.children, ids);
+  const children = resolvedChildren ?? resolveChildren(node.children, ids);
   const mask = resolveMask(node, ids, defs);
 
   return {
@@ -660,7 +664,11 @@ function resolveGroupNode(node: GroupNode, ids: IdGenerator): RenderGroupNode {
   };
 }
 
-function resolveFrameNode(node: FrameNode, ids: IdGenerator): RenderFrameNode {
+function resolveFrameNode(
+  node: FrameNode,
+  ids: IdGenerator,
+  resolvedChildren: readonly RenderNode[] | undefined = undefined,
+): RenderFrameNode {
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
   const clampedRadius = clampRadius(node.cornerRadius, node.width, node.height);
@@ -723,7 +731,7 @@ function resolveFrameNode(node: FrameNode, ids: IdGenerator): RenderFrameNode {
 
   // Child clip path
   let childClipId: string | undefined;
-  const children = resolveChildren(node.children, ids);
+  const children = resolvedChildren ?? resolveChildren(node.children, ids);
   if (node.clipsContent && children.length > 0) {
     childClipId = ids.getNextId("clip");
     // The clip-path follows the frame's exact geometry — no expansion.
@@ -1134,6 +1142,113 @@ function resolveChildren(children: readonly SceneNode[], ids: IdGenerator): Rend
 }
 
 // =============================================================================
+// Incremental resolution cache
+// =============================================================================
+
+type CachedRenderNode = {
+  readonly source: SceneNode;
+  readonly node: RenderNode;
+};
+
+export type RenderTreeResolutionCache = {
+  readonly nodesById: ReadonlyMap<string, CachedRenderNode>;
+  readonly rootChildren: readonly RenderNode[];
+};
+
+export type RenderTreeResolutionResult = {
+  readonly renderTree: RenderTree;
+  readonly cache: RenderTreeResolutionCache;
+};
+
+function renderChildrenEqual(a: readonly RenderNode[], b: readonly RenderNode[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((node, index) => node === b[index]);
+}
+
+function cachedContainerChildren(node: RenderNode): readonly RenderNode[] | undefined {
+  if (node.type === "group" || node.type === "frame") {
+    return node.children;
+  }
+  return undefined;
+}
+
+function resolveContainerNodeIncremental(
+  node: GroupNode | FrameNode,
+  ids: IdGenerator,
+  children: readonly RenderNode[],
+): RenderGroupNode | RenderFrameNode {
+  if (node.type === "group") {
+    return resolveGroupNode(node, ids, children);
+  }
+  return resolveFrameNode(node, ids, children);
+}
+
+function reuseRootChildren(
+  previousCache: RenderTreeResolutionCache | undefined,
+  resolvedChildren: readonly RenderNode[],
+): readonly RenderNode[] {
+  if (previousCache && renderChildrenEqual(previousCache.rootChildren, resolvedChildren)) {
+    return previousCache.rootChildren;
+  }
+  return resolvedChildren;
+}
+
+function resolveNodeIncremental(
+  node: SceneNode,
+  ids: IdGenerator,
+  previousCache: RenderTreeResolutionCache | undefined,
+  nextNodesById: Map<string, CachedRenderNode>,
+): RenderNode | null {
+  if (!node.visible) {
+    return null;
+  }
+
+  const previous = previousCache?.nodesById.get(node.id);
+
+  if (previous?.source === node) {
+    nextNodesById.set(node.id, previous);
+    return previous.node;
+  }
+
+  if (node.type === "group" || node.type === "frame") {
+    const children = resolveChildrenIncremental(node.children, ids, previousCache, nextNodesById);
+    if (previous && renderChildrenEqual(cachedContainerChildren(previous.node) ?? [], children)) {
+      nextNodesById.set(node.id, previous);
+      return previous.node;
+    }
+
+    const resolved = resolveContainerNodeIncremental(node, ids, children);
+    nextNodesById.set(node.id, { source: node, node: resolved });
+    return resolved;
+  }
+
+  const resolved = resolveNode(node, ids);
+  if (!resolved) {
+    return null;
+  }
+  nextNodesById.set(node.id, { source: node, node: resolved });
+  return resolved;
+}
+
+function resolveChildrenIncremental(
+  children: readonly SceneNode[],
+  ids: IdGenerator,
+  previousCache: RenderTreeResolutionCache | undefined,
+  nextNodesById: Map<string, CachedRenderNode>,
+): RenderNode[] {
+  const result: RenderNode[] = [];
+  for (const child of children) {
+    const resolved = resolveNodeIncremental(child, ids, previousCache, nextNodesById);
+    if (resolved) {
+      result.push(resolved);
+    }
+  }
+  return result;
+}
+
+// =============================================================================
 // Public API
 // =============================================================================
 
@@ -1159,5 +1274,38 @@ export function resolveRenderTree(sceneGraph: SceneGraph): RenderTree {
     height: sceneGraph.height,
     viewport,
     children,
+  };
+}
+
+/**
+ * Resolve a SceneGraph while reusing RenderNode objects for unchanged nodes.
+ *
+ * The cache is explicit and caller-owned. This keeps standalone string
+ * rendering deterministic while allowing the React editor path to preserve
+ * RenderNode identity across partial document edits.
+ */
+export function resolveRenderTreeIncremental(
+  sceneGraph: SceneGraph,
+  previousCache: RenderTreeResolutionCache | undefined,
+): RenderTreeResolutionResult {
+  const ids = createIdGenerator();
+  const nextNodesById = new Map<string, CachedRenderNode>();
+  const resolvedChildren = resolveChildrenIncremental(sceneGraph.root.children, ids, previousCache, nextNodesById);
+  const children = reuseRootChildren(previousCache, resolvedChildren);
+  const viewport = sceneGraph.viewport ?? {
+    x: 0,
+    y: 0,
+    width: sceneGraph.width,
+    height: sceneGraph.height,
+  };
+
+  return {
+    renderTree: {
+      width: sceneGraph.width,
+      height: sceneGraph.height,
+      viewport,
+      children,
+    },
+    cache: { nodesById: nextNodesById, rootChildren: children },
   };
 }

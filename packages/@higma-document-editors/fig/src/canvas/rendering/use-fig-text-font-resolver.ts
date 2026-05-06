@@ -60,9 +60,12 @@ export function useFigTextFontResolver({
 }: UseFigTextFontResolverParams): TextFontResolver | undefined {
   const fontOptions = useMemo(() => collectTextFontOptions(page), [page]);
   const [loadedVersion, setLoadedVersion] = useState(0);
+  const [loadedKey, setLoadedKey] = useState("");
+  const requiredKey = useMemo(() => fontOptions.map(fontKey).sort().join("\u001f"), [fontOptions]);
 
   useEffect(() => {
     if (!fontLoader || fontOptions.length === 0) {
+      setLoadedKey("");
       return;
     }
     const cancelledRef = { value: false };
@@ -70,18 +73,22 @@ export function useFigTextFontResolver({
       await fontLoader.loadFont(options);
     })).then(() => {
       if (!cancelledRef.value) {
+        setLoadedKey(requiredKey);
         setLoadedVersion((version) => version + 1);
       }
     });
     return () => {
       cancelledRef.value = true;
     };
-  }, [fontLoader, fontOptions]);
+  }, [fontLoader, fontOptions, requiredKey]);
 
   return useMemo(() => {
     if (!fontLoader) {
       return undefined;
     }
+    if (fontOptions.length > 0 && loadedKey !== requiredKey) {
+      return undefined;
+    }
     return createCachedTextFontResolver(fontLoader);
-  }, [fontLoader, loadedVersion]);
+  }, [fontLoader, fontOptions.length, loadedKey, requiredKey, loadedVersion]);
 }

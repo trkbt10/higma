@@ -25,6 +25,8 @@ import { FigInspectorOverlay } from "../src/inspector/FigInspectorOverlay";
 import { FigInspectorProvider } from "../src/inspector/FigInspectorContext";
 import { FileDropZone } from "./components/FileDropZone";
 import { RendererDebugView } from "./components/RendererDebugView";
+import { createBrowserFontLoader } from "@higma-document-renderers/fig/font-drivers/browser";
+import { createCachingFontLoader } from "@higma-document-renderers/fig/font";
 
 injectCSSVariables();
 
@@ -224,6 +226,7 @@ function App() {
   const [mode, setMode] = useState<DevMode>("editor");
   const [inspectorOverlayEnabled, setInspectorOverlayEnabled] = useState(false);
   const [editorRenderer, setEditorRenderer] = useState<FigEditorRendererKind>("svg");
+  const editorFontLoader = useMemo(() => createCachingFontLoader(createBrowserFontLoader()), []);
 
   const editorPanels = useMemo<EditorPanel[]>(
     () => [
@@ -332,6 +335,7 @@ function App() {
                     panels={editorPanels}
                     canvasOverlay={inspectorOverlayEnabled ? <FigInspectorOverlay /> : null}
                     renderer={editorRenderer}
+                    fontLoader={editorFontLoader}
                   />
                 </FigInspectorProvider>
               </div>

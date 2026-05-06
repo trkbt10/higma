@@ -2,7 +2,8 @@
  * @file FigPageRenderer integration test
  *
  * Ensures the fig-editor renderer shell consumes selectable renderer
- * backends instead of duplicating a third React rendering path.
+ * backends. The SVG backend is React-owned so editor updates can be
+ * diffed instead of reparsing a full SVG image data URL.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -61,28 +62,29 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
   it("defaults to the SVG backend layer", async () => {
     const doc = await docPromise;
     const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800 });
-    expect(html).toContain("<img");
-    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("<svg");
+    expect(html).not.toContain("data:image/svg+xml");
   });
 
-  it("does not emit a React SVG scene tree in the editor renderer shell", async () => {
+  it("emits a React SVG scene tree in the editor renderer shell", async () => {
     const doc = await docPromise;
     const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800 });
-    expect(html).not.toMatch(/<rect[^>]+fill="#ffffff"/i);
-    expect(html).not.toMatch(/<(linearGradient|radialGradient)\b/);
+    expect(html).toMatch(/<rect[^>]+fill="#ffffff"/i);
   });
 
   it("can explicitly render through the SVG backend layer", async () => {
     const doc = await docPromise;
     const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "svg" });
-    expect(html).toContain("<img");
-    expect(html).toContain("data:image/svg+xml");
+    expect(html).toContain("<svg");
+    expect(html).not.toContain("data:image/svg+xml");
   });
 
   it("can render through the WebGL backend layer shell", async () => {
     const doc = await docPromise;
     const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "webgl" });
     expect(html).toContain("<canvas");
+    expect(html).toContain("data-webgl-ready=\"false\"");
+    expect(html).toContain("data-webgl-loading=\"true\"");
   });
 
   it("keeps the SVG viewport image screen-aligned when a viewport window is supplied", async () => {
@@ -111,6 +113,6 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
     expect(html).toContain("top:0");
     expect(html).toContain("width:980px");
     expect(html).toContain("height:700px");
-    expect(decodeURIComponent(html)).toContain('viewBox="125 -50 490 350"');
+    expect(html).toContain('viewBox="125 -50 490 350"');
   });
 });

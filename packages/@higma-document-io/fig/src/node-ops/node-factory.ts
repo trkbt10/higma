@@ -6,11 +6,17 @@
  */
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import type { FigDesignNode, TextData } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "../types/spec-types";
 import { nextNodeId } from "../types/node-id";
 import type { FigBuilderState } from "../types/node-id";
 
+function textLineHeightSpec(lineHeight: number | undefined): TextData["lineHeight"] | undefined {
+  if (lineHeight === undefined) {
+    return undefined;
+  }
+  return { value: lineHeight, units: { name: "PIXELS", value: 0 } };
+}
 
 // =============================================================================
 // Transform Construction
@@ -207,6 +213,7 @@ function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesign
           },
           textAlignHorizontal: spec.textAlignHorizontal,
           textAlignVertical: spec.textAlignVertical,
+          lineHeight: textLineHeightSpec(spec.lineHeight),
         },
       };
 

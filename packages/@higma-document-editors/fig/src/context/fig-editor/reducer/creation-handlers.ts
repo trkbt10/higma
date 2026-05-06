@@ -73,6 +73,7 @@ function buildNodeSpecFromCreationMode(
         fontSize: 16,
         fontFamily: "Inter",
         fontStyle: "Regular",
+        lineHeight: 20,
       };
     case "select":
     case "pen":

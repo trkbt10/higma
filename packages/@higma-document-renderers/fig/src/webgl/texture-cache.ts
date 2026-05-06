@@ -19,6 +19,8 @@ export type TextureEntry = {
  * Manages texture lifecycle with reference counting.
  */
 export type TextureCache = {
+  /** Prepare a texture for rendering without adding a transient draw reference. */
+  prepare(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry>;
   /** Get or create a texture from image data */
   getOrCreate(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry>;
   /** Synchronous lookup for an already-cached texture */
@@ -32,6 +34,7 @@ export type TextureCache = {
 /** Create a new WebGL texture cache */
 export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
   const cache = new Map<string, TextureEntry>();
+  const pendingUploads = new Map<string, Promise<TextureEntry>>();
 
   /** Configure standard texture parameters */
   function configureTextureParams(): void {
@@ -41,41 +44,74 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   }
 
+  async function uploadTexture(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry> {
+    // `Uint8Array<ArrayBufferLike>` is structurally a valid `BlobPart`
+    // (BufferSource), but TS lib variants disagree on the assignability
+    // due to recent ArrayBuffer-vs-SharedArrayBuffer narrowing. Keep
+    // the cast scoped to this single boundary.
+    const blob = new Blob([data as BlobPart], { type: mimeType });
+    const bitmap = await createImageBitmap(blob);
+
+    const texture = gl.createTexture();
+    if (!texture) {
+      bitmap.close();
+      throw new Error(`Failed to create WebGL texture for image resource: ${resource.id}`);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
+    configureTextureParams();
+
+    const entry: TextureEntry = {
+      texture,
+      width: bitmap.width,
+      height: bitmap.height,
+      refCount: 1,
+    };
+
+    bitmap.close();
+    cache.set(resource.id, entry);
+    return entry;
+  }
+
+  async function prepareTexture(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry> {
+    const existing = cache.get(resource.id);
+    if (existing) {
+      return existing;
+    }
+
+    const pending = pendingUploads.get(resource.id);
+    if (pending) {
+      return pending;
+    }
+
+    const upload = uploadTexture(resource, data, mimeType);
+    pendingUploads.set(resource.id, upload);
+    try {
+      return await upload;
+    } finally {
+      pendingUploads.delete(resource.id);
+    }
+  }
+
   return {
+    prepare(resource, data, mimeType) {
+      return prepareTexture(resource, data, mimeType);
+    },
+
     async getOrCreate(resource, data, mimeType) {
       const existing = cache.get(resource.id);
       if (existing) {
         existing.refCount++;
         return existing;
       }
-
-      // `Uint8Array<ArrayBufferLike>` is structurally a valid `BlobPart`
-      // (BufferSource), but TS lib variants disagree on the assignability
-      // due to recent ArrayBuffer-vs-SharedArrayBuffer narrowing. Keep
-      // the cast scoped to this single boundary.
-      const blob = new Blob([data as BlobPart], { type: mimeType });
-      const bitmap = await createImageBitmap(blob);
-
-      const texture = gl.createTexture();
-      if (!texture) {
-        bitmap.close();
-        throw new Error(`Failed to create WebGL texture for image resource: ${resource.id}`);
+      const pending = pendingUploads.get(resource.id);
+      if (pending) {
+        const entry = await pending;
+        entry.refCount++;
+        return entry;
       }
-
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
-      configureTextureParams();
-
-      const entry: TextureEntry = {
-        texture,
-        width: bitmap.width,
-        height: bitmap.height,
-        refCount: 1,
-      };
-
-      bitmap.close();
-      cache.set(resource.id, entry);
-      return entry;
+      return prepareTexture(resource, data, mimeType);
     },
 
     getIfCached(resource) {
@@ -94,6 +130,7 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
     },
 
     dispose() {
+      pendingUploads.clear();
       for (const entry of cache.values()) {
         gl.deleteTexture(entry.texture);
       }

@@ -5,9 +5,11 @@
   "type": "module",
   "sideEffects": false,
   "scripts": {
-    "lint": "eslint src",
+    "lint": "eslint src dev spec/e2e",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-editors/site/src'"
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-editors/site/src'",
+    "e2e": "vitest --run --config ../../../vitest.config.ts --environment jsdom spec/e2e",
+    "dev": "vite --config dev/vite.config.ts --open"
   },
   "exports": {
     ".": {

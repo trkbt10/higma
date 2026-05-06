@@ -213,7 +213,18 @@ type BuildContext = {
   readonly showHiddenNodes: boolean;
   readonly warnings: string[];
   readonly textFontResolver: TextFontResolver | undefined;
+  readonly previousCache?: SceneGraphBuildCache;
+  readonly nextNodesBySource: WeakMap<FigDesignNode, SceneNode>;
   nodeCounter: number;
+};
+
+export type SceneGraphBuildCache = {
+  readonly nodesBySource: WeakMap<FigDesignNode, SceneNode>;
+};
+
+export type BuildSceneGraphResult = {
+  readonly sceneGraph: SceneGraph;
+  readonly cache: SceneGraphBuildCache;
 };
 
 // =============================================================================
@@ -1758,6 +1769,11 @@ function parseSvgPathDToCommands(d: string): PathContour["commands"][number][] {
   return parseSvgPathD(d);
 }
 
+function cacheBuiltNode<T extends SceneNode>(source: FigDesignNode, sceneNode: T, ctx: BuildContext): T {
+  ctx.nextNodesBySource.set(source, sceneNode);
+  return sceneNode;
+}
+
 // =============================================================================
 // Auto-layout stretch (narrow)
 // =============================================================================
@@ -1879,6 +1895,12 @@ function positionResolvedInstanceChildren<C extends PrimaryAxisChild>(
 // =============================================================================
 
 function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
+  const cached = ctx.previousCache?.nodesBySource.get(node);
+  if (cached) {
+    ctx.nextNodesBySource.set(node, cached);
+    return cached;
+  }
+
   const base = extractBaseProps(node);
 
   // Skip hidden nodes unless explicitly shown
@@ -1893,7 +1915,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     case "DOCUMENT":
     case "CANVAS": {
       const childNodes = buildChildren(children, ctx);
-      return buildGroupNode(node, ctx, childNodes);
+      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
     }
 
     case "FRAME":
@@ -1907,7 +1929,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     case "SYMBOL": {
       const stretched = applyCounterAxisStretch(node, children);
       const childNodes = buildChildren(stretched, ctx);
-      return buildFrameNode(node, ctx, childNodes);
+      return cacheBuiltNode(node, buildFrameNode(node, ctx, childNodes), ctx);
     }
 
     case "INSTANCE": {
@@ -1944,12 +1966,12 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       );
       const positioned = positionResolvedInstanceChildren(sizeChanged, dsdPinsTransform, resolved.effectiveNode, stretched);
       const childNodes = buildChildren(positioned, ctx);
-      return buildFrameNode(resolved.effectiveNode, ctx, childNodes);
+      return cacheBuiltNode(node, buildFrameNode(resolved.effectiveNode, ctx, childNodes), ctx);
     }
 
     case "GROUP": {
       const childNodes = buildChildren(children, ctx);
-      return buildGroupNode(node, ctx, childNodes);
+      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
     }
 
     case "BOOLEAN_OPERATION": {
@@ -1959,44 +1981,44 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
         (fillGeometry && fillGeometry.length > 0) ||
         (strokeGeometry && strokeGeometry.length > 0);
       if (hasMergedGeometry) {
-        return buildVectorNode(node, ctx);
+        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
       }
       // 2. Compute boolean operation from child geometries using path-bool
       const resultPaths = computeBooleanResultFromNode(node, ctx);
       if (resultPaths && resultPaths.length > 0) {
-        return buildBooleanOperationNode(node, ctx, resultPaths);
+        return cacheBuiltNode(node, buildBooleanOperationNode(node, ctx, resultPaths), ctx);
       }
       throw new Error(`Boolean operation  has neither merged geometry nor computable child paths`);
     }
 
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
-      return buildRectNode(node, ctx);
+      return cacheBuiltNode(node, buildRectNode(node, ctx), ctx);
 
     case "ELLIPSE":
-      return buildEllipseNode(node, ctx);
+      return cacheBuiltNode(node, buildEllipseNode(node, ctx), ctx);
 
     case "VECTOR":
     case "LINE":
     case "STAR":
     case "REGULAR_POLYGON":
-      return buildVectorNode(node, ctx);
+      return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
 
     case "TEXT":
-      return buildTextNode(node, ctx);
+      return cacheBuiltNode(node, buildTextNode(node, ctx), ctx);
 
     // IMAGE nodes in .fig are rectangles with image fills.
     // The image data lives in the fills array as an IMAGE paint.
     // Render as a rect node — the image fill is handled by the
     // fill conversion pipeline (convertPaintsToFills → ImageFill).
     case "IMAGE":
-      return buildRectNode(node, ctx);
+      return cacheBuiltNode(node, buildRectNode(node, ctx), ctx);
 
     default:
       // Unknown node type - try to render children as group
       if (children.length > 0) {
         const childNodes = buildChildren(children, ctx);
-        return buildGroupNode(node, ctx, childNodes);
+        return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
       }
       return null;
   }
@@ -2096,6 +2118,19 @@ function wrapWithMask(
  * @returns Format-agnostic scene graph
  */
 export function buildSceneGraph(nodes: readonly FigDesignNode[], options: BuildSceneGraphOptions): SceneGraph {
+  return buildSceneGraphWithCache(nodes, options, undefined).sceneGraph;
+}
+
+/**
+ * Build a scene graph and preserve SceneNode references for unchanged
+ * immutable FigDesignNode source objects.
+ */
+export function buildSceneGraphWithCache(
+  nodes: readonly FigDesignNode[],
+  options: BuildSceneGraphOptions,
+  previousCache: SceneGraphBuildCache | undefined,
+): BuildSceneGraphResult {
+  const nextNodesBySource = new WeakMap<FigDesignNode, SceneNode>();
   const ctx: BuildContext = {
     blobs: options.blobs,
     images: options.images,
@@ -2104,6 +2139,8 @@ export function buildSceneGraph(nodes: readonly FigDesignNode[], options: BuildS
     showHiddenNodes: options.showHiddenNodes,
     warnings: options.warnings,
     textFontResolver: options.textFontResolver,
+    previousCache,
+    nextNodesBySource,
     nodeCounter: 0,
   };
 
@@ -2120,10 +2157,13 @@ export function buildSceneGraph(nodes: readonly FigDesignNode[], options: BuildS
   };
 
   return {
-    width: options.canvasSize.width,
-    height: options.canvasSize.height,
-    viewport: options.viewport,
-    root,
-    version: 1,
+    sceneGraph: {
+      width: options.canvasSize.width,
+      height: options.canvasSize.height,
+      viewport: options.viewport,
+      root,
+      version: 1,
+    },
+    cache: { nodesBySource: nextNodesBySource },
   };
 }

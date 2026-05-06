@@ -44,6 +44,7 @@ import {
   computeTextLayout,
   textLayoutToCursorLayout,
   resolveTextAscenderRatio,
+  type TextFontResolver,
 } from "@higma-document-renderers/fig/text";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
 
@@ -161,6 +162,7 @@ type FigTextEditOverlayProps = {
   };
   readonly canvasWidth: number;
   readonly canvasHeight: number;
+  readonly textFontResolver: TextFontResolver;
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
@@ -179,6 +181,7 @@ export function FigTextEditOverlay({
   bounds,
   canvasWidth,
   canvasHeight,
+  textFontResolver,
   dispatch,
 }: FigTextEditOverlayProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -198,8 +201,8 @@ export function FigTextEditOverlay({
 
   // --- Compute layout using the SAME function as SVG renderer ---
   const ascenderRatio = useMemo(
-    () => resolveTextAscenderRatio(node, textProps, {}),
-    [node, textProps],
+    () => resolveTextAscenderRatio(node, textProps, { fontResolver: textFontResolver }),
+    [node, textProps, textFontResolver],
   );
   const textLayout = useMemo(
     () => computeTextLayout({ props: textProps, ascenderRatio }),
@@ -261,21 +264,21 @@ export function FigTextEditOverlay({
     const ta = textareaRef.current;
     if (!ta) {return;}
 
-    let rafId: number | null = null;
+    const rafIdRef = { value: null as number | null };
 
     const handleBlur = () => {
-      rafId = requestAnimationFrame(() => {
+      rafIdRef.value = requestAnimationFrame(() => {
         if (document.activeElement !== ta) {
           dispatch({ type: "EXIT_TEXT_EDIT" });
         }
-        rafId = null;
+        rafIdRef.value = null;
       });
     };
 
     ta.addEventListener("blur", handleBlur);
     return () => {
       ta.removeEventListener("blur", handleBlur);
-      if (rafId !== null) {cancelAnimationFrame(rafId);}
+      if (rafIdRef.value !== null) {cancelAnimationFrame(rafIdRef.value);}
     };
   }, [dispatch]);
 
@@ -305,7 +308,7 @@ export function FigTextEditOverlay({
         nodeId: node.id,
         updater: (n) => {
           if (!n.textData) {return n;}
-          return { ...n, textData: { ...n.textData, characters: newText } };
+          return { ...n, textData: { ...n.textData, characters: newText }, derivedTextData: undefined };
         },
       });
       // Defer selection update to after React re-render

@@ -29,9 +29,8 @@ test.describe("Fig editor SVG text editing visual parity", () => {
     const duringEdit = readPng(await page.screenshot({ clip: textClip }));
 
     const editingState = await page.evaluate(() => {
-      const img = document.querySelector<HTMLImageElement>("img[src^='data:image/svg+xml']");
-      const svg = img?.src ? decodeURIComponent(img.src.substring(img.src.indexOf(",") + 1)) : "";
-      const overlayTexts = Array.from(document.querySelectorAll<SVGTextElement>("svg text"))
+      const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']")?.outerHTML ?? "";
+      const overlayTexts = Array.from(document.querySelectorAll<SVGTextElement>("svg:not([aria-hidden='true']) text"))
         .map((text) => text.textContent ?? "")
         .filter((text) => text.includes("Hello World"));
       return { svg, overlayTextCount: overlayTexts.length };
@@ -43,9 +42,8 @@ test.describe("Fig editor SVG text editing visual parity", () => {
 
     await fillHiddenCanvasTextarea(page, "Edited SVG text");
     const afterEditState = await page.evaluate(() => {
-      const img = document.querySelector<HTMLImageElement>("img[src^='data:image/svg+xml']");
-      const svg = img?.src ? decodeURIComponent(img.src.substring(img.src.indexOf(",") + 1)) : "";
-      const overlayTexts = Array.from(document.querySelectorAll<SVGTextElement>("svg text"))
+      const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']")?.outerHTML ?? "";
+      const overlayTexts = Array.from(document.querySelectorAll<SVGTextElement>("svg:not([aria-hidden='true']) text"))
         .map((text) => text.textContent ?? "")
         .filter((text) => text.includes("Edited SVG text"));
       return { svg, overlayTextCount: overlayTexts.length };
@@ -97,7 +95,7 @@ test.describe("Fig editor SVG text editing visual parity", () => {
 async function waitForSvgEditor(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
-      const image = document.querySelector("img[src^='data:image/svg+xml']");
+      const image = document.querySelector("svg[aria-hidden='true']");
       const hitArea = document.querySelector("rect[fill='transparent']");
       return Boolean(image && hitArea);
     },
@@ -107,11 +105,11 @@ async function waitForSvgEditor(page: Page): Promise<void> {
 
 async function decodedSvgImage(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const img = document.querySelector<HTMLImageElement>("img[src^='data:image/svg+xml']");
-    if (!img) {
-      throw new Error("SVG renderer image was not found");
+    const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']");
+    if (!svg) {
+      throw new Error("SVG renderer tree was not found");
     }
-    return decodeURIComponent(img.src.substring(img.src.indexOf(",") + 1));
+    return svg.outerHTML;
   });
 }
 

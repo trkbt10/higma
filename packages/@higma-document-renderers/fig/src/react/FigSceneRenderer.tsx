@@ -20,9 +20,13 @@
  * - In standalone viewer: wrap in your own <svg> element
  */
 
-import { memo, useMemo } from "react";
+import { memo, useMemo, useRef } from "react";
 import type { SceneGraph } from "../scene-graph/types";
-import { resolveRenderTree, type RenderTree } from "../scene-graph/render-tree";
+import {
+  resolveRenderTreeIncremental,
+  type RenderTree,
+  type RenderTreeResolutionCache,
+} from "../scene-graph/render-tree";
 import { RenderNodeComponent } from "./nodes/RenderNodeComponent";
 
 // =============================================================================
@@ -70,10 +74,12 @@ export const FigRenderTreeRenderer = memo(FigRenderTreeRendererImpl);
  * This is the backward-compatible entry point.
  */
 function FigSceneRendererImpl({ sceneGraph }: FigSceneRendererProps) {
-  const renderTree = useMemo(
-    () => resolveRenderTree(sceneGraph),
-    [sceneGraph],
-  );
+  const cacheRef = useRef<RenderTreeResolutionCache | undefined>(undefined);
+  const renderTree = useMemo(() => {
+    const result = resolveRenderTreeIncremental(sceneGraph, cacheRef.current);
+    cacheRef.current = result.cache;
+    return result.renderTree;
+  }, [sceneGraph]);
 
   return <FigRenderTreeRenderer renderTree={renderTree} />;
 }

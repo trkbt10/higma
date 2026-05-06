@@ -11,7 +11,7 @@ import type { FigImage } from "@higma-document-models/fig/domain";
 import type { BuildSceneGraphOptions, SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { useFigSceneGraph } from "./use-fig-scene-graph";
 import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";
-import { FigSvgViewportImage } from "./FigSvgViewportImage";
+import { FigSvgViewportScene } from "./FigSvgViewportScene";
 import type { FigEditorRendererKind } from "./renderer-kind";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import type { ViewportLayerPlacement } from "./viewport-render-plan";
@@ -47,6 +47,7 @@ type FigPageRendererProps = {
   readonly viewportScale?: number;
   readonly viewportPlacement?: ViewportLayerPlacement;
   readonly webglPlacement?: ViewportLayerPlacement;
+  readonly webglInitializationDelayMs?: number;
   readonly textFontResolver?: TextFontResolver;
 };
 
@@ -80,6 +81,7 @@ export function FigPageRenderer({
   viewportScale = 1,
   viewportPlacement,
   webglPlacement = "world",
+  webglInitializationDelayMs,
   textFontResolver,
 }: FigPageRendererProps) {
   const builtSceneGraph = useFigSceneGraph({
@@ -104,8 +106,15 @@ export function FigPageRenderer({
 
   switch (renderer) {
     case "svg":
-      return <FigSvgViewportImage sceneGraph={sceneGraph} placement={viewportPlacement ?? "world"} />;
+      return <FigSvgViewportScene sceneGraph={sceneGraph} placement={viewportPlacement ?? "world"} />;
     case "webgl":
-      return <FigWebGLViewportCanvas sceneGraph={sceneGraph} viewportScale={viewportScale} placement={viewportPlacement ?? webglPlacement} />;
+      return (
+        <FigWebGLViewportCanvas
+          sceneGraph={sceneGraph}
+          viewportScale={viewportScale}
+          placement={viewportPlacement ?? webglPlacement}
+          initializationDelayMs={webglInitializationDelayMs}
+        />
+      );
   }
 }

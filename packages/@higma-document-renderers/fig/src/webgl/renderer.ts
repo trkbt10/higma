@@ -55,7 +55,6 @@ import {
 } from "../scene-graph/render-tree";
 import type { ResolvedFillDef } from "../scene-graph/render/fill";
 
-import { createShaderCache } from "./shaders";
 import {
   generateRectVertices,
   generateEllipseVertices,
@@ -70,7 +69,6 @@ import {
   drawImageFill,
   type GLContext,
 } from "./fill-renderer";
-import { createTextureCache } from "./texture-cache";
 import { imageTextureResource } from "./texture-resource";
 import { IDENTITY_MATRIX, multiplyMatrices } from "@higma-document-models/fig/matrix";
 import { rebuildStencilClipStack, type StencilClipEntry } from "./clip-mask";
@@ -84,7 +82,7 @@ import { createEffectsRenderer } from "./effects-renderer";
 import { buildEffectStack, renderShapeEffectStack } from "../scene-graph/render/effect-stack";
 import { createWebGLEffectRendering } from "./effect-rendering";
 import { shouldRenderVisualNode, type ViewportRect } from "./render-culling";
-import { createWebGLRenderTreeCache } from "./render-tree-cache";
+import { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "./resource-context";
 import {
   prepareFanTriangles,
   generateCoverQuad,
@@ -119,6 +117,15 @@ export type WebGLRendererOptions = {
   readonly antialias?: boolean;
   /** Background color (default: white) */
   readonly backgroundColor?: Color;
+  /** Central resource owner for caches and precompiled GPU programs. */
+  readonly resourceContext?: WebGLFigmaResourceContext;
+};
+
+export type WebGLFigmaRendererMetrics = {
+  readonly prepareCount: number;
+  readonly renderCount: number;
+  readonly lastPrepareMs: number;
+  readonly lastRenderMs: number;
 };
 
 // =============================================================================
@@ -128,8 +135,10 @@ export type WebGLRendererOptions = {
 /** WebGL renderer instance for Figma scene graphs */
 export type WebGLFigmaRendererInstance = {
   prepareScene(scene: SceneGraph): Promise<void>;
+  precompileResources(): void;
   render(scene: SceneGraph): void;
   setPixelRatio(pixelRatio: number): void;
+  getMetrics(): WebGLFigmaRendererMetrics;
   dispose(): void;
 };
 
@@ -151,15 +160,22 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   const gl: WebGLRenderingContext = glOrNull;
 
   const pixelRatioRef = { value: options.pixelRatio ?? (typeof window !== "undefined" ? window.devicePixelRatio : 1) };
-  const shaders = createShaderCache(gl);
   const backgroundColor = options.backgroundColor ?? { r: 1, g: 1, b: 1, a: 1 };
-  const textureCache = createTextureCache(gl);
+  const resourceContext = options.resourceContext ?? createWebGLFigmaResourceContext(gl);
+  const shaders = resourceContext.shaders;
+  const textureCache = resourceContext.textures;
   const effectsRenderer = createEffectsRenderer(gl);
   const width = { value: 0 };
   const height = { value: 0 };
   const clipActive = { value: false };
   const clipStencilValid = { value: false };
-  const renderTreeCache = createWebGLRenderTreeCache();
+  const renderTreeCache = resourceContext.renderTrees;
+  const metrics = {
+    prepareCount: 0,
+    renderCount: 0,
+    lastPrepareMs: 0,
+    lastRenderMs: 0,
+  };
   const clipStack: StencilClipEntry[] = [];
 
   const buffer = gl.createBuffer();
@@ -170,8 +186,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   const geometryCache = {
     rectVertices: new Map<string, Float32Array>(),
     ellipseVertices: new Map<string, Float32Array>(),
-    pathGeometry: new Map<string, PathGeometry>(),
-    textGlyphGeometry: new Map<string, TextGlyphGeometry>(),
+    pathGeometry: new WeakMap<RenderPathNode, PathGeometry>(),
+    pathStrokeVertices: new WeakMap<RenderPathNode, Map<string, Float32Array>>(),
+    textGlyphGeometry: new WeakMap<RenderTextNode, TextGlyphGeometry>(),
   };
 
   // Enable blending for transparency
@@ -202,6 +219,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   type TextGlyphGeometry = {
     readonly contours: readonly PathContour[];
     readonly vertices: Float32Array;
+    readonly prepared: ReturnType<typeof prepareFanTriangles>;
   };
 
   type StencilFillRule = WebGLPathFillRule;
@@ -246,12 +264,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     );
   }
 
-  function renderPathCacheKey(node: RenderPathNode): string {
-    return node.paths.map((path) => `${path.fillRule ?? "nonzero"}:${path.d}`).join("\u001f");
-  }
-
   function getPathGeometry(node: RenderPathNode): PathGeometry {
-    return getCachedGeometry(geometryCache.pathGeometry, renderPathCacheKey(node), () => {
+    const cached = geometryCache.pathGeometry.get(node);
+    if (cached) {
+      return cached;
+    }
+    const value = (() => {
       const parsedContours = node.paths.flatMap((rp) => svgPathDToContours({
         d: rp.d,
         windingRule: rp.fillRule ?? "nonzero",
@@ -263,17 +281,57 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         pathVertices: new Float32Array(0),
         backgroundMaskVertices: tessellateContours(parsedContours, 0.25, true),
       };
-    });
+    })();
+    geometryCache.pathGeometry.set(node, value);
+    return value;
   }
 
-  function getTextGlyphGeometry(pathData: string): TextGlyphGeometry {
-    return getCachedGeometry(geometryCache.textGlyphGeometry, pathData, () => {
-      const contours = svgPathDToContours({ d: pathData });
+  function getTextGlyphGeometry(node: RenderTextNode): TextGlyphGeometry {
+    const cached = geometryCache.textGlyphGeometry.get(node);
+    if (cached) {
+      return cached;
+    }
+    const value = (() => {
+      if (node.content.mode !== "glyphs") {
+        throw new Error(`WebGL text glyph geometry cache requires glyph content for text node ${node.id}`);
+      }
+      const contours = svgPathDToContours({ d: node.content.d });
       return {
         contours,
         vertices: tessellateContours(contours, 0.1, true),
+        prepared: prepareFanTriangles(contours, 0.1),
       };
-    });
+    })();
+    geometryCache.textGlyphGeometry.set(node, value);
+    return value;
+  }
+
+  function pathStrokeCacheKey(
+    { strokeWidth, dashPattern }: {
+      readonly strokeWidth: number;
+      readonly dashPattern?: readonly number[];
+    },
+  ): string {
+    return `${strokeWidth}\u001e${dashPattern?.join(",") ?? ""}`;
+  }
+
+  function getPathStrokeVertices(
+    { node, contours, strokeWidth, dashPattern }: {
+      readonly node: RenderPathNode;
+      readonly contours: readonly PathContour[];
+      readonly strokeWidth: number;
+      readonly dashPattern?: readonly number[];
+    },
+  ): Float32Array {
+    const cache = geometryCache.pathStrokeVertices.get(node) ?? new Map<string, Float32Array>();
+    if (!geometryCache.pathStrokeVertices.has(node)) {
+      geometryCache.pathStrokeVertices.set(node, cache);
+    }
+    return getCachedGeometry(
+      cache,
+      pathStrokeCacheKey({ strokeWidth, dashPattern }),
+      () => tessellatePathStroke(contours, strokeWidth, { dashPattern }),
+    );
   }
 
   // =========================================================================
@@ -321,7 +379,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     // Image nodes carry source data for texture creation
     if (node.type === "image" && visible) {
-      await textureCache.getOrCreate(imageTextureResource(node.sourceImageRef), node.sourceData, node.sourceMimeType);
+      await textureCache.prepare(imageTextureResource(node.sourceImageRef), node.sourceData, node.sourceMimeType);
     }
 
     // Shape and frame nodes share `sourceFills`. Walk all variants that
@@ -334,7 +392,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     )) {
       for (const fill of node.sourceFills) {
         if (fill.type === "image") {
-          await textureCache.getOrCreate(imageTextureResource(fill.imageRef), fill.data, fill.mimeType);
+          await textureCache.prepare(imageTextureResource(fill.imageRef), fill.data, fill.mimeType);
         }
       }
     }
@@ -1303,7 +1361,10 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     if (!node.strokeRendering) { return; }
     const sr = node.strokeRendering;
     if (sr.mode === "uniform" && node.sourceStroke && node.sourceStroke.width > 0) {
-      const strokeVerts = tessellatePathStroke(contours, node.sourceStroke.width, {
+      const strokeVerts = getPathStrokeVertices({
+        node,
+        contours,
+        strokeWidth: node.sourceStroke.width,
         dashPattern: node.sourceStroke.dashPattern,
       });
       if (strokeVerts.length > 0) {
@@ -1319,7 +1380,10 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       for (const layer of sr.layers) {
         const strokeWidth = layer.attrs.strokeWidth ?? 1;
         if (strokeWidth <= 0) { continue; }
-        const strokeVerts = tessellatePathStroke(contours, strokeWidth, {
+        const strokeVerts = getPathStrokeVertices({
+          node,
+          contours,
+          strokeWidth,
           dashPattern: parseStrokeDasharray(layer.attrs.strokeDasharray),
         });
         if (strokeVerts.length > 0) {
@@ -1335,11 +1399,40 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       }
       return;
     }
-    if (sr.mode === "masked" && node.sourceStroke && node.sourceStroke.width > 0) {
-      const strokeVerts = tessellatePathStroke(contours, node.sourceStroke.width, {
-        dashPattern: node.sourceStroke.dashPattern,
+    if (sr.mode === "masked") {
+      const strokeWidth = sr.attrs.strokeWidth ?? 1;
+      if (strokeWidth <= 0) { return; }
+      const strokeVerts = getPathStrokeVertices({
+        node,
+        contours,
+        strokeWidth,
+        dashPattern: parseStrokeDasharray(sr.attrs.strokeDasharray),
       });
-      if (strokeVerts.length > 0) {
+      const fillVerts = tessellateContours(contours, 0.25, true);
+      if (strokeVerts.length > 0 && fillVerts.length > 0) {
+        const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+        const wasStencilEnabled = gl.isEnabled(gl.STENCIL_TEST);
+        const isInside = sr.attrs.strokeAlign === "INSIDE";
+
+        gl.enable(gl.STENCIL_TEST);
+        gl.colorMask(false, false, false, false);
+        gl.stencilMask(FILL_STENCIL_MASK);
+        gl.stencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
+
+        gl.colorMask(true, true, true, true);
+        gl.stencilMask(0x00);
+        if (isInside) {
+          const ref = clipActive.value ? (CLIP_STENCIL_BIT | FILL_STENCIL_MASK) : FILL_STENCIL_MASK;
+          const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
+          gl.stencilFunc(gl.EQUAL, ref, mask);
+        } else {
+          const ref = clipActive.value ? CLIP_STENCIL_BIT : 0;
+          const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
+          gl.stencilFunc(gl.EQUAL, ref, mask);
+        }
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
         drawStrokePaintLayer({
           vertices: strokeVerts,
           layer: sr.layer,
@@ -1348,6 +1441,21 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
           opacity,
           elementSize: pathContoursElementSize(contours),
         });
+
+        gl.colorMask(false, false, false, false);
+        gl.stencilMask(FILL_STENCIL_MASK);
+        gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+        drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
+
+        gl.colorMask(true, true, true, true);
+        gl.stencilMask(0xff);
+        if (!wasStencilEnabled) {
+          gl.disable(gl.STENCIL_TEST);
+          return;
+        }
+        gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
       }
     }
   }
@@ -1425,8 +1533,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       // Glyph path: parse the SVG path d string (SoT) and render via stencil.
       if (node.content.d.length === 0) { return; }
 
-      const { contours: glyphContours } = getTextGlyphGeometry(node.content.d);
-      const prepared = prepareFanTriangles(glyphContours, 0.1);
+      const { prepared } = getTextGlyphGeometry(node);
       if (prepared) {
         const { bounds } = prepared;
         const coverQuad = generateCoverQuad(bounds);
@@ -1460,16 +1567,22 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
   return {
     async prepareScene(scene: SceneGraph): Promise<void> {
+      const start = performance.now();
       width.value = scene.width;
       height.value = scene.height;
       const renderTree = renderTreeCache.get(scene);
       const viewportTransform = viewportToSurfaceTransform(renderTree);
-      for (const child of renderTree.children) {
-        await walkForImages(child, viewportTransform);
-      }
+      await Promise.all(renderTree.children.map((child) => walkForImages(child, viewportTransform)));
+      metrics.prepareCount += 1;
+      metrics.lastPrepareMs = performance.now() - start;
+    },
+
+    precompileResources(): void {
+      resourceContext.precompile();
     },
 
     render(scene: SceneGraph): void {
+      const start = performance.now();
       width.value = scene.width;
       height.value = scene.height;
       const canvas = gl.canvas;
@@ -1504,6 +1617,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       for (const child of renderTree.children) {
         renderRenderNode(child, viewportTransform, 1);
       }
+      metrics.renderCount += 1;
+      metrics.lastRenderMs = performance.now() - start;
     },
 
     setPixelRatio(pixelRatio: number): void {
@@ -1513,15 +1628,15 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       pixelRatioRef.value = pixelRatio;
     },
 
+    getMetrics(): WebGLFigmaRendererMetrics {
+      return { ...metrics };
+    },
+
     dispose(): void {
-      shaders.dispose();
-      textureCache.dispose();
+      resourceContext.dispose();
       effectsRenderer.dispose();
-      renderTreeCache.clear();
       geometryCache.rectVertices.clear();
       geometryCache.ellipseVertices.clear();
-      geometryCache.pathGeometry.clear();
-      geometryCache.textGlyphGeometry.clear();
       gl.deleteBuffer(positionBuffer);
     },
   };

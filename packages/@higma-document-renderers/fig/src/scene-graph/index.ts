@@ -62,7 +62,13 @@ export {
 } from "./boolean-operation";
 
 // Builder
-export { buildSceneGraph, type BuildSceneGraphOptions } from "./builder";
+export {
+  buildSceneGraph,
+  buildSceneGraphWithCache,
+  type BuildSceneGraphOptions,
+  type BuildSceneGraphResult,
+  type SceneGraphBuildCache,
+} from "./builder";
 
 // Diff
 export {
@@ -103,7 +109,10 @@ export {
 // RenderTree — intermediate representation for SVG/React/WebGL backends
 export {
   resolveRenderTree,
+  resolveRenderTreeIncremental,
   type RenderTree,
+  type RenderTreeResolutionCache,
+  type RenderTreeResolutionResult,
   type RenderNode,
   type RenderNodeBase,
   type RenderGroupNode,

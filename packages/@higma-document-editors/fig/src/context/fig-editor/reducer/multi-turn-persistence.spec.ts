@@ -101,4 +101,32 @@ describe("multi-turn reducer persistence", () => {
 
     expect(second.documentHistory.present.pages[0]!.children[0]!.textData?.characters).toBe("ABC");
   });
+
+  it("invalidates derived text data when text edit changes characters", () => {
+    const node = {
+      ...makeTextNode(),
+      derivedTextData: {
+        glyphs: [],
+        decorations: [],
+        baselines: [],
+        layoutSize: { width: 10, height: 10 },
+      },
+    };
+    const editing = figEditorReducer(createFigEditorState(makeDocument(node)), {
+      type: "ENTER_TEXT_EDIT",
+      nodeId: node.id,
+    });
+    const updated = figEditorReducer(editing, {
+      type: "UPDATE_NODE",
+      source: "text-edit",
+      nodeId: node.id,
+      updater: (current) => ({
+        ...current,
+        textData: current.textData ? { ...current.textData, characters: "AB" } : current.textData,
+        derivedTextData: undefined,
+      }),
+    });
+
+    expect(updated.documentHistory.present.pages[0]!.children[0]!.derivedTextData).toBeUndefined();
+  });
 });

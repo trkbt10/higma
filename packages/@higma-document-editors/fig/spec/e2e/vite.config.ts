@@ -18,12 +18,15 @@ export default defineConfig({
   resolve: {
     alias: {
       "@higma-document-editors/fig": path.resolve(__dirname, "../../src"),
-      "@higma-editor-kernel/core": path.resolve(__dirname, "../../../../-editor/core/src"),
-      "@higma-editor-surfaces/controls": path.resolve(__dirname, "../../../../-editor/controls/src"),
-      "@higma-editor-kernel/ui": path.resolve(__dirname, "../../../../-editor/ui/src"),
-      "@higma-document-models/fig": path.resolve(__dirname, "../../../../-document-models/fig/src"),
-      "@higma-document-renderers/fig": path.resolve(__dirname, "../../../../-document-renderers/fig/src"),
-      "@higma-document-io/fig": path.resolve(__dirname, "../../../../-document-io/fig/src"),
+      "@higma-editor-kernel/core": path.resolve(__dirname, "../../../../@higma-editor-kernel/core/src"),
+      "@higma-editor-surfaces/controls": path.resolve(__dirname, "../../../../@higma-editor-surfaces/controls/src"),
+      "@higma-editor-kernel/ui": path.resolve(__dirname, "../../../../@higma-editor-kernel/ui/src"),
+      "@higma-document-models/fig": path.resolve(__dirname, "../../../../@higma-document-models/fig/src"),
+      "@higma-document-renderers/fig": path.resolve(__dirname, "../../../../@higma-document-renderers/fig/src"),
+      "@higma-document-io/fig": path.resolve(__dirname, "../../../../@higma-document-io/fig/src"),
+      "@higma-primitives/tree": path.resolve(__dirname, "../../../../@higma-primitives/tree/src"),
+      "@higma-primitives/buffer": path.resolve(__dirname, "../../../../@higma-primitives/buffer/src"),
+      "@higma-codecs/png": path.resolve(__dirname, "../../../../@higma-codecs/png/src"),
     },
   },
 });

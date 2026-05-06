@@ -25,7 +25,7 @@ import type {
 } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { FigImage } from "@higma-document-models/fig/domain";
-import type { FigMatrix, KiwiEnumValue } from "@higma-document-models/fig/types";
+import type { FigDerivedTextData, FigMatrix, KiwiEnumValue } from "@higma-document-models/fig/types";
 import {
   createCachingFontLoader,
   type AbstractFont,
@@ -115,6 +115,40 @@ function makeKiwiEnum(name: string, value: number): KiwiEnumValue {
   return { value, name } as KiwiEnumValue;
 }
 
+function makeDerivedTextData({
+  text,
+  fontFamily,
+  fontStyle,
+  fontSize,
+  lineHeight,
+}: {
+  readonly text: string;
+  readonly fontFamily: string;
+  readonly fontStyle: string;
+  readonly fontSize: number;
+  readonly lineHeight: number;
+}): FigDerivedTextData | undefined {
+  if (text.length === 0) {
+    return undefined;
+  }
+  return {
+    baselines: [{
+      position: { x: 0, y: fontSize * 0.8 },
+      width: text.length * fontSize * 0.5,
+      lineY: 0,
+      lineHeight,
+      lineAscent: fontSize * 0.8,
+      firstCharacter: 0,
+      endCharacter: text.length,
+    }],
+    fontMetaData: [{
+      key: { family: fontFamily, style: fontStyle, postscript: `${fontFamily}-${fontStyle}` },
+      fontLineHeight: lineHeight / fontSize,
+      fontWeight: 400,
+    }],
+  };
+}
+
 type MakeTextNodeOptions = {
   readonly id: string;
   readonly x: number;
@@ -123,12 +157,13 @@ type MakeTextNodeOptions = {
   readonly height: number;
   readonly text: string;
   readonly fontSize?: number;
+  readonly lineHeight: number;
   readonly fontFamily?: string;
   readonly fontStyle?: string;
 };
 
 function makeTextNode(
-  { id, x, y, width, height, text, fontSize = 16, fontFamily = "Inter", fontStyle = "Regular" }: MakeTextNodeOptions,
+  { id, x, y, width, height, text, fontSize = 16, lineHeight, fontFamily = "Inter", fontStyle = "Regular" }: MakeTextNodeOptions,
 ): FigDesignNode {
   return {
     id: id as FigNodeId,
@@ -152,11 +187,13 @@ function makeTextNode(
     textData: {
       characters: text,
       fontSize,
+      lineHeight: { value: lineHeight, units: makeKiwiEnum("PIXELS", 0) },
       fontName: { family: fontFamily, style: fontStyle, postscript: `${fontFamily}-${fontStyle}` },
       textAlignHorizontal: makeKiwiEnum("LEFT", 0),
       textAlignVertical: makeKiwiEnum("TOP", 0),
       textAutoResize: makeKiwiEnum("NONE", 2),
     },
+    derivedTextData: makeDerivedTextData({ text, fontFamily, fontStyle, fontSize, lineHeight }),
   } as FigDesignNode;
 }
 
@@ -203,7 +240,7 @@ const TEST_IMAGE: FigImage = {
 
 function makeImageFillNode(): FigDesignNode {
   return {
-    ...makeRectNode({ id: "image-fill-rect", x: 960, y: 310, width: 90, height: 70 }),
+    ...makeRectNode({ id: "2:15", x: 960, y: 310, width: 90, height: 70 }),
     name: "Image Fill Rect",
     fills: [{
       type: "IMAGE",
@@ -238,7 +275,7 @@ type MakeVectorNodeOptions = {
 
 function makeVectorNode(
   {
-    id = "vector-1",
+    id = "2:8",
     name = "Editable Vector",
     x = 330,
     y = 310,
@@ -275,7 +312,7 @@ function makeVectorNode(
 
 function makeNestedFrameNode(): FigDesignNode {
   return {
-    id: "frame-1" as FigNodeId,
+    id: "2:9" as FigNodeId,
     type: "FRAME",
     name: "Nested Frame",
     visible: true,
@@ -300,7 +337,7 @@ function makeNestedFrameNode(): FigDesignNode {
 
 function makeInnerFrameNode(): FigDesignNode {
   return {
-    id: "inner-frame-1" as FigNodeId,
+    id: "2:10" as FigNodeId,
     type: "FRAME",
     name: "Inner Frame",
     visible: true,
@@ -325,7 +362,7 @@ function makeInnerFrameNode(): FigDesignNode {
 
 function makeFrameChildRectNode(): FigDesignNode {
   return {
-    id: "frame-child-rect" as FigNodeId,
+    id: "2:11" as FigNodeId,
     type: "RECTANGLE",
     name: "Frame Child Rect",
     visible: true,
@@ -348,7 +385,7 @@ function makeFrameChildRectNode(): FigDesignNode {
 
 function makeFrameChildVectorNode(): FigDesignNode {
   return makeVectorNode({
-    id: "frame-child-vector",
+    id: "2:12",
     name: "Frame Child Vector",
     x: 98,
     y: 18,
@@ -360,7 +397,7 @@ function makeFrameChildVectorNode(): FigDesignNode {
 
 function makeCoveringGroupNode(): FigDesignNode {
   return {
-    id: "covering-group-1" as FigNodeId,
+    id: "2:13" as FigNodeId,
     type: "GROUP",
     name: "Covering Group",
     visible: true,
@@ -373,11 +410,11 @@ function makeCoveringGroupNode(): FigDesignNode {
     effects: [],
     children: [
       {
-        ...makeRectNode({ id: "group-child-rect", x: 24, y: 26, width: 90, height: 54 }),
+        ...makeRectNode({ id: "2:14", x: 24, y: 26, width: 90, height: 54 }),
         name: "Group Child Rect",
       },
       makeVectorNode({
-        id: "group-child-vector",
+        id: "2:16",
         name: "Group Child Vector",
         x: 92,
         y: 40,
@@ -455,7 +492,7 @@ function makeComponentSymbol(): FigDesignNode {
         fills: [{ type: "SOLID", color: { r: 0.92, g: 0.95, b: 1, a: 1 }, opacity: 1, visible: true }],
       } as FigDesignNode,
       {
-        ...makeTextNode({ id: "20:3", x: 48, y: 20, width: 110, height: 22, text: "Default label", fontSize: 16 }),
+        ...makeTextNode({ id: "20:3", x: 48, y: 20, width: 110, height: 22, text: "Default label", fontSize: 16, lineHeight: 20 }),
         name: "Button Label",
         componentPropertyRefs: [{ defId: COMPONENT_LABEL_DEF_ID, nodeField: "TEXT_DATA" }],
       } as FigDesignNode,
@@ -500,7 +537,7 @@ function makeComponentInstanceNode(): FigDesignNode {
 
 function makeSectionNode(): FigDesignNode {
   return {
-    id: "section-1" as FigNodeId,
+    id: "2:17" as FigNodeId,
     type: "SECTION",
     name: "Editable Section",
     visible: true,
@@ -517,7 +554,7 @@ function makeSectionNode(): FigDesignNode {
 
 function makeVariantComponentNode(): FigDesignNode {
   return {
-    ...makeRectNode({ id: "variant-component", x: 960, y: 80, width: 150, height: 70 }),
+    ...makeRectNode({ id: "2:18", x: 960, y: 80, width: 150, height: 70 }),
     type: "COMPONENT",
     name: "Variant Component",
     fills: [{ type: "SOLID", color: { r: 0.82, g: 0.74, b: 0.96, a: 1 }, opacity: 1, visible: true }],
@@ -567,17 +604,17 @@ function makeComponentSetNode(): FigDesignNode {
 // =============================================================================
 
 const testPage: FigPage = {
-  id: "page-1" as FigPageId,
+  id: "0:1" as FigPageId,
   name: "Test Page",
   backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
   children: [
-    makeTextNode({ id: "text-hello", x: 50, y: 50, width: 200, height: 30, text: "Hello World" }),
-    makeTextNode({ id: "text-multi", x: 50, y: 120, width: 250, height: 80, text: "Line one\nLine two\nLine three", fontSize: 14 }),
-    makeTextNode({ id: "text-empty", x: 50, y: 240, width: 200, height: 30, text: "" }),
-    makeTextNode({ id: "text-wrapped", x: 260, y: 50, width: 60, height: 80, text: "Hello World", fontSize: 16 }),
-    makeRectNode({ id: "rect-1", x: 50, y: 310, width: 150, height: 80 }),
-    makeRectNode({ id: "ellipse-1", type: "ELLIPSE", x: 130, y: 330, width: 120, height: 80 }),
-    makeRectNode({ id: "line-1", type: "LINE", x: 280, y: 455, width: 120, height: 40 }),
+    makeTextNode({ id: "2:1", x: 50, y: 50, width: 200, height: 30, text: "Hello World", lineHeight: 20 }),
+    makeTextNode({ id: "2:2", x: 50, y: 120, width: 250, height: 80, text: "Line one\nLine two\nLine three", fontSize: 14, lineHeight: 18 }),
+    makeTextNode({ id: "2:3", x: 50, y: 240, width: 200, height: 30, text: "", lineHeight: 20 }),
+    makeTextNode({ id: "2:4", x: 260, y: 50, width: 60, height: 80, text: "Hello World", fontSize: 16, lineHeight: 20 }),
+    makeRectNode({ id: "2:5", x: 50, y: 310, width: 150, height: 80 }),
+    makeRectNode({ id: "2:6", type: "ELLIPSE", x: 130, y: 330, width: 120, height: 80 }),
+    makeRectNode({ id: "2:7", type: "LINE", x: 280, y: 455, width: 120, height: 40 }),
     makeVectorNode(),
     makeComponentInstanceNode(),
     makeSectionNode(),
@@ -662,6 +699,7 @@ const toolbarStyle: CSSProperties = {
 function App() {
   const renderer = resolveRendererFromLocation(window.location);
   const panelMode = resolvePanelModeFromLocation(window.location);
+  const webglInitializationDelayMs = resolveWebGLInitializationDelayMsFromLocation(window.location);
   return (
     <FigEditorProvider initialDocument={testDocument}>
       <div style={containerStyle}>
@@ -675,7 +713,7 @@ function App() {
               <LayerPanel />
             </aside>
           )}
-          <FigEditorCanvas renderer={renderer} fontLoader={TEST_FONT_LOADER} />
+          <FigEditorCanvas renderer={renderer} fontLoader={TEST_FONT_LOADER} webglInitializationDelayMs={webglInitializationDelayMs} />
           {(panelMode === "property" || panelMode === "all") && (
             <aside aria-label="Properties" style={propertyPanelStyle}>
               <PropertyPanel />
@@ -703,6 +741,18 @@ function resolveRendererFromLocation(location: Location): FigEditorRendererKind 
     return renderer;
   }
   return "svg";
+}
+
+function resolveWebGLInitializationDelayMsFromLocation(location: Location): number | undefined {
+  const delay = new URLSearchParams(location.search).get("webglInitializationDelayMs");
+  if (delay === null) {
+    return undefined;
+  }
+  const value = Number(delay);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("webglInitializationDelayMs must be a non-negative number");
+  }
+  return value;
 }
 
 createRoot(document.getElementById("root")!).render(

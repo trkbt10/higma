@@ -89,6 +89,59 @@ test.describe("Fig editor WebGL text editing", () => {
     expect(selectionRects[0].width).toBeGreaterThan(30);
     expect(selectionRects[0].y).toBeGreaterThan(15);
   });
+
+  test("creates and edits a new WebGL text node with explicit font metrics", async ({ page }) => {
+    const canvas = page.locator("canvas");
+    const beforePixels = await canvas.evaluate((node) => node.toDataURL("image/png"));
+
+    await createTextNodeByDrag(page);
+    await page.locator("textarea").waitFor({ state: "attached" });
+    await fillHiddenCanvasTextarea(page, "New WebGL text");
+
+    await expect.poll(
+      () => canvas.evaluate((node) => node.toDataURL("image/png")),
+      { timeout: 5_000 },
+    ).not.toBe(beforePixels);
+    await expect.poll(() => page.locator("textarea").inputValue()).toBe("New WebGL text");
+  });
+});
+
+test.describe("Fig editor WebGL initialization performance", () => {
+  test("shows a loading layer while heavy WebGL initialization is pending", async ({ page }) => {
+    await page.goto("/?renderer=webgl&webglInitializationDelayMs=3000");
+
+    const canvas = page.locator("canvas");
+    const loading = page.locator("[data-webgl-loading='true']");
+    await expect(loading).toBeVisible();
+    await expect(canvas).toHaveAttribute("data-webgl-ready", "false");
+
+    await expect(loading).toBeHidden({ timeout: 10_000 });
+    await expect(canvas).toHaveAttribute("data-webgl-ready", "true");
+
+    const metrics = await readWebGLMetrics(page);
+    expect(metrics.prepareCount).toBeGreaterThanOrEqual(1);
+    expect(metrics.renderCount).toBeGreaterThanOrEqual(1);
+    expect(metrics.lastPrepareMs).toBeGreaterThanOrEqual(0);
+    expect(metrics.lastRenderMs).toBeGreaterThanOrEqual(0);
+    expect(metrics.lastRenderMs).toBeLessThan(100);
+  });
+
+  test("keeps viewport movement on the cached WebGL resource path", async ({ page }) => {
+    await page.goto("/?renderer=webgl");
+    await waitForReadyWebGLCanvas(page);
+    await switchWebGLViewportToFixedZoom(page);
+
+    const before = await readWebGLMetrics(page);
+    await panWebGLViewport(page);
+    await expect.poll(
+      () => readWebGLMetrics(page).then((metrics) => metrics.renderCount),
+      { timeout: 5_000 },
+    ).toBeGreaterThan(before.renderCount);
+
+    const after = await readWebGLMetrics(page);
+    expect(after.prepareCount).toBe(before.prepareCount);
+    expect(after.lastRenderMs).toBeLessThan(100);
+  });
 });
 
 async function waitForWebGLEditor(page: Page): Promise<void> {
@@ -96,10 +149,96 @@ async function waitForWebGLEditor(page: Page): Promise<void> {
     () => {
       const canvas = document.querySelector("canvas");
       const hitArea = document.querySelector("rect[fill='transparent']");
-      return Boolean(canvas && hitArea);
+      return Boolean(canvas && hitArea && canvas.getAttribute("data-webgl-ready") === "true");
     },
     { timeout: 10_000 },
   );
+}
+
+async function waitForReadyWebGLCanvas(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => document.querySelector("canvas")?.getAttribute("data-webgl-ready") === "true",
+    { timeout: 10_000 },
+  );
+}
+
+async function readWebGLMetrics(page: Page): Promise<{
+  readonly prepareCount: number;
+  readonly renderCount: number;
+  readonly lastPrepareMs: number;
+  readonly lastRenderMs: number;
+}> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    if (!canvas) {
+      throw new Error("WebGL canvas was not found");
+    }
+    return {
+      prepareCount: Number(canvas.getAttribute("data-webgl-prepare-count")),
+      renderCount: Number(canvas.getAttribute("data-webgl-render-count")),
+      lastPrepareMs: Number(canvas.getAttribute("data-webgl-last-prepare-ms")),
+      lastRenderMs: Number(canvas.getAttribute("data-webgl-last-render-ms")),
+    };
+  });
+}
+
+async function panWebGLViewport(page: Page): Promise<void> {
+  const point = await resolveEditorViewportCenter(page);
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.wheel(120, 40);
+}
+
+async function switchWebGLViewportToFixedZoom(page: Page): Promise<void> {
+  const before = await readWebGLMetrics(page);
+  const point = await resolveEditorViewportCenter(page);
+  await page.mouse.move(point.x, point.y);
+  await page.keyboard.down("Meta");
+  await page.mouse.wheel(0, -120);
+  await page.keyboard.up("Meta");
+  await expect.poll(
+    () => readWebGLMetrics(page).then((metrics) => metrics.renderCount),
+    { timeout: 5_000 },
+  ).toBeGreaterThan(before.renderCount);
+}
+
+async function resolveEditorViewportCenter(page: Page): Promise<{ readonly x: number; readonly y: number }> {
+  return page.evaluate(() => {
+    const svg = Array.from(document.querySelectorAll("svg")).find((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.width > 500 && rect.height > 300;
+    }) ?? null;
+    if (!svg) {
+      throw new Error("Editor SVG viewport was not found");
+    }
+    const rect = svg.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  });
+}
+
+async function createTextNodeByDrag(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Text" }).click();
+  const start = await resolveEditorViewportPoint(page, { xRatio: 0.58, yRatio: 0.42 });
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 160, start.y + 36, { steps: 4 });
+  await page.mouse.up();
+}
+
+async function resolveEditorViewportPoint(
+  page: Page,
+  point: { readonly xRatio: number; readonly yRatio: number },
+): Promise<{ readonly x: number; readonly y: number }> {
+  return page.evaluate(({ xRatio, yRatio }) => {
+    const svg = Array.from(document.querySelectorAll("svg")).find((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.width > 500 && rect.height > 300;
+    }) ?? null;
+    if (!svg) {
+      throw new Error("Editor SVG viewport was not found");
+    }
+    const rect = svg.getBoundingClientRect();
+    return { x: rect.left + rect.width * xRatio, y: rect.top + rect.height * yRatio };
+  }, point);
 }
 
 async function doubleClickNode(

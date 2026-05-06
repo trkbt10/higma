@@ -1,9 +1,13 @@
 /** @file SceneGraph construction hook for fig editor canvas renderers. */
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import type { FigImage } from "@higma-document-models/fig/domain";
-import { buildSceneGraph, type BuildSceneGraphOptions } from "@higma-document-renderers/fig/scene-graph";
+import {
+  buildSceneGraphWithCache,
+  type BuildSceneGraphOptions,
+  type SceneGraphBuildCache,
+} from "@higma-document-renderers/fig/scene-graph";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 
 export type UseFigSceneGraphParams = {
@@ -21,6 +25,62 @@ export type UseFigSceneGraphParams = {
   readonly textFontResolver?: TextFontResolver;
 };
 
+type SceneGraphCacheRef = {
+  readonly images: ReadonlyMap<string, FigImage>;
+  readonly blobs: BuildSceneGraphOptions["blobs"];
+  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly styleRegistry: FigStyleRegistry;
+  readonly textFontResolver: TextFontResolver | undefined;
+  readonly cache: SceneGraphBuildCache;
+};
+
+function canReuseSceneGraphCache({
+  previous,
+  images,
+  blobs,
+  symbolMap,
+  styleRegistry,
+  textFontResolver,
+}: {
+  readonly previous: SceneGraphCacheRef | undefined;
+  readonly images: ReadonlyMap<string, FigImage>;
+  readonly blobs: BuildSceneGraphOptions["blobs"];
+  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly styleRegistry: FigStyleRegistry;
+  readonly textFontResolver: TextFontResolver | undefined;
+}): boolean {
+  return !!previous
+    && previous.images === images
+    && previous.blobs === blobs
+    && previous.symbolMap === symbolMap
+    && previous.styleRegistry === styleRegistry
+    && previous.textFontResolver === textFontResolver;
+}
+
+function resolvePreviousSceneGraphCache({
+  previous,
+  images,
+  blobs,
+  symbolMap,
+  styleRegistry,
+  textFontResolver,
+}: {
+  readonly previous: SceneGraphCacheRef | undefined;
+  readonly images: ReadonlyMap<string, FigImage>;
+  readonly blobs: BuildSceneGraphOptions["blobs"];
+  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly styleRegistry: FigStyleRegistry;
+  readonly textFontResolver: TextFontResolver | undefined;
+}): SceneGraphBuildCache | undefined {
+  if (!previous) {
+    return undefined;
+  }
+  if (!canReuseSceneGraphCache({ previous, images, blobs, symbolMap, styleRegistry, textFontResolver })) {
+    return undefined;
+  }
+  return previous.cache;
+}
+
 /** Build the renderer-neutral SceneGraph consumed by React, SVG, and WebGL. */
 export function useFigSceneGraph({
   page,
@@ -36,12 +96,22 @@ export function useFigSceneGraph({
   styleRegistry,
   textFontResolver,
 }: UseFigSceneGraphParams) {
+  const cacheRef = useRef<SceneGraphCacheRef | undefined>(undefined);
   const contentSceneGraph = useMemo(() => {
     if (!page || page.children.length === 0) {
       return null;
     }
 
-    return buildSceneGraph(page.children, {
+    const previous = resolvePreviousSceneGraphCache({
+      previous: cacheRef.current,
+      images,
+      blobs,
+      symbolMap,
+      styleRegistry,
+      textFontResolver,
+    });
+
+    const result = buildSceneGraphWithCache(page.children, {
       blobs,
       images,
       canvasSize: { width: 0, height: 0 },
@@ -51,7 +121,16 @@ export function useFigSceneGraph({
       showHiddenNodes: false,
       warnings: [],
       textFontResolver,
-    });
+    }, previous);
+    cacheRef.current = {
+      images,
+      blobs,
+      symbolMap,
+      styleRegistry,
+      textFontResolver,
+      cache: result.cache,
+    };
+    return result.sceneGraph;
   }, [page, images, blobs, symbolMap, styleRegistry, textFontResolver]);
 
   return useMemo(() => {

@@ -43,4 +43,9 @@ export type {
 export { WRAPPER_ATTRS_FIELDS } from "./types";
 
 // Resolver
-export { resolveRenderTree } from "./resolve";
+export {
+  resolveRenderTree,
+  resolveRenderTreeIncremental,
+  type RenderTreeResolutionCache,
+  type RenderTreeResolutionResult,
+} from "./resolve";

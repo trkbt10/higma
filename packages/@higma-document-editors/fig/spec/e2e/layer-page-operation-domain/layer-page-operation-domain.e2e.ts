@@ -60,7 +60,7 @@ test.describe("Fig editor layer and page panels operation domain", () => {
 
 async function waitForEditor(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => Boolean(document.querySelector("img[src^='data:image/svg+xml']") && document.querySelector("rect[fill='transparent']")),
+    () => Boolean(document.querySelector("svg[aria-hidden='true']") && document.querySelector("rect[fill='transparent']")),
     { timeout: 10_000 },
   );
 }

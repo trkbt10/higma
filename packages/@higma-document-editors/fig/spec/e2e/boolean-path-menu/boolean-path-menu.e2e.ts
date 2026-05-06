@@ -18,14 +18,12 @@ test.describe("Fig editor boolean path context menu", () => {
     await expect(page.getByRole("menuitem", { name: "Union Selection" })).toHaveCSS("opacity", "1");
     await page.getByRole("menuitem", { name: "Union Selection" }).click();
     await page.waitForFunction(() => {
-      const svgImage = document.querySelector<HTMLImageElement>("img[src^='data:image/svg+xml']");
-      const svg = svgImage?.src ? decodeURIComponent(svgImage.src.substring(svgImage.src.indexOf(",") + 1)) : "";
+      const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']")?.outerHTML ?? "";
       return svg.includes("<path");
     });
 
     const result = await page.evaluate(() => {
-      const svgImage = document.querySelector<HTMLImageElement>("img[src^='data:image/svg+xml']");
-      const svg = svgImage?.src ? decodeURIComponent(svgImage.src.substring(svgImage.src.indexOf(",") + 1)) : "";
+      const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']")?.outerHTML ?? "";
       const hitAreas = Array.from(document.querySelectorAll<SVGRectElement>("rect[fill='transparent']")).map((rect) => ({
         x: Number(rect.getAttribute("x")),
         y: Number(rect.getAttribute("y")),
@@ -44,7 +42,7 @@ test.describe("Fig editor boolean path context menu", () => {
 async function waitForSvgEditor(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
-      const image = document.querySelector("img[src^='data:image/svg+xml']");
+      const image = document.querySelector("svg[aria-hidden='true']");
       const hitArea = document.querySelector("rect[fill='transparent']");
       return Boolean(image && hitArea);
     },

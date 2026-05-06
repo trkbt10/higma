@@ -62,7 +62,7 @@ test.describe("Fig editor property panel operation domain", () => {
 
 async function waitForEditor(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => Boolean(document.querySelector("img[src^='data:image/svg+xml']") && document.querySelector("rect[fill='transparent']")),
+    () => Boolean(document.querySelector("svg[aria-hidden='true']") && document.querySelector("rect[fill='transparent']")),
     { timeout: 10_000 },
   );
 }
@@ -99,7 +99,7 @@ async function setColorInput(locator: Locator, value: string): Promise<void> {
 
 async function countRenderedRedFills(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const img = Array.from(document.querySelectorAll<HTMLImageElement>("img[src^='data:image/svg+xml']")).reduce<HTMLImageElement | null>((best, candidate) => {
+    const svg = Array.from(document.querySelectorAll<SVGSVGElement>("svg[aria-hidden='true']")).reduce<SVGSVGElement | null>((best, candidate) => {
       const rect = candidate.getBoundingClientRect();
       if (!best) {
         return candidate;
@@ -107,11 +107,10 @@ async function countRenderedRedFills(page: Page): Promise<number> {
       const bestRect = best.getBoundingClientRect();
       return rect.width * rect.height > bestRect.width * bestRect.height ? candidate : best;
     }, null);
-    if (!img) {
-      throw new Error("SVG renderer image was not found");
+    if (!svg) {
+      throw new Error("SVG renderer tree was not found");
     }
-    const svg = decodeURIComponent(img.src.substring(img.src.indexOf(",") + 1));
-    const fills = Array.from(svg.matchAll(/fill="([^"]+)"/g)).map((match) => match[1]?.replace(/\s+/g, "").toLowerCase());
+    const fills = Array.from(svg.outerHTML.matchAll(/fill="([^"]+)"/g)).map((match) => match[1]?.replace(/\s+/g, "").toLowerCase());
     return fills.filter((fill) => fill === "rgb(255,0,0)" || fill === "rgba(255,0,0,1)" || fill === "#ff0000").length;
   });
 }

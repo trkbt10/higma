@@ -103,6 +103,7 @@ export type TextNodeSpec = BaseNodeSpec & {
   readonly fontSize?: number;
   readonly fontFamily?: string;
   readonly fontStyle?: string;
+  readonly lineHeight?: number;
   readonly textAlignHorizontal?: KiwiEnumValue;
   readonly textAlignVertical?: KiwiEnumValue;
 };

@@ -257,10 +257,11 @@ type FigEditorCanvasProps = {
   readonly canvasOverlay?: ReactNode;
   readonly renderer?: FigEditorRendererKind;
   readonly fontLoader?: CachingFontLoader;
+  readonly webglInitializationDelayMs?: number;
 };
 
 /** Render the interactive fig editor canvas with selectable renderer backends. */
-export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }: FigEditorCanvasProps = {}) {
+export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, webglInitializationDelayMs }: FigEditorCanvasProps = {}) {
   const {
     dispatch,
     document,
@@ -1542,6 +1543,9 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
     if (!bounds) {
       return undefined;
     }
+    if (!textFontResolver) {
+      return undefined;
+    }
 
     return (
       <FigTextEditOverlay
@@ -1550,10 +1554,11 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
         bounds={bounds}
         canvasWidth={canvasSize.width}
         canvasHeight={canvasSize.height}
+        textFontResolver={textFontResolver}
         dispatch={dispatch}
       />
     );
-  }, [textEdit, activePage, canvasSize, dispatch]);
+  }, [textEdit, activePage, canvasSize, textFontResolver, dispatch]);
 
   // =========================================================================
   // Determine if rotate handle should show
@@ -1593,10 +1598,11 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader }:
         viewportScale={viewportScale}
         viewportPlacement="screen"
         webglPlacement="screen"
+        webglInitializationDelayMs={webglInitializationDelayMs}
         textFontResolver={textFontResolver}
       />
     );
-  }, [activePage, sceneGraph, renderer, renderWindow, document.images, document.blobs, document.components, document.styleRegistry, viewportScale, textFontResolver]);
+  }, [activePage, sceneGraph, renderer, renderWindow, document.images, document.blobs, document.components, document.styleRegistry, viewportScale, webglInitializationDelayMs, textFontResolver]);
 
   const handleViewportChange = useCallback((viewport: EditorCanvasViewportContentContext["viewport"], context: EditorCanvasViewportContentContext) => {
     setViewportScale(viewport.scale);

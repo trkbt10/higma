@@ -25,6 +25,15 @@ const SHADER_SOURCES: Record<ShaderProgramName, ShaderSources> = {
   textured: { vertex: texturedVertexShader, fragment: texturedFragmentShader },
 };
 
+const SHADER_PROGRAM_NAMES: readonly ShaderProgramName[] = [
+  "flat",
+  "linearGradient",
+  "radialGradient",
+  "angularGradient",
+  "diamondGradient",
+  "textured",
+];
+
 /**
  * Compile a shader from source
  */
@@ -92,6 +101,12 @@ function createProgram(
 export type ShaderCache = {
   /** Get (or compile) a shader program by name */
   get(name: ShaderProgramName): WebGLProgram;
+  /** Compile every known shader program before interactive rendering starts. */
+  precompileAll(): void;
+  /** Get and cache an attribute location for a compiled program. */
+  getAttribLocation(programName: ShaderProgramName, attributeName: string): number;
+  /** Get and cache a uniform location for a compiled program. */
+  getUniformLocation(programName: ShaderProgramName, uniformName: string): WebGLUniformLocation | null;
   /** Dispose all cached programs */
   dispose(): void;
 };
@@ -99,16 +114,55 @@ export type ShaderCache = {
 /** Create a shader cache that lazily compiles and caches shader programs */
 export function createShaderCache(gl: WebGLRenderingContext): ShaderCache {
   const programs = new Map<ShaderProgramName, WebGLProgram>();
+  const attribLocations = new Map<string, number>();
+  const uniformLocations = new Map<string, WebGLUniformLocation | null>();
+
+  function programLocationKey(programName: ShaderProgramName, locationName: string): string {
+    return `${programName}:${locationName}`;
+  }
+
+  function getProgram(name: ShaderProgramName): WebGLProgram {
+    const cached = programs.get(name);
+    if (cached) {
+      return cached;
+    }
+
+    const sources = SHADER_SOURCES[name];
+    const program = createProgram(gl, sources.vertex, sources.fragment);
+    programs.set(name, program);
+    return program;
+  }
 
   return {
     get(name) {
-      const programRef = { value: programs.get(name) };
-      if (!programRef.value) {
-        const sources = SHADER_SOURCES[name];
-        programRef.value = createProgram(gl, sources.vertex, sources.fragment);
-        programs.set(name, programRef.value);
+      return getProgram(name);
+    },
+
+    precompileAll() {
+      for (const name of SHADER_PROGRAM_NAMES) {
+        getProgram(name);
       }
-      return programRef.value;
+    },
+
+    getAttribLocation(programName, attributeName) {
+      const key = programLocationKey(programName, attributeName);
+      const cached = attribLocations.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const location = gl.getAttribLocation(getProgram(programName), attributeName);
+      attribLocations.set(key, location);
+      return location;
+    },
+
+    getUniformLocation(programName, uniformName) {
+      const key = programLocationKey(programName, uniformName);
+      if (uniformLocations.has(key)) {
+        return uniformLocations.get(key) ?? null;
+      }
+      const location = gl.getUniformLocation(getProgram(programName), uniformName);
+      uniformLocations.set(key, location);
+      return location;
     },
 
     dispose() {
@@ -116,6 +170,8 @@ export function createShaderCache(gl: WebGLRenderingContext): ShaderCache {
         gl.deleteProgram(program);
       }
       programs.clear();
+      attribLocations.clear();
+      uniformLocations.clear();
     },
   };
 }

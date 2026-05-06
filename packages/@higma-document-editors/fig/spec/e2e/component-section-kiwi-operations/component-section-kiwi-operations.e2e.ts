@@ -110,7 +110,7 @@ test.describe("Fig editor Kiwi-backed component and section operations", () => {
 
 async function waitForEditor(page: Page): Promise<void> {
   await page.waitForFunction(
-    () => Boolean(document.querySelector("img[src^='data:image/svg+xml']") && document.querySelector("rect[fill='transparent']")),
+    () => Boolean(document.querySelector("svg[aria-hidden='true']") && document.querySelector("rect[fill='transparent']")),
     { timeout: 10_000 },
   );
 }
@@ -157,13 +157,13 @@ async function nodeScreenPoint(
 }
 
 async function decodedSvgImage(page: Page): Promise<string> {
-  await page.waitForSelector("img[src^='data:image/svg+xml']", { timeout: 5_000 });
+  await page.waitForSelector("svg[aria-hidden='true']", { timeout: 5_000 });
   return page.evaluate(() => {
-    const svgImage = document.querySelector<HTMLImageElement>("img[src^='data:image/svg+xml']");
-    if (!svgImage?.src) {
-      throw new Error("Rendered SVG image was not found");
+    const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']");
+    if (!svg) {
+      throw new Error("Rendered SVG tree was not found");
     }
-    return decodeURIComponent(svgImage.src.substring(svgImage.src.indexOf(",") + 1));
+    return svg.outerHTML;
   });
 }
 

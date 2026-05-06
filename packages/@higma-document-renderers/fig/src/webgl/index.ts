@@ -5,7 +5,13 @@
  */
 
 // Main renderer
-export { createWebGLFigmaRenderer, type WebGLFigmaRendererInstance, type WebGLRendererOptions } from "./renderer";
+export {
+  createWebGLFigmaRenderer,
+  type WebGLFigmaRendererInstance,
+  type WebGLRendererOptions,
+  type WebGLFigmaRendererMetrics,
+} from "./renderer";
+export { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "./resource-context";
 
 // Tessellation
 export {
