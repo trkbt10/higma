@@ -84,7 +84,6 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
     const html = await renderPage({ page: doc.pages[0], width: 1200, height: 800, renderer: "webgl" });
     expect(html).toContain("<canvas");
     expect(html).toContain("data-webgl-ready=\"false\"");
-    expect(html).toContain("data-webgl-loading=\"true\"");
   });
 
   it("keeps the SVG viewport image screen-aligned when a viewport window is supplied", async () => {

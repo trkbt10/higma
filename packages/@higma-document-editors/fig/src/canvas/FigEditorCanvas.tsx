@@ -31,8 +31,7 @@ import { EditorCanvas } from "@higma-editor-surfaces/controls/canvas";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
 import type { ResizeHandlePosition } from "@higma-editor-kernel/core/geometry";
 import type { DragState } from "@higma-editor-kernel/core/drag-state";
-import { isDragThresholdExceeded } from "@higma-editor-kernel/core/drag-utils";
-import type { FigNodeId, FigDesignNode } from "@higma-document-models/fig/domain";
+import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import { findNodeById } from "@higma-document-io/fig/node-ops";
 import { useFigEditor, useFigDrag } from "../context/FigEditorContext";
@@ -41,9 +40,11 @@ import type { FigEditorRendererKind } from "./rendering/renderer-kind";
 import { useFigSceneGraph } from "./rendering/use-fig-scene-graph";
 import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
 import { resolveViewportRenderWindow } from "./rendering/viewport-render-plan";
-import { computeAbsoluteTransform, filterMarqueeSelectionByHierarchy, flattenAllNodeBounds } from "./interaction/bounds";
+import { computeAbsoluteTransform, flattenAllNodeBounds } from "./interaction/bounds";
 import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
-import { resolveCanvasInteractionTarget, type CanvasTargetMode } from "./interaction/target-resolution";
+import { resolveInteractionTargetNodeId, resolveSelectableMarqueeIds } from "./interaction/selection-resolution";
+import { exceedsThreshold } from "./interaction/drag-threshold";
+import { computeCanvasBoundsFromNodes } from "./layout/canvas-bounds";
 import {
   getVectorPathHandleCursor,
   orderVectorPathHandlesForHitTesting,
@@ -83,6 +84,7 @@ import {
   type VectorPathDraftOperationResult,
   type VectorPathDraftSession,
 } from "../vector-path/draft";
+import { getVectorPathDraftHandleLabel } from "../vector-path/draft-labels";
 import type { MenuEntry } from "@higma-editor-kernel/ui/context-menu";
 import { ContextMenu } from "@higma-editor-kernel/ui/context-menu";
 import type { CachingFontLoader } from "@higma-document-renderers/fig/font";
@@ -93,99 +95,12 @@ import { allowsFigUserOperation, resolveFigUserOperationDomain } from "../contex
 // Canvas bounds computation
 // =============================================================================
 
-/** Minimum canvas size to prevent degenerate viewports */
-const MIN_CANVAS_SIZE = 800;
-/** Padding around content for breathing room */
-const CANVAS_PADDING = 200;
 const VECTOR_PATH_CLOSE_TOLERANCE_PX = 8;
 const VECTOR_PATH_HANDLE_DRAG_THRESHOLD_PX = 3;
 const MIN_RENDER_WINDOW_SIZE = 1;
 
-/**
- * Compute canvas dimensions that enclose all nodes with padding.
- *
- * Unlike PPTX where canvas = slide size (fixed), the fig canvas
- * size is the bounding box of all content + padding.
- * This ensures fit-to-view works correctly for any page content.
- */
-function computeCanvasBoundsFromNodes(nodes: readonly FigDesignNode[]): {
-  width: number;
-  height: number;
-  renderX: number;
-  renderY: number;
-  renderWidth: number;
-  renderHeight: number;
-} {
-  if (nodes.length === 0) {
-    return {
-      width: MIN_CANVAS_SIZE,
-      height: MIN_CANVAS_SIZE,
-      renderX: 0,
-      renderY: 0,
-      renderWidth: MIN_CANVAS_SIZE,
-      renderHeight: MIN_CANVAS_SIZE,
-    };
-  }
-
-  const extremes = nodes.reduce(
-    (acc, node) => {
-      const left = node.transform.m02;
-      const top = node.transform.m12;
-      const right = node.transform.m02 + node.size.x;
-      const bottom = node.transform.m12 + node.size.y;
-      return {
-        minLeft: Math.min(acc.minLeft, left),
-        minTop: Math.min(acc.minTop, top),
-        maxRight: Math.max(acc.maxRight, right),
-        maxBottom: Math.max(acc.maxBottom, bottom),
-      };
-    },
-    { minLeft: 0, minTop: 0, maxRight: 0, maxBottom: 0 },
-  );
-
-  return {
-    width: Math.max(MIN_CANVAS_SIZE, extremes.maxRight + CANVAS_PADDING),
-    height: Math.max(MIN_CANVAS_SIZE, extremes.maxBottom + CANVAS_PADDING),
-    renderX: extremes.minLeft - CANVAS_PADDING,
-    renderY: extremes.minTop - CANVAS_PADDING,
-    renderWidth: Math.max(MIN_CANVAS_SIZE, extremes.maxRight - extremes.minLeft + CANVAS_PADDING * 2),
-    renderHeight: Math.max(MIN_CANVAS_SIZE, extremes.maxBottom - extremes.minTop + CANVAS_PADDING * 2),
-  };
-}
-
-function resolveSelectableMarqueeIds({
-  activePage,
-  itemIds,
-}: {
-  readonly activePage: { readonly children: readonly FigDesignNode[] } | null | undefined;
-  readonly itemIds: readonly string[];
-}): readonly string[] {
-  if (!activePage) {
-    return itemIds;
-  }
-  return filterMarqueeSelectionByHierarchy(activePage.children, itemIds);
-}
-
 /** Identity clamp — infinite canvas has no viewport boundaries */
 const NO_CLAMP = (vp: { translateX: number; translateY: number; scale: number }) => vp;
-
-type ExceedsThresholdOptions = {
-  readonly startClientX: number;
-  readonly startClientY: number;
-  readonly clientX: number;
-  readonly clientY: number;
-};
-
-function exceedsThreshold(
-  { startClientX, startClientY, clientX, clientY }: ExceedsThresholdOptions,
-): boolean {
-  return isDragThresholdExceeded({
-    startX: startClientX,
-    startY: startClientY,
-    currentX: clientX,
-    currentY: clientY,
-  });
-}
 
 // =============================================================================
 // Context menu state
@@ -199,39 +114,6 @@ type ContextMenuState = {
   readonly targetId: FigNodeId;
   readonly vectorHandle?: VectorPathHandle;
 } | null;
-
-function resolveInteractionTargetNodeId({
-  activePage,
-  itemBounds,
-  hitNodeId,
-  targetMode,
-  point,
-}: {
-  readonly activePage: { readonly children: readonly FigDesignNode[] } | null | undefined;
-  readonly itemBounds: readonly { readonly id: string; readonly x: number; readonly y: number; readonly width: number; readonly height: number }[];
-  readonly hitNodeId: FigNodeId;
-  readonly targetMode: CanvasTargetMode;
-  readonly point: { readonly x: number; readonly y: number };
-}): FigNodeId {
-  if (!activePage) {
-    return hitNodeId;
-  }
-  return resolveCanvasInteractionTarget({
-    pageChildren: activePage.children,
-    itemBounds,
-    point,
-    hitNodeId,
-    mode: targetMode,
-    canEditPath: canEnterVectorPathEdit,
-  });
-}
-
-function getVectorPathDraftHandleLabel(handle: VectorPathDraftHandle): string {
-  if (handle.role === "anchor") {
-    return `Draft vector path anchor handle ${handle.index + 1}`;
-  }
-  return `Draft vector path control handle ${handle.index + 1}`;
-}
 
 // =============================================================================
 // Component

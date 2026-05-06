@@ -10,7 +10,7 @@ import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-m
 import type { FigImage } from "@higma-document-models/fig/domain";
 import type { BuildSceneGraphOptions, SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { useFigSceneGraph } from "./use-fig-scene-graph";
-import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";
+import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
 import { FigSvgViewportScene } from "./FigSvgViewportScene";
 import type { FigEditorRendererKind } from "./renderer-kind";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
@@ -109,7 +109,7 @@ export function FigPageRenderer({
       return <FigSvgViewportScene sceneGraph={sceneGraph} placement={viewportPlacement ?? "world"} />;
     case "webgl":
       return (
-        <FigWebGLViewportCanvas
+        <FigWebGLViewportLayer
           sceneGraph={sceneGraph}
           viewportScale={viewportScale}
           placement={viewportPlacement ?? webglPlacement}

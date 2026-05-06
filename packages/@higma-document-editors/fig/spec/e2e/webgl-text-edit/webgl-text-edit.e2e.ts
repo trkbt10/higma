@@ -112,7 +112,12 @@ test.describe("Fig editor WebGL initialization performance", () => {
 
     const canvas = page.locator("canvas");
     const loading = page.locator("[data-webgl-loading='true']");
+    const progress = loading.getByRole("progressbar", { name: "WebGL resource preparation progress" });
     await expect(loading).toBeVisible();
+    await expect(loading).toHaveAttribute("data-webgl-loading-phase", "scheduled");
+    await expect(loading).not.toHaveText("Preparing WebGL canvas");
+    await expect(progress).toHaveAttribute("aria-valuemin", "0");
+    await expect(progress).toHaveAttribute("aria-valuemax", "3");
     await expect(canvas).toHaveAttribute("data-webgl-ready", "false");
 
     await expect(loading).toBeHidden({ timeout: 10_000 });

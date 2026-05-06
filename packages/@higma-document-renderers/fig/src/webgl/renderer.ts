@@ -57,7 +57,6 @@ import type { ResolvedFillDef } from "../scene-graph/render/fill";
 
 import {
   generateRectVertices,
-  generateEllipseVertices,
   tessellateContours,
 } from "./tessellation";
 import {
@@ -76,7 +75,6 @@ import {
   tessellateRectStroke,
   tessellateRectAlignedStroke,
   tessellateEllipseStroke,
-  tessellatePathStroke,
 } from "./stroke-tessellation";
 import { createEffectsRenderer } from "./effects-renderer";
 import { buildEffectStack, renderShapeEffectStack } from "../scene-graph/render/effect-stack";
@@ -95,6 +93,7 @@ import { flattenPathCommands } from "./tessellation";
 import { syncWebGLCanvasRenderSurface } from "./render-surface";
 import { createWebGLPathFillPlan, type WebGLPathFillRule } from "./render-path-fill-plan";
 import { hasVisibleLineText } from "./text-visibility";
+import { createWebGLGeometryCache } from "./geometry-cache";
 
 /** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
 function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
@@ -183,13 +182,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     throw new Error("Failed to create buffer");
   }
   const positionBuffer = buffer;
-  const geometryCache = {
-    rectVertices: new Map<string, Float32Array>(),
-    ellipseVertices: new Map<string, Float32Array>(),
-    pathGeometry: new WeakMap<RenderPathNode, PathGeometry>(),
-    pathStrokeVertices: new WeakMap<RenderPathNode, Map<string, Float32Array>>(),
-    textGlyphGeometry: new WeakMap<RenderTextNode, TextGlyphGeometry>(),
-  };
+  const geometryCache = createWebGLGeometryCache();
 
   // Enable blending for transparency
   gl.enable(gl.BLEND);
@@ -209,130 +202,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     };
   }
 
-  type PathGeometry = {
-    readonly parsedContours: readonly PathContour[];
-    readonly prepared: ReturnType<typeof prepareFanTriangles>;
-    readonly pathVertices: Float32Array;
-    readonly backgroundMaskVertices: Float32Array;
-  };
-
-  type TextGlyphGeometry = {
-    readonly contours: readonly PathContour[];
-    readonly vertices: Float32Array;
-    readonly prepared: ReturnType<typeof prepareFanTriangles>;
-  };
-
   type StencilFillRule = WebGLPathFillRule;
 
   type StencilPreparedGeometry = NonNullable<ReturnType<typeof prepareFanTriangles>>;
-
-  const maxGeometryCacheEntries = 2048;
-
-  function getCachedGeometry<T>(cache: Map<string, T>, key: string, create: () => T): T {
-    const cached = cache.get(key);
-    if (cached) {
-      return cached;
-    }
-    const value = create();
-    if (cache.size >= maxGeometryCacheEntries) {
-      const firstKey = cache.keys().next().value;
-      if (typeof firstKey === "string") {
-        cache.delete(firstKey);
-      }
-    }
-    cache.set(key, value);
-    return value;
-  }
-
-  function cornerRadiusCacheKey(cornerRadius: CornerRadius | undefined): string {
-    return Array.isArray(cornerRadius) ? cornerRadius.join(",") : `${cornerRadius ?? ""}`;
-  }
-
-  function getRectVertices(widthValue: number, heightValue: number, cornerRadius?: CornerRadius): Float32Array {
-    return getCachedGeometry(
-      geometryCache.rectVertices,
-      `${widthValue}:${heightValue}:${cornerRadiusCacheKey(cornerRadius)}`,
-      () => generateRectVertices(widthValue, heightValue, cornerRadius),
-    );
-  }
-
-  function getEllipseVertices({ cx, cy, rx, ry }: { readonly cx: number; readonly cy: number; readonly rx: number; readonly ry: number }): Float32Array {
-    return getCachedGeometry(
-      geometryCache.ellipseVertices,
-      `${cx}:${cy}:${rx}:${ry}`,
-      () => generateEllipseVertices({ cx, cy, rx, ry }),
-    );
-  }
-
-  function getPathGeometry(node: RenderPathNode): PathGeometry {
-    const cached = geometryCache.pathGeometry.get(node);
-    if (cached) {
-      return cached;
-    }
-    const value = (() => {
-      const parsedContours = node.paths.flatMap((rp) => svgPathDToContours({
-        d: rp.d,
-        windingRule: rp.fillRule ?? "nonzero",
-      }));
-      const usesEvenOddFill = parsedContours.some((contour) => contour.windingRule === "evenodd");
-      return {
-        parsedContours,
-        prepared: prepareFanTriangles(parsedContours, 0.25, !usesEvenOddFill),
-        pathVertices: new Float32Array(0),
-        backgroundMaskVertices: tessellateContours(parsedContours, 0.25, true),
-      };
-    })();
-    geometryCache.pathGeometry.set(node, value);
-    return value;
-  }
-
-  function getTextGlyphGeometry(node: RenderTextNode): TextGlyphGeometry {
-    const cached = geometryCache.textGlyphGeometry.get(node);
-    if (cached) {
-      return cached;
-    }
-    const value = (() => {
-      if (node.content.mode !== "glyphs") {
-        throw new Error(`WebGL text glyph geometry cache requires glyph content for text node ${node.id}`);
-      }
-      const contours = svgPathDToContours({ d: node.content.d });
-      return {
-        contours,
-        vertices: tessellateContours(contours, 0.1, true),
-        prepared: prepareFanTriangles(contours, 0.1),
-      };
-    })();
-    geometryCache.textGlyphGeometry.set(node, value);
-    return value;
-  }
-
-  function pathStrokeCacheKey(
-    { strokeWidth, dashPattern }: {
-      readonly strokeWidth: number;
-      readonly dashPattern?: readonly number[];
-    },
-  ): string {
-    return `${strokeWidth}\u001e${dashPattern?.join(",") ?? ""}`;
-  }
-
-  function getPathStrokeVertices(
-    { node, contours, strokeWidth, dashPattern }: {
-      readonly node: RenderPathNode;
-      readonly contours: readonly PathContour[];
-      readonly strokeWidth: number;
-      readonly dashPattern?: readonly number[];
-    },
-  ): Float32Array {
-    const cache = geometryCache.pathStrokeVertices.get(node) ?? new Map<string, Float32Array>();
-    if (!geometryCache.pathStrokeVertices.has(node)) {
-      geometryCache.pathStrokeVertices.set(node, cache);
-    }
-    return getCachedGeometry(
-      cache,
-      pathStrokeCacheKey({ strokeWidth, dashPattern }),
-      () => tessellatePathStroke(contours, strokeWidth, { dashPattern }),
-    );
-  }
 
   // =========================================================================
   // Image preloading — walk RenderTree, use source* fields for image data
@@ -928,10 +800,10 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   ): Float32Array {
     switch (shape.kind) {
       case "rect": {
-        return getRectVertices(shape.width, shape.height, shape.cornerRadius);
+        return geometryCache.getRectVertices(shape.width, shape.height, shape.cornerRadius);
       }
       case "ellipse":
-        return getEllipseVertices({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
+        return geometryCache.getEllipseVertices({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
       case "path": {
         const contours: PathContour[] = shape.paths.flatMap((p) => svgPathDToContours({
           d: p.d,
@@ -1188,7 +1060,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // Use RenderTree fields for dimensions and corner radius
     const elementSize = { width: node.width, height: node.height };
     const uniformCR = uniformRadiusForGL(node.cornerRadius);
-    const vertices = getRectVertices(node.width, node.height, node.cornerRadius);
+    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius);
     const effects = getSourceEffects(node);
 
     // Check if node has visible content — SVG filters operate on rendered content,
@@ -1269,7 +1141,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // Use RenderTree fields for dimensions
     const elementSize = { width: node.width, height: node.height };
     const uniformCR = uniformRadiusForGL(node.cornerRadius);
-    const vertices = getRectVertices(node.width, node.height, node.cornerRadius);
+    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius);
     const effects = getSourceEffects(node);
 
     // Skip effects when node has no visible content (fill=none + no stroke → empty silhouette)
@@ -1312,7 +1184,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
   function renderEllipseFromTree(node: RenderEllipseNode, transform: AffineMatrix, opacity: number): void {
     const elementSize = { width: node.rx * 2, height: node.ry * 2 };
-    const vertices = getEllipseVertices({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry });
+    const vertices = geometryCache.getEllipseVertices({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry });
     const effects = getSourceEffects(node);
 
     const hasVisibleContent = node.sourceFills.length > 0 || !!node.strokeRendering;
@@ -1361,7 +1233,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     if (!node.strokeRendering) { return; }
     const sr = node.strokeRendering;
     if (sr.mode === "uniform" && node.sourceStroke && node.sourceStroke.width > 0) {
-      const strokeVerts = getPathStrokeVertices({
+      const strokeVerts = geometryCache.getPathStrokeVertices({
         node,
         contours,
         strokeWidth: node.sourceStroke.width,
@@ -1380,7 +1252,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       for (const layer of sr.layers) {
         const strokeWidth = layer.attrs.strokeWidth ?? 1;
         if (strokeWidth <= 0) { continue; }
-        const strokeVerts = getPathStrokeVertices({
+        const strokeVerts = geometryCache.getPathStrokeVertices({
           node,
           contours,
           strokeWidth,
@@ -1402,7 +1274,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     if (sr.mode === "masked") {
       const strokeWidth = sr.attrs.strokeWidth ?? 1;
       if (strokeWidth <= 0) { return; }
-      const strokeVerts = getPathStrokeVertices({
+      const strokeVerts = geometryCache.getPathStrokeVertices({
         node,
         contours,
         strokeWidth,
@@ -1470,7 +1342,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const effectStack = buildEffectStack(effects);
 
     const hasVisibleContent = node.sourceFills.length > 0 || !!node.strokeRendering;
-    const { parsedContours, prepared, pathVertices, backgroundMaskVertices } = getPathGeometry(node);
+    const { parsedContours, prepared, pathVertices, backgroundMaskVertices } = geometryCache.getPathGeometry(node);
 
     renderShapeEffectStack({
       stack: effectStack,
@@ -1533,7 +1405,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       // Glyph path: parse the SVG path d string (SoT) and render via stencil.
       if (node.content.d.length === 0) { return; }
 
-      const { prepared } = getTextGlyphGeometry(node);
+      const { prepared } = geometryCache.getTextGlyphGeometry(node);
       if (prepared) {
         const { bounds } = prepared;
         const coverQuad = generateCoverQuad(bounds);
@@ -1557,7 +1429,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const entry = textureCache.getIfCached(imageTextureResource(node.sourceImageRef));
     if (!entry) { return; }
 
-    const vertices = getRectVertices(node.width, node.height);
+    const vertices = geometryCache.getRectVertices(node.width, node.height);
     const elementSize = { width: node.width, height: node.height };
     drawImageFill({
       ctx: getGlContext(), vertices, texture: entry.texture, transform, opacity, elementSize,
@@ -1635,8 +1507,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     dispose(): void {
       resourceContext.dispose();
       effectsRenderer.dispose();
-      geometryCache.rectVertices.clear();
-      geometryCache.ellipseVertices.clear();
+      geometryCache.dispose();
       gl.deleteBuffer(positionBuffer);
     },
   };

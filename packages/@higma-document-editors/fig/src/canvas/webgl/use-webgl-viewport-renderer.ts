@@ -1,37 +1,60 @@
-/** @file WebGL viewport canvas for the fig editor. */
+/** @file WebGL viewport renderer lifecycle and resource preparation hook. */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import {
   createWebGLFigmaRenderer,
   resolveWebGLViewportPixelRatio,
   type WebGLFigmaRendererInstance,
 } from "@higma-document-renderers/fig/webgl";
-import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "./viewport-render-plan";
 import { getWebGLSceneResourceKey, isWebGLSceneResourceKeyEqual, type WebGLSceneResourceKey } from "./webgl-scene-resource-key";
+import {
+  getWebGLViewportPreparationStatus,
+  type WebGLViewportPreparationStatus,
+} from "./webgl-viewport-preparation-status";
 
-type FigWebGLViewportCanvasProps = {
+type UseWebGLViewportRendererParams = {
   readonly sceneGraph: SceneGraph;
   readonly viewportScale: number;
-  readonly placement?: ViewportLayerPlacement;
   readonly initializationDelayMs?: number;
 };
 
-/** Render the WebGL backend as an inert viewport-aligned canvas layer. */
-export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = "world", initializationDelayMs }: FigWebGLViewportCanvasProps) {
+type PendingPrepare = {
+  readonly scene: SceneGraph;
+  readonly pixelRatio: number;
+};
+
+type LatestRender = {
+  readonly scene: SceneGraph;
+  readonly pixelRatio: number;
+};
+
+export type WebGLViewportRendererState = {
+  readonly canvasRef: RefObject<HTMLCanvasElement | null>;
+  readonly pixelRatio: number;
+  readonly isReady: boolean;
+  readonly status: WebGLViewportPreparationStatus;
+};
+
+/** Manage WebGL renderer creation, resource preparation, rendering, and metrics. */
+export function useWebGLViewportRenderer({
+  sceneGraph,
+  viewportScale,
+  initializationDelayMs,
+}: UseWebGLViewportRendererParams): WebGLViewportRendererState {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<WebGLFigmaRendererInstance | null>(null);
   const renderFrameRef = useRef<number | null>(null);
   const initializeFrameRef = useRef<number | null>(null);
   const initializeTimerRef = useRef<number | null>(null);
   const prepareRunningRef = useRef(false);
-  const pendingPrepareRef = useRef<{ readonly scene: SceneGraph; readonly pixelRatio: number } | null>(null);
-  const latestRenderRef = useRef<{ readonly scene: SceneGraph; readonly pixelRatio: number } | null>(null);
+  const pendingPrepareRef = useRef<PendingPrepare | null>(null);
+  const latestRenderRef = useRef<LatestRender | null>(null);
   const preparedResourceKeyRef = useRef<WebGLSceneResourceKey | null>(null);
-  const [isReady, setIsReady] = useState(false);
+  const disposedRef = useRef(false);
+  const [status, setStatus] = useState(() => getWebGLViewportPreparationStatus("scheduled"));
   const [devicePixelRatio, setDevicePixelRatio] = useState(() => typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
-  const frame = resolveViewportLayerFrame({ sceneGraph, placement });
-  const effectivePixelRatio = resolveWebGLViewportPixelRatio({
+  const pixelRatio = resolveWebGLViewportPixelRatio({
     devicePixelRatio,
     viewportScale,
     surfaceWidth: sceneGraph.width,
@@ -53,11 +76,18 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
   }, []);
 
   useEffect(() => {
+    disposedRef.current = false;
     const canvas = canvasRef.current;
     if (!canvas) { return; }
     if (initializationDelayMs !== undefined && (!Number.isFinite(initializationDelayMs) || initializationDelayMs < 0)) {
-      throw new Error("FigWebGLViewportCanvas requires a non-negative initializationDelayMs when provided");
+      throw new Error("useWebGLViewportRenderer requires a non-negative initializationDelayMs when provided");
     }
+
+    const setPhase = (phase: WebGLViewportPreparationStatus["phase"]) => {
+      if (!disposedRef.current) {
+        setStatus(getWebGLViewportPreparationStatus(phase));
+      }
+    };
 
     const cancelInitializationSchedule = () => {
       if (initializeFrameRef.current !== null && typeof window !== "undefined") {
@@ -70,11 +100,20 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       }
     };
 
+    const writeMetrics = (renderer: WebGLFigmaRendererInstance) => {
+      const metrics = renderer.getMetrics();
+      canvas.dataset.webglLastPrepareMs = metrics.lastPrepareMs.toFixed(3);
+      canvas.dataset.webglPrepareCount = `${metrics.prepareCount}`;
+      canvas.dataset.webglLastRenderMs = metrics.lastRenderMs.toFixed(3);
+      canvas.dataset.webglRenderCount = `${metrics.renderCount}`;
+    };
+
     const createRenderer = (): WebGLFigmaRendererInstance => {
+      setPhase("precompiling");
       const renderer = createWebGLFigmaRenderer({
         canvas,
         antialias: true,
-        pixelRatio: effectivePixelRatio,
+        pixelRatio,
         backgroundColor: { r: 0, g: 0, b: 0, a: 0 },
       });
       renderer.precompileResources();
@@ -82,23 +121,23 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       return renderer;
     };
 
-    latestRenderRef.current = { scene: sceneGraph, pixelRatio: effectivePixelRatio };
+    latestRenderRef.current = { scene: sceneGraph, pixelRatio };
 
-    const renderScene = (renderer: WebGLFigmaRendererInstance, scene: SceneGraph, pixelRatio: number) => {
+    const renderScene = (renderer: WebGLFigmaRendererInstance, scene: SceneGraph, nextPixelRatio: number) => {
       renderFrameRef.current = null;
-      renderer.setPixelRatio(pixelRatio);
+      setPhase("rendering");
+      renderer.setPixelRatio(nextPixelRatio);
       renderer.render(scene);
-      const metrics = renderer.getMetrics();
-      canvas.dataset.webglLastRenderMs = metrics.lastRenderMs.toFixed(3);
-      canvas.dataset.webglRenderCount = `${metrics.renderCount}`;
+      writeMetrics(renderer);
+      setPhase("ready");
     };
 
-    const requestRender = (renderer: WebGLFigmaRendererInstance, scene: SceneGraph, pixelRatio: number) => {
+    const requestRender = (renderer: WebGLFigmaRendererInstance, scene: SceneGraph, nextPixelRatio: number) => {
       if (renderFrameRef.current !== null) {
         window.cancelAnimationFrame(renderFrameRef.current);
       }
       renderFrameRef.current = window.requestAnimationFrame(() => {
-        renderScene(renderer, scene, pixelRatio);
+        renderScene(renderer, scene, nextPixelRatio);
       });
     };
 
@@ -112,22 +151,20 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       }
       pendingPrepareRef.current = null;
       prepareRunningRef.current = true;
+      setPhase("preparing-resources");
       const resourceKey = getWebGLSceneResourceKey(next.scene);
       void renderer.prepareScene(next.scene).then(
         () => {
           prepareRunningRef.current = false;
           preparedResourceKeyRef.current = resourceKey;
-          const prepareMetrics = renderer.getMetrics();
-          canvas.dataset.webglLastPrepareMs = prepareMetrics.lastPrepareMs.toFixed(3);
-          canvas.dataset.webglPrepareCount = `${prepareMetrics.prepareCount}`;
+          writeMetrics(renderer);
           const latest = latestRenderRef.current;
           if (latest?.scene === next.scene && latest.pixelRatio === next.pixelRatio) {
             renderer.setPixelRatio(next.pixelRatio);
+            setPhase("rendering");
             renderer.render(next.scene);
-            const renderMetrics = renderer.getMetrics();
-            canvas.dataset.webglLastRenderMs = renderMetrics.lastRenderMs.toFixed(3);
-            canvas.dataset.webglRenderCount = `${renderMetrics.renderCount}`;
-            setIsReady(true);
+            writeMetrics(renderer);
+            setPhase("ready");
           }
           runPrepareQueue(renderer);
         },
@@ -141,13 +178,12 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
     const renderWithResources = (renderer: WebGLFigmaRendererInstance) => {
       const resourceKey = getWebGLSceneResourceKey(sceneGraph);
       if (!isWebGLSceneResourceKeyEqual(preparedResourceKeyRef.current, resourceKey)) {
-        setIsReady(false);
-        pendingPrepareRef.current = { scene: sceneGraph, pixelRatio: effectivePixelRatio };
+        setPhase("scheduled");
+        pendingPrepareRef.current = { scene: sceneGraph, pixelRatio };
         runPrepareQueue(renderer);
         return;
       }
-      requestRender(renderer, sceneGraph, effectivePixelRatio);
-      setIsReady(true);
+      requestRender(renderer, sceneGraph, pixelRatio);
     };
 
     const initializeAndRender = () => {
@@ -162,6 +198,7 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
         return;
       }
       cancelInitializationSchedule();
+      setPhase("scheduled");
       const requestInitialize = () => {
         initializeFrameRef.current = window.requestAnimationFrame(initializeAndRender);
       };
@@ -181,10 +218,11 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
         renderFrameRef.current = null;
       }
     };
-  }, [sceneGraph, effectivePixelRatio, initializationDelayMs]);
+  }, [sceneGraph, pixelRatio, initializationDelayMs]);
 
   useEffect(() => {
     return () => {
+      disposedRef.current = true;
       if (renderFrameRef.current !== null && typeof window !== "undefined") {
         window.cancelAnimationFrame(renderFrameRef.current);
         renderFrameRef.current = null;
@@ -192,59 +230,16 @@ export function FigWebGLViewportCanvas({ sceneGraph, viewportScale, placement = 
       pendingPrepareRef.current = null;
       latestRenderRef.current = null;
       preparedResourceKeyRef.current = null;
-      setIsReady(false);
+      setStatus(getWebGLViewportPreparationStatus("scheduled"));
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
   }, []);
 
-  if (sceneGraph.width <= 0 || sceneGraph.height <= 0) {
-    return null;
-  }
-
-  if (!sceneGraph.viewport) {
-    throw new Error("FigWebGLViewportCanvas requires sceneGraph.viewport");
-  }
-
-  return (
-    <>
-    <canvas
-      ref={canvasRef}
-      width={Math.ceil(sceneGraph.width * effectivePixelRatio)}
-      height={Math.ceil(sceneGraph.height * effectivePixelRatio)}
-      data-webgl-ready={isReady ? "true" : "false"}
-      style={{
-        position: "absolute",
-        left: frame.left,
-        top: frame.top,
-        display: "block",
-        width: frame.width,
-        height: frame.height,
-      }}
-    />
-      {!isReady && (
-        <div
-          role="status"
-          aria-label="Preparing WebGL canvas"
-          data-webgl-loading="true"
-          style={{
-            position: "absolute",
-            left: frame.left,
-            top: frame.top,
-            width: frame.width,
-            height: frame.height,
-            display: "grid",
-            placeItems: "center",
-            background: "rgba(247, 249, 252, 0.92)",
-            color: "#1f2937",
-            fontSize: 13,
-            fontFamily: "inherit",
-            pointerEvents: "none",
-          }}
-        >
-          Preparing WebGL canvas
-        </div>
-      )}
-    </>
-  );
+  return {
+    canvasRef,
+    pixelRatio,
+    isReady: status.phase === "ready",
+    status,
+  };
 }
