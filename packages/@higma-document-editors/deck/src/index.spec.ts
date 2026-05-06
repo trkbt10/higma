@@ -23,12 +23,13 @@ const canvas: Parameters<typeof createDeckDocument>[0] = {
   message: {},
   nodeChanges: [
     { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 }, name: "Document" },
-    { type: "SLIDE_GRID", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
-    { type: "SLIDE_ROW", guid: { sessionID: 0, localID: 2 }, parentIndex: { guid: { sessionID: 0, localID: 1 } } },
-    { type: "SLIDE", guid: { sessionID: 0, localID: 3 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "SLIDE_GRID", guid: { sessionID: 0, localID: 1 }, name: "Grid", parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "SLIDE_ROW", guid: { sessionID: 0, localID: 2 }, name: "Row", parentIndex: { guid: { sessionID: 0, localID: 1 } } },
+    { type: "SLIDE", guid: { sessionID: 0, localID: 3 }, name: "Slide", parentIndex: { guid: { sessionID: 0, localID: 2 } } },
     {
       type: "INTERACTIVE_SLIDE_ELEMENT",
       guid: { sessionID: 0, localID: 4 },
+      name: "Button",
       parentIndex: { guid: { sessionID: 0, localID: 3 } },
     },
   ],
@@ -65,6 +66,24 @@ describe("createDeckEditorWorkspace", () => {
     expect(workspace.session.insights).toBe(insights);
     expect(workspace.renderPlan.insights).toBe(insights);
     expect(workspace.renderPlan.domainSummary.presentationNodeCount).toBe(4);
+    expect(workspace.editableUnits.map((unit) => ({
+      id: unit.id,
+      role: unit.role,
+      label: unit.label,
+      presentationScope: unit.presentationScope,
+      operationTarget: unit.operationTarget,
+    }))).toEqual([
+      { id: "0:1", role: "slide-grid", label: "Grid", presentationScope: "slide-grid", operationTarget: "presentation-structure" },
+      { id: "0:2", role: "slide-row", label: "Row", presentationScope: "slide-row", operationTarget: "presentation-structure" },
+      { id: "0:3", role: "slide", label: "Slide", presentationScope: "slide", operationTarget: "presentation-structure" },
+      {
+        id: "0:4",
+        role: "interactive-slide-element",
+        label: "Button",
+        presentationScope: "interactive-slide-element",
+        operationTarget: "presentation-structure",
+      },
+    ]);
     expect(workspace.overview).toEqual({
       nodeCount: 4,
       renderUnitCount: 4,

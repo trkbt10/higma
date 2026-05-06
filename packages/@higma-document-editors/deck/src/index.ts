@@ -4,7 +4,7 @@
 
 import { createDeckDomainSummary, type DeckDocument, type DeckDomainSummary } from "@higma-document-models/deck";
 import { loadDeckDocumentResult } from "@higma-document-io/deck";
-import { createDeckRenderPlan, type DeckRenderPlan } from "@higma-document-renderers/deck";
+import { createDeckRenderPlan, type DeckRenderPlan, type DeckRenderUnit } from "@higma-document-renderers/deck";
 import { createEditorSession, type EditorSession } from "@higma-editor-surfaces/sessions";
 
 export type DeckEditorSession = EditorSession<DeckDocument, "deck", DeckDocument["insights"]>;
@@ -26,10 +26,23 @@ export type DeckEditorOverview = {
   readonly domainSummary: DeckDomainSummary;
 };
 
+export type DeckEditableUnit = {
+  readonly kind: "deck-editable-unit";
+  readonly id: string;
+  readonly role: DeckRenderUnit["role"];
+  readonly label: string;
+  readonly parentId: string | null;
+  readonly childIds: readonly string[];
+  readonly depth: number;
+  readonly presentationScope: DeckRenderUnit["presentationScope"];
+  readonly operationTarget: "presentation-structure";
+};
+
 export type DeckEditorWorkspace = {
   readonly session: DeckEditorSession;
   readonly renderPlan: DeckRenderPlan;
   readonly overview: DeckEditorOverview;
+  readonly editableUnits: readonly DeckEditableUnit[];
 };
 
 function createDeckEditorOverview(document: DeckDocument, renderPlan: DeckRenderPlan): DeckEditorOverview {
@@ -51,6 +64,21 @@ function createDeckEditorOverview(document: DeckDocument, renderPlan: DeckRender
   };
 }
 
+/** Convert a deck render unit into the editor operation unit contract. */
+export function createDeckEditableUnit(unit: DeckRenderUnit): DeckEditableUnit {
+  return {
+    kind: "deck-editable-unit",
+    id: unit.id,
+    role: unit.role,
+    label: unit.label,
+    parentId: unit.parentId,
+    childIds: unit.childIds,
+    depth: unit.depth,
+    presentationScope: unit.presentationScope,
+    operationTarget: "presentation-structure",
+  };
+}
+
 /** Create a deck editor session from a deck document model. */
 export function createDeckEditorSession(document: DeckDocument): DeckEditorSession {
   return createEditorSession("deck", document, document.insights);
@@ -63,6 +91,7 @@ export function createDeckEditorWorkspace(document: DeckDocument): DeckEditorWor
     session: createDeckEditorSession(document),
     renderPlan,
     overview: createDeckEditorOverview(document, renderPlan),
+    editableUnits: renderPlan.renderUnits.map(createDeckEditableUnit),
   };
 }
 

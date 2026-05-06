@@ -46,11 +46,25 @@ describe("createSiteRenderPlan", () => {
   it("creates explicit layout render units", () => {
     const plan = createSiteRenderPlan(createDocument([
       { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 } },
-      { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+      { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 1 }, name: "Hero Breakpoints", parentIndex: { guid: { sessionID: 0, localID: 0 } } },
     ]));
 
     expect(plan.renderOutline.entries).toHaveLength(1);
     expect(plan.renderOutline.entries[0]!.role).toBe("responsive-set");
+    expect(plan.renderUnits).toEqual([
+      {
+        kind: "site-render-unit",
+        id: "0:1",
+        role: "responsive-set",
+        nodeType: "RESPONSIVE_SET",
+        label: "Hero Breakpoints",
+        parentId: "0:0",
+        childIds: [],
+        depth: 1,
+        order: 1,
+        layoutScope: "responsive-set",
+      },
+    ]);
   });
 
   it("throws when no layout render units exist", () => {

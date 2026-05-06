@@ -46,11 +46,25 @@ describe("createBuzzRenderPlan", () => {
   it("creates explicit template render units", () => {
     const plan = createBuzzRenderPlan(createDocument([
       { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 } },
-      { type: "SYMBOL", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+      { type: "SYMBOL", guid: { sessionID: 0, localID: 1 }, name: "Sticker", parentIndex: { guid: { sessionID: 0, localID: 0 } } },
     ]));
 
     expect(plan.renderOutline.entries).toHaveLength(1);
     expect(plan.renderOutline.entries[0]!.role).toBe("symbol");
+    expect(plan.renderUnits).toEqual([
+      {
+        kind: "buzz-render-unit",
+        id: "0:1",
+        role: "symbol",
+        nodeType: "SYMBOL",
+        label: "Sticker",
+        parentId: "0:0",
+        childIds: [],
+        depth: 1,
+        order: 1,
+        templateScope: "symbol",
+      },
+    ]);
   });
 
   it("throws when no template render units exist", () => {

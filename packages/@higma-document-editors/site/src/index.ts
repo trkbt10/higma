@@ -4,7 +4,7 @@
 
 import { createSiteDomainSummary, type SiteDocument, type SiteDomainSummary } from "@higma-document-models/site";
 import { loadSiteDocumentResult } from "@higma-document-io/site";
-import { createSiteRenderPlan, type SiteRenderPlan } from "@higma-document-renderers/site";
+import { createSiteRenderPlan, type SiteRenderPlan, type SiteRenderUnit } from "@higma-document-renderers/site";
 import { createEditorSession, type EditorSession } from "@higma-editor-surfaces/sessions";
 
 export type SiteEditorSession = EditorSession<SiteDocument, "site", SiteDocument["insights"]>;
@@ -26,10 +26,23 @@ export type SiteEditorOverview = {
   readonly domainSummary: SiteDomainSummary;
 };
 
+export type SiteEditableUnit = {
+  readonly kind: "site-editable-unit";
+  readonly id: string;
+  readonly role: SiteRenderUnit["role"];
+  readonly label: string;
+  readonly parentId: string | null;
+  readonly childIds: readonly string[];
+  readonly depth: number;
+  readonly layoutScope: SiteRenderUnit["layoutScope"];
+  readonly operationTarget: "site-layout-structure";
+};
+
 export type SiteEditorWorkspace = {
   readonly session: SiteEditorSession;
   readonly renderPlan: SiteRenderPlan;
   readonly overview: SiteEditorOverview;
+  readonly editableUnits: readonly SiteEditableUnit[];
 };
 
 function createSiteEditorOverview(document: SiteDocument, renderPlan: SiteRenderPlan): SiteEditorOverview {
@@ -51,6 +64,21 @@ function createSiteEditorOverview(document: SiteDocument, renderPlan: SiteRender
   };
 }
 
+/** Convert a site render unit into the editor operation unit contract. */
+export function createSiteEditableUnit(unit: SiteRenderUnit): SiteEditableUnit {
+  return {
+    kind: "site-editable-unit",
+    id: unit.id,
+    role: unit.role,
+    label: unit.label,
+    parentId: unit.parentId,
+    childIds: unit.childIds,
+    depth: unit.depth,
+    layoutScope: unit.layoutScope,
+    operationTarget: "site-layout-structure",
+  };
+}
+
 /** Create a site editor session from a site document model. */
 export function createSiteEditorSession(document: SiteDocument): SiteEditorSession {
   return createEditorSession("site", document, document.insights);
@@ -63,6 +91,7 @@ export function createSiteEditorWorkspace(document: SiteDocument): SiteEditorWor
     session: createSiteEditorSession(document),
     renderPlan,
     overview: createSiteEditorOverview(document, renderPlan),
+    editableUnits: renderPlan.renderUnits.map(createSiteEditableUnit),
   };
 }
 

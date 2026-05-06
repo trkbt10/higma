@@ -24,12 +24,12 @@ const canvas: Parameters<typeof createBuzzDocument>[0] = {
   message: {},
   nodeChanges: [
     { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 }, name: "Document" },
-    { type: "SLIDE_GRID", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
-    { type: "SLIDE_ROW", guid: { sessionID: 0, localID: 2 }, parentIndex: { guid: { sessionID: 0, localID: 1 } } },
-    { type: "SYMBOL", guid: { sessionID: 0, localID: 3 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
-    { type: "BOOLEAN_OPERATION", guid: { sessionID: 0, localID: 4 }, parentIndex: { guid: { sessionID: 0, localID: 3 } } },
-    { type: "VECTOR", guid: { sessionID: 0, localID: 5 }, parentIndex: { guid: { sessionID: 0, localID: 4 } } },
-    { type: "VECTOR", guid: { sessionID: 0, localID: 6 }, parentIndex: { guid: { sessionID: 0, localID: 4 } } },
+    { type: "SLIDE_GRID", guid: { sessionID: 0, localID: 1 }, name: "Grid", parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "SLIDE_ROW", guid: { sessionID: 0, localID: 2 }, name: "Row", parentIndex: { guid: { sessionID: 0, localID: 1 } } },
+    { type: "SYMBOL", guid: { sessionID: 0, localID: 3 }, name: "Symbol", parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "BOOLEAN_OPERATION", guid: { sessionID: 0, localID: 4 }, name: "Boolean", parentIndex: { guid: { sessionID: 0, localID: 3 } } },
+    { type: "VECTOR", guid: { sessionID: 0, localID: 5 }, name: "Vector A", parentIndex: { guid: { sessionID: 0, localID: 4 } } },
+    { type: "VECTOR", guid: { sessionID: 0, localID: 6 }, name: "Vector B", parentIndex: { guid: { sessionID: 0, localID: 4 } } },
   ],
   blobs: [],
   images: new Map(),
@@ -64,6 +64,20 @@ describe("createBuzzEditorWorkspace", () => {
     expect(workspace.session.insights).toBe(insights);
     expect(workspace.renderPlan.insights).toBe(insights);
     expect(workspace.renderPlan.domainSummary.templateNodeCount).toBe(6);
+    expect(workspace.editableUnits.map((unit) => ({
+      id: unit.id,
+      role: unit.role,
+      label: unit.label,
+      templateScope: unit.templateScope,
+      operationTarget: unit.operationTarget,
+    }))).toEqual([
+      { id: "0:1", role: "slide-grid", label: "Grid", templateScope: "slide-grid", operationTarget: "template-structure" },
+      { id: "0:2", role: "slide-row", label: "Row", templateScope: "slide-row", operationTarget: "template-structure" },
+      { id: "0:3", role: "symbol", label: "Symbol", templateScope: "symbol", operationTarget: "template-structure" },
+      { id: "0:4", role: "boolean-operation", label: "Boolean", templateScope: "boolean-operation", operationTarget: "template-structure" },
+      { id: "0:5", role: "vector", label: "Vector A", templateScope: "vector", operationTarget: "template-structure" },
+      { id: "0:6", role: "vector", label: "Vector B", templateScope: "vector", operationTarget: "template-structure" },
+    ]);
     expect(workspace.overview).toEqual({
       nodeCount: 6,
       renderUnitCount: 6,

@@ -24,12 +24,12 @@ const canvas: Parameters<typeof createSiteDocument>[0] = {
   message: {},
   nodeChanges: [
     { type: "DOCUMENT", guid: { sessionID: 0, localID: 0 }, name: "Document" },
-    { type: "CMS_RICH_TEXT", guid: { sessionID: 0, localID: 1 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
-    { type: "REPEATER", guid: { sessionID: 0, localID: 2 }, parentIndex: { guid: { sessionID: 0, localID: 0 } } },
-    { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 3 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
-    { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 4 }, parentIndex: { guid: { sessionID: 0, localID: 2 } } },
-    { type: "SYMBOL", guid: { sessionID: 0, localID: 5 }, parentIndex: { guid: { sessionID: 0, localID: 3 } } },
-    { type: "INSTANCE", guid: { sessionID: 0, localID: 6 }, parentIndex: { guid: { sessionID: 0, localID: 5 } } },
+    { type: "CMS_RICH_TEXT", guid: { sessionID: 0, localID: 1 }, name: "Body", parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "REPEATER", guid: { sessionID: 0, localID: 2 }, name: "Cards", parentIndex: { guid: { sessionID: 0, localID: 0 } } },
+    { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 3 }, name: "Desktop", parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "RESPONSIVE_SET", guid: { sessionID: 0, localID: 4 }, name: "Mobile", parentIndex: { guid: { sessionID: 0, localID: 2 } } },
+    { type: "SYMBOL", guid: { sessionID: 0, localID: 5 }, name: "Card", parentIndex: { guid: { sessionID: 0, localID: 3 } } },
+    { type: "INSTANCE", guid: { sessionID: 0, localID: 6 }, name: "Card Instance", parentIndex: { guid: { sessionID: 0, localID: 5 } } },
   ],
   blobs: [],
   images: new Map(),
@@ -64,6 +64,20 @@ describe("createSiteEditorWorkspace", () => {
     expect(workspace.session.insights).toBe(insights);
     expect(workspace.renderPlan.insights).toBe(insights);
     expect(workspace.renderPlan.domainSummary.layoutNodeCount).toBe(6);
+    expect(workspace.editableUnits.map((unit) => ({
+      id: unit.id,
+      role: unit.role,
+      label: unit.label,
+      layoutScope: unit.layoutScope,
+      operationTarget: unit.operationTarget,
+    }))).toEqual([
+      { id: "0:1", role: "cms-rich-text", label: "Body", layoutScope: "cms-rich-text", operationTarget: "site-layout-structure" },
+      { id: "0:2", role: "repeater", label: "Cards", layoutScope: "repeater", operationTarget: "site-layout-structure" },
+      { id: "0:3", role: "responsive-set", label: "Desktop", layoutScope: "responsive-set", operationTarget: "site-layout-structure" },
+      { id: "0:4", role: "responsive-set", label: "Mobile", layoutScope: "responsive-set", operationTarget: "site-layout-structure" },
+      { id: "0:5", role: "symbol", label: "Card", layoutScope: "symbol", operationTarget: "site-layout-structure" },
+      { id: "0:6", role: "instance", label: "Card Instance", layoutScope: "instance", operationTarget: "site-layout-structure" },
+    ]);
     expect(workspace.overview).toEqual({
       nodeCount: 6,
       renderUnitCount: 6,
