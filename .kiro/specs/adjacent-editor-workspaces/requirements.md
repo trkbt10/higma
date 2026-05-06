@@ -9,6 +9,7 @@
 1. WHEN an adjacent editor workspace is created THEN its overview SHALL include the render unit count from the renderer plan.
 2. WHEN an adjacent editor workspace is created THEN its overview SHALL include schema definition names and node type names for inspector UI.
 3. WHEN an adjacent editor workspace is created THEN its overview SHALL include metadata flags for render coordinates, thumbnail size, developer related links, and export timestamp.
+4. WHEN an adjacent editor workspace is created THEN it SHALL expose product-specific editable units derived from renderer render units, not just session and overview metadata.
 
 ## Requirement 2: Product-Specific Editor Boundaries
 
@@ -16,9 +17,9 @@
 
 #### Acceptance Criteria
 
-1. WHEN `createDeckEditorWorkspace` is called THEN it SHALL expose deck render units and deck presentation summary.
-2. WHEN `createBuzzEditorWorkspace` is called THEN it SHALL expose buzz render units and buzz template summary.
-3. WHEN `createSiteEditorWorkspace` is called THEN it SHALL expose site render units and site layout summary.
+1. WHEN `createDeckEditorWorkspace` is called THEN it SHALL expose deck editable units and deck presentation summary.
+2. WHEN `createBuzzEditorWorkspace` is called THEN it SHALL expose buzz editable units and buzz template summary.
+3. WHEN `createSiteEditorWorkspace` is called THEN it SHALL expose site editable units and site layout summary.
 
 ## Requirement 3: Product-Specific Editor Sessions
 

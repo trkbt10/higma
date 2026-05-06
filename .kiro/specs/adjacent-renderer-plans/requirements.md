@@ -7,7 +7,8 @@
 #### Acceptance Criteria
 
 1. WHEN `createDeckRenderPlan` receives a deck document THEN it SHALL produce a presentation outline for `SLIDE_GRID`, `SLIDE_ROW`, `SLIDE`, and `INTERACTIVE_SLIDE_ELEMENT`.
-2. WHEN the deck document contains no presentation render units THEN `createDeckRenderPlan` SHALL throw.
+2. WHEN a deck render outline entry is selected THEN the renderer SHALL convert it into a discriminated `DeckRenderUnit` carrying the entry id, role, label, hierarchy, and product-specific presentation scope.
+3. WHEN the deck document contains no presentation render units THEN `createDeckRenderPlan` SHALL throw.
 
 ## Requirement 2: Buzz Render Plan Completeness
 
@@ -16,7 +17,8 @@
 #### Acceptance Criteria
 
 1. WHEN `createBuzzRenderPlan` receives a buzz document THEN it SHALL produce a template outline for `SLIDE_GRID`, `SLIDE_ROW`, `SYMBOL`, `VECTOR`, and `BOOLEAN_OPERATION`.
-2. WHEN the buzz document contains no template render units THEN `createBuzzRenderPlan` SHALL throw.
+2. WHEN a buzz render outline entry is selected THEN the renderer SHALL convert it into a discriminated `BuzzRenderUnit` carrying the entry id, role, label, hierarchy, and product-specific template scope.
+3. WHEN the buzz document contains no template render units THEN `createBuzzRenderPlan` SHALL throw.
 
 ## Requirement 3: Site Render Plan Completeness
 
@@ -25,4 +27,5 @@
 #### Acceptance Criteria
 
 1. WHEN `createSiteRenderPlan` receives a site document THEN it SHALL produce a layout outline for `CMS_RICH_TEXT`, `REPEATER`, `RESPONSIVE_SET`, `SYMBOL`, and `INSTANCE`.
-2. WHEN the site document contains no layout render units THEN `createSiteRenderPlan` SHALL throw.
+2. WHEN a site render outline entry is selected THEN the renderer SHALL convert it into a discriminated `SiteRenderUnit` carrying the entry id, role, label, hierarchy, and product-specific layout scope.
+3. WHEN the site document contains no layout render units THEN `createSiteRenderPlan` SHALL throw.

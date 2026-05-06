@@ -8,12 +8,15 @@ Deck, buzz, and site renderer packages remain product-specific packages under `@
 
 - `packages/@higma-document-renderers/deck/src/index.ts`
   - owns `DeckRenderPlan`
+  - owns `DeckRenderUnit`
   - owns `createDeckRenderPlan`
 - `packages/@higma-document-renderers/buzz/src/index.ts`
   - owns `BuzzRenderPlan`
+  - owns `BuzzRenderUnit`
   - owns `createBuzzRenderPlan`
 - `packages/@higma-document-renderers/site/src/index.ts`
   - owns `SiteRenderPlan`
+  - owns `SiteRenderUnit`
   - owns `createSiteRenderPlan`
 
-Each render plan carries `renderOutline` in addition to document, insights, and domain summary. Empty domain render units are fail-fast errors.
+Each render plan carries `renderOutline` and product-specific render units in addition to document, insights, and domain summary. The outline remains the product-free traversal result; render units are the product renderer contract. Empty domain render units are fail-fast errors.
