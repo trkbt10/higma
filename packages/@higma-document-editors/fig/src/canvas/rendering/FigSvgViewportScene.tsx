@@ -3,7 +3,7 @@
 import type { CSSProperties } from "react";
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "./viewport-render-plan";
+import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";
 
 type FigSvgViewportSceneProps = {
   readonly sceneGraph: SceneGraph;

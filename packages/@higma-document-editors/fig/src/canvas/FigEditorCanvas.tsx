@@ -39,7 +39,7 @@ import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
 import { useFigSceneGraph } from "./rendering/use-fig-scene-graph";
 import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
-import { resolveViewportRenderWindow } from "./rendering/viewport-render-plan";
+import { resolveViewportRenderWindow } from "./layout/viewport-render-plan";
 import { computeAbsoluteTransform, flattenAllNodeBounds } from "./interaction/bounds";
 import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
 import { resolveInteractionTargetNodeId, resolveSelectableMarqueeIds } from "./interaction/selection-resolution";

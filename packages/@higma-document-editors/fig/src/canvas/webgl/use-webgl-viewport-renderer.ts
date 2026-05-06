@@ -10,7 +10,7 @@ import {
 import {
   getWebGLViewportPreparationStatus,
   type WebGLViewportPreparationStatus,
-} from "./webgl-viewport-preparation-status";
+} from "../status/webgl-viewport-preparation-status";
 
 type UseWebGLViewportRendererParams = {
   readonly sceneGraph: SceneGraph;

@@ -2,7 +2,7 @@
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { FigWebGLViewportLoadingOverlay } from "../status/FigWebGLViewportLoadingOverlay";
-import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../rendering/viewport-render-plan";
+import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";
 import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";
 import { useWebGLViewportRenderer } from "./use-webgl-viewport-renderer";
 

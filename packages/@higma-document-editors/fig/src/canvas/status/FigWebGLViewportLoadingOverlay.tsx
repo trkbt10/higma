@@ -1,7 +1,7 @@
 /** @file Canvas status overlay for WebGL viewport resource preparation. */
 
-import type { ViewportLayerFrame } from "../rendering/viewport-render-plan";
-import type { WebGLViewportPreparationStatus } from "../webgl/webgl-viewport-preparation-status";
+import type { ViewportLayerFrame } from "../layout/viewport-render-plan";
+import type { WebGLViewportPreparationStatus } from "./webgl-viewport-preparation-status";
 
 type FigWebGLViewportLoadingOverlayProps = {
   readonly frame: ViewportLayerFrame;

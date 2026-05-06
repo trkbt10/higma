@@ -1,7 +1,7 @@
 /** @file Presentational WebGL viewport canvas element. */
 
 import type { RefObject } from "react";
-import type { ViewportLayerFrame } from "../rendering/viewport-render-plan";
+import type { ViewportLayerFrame } from "../layout/viewport-render-plan";
 
 type FigWebGLViewportCanvasProps = {
   readonly canvasRef: RefObject<HTMLCanvasElement | null>;

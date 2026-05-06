@@ -14,7 +14,7 @@ import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
 import { FigSvgViewportScene } from "./FigSvgViewportScene";
 import type { FigEditorRendererKind } from "./renderer-kind";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
-import type { ViewportLayerPlacement } from "./viewport-render-plan";
+import type { ViewportLayerPlacement } from "../layout/viewport-render-plan";
 
 // =============================================================================
 // Types

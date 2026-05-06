@@ -1,4 +1,4 @@
-/** @file Shared viewport render planning for fig editor renderer backends. */
+/** @file Shared viewport layout planning for fig editor renderer backends. */
 
 import type { ViewportSize, ViewportTransform } from "@higma-editor-kernel/core/viewport";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";

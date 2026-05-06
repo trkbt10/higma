@@ -1,4 +1,4 @@
-/** @file Tests for shared fig editor viewport renderer planning. */
+/** @file Tests for shared fig editor viewport layout planning. */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { resolveViewportLayerFrame, resolveViewportRenderWindow } from "./viewport-render-plan";
@@ -14,12 +14,13 @@ function makeSceneGraph(): SceneGraph {
       height: 350,
     },
     root: {
-      id: "root",
-      type: "GROUP",
+      id: "root" as SceneGraph["root"]["id"],
+      type: "group",
       name: "root",
       visible: true,
       opacity: 1,
-      transform: [1, 0, 0, 1, 0, 0],
+      effects: [],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
       children: [],
     },
     version: 1,
