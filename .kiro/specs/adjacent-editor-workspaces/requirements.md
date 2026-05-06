@@ -31,3 +31,13 @@
 1. WHEN `createDeckEditorSession` is called THEN it SHALL create a `DeckEditorSession` tagged with the deck kind and deck insights.
 2. WHEN `createBuzzEditorSession` is called THEN it SHALL create a `BuzzEditorSession` tagged with the buzz kind and buzz insights.
 3. WHEN `createSiteEditorSession` is called THEN it SHALL create a `SiteEditorSession` tagged with the site kind and site insights.
+
+## Requirement 4: SDD Completion Gate
+
+**User Story:** As a maintainer, I want editor completion to be recorded in SDD instead of agent memory, so that unfinished verification cannot be carried outside the spec.
+
+#### Acceptance Criteria
+
+1. WHEN editor work is reported complete THEN requirements-to-design and requirements-to-implementation alignment SHALL have zero drift, zero spec-only items, and zero impl-only items for deck, buzz, and site.
+2. WHEN editor work is reported complete THEN lint, typecheck, tests, diff checks, and repository leak scans SHALL have been executed without adding ignore directives or local sample references.
+3. WHEN editor work is reported complete THEN the implementation and SDD task state SHALL be committed together after the completion gate passes.

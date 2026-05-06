@@ -29,3 +29,13 @@
 1. WHEN `createSiteRenderPlan` receives a site document THEN it SHALL produce a layout outline for `CMS_RICH_TEXT`, `REPEATER`, `RESPONSIVE_SET`, `SYMBOL`, and `INSTANCE`.
 2. WHEN a site render outline entry is selected THEN the renderer SHALL convert it into a discriminated `SiteRenderUnit` carrying the entry id, role, label, hierarchy, and product-specific layout scope.
 3. WHEN the site document contains no layout render units THEN `createSiteRenderPlan` SHALL throw.
+
+## Requirement 4: SDD Completion Gate
+
+**User Story:** As a maintainer, I want renderer completion to be recorded in SDD instead of agent memory, so that unfinished verification cannot be carried outside the spec.
+
+#### Acceptance Criteria
+
+1. WHEN renderer work is reported complete THEN requirements-to-design and requirements-to-implementation alignment SHALL have zero drift, zero spec-only items, and zero impl-only items for deck, buzz, and site.
+2. WHEN renderer work is reported complete THEN lint, typecheck, tests, diff checks, and repository leak scans SHALL have been executed without adding ignore directives or local sample references.
+3. WHEN renderer work is reported complete THEN the implementation and SDD task state SHALL be committed together after the completion gate passes.
