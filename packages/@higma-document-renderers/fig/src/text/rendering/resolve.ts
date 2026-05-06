@@ -104,10 +104,16 @@ function resolveTruncation(
   derivedTextData: DerivedTextData | undefined,
 ): TextTruncation | undefined {
   const mode = typeof textTruncation === "string" ? textTruncation : textTruncation?.name;
-  if (mode !== "ENDING") return undefined;
-  if (!derivedTextData) return undefined;
+  if (mode !== "ENDING") {
+    return undefined;
+  }
+  if (!derivedTextData) {
+    return undefined;
+  }
   const startIndex = derivedTextData.truncationStartIndex;
-  if (typeof startIndex !== "number" || startIndex < 0) return undefined;
+  if (typeof startIndex !== "number" || startIndex < 0) {
+    return undefined;
+  }
   const mh = derivedTextData.truncatedHeight;
   return {
     mode: "ENDING",
@@ -128,19 +134,26 @@ function resolveTruncation(
  */
 function derivedLineStrings(dtd: FigDerivedTextData | undefined): readonly string[] | undefined {
   const lines = dtd?.derivedLines;
-  if (!Array.isArray(lines) || lines.length === 0) return undefined;
-  const out: string[] = [];
-  for (const l of lines) {
-    if (typeof l.characters !== "string") {
-      // A single missing line invalidates the set — don't mix derived & guessed lines.
-      defensiveMark("text-resolve:derived-lines:partial-set-invalidated", {
-        lineCount: lines.length,
-      });
-      return undefined;
-    }
-    out.push(l.characters);
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return undefined;
   }
-  return out;
+  const linesWithCharacters = lines.flatMap((line) => {
+    if (typeof line.characters !== "string") {
+      return [];
+    }
+    return [line.characters];
+  });
+  if (linesWithCharacters.length === 0) {
+    return undefined;
+  }
+  if (linesWithCharacters.length !== lines.length) {
+    // A single missing line invalidates the set — don't mix derived & guessed lines.
+    defensiveMark("text-resolve:derived-lines:partial-set-invalidated", {
+      lineCount: lines.length,
+      linesWithCharacters: linesWithCharacters.length,
+    });
+  }
+  return linesWithCharacters;
 }
 
 /**
@@ -154,10 +167,14 @@ function derivedLineStrings(dtd: FigDerivedTextData | undefined): readonly strin
  */
 function resolveFontMetrics(dtd: FigDerivedTextData | undefined): ResolvedFontMetrics | undefined {
   const list = dtd?.fontMetaData;
-  if (!Array.isArray(list) || list.length === 0) return undefined;
+  if (!Array.isArray(list) || list.length === 0) {
+    return undefined;
+  }
   const m: FigFontMetaData = list[0];
   const lh = readPositiveFontLineHeight(m.fontLineHeight);
-  if (lh === undefined) return undefined;
+  if (lh === undefined) {
+    return undefined;
+  }
   const baseline = dtd?.baselines?.[0];
   if (!baseline || typeof baseline.lineAscent !== "number" || baseline.lineAscent <= 0) {
     return undefined;
@@ -170,6 +187,9 @@ function resolveFontMetrics(dtd: FigDerivedTextData | undefined): ResolvedFontMe
   };
 }
 
+/**
+ * Resolve the ascender ratio from derived metadata or an explicit font resolver.
+ */
 export function resolveTextAscenderRatio(
   node: TextNodeInput,
   props: ExtractedTextProps,
@@ -203,7 +223,9 @@ export function resolveTextAscenderRatio(
  */
 function applyTruncation(source: string, truncation: TextTruncation): string {
   const cps = [...source];
-  if (truncation.startIndex >= cps.length) return source;
+  if (truncation.startIndex >= cps.length) {
+    return source;
+  }
   return cps.slice(0, truncation.startIndex).join("") + truncation.ellipsis;
 }
 

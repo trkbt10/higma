@@ -74,4 +74,41 @@ describe("resolveTextRendering font outlines", () => {
     expect(rendering.props.fontFamily).toBe("Unit Test Sans");
     expect(rendering.layout.lines[0]?.text).toBe("Hello");
   });
+
+  it("ignores derivedLines when none of the lines carry characters", () => {
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      derivedTextData: {
+        derivedLines: [{ width: 40 }],
+      },
+    }, {
+      blobs: [],
+      fontResolver: RECT_FONT_RESOLVER,
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.text).toBe("Hello");
+  });
+
+  it("throws when derivedLines mix present and missing characters", () => {
+    expect(() => resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "Hello\nWorld",
+      },
+      derivedTextData: {
+        derivedLines: [
+          { characters: "Hello" },
+          { width: 40 },
+        ],
+      },
+    }, {
+      blobs: [],
+      fontResolver: RECT_FONT_RESOLVER,
+    })).toThrow("text-resolve:derived-lines:partial-set-invalidated");
+  });
 });

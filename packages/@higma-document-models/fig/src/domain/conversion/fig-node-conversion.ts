@@ -946,7 +946,8 @@ function resolveEntryPath(
     // direct child of the variant SYMBOL but was rewritten to a
     // sibling TEXT.
     const alreadyDescendant = traversal.levelSymbolRoot !== undefined && findInKiwiTree(ctx, traversal.levelSymbolRoot, src) !== undefined;
-    if (alreadyDescendant && traversal.levelMap.has(src)) {
+    const proposed = traversal.levelMap.get(src);
+    if (alreadyDescendant && proposed !== undefined && proposed !== src) {
       // The translation primitive proposed a mapping for `src`, but
       // `src` already exists as a descendant of the current SYMBOL.
       // Identity preference wins (we keep `src` as-is) — but the fact
@@ -956,10 +957,10 @@ function resolveEntryPath(
       // to a different descendant. Recorded for calibration.
       defensiveMark("tree-to-document:alreadyDescendant-overrides-translation", {
         src,
-        proposed: traversal.levelMap.get(src),
+        proposed,
       });
     }
-    const resolvedStr = alreadyDescendant ? src : (traversal.levelMap.get(src) ?? src);
+    const resolvedStr = alreadyDescendant ? src : (proposed ?? src);
     resolved.push(parseGuidString(resolvedStr));
 
     if (i === guids.length - 1 || !traversal.levelSymbolRoot) { break; }

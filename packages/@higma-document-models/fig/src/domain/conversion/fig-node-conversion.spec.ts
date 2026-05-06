@@ -1,0 +1,70 @@
+/**
+ * @file Tests for raw FigNode to FigDesignNode conversion.
+ */
+
+import { convertFigNode } from "./fig-node-conversion";
+import type { FigGuid, FigNode, FigNodeType, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+
+const RED_PAINT: FigPaint = {
+  type: "SOLID",
+  color: { r: 1, g: 0, b: 0, a: 1 },
+  opacity: 1,
+  visible: true,
+};
+
+function guid(sessionID: number, localID: number): FigGuid {
+  return { sessionID, localID };
+}
+
+function nodeType(value: number, name: FigNodeType): KiwiEnumValue<FigNodeType> {
+  return { value, name };
+}
+
+function createNode(fields: Partial<FigNode>): FigNode {
+  return {
+    guid: guid(1, 1),
+    phase: { value: 1, name: "CREATED" },
+    type: nodeType(3, "FRAME"),
+    name: "Node",
+    ...fields,
+  };
+}
+
+function collectNodeMap(nodes: readonly FigNode[]): ReadonlyMap<string, FigNode> {
+  return new Map(nodes.map((node) => [`${node.guid.sessionID}:${node.guid.localID}`, node]));
+}
+
+describe("convertFigNode override path resolution", () => {
+  it("accepts identity translations for descendants that are already in the symbol namespace", () => {
+    const target = createNode({
+      guid: guid(4, 2331),
+      type: nodeType(4, "RECTANGLE"),
+      name: "Target",
+      overrideKey: guid(4, 2331),
+    });
+    const symbol = createNode({
+      guid: guid(1, 100),
+      type: nodeType(23, "SYMBOL"),
+      name: "Symbol",
+      children: [target],
+    });
+    const unrelated = createNode({
+      guid: guid(7, 1),
+      name: "Unrelated",
+    });
+    const instance = createNode({
+      guid: guid(9, 1),
+      type: nodeType(19, "INSTANCE"),
+      name: "Instance",
+      symbolID: symbol.guid,
+      symbolOverrides: [
+        { guidPath: { guids: [target.guid] }, fillPaints: [RED_PAINT] },
+        { guidPath: { guids: [unrelated.guid] }, fillPaints: [RED_PAINT] },
+      ],
+    });
+
+    const converted = convertFigNode(instance, new Map(), undefined, collectNodeMap([symbol, target, unrelated, instance]));
+
+    expect(converted.overrides?.map((entry) => entry.guidPath.guids[0])).toEqual([target.guid]);
+  });
+});
