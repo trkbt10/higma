@@ -18,8 +18,6 @@ import type {
   TextNode,
   ImageNode,
   Fill,
-  CornerRadius,
-  ArcData,
   Stroke,
 } from "../types";
 
@@ -40,7 +38,10 @@ import {
 } from "../render";
 import { computePathContoursBbox } from "../path-bbox";
 import { buildEffectStack, type ResolvedEffectStack } from "../render/effect-stack";
-import { buildRoundedRectPathD } from "../render/rounded-rect-path";
+import { createRenderTreeIdGenerator } from "./id-generator";
+import { clampCornerRadius, cornerRadiusScalar } from "./corner-radius";
+import { buildClipShape } from "./clip-shape";
+import { buildEllipseArcPathD } from "./ellipse-arc-path";
 
 import type {
   RenderTree,
@@ -65,72 +66,6 @@ import type {
   StrokeRendering,
 } from "./types";
 
-// =============================================================================
-// ID Generator
-// =============================================================================
-
-/**
- * Module-level monotonic counter — every `createIdGenerator()` call gets a
- * distinct `generation` prefix so IDs never collide across renders or
- * across concurrently-mounted `FigSceneRenderer` instances in the same DOM.
- *
- * Why this matters: SVG `<mask>` / `<clipPath>` / `<filter>` references use
- * a document-wide namespace (`url(#stroke-mask-0)` resolves against the
- * whole HTML document, not the containing SVG). Two scene renderers that
- * each produced `stroke-mask-0` would collide, and which definition wins
- * for a given reference is undefined — producing the observed
- * zoom-alternating clip-regression on fig-editor (Link 190:3213 and any
- * other ELLIPSE-with-OUTSIDE-stroke on Cover / Components pages).
- *
- * Keeping the `generation` portion out of the node tree data (it's only
- * assigned at resolve time) means the SceneGraph itself stays pure.
- */
-let resolverGeneration = 0;
-
-function createIdGenerator(): IdGenerator {
-  const generation = resolverGeneration++;
-  let counter = 0;
-  return {
-    getNextId(prefix: string): string {
-      return `${prefix}-g${generation}-${counter++}`;
-    },
-  };
-}
-
-// =============================================================================
-// Corner radius clamping
-// =============================================================================
-
-function clampRadius(
-  radius: CornerRadius | undefined,
-  width: number,
-  height: number,
-): CornerRadius | undefined {
-  if (radius === undefined) { return undefined; }
-  const max = Math.min(width, height) / 2;
-  if (typeof radius === "number") {
-    if (radius <= 0) { return undefined; }
-    return Math.min(radius, max);
-  }
-  // Per-corner: clamp each — explicit tuple to avoid `as unknown as`
-  const clamped: readonly [number, number, number, number] = [
-    Math.min(radius[0], max),
-    Math.min(radius[1], max),
-    Math.min(radius[2], max),
-    Math.min(radius[3], max),
-  ];
-  if (clamped[0] === 0 && clamped[1] === 0 && clamped[2] === 0 && clamped[3] === 0) { return undefined; }
-  return clamped;
-}
-
-function cornerRadiusScalar(radius: CornerRadius | undefined): number {
-  if (typeof radius === "number") { return radius; }
-  if (radius) {
-    return Math.max(radius[0], radius[1], radius[2], radius[3]);
-  }
-  return 0;
-}
-
 function resolveOptionalStrokeRendering(
   stroke: Stroke | undefined,
   ids: IdGenerator,
@@ -153,6 +88,122 @@ function resolveOptionalBackgroundBlur(
   return resolveBackgroundBlur(effectStack, bounds, ids, defs, shape);
 }
 
+function resolveFrameStrokeRendering(
+  node: FrameNode,
+  clampedRadius: ReturnType<typeof clampCornerRadius>,
+  ids: IdGenerator,
+  defs: RenderDef[],
+  maskShape: ClipPathShape,
+): StrokeRendering | undefined {
+  if (node.individualStrokeWeights && node.stroke) {
+    const result = resolveStrokeResult(node.stroke, ids);
+    if (result.layers) {
+      for (const layer of result.layers) {
+        if (layer.gradientDef) {
+          collectGradientDef(layer.gradientDef, defs);
+        }
+      }
+    }
+    const cornerScalar = cornerRadiusScalar(clampedRadius);
+    return {
+      mode: "individual",
+      sides: node.individualStrokeWeights,
+      color: result.attrs.stroke,
+      opacity: result.attrs.strokeOpacity,
+      width: node.width,
+      height: node.height,
+      cornerRadius: cornerScalar > 0 ? cornerScalar : undefined,
+      strokeAlign: result.attrs.strokeAlign,
+    };
+  }
+  if (node.stroke) {
+    const strokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius };
+    return resolveStrokeRendering(node.stroke, ids, defs, strokeShape, maskShape);
+  }
+  return undefined;
+}
+
+function resolveFrameBackground(
+  node: FrameNode,
+  hasFills: boolean,
+  strokeRendering: StrokeRendering | undefined,
+  ids: IdGenerator,
+  defs: RenderDef[],
+): RenderFrameBackground | null {
+  if (!hasFills && !strokeRendering) {
+    return null;
+  }
+  const fillResult = resolveFrameBackgroundFill(hasFills, node.fills, ids, defs);
+  const fillLayers = hasFills ? resolveAllFillLayers(node.fills, ids, defs) : undefined;
+  return {
+    fill: fillResult,
+    fillLayers,
+    strokeRendering,
+  };
+}
+
+function resolveFrameChildClipId(
+  node: FrameNode,
+  children: readonly RenderNode[],
+  ids: IdGenerator,
+  defs: RenderDef[],
+  clampedRadius: ReturnType<typeof clampCornerRadius>,
+): string | undefined {
+  if (!node.clipsContent || children.length === 0) {
+    return undefined;
+  }
+  const childClipId = ids.getNextId("clip");
+  defs.push({
+    type: "clip-path",
+    id: childClipId,
+    shape: buildClipShape(node.width, node.height, clampedRadius),
+  });
+  return childClipId;
+}
+
+function resolveTextClipId(node: TextNode, ids: IdGenerator, defs: RenderDef[]): string | undefined {
+  const needsClip = node.textAutoResize === "NONE" || node.textAutoResize === "TRUNCATE"
+    || node.textTruncation === "ENDING";
+  if (!needsClip) {
+    return undefined;
+  }
+  const textClipId = ids.getNextId("text-clip");
+  defs.push({
+    type: "clip-path",
+    id: textClipId,
+    shape: {
+      kind: "rect",
+      x: 0,
+      y: 0,
+      width: node.width,
+      height: node.height,
+    },
+  });
+  return textClipId;
+}
+
+function resolveTextContent(node: TextNode): RenderTextNode["content"] {
+  if (node.glyphContours && node.glyphContours.length > 0) {
+    const contourData = [
+      ...node.glyphContours.map((contour) => contourToSvgD(contour)),
+      ...(node.decorationContours?.map((contour) => contourToSvgD(contour)) ?? []),
+    ];
+    return { mode: "glyphs", d: contourData.join("") };
+  }
+  if (node.textLineLayout) {
+    return { mode: "lines", layout: node.textLineLayout };
+  }
+  return { mode: "glyphs", d: "" };
+}
+
+function resolveImageDataUri(node: ImageNode): string | undefined {
+  if (!node.data || node.data.length === 0) {
+    return undefined;
+  }
+  const base64 = uint8ArrayToBase64(node.data);
+  return `data:${node.mimeType};base64,${base64}`;
+}
+
 function resolvePathBounds(node: PathNode) {
   const pathBbox = computePathContoursBbox(node.contours);
   if (pathBbox) { return pathBbox; }
@@ -161,133 +212,6 @@ function resolvePathBounds(node: PathNode) {
   }
   return undefined;
 }
-
-// =============================================================================
-// Helper: CornerRadius → uniform number (for SVG rx/ry)
-// =============================================================================
-
-/**
- * Build a ClipPathShape from dimensions and corner radius.
- *
- * Rounded rects emit a `<path>` with cubic Bézier corners (matching
- * Figma's exporter form `M 24 0 L w-24 0 C ... 24` exactly). resvg-js
- * rasterises `<path>` clip-paths at the same sub-pixel positions as
- * the equivalently-shaped fill path; using `<rect rx>` for clipPath
- * produces a half-pixel mismatch at the rounded corner versus our
- * Bézier-based fill, visible as a 1-pixel-wide red sliver in diff
- * tests. Sharp-cornered rects keep `<rect>` because there's no AA cost.
- */
-function buildClipShape(
-  width: number, height: number, cr: CornerRadius | undefined,
-): { kind: "rect"; x: number; y: number; width: number; height: number; rx?: number; ry?: number } | { kind: "path"; d: string } {
-  if (cr !== undefined && typeof cr !== "number") {
-    return { kind: "path", d: buildRoundedRectPathD(width, height, cr) };
-  }
-  const r = typeof cr === "number" ? cr : undefined;
-  if (r !== undefined && r > 0) {
-    return { kind: "path", d: buildRoundedRectPathD(width, height, [r, r, r, r]) };
-  }
-  return { kind: "rect", x: 0, y: 0, width, height, rx: r, ry: r };
-}
-
-// =============================================================================
-// Ellipse Arc → SVG Path
-// =============================================================================
-
-/**
- * Generate SVG path d string for an ellipse with arc data.
- *
- * Figma's ArcData:
- * - startingAngle/endingAngle: radians, 0 = 3 o'clock, clockwise
- * - innerRadius: 0..1, ratio of inner to outer radius (0 = pie, >0 = donut)
- *
- * For a full ellipse (startingAngle=0, endingAngle=2π, innerRadius=0),
- * this is not called — the ellipse element is used directly.
- */
-function buildEllipseArcPathD(
-  cx: number, cy: number, rx: number, ry: number, arc: ArcData,
-): string {
-  const { startingAngle, endingAngle, innerRadius } = arc;
-
-  // Normalize: Figma uses 0=3 o'clock, clockwise. SVG uses same convention.
-  const sweep = endingAngle - startingAngle;
-  const isFullCircle = Math.abs(sweep) >= Math.PI * 2 - 1e-6;
-
-  // Outer arc points
-  const outerStartX = cx + rx * Math.cos(startingAngle);
-  const outerStartY = cy + ry * Math.sin(startingAngle);
-  const outerEndX = cx + rx * Math.cos(endingAngle);
-  const outerEndY = cy + ry * Math.sin(endingAngle);
-
-  // SVG arc flags
-  const largeArc = Math.abs(sweep) > Math.PI ? 1 : 0;
-  const sweepFlag = sweep > 0 ? 1 : 0;
-
-  if (innerRadius <= 0) {
-    // Pie slice (no hole)
-    if (isFullCircle) {
-      // Full ellipse — use two half-arcs to avoid SVG arc degenerate case
-      const midAngle = startingAngle + Math.PI;
-      const midX = cx + rx * Math.cos(midAngle);
-      const midY = cy + ry * Math.sin(midAngle);
-      return [
-        `M${outerStartX} ${outerStartY}`,
-        `A${rx} ${ry} 0 1 ${sweepFlag} ${midX} ${midY}`,
-        `A${rx} ${ry} 0 1 ${sweepFlag} ${outerStartX} ${outerStartY}`,
-        "Z",
-      ].join("");
-    }
-    return [
-      `M${cx} ${cy}`,
-      `L${outerStartX} ${outerStartY}`,
-      `A${rx} ${ry} 0 ${largeArc} ${sweepFlag} ${outerEndX} ${outerEndY}`,
-      "Z",
-    ].join("");
-  }
-
-  // Donut / ring
-  const irx = rx * innerRadius;
-  const iry = ry * innerRadius;
-
-  const innerStartX = cx + irx * Math.cos(startingAngle);
-  const innerStartY = cy + iry * Math.sin(startingAngle);
-  const innerEndX = cx + irx * Math.cos(endingAngle);
-  const innerEndY = cy + iry * Math.sin(endingAngle);
-
-  // Reverse sweep for inner arc (draw backwards)
-  const reverseSweep = sweepFlag === 1 ? 0 : 1;
-
-  if (isFullCircle) {
-    // Full donut — two full arcs (outer CW, inner CCW)
-    const midAngle = startingAngle + Math.PI;
-    const outerMidX = cx + rx * Math.cos(midAngle);
-    const outerMidY = cy + ry * Math.sin(midAngle);
-    const innerMidX = cx + irx * Math.cos(midAngle);
-    const innerMidY = cy + iry * Math.sin(midAngle);
-    return [
-      // Outer arc (two halves)
-      `M${outerStartX} ${outerStartY}`,
-      `A${rx} ${ry} 0 1 ${sweepFlag} ${outerMidX} ${outerMidY}`,
-      `A${rx} ${ry} 0 1 ${sweepFlag} ${outerStartX} ${outerStartY}`,
-      "Z",
-      // Inner arc (two halves, reversed)
-      `M${innerStartX} ${innerStartY}`,
-      `A${irx} ${iry} 0 1 ${reverseSweep} ${innerMidX} ${innerMidY}`,
-      `A${irx} ${iry} 0 1 ${reverseSweep} ${innerStartX} ${innerStartY}`,
-      "Z",
-    ].join("");
-  }
-
-  // Partial donut arc
-  return [
-    `M${outerStartX} ${outerStartY}`,
-    `A${rx} ${ry} 0 ${largeArc} ${sweepFlag} ${outerEndX} ${outerEndY}`,
-    `L${innerEndX} ${innerEndY}`,
-    `A${irx} ${iry} 0 ${largeArc} ${reverseSweep} ${innerStartX} ${innerStartY}`,
-    "Z",
-  ].join("");
-}
-
 
 // =============================================================================
 // Helper: Resolve wrapper attributes
@@ -671,83 +595,16 @@ function resolveFrameNode(
 ): RenderFrameNode {
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
-  const clampedRadius = clampRadius(node.cornerRadius, node.width, node.height);
+  const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
 
   // Background fill and stroke — resolved independently.
   const hasFills = node.fills.length > 0;
   const maskShape = buildClipShape(node.width, node.height, clampedRadius);
 
-  // Determine stroke rendering mode
-  let strokeRendering: StrokeRendering | undefined;
-  if (node.individualStrokeWeights && node.stroke) {
-    const result = resolveStrokeResult(node.stroke, ids);
-    // When the stroke paint is a gradient, collect its <linearGradient>
-    // / <radialGradient> def into the parent's defs so the url(#lg-N)
-    // reference in `result.attrs.stroke` actually resolves. Without
-    // this, a FRAME with individualStrokeWeights + gradient stroke
-    // renders as `stroke="url(#lg-5)"` with no matching def — the
-    // browser falls back to the default (black) or nothing at all,
-    // depending on the engine.
-    if (result.layers) {
-      for (const layer of result.layers) {
-        if (layer.gradientDef) {
-          collectGradientDef(layer.gradientDef, defs);
-        }
-      }
-    }
-    // Per-side strokes carry a single corner radius for clipping the
-    // sides to the rounded perimeter. When the frame's corners are
-    // non-uniform we use the max corner: this still keeps each side's
-    // drawn area inside the union of all four corner arcs (no over-
-    // paint outside the rounded rect) at the cost of slightly under-
-    // clipping the smaller corners — acceptable approximation.
-    const cornerScalar = cornerRadiusScalar(clampedRadius);
-    strokeRendering = {
-      mode: "individual",
-      sides: node.individualStrokeWeights,
-      color: result.attrs.stroke,
-      opacity: result.attrs.strokeOpacity,
-      width: node.width,
-      height: node.height,
-      cornerRadius: cornerScalar > 0 ? cornerScalar : undefined,
-      strokeAlign: result.attrs.strokeAlign,
-    };
-  } else if (node.stroke) {
-    const strokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius };
-    strokeRendering = resolveStrokeRendering(node.stroke, ids, defs, strokeShape, maskShape);
-  }
-
-  let background: RenderFrameBackground | null = null;
-  if (hasFills || strokeRendering) {
-    const fillResult = resolveFrameBackgroundFill(hasFills, node.fills, ids, defs);
-    const fillLayers = hasFills ? resolveAllFillLayers(node.fills, ids, defs) : undefined;
-
-    background = {
-      fill: fillResult,
-      fillLayers,
-      strokeRendering,
-    };
-  }
-
-  // Child clip path
-  let childClipId: string | undefined;
+  const strokeRendering = resolveFrameStrokeRendering(node, clampedRadius, ids, defs, maskShape);
+  const background = resolveFrameBackground(node, hasFills, strokeRendering, ids, defs);
   const children = resolvedChildren ?? resolveChildren(node.children, ids);
-  if (node.clipsContent && children.length > 0) {
-    childClipId = ids.getNextId("clip");
-    // The clip-path follows the frame's exact geometry — no expansion.
-    // Figma's SVG exporter uses an unexpanded clip-path even when child
-    // strokes would naturally overhang; the resulting half-pixel stroke
-    // truncation matches Figma's canvas rendering. Expanding the clip
-    // by the child stroke half-width was tried previously, but it shifts
-    // the rounded-corner AA outward by half a pixel, producing a 0.10%
-    // diff against Figma's exporter at corners — much larger than the
-    // ~0% impact of letting boundary strokes get half-clipped.
-    defs.push({
-      type: "clip-path",
-      id: childClipId,
-      shape: buildClipShape(node.width, node.height, clampedRadius),
-    });
-  }
+  const childClipId = resolveFrameChildClipId(node, children, ids, defs, clampedRadius);
 
   // Finalize gradient coordinates using element size
   finalizeDefs(defs, { width: node.width, height: node.height });
@@ -788,7 +645,7 @@ function resolveFrameNode(
 function resolveRectNode(node: RectNode, ids: IdGenerator): RenderRectNode {
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
-  const clampedRadius = clampRadius(node.cornerRadius, node.width, node.height);
+  const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
   const fillResult = resolveTopFillResult(node.fills, ids, defs);
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs);
   const maskClipShape = buildClipShape(node.width, node.height, clampedRadius);
@@ -979,45 +836,8 @@ function resolveTextNode(node: TextNode, ids: IdGenerator): RenderTextNode {
   const fillColor = colorToHex(node.fill.color);
   const fillOpacity = node.fill.opacity < 1 ? node.fill.opacity : undefined;
 
-  // Clip text to bounding box when textAutoResize is NONE/TRUNCATE,
-  // or when textTruncation is ENDING (text overflows with ellipsis)
-  const needsClip = node.textAutoResize === "NONE" || node.textAutoResize === "TRUNCATE"
-    || node.textTruncation === "ENDING";
-  let textClipId: string | undefined;
-  if (needsClip) {
-    textClipId = ids.getNextId("text-clip");
-    defs.push({
-      type: "clip-path",
-      id: textClipId,
-      shape: {
-        kind: "rect",
-        x: 0,
-        y: 0,
-        width: node.width,
-        height: node.height,
-      },
-    });
-  }
-
-  // Determine content mode
-  let content: RenderTextNode["content"];
-  if (node.glyphContours && node.glyphContours.length > 0) {
-    const allD: string[] = [];
-    for (const contour of node.glyphContours) {
-      allD.push(contourToSvgD(contour));
-    }
-    if (node.decorationContours) {
-      for (const contour of node.decorationContours) {
-        allD.push(contourToSvgD(contour));
-      }
-    }
-    content = { mode: "glyphs", d: allD.join("") };
-  } else if (node.textLineLayout) {
-    content = { mode: "lines", layout: node.textLineLayout };
-  } else {
-    // Empty text — use empty glyph content
-    content = { mode: "glyphs", d: "" };
-  }
+  const textClipId = resolveTextClipId(node, ids, defs);
+  const content = resolveTextContent(node);
 
   const mask = resolveMask(node, ids, defs);
 
@@ -1050,11 +870,7 @@ function resolveImageNode(node: ImageNode, ids: IdGenerator): RenderImageNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
 
-  let dataUri: string | undefined;
-  if (node.data && node.data.length > 0) {
-    const base64 = uint8ArrayToBase64(node.data);
-    dataUri = `data:${node.mimeType};base64,${base64}`;
-  }
+  const dataUri = resolveImageDataUri(node);
 
   const mask = resolveMask(node, ids, defs);
   const needsWrapper = !!(wrapper.transform || node.opacity < 1 || mask);
@@ -1260,7 +1076,7 @@ function resolveChildrenIncremental(
  * only format the result.
  */
 export function resolveRenderTree(sceneGraph: SceneGraph): RenderTree {
-  const ids = createIdGenerator();
+  const ids = createRenderTreeIdGenerator();
   const children = resolveChildren(sceneGraph.root.children, ids);
   const viewport = sceneGraph.viewport ?? {
     x: 0,
@@ -1288,7 +1104,7 @@ export function resolveRenderTreeIncremental(
   sceneGraph: SceneGraph,
   previousCache: RenderTreeResolutionCache | undefined,
 ): RenderTreeResolutionResult {
-  const ids = createIdGenerator();
+  const ids = createRenderTreeIdGenerator();
   const nextNodesById = new Map<string, CachedRenderNode>();
   const resolvedChildren = resolveChildrenIncremental(sceneGraph.root.children, ids, previousCache, nextNodesById);
   const children = reuseRootChildren(previousCache, resolvedChildren);

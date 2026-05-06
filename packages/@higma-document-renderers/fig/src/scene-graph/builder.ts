@@ -24,7 +24,7 @@ import {
   applyOverrideToNode,
   overrideFieldKeys,
 } from "@higma-document-models/fig/domain";
-import type { FigPaint } from "@higma-document-models/fig/types";
+import type { FigFillGeometry, FigPaint } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/domain";
 import { styleRefKeys, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
@@ -57,14 +57,21 @@ import { convertEffectsToScene } from "./convert/effects";
 import { decodeGeometryToContours, convertVectorPathsToContours, parseSvgPathD, type DecodedContour } from "./convert/path";
 import { reconstructStrokeCenterline } from "./convert/stroke-geometry-centerline";
 import { generateEllipseContour, generateLineContour, generatePolygonContour, generateRectContour, generateStarContour } from "./convert/shape-geometry";
-import { resolveClipsContent as sharedResolveClipsContent } from "../geometry";
 import { convertTextNode } from "./convert/text";
-import type { Fill, PathContour, BlendMode, CornerRadius, ArcData } from "./types";
+import type { Fill, PathContour, BlendMode, ArcData } from "./types";
 import { convertFigmaBlendMode } from "./convert/blend-mode";
 import { resolveChildConstraints } from "@higma-document-models/fig/symbols";
 import type { TextAutoResize } from "../text/layout/types";
 import type { TextFontResolver } from "../text/rendering";
 import { evaluateBooleanPathResult, resolveBooleanOperationType, type BooleanPathInput } from "./boolean-operation";
+import {
+  convertDesignTransform,
+  deepCloneDesignNode,
+  extractDesignCornerRadius,
+  getDesignNodeTypeName,
+  hasPaintDeclaration,
+  resolveDesignClipsContent,
+} from "./design-node-helpers";
 
 function convertBlendMode(node: FigDesignNode): BlendMode | undefined {
   return convertFigmaBlendMode(node.blendMode);
@@ -232,19 +239,6 @@ export type BuildSceneGraphResult = {
 // =============================================================================
 
 /**
- * Get the node type name from a FigDesignNode.
- *
- * FigDesignNode.type is FigNodeType (a string literal from KiwiEnumValue name),
- * so this is a direct read — no enum unwrapping needed.
- */
-function getNodeTypeName(node: FigDesignNode): string {
-  // FigDesignNode.type is `FigNodeType`, a string-literal union produced by
-  // `convertFigNode` during domain conversion. The KiwiEnumValue object
-  // shape exists only at the parser level and never reaches this layer.
-  return node.type;
-}
-
-/**
  * Generate a SceneNodeId from a FigDesignNode.
  *
  * FigDesignNode.id is a branded string "sessionID:localID",
@@ -257,65 +251,7 @@ function getNodeId(node: FigDesignNode, ctx: BuildContext): SceneNodeId {
   return createNodeId(`node-${ctx.nodeCounter++}`);
 }
 
-// =============================================================================
-// Transform Conversion
-// =============================================================================
-
 const IDENTITY: AffineMatrix = IDENTITY_MATRIX;
-
-function convertTransform(
-  matrix: { m00?: number; m01?: number; m02?: number; m10?: number; m11?: number; m12?: number } | undefined,
-): AffineMatrix {
-  if (!matrix) {return IDENTITY;}
-  return {
-    m00: matrix.m00 ?? 1,
-    m01: matrix.m01 ?? 0,
-    m02: matrix.m02 ?? 0,
-    m10: matrix.m10 ?? 0,
-    m11: matrix.m11 ?? 1,
-    m12: matrix.m12 ?? 0,
-  };
-}
-
-// =============================================================================
-// Corner Radius & Clipping (delegates to shared SoT in geometry/)
-// =============================================================================
-
-/**
- * Extract corner radius, preserving per-corner radii when present.
- * Returns CornerRadius (number | [tl,tr,br,bl]) or undefined.
- */
-function extractCornerRadius(node: FigDesignNode): CornerRadius | undefined {
-  const radii = node.rectangleCornerRadii;
-  if (radii && radii.length === 4) {
-    // Build the tuple explicitly so TS keeps the literal 4-tuple type
-    // without a cast. Each index is known to exist because
-    // `radii.length === 4` narrows the array to a readonly[number, ...].
-    const tl = radii[0];
-    const tr = radii[1];
-    const br = radii[2];
-    const bl = radii[3];
-    // All same → collapse to uniform
-    if (tl === tr && tr === br && br === bl) {
-      return tl || undefined;
-    }
-    const tuple: readonly [number, number, number, number] = [tl, tr, br, bl];
-    return tuple;
-  }
-  return node.cornerRadius;
-}
-
-function resolveClipsContent(node: FigDesignNode): boolean {
-  // clipsContent is pre-resolved at domain construction time
-  // (tree-to-document.ts normalizes frameMaskDisabled → clipsContent).
-  // Use the shared resolver only when the domain did not provide a value.
-  if (node.clipsContent !== undefined) { return node.clipsContent; }
-  return sharedResolveClipsContent(
-    undefined,
-    undefined,
-    getNodeTypeName(node),
-  );
-}
 
 // =============================================================================
 // Instance Resolution
@@ -337,39 +273,6 @@ type ResolvedDesignInstance = {
   /** Resolved children (from instance or inherited from symbol) */
   readonly children: readonly MutableFigDesignNode[];
 };
-
-/**
- * Check whether a paint array is declared (i.e. the Kiwi field was present
- * on the original node). An explicitly empty array still counts as
- * "declared" — the node author chose "no paint". An absent array means
- * "inherit from elsewhere" (e.g. SYMBOL). This matches the semantics of
- * `mergeSymbolProperties` in @higma-document-models/fig/symbols, which checks
- * `if (symbolNode.fillPaints)` — truthy only when declared.
- */
-function hasPaintDeclaration(paints: readonly FigPaint[] | undefined): boolean {
-  return paints !== undefined && paints.length > 0;
-}
-
-
-/**
- * Deep clone a FigDesignNode tree.
- *
- * Returns `MutableFigDesignNode` — every cloned node is intended to
- * be mutated by the override / CPA / dsd pipelines below. Returning
- * the readonly type would force every mutation site to re-cast
- * (`node as MutableFigDesignNode`), which both clutters the code and
- * hides the fact that clones exist precisely to be mutated. The input
- * stays readonly; only the output is declared mutable.
- */
-function deepCloneDesignNode(node: FigDesignNode): MutableFigDesignNode {
-  if (!node.children || node.children.length === 0) {
-    return { ...node };
-  }
-  return {
-    ...node,
-    children: node.children.map(deepCloneDesignNode),
-  };
-}
 
 /**
  * Find a descendant node by walking the override's guidPath through the tree.
@@ -485,17 +388,19 @@ function walkOverridePathIds(
   ids: readonly string[],
   symbolMap: ReadonlyMap<string, FigDesignNode>,
 ): MutableFigDesignNode | undefined {
-  let current: readonly MutableFigDesignNode[] = nodes;
-  let found: MutableFigDesignNode | undefined;
-  for (const id of ids) {
-    found = findInDesignTree(current, id, symbolMap);
-    if (!found) {
-      return undefined;
-    }
-    expandInstanceChildrenIfEmpty(found, symbolMap);
-    current = mutableChildren(found);
+  if (ids.length === 0) {
+    return undefined;
   }
-  return found;
+  const [head, ...tail] = ids;
+  const found = findInDesignTree(nodes, head, symbolMap);
+  if (!found) {
+    return undefined;
+  }
+  expandInstanceChildrenIfEmpty(found, symbolMap);
+  if (tail.length === 0) {
+    return found;
+  }
+  return walkOverridePathIds(mutableChildren(found), tail, symbolMap);
 }
 
 /**
@@ -594,7 +499,7 @@ function applySymbolOverridesToChildren(
     if (overridePathToIds(override).length !== 1) { continue; }
 
     const target = findNodeByOverridePath(children, override, symbolMap);
-    if (!target || getNodeTypeName(target) !== FIG_NODE_TYPE.INSTANCE) { continue; }
+    if (!target || getDesignNodeTypeName(target) !== FIG_NODE_TYPE.INSTANCE) { continue; }
 
     // Capture the **old** symbolId before `applyOverrideToNode` rewrites
     // it — `reresolveOverridesForVariant` needs both old and new ids so
@@ -679,7 +584,9 @@ function resolveStyleRef(
 ): readonly FigPaint[] | undefined {
   for (const k of styleRefKeys(ref)) {
     const v = map.get(k);
-    if (v) return v;
+    if (v) {
+      return v;
+    }
   }
   return undefined;
 }
@@ -832,17 +739,23 @@ function applyDerivedSymbolData(
     //
     if (!outer) {
       const sizeConflict = entry.size !== undefined && pinned.has("size");
-      const transformConflict = entry.transform !== undefined && pinned.has("transform");
-      if (sizeConflict || transformConflict) {
-        const stripped = stripOverrideFields(entry, sizeConflict, transformConflict);
-        if (stripped === undefined) continue;
-        applyOverrideToNode(target, stripped);
-        continue;
+        const transformConflict = entry.transform !== undefined && pinned.has("transform");
+        if (sizeConflict || transformConflict) {
+          const stripped = stripOverrideFields(entry, sizeConflict, transformConflict);
+          if (stripped === undefined) {
+            continue;
+          }
+          applyOverrideToNode(target, stripped);
+          continue;
+        }
       }
-    }
-    applyOverrideToNode(target, entry);
-    if (entry.size !== undefined) pinned.add("size");
-    if (entry.transform !== undefined) pinned.add("transform");
+      applyOverrideToNode(target, entry);
+      if (entry.size !== undefined) {
+        pinned.add("size");
+      }
+      if (entry.transform !== undefined) {
+        pinned.add("transform");
+      }
     // Forward multi-guid DSD entries through the INSTANCE chain so the
     // inner INSTANCE's Step 5 (applyDerivedSymbolData) picks them up
     // on freshly-cloned descendants. The forwarded copy is appended
@@ -909,13 +822,7 @@ function forwardOverrideToDescendantInstance(
   // `overriddenSymbolID` alone is a variant-swap directive the inner
   // INSTANCE already resolves through its own pipeline; forwarding it
   // would be a no-op.
-  let hasPayload = false;
-  for (const key of overrideFieldKeys(override)) {
-    if (key !== "overriddenSymbolID") {
-      hasPayload = true;
-      break;
-    }
-  }
+  const hasPayload = overrideFieldKeys(override).some((key) => key !== "overriddenSymbolID");
   if (!hasPayload) {
     return false;
   }
@@ -961,7 +868,9 @@ function stripOverrideFields(
     // overriddenSymbolID is a routing field (instance swap) — present
     // even on otherwise-empty entries; skip it. Every other present
     // key is an actionable override.
-    if (key === "overriddenSymbolID") continue;
+    if (key === "overriddenSymbolID") {
+      continue;
+    }
     return stripped;
   }
   return undefined;
@@ -1128,9 +1037,13 @@ function resolveDesignInstance(
     // If self-overrides set styleIdForFill/styleIdForStrokeFill, resolve
     // through guid or assetRef.key via the style registry.
     const mergedFills = resolveStyleRef(merged.styleIdForFill, ctx.styleRegistry.fills);
-    if (mergedFills) merged.fills = mergedFills;
+    if (mergedFills) {
+      merged.fills = mergedFills;
+    }
     const mergedStrokes = resolveStyleRef(merged.styleIdForStrokeFill, ctx.styleRegistry.strokes);
-    if (mergedStrokes) merged.strokes = mergedStrokes;
+    if (mergedStrokes) {
+      merged.strokes = mergedStrokes;
+    }
   }
 
   // `merged` is mutated by Step 6 (size adjustment) and is the `effectiveNode`
@@ -1148,23 +1061,7 @@ function resolveDesignInstance(
   // resolution) mutates these clones. Declaring the type here removes
   // the `as MutableFigDesignNode` casts that would otherwise appear in
   // each step.
-  let children: readonly MutableFigDesignNode[];
-  if (ownChildren.length > 0) {
-    // ownChildren are the *already-resolved* clones an outer INSTANCE
-    // handed us (via resolveNestedInstances). They are not shared with
-    // any other resolve pass, so we must NOT deep-clone them again —
-    // re-cloning produces fresh node objects that lose any per-node
-    // bookkeeping the outer cascade attached (e.g. the seal WeakSets in
-    // `applyDerivedSymbolData` that prevent this inner DSD from
-    // overwriting outer-pinned size/transform with the SYMBOL-default
-    // layout).
-    children = ownChildren;
-  } else {
-    // SYMBOL children, on the other hand, are read-only and shared
-    // across every INSTANCE that references the SYMBOL. We must clone
-    // before mutating.
-    children = (symbol.children ?? []).map(deepCloneDesignNode);
-  }
+  const children = resolveInstanceChildrenForMutation(ownChildren, symbol);
 
   // Apply per-child overrides from symbolOverrides
   if (node.overrides && node.overrides.length > 0) {
@@ -1244,9 +1141,30 @@ function resolveDesignInstance(
   // ── Step 7: Recursively resolve nested INSTANCE children ──
   // Children inherited from SYMBOL may themselves be INSTANCE nodes.
   // These must be resolved against the same symbolMap.
-  children = resolveNestedInstances(children, ctx);
+  const resolvedChildren = resolveNestedInstances(children, ctx);
 
-  return { effectiveNode, children };
+  return { effectiveNode, children: resolvedChildren };
+}
+
+function resolveInstanceChildrenForMutation(
+  ownChildren: readonly MutableFigDesignNode[],
+  symbol: FigDesignNode,
+): readonly MutableFigDesignNode[] {
+  if (ownChildren.length > 0) {
+    // ownChildren are the *already-resolved* clones an outer INSTANCE
+    // handed us (via resolveNestedInstances). They are not shared with
+    // any other resolve pass, so we must NOT deep-clone them again —
+    // re-cloning produces fresh node objects that lose any per-node
+    // bookkeeping the outer cascade attached (e.g. the seal WeakSets in
+    // `applyDerivedSymbolData` that prevent this inner DSD from
+    // overwriting outer-pinned size/transform with the SYMBOL-default
+    // layout).
+    return ownChildren;
+  }
+  // SYMBOL children, on the other hand, are read-only and shared
+  // across every INSTANCE that references the SYMBOL. We must clone
+  // before mutating.
+  return (symbol.children ?? []).map(deepCloneDesignNode);
 }
 
 /**
@@ -1261,7 +1179,7 @@ function resolveNestedInstances(
   ctx: BuildContext,
 ): readonly MutableFigDesignNode[] {
   return children.map((child) => {
-    const typeName = getNodeTypeName(child);
+    const typeName = getDesignNodeTypeName(child);
     if (typeName !== FIG_NODE_TYPE.INSTANCE) {
       if (child.children && child.children.length > 0) {
         const resolvedGrandchildren = resolveNestedInstances(mutableChildren(child), ctx);
@@ -1294,7 +1212,7 @@ function buildGroupNode(node: FigDesignNode, ctx: BuildContext, children: readon
     type: "group",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1308,14 +1226,14 @@ function buildFrameNode(node: FigDesignNode, ctx: BuildContext, children: readon
   const { size } = extractSizeProps(node);
   const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
   const { effects } = extractEffectsProps(node);
-  const cornerRadius = extractCornerRadius(node);
-  const clipsContent = resolveClipsContent(node);
+  const cornerRadius = extractDesignCornerRadius(node);
+  const clipsContent = resolveDesignClipsContent(node);
 
   return {
     type: "frame",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1337,13 +1255,13 @@ function buildRectNode(node: FigDesignNode, ctx: BuildContext): RectNode {
   const { size } = extractSizeProps(node);
   const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
   const { effects } = extractEffectsProps(node);
-  const cornerRadius = extractCornerRadius(node);
+  const cornerRadius = extractDesignCornerRadius(node);
 
   return {
     type: "rect",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1367,7 +1285,7 @@ function buildEllipseNode(node: FigDesignNode, ctx: BuildContext): EllipseNode {
     type: "ellipse",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1403,14 +1321,14 @@ function extractArcData(node: FigDesignNode): ArcData | undefined {
  * pre-computed geometry blobs exist (e.g., builder-generated documents).
  */
 function synthesizeContours(node: FigDesignNode): DecodedContour[] {
-  const typeName = getNodeTypeName(node);
+  const typeName = getDesignNodeTypeName(node);
   const w = node.size?.x ?? 0;
   const h = node.size?.y ?? 0;
 
   switch (typeName) {
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
-      return [generateRectContour(w, h, extractCornerRadius(node))];
+      return [generateRectContour(w, h, extractDesignCornerRadius(node))];
     case "ELLIPSE":
       return [generateEllipseContour(w, h)];
     case "STAR":
@@ -1450,7 +1368,9 @@ function resolveOverrideEntryPaints(
 ): readonly FigPaint[] | undefined {
   // Priority 1: styleIdForFill via style registry (guid or assetRef.key)
   const resolved = resolveStyleRef(entry.styleIdForFill, styleRegistry.fills);
-  if (resolved) return resolved;
+  if (resolved) {
+    return resolved;
+  }
 
   // Priority 2: inline fillPaints
   if (entry.fillPaints && entry.fillPaints.length > 0) {
@@ -1553,7 +1473,7 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
     type: "path",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1602,7 +1522,7 @@ function buildTextNode(node: FigDesignNode, ctx: BuildContext): TextNode {
     type: "text",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1659,10 +1579,12 @@ function collectChildPathsForBoolean(
 
   for (const child of children) {
     const base = extractBaseProps(child);
-    if (!base.visible && !ctx.showHiddenNodes) { continue; }
+    if (!base.visible && !ctx.showHiddenNodes) {
+      continue;
+    }
 
-    const typeName = getNodeTypeName(child);
-    const childTransform = convertTransform(base.transform);
+    const typeName = getDesignNodeTypeName(child);
+    const childTransform = convertDesignTransform(base.transform);
 
     // Nested BOOLEAN_OPERATION: recurse
     if (typeName === "BOOLEAN_OPERATION") {
@@ -1678,16 +1600,7 @@ function collectChildPathsForBoolean(
 
     // Extract geometry
     const { fillGeometry, strokeGeometry } = extractGeometryProps(child);
-    let contours = decodeGeometryToContours(fillGeometry, ctx.blobs);
-    if (contours.length === 0) {
-      contours = convertVectorPathsToContours(child.vectorPaths);
-    }
-    if (contours.length === 0) {
-      contours = decodeGeometryToContours(strokeGeometry, ctx.blobs);
-    }
-    if (contours.length === 0) {
-      contours = synthesizeContours(child);
-    }
+    const contours = resolveBooleanInputContours(child, fillGeometry, strokeGeometry, ctx);
 
     for (const contour of contours) {
       const d = contour.commands.map((cmd) => {
@@ -1707,6 +1620,27 @@ function collectChildPathsForBoolean(
   }
 
   return result;
+}
+
+function resolveBooleanInputContours(
+  child: FigDesignNode,
+  fillGeometry: readonly FigFillGeometry[] | undefined,
+  strokeGeometry: readonly FigFillGeometry[] | undefined,
+  ctx: BuildContext,
+): DecodedContour[] {
+  const fillContours = decodeGeometryToContours(fillGeometry, ctx.blobs);
+  if (fillContours.length > 0) {
+    return fillContours;
+  }
+  const vectorContours = convertVectorPathsToContours(child.vectorPaths);
+  if (vectorContours.length > 0) {
+    return vectorContours;
+  }
+  const strokeContours = decodeGeometryToContours(strokeGeometry, ctx.blobs);
+  if (strokeContours.length > 0) {
+    return strokeContours;
+  }
+  return synthesizeContours(child);
 }
 
 /**
@@ -1751,7 +1685,7 @@ function buildBooleanOperationNode(
     type: "path",
     id: getNodeId(node, ctx),
     name: node.name,
-    transform: convertTransform(base.transform),
+    transform: convertDesignTransform(base.transform),
     opacity: base.opacity,
     visible: base.visible,
     effects: convertEffectsToScene(effects),
@@ -1827,50 +1761,67 @@ function resizeCounterAxis(
   return { x: size.x, y: counterContent };
 }
 
+/**
+ * Stretch auto-layout children along the counter axis.
+ */
 export function applyCounterAxisStretch<C extends StretchChild>(
   parent: StretchParent,
   children: readonly C[],
 ): readonly C[] {
   const autoLayout = parent.autoLayout;
-  if (!autoLayout) return children;
+  if (!autoLayout) {
+    return children;
+  }
   const modeName = autoLayout.stackMode?.name;
-  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") return children;
+  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") {
+    return children;
+  }
 
   // Parent's content area = size minus padding. `stackPadding` may be a
   // uniform number (Kiwi shorthand) OR a per-side `{top,right,bottom,
   // left}` object (domain expanded form); both are honoured here.
   // When no stackPadding is set the content area equals the parent's size.
-  let padCounter = 0;
-  const sp = autoLayout.stackPadding;
-  if (typeof sp === "number") {
-    padCounter = sp * 2;
-  } else if (sp && typeof sp === "object") {
-    padCounter = modeName === "VERTICAL" ? sp.left + sp.right : sp.top + sp.bottom;
-  }
+  const padCounter = resolveCounterAxisPadding(autoLayout.stackPadding, modeName);
   const pSize = parent.size;
-  if (!pSize) return children;
+  if (!pSize) {
+    return children;
+  }
   const counterAxis = modeName === "VERTICAL" ? "x" : "y";
   const counterContent = (counterAxis === "x" ? pSize.x : pSize.y) - padCounter;
-  if (counterContent <= 0) return children;
+  if (counterContent <= 0) {
+    return children;
+  }
 
-  let changed = false;
-  const out: C[] = [];
+  const state: { changed: boolean; children: C[] } = { changed: false, children: [] };
   for (const child of children) {
     const alignSelf = child.layoutConstraints?.stackChildAlignSelf?.name;
     if (alignSelf !== "STRETCH" || !child.size) {
-      out.push(child);
+      state.children.push(child);
       continue;
     }
     const current = counterAxis === "x" ? child.size.x : child.size.y;
     if (Math.abs(current - counterContent) < 0.5) {
-      out.push(child);
+      state.children.push(child);
       continue;
     }
     const newSize = resizeCounterAxis(child.size, counterContent, counterAxis);
-    out.push({ ...child, size: newSize });
-    changed = true;
+    state.children.push({ ...child, size: newSize });
+    state.changed = true;
   }
-  return changed ? out : children;
+  return state.changed ? state.children : children;
+}
+
+function resolveCounterAxisPadding(
+  stackPadding: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number } | number | undefined,
+  modeName: "VERTICAL" | "HORIZONTAL",
+): number {
+  if (typeof stackPadding === "number") {
+    return stackPadding * 2;
+  }
+  if (stackPadding && typeof stackPadding === "object") {
+    return modeName === "VERTICAL" ? stackPadding.left + stackPadding.right : stackPadding.top + stackPadding.bottom;
+  }
+  return 0;
 }
 
 function cloneOwnInstanceChildren(children: readonly FigDesignNode[]): MutableFigDesignNode[] {
@@ -1908,7 +1859,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     return null;
   }
 
-  const typeName = getNodeTypeName(node);
+  const typeName = getDesignNodeTypeName(node);
   const children = node.children ?? [];
 
   switch (typeName) {
@@ -2038,10 +1989,15 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
 function buildChildren(children: readonly FigDesignNode[], ctx: BuildContext): SceneNode[] {
   const result: SceneNode[] = [];
 
-  // Track current active mask state across the single loop
-  let activeMaskContent: SceneNode | null = null;
-  let activeMaskId: SceneNodeId | null = null;
-  let maskedChildren: SceneNode[] = [];
+  const maskState: {
+    activeMaskContent: SceneNode | null;
+    activeMaskId: SceneNodeId | null;
+    maskedChildren: SceneNode[];
+  } = {
+    activeMaskContent: null,
+    activeMaskId: null,
+    maskedChildren: [],
+  };
 
   for (const child of children) {
     const base = extractBaseProps(child);
@@ -2051,25 +2007,25 @@ function buildChildren(children: readonly FigDesignNode[], ctx: BuildContext): S
 
     if (isMaskNode(child)) {
       // Flush previously accumulated masked children
-      if (activeMaskId && activeMaskContent && maskedChildren.length > 0) {
-        result.push(wrapWithMask(activeMaskId, activeMaskContent, maskedChildren, ctx));
-        maskedChildren = [];
+      if (maskState.activeMaskId && maskState.activeMaskContent && maskState.maskedChildren.length > 0) {
+        result.push(wrapWithMask(maskState.activeMaskId, maskState.activeMaskContent, maskState.maskedChildren, ctx));
+        maskState.maskedChildren = [];
       }
 
       // Build the mask node and start a new mask group
       const maskNode = buildNode(child, ctx);
       if (maskNode) {
-        activeMaskId = maskNode.id;
-        activeMaskContent = maskNode;
+        maskState.activeMaskId = maskNode.id;
+        maskState.activeMaskContent = maskNode;
       } else {
-        activeMaskId = null;
-        activeMaskContent = null;
+        maskState.activeMaskId = null;
+        maskState.activeMaskContent = null;
       }
     } else {
       const node = buildNode(child, ctx);
       if (node) {
-        if (activeMaskId) {
-          maskedChildren.push(node);
+        if (maskState.activeMaskId) {
+          maskState.maskedChildren.push(node);
         } else {
           result.push(node);
         }
@@ -2078,8 +2034,8 @@ function buildChildren(children: readonly FigDesignNode[], ctx: BuildContext): S
   }
 
   // Flush final masked group
-  if (activeMaskId && activeMaskContent && maskedChildren.length > 0) {
-    result.push(wrapWithMask(activeMaskId, activeMaskContent, maskedChildren, ctx));
+  if (maskState.activeMaskId && maskState.activeMaskContent && maskState.maskedChildren.length > 0) {
+    result.push(wrapWithMask(maskState.activeMaskId, maskState.activeMaskContent, maskState.maskedChildren, ctx));
   }
 
   return result;

@@ -45,6 +45,7 @@ import {
 } from "../geometry";
 import { resolveChildConstraints } from "@higma-document-models/fig/symbols";
 import { getEffectiveSymbolID } from "@higma-document-models/fig/symbols";
+import { generatePlaceholderThumbnail } from "../thumbnail";
 
 
 
@@ -1393,37 +1394,6 @@ function _createFigFileBuilder() {
     build,
     buildAsync,
   };
-}
-
-/**
- * Generate a minimal placeholder thumbnail PNG (1x1 gray pixel)
- * This is a valid PNG file that Figma accepts.
- */
-function generatePlaceholderThumbnail(): Uint8Array {
-  // Minimal 1x1 gray PNG (pre-computed bytes)
-  // PNG header + IHDR + IDAT + IEND
-  // Color: #F5F5F5 (light gray, matches default canvas background)
-  return new Uint8Array([
-    // PNG signature
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    // IHDR chunk (1x1, 8-bit RGB)
-    0x00, 0x00, 0x00, 0x0d, // length
-    0x49, 0x48, 0x44, 0x52, // "IHDR"
-    0x00, 0x00, 0x00, 0x01, // width: 1
-    0x00, 0x00, 0x00, 0x01, // height: 1
-    0x08, 0x02, // bit depth: 8, color type: RGB
-    0x00, 0x00, 0x00, // compression, filter, interlace
-    0x90, 0x77, 0x53, 0xde, // CRC
-    // IDAT chunk (compressed pixel data: #F5F5F5)
-    0x00, 0x00, 0x00, 0x0c, // length
-    0x49, 0x44, 0x41, 0x54, // "IDAT"
-    0x08, 0xd7, 0x63, 0x78, 0xf6, 0xf6, 0x06, 0x00, 0x02, 0x3b, 0x01, 0x1e,
-    0xd6, 0xcc, 0x05, 0x0e, // CRC
-    // IEND chunk
-    0x00, 0x00, 0x00, 0x00, // length
-    0x49, 0x45, 0x4e, 0x44, // "IEND"
-    0xae, 0x42, 0x60, 0x82, // CRC
-  ]);
 }
 
 /**
