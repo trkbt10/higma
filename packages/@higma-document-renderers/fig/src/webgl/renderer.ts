@@ -96,6 +96,7 @@ import { svgPathDToContours } from "./path-contours";
 import { flattenPathCommands } from "./tessellation";
 import { syncWebGLCanvasRenderSurface } from "./render-surface";
 import { createWebGLPathFillPlan, type WebGLPathFillRule } from "./render-path-fill-plan";
+import { hasVisibleLineText } from "./text-visibility";
 
 /** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
 function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
@@ -1440,6 +1441,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
 
     if (node.content.mode === "lines") {
+      if (!hasVisibleLineText(node.content)) { return; }
       throw new Error(`WebGL text renderer requires glyph contours for text node ${node.id}`);
     }
   }
