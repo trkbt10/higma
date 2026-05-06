@@ -26,3 +26,5 @@ Deck, buzz, and site editor packages assemble product-specific workspaces from t
   - owns `createSiteEditorWorkspace`
 
 The overview expands beyond metadata counts by exposing render unit count, schema definition names, node type names, and metadata flags required by editor inspection surfaces. Each workspace also exposes product-specific editable units derived from renderer render units so the editor boundary is not a load/session wrapper.
+
+Editable-unit conversion is explicit per product: `createDeckEditableUnit` produces `DeckEditableUnit`, `createBuzzEditableUnit` produces `BuzzEditableUnit`, and `createSiteEditableUnit` produces `SiteEditableUnit`. These converters preserve render-unit identity, hierarchy, label, product scope, and operation target for downstream editor surfaces.
