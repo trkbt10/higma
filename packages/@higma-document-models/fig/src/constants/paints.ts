@@ -43,10 +43,11 @@ export type BlendMode = keyof typeof BLEND_MODE_VALUES;
 
 /** Scale mode values for image fills */
 export const SCALE_MODE_VALUES = {
-  FILL: 0,
+  STRETCH: 0,
   FIT: 1,
-  CROP: 2,
+  FILL: 2,
   TILE: 3,
+  CROP: 4,
 } as const;
 
 export type ScaleMode = keyof typeof SCALE_MODE_VALUES;
