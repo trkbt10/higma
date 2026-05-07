@@ -4,7 +4,7 @@
 
 import { createTranslationMatrix } from "@higma-document-models/fig/matrix";
 import type { Color } from "../types";
-import type { TextNodeData, DerivedTextNodeData } from "./types";
+import type { TextNodeData, DerivedTextNodeData, TextStyleRunData } from "./types";
 import {
   TEXT_ALIGN_H_VALUES,
   TEXT_ALIGN_V_VALUES,
@@ -61,6 +61,7 @@ export type TextNodeBuilder = {
   lineHeight: (value: number, unit?: NumberUnits) => TextNodeBuilder;
   letterSpacing: (value: number, unit?: NumberUnits) => TextNodeBuilder;
   color: (c: Color) => TextNodeBuilder;
+  styleRuns: (runs: readonly TextStyleRunData[]) => TextNodeBuilder;
   visible: (v: boolean) => TextNodeBuilder;
   opacity: (o: number) => TextNodeBuilder;
   derivedTextData: (data: DerivedTextNodeData) => TextNodeBuilder;
@@ -85,6 +86,7 @@ type TextBuilderState = {
   lineHeight: { value: number; unit: NumberUnits };
   letterSpacing: { value: number; unit: NumberUnits };
   fillColor: Color;
+  styleRuns: readonly TextStyleRunData[] | undefined;
   visible: boolean;
   opacity: number;
   derivedTextData: DerivedTextNodeData | undefined;
@@ -110,6 +112,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
     lineHeight: { value: 100, unit: "PERCENT" },
     letterSpacing: { value: 0, unit: "PERCENT" },
     fillColor: { r: 0, g: 0, b: 0, a: 1 },
+    styleRuns: undefined,
     visible: true,
     opacity: 1,
     derivedTextData: undefined,
@@ -130,6 +133,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
     lineHeight(value: number, unit: NumberUnits = "PIXELS") { state.lineHeight = { value, unit }; return builder; },
     letterSpacing(value: number, unit: NumberUnits = "PERCENT") { state.letterSpacing = { value, unit }; return builder; },
     color(c: Color) { state.fillColor = c; return builder; },
+    styleRuns(runs: readonly TextStyleRunData[]) { state.styleRuns = runs; return builder; },
     visible(v: boolean) { state.visible = v; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
     derivedTextData(data: DerivedTextNodeData) { state.derivedTextData = data; return builder; },
@@ -171,6 +175,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
         visible: state.visible,
         opacity: state.opacity,
         derivedTextData: state.derivedTextData,
+        styleRuns: state.styleRuns,
       };
     },
   };

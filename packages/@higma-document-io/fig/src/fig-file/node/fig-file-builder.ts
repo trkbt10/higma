@@ -433,6 +433,7 @@ function _createFigFileBuilder() {
    * Add a TEXT node
    */
   function addTextNode(data: TextNodeData): number {
+    const textRunData = buildTextRunData(data);
     const node = createNodeChange({
       localID: data.localID,
       parentID: data.parentID,
@@ -453,7 +454,8 @@ function _createFigFileBuilder() {
       letterSpacing: data.letterSpacing,
       textData: {
         characters: data.characters,
-        characterStyleIDs: new Array(data.characters.length).fill(0),
+        characterStyleIDs: textRunData.characterStyleIDs,
+        styleOverrideTable: textRunData.styleOverrideTable,
       },
       fillPaints: data.fillPaints,
     });
@@ -462,6 +464,55 @@ function _createFigFileBuilder() {
     }
     nodes.push(node);
     return data.localID;
+  }
+
+  function buildTextRunData(data: TextNodeData): {
+    readonly characterStyleIDs: number[];
+    readonly styleOverrideTable: readonly {
+      readonly styleID: number;
+      readonly fillPaints: TextNodeData["fillPaints"];
+    }[] | undefined;
+  } {
+    if (data.styleRuns === undefined || data.styleRuns.length === 0) {
+      return {
+        characterStyleIDs: new Array(data.characters.length).fill(0),
+        styleOverrideTable: undefined,
+      };
+    }
+    const ids = new Array<number>(data.characters.length).fill(0);
+    const styleOverrideTable = data.styleRuns.map((run, index) => {
+      validateTextStyleRun(run, data.characters.length);
+      const styleID = index + 1;
+      for (let i = run.start; i < run.end; i++) {
+        if (ids[i] !== 0) {
+          throw new Error(`Text style run overlaps at character index ${i}`);
+        }
+        ids[i] = styleID;
+      }
+      return {
+        styleID,
+        fillPaints: [{
+          type: { value: 0, name: "SOLID" as const },
+          color: run.fillColor,
+          opacity: 1,
+          visible: true,
+          blendMode: { value: 1, name: "NORMAL" as const },
+        }],
+      };
+    });
+    return {
+      characterStyleIDs: ids,
+      styleOverrideTable,
+    };
+  }
+
+  function validateTextStyleRun(run: NonNullable<TextNodeData["styleRuns"]>[number], characterCount: number): void {
+    if (!Number.isInteger(run.start) || !Number.isInteger(run.end)) {
+      throw new Error("Text style run start/end must be integers");
+    }
+    if (run.start < 0 || run.end > characterCount || run.start >= run.end) {
+      throw new Error(`Text style run range ${run.start}-${run.end} is outside character count ${characterCount}`);
+    }
   }
 
   // ===========================================================================
@@ -799,7 +850,14 @@ function _createFigFileBuilder() {
     textCase?: { value: number; name: string };
     lineHeight?: { value: number; units: { value: number; name: string } };
     letterSpacing?: { value: number; units: { value: number; name: string } };
-    textData?: { characters: string; characterStyleIDs: number[] };
+    textData?: {
+      characters: string;
+      characterStyleIDs: number[];
+      styleOverrideTable?: readonly {
+        readonly styleID: number;
+        readonly fillPaints: TextNodeData["fillPaints"];
+      }[];
+    };
     // Paint fields
     fillPaints?: readonly {
       type: { value: number; name: string };

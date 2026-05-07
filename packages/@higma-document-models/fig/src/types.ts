@@ -455,6 +455,9 @@ export type FigKiwiSymbolOverridePayload = {
   readonly effects?: readonly FigEffect[];
   readonly styleIdForFill?: FigStyleId;
   readonly styleIdForStrokeFill?: FigStyleId;
+  readonly styleIdForText?: FigStyleId;
+  readonly styleIdForEffect?: FigStyleId;
+  readonly styleIdForGrid?: FigStyleId;
   readonly characters?: string;
   readonly textData?: FigKiwiTextData;
   readonly derivedTextData?: FigDerivedTextData;
@@ -623,6 +626,28 @@ export type FigNode = {
   readonly styleIdForFill?: FigStyleId;
   /** Style reference for stroke paint (Kiwi schema field 333) */
   readonly styleIdForStrokeFill?: FigStyleId;
+  /**
+   * Style reference for text properties (Kiwi schema field 334).
+   * Resolves to a TEXT-type style-definition node whose own
+   * `fontName` / `fontSize` / `lineHeight` / `letterSpacing` /
+   * `textCase` / `textDecoration` / `textTracking` define the
+   * shared text style. Used on TEXT nodes only.
+   */
+  readonly styleIdForText?: FigStyleId;
+  /**
+   * Style reference for effects (Kiwi schema field 335). Resolves to
+   * an EFFECT-type style-definition node whose own `effects` array
+   * (DROP_SHADOW / INNER_SHADOW / LAYER_BLUR / BACKGROUND_BLUR)
+   * defines the shared effect style.
+   */
+  readonly styleIdForEffect?: FigStyleId;
+  /**
+   * Style reference for layout grids (Kiwi schema field 336).
+   * Resolves to a GRID-type style-definition node whose own
+   * `layoutGrids` array defines the shared grid style. Used on
+   * FRAME / SECTION nodes that publish layout grids.
+   */
+  readonly styleIdForGrid?: FigStyleId;
   /** Stroke dash pattern */
   readonly strokeDashes?: readonly number[];
   /** Per-side stroke weights (Figma "Independent stroke weights" feature) */
@@ -795,8 +820,21 @@ export type FigNode = {
   readonly leadingTrim?: KiwiEnumValue;
   /** Variable font axis values */
   readonly fontVariations?: readonly { readonly axisTag: number; readonly axisValue: number }[];
+  /**
+   * Letter-spacing tracking value (Kiwi `textTracking`). Distinct from
+   * the unit-bearing `letterSpacing`: this is a numeric tracking adjust
+   * applied at the engine level. Used by text-style definitions and
+   * preserved on TEXT nodes that carry it.
+   */
+  readonly textTracking?: number;
   /** Hyperlink data */
   readonly hyperlink?: { readonly url?: string };
+  /**
+   * Layout grids (Kiwi `layoutGrids`). Set on FRAME / SECTION nodes
+   * that publish layout grids and on GRID-type style-definition nodes
+   * whose `layoutGrids` array is the authoritative grid set.
+   */
+  readonly layoutGrids?: readonly unknown[];
   /** Kiwi TextData message for TEXT nodes (per-character styling) */
   readonly textData?: FigKiwiTextData;
   /** Pre-computed text rendering data (glyph outlines, baselines, decorations) */

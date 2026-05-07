@@ -41,6 +41,12 @@ export type DerivedTextNodeData = {
   }[];
 };
 
+export type TextStyleRunData = {
+  readonly start: number;
+  readonly end: number;
+  readonly fillColor: Paint["color"];
+};
+
 export type TextNodeData = {
   readonly localID: number;
   readonly parentID: number;
@@ -68,4 +74,5 @@ export type TextNodeData = {
   readonly visible: boolean;
   readonly opacity: number;
   readonly derivedTextData?: DerivedTextNodeData;
+  readonly styleRuns?: readonly TextStyleRunData[];
 };

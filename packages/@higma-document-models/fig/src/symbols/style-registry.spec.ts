@@ -39,13 +39,24 @@ import {
   resolveNodeStyleIds,
   resolvePaintRef,
   resolveStyledPaint,
+  resolveStyledEffects,
+  resolveStyledTextProperties,
+  resolveStyledGrids,
   formatNodeLocator,
   styleRefHasKey,
   styleRefKey,
   styleRefKeys,
 } from "./style-registry";
 import { EMPTY_FIG_STYLE_REGISTRY } from "../domain/document";
-import type { FigNode, FigPaint } from "../types";
+import type { FigNode, FigPaint, FigEffect } from "../types";
+
+function dropShadow(radius: number): FigEffect {
+  return { type: "DROP_SHADOW", radius, visible: true, blendMode: "NORMAL" };
+}
+
+function layerBlur(radius: number): FigEffect {
+  return { type: "LAYER_BLUR", radius, visible: true, blendMode: "NORMAL" };
+}
 
 function solidPaint(r: number, g: number, b: number): FigPaint {
   return {
@@ -120,7 +131,7 @@ describe("buildFigStyleRegistry", () => {
       fillPaints: [solidPaint(0, 0, 0)],
     });
     const registry = buildFigStyleRegistry(new Map([["1:100", def]]));
-    expect(registry.get("1:100")).toEqual([solidPaint(0, 0, 0)]);
+    expect(registry.paints.get("1:100")).toEqual([solidPaint(0, 0, 0)]);
   });
 
   it("indexes a STROKE style-definition node under its GUID using strokePaints", () => {
@@ -130,7 +141,7 @@ describe("buildFigStyleRegistry", () => {
       strokePaints: [solidPaint(0.5, 0.5, 0.5)],
     });
     const registry = buildFigStyleRegistry(new Map([["1:101", def]]));
-    expect(registry.get("1:101")).toEqual([solidPaint(0.5, 0.5, 0.5)]);
+    expect(registry.paints.get("1:101")).toEqual([solidPaint(0.5, 0.5, 0.5)]);
   });
 
   it("indexes a style-definition under both GUID and assetRef key when both are present", () => {
@@ -141,8 +152,8 @@ describe("buildFigStyleRegistry", () => {
       fillPaints: [solidPaint(0, 0, 0)],
     });
     const registry = buildFigStyleRegistry(new Map([["15:133", proxy]]));
-    expect(registry.get("15:133")).toEqual([solidPaint(0, 0, 0)]);
-    expect(registry.get("c3ebcfd9acc3408d6578662e147b484f2e0b567d"))
+    expect(registry.paints.get("15:133")).toEqual([solidPaint(0, 0, 0)]);
+    expect(registry.paints.get("c3ebcfd9acc3408d6578662e147b484f2e0b567d"))
       .toEqual([solidPaint(0, 0, 0)]);
   });
 
@@ -153,7 +164,10 @@ describe("buildFigStyleRegistry", () => {
       fillPaints: [solidPaint(0, 0, 0)],
     });
     const registry = buildFigStyleRegistry(new Map([["2:200", rect]]));
-    expect(registry.size).toBe(0);
+    expect(registry.paints.size).toBe(0);
+    expect(registry.effects.size).toBe(0);
+    expect(registry.textProperties.size).toBe(0);
+    expect(registry.layoutGrids.size).toBe(0);
   });
 
   it("skips style-definitions whose implied paint field is empty", () => {
@@ -164,7 +178,7 @@ describe("buildFigStyleRegistry", () => {
       // no fillPaints
     });
     const registry = buildFigStyleRegistry(new Map([["3:300", empty]]));
-    expect(registry.size).toBe(0);
+    expect(registry.paints.size).toBe(0);
   });
 
   it("does not cross-fall back fillPaints to strokePaints based on consumer intent", () => {
@@ -180,7 +194,49 @@ describe("buildFigStyleRegistry", () => {
     });
     const registry = buildFigStyleRegistry(new Map([["7:80", fillStyle]]));
     // Same lookup key works regardless of intent — registry is intent-agnostic.
-    expect(registry.get("7:80")).toEqual([solidPaint(1, 1, 1)]);
+    expect(registry.paints.get("7:80")).toEqual([solidPaint(1, 1, 1)]);
+  });
+
+  it("indexes an EFFECT style-definition node under its GUID using effects", () => {
+    const blur = layerBlur(4);
+    const def = node({
+      guid: { sessionID: 4, localID: 1 },
+      styleType: { value: 4, name: "EFFECT" },
+      effects: [blur],
+    });
+    const registry = buildFigStyleRegistry(new Map([["4:1", def]]));
+    expect(registry.effects.get("4:1")).toEqual([blur]);
+    expect(registry.paints.size).toBe(0);
+  });
+
+  it("indexes a TEXT style-definition node into the textProperties map (only set fields)", () => {
+    const def = node({
+      guid: { sessionID: 5, localID: 1 },
+      styleType: { value: 3, name: "TEXT" },
+      fontSize: 24,
+      lineHeight: { value: 32, units: { value: 1, name: "PIXELS" } },
+      // letterSpacing intentionally omitted — the style only sets
+      // fontSize and lineHeight, and the registry must reflect that
+      // partial coverage so consumers fall back to embedded values
+      // for unset properties.
+    });
+    const registry = buildFigStyleRegistry(new Map([["5:1", def]]));
+    const properties = registry.textProperties.get("5:1");
+    expect(properties).toBeDefined();
+    expect(properties?.fontSize).toBe(24);
+    expect(properties?.lineHeight?.value).toBe(32);
+    expect(properties?.letterSpacing).toBeUndefined();
+  });
+
+  it("indexes a GRID style-definition node into the layoutGrids map", () => {
+    const grid = { type: "COLUMNS", count: 12 };
+    const def = node({
+      guid: { sessionID: 6, localID: 1 },
+      styleType: { value: 6, name: "GRID" },
+      layoutGrids: [grid],
+    });
+    const registry = buildFigStyleRegistry(new Map([["6:1", def]]));
+    expect(registry.layoutGrids.get("6:1")).toEqual([grid]);
   });
 });
 
@@ -276,6 +332,174 @@ describe("resolveStyledPaint (registry-vs-embedded SoT)", () => {
 
   it("returns undefined when both ref and embedded are absent", () => {
     expect(resolveStyledPaint(undefined, undefined, registry)).toBeUndefined();
+  });
+});
+
+describe("resolveStyledEffects (registry-vs-embedded SoT for EFFECT styles)", () => {
+  const styleEffect = dropShadow(8);
+  const embeddedEffect = layerBlur(4);
+  const styleNode = node({
+    guid: { sessionID: 4, localID: 1 },
+    styleType: { value: 4, name: "EFFECT" },
+    effects: [styleEffect],
+  });
+  const registry = buildFigStyleRegistry(new Map([["4:1", styleNode]]));
+
+  it("returns the registry effects when the ref resolves", () => {
+    const got = resolveStyledEffects(
+      { guid: { sessionID: 4, localID: 1 } },
+      [embeddedEffect],
+      registry,
+    );
+    expect(got).toEqual([styleEffect]);
+  });
+
+  it("returns the embedded effects when the ref is dangling", () => {
+    const got = resolveStyledEffects(
+      { guid: { sessionID: 99, localID: 99 } },
+      [embeddedEffect],
+      registry,
+    );
+    expect(got).toEqual([embeddedEffect]);
+  });
+
+  it("returns the embedded effects when the ref is absent", () => {
+    expect(resolveStyledEffects(undefined, [embeddedEffect], registry)).toEqual([embeddedEffect]);
+  });
+});
+
+describe("resolveStyledTextProperties (per-property registry overlay)", () => {
+  const partialTextStyle = node({
+    guid: { sessionID: 5, localID: 1 },
+    styleType: { value: 3, name: "TEXT" },
+    fontSize: 24,
+    lineHeight: { value: 32, units: { value: 1, name: "PIXELS" } },
+  });
+  const registry = buildFigStyleRegistry(new Map([["5:1", partialTextStyle]]));
+
+  it("overrides only the properties the style sets, leaving others embedded", () => {
+    const got = resolveStyledTextProperties(
+      { guid: { sessionID: 5, localID: 1 } },
+      {
+        fontName: { family: "Inter", style: "Regular" },
+        fontSize: 12,
+        letterSpacing: { value: 0.5, units: { value: 1, name: "PIXELS" } },
+      },
+      registry,
+    );
+    // fontSize and lineHeight come from the style; the rest from
+    // embedded. This is how Figma applies a partial text style.
+    expect(got.fontSize).toBe(24);
+    expect(got.lineHeight?.value).toBe(32);
+    expect(got.fontName).toEqual({ family: "Inter", style: "Regular" });
+    expect(got.letterSpacing?.value).toBe(0.5);
+  });
+
+  it("returns the embedded bundle unchanged when the ref is dangling", () => {
+    const embedded = {
+      fontName: { family: "Inter", style: "Bold" },
+      fontSize: 14,
+    };
+    const got = resolveStyledTextProperties(
+      { guid: { sessionID: 99, localID: 99 } },
+      embedded,
+      registry,
+    );
+    expect(got).toBe(embedded);
+  });
+
+  it("returns the embedded bundle unchanged when the ref is absent", () => {
+    const embedded = { fontSize: 16 };
+    expect(resolveStyledTextProperties(undefined, embedded, registry)).toBe(embedded);
+  });
+});
+
+describe("resolveStyledGrids (registry-vs-embedded SoT for GRID styles)", () => {
+  const styleGrid = { type: "COLUMNS", count: 12 };
+  const embeddedGrid = { type: "ROWS", count: 4 };
+  const styleNode = node({
+    guid: { sessionID: 6, localID: 1 },
+    styleType: { value: 6, name: "GRID" },
+    layoutGrids: [styleGrid],
+  });
+  const registry = buildFigStyleRegistry(new Map([["6:1", styleNode]]));
+
+  it("returns the registry grids when the ref resolves", () => {
+    const got = resolveStyledGrids(
+      { guid: { sessionID: 6, localID: 1 } },
+      [embeddedGrid],
+      registry,
+    );
+    expect(got).toEqual([styleGrid]);
+  });
+
+  it("returns the embedded grids when the ref is dangling", () => {
+    const got = resolveStyledGrids(
+      { guid: { sessionID: 99, localID: 99 } },
+      [embeddedGrid],
+      registry,
+    );
+    expect(got).toEqual([embeddedGrid]);
+  });
+});
+
+describe("resolveNodeStyleIds extended StyleType coverage", () => {
+  it("bakes a TEXT style's properties into a consumer's text fields", () => {
+    const styleDef = node({
+      guid: { sessionID: 5, localID: 1 },
+      styleType: { value: 3, name: "TEXT" },
+      fontSize: 24,
+      lineHeight: { value: 32, units: { value: 1, name: "PIXELS" } },
+    });
+    const consumer = node({
+      guid: { sessionID: 9, localID: 1 },
+      type: { value: 5, name: "TEXT" },
+      styleIdForText: { guid: { sessionID: 5, localID: 1 } },
+      fontSize: 12,
+      letterSpacing: { value: 0.5, units: { value: 1, name: "PIXELS" } },
+    });
+    const registry = buildFigStyleRegistry(new Map([
+      ["5:1", styleDef],
+      ["9:1", consumer],
+    ]));
+    const resolved = resolveNodeStyleIds(consumer, registry);
+    expect(resolved.fontSize).toBe(24);
+    expect(resolved.lineHeight?.value).toBe(32);
+    // letterSpacing isn't set on the style, so the consumer's value
+    // survives.
+    expect(resolved.letterSpacing?.value).toBe(0.5);
+  });
+
+  it("bakes an EFFECT style's effects into a consumer's effects field", () => {
+    const styleEffect = dropShadow(8);
+    const styleDef = node({
+      guid: { sessionID: 4, localID: 1 },
+      styleType: { value: 4, name: "EFFECT" },
+      effects: [styleEffect],
+    });
+    const consumer = node({
+      guid: { sessionID: 9, localID: 2 },
+      styleIdForEffect: { guid: { sessionID: 4, localID: 1 } },
+      effects: [],
+    });
+    const registry = buildFigStyleRegistry(new Map([
+      ["4:1", styleDef],
+      ["9:2", consumer],
+    ]));
+    const resolved = resolveNodeStyleIds(consumer, registry);
+    expect(resolved.effects).toEqual([styleEffect]);
+  });
+
+  it("leaves the consumer's effects in place when styleIdForEffect is dangling", () => {
+    const embedded = [layerBlur(4)];
+    const consumer = node({
+      guid: { sessionID: 9, localID: 3 },
+      styleIdForEffect: { guid: { sessionID: 99, localID: 99 } },
+      effects: embedded,
+    });
+    const resolved = resolveNodeStyleIds(consumer, EMPTY_FIG_STYLE_REGISTRY);
+    expect(resolved).toBe(consumer);
+    expect(resolved.effects).toBe(embedded);
   });
 });
 

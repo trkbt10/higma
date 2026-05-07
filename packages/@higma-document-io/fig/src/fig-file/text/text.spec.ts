@@ -39,6 +39,15 @@ describe("TextNodeBuilder", () => {
     expect(node.fillPaints[0].color).toEqual({ r: 1, g: 0, b: 0, a: 1 });
   });
 
+  it("sets explicit per-character style runs", () => {
+    const node = textNode(1, 0)
+      .text("Sale price")
+      .styleRuns([{ start: 5, end: 10, fillColor: { r: 1, g: 0, b: 0, a: 1 } }])
+      .build();
+
+    expect(node.styleRuns).toEqual([{ start: 5, end: 10, fillColor: { r: 1, g: 0, b: 0, a: 1 } }]);
+  });
+
   it("sets text alignment", () => {
     const node = textNode(1, 0)
       .alignHorizontal("CENTER")

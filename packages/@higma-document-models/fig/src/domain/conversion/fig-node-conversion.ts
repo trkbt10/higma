@@ -26,6 +26,9 @@ import {
   analyzeOverrideSets,
   resolveSymbolGuidStr,
   resolveStyledPaint,
+  resolveStyledEffects,
+  resolveStyledTextProperties,
+  resolveStyledGrids,
   formatNodeLocator,
   isInstanceSelfOverride,
   createFigResolveContext,
@@ -133,6 +136,27 @@ function resolveNodeFills(node: FigNode, styleRegistry: FigStyleRegistry): reado
  */
 function resolveNodeStrokes(node: FigNode, styleRegistry: FigStyleRegistry): readonly FigPaint[] {
   return resolveStyledPaint(node.styleIdForStrokeFill, node.strokePaints, styleRegistry) ?? [];
+}
+
+/**
+ * Resolve node effects via the styled-effect SoT. Registry wins when
+ * `styleIdForEffect` resolves; otherwise the node's embedded
+ * `effects` cache is the SoT (matches Figma's render of dangling
+ * refs). Empty result is normalised to `[]` because the domain field
+ * is non-optional.
+ */
+function resolveNodeEffects(node: FigNode, styleRegistry: FigStyleRegistry): readonly FigEffect[] {
+  return resolveStyledEffects(node.styleIdForEffect, node.effects, styleRegistry) ?? [];
+}
+
+/**
+ * Resolve node layout grids via the styled-grid SoT. The domain
+ * doesn't decode grids itself — consumers (editor overlays / future
+ * layout systems) walk the array — so we forward the registry-or-
+ * embedded result verbatim.
+ */
+function resolveNodeGrids(node: FigNode, styleRegistry: FigStyleRegistry): readonly unknown[] | undefined {
+  return resolveStyledGrids(node.styleIdForGrid, node.layoutGrids, styleRegistry);
 }
 
 /**
@@ -381,7 +405,7 @@ function extractLayoutConstraints(node: FigNode): LayoutConstraints | undefined 
  * - `raw.characters` (real .fig files from Figma have it as a direct node field)
  * - `raw.textData.characters` (builder-generated files store it in the TextData message)
  */
-function extractTextData(node: FigNode): TextData | undefined {
+function extractTextData(node: FigNode, styleRegistry: FigStyleRegistry): TextData | undefined {
   // Resolve characters from direct field or nested textData.
   // In real .fig files, characters is a direct NodeChange field.
   // In builder-generated files, it's inside the textData Kiwi message.
@@ -400,22 +424,41 @@ function extractTextData(node: FigNode): TextData | undefined {
     () => formatNodeLocator(node),
   );
 
+  // SoT: when the node references a TEXT-type shared style via
+  // `styleIdForText`, its properties override the node's own
+  // (potentially stale) cache, property by property. Dangling refs
+  // leave every property at its embedded value.
+  const textProperties = resolveStyledTextProperties(
+    node.styleIdForText,
+    {
+      fontName: node.fontName,
+      fontSize: node.fontSize,
+      lineHeight: node.lineHeight,
+      letterSpacing: node.letterSpacing,
+      textCase: node.textCase,
+      textDecoration: node.textDecoration,
+      textTracking: node.textTracking,
+      fontVariations: node.fontVariations,
+    },
+    styleRegistry,
+  );
+
   return {
     characters,
-    fontSize: node.fontSize ?? 12,
-    fontName: node.fontName ?? { family: "Inter", style: "Regular", postscript: "Inter-Regular" },
+    fontSize: textProperties.fontSize ?? 12,
+    fontName: textProperties.fontName ?? { family: "Inter", style: "Regular", postscript: "Inter-Regular" },
     textAlignHorizontal: node.textAlignHorizontal,
     textAlignVertical: node.textAlignVertical,
     textAutoResize: node.textAutoResize,
-    textDecoration: node.textDecoration,
-    textCase: node.textCase,
-    lineHeight: node.lineHeight,
-    letterSpacing: node.letterSpacing,
+    textDecoration: textProperties.textDecoration,
+    textCase: textProperties.textCase,
+    lineHeight: textProperties.lineHeight,
+    letterSpacing: textProperties.letterSpacing,
     characterStyleIDs,
     styleOverrideTable: styleOverrideTable && styleOverrideTable.length > 0 ? styleOverrideTable : undefined,
     textTruncation: node.textTruncation,
     leadingTrim: node.leadingTrim,
-    fontVariations: node.fontVariations,
+    fontVariations: textProperties.fontVariations,
     hyperlink: node.hyperlink,
   };
 }
@@ -1204,7 +1247,7 @@ export function convertFigNode(
 
     blendMode: extractBlendMode(node),
 
-    effects: (node.effects ?? []) as readonly FigEffect[],
+    effects: resolveNodeEffects(node, styleRegistry),
 
     children: convertedChildren,
 
@@ -1212,8 +1255,9 @@ export function convertFigNode(
     sectionContentsHidden: node.sectionContentsHidden,
     autoLayout: extractAutoLayout(node),
     layoutConstraints: extractLayoutConstraints(node),
+    layoutGrids: resolveNodeGrids(node, styleRegistry),
 
-    textData: nodeType === "TEXT" ? extractTextData(node) : undefined,
+    textData: nodeType === "TEXT" ? extractTextData(node, styleRegistry) : undefined,
     derivedTextData: node.derivedTextData as DerivedTextData | undefined,
 
     symbolId: resolveSymbolIdForDomain(node),

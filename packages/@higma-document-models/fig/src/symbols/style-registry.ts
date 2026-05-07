@@ -46,8 +46,8 @@
  * authoritative when it has an entry).
  */
 
-import type { FigNode, MutableFigNode, FigPaint, FigStyleId } from "../types";
-import type { FigStyleRegistry } from "../domain/document";
+import type { FigNode, MutableFigNode, FigPaint, FigEffect, FigStyleId } from "../types";
+import type { FigStyleRegistry, FigTextStyleProperties } from "../domain/document";
 import { guidToString } from "@higma-document-models/fig/domain";
 
 // =============================================================================
@@ -86,31 +86,95 @@ export function styleRefKeys(ref: FigStyleId | undefined): readonly string[] {
 }
 
 /**
- * Extract the authoritative paint array from a style-definition node.
+ * Pull the authoritative payload out of a style-definition node, choosing
+ * the field implied by `styleType`:
  *
- * SoT: a node is a style-definition iff `styleType` is set; the paint
- * lives in the field implied by `styleType` (FILL → `fillPaints`,
- * STROKE → `strokePaints`). Returns `undefined` when the node is not a
- * paint-style definition or when the implied field is empty (the latter
- * is treated as "this style contributes nothing"; consumers that try to
- * resolve such a reference will throw at lookup time).
+ *   FILL    → `fillPaints`     (paint array)
+ *   STROKE  → `strokePaints`   (paint array)
+ *   EFFECT  → `effects`        (effect array)
+ *   TEXT    → text properties  (font/size/line-height/...)
+ *   GRID    → `layoutGrids`    (layout-grid array, opaque to us)
  *
- * No fallback between fillPaints/strokePaints: which field carries the
- * paint is determined by the style's own type, not by the consumer's
- * intent. Consumer-side intent (use as fill vs stroke) is independent
- * and handled at the `lookupStylePaint` boundary.
+ * Returns `undefined` for non-style-definition nodes and for definitions
+ * whose implied field is missing (treated as "this style contributes
+ * nothing"; consumers fall through to their embedded cache).
+ *
+ * The dispatch is type-driven, never consumer-intent-driven: a FILL
+ * style stores its paint in `fillPaints` regardless of whether the
+ * consumer references it via `styleIdForFill` or `styleIdForStrokeFill`.
+ * The single-namespace registry maps below preserve that property.
  */
-function getStylePaint(node: FigNode): readonly FigPaint[] | undefined {
+type StyleDefinitionEntry =
+  | { readonly kind: "paint"; readonly paints: readonly FigPaint[] }
+  | { readonly kind: "effect"; readonly effects: readonly FigEffect[] }
+  | { readonly kind: "text"; readonly properties: FigTextStyleProperties }
+  | { readonly kind: "grid"; readonly layoutGrids: readonly unknown[] };
+
+function readStyleDefinition(node: FigNode): StyleDefinitionEntry | undefined {
   const typeName = node.styleType?.name;
   if (typeName === "FILL") {
-    if (node.fillPaints && node.fillPaints.length > 0) { return node.fillPaints; }
+    if (node.fillPaints && node.fillPaints.length > 0) {
+      return { kind: "paint", paints: node.fillPaints };
+    }
     return undefined;
   }
   if (typeName === "STROKE") {
-    if (node.strokePaints && node.strokePaints.length > 0) { return node.strokePaints; }
+    if (node.strokePaints && node.strokePaints.length > 0) {
+      return { kind: "paint", paints: node.strokePaints };
+    }
+    return undefined;
+  }
+  if (typeName === "EFFECT") {
+    if (node.effects && node.effects.length > 0) {
+      return { kind: "effect", effects: node.effects };
+    }
+    return undefined;
+  }
+  if (typeName === "TEXT") {
+    const properties = readTextStyleProperties(node);
+    if (properties === undefined) { return undefined; }
+    return { kind: "text", properties };
+  }
+  if (typeName === "GRID") {
+    const grids = node.layoutGrids;
+    if (Array.isArray(grids) && grids.length > 0) {
+      return { kind: "grid", layoutGrids: grids as readonly unknown[] };
+    }
     return undefined;
   }
   return undefined;
+}
+
+/**
+ * Extract the property bag a TEXT-type style-definition node contributes.
+ *
+ * A TEXT style may set any subset of the typical text properties; only
+ * the explicitly-set ones are part of its definition (the rest leave
+ * the consumer's local values intact). Returns `undefined` when no
+ * property is set, signalling the style contributes nothing.
+ */
+function readTextStyleProperties(node: FigNode): FigTextStyleProperties | undefined {
+  const properties: FigTextStyleProperties = {
+    fontName: node.fontName,
+    fontSize: node.fontSize,
+    lineHeight: node.lineHeight,
+    letterSpacing: node.letterSpacing,
+    textCase: node.textCase,
+    textDecoration: node.textDecoration,
+    textTracking: node.textTracking,
+    fontVariations: node.fontVariations,
+  };
+  const hasAny =
+    properties.fontName !== undefined ||
+    properties.fontSize !== undefined ||
+    properties.lineHeight !== undefined ||
+    properties.letterSpacing !== undefined ||
+    properties.textCase !== undefined ||
+    properties.textDecoration !== undefined ||
+    properties.textTracking !== undefined ||
+    (Array.isArray(properties.fontVariations) && properties.fontVariations.length > 0);
+  if (!hasAny) { return undefined; }
+  return properties;
 }
 
 /**
@@ -119,48 +183,80 @@ function getStylePaint(node: FigNode): readonly FigPaint[] | undefined {
  * Walks every node and indexes the ones that are style definitions
  * (`styleType` set). Each style is registered under its GUID (via
  * `guidToString`) and, when present, its `key` (assetRef hash). The
- * two namespaces share one map because their string forms can't
- * collide ("session:local" vs hex digest).
+ * two namespaces share one map per StyleType because their string
+ * forms can't collide ("session:local" vs hex digest).
  *
- * The resulting map is keyed by the union of both reference forms a
- * consumer might use — so a `styleIdForFill` carrying either a guid or
- * an assetRef.key resolves through a single `Map.get`.
+ * Five Kiwi `StyleType` values get their own map so consumers can
+ * resolve with type-correct value shapes without a runtime tag check.
  */
 export function buildFigStyleRegistry(nodeMap: ReadonlyMap<string, FigNode>): FigStyleRegistry {
-  const map = new Map<string, readonly FigPaint[]>();
+  const paints = new Map<string, readonly FigPaint[]>();
+  const effects = new Map<string, readonly FigEffect[]>();
+  const textProperties = new Map<string, FigTextStyleProperties>();
+  const layoutGrids = new Map<string, readonly unknown[]>();
   for (const [, node] of nodeMap) {
-    const paint = getStylePaint(node);
-    if (!paint) { continue; }
-    if (node.guid) { map.set(guidToString(node.guid), paint); }
-    if (typeof node.key === "string" && node.key.length > 0) { map.set(node.key, paint); }
+    const entry = readStyleDefinition(node);
+    if (!entry) { continue; }
+    indexEntryUnderKeys(node, entry, { paints, effects, textProperties, layoutGrids });
   }
-  return map;
+  return { paints, effects, textProperties, layoutGrids };
+}
+
+function indexEntryUnderKeys(
+  node: FigNode,
+  entry: StyleDefinitionEntry,
+  maps: {
+    readonly paints: Map<string, readonly FigPaint[]>;
+    readonly effects: Map<string, readonly FigEffect[]>;
+    readonly textProperties: Map<string, FigTextStyleProperties>;
+    readonly layoutGrids: Map<string, readonly unknown[]>;
+  },
+): void {
+  const keys = nodeRegistryKeys(node);
+  if (keys.length === 0) { return; }
+  if (entry.kind === "paint") {
+    for (const key of keys) { maps.paints.set(key, entry.paints); }
+    return;
+  }
+  if (entry.kind === "effect") {
+    for (const key of keys) { maps.effects.set(key, entry.effects); }
+    return;
+  }
+  if (entry.kind === "text") {
+    for (const key of keys) { maps.textProperties.set(key, entry.properties); }
+    return;
+  }
+  for (const key of keys) { maps.layoutGrids.set(key, entry.layoutGrids); }
+}
+
+function nodeRegistryKeys(node: FigNode): readonly string[] {
+  const keys: string[] = [];
+  if (node.guid) { keys.push(guidToString(node.guid)); }
+  if (typeof node.key === "string" && node.key.length > 0) { keys.push(node.key); }
+  return keys;
 }
 
 /**
- * Look up the paint array referenced by a `FigStyleId`.
+ * Generic registry-key resolver. Tries the `guid` form first (authoritative
+ * same-file reference) then the `assetRef.key` form (team-library import).
+ * The sentinel guid `0xffffffff:0xffffffff` is treated as "no guid".
  *
- * Tries `guid` first (authoritative same-file reference) then
- * `assetRef.key` (team-library import). Returns `undefined` only when
- * the reference itself is empty (no guid and no assetRef.key) — caller
- * is responsible for deciding what an empty reference means in their
- * context. When the reference HAS at least one key but neither key
- * resolves, the registry is malformed for that consumer's needs and
- * the function still returns `undefined` so the caller can throw with
- * a context-specific error.
+ * Returns `undefined` for empty references and for dangling references
+ * (key carried but absent from the supplied map). Per-StyleType resolvers
+ * call this against their own map.
  */
-function lookupStylePaint(
+function lookupRegistryEntry<V>(
   ref: FigStyleId | undefined,
-  registry: FigStyleRegistry,
-): readonly FigPaint[] | undefined {
+  byKey: ReadonlyMap<string, V>,
+): V | undefined {
   if (!ref) { return undefined; }
   if (ref.guid && !isSentinelGuid(ref.guid)) {
-    const paint = registry.get(guidToString(ref.guid));
-    if (paint) { return paint; }
+    const hit = byKey.get(guidToString(ref.guid));
+    if (hit !== undefined) { return hit; }
   }
   if (ref.assetRef?.key) {
-    const paint = registry.get(ref.assetRef.key);
-    if (paint) { return paint; }
+    const hit = byKey.get(ref.assetRef.key);
+    if (hit !== undefined) { return hit; }
   }
   return undefined;
 }
@@ -192,7 +288,8 @@ export function styleRefHasKey(ref: FigStyleId | undefined): ref is FigStyleId {
 }
 
 /**
- * Resolve a paint reference through the registry — the lookup primitive.
+ * Resolve a paint reference through the registry — the lookup primitive
+ * for FILL / STROKE styles.
  *
  * Three outcomes:
  *
@@ -209,15 +306,55 @@ export function styleRefHasKey(ref: FigStyleId | undefined): ref is FigStyleId {
  *    refuse to open normal `.fig` files.
  *
  * This is the **lookup** SoT. Consumers that want "registry-or-embedded"
- * semantics should call `resolveStyledPaint` instead, which is the
- * higher-level SoT covering the full styled-paint resolution.
+ * semantics should call `resolveStyledPaint` instead.
  */
 export function resolvePaintRef(
   ref: FigStyleId | undefined,
   registry: FigStyleRegistry,
 ): readonly FigPaint[] | undefined {
   if (!styleRefHasKey(ref)) { return undefined; }
-  return lookupStylePaint(ref, registry);
+  return lookupRegistryEntry(ref, registry.paints);
+}
+
+/**
+ * Resolve an effect reference through the registry — the lookup
+ * primitive for EFFECT styles. Same dangling-ref semantics as
+ * `resolvePaintRef`.
+ */
+export function resolveEffectsRef(
+  ref: FigStyleId | undefined,
+  registry: FigStyleRegistry,
+): readonly FigEffect[] | undefined {
+  if (!styleRefHasKey(ref)) { return undefined; }
+  return lookupRegistryEntry(ref, registry.effects);
+}
+
+/**
+ * Resolve a text-style reference through the registry — the lookup
+ * primitive for TEXT styles. Returns the property bag the style sets
+ * (any subset of font/size/line-height/letter-spacing/case/decoration);
+ * dangling refs and empty refs both yield `undefined`.
+ */
+export function resolveTextStyleRef(
+  ref: FigStyleId | undefined,
+  registry: FigStyleRegistry,
+): FigTextStyleProperties | undefined {
+  if (!styleRefHasKey(ref)) { return undefined; }
+  return lookupRegistryEntry(ref, registry.textProperties);
+}
+
+/**
+ * Resolve a grid reference through the registry — the lookup primitive
+ * for GRID styles. The value is opaque (Kiwi `LayoutGrid[]`); decoders
+ * walk the array themselves. Same dangling-ref semantics as the
+ * paint resolver.
+ */
+export function resolveGridRef(
+  ref: FigStyleId | undefined,
+  registry: FigStyleRegistry,
+): readonly unknown[] | undefined {
+  if (!styleRefHasKey(ref)) { return undefined; }
+  return lookupRegistryEntry(ref, registry.layoutGrids);
 }
 
 /**
@@ -240,21 +377,71 @@ export function resolvePaintRef(
  * are absent — callers can chain `?? []` or `?? someBase` as their
  * own context dictates. Empty embedded arrays are preserved (they
  * represent "explicitly no paint", not "no value").
- *
- * Centralising the rule here means renderer text-runs, scene-graph
- * INSTANCE merges, vector per-path style overrides, and the
- * conversion-layer node helpers all share the same answer to one
- * question. Adding observability (counters, logs) for dangling refs
- * later only needs a single call-site change.
  */
 export function resolveStyledPaint(
   ref: FigStyleId | undefined,
   embedded: readonly FigPaint[] | undefined,
   registry: FigStyleRegistry,
 ): readonly FigPaint[] | undefined {
-  const fromRegistry = resolvePaintRef(ref, registry);
-  if (fromRegistry !== undefined) { return fromRegistry; }
-  return embedded;
+  return resolvePaintRef(ref, registry) ?? embedded;
+}
+
+/**
+ * Resolve the authoritative effect array — same SoT as
+ * `resolveStyledPaint`, applied to EFFECT styles. Registry wins when
+ * the ref resolves; otherwise the embedded `effects` cache is SoT.
+ */
+export function resolveStyledEffects(
+  ref: FigStyleId | undefined,
+  embedded: readonly FigEffect[] | undefined,
+  registry: FigStyleRegistry,
+): readonly FigEffect[] | undefined {
+  return resolveEffectsRef(ref, registry) ?? embedded;
+}
+
+/**
+ * Resolve the authoritative text-property bundle — variant of the
+ * paint SoT for TEXT styles.
+ *
+ * Unlike paint/effect/grid (which replace the entire array atomically),
+ * a TEXT style overlays a *subset* of properties on top of the
+ * consumer's embedded values. The style may set, say, only
+ * `lineHeight` and `fontSize` while leaving `fontName` for the
+ * consumer to control. This helper materialises the per-property
+ * precedence: registry property when set, else embedded property.
+ *
+ * Dangling refs return the embedded bundle unchanged (matches Figma's
+ * actual rendering when a text style reference can't resolve).
+ */
+export function resolveStyledTextProperties(
+  ref: FigStyleId | undefined,
+  embedded: FigTextStyleProperties,
+  registry: FigStyleRegistry,
+): FigTextStyleProperties {
+  const fromRegistry = resolveTextStyleRef(ref, registry);
+  if (fromRegistry === undefined) { return embedded; }
+  return {
+    fontName: fromRegistry.fontName ?? embedded.fontName,
+    fontSize: fromRegistry.fontSize ?? embedded.fontSize,
+    lineHeight: fromRegistry.lineHeight ?? embedded.lineHeight,
+    letterSpacing: fromRegistry.letterSpacing ?? embedded.letterSpacing,
+    textCase: fromRegistry.textCase ?? embedded.textCase,
+    textDecoration: fromRegistry.textDecoration ?? embedded.textDecoration,
+    textTracking: fromRegistry.textTracking ?? embedded.textTracking,
+    fontVariations: fromRegistry.fontVariations ?? embedded.fontVariations,
+  };
+}
+
+/**
+ * Resolve the authoritative layout-grid array — same SoT as
+ * `resolveStyledPaint`, applied to GRID styles.
+ */
+export function resolveStyledGrids(
+  ref: FigStyleId | undefined,
+  embedded: readonly unknown[] | undefined,
+  registry: FigStyleRegistry,
+): readonly unknown[] | undefined {
+  return resolveGridRef(ref, registry) ?? embedded;
 }
 
 /**
@@ -286,66 +473,121 @@ function pickGuidString(node: {
 // =============================================================================
 
 /**
- * Resolve styleIdForFill / styleIdForStrokeFill on an immutable FigNode.
+ * Bake every styleId reference on a node into the corresponding cache
+ * field, returning a new immutable node when at least one reference
+ * resolved.
  *
- * If the node's `styleIdForFill` resolves through the registry, returns
- * a new node with `fillPaints` replaced by the registry value (and the
- * same for stroke). The original node is returned unchanged when no
- * resolvable references are present.
+ * Coverage parallels the registry's StyleType axis:
+ *   - `styleIdForFill`       → `fillPaints`       (paint registry)
+ *   - `styleIdForStrokeFill` → `strokePaints`     (paint registry)
+ *   - `styleIdForEffect`     → `effects`          (effect registry)
+ *   - `styleIdForText`       → text properties    (text registry)
+ *   - `styleIdForGrid`       → `layoutGrids`      (grid registry)
  *
- * Stale-cache repair: a node's own `fillPaints` may have been captured
- * when the referenced style had a different paint. The registry's
- * value is the SoT, so we always replace when a resolution succeeds —
- * even when the new value is structurally equal to the cache, the
- * identity-comparison `!==` is enough to detect "we resolved through a
- * style" vs "we left the cache".
+ * Stale-cache repair: a node's own cached field may have been captured
+ * when the referenced style had a different value. The registry is the
+ * SoT, so each successful resolution overwrites the matching cache
+ * field. Dangling refs leave the cache unchanged (Figma's own render
+ * behaviour).
+ *
+ * Returns the original `node` reference when nothing changed — callers
+ * that compare with `!==` use that to short-circuit.
  */
 export function resolveNodeStyleIds(
   node: FigNode,
   registry: FigStyleRegistry,
 ): FigNode {
-  const fillResolved = resolvePaintRef(node.styleIdForFill, registry);
-  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry);
-
-  if (fillResolved === undefined && strokeResolved === undefined) {
-    return node;
-  }
-
-  // `nextPaintFor` returns either the registry-resolved value (when
-  // present and identity-distinct from the cache) or the original
-  // cache reference; the identity-compare downstream then tells us
-  // whether anything actually changed.
-  const fillPaints = nextPaintFor(node.fillPaints, fillResolved);
-  const strokePaints = nextPaintFor(node.strokePaints, strokeResolved);
-
-  if (fillPaints === node.fillPaints && strokePaints === node.strokePaints) {
-    return node;
-  }
-  return { ...node, fillPaints, strokePaints } as FigNode;
-}
-
-function nextPaintFor(
-  cached: readonly FigPaint[] | undefined,
-  resolved: readonly FigPaint[] | undefined,
-): readonly FigPaint[] | undefined {
-  if (resolved && resolved !== cached) { return resolved; }
-  return cached;
+  const overlay = computeStyleOverlay(node, registry);
+  if (overlay === undefined) { return node; }
+  return { ...node, ...overlay } as FigNode;
 }
 
 /**
- * Resolve styleIdForFill / styleIdForStrokeFill on a mutable node clone.
- *
- * Used inside `applyOverrides` where nodes are MutableFigNode clones
- * created by `deepCloneNode`. Mirrors `resolveNodeStyleIds` but mutates
- * in place.
+ * Mutating sibling of `resolveNodeStyleIds`. Used inside the override
+ * pipeline (`applyOverrides`) where the target is already a clone, so
+ * a fresh allocation per resolve would be wasted.
  */
 export function resolveStyleIdOnMutableNode(
   node: MutableFigNode,
   registry: FigStyleRegistry,
 ): void {
+  const overlay = computeStyleOverlay(node, registry);
+  if (overlay === undefined) { return; }
+  Object.assign(node, overlay);
+}
+
+/**
+ * Compute the partial node update implied by every resolved styleId
+ * reference on `node`. Returns `undefined` when no field needs to
+ * change — that signals "registry contributed nothing here". Each
+ * field present in the result is a guaranteed change vs the input.
+ *
+ * Centralising the decision here is what lets the immutable and
+ * mutable variants of the public API share one implementation.
+ */
+type StyleOverlay = {
+  fillPaints?: readonly FigPaint[];
+  strokePaints?: readonly FigPaint[];
+  effects?: readonly FigEffect[];
+  fontName?: FigNode["fontName"];
+  fontSize?: FigNode["fontSize"];
+  lineHeight?: FigNode["lineHeight"];
+  letterSpacing?: FigNode["letterSpacing"];
+  textCase?: FigNode["textCase"];
+  textDecoration?: FigNode["textDecoration"];
+  textTracking?: FigNode["textTracking"];
+  fontVariations?: FigNode["fontVariations"];
+  layoutGrids?: readonly unknown[];
+};
+
+function computeStyleOverlay(
+  node: FigNode,
+  registry: FigStyleRegistry,
+): StyleOverlay | undefined {
+  const overlay: StyleOverlay = {};
   const fillResolved = resolvePaintRef(node.styleIdForFill, registry);
-  if (fillResolved) { node.fillPaints = fillResolved; }
+  if (fillResolved !== undefined && fillResolved !== node.fillPaints) {
+    overlay.fillPaints = fillResolved;
+  }
   const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry);
-  if (strokeResolved) { node.strokePaints = strokeResolved; }
+  if (strokeResolved !== undefined && strokeResolved !== node.strokePaints) {
+    overlay.strokePaints = strokeResolved;
+  }
+  const effectsResolved = resolveEffectsRef(node.styleIdForEffect, registry);
+  if (effectsResolved !== undefined && effectsResolved !== node.effects) {
+    overlay.effects = effectsResolved;
+  }
+  const textResolved = resolveTextStyleRef(node.styleIdForText, registry);
+  if (textResolved !== undefined) {
+    pickResolvedTextField(textResolved, node, "fontName", overlay);
+    pickResolvedTextField(textResolved, node, "fontSize", overlay);
+    pickResolvedTextField(textResolved, node, "lineHeight", overlay);
+    pickResolvedTextField(textResolved, node, "letterSpacing", overlay);
+    pickResolvedTextField(textResolved, node, "textCase", overlay);
+    pickResolvedTextField(textResolved, node, "textDecoration", overlay);
+    pickResolvedTextField(textResolved, node, "textTracking", overlay);
+    pickResolvedTextField(textResolved, node, "fontVariations", overlay);
+  }
+  const gridResolved = resolveGridRef(node.styleIdForGrid, registry);
+  if (gridResolved !== undefined && gridResolved !== node.layoutGrids) {
+    overlay.layoutGrids = gridResolved;
+  }
+  return Object.keys(overlay).length === 0 ? undefined : overlay;
+}
+
+function pickResolvedTextField<K extends keyof FigTextStyleProperties & keyof StyleOverlay & keyof FigNode>(
+  resolved: FigTextStyleProperties,
+  node: FigNode,
+  field: K,
+  overlay: StyleOverlay,
+): void {
+  const value = resolved[field];
+  if (value === undefined) { return; }
+  if (value === node[field]) { return; }
+  // `value` is sourced from the registry's `FigTextStyleProperties`
+  // bag whose property types match `FigNode`'s by construction, so
+  // an explicit cast wraps the narrowing the compiler can't follow
+  // through the keyed lookup.
+  overlay[field] = value as StyleOverlay[K];
 }
 

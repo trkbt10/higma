@@ -14,7 +14,7 @@
 
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { EffectData } from "../effect/types";
-import type { Stroke } from "../types";
+import type { Paint, Stroke } from "../types";
 import type { ArcData } from "../shape";
 
 // =============================================================================
@@ -85,6 +85,10 @@ export type KiwiValueWithUnits = {
 export type KiwiTextData = {
   readonly characters: string;
   readonly characterStyleIDs: number[];
+  readonly styleOverrideTable?: readonly {
+    readonly styleID: number;
+    readonly fillPaints: readonly Paint[];
+  }[];
 };
 
 /** Derived text data (for path rendering) */

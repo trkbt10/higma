@@ -563,6 +563,17 @@ export type FigDesignNode = {
   readonly sectionContentsHidden?: boolean;
   readonly autoLayout?: AutoLayoutProps;
   readonly layoutConstraints?: LayoutConstraints;
+  /**
+   * Layout grids published by FRAME / SECTION nodes. The shape is the
+   * raw Kiwi `LayoutGrid` array — opaque at the domain layer because
+   * domain consumers don't currently decode grids; editor overlays
+   * walk the array directly when they need it. Resolved through the
+   * style registry at conversion time, so `styleIdForGrid`-bound
+   * grids are already substituted with the registry's authoritative
+   * value when present (matching the paint / effect / text-style
+   * resolution paths).
+   */
+  readonly layoutGrids?: readonly unknown[];
 
   // Text specifics
   readonly textData?: TextData;
@@ -695,11 +706,46 @@ export type FigPage = {
  *  - assetRef hash strings (hex digest) for team-library imports.
  *
  * Built by `buildFigStyleRegistry` from a document-wide `nodeMap`.
+ *
+ * Five Kiwi `StyleType` values are indexed, each in its own map:
+ *  - `paints`         — FILL- and STROKE-type styles. The single map
+ *                       holds both because consumer intent
+ *                       (`styleIdForFill` vs `styleIdForStrokeFill`) is
+ *                       independent of where the paint sits on the
+ *                       definition.
+ *  - `effects`        — EFFECT-type styles (drop shadow / blur / etc.).
+ *  - `textProperties` — TEXT-type styles (font / size / line-height /
+ *                       letter-spacing / case / decoration).
+ *  - `layoutGrids`    — GRID-type styles (column / row / cross-grid
+ *                       layout aids). Stored as the raw Kiwi
+ *                       `layoutGrids` array; consumers that decode
+ *                       grids do their own walk.
  */
-export type FigStyleRegistry = ReadonlyMap<string, readonly FigPaint[]>;
+export type FigTextStyleProperties = {
+  readonly fontName?: FigFontName;
+  readonly fontSize?: number;
+  readonly lineHeight?: { readonly value: number; readonly units: KiwiEnumValue };
+  readonly letterSpacing?: { readonly value: number; readonly units: KiwiEnumValue };
+  readonly textCase?: KiwiEnumValue;
+  readonly textDecoration?: KiwiEnumValue;
+  readonly textTracking?: number;
+  readonly fontVariations?: readonly { readonly axisTag: number; readonly axisValue: number }[];
+};
+
+export type FigStyleRegistry = {
+  readonly paints: ReadonlyMap<string, readonly FigPaint[]>;
+  readonly effects: ReadonlyMap<string, readonly FigEffect[]>;
+  readonly textProperties: ReadonlyMap<string, FigTextStyleProperties>;
+  readonly layoutGrids: ReadonlyMap<string, readonly unknown[]>;
+};
 
 /** Empty style registry — no styles to resolve. */
-export const EMPTY_FIG_STYLE_REGISTRY: FigStyleRegistry = new Map();
+export const EMPTY_FIG_STYLE_REGISTRY: FigStyleRegistry = {
+  paints: new Map(),
+  effects: new Map(),
+  textProperties: new Map(),
+  layoutGrids: new Map(),
+};
 
 // =============================================================================
 // Design Document
