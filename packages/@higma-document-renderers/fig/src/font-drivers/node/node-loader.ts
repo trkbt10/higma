@@ -207,13 +207,17 @@ async function indexDirectory(
  * Create a Node.js font loader with default settings
  */
 export function createNodeFontLoader(
-  options?: { fontDirs?: readonly string[] }
+  options?: { fontDirs?: readonly string[]; includeSystemFontDirs?: boolean }
 ): NodeFontLoaderInstance {
   const customFontDirs = options?.fontDirs ?? [];
+  const includeSystemFontDirs = options?.includeSystemFontDirs ?? true;
   const fontIndexRef = { value: null as Map<string, FontFileInfo[]> | null };
   const indexPromiseRef = { value: null as Promise<void> | null };
 
   function getFontDirs(): readonly string[] {
+    if (!includeSystemFontDirs) {
+      return customFontDirs;
+    }
     return [...customFontDirs, ...getSystemFontDirs()];
   }
 

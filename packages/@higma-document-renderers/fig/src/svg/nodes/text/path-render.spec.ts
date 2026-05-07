@@ -9,6 +9,7 @@ import {
 } from "./path-render";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
+import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { AbstractFont, FontLoader, FontLoadOptions, LoadedFont } from "../../../font";
 
 function createFakeFont(supportedChars: string): AbstractFont {
@@ -88,7 +89,7 @@ function createPathRenderContext(fontLoader: FontLoader): PathRenderContext {
     blobs: [] as FigBlob[],
     images: new Map(),
     showHiddenNodes: false,
-    styleRegistry: new Map(),
+    styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
     fontLoader,
   };
 }
@@ -121,7 +122,7 @@ describe("path-render", () => {
         blobs: [] as FigBlob[],
         images: new Map(),
         showHiddenNodes: false,
-        styleRegistry: new Map(),
+        styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
         fontLoader: createFakeFontLoader({}),
       };
 

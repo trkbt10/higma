@@ -30,12 +30,15 @@ import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
 import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
 import type { FontLoader } from "../font";
+import type { FontLoadOptions, LoadedFont } from "../font";
+import type { TextFontResolveRequest, TextFontResolver } from "../text/rendering";
 import type { FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { convertFigNode, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { buildFigStyleRegistry } from "@higma-document-models/fig/symbols";
 import { buildSceneGraph } from "../scene-graph/builder";
 import { resolveRenderTree } from "../scene-graph/render-tree";
 import { formatRenderTreeToSvg } from "./scene-renderer";
+import { extractTextProps } from "../text/layout";
 
 // =============================================================================
 // Transform Normalization
@@ -119,12 +122,102 @@ export type FigSvgRenderOptions = {
   readonly showHiddenNodes?: boolean;
   /** Raw symbolMap from `buildNodeTree` (required for INSTANCE resolution). */
   readonly symbolMap?: ReadonlyMap<string, FigNode>;
-  /**
-   * Font loader for path-based text rendering. Not yet threaded through the
-   * RenderTree pipeline — see Task #5 of the SSoT migration.
-   */
+  /** Explicit font loader used to preload TEXT fonts before scene-graph resolution. */
   readonly fontLoader?: FontLoader;
 };
+
+type FontRequest = {
+  readonly family: string;
+  readonly weight: number | undefined;
+  readonly style: "normal" | "italic" | "oblique";
+};
+
+function normalizeRequestStyle(style: string | undefined): "normal" | "italic" | "oblique" {
+  if (style === "italic" || style === "oblique") {
+    return style;
+  }
+  return "normal";
+}
+
+function fontRequestKey(request: FontRequest): string {
+  return `${request.family}\u0000${request.weight ?? "unspecified"}\u0000${request.style}`;
+}
+
+function fontLoadOptions(request: FontRequest): FontLoadOptions {
+  return {
+    family: request.family,
+    weight: request.weight,
+    style: request.style,
+  };
+}
+
+function collectTextFontRequests(nodes: readonly FigDesignNode[]): readonly FontRequest[] {
+  const requests: FontRequest[] = [];
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    collectNodeTextFontRequests(node, requests, seen);
+  }
+  return requests;
+}
+
+function collectNodeTextFontRequests(node: FigDesignNode, requests: FontRequest[], seen: Set<string>): void {
+  if (node.type === "TEXT") {
+    const props = extractTextProps(node);
+    if (props.characters.length > 0) {
+      pushFontRequest(requests, seen, {
+        family: props.fontFamily,
+        weight: props.fontWeight,
+        style: normalizeRequestStyle(props.fontStyle),
+      });
+    }
+  }
+  const children = node.children;
+  if (children === undefined) {
+    return;
+  }
+  for (const child of children) {
+    collectNodeTextFontRequests(child, requests, seen);
+  }
+}
+
+function pushFontRequest(requests: FontRequest[], seen: Set<string>, request: FontRequest): void {
+  const key = fontRequestKey(request);
+  if (seen.has(key)) {
+    return;
+  }
+  seen.add(key);
+  requests.push(request);
+}
+
+async function createPreloadedTextFontResolver(
+  nodes: readonly FigDesignNode[],
+  fontLoader: FontLoader | undefined,
+): Promise<TextFontResolver | undefined> {
+  if (fontLoader === undefined) {
+    return undefined;
+  }
+  const requests = collectTextFontRequests(nodes);
+  const cache = new Map<string, LoadedFont>();
+  for (const request of requests) {
+    const loaded = await fontLoader.loadFont(fontLoadOptions(request));
+    if (loaded === undefined) {
+      throw new Error(`renderFigToSvg: fontLoader could not load "${request.family}" weight ${request.weight ?? "unspecified"} style ${request.style}`);
+    }
+    cache.set(fontRequestKey(request), loaded);
+  }
+  return (request: TextFontResolveRequest) => {
+    const key = fontRequestKey({
+      family: request.fontFamily,
+      weight: request.fontWeight,
+      style: normalizeRequestStyle(request.fontStyle),
+    });
+    const loaded = cache.get(key);
+    if (loaded === undefined) {
+      throw new Error(`renderFigToSvg: text font resolver was not preloaded for "${request.fontFamily}" weight ${request.fontWeight ?? "unspecified"} style ${normalizeRequestStyle(request.fontStyle)}`);
+    }
+    return loaded.font;
+  };
+}
 
 // =============================================================================
 // Main Render Function
@@ -211,6 +304,7 @@ export async function renderFigToSvg(
     }
     return designNodes;
   })();
+  const textFontResolver = await createPreloadedTextFontResolver(normalizedNodes, options.fontLoader);
 
   const sceneGraph = buildSceneGraph(normalizedNodes, {
     blobs,
@@ -221,7 +315,7 @@ export async function renderFigToSvg(
     showHiddenNodes: options.showHiddenNodes === true,
     styleRegistry,
     warnings,
-    textFontResolver: undefined,
+    textFontResolver,
   });
 
   const renderTree = resolveRenderTree(sceneGraph);

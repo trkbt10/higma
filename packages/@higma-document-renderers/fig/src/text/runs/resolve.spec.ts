@@ -90,9 +90,12 @@ describe("resolveTextRuns", () => {
   });
 
   it("resolves override.styleIdForFill through the style registry", () => {
-    const styleRegistry: FigStyleRegistry = new Map([
-      ["7:81", [red]],
-    ]);
+    const styleRegistry: FigStyleRegistry = {
+      paints: new Map([["7:81", [red]]]),
+      effects: new Map(),
+      textProperties: new Map(),
+      layoutGrids: new Map(),
+    };
     const overrides: TextStyleOverride[] = [
       { styleID: 2, styleIdForFill: { guid: { sessionID: 7, localID: 81 } } },
     ];
