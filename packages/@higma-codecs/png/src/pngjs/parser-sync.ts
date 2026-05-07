@@ -9,7 +9,7 @@
 import { inflate } from "pako";
 import { createSyncReader } from "./sync-reader";
 import { createFilter, type BitmapInfo } from "./filter-parse";
-import { createParser, type PngMetadata } from "./parser";
+import { createParser, type PngChromaticity, type PngIccProfile, type PngMetadata } from "./parser";
 import { dataToBitMap } from "./bitmapper";
 import { normaliseFormat } from "./format-normaliser";
 import { concatUint8Arrays } from "./buffer-util";
@@ -31,6 +31,9 @@ export type ParseResult = {
   colorType: number;
   data: Uint8Array | Uint16Array;
   gamma: number;
+  srgbIntent?: number;
+  chromaticity?: PngChromaticity;
+  iccProfile?: PngIccProfile;
   transColor?: number[];
 };
 
@@ -44,6 +47,9 @@ export function parseSync(buffer: Uint8Array, options?: ParseOptions): ParseResu
     metaData: undefined as PngMetadata | undefined,
     paletteData: undefined as number[][] | undefined,
     gamma: undefined as number | undefined,
+    srgbIntent: undefined as number | undefined,
+    chromaticity: undefined as PngChromaticity | undefined,
+    iccProfile: undefined as PngIccProfile | undefined,
   };
   const inflateDataList: Uint8Array[] = [];
 
@@ -54,6 +60,9 @@ export function parseSync(buffer: Uint8Array, options?: ParseOptions): ParseResu
     error: (e: Error) => { state.err = e; },
     metadata: (m: PngMetadata) => { state.metaData = m; },
     gamma: (g: number) => { state.gamma = g; },
+    srgbIntent: (intent: number) => { state.srgbIntent = intent; },
+    chromaticity: (chromaticity: PngChromaticity) => { state.chromaticity = chromaticity; },
+    iccProfile: (iccProfile: PngIccProfile) => { state.iccProfile = iccProfile; },
     palette: (p: number[][]) => { state.paletteData = p; },
     transColor: (c: number[]) => { state.metaData!.transColor = c; },
     inflateData: (d: Uint8Array) => { inflateDataList.push(d); },
@@ -117,6 +126,9 @@ export function parseSync(buffer: Uint8Array, options?: ParseOptions): ParseResu
     colorType: md.colorType,
     data: normalisedBitmapData,
     gamma: state.gamma || 0,
+    srgbIntent: state.srgbIntent,
+    chromaticity: state.chromaticity,
+    iccProfile: state.iccProfile,
     transColor: md.transColor,
   };
 }

@@ -9,6 +9,7 @@
 import * as constants from "./constants";
 import { crc32 } from "./crc";
 import { readUInt32BE, readInt32BE, readUInt16BE, concatUint8Arrays } from "./buffer-util";
+import { inflate } from "pako";
 
 export type PngMetadata = {
   width: number;
@@ -23,6 +24,25 @@ export type PngMetadata = {
   transColor?: number[];
   data?: Uint8Array | Uint16Array;
   gamma?: number;
+  srgbIntent?: number;
+  chromaticity?: PngChromaticity;
+  iccProfile?: PngIccProfile;
+};
+
+export type PngChromaticity = {
+  readonly whitePointX: number;
+  readonly whitePointY: number;
+  readonly redX: number;
+  readonly redY: number;
+  readonly greenX: number;
+  readonly greenY: number;
+  readonly blueX: number;
+  readonly blueY: number;
+};
+
+export type PngIccProfile = {
+  readonly name: string;
+  readonly data: Uint8Array;
 };
 
 export type ParserDependencies = {
@@ -30,6 +50,9 @@ export type ParserDependencies = {
   error: (err: Error) => void;
   metadata: (data: PngMetadata) => void;
   gamma: (value: number) => void;
+  srgbIntent?: (value: number) => void;
+  chromaticity?: (value: PngChromaticity) => void;
+  iccProfile?: (value: PngIccProfile) => void;
   palette: (colors: number[][]) => void;
   transColor: (color: number[]) => void;
   inflateData: (data: Uint8Array) => void;
@@ -69,6 +92,9 @@ export function createParser(options: ParserOptions, deps: ParserDependencies): 
     [constants.TYPE_PLTE]: handlePLTE,
     [constants.TYPE_tRNS]: handleTRNS,
     [constants.TYPE_gAMA]: handleGAMA,
+    [constants.TYPE_sRGB]: handleSRGB,
+    [constants.TYPE_cHRM]: handleCHRM,
+    [constants.TYPE_iCCP]: handleICCP,
   };
 
   function parseSignature(data: Uint8Array): void {
@@ -239,6 +265,80 @@ export function createParser(options: ParserOptions, deps: ParserDependencies): 
     handleChunkEnd();
   }
 
+  function handleSRGB(length: number): void {
+    deps.read(length, parseSRGB);
+  }
+
+  function parseSRGB(data: Uint8Array): void {
+    state.crcData.push(data);
+    if (data.length !== 1) {
+      deps.error(new Error("sRGB chunk requires one rendering-intent byte"));
+      return;
+    }
+    const intent = data[0];
+    if (intent === undefined) {
+      deps.error(new Error("sRGB chunk requires one rendering-intent byte"));
+      return;
+    }
+    if (intent > 3) {
+      deps.error(new Error("sRGB rendering intent must be 0, 1, 2, or 3"));
+      return;
+    }
+    deps.srgbIntent?.(intent);
+    handleChunkEnd();
+  }
+
+  function handleCHRM(length: number): void {
+    deps.read(length, parseCHRM);
+  }
+
+  function parseCHRM(data: Uint8Array): void {
+    state.crcData.push(data);
+    if (data.length !== 32) {
+      deps.error(new Error("cHRM chunk requires 32 bytes"));
+      return;
+    }
+    deps.chromaticity?.({
+      whitePointX: readUInt32BE(data, 0) / constants.GAMMA_DIVISION,
+      whitePointY: readUInt32BE(data, 4) / constants.GAMMA_DIVISION,
+      redX: readUInt32BE(data, 8) / constants.GAMMA_DIVISION,
+      redY: readUInt32BE(data, 12) / constants.GAMMA_DIVISION,
+      greenX: readUInt32BE(data, 16) / constants.GAMMA_DIVISION,
+      greenY: readUInt32BE(data, 20) / constants.GAMMA_DIVISION,
+      blueX: readUInt32BE(data, 24) / constants.GAMMA_DIVISION,
+      blueY: readUInt32BE(data, 28) / constants.GAMMA_DIVISION,
+    });
+    handleChunkEnd();
+  }
+
+  function handleICCP(length: number): void {
+    deps.read(length, parseICCP);
+  }
+
+  function parseICCP(data: Uint8Array): void {
+    state.crcData.push(data);
+    const separatorIndex = data.indexOf(0);
+    if (separatorIndex < 1 || separatorIndex > 79) {
+      deps.error(new Error("iCCP chunk requires a 1..79 byte profile name"));
+      return;
+    }
+    const compressionMethod = data[separatorIndex + 1];
+    if (compressionMethod !== 0) {
+      deps.error(new Error("iCCP chunk requires zlib compression method 0"));
+      return;
+    }
+    const compressedProfileStart = separatorIndex + 2;
+    if (compressedProfileStart >= data.length) {
+      deps.error(new Error("iCCP chunk requires compressed profile data"));
+      return;
+    }
+    deps.iccProfile?.({
+      name: decodeLatin1(data.slice(0, separatorIndex)),
+      data: inflate(data.slice(compressedProfileStart)),
+    });
+    handleChunkEnd();
+  }
+
   function handleIDAT(length: number): void {
     if (!state.emittedHeadersFinished) {
       state.emittedHeadersFinished = true;
@@ -279,4 +379,8 @@ export function createParser(options: ParserOptions, deps: ParserDependencies): 
       deps.read(constants.PNG_SIGNATURE.length, parseSignature);
     },
   };
+}
+
+function decodeLatin1(data: Uint8Array): string {
+  return Array.from(data, (byte) => String.fromCharCode(byte)).join("");
 }

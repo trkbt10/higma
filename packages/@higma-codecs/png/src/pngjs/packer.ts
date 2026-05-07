@@ -113,6 +113,46 @@ function packGAMA(gamma: number): Uint8Array {
   return packChunk(constants.TYPE_gAMA, buf);
 }
 
+function packSRGB(intent: number): Uint8Array {
+  if (!Number.isInteger(intent) || intent < 0 || intent > 3) {
+    throw new Error("sRGB rendering intent must be 0, 1, 2, or 3");
+  }
+  return packChunk(constants.TYPE_sRGB, new Uint8Array([intent]));
+}
+
+function chromaticityValueToPngInt(key: string, value: number): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`cHRM ${key} must be a finite value from 0 to 1`);
+  }
+  return Math.round(value * constants.GAMMA_DIVISION);
+}
+
+function packCHRM(chromaticity: PngChromaticity): Uint8Array {
+  const buf = new Uint8Array(32);
+  writeUInt32BE(buf, chromaticityValueToPngInt("whitePointX", chromaticity.whitePointX), 0);
+  writeUInt32BE(buf, chromaticityValueToPngInt("whitePointY", chromaticity.whitePointY), 4);
+  writeUInt32BE(buf, chromaticityValueToPngInt("redX", chromaticity.redX), 8);
+  writeUInt32BE(buf, chromaticityValueToPngInt("redY", chromaticity.redY), 12);
+  writeUInt32BE(buf, chromaticityValueToPngInt("greenX", chromaticity.greenX), 16);
+  writeUInt32BE(buf, chromaticityValueToPngInt("greenY", chromaticity.greenY), 20);
+  writeUInt32BE(buf, chromaticityValueToPngInt("blueX", chromaticity.blueX), 24);
+  writeUInt32BE(buf, chromaticityValueToPngInt("blueY", chromaticity.blueY), 28);
+  return packChunk(constants.TYPE_cHRM, buf);
+}
+
+function packICCP(profile: PngIccProfile): Uint8Array {
+  const nameBytes = encodeIccProfileName(profile.name);
+  const compressedProfile = deflate(profile.data, { level: 9 });
+  if (!compressedProfile || compressedProfile.length === 0) {
+    throw new Error("iCCP profile requires compressible profile bytes");
+  }
+  return packChunk(constants.TYPE_iCCP, concatUint8Arrays([
+    nameBytes,
+    new Uint8Array([0, 0]),
+    compressedProfile,
+  ]));
+}
+
 function packIDAT(data: Uint8Array): Uint8Array {
   return packChunk(constants.TYPE_IDAT, data);
 }
@@ -126,6 +166,25 @@ export type PngData = {
   height: number;
   data: Uint8Array;
   gamma?: number;
+  srgbIntent?: number;
+  chromaticity?: PngChromaticity;
+  iccProfile?: PngIccProfile;
+};
+
+export type PngChromaticity = {
+  readonly whitePointX: number;
+  readonly whitePointY: number;
+  readonly redX: number;
+  readonly redY: number;
+  readonly greenX: number;
+  readonly greenY: number;
+  readonly blueX: number;
+  readonly blueY: number;
+};
+
+export type PngIccProfile = {
+  readonly name: string;
+  readonly data: Uint8Array;
 };
 
 /**
@@ -133,13 +192,26 @@ export type PngData = {
  */
 export function pack(metaData: PngData, opt?: PackerOptions): Uint8Array {
   const options = resolveOptions(opt || {});
+  assertColorSpaceChunks(metaData);
 
   const chunks: Uint8Array[] = [
     new Uint8Array(constants.PNG_SIGNATURE),
     packIHDR(metaData.width, metaData.height, options),
   ];
 
-  if (metaData.gamma) {
+  if (metaData.iccProfile) {
+    chunks.push(packICCP(metaData.iccProfile));
+  }
+
+  if (!metaData.iccProfile && metaData.srgbIntent !== undefined) {
+    chunks.push(packSRGB(metaData.srgbIntent));
+  }
+
+  if (!metaData.iccProfile && metaData.chromaticity) {
+    chunks.push(packCHRM(metaData.chromaticity));
+  }
+
+  if (!metaData.iccProfile && metaData.gamma) {
     chunks.push(packGAMA(metaData.gamma));
   }
 
@@ -175,4 +247,27 @@ export function pack(metaData: PngData, opt?: PackerOptions): Uint8Array {
   chunks.push(packIEND());
 
   return concatUint8Arrays(chunks);
+}
+
+function assertColorSpaceChunks(metaData: PngData): void {
+  if (!metaData.iccProfile) {
+    return;
+  }
+  if (metaData.srgbIntent !== undefined || metaData.chromaticity !== undefined || metaData.gamma !== undefined) {
+    throw new Error("PNG iCCP profile must not be combined with sRGB, cHRM, or gAMA chunks");
+  }
+}
+
+function encodeIccProfileName(name: string): Uint8Array {
+  if (name.length < 1 || name.length > 79) {
+    throw new Error("iCCP profile name must contain 1..79 Latin-1 characters");
+  }
+  const bytes = Array.from(name, (char) => {
+    const code = char.charCodeAt(0);
+    if (code < 32 || code > 126) {
+      throw new Error("iCCP profile name must contain printable Latin-1 characters");
+    }
+    return code;
+  });
+  return new Uint8Array(bytes);
 }

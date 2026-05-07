@@ -7,7 +7,7 @@
  * - writePng(image) — encode to PNG buffer (equivalent to PNG.sync.write)
  */
 
-import { pack } from "./pngjs/packer";
+import { pack, type PngChromaticity, type PngIccProfile } from "./pngjs/packer";
 import { parseSync } from "./pngjs/parser-sync";
 
 /**
@@ -19,6 +19,10 @@ export type PngImage = {
   readonly height: number;
   /** RGBA pixel data, 4 bytes per pixel, row-major order. */
   data: Uint8Array;
+  readonly gamma?: number;
+  readonly srgbIntent?: number;
+  readonly chromaticity?: PngChromaticity;
+  readonly iccProfile?: PngIccProfile;
 };
 
 /**
@@ -45,6 +49,10 @@ export function readPng(buffer: Uint8Array): PngImage {
     width: result.width,
     height: result.height,
     data: result.data instanceof Uint8Array ? result.data : new Uint8Array(result.data.buffer),
+    gamma: result.gamma === 0 ? undefined : result.gamma,
+    srgbIntent: result.srgbIntent,
+    chromaticity: result.chromaticity,
+    iccProfile: result.iccProfile,
   };
 }
 
@@ -54,5 +62,15 @@ export function readPng(buffer: Uint8Array): PngImage {
  * Equivalent to `PNG.sync.write(png)` in pngjs.
  */
 export function writePng(image: PngImage): Uint8Array {
-  return pack({ width: image.width, height: image.height, data: image.data });
+  return pack({
+    width: image.width,
+    height: image.height,
+    data: image.data,
+    gamma: image.gamma,
+    srgbIntent: image.srgbIntent,
+    chromaticity: image.chromaticity,
+    iccProfile: image.iccProfile,
+  });
 }
+
+export type { PngChromaticity, PngIccProfile };

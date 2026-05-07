@@ -6,6 +6,17 @@ import { pack } from "./packer";
 import { readUInt32BE } from "./buffer-util";
 import { COLORTYPE_COLOR } from "./constants";
 
+const SRGB_CHROMATICITY = {
+  whitePointX: 0.3127,
+  whitePointY: 0.329,
+  redX: 0.64,
+  redY: 0.33,
+  greenX: 0.3,
+  greenY: 0.6,
+  blueX: 0.15,
+  blueY: 0.06,
+};
+
 describe("pack", () => {
   describe("PNG structure", () => {
     it("starts with PNG signature", () => {
@@ -56,6 +67,36 @@ describe("pack", () => {
       const png = pack({ width: 1, height: 1, data: new Uint8Array(4) });
       const str = Array.from(png).map((b) => String.fromCharCode(b)).join("");
       expect(str).not.toContain("gAMA");
+    });
+  });
+
+  describe("sRGB", () => {
+    it("includes sRGB chunk when rendering intent is set", () => {
+      const png = pack({ width: 1, height: 1, data: new Uint8Array(4), srgbIntent: 0 });
+      const str = Array.from(png).map((b) => String.fromCharCode(b)).join("");
+      expect(str).toContain("sRGB");
+    });
+
+    it("throws on unsupported sRGB rendering intent", () => {
+      expect(() => pack({ width: 1, height: 1, data: new Uint8Array(4), srgbIntent: 4 }))
+        .toThrow("sRGB rendering intent");
+    });
+  });
+
+  describe("cHRM", () => {
+    it("includes cHRM chunk when chromaticity is set", () => {
+      const png = pack({ width: 1, height: 1, data: new Uint8Array(4), chromaticity: SRGB_CHROMATICITY });
+      const str = Array.from(png).map((b) => String.fromCharCode(b)).join("");
+      expect(str).toContain("cHRM");
+    });
+
+    it("throws on invalid chromaticity values", () => {
+      expect(() => pack({
+        width: 1,
+        height: 1,
+        data: new Uint8Array(4),
+        chromaticity: { ...SRGB_CHROMATICITY, redX: 1.1 },
+      })).toThrow("cHRM redX");
     });
   });
 

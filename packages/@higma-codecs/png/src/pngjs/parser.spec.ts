@@ -12,6 +12,8 @@ function parseChunks(png: Uint8Array): {
   metadata: PngMetadata | undefined;
   errors: Error[];
   gamma: number | undefined;
+  srgbIntent: number | undefined;
+  chromaticity: PngMetadata["chromaticity"];
   inflateDataChunks: Uint8Array[];
   paletteData: number[][] | undefined;
   headersFinishedCalled: boolean;
@@ -20,6 +22,8 @@ function parseChunks(png: Uint8Array): {
     metadata: undefined as PngMetadata | undefined,
     errors: [] as Error[],
     gamma: undefined as number | undefined,
+    srgbIntent: undefined as number | undefined,
+    chromaticity: undefined as PngMetadata["chromaticity"],
     inflateDataChunks: [] as Uint8Array[],
     paletteData: undefined as number[][] | undefined,
     headersFinishedCalled: false,
@@ -31,6 +35,8 @@ function parseChunks(png: Uint8Array): {
     error: (e) => state.errors.push(e),
     metadata: (m) => { state.metadata = m; },
     gamma: (g) => { state.gamma = g; },
+    srgbIntent: (intent) => { state.srgbIntent = intent; },
+    chromaticity: (chromaticity) => { state.chromaticity = chromaticity; },
     palette: (p) => { state.paletteData = p; },
     transColor: () => {},
     inflateData: (d) => { state.inflateDataChunks.push(d); },
@@ -80,6 +86,28 @@ describe("createParser", () => {
       const png = pack({ width: 1, height: 1, data: new Uint8Array(4) });
       const result = parseChunks(png);
       expect(result.gamma).toBeUndefined();
+    });
+
+    it("extracts sRGB rendering intent when present", () => {
+      const png = pack({ width: 1, height: 1, data: new Uint8Array(4), srgbIntent: 0 });
+      const result = parseChunks(png);
+      expect(result.srgbIntent).toBe(0);
+    });
+
+    it("extracts cHRM chromaticity when present", () => {
+      const chromaticity = {
+        whitePointX: 0.3127,
+        whitePointY: 0.329,
+        redX: 0.64,
+        redY: 0.33,
+        greenX: 0.3,
+        greenY: 0.6,
+        blueX: 0.15,
+        blueY: 0.06,
+      };
+      const png = pack({ width: 1, height: 1, data: new Uint8Array(4), chromaticity });
+      const result = parseChunks(png);
+      expect(result.chromaticity).toEqual(chromaticity);
     });
   });
 

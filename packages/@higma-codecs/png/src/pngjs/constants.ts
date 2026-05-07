@@ -14,6 +14,9 @@ export const TYPE_IDAT = 0x49444154;
 export const TYPE_PLTE = 0x504c5445;
 export const TYPE_tRNS = 0x74524e53;
 export const TYPE_gAMA = 0x67414d41;
+export const TYPE_sRGB = 0x73524742;
+export const TYPE_cHRM = 0x6348524d;
+export const TYPE_iCCP = 0x69434350;
 
 export const COLORTYPE_GRAYSCALE = 0;
 export const COLORTYPE_PALETTE = 1;
