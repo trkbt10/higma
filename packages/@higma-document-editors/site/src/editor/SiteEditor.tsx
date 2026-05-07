@@ -2,18 +2,18 @@
  * @file Top-level site editor component.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { SiteDocument } from "@higma-document-models/site";
+import type { SiteCmsFieldEdit } from "@higma-document-renderers/site";
 import { CanvasArea, EditorShell, StackedEditorPanel, type EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
 import { GalleryVerticalIcon, SettingsIcon, TableIcon } from "@higma-editor-kernel/ui/icons";
 
-import { SiteEditorProvider } from "../context/SiteEditorContext";
+import { SiteEditorProvider, useSiteEditor } from "../context/SiteEditorContext";
 import type { SiteEditorEditState } from "../context/SiteEditorContext";
 import { createSiteEditorWorkspace } from "../site-editor-workspace";
 import { SiteEditorCanvas } from "../canvas/SiteEditorCanvas";
 import { SiteCmsCollectionView } from "../cms/SiteCmsCollectionView";
 import { SiteCmsCollectionsPanel } from "../cms/SiteCmsCollectionsPanel";
-import { SiteCmsItemEditor } from "../cms/SiteCmsItemEditor";
 import { SiteCmsProvider } from "../cms/SiteCmsContext";
 import { SitePagesPanel } from "../panels/SitePagesPanel";
 import { SitePropertiesPanel } from "../panels/SitePropertiesPanel";
@@ -62,14 +62,6 @@ const cmsModePanels: EditorPanel[] = [
     drawerIcon: TableIcon,
     scrollable: false,
   },
-  {
-    id: "site-cms-item",
-    position: "right",
-    content: <SiteCmsItemEditor />,
-    drawerLabel: "Item editor",
-    drawerIcon: SettingsIcon,
-    scrollable: false,
-  },
 ];
 
 function renderWorkspaceForMode(mode: SiteEditorWorkspaceMode) {
@@ -115,17 +107,28 @@ function SiteEditorContent({ panels }: { readonly panels?: EditorPanel[] }) {
   );
 }
 
+function SiteCmsEditBridge({ children }: { readonly children: React.ReactNode }) {
+  const { setCmsFieldEdits } = useSiteEditor();
+  const handleFieldEditsChange = useCallback(
+    (edits: readonly SiteCmsFieldEdit[]) => {
+      setCmsFieldEdits(edits);
+    },
+    [setCmsFieldEdits],
+  );
+  return <SiteCmsProvider onFieldEditsChange={handleFieldEditsChange}>{children}</SiteCmsProvider>;
+}
+
 /** Full site document editor shell. */
 export function SiteEditor({ initialDocument, panels, onEditStateChange }: SiteEditorProps) {
   const workspace = useMemo(() => createSiteEditorWorkspace(initialDocument), [initialDocument]);
 
   return (
     <SiteEditorProvider workspace={workspace} onEditStateChange={onEditStateChange}>
-      <SiteCmsProvider>
+      <SiteCmsEditBridge>
         <div style={{ width: "100%", height: "100%" }}>
           <SiteEditorContent panels={panels} />
         </div>
-      </SiteCmsProvider>
+      </SiteCmsEditBridge>
     </SiteEditorProvider>
   );
 }

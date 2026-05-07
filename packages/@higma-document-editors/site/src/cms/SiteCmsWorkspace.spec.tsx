@@ -1,5 +1,5 @@
 /**
- * @file CMS workspace tests covering the sidebar, items table, item editor, and edit roundtrip.
+ * @file CMS workspace tests covering CRUD on collections / fields / items.
  */
 // @vitest-environment jsdom
 
@@ -10,7 +10,6 @@ import { createSiteEditorWorkspace } from "../site-editor-workspace";
 import { createSiteEditorTestDocument } from "../../spec/shared/site-editor-test-fixture";
 import { SiteCmsCollectionView } from "./SiteCmsCollectionView";
 import { SiteCmsCollectionsPanel } from "./SiteCmsCollectionsPanel";
-import { SiteCmsItemEditor } from "./SiteCmsItemEditor";
 import { SiteCmsProvider, useSiteCms } from "./SiteCmsContext";
 
 function FieldEditsProbe() {
@@ -22,6 +21,15 @@ function FieldEditsProbe() {
   );
 }
 
+function CollectionsProbe() {
+  const { collections } = useSiteCms();
+  return (
+    <output aria-label="collections">
+      {collections.map((collection) => `${collection.id}:items=${collection.items.length}:fields=${collection.fields.length}`).join("|")}
+    </output>
+  );
+}
+
 function renderCmsWorkspace() {
   const workspace = createSiteEditorWorkspace(createSiteEditorTestDocument());
   return render(
@@ -29,8 +37,8 @@ function renderCmsWorkspace() {
       <SiteCmsProvider>
         <SiteCmsCollectionsPanel />
         <SiteCmsCollectionView />
-        <SiteCmsItemEditor />
         <FieldEditsProbe />
+        <CollectionsProbe />
       </SiteCmsProvider>
     </SiteEditorProvider>,
   );
@@ -47,15 +55,28 @@ describe("SiteCmsCollectionsPanel", () => {
     const sidebar = screen.getByLabelText("Collections sidebar");
     expect(within(sidebar).getByRole("tab", { name: "Edit" })).toBeTruthy();
     expect(within(sidebar).getByRole("tab", { name: "Connect" })).toBeTruthy();
-    expect(within(sidebar).getByRole("option", { name: "Case Study Page" })).toBeTruthy();
+    expect(within(sidebar).getByRole("option", { name: /Case Study Page/ })).toBeTruthy();
   });
 
-  it("ignores Connect tab activation and disables the Add collection button", () => {
+  it("auto-creates a Collection N draft when the + button is clicked, no prompt", () => {
     renderCmsWorkspace();
-    const connectTab = screen.getByRole("tab", { name: "Connect" });
-    fireEvent.click(connectTab);
-    expect(screen.getByRole("tab", { name: "Edit" }).getAttribute("aria-selected")).toBe("true");
-    expect((screen.getByRole("button", { name: "Add collection" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Add collection" }));
+
+    const sidebar = screen.getByLabelText("Collections sidebar");
+    expect(within(sidebar).getByText("Collection 2")).toBeTruthy();
+
+    const probe = screen.getByLabelText("collections");
+    expect(probe.textContent).toContain("draft-collection-1");
+  });
+
+  it("deletes a draft collection via the trash button", () => {
+    renderCmsWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: "Add collection" }));
+
+    const sidebar = screen.getByLabelText("Collections sidebar");
+    fireEvent.click(within(sidebar).getByRole("button", { name: "Delete collection Collection 2" }));
+
+    expect(within(sidebar).queryByText("Collection 2")).toBeNull();
   });
 });
 
@@ -68,15 +89,61 @@ describe("SiteCmsCollectionView", () => {
     expect(headers.some((header) => header.includes("Rich Text 1"))).toBe(true);
   });
 
-  it("disables New item, Edit fields and surfaces the back button", () => {
+  it("adds a draft item via the New item header button and opens the editor on it", () => {
     renderCmsWorkspace();
-    expect((screen.getByRole("button", { name: /New item/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /Edit fields/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByRole("button", { name: "Back to collections" })).toBeTruthy();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    const headerNewItem = within(view).getAllByRole("button", { name: /New item/ })[0];
+    if (!headerNewItem) {
+      throw new Error("Expected the header New item button");
+    }
+    fireEvent.click(headerNewItem);
+
+    expect(screen.getByLabelText(/Editing draft-item-1/)).toBeTruthy();
+    const probe = screen.getByLabelText("collections");
+    expect(probe.textContent).toContain("collection-1:items=2");
+  });
+
+  it("opens the fields editor and adds an auto-named draft field of the picked kind", () => {
+    renderCmsWorkspace();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    fireEvent.click(within(view).getByRole("button", { name: /Edit fields/ }));
+    fireEvent.click(within(view).getByRole("button", { name: /Add field/ }));
+
+    const probe = screen.getByLabelText("collections");
+    expect(probe.textContent).toContain("collection-1:items=1:fields=2");
+  });
+
+  it("deletes a draft field via the trash button", () => {
+    renderCmsWorkspace();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    fireEvent.click(within(view).getByRole("button", { name: /Edit fields/ }));
+    fireEvent.click(within(view).getByRole("button", { name: /Add field/ }));
+
+    fireEvent.click(within(view).getByRole("button", { name: /Delete field Text 2/ }));
+
+    const probe = screen.getByLabelText("collections");
+    expect(probe.textContent).toContain("collection-1:items=1:fields=1");
+  });
+
+  it("deletes a draft item row via the trash button", () => {
+    renderCmsWorkspace();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    const headerNewItem = within(view).getAllByRole("button", { name: /New item/ })[0];
+    if (!headerNewItem) {
+      throw new Error("Expected the header New item button");
+    }
+    fireEvent.click(headerNewItem);
+    // Close the editor so we can click the row trash icon without overlay interference
+    fireEvent.click(screen.getByRole("button", { name: "Close item editor" }));
+
+    fireEvent.click(within(view).getByRole("button", { name: /Delete item draft-item-1/ }));
+
+    const probe = screen.getByLabelText("collections");
+    expect(probe.textContent).toContain("collection-1:items=1");
   });
 });
 
-describe("SiteCmsItemEditor", () => {
+describe("SiteCmsItemEditor overlay", () => {
   it("opens when an item row is clicked and exposes Close + nav controls", () => {
     renderCmsWorkspace();
     openContextItem();
@@ -85,6 +152,11 @@ describe("SiteCmsItemEditor", () => {
     expect(within(editor).getByRole("button", { name: "Close item editor" })).toBeTruthy();
     expect((within(editor).getByRole("button", { name: "Previous item" }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(editor).getByRole("button", { name: "Next item" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("is not mounted when no item is selected", () => {
+    renderCmsWorkspace();
+    expect(screen.queryByLabelText(/Editing /)).toBeNull();
   });
 
   it("closes the item editor when Close is pressed", () => {

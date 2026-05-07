@@ -242,6 +242,7 @@ export function SiteEditorCanvas() {
           blobs={figSurface.document.blobs}
           symbolMap={figSurface.document.components}
           styleRegistry={figSurface.document.styleRegistry}
+          renderOptions={figSurface.renderOptions}
           viewportX={-extents.offsetX}
           viewportY={-extents.offsetY}
           viewportWidth={extents.width}

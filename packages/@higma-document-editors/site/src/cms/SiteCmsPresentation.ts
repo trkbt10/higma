@@ -5,6 +5,9 @@
  * fields, or items — those live in the CMS backend that built the .site file.
  * This module is the single, explicit place where the UI synthesises a
  * presentable label, so that no fallback / heuristic leaks into the domain.
+ *
+ * Helpers accept an optional `userOverride` argument so the caller can pass a
+ * value from the reducer's display-name override map (set via the rename UI).
  */
 
 import { getSiteCollectionFieldKindLabel } from "../domain/site-collection-field-kind";
@@ -25,8 +28,15 @@ function trimDisplayText(text: string): string {
   return text;
 }
 
-/** Pick a UI label for a collection from its selectors, or fall back to a positional placeholder. */
-export function getSiteCollectionDisplayName(collection: SiteCollection, indexInWorkspace: number): string {
+/** Pick a UI label for a collection. User override → SoT-derived → positional placeholder. */
+export function getSiteCollectionDisplayName(
+  collection: SiteCollection,
+  indexInWorkspace: number,
+  userOverride: string | null = null,
+): string {
+  if (userOverride !== null) {
+    return userOverride;
+  }
   const namedSelector = collection.selectors.find((selector) => selector.nodeName.trim() !== "");
   if (namedSelector) {
     return namedSelector.nodeName;
@@ -40,11 +50,15 @@ export function getSiteCollectionDisplayName(collection: SiteCollection, indexIn
   return COLLECTION_PLACEHOLDER;
 }
 
-/** Build a UI label for a field from its kind and ordinal position in the collection. */
+/** Pick a UI label for a field. User override → kind+positional. */
 export function getSiteCollectionFieldDisplayName(
   field: SiteCollectionField,
   indexInCollection: number,
+  userOverride: string | null = null,
 ): string {
+  if (userOverride !== null) {
+    return userOverride;
+  }
   return `${getSiteCollectionFieldKindLabel(field.kind)} ${indexInCollection + 1}`;
 }
 

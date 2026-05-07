@@ -3,18 +3,23 @@
  */
 
 import { createSiteDomainSummary, type SiteDocument, type SiteDomainSummary } from "@higma-document-models/site";
-import { exportEditedSiteDocument as exportEditedSiteDocumentBytes, loadSiteDocumentResult } from "@higma-document-io/site";
+import {
+  exportEditedSiteDocument as exportEditedSiteDocumentBytes,
+  loadSiteDocumentResult,
+  type SiteEditPayload,
+} from "@higma-document-io/site";
 import {
   createFigFamilyDesignDocument,
+  createFigFamilyRenderOptions,
   type FigFamilyDesignDocument,
   type FigFamilyPage,
+  type FigFamilyRenderOptions,
 } from "@higma-figma-runtime/react-renderer";
 import {
   createSiteRenderPlan,
   type SiteBreakpointVariant,
   type SiteRenderPlan,
   type SiteRenderUnit,
-  type SiteUnitMove,
 } from "@higma-document-renderers/site";
 import { createEditorSession, type EditorSession } from "@higma-editor-surfaces/sessions";
 
@@ -55,6 +60,7 @@ export type SiteEditableUnit = {
 export type SiteFigRenderSurface = {
   readonly document: FigFamilyDesignDocument;
   readonly page: FigFamilyPage;
+  readonly renderOptions?: FigFamilyRenderOptions;
 };
 
 export type SiteFigRenderSurfaceOptions = {
@@ -204,6 +210,7 @@ export function createSiteFigRenderSurface(
       ...page,
       children,
     },
+    renderOptions: createFigFamilyRenderOptions(figDocument),
   };
 }
 
@@ -233,10 +240,10 @@ export async function openSiteEditor(data: Uint8Array): Promise<SiteEditorWorksp
   return createSiteEditorWorkspace(result.document);
 }
 
-/** Export edited site bytes from the original file data and committed editor unit moves. */
+/** Export edited site bytes from the original file data and committed editor edits. */
 export async function exportEditedSiteDocument(
   data: Uint8Array,
-  moves: readonly SiteUnitMove[],
+  edits: SiteEditPayload,
 ): Promise<Uint8Array> {
-  return exportEditedSiteDocumentBytes(data, moves);
+  return exportEditedSiteDocumentBytes(data, edits);
 }

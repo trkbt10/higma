@@ -7,6 +7,7 @@ import type { SiteDocument } from "@higma-document-models/site";
 import {
   createSiteDocumentWithUnitMoves,
   type SiteBreakpointVariant,
+  type SiteCmsFieldEdit,
   type SiteRenderSurface,
 } from "@higma-document-renderers/site";
 
@@ -46,6 +47,7 @@ export type SiteEditorEditState = {
   readonly figRenderSurface: SiteFigRenderSurface;
   readonly unitBounds: readonly SiteUnitBounds[];
   readonly unitMoves: readonly SiteUnitMove[];
+  readonly cmsFieldEdits: readonly SiteCmsFieldEdit[];
 };
 
 export type SiteEditorContextValue = {
@@ -56,6 +58,7 @@ export type SiteEditorContextValue = {
   readonly unitSelection: SiteUnitSelection;
   readonly unitBounds: readonly SiteUnitBounds[];
   readonly unitMoves: readonly SiteUnitMove[];
+  readonly cmsFieldEdits: readonly SiteCmsFieldEdit[];
   readonly canvasRegions: readonly SiteCanvasRegion[];
   readonly activeSurfaceId: string;
   readonly activeSurface: SiteRenderSurface;
@@ -71,6 +74,7 @@ export type SiteEditorContextValue = {
   readonly beginMoveUnit: (unitId: string, pageX: number, pageY: number) => void;
   readonly moveActiveUnit: (pageX: number, pageY: number) => void;
   readonly endActiveUnitMove: (pageX: number, pageY: number) => void;
+  readonly setCmsFieldEdits: (edits: readonly SiteCmsFieldEdit[]) => void;
 };
 
 const SiteEditorContext = createContext<SiteEditorContextValue | null>(null);
@@ -223,9 +227,9 @@ function resolveVisibleSelection(
   if (selectionExistsInUnits(units, selection) && responsiveSetHasVariant(variants, selectedUnit?.responsiveSetId ?? null, breakpointName)) {
     return selection;
   }
-  const responsiveSetId = units.find((unit) => unit.responsiveSetId)?.responsiveSetId;
-  if (responsiveSetId) {
-    return createSelectionForResponsiveSet(units, responsiveSetId, surfaceId);
+  const recoveryUnit = units.find((unit) => unit.id !== surfaceId && unit.responsiveSetId !== null);
+  if (recoveryUnit && recoveryUnit.responsiveSetId !== null) {
+    return createSelectionForResponsiveSet(units, recoveryUnit.responsiveSetId, surfaceId);
   }
   return createInitialVisibleSelection(units, surfaceId);
 }
@@ -247,6 +251,7 @@ export function SiteEditorProvider({
     createInitialSelectionForSurface(workspace, initialSurfaceId, initialBreakpointName)
   ));
   const [unitMoves, setUnitMoves] = useState<readonly SiteUnitMove[]>([]);
+  const [cmsFieldEdits, setCmsFieldEditsState] = useState<readonly SiteCmsFieldEdit[]>([]);
   const [moveDraft, setMoveDraft] = useState<SiteUnitMoveDraft | null>(null);
   const unitMovesRef = useRef<readonly SiteUnitMove[]>([]);
   const moveDraftRef = useRef<SiteUnitMoveDraft | null>(null);
@@ -322,8 +327,9 @@ export function SiteEditorProvider({
       figRenderSurface,
       unitBounds,
       unitMoves: previewMoves,
+      cmsFieldEdits,
     });
-  }, [onEditStateChange, document, figRenderSurface, unitBounds, previewMoves]);
+  }, [onEditStateChange, document, figRenderSurface, unitBounds, previewMoves, cmsFieldEdits]);
   const value = useMemo<SiteEditorContextValue>(
     () => ({
       workspace,
@@ -333,6 +339,7 @@ export function SiteEditorProvider({
       unitSelection: visibleUnitSelection,
       unitBounds,
       unitMoves: previewMoves,
+      cmsFieldEdits,
       canvasRegions,
       activeSurfaceId,
       activeSurface,
@@ -381,6 +388,7 @@ export function SiteEditorProvider({
         setUnitMoves((currentMoves) => commitSiteUnitMove({ moves: currentMoves, draft, pageX, pageY }));
         setMoveDraft(null);
       },
+      setCmsFieldEdits: (edits) => setCmsFieldEditsState(edits),
     }),
     [
       workspace,
@@ -390,6 +398,7 @@ export function SiteEditorProvider({
       visibleUnitSelection,
       unitBounds,
       previewMoves,
+      cmsFieldEdits,
       canvasRegions,
       activeSurfaceId,
       activeSurface,

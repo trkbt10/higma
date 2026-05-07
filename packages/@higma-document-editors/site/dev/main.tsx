@@ -107,7 +107,10 @@ function App() {
       return;
     }
     setErrorMessage(null);
-    void exportEditedSiteDocument(loadedFile.data, editState?.unitMoves ?? []).then((data) => {
+    void exportEditedSiteDocument(loadedFile.data, {
+      unitMoves: editState?.unitMoves ?? [],
+      cmsFieldEdits: editState?.cmsFieldEdits ?? [],
+    }).then((data) => {
       downloadBytes(createEditedFileName(loadedFile.name), data);
     }).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : String(error));
@@ -118,7 +121,9 @@ function App() {
     if (!loadedFile) {
       return "No file loaded";
     }
-    return `${loadedFile.name} / ${editState?.unitMoves.length ?? 0} edited units`;
+    const unitCount = editState?.unitMoves.length ?? 0;
+    const fieldCount = editState?.cmsFieldEdits.length ?? 0;
+    return `${loadedFile.name} / ${unitCount} edited units / ${fieldCount} edited fields`;
   }, [loadedFile, editState]);
 
   const editorContent = renderEditorContent(loadedFile?.document ?? null, setEditState);
