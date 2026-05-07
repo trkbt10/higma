@@ -27,7 +27,7 @@ import {
 import type { FigFillGeometry, FigPaint } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/domain";
-import { resolvePaintRef, formatNodeLocator, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
+import { resolvePaintRef, resolveStyledPaint, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
 import { dfsById } from "@higma-primitives/tree";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import {
@@ -563,9 +563,9 @@ function applySymbolOverridesToChildren(
     // descendants. SSoT: `forwardOverrideToDescendantInstance`.
     forwardOverrideToDescendantInstance(override, children, symbolMap, "overrides");
 
-    const targetFills = resolvePaintRef(target.styleIdForFill, styleRegistry, { intent: "fill", locator: () => formatNodeLocator(target) });
+    const targetFills = resolvePaintRef(target.styleIdForFill, styleRegistry);
     if (targetFills) { target.fills = targetFills; }
-    const targetStrokes = resolvePaintRef(target.styleIdForStrokeFill, styleRegistry, { intent: "stroke", locator: () => formatNodeLocator(target) });
+    const targetStrokes = resolvePaintRef(target.styleIdForStrokeFill, styleRegistry);
     if (targetStrokes) { target.strokes = targetStrokes; }
   }
 }
@@ -1016,11 +1016,11 @@ function resolveDesignInstance(
     }
     // If self-overrides set styleIdForFill/styleIdForStrokeFill, resolve
     // through guid or assetRef.key via the style registry.
-    const mergedFills = resolvePaintRef(merged.styleIdForFill, ctx.styleRegistry, { intent: "fill", locator: () => formatNodeLocator(merged) });
+    const mergedFills = resolvePaintRef(merged.styleIdForFill, ctx.styleRegistry);
     if (mergedFills) {
       merged.fills = mergedFills;
     }
-    const mergedStrokes = resolvePaintRef(merged.styleIdForStrokeFill, ctx.styleRegistry, { intent: "stroke", locator: () => formatNodeLocator(merged) });
+    const mergedStrokes = resolvePaintRef(merged.styleIdForStrokeFill, ctx.styleRegistry);
     if (mergedStrokes) {
       merged.strokes = mergedStrokes;
     }
@@ -1344,10 +1344,10 @@ function shouldRenderInteractiveSlideElementAsPath(node: FigDesignNode, children
 /**
  * Resolve the effective fill paints for a vector per-path style override entry.
  *
- * Resolution priority (matching the old SVG renderer's resolveStyleOverrideFillPaints):
- * 1. If the entry has styleIdForFill, resolve via the style registry
- * 2. Otherwise, use the entry's own fillPaints
- * 3. If neither, return undefined (use base fill)
+ * Delegates to the styled-paint SoT: registry wins when
+ * `styleIdForFill` resolves; otherwise the entry's inline `fillPaints`
+ * is the SoT. An empty inline list is treated as "no paint authored
+ * here, use the base fill" so it is normalised to `undefined`.
  */
 function resolveOverrideEntryPaints(
   entry: {
@@ -1359,20 +1359,8 @@ function resolveOverrideEntryPaints(
   },
   styleRegistry: FigStyleRegistry,
 ): readonly FigPaint[] | undefined {
-  // Priority 1: styleIdForFill via style registry (guid or assetRef.key)
-  const resolved = resolvePaintRef(entry.styleIdForFill, styleRegistry, {
-    intent: "fill",
-    locator: () => `vector style-override entry styleID=${(entry as { styleID?: number }).styleID ?? "?"}`,
-  });
-  if (resolved) {
-    return resolved;
-  }
-
-  // Priority 2: inline fillPaints
-  if (entry.fillPaints && entry.fillPaints.length > 0) {
-    return entry.fillPaints;
-  }
-
+  const resolved = resolveStyledPaint(entry.styleIdForFill, entry.fillPaints, styleRegistry);
+  if (resolved && resolved.length > 0) { return resolved; }
   return undefined;
 }
 

@@ -2,7 +2,6 @@
  * @file resolveTextRuns unit tests — pin the SoT contract.
  */
 
-import { describe, it, expect } from "vitest";
 import type { FigPaint } from "@higma-document-models/fig/types";
 import type { FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
@@ -129,6 +128,10 @@ describe("resolveTextRuns", () => {
   });
 
   it("throws when characterStyleIDs length doesn't match the source", () => {
+    // The resolver expects post-normalised input where the length already
+    // equals `characters.length` (the conversion layer pads Figma's
+    // trailing-zero-omitted Kiwi array). Feeding it un-normalised data is
+    // a caller bug and should fail loudly.
     expect(() => resolveTextRuns({
       characters: "abc",
       baseFillPaints: [black],
@@ -150,18 +153,45 @@ describe("resolveTextRuns", () => {
     })).toThrow(/styleID=7 which has no entry in styleOverrideTable on node 1:2/);
   });
 
-  it("throws when override.styleIdForFill cannot be resolved through the registry", () => {
+  it("falls through to override.fillPaints when override.styleIdForFill is dangling", () => {
+    // A run whose override carries a styleId that the registry can't
+    // resolve must use the override's own embedded fillPaints (when
+    // present). Figma Community exports routinely emit dangling refs
+    // and Figma itself renders them with the embedded paint.
     const overrides: TextStyleOverride[] = [
-      { styleID: 2, styleIdForFill: { guid: { sessionID: 99, localID: 99 } } },
+      { styleID: 2, styleIdForFill: { guid: { sessionID: 99, localID: 99 } }, fillPaints: [red] },
     ];
-    expect(() => resolveTextRuns({
+    const runs = resolveTextRuns({
       characters: "ab",
       baseFillPaints: [black],
       characterStyleIDs: [0, 2],
       styleOverrideTable: overrides,
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       locator: () => "node 1:2",
-    })).toThrow(/Unresolved styleId for fill on node 1:2 \(text run styleID=2\)/);
+    });
+    expect(runs[0].fillColor).toBe("#000000");
+    expect(runs[1].fillColor).toBe("#ff0000");
+  });
+
+  it("inherits the base fill when a sparse override authors only a dangling styleIdForFill", () => {
+    // Override doesn't author its own fillPaints and the styleId is
+    // dangling — there is no override fill, so the run should keep
+    // the node's base fill (Figma's "this override doesn't touch
+    // fill" semantic, applied even when the dangling styleId is
+    // present).
+    const overrides: TextStyleOverride[] = [
+      { styleID: 2, styleIdForFill: { guid: { sessionID: 99, localID: 99 } } },
+    ];
+    const runs = resolveTextRuns({
+      characters: "ab",
+      baseFillPaints: [black],
+      characterStyleIDs: [0, 2],
+      styleOverrideTable: overrides,
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      locator: () => "node 1:2",
+    });
+    expect(runs[0].fillColor).toBe("#000000");
+    expect(runs[1].fillColor).toBe("#000000");
   });
 
   it("rejects styleID=0 in the override table (forbidden by the schema)", () => {

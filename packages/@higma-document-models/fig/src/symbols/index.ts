@@ -64,6 +64,7 @@ export {
   resolveNodeStyleIds,
   resolveStyleIdOnMutableNode,
   resolvePaintRef,
+  resolveStyledPaint,
   formatNodeLocator,
   styleRefHasKey,
   styleRefKey,

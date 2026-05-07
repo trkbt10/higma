@@ -10,27 +10,35 @@
  *   string and (when present) its `key` (assetRef hash). Both
  *   namespaces share one map; the two key forms can't collide.
  *
- * - `resolvePaintRef` is the SoT for turning a `styleIdForFill` /
- *   `styleIdForStrokeFill` into a paint array. It returns `undefined`
- *   for empty references and throws for references that carry a key
- *   the registry does not contain.
+ * - `resolvePaintRef` is the registry-lookup primitive: empty refs and
+ *   dangling refs both return `undefined`; only registry-resolved
+ *   refs return paint arrays.
+ *
+ * - `resolveStyledPaint` is the higher-level SoT used by every
+ *   consumer (node fill/stroke, scene-graph instance merge, vector
+ *   per-path style overrides, text run override entries). It picks
+ *   the registry value when the ref resolves and otherwise yields the
+ *   caller's embedded paint cache — matching Figma's actual rendering
+ *   for dangling references.
  *
  * - `resolveNodeStyleIds` / `resolveStyleIdOnMutableNode` apply the
- *   resolved paints back onto a node — the node's own
- *   `fillPaints`/`strokePaints` are stale caches that the style
- *   registry overrides.
+ *   resolved paints back onto a node — when the registry has the
+ *   style it overrides the node's potentially-stale embedded cache.
  *
  * Regression guard for: Device 2×4 Apple logo (cross-canvas asset-ref
- * lookup) and YouTube OFF-state chevron (FILL-style referenced via
+ * lookup), YouTube OFF-state chevron (FILL-style referenced via
  * `styleIdForStrokeFill`, which historically used the wrong field on
  * the style-definition node and silently fell back to the consumer's
- * stale stroke cache).
+ * stale stroke cache), and the E-Commerce Plant Shop Community export
+ * (intra-file guid pointing at a non-style FRAME — Figma renders the
+ * consumer's own fillPaints, so the resolver must not throw).
  */
 
 import {
   buildFigStyleRegistry,
   resolveNodeStyleIds,
   resolvePaintRef,
+  resolveStyledPaint,
   formatNodeLocator,
   styleRefHasKey,
   styleRefKey,
@@ -178,17 +186,11 @@ describe("buildFigStyleRegistry", () => {
 
 describe("resolvePaintRef", () => {
   it("returns undefined for an undefined reference", () => {
-    expect(resolvePaintRef(undefined, EMPTY_FIG_STYLE_REGISTRY, {
-      intent: "fill",
-      locator: () => "test",
-    })).toBeUndefined();
+    expect(resolvePaintRef(undefined, EMPTY_FIG_STYLE_REGISTRY)).toBeUndefined();
   });
 
   it("returns undefined for a reference with no usable key", () => {
-    expect(resolvePaintRef({}, EMPTY_FIG_STYLE_REGISTRY, {
-      intent: "fill",
-      locator: () => "test",
-    })).toBeUndefined();
+    expect(resolvePaintRef({}, EMPTY_FIG_STYLE_REGISTRY)).toBeUndefined();
   });
 
   it("resolves a guid reference through the registry", () => {
@@ -201,13 +203,14 @@ describe("resolvePaintRef", () => {
     const resolved = resolvePaintRef(
       { guid: { sessionID: 1, localID: 100 } },
       registry,
-      { intent: "fill", locator: () => "test" },
     );
     expect(resolved).toEqual([solidPaint(0, 0, 0)]);
   });
 
   it("resolves the same paint via either intent (SoT regression guard for the OFF chevron)", () => {
-    // FILL-type style 7:80, referenced as both fill and stroke.
+    // FILL-type style 7:80, referenced as both fill and stroke. The
+    // lookup primitive is intent-agnostic: a single registry entry
+    // serves both consumer intents.
     const fillStyle = node({
       guid: { sessionID: 7, localID: 80 },
       styleType: { value: 1, name: "FILL" },
@@ -215,18 +218,64 @@ describe("resolvePaintRef", () => {
     });
     const registry = buildFigStyleRegistry(new Map([["7:80", fillStyle]]));
     const ref = { guid: { sessionID: 7, localID: 80 } };
-    const fill = resolvePaintRef(ref, registry, { intent: "fill", locator: () => "x" });
-    const stroke = resolvePaintRef(ref, registry, { intent: "stroke", locator: () => "x" });
-    expect(fill).toEqual([solidPaint(1, 1, 1)]);
-    expect(stroke).toEqual([solidPaint(1, 1, 1)]);
+    expect(resolvePaintRef(ref, registry)).toEqual([solidPaint(1, 1, 1)]);
   });
 
-  it("throws when a reference carries a key that the registry does not contain", () => {
-    expect(() => resolvePaintRef(
+  it("returns undefined for a dangling reference (key carried but no registry entry)", () => {
+    // Real-world case: Figma Community exports include team-library
+    // refs whose proxy nodes are stripped, and intra-file guids may
+    // point at non-style nodes (a stale FRAME guid). The lookup
+    // primitive must yield undefined so callers fall through to the
+    // consumer's embedded paint cache — what Figma itself does.
+    expect(resolvePaintRef(
       { guid: { sessionID: 99, localID: 99 } },
       EMPTY_FIG_STYLE_REGISTRY,
-      { intent: "fill", locator: () => "node 99:99 (Test)" },
-    )).toThrow(/Unresolved styleId for fill on node 99:99 \(Test\): \{"guid":\{"sessionID":99,"localID":99\}\} not found/);
+    )).toBeUndefined();
+  });
+});
+
+describe("resolveStyledPaint (registry-vs-embedded SoT)", () => {
+  const registryPaint = solidPaint(1, 0, 0);
+  const embeddedPaint = solidPaint(0, 0, 1);
+  const styleNode = node({
+    guid: { sessionID: 1, localID: 100 },
+    styleType: { value: 1, name: "FILL" },
+    fillPaints: [registryPaint],
+  });
+  const registry = buildFigStyleRegistry(new Map([["1:100", styleNode]]));
+
+  it("returns the registry value when the ref resolves (registry wins over embedded)", () => {
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 100 } },
+      [embeddedPaint],
+      registry,
+    );
+    expect(got).toEqual([registryPaint]);
+  });
+
+  it("returns the embedded value when the ref is absent", () => {
+    const got = resolveStyledPaint(undefined, [embeddedPaint], registry);
+    expect(got).toEqual([embeddedPaint]);
+  });
+
+  it("returns the embedded value when the ref is dangling (Plant Shop / Community export shape)", () => {
+    // Consumer carries a styleId pointing at a non-style or absent
+    // node, and its own embedded paint is the SoT — Figma renders
+    // these with the embedded paint, so must we.
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 99, localID: 99 } },
+      [embeddedPaint],
+      registry,
+    );
+    expect(got).toEqual([embeddedPaint]);
+  });
+
+  it("preserves an explicitly-empty embedded array (not the same as undefined)", () => {
+    expect(resolveStyledPaint(undefined, [], registry)).toEqual([]);
+  });
+
+  it("returns undefined when both ref and embedded are absent", () => {
+    expect(resolveStyledPaint(undefined, undefined, registry)).toBeUndefined();
   });
 });
 
@@ -254,15 +303,21 @@ describe("resolveNodeStyleIds", () => {
     });
   });
 
-  it("throws when a consumer's styleIdForFill cannot be resolved", () => {
+  it("leaves the consumer's embedded fillPaints in place when the styleIdForFill is dangling", () => {
+    // A dangling ref is a normal Figma Community-export shape; the
+    // node's own fillPaints is the SoT in that case (Figma itself
+    // renders the embedded paint). The resolver must not rewrite the
+    // embedded cache, and must not throw.
+    const embedded = [solidPaint(1, 1, 1)] as const;
     const consumer = node({
       guid: { sessionID: 15, localID: 500 },
       name: "Consumer",
       styleIdForFill: { assetRef: { key: "no-such-key" } },
-      fillPaints: [solidPaint(1, 1, 1)],
+      fillPaints: embedded,
     });
-    expect(() => resolveNodeStyleIds(consumer, EMPTY_FIG_STYLE_REGISTRY))
-      .toThrow(/Unresolved styleId for fill on 15:500 \(Consumer\)/);
+    const result = resolveNodeStyleIds(consumer, EMPTY_FIG_STYLE_REGISTRY);
+    expect(result).toBe(consumer);
+    expect(result.fillPaints).toBe(embedded);
   });
 
   it("returns the node unchanged when no style references are present", () => {

@@ -25,7 +25,7 @@ import {
   buildGuidTranslationMap,
   analyzeOverrideSets,
   resolveSymbolGuidStr,
-  resolvePaintRef,
+  resolveStyledPaint,
   formatNodeLocator,
   isInstanceSelfOverride,
   createFigResolveContext,
@@ -110,39 +110,29 @@ function hasPaintEntries(paints: readonly FigPaint[] | undefined): paints is rea
 }
 
 /**
- * Resolve node fills via the style registry SoT.
+ * Resolve node fills via the style-paint SoT.
  *
- * Priority:
- *  1. `styleIdForFill` — when set, the registry's paint wins over the
- *     node's potentially-stale local `fillPaints`. `resolvePaintRef`
- *     throws if the reference carries a key but the registry has no
- *     entry, surfacing dangling style references rather than masking
- *     them with the cached local paint.
- *  2. `backgroundPaints` — frame backgrounds.
- *  3. `fillPaints` — the node's own paints, used only when no style
- *     reference is set (i.e. the node is the SoT for its own fill).
+ * Embedded SoT: a FRAME with `backgroundPaints` uses that as its own
+ * paint cache; every other node uses `fillPaints`. `resolveStyledPaint`
+ * lets the registry win when `styleIdForFill` resolves and otherwise
+ * returns the embedded cache (matching Figma's render of dangling
+ * refs).
  */
 function resolveNodeFills(node: FigNode, styleRegistry: FigStyleRegistry): readonly FigPaint[] {
-  const resolved = resolvePaintRef(node.styleIdForFill, styleRegistry, { intent: "fill", locator: () => formatNodeLocator(node) });
-  if (resolved) { return resolved; }
-  if (hasPaintEntries(node.backgroundPaints)) {
-    return node.backgroundPaints;
-  }
-  return node.fillPaints ?? [];
+  const embedded = hasPaintEntries(node.backgroundPaints) ? node.backgroundPaints : node.fillPaints;
+  return resolveStyledPaint(node.styleIdForFill, embedded, styleRegistry) ?? [];
 }
 
 /**
- * Resolve node strokes via the style registry SoT.
+ * Resolve node strokes via the style-paint SoT.
  *
- * Mirrors `resolveNodeFills`: `styleIdForStrokeFill` (when set) is the
- * SoT and resolves through the same registry — Figma allows referencing
- * a FILL-type style as a stroke, so the resolution doesn't depend on
- * which intent the consumer has.
+ * Mirrors `resolveNodeFills` with `strokePaints` as the embedded
+ * cache. Figma allows referencing a FILL-type style as a stroke, so
+ * the resolution itself is intent-agnostic — this function only
+ * decides which embedded cache backs the consumer.
  */
 function resolveNodeStrokes(node: FigNode, styleRegistry: FigStyleRegistry): readonly FigPaint[] {
-  const resolved = resolvePaintRef(node.styleIdForStrokeFill, styleRegistry, { intent: "stroke", locator: () => formatNodeLocator(node) });
-  if (resolved) { return resolved; }
-  return node.strokePaints ?? [];
+  return resolveStyledPaint(node.styleIdForStrokeFill, node.strokePaints, styleRegistry) ?? [];
 }
 
 /**
@@ -402,9 +392,13 @@ function extractTextData(node: FigNode): TextData | undefined {
   }
 
   // Extract characterStyleIDs and styleOverrideTable from the typed Kiwi TextData.
-  const characterStyleIDs = kiwiTextData?.characterStyleIDs;
   const rawOverrideTable = kiwiTextData?.styleOverrideTable;
   const styleOverrideTable = rawOverrideTable ? convertKiwiOverrideTable(rawOverrideTable) : undefined;
+  const characterStyleIDs = normaliseCharacterStyleIDs(
+    kiwiTextData?.characterStyleIDs,
+    characters.length,
+    () => formatNodeLocator(node),
+  );
 
   return {
     characters,
@@ -417,13 +411,53 @@ function extractTextData(node: FigNode): TextData | undefined {
     textCase: node.textCase,
     lineHeight: node.lineHeight,
     letterSpacing: node.letterSpacing,
-    characterStyleIDs: characterStyleIDs && characterStyleIDs.length > 0 ? characterStyleIDs : undefined,
+    characterStyleIDs,
     styleOverrideTable: styleOverrideTable && styleOverrideTable.length > 0 ? styleOverrideTable : undefined,
     textTruncation: node.textTruncation,
     leadingTrim: node.leadingTrim,
     fontVariations: node.fontVariations,
     hyperlink: node.hyperlink,
   };
+}
+
+/**
+ * Normalise the per-character style id array to the post-conversion contract:
+ *   `result.length === characters.length`
+ *
+ * Figma's `.fig` exporter omits trailing entries when every remaining
+ * character uses the base style (styleID 0). The Kiwi schema's
+ * length-prefixed array therefore reports a length less than the source
+ * string when the tail is "all base". This is a deliberate file-size
+ * compression — every observed file in the workspace either matches the
+ * source length exactly or is short by exactly the trailing base run, and
+ * styleID 0 is the documented "use the node's base style" sentinel.
+ *
+ * Padding here means downstream consumers (renderer SVG, WebGL, editor
+ * overlays) all see a single canonical shape and never need to reason
+ * about the trailing-omit compression themselves.
+ *
+ * Overflow (more ids than characters) is still treated as corruption and
+ * surfaced via throw — Figma never emits this, so seeing it means the
+ * file is malformed or the parser truncated `characters`.
+ */
+function normaliseCharacterStyleIDs(
+  ids: readonly number[] | undefined,
+  characterCount: number,
+  locator: () => string,
+): readonly number[] | undefined {
+  if (!ids || ids.length === 0) { return undefined; }
+  if (ids.length > characterCount) {
+    throw new Error(
+      `Text node has more characterStyleIDs (${ids.length}) than characters (${characterCount}) on ${locator()}`,
+    );
+  }
+  if (ids.length === characterCount) { return ids; }
+  // Short by `characterCount - ids.length` entries; pad the tail with the
+  // base-style sentinel (0). Treat the result as immutable from here on.
+  const padded = new Array<number>(characterCount);
+  for (let i = 0; i < ids.length; i++) { padded[i] = ids[i]; }
+  for (let i = ids.length; i < characterCount; i++) { padded[i] = 0; }
+  return padded;
 }
 
 /**

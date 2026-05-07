@@ -99,3 +99,54 @@ describe("convertFigNode override path resolution", () => {
     expect(converted.derivedSymbolData?.map((entry) => entry.guidPath.guids[0])).toEqual([target.guid]);
   });
 });
+
+describe("convertFigNode TEXT characterStyleIDs normalisation", () => {
+  // Figma's `.fig` exporter omits trailing characterStyleIDs entries when
+  // every remaining character uses the base style (styleID 0). The Kiwi
+  // length-prefixed array therefore reports `length < characters.length`
+  // for those tails. We pad here so downstream consumers see a single
+  // canonical shape (`length === characters.length`) and never need to
+  // model the trailing-omit compression themselves.
+
+  function textNode(characters: string, characterStyleIDs: readonly number[] | undefined): FigNode {
+    return createNode({
+      guid: guid(2, 200),
+      type: nodeType(5, "TEXT"),
+      name: "Text",
+      characters,
+      textData: {
+        characters,
+        characterStyleIDs,
+      },
+    } as Partial<FigNode>);
+  }
+
+  it("pads trailing zeros when the Kiwi array is shorter than characters.length", () => {
+    // 5-char source, 2 characterStyleIDs → expand to length 5 with [0, 0, 0]
+    // appended. The leading override is preserved verbatim.
+    const node = textNode("abcde", [3, 3]);
+    const converted = convertFigNode(node, new Map(), undefined, collectNodeMap([node]));
+    expect(converted.textData?.characterStyleIDs).toEqual([3, 3, 0, 0, 0]);
+  });
+
+  it("leaves a length-equal array untouched", () => {
+    const ids = [1, 2, 3] as const;
+    const node = textNode("abc", ids);
+    const converted = convertFigNode(node, new Map(), undefined, collectNodeMap([node]));
+    expect(converted.textData?.characterStyleIDs).toEqual([1, 2, 3]);
+  });
+
+  it("normalises an empty array to undefined (the no-overrides shape)", () => {
+    const node = textNode("abc", []);
+    const converted = convertFigNode(node, new Map(), undefined, collectNodeMap([node]));
+    expect(converted.textData?.characterStyleIDs).toBeUndefined();
+  });
+
+  it("throws when characterStyleIDs overflows characters.length (file is corrupt)", () => {
+    // Figma never emits this shape; surfacing it as a hard error
+    // catches genuine corruption without masking it.
+    const node = textNode("ab", [1, 2, 3]);
+    expect(() => convertFigNode(node, new Map(), undefined, collectNodeMap([node])))
+      .toThrow(/more characterStyleIDs \(3\) than characters \(2\)/);
+  });
+});

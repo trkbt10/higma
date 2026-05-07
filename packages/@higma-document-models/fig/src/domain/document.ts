@@ -91,7 +91,14 @@ export type TextData = {
    * Characters with the same ID share the same style override.
    * ID 0 means "use the node's base style" (no override).
    *
-   * This is a direct representation of Figma's Kiwi TextData.characterStyleIDs.
+   * Post-conversion contract: when present, `characterStyleIDs.length`
+   * equals `characters.length`. The raw Kiwi field may be shorter than
+   * the source string — Figma omits trailing entries when they would all
+   * be the base-style sentinel (0) — but the conversion layer pads to
+   * full length so consumers see a single canonical shape.
+   *
+   * This is a near-direct representation of Figma's Kiwi
+   * TextData.characterStyleIDs (with trailing-zero padding applied).
    * @see Kiwi schema: TextData.characterStyleIDs
    */
   readonly characterStyleIDs?: readonly number[];

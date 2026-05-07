@@ -42,7 +42,7 @@
 
 import type { FigPaint } from "@higma-document-models/fig/types";
 import type { FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
-import { resolvePaintRef } from "@higma-document-models/fig/symbols";
+import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { getFillColorAndOpacity } from "../layout/fill";
 import type { TextRun } from "./types";
 
@@ -71,13 +71,18 @@ export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[]
   const length = characters.length;
   if (length === 0) { return []; }
 
-  // Input validation comes first. Errors here surface schema violations
-  // regardless of whether the run-collapse path actually consults the
-  // questionable inputs — a malformed override table is a malformed
-  // override table, even if every character happens to use the base.
+  // Post-normalise contract: the conversion layer guarantees that when
+  // `characterStyleIDs` carries entries, its length equals
+  // `characters.length` (Figma's trailing-zero-omitted Kiwi array is
+  // padded upstream). The empty-array case is also acceptable here and
+  // is treated identically to `undefined` by the fast path below.
+  // Reaching this branch with a length mismatch means the caller fed
+  // un-normalised data and downstream offsets would walk off the end —
+  // a bug in the caller, not a Figma format quirk.
   if (characterStyleIDs && characterStyleIDs.length > 0 && characterStyleIDs.length !== length) {
     throw new Error(
-      `Text run resolver: characterStyleIDs length ${characterStyleIDs.length} does not match characters length ${length} on ${locator()}`,
+      `Text run resolver: characterStyleIDs length ${characterStyleIDs.length} does not match characters length ${length} on ${locator()} ` +
+      `(expected post-normalise length === characters.length; pad before calling)`,
     );
   }
 
@@ -115,52 +120,56 @@ export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[]
         `Text run resolver: characterStyleIDs references styleID=${styleId} which has no entry in styleOverrideTable on ${locator()}`,
       );
     }
-    const resolved = resolveOverrideFill(override, baseFill, styleRegistry, locator);
+    const resolved = resolveOverrideFill(override, baseFill, styleRegistry);
     fillByStyleId.set(styleId, resolved);
     return resolved;
   }
 
-  // Sweep the styleID array once, collapsing identical-id runs.
-  const runs: TextRun[] = [];
-  let runStart = 0;
-  let runId = characterStyleIDs[0];
-  for (let i = 1; i < length; i++) {
-    if (characterStyleIDs[i] === runId) { continue; }
-    const fill = fillForStyleId(runId);
-    runs.push({ start: runStart, end: i, fillColor: fill.color, fillOpacity: fill.opacity });
-    runStart = i;
-    runId = characterStyleIDs[i];
-  }
-  // Flush the final run.
-  const lastFill = fillForStyleId(runId);
-  runs.push({ start: runStart, end: length, fillColor: lastFill.color, fillOpacity: lastFill.opacity });
-
-  return runs;
+  return collapseRuns(characterStyleIDs, length, fillForStyleId);
 }
 
 /**
- * Resolve a single override entry's fill, with explicit precedence:
- * styleIdForFill (registry SoT) > inline fillPaints > base fill.
+ * Collapse contiguous identical-styleID positions into `TextRun`
+ * segments. Boundaries are computed first (positions where the
+ * styleID differs from the previous, plus position 0 which always
+ * starts a run) and then materialised — keeping the function purely
+ * derivation-driven without sweep-state.
+ */
+function collapseRuns(
+  characterStyleIDs: readonly number[],
+  length: number,
+  fillForStyleId: (styleId: number) => { readonly color: string; readonly opacity: number },
+): readonly TextRun[] {
+  const runStarts: readonly number[] = characterStyleIDs.flatMap((id, i) => {
+    if (i === 0) { return [0]; }
+    if (id !== characterStyleIDs[i - 1]) { return [i]; }
+    return [];
+  });
+  return runStarts.map((start, idx) => {
+    const end = idx + 1 < runStarts.length ? runStarts[idx + 1] : length;
+    const fill = fillForStyleId(characterStyleIDs[start]);
+    return { start, end, fillColor: fill.color, fillOpacity: fill.opacity };
+  });
+}
+
+/**
+ * Resolve a single override entry's fill via the styled-paint SoT.
  *
- * The "fall through to base" leg is *not* a fallback: a sparse Kiwi
- * NodeChange override that omits both `styleIdForFill` and `fillPaints`
- * is intentionally signalling "this override does not touch the fill",
- * and inheriting the base is the documented semantic.
+ * Precedence is the SoT-uniform "registry wins, embedded follows":
+ * `styleIdForFill` (when it resolves through the registry) overrides
+ * `override.fillPaints`; an unresolved/dangling ref falls through to
+ * `override.fillPaints`; a sparse override that authors neither leaves
+ * the fill at the node's base — that is *not* a fallback but the
+ * documented Kiwi NodeChange semantic of "this override doesn't touch
+ * the fill".
  */
 function resolveOverrideFill(
   override: TextStyleOverride,
   baseFill: { color: string; opacity: number },
   styleRegistry: FigStyleRegistry,
-  locator: () => string,
 ): { color: string; opacity: number } {
-  const styleResolved = resolvePaintRef(override.styleIdForFill, styleRegistry, {
-    intent: "fill",
-    locator: () => `${locator()} (text run styleID=${override.styleID})`,
-  });
-  if (styleResolved) { return paintsToFill(styleResolved); }
-  if (override.fillPaints && override.fillPaints.length > 0) {
-    return paintsToFill(override.fillPaints);
-  }
+  const resolved = resolveStyledPaint(override.styleIdForFill, override.fillPaints, styleRegistry);
+  if (resolved && resolved.length > 0) { return paintsToFill(resolved); }
   return baseFill;
 }
 

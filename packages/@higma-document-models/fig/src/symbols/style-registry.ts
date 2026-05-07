@@ -32,10 +32,18 @@
  *    "sessionID:localID" (digits + colon only) whereas assetRef keys
  *    are hex content hashes — they don't collide.
  *
- * No fallbacks: a consumer setting `styleIdForFill`/`styleIdForStrokeFill`
- * to an entry that the registry does not contain is treated as a
- * malformed reference by the resolution helpers, which throw rather
- * than silently returning the consumer's stale local paint cache.
+ * Dangling references: a consumer's `styleIdForFill` /
+ * `styleIdForStrokeFill` may carry a key whose target is not in the
+ * registry. This is a normal state for Figma Community-distributed
+ * `.fig` files — team-library proxies are routinely stripped on export
+ * for licensing reasons, and intra-file refs occasionally point at
+ * non-style nodes (e.g. a stale guid pointing at a now-FRAME node).
+ * Figma itself renders such cases using the consumer's own embedded
+ * `fillPaints` / `strokePaints` cache. The resolution helpers therefore
+ * return `undefined` for dangling refs so callers fall through to the
+ * embedded paint, matching Figma's actual behaviour. A successful
+ * registry lookup still wins over the embedded cache (the registry is
+ * authoritative when it has an entry).
  */
 
 import type { FigNode, MutableFigNode, FigPaint, FigStyleId } from "../types";
@@ -54,9 +62,9 @@ import { guidToString } from "@higma-document-models/fig/domain";
  * reference carries neither.
  */
 export function styleRefKey(ref: FigStyleId | undefined): string | undefined {
-  if (!ref) return undefined;
-  if (ref.guid) return guidToString(ref.guid);
-  if (ref.assetRef?.key) return ref.assetRef.key;
+  if (!ref) { return undefined; }
+  if (ref.guid) { return guidToString(ref.guid); }
+  if (ref.assetRef?.key) { return ref.assetRef.key; }
   return undefined;
 }
 
@@ -70,10 +78,10 @@ export function styleRefKey(ref: FigStyleId | undefined): string | undefined {
  * asset-ref proxy is present.
  */
 export function styleRefKeys(ref: FigStyleId | undefined): readonly string[] {
-  if (!ref) return [];
+  if (!ref) { return []; }
   const keys: string[] = [];
-  if (ref.guid) keys.push(guidToString(ref.guid));
-  if (ref.assetRef?.key) keys.push(ref.assetRef.key);
+  if (ref.guid) { keys.push(guidToString(ref.guid)); }
+  if (ref.assetRef?.key) { keys.push(ref.assetRef.key); }
   return keys;
 }
 
@@ -184,34 +192,69 @@ export function styleRefHasKey(ref: FigStyleId | undefined): ref is FigStyleId {
 }
 
 /**
- * Resolve a paint reference through the registry.
+ * Resolve a paint reference through the registry — the lookup primitive.
  *
- * This is the single SoT consumers use to turn a `styleIdForFill` or
- * `styleIdForStrokeFill` into a paint array. Throws when the reference
- * carries a key but the registry has no entry for it — that's a
- * malformed reference (dangling style guid or missing asset-ref proxy)
- * which historically the codebase masked by silently using the
- * consumer's stale cached `fillPaints`/`strokePaints`. Throwing here
- * makes such inconsistencies visible at the conversion boundary
- * instead of leaking into rendered output.
+ * Three outcomes:
  *
- * `diagnostic.locator` produces a string identifying the resolution
- * site (e.g. "node 34:785 (Vector)") so the thrown error names the
- * actual offending node — keep the call cheap, it's only invoked on
- * the throw path.
+ *  - the reference is empty (no guid, no assetRef.key, or the
+ *    `0xffffffff:0xffffffff` no-ref sentinel) → `undefined`.
+ *  - the reference resolves through the registry → the registry's
+ *    paint array (authoritative).
+ *  - the reference carries a key but the registry has no matching
+ *    entry (a dangling ref) → `undefined`. Figma's exporter routinely
+ *    emits dangling refs (team-library proxies stripped from
+ *    Community files, intra-file guids that point at non-style nodes
+ *    such as a stale FRAME guid) and Figma itself renders such cases
+ *    using the consumer's embedded paint cache. Failing fast would
+ *    refuse to open normal `.fig` files.
+ *
+ * This is the **lookup** SoT. Consumers that want "registry-or-embedded"
+ * semantics should call `resolveStyledPaint` instead, which is the
+ * higher-level SoT covering the full styled-paint resolution.
  */
 export function resolvePaintRef(
   ref: FigStyleId | undefined,
   registry: FigStyleRegistry,
-  diagnostic: { readonly intent: "fill" | "stroke"; readonly locator: () => string },
 ): readonly FigPaint[] | undefined {
   if (!styleRefHasKey(ref)) { return undefined; }
-  const paint = lookupStylePaint(ref, registry);
-  if (paint) { return paint; }
-  throw new Error(
-    `Unresolved styleId for ${diagnostic.intent} on ${diagnostic.locator()}: ` +
-    `${JSON.stringify(ref)} not found in style registry`,
-  );
+  return lookupStylePaint(ref, registry);
+}
+
+/**
+ * Resolve the authoritative paint for a styled element — the SoT.
+ *
+ * Every consumer of `styleIdForFill` / `styleIdForStrokeFill` /
+ * per-override `styleIdForFill` answers the same question: "given a
+ * style reference and an embedded paint cache, which paints are
+ * authoritative?". The answer is uniform:
+ *
+ *   1. If the registry resolves the reference, the registry value
+ *      wins — it's the file-level SoT and is the right value even when
+ *      the embedded cache is structurally identical.
+ *   2. Otherwise the embedded cache (the consumer's own
+ *      `fillPaints` / `strokePaints` / override `fillPaints`) is the
+ *      SoT. This matches Figma's rendering for dangling refs and is
+ *      the only value present when the consumer carries no styleId.
+ *
+ * Returns `undefined` only when both the ref and the embedded cache
+ * are absent — callers can chain `?? []` or `?? someBase` as their
+ * own context dictates. Empty embedded arrays are preserved (they
+ * represent "explicitly no paint", not "no value").
+ *
+ * Centralising the rule here means renderer text-runs, scene-graph
+ * INSTANCE merges, vector per-path style overrides, and the
+ * conversion-layer node helpers all share the same answer to one
+ * question. Adding observability (counters, logs) for dangling refs
+ * later only needs a single call-site change.
+ */
+export function resolveStyledPaint(
+  ref: FigStyleId | undefined,
+  embedded: readonly FigPaint[] | undefined,
+  registry: FigStyleRegistry,
+): readonly FigPaint[] | undefined {
+  const fromRegistry = resolvePaintRef(ref, registry);
+  if (fromRegistry !== undefined) { return fromRegistry; }
+  return embedded;
 }
 
 /**
@@ -226,10 +269,16 @@ export function formatNodeLocator(node: {
   readonly id?: string;
   readonly name?: string | undefined;
 }): string {
-  const guidStr = node.guid
-    ? guidToString(node.guid)
-    : (typeof node.id === "string" && node.id.length > 0 ? node.id : "<no-guid>");
-  return `${guidStr} (${node.name ?? "?"})`;
+  return `${pickGuidString(node)} (${node.name ?? "?"})`;
+}
+
+function pickGuidString(node: {
+  readonly guid?: { readonly sessionID: number; readonly localID: number };
+  readonly id?: string;
+}): string {
+  if (node.guid) { return guidToString(node.guid); }
+  if (typeof node.id === "string" && node.id.length > 0) { return node.id; }
+  return "<no-guid>";
 }
 
 // =============================================================================
@@ -255,26 +304,32 @@ export function resolveNodeStyleIds(
   node: FigNode,
   registry: FigStyleRegistry,
 ): FigNode {
-  const fillResolved = resolvePaintRef(node.styleIdForFill, registry, { intent: "fill", locator: () => formatNodeLocator(node) });
-  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry, { intent: "stroke", locator: () => formatNodeLocator(node) });
+  const fillResolved = resolvePaintRef(node.styleIdForFill, registry);
+  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry);
 
   if (fillResolved === undefined && strokeResolved === undefined) {
     return node;
   }
 
-  let fillPaints = node.fillPaints;
-  let strokePaints = node.strokePaints;
-  let changed = false;
-  if (fillResolved && fillResolved !== fillPaints) {
-    fillPaints = fillResolved;
-    changed = true;
+  // `nextPaintFor` returns either the registry-resolved value (when
+  // present and identity-distinct from the cache) or the original
+  // cache reference; the identity-compare downstream then tells us
+  // whether anything actually changed.
+  const fillPaints = nextPaintFor(node.fillPaints, fillResolved);
+  const strokePaints = nextPaintFor(node.strokePaints, strokeResolved);
+
+  if (fillPaints === node.fillPaints && strokePaints === node.strokePaints) {
+    return node;
   }
-  if (strokeResolved && strokeResolved !== strokePaints) {
-    strokePaints = strokeResolved;
-    changed = true;
-  }
-  if (!changed) { return node; }
   return { ...node, fillPaints, strokePaints } as FigNode;
+}
+
+function nextPaintFor(
+  cached: readonly FigPaint[] | undefined,
+  resolved: readonly FigPaint[] | undefined,
+): readonly FigPaint[] | undefined {
+  if (resolved && resolved !== cached) { return resolved; }
+  return cached;
 }
 
 /**
@@ -288,9 +343,9 @@ export function resolveStyleIdOnMutableNode(
   node: MutableFigNode,
   registry: FigStyleRegistry,
 ): void {
-  const fillResolved = resolvePaintRef(node.styleIdForFill, registry, { intent: "fill", locator: () => formatNodeLocator(node) });
+  const fillResolved = resolvePaintRef(node.styleIdForFill, registry);
   if (fillResolved) { node.fillPaints = fillResolved; }
-  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry, { intent: "stroke", locator: () => formatNodeLocator(node) });
+  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry);
   if (strokeResolved) { node.strokePaints = strokeResolved; }
 }
 
