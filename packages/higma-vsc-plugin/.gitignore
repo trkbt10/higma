@@ -1,0 +1,4 @@
+dist/
+*.vsix
+test-results/
+playwright-report/

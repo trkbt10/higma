@@ -5,6 +5,8 @@
   "type": "module",
   "packageManager": "bun@1.3.13",
   "workspaces": [
+    "packages/higma-design-tool",
+    "packages/higma-vsc-plugin",
     "packages/@higma-primitives/*",
     "packages/@higma-codecs/*",
     "packages/@higma-figma-schema/*",
@@ -16,7 +18,8 @@
     "packages/@higma-editor-kernel/*",
     "packages/@higma-editor-surfaces/*",
     "packages/@higma-figma-runtime/*",
-    "packages/@higma-figma-analysis/*"
+    "packages/@higma-figma-analysis/*",
+    "packages/@higma-tools/*"
   ],
   "scripts": {
     "lint": "eslint .",

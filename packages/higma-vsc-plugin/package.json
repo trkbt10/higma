@@ -1,0 +1,67 @@
+{
+  "name": "higma-vsc-plugin",
+  "displayName": "Higma Fig Viewer",
+  "description": "Viewer for Figma .fig design files inside VS Code, powered by the higma renderer.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "publisher": "higma",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCustomEditor:higma.figViewer"
+  ],
+  "main": "./dist/extension.cjs",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "higma.figViewer",
+        "displayName": "Higma Fig Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.fig"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "scripts": {
+    "build:assets": "mkdir -p dist && cp src/webview/styles.css dist/webview.css",
+    "build:extension": "bun build src/extension/index.ts --target=node --external=vscode --format=cjs --sourcemap=inline --outfile=dist/extension.cjs",
+    "build:webview": "bun build src/webview/index.tsx --target=browser --format=esm --sourcemap=inline --outfile=dist/webview.js",
+    "build": "bun run build:assets && bun run build:extension && bun run build:webview",
+    "watch:extension": "bun build src/extension/index.ts --target=node --external=vscode --format=cjs --sourcemap=inline --outfile=dist/extension.cjs --watch",
+    "watch:webview": "bun build src/webview/index.tsx --target=browser --format=esm --sourcemap=inline --outfile=dist/webview.js --watch",
+    "lint": "cd ../.. && eslint packages/higma-vsc-plugin/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../vitest.config.ts '../../packages/higma-vsc-plugin/src'",
+    "e2e": "playwright test",
+    "dev": "scripts/run-dev.sh"
+  },
+  "dependencies": {
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-document-renderers/fig": "workspace:*",
+    "@higma-figma-runtime/react-renderer": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.84.0"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "vsc-plugin",
+      "product": "fig"
+    }
+  }
+}
