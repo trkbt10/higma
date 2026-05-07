@@ -23,6 +23,12 @@
  * tell it is running in a browser.
  */
 
+// Vite handles stylesheet imports with the right MIME type and HMR.
+// A `<link rel="stylesheet">` in `dev/index.html` would 404 / fall back
+// to text/html for paths outside Vite's root, which silently breaks the
+// layout instead of failing loud.
+import "../src/webview/styles.css";
+
 import smallFixtureUrl from "../spec/e2e/fixtures/sample.fig?url";
 import largeFixtureUrl from "../../@higma-document-io/fig/samples/sample-file.fig?url";
 
