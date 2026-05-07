@@ -763,7 +763,14 @@ function resolveOverridePaths(
       const g = e.guidPath?.guids?.[0];
       if (!g) {return true;}
       if (guidExistsInFile(ctx, g, symbolMap)) {return true;}
-      if (overrideKeyExistsInSymbol(ctx, effectiveSymbol.node, ctx.guidString(g))) {return true;}
+      // Exact slot in the effective SYMBOL (own-GUID or authored
+      // overrideKey form). The own-GUID form is already covered by
+      // `guidExistsInFile`, but `bundle.exactSlotMap` is the SoT for
+      // "this address resolves to a SYMBOL slot exactly", so we
+      // consult it here for the overrideKey form.
+      if (ctx.symbolDescendants(effectiveSymbol.node).exactSlotMap.has(ctx.guidString(g))) {
+        return true;
+      }
       if (ghostSessions.has(g.sessionID)) {
         return true;
       }
@@ -787,11 +794,14 @@ function resolveOverridePaths(
       const firstGuid = e.guidPath?.guids?.[0];
       if (firstGuid) {
         const s = ctx.guidString(firstGuid);
-        // Already an exact GUID match in the SYMBOL — leave as-is.
-        if (findInKiwiTree(ctx, effectiveSymbol.node, s) !== undefined) { return e; }
-        // Or matches a descendant's overrideKey (Figma's stable
-        // SYMBOL-side slot identifier).
-        if (overrideKeyExistsInSymbol(ctx, effectiveSymbol.node, s)) { return e; }
+        // Exact slot match in the SYMBOL — by descendant's own GUID
+        // or by Figma's stable SYMBOL-side `overrideKey`. Both forms
+        // live in `bundle.exactSlotMap`, the SoT for "is this address
+        // an exact slot reference?". When matched, the entry targets
+        // a real descendant (not the SYMBOL root) and must NOT be
+        // rerouted as a self-override.
+        const bundle = ctx.symbolDescendants(effectiveSymbol.node);
+        if (bundle.exactSlotMap.has(s)) { return e; }
       }
       const newPath = { guids: [effectiveGuid] };
       return { ...e, guidPath: newPath };
@@ -1069,23 +1079,6 @@ function resolveEntryPath(
  */
 function findInKiwiTree(ctx: FigResolveContext, root: FigNode, guidStr: string): FigNode | undefined {
   return ctx.symbolDescendants(root).guidToDesc.get(guidStr)?.node;
-}
-
-/**
- * `true` when any descendant of `root` has an `overrideKey` matching
- * `guidStr`. Routes through the bundle's `directOverrideKeyMap` for
- * an O(1) hit; same SoT pattern as `findInKiwiTree`. Figma authors
- * DSD entries against the descendant's SYMBOL-side `overrideKey` (a
- * stable identifier shared across every INSTANCE that descends from
- * the same SYMBOL); the descendant's own `guid` is freshly assigned
- * per clone. When a DSD entry's first-guid matches a descendant's
- * `overrideKey`, the entry targets that descendant — NOT the SYMBOL
- * root — and must NOT be misclassified as a self-override even when
- * its payload happens to be a single INSTANCE-self field name like
- * `size`.
- */
-function overrideKeyExistsInSymbol(ctx: FigResolveContext, root: FigNode, guidStr: string): boolean {
-  return ctx.symbolDescendants(root).directOverrideKeyMap.has(guidStr);
 }
 
 /**

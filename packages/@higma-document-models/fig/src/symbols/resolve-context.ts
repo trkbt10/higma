@@ -89,6 +89,30 @@ export type SymbolDescendantBundle = {
   readonly guidToDesc: ReadonlyMap<string, SymbolDescendant>;
   /** `overrideKey` (SYMBOL-side stable slot id) → descendant GUID-string. */
   readonly directOverrideKeyMap: ReadonlyMap<string, string>;
+  /**
+   * SoT for "this string addresses an exact SYMBOL slot, no heuristic
+   * needed". An override entry's first GUID can address a slot in two
+   * ways with equal exactness:
+   *   - via the descendant's authored `overrideKey` (Figma's stable
+   *     slot id, set on COMPONENT slots)
+   *   - via the descendant's own GUID (when no `overrideKey` was
+   *     authored — Figma still treats matching GUIDs as the same
+   *     logical slot because GUIDs are unique by construction)
+   * Both forms point to the same slot; this Map is the single answer
+   * to "what descendant guidStr does this address point to?". Phase
+   * Zero of `buildGuidTranslationMap` and the self-override-vs-slot
+   * classifier in `fig-node-conversion` both consume this — they no
+   * longer compose `directOverrideKeyMap` and `guidSet` independently.
+   *
+   * Keys are addressable strings (overrideKey OR own guidStr); values
+   * are the target descendant's own guidStr.
+   *
+   * Note: this is wider than the "no-rewrite-needed" short-circuit's
+   * test (`guidSet`), which only matches own-GUID addresses. Callers
+   * asking "is rewrite unnecessary?" must keep using `guidSet`,
+   * because the overrideKey form does need a rewrite.
+   */
+  readonly exactSlotMap: ReadonlyMap<string, string>;
   /** Descendant `localID` → descendant GUID-string. */
   readonly localIdToDescendant: ReadonlyMap<number, string>;
   /** Descendant `localID` → SymbolDescendant for type-tiebreaker lookups. */
@@ -259,6 +283,7 @@ function buildSymbolDescendantBundle(
   const guidSet = new Set<string>();
   const guidToDesc = new Map<string, SymbolDescendant>();
   const directOverrideKeyMap = new Map<string, string>();
+  const exactSlotMap = new Map<string, string>();
   const localIdToDescendant = new Map<number, string>();
   const localIdToDescInfo = new Map<number, SymbolDescendant>();
 
@@ -310,6 +335,19 @@ function buildSymbolDescendantBundle(
       if (overrideKeyStr && !directOverrideKeyMap.has(overrideKeyStr)) {
         directOverrideKeyMap.set(overrideKeyStr, guidStr);
       }
+      // exactSlotMap: every form of address that points to this slot
+      // exactly. Identity-by-own-GUID and identity-by-overrideKey are
+      // both registered here so consumers ask one Map "is this address
+      // an exact slot reference?" instead of composing two checks.
+      // First-wins matches the existing `directOverrideKeyMap` /
+      // `guidToDesc` semantics — the canonical descendant for any
+      // colliding address is the BFS-first one.
+      if (!exactSlotMap.has(guidStr)) {
+        exactSlotMap.set(guidStr, guidStr);
+      }
+      if (overrideKeyStr && !exactSlotMap.has(overrideKeyStr)) {
+        exactSlotMap.set(overrideKeyStr, guidStr);
+      }
       if (!localIdToDescendant.has(guid.localID)) {
         localIdToDescendant.set(guid.localID, guidStr);
         localIdToDescInfo.set(guid.localID, desc);
@@ -323,6 +361,7 @@ function buildSymbolDescendantBundle(
     guidSet,
     guidToDesc,
     directOverrideKeyMap,
+    exactSlotMap,
     localIdToDescendant,
     localIdToDescInfo,
   };

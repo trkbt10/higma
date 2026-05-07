@@ -43,6 +43,14 @@ function imageShapeOverride(target: FigGuid): FigKiwiSymbolOverride {
   };
 }
 
+function sizedShapeOverride(target: FigGuid, size: { x: number; y: number }): FigKiwiSymbolOverride {
+  return {
+    guidPath: { guids: [target] },
+    fillPaints: [IMAGE_PAINT],
+    size,
+  };
+}
+
 describe("buildGuidTranslationMap", () => {
   it("evicts SHAPE overrides that majority-offset matching placed on TEXT nodes", () => {
     const symbolRoot = createNode({
@@ -68,5 +76,50 @@ describe("buildGuidTranslationMap", () => {
     );
 
     expect(map.get("2:202")).not.toBe("1:102");
+  });
+
+  // Regression: when an override entry's first GUID is itself one of the
+  // SYMBOL's descendant GUIDs (an identity match), the mapping is exact
+  // by construction — Figma's GUID design guarantees uniqueness, so a
+  // matching GUID *is* the same logical slot. The size declared on the
+  // override is then a legitimate INSTANCE-level resize, not evidence
+  // of a Phase 1 majority-vote misroute.
+  //
+  // This pins the Youtube Mobile App UIKit fixture incident
+  // (`docs/investigation-guid-translation-size-mismatch-evict.md`):
+  // SYMBOL "Property 1=OFF" with 4 descendants in session 7 received
+  // 3 overrides also in session 7, two of which were identity matches
+  // (`7:109` and `7:113`) carrying a 542×383 size while the targeted
+  // descendants are 40×28. Phase 1's majority-vote produced the
+  // (correct) 0-offset mapping, then the size-mismatch validator
+  // evicted them and the defensive guard threw. Phase Zero must
+  // recognise these as exact and lock them before any heuristic phase.
+  it("locks override→descendant identity matches even when the override's size grossly differs", () => {
+    const symbolRoot = createNode({
+      type: nodeType("SYMBOL"),
+      guid: guid(7, 50),
+      size: { x: 597, y: 421 },
+      children: [
+        createNode({ type: nodeType("FRAME"), guid: guid(7, 109), size: { x: 40, y: 28 } }),
+        createNode({ type: nodeType("FRAME"), guid: guid(7, 113), size: { x: 40, y: 28 } }),
+        createNode({ type: nodeType("TEXT"), guid: guid(7, 120), characters: "label" }),
+        createNode({ type: nodeType("RECTANGLE"), guid: guid(7, 121), size: { x: 10, y: 10 } }),
+      ],
+    });
+
+    const overrides: readonly FigKiwiSymbolOverride[] = [
+      // Self-frame override (no matching descendant; emulates the
+      // INSTANCE addressing its own root in session 7's namespace).
+      sizedShapeOverride(guid(7, 62), { x: 597, y: 421 }),
+      // Identity matches: descendant GUIDs reused verbatim by the
+      // override entries, with a much larger size (the legitimate
+      // INSTANCE-level resize). Both must survive into the result.
+      sizedShapeOverride(guid(7, 109), { x: 542, y: 383 }),
+      sizedShapeOverride(guid(7, 113), { x: 542, y: 383 }),
+    ];
+
+    const map = buildGuidTranslationMap(symbolRoot, overrides, undefined);
+    expect(map.get("7:109")).toBe("7:109");
+    expect(map.get("7:113")).toBe("7:113");
   });
 });

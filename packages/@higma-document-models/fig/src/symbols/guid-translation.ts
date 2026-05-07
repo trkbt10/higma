@@ -681,17 +681,21 @@ export function buildGuidTranslationMap(
     return cachedOverrideSizes;
   };
 
-  // Check if override GUIDs already match descendants — no translation needed
+  // Check if override GUIDs already match descendants' own GUIDs — no
+  // translation needed. This is narrower than `exactSlotMap`: the
+  // overrideKey form would need a rewrite (overrideKey → own-GUID), so
+  // it must NOT be treated as "no translation". The SoT for "this
+  // address is identical to the descendant's own GUID, no rewrite
+  // needed" is `bundle.guidSet`.
   const descendantSet = bundle.guidSet;
   const allMatch = [...overrideGuids.keys()].every((key) => descendantSet.has(key));
   if (allMatch) {return new Map();}
 
-  // Both maps are SYMBOL-pure — read straight from the cached bundle
-  // instead of re-deriving them per call. `directOverrideKeyMap` is the
-  // overrideKey → descendant GUID lookup the Figma authoring uses for
-  // stable cross-INSTANCE addressing; `localIdToDescendant` is the
-  // localID-only lookup used by Phase 1's offset heuristics.
-  const directOverrideKeyMap = bundle.directOverrideKeyMap;
+  // SYMBOL-pure lookups read from the cached bundle. `exactSlotMap` is
+  // the SoT for Phase Zero ("does this address resolve to a SYMBOL slot
+  // exactly, by own-GUID or by overrideKey?"). `localIdToDescendant`
+  // is the localID-only lookup Phase 1's offset heuristic consumes.
+  const exactSlotMap = bundle.exactSlotMap;
   const localIdToDescendant = bundle.localIdToDescendant;
   // Single SoT for "descendant by guidStr" — straight off the bundle.
   // Multiple phases below used to rebuild this Map (`descByGuidStr` /
@@ -711,15 +715,27 @@ export function buildGuidTranslationMap(
 
   const typeHints = overrideAnalysis.typeHints;
 
-  // ── Phase Zero: Direct overrideKey resolution ──
+  // ── Phase Zero: Exact slot resolution ──
   //
-  // Override entries authored by Figma carry the SYMBOL-side
-  // `overrideKey` of their target slot in `guidPath.guids[0]`. The
-  // descendant tree retains the same `overrideKey` on the cloned
-  // SYMBOL-descendant slot (its own `guid` is fresh per-clone). When a
-  // descendant has a matching `overrideKey`, that pairing is exact —
-  // no sibling-pairing or majority-vote heuristic can do better. Lock
-  // it before any later phase so heuristics don't steal the slot.
+  // An override entry's first GUID can address a SYMBOL slot exactly
+  // in two equivalent ways:
+  //   - via the descendant's authored `overrideKey` — Figma's stable
+  //     slot id used on COMPONENT slots so overrides survive cloning
+  //   - via the descendant's own GUID — when no `overrideKey` was
+  //     authored (Figma sets it only on COMPONENT slots), the
+  //     override addresses the descendant by its own GUID, which is
+  //     unique by construction
+  //
+  // Both forms produce an exact pairing — no sibling-pairing or
+  // majority-vote heuristic can do better — so we lock the result
+  // before any later phase. The bundle exposes a single
+  // `exactSlotMap` covering both forms, so Phase Zero asks one
+  // question once.
+  //
+  // Without this lock, the size-mismatch validator can evict
+  // legitimate INSTANCE-level resizes whose override's GUID matches
+  // the descendant's own GUID (`docs/investigation-guid-translation-
+  // size-mismatch-evict.md`).
   //
   // The `lockedKeys` set is consulted by Phase 1.3 / 1.5 / 2 / 3 / 4 / 5
   // before evicting or overwriting an entry — Phase Zero pairings are
@@ -727,9 +743,9 @@ export function buildGuidTranslationMap(
   const lockedKeys = new Set<string>();
   for (const guidStr of overrideGuids.keys()) {
     if (result.has(guidStr)) continue;
-    const directDescendant = directOverrideKeyMap.get(guidStr);
-    if (directDescendant) {
-      result.set(guidStr, directDescendant);
+    const exactDescendant = exactSlotMap.get(guidStr);
+    if (exactDescendant) {
+      result.set(guidStr, exactDescendant);
       lockedKeys.add(guidStr);
     }
   }

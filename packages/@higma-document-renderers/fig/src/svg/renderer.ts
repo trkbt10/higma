@@ -105,6 +105,8 @@ export type FigSvgRenderOptions = {
   readonly width: number;
   /** Canvas height in SVG user units. */
   readonly height: number;
+  /** World-space viewport rendered into the supplied canvas dimensions. */
+  readonly viewport?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   /** Binary blobs from the parsed .fig file (required for path geometry). */
   readonly blobs: readonly FigBlob[];
   /** Image map from the parsed .fig file (required for IMAGE paints). */
@@ -214,7 +216,7 @@ export async function renderFigToSvg(
     blobs,
     images,
     canvasSize: { width, height },
-    viewport: { x: 0, y: 0, width, height },
+    viewport: options.viewport ?? { x: 0, y: 0, width, height },
     symbolMap: mergedSymbolMap,
     showHiddenNodes: options.showHiddenNodes === true,
     styleRegistry,
