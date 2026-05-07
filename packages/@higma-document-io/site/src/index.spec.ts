@@ -79,7 +79,10 @@ describe("site document roundtrip export", () => {
     const targetId = readGuid(targetNode);
     const targetTransform = readTransform(targetNode);
 
-    const editedData = await exportEditedSiteDocument(siteData, [{ unitId: targetId, deltaX: 24, deltaY: 9 }]);
+    const editedData = await exportEditedSiteDocument(siteData, {
+      unitMoves: [{ unitId: targetId, deltaX: 24, deltaY: 9 }],
+      cmsFieldEdits: [],
+    });
     const editedLoaded = await loadFigFamilyFile<Record<string, unknown>>(editedData);
     const editedNode = findNamedNode(editedLoaded.nodeChanges, "Membership");
     const editedTransform = readTransform(editedNode);

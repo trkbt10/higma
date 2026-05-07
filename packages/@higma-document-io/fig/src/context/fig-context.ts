@@ -91,6 +91,7 @@ export function createEmptyFigDesignDocument(pageName = "Page 1"): FigDesignDocu
 
   return {
     pages: [page],
+    documentColorProfile: { value: 1, name: "SRGB" },
     components: new Map(),
     images: new Map(),
     blobs: [],

@@ -11,6 +11,10 @@ import {
   type SceneGraph,
   type SceneGraphBuildCache,
 } from "@higma-document-renderers/fig/scene-graph";
+import type {
+  FigmaExportColorProfile,
+  SceneGraphRenderOptions,
+} from "@higma-document-renderers/fig/scene-graph/render";
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 
@@ -18,6 +22,7 @@ export type FigFamilyDesignDocument = FigDesignDocument;
 export type FigFamilyPage = FigPage;
 export type FigFamilyKiwiCanvas = Parameters<typeof createFigDesignDocumentFromKiwiCanvas>[0];
 export type FigFamilyDesignDocumentOptions = Parameters<typeof createFigDesignDocumentFromKiwiCanvas>[1];
+export type FigFamilyRenderOptions = SceneGraphRenderOptions;
 
 /** Convert a decoded fig-family canvas into the shared fig renderer domain model. */
 export function createFigFamilyDesignDocument(
@@ -44,6 +49,7 @@ export type UseFigSceneGraphParams = {
 
 export type FigFamilyPageRendererProps = UseFigSceneGraphParams & {
   readonly sceneGraph?: SceneGraph | null;
+  readonly renderOptions?: SceneGraphRenderOptions;
 };
 
 type SceneGraphCacheRef = {
@@ -118,6 +124,33 @@ function resolveViewBox(sceneGraph: SceneGraph): string {
   return `${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`;
 }
 
+function mapDocumentColorProfile(profile: FigDesignDocument["documentColorProfile"]): FigmaExportColorProfile | undefined {
+  if (!profile) {
+    return undefined;
+  }
+  switch (profile.name) {
+    case "SRGB":
+      return "SRGB";
+    case "DISPLAY_P3":
+    case "DISPLAY_P3_V4":
+    case "P3":
+      throw new Error("Fig family Display P3 rendering requires explicit exportSettings.displayP3IccProfile");
+    case "DOCUMENT":
+      throw new Error("Fig family rendering requires a concrete documentColorProfile, got DOCUMENT");
+    default:
+      throw new Error(`Unsupported fig documentColorProfile ${profile.name}`);
+  }
+}
+
+/** Create explicit fig render options from the decoded document color profile. */
+export function createFigFamilyRenderOptions(document: FigDesignDocument): SceneGraphRenderOptions | undefined {
+  const colorProfile = mapDocumentColorProfile(document.documentColorProfile);
+  if (!colorProfile) {
+    return undefined;
+  }
+  return { exportSettings: { colorProfile } };
+}
+
 /** Build the renderer-neutral SceneGraph consumed by React, SVG, and WebGL. */
 export function useFigSceneGraph({
   page,
@@ -189,6 +222,7 @@ export function useFigSceneGraph({
 /** Render a fig-family page as React-owned SVG nodes. */
 export function FigFamilyPageRenderer({
   sceneGraph: sceneGraphProp,
+  renderOptions,
   ...params
 }: FigFamilyPageRendererProps) {
   const builtSceneGraph = useFigSceneGraph(params);
@@ -209,7 +243,7 @@ export function FigFamilyPageRenderer({
       pointerEvents="none"
       aria-hidden="true"
     >
-      <FigSceneRenderer sceneGraph={sceneGraph} />
+      <FigSceneRenderer sceneGraph={sceneGraph} renderOptions={renderOptions} />
     </svg>
   );
 }

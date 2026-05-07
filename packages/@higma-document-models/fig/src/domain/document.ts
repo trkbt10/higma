@@ -704,6 +704,8 @@ export type FigDesignBlob = {
 
 export type FigDesignDocument = {
   readonly pages: readonly FigPage[];
+  /** Document-level color profile from the root DOCUMENT node. */
+  readonly documentColorProfile?: KiwiEnumValue;
   /** Components (SYMBOL/COMPONENT nodes) indexed by their node ID */
   readonly components: ReadonlyMap<string, FigDesignNode>;
   /** Images extracted from the .fig ZIP */

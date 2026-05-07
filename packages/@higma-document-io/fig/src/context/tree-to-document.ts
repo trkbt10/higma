@@ -110,6 +110,15 @@ function collectNodeMap(ctx: FigResolveContext, roots: readonly FigNode[]): Read
   return map;
 }
 
+function readDocumentColorProfile(tree: NodeTreeResult): FigNode["documentColorProfile"] {
+  for (const root of tree.roots) {
+    if (getNodeType(root) === "DOCUMENT") {
+      return root.documentColorProfile;
+    }
+  }
+  return undefined;
+}
+
 /** Convert a parsed raw node tree into the shared FigDesignDocument domain model. */
 export function treeToDocument(
   tree: NodeTreeResult,
@@ -138,6 +147,7 @@ export function treeToDocument(
 
   const document: FigDesignDocument = {
     pages,
+    documentColorProfile: readDocumentColorProfile(tree),
     components,
     images: source.images,
     blobs: source.blobs,

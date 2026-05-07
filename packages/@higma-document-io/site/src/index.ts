@@ -6,7 +6,12 @@ import { parseFigCanvasHeader } from "@higma-figma-containers/canvas";
 import { loadFigmaDocumentFacts, type FigmaDocumentFacts } from "@higma-figma-analysis/document-facts";
 import { createFigmaFormatInsights } from "@higma-figma-analysis/format-insights";
 import { createSiteDocument, SITE_DOCUMENT_PROFILE, type SiteDocument } from "@higma-document-models/site";
-import { applySiteUnitMovesToNodeChanges, type SiteUnitMove } from "@higma-document-renderers/site";
+import {
+  applySiteCmsFieldEditsToNodeChanges,
+  applySiteUnitMovesToNodeChanges,
+  type SiteCmsFieldEdit,
+  type SiteUnitMove,
+} from "@higma-document-renderers/site";
 import { loadFigFamilyFile, saveFigFamilyFile } from "@higma-figma-runtime/roundtrip";
 
 export type SiteDocumentLoadResult = {
@@ -37,18 +42,25 @@ export async function loadSiteDocument(data: Uint8Array): Promise<SiteDocument> 
   return result.document;
 }
 
-/** Export original site bytes after applying direct editor unit moves to the fig-family node changes. */
+export type SiteEditPayload = {
+  readonly unitMoves: readonly SiteUnitMove[];
+  readonly cmsFieldEdits: readonly SiteCmsFieldEdit[];
+};
+
+/** Export original site bytes after applying every editor edit to the fig-family node changes. */
 export async function exportEditedSiteDocument(
   data: Uint8Array,
-  moves: readonly SiteUnitMove[],
+  edits: SiteEditPayload,
 ): Promise<Uint8Array> {
   const loaded = await loadFigFamilyFile(data);
   if (loaded.canvasMagic !== SITE_DOCUMENT_PROFILE.magic) {
     throw new Error(`Expected site canvas magic ${SITE_DOCUMENT_PROFILE.magic}, got ${loaded.canvasMagic}`);
   }
+  const nodeChangesAfterMoves = applySiteUnitMovesToNodeChanges(loaded.nodeChanges, edits.unitMoves);
+  const nodeChanges = applySiteCmsFieldEditsToNodeChanges(nodeChangesAfterMoves, edits.cmsFieldEdits);
   return saveFigFamilyFile({
     ...loaded,
-    nodeChanges: applySiteUnitMovesToNodeChanges(loaded.nodeChanges, moves),
+    nodeChanges,
   }, {
     canvasMagic: SITE_DOCUMENT_PROFILE.magic,
   });

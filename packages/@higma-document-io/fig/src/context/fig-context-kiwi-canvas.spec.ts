@@ -52,4 +52,22 @@ describe("createFigDesignDocumentFromKiwiCanvas", () => {
     expect(document.images).toBeInstanceOf(Map);
     expect(document._loaded).toBeUndefined();
   });
+
+  it("preserves the root document color profile for render export settings", () => {
+    const canvas = createCanvas();
+    const document = createFigDesignDocumentFromKiwiCanvas({
+      ...canvas,
+      nodeChanges: [
+        {
+          type: "DOCUMENT",
+          guid: { sessionID: 0, localID: 0 },
+          name: "Document",
+          documentColorProfile: { value: 1, name: "SRGB" },
+        },
+        ...canvas.nodeChanges.slice(1),
+      ],
+    }, { canvasVisibility: "user-visible" });
+
+    expect(document.documentColorProfile).toEqual({ value: 1, name: "SRGB" });
+  });
 });

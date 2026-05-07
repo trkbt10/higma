@@ -456,6 +456,9 @@ function buildFreshNodeChanges(doc: FigDesignDocument): DocumentToTreeResult {
     name: "Document",
     visible: true,
   };
+  if (doc.documentColorProfile) {
+    documentNode.documentColorProfile = doc.documentColorProfile;
+  }
   result.push(documentNode as FigNode);
 
   // Add pages
