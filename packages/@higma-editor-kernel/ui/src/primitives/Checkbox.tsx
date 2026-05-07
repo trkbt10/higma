@@ -39,19 +39,28 @@ const inputStyle: CSSProperties = {
   cursor: "inherit",
 };
 
-function boxStyle(checked: boolean | "mixed", disabled: boolean): CSSProperties {
+function pickBoxBorder(checked: boolean | "mixed"): string {
   const accent = `var(--accent-primary, ${colorTokens.accent.primary})`;
-  const borderActive = checked === false
-    ? `1px solid var(--border-strong, ${colorTokens.border.strong})`
-    : `1px solid ${accent}`;
+  if (checked === false) {
+    return `1px solid var(--border-strong, ${colorTokens.border.strong})`;
+  }
+  return `1px solid ${accent}`;
+}
+
+function pickBoxBackground(checked: boolean | "mixed"): string {
+  if (checked === false) {
+    return `var(--bg-primary, ${colorTokens.background.primary})`;
+  }
+  return `var(--accent-primary, ${colorTokens.accent.primary})`;
+}
+
+function boxStyle(checked: boolean | "mixed", disabled: boolean): CSSProperties {
   return {
     width: SIZE,
     height: SIZE,
     borderRadius: radiusTokens.xs,
-    border: borderActive,
-    background: checked === false
-      ? `var(--bg-primary, ${colorTokens.background.primary})`
-      : accent,
+    border: pickBoxBorder(checked),
+    background: pickBoxBackground(checked),
     color: colorTokens.text.inverse,
     display: "flex",
     alignItems: "center",
