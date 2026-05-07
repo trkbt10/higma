@@ -5,14 +5,33 @@
  *
  * zstd-codec is loaded lazily via dynamic import() to avoid a bun bundler bug
  * where the CJS module's `module.ZstdCodec = {}` line is miscompiled into a
- * reference to an undeclared `module_zstd_codec` variable.
- * Lazy loading also avoids paying the WASM initialization cost when only
- * decompression (fzstd, sync) is needed.
+ * reference to an undeclared `module_zstd_codec` variable. The static
+ * `import { ZstdCodec }` form (kept here previously) was enough to trigger
+ * the miscompile even when consumers never called the compressor — it
+ * crashed every webview consumer on script evaluation. Lazy loading also
+ * avoids paying the WASM initialization cost when only decompression
+ * (fzstd, sync) is needed.
  */
 
 import { decompress as fzstdDecompress } from "fzstd";
-import { ZstdCodec } from "zstd-codec";
 import type { ZstdSimple } from "zstd-codec";
+
+type ZstdCodecModule = {
+  readonly ZstdCodec: {
+    run(callback: (binding: { Simple: new () => ZstdSimple }) => void): void;
+  };
+};
+
+let zstdCodecModulePromise: Promise<ZstdCodecModule> | null = null;
+
+function loadZstdCodec(): Promise<ZstdCodecModule> {
+  if (!zstdCodecModulePromise) {
+    // Inline ignore is required because TypeScript's resolver pre-evaluates
+    // the literal specifier; we want the module loaded only on demand.
+    zstdCodecModulePromise = import("zstd-codec") as unknown as Promise<ZstdCodecModule>;
+  }
+  return zstdCodecModulePromise;
+}
 
 /**
  * Decompress zstd data (sync).
@@ -39,13 +58,8 @@ export type ZstdCompressor = {
   compress(data: Uint8Array, level?: number): Uint8Array;
 };
 
-/**
- * Create a new zstd compressor instance.
- * Each instance is independent (no global singleton).
- *
- * @returns Promise resolving to a ZstdCompressor
- */
 export async function createZstdCompressor(): Promise<ZstdCompressor> {
+  const { ZstdCodec } = await loadZstdCodec();
   return new Promise<ZstdCompressor>((resolve, reject) => {
     ZstdCodec.run((binding) => {
       try {
