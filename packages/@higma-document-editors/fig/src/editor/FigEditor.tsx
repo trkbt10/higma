@@ -7,7 +7,7 @@
 
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
-import { EditorShell, CanvasArea, type EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
+import { EditorShell, CanvasArea, StackedEditorPanel, type EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
 import { FigEditorProvider } from "../context/FigEditorContext";
 import { FigEditorCanvas } from "../canvas/FigEditorCanvas";
 import { FigEditorToolbar } from "./FigEditorToolbar";
@@ -69,19 +69,6 @@ type FigEditorProps = {
 // Left panel content: pages (fixed) + layers (scrollable)
 // =============================================================================
 
-const leftPanelStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  height: "100%",
-  overflow: "hidden",
-};
-
-const layerPanelWrapperStyle: CSSProperties = {
-  flex: 1,
-  minHeight: 0,
-  overflowY: "auto",
-};
-
 /**
  * Left panel: Pages (compact, always visible) above Layers (scrollable, fills remaining space).
  *
@@ -90,12 +77,12 @@ const layerPanelWrapperStyle: CSSProperties = {
  */
 function LeftPanelContent() {
   return (
-    <div style={leftPanelStyle}>
-      <PageListPanel />
-      <div style={layerPanelWrapperStyle}>
-        <LayerPanel />
-      </div>
-    </div>
+    <StackedEditorPanel
+      sections={[
+        { id: "pages", content: <PageListPanel />, grow: false, scrollable: false },
+        { id: "layers", content: <LayerPanel />, grow: true, scrollable: true },
+      ]}
+    />
   );
 }
 

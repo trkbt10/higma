@@ -5,7 +5,7 @@
  * to ensure parity with the SVG string renderer's fill handling.
  */
 
-import type { FigPaint, FigColor, FigGradientPaint } from "@higma-document-models/fig/types";
+import type { FigPaint, FigColor, FigGradientPaint, FigImagePaint } from "@higma-document-models/fig/types";
 import type { FigImage } from "@higma-document-models/fig/domain";
 import {
   getPaintType,
@@ -23,6 +23,8 @@ import {
   getImageTransform,
   getScaleMode,
   getScalingFactor,
+  getPaintFilter,
+  getImageShouldColorManage,
 } from "../../paint";
 import type { Fill, Color, GradientStop, BlendMode, AffineMatrix } from "../types";
 import { convertFigmaBlendMode } from "./blend-mode";
@@ -65,13 +67,6 @@ function isFullyTransparentGradient(
 }
 
 /**
- * Convert a single Figma paint to a scene graph Fill
- *
- * @param paint - Figma paint
- * @param images - Image lookup map
- * @returns Scene graph Fill, or null if unsupported
- */
-/**
  * Extract paint-level blend mode from a FigPaint.
  * The blendMode field is typed `string | KiwiEnumValue` on FigPaintBase;
  * `convertFigmaBlendMode` accepts both shapes.
@@ -102,6 +97,29 @@ function extractGradientTransform(gradientPaint: FigGradientPaint): AffineMatrix
   return m;
 }
 
+/** Extract image transform matrix from any supported image paint field. */
+function extractImageTransform(imagePaint: FigImagePaint): AffineMatrix | undefined {
+  const t = getImageTransform(imagePaint);
+  if (!t) {
+    return undefined;
+  }
+  return {
+    m00: t.m00 ?? 1,
+    m01: t.m01 ?? 0,
+    m02: t.m02 ?? 0,
+    m10: t.m10 ?? 0,
+    m11: t.m11 ?? 1,
+    m12: t.m12 ?? 0,
+  };
+}
+
+/**
+ * Convert a single Figma paint to a scene graph Fill
+ *
+ * @param paint - Figma paint
+ * @param images - Image lookup map
+ * @returns Scene graph Fill, or null if unsupported
+ */
 export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, FigImage>): Fill | null {
   const opacity = paint.opacity ?? 1;
   const paintType = getPaintType(paint);
@@ -207,21 +225,6 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
       const figImage = images.get(imageRef);
       if (!figImage) { return null; }
 
-      // Extract image transform if present
-      let imageTransform: AffineMatrix | undefined;
-      const sourceImageTransform = getImageTransform(imagePaint);
-      if (sourceImageTransform) {
-        const t = sourceImageTransform;
-        imageTransform = {
-          m00: t.m00 ?? 1,
-          m01: t.m01 ?? 0,
-          m02: t.m02 ?? 0,
-          m10: t.m10 ?? 0,
-          m11: t.m11 ?? 1,
-          m12: t.m12 ?? 0,
-        };
-      }
-
       return {
         type: "image",
         imageRef,
@@ -231,7 +234,9 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
         opacity,
         blendMode,
         scalingFactor: getScalingFactor(imagePaint),
-        imageTransform,
+        imageTransform: extractImageTransform(imagePaint),
+        paintFilter: getPaintFilter(imagePaint),
+        imageShouldColorManage: getImageShouldColorManage(imagePaint),
       };
     }
 

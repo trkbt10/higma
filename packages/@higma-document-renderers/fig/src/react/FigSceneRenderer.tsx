@@ -22,6 +22,7 @@
 
 import { memo, useMemo, useRef } from "react";
 import type { SceneGraph } from "../scene-graph/types";
+import type { SceneGraphRenderOptions } from "../scene-graph/render";
 import {
   resolveRenderTreeIncremental,
   type RenderTree,
@@ -36,6 +37,7 @@ import { RenderNodeComponent } from "./nodes/RenderNodeComponent";
 type FigSceneRendererProps = {
   /** The scene graph to render (will be resolved to RenderTree internally) */
   readonly sceneGraph: SceneGraph;
+  readonly renderOptions?: SceneGraphRenderOptions;
 };
 
 type FigRenderTreeRendererProps = {
@@ -73,13 +75,13 @@ export const FigRenderTreeRenderer = memo(FigRenderTreeRendererImpl);
  * Resolves the SceneGraph to a RenderTree internally, then renders.
  * This is the backward-compatible entry point.
  */
-function FigSceneRendererImpl({ sceneGraph }: FigSceneRendererProps) {
+function FigSceneRendererImpl({ sceneGraph, renderOptions }: FigSceneRendererProps) {
   const cacheRef = useRef<RenderTreeResolutionCache | undefined>(undefined);
   const renderTree = useMemo(() => {
-    const result = resolveRenderTreeIncremental(sceneGraph, cacheRef.current);
+    const result = resolveRenderTreeIncremental(sceneGraph, cacheRef.current, renderOptions);
     cacheRef.current = result.cache;
     return result.renderTree;
-  }, [sceneGraph]);
+  }, [sceneGraph, renderOptions]);
 
   return <FigRenderTreeRenderer renderTree={renderTree} />;
 }

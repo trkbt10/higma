@@ -24,6 +24,8 @@ import type {
   AffineMatrix,
   PathContour,
 } from "../types";
+import { readPng } from "@higma-codecs/png";
+import { encode as encodeJpeg } from "jpeg-js";
 import {
   resolveFill,
   resolveTopFill,
@@ -40,10 +42,12 @@ import {
 // =============================================================================
 
 function createIdGenerator(): IdGenerator {
-  let counter = 0;
+  const counter = { value: 0 };
   return {
     getNextId(prefix: string): string {
-      return `${prefix}-${counter++}`;
+      const id = `${prefix}-${counter.value}`;
+      counter.value += 1;
+      return id;
     },
   };
 }
@@ -51,6 +55,7 @@ function createIdGenerator(): IdGenerator {
 const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
 const RED: Color = { r: 1, g: 0, b: 0, a: 1 };
 const BLACK_50: Color = { r: 0, g: 0, b: 0, a: 0.5 };
+const DATA_URI_PREFIX = "data:image/png;base64,";
 
 // =============================================================================
 // Test Helpers
@@ -84,6 +89,21 @@ function buildEffectForType(type: Effect["type"]): Effect {
     case "background-blur":
       return { type: "background-blur", radius: 0 };
   }
+}
+
+function createJpegData(): Uint8Array {
+  const pixels = new Uint8Array([
+    48, 64, 80, 255,
+    192, 208, 224, 255,
+  ]);
+  return encodeJpeg({ width: 2, height: 1, data: pixels }, 100).data;
+}
+
+function pngDataFromImageDefDataUri(dataUri: string): Uint8Array {
+  if (!dataUri.startsWith(DATA_URI_PREFIX)) {
+    throw new Error("expected PNG data URI");
+  }
+  return Buffer.from(dataUri.slice(DATA_URI_PREFIX.length), "base64");
 }
 
 // =============================================================================
@@ -169,6 +189,68 @@ describe("Fill resolution (shared SoT)", () => {
 
     expect(result.attrs.fill).toBe("url(#img-0)");
     expect(result.def!.type).toBe("image");
+  });
+
+  it("bakes paintFilter into JPEG image fills as PNG data", () => {
+    const fill: ImageFill = {
+      type: "image",
+      imageRef: "jpeg-ref",
+      data: createJpegData(),
+      mimeType: "image/jpeg",
+      scaleMode: "FILL",
+      opacity: 1,
+      paintFilter: { brightness: 0.1 },
+      imageShouldColorManage: true,
+    };
+    const ids = createIdGenerator();
+    const result = resolveFill(fill, ids, { colorProfile: "SRGB" });
+
+    expect(result.def?.type).toBe("image");
+    if (result.def?.type === "image") {
+      expect(result.def.dataUri.startsWith(DATA_URI_PREFIX)).toBe(true);
+      const decoded = readPng(pngDataFromImageDefDataUri(result.def.dataUri));
+      expect(decoded.width).toBe(2);
+      expect(decoded.height).toBe(1);
+      expect(decoded.srgbIntent).toBe(0);
+    }
+  });
+
+  it("requires an explicit export color profile for managed image fills", () => {
+    const fill: ImageFill = {
+      type: "image",
+      imageRef: "color-managed-jpeg-ref",
+      data: createJpegData(),
+      mimeType: "image/jpeg",
+      scaleMode: "FILL",
+      opacity: 1,
+      imageShouldColorManage: true,
+    };
+    const ids = createIdGenerator();
+
+    expect(() => resolveFill(fill, ids)).toThrow("requires explicit exportSettings.colorProfile");
+  });
+
+  it("tags color-managed JPEG image fills without paintFilter as PNG sRGB data", () => {
+    const fill: ImageFill = {
+      type: "image",
+      imageRef: "color-managed-jpeg-ref",
+      data: createJpegData(),
+      mimeType: "image/jpeg",
+      scaleMode: "FILL",
+      opacity: 1,
+      imageShouldColorManage: true,
+    };
+    const ids = createIdGenerator();
+    const result = resolveFill(fill, ids, { colorProfile: "SRGB" });
+
+    expect(result.def?.type).toBe("image");
+    if (result.def?.type === "image") {
+      expect(result.def.dataUri.startsWith(DATA_URI_PREFIX)).toBe(true);
+      const decoded = readPng(pngDataFromImageDefDataUri(result.def.dataUri));
+      expect(decoded.width).toBe(2);
+      expect(decoded.height).toBe(1);
+      expect(decoded.srgbIntent).toBe(0);
+    }
   });
 
   it("resolveTopFill returns fill=none for empty fills", () => {

@@ -21,6 +21,7 @@ export {
 export {
   createFigDesignDocument,
   createFigDesignDocumentFromLoaded,
+  createFigDesignDocumentFromKiwiCanvas,
   createEmptyFigDesignDocument,
 } from "./context";
 

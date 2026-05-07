@@ -5,7 +5,7 @@
  * FigColor is defined in types.ts — this module provides operations on it.
  */
 
-import type { FigColor, FigPaint, FigSolidPaint, FigGradientPaint, FigImagePaint } from "./types";
+import type { FigColor, FigPaint, FigSolidPaint, FigGradientPaint, FigImagePaint, FigPaintType } from "./types";
 
 // =============================================================================
 // Color Predicates
@@ -63,13 +63,17 @@ export function hexToFigColor(hex: string, alpha = 1): FigColor {
 // =============================================================================
 
 /**
- * Get paint type as string. With the SSoT kiwi→domain normalisation
- * performed at parse time, `paint.type` is always a FigPaintType
- * string — this helper remains to document the domain contract and
- * give a single call site if the contract ever evolves.
+ * Get paint type as string.
  */
-export function getPaintType(paint: FigPaint): FigPaint["type"] {
-  return paint.type;
+export function getPaintType(paint: { readonly type: unknown }): FigPaintType {
+  const rawType: unknown = paint.type;
+  if (isPaintType(rawType)) {
+    return rawType;
+  }
+  if (isKiwiEnumPaintType(rawType)) {
+    return rawType.name;
+  }
+  throw new Error("FigPaint.type must be a supported paint type");
 }
 
 /**
@@ -78,37 +82,31 @@ export function getPaintType(paint: FigPaint): FigPaint["type"] {
  * discriminated union's `type` tag — no cast needed.
  */
 export function getSolidPaintColor(paint: FigPaint): FigColor | undefined {
-  if (paint.type !== "SOLID") {
-    return undefined;
-  }
-  return paint.color;
+  return asSolidPaint(paint)?.color;
 }
 
 // =============================================================================
 // Paint Narrowing Helpers (SSoT for FigPaint → variant)
 // =============================================================================
 //
-// After the parser normalises KiwiEnumValue type tags to string
-// literals, FigPaint is a plain discriminated union and TypeScript
-// narrows it natively via `paint.type === "SOLID"` etc. These helpers
-// remain as explicit, named entry points for variant access so call
-// sites read as domain intent ("give me the gradient variant") rather
-// than open-coded switch statements.
+// FigPaint can carry either parser-normalized string tags or decoded
+// Kiwi enum-object tags. These helpers are the named entry points for
+// variant access so call sites do not re-derive tag handling.
 
 /**
  * Narrow a paint to `FigGradientPaint` when its type is one of the
  * gradient tags. Returns undefined otherwise.
  */
 export function asGradientPaint(paint: FigPaint): FigGradientPaint | undefined {
-  if (
-    paint.type === "GRADIENT_LINEAR" ||
-    paint.type === "GRADIENT_RADIAL" ||
-    paint.type === "GRADIENT_ANGULAR" ||
-    paint.type === "GRADIENT_DIAMOND"
-  ) {
-    return paint;
+  switch (getPaintType(paint)) {
+    case "GRADIENT_LINEAR":
+    case "GRADIENT_RADIAL":
+    case "GRADIENT_ANGULAR":
+    case "GRADIENT_DIAMOND":
+      return paint as FigGradientPaint;
+    default:
+      return undefined;
   }
-  return undefined;
 }
 
 /**
@@ -116,7 +114,10 @@ export function asGradientPaint(paint: FigPaint): FigGradientPaint | undefined {
  * Returns undefined otherwise.
  */
 export function asImagePaint(paint: FigPaint): FigImagePaint | undefined {
-  return paint.type === "IMAGE" ? paint : undefined;
+  if (getPaintType(paint) === "IMAGE") {
+    return paint as FigImagePaint;
+  }
+  return undefined;
 }
 
 /**
@@ -124,5 +125,33 @@ export function asImagePaint(paint: FigPaint): FigImagePaint | undefined {
  * Returns undefined otherwise.
  */
 export function asSolidPaint(paint: FigPaint): FigSolidPaint | undefined {
-  return paint.type === "SOLID" ? paint : undefined;
+  if (getPaintType(paint) === "SOLID") {
+    return paint as FigSolidPaint;
+  }
+  return undefined;
+}
+
+const PAINT_TYPES = [
+  "SOLID",
+  "GRADIENT_LINEAR",
+  "GRADIENT_RADIAL",
+  "GRADIENT_ANGULAR",
+  "GRADIENT_DIAMOND",
+  "IMAGE",
+  "EMOJI",
+  "VIDEO",
+] as const;
+
+function isPaintType(value: unknown): value is FigPaintType {
+  return typeof value === "string" && PAINT_TYPES.includes(value as FigPaintType);
+}
+
+function isKiwiEnumPaintType(value: unknown): value is { readonly name: FigPaintType } {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  if (!("name" in value)) {
+    return false;
+  }
+  return isPaintType(value.name);
 }

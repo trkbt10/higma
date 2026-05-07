@@ -30,8 +30,34 @@ import {
 } from "@higma-document-models/fig/domain";
 import { walkTree } from "@higma-primitives/tree";
 
+export type FigDocumentTreeResources = {
+  readonly blobs: LoadedFigFile["blobs"];
+  readonly images: LoadedFigFile["images"];
+  readonly metadata: LoadedFigFile["metadata"];
+  readonly canvasVisibility: "user-visible" | "all";
+};
+
+type TreeToDocumentSource = LoadedFigFile | FigDocumentTreeResources;
+
+/** Check whether tree resources preserve the complete roundtrip file state. */
+function isLoadedFigFile(source: TreeToDocumentSource): source is LoadedFigFile {
+  return "schema" in source && "compressedSchema" in source && "nodeChanges" in source;
+}
+
 function isUserVisibleCanvas(canvas: FigNode): boolean {
   return canvas.visible !== false && canvas.internalOnly !== true;
+}
+
+function shouldConvertCanvas(canvas: FigNode, source: TreeToDocumentSource): boolean {
+  if (isLoadedFigFile(source)) {
+    return isUserVisibleCanvas(canvas);
+  }
+  switch (source.canvasVisibility) {
+    case "user-visible":
+      return isUserVisibleCanvas(canvas);
+    case "all":
+      return true;
+  }
 }
 
 /**
@@ -84,37 +110,42 @@ function collectNodeMap(ctx: FigResolveContext, roots: readonly FigNode[]): Read
   return map;
 }
 
+/** Convert a parsed raw node tree into the shared FigDesignDocument domain model. */
 export function treeToDocument(
   tree: NodeTreeResult,
-  loaded: LoadedFigFile,
+  source: TreeToDocumentSource,
 ): FigDesignDocument {
   const ctx = createFigResolveContext();
   const components = new Map<string, FigDesignNode>();
   const pages: FigPage[] = [];
   const nodeMap = collectNodeMap(ctx, tree.roots);
   const styleRegistry = nodeMap.size > 0 ? buildFigStyleRegistry(nodeMap) : EMPTY_FIG_STYLE_REGISTRY;
+  const loaded = isLoadedFigFile(source) ? source : undefined;
 
   for (const root of tree.roots) {
     const rootType = getNodeType(root);
 
     if (rootType === "DOCUMENT") {
       for (const canvas of ctx.safeChildren(root)) {
-        if (getNodeType(canvas) === "CANVAS" && isUserVisibleCanvas(canvas)) {
-          pages.push(convertCanvasToPage(ctx, canvas, components, styleRegistry, nodeMap, loaded.blobs));
+        if (getNodeType(canvas) === "CANVAS" && shouldConvertCanvas(canvas, source)) {
+          pages.push(convertCanvasToPage(ctx, canvas, components, styleRegistry, nodeMap, source.blobs));
         }
       }
-    } else if (rootType === "CANVAS" && isUserVisibleCanvas(root)) {
-      pages.push(convertCanvasToPage(ctx, root, components, styleRegistry, nodeMap, loaded.blobs));
+    } else if (rootType === "CANVAS" && shouldConvertCanvas(root, source)) {
+      pages.push(convertCanvasToPage(ctx, root, components, styleRegistry, nodeMap, source.blobs));
     }
   }
 
-  return {
+  const document: FigDesignDocument = {
     pages,
     components,
-    images: loaded.images,
-    blobs: loaded.blobs,
-    metadata: loaded.metadata,
+    images: source.images,
+    blobs: source.blobs,
+    metadata: source.metadata,
     styleRegistry,
-    _loaded: loaded,
   };
+  if (!loaded) {
+    return document;
+  }
+  return { ...document, _loaded: loaded };
 }

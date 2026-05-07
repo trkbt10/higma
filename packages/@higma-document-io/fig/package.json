@@ -8,13 +8,16 @@
     "@higma-codecs/compression": "workspace:*",
     "@higma-figma-containers/canvas": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
+    "@higma-figma-runtime/kiwi-canvas": "workspace:*",
+    "@higma-figma-runtime/roundtrip": "workspace:*",
+    "@higma-figma-schema/profiles": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-primitives/zip": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-codecs/kiwi": "workspace:*"
   },
   "scripts": {
-    "lint": "eslint src",
+    "lint": "cd ../../.. && eslint packages/@higma-document-io/fig/src",
     "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
     "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-io/fig/src'"
   },

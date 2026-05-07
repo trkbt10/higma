@@ -35,6 +35,7 @@ import { SelectionBox } from "./SelectionBox";
 import { SvgRulers } from "./SvgRulers";
 import { ViewportOverlay } from "./ViewportOverlay";
 import { useSvgViewport } from "./use-svg-viewport";
+import type { InitialViewportPlacement } from "./use-svg-viewport";
 import type { ResizeHandlePosition } from "@higma-editor-kernel/core/geometry";
 import { applyDragPreview, getCombinedBoundsWithRotation } from "@higma-editor-kernel/core/geometry";
 import { getTransformString, screenToSlideCoords } from "@higma-editor-kernel/core/viewport";
@@ -101,6 +102,8 @@ export type EditorCanvasProps = {
   readonly onZoomModeChange: (mode: ZoomMode) => void;
   readonly onDisplayZoomChange?: (zoom: number) => void;
   readonly onViewportChange?: (viewport: ViewportTransform, context: EditorCanvasViewportContentContext) => void;
+  readonly initialViewportPlacement?: InitialViewportPlacement;
+  readonly initialViewportMargin?: number;
   /**
    * Custom viewport clamp function for pan boundaries.
    * Default: standard slide clamping. Pass `(v) => v` for infinite canvas.
@@ -111,6 +114,7 @@ export type EditorCanvasProps = {
   readonly showRulers?: boolean;
   readonly rulerThickness?: number;
   readonly rulerCoordinateMode?: "bounded" | "unbounded";
+  readonly rulerCoordinateOffset?: { readonly x: number; readonly y: number };
 
   // --- Content ---
   /** React children rendered inside the viewport transform group (e.g., SlideRenderer). */
@@ -127,6 +131,8 @@ export type EditorCanvasProps = {
   // --- Hit areas ---
   /** All items with bounds — used for hit areas AND as source for selectedBounds computation. */
   readonly itemBounds: readonly EditorCanvasItemBounds[];
+  /** Accessible label for item hit areas. */
+  readonly getItemAriaLabel?: (id: string) => string;
 
   // --- Selection ---
   /** IDs of selected items. EditorCanvas computes selection boxes from itemBounds + drag preview. */
@@ -254,6 +260,7 @@ const IDLE_DRAG: EditorCanvasDrag = { type: "idle" };
 
 type HitAreaLayerProps = {
   readonly itemBounds: readonly EditorCanvasItemBounds[];
+  readonly getItemAriaLabel?: (id: string) => string;
   readonly onItemClick: (id: string, e: React.MouseEvent) => void;
   readonly onItemDoubleClick: (id: string, e: React.MouseEvent) => void;
   readonly onItemPointerDown: (id: string, e: React.PointerEvent) => void;
@@ -262,6 +269,7 @@ type HitAreaLayerProps = {
 
 const HitAreaLayer = memo(function HitAreaLayer({
   itemBounds,
+  getItemAriaLabel,
   onItemClick,
   onItemDoubleClick,
   onItemPointerDown,
@@ -272,6 +280,9 @@ const HitAreaLayer = memo(function HitAreaLayer({
       {itemBounds.map((b) => (
         <g key={`hit-${b.id}`} transform={getRotationTransform(b)}>
           <rect
+            data-editor-canvas-item-id={b.id}
+            role={getItemAriaLabel ? "button" : undefined}
+            aria-label={getItemAriaLabel?.(b.id)}
             x={b.x}
             y={b.y}
             width={Math.max(b.width, 1)}
@@ -308,16 +319,20 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     onZoomModeChange,
     onDisplayZoomChange,
     onViewportChange,
+    initialViewportPlacement,
+    initialViewportMargin,
     clampFn,
     showRulers = true,
     rulerThickness: rulerThicknessProp = DEFAULT_RULER_THICKNESS,
     rulerCoordinateMode = "bounded",
+    rulerCoordinateOffset,
     children,
     interactionOverlay,
     viewportContent,
     screenViewportContent,
     embeddedFontCss,
     itemBounds,
+    getItemAriaLabel,
     selectedIds,
     primaryId,
     drag,
@@ -369,6 +384,8 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     zoomMode,
     onZoomModeChange,
     onDisplayZoomChange,
+    initialViewportPlacement,
+    initialViewportMargin,
     clampFn,
   });
 
@@ -841,6 +858,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             {/* Hit areas for items */}
             <HitAreaLayer
               itemBounds={itemBounds}
+              getItemAriaLabel={getItemAriaLabel}
               onItemClick={handleItemClick}
               onItemDoubleClick={handleItemDoubleClick}
               onItemPointerDown={handleItemPointerDown}
@@ -911,6 +929,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
           rulerThickness={rulerThicknessProp}
           visible={showRulers}
           coordinateMode={rulerCoordinateMode}
+          coordinateOffset={rulerCoordinateOffset}
         />
       </svg>
 

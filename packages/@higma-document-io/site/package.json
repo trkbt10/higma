@@ -5,7 +5,7 @@
   "type": "module",
   "sideEffects": false,
   "scripts": {
-    "lint": "eslint src",
+    "lint": "cd ../../.. && eslint packages/@higma-document-io/site/src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-io/site/src'"
   },
@@ -19,7 +19,9 @@
     "@higma-figma-analysis/document-facts": "workspace:*",
     "@higma-figma-analysis/format-insights": "workspace:*",
     "@higma-document-models/site": "workspace:*",
-    "@higma-figma-containers/canvas": "workspace:*"
+    "@higma-document-renderers/site": "workspace:*",
+    "@higma-figma-containers/canvas": "workspace:*",
+    "@higma-figma-runtime/roundtrip": "workspace:*"
   },
   "devDependencies": {
     "@higma-codecs/kiwi": "workspace:*"

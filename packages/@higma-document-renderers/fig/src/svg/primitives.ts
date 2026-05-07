@@ -133,6 +133,7 @@ export type SvgPaintAttrs = {
   class?: string;
   style?: string;
   opacity?: number | string;
+  filter?: string;
 };
 
 /**
@@ -286,6 +287,7 @@ export function image(attrs: {
   transform?: string;
   class?: string;
   style?: string;
+  filter?: string;
   opacity?: number | string;
 }): SvgString {
   const attrStr = buildAttrs(attrs);

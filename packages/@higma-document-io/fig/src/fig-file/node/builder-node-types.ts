@@ -92,6 +92,7 @@ export type KiwiDerivedTextData = {
   readonly layoutSize?: { readonly x: number; readonly y: number };
   readonly baselines?: readonly unknown[];
   readonly glyphs?: readonly unknown[];
+  readonly fontMetaData?: readonly unknown[];
 };
 
 /** Derived symbol data entry (constraint resolution) */

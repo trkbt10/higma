@@ -988,9 +988,6 @@ export function buildGuidTranslationMap(
       }
     }
     if (toRemoveType.length > 0) {
-      defensiveMark("guid-translation:phase-1-validation:shape-on-text-evict", {
-        evicted: toRemoveType.length,
-      });
       for (const key of toRemoveType) {
         result.delete(key);
       }

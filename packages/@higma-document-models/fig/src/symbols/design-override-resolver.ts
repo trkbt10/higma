@@ -23,6 +23,7 @@
 import type { FigKiwiSymbolOverride, FigComponentPropAssignment, FigPaint, FigVector, FigNodeType, FigNode, KiwiEnumValue } from "../types";
 import { guidToString, parseGuidString, type FigBlob } from "../domain";
 import { buildGuidTranslationMap, type GuidTranslationMap } from "./guid-translation";
+import { getPaintType } from "../color";
 
 /**
  * Structural subset of `FigDesignNode` (defined in `@higma-document-models/fig/domain`)
@@ -189,10 +190,7 @@ function toRawOverride(o: DesignSymbolOverrideShape): FigKiwiSymbolOverride {
  * placeholder when feeding domain content back through the SoT.
  */
 function designNodeToRawShape(node: DesignNodeShape): FigNode {
-  // Domain FigPaint carries `type` as a string literal (union). The
-  // raw-side `buildGuidTranslationMap` reads `p.type` and tolerates
-  // both string and `{ name }` — we feed strings, which is supported.
-  const hasImageFill = node.fills?.some((p) => p.type === "IMAGE") ?? false;
+  const hasImageFill = node.fills?.some((p) => getPaintType(p) === "IMAGE") ?? false;
   const PHASE_LIVE: KiwiEnumValue = { value: 0, name: "LIVE" };
   return {
     guid: parseGuid(node.id),

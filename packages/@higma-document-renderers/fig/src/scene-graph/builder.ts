@@ -1348,6 +1348,19 @@ function synthesizeContours(node: FigDesignNode): DecodedContour[] {
   }
 }
 
+function hasRenderablePathGeometry(node: FigDesignNode): boolean {
+  if (node.vectorPaths?.some((path) => path.data !== undefined && path.data.length > 0)) {
+    return true;
+  }
+  const { fillGeometry, strokeGeometry } = extractGeometryProps(node);
+  return (fillGeometry !== undefined && fillGeometry.length > 0)
+    || (strokeGeometry !== undefined && strokeGeometry.length > 0);
+}
+
+function shouldRenderInteractiveSlideElementAsPath(node: FigDesignNode, children: readonly FigDesignNode[]): boolean {
+  return children.length === 0 && hasRenderablePathGeometry(node);
+}
+
 /**
  * Resolve the effective fill paints for a vector per-path style override entry.
  *
@@ -1874,10 +1887,18 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     case "SLIDE":
     case "SLIDE_GRID":
     case "SLIDE_ROW":
-    case "INTERACTIVE_SLIDE_ELEMENT":
     case "COMPONENT":
     case "COMPONENT_SET":
     case "SYMBOL": {
+      const stretched = applyCounterAxisStretch(node, children);
+      const childNodes = buildChildren(stretched, ctx);
+      return cacheBuiltNode(node, buildFrameNode(node, ctx, childNodes), ctx);
+    }
+
+    case "INTERACTIVE_SLIDE_ELEMENT": {
+      if (shouldRenderInteractiveSlideElementAsPath(node, children)) {
+        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+      }
       const stretched = applyCounterAxisStretch(node, children);
       const childNodes = buildChildren(stretched, ctx);
       return cacheBuiltNode(node, buildFrameNode(node, ctx, childNodes), ctx);

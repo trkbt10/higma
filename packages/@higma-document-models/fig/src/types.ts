@@ -1080,6 +1080,20 @@ export type FigImageTransform = FigGradientTransform;
 /** Image paint scale mode — SSoT string union. */
 export type FigImageScaleMode = "FILL" | "FIT" | "CROP" | "TILE" | "STRETCH";
 
+export type FigImagePaintFilter = {
+  readonly tint?: number;
+  readonly shadows?: number;
+  readonly highlights?: number;
+  readonly detail?: number;
+  readonly exposure?: number;
+  readonly vignette?: number;
+  readonly temperature?: number;
+  readonly vibrance?: number;
+  readonly contrast?: number;
+  readonly brightness?: number;
+  readonly saturation?: number;
+};
+
 export type FigImagePaint = FigPaintBase & {
   readonly type: "IMAGE";
   /** API format: image reference string */
@@ -1100,6 +1114,14 @@ export type FigImagePaint = FigPaintBase & {
   readonly scalingFactor?: number;
   /** Kiwi-format multiplier. Semantics match `scalingFactor`. */
   readonly scale?: number;
+  /** Kiwi/API image colour adjustment payload. */
+  readonly paintFilter?: FigImagePaintFilter;
+  /** Older builder/API colour adjustment payload. */
+  readonly filterColorAdjust?: FigImagePaintFilter;
+  /** Builder-level alias used by local fixtures. */
+  readonly filters?: FigImagePaintFilter;
+  /** Whether browser colour management should be used while decoding/uploading. */
+  readonly imageShouldColorManage?: boolean;
   /**
    * Rotation of the image in radians, applied about the element center.
    * Kiwi binary field.

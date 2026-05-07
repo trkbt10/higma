@@ -10,7 +10,7 @@
  * - Kiwi (.fig) format: transform matrix, stops array
  */
 
-import type { FigGradientPaint, FigGradientStop, FigGradientTransform, FigImagePaint } from "@higma-document-models/fig/types";
+import type { FigGradientPaint, FigGradientStop, FigGradientTransform, FigImagePaint, FigImagePaintFilter, FigImageScaleMode } from "@higma-document-models/fig/types";
 
 export type GradientDirection = {
   readonly start: { readonly x: number; readonly y: number };
@@ -294,8 +294,12 @@ export function getImageRef(paint: FigImagePaint): string | null {
  * `imageScaleMode` are SSoT string unions; the parser normalises the
  * Kiwi enum shape at file-read time.
  */
-export function getScaleMode(paint: FigImagePaint): string {
-  return paint.scaleMode ?? paint.imageScaleMode ?? "FILL";
+export function getScaleMode(paint: FigImagePaint): FigImageScaleMode {
+  const scaleMode = readImageScaleMode(paint.scaleMode) ?? readImageScaleMode(paint.imageScaleMode);
+  if (scaleMode) {
+    return scaleMode;
+  }
+  return "FILL";
 }
 
 /**
@@ -321,4 +325,42 @@ export function getScalingFactor(paint: FigImagePaint): number | undefined {
     return paint.scale;
   }
   return undefined;
+}
+
+/** Read the image paint colour-adjustment payload, regardless of source field name. */
+export function getPaintFilter(paint: FigImagePaint): FigImagePaintFilter | undefined {
+  return paint.paintFilter ?? paint.filterColorAdjust ?? paint.filters;
+}
+
+/** Read the explicit image decode colour-management flag. */
+export function getImageShouldColorManage(paint: FigImagePaint): boolean | undefined {
+  return paint.imageShouldColorManage;
+}
+
+const IMAGE_SCALE_MODES = ["FILL", "FIT", "CROP", "TILE", "STRETCH"] as const;
+
+function readImageScaleMode(value: unknown): FigImageScaleMode | undefined {
+  if (isImageScaleMode(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    throw new Error("IMAGE scale mode must be a supported FigImageScaleMode");
+  }
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+  if (!("name" in value)) {
+    return undefined;
+  }
+  if (typeof value.name !== "string") {
+    throw new Error("IMAGE imageScaleMode.name must be a string");
+  }
+  if (!isImageScaleMode(value.name)) {
+    throw new Error("IMAGE imageScaleMode.name must be a supported FigImageScaleMode");
+  }
+  return value.name;
+}
+
+function isImageScaleMode(value: unknown): value is FigImageScaleMode {
+  return typeof value === "string" && IMAGE_SCALE_MODES.includes(value as FigImageScaleMode);
 }

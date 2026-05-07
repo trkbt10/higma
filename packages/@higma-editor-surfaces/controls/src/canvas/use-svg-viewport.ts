@@ -8,6 +8,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject
 import type { ViewportTransform, ViewportSize, SlideSize } from "@higma-editor-kernel/core/viewport";
 import {
   INITIAL_VIEWPORT,
+  getCenteredViewport,
   getNextZoomValue,
   zoomTowardCursor,
   panViewport,
@@ -26,6 +27,8 @@ import { type ZoomMode, isFitMode } from "@higma-editor-surfaces/controls/zoom";
  */
 export type ViewportClampFn = (viewport: ViewportTransform) => ViewportTransform;
 
+export type InitialViewportPlacement = "center" | "top";
+
 export type UseSvgViewportOptions = {
   /** Canvas content dimensions (for fit-to-view and default clamping) */
   readonly slideSize: SlideSize;
@@ -37,6 +40,10 @@ export type UseSvgViewportOptions = {
   readonly onZoomModeChange?: (mode: ZoomMode) => void;
   /** Callback to report current display zoom value (useful when in fit mode) */
   readonly onDisplayZoomChange?: (zoom: number) => void;
+  /** Initial content placement inside the visible viewport. */
+  readonly initialViewportPlacement?: InitialViewportPlacement;
+  /** Viewport margin used when initialViewportPlacement is "top". */
+  readonly initialViewportMargin?: number;
   /**
    * Custom viewport clamp function. Called after every pan to enforce boundaries.
    * Default: clampViewport (prevents content from going off-screen).
@@ -70,6 +77,79 @@ export type UseSvgViewportResult = {
   readonly setZoom: (zoom: number) => void;
 };
 
+/** Create the first viewport transform for the current controlled zoom mode. */
+function createTopAlignedViewport({
+  viewportSize,
+  slideSize,
+  scale,
+  rulerThickness,
+  margin,
+}: {
+  readonly viewportSize: ViewportSize;
+  readonly slideSize: SlideSize;
+  readonly scale: number;
+  readonly rulerThickness: number;
+  readonly margin: number;
+}): ViewportTransform {
+  const availableWidth = viewportSize.width - rulerThickness;
+  const scaledSlideWidth = slideSize.width * scale;
+  return {
+    translateX: Math.max(margin, (availableWidth - scaledSlideWidth) / 2),
+    translateY: margin,
+    scale,
+  };
+}
+
+function createPlacedViewport({
+  viewportSize,
+  slideSize,
+  scale,
+  rulerThickness,
+  placement,
+  margin,
+}: {
+  readonly viewportSize: ViewportSize;
+  readonly slideSize: SlideSize;
+  readonly scale: number;
+  readonly rulerThickness: number;
+  readonly placement: InitialViewportPlacement;
+  readonly margin: number;
+}): ViewportTransform {
+  if (placement === "top") {
+    return createTopAlignedViewport({ viewportSize, slideSize, scale, rulerThickness, margin });
+  }
+  return getCenteredViewport({ viewportSize, slideSize, scale, rulerThickness });
+}
+
+function createInitialViewportForZoomMode({
+  viewportSize,
+  slideSize,
+  rulerThickness,
+  zoomMode,
+  placement,
+  margin,
+}: {
+  readonly viewportSize: ViewportSize;
+  readonly slideSize: SlideSize;
+  readonly rulerThickness: number;
+  readonly zoomMode: ZoomMode;
+  readonly placement: InitialViewportPlacement;
+  readonly margin: number;
+}): ViewportTransform {
+  if (isFitMode(zoomMode)) {
+    const fitted = createFittedViewport(viewportSize, slideSize, rulerThickness);
+    return createPlacedViewport({
+      viewportSize,
+      slideSize,
+      scale: fitted.scale,
+      rulerThickness,
+      placement,
+      margin,
+    });
+  }
+  return createPlacedViewport({ viewportSize, slideSize, scale: zoomMode, rulerThickness, placement, margin });
+}
+
 /**
  * Hook for managing SVG viewport pan/zoom state.
  */
@@ -79,6 +159,8 @@ export function useSvgViewport({
   zoomMode,
   onZoomModeChange,
   onDisplayZoomChange,
+  initialViewportPlacement = "center",
+  initialViewportMargin = 40,
   clampFn: clampFnProp,
 }: UseSvgViewportOptions): UseSvgViewportResult {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -100,8 +182,16 @@ export function useSvgViewport({
     if (viewportSize.width === 0 || viewportSize.height === 0) {
       return INITIAL_VIEWPORT;
     }
-    return createFittedViewport(viewportSize, slideSize, rulerThickness);
-  }, [viewportSize, slideSize, rulerThickness]);
+    const fitted = createFittedViewport(viewportSize, slideSize, rulerThickness);
+    return createPlacedViewport({
+      viewportSize,
+      slideSize,
+      scale: fitted.scale,
+      rulerThickness,
+      placement: initialViewportPlacement,
+      margin: initialViewportMargin,
+    });
+  }, [viewportSize, slideSize, rulerThickness, initialViewportPlacement, initialViewportMargin]);
 
   // Determine effective viewport based on zoom mode
   const effectiveViewport = useMemo(() => {
@@ -149,12 +239,17 @@ export function useSvgViewport({
       return;
     }
 
-    // Set initial viewport position (centered)
-    const fitted = createFittedViewport(viewportSize, slideSize, rulerThickness);
-    setViewport(fitted);
+    setViewport(createInitialViewportForZoomMode({
+      viewportSize,
+      slideSize,
+      rulerThickness,
+      zoomMode,
+      placement: initialViewportPlacement,
+      margin: initialViewportMargin,
+    }));
 
     hasInitializedRef.current = true;
-  }, [viewportSize, slideSize, rulerThickness]);
+  }, [viewportSize, slideSize, rulerThickness, zoomMode, initialViewportPlacement, initialViewportMargin]);
 
   // Wheel handler for zoom and scroll-based panning
   const handleWheel = useCallback(

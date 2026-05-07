@@ -115,4 +115,31 @@ describe("treeToDocument page visibility", () => {
 
     expect(doc.pages.map((page) => page.name)).toEqual(["Internal Only Canvas"]);
   });
+
+  it("keeps internal canvas pages when product adapters explicitly request all canvases", () => {
+    const visible = createCanvasNode({ guid: { sessionID: 1, localID: 11 }, name: "Page" });
+    const internal = createCanvasNode({
+      guid: { sessionID: 1, localID: 12 },
+      name: "Internal Only Canvas",
+      internalOnly: true,
+      visible: false,
+    });
+    const documentNode: FigNode = {
+      guid: { sessionID: 1, localID: 1 },
+      phase: { value: 1, name: "CREATED" },
+      type: { value: 1, name: "DOCUMENT" },
+      name: "Document",
+      children: [visible, internal],
+    };
+    const loaded = createLoaded();
+
+    const doc = treeToDocument({ roots: [documentNode], nodeMap: new Map() }, {
+      blobs: loaded.blobs,
+      images: loaded.images,
+      metadata: loaded.metadata,
+      canvasVisibility: "all",
+    });
+
+    expect(doc.pages.map((page) => page.name)).toEqual(["Page", "Internal Only Canvas"]);
+  });
 });

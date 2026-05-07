@@ -7,13 +7,14 @@
 
 
 import { createDemoFigDesignDocument } from "../testing/demo-document";
-import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
+import { EMPTY_FIG_STYLE_REGISTRY, toNodeId, type FigBlob, type FigDesignDocument, type FigDesignNode } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg/scene-renderer";
 import type { SceneGraph, SceneNode, RectNode, EllipseNode, PathNode, TextNode, FrameNode, Fill } from "./types";
 
 const docRef = { value: undefined as FigDesignDocument | undefined };
 const sceneGraphsRef = { value: [] as SceneGraph[] };
+const IDENTITY_TRANSFORM = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 
 beforeAll(async () => {
   const doc = await createDemoFigDesignDocument();
@@ -42,6 +43,46 @@ function findAllByType(nodes: readonly SceneNode[], type: string): SceneNode[] {
     }
   }
   return result;
+}
+
+function encodeFloat32LE(value: number): number[] {
+  const buf = new ArrayBuffer(4);
+  new DataView(buf).setFloat32(0, value, true);
+  return Array.from(new Uint8Array(buf));
+}
+
+function encodeMoveTo(x: number, y: number): number[] {
+  return [0x01, ...encodeFloat32LE(x), ...encodeFloat32LE(y)];
+}
+
+function encodeLineTo(x: number, y: number): number[] {
+  return [0x02, ...encodeFloat32LE(x), ...encodeFloat32LE(y)];
+}
+
+function buildRectGeometryBlob(width: number, height: number): FigBlob {
+  return {
+    bytes: [
+      ...encodeMoveTo(0, 0),
+      ...encodeLineTo(width, 0),
+      ...encodeLineTo(width, height),
+      ...encodeLineTo(0, height),
+      0x06,
+    ],
+  };
+}
+
+function buildSingleNodeSceneGraph(node: FigDesignNode, blobs: readonly FigBlob[]): SceneGraph {
+  return buildSceneGraph([node], {
+    blobs,
+    images: new Map(),
+    canvasSize: { width: 1200, height: 800 },
+    viewport: { x: 0, y: 0, width: 1200, height: 800 },
+    symbolMap: new Map(),
+    styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+    showHiddenNodes: false,
+    warnings: [],
+    textFontResolver: undefined,
+  });
 }
 
 describe("Scene graph builder - demo document", () => {
@@ -240,6 +281,32 @@ describe("Scene graph builder - demo document", () => {
       // SVG must mention white somewhere — either as hex or named.
       const mentionsWhite = /#ffffff|#fff\b|rgb\(255, ?255, ?255\)|white/i.test(svg);
       expect(mentionsWhite, "FRAME background fill must appear in SVG output").toBe(true);
+    });
+  });
+
+  describe("interactive slide elements", () => {
+    it("renders geometry-backed empty interactive elements as paths", () => {
+      const blob = buildRectGeometryBlob(120, 48);
+      const node: FigDesignNode = {
+        id: toNodeId("1:1"),
+        type: "INTERACTIVE_SLIDE_ELEMENT" as FigDesignNode["type"],
+        name: "Poll",
+        visible: true,
+        opacity: 1,
+        transform: IDENTITY_TRANSFORM,
+        size: { x: 120, y: 48 },
+        fills: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true }],
+        strokes: [],
+        strokeWeight: 0,
+        effects: [],
+        fillGeometry: [{ commandsBlob: 0, windingRule: "NONZERO", styleID: 0 }],
+      };
+
+      const sceneGraph = buildSingleNodeSceneGraph(node, [blob]);
+      const child = sceneGraph.root.children[0];
+
+      expect(child?.type).toBe("path");
+      expect((child as PathNode).contours[0].commands.length).toBeGreaterThan(0);
     });
   });
 });

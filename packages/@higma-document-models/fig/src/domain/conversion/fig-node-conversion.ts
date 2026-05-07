@@ -763,6 +763,7 @@ function resolveOverridePaths(
       const g = e.guidPath?.guids?.[0];
       if (!g) {return true;}
       if (guidExistsInFile(ctx, g, symbolMap)) {return true;}
+      if (overrideKeyExistsInSymbol(ctx, effectiveSymbol.node, ctx.guidString(g))) {return true;}
       if (ghostSessions.has(g.sessionID)) {
         return true;
       }

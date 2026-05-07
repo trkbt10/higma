@@ -8,8 +8,20 @@
  * usable by both string concatenation and React JSX.
  */
 
-import type { Fill, GradientStop, AffineMatrix } from "../types";
+import type { Fill, GradientStop, AffineMatrix, ImagePaintFilter } from "../types";
+import { writePng } from "@higma-codecs/png";
 import { colorToHex, uint8ArrayToBase64 } from "./color";
+import { applyImagePaintFilterToRgb, hasImagePaintFilter, resolveImagePaintFilterUniforms } from "./image-paint-filter";
+import { decodeRasterImage, pngMetadataFromDecodedRaster } from "./image-raster-decode";
+import { convertRgbColorProfile, resolveManagedRasterSourceProfile } from "./color-profile";
+import {
+  normalizeFigmaRenderExportSettings,
+  renderExportSettingsCacheKey,
+  requireManagedDisplayP3IccProfile,
+  requireManagedImageColorProfile,
+  type FigmaRenderExportSettings,
+  type NormalizedFigmaRenderExportSettings,
+} from "./export-settings";
 
 // =============================================================================
 // Resolved Types
@@ -95,11 +107,12 @@ export type ResolvedImagePattern = {
    */
   readonly imageTransform?: string;
   /** Scale mode for image pattern finalization */
-  readonly scaleMode?: string;
+  readonly scaleMode: string;
   /** Tile scale multiplier for TILE image fills */
   readonly scalingFactor?: number;
   /** Source paint transform (AffineMatrix) for finalization */
   readonly sourceTransform?: AffineMatrix;
+  readonly paintFilter?: ImagePaintFilter;
 };
 
 /**
@@ -207,13 +220,159 @@ function buildAttrs(fillValue: string, opacity: number): ResolvedFillAttrs {
   return { fill: fillValue };
 }
 
+function byteFromUnit(value: number): number {
+  return Math.round(Math.min(1, Math.max(0, value)) * 255);
+}
+
+type ResolvedRasterImageData = {
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+};
+
+const filteredImageDataCache = new WeakMap<Uint8Array, Map<string, ResolvedRasterImageData>>();
+
+function imageFilterCacheKey(
+  mimeType: string,
+  paintFilter: ImagePaintFilter | undefined,
+  colorManage: boolean | undefined,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): string {
+  return [
+    mimeType,
+    `color-managed-${String(colorManage)}`,
+    renderExportSettingsCacheKey(exportSettings),
+    JSON.stringify(resolveImagePaintFilterUniforms(paintFilter)),
+  ].join(":");
+}
+
+function filteredPngSrgbIntent(
+  sourceMimeType: string,
+  sourceSrgbIntent: number | undefined,
+  sourceIccProfile: ResolvedRasterImageData["data"] | undefined,
+  colorManage: boolean | undefined,
+): number | undefined {
+  if (sourceIccProfile) {
+    return undefined;
+  }
+  if (sourceSrgbIntent !== undefined) {
+    return sourceSrgbIntent;
+  }
+  if ((sourceMimeType === "image/jpeg" || sourceMimeType === "image/jpg" || sourceMimeType === "image/png") && colorManage === true) {
+    return 0;
+  }
+  return undefined;
+}
+
+function outputIccProfile(
+  targetProfile: ReturnType<typeof requireManagedImageColorProfile> | undefined,
+  sourceIccProfile: { readonly name: string; readonly data: Uint8Array } | undefined,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): { readonly name: string; readonly data: Uint8Array } | undefined {
+  if (targetProfile === "DISPLAY_P3_V4") {
+    return { name: "Display P3", data: requireManagedDisplayP3IccProfile(exportSettings.imageColorManagement) };
+  }
+  if (targetProfile) {
+    return undefined;
+  }
+  if (!sourceIccProfile) {
+    return undefined;
+  }
+  return sourceIccProfile;
+}
+
+function outputSrgbIntent(
+  targetProfile: ReturnType<typeof requireManagedImageColorProfile> | undefined,
+  sourceMimeType: string,
+  sourceSrgbIntent: number | undefined,
+  sourceIccProfile: ResolvedRasterImageData["data"] | undefined,
+  colorManage: boolean | undefined,
+): number | undefined {
+  if (targetProfile === "SRGB") {
+    return 0;
+  }
+  return filteredPngSrgbIntent(sourceMimeType, sourceSrgbIntent, sourceIccProfile, colorManage);
+}
+
+function resolveImageRasterData(
+  data: Uint8Array,
+  mimeType: string,
+  paintFilter: ImagePaintFilter | undefined,
+  colorManage: boolean | undefined,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): ResolvedRasterImageData {
+  const hasFilter = hasImagePaintFilter(paintFilter);
+  if (!hasFilter && colorManage !== true) {
+    return { data, mimeType };
+  }
+  const cacheKey = imageFilterCacheKey(mimeType, paintFilter, colorManage, exportSettings);
+  const dataCache = filteredImageDataCache.get(data);
+  const cached = dataCache?.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const image = decodeRasterImage(data, mimeType);
+  const targetProfile = colorManage === true ? requireManagedImageColorProfile(exportSettings.imageColorManagement) : undefined;
+  const sourceProfile = targetProfile ? resolveManagedRasterSourceProfile(image) : undefined;
+  const requiresColorConversion = !!(targetProfile && sourceProfile !== targetProfile);
+  const filtered = hasFilter || requiresColorConversion ? new Uint8Array(image.data) : image.data;
+  if (targetProfile && sourceProfile && sourceProfile !== targetProfile) {
+    for (let i = 0; i < filtered.length; i += 4) {
+      const rgb = convertRgbColorProfile({
+        r: filtered[i] / 255,
+        g: filtered[i + 1] / 255,
+        b: filtered[i + 2] / 255,
+      }, sourceProfile, targetProfile);
+      filtered[i] = byteFromUnit(rgb.r);
+      filtered[i + 1] = byteFromUnit(rgb.g);
+      filtered[i + 2] = byteFromUnit(rgb.b);
+    }
+  }
+  if (hasFilter) {
+    for (let i = 0; i < filtered.length; i += 4) {
+      const rgb = applyImagePaintFilterToRgb({
+        r: filtered[i] / 255,
+        g: filtered[i + 1] / 255,
+        b: filtered[i + 2] / 255,
+      }, paintFilter);
+      filtered[i] = byteFromUnit(rgb.r);
+      filtered[i + 1] = byteFromUnit(rgb.g);
+      filtered[i + 2] = byteFromUnit(rgb.b);
+    }
+  }
+  const pngMetadata = pngMetadataFromDecodedRaster(image);
+  const iccProfile = pngMetadata.iccProfile;
+  const outputIcc = outputIccProfile(targetProfile, iccProfile, exportSettings);
+  const result = {
+    data: writePng({
+      width: image.width,
+      height: image.height,
+      data: filtered,
+      gamma: pngMetadata.gamma,
+      srgbIntent: outputSrgbIntent(targetProfile, mimeType, pngMetadata.srgbIntent, iccProfile?.data, colorManage),
+      chromaticity: targetProfile ? undefined : (iccProfile ? undefined : pngMetadata.chromaticity),
+      iccProfile: outputIcc,
+    }),
+    mimeType: "image/png",
+  };
+  if (dataCache) {
+    dataCache.set(cacheKey, result);
+  } else {
+    filteredImageDataCache.set(data, new Map([[cacheKey, result]]));
+  }
+  return result;
+}
+
 /**
  * Resolve a single Fill to SVG attributes and an optional def.
  *
  * This is the exhaustive handler — adding a new Fill type without
  * handling it here will produce a TypeScript compile error.
  */
-export function resolveFill(fill: Fill, ids: IdGenerator): ResolvedFill {
+export function resolveFillWithRenderSettings(
+  fill: Fill,
+  ids: IdGenerator,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): ResolvedFill {
   switch (fill.type) {
     case "solid":
       return { attrs: buildAttrs(colorToHex(fill.color), fill.opacity) };
@@ -282,8 +441,9 @@ export function resolveFill(fill: Fill, ids: IdGenerator): ResolvedFill {
 
     case "image": {
       const id = ids.getNextId("img");
-      const base64 = uint8ArrayToBase64(fill.data);
-      const dataUri = `data:${fill.mimeType};base64,${base64}`;
+      const imageData = resolveImageRasterData(fill.data, fill.mimeType, fill.paintFilter, fill.imageShouldColorManage, exportSettings);
+      const base64 = uint8ArrayToBase64(imageData.data);
+      const dataUri = `data:${imageData.mimeType};base64,${base64}`;
       return {
         attrs: buildAttrs(`url(#${id})`, fill.opacity),
         def: {
@@ -305,6 +465,7 @@ export function resolveFill(fill: Fill, ids: IdGenerator): ResolvedFill {
           scaleMode: fill.scaleMode,
           scalingFactor: fill.scalingFactor,
           sourceTransform: fill.imageTransform,
+          paintFilter: fill.paintFilter,
         },
       };
     }
@@ -319,12 +480,26 @@ function unsupportedFill(fill: never): ResolvedFill {
   throw new Error(`Unsupported fill: ${JSON.stringify(fill)}`);
 }
 
+/** Resolve a fill through public export settings. */
+export function resolveFill(fill: Fill, ids: IdGenerator, exportSettings?: FigmaRenderExportSettings): ResolvedFill {
+  return resolveFillWithRenderSettings(fill, ids, normalizeFigmaRenderExportSettings(exportSettings));
+}
+
 /**
  * Resolve fills array — uses the topmost (last) fill, or fill="none" if empty.
  */
-export function resolveTopFill(fills: readonly Fill[], ids: IdGenerator): ResolvedFill {
+export function resolveTopFillWithRenderSettings(
+  fills: readonly Fill[],
+  ids: IdGenerator,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): ResolvedFill {
   if (fills.length > 0) {
-    return resolveFill(fills[fills.length - 1], ids);
+    return resolveFillWithRenderSettings(fills[fills.length - 1], ids, exportSettings);
   }
   return { attrs: { fill: "none" } };
+}
+
+/** Resolve the visible top fill through public export settings. */
+export function resolveTopFill(fills: readonly Fill[], ids: IdGenerator, exportSettings?: FigmaRenderExportSettings): ResolvedFill {
+  return resolveTopFillWithRenderSettings(fills, ids, normalizeFigmaRenderExportSettings(exportSettings));
 }

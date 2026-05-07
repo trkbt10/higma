@@ -7,7 +7,7 @@
  * - convert/effects.ts (effect-level blendMode)
  */
 
-import type { BlendMode as FigBlendMode } from "@higma-document-models/fig/types";
+import type { BlendMode as FigBlendMode, KiwiEnumValue } from "@higma-document-models/fig/types";
 import type { BlendMode } from "../types";
 
 /**
@@ -41,8 +41,11 @@ const FIGMA_BLEND_MODE_TO_CSS: Partial<Record<FigBlendMode, BlendMode>> = {
  * Returns undefined for NORMAL / PASS_THROUGH / unmapped names.
  */
 export function convertFigmaBlendMode(
-  blendMode: FigBlendMode | undefined,
+  blendMode: FigBlendMode | KiwiEnumValue<FigBlendMode> | undefined,
 ): BlendMode | undefined {
   if (!blendMode) { return undefined; }
-  return FIGMA_BLEND_MODE_TO_CSS[blendMode];
+  if (typeof blendMode === "string") {
+    return FIGMA_BLEND_MODE_TO_CSS[blendMode];
+  }
+  return FIGMA_BLEND_MODE_TO_CSS[blendMode.name];
 }

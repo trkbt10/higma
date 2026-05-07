@@ -26,16 +26,23 @@ import {
   uint8ArrayToBase64,
   matrixToSvgTransform,
   contourToSvgD,
-  resolveFill,
-  resolveTopFill,
+  resolveFillWithRenderSettings,
+  resolveTopFillWithRenderSettings,
   resolveStrokeResult,
   resolveEffects,
   finalizeGradientDefs,
-  finalizeImagePatternDefs,
+  finalizeImagePatternDefsWithRenderSettings,
+  normalizeFigmaRenderExportSettings,
+  renderExportSettingsCacheKey,
   type IdGenerator,
   type ResolvedFill,
   type ResolvedFilter,
 } from "../render";
+import type {
+  NormalizedFigmaRenderExportSettings,
+  RenderExportSettingsCacheKey,
+  SceneGraphRenderOptions,
+} from "../render/export-settings";
 import { computePathContoursBbox } from "../path-bbox";
 import { buildEffectStack, type ResolvedEffectStack } from "../render/effect-stack";
 import { createRenderTreeIdGenerator } from "./id-generator";
@@ -129,12 +136,13 @@ function resolveFrameBackground(
   strokeRendering: StrokeRendering | undefined,
   ids: IdGenerator,
   defs: RenderDef[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): RenderFrameBackground | null {
   if (!hasFills && !strokeRendering) {
     return null;
   }
-  const fillResult = resolveFrameBackgroundFill(hasFills, node.fills, ids, defs);
-  const fillLayers = hasFills ? resolveAllFillLayers(node.fills, ids, defs) : undefined;
+  const fillResult = resolveFrameBackgroundFill(hasFills, node.fills, ids, defs, exportSettings);
+  const fillLayers = hasFills ? resolveAllFillLayers(node.fills, ids, defs, exportSettings) : undefined;
   return {
     fill: fillResult,
     fillLayers,
@@ -280,13 +288,14 @@ function resolveWrapper(
 function finalizeDefs(
   defs: RenderDef[],
   elementBounds: { readonly x?: number; readonly y?: number; readonly width: number; readonly height: number },
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): void {
   finalizeGradientDefs(defs, elementBounds);
   // Image patterns and angular/diamond gradients still operate on
   // `{width, height}` only — they tile/centre on the node's own
   // (0, 0) origin and do not need the bbox offset.
   const sizeOnly = { width: elementBounds.width, height: elementBounds.height };
-  finalizeImagePatternDefs(defs, sizeOnly);
+  finalizeImagePatternDefsWithRenderSettings(defs, sizeOnly, exportSettings);
   finalizeAngularDiamondGradientDefs(defs, sizeOnly);
 }
 
@@ -333,12 +342,13 @@ function resolveMask(
   node: SceneNode,
   ids: IdGenerator,
   defs: RenderDef[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): RenderMask | undefined {
   if (!node.mask) {
     return undefined;
   }
   const maskId = ids.getNextId("mask");
-  const resolvedMaskContent = resolveNode(node.mask.maskContent, ids);
+  const resolvedMaskContent = resolveNode(node.mask.maskContent, ids, exportSettings);
   if (!resolvedMaskContent) {
     return undefined;
   }
@@ -399,8 +409,13 @@ function resolveBackgroundBlur(
 // Helper: Resolve fill and collect defs
 // =============================================================================
 
-function resolveFillResult(fill: Fill, ids: IdGenerator, defs: RenderDef[]): ResolvedFillResult {
-  const resolved = resolveFill(fill, ids);
+function resolveFillResult(
+  fill: Fill,
+  ids: IdGenerator,
+  defs: RenderDef[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): ResolvedFillResult {
+  const resolved = resolveFillWithRenderSettings(fill, ids, exportSettings);
   collectFillDef(resolved, defs);
   return {
     attrs: resolved.attrs,
@@ -413,8 +428,13 @@ function resolveFillResult(fill: Fill, ids: IdGenerator, defs: RenderDef[]): Res
   };
 }
 
-function resolveTopFillResult(fills: readonly Fill[], ids: IdGenerator, defs: RenderDef[]): ResolvedFillResult {
-  const resolved = resolveTopFill(fills, ids);
+function resolveTopFillResult(
+  fills: readonly Fill[],
+  ids: IdGenerator,
+  defs: RenderDef[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): ResolvedFillResult {
+  const resolved = resolveTopFillWithRenderSettings(fills, ids, exportSettings);
   collectFillDef(resolved, defs);
   // When topmost fill gets used here (single-visible path), preserve
   // its paint-level blend mode too — the fills array may still have
@@ -432,9 +452,10 @@ function resolveFrameBackgroundFill(
   fills: readonly Fill[],
   ids: IdGenerator,
   defs: RenderDef[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): ResolvedFillResult {
   if (!hasFills) { return { attrs: { fill: "none" as const } }; }
-  return resolveFillResult(fills[fills.length - 1], ids, defs);
+  return resolveFillResult(fills[fills.length - 1], ids, defs, exportSettings);
 }
 
 /**
@@ -443,13 +464,16 @@ function resolveFrameBackgroundFill(
  * Fills are ordered bottom-to-top (first fill = bottommost layer).
  */
 function resolveAllFillLayers(
-  fills: readonly Fill[], ids: IdGenerator, defs: RenderDef[],
+  fills: readonly Fill[],
+  ids: IdGenerator,
+  defs: RenderDef[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): readonly ResolvedFillLayer[] | undefined {
   if (fills.length < 2) { return undefined; }
 
   const layers: ResolvedFillLayer[] = [];
   for (const fill of fills) {
-    const resolved = resolveFill(fill, ids);
+    const resolved = resolveFillWithRenderSettings(fill, ids, exportSettings);
     collectFillDef(resolved, defs);
     layers.push({
       attrs: resolved.attrs,
@@ -567,13 +591,14 @@ function resolveStrokeRendering(
 function resolveGroupNode(
   node: GroupNode,
   ids: IdGenerator,
+  exportSettings: NormalizedFigmaRenderExportSettings,
   resolvedChildren: readonly RenderNode[] | undefined = undefined,
 ): RenderGroupNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
 
-  const children = resolvedChildren ?? resolveChildren(node.children, ids);
-  const mask = resolveMask(node, ids, defs);
+  const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
+  const mask = resolveMask(node, ids, defs, exportSettings);
 
   return {
     type: "group",
@@ -591,6 +616,7 @@ function resolveGroupNode(
 function resolveFrameNode(
   node: FrameNode,
   ids: IdGenerator,
+  exportSettings: NormalizedFigmaRenderExportSettings,
   resolvedChildren: readonly RenderNode[] | undefined = undefined,
 ): RenderFrameNode {
   const defs: RenderDef[] = [];
@@ -602,12 +628,12 @@ function resolveFrameNode(
   const maskShape = buildClipShape(node.width, node.height, clampedRadius);
 
   const strokeRendering = resolveFrameStrokeRendering(node, clampedRadius, ids, defs, maskShape);
-  const background = resolveFrameBackground(node, hasFills, strokeRendering, ids, defs);
-  const children = resolvedChildren ?? resolveChildren(node.children, ids);
+  const background = resolveFrameBackground(node, hasFills, strokeRendering, ids, defs, exportSettings);
+  const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
   const childClipId = resolveFrameChildClipId(node, children, ids, defs, clampedRadius);
 
   // Finalize gradient coordinates using element size
-  finalizeDefs(defs, { width: node.width, height: node.height });
+  finalizeDefs(defs, { width: node.width, height: node.height }, exportSettings);
 
   // Background blur (foreignObject + backdrop-filter, separate from filter
   // pipeline). Pass the FRAME's rounded-rect shape so the backdrop clip
@@ -618,7 +644,7 @@ function resolveFrameNode(
     maskShape,
   );
 
-  const mask = resolveMask(node, ids, defs);
+  const mask = resolveMask(node, ids, defs, exportSettings);
 
   return {
     type: "frame",
@@ -642,24 +668,24 @@ function resolveFrameNode(
   };
 }
 
-function resolveRectNode(node: RectNode, ids: IdGenerator): RenderRectNode {
+function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderRectNode {
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
   const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
-  const fillResult = resolveTopFillResult(node.fills, ids, defs);
-  const fillLayers = resolveAllFillLayers(node.fills, ids, defs);
+  const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
+  const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
   const maskClipShape = buildClipShape(node.width, node.height, clampedRadius);
   const rectStrokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius };
   const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, rectStrokeShape, maskClipShape);
 
-  finalizeDefs(defs, { width: node.width, height: node.height });
+  finalizeDefs(defs, { width: node.width, height: node.height }, exportSettings);
 
   const backgroundBlur = resolveBackgroundBlur(
     effectStack, { x: 0, y: 0, width: node.width, height: node.height }, ids, defs,
     maskClipShape,
   );
 
-  const mask = resolveMask(node, ids, defs);
+  const mask = resolveMask(node, ids, defs, exportSettings);
   const needsWrapper = !!(wrapper.transform || node.opacity < 1 || wrapper.filterAttr || defs.length > 0 || fillLayers || strokeRendering || backgroundBlur || mask);
 
   return {
@@ -682,11 +708,11 @@ function resolveRectNode(node: RectNode, ids: IdGenerator): RenderRectNode {
   };
 }
 
-function resolveEllipseNode(node: EllipseNode, ids: IdGenerator): RenderEllipseNode | RenderPathNode {
+function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderEllipseNode | RenderPathNode {
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
-  const fillResult = resolveTopFillResult(node.fills, ids, defs);
-  const fillLayers = resolveAllFillLayers(node.fills, ids, defs);
+  const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
+  const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
   const ellipseStrokeShape: StrokeShape = { kind: "ellipse", cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry };
   // INSIDE/OUTSIDE stroke needs an ellipse-shaped mask to clip the doubled
   // stroke width to the correct half. Without this, an INSIDE stroke bleeds
@@ -707,13 +733,13 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator): RenderEllipseN
     effectStack, { x: 0, y: 0, ...ellipseSize }, ids, defs,
     ellipseMaskShape,
   );
-  const mask = resolveMask(node, ids, defs);
+  const mask = resolveMask(node, ids, defs, exportSettings);
 
   // If arc data is present, resolve as a path node
   if (node.arcData) {
     const d = buildEllipseArcPathD(node.cx, node.cy, node.rx, node.ry, node.arcData);
     const paths: RenderPathContour[] = [{ d, fillRule: "evenodd" }];
-    finalizeDefs(defs, ellipseSize);
+    finalizeDefs(defs, ellipseSize, exportSettings);
     const needsWrapper = !!(
       wrapper.transform || node.opacity < 1 || wrapper.filterAttr || defs.length > 0 || fillLayers || strokeRendering || backgroundBlur || mask
     );
@@ -736,7 +762,7 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator): RenderEllipseN
     };
   }
 
-  finalizeDefs(defs, ellipseSize);
+  finalizeDefs(defs, ellipseSize, exportSettings);
   const needsWrapper = !!(wrapper.transform || node.opacity < 1 || wrapper.filterAttr || defs.length > 0 || fillLayers || strokeRendering || backgroundBlur || mask);
 
   return {
@@ -760,11 +786,11 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator): RenderEllipseN
   };
 }
 
-function resolvePathNode(node: PathNode, ids: IdGenerator): RenderPathNode {
+function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderPathNode {
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
-  const fillResult = resolveTopFillResult(node.fills, ids, defs);
-  const fillLayers = resolveAllFillLayers(node.fills, ids, defs);
+  const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
+  const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
 
   const paths: RenderPathContour[] = node.contours.map((contour) => {
     const base: RenderPathContour = {
@@ -772,7 +798,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator): RenderPathNode {
       fillRule: contour.windingRule !== "nonzero" ? contour.windingRule as "evenodd" : undefined,
     };
     if (contour.fillOverride) {
-      const overrideFill = resolveFillResult(contour.fillOverride, ids, defs);
+      const overrideFill = resolveFillResult(contour.fillOverride, ids, defs, exportSettings);
       return { ...base, fillOverride: overrideFill };
     }
     return base;
@@ -798,13 +824,13 @@ function resolvePathNode(node: PathNode, ids: IdGenerator): RenderPathNode {
   // Falls back to (0, 0) origin when contours can't be measured.
   const pathBounds = resolvePathBounds(node);
   if (pathBounds) {
-    finalizeDefs(defs, pathBounds);
+    finalizeDefs(defs, pathBounds, exportSettings);
   }
 
   // Pass path shape so backdrop-filter clips to the actual contour, not
   // the node's bounding rect (matches ELLIPSE/FRAME behaviour).
   const backgroundBlur = resolveOptionalBackgroundBlur(effectStack, pathBounds, ids, defs, pathMaskShape);
-  const mask = resolveMask(node, ids, defs);
+  const mask = resolveMask(node, ids, defs, exportSettings);
 
   const needsWrapper = !!(
     wrapper.transform || node.opacity < 1 || wrapper.filterAttr ||
@@ -830,7 +856,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator): RenderPathNode {
   };
 }
 
-function resolveTextNode(node: TextNode, ids: IdGenerator): RenderTextNode {
+function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderTextNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
   const fillColor = colorToHex(node.fill.color);
@@ -839,7 +865,7 @@ function resolveTextNode(node: TextNode, ids: IdGenerator): RenderTextNode {
   const textClipId = resolveTextClipId(node, ids, defs);
   const content = resolveTextContent(node);
 
-  const mask = resolveMask(node, ids, defs);
+  const mask = resolveMask(node, ids, defs, exportSettings);
 
   return {
     type: "text",
@@ -866,13 +892,13 @@ function resolveTextNode(node: TextNode, ids: IdGenerator): RenderTextNode {
   };
 }
 
-function resolveImageNode(node: ImageNode, ids: IdGenerator): RenderImageNode {
+function resolveImageNode(node: ImageNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderImageNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
 
   const dataUri = resolveImageDataUri(node);
 
-  const mask = resolveMask(node, ids, defs);
+  const mask = resolveMask(node, ids, defs, exportSettings);
   const needsWrapper = !!(wrapper.transform || node.opacity < 1 || mask);
 
   return {
@@ -890,6 +916,7 @@ function resolveImageNode(node: ImageNode, ids: IdGenerator): RenderImageNode {
     sourceData: node.data,
     sourceMimeType: node.mimeType,
     sourceScaleMode: node.scaleMode,
+    sourceImageShouldColorManage: node.imageShouldColorManage,
     mask,
   };
 }
@@ -917,26 +944,26 @@ function resolvePreserveAspectRatio(scaleMode: string): string {
 // Node Dispatch
 // =============================================================================
 
-function resolveNode(node: SceneNode, ids: IdGenerator): RenderNode | null {
+function resolveNode(node: SceneNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderNode | null {
   if (!node.visible) {
     return null;
   }
 
   switch (node.type) {
     case "group":
-      return resolveGroupNode(node, ids);
+      return resolveGroupNode(node, ids, exportSettings);
     case "frame":
-      return resolveFrameNode(node, ids);
+      return resolveFrameNode(node, ids, exportSettings);
     case "rect":
-      return resolveRectNode(node, ids);
+      return resolveRectNode(node, ids, exportSettings);
     case "ellipse":
-      return resolveEllipseNode(node, ids);
+      return resolveEllipseNode(node, ids, exportSettings);
     case "path":
-      return resolvePathNode(node, ids);
+      return resolvePathNode(node, ids, exportSettings);
     case "text":
-      return resolveTextNode(node, ids);
+      return resolveTextNode(node, ids, exportSettings);
     case "image":
-      return resolveImageNode(node, ids);
+      return resolveImageNode(node, ids, exportSettings);
     default: {
       // Exhaustiveness check
       const _exhaustive: never = node;
@@ -946,10 +973,14 @@ function resolveNode(node: SceneNode, ids: IdGenerator): RenderNode | null {
   }
 }
 
-function resolveChildren(children: readonly SceneNode[], ids: IdGenerator): RenderNode[] {
+function resolveChildren(
+  children: readonly SceneNode[],
+  ids: IdGenerator,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): RenderNode[] {
   const result: RenderNode[] = [];
   for (const child of children) {
-    const resolved = resolveNode(child, ids);
+    const resolved = resolveNode(child, ids, exportSettings);
     if (resolved) {
       result.push(resolved);
     }
@@ -969,6 +1000,7 @@ type CachedRenderNode = {
 export type RenderTreeResolutionCache = {
   readonly nodesById: ReadonlyMap<string, CachedRenderNode>;
   readonly rootChildren: readonly RenderNode[];
+  readonly exportSettingsKey: RenderExportSettingsCacheKey;
 };
 
 export type RenderTreeResolutionResult = {
@@ -990,25 +1022,96 @@ function cachedContainerChildren(node: RenderNode): readonly RenderNode[] | unde
   return undefined;
 }
 
+function cacheReusableForExportSettings(
+  previousCache: RenderTreeResolutionCache | undefined,
+  cacheKey: RenderExportSettingsCacheKey,
+): RenderTreeResolutionCache | undefined {
+  if (previousCache === undefined) {
+    return undefined;
+  }
+  if (previousCache.exportSettingsKey !== cacheKey) {
+    return undefined;
+  }
+  return previousCache;
+}
+
+function cachedPreviousContainerChildren(previous: CachedRenderNode | undefined): readonly RenderNode[] | undefined {
+  if (previous === undefined) {
+    return undefined;
+  }
+  return cachedContainerChildren(previous.node);
+}
+
 function resolveContainerNodeIncremental(
   node: GroupNode | FrameNode,
   ids: IdGenerator,
   children: readonly RenderNode[],
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): RenderGroupNode | RenderFrameNode {
   if (node.type === "group") {
-    return resolveGroupNode(node, ids, children);
+    return resolveGroupNode(node, ids, exportSettings, children);
   }
-  return resolveFrameNode(node, ids, children);
+  return resolveFrameNode(node, ids, exportSettings, children);
 }
 
-function reuseRootChildren(
-  previousCache: RenderTreeResolutionCache | undefined,
-  resolvedChildren: readonly RenderNode[],
-): readonly RenderNode[] {
-  if (previousCache && renderChildrenEqual(previousCache.rootChildren, resolvedChildren)) {
-    return previousCache.rootChildren;
+function shouldOmitViewportRootFrameChildClip(
+  node: RenderFrameNode,
+  viewport: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): boolean {
+  return node.childClipId !== undefined
+    && viewport.x === 0
+    && viewport.y === 0
+    && node.wrapper.transform === undefined
+    && node.width === viewport.width
+    && node.height === viewport.height;
+}
+
+function shouldReuseViewportRootChildClipMark(
+  previousChild: RenderNode | undefined,
+  child: RenderFrameNode,
+): previousChild is RenderFrameNode {
+  return previousChild?.type === "frame"
+    && previousChild.omitChildClip === true
+    && previousChild.id === child.id
+    && previousChild.source === child.source
+    && previousChild.childClipId === child.childClipId;
+}
+
+function markViewportRootChildClip(
+  child: RenderNode,
+  viewport: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  previousChild: RenderNode | undefined,
+): RenderNode {
+  if (child.type === "frame") {
+    if (shouldOmitViewportRootFrameChildClip(child, viewport)) {
+      if (child.omitChildClip === true) {
+        return child;
+      }
+      if (shouldReuseViewportRootChildClipMark(previousChild, child)) {
+        return previousChild;
+      }
+      return { ...child, omitChildClip: true };
+    }
+    if (child.omitChildClip === true) {
+      return { ...child, omitChildClip: undefined };
+    }
   }
-  return resolvedChildren;
+  return child;
+}
+
+function markViewportRootChildClips(
+  children: readonly RenderNode[],
+  viewport: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  previousChildren?: readonly RenderNode[],
+): readonly RenderNode[] {
+  const marked = children.map((child, index) => markViewportRootChildClip(child, viewport, previousChildren?.[index]));
+  if (previousChildren && renderChildrenEqual(previousChildren, marked)) {
+    return previousChildren;
+  }
+  if (renderChildrenEqual(children, marked)) {
+    return children;
+  }
+  return marked;
 }
 
 function resolveNodeIncremental(
@@ -1016,6 +1119,7 @@ function resolveNodeIncremental(
   ids: IdGenerator,
   previousCache: RenderTreeResolutionCache | undefined,
   nextNodesById: Map<string, CachedRenderNode>,
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): RenderNode | null {
   if (!node.visible) {
     return null;
@@ -1029,18 +1133,19 @@ function resolveNodeIncremental(
   }
 
   if (node.type === "group" || node.type === "frame") {
-    const children = resolveChildrenIncremental(node.children, ids, previousCache, nextNodesById);
-    if (previous && renderChildrenEqual(cachedContainerChildren(previous.node) ?? [], children)) {
+    const children = resolveChildrenIncremental(node.children, ids, previousCache, nextNodesById, exportSettings);
+    const previousChildren = cachedPreviousContainerChildren(previous);
+    if (previous !== undefined && previousChildren !== undefined && renderChildrenEqual(previousChildren, children)) {
       nextNodesById.set(node.id, previous);
       return previous.node;
     }
 
-    const resolved = resolveContainerNodeIncremental(node, ids, children);
+    const resolved = resolveContainerNodeIncremental(node, ids, children, exportSettings);
     nextNodesById.set(node.id, { source: node, node: resolved });
     return resolved;
   }
 
-  const resolved = resolveNode(node, ids);
+  const resolved = resolveNode(node, ids, exportSettings);
   if (!resolved) {
     return null;
   }
@@ -1053,10 +1158,11 @@ function resolveChildrenIncremental(
   ids: IdGenerator,
   previousCache: RenderTreeResolutionCache | undefined,
   nextNodesById: Map<string, CachedRenderNode>,
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): RenderNode[] {
   const result: RenderNode[] = [];
   for (const child of children) {
-    const resolved = resolveNodeIncremental(child, ids, previousCache, nextNodesById);
+    const resolved = resolveNodeIncremental(child, ids, previousCache, nextNodesById, exportSettings);
     if (resolved) {
       result.push(resolved);
     }
@@ -1075,15 +1181,16 @@ function resolveChildrenIncremental(
  * clip path generation, def collection) are performed here. Backends
  * only format the result.
  */
-export function resolveRenderTree(sceneGraph: SceneGraph): RenderTree {
+export function resolveRenderTree(sceneGraph: SceneGraph, options?: SceneGraphRenderOptions): RenderTree {
   const ids = createRenderTreeIdGenerator();
-  const children = resolveChildren(sceneGraph.root.children, ids);
+  const exportSettings = normalizeFigmaRenderExportSettings(options?.exportSettings);
   const viewport = sceneGraph.viewport ?? {
     x: 0,
     y: 0,
     width: sceneGraph.width,
     height: sceneGraph.height,
   };
+  const children = markViewportRootChildClips(resolveChildren(sceneGraph.root.children, ids, exportSettings), viewport);
 
   return {
     width: sceneGraph.width,
@@ -1103,17 +1210,21 @@ export function resolveRenderTree(sceneGraph: SceneGraph): RenderTree {
 export function resolveRenderTreeIncremental(
   sceneGraph: SceneGraph,
   previousCache: RenderTreeResolutionCache | undefined,
+  options?: SceneGraphRenderOptions,
 ): RenderTreeResolutionResult {
   const ids = createRenderTreeIdGenerator();
   const nextNodesById = new Map<string, CachedRenderNode>();
-  const resolvedChildren = resolveChildrenIncremental(sceneGraph.root.children, ids, previousCache, nextNodesById);
-  const children = reuseRootChildren(previousCache, resolvedChildren);
+  const exportSettings = normalizeFigmaRenderExportSettings(options?.exportSettings);
+  const cacheKey = renderExportSettingsCacheKey(exportSettings);
+  const reusablePreviousCache = cacheReusableForExportSettings(previousCache, cacheKey);
+  const resolvedChildren = resolveChildrenIncremental(sceneGraph.root.children, ids, reusablePreviousCache, nextNodesById, exportSettings);
   const viewport = sceneGraph.viewport ?? {
     x: 0,
     y: 0,
     width: sceneGraph.width,
     height: sceneGraph.height,
   };
+  const children = markViewportRootChildClips(resolvedChildren, viewport, reusablePreviousCache?.rootChildren);
 
   return {
     renderTree: {
@@ -1122,6 +1233,6 @@ export function resolveRenderTreeIncremental(
       viewport,
       children,
     },
-    cache: { nodesById: nextNodesById, rootChildren: children },
+    cache: { nodesById: nextNodesById, rootChildren: children, exportSettingsKey: cacheKey },
   };
 }

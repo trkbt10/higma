@@ -4,13 +4,17 @@
  * Caches textures by image reference to avoid redundant uploads.
  */
 
-import type { TextureResource } from "./texture-resource";
+import type { TextureColorManagement, TextureResource } from "./texture-resource";
 
 export type TextureEntry = {
   readonly texture: WebGLTexture;
   readonly width: number;
   readonly height: number;
   refCount: number;
+};
+
+export type TextureUploadOptions = {
+  readonly colorManagement: TextureColorManagement;
 };
 
 /**
@@ -20,9 +24,9 @@ export type TextureEntry = {
  */
 export type TextureCache = {
   /** Prepare a texture for rendering without adding a transient draw reference. */
-  prepare(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry>;
+  prepare(resource: TextureResource, data: Uint8Array, mimeType: string, options: TextureUploadOptions): Promise<TextureEntry>;
   /** Get or create a texture from image data */
-  getOrCreate(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry>;
+  getOrCreate(resource: TextureResource, data: Uint8Array, mimeType: string, options: TextureUploadOptions): Promise<TextureEntry>;
   /** Synchronous lookup for an already-cached texture */
   getIfCached(resource: TextureResource): TextureEntry | null;
   /** Release a texture reference */
@@ -44,13 +48,50 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   }
 
-  async function uploadTexture(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry> {
+  function shouldColorManage(options: TextureUploadOptions): boolean {
+    return options.colorManagement.kind === "managed";
+  }
+
+  function resolveImageBitmapOptions(options: TextureUploadOptions): ImageBitmapOptions {
+    return { colorSpaceConversion: shouldColorManage(options) ? "default" : "none" };
+  }
+
+  function applyColorManagement(options: TextureUploadOptions): void {
+    applyUnpackColorSpace(options);
+    gl.pixelStorei(
+      gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,
+      shouldColorManage(options) ? gl.BROWSER_DEFAULT_WEBGL : gl.NONE,
+    );
+  }
+
+  function applyUnpackColorSpace(options: TextureUploadOptions): void {
+    if (options.colorManagement.kind === "unmanaged") {
+      return;
+    }
+    const target = options.colorManagement.targetColorProfile;
+    const colorManagedGl = gl as WebGLRenderingContext & {
+      unpackColorSpace?: "srgb" | "display-p3";
+    };
+    if (target === "DISPLAY_P3_V4") {
+      if (colorManagedGl.unpackColorSpace === undefined) {
+        throw new Error("Display P3 WebGL texture upload requires WebGLRenderingContext.unpackColorSpace support");
+      }
+      colorManagedGl.unpackColorSpace = "display-p3";
+      return;
+    }
+    if (colorManagedGl.unpackColorSpace !== undefined) {
+      colorManagedGl.unpackColorSpace = "srgb";
+    }
+  }
+
+  async function uploadTexture(resource: TextureResource, data: Uint8Array, mimeType: string, options: TextureUploadOptions): Promise<TextureEntry> {
     // `Uint8Array<ArrayBufferLike>` is structurally a valid `BlobPart`
     // (BufferSource), but TS lib variants disagree on the assignability
     // due to recent ArrayBuffer-vs-SharedArrayBuffer narrowing. Keep
     // the cast scoped to this single boundary.
     const blob = new Blob([data as BlobPart], { type: mimeType });
-    const bitmap = await createImageBitmap(blob);
+    const bitmapOptions = resolveImageBitmapOptions(options);
+    const bitmap = await createImageBitmap(blob, bitmapOptions);
 
     const texture = gl.createTexture();
     if (!texture) {
@@ -59,6 +100,7 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
     }
 
     gl.bindTexture(gl.TEXTURE_2D, texture);
+    applyColorManagement(options);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
     configureTextureParams();
 
@@ -74,7 +116,7 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
     return entry;
   }
 
-  async function prepareTexture(resource: TextureResource, data: Uint8Array, mimeType: string): Promise<TextureEntry> {
+  async function prepareTexture(resource: TextureResource, data: Uint8Array, mimeType: string, options: TextureUploadOptions): Promise<TextureEntry> {
     const existing = cache.get(resource.id);
     if (existing) {
       return existing;
@@ -85,7 +127,7 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
       return pending;
     }
 
-    const upload = uploadTexture(resource, data, mimeType);
+    const upload = uploadTexture(resource, data, mimeType, options);
     pendingUploads.set(resource.id, upload);
     try {
       return await upload;
@@ -95,11 +137,11 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
   }
 
   return {
-    prepare(resource, data, mimeType) {
-      return prepareTexture(resource, data, mimeType);
+    prepare(resource, data, mimeType, options) {
+      return prepareTexture(resource, data, mimeType, options);
     },
 
-    async getOrCreate(resource, data, mimeType) {
+    async getOrCreate(resource, data, mimeType, options) {
       const existing = cache.get(resource.id);
       if (existing) {
         existing.refCount++;
@@ -111,11 +153,15 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
         entry.refCount++;
         return entry;
       }
-      return prepareTexture(resource, data, mimeType);
+      return prepareTexture(resource, data, mimeType, options);
     },
 
     getIfCached(resource) {
-      return cache.get(resource.id) ?? null;
+      const entry = cache.get(resource.id);
+      if (entry === undefined) {
+        return null;
+      }
+      return entry;
     },
 
     release(resource) {

@@ -20,6 +20,7 @@
  */
 
 import type { SceneGraph } from "../scene-graph/types";
+import type { SceneGraphRenderOptions } from "../scene-graph/render";
 import {
   resolveRenderTree,
   type RenderTree,
@@ -856,10 +857,18 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
       const bottomY = h + (sign === 0 ? 0 : -sign * (sides.bottom / 2));
       const leftX = sign * (sides.left / 2);
       const rightX = w + (sign === 0 ? 0 : -sign * (sides.right / 2));
-      if (sides.top > 0) lines.push(line({ x1: 0, y1: topY, x2: w, y2: topY, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.top }));
-      if (sides.right > 0) lines.push(line({ x1: rightX, y1: 0, x2: rightX, y2: h, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.right }));
-      if (sides.bottom > 0) lines.push(line({ x1: 0, y1: bottomY, x2: w, y2: bottomY, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.bottom }));
-      if (sides.left > 0) lines.push(line({ x1: leftX, y1: 0, x2: leftX, y2: h, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.left }));
+      if (sides.top > 0) {
+        lines.push(line({ x1: 0, y1: topY, x2: w, y2: topY, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.top }));
+      }
+      if (sides.right > 0) {
+        lines.push(line({ x1: rightX, y1: 0, x2: rightX, y2: h, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.right }));
+      }
+      if (sides.bottom > 0) {
+        lines.push(line({ x1: 0, y1: bottomY, x2: w, y2: bottomY, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.bottom }));
+      }
+      if (sides.left > 0) {
+        lines.push(line({ x1: leftX, y1: 0, x2: leftX, y2: h, stroke: color, "stroke-opacity": opacity, "stroke-width": sides.left }));
+      }
 
       // Clip the band to the rounded perimeter only for INSIDE alignment;
       // OUTSIDE strokes lie outside the rect by definition and clipping
@@ -1032,7 +1041,8 @@ function formatFrameNode(node: RenderFrameNode): SvgString {
   }
 
   const childElements = node.children.map(formatNode);
-  if (node.childClipId && childElements.length > 0) {
+  const childClipId = node.omitChildClip ? undefined : node.childClipId;
+  if (childClipId && childElements.length > 0) {
     // Clip elision is only safe for SQUARE-CORNERED frames. When the
     // frame has a non-zero corner radius, children that paint past the
     // bg's rounded edge (e.g. an IMAGE/LIGHTEN-blended fill on a child
@@ -1049,7 +1059,7 @@ function formatFrameNode(node: RenderFrameNode): SvgString {
       // exactly because the frame is square-cornered.
       parts.push(...bgFillParts, ...childElements, ...bgStrokeParts);
     } else {
-      parts.push(g({ "clip-path": `url(#${node.childClipId})` }, ...bgFillParts, ...childElements));
+      parts.push(g({ "clip-path": `url(#${childClipId})` }, ...bgFillParts, ...childElements));
       parts.push(...bgStrokeParts);
     }
   } else {
@@ -1204,14 +1214,12 @@ function formatTextNode(node: RenderTextNode): SvgString {
     if (node.content.d === "") {
       return EMPTY_SVG;
     }
-    let glyphContent: SvgString = path({
+    const glyphPath = path({
       d: node.content.d,
       fill: node.fillColor,
       "fill-opacity": node.fillOpacity,
     });
-    if (node.hyperlink) {
-      glyphContent = svgAnchor({ href: node.hyperlink }, glyphContent);
-    }
+    const glyphContent = node.hyperlink ? svgAnchor({ href: node.hyperlink }, glyphPath) : glyphPath;
     const content = clipSvgContent(glyphContent, node.textClipId);
 
     const parts: SvgString[] = [];
@@ -1249,12 +1257,8 @@ function formatTextNode(node: RenderTextNode): SvgString {
     ),
   );
 
-  let textContent: SvgString = groupMultipleTextElements(textElements);
-
-  // Wrap in hyperlink if present
-  if (node.hyperlink) {
-    textContent = svgAnchor({ href: node.hyperlink }, textContent);
-  }
+  const groupedTextContent = groupMultipleTextElements(textElements);
+  const textContent = node.hyperlink ? svgAnchor({ href: node.hyperlink }, groupedTextContent) : groupedTextContent;
 
   const clippedContent = clipSvgContent(textContent, node.textClipId);
 
@@ -1366,7 +1370,7 @@ export function formatRenderTreeToSvg(
  * Resolves the SceneGraph to a RenderTree, then formats to SVG.
  * This is the backward-compatible entry point.
  */
-export function renderSceneGraphToSvg(sceneGraph: SceneGraph): SvgString {
-  const renderTree = resolveRenderTree(sceneGraph);
+export function renderSceneGraphToSvg(sceneGraph: SceneGraph, options?: SceneGraphRenderOptions): SvgString {
+  const renderTree = resolveRenderTree(sceneGraph, options);
   return formatRenderTreeToSvg(renderTree);
 }

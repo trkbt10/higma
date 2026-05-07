@@ -164,6 +164,22 @@ export type ImageFill = {
   readonly naturalHeight?: number;
   /** Image transform (for non-FILL scale modes) */
   readonly imageTransform?: AffineMatrix;
+  readonly paintFilter?: ImagePaintFilter;
+  readonly imageShouldColorManage?: boolean;
+};
+
+export type ImagePaintFilter = {
+  readonly tint?: number;
+  readonly shadows?: number;
+  readonly highlights?: number;
+  readonly detail?: number;
+  readonly exposure?: number;
+  readonly vignette?: number;
+  readonly temperature?: number;
+  readonly vibrance?: number;
+  readonly contrast?: number;
+  readonly brightness?: number;
+  readonly saturation?: number;
 };
 
 export type Fill =
@@ -491,6 +507,7 @@ export type ImageNode = SceneNodeBase & {
   readonly data: Uint8Array;
   readonly mimeType: string;
   readonly scaleMode: string;
+  readonly imageShouldColorManage?: boolean;
 };
 
 export type SceneNode =

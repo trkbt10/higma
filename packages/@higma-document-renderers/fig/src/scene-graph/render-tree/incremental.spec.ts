@@ -1,6 +1,6 @@
 /** @file Incremental RenderTree resolution tests. */
 
-import { createNodeId, type RectNode, type SceneGraph } from "../types";
+import { createNodeId, type FrameNode, type RectNode, type SceneGraph, type SceneNode } from "../types";
 import { resolveRenderTreeIncremental } from "./resolve";
 
 const identity = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
@@ -20,7 +20,7 @@ function rect(id: string, x: number): RectNode {
   };
 }
 
-function graph(first: RectNode, second: RectNode): SceneGraph {
+function graphWithChildren(children: readonly SceneNode[]): SceneGraph {
   return {
     width: 100,
     height: 100,
@@ -32,8 +32,28 @@ function graph(first: RectNode, second: RectNode): SceneGraph {
       opacity: 1,
       visible: true,
       effects: [],
-      children: [first, second],
+      children,
     },
+  };
+}
+
+function graph(first: RectNode, second: RectNode): SceneGraph {
+  return graphWithChildren([first, second]);
+}
+
+function viewportFrame(child: SceneNode): FrameNode {
+  return {
+    id: createNodeId("viewport-frame"),
+    type: "frame",
+    transform: identity,
+    opacity: 1,
+    visible: true,
+    effects: [],
+    width: 100,
+    height: 100,
+    fills: [],
+    clipsContent: true,
+    children: [child],
   };
 }
 
@@ -57,5 +77,23 @@ describe("resolveRenderTreeIncremental", () => {
     const next = resolveRenderTreeIncremental(graph(first, second), initial.cache);
 
     expect(next.renderTree.children).toBe(initial.renderTree.children);
+  });
+
+  it("reuses root children after viewport clip omission is applied", () => {
+    const frame = viewportFrame(rect("inner", 0));
+    const initial = resolveRenderTreeIncremental(graphWithChildren([frame]), undefined);
+    const next = resolveRenderTreeIncremental(graphWithChildren([frame]), initial.cache);
+
+    expect(next.renderTree.children).toBe(initial.renderTree.children);
+  });
+
+  it("invalidates reused nodes when export settings change", () => {
+    const first = rect("first", 0);
+    const initial = resolveRenderTreeIncremental(graphWithChildren([first]), undefined);
+    const next = resolveRenderTreeIncremental(graphWithChildren([first]), initial.cache, {
+      exportSettings: { colorProfile: "SRGB" },
+    });
+
+    expect(next.renderTree.children[0]).not.toBe(initial.renderTree.children[0]);
   });
 });

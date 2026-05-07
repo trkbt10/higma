@@ -4,7 +4,8 @@
  * Handles solid, linear gradient, radial gradient, and image fills.
  */
 
-import type { Fill, Color, AffineMatrix } from "../scene-graph/types";
+import type { Fill, Color, AffineMatrix, ImagePaintFilter } from "../scene-graph/types";
+import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "../scene-graph/render/image-paint-filter";
 import type { ShaderCache } from "./shaders";
 
 // =============================================================================
@@ -306,6 +307,7 @@ export type ImageFillOptions = {
   readonly scaleMode?: string;
   /** TILE scale multiplier */
   readonly scalingFactor?: number;
+  readonly paintFilter?: ImagePaintFilter;
 };
 
 
@@ -381,6 +383,15 @@ export function drawImageFill(
   gl.uniform1i(shaders.getUniformLocation(programName, "u_repeat"), repeat ? 1 : 0);
   gl.uniform1i(shaders.getUniformLocation(programName, "u_clipTransparent"), clipTransparent ? 1 : 0);
   gl.uniform1f(shaders.getUniformLocation(programName, "u_opacity"), opacity);
+  const filterUniforms = resolveImagePaintFilterUniforms(options?.paintFilter);
+  gl.uniform1i(shaders.getUniformLocation(programName, "u_hasPaintFilter"), hasImagePaintFilter(options?.paintFilter) ? 1 : 0);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_exposure"), filterUniforms.exposure);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_contrast"), filterUniforms.contrast);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_brightness"), filterUniforms.brightness);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_temperature"), filterUniforms.temperature);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_tint"), filterUniforms.tint);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_saturation"), filterUniforms.saturation);
+  gl.uniform1f(shaders.getUniformLocation(programName, "u_vibrance"), filterUniforms.vibrance);
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }

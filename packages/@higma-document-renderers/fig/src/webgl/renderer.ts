@@ -38,6 +38,12 @@ import type {
   PathContour,
   ClipShape,
 } from "../scene-graph/types";
+import {
+  normalizeFigmaRenderExportSettings,
+  requireManagedImageColorProfile,
+  type FigmaRenderExportSettings,
+  type NormalizedFigmaRenderExportSettings,
+} from "../scene-graph/render";
 
 import {
   type RenderNode,
@@ -68,7 +74,7 @@ import {
   drawImageFill,
   type GLContext,
 } from "./fill-renderer";
-import { imageTextureResource } from "./texture-resource";
+import { imageTextureResource, type TextureColorManagement } from "./texture-resource";
 import { IDENTITY_MATRIX, multiplyMatrices } from "@higma-document-models/fig/matrix";
 import { rebuildStencilClipStack, type StencilClipEntry } from "./clip-mask";
 import {
@@ -118,6 +124,7 @@ export type WebGLRendererOptions = {
   readonly backgroundColor?: Color;
   /** Central resource owner for caches and precompiled GPU programs. */
   readonly resourceContext?: WebGLFigmaResourceContext;
+  readonly exportSettings?: FigmaRenderExportSettings;
 };
 
 export type WebGLFigmaRendererMetrics = {
@@ -130,6 +137,34 @@ export type WebGLFigmaRendererMetrics = {
 // =============================================================================
 // WebGL Renderer
 // =============================================================================
+
+function configureWebGLColorProfile(
+  gl: WebGLRenderingContext,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): void {
+  if (exportSettings.imageColorManagement.kind === "unmanaged") {
+    return;
+  }
+  const profile = requireManagedImageColorProfile(exportSettings.imageColorManagement);
+  const colorManagedGl = gl as WebGLRenderingContext & {
+    drawingBufferColorSpace?: "srgb" | "display-p3";
+    unpackColorSpace?: "srgb" | "display-p3";
+  };
+  if (profile === "DISPLAY_P3_V4") {
+    if (colorManagedGl.drawingBufferColorSpace === undefined || colorManagedGl.unpackColorSpace === undefined) {
+      throw new Error("Display P3 WebGL rendering requires drawingBufferColorSpace and unpackColorSpace support");
+    }
+    colorManagedGl.drawingBufferColorSpace = "display-p3";
+    colorManagedGl.unpackColorSpace = "display-p3";
+    return;
+  }
+  if (colorManagedGl.drawingBufferColorSpace !== undefined) {
+    colorManagedGl.drawingBufferColorSpace = "srgb";
+  }
+  if (colorManagedGl.unpackColorSpace !== undefined) {
+    colorManagedGl.unpackColorSpace = "srgb";
+  }
+}
 
 /** WebGL renderer instance for Figma scene graphs */
 export type WebGLFigmaRendererInstance = {
@@ -158,6 +193,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
   // Reassign after null guard so TypeScript narrows correctly in closures
   const gl: WebGLRenderingContext = glOrNull;
+  const exportSettings = normalizeFigmaRenderExportSettings(options.exportSettings);
+  configureWebGLColorProfile(gl, exportSettings);
 
   const pixelRatioRef = { value: options.pixelRatio ?? (typeof window !== "undefined" ? window.devicePixelRatio : 1) };
   const backgroundColor = options.backgroundColor ?? { r: 1, g: 1, b: 1, a: 1 };
@@ -248,13 +285,42 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     clipStencilValid.value = clipStack.length > 0;
   }
 
+  function colorManagementForImagePaint(fill: Fill & { readonly type: "image" }): TextureColorManagement {
+    if (fill.imageShouldColorManage === true) {
+      return {
+        kind: "managed",
+        targetColorProfile: requireManagedImageColorProfile(exportSettings.imageColorManagement),
+      };
+    }
+    return { kind: "unmanaged" };
+  }
+
+  function colorManagementForImageNode(node: RenderImageNode): TextureColorManagement {
+    if (node.sourceImageShouldColorManage === undefined) {
+      throw new Error(`WebGL image node ${node.id} requires explicit imageShouldColorManage`);
+    }
+    if (node.sourceImageShouldColorManage) {
+      return {
+        kind: "managed",
+        targetColorProfile: requireManagedImageColorProfile(exportSettings.imageColorManagement),
+      };
+    }
+    return { kind: "unmanaged" };
+  }
+
   async function walkForImages(node: RenderNode, parentTransform: AffineMatrix): Promise<void> {
     const worldTransform = multiplyMatrices(parentTransform, node.source.transform);
     const visible = isVisualNodeInViewport(node, worldTransform);
 
     // Image nodes carry source data for texture creation
     if (node.type === "image" && visible) {
-      await textureCache.prepare(imageTextureResource(node.sourceImageRef), node.sourceData, node.sourceMimeType);
+      const colorManagement = colorManagementForImageNode(node);
+      await textureCache.prepare(
+        imageTextureResource(node.sourceImageRef, colorManagement),
+        node.sourceData,
+        node.sourceMimeType,
+        { colorManagement },
+      );
     }
 
     // Shape and frame nodes share `sourceFills`. Walk all variants that
@@ -267,7 +333,13 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     )) {
       for (const fill of node.sourceFills) {
         if (fill.type === "image") {
-          await textureCache.prepare(imageTextureResource(fill.imageRef), fill.data, fill.mimeType);
+          const colorManagement = colorManagementForImagePaint(fill);
+          await textureCache.prepare(
+            imageTextureResource(fill.imageRef, colorManagement),
+            fill.data,
+            fill.mimeType,
+            { colorManagement },
+          );
         }
       }
     }
@@ -316,7 +388,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         break;
 
       case "image": {
-        const entry = textureCache.getIfCached(imageTextureResource(fill.imageRef));
+        const entry = textureCache.getIfCached(imageTextureResource(fill.imageRef, colorManagementForImagePaint(fill)));
         if (entry) {
           drawImageFill({
             ctx, vertices, texture: entry.texture, transform,
@@ -326,6 +398,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
               imageHeight: entry.height,
               scaleMode: fill.scaleMode,
               scalingFactor: fill.scalingFactor,
+              paintFilter: fill.paintFilter,
             },
           });
         }
@@ -1429,7 +1502,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderImageFromTree(node: RenderImageNode, transform: AffineMatrix, opacity: number): void {
-    const entry = textureCache.getIfCached(imageTextureResource(node.sourceImageRef));
+    const entry = textureCache.getIfCached(imageTextureResource(node.sourceImageRef, colorManagementForImageNode(node)));
     if (!entry) { return; }
 
     const vertices = geometryCache.getRectVertices(node.width, node.height);

@@ -16,8 +16,9 @@ type Props = { readonly node: RenderFrameNode };
 
 function renderFrameChildren(node: RenderFrameNode): ReactNode {
   const childElements = node.children.map((child) => <RenderNodeComponent key={child.id} node={child} />);
-  if (node.childClipId && childElements.length > 0) {
-    return <g clipPath={`url(#${node.childClipId})`}>{childElements}</g>;
+  const childClipId = node.omitChildClip ? undefined : node.childClipId;
+  if (childClipId && childElements.length > 0) {
+    return <g clipPath={`url(#${childClipId})`}>{childElements}</g>;
   }
   return <>{childElements}</>;
 }

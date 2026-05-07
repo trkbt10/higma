@@ -38,7 +38,9 @@ export { contourToSvgD } from "./path";
 
 export {
   resolveFill,
+  resolveFillWithRenderSettings,
   resolveTopFill,
+  resolveTopFillWithRenderSettings,
   type ResolvedFill,
   type ResolvedFillAttrs,
   type ResolvedFillDef,
@@ -58,7 +60,24 @@ export {
 
 export {
   finalizeImagePatternDefs,
+  finalizeImagePatternDefsWithRenderSettings,
 } from "./image-pattern-finalize";
+
+export type {
+  FigmaExportColorProfile,
+  FigmaImageResamplingMethod,
+  FigmaImageResamplingSettings,
+  FigmaPdfImageQuality,
+  FigmaRenderExportSettings,
+  NormalizedFigmaRenderExportSettings,
+  SceneGraphRenderOptions,
+} from "./export-settings";
+
+export {
+  normalizeFigmaRenderExportSettings,
+  renderExportSettingsCacheKey,
+  requireManagedImageColorProfile,
+} from "./export-settings";
 
 export {
   resolveStroke,

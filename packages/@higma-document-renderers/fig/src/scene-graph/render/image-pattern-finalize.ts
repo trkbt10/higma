@@ -15,6 +15,15 @@
 import type { AffineMatrix } from "../types";
 import type { RenderDef } from "../render-tree/types";
 import { getImageDimensions, type ImageDimensions } from "./image-dimensions";
+import { uint8ArrayToBase64 } from "./color";
+import { decodeRasterImage, pngMetadataFromDecodedRaster } from "./image-raster-decode";
+import { resampleImage, type RgbaRaster } from "./image-resample";
+import {
+  normalizeFigmaRenderExportSettings,
+  type FigmaRenderExportSettings,
+  type NormalizedFigmaRenderExportSettings,
+} from "./export-settings";
+import { writePng } from "@higma-codecs/png";
 
 type ElementSize = { readonly width: number; readonly height: number };
 type ImagePatternLayout = {
@@ -39,6 +48,16 @@ type ImagePatternLayout = {
 export function finalizeImagePatternDefs(
   defs: RenderDef[],
   elementSize: ElementSize,
+  exportSettings?: FigmaRenderExportSettings,
+): void {
+  finalizeImagePatternDefsWithRenderSettings(defs, elementSize, normalizeFigmaRenderExportSettings(exportSettings));
+}
+
+/** Finalize image patterns with normalized render settings. */
+export function finalizeImagePatternDefsWithRenderSettings(
+  defs: RenderDef[],
+  elementSize: ElementSize,
+  exportSettings: NormalizedFigmaRenderExportSettings,
 ): void {
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
@@ -61,6 +80,8 @@ export function finalizeImagePatternDefs(
       paintTransform: pattern.sourceTransform,
       scalingFactor: pattern.scalingFactor,
     });
+    const dataUri = finalizePatternDataUri(pattern.dataUri, pattern.scaleMode, elementSize, exportSettings);
+    const finalizedLayout = dataUri.kind === "resampled" ? createBakedImagePatternLayout(dataUri.width, dataUri.height) : layout;
 
     // Replace the pattern def with finalized version.
     //
@@ -80,16 +101,107 @@ export function finalizeImagePatternDefs(
         ...pattern,
         // In objectBoundingBox space, the image uses its natural pixel dimensions
         // and the transform maps those pixels to 0..1 space
-        width: layout.patternWidth,
-        height: layout.patternHeight,
-        imageWidth: layout.imageWidth,
-        imageHeight: layout.imageHeight,
-        preserveAspectRatio: layout.preserveAspectRatio,
-        imageTransform: layout.imageTransform,
+        dataUri: dataUri.value,
+        width: finalizedLayout.patternWidth,
+        height: finalizedLayout.patternHeight,
+        imageWidth: finalizedLayout.imageWidth,
+        imageHeight: finalizedLayout.imageHeight,
+        preserveAspectRatio: finalizedLayout.preserveAspectRatio,
+        imageTransform: finalizedLayout.imageTransform,
         patternTransform: undefined,
       },
     };
   }
+}
+
+type FinalizedPatternDataUri =
+  | { readonly kind: "source"; readonly value: string }
+  | { readonly kind: "resampled"; readonly value: string; readonly width: number; readonly height: number };
+
+function createBakedImagePatternLayout(width: number, height: number): ImagePatternLayout {
+  return {
+    patternWidth: 1,
+    patternHeight: 1,
+    imageWidth: width,
+    imageHeight: height,
+    preserveAspectRatio: "none",
+    imageTransform: formatImageTransform({ sa: 1 / width, sb: 0, sc: 0, sd: 1 / height, stx: 0, sty: 0 }),
+  };
+}
+
+function decodeDataUri(dataUri: string): { readonly data: Uint8Array; readonly mimeType: string } {
+  const mimeMatch = dataUri.match(/^data:([^;]+);base64,/);
+  if (!mimeMatch) {
+    throw new Error("Image pattern data URI requires a base64 mime type prefix");
+  }
+  const base64Data = dataUri.slice(dataUri.indexOf(",") + 1);
+  const binaryStr = atob(base64Data);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+  return { data: bytes, mimeType: mimeMatch[1] };
+}
+
+function targetRasterLength(value: number, rasterScale: number, label: string): number {
+  const scaled = value * rasterScale;
+  if (!Number.isFinite(scaled) || scaled <= 0) {
+    throw new Error(`Image resampling requires a positive finite ${label}`);
+  }
+  return Math.max(1, Math.round(scaled));
+}
+
+function resampleFitForScaleMode(scaleMode: string): "cover" | "stretch" {
+  if (scaleMode === "FILL") {
+    return "cover";
+  }
+  if (scaleMode === "STRETCH") {
+    return "stretch";
+  }
+  throw new Error(`Image resampling for SVG/React currently requires FILL or STRETCH imageScaleMode, got ${scaleMode}`);
+}
+
+function encodeResampledPng(image: RgbaRaster, source: ReturnType<typeof decodeRasterImage>): Uint8Array {
+  const metadata = pngMetadataFromDecodedRaster(source);
+  return writePng({
+    width: image.width,
+    height: image.height,
+    data: image.data,
+    gamma: metadata.gamma,
+    srgbIntent: metadata.srgbIntent,
+    chromaticity: metadata.iccProfile ? undefined : metadata.chromaticity,
+    iccProfile: metadata.iccProfile,
+  });
+}
+
+function finalizePatternDataUri(
+  dataUri: string,
+  scaleMode: string,
+  elementSize: ElementSize,
+  exportSettings: NormalizedFigmaRenderExportSettings,
+): FinalizedPatternDataUri {
+  const resampling = exportSettings.imageResampling;
+  if (resampling.kind === "source") {
+    return { kind: "source", value: dataUri };
+  }
+  const decodedUri = decodeDataUri(dataUri);
+  const source = decodeRasterImage(decodedUri.data, decodedUri.mimeType);
+  const width = targetRasterLength(elementSize.width, resampling.rasterScale, "target width");
+  const height = targetRasterLength(elementSize.height, resampling.rasterScale, "target height");
+  const resampled = resampleImage({
+    source: { width: source.width, height: source.height, data: source.data },
+    width,
+    height,
+    method: resampling.method,
+    fit: resampleFitForScaleMode(scaleMode),
+  });
+  const png = encodeResampledPng(resampled, source);
+  return {
+    kind: "resampled",
+    value: `data:image/png;base64,${uint8ArrayToBase64(png)}`,
+    width,
+    height,
+  };
 }
 
 /**
@@ -137,7 +249,7 @@ function extractDimensionsFromDataUri(
 type ImagePatternLayoutParams = {
   readonly imgDim: ImageDimensions;
   readonly elementSize: ElementSize;
-  readonly scaleMode: string | undefined;
+  readonly scaleMode: string;
   readonly paintTransform: AffineMatrix | undefined;
   readonly scalingFactor: number | undefined;
 };
@@ -149,14 +261,6 @@ function computeImagePatternLayout(params: ImagePatternLayoutParams): ImagePatte
   if (imgW <= 0 || imgH <= 0 || elementSize.width <= 0 || elementSize.height <= 0) {
     throw new Error("Image pattern layout requires positive image and element dimensions");
   }
-
-  // Extract paint transform components (identity if unset)
-  const pm00 = paintTransform?.m00 ?? 1;
-  const pm01 = paintTransform?.m01 ?? 0;
-  const pm10 = paintTransform?.m10 ?? 0;
-  const pm11 = paintTransform?.m11 ?? 1;
-  const pm02 = paintTransform?.m02 ?? 0;
-  const pm12 = paintTransform?.m12 ?? 0;
 
   // Figma's SVG export for FILL/FIT/STRETCH computes the scale purely from
   // element × image dimensions and ignores paint.transform. paint.transform
@@ -182,7 +286,7 @@ function computeImagePatternLayout(params: ImagePatternLayoutParams): ImagePatte
     });
   }
 
-  if (scaleMode === "FILL" || scaleMode === undefined) {
+  if (scaleMode === "FILL") {
     return createScaledImagePatternLayout({
       imgW,
       imgH,
@@ -198,6 +302,15 @@ function computeImagePatternLayout(params: ImagePatternLayoutParams): ImagePatte
 
   // CROP (and any other explicit mode with paint.transform) — invert paint transform.
   // inv(paintTransform) × diag(1/imgW, 1/imgH)
+  if (paintTransform === undefined) {
+    throw new Error("Image pattern layout requires an explicit paint transform for CROP mode");
+  }
+  const pm00 = paintTransform.m00;
+  const pm01 = paintTransform.m01;
+  const pm10 = paintTransform.m10;
+  const pm11 = paintTransform.m11;
+  const pm02 = paintTransform.m02;
+  const pm12 = paintTransform.m12;
   const det = pm00 * pm11 - pm01 * pm10;
   if (Math.abs(det) < 1e-12) {
     throw new Error("Image pattern layout requires an invertible paint transform for CROP mode");
@@ -265,7 +378,10 @@ type TiledImagePatternParams = {
 /** Create a repeating pattern layout for TILE mode. */
 function createTiledImagePatternLayout(params: TiledImagePatternParams): ImagePatternLayout {
   const { imgW, imgH, elementSize } = params;
-  const scale = params.scalingFactor ?? 1;
+  if (params.scalingFactor === undefined) {
+    throw new Error("TILE image pattern layout requires explicit scalingFactor");
+  }
+  const scale = params.scalingFactor;
   const patternWidth = (imgW * scale) / elementSize.width;
   const patternHeight = (imgH * scale) / elementSize.height;
 
@@ -303,44 +419,23 @@ type ImageTransformParts = {
   readonly sty: number;
 };
 
-/**
- * Format a number with 7 significant digits.
- * (Used for SVG numeric attributes / transform values.)
- */
 function fmt(n: number): string {
   if (!Number.isFinite(n)) {
     throw new Error(`Image pattern layout produced a non-finite transform value: ${n}`);
   }
   if (n === 0) { return "0"; }
-  const s = n.toPrecision(7);
+  const s = n.toPrecision(15);
   const asNum = Number.parseFloat(s);
   if (Number.isInteger(asNum)) { return String(asNum); }
   return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
-}
-
-/**
- * Round *up* to 6 significant digits, preserving sign direction.
- *
- * Some SVG renderers (notably resvg) mishandle the edge case where an image
- * inside an objectBoundingBox pattern has its oBB size equal to exactly 1.0
- * (image exactly fills pattern tile). Adding a tiny positive bias via
- * upward rounding avoids that degenerate case while being visually
- * indistinguishable. Matches Figma's own SVG export precision.
- */
-function fmtUp(n: number): string {
-  if (!Number.isFinite(n) || n === 0) { return fmt(n); }
-  const abs = Math.abs(n);
-  const magnitude = Math.pow(10, Math.ceil(Math.log10(abs)) - 6);
-  const rounded = (n > 0 ? Math.ceil(n / magnitude) : Math.floor(n / magnitude)) * magnitude;
-  return fmt(rounded);
 }
 
 /** Format SVG image transform from matrix components. */
 function formatImageTransform(parts: ImageTransformParts): string {
   const { sa, sb, sc, sd, stx, sty } = parts;
   if (sb === 0 && sc === 0) {
-    const sax = fmtUp(sa);
-    const sdx = fmtUp(sd);
+    const sax = fmt(sa);
+    const sdx = fmt(sd);
     if (stx === 0 && sty === 0) {
       if (sax === sdx) {
         return `scale(${sax})`;

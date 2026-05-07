@@ -34,6 +34,11 @@ export type DerivedTextNodeData = {
   readonly layoutSize?: { x: number; y: number };
   readonly baselines?: readonly DerivedBaselineData[];
   readonly glyphs?: readonly DerivedGlyphData[];
+  readonly fontMetaData?: readonly {
+    readonly key?: FontName;
+    readonly fontLineHeight?: number;
+    readonly fontWeight?: number;
+  }[];
 };
 
 export type TextNodeData = {

@@ -9,9 +9,15 @@
 
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
+import type { FigmaKiwiCanvas } from "@higma-figma-runtime/kiwi-canvas";
 import type { FigDesignDocument, FigPage } from "@higma-document-models/fig/domain";
 import { buildNodeTree, DEFAULT_PAGE_BACKGROUND, EMPTY_FIG_STYLE_REGISTRY, toPageId } from "@higma-document-models/fig/domain";
+import { asBlobArray, normaliseNodeChanges } from "../parser";
 import { treeToDocument } from "./tree-to-document";
+
+export type CreateFigDesignDocumentFromKiwiCanvasOptions = {
+  readonly canvasVisibility: "user-visible" | "all";
+};
 
 // =============================================================================
 // From Loaded File
@@ -25,6 +31,28 @@ import { treeToDocument } from "./tree-to-document";
 export function createFigDesignDocumentFromLoaded(loaded: LoadedFigFile): FigDesignDocument {
   const tree = buildNodeTree(loaded.nodeChanges);
   return treeToDocument(tree, loaded);
+}
+
+/**
+ * Create a FigDesignDocument from an already decoded fig-family canvas.
+ *
+ * Product-specific formats such as site/deck/buzz decode through
+ * @higma-figma-runtime/kiwi-canvas first. This adapter keeps their visual
+ * rendering on the same FigDesignDocument -> scene graph -> renderer path
+ * used by the fig editor, without requiring a .fig roundtrip package.
+ */
+export function createFigDesignDocumentFromKiwiCanvas(
+  canvas: FigmaKiwiCanvas,
+  options: CreateFigDesignDocumentFromKiwiCanvasOptions,
+): FigDesignDocument {
+  const nodeChanges = normaliseNodeChanges(canvas.nodeChanges);
+  const tree = buildNodeTree(nodeChanges);
+  return treeToDocument(tree, {
+    blobs: asBlobArray(canvas.blobs),
+    images: canvas.images,
+    metadata: canvas.metadata,
+    canvasVisibility: options.canvasVisibility,
+  });
 }
 
 // =============================================================================

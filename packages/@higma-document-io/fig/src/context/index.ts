@@ -5,6 +5,7 @@
 export {
   createFigDesignDocument,
   createFigDesignDocumentFromLoaded,
+  createFigDesignDocumentFromKiwiCanvas,
   createEmptyFigDesignDocument,
 } from "./fig-context";
 

@@ -5,9 +5,11 @@
   "type": "module",
   "sideEffects": false,
   "dependencies": {
+    "@higma-codecs/png": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "earcut": "^3.0.2",
+    "jpeg-js": "^0.4.4",
     "opentype.js": "^1.3.4"
   },
   "peerDependencies": {

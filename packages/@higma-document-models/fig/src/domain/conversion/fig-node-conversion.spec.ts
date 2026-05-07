@@ -67,4 +67,35 @@ describe("convertFigNode override path resolution", () => {
 
     expect(converted.overrides?.map((entry) => entry.guidPath.guids[0])).toEqual([target.guid]);
   });
+
+  it("accepts derived symbol data addressed by a descendant overrideKey", () => {
+    const target = createNode({
+      guid: guid(4, 2331),
+      type: nodeType(4, "RECTANGLE"),
+      name: "Target",
+      overrideKey: guid(87, 346),
+    });
+    const symbol = createNode({
+      guid: guid(1, 100),
+      type: nodeType(23, "SYMBOL"),
+      name: "Symbol",
+      children: [target],
+    });
+    const instance = createNode({
+      guid: guid(9, 1),
+      type: nodeType(19, "INSTANCE"),
+      name: "Instance",
+      symbolID: symbol.guid,
+      derivedSymbolData: [
+        {
+          guidPath: { guids: [guid(87, 346)] },
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 226 },
+        },
+      ],
+    });
+
+    const converted = convertFigNode(instance, new Map(), undefined, collectNodeMap([symbol, target, instance]));
+
+    expect(converted.derivedSymbolData?.map((entry) => entry.guidPath.guids[0])).toEqual([target.guid]);
+  });
 });

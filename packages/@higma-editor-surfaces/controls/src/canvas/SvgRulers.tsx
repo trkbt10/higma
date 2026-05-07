@@ -26,9 +26,12 @@ export type SvgRulersProps = {
    * visible while panning.
    */
   readonly coordinateMode?: "bounded" | "unbounded";
+  /** Page-coordinate value displayed at canvas coordinate 0 on each axis. */
+  readonly coordinateOffset?: { readonly x: number; readonly y: number };
 };
 
 const TICK_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+const ZERO_COORDINATE_OFFSET = { x: 0, y: 0 } as const;
 
 function getStepForZoom(zoom: number): { major: number; minor: number } {
   const targetPx = 50;
@@ -51,6 +54,14 @@ function getTickValues(start: number, end: number, step: number): number[] {
 function isMajorTick(value: number, majorStep: number): boolean {
   const ratio = value / majorStep;
   return Math.abs(ratio - Math.round(ratio)) < 1e-6;
+}
+
+function coordinateToCanvas(value: number, offset: number, viewport: ViewportTransform): number {
+  return (value - offset) * viewport.scale + viewport.translateX;
+}
+
+function coordinateToCanvasY(value: number, offset: number, viewport: ViewportTransform): number {
+  return (value - offset) * viewport.scale + viewport.translateY;
 }
 
 /** Resolve the coordinate range displayed on a ruler axis. */
@@ -80,6 +91,7 @@ export function SvgRulers({
   rulerThickness,
   visible,
   coordinateMode = "bounded",
+  coordinateOffset = ZERO_COORDINATE_OFFSET,
 }: SvgRulersProps) {
   if (!visible) {
     return null;
@@ -89,19 +101,19 @@ export function SvgRulers({
 
   // Calculate visible slide coordinate range for horizontal ruler
   const hVisible = resolveVisibleRange({
-    rawStart: -viewport.translateX / viewport.scale,
-    rawEnd: (viewportSize.width - rulerThickness - viewport.translateX) / viewport.scale,
-    min: 0,
-    max: slideSize.width,
+    rawStart: -viewport.translateX / viewport.scale + coordinateOffset.x,
+    rawEnd: (viewportSize.width - rulerThickness - viewport.translateX) / viewport.scale + coordinateOffset.x,
+    min: coordinateOffset.x,
+    max: coordinateOffset.x + slideSize.width,
     coordinateMode,
   });
 
   // Calculate visible slide coordinate range for vertical ruler
   const vVisible = resolveVisibleRange({
-    rawStart: -viewport.translateY / viewport.scale,
-    rawEnd: (viewportSize.height - rulerThickness - viewport.translateY) / viewport.scale,
-    min: 0,
-    max: slideSize.height,
+    rawStart: -viewport.translateY / viewport.scale + coordinateOffset.y,
+    rawEnd: (viewportSize.height - rulerThickness - viewport.translateY) / viewport.scale + coordinateOffset.y,
+    min: coordinateOffset.y,
+    max: coordinateOffset.y + slideSize.height,
     coordinateMode,
   });
 
@@ -151,7 +163,7 @@ export function SvgRulers({
         <g style={{ clipPath: `inset(0 0 0 0)` }}>
           {/* Minor ticks */}
           {hMinorTicks.map((value) => {
-            const pos = value * viewport.scale + viewport.translateX;
+            const pos = coordinateToCanvas(value, coordinateOffset.x, viewport);
             if (pos < 0 || pos > hRulerWidth) {
               return null;
             }
@@ -169,7 +181,7 @@ export function SvgRulers({
           })}
           {/* Major ticks with labels */}
           {hMajorTicks.map((value) => {
-            const pos = value * viewport.scale + viewport.translateX;
+            const pos = coordinateToCanvas(value, coordinateOffset.x, viewport);
             if (pos < -20 || pos > hRulerWidth + 20) {
               return null;
             }
@@ -208,7 +220,7 @@ export function SvgRulers({
         <g style={{ clipPath: `inset(0 0 0 0)` }}>
           {/* Minor ticks */}
           {vMinorTicks.map((value) => {
-            const pos = value * viewport.scale + viewport.translateY;
+            const pos = coordinateToCanvasY(value, coordinateOffset.y, viewport);
             if (pos < 0 || pos > vRulerHeight) {
               return null;
             }
@@ -226,7 +238,7 @@ export function SvgRulers({
           })}
           {/* Major ticks with labels */}
           {vMajorTicks.map((value) => {
-            const pos = value * viewport.scale + viewport.translateY;
+            const pos = coordinateToCanvasY(value, coordinateOffset.y, viewport);
             if (pos < -20 || pos > vRulerHeight + 20) {
               return null;
             }

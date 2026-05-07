@@ -47,6 +47,12 @@ export {
 export { slideCanvasBackground } from "./SlideCanvasBackground";
 
 // Viewport management (pan/zoom)
-export { useSvgViewport, type UseSvgViewportOptions, type UseSvgViewportResult, type ViewportClampFn } from "./use-svg-viewport";
+export {
+  useSvgViewport,
+  type InitialViewportPlacement,
+  type UseSvgViewportOptions,
+  type UseSvgViewportResult,
+  type ViewportClampFn,
+} from "./use-svg-viewport";
 export { SvgRulers, type SvgRulersProps } from "./SvgRulers";
 export { ViewportOverlay, type ViewportOverlayProps } from "./ViewportOverlay";

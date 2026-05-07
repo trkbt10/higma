@@ -1,0 +1,32 @@
+{
+  "name": "@higma-figma-runtime/react-renderer",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-figma-runtime/react-renderer/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-figma-runtime/react-renderer/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.tsx",
+      "default": "./src/index.tsx"
+    }
+  },
+  "dependencies": {
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-document-renderers/fig": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 6,
+      "family": "figma-runtime"
+    }
+  }
+}

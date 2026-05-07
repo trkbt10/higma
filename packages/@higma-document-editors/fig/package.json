@@ -12,6 +12,7 @@
     "@higma-editor-kernel/core": "workspace:*",
     "@higma-editor-surfaces/controls": "workspace:*",
     "@higma-editor-kernel/ui": "workspace:*",
+    "@higma-figma-runtime/react-renderer": "workspace:*",
     "react-editor-ui": "^0.4.0"
   },
   "peerDependencies": {

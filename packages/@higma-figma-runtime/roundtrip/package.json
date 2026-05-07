@@ -1,0 +1,31 @@
+{
+  "name": "@higma-figma-runtime/roundtrip",
+  "version": "0.12.2",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "dependencies": {
+    "@higma-codecs/compression": "workspace:*",
+    "@higma-codecs/kiwi": "workspace:*",
+    "@higma-figma-containers/canvas": "workspace:*",
+    "@higma-figma-containers/package": "workspace:*",
+    "@higma-figma-schema/profiles": "workspace:*"
+  },
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-figma-runtime/roundtrip/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ../../../packages/@higma-figma-runtime/roundtrip/src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "higma": {
+    "boundary": {
+      "layer": 3,
+      "family": "figma-runtime"
+    }
+  }
+}

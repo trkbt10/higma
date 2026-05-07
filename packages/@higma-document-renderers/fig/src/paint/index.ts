@@ -22,6 +22,8 @@ export {
   getImageTransform,
   getScaleMode,
   getScalingFactor,
+  getPaintFilter,
+  getImageShouldColorManage,
   type GradientDirection,
   type RadialGradientParams,
   type AngularGradientParams,

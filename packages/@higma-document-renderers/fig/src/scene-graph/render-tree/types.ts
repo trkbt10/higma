@@ -329,6 +329,8 @@ export type RenderFrameNode = RenderNodeBase<FrameNode> & {
   readonly children: readonly RenderNode[];
   /** Clip path ID for children (if clipsContent is true) */
   readonly childClipId?: string;
+  /** Viewport-equivalent root frames are already clipped by the SVG viewport. */
+  readonly omitChildClip?: boolean;
   /** Frame dimensions (needed for background rect and clip) */
   readonly width: number;
   readonly height: number;
@@ -527,6 +529,7 @@ export type RenderImageNode = RenderNodeBase<ImageNode> & {
   readonly sourceData: Uint8Array;
   readonly sourceMimeType: string;
   readonly sourceScaleMode: string;
+  readonly sourceImageShouldColorManage?: boolean;
 };
 
 // =============================================================================
