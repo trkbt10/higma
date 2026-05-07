@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en" data-higma-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Higma Fig Viewer — browser playground</title>
+    <!--
+      `webview/styles.css` resolves every colour/size from `--vscode-*`
+      custom properties. Outside a VS Code webview those properties are
+      undefined, so the toolbar renders transparent and the stage uses
+      the user-agent default white. The blocks below seed values that
+      mirror the built-in "Dark+ (default dark)" and "Light+ (default
+      light)" themes — close enough that fonts, spacing, and borders
+      look the same here as inside VS Code.
+
+      The toolbar in `main.tsx` flips `data-higma-theme` to swap
+      between the two blocks. Keep the variable list in sync with the
+      one referenced by `src/webview/styles.css`.
+    -->
+    <style>
+      :root {
+        --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+          Helvetica, Arial, sans-serif;
+        --vscode-font-size: 13px;
+        --vscode-font-weight: normal;
+        --vscode-editor-font-family: Menlo, Monaco, "Courier New", monospace;
+        --vscode-editor-font-size: 12px;
+      }
+
+      :root[data-higma-theme="dark"] {
+        --vscode-color-scheme: dark;
+        --vscode-foreground: #cccccc;
+        --vscode-descriptionForeground: rgba(204, 204, 204, 0.7);
+        --vscode-errorForeground: #f48771;
+        --vscode-focusBorder: #007fd4;
+        --vscode-contrastBorder: transparent;
+        --vscode-editor-background: #1e1e1e;
+        --vscode-editor-foreground: #d4d4d4;
+        --vscode-editorWidget-background: #252526;
+        --vscode-editorWidget-border: #454545;
+        --vscode-editorRuler-foreground: #5a5a5a;
+        --vscode-panel-border: rgba(128, 128, 128, 0.35);
+        --vscode-toolbar-activeBackground: rgba(99, 102, 103, 0.5);
+        --vscode-toolbar-hoverBackground: rgba(90, 93, 94, 0.31);
+        --vscode-list-activeSelectionBackground: #094771;
+        --vscode-list-hoverBackground: #2a2d2e;
+        --vscode-input-background: #3c3c3c;
+        --vscode-input-border: transparent;
+        --vscode-input-foreground: #cccccc;
+        --vscode-dropdown-background: #3c3c3c;
+        --vscode-dropdown-border: #3c3c3c;
+        --vscode-dropdown-foreground: #f0f0f0;
+        --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
+        --vscode-textBlockQuote-border: rgba(0, 122, 204, 0.5);
+
+        --higma-dev-shell-background: #1b1b1b;
+        --higma-dev-toolbar-background: #181818;
+        --higma-dev-toolbar-foreground: #cccccc;
+        --higma-dev-toolbar-border: #303030;
+        --higma-dev-toolbar-button-background: #2a2a2a;
+        --higma-dev-toolbar-button-hover: #3a3a3a;
+        --higma-dev-toolbar-accent: #0e639c;
+        --higma-dev-toolbar-accent-hover: #1177bb;
+        --higma-dev-drop-shade: rgba(14, 99, 156, 0.18);
+        --higma-dev-drop-border: #1177bb;
+      }
+
+      :root[data-higma-theme="light"] {
+        --vscode-color-scheme: light;
+        --vscode-foreground: #3b3b3b;
+        --vscode-descriptionForeground: #717171;
+        --vscode-errorForeground: #a1260d;
+        --vscode-focusBorder: #0090f1;
+        --vscode-contrastBorder: transparent;
+        --vscode-editor-background: #ffffff;
+        --vscode-editor-foreground: #000000;
+        --vscode-editorWidget-background: #f3f3f3;
+        --vscode-editorWidget-border: #c8c8c8;
+        --vscode-editorRuler-foreground: #d3d3d3;
+        --vscode-panel-border: rgba(128, 128, 128, 0.35);
+        --vscode-toolbar-activeBackground: rgba(166, 166, 166, 0.31);
+        --vscode-toolbar-hoverBackground: rgba(184, 184, 184, 0.31);
+        --vscode-list-activeSelectionBackground: #0060c0;
+        --vscode-list-hoverBackground: #e8e8e8;
+        --vscode-input-background: #ffffff;
+        --vscode-input-border: #cecece;
+        --vscode-input-foreground: #3b3b3b;
+        --vscode-dropdown-background: #ffffff;
+        --vscode-dropdown-border: #cecece;
+        --vscode-dropdown-foreground: #3b3b3b;
+        --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
+        --vscode-textBlockQuote-border: rgba(0, 122, 204, 0.5);
+
+        --higma-dev-shell-background: #f5f5f5;
+        --higma-dev-toolbar-background: #ececec;
+        --higma-dev-toolbar-foreground: #3b3b3b;
+        --higma-dev-toolbar-border: #d0d0d0;
+        --higma-dev-toolbar-button-background: #ffffff;
+        --higma-dev-toolbar-button-hover: #e8e8e8;
+        --higma-dev-toolbar-accent: #0067c0;
+        --higma-dev-toolbar-accent-hover: #1177bb;
+        --higma-dev-drop-shade: rgba(0, 103, 192, 0.12);
+        --higma-dev-drop-border: #0067c0;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--higma-dev-shell-background);
+        color: var(--higma-dev-toolbar-foreground);
+        font-family: var(--vscode-font-family);
+        font-size: var(--vscode-font-size);
+      }
+
+      #higma-dev-shell {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        width: 100%;
+      }
+
+      #higma-dev-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        background: var(--higma-dev-toolbar-background);
+        color: var(--higma-dev-toolbar-foreground);
+        border-bottom: 1px solid var(--higma-dev-toolbar-border);
+        flex: 0 0 auto;
+        font-size: 12px;
+      }
+
+      .higma-dev-toolbar__brand {
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .higma-dev-toolbar__group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .higma-dev-toolbar__label {
+        opacity: 0.7;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.06em;
+      }
+
+      .higma-dev-toolbar__current {
+        opacity: 0.7;
+        max-width: 280px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .higma-dev-toolbar__spacer {
+        flex: 1 1 auto;
+      }
+
+      .higma-dev-button {
+        appearance: none;
+        border: 1px solid transparent;
+        background: var(--higma-dev-toolbar-button-background);
+        color: var(--higma-dev-toolbar-foreground);
+        font: inherit;
+        padding: 4px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .higma-dev-button:hover {
+        background: var(--higma-dev-toolbar-button-hover);
+      }
+      .higma-dev-button[aria-pressed="true"] {
+        background: var(--higma-dev-toolbar-accent);
+        color: #ffffff;
+      }
+      .higma-dev-button[aria-pressed="true"]:hover {
+        background: var(--higma-dev-toolbar-accent-hover);
+      }
+
+      .higma-dev-file-input {
+        display: none;
+      }
+
+      #higma-dev-stage {
+        position: relative;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+
+      #higma-fig-root {
+        position: absolute;
+        inset: 0;
+      }
+
+      #higma-dev-drop-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--higma-dev-drop-shade);
+        outline: 2px dashed var(--higma-dev-drop-border);
+        outline-offset: -16px;
+        opacity: 0;
+        transition: opacity 0.1s ease-out;
+        font-size: 14px;
+        color: var(--higma-dev-toolbar-foreground);
+      }
+      #higma-dev-drop-overlay[data-active="true"] {
+        opacity: 1;
+      }
+    </style>
+    <link rel="stylesheet" href="../src/webview/styles.css" />
+  </head>
+  <body>
+    <div id="higma-dev-shell">
+      <div id="higma-dev-toolbar" role="toolbar" aria-label="Higma Fig Viewer dev controls">
+        <span class="higma-dev-toolbar__brand">Higma Fig Viewer · Dev</span>
+        <div class="higma-dev-toolbar__group" aria-label="Theme">
+          <span class="higma-dev-toolbar__label">Theme</span>
+          <button type="button" class="higma-dev-button" data-action="theme" data-value="dark">Dark</button>
+          <button type="button" class="higma-dev-button" data-action="theme" data-value="light">Light</button>
+        </div>
+        <div class="higma-dev-toolbar__group" aria-label="Fixture">
+          <span class="higma-dev-toolbar__label">Fixture</span>
+          <button type="button" class="higma-dev-button" data-action="fixture" data-value="small">small</button>
+          <button type="button" class="higma-dev-button" data-action="fixture" data-value="large">large</button>
+          <button type="button" class="higma-dev-button" data-action="fixture" data-value="garbage">garbage</button>
+        </div>
+        <div class="higma-dev-toolbar__group" aria-label="Custom file">
+          <button type="button" class="higma-dev-button" data-action="open-file">Open .fig…</button>
+          <input type="file" class="higma-dev-file-input" id="higma-dev-file-input" accept=".fig" />
+          <span class="higma-dev-toolbar__current" id="higma-dev-current"></span>
+        </div>
+        <div class="higma-dev-toolbar__spacer"></div>
+        <span class="higma-dev-toolbar__label" id="higma-dev-status">starting…</span>
+      </div>
+      <div id="higma-dev-stage">
+        <div id="higma-fig-root"></div>
+        <div id="higma-dev-drop-overlay">Drop a .fig file to load it</div>
+      </div>
+    </div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

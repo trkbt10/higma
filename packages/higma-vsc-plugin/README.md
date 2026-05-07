@@ -20,12 +20,58 @@ src/
 
 ## Develop
 
-The only supported flow is `bun run dev`. It builds the bundle, spins up an
-**isolated VS Code profile** under `/tmp/higma-vsc-plugin-{user,exts}`, starts
-incremental watchers for both the extension and the webview, and opens a sample
-`.fig` so the viewer renders straight away. The user’s real VS Code installation
-is not touched: the temporary profile has no installed extensions and no
-sign-in prompts.
+Two entry points, picked by what you are iterating on:
+
+| You are iterating on…                       | Use            | Why                                                                                                  |
+| ------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
+| The webview UI (toolbar, stage, renderer)   | `bun run dev:ui` | Loads the same `webview/index.tsx` in a normal browser via Vite. No VS Code launch, full HMR.         |
+| The extension host (custom editor wiring)   | `bun run dev`    | Builds the bundle and launches an isolated VS Code profile so the customEditor association can run. |
+
+`dev:ui` covers the bulk of UI work — fixture switching, theme verification,
+arbitrary `.fig` files, error UI. Reach for `dev` only when you need to
+exercise the extension-host side (file resolution, CSP, Output channel,
+custom-editor registration).
+
+### Browser playground (`bun run dev:ui`)
+
+Serves `dev/index.html` via Vite at <http://localhost:5194> and mounts the
+real `src/webview/index.tsx` with `acquireVsCodeApi` stubbed. The page seeds
+`--vscode-*` CSS variables that match VS Code's Dark+ / Light+ themes so the
+viewer paints the same as it does inside the editor.
+
+```bash
+cd packages/higma-vsc-plugin
+bun run dev:ui                          # opens the browser
+bun run dev:ui -- --port 5300            # override the port if 5194 is taken
+```
+
+The dev toolbar at the top of the page lets you:
+
+- toggle **Dark / Light** to verify theme adaptation
+- swap between fixtures (`small`, `large`, `garbage`) to exercise the happy
+  path, the heavy real-world Figma export, and the error UI
+- **Open .fig…** or drag-and-drop any local `.fig` to load it through the
+  same `fig/loaded` channel the extension uses
+
+Vite HMR reloads the page on edits to `src/webview/**` or any workspace
+`@higma-*` source dependency — no manual rebuild step.
+
+What `dev:ui` does **not** cover (use `bun run dev` for these):
+
+- the production CSP (including `'unsafe-eval'` for `opentype.js`) — the
+  browser has no CSP. The `bundle-smoke.e2e.ts` spec asserts the shipped CSP.
+- the bundled `dist/webview.js` — `dev:ui` runs source files directly, so
+  bun-bundler-specific failures (CJS hoisting, `--minify` rename bugs) only
+  surface in `bun run e2e` and inside a real VS Code launch.
+- the customEditor registration / `editorAssociations` plumbing.
+
+### VS Code launch (`bun run dev`)
+
+Builds the bundle, spins up an **isolated VS Code profile** under
+`/tmp/higma-vsc-plugin-{user,exts}`, starts incremental watchers for both the
+extension and the webview, and opens a sample `.fig` so the viewer renders
+straight away. The user’s real VS Code installation is not touched: the
+temporary profile has no installed extensions and no sign-in prompts.
 
 ```bash
 cd packages/higma-vsc-plugin

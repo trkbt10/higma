@@ -42,7 +42,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --run --passWithNoTests --config ../../vitest.config.ts '../../packages/higma-vsc-plugin/src'",
     "e2e": "playwright test",
-    "dev": "scripts/run-dev.sh"
+    "dev": "scripts/run-dev.sh",
+    "dev:ui": "vite --config dev/vite.config.ts --open"
   },
   "dependencies": {
     "@higma-document-io/fig": "workspace:*",
