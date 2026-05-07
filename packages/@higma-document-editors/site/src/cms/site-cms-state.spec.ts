@@ -254,4 +254,59 @@ describe("CRUD reducer actions", () => {
     });
     expect(selectFieldDisplayName(b, "collection-1", "body")).toBe("Body content");
   });
+
+  it("set-field-kind overrides the kind reported by selectSiteCmsCollections for a source field", () => {
+    const next = siteCmsReducer(INITIAL_SITE_CMS_STATE, {
+      type: "set-field-kind",
+      collectionId: "collection-1",
+      fieldId: "body",
+      kind: "text",
+    });
+    const collections = selectSiteCmsCollections(next, sourceCollections);
+    const collection = collections[0];
+    if (!collection) {
+      throw new Error("Expected at least one collection");
+    }
+    const overridden = collection.fields.find((field) => field.id === "body");
+    if (!overridden) {
+      throw new Error("Expected the body field to remain present");
+    }
+    expect(overridden.kind).toBe("text");
+  });
+
+  it("delete-draft-collection cascades fieldKindOverrides for that collection", () => {
+    const seeded: SiteCmsState = {
+      ...INITIAL_SITE_CMS_STATE,
+      drafts: {
+        collections: [{ id: "draft-collection-1", displayName: "Pages" }],
+        fields: [{ id: "draft-field-1", collectionId: "draft-collection-1", displayName: "Title", kind: "text" }],
+        items: [],
+      },
+      fieldKindOverrides: new Map([
+        ["draft-collection-1/draft-field-1", "rich-text"],
+        ["collection-1/body", "text"],
+      ]),
+    };
+    const next = siteCmsReducer(seeded, { type: "delete-draft-collection", collectionId: "draft-collection-1" });
+    expect(next.fieldKindOverrides.has("draft-collection-1/draft-field-1")).toBe(false);
+    expect(next.fieldKindOverrides.get("collection-1/body")).toBe("text");
+  });
+
+  it("delete-draft-field clears the kind override for that field only", () => {
+    const seeded: SiteCmsState = {
+      ...INITIAL_SITE_CMS_STATE,
+      drafts: {
+        collections: [],
+        fields: [{ id: "draft-field-1", collectionId: "collection-1", displayName: "Title", kind: "text" }],
+        items: [],
+      },
+      fieldKindOverrides: new Map([
+        ["collection-1/draft-field-1", "rich-text"],
+        ["collection-1/body", "text"],
+      ]),
+    };
+    const next = siteCmsReducer(seeded, { type: "delete-draft-field", collectionId: "collection-1", fieldId: "draft-field-1" });
+    expect(next.fieldKindOverrides.has("collection-1/draft-field-1")).toBe(false);
+    expect(next.fieldKindOverrides.get("collection-1/body")).toBe("text");
+  });
 });

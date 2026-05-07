@@ -4,10 +4,11 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent } from "react";
-import { AddIcon, ChevronLeftIcon, SettingsIcon, TrashIcon } from "@higma-editor-kernel/ui/icons";
+import { AddIcon, ChevronLeftIcon, CloseIcon, SettingsIcon, TrashIcon } from "@higma-editor-kernel/ui/icons";
 import { Button } from "@higma-editor-kernel/ui/primitives/Button";
 import { Checkbox } from "@higma-editor-kernel/ui/primitives/Checkbox";
 import { IconButton } from "@higma-editor-kernel/ui/primitives/IconButton";
+import { Input } from "@higma-editor-kernel/ui/primitives/Input";
 import { Select } from "@higma-editor-kernel/ui/primitives/Select";
 import { InlineRenameLabel } from "@higma-editor-surfaces/controls/ui";
 import { useContainerWidth } from "@higma-editor-surfaces/controls/editor-shell";
@@ -93,21 +94,51 @@ const HEADER_TRAILING_STYLE: CSSProperties = {
   marginInlineStart: "auto",
 };
 
-const FIELDS_EDITOR_STYLE: CSSProperties = {
-  width: "100%",
-  borderTop: `1px solid ${colorTokens.border.subtle}`,
-  background: colorTokens.background.secondary,
+const FIELDS_EDITOR_HEADER_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  padding: `${spacingTokens.sm} ${spacingTokens.md}`,
+  borderBottom: `1px solid ${colorTokens.border.subtle}`,
+};
+
+const FIELDS_EDITOR_TITLE_STYLE: CSSProperties = {
+  fontSize: fontTokens.size.md,
+  fontWeight: fontTokens.weight.semibold,
+  color: colorTokens.text.primary,
+};
+
+const FIELDS_EDITOR_BODY_STYLE: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflow: "auto",
   padding: spacingTokens.md,
   display: "flex",
   flexDirection: "column",
   gap: spacingTokens.sm,
 };
 
-const FIELDS_EDITOR_FORM_STYLE: CSSProperties = {
+const FIELDS_EDITOR_FOOTER_STYLE: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
   alignItems: "center",
   gap: spacingTokens.sm,
+  padding: `${spacingTokens.sm} ${spacingTokens.md}`,
+  borderTop: `1px solid ${colorTokens.border.subtle}`,
+  background: colorTokens.background.primary,
+};
+
+const FIELDS_EDITOR_HELPER_STYLE: CSSProperties = {
+  fontSize: fontTokens.size.sm,
+  color: colorTokens.text.secondary,
+};
+
+const FIELD_ROW_STYLE: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "auto 1fr 160px auto auto",
+  alignItems: "center",
+  gap: spacingTokens.sm,
+  paddingBlock: spacingTokens.xs,
 };
 
 const TABLE_AREA_STYLE: CSSProperties = {
@@ -239,6 +270,30 @@ const OVERLAY_PANEL_STYLE: CSSProperties = {
   inset: 0,
   background: colorTokens.background.primary,
   zIndex: 6,
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+};
+
+const FIELDS_OVERLAY_STYLE: CSSProperties = {
+  position: "absolute",
+  insetBlock: 0,
+  insetInlineEnd: 0,
+  width: SPLIT_PANE_PANEL_WIDTH,
+  background: colorTokens.background.primary,
+  borderInlineStart: `1px solid ${colorTokens.border.subtle}`,
+  zIndex: 7,
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+  boxShadow: `-4px 0 12px rgba(0, 0, 0, 0.04)`,
+};
+
+const FIELDS_OVERLAY_NARROW_STYLE: CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  background: colorTokens.background.primary,
+  zIndex: 7,
   display: "flex",
   flexDirection: "column",
   minHeight: 0,
@@ -395,66 +450,114 @@ function FieldRowEditor({
   readonly field: SiteCollectionField;
   readonly index: number;
 }) {
-  const { state, renameField, deleteDraftField } = useSiteCms();
+  const { state, renameField, setFieldKind, deleteDraftField } = useSiteCms();
   const override = selectFieldDisplayName(state, collection.id, field.id);
   const displayName = getSiteCollectionFieldDisplayName(field, index, override);
   const draft = isSiteCmsDraftId(field.id);
 
-  const handleRename = useCallback(
+  const handleNameChange = useCallback(
     (next: string) => {
       renameField({ collectionId: collection.id, fieldId: field.id, displayName: next });
     },
     [collection.id, field.id, renameField],
+  );
+  const handleKindChange = useCallback(
+    (next: SiteCollectionFieldKind) => {
+      setFieldKind({ collectionId: collection.id, fieldId: field.id, kind: next });
+    },
+    [collection.id, field.id, setFieldKind],
   );
   const handleDelete = useCallback(() => {
     deleteDraftField({ collectionId: collection.id, fieldId: field.id });
   }, [collection.id, deleteDraftField, field.id]);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: spacingTokens.sm,
-        paddingBlock: spacingTokens.xs,
-      }}
-    >
+    <div style={FIELD_ROW_STYLE} aria-label={`Field row ${displayName}`}>
       <SiteCollectionFieldIcon kind={field.kind} />
-      <span style={{ flex: 1, minWidth: 0 }}>
-        <InlineRenameLabel label={displayName} onRename={handleRename} />
-      </span>
-      {draft && <span style={DRAFT_BADGE_STYLE}>Draft</span>}
-      {draft && (
-        <IconButton
-          icon={<TrashIcon size={iconTokens.size.sm} strokeWidth={iconTokens.strokeWidth} />}
-          ariaLabel={`Delete field ${displayName}`}
-          variant="ghost"
-          size="sm"
-          style={{ width: 22, height: 22, padding: 0 }}
-          onClick={handleDelete}
-        />
-      )}
+      <Input
+        value={displayName}
+        onChange={(next) => handleNameChange(typeof next === "number" ? String(next) : next)}
+        ariaLabel={`Field name ${displayName}`}
+      />
+      <Select<SiteCollectionFieldKind>
+        value={field.kind}
+        onChange={handleKindChange}
+        options={FIELD_KIND_OPTIONS}
+        ariaLabel={`Field kind ${displayName}`}
+      />
+      <FieldDraftBadgeSlot draft={draft} />
+      <FieldDeleteSlot draft={draft} displayName={displayName} onDelete={handleDelete} />
     </div>
   );
 }
 
-function FieldsEditor({ collection }: { readonly collection: SiteCollection }) {
+function FieldDraftBadgeSlot({ draft }: { readonly draft: boolean }) {
+  if (!draft) {
+    return <span aria-hidden style={{ width: 0 }} />;
+  }
+  return <span style={DRAFT_BADGE_STYLE}>Draft</span>;
+}
+
+function FieldDeleteSlot({
+  draft,
+  displayName,
+  onDelete,
+}: {
+  readonly draft: boolean;
+  readonly displayName: string;
+  readonly onDelete: () => void;
+}) {
+  if (!draft) {
+    return <span aria-hidden style={{ width: 22 }} />;
+  }
+  return (
+    <IconButton
+      icon={<TrashIcon size={iconTokens.size.sm} strokeWidth={iconTokens.strokeWidth} />}
+      ariaLabel={`Delete field ${displayName}`}
+      variant="ghost"
+      size="sm"
+      style={{ width: 22, height: 22, padding: 0 }}
+      onClick={onDelete}
+    />
+  );
+}
+
+function FieldsEditor({
+  collection,
+  onClose,
+}: {
+  readonly collection: SiteCollection;
+  readonly onClose: () => void;
+}) {
   const { addDraftField } = useSiteCms();
   const [kind, setKind] = useState<SiteCollectionFieldKind>("text");
   const handleAdd = useCallback(() => {
     addDraftField({ collectionId: collection.id, kind });
   }, [addDraftField, collection.id, kind]);
   return (
-    <div style={FIELDS_EDITOR_STYLE} aria-label="Fields editor">
-      <span style={{ fontSize: fontTokens.size.sm, color: colorTokens.text.secondary }}>
-        Double-click a field name to rename. Drafts can be deleted with the trash icon; document-derived fields cannot.
-      </span>
-      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-        {collection.fields.map((field, index) => (
-          <FieldRowEditor key={field.id} collection={collection} field={field} index={index} />
-        ))}
+    <>
+      <div style={FIELDS_EDITOR_HEADER_STYLE}>
+        <span style={FIELDS_EDITOR_TITLE_STYLE}>Edit fields</span>
+        <IconButton
+          icon={<CloseIcon size={iconTokens.size.sm} strokeWidth={iconTokens.strokeWidth} />}
+          ariaLabel="Close fields editor"
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          style={{ width: 24, height: 24, padding: 0 }}
+        />
       </div>
-      <div style={FIELDS_EDITOR_FORM_STYLE}>
+      <div style={FIELDS_EDITOR_BODY_STYLE}>
+        <span style={FIELDS_EDITOR_HELPER_STYLE}>
+          Rename or retype any field. Drafts can also be removed; document-derived fields cannot be deleted.
+        </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {collection.fields.map((field, index) => (
+            <FieldRowEditor key={field.id} collection={collection} field={field} index={index} />
+          ))}
+        </div>
+      </div>
+      <div style={FIELDS_EDITOR_FOOTER_STYLE}>
         <div style={{ width: 160 }}>
           <Select<SiteCollectionFieldKind>
             value={kind}
@@ -468,7 +571,7 @@ function FieldsEditor({ collection }: { readonly collection: SiteCollection }) {
           Add field
         </Button>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -571,6 +674,26 @@ function OverlayItemEditor() {
   );
 }
 
+function FieldsEditorPanel({
+  collection,
+  onClose,
+  narrow,
+}: {
+  readonly collection: SiteCollection;
+  readonly onClose: () => void;
+  readonly narrow: boolean;
+}) {
+  return (
+    <div
+      style={narrow ? FIELDS_OVERLAY_NARROW_STYLE : FIELDS_OVERLAY_STYLE}
+      role="dialog"
+      aria-label="Fields editor"
+    >
+      <FieldsEditor collection={collection} onClose={onClose} />
+    </div>
+  );
+}
+
 /** Center pane that hosts the items table for the active collection. */
 export function SiteCmsCollectionView() {
   const { state, activeCollection, activeItem, setActiveCollectionId, addDraftItem } = useSiteCms();
@@ -592,6 +715,9 @@ export function SiteCmsCollectionView() {
   const handleToggleFieldsEditor = useCallback(() => {
     setFieldsEditorOpen((current) => !current);
   }, []);
+  const handleCloseFieldsEditor = useCallback(() => {
+    setFieldsEditorOpen(false);
+  }, []);
 
   if (!activeCollection) {
     return (
@@ -606,6 +732,7 @@ export function SiteCmsCollectionView() {
   const draftCollection = isSiteCmsDraftId(activeCollection.id);
   const editorOpen = activeItem !== null;
   const useSplitLayout = editorOpen && tableAreaWidth >= SPLIT_PANE_BREAKPOINT;
+  const useNarrowFieldsLayout = tableAreaWidth < SPLIT_PANE_BREAKPOINT;
 
   return (
     <section style={ROOT_STYLE} aria-label={`Collection ${displayName}`}>
@@ -637,7 +764,6 @@ export function SiteCmsCollectionView() {
             Edit fields
           </Button>
         </div>
-        {fieldsEditorOpen && <FieldsEditor collection={activeCollection} />}
       </header>
       <div ref={tableAreaRef} style={TABLE_AREA_STYLE}>
         <div style={TABLE_SHELL_STYLE}>
@@ -645,6 +771,13 @@ export function SiteCmsCollectionView() {
         </div>
         {editorOpen && useSplitLayout && <SplitItemEditor />}
         {editorOpen && !useSplitLayout && <OverlayItemEditor />}
+        {fieldsEditorOpen && (
+          <FieldsEditorPanel
+            collection={activeCollection}
+            onClose={handleCloseFieldsEditor}
+            narrow={useNarrowFieldsLayout}
+          />
+        )}
       </div>
     </section>
   );

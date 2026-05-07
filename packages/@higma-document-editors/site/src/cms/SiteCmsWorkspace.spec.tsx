@@ -125,6 +125,34 @@ describe("SiteCmsCollectionView", () => {
     expect(probe.textContent).toContain("collection-1:items=1:fields=1");
   });
 
+  it("opens the fields editor as a dialog outside the page header (no layout shift)", () => {
+    renderCmsWorkspace();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    fireEvent.click(within(view).getByRole("button", { name: /Edit fields/ }));
+
+    const dialog = within(view).getByRole("dialog", { name: "Fields editor" });
+    expect(dialog).toBeTruthy();
+    // The dialog must NOT be nested inside the section's <header>.
+    const header = view.querySelector("header");
+    expect(header).not.toBeNull();
+    expect(header?.contains(dialog)).toBe(false);
+  });
+
+  it("retypes an existing source field via the kind Select inside the fields editor", () => {
+    renderCmsWorkspace();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    fireEvent.click(within(view).getByRole("button", { name: /Edit fields/ }));
+
+    const dialog = within(view).getByRole("dialog", { name: "Fields editor" });
+    const select = within(dialog).getByLabelText(/^Field kind /) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "text" } });
+
+    // The on-page table column header should reflect the retype on the same source field.
+    const table = within(view).getByRole("table");
+    const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent ?? "");
+    expect(headers.some((header) => header.includes("Text 1"))).toBe(true);
+  });
+
   it("deletes a draft item row via the trash button", () => {
     renderCmsWorkspace();
     const view = screen.getByLabelText("Collection Case Study Page");

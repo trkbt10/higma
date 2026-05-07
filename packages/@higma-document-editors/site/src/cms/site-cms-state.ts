@@ -22,17 +22,62 @@ import {
 } from "../domain/site-collection-field-kind";
 
 // ===========================================================================
+// Named ref + request shapes
+// ===========================================================================
+
+/** Identifier for one collection. */
+export type SiteCmsCollectionRef = {
+  readonly collectionId: string;
+};
+
+/** Identifier for one field inside a collection. */
+export type SiteCmsFieldRef = SiteCmsCollectionRef & {
+  readonly fieldId: string;
+};
+
+/** Identifier for one item inside a collection. */
+export type SiteCmsItemRef = SiteCmsCollectionRef & {
+  readonly itemId: string;
+};
+
+/** Composite key for an in-flight field value edit. */
+export type SiteCmsFieldValueRef = SiteCmsItemRef & {
+  readonly fieldId: string;
+};
+
+/** Display-name update payload for a collection. */
+export type SiteCmsCollectionRenameRequest = SiteCmsCollectionRef & {
+  readonly displayName: string;
+};
+
+/** Display-name update payload for a field. */
+export type SiteCmsFieldRenameRequest = SiteCmsFieldRef & {
+  readonly displayName: string;
+};
+
+/** Kind update payload for a field. */
+export type SiteCmsFieldKindRequest = SiteCmsFieldRef & {
+  readonly kind: SiteCollectionFieldKind;
+};
+
+/** Add-field request — no name (auto-named) and no id (auto-allocated). */
+export type SiteCmsAddFieldRequest = SiteCmsCollectionRef & {
+  readonly kind: SiteCollectionFieldKind;
+};
+
+/** Add-item request — no id (auto-allocated). */
+export type SiteCmsAddItemRequest = SiteCmsCollectionRef;
+
+/** Field value edit payload. */
+export type SiteCmsFieldEdit = SiteCmsFieldValueRef & {
+  readonly text: string;
+};
+
+// ===========================================================================
 // Domain value types
 // ===========================================================================
 
 export type SiteCmsFieldEditKey = string;
-
-export type SiteCmsFieldEdit = {
-  readonly collectionId: string;
-  readonly itemId: string;
-  readonly fieldId: string;
-  readonly text: string;
-};
 
 export type SiteCmsDraftCollection = {
   readonly id: string;
@@ -68,6 +113,8 @@ export type SiteCmsState = {
   readonly collectionDisplayNames: ReadonlyMap<string, string>;
   /** `${collectionId}/${fieldId}` → user-set display name override. */
   readonly fieldDisplayNames: ReadonlyMap<string, string>;
+  /** `${collectionId}/${fieldId}` → user-set field kind override. */
+  readonly fieldKindOverrides: ReadonlyMap<string, SiteCollectionFieldKind>;
   readonly activeCollectionId: string | null;
   readonly activeItemId: string | null;
 };
@@ -80,17 +127,19 @@ export type SiteCmsAction =
   | { readonly type: "add-draft-collection"; readonly collection: SiteCmsDraftCollection; readonly setActive: boolean }
   | { readonly type: "add-draft-field"; readonly field: SiteCmsDraftField }
   | { readonly type: "add-draft-item"; readonly item: SiteCmsDraftItem; readonly setActive: boolean }
-  | { readonly type: "delete-draft-collection"; readonly collectionId: string }
-  | { readonly type: "delete-draft-field"; readonly collectionId: string; readonly fieldId: string }
-  | { readonly type: "delete-draft-item"; readonly collectionId: string; readonly itemId: string }
-  | { readonly type: "set-collection-display-name"; readonly collectionId: string; readonly displayName: string }
-  | { readonly type: "set-field-display-name"; readonly collectionId: string; readonly fieldId: string; readonly displayName: string };
+  | ({ readonly type: "delete-draft-collection" } & SiteCmsCollectionRef)
+  | ({ readonly type: "delete-draft-field" } & SiteCmsFieldRef)
+  | ({ readonly type: "delete-draft-item" } & SiteCmsItemRef)
+  | ({ readonly type: "set-collection-display-name" } & SiteCmsCollectionRenameRequest)
+  | ({ readonly type: "set-field-display-name" } & SiteCmsFieldRenameRequest)
+  | ({ readonly type: "set-field-kind" } & SiteCmsFieldKindRequest);
 
 export const INITIAL_SITE_CMS_STATE: SiteCmsState = {
   drafts: { collections: [], fields: [], items: [] },
   editsMap: new Map(),
   collectionDisplayNames: new Map(),
   fieldDisplayNames: new Map(),
+  fieldKindOverrides: new Map(),
   activeCollectionId: null,
   activeItemId: null,
 };
@@ -99,13 +148,13 @@ export const INITIAL_SITE_CMS_STATE: SiteCmsState = {
 // Reducer
 // ===========================================================================
 
-function fieldOverrideKey(collectionId: string, fieldId: string): string {
-  return `${collectionId}/${fieldId}`;
+function fieldOverrideKey(ref: SiteCmsFieldRef): string {
+  return `${ref.collectionId}/${ref.fieldId}`;
 }
 
 function dropEditsByPredicate(
   edits: ReadonlyMap<SiteCmsFieldEditKey, string>,
-  predicate: (edit: { collectionId: string; itemId: string; fieldId: string }) => boolean,
+  predicate: (edit: SiteCmsFieldValueRef) => boolean,
 ): ReadonlyMap<SiteCmsFieldEditKey, string> {
   const next = new Map(edits);
   for (const key of [...next.keys()]) {
@@ -165,12 +214,8 @@ export function siteCmsReducer(state: SiteCmsState, action: SiteCmsAction): Site
       const editsMap = dropEditsByPredicate(state.editsMap, (edit) => edit.collectionId === action.collectionId);
       const collectionDisplayNames = new Map(state.collectionDisplayNames);
       collectionDisplayNames.delete(action.collectionId);
-      const fieldDisplayNames = new Map(state.fieldDisplayNames);
-      for (const key of [...fieldDisplayNames.keys()]) {
-        if (key.startsWith(`${action.collectionId}/`)) {
-          fieldDisplayNames.delete(key);
-        }
-      }
+      const fieldDisplayNames = filterMapByKeyPrefix(state.fieldDisplayNames, `${action.collectionId}/`);
+      const fieldKindOverrides = filterMapByKeyPrefix(state.fieldKindOverrides, `${action.collectionId}/`);
       const activeCollectionId = state.activeCollectionId === action.collectionId ? null : state.activeCollectionId;
       const activeItemId = activeCollectionId === null ? null : state.activeItemId;
       return {
@@ -179,6 +224,7 @@ export function siteCmsReducer(state: SiteCmsState, action: SiteCmsAction): Site
         editsMap,
         collectionDisplayNames,
         fieldDisplayNames,
+        fieldKindOverrides,
         activeCollectionId,
         activeItemId,
       };
@@ -194,12 +240,15 @@ export function siteCmsReducer(state: SiteCmsState, action: SiteCmsAction): Site
         edit.collectionId === action.collectionId && edit.fieldId === action.fieldId,
       );
       const fieldDisplayNames = new Map(state.fieldDisplayNames);
-      fieldDisplayNames.delete(fieldOverrideKey(action.collectionId, action.fieldId));
+      fieldDisplayNames.delete(fieldOverrideKey(action));
+      const fieldKindOverrides = new Map(state.fieldKindOverrides);
+      fieldKindOverrides.delete(fieldOverrideKey(action));
       return {
         ...state,
         drafts,
         editsMap,
         fieldDisplayNames,
+        fieldKindOverrides,
       };
     }
     case "delete-draft-item": {
@@ -227,10 +276,28 @@ export function siteCmsReducer(state: SiteCmsState, action: SiteCmsAction): Site
     }
     case "set-field-display-name": {
       const fieldDisplayNames = new Map(state.fieldDisplayNames);
-      fieldDisplayNames.set(fieldOverrideKey(action.collectionId, action.fieldId), action.displayName);
+      fieldDisplayNames.set(fieldOverrideKey(action), action.displayName);
       return { ...state, fieldDisplayNames };
     }
+    case "set-field-kind": {
+      const fieldKindOverrides = new Map(state.fieldKindOverrides);
+      fieldKindOverrides.set(fieldOverrideKey(action), action.kind);
+      return { ...state, fieldKindOverrides };
+    }
   }
+}
+
+function filterMapByKeyPrefix<TValue>(
+  source: ReadonlyMap<string, TValue>,
+  prefix: string,
+): ReadonlyMap<string, TValue> {
+  const next = new Map(source);
+  for (const key of [...next.keys()]) {
+    if (key.startsWith(prefix)) {
+      next.delete(key);
+    }
+  }
+  return next;
 }
 
 // ===========================================================================
@@ -242,7 +309,7 @@ const DRAFT_FIELD_PREFIX = "draft-field-";
 const DRAFT_ITEM_PREFIX = "draft-item-";
 
 /** Compose the storage key used by the editsMap. */
-export function fieldEditKey(input: { readonly collectionId: string; readonly itemId: string; readonly fieldId: string }): SiteCmsFieldEditKey {
+export function fieldEditKey(input: SiteCmsFieldValueRef): SiteCmsFieldEditKey {
   return `${input.collectionId} ${input.itemId} ${input.fieldId}`;
 }
 
@@ -332,20 +399,35 @@ function buildEmptyValue(fieldId: string): SiteCollectionItemValue {
   return { fieldId, text: null, references: [] };
 }
 
+function applyFieldKindOverride(
+  collectionId: string,
+  field: SiteCollectionField,
+  overrides: ReadonlyMap<string, SiteCollectionFieldKind>,
+): SiteCollectionField {
+  const override = overrides.get(`${collectionId}/${field.id}`);
+  if (override === undefined) {
+    return field;
+  }
+  return { ...field, kind: override };
+}
+
 function mergeFields(
+  collectionId: string,
   source: readonly SiteCollectionField[],
   drafts: readonly SiteCmsDraftField[],
+  overrides: ReadonlyMap<string, SiteCollectionFieldKind>,
 ): readonly SiteCollectionField[] {
+  const sourceWithOverrides = source.map((field) => applyFieldKindOverride(collectionId, field, overrides));
   if (drafts.length === 0) {
-    return source;
+    return sourceWithOverrides;
   }
   const draftFields: SiteCollectionField[] = drafts.map((draft) => ({
     id: draft.id,
-    kind: draft.kind,
+    kind: overrides.get(`${collectionId}/${draft.id}`) ?? draft.kind,
     variableFields: [],
     references: [],
   }));
-  return [...source, ...draftFields];
+  return [...sourceWithOverrides, ...draftFields];
 }
 
 function mergeItems(
@@ -375,32 +457,32 @@ function mergeItems(
 
 function mergeCollection(
   collection: SiteCollection,
-  drafts: SiteCmsDrafts,
+  state: SiteCmsState,
 ): SiteCollection {
-  const collectionFields = drafts.fields.filter((field) => field.collectionId === collection.id);
-  const collectionItems = drafts.items.filter((item) => item.collectionId === collection.id);
-  const mergedFields = mergeFields(collection.fields, collectionFields);
+  const collectionFields = state.drafts.fields.filter((field) => field.collectionId === collection.id);
+  const collectionItems = state.drafts.items.filter((item) => item.collectionId === collection.id);
+  const mergedFields = mergeFields(collection.id, collection.fields, collectionFields, state.fieldKindOverrides);
   const mergedItems = mergeItems(collection.items, mergedFields, collectionItems);
   return { ...collection, fields: mergedFields, items: mergedItems };
 }
 
 function appendDraftCollections(
   base: readonly SiteCollection[],
-  drafts: SiteCmsDrafts,
+  state: SiteCmsState,
 ): readonly SiteCollection[] {
-  if (drafts.collections.length === 0) {
+  if (state.drafts.collections.length === 0) {
     return base;
   }
-  const draftCollections: SiteCollection[] = drafts.collections.map((draft) => {
-    const fields: readonly SiteCollectionField[] = drafts.fields
+  const draftCollections: SiteCollection[] = state.drafts.collections.map((draft) => {
+    const fields: readonly SiteCollectionField[] = state.drafts.fields
       .filter((field) => field.collectionId === draft.id)
       .map((field) => ({
         id: field.id,
-        kind: field.kind,
+        kind: state.fieldKindOverrides.get(`${draft.id}/${field.id}`) ?? field.kind,
         variableFields: [],
         references: [],
       }));
-    const items: readonly SiteCollectionItem[] = drafts.items
+    const items: readonly SiteCollectionItem[] = state.drafts.items
       .filter((item) => item.collectionId === draft.id)
       .map((item) => ({
         id: item.id,
@@ -454,8 +536,8 @@ export function selectSiteCmsCollections(
   sourceCollections: readonly SiteCollection[],
 ): readonly SiteCollection[] {
   const withDrafts = appendDraftCollections(
-    sourceCollections.map((collection) => mergeCollection(collection, state.drafts)),
-    state.drafts,
+    sourceCollections.map((collection) => mergeCollection(collection, state)),
+    state,
   );
   if (state.editsMap.size === 0) {
     return withDrafts;
@@ -552,7 +634,7 @@ export function selectFieldDisplayName(
   collectionId: string,
   fieldId: string,
 ): string | null {
-  const override = state.fieldDisplayNames.get(fieldOverrideKey(collectionId, fieldId));
+  const override = state.fieldDisplayNames.get(`${collectionId}/${fieldId}`);
   if (override !== undefined) {
     return override;
   }

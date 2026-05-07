@@ -22,7 +22,6 @@ import {
   type SiteCollection,
   type SiteCollectionItem,
 } from "../domain/site-collections";
-import type { SiteCollectionFieldKind } from "../domain/site-collection-field-kind";
 import {
   INITIAL_SITE_CMS_STATE,
   assertCollectionExists,
@@ -40,11 +39,19 @@ import {
   selectSiteCmsCollections,
   siteCmsReducer,
   type SiteCmsAction,
+  type SiteCmsAddFieldRequest,
+  type SiteCmsAddItemRequest,
+  type SiteCmsCollectionRef,
+  type SiteCmsCollectionRenameRequest,
   type SiteCmsDraftCollection,
   type SiteCmsDraftField,
   type SiteCmsDraftItem,
   type SiteCmsDrafts,
   type SiteCmsFieldEdit,
+  type SiteCmsFieldKindRequest,
+  type SiteCmsFieldRef,
+  type SiteCmsFieldRenameRequest,
+  type SiteCmsItemRef,
   type SiteCmsState,
 } from "./site-cms-state";
 
@@ -66,15 +73,16 @@ export type SiteCmsContextValue = {
   readonly resetFieldEdits: () => void;
   // Create
   readonly addDraftCollection: () => SiteCmsDraftCollection;
-  readonly addDraftField: (input: { readonly collectionId: string; readonly kind: SiteCollectionFieldKind }) => SiteCmsDraftField;
-  readonly addDraftItem: (input: { readonly collectionId: string }) => SiteCmsDraftItem;
-  // Update (rename)
-  readonly renameCollection: (input: { readonly collectionId: string; readonly displayName: string }) => void;
-  readonly renameField: (input: { readonly collectionId: string; readonly fieldId: string; readonly displayName: string }) => void;
+  readonly addDraftField: (input: SiteCmsAddFieldRequest) => SiteCmsDraftField;
+  readonly addDraftItem: (input: SiteCmsAddItemRequest) => SiteCmsDraftItem;
+  // Update (rename + retype)
+  readonly renameCollection: (input: SiteCmsCollectionRenameRequest) => void;
+  readonly renameField: (input: SiteCmsFieldRenameRequest) => void;
+  readonly setFieldKind: (input: SiteCmsFieldKindRequest) => void;
   // Delete (drafts only)
-  readonly deleteDraftCollection: (input: { readonly collectionId: string }) => void;
-  readonly deleteDraftField: (input: { readonly collectionId: string; readonly fieldId: string }) => void;
-  readonly deleteDraftItem: (input: { readonly collectionId: string; readonly itemId: string }) => void;
+  readonly deleteDraftCollection: (input: SiteCmsCollectionRef) => void;
+  readonly deleteDraftField: (input: SiteCmsFieldRef) => void;
+  readonly deleteDraftItem: (input: SiteCmsItemRef) => void;
 };
 
 const SiteCmsContext = createContext<SiteCmsContextValue | null>(null);
@@ -189,7 +197,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   }, [sourceCollections, state.drafts]);
 
   const addDraftField = useCallback(
-    (input: { readonly collectionId: string; readonly kind: SiteCollectionFieldKind }) => {
+    (input: SiteCmsAddFieldRequest) => {
       const collection = collections.find((entry) => entry.id === input.collectionId);
       if (!collection) {
         throw new Error(`Cannot add field: collection ${input.collectionId} not found`);
@@ -209,7 +217,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   );
 
   const addDraftItem = useCallback(
-    (input: { readonly collectionId: string }) => {
+    (input: SiteCmsAddItemRequest) => {
       assertCollectionExists(collections, input.collectionId);
       const id = makeNextDraftItemId(sourceCollections, state.drafts);
       const item: SiteCmsDraftItem = { id, collectionId: input.collectionId };
@@ -220,7 +228,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   );
 
   const renameCollection = useCallback(
-    (input: { readonly collectionId: string; readonly displayName: string }) => {
+    (input: SiteCmsCollectionRenameRequest) => {
       assertCollectionExists(collections, input.collectionId);
       dispatch({ type: "set-collection-display-name", collectionId: input.collectionId, displayName: input.displayName });
     },
@@ -228,7 +236,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   );
 
   const renameField = useCallback(
-    (input: { readonly collectionId: string; readonly fieldId: string; readonly displayName: string }) => {
+    (input: SiteCmsFieldRenameRequest) => {
       const collection = collections.find((entry) => entry.id === input.collectionId);
       if (!collection) {
         throw new Error(`Cannot rename field: collection ${input.collectionId} not found`);
@@ -242,8 +250,23 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
     [collections],
   );
 
+  const setFieldKind = useCallback(
+    (input: SiteCmsFieldKindRequest) => {
+      const collection = collections.find((entry) => entry.id === input.collectionId);
+      if (!collection) {
+        throw new Error(`Cannot retype field: collection ${input.collectionId} not found`);
+      }
+      const field = collection.fields.find((entry) => entry.id === input.fieldId);
+      if (!field) {
+        throw new Error(`Cannot retype field: field ${input.fieldId} not found`);
+      }
+      dispatch({ type: "set-field-kind", collectionId: input.collectionId, fieldId: input.fieldId, kind: input.kind });
+    },
+    [collections],
+  );
+
   const deleteDraftCollection = useCallback(
-    (input: { readonly collectionId: string }) => {
+    (input: SiteCmsCollectionRef) => {
       assertDraftId(input.collectionId, "Collection");
       dispatch({ type: "delete-draft-collection", collectionId: input.collectionId });
     },
@@ -251,7 +274,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   );
 
   const deleteDraftField = useCallback(
-    (input: { readonly collectionId: string; readonly fieldId: string }) => {
+    (input: SiteCmsFieldRef) => {
       assertDraftId(input.fieldId, "Field");
       dispatch({ type: "delete-draft-field", collectionId: input.collectionId, fieldId: input.fieldId });
     },
@@ -259,7 +282,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   );
 
   const deleteDraftItem = useCallback(
-    (input: { readonly collectionId: string; readonly itemId: string }) => {
+    (input: SiteCmsItemRef) => {
       assertDraftId(input.itemId, "Item");
       dispatch({ type: "delete-draft-item", collectionId: input.collectionId, itemId: input.itemId });
     },
@@ -286,6 +309,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
       addDraftItem,
       renameCollection,
       renameField,
+      setFieldKind,
       deleteDraftCollection,
       deleteDraftField,
       deleteDraftItem,
@@ -307,6 +331,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
       addDraftItem,
       renameCollection,
       renameField,
+      setFieldKind,
       deleteDraftCollection,
       deleteDraftField,
       deleteDraftItem,
