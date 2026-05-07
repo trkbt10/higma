@@ -3,10 +3,18 @@
  * components list.
  *
  * The layers tree mirrors VS Code's tree view conventions: indent per
- * depth, an expand chevron on rows that have children, and a single
- * focusable selection that the inspect panel listens to. Hover and
- * selection state are owned by the parent so the canvas overlay and
- * this tree stay in sync.
+ * depth, an expand chevron on rows that have children, and selection
+ * the inspect panel listens to. Hover and selection state are owned by
+ * the parent so the canvas overlay and this tree stay in sync.
+ *
+ * Selection is multi-pick:
+ *   - Plain click selects exactly the row.
+ *   - Cmd/Ctrl-click toggles the row in/out of the set without
+ *     touching other members.
+ *   - Shift-click selects every row between the current primary and
+ *     the click target in painter (DFS pre-order) order.
+ *   - The "primary" row paints a stronger highlight so subsequent
+ *     shift-clicks have a visible anchor.
  *
  * Component selection is implemented by locating the page that
  * contains the component node and switching to it before selecting.
@@ -24,6 +32,7 @@ import type {
 } from "@higma-document-models/fig/domain";
 import { dfsById } from "@higma-primitives/tree";
 import { nodeTypeGlyph, nodeTypeLabel } from "./node-icon";
+import type { SelectionModifiers } from "../selection";
 
 const DESIGN_NODE_DFS_OPTIONS = {
   getId: (node: FigDesignNode) => node.id as string,
@@ -36,17 +45,21 @@ type Props = {
   readonly activePageId: FigPageId | null;
   readonly onPageChange: (id: FigPageId) => void;
   readonly hoveredId: FigNodeId | null;
-  readonly selectedId: FigNodeId | null;
+  readonly selectedIds: ReadonlySet<FigNodeId>;
+  readonly primaryId: FigNodeId | null;
   readonly onHover: (id: FigNodeId | null) => void;
-  readonly onSelect: (id: FigNodeId | null) => void;
+  readonly onSelect: (id: FigNodeId, modifiers: SelectionModifiers) => void;
+  readonly onClearSelection: () => void;
 };
 
 type Section = "pages" | "layers" | "components";
 
-
-
-
-
+function modifiersFromMouse(event: React.MouseEvent): SelectionModifiers {
+  return {
+    meta: event.metaKey || event.ctrlKey,
+    shift: event.shiftKey,
+  };
+}
 
 export function LayersPanel(props: Props) {
   const [collapsed, setCollapsed] = useState<Record<Section, boolean>>({
@@ -63,18 +76,27 @@ export function LayersPanel(props: Props) {
   }, [props.document]);
 
   const handleComponentClick = useCallback(
-    (componentId: FigNodeId) => {
+    (componentId: FigNodeId, modifiers: SelectionModifiers) => {
       const owner = findPageContaining(props.document, componentId);
       if (!owner) {
         return;
       }
       if (owner.id !== props.activePageId) {
+        // Switching pages clears selection in the viewer; honour that
+        // by sending an unmodified click so the new page starts with
+        // the component as the lone selection.
         props.onPageChange(owner.id);
+        props.onSelect(componentId, { meta: false, shift: false });
+        return;
       }
-      props.onSelect(componentId);
+      props.onSelect(componentId, modifiers);
     },
     [props],
   );
+
+  const selectionCount = props.selectedIds.size;
+  const layersTitle = formatLayersTitle(props.activePage, selectionCount);
+  const layersAction = buildLayersAction(selectionCount, props.onClearSelection);
 
   return (
     <aside className="higma-fig-sidebar higma-fig-sidebar--left" aria-label="Layers">
@@ -104,9 +126,10 @@ export function LayersPanel(props: Props) {
       )}
 
       <SectionHeader
-        title={props.activePage ? `Layers — ${props.activePage.name}` : "Layers"}
+        title={layersTitle}
         collapsed={collapsed.layers}
         onToggle={() => toggleSection("layers")}
+        action={layersAction}
       />
       {!collapsed.layers && props.activePage && (
         <ul className="higma-fig-tree" role="tree">
@@ -116,7 +139,8 @@ export function LayersPanel(props: Props) {
               node={child}
               depth={0}
               hoveredId={props.hoveredId}
-              selectedId={props.selectedId}
+              selectedIds={props.selectedIds}
+              primaryId={props.primaryId}
               onHover={props.onHover}
               onSelect={props.onSelect}
             />
@@ -139,8 +163,8 @@ export function LayersPanel(props: Props) {
               <button
                 type="button"
                 className="higma-fig-tree__row"
-                aria-pressed={component.id === props.selectedId}
-                onClick={() => handleComponentClick(component.id)}
+                aria-pressed={props.selectedIds.has(component.id)}
+                onClick={(event) => handleComponentClick(component.id, modifiersFromMouse(event))}
                 onMouseEnter={() => props.onHover(component.id)}
                 onMouseLeave={() => props.onHover(null)}
               >
@@ -163,21 +187,38 @@ type SectionHeaderProps = {
   readonly title: string;
   readonly collapsed: boolean;
   readonly onToggle: () => void;
+  readonly action?: { readonly label: string; readonly onClick: () => void } | null;
 };
 
-function SectionHeader({ title, collapsed, onToggle }: SectionHeaderProps) {
+function SectionHeader({ title, collapsed, onToggle, action }: SectionHeaderProps) {
   return (
-    <button
-      type="button"
-      className="higma-fig-sidebar__section"
-      aria-expanded={!collapsed}
-      onClick={onToggle}
-    >
-      <span className="higma-fig-sidebar__chevron" aria-hidden="true">
-        {collapsed ? "▸" : "▾"}
-      </span>
-      <span className="higma-fig-sidebar__section-title">{title}</span>
-    </button>
+    <div className="higma-fig-sidebar__section-row">
+      <button
+        type="button"
+        className="higma-fig-sidebar__section"
+        aria-expanded={!collapsed}
+        onClick={onToggle}
+      >
+        <span className="higma-fig-sidebar__chevron" aria-hidden="true">
+          {collapsed ? "▸" : "▾"}
+        </span>
+        <span className="higma-fig-sidebar__section-title">{title}</span>
+      </button>
+      {action && (
+        <button
+          type="button"
+          className="higma-fig-sidebar__section-action"
+          // stopPropagation so the click does not also toggle the
+          // surrounding section header's collapsed state.
+          onClick={(event) => {
+            event.stopPropagation();
+            action.onClick();
+          }}
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -185,18 +226,28 @@ type LayerNodeProps = {
   readonly node: FigDesignNode;
   readonly depth: number;
   readonly hoveredId: FigNodeId | null;
-  readonly selectedId: FigNodeId | null;
+  readonly selectedIds: ReadonlySet<FigNodeId>;
+  readonly primaryId: FigNodeId | null;
   readonly onHover: (id: FigNodeId | null) => void;
-  readonly onSelect: (id: FigNodeId | null) => void;
+  readonly onSelect: (id: FigNodeId, modifiers: SelectionModifiers) => void;
 };
 
-function LayerNode({ node, depth, hoveredId, selectedId, onHover, onSelect }: LayerNodeProps) {
+function LayerNode({
+  node,
+  depth,
+  hoveredId,
+  selectedIds,
+  primaryId,
+  onHover,
+  onSelect,
+}: LayerNodeProps) {
   // Auto-collapse beyond the first level. Users can drill in
   // explicitly; auto-expanding the entire tree on a real-world Figma
   // export produces hundreds of rows on first paint.
   const [expanded, setExpanded] = useState<boolean>(depth < 1);
   const hasChildren = !!node.children && node.children.length > 0;
-  const isSelected = node.id === selectedId;
+  const isSelected = selectedIds.has(node.id);
+  const isPrimary = primaryId === node.id;
   const isHovered = node.id === hoveredId && !isSelected;
   const labelTitle = `${node.name} (${nodeTypeLabel(node.type)})`;
   const handleToggle = useCallback(
@@ -206,6 +257,12 @@ function LayerNode({ node, depth, hoveredId, selectedId, onHover, onSelect }: La
     },
     [],
   );
+  const handleRowClick = useCallback(
+    (event: React.MouseEvent) => {
+      onSelect(node.id, modifiersFromMouse(event));
+    },
+    [node.id, onSelect],
+  );
 
   return (
     <li role="treeitem" aria-expanded={hasChildren ? expanded : undefined}>
@@ -214,8 +271,9 @@ function LayerNode({ node, depth, hoveredId, selectedId, onHover, onSelect }: La
         className="higma-fig-tree__row"
         style={{ paddingLeft: 8 + depth * 12 }}
         aria-pressed={isSelected}
+        data-primary={isPrimary ? "true" : undefined}
         data-hovered={isHovered ? "true" : undefined}
-        onClick={() => onSelect(node.id)}
+        onClick={handleRowClick}
         onMouseEnter={() => onHover(node.id)}
         onMouseLeave={() => onHover(null)}
       >
@@ -245,7 +303,8 @@ function LayerNode({ node, depth, hoveredId, selectedId, onHover, onSelect }: La
               node={child}
               depth={depth + 1}
               hoveredId={hoveredId}
-              selectedId={selectedId}
+              selectedIds={selectedIds}
+              primaryId={primaryId}
               onHover={onHover}
               onSelect={onSelect}
             />
@@ -254,6 +313,24 @@ function LayerNode({ node, depth, hoveredId, selectedId, onHover, onSelect }: La
       )}
     </li>
   );
+}
+
+function formatLayersTitle(activePage: FigPage | null, selectionCount: number): string {
+  if (!activePage) {return "Layers";}
+  if (selectionCount > 1) {
+    return `Layers — ${activePage.name} (${selectionCount} selected)`;
+  }
+  return `Layers — ${activePage.name}`;
+}
+
+// Right-side action slot: clear selection when something is selected
+// — saves users digging for the canvas to deselect.
+function buildLayersAction(
+  selectionCount: number,
+  onClearSelection: () => void,
+): { readonly label: string; readonly onClick: () => void } | null {
+  if (selectionCount === 0) {return null;}
+  return { label: "Clear", onClick: onClearSelection };
 }
 
 function findPageContaining(

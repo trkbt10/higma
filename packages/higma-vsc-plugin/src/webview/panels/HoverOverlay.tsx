@@ -1,27 +1,47 @@
 /**
- * @file Selection / hover bounding box rendered over the rendered fig
+ * @file Selection / hover bounding boxes rendered over the rendered fig
  * canvas.
  *
  * Overlay rectangles are positioned in *surface-px* (the same coords
  * the canvas DOM lives in) by applying the viewport transform to the
  * world-space node bounds: `surface = world * scale + translate`.
  * That mirrors the inverse the renderer uses when sampling the world
- * window for paint, so a hover box always lands exactly on the node
- * the renderer drew — regardless of pan or zoom.
+ * window for paint, so a box always lands exactly on the node the
+ * renderer drew — regardless of pan or zoom.
+ *
+ * Multiple selection: every member of the selection set draws a box.
+ * The current "primary" — the last-clicked anchor — gets a slightly
+ * stronger outline so the user has visual confirmation of where the
+ * next shift-click will extend from. Non-primary members use the
+ * standard selection outline.
  *
  * The cursor tooltip is mounted by `FigViewer` as a sibling of the
  * stage at fixed-position client px so it never inherits any canvas
  * styling that could clip or distort it.
  */
 
+import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { NodeBounds } from "../geometry/node-bounds";
 import type { ViewportTransform } from "../FigViewer";
 
 type Props = {
   readonly viewport: ViewportTransform;
   readonly hovered: NodeBounds | null;
-  readonly selected: NodeBounds | null;
+  readonly selected: readonly NodeBounds[];
+  readonly primaryId: FigNodeId | null;
 };
+
+function selectionOverlayClassName(isPrimary: boolean): string {
+  if (isPrimary) {
+    return "higma-fig-overlay higma-fig-overlay--selected higma-fig-overlay--primary";
+  }
+  return "higma-fig-overlay higma-fig-overlay--selected";
+}
+
+function selectionOverlayTestId(isPrimary: boolean): string {
+  if (isPrimary) {return "fig-overlay-selected";}
+  return "fig-overlay-selected-secondary";
+}
 
 function rectStyle(node: NodeBounds, viewport: ViewportTransform): React.CSSProperties {
   return {
@@ -34,24 +54,29 @@ function rectStyle(node: NodeBounds, viewport: ViewportTransform): React.CSSProp
   };
 }
 
-
-export function HoverOverlay({ viewport, hovered, selected }: Props) {
+export function HoverOverlay({ viewport, hovered, selected, primaryId }: Props) {
+  const selectedIds = new Set(selected.map((node) => node.id));
+  const showHover = hovered && !selectedIds.has(hovered.id);
   return (
     <>
-      {hovered && hovered.id !== selected?.id && (
+      {showHover && hovered && (
         <div
           className="higma-fig-overlay higma-fig-overlay--hover"
           style={rectStyle(hovered, viewport)}
           data-testid="fig-overlay-hover"
         />
       )}
-      {selected && (
-        <div
-          className="higma-fig-overlay higma-fig-overlay--selected"
-          style={rectStyle(selected, viewport)}
-          data-testid="fig-overlay-selected"
-        />
-      )}
+      {selected.map((node) => {
+        const isPrimary = node.id === primaryId;
+        return (
+          <div
+            key={node.id}
+            className={selectionOverlayClassName(isPrimary)}
+            style={rectStyle(node, viewport)}
+            data-testid={selectionOverlayTestId(isPrimary)}
+          />
+        );
+      })}
     </>
   );
 }

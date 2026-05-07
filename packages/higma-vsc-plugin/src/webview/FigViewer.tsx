@@ -4,9 +4,16 @@
  *
  * The viewer owns:
  *   - the active page selection
- *   - the hovered and selected node ids
+ *   - the hovered node id and the multi-node selection state
+ *     (`SelectionState` from `./selection`)
  *   - the viewport transform (pan + zoom) and fit mode
- *   - the export request state (busy + error message)
+ *   - the export request state (busy + error + per-node rollup)
+ *
+ * Selection model — a single `SelectionState` value drives both the
+ * canvas overlay and the layers tree, so range/toggle clicks on either
+ * surface update the other immediately. The painter-order id list used
+ * for shift-click range selection comes from `nodeBounds`, so range
+ * selection on the canvas matches range selection on the tree.
  *
  * Viewport model — same shape as the editor's infinite canvas:
  *   - The DOM canvas is sized to the *visible stage*, not the design.
@@ -47,7 +54,15 @@ import { WebGLViewport } from "./webgl/WebGLViewport";
 import { renderNodeToSvg } from "./export/render-node-svg";
 import { rasterizeSvg } from "./export/rasterize";
 import { triggerBlobDownload, buildExportFileName } from "./export/download";
-import type { ExportRequest } from "./export/types";
+import type { ExportRequest, ExportRollupStatus } from "./export/types";
+import {
+  EMPTY_SELECTION,
+  applyClickSelection,
+  clampSelectionToIds,
+  selectionAsSet,
+  type SelectionModifiers,
+  type SelectionState,
+} from "./selection";
 
 const ZOOM_LEVELS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8] as const;
 const MIN_ZOOM = ZOOM_LEVELS[0];
@@ -138,11 +153,6 @@ function fitViewport(
   return { translateX, translateY, scale };
 }
 
-
-
-
-
-
 export function FigViewer({ fileName, document }: FigViewerProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -174,28 +184,68 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
   }, [activePage]);
 
   const boundsById = useMemo(() => indexBoundsById(nodeBounds), [nodeBounds]);
+  const orderedIds = useMemo<readonly FigNodeId[]>(
+    () => nodeBounds.map((entry) => entry.id),
+    [nodeBounds],
+  );
+  const validIdSet = useMemo<ReadonlySet<FigNodeId>>(
+    () => new Set(orderedIds),
+    [orderedIds],
+  );
 
   const renderOptions = useMemo(() => createFigFamilyRenderOptions(document), [document]);
   const textFontResolver = useMemo(() => createCanvasMetricsTextFontResolver(), []);
 
   const [hoveredId, setHoveredId] = useState<FigNodeId | null>(null);
-  const [selectedId, setSelectedId] = useState<FigNodeId | null>(null);
+  const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
   const [cursor, setCursor] = useState<Cursor | null>(null);
 
-  // Reset selection / hover when the active page changes — the ids
-  // from a previous page are not valid in the new page's tree.
+  // Reset hover when the active page changes — ids from a previous
+  // page are not valid in the new tree.
   useEffect(() => {
-    setSelectedId(null);
     setHoveredId(null);
     setCursor(null);
   }, [activePageId]);
 
+  // Drop selection ids that no longer exist on this page (page change,
+  // or document mutation). Keeping stale ids would leave "ghost"
+  // overlays anchored at world positions from a different tree.
+  useEffect(() => {
+    setSelection((prev) => clampSelectionToIds(prev, validIdSet));
+  }, [validIdSet]);
+
   const hoveredNode = hoveredId ? (boundsById.get(hoveredId) ?? null) : null;
-  const selectedNode = selectedId ? (boundsById.get(selectedId) ?? null) : null;
-  const selectedFigNode = useMemo(
-    () => (selectedId && activePage ? findNodeInPage(activePage.children, selectedId) : null),
-    [selectedId, activePage],
+  const selectedIds = useMemo(() => selectionAsSet(selection), [selection]);
+  const selectedBounds = useMemo<readonly NodeBounds[]>(() => {
+    if (selection.ids.length === 0) {return [];}
+    const out: NodeBounds[] = [];
+    for (const id of selection.ids) {
+      const bounds = boundsById.get(id);
+      if (bounds) {out.push(bounds);}
+    }
+    return out;
+  }, [selection, boundsById]);
+
+  const selectedFigNodes = useMemo<readonly FigDesignNode[]>(() => {
+    if (!activePage || selection.ids.length === 0) {return [];}
+    const out: FigDesignNode[] = [];
+    for (const id of selection.ids) {
+      const node = findNodeInPage(activePage.children, id);
+      if (node) {out.push(node);}
+    }
+    return out;
+  }, [selection, activePage]);
+
+  const handleSelectId = useCallback(
+    (id: FigNodeId, modifiers: SelectionModifiers) => {
+      setSelection((prev) => applyClickSelection(prev, id, modifiers, orderedIds));
+    },
+    [orderedIds],
   );
+
+  const handleClearSelection = useCallback(() => {
+    setSelection(EMPTY_SELECTION);
+  }, []);
 
   const [zoomMode, setZoomMode] = useState<ZoomMode>("fit");
   const [manualViewport, setManualViewport] = useState<ViewportTransform | null>(null);
@@ -279,9 +329,13 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
 
   const handlePageChange = useCallback((id: FigPageId) => {
     setActivePageId(id);
+    // Page change clears selection too — ids from the previous page
+    // cannot be evaluated against the new tree.
+    setSelection(EMPTY_SELECTION);
   }, []);
   const handlePageSelectChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
     setActivePageId(toPageId(event.target.value));
+    setSelection(EMPTY_SELECTION);
   }, []);
 
   // Surface px under cursor → world (page) px. Same inverse the
@@ -488,69 +542,81 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
       // Space-held click is part of the pan gesture — never a select.
       if (spacePan) {return;}
       const point = cursorToPagePoint(event.clientX, event.clientY);
+      const modifiers: SelectionModifiers = {
+        meta: event.metaKey || event.ctrlKey,
+        shift: event.shiftKey,
+      };
       if (!point) {
-        setSelectedId(null);
+        if (!modifiers.meta && !modifiers.shift) {
+          setSelection(EMPTY_SELECTION);
+        }
         return;
       }
       const hit = findNodeAtPoint(nodeBounds, point);
-      setSelectedId(hit ? hit.id : null);
+      if (!hit) {
+        // Background click: only clear the selection on a plain click.
+        // A modifier-augmented click on empty space leaves the
+        // selection alone — matches Figma, where Cmd-click on empty
+        // canvas is a no-op rather than a deselect.
+        if (!modifiers.meta && !modifiers.shift) {
+          setSelection(EMPTY_SELECTION);
+        }
+        return;
+      }
+      setSelection((prev) => applyClickSelection(prev, hit.id, modifiers, orderedIds));
     },
-    [cursorToPagePoint, nodeBounds, spacePan],
+    [cursorToPagePoint, nodeBounds, orderedIds, spacePan],
   );
+
+  // ----------------------------------------------------------------------
+  // Export rollup
+  //
+  // The viewer iterates the current selection and runs each node
+  // through `renderNodeToSvg` + (optionally) `rasterizeSvg` in series.
+  // Series rather than parallel: each `renderNodeToSvg` mounts a
+  // hidden React root and waits two frames. Running them concurrently
+  // would interleave commits and font/image decode races.
+  //
+  // Filenames are deduped per request — duplicate node names get
+  // numeric suffixes — and per-node failures are accumulated rather
+  // than aborted, so a broken text node mid-list does not stop the
+  // remaining shapes from downloading.
+  // ----------------------------------------------------------------------
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<ExportRollupStatus>({ kind: "idle" });
+
   const handleExport = useCallback(
     async (request: ExportRequest) => {
-      if (!activePage || !selectedFigNode) {
-        setExportError("Select a layer to export.");
+      if (!activePage || selectedFigNodes.length === 0) {
+        setExportError("Select at least one layer to export.");
         return;
       }
       setExporting(true);
       setExportError(null);
+      const total = selectedFigNodes.length;
+      setExportStatus({ kind: "running", completed: 0, total });
+
       try {
-        const rendered = await renderNodeToSvg({
-          document,
+        const rollup = await runExportRollup({
+          nodes: selectedFigNodes,
           page: activePage,
-          node: selectedFigNode,
+          document,
           renderOptions,
           textFontResolver,
+          request,
+          onProgress: (completed) => {
+            setExportStatus({ kind: "running", completed, total });
+          },
         });
-        if (request.format === "SVG") {
-          const blob = new Blob([rendered.svgString], { type: "image/svg+xml;charset=utf-8" });
-          triggerBlobDownload(
-            blob,
-            buildExportFileName({
-              baseName: request.baseName,
-              suffix: request.suffix,
-              extension: "svg",
-            }),
-          );
-          return;
-        }
-        const blob = await rasterizeSvg({
-          svgString: rendered.svgString,
-          width: rendered.width,
-          height: rendered.height,
-          scale: request.scale,
-          format: request.format,
-        });
-        triggerBlobDownload(
-          blob,
-          buildExportFileName({
-            baseName: request.baseName,
-            suffix: request.suffix,
-            extension: request.format === "PNG" ? "png" : "jpg",
-          }),
-        );
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        setExportError(message);
+        setExportStatus({ kind: "done", succeeded: rollup.succeeded, failed: rollup.failed });
+        setExportError(buildRollupErrorMessage(rollup));
       } finally {
         setExporting(false);
       }
     },
-    [activePage, selectedFigNode, document, renderOptions, textFontResolver],
+    [activePage, document, renderOptions, selectedFigNodes, textFontResolver],
   );
 
   return (
@@ -626,9 +692,11 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
           activePageId={activePageId}
           onPageChange={handlePageChange}
           hoveredId={hoveredId}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
+          primaryId={selection.primaryId}
           onHover={setHoveredId}
-          onSelect={setSelectedId}
+          onSelect={handleSelectId}
+          onClearSelection={handleClearSelection}
         />
         <div
           className="higma-fig-stage"
@@ -654,23 +722,194 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
             renderOptions={renderOptions}
             textFontResolver={textFontResolver}
             hoveredNode={hoveredNode}
-            selectedNode={selectedNode}
+            selectedBounds={selectedBounds}
+            primaryId={selection.primaryId}
             canvasRef={canvasRef}
           />
         </div>
         <InspectPanel
-          document={document}
-          page={activePage}
-          selectedNode={selectedFigNode}
-          selectedBounds={selectedNode}
+          selectedNodes={selectedFigNodes}
+          selectedBounds={selectedBounds}
           onExport={(req) => void handleExport(req)}
           exporting={exporting}
           exportError={exportError}
+          exportStatus={exportStatus}
         />
       </div>
       {hoveredNode && cursor && <HoverTooltip node={hoveredNode} cursor={cursor} />}
     </div>
   );
+}
+
+type RolloupResult = {
+  readonly succeeded: number;
+  readonly failed: ReadonlyArray<{ readonly name: string; readonly message: string }>;
+};
+
+type RolloupArgs = {
+  readonly nodes: readonly FigDesignNode[];
+  readonly page: FigPage;
+  readonly document: FigDesignDocument;
+  readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
+  readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
+  readonly request: ExportRequest;
+  readonly onProgress: (completed: number) => void;
+};
+
+/**
+ * Run a series of single-node exports against the current selection.
+ *
+ * Series rather than parallel: each `renderNodeToSvg` mounts a hidden
+ * React root and waits two frames; running them concurrently would
+ * interleave commits and font/image decode races.
+ *
+ * Per-node failures are accumulated rather than thrown — a broken text
+ * node mid-list does not stop the remaining shapes from downloading.
+ */
+async function runExportRollup(args: RolloupArgs): Promise<RolloupResult> {
+  const usedNames = new Map<string, number>();
+  const failed: { name: string; message: string }[] = [];
+  const accumulator = { succeeded: 0 };
+  for (let i = 0; i < args.nodes.length; i += 1) {
+    const node = args.nodes[i];
+    if (!node) {continue;}
+    await runOneNode({
+      node,
+      page: args.page,
+      document: args.document,
+      renderOptions: args.renderOptions,
+      textFontResolver: args.textFontResolver,
+      request: args.request,
+      usedNames,
+      failed,
+      accumulator,
+    });
+    args.onProgress(i + 1);
+  }
+  return { succeeded: accumulator.succeeded, failed };
+}
+
+type RunOneNodeArgs = ExportSingleArgs & {
+  readonly failed: { name: string; message: string }[];
+  readonly accumulator: { succeeded: number };
+};
+
+/**
+ * Wrap `exportSingleNode` so the rollup loop can stay free of nested
+ * try/catch — `runExportRollup`'s eslint config forbids them.
+ */
+async function runOneNode(args: RunOneNodeArgs): Promise<void> {
+  try {
+    await exportSingleNode({
+      node: args.node,
+      page: args.page,
+      document: args.document,
+      renderOptions: args.renderOptions,
+      textFontResolver: args.textFontResolver,
+      request: args.request,
+      usedNames: args.usedNames,
+    });
+    args.accumulator.succeeded += 1;
+  } catch (error: unknown) {
+    args.failed.push({
+      name: args.node.name || args.node.type,
+      message: describeError(error),
+    });
+  }
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function buildRollupErrorMessage(result: RolloupResult): string | null {
+  if (result.succeeded > 0 || result.failed.length === 0) {
+    return null;
+  }
+  if (result.failed.length === 1) {
+    const first = result.failed[0];
+    if (first) {
+      return `${first.name}: ${first.message}`;
+    }
+  }
+  return `Failed to export ${result.failed.length} layers.`;
+}
+
+type ExportSingleArgs = {
+  readonly node: FigDesignNode;
+  readonly page: FigPage;
+  readonly document: FigDesignDocument;
+  readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
+  readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
+  readonly request: ExportRequest;
+  readonly usedNames: Map<string, number>;
+};
+
+async function exportSingleNode(args: ExportSingleArgs): Promise<void> {
+  const { node, page, document, renderOptions, textFontResolver, request, usedNames } = args;
+  const baseName = node.name || node.type;
+  const extension = extensionForFormat(request.format);
+  const proposedName = buildExportFileName({
+    baseName,
+    suffix: request.suffix,
+    extension,
+  });
+  const fileName = dedupeFileName(proposedName, usedNames);
+
+  const rendered = await renderNodeToSvg({
+    document,
+    page,
+    node,
+    renderOptions,
+    textFontResolver,
+  });
+  if (request.format === "SVG") {
+    const blob = new Blob([rendered.svgString], { type: "image/svg+xml;charset=utf-8" });
+    triggerBlobDownload(blob, fileName);
+    return;
+  }
+  const blob = await rasterizeSvg({
+    svgString: rendered.svgString,
+    width: rendered.width,
+    height: rendered.height,
+    scale: request.scale,
+    format: request.format,
+  });
+  triggerBlobDownload(blob, fileName);
+}
+
+function extensionForFormat(format: ExportRequest["format"]): "svg" | "png" | "jpg" {
+  if (format === "SVG") {return "svg";}
+  if (format === "PNG") {return "png";}
+  return "jpg";
+}
+
+/**
+ * Append a numeric suffix to `name` when the same filename has already
+ * been emitted in this rollup. Two layers called "Icon" become
+ * `Icon.png` and `Icon (2).png`.
+ */
+function dedupeFileName(name: string, used: Map<string, number>): string {
+  const count = used.get(name) ?? 0;
+  if (count === 0) {
+    used.set(name, 1);
+    return name;
+  }
+  const dot = name.lastIndexOf(".");
+  const stem = dot >= 0 ? name.slice(0, dot) : name;
+  const ext = dot >= 0 ? name.slice(dot) : "";
+  // Try `(2)`, `(3)`, … until a free slot is found. The bookkeeping
+  // map only tracks the base name, so we still need to verify each
+  // candidate to handle the unlikely case where the user named one
+  // layer literally "Icon (2)".
+  for (let n = count + 1; ; n += 1) {
+    const candidate = `${stem} (${n})${ext}`;
+    if (!used.has(candidate)) {
+      used.set(name, n);
+      used.set(candidate, 1);
+      return candidate;
+    }
+  }
 }
 
 type FigStageContentProps = {
@@ -687,7 +926,8 @@ type FigStageContentProps = {
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
   readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
   readonly hoveredNode: NodeBounds | null;
-  readonly selectedNode: NodeBounds | null;
+  readonly selectedBounds: readonly NodeBounds[];
+  readonly primaryId: FigNodeId | null;
   readonly canvasRef: React.RefObject<HTMLDivElement | null>;
 };
 
@@ -705,7 +945,8 @@ function FigStageContent({
   renderOptions,
   textFontResolver,
   hoveredNode,
-  selectedNode,
+  selectedBounds,
+  primaryId,
   canvasRef,
 }: FigStageContentProps) {
   // The renderer wants surface = visible CSS px and viewport = the
@@ -752,7 +993,8 @@ function FigStageContent({
       <HoverOverlay
         viewport={viewport}
         hovered={hoveredNode}
-        selected={selectedNode}
+        selected={selectedBounds}
+        primaryId={primaryId}
       />
     </div>
   );

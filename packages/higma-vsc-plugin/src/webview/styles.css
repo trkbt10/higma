@@ -256,11 +256,17 @@ button {
   border-left: 1px solid var(--vscode-panel-border, var(--vscode-editorWidget-border, transparent));
 }
 
+.higma-fig-sidebar__section-row {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+
 .higma-fig-sidebar__section {
   display: flex;
   align-items: center;
   gap: 4px;
-  width: 100%;
+  flex: 1 1 auto;
   text-align: left;
   padding: 6px 8px;
   background: transparent;
@@ -271,11 +277,30 @@ button {
   letter-spacing: 0.04em;
   font-size: 11px;
   font-weight: 600;
-  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .higma-fig-sidebar__section:hover {
   background: var(--vscode-list-hoverBackground, transparent);
+}
+
+.higma-fig-sidebar__section-action {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.higma-fig-sidebar__section-action:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground, transparent));
+  color: var(--vscode-foreground);
 }
 
 .higma-fig-sidebar__chevron {
@@ -333,9 +358,24 @@ button {
   background: var(--vscode-list-hoverBackground, transparent);
 }
 
+/* Selected rows always paint with the strong active-selection
+ * background so a multi-selection in a dark panel reads as obviously
+ * selected. The primary anchor adds a focus-border stripe and a
+ * brighter outline so subsequent shift-clicks have a visible pivot. */
 .higma-fig-tree__row[aria-pressed="true"] {
   background: var(--vscode-list-activeSelectionBackground, var(--vscode-toolbar-activeBackground));
   color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
+  /* Inset accent on the leading edge so the row reads as selected even
+   * when the active-selection tint is similar to the editor surface. */
+  box-shadow: inset 2px 0 0 var(--vscode-focusBorder, #007fd4);
+}
+
+.higma-fig-tree__row[aria-pressed="true"][data-primary="true"] {
+  /* Primary anchor: a thicker stripe + a focus-border outline so it
+   * stands out from its peers without changing the row geometry. */
+  box-shadow:
+    inset 4px 0 0 var(--vscode-focusBorder, #007fd4),
+    inset 0 0 0 1px var(--vscode-focusBorder, rgba(0, 127, 212, 0.6));
 }
 
 .higma-fig-tree__row:focus-visible {
@@ -502,6 +542,88 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.higma-fig-inspect__color-count {
+  margin-left: auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: calc(var(--vscode-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+/* When alpha and count are both present, alpha sits to the left of the
+ * count rather than fighting for `margin-left: auto`. */
+.higma-fig-inspect__color-row .higma-fig-inspect__color-alpha + .higma-fig-inspect__color-count {
+  margin-left: 0;
+}
+
+.higma-fig-inspect__swatch--gradient {
+  background: linear-gradient(
+    90deg,
+    var(--vscode-charts-blue, #4f8cd0),
+    var(--vscode-charts-purple, #b180d7)
+  );
+}
+
+.higma-fig-inspect__chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.higma-fig-inspect__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--vscode-badge-background, var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2)));
+  color: var(--vscode-badge-foreground, var(--vscode-foreground));
+  font-size: calc(var(--vscode-font-size) * 0.85);
+}
+
+.higma-fig-inspect__chip-count {
+  color: var(--vscode-descriptionForeground, inherit);
+  font-variant-numeric: tabular-nums;
+}
+
+.higma-fig-inspect__metric-value--mixed {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: var(--vscode-descriptionForeground, var(--vscode-foreground));
+  font-style: italic;
+}
+
+.higma-fig-inspect__metric-range {
+  font-style: normal;
+  font-size: calc(var(--vscode-font-size) * 0.85);
+  color: var(--vscode-descriptionForeground);
+}
+
+.higma-fig-inspect__export-progress {
+  margin-top: 6px;
+  font-size: calc(var(--vscode-font-size) * 0.9);
+  color: var(--vscode-descriptionForeground);
+}
+
+.higma-fig-inspect__export-success {
+  margin-top: 6px;
+  font-size: calc(var(--vscode-font-size) * 0.9);
+  color: var(--vscode-descriptionForeground);
+}
+
+.higma-fig-inspect__export-failures {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: calc(var(--vscode-font-size) * 0.85);
+}
+
+.higma-fig-inspect__export-failures code {
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
 .higma-fig-inspect__export-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -576,8 +698,24 @@ button {
 }
 
 .higma-fig-overlay--selected {
-  outline: 2px solid var(--vscode-focusBorder, #007fd4);
+  outline: 1.5px solid var(--vscode-focusBorder, #007fd4);
   outline-offset: -1px;
+  /* Faint translucent fill so a multi-selection of stacked frames is
+   * still visually grouped even where outlines coincide. */
+  background: color-mix(
+    in srgb,
+    var(--vscode-focusBorder, #007fd4) 8%,
+    transparent
+  );
+}
+
+.higma-fig-overlay--selected.higma-fig-overlay--primary {
+  outline-width: 2px;
+  background: color-mix(
+    in srgb,
+    var(--vscode-focusBorder, #007fd4) 14%,
+    transparent
+  );
 }
 
 .higma-fig-overlay-tooltip {
