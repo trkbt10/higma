@@ -8,13 +8,20 @@
 
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import { Buffer } from "node:buffer";
 import { createDemoFigDesignDocument } from "@higma-document-io/fig/context";
 import type { FigPage } from "@higma-document-models/fig/domain";
+import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { FigPageRenderer } from "./FigPageRenderer";
 import type { FigEditorRendererKind } from "./renderer-kind";
 import type { AbstractFont } from "@higma-document-renderers/fig/font";
+import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 
 const docPromise = createDemoFigDesignDocument();
+const ONE_PIXEL_PNG = Uint8Array.from(Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNgAAIAAAUAAen63NgAAAAASUVORK5CYII=",
+  "base64",
+));
 
 const testFont: AbstractFont = {
   unitsPerEm: 1000,
@@ -56,6 +63,45 @@ async function renderPage(
       textFontResolver: () => testFont,
     }),
   );
+}
+
+function createManagedImageSceneGraph(): SceneGraph {
+  return {
+    width: 1,
+    height: 1,
+    version: 1,
+    root: {
+      type: "group",
+      id: createNodeId("root"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      children: [
+        {
+          type: "rect",
+          id: createNodeId("managed-image"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          width: 1,
+          height: 1,
+          fills: [
+            {
+              type: "image",
+              imageRef: "pixel",
+              data: ONE_PIXEL_PNG,
+              mimeType: "image/png",
+              scaleMode: "FILL",
+              opacity: 1,
+              imageShouldColorManage: true,
+            },
+          ],
+        },
+      ],
+    },
+  };
 }
 
 describe("FigPageRenderer — selectable renderer backend shell", () => {
@@ -113,5 +159,27 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
     expect(html).toContain("width:980px");
     expect(html).toContain("height:700px");
     expect(html).toContain('viewBox="125 -50 490 350"');
+  });
+
+  it("passes explicit render settings to the SVG backend for color-managed image fills", async () => {
+    const doc = await docPromise;
+    const renderOptions: FigFamilyRenderOptions = { exportSettings: { colorProfile: "SRGB" } };
+    const html = renderToStaticMarkup(
+      createElement(FigPageRenderer, {
+        page: doc.pages[0],
+        canvasWidth: 1,
+        canvasHeight: 1,
+        images: doc.images,
+        blobs: doc.blobs,
+        symbolMap: doc.components,
+        styleRegistry: doc.styleRegistry,
+        renderer: "svg",
+        sceneGraph: createManagedImageSceneGraph(),
+        renderOptions,
+        textFontResolver: () => testFont,
+      }),
+    );
+
+    expect(html).toContain("data:image/png");
   });
 });

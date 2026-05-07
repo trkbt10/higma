@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import {
   createWebGLFigmaRenderer,
   resolveWebGLViewportPixelRatio,
@@ -14,6 +15,7 @@ import {
 
 type UseWebGLViewportRendererParams = {
   readonly sceneGraph: SceneGraph;
+  readonly renderOptions?: FigFamilyRenderOptions;
   readonly viewportScale: number;
   readonly initializationDelayMs?: number;
 };
@@ -38,6 +40,7 @@ export type WebGLViewportRendererState = {
 /** Manage WebGL renderer creation, resource preparation, rendering, and metrics. */
 export function useWebGLViewportRenderer({
   sceneGraph,
+  renderOptions,
   viewportScale,
   initializationDelayMs,
 }: UseWebGLViewportRendererParams): WebGLViewportRendererState {
@@ -113,6 +116,7 @@ export function useWebGLViewportRenderer({
         antialias: true,
         pixelRatio,
         backgroundColor: { r: 0, g: 0, b: 0, a: 0 },
+        exportSettings: renderOptions?.exportSettings,
       });
       renderer.precompileResources();
       rendererRef.current = renderer;
@@ -213,7 +217,7 @@ export function useWebGLViewportRenderer({
         renderFrameRef.current = null;
       }
     };
-  }, [sceneGraph, pixelRatio, initializationDelayMs]);
+  }, [sceneGraph, renderOptions, pixelRatio, initializationDelayMs]);
 
   useEffect(() => {
     return () => {

@@ -37,7 +37,7 @@ import { findNodeById } from "@higma-document-io/fig/node-ops";
 import { useFigEditor, useFigDrag } from "../context/FigEditorContext";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
-import { useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+import { createFigFamilyRenderOptions, useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
 import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
 import { resolveViewportRenderWindow } from "./layout/viewport-render-plan";
 import { computeAbsoluteTransform, flattenAllNodeBounds } from "./interaction/bounds";
@@ -311,6 +311,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
     styleRegistry: document.styleRegistry,
     textFontResolver,
   });
+  const renderOptions = useMemo(() => createFigFamilyRenderOptions(document), [document]);
 
   const applyVectorPathDraftResult = useCallback((result: VectorPathDraftOperationResult) => {
     vectorPathDraftSessionRef.current = result.session;
@@ -1472,6 +1473,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
         symbolMap={document.components}
         styleRegistry={document.styleRegistry}
         renderer={renderer}
+        renderOptions={renderOptions}
         sceneGraph={sceneGraph}
         viewportX={renderWindow.x}
         viewportY={renderWindow.y}
@@ -1484,7 +1486,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
         textFontResolver={textFontResolver}
       />
     );
-  }, [activePage, sceneGraph, renderer, renderWindow, document.images, document.blobs, document.components, document.styleRegistry, viewportScale, webglInitializationDelayMs, textFontResolver]);
+  }, [activePage, sceneGraph, renderer, renderOptions, renderWindow, document.images, document.blobs, document.components, document.styleRegistry, viewportScale, webglInitializationDelayMs, textFontResolver]);
 
   const handleViewportChange = useCallback((viewport: EditorCanvasViewportContentContext["viewport"], context: EditorCanvasViewportContentContext) => {
     setViewportScale(viewport.scale);

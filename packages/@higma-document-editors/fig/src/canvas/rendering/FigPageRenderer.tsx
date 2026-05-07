@@ -9,7 +9,7 @@
 import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import type { FigImage } from "@higma-document-models/fig/domain";
 import type { BuildSceneGraphOptions, SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import { useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+import { useFigSceneGraph, type FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
 import { FigSvgViewportScene } from "./FigSvgViewportScene";
 import type { FigEditorRendererKind } from "./renderer-kind";
@@ -39,6 +39,7 @@ type FigPageRendererProps = {
    */
   readonly styleRegistry: FigStyleRegistry;
   readonly renderer?: FigEditorRendererKind;
+  readonly renderOptions?: FigFamilyRenderOptions;
   readonly sceneGraph?: SceneGraph | null;
   readonly viewportX?: number;
   readonly viewportY?: number;
@@ -73,6 +74,7 @@ export function FigPageRenderer({
   symbolMap,
   styleRegistry,
   renderer = "svg",
+  renderOptions,
   sceneGraph: sceneGraphProp,
   viewportX = 0,
   viewportY = 0,
@@ -106,11 +108,12 @@ export function FigPageRenderer({
 
   switch (renderer) {
     case "svg":
-      return <FigSvgViewportScene sceneGraph={sceneGraph} placement={viewportPlacement ?? "world"} />;
+      return <FigSvgViewportScene sceneGraph={sceneGraph} renderOptions={renderOptions} placement={viewportPlacement ?? "world"} />;
     case "webgl":
       return (
         <FigWebGLViewportLayer
           sceneGraph={sceneGraph}
+          renderOptions={renderOptions}
           viewportScale={viewportScale}
           placement={viewportPlacement ?? webglPlacement}
           initializationDelayMs={webglInitializationDelayMs}

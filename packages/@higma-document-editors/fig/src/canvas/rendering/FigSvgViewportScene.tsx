@@ -3,10 +3,12 @@
 import type { CSSProperties } from "react";
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";
 
 type FigSvgViewportSceneProps = {
   readonly sceneGraph: SceneGraph;
+  readonly renderOptions?: FigFamilyRenderOptions;
   readonly placement?: ViewportLayerPlacement;
 };
 
@@ -44,7 +46,7 @@ function resolveSvgLayerStyle({
 }
 
 /** Render the SVG backend as a React-owned SVG tree so React can diff node updates. */
-export function FigSvgViewportScene({ sceneGraph, placement = "world" }: FigSvgViewportSceneProps) {
+export function FigSvgViewportScene({ sceneGraph, renderOptions, placement = "world" }: FigSvgViewportSceneProps) {
   return (
     <svg
       viewBox={resolveViewBox(sceneGraph)}
@@ -52,7 +54,7 @@ export function FigSvgViewportScene({ sceneGraph, placement = "world" }: FigSvgV
       style={resolveSvgLayerStyle({ sceneGraph, placement })}
       aria-hidden="true"
     >
-      <FigSceneRenderer sceneGraph={sceneGraph} />
+      <FigSceneRenderer sceneGraph={sceneGraph} renderOptions={renderOptions} />
     </svg>
   );
 }
