@@ -38,7 +38,7 @@
  *     gaps and aligns against.
  */
 import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
-import type { ParentLayout } from "./style";
+import type { ParentLayout } from "../style/style";
 
 const SIZE_TOLERANCE = 0.5;
 

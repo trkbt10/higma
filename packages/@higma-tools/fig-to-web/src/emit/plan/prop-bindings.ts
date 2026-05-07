@@ -27,7 +27,8 @@
  */
 import type { FigComponentPropRef, FigNode } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
-import type { ComponentPropDecl, ComponentTarget } from "./types";
+import type { ComponentPropDecl, ComponentTarget } from "../types";
+import { SYNTHETIC_TEXT_PREFIX } from "./registry";
 
 export type PropBindingField = "TEXT_DATA" | "VISIBLE" | "OVERRIDDEN_SYMBOL_ID";
 
@@ -156,13 +157,11 @@ export function buildPropBindings(target: ComponentTarget): PropBindings {
   return out;
 }
 
-const SYNTHETIC_TEXT_PREFIX_LOCAL = "synthetic-text:";
-
 function syntheticTextDeclByGuid(target: ComponentTarget): ReadonlyMap<string, ComponentPropDecl> {
   const out = new Map<string, ComponentPropDecl>();
   for (const decl of target.props) {
-    if (decl.defId.startsWith(SYNTHETIC_TEXT_PREFIX_LOCAL)) {
-      const guidStr = decl.defId.slice(SYNTHETIC_TEXT_PREFIX_LOCAL.length);
+    if (decl.defId.startsWith(SYNTHETIC_TEXT_PREFIX)) {
+      const guidStr = decl.defId.slice(SYNTHETIC_TEXT_PREFIX.length);
       out.set(guidStr, decl);
     }
   }

@@ -36,7 +36,7 @@
  * pixel-diffing the React output against the renderer's SVG.
  */
 import type { FigFontName, FigNode, FigPaint, FigValueWithUnits } from "@higma-document-models/fig/types";
-import type { TokenIndex } from "../tokens";
+import type { TokenIndex } from "../../tokens";
 
 /** A contiguous range of characters that share an effective style. */
 export type TextRun = {

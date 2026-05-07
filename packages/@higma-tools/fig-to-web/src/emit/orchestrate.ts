@@ -23,11 +23,11 @@
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigSource } from "../fig-source";
 import type { EmitFile, EmitRegistry, FrameTarget } from "./types";
-import { buildRegistry } from "./registry";
-import { emitComponentFile, emitPageFile } from "./files";
+import { buildRegistry } from "./plan/registry";
+import { emitComponentFile, emitPageFile } from "./render/files";
 import { buildTokensFromFrames, tokensToCss } from "../tokens";
-import { createImageRegistry } from "./images";
-import { emitFigmaSvgForFrame } from "./figma-svg";
+import { createImageRegistry } from "./assets/images";
+import { emitFigmaSvgForFrame } from "./figma-export/figma-svg";
 
 export type EmitResult = {
   readonly files: readonly EmitFile[];

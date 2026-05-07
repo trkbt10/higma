@@ -22,15 +22,15 @@
  * regenerating the same fig produces byte-identical output.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { ComponentPropDecl, ComponentTarget, EmitFile, EmitRegistry, FrameTarget } from "./types";
+import type { ComponentPropDecl, ComponentTarget, EmitFile, EmitRegistry, FrameTarget } from "../types";
 import type { EmitContext } from "./jsx";
 import { emitFrameJsx } from "./jsx";
-import type { TokenIndex } from "../tokens";
-import type { FigSource } from "../fig-source";
-import type { ImageResolver } from "./paint";
-import type { PropBindings } from "./prop-bindings";
-import { buildPropBindings } from "./prop-bindings";
-import { buildReparentResult } from "./reparent";
+import type { TokenIndex } from "../../tokens";
+import type { FigSource } from "../../fig-source";
+import type { ImageResolver } from "../style/paint";
+import type { PropBindings } from "../plan/prop-bindings";
+import { buildPropBindings } from "../plan/prop-bindings";
+import { buildReparentResult } from "../layout/reparent";
 
 export type EmitOpts = {
   readonly debugAttrs: boolean;

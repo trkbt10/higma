@@ -37,7 +37,7 @@ import type {
   FigPaint,
   FigSolidPaint,
 } from "@higma-document-models/fig/types";
-import type { TokenIndex } from "../tokens";
+import type { TokenIndex } from "../../tokens";
 
 export type ImageResolver = (paint: FigImagePaint) => string | undefined;
 

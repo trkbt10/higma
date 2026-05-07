@@ -37,12 +37,12 @@ import type {
   FigValueWithUnits,
 } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
-import type { TokenIndex } from "../tokens";
-import { effectsToBoxShadow } from "../tokens";
+import type { TokenIndex } from "../../tokens";
+import { effectsToBoxShadow } from "../../tokens";
 import type { ImageResolver } from "./paint";
 import { paintsForText, paintsToBackgroundStyle } from "./paint";
-import type { InferenceResult, InferredInset, InferredLayout } from "./infer-layout";
-import { isVectorOnlyContainer } from "./svg";
+import type { InferenceResult, InferredInset, InferredLayout } from "../layout/infer-layout";
+import { isVectorOnlyContainer } from "../svg/svg";
 import { computeRuleGeometry } from "./rule";
 
 const ROOT_FRAME_TYPES: ReadonlySet<string> = new Set([

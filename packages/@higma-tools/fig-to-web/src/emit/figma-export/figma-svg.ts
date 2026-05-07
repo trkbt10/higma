@@ -19,8 +19,8 @@
  *     documents handle `<head>`-less rendering.
  */
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
-import type { FigSource } from "../fig-source";
-import type { EmitFile, FrameTarget } from "./types";
+import type { FigSource } from "../../fig-source";
+import type { EmitFile, FrameTarget } from "../types";
 
 export type FigmaSvgFiles = {
   readonly svg: EmitFile;

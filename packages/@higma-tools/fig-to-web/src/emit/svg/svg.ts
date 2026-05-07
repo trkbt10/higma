@@ -33,8 +33,8 @@ import type {
 } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import { decodeBlobToSvgPath } from "@higma-document-models/fig/domain";
-import type { FigSource } from "../fig-source";
-import type { TokenIndex } from "../tokens";
+import type { FigSource } from "../../fig-source";
+import type { TokenIndex } from "../../tokens";
 import { synthesizeShapePath } from "./synth-shape";
 
 const VECTOR_NODE_TYPES: ReadonlySet<string> = new Set([

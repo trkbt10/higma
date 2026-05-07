@@ -45,7 +45,7 @@
 import type { FigEffect, FigNode } from "@higma-document-models/fig/types";
 import type { StyleInputs } from "./style";
 import { paintsToBackgroundStyle } from "./paint";
-import { effectsToBoxShadow } from "../tokens";
+import { effectsToBoxShadow } from "../../tokens";
 
 const SIZE_TOLERANCE = 0.5;
 const POSITION_TOLERANCE = 0.5;

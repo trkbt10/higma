@@ -23,7 +23,7 @@
  * the existing SVG path so we don't regress on richer line styling.
  */
 import type { FigMatrix, FigNode, FigPaint, FigStrokeWeight } from "@higma-document-models/fig/types";
-import type { TokenIndex } from "../tokens";
+import type { TokenIndex } from "../../tokens";
 
 const RULE_NODE_TYPES: ReadonlySet<string> = new Set([
   "LINE",

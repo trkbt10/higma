@@ -24,25 +24,25 @@
  *     parents.
  */
 import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
-import type { TokenIndex } from "../tokens";
-import type { EmitRegistry } from "./types";
-import type { ParentContext, ParentLayout, RootMode, StyleInputs } from "./style";
-import { nodeToStyle, parentLayoutOf } from "./style";
-import { lookupInstanceTarget, variantValueForInstance } from "./registry";
-import type { FigSource } from "../fig-source";
-import { emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "./svg";
-import { isPlainRule } from "./rule";
-import { hasOverrides, resolveTextRuns } from "./text-runs";
-import { collapseChain } from "./collapse";
-import type { ImageResolver } from "./paint";
-import type { InferenceResult } from "./infer-layout";
-import { inferLayout } from "./infer-layout";
-import { absorbBackgroundDecoration } from "./decoration";
-import type { PropBindings } from "./prop-bindings";
+import type { TokenIndex } from "../../tokens";
+import type { EmitRegistry } from "../types";
+import type { ParentContext, ParentLayout, RootMode, StyleInputs } from "../style/style";
+import { nodeToStyle, parentLayoutOf } from "../style/style";
+import type { ImageResolver } from "../style/paint";
+import { absorbBackgroundDecoration } from "../style/decoration";
+import { isPlainRule } from "../style/rule";
+import type { PropBindings } from "../plan/prop-bindings";
+import { lookupInstanceTarget, variantValueForInstance } from "../plan/registry";
+import type { FigSource } from "../../fig-source";
+import { emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "../svg/svg";
+import { hasOverrides, resolveTextRuns } from "../text/text-runs";
+import type { InferenceResult } from "../layout/infer-layout";
+import { inferLayout } from "../layout/infer-layout";
+import { collapseChain } from "../layout/collapse";
+import type { ReparentResult } from "../layout/reparent";
 import { guidToString, safeChildren as safeChildrenDomain } from "@higma-document-models/fig/domain";
 import { resolvePaintRef } from "@higma-document-models/fig/symbols";
 import type { FigPaint, FigStyleId } from "@higma-document-models/fig/types";
-import type { ReparentResult } from "./reparent";
 
 const TEXT_NODE_TYPE = "TEXT";
 const INSTANCE_NODE_TYPE = "INSTANCE";
