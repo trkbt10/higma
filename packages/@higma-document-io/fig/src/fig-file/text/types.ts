@@ -9,6 +9,8 @@ import type {
   TextAutoResize,
   TextDecoration,
   TextCase,
+  StackPositioning,
+  StackSizing,
 } from "@higma-document-models/fig/constants";
 
 export type DerivedGlyphData = {
@@ -75,4 +77,7 @@ export type TextNodeData = {
   readonly opacity: number;
   readonly derivedTextData?: DerivedTextNodeData;
   readonly styleRuns?: readonly TextStyleRunData[];
+  readonly stackPositioning?: { value: number; name: StackPositioning };
+  readonly stackPrimarySizing?: { value: number; name: StackSizing };
+  readonly stackCounterSizing?: { value: number; name: StackSizing };
 };

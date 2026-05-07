@@ -458,6 +458,9 @@ function _createFigFileBuilder() {
         styleOverrideTable: textRunData.styleOverrideTable,
       },
       fillPaints: data.fillPaints,
+      stackPositioning: data.stackPositioning,
+      stackPrimarySizing: data.stackPrimarySizing,
+      stackCounterSizing: data.stackCounterSizing,
     });
     if (data.derivedTextData) {
       node.derivedTextData = data.derivedTextData;
