@@ -37,7 +37,7 @@ import { findNodeById } from "@higma-document-io/fig/node-ops";
 import { useFigEditor, useFigDrag } from "../context/FigEditorContext";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
-import { useFigSceneGraph } from "./rendering/use-fig-scene-graph";
+import { useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
 import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
 import { resolveViewportRenderWindow } from "./layout/viewport-render-plan";
 import { computeAbsoluteTransform, flattenAllNodeBounds } from "./interaction/bounds";

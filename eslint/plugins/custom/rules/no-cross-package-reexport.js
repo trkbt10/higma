@@ -1,10 +1,12 @@
 /**
- * @file Custom rule: prohibit re-exports from external workspace packages.
+ * @file Custom rule: prohibit re-exports from package imports.
  *
  * Disallows patterns like:
  *   export type { Foo } from "@higma-document-models/fig/domain"
  *   export { bar } from "@higma-primitives/tree"
  *   export * from "@higma-document-io/fig"
+ *   export { useState } from "react"
+ *   export { map } from "lodash/fp"
  *
  * Also disallows indirect re-exports:
  *   import type { Foo } from "@higma-document-models/fig/domain"
@@ -13,46 +15,23 @@
  *   import { bar } from "@higma-primitives/tree"
  *   export { bar }                    // ← prohibited
  *   export default bar                // ← prohibited
- *
- * Configurable:
- *   - packagePrefixes: string[] - package prefixes to disallow re-exports from
  */
-
-const DEFAULT_PACKAGE_PREFIXES = [
-  "@higma-primitives/",
-  "@higma-codecs/",
-  "@higma-figma-schema/",
-  "@higma-figma-containers/",
-  "@higma-document-models/",
-  "@higma-document-io/",
-  "@higma-document-renderers/",
-  "@higma-document-editors/",
-  "@higma-editor-kernel/",
-  "@higma-editor-surfaces/",
-];
 
 /**
- * Check if a path matches any of the disallowed package prefixes
+ * Check if a specifier targets a package instead of a local file.
  * @param {string} path - The import/export path
- * @param {string[]} prefixes - Array of package prefixes to check
- * @returns {string | null} - The matched prefix, or null if no match
+ * @returns {boolean} - true when the specifier is a package/builtin alias
  */
-function matchesPackagePrefix(path, prefixes) {
+function isPackageSpecifier(path) {
   if (!path || typeof path !== "string") {
-    return null;
+    return false;
   }
 
-  if (path.startsWith(".")) {
-    return null;
+  if (path.startsWith(".") || path.startsWith("/")) {
+    return false;
   }
 
-  for (const prefix of prefixes) {
-    if (path.startsWith(prefix)) {
-      return prefix;
-    }
-  }
-
-  return null;
+  return true;
 }
 
 /**
@@ -77,7 +56,6 @@ function resolveImportType(node, specifier) {
 /**
  * @typedef {Object} ExternalImportInfo
  * @property {string} source - The import source path
- * @property {string} matchedPrefix - The matched package prefix
  * @property {'named' | 'default' | 'namespace' | 'type'} type - Type of import
  */
 
@@ -85,22 +63,10 @@ export default {
   meta: {
     type: "problem",
     docs: {
-      description: "Disallow re-exports from external packages within the same higma",
+      description: "Disallow re-exports from any package import",
       recommended: true,
     },
-    schema: [
-      {
-        type: "object",
-        properties: {
-          packagePrefixes: {
-            type: "array",
-            items: { type: "string" },
-            default: DEFAULT_PACKAGE_PREFIXES,
-          },
-        },
-        additionalProperties: false,
-      },
-    ],
+    schema: [],
     messages: {
       directReexport:
         "Re-exporting from external package '{{source}}' is prohibited. " +
@@ -118,9 +84,6 @@ export default {
   },
 
   create(context) {
-    const options = context.options[0] || {};
-    const packagePrefixes = options.packagePrefixes ?? DEFAULT_PACKAGE_PREFIXES;
-
     /** @type {Map<string, ExternalImportInfo>} */
     const externalImports = new Map();
 
@@ -130,8 +93,7 @@ export default {
         return;
       }
 
-      const matchedPrefix = matchesPackagePrefix(sourcePath, packagePrefixes);
-      if (!matchedPrefix) {
+      if (!isPackageSpecifier(sourcePath)) {
         return;
       }
 
@@ -145,7 +107,6 @@ export default {
 
         externalImports.set(localName, {
           source: sourcePath,
-          matchedPrefix,
           type: importType,
         });
       }
@@ -161,8 +122,7 @@ export default {
         return;
       }
 
-      const matchedPrefix = matchesPackagePrefix(sourcePath, packagePrefixes);
-      if (matchedPrefix) {
+      if (isPackageSpecifier(sourcePath)) {
         context.report({
           node: node.source,
           messageId: "directReexport",

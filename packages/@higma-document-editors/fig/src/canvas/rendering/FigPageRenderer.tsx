@@ -9,7 +9,7 @@
 import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import type { FigImage } from "@higma-document-models/fig/domain";
 import type { BuildSceneGraphOptions, SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import { useFigSceneGraph } from "./use-fig-scene-graph";
+import { useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
 import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
 import { FigSvgViewportScene } from "./FigSvgViewportScene";
 import type { FigEditorRendererKind } from "./renderer-kind";

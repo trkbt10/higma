@@ -19,6 +19,13 @@ describe("no-cross-package-reexport", () => {
       {
         code: 'export { localValue } from "./local";',
       },
+      {
+        code: 'export { localValue } from "../local";',
+      },
+      {
+        code: 'export { MousePointer2 as SelectIcon } from "lucide-react";',
+        options: [{ allowedPackageSources: ["lucide-react"] }],
+      },
     ],
     invalid: [
       {
@@ -26,7 +33,27 @@ describe("no-cross-package-reexport", () => {
         errors: [{ messageId: "directReexport" }],
       },
       {
+        code: 'export { useFigSceneGraph, type UseFigSceneGraphParams } from "@higma-figma-runtime/react-renderer";',
+        errors: [{ messageId: "directReexport" }],
+      },
+      {
+        code: 'export { useState } from "react";',
+        errors: [{ messageId: "directReexport" }],
+      },
+      {
+        code: 'export { map } from "lodash/fp";',
+        errors: [{ messageId: "directReexport" }],
+      },
+      {
+        code: 'export type { Stats } from "node:fs";',
+        errors: [{ messageId: "directReexport" }],
+      },
+      {
         code: 'import { parseFigCanvasHeader } from "@higma-figma-containers/canvas";\nexport { parseFigCanvasHeader };',
+        errors: [{ messageId: "indirectReexport" }],
+      },
+      {
+        code: 'import { useMemo } from "react";\nexport { useMemo };',
         errors: [{ messageId: "indirectReexport" }],
       },
       {
@@ -34,8 +61,16 @@ describe("no-cross-package-reexport", () => {
         errors: [{ messageId: "indirectNamespaceExport" }],
       },
       {
+        code: 'import * as React from "react";\nexport { React };',
+        errors: [{ messageId: "indirectNamespaceExport" }],
+      },
+      {
         code: 'import { parseFigCanvasHeader } from "@higma-figma-containers/canvas";\nexport const parse = parseFigCanvasHeader;',
         errors: [{ messageId: "indirectReexport" }],
+      },
+      {
+        code: 'import React from "react";\nexport default React;',
+        errors: [{ messageId: "indirectDefaultExport" }],
       },
     ],
   });
