@@ -22,10 +22,6 @@ describe("no-cross-package-reexport", () => {
       {
         code: 'export { localValue } from "../local";',
       },
-      {
-        code: 'export { MousePointer2 as SelectIcon } from "lucide-react";',
-        options: [{ allowedPackageSources: ["lucide-react"] }],
-      },
     ],
     invalid: [
       {
@@ -38,6 +34,10 @@ describe("no-cross-package-reexport", () => {
       },
       {
         code: 'export { useState } from "react";',
+        errors: [{ messageId: "directReexport" }],
+      },
+      {
+        code: 'export { MousePointer2 as SelectIcon } from "lucide-react";',
         errors: [{ messageId: "directReexport" }],
       },
       {
