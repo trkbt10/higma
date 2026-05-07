@@ -5,11 +5,11 @@
   "type": "module",
   "sideEffects": false,
   "scripts": {
-    "lint": "eslint src dev spec/e2e",
+    "lint": "cd ../../.. && eslint packages/@higma-document-editors/site/src packages/@higma-document-editors/site/dev",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-editors/site/src'",
     "e2e": "vitest --run --config ../../../vitest.config.ts --environment jsdom spec/e2e",
-    "dev": "vite --config dev/vite.config.ts --open"
+    "dev": "vite --config dev/vite.config.ts"
   },
   "exports": {
     ".": {
@@ -21,7 +21,15 @@
     "@higma-document-models/site": "workspace:*",
     "@higma-document-io/site": "workspace:*",
     "@higma-document-renderers/site": "workspace:*",
-    "@higma-editor-surfaces/sessions": "workspace:*"
+    "@higma-editor-kernel/core": "workspace:*",
+    "@higma-editor-kernel/ui": "workspace:*",
+    "@higma-editor-surfaces/controls": "workspace:*",
+    "@higma-editor-surfaces/sessions": "workspace:*",
+    "@higma-figma-runtime/react-renderer": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
   },
   "higma": {
     "boundary": {
