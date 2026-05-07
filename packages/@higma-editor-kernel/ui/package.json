@@ -42,6 +42,10 @@
       "types": "./src/primitives/Button.tsx",
       "default": "./src/primitives/Button.tsx"
     },
+    "./primitives/Checkbox": {
+      "types": "./src/primitives/Checkbox.tsx",
+      "default": "./src/primitives/Checkbox.tsx"
+    },
     "./primitives/IconButton": {
       "types": "./src/primitives/IconButton.tsx",
       "default": "./src/primitives/IconButton.tsx"

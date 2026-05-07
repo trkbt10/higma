@@ -1,106 +1,108 @@
 /**
- * @file CMS workspace navigation tests covering list, table, and detail pages.
+ * @file CMS workspace tests covering the sidebar, items table, item editor, and edit roundtrip.
  */
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import { SiteEditorProvider, useSiteEditor } from "../context/SiteEditorContext";
+import { SiteEditorProvider } from "../context/SiteEditorContext";
 import { createSiteEditorWorkspace } from "../site-editor-workspace";
 import { createSiteEditorTestDocument } from "../../spec/shared/site-editor-test-fixture";
-import { SiteCmsWorkspace } from "./SiteCmsWorkspace";
+import { SiteCmsCollectionView } from "./SiteCmsCollectionView";
+import { SiteCmsCollectionsPanel } from "./SiteCmsCollectionsPanel";
+import { SiteCmsItemEditor } from "./SiteCmsItemEditor";
+import { SiteCmsProvider, useSiteCms } from "./SiteCmsContext";
 
-function SelectedUnitProbe() {
-  const { selectedUnit } = useSiteEditor();
-  return <output aria-label="selected unit">{selectedUnit.id}:{selectedUnit.label}</output>;
+function FieldEditsProbe() {
+  const { fieldEdits } = useSiteCms();
+  return (
+    <output aria-label="field edits">
+      {fieldEdits.map((edit) => `${edit.collectionId}/${edit.itemId}/${edit.fieldId}=${edit.text}`).join("|")}
+    </output>
+  );
 }
 
-function renderWorkspace() {
+function renderCmsWorkspace() {
   const workspace = createSiteEditorWorkspace(createSiteEditorTestDocument());
   return render(
     <SiteEditorProvider workspace={workspace}>
-      <SiteCmsWorkspace />
-      <SelectedUnitProbe />
+      <SiteCmsProvider>
+        <SiteCmsCollectionsPanel />
+        <SiteCmsCollectionView />
+        <SiteCmsItemEditor />
+        <FieldEditsProbe />
+      </SiteCmsProvider>
     </SiteEditorProvider>,
   );
 }
 
-describe("SiteCmsWorkspace", () => {
-  it("lists the collections referenced by the document", () => {
-    renderWorkspace();
-    const list = screen.getByRole("region", { name: "Site CMS collections" });
-    expect(within(list).getByText("collection-1")).toBeTruthy();
-    expect(within(list).getAllByText("1")[0]).toBeTruthy();
+function openContextItem() {
+  const row = screen.getByRole("button", { name: "Open item Untitled item" });
+  fireEvent.click(row);
+}
+
+describe("SiteCmsCollectionsPanel", () => {
+  it("renders the Edit / Connect tabs and lists the document collections", () => {
+    renderCmsWorkspace();
+    const sidebar = screen.getByLabelText("Collections sidebar");
+    expect(within(sidebar).getByRole("tab", { name: "Edit" })).toBeTruthy();
+    expect(within(sidebar).getByRole("tab", { name: "Connect" })).toBeTruthy();
+    expect(within(sidebar).getByRole("option", { name: "Case Study Page" })).toBeTruthy();
   });
 
-  function openCollection() {
-    const region = screen.getByRole("region", { name: "Site CMS collections" });
-    const row = within(region).getByText("collection-1").closest("tr");
-    if (!row) {
-      throw new Error("Expected a row for collection-1");
-    }
-    fireEvent.click(row);
-  }
+  it("ignores Connect tab activation and disables the Add collection button", () => {
+    renderCmsWorkspace();
+    const connectTab = screen.getByRole("tab", { name: "Connect" });
+    fireEvent.click(connectTab);
+    expect(screen.getByRole("tab", { name: "Edit" }).getAttribute("aria-selected")).toBe("true");
+    expect((screen.getByRole("button", { name: "Add collection" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
 
-  it("opens a collection table view when a row is clicked and shows fields by default", () => {
-    renderWorkspace();
-    openCollection();
-
-    const fieldsTable = screen.getByRole("region", { name: "Fields of collection collection-1" });
-    expect(within(fieldsTable).getByText("body")).toBeTruthy();
-    expect(within(fieldsTable).getByText("CMS_SERIALIZED_RICH_TEXT_DATA")).toBeTruthy();
+describe("SiteCmsCollectionView", () => {
+  it("auto-selects the first collection and renders its items table with field-typed columns", () => {
+    renderCmsWorkspace();
+    const view = screen.getByLabelText("Collection Case Study Page");
+    const table = within(view).getByRole("table", { name: "Items of Case Study Page" });
+    const headers = within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.trim() ?? "");
+    expect(headers.some((header) => header.includes("Rich Text 1"))).toBe(true);
   });
 
-  it("switches to the items tab and lists context-bound bindings", () => {
-    renderWorkspace();
-    openCollection();
-    fireEvent.click(screen.getByRole("tab", { name: /Items \(/ }));
+  it("disables New item, Edit fields and surfaces the back button", () => {
+    renderCmsWorkspace();
+    expect((screen.getByRole("button", { name: /New item/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Edit fields/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Back to collections" })).toBeTruthy();
+  });
+});
 
-    const itemsTable = screen.getByRole("region", { name: "Items of collection collection-1" });
-    expect(within(itemsTable).getByText("<context-bound>")).toBeTruthy();
+describe("SiteCmsItemEditor", () => {
+  it("opens when an item row is clicked and exposes Close + nav controls", () => {
+    renderCmsWorkspace();
+    openContextItem();
+
+    const editor = screen.getByLabelText("Editing Untitled item");
+    expect(within(editor).getByRole("button", { name: "Close item editor" })).toBeTruthy();
+    expect((within(editor).getByRole("button", { name: "Previous item" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(editor).getByRole("button", { name: "Next item" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("switches to the selectors tab and lists the responsive-set selector", () => {
-    renderWorkspace();
-    openCollection();
-    fireEvent.click(screen.getByRole("tab", { name: /Selectors \(/ }));
-
-    const selectorsTable = screen.getByRole("region", { name: "Selectors targeting collection collection-1" });
-    expect(within(selectorsTable).getByText("Case Study Page")).toBeTruthy();
-    expect(within(selectorsTable).getByText("slug EQUALS case-study")).toBeTruthy();
+  it("closes the item editor when Close is pressed", () => {
+    renderCmsWorkspace();
+    openContextItem();
+    fireEvent.click(screen.getByRole("button", { name: "Close item editor" }));
+    expect(screen.queryByLabelText(/Editing /)).toBeNull();
   });
 
-  it("navigates from a field row to the field detail page and selects the consumer unit", () => {
-    renderWorkspace();
-    openCollection();
-    const fieldsTable = screen.getByRole("region", { name: "Fields of collection collection-1" });
-    const fieldRow = within(fieldsTable).getByText("body").closest("tr");
-    if (!fieldRow) {
-      throw new Error("Expected a row for body field");
-    }
-    fireEvent.click(fieldRow);
+  it("propagates edits typed in the rich-text editor through the context", () => {
+    renderCmsWorkspace();
+    openContextItem();
 
-    const usagesTable = screen.getByRole("region", { name: "Usages of field body" });
-    expect(within(usagesTable).getByText("Body")).toBeTruthy();
-    expect(within(usagesTable).getByText("Mobile Body")).toBeTruthy();
+    const editor = screen.getByLabelText("Editing Untitled item");
+    const textarea = within(editor).getByLabelText("Rich Text 1") as HTMLTextAreaElement;
 
-    const bodyUsageRow = within(usagesTable).getByText("Body").closest("tr");
-    if (!bodyUsageRow) {
-      throw new Error("Expected a usage row for Body");
-    }
-    fireEvent.click(bodyUsageRow);
-    expect(screen.getByLabelText("selected unit").textContent).toBe("0:3:Body");
-  });
+    fireEvent.change(textarea, { target: { value: "New body content" } });
 
-  it("navigates back to the list via the breadcrumb root", () => {
-    renderWorkspace();
-    openCollection();
-    const breadcrumbRoot = screen.getAllByRole("button", { name: "Collections" })[0];
-    if (!breadcrumbRoot) {
-      throw new Error("Expected Collections breadcrumb root");
-    }
-    fireEvent.click(breadcrumbRoot);
-
-    expect(screen.getByRole("region", { name: "Site CMS collections" })).toBeTruthy();
+    expect(screen.getByLabelText("field edits").textContent).toBe("collection-1//body=New body content");
   });
 });

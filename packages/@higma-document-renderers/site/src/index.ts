@@ -10,8 +10,11 @@ import {
 } from "@higma-figma-analysis/render-outline";
 
 export {
+  applySiteCmsFieldEditsToNodeChanges,
   applySiteUnitMovesToNodeChanges,
+  createSiteDocumentWithCmsFieldEdits,
   createSiteDocumentWithUnitMoves,
+  type SiteCmsFieldEdit,
   type SiteUnitMove,
 } from "./edits";
 

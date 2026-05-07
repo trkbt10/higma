@@ -14,6 +14,8 @@ export type IconButtonSize = "sm" | "md" | "lg";
 export type IconButtonProps = {
   readonly icon: ReactNode;
   readonly label?: string;
+  readonly ariaLabel?: string;
+  readonly title?: string;
   readonly onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
   readonly variant?: ButtonVariant;
   readonly size?: IconButtonSize;
@@ -101,6 +103,8 @@ const disabledStyle: CSSProperties = {
 export function IconButton({
   icon,
   label,
+  ariaLabel,
+  title,
   onClick,
   variant = "ghost",
   size = "md",
@@ -127,7 +131,8 @@ export function IconButton({
       disabled={disabled}
       className={className}
       style={combinedStyle}
-      aria-label={label || undefined}
+      aria-label={ariaLabel ?? label}
+      title={title ?? ariaLabel ?? label}
     >
       {icon}
       {label && <span>{label}</span>}

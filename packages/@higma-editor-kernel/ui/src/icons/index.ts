@@ -18,6 +18,7 @@ import {
   BarChart3,
   Baseline,
   Bold,
+  Calendar,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -87,6 +88,7 @@ import {
   TableCellsMerge,
   TableCellsSplit,
   TextWrap,
+  ToggleLeft,
   Trash2,
   Triangle,
   Type,
@@ -162,6 +164,8 @@ export const FolderIcon = createIcon(Folder);
 // Objects
 export const PictureIcon = createIcon(Image);
 export const TableIcon = createIcon(Table);
+export const CalendarIcon = createIcon(Calendar);
+export const ToggleIcon = createIcon(ToggleLeft);
 export const MergeCellsIcon = createIcon(TableCellsMerge);
 export const UnmergeCellsIcon = createIcon(TableCellsSplit);
 export const ChartIcon = createIcon(BarChart3);

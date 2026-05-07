@@ -3,6 +3,7 @@
  */
 
 export { Button, type ButtonProps, type ButtonSize } from "./Button";
+export { Checkbox, type CheckboxProps } from "./Checkbox";
 export { IconButton, type IconButtonProps, type IconButtonSize } from "./IconButton";
 export { Input, type InputProps } from "./Input";
 export { Popover, type PopoverProps } from "./Popover";

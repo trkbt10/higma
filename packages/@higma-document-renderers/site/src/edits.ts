@@ -220,3 +220,170 @@ export function createSiteDocumentWithUnitMoves(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// CMS field edits — write back into the canvas
+// ---------------------------------------------------------------------------
+
+export type SiteCmsFieldEdit = {
+  readonly collectionId: string;
+  readonly itemId: string;
+  readonly fieldId: string;
+  readonly text: string;
+};
+
+const ALIAS_SOURCES = ["parameter", "variable"] as const;
+type SiteCmsAliasSource = (typeof ALIAS_SOURCES)[number];
+
+const TEXT_VARIABLE_FIELDS: ReadonlySet<string> = new Set(["TEXT_DATA"]);
+
+function readEnumName(value: unknown, fieldName: string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  const record = asRecord(value, fieldName);
+  if (typeof record.name !== "string") {
+    throw new Error(`Expected ${fieldName}.name to be a string`);
+  }
+  return record.name;
+}
+
+function readString(value: unknown, fieldName: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`Expected ${fieldName} to be a string`);
+  }
+  return value;
+}
+
+type AliasSlot = {
+  readonly collectionId: string;
+  readonly itemId: string;
+  readonly fieldId: string;
+  readonly variableField: string;
+};
+
+function readAliasSlot(
+  entry: Record<string, unknown>,
+  source: SiteCmsAliasSource,
+  index: number,
+): AliasSlot | null {
+  if (entry.variableData === undefined) {
+    return null;
+  }
+  const variableData = asRecord(entry.variableData, `${source}ConsumptionMap.entries[${index}].variableData`);
+  if (!variableData.value || typeof variableData.value !== "object") {
+    return null;
+  }
+  const value = variableData.value as Record<string, unknown>;
+  if (value.cmsAliasValue === undefined) {
+    return null;
+  }
+  const alias = asRecord(value.cmsAliasValue, `${source}ConsumptionMap.entries[${index}].variableData.value.cmsAliasValue`);
+  return {
+    collectionId: readString(alias.collectionId, `${source}ConsumptionMap.entries[${index}].variableData.value.cmsAliasValue.collectionId`),
+    fieldId: readString(alias.fieldId, `${source}ConsumptionMap.entries[${index}].variableData.value.cmsAliasValue.fieldId`),
+    itemId: readString(alias.itemId, `${source}ConsumptionMap.entries[${index}].variableData.value.cmsAliasValue.itemId`),
+    variableField: readEnumName(entry.variableField, `${source}ConsumptionMap.entries[${index}].variableField`),
+  };
+}
+
+function nodeMatchesAnyEdit(
+  node: Record<string, unknown>,
+  editsByKey: ReadonlyMap<string, SiteCmsFieldEdit>,
+): SiteCmsFieldEdit | null {
+  for (const source of ALIAS_SOURCES) {
+    const map = node[`${source}ConsumptionMap`];
+    if (map === undefined) {
+      continue;
+    }
+    const mapRecord = asRecord(map, `${source}ConsumptionMap`);
+    if (mapRecord.entries === undefined) {
+      continue;
+    }
+    if (!Array.isArray(mapRecord.entries)) {
+      throw new Error(`Expected ${source}ConsumptionMap.entries to be an array`);
+    }
+    for (let index = 0; index < mapRecord.entries.length; index += 1) {
+      const entry = mapRecord.entries[index];
+      if (entry === undefined) {
+        continue;
+      }
+      const slot = readAliasSlot(asRecord(entry, `${source}ConsumptionMap.entries[${index}]`), source, index);
+      if (!slot) {
+        continue;
+      }
+      if (!TEXT_VARIABLE_FIELDS.has(slot.variableField)) {
+        continue;
+      }
+      const edit = editsByKey.get(`${slot.collectionId} ${slot.itemId} ${slot.fieldId}`);
+      if (edit) {
+        return edit;
+      }
+    }
+  }
+  return null;
+}
+
+function applyEditToTextNode(node: Record<string, unknown>, edit: SiteCmsFieldEdit): Record<string, unknown> {
+  if (node.textData === undefined) {
+    return node;
+  }
+  const textData = asRecord(node.textData, "node.textData");
+  return {
+    ...node,
+    textData: {
+      ...textData,
+      characters: edit.text,
+    },
+  };
+}
+
+function buildEditsByKey(edits: readonly SiteCmsFieldEdit[]): ReadonlyMap<string, SiteCmsFieldEdit> {
+  const map = new Map<string, SiteCmsFieldEdit>();
+  for (const edit of edits) {
+    map.set(`${edit.collectionId} ${edit.itemId} ${edit.fieldId}`, edit);
+  }
+  return map;
+}
+
+/**
+ * Apply CMS field edits to raw fig-family node changes by mutating the
+ * `textData.characters` of every consumer node whose `cmsAliasValue`
+ * targets the edited (collection, item, field) triple.
+ *
+ * Only TEXT_DATA-typed bindings are written by this v1 path; rich-text /
+ * image / date / link / number / boolean fields require structured
+ * encoders that the .site source does not yet expose, so calling code must
+ * route those through dedicated paths instead of this function.
+ */
+export function applySiteCmsFieldEditsToNodeChanges<NodeChange>(
+  nodeChanges: readonly NodeChange[],
+  edits: readonly SiteCmsFieldEdit[],
+): readonly NodeChange[] {
+  if (edits.length === 0) {
+    return nodeChanges;
+  }
+  const editsByKey = buildEditsByKey(edits);
+  return nodeChanges.map((nodeChange): NodeChange => {
+    const node = asRecord(nodeChange, "nodeChange");
+    const edit = nodeMatchesAnyEdit(node, editsByKey);
+    if (!edit) {
+      return nodeChange;
+    }
+    return applyEditToTextNode(node, edit) as NodeChange;
+  });
+}
+
+/** Create a draft site document whose canvas reflects pending CMS field edits. */
+export function createSiteDocumentWithCmsFieldEdits(
+  document: SiteDocument,
+  edits: readonly SiteCmsFieldEdit[],
+): SiteDocument {
+  return {
+    ...document,
+    canvas: {
+      ...document.canvas,
+      nodeChanges: applySiteCmsFieldEditsToNodeChanges(document.canvas.nodeChanges, edits),
+    },
+  };
+}

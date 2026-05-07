@@ -5,13 +5,16 @@
 import { useMemo, useState } from "react";
 import type { SiteDocument } from "@higma-document-models/site";
 import { CanvasArea, EditorShell, StackedEditorPanel, type EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
-import { GalleryVerticalIcon, SettingsIcon } from "@higma-editor-kernel/ui/icons";
+import { GalleryVerticalIcon, SettingsIcon, TableIcon } from "@higma-editor-kernel/ui/icons";
 
 import { SiteEditorProvider } from "../context/SiteEditorContext";
 import type { SiteEditorEditState } from "../context/SiteEditorContext";
 import { createSiteEditorWorkspace } from "../site-editor-workspace";
 import { SiteEditorCanvas } from "../canvas/SiteEditorCanvas";
-import { SiteCmsWorkspace } from "../cms/SiteCmsWorkspace";
+import { SiteCmsCollectionView } from "../cms/SiteCmsCollectionView";
+import { SiteCmsCollectionsPanel } from "../cms/SiteCmsCollectionsPanel";
+import { SiteCmsItemEditor } from "../cms/SiteCmsItemEditor";
+import { SiteCmsProvider } from "../cms/SiteCmsContext";
 import { SitePagesPanel } from "../panels/SitePagesPanel";
 import { SitePropertiesPanel } from "../panels/SitePropertiesPanel";
 import { SiteStructurePanel } from "../panels/SiteStructurePanel";
@@ -24,7 +27,7 @@ export type SiteEditorProps = {
   readonly onEditStateChange?: (state: SiteEditorEditState) => void;
 };
 
-const defaultPanels: EditorPanel[] = [
+const canvasModePanels: EditorPanel[] = [
   {
     id: "site-structure",
     position: "left",
@@ -50,6 +53,25 @@ const defaultPanels: EditorPanel[] = [
   },
 ];
 
+const cmsModePanels: EditorPanel[] = [
+  {
+    id: "site-cms-collections",
+    position: "left",
+    content: <SiteCmsCollectionsPanel />,
+    drawerLabel: "Collections",
+    drawerIcon: TableIcon,
+    scrollable: false,
+  },
+  {
+    id: "site-cms-item",
+    position: "right",
+    content: <SiteCmsItemEditor />,
+    drawerLabel: "Item editor",
+    drawerIcon: SettingsIcon,
+    scrollable: false,
+  },
+];
+
 function renderWorkspaceForMode(mode: SiteEditorWorkspaceMode) {
   if (mode === "canvas") {
     return (
@@ -58,7 +80,17 @@ function renderWorkspaceForMode(mode: SiteEditorWorkspaceMode) {
       </CanvasArea>
     );
   }
-  return <SiteCmsWorkspace />;
+  return <SiteCmsCollectionView />;
+}
+
+function pickPanels(mode: SiteEditorWorkspaceMode, override?: EditorPanel[]): EditorPanel[] {
+  if (override) {
+    return override;
+  }
+  if (mode === "cms") {
+    return cmsModePanels;
+  }
+  return canvasModePanels;
 }
 
 function SiteEditorContent({ panels }: { readonly panels?: EditorPanel[] }) {
@@ -74,7 +106,7 @@ function SiteEditorContent({ panels }: { readonly panels?: EditorPanel[] }) {
     ),
     [mode],
   );
-  const resolvedPanels = panels ?? defaultPanels;
+  const resolvedPanels = pickPanels(mode, panels);
 
   return (
     <EditorShell toolbar={toolbar} panels={resolvedPanels}>
@@ -89,9 +121,11 @@ export function SiteEditor({ initialDocument, panels, onEditStateChange }: SiteE
 
   return (
     <SiteEditorProvider workspace={workspace} onEditStateChange={onEditStateChange}>
-      <div style={{ width: "100%", height: "100%" }}>
-        <SiteEditorContent panels={panels} />
-      </div>
+      <SiteCmsProvider>
+        <div style={{ width: "100%", height: "100%" }}>
+          <SiteEditorContent panels={panels} />
+        </div>
+      </SiteCmsProvider>
     </SiteEditorProvider>
   );
 }
