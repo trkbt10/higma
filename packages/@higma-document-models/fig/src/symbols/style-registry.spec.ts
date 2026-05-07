@@ -1,27 +1,42 @@
 /**
  * @file style-registry unit tests
  *
- * Pins the two lookup strategies the registry supports:
+ * Pins the single-Map SoT design:
  *
- * 1. Local guid references: a `styleIdForFill.guid` pointing to another
- *    node in the same file resolves to that node's own `fillPaints`.
- * 2. Team-library asset references: a `styleIdForFill.assetRef.key`
- *    pointing to an imported style resolves through a local proxy
- *    node that has `styleType.name === "FILL"` and whose own `key`
- *    matches the assetRef key.
+ * - `buildFigStyleRegistry` walks every node and indexes the ones that
+ *   are style-definitions (`styleType` set, with the paint stored in
+ *   the field implied by the type — `fillPaints` for FILL,
+ *   `strokePaints` for STROKE). Each style is keyed under its GUID
+ *   string and (when present) its `key` (assetRef hash). Both
+ *   namespaces share one map; the two key forms can't collide.
  *
- * Regression guard for: Device 2×4 Apple logo. Before assetRef support
- * existed, the Logo VECTOR's raw `fillPaints` (white, a stale cache) was
- * used instead of the resolved shared-style paint (black), producing a
- * white-outlined rendering where Figma exports a filled black logo.
+ * - `resolvePaintRef` is the SoT for turning a `styleIdForFill` /
+ *   `styleIdForStrokeFill` into a paint array. It returns `undefined`
+ *   for empty references and throws for references that carry a key
+ *   the registry does not contain.
+ *
+ * - `resolveNodeStyleIds` / `resolveStyleIdOnMutableNode` apply the
+ *   resolved paints back onto a node — the node's own
+ *   `fillPaints`/`strokePaints` are stale caches that the style
+ *   registry overrides.
+ *
+ * Regression guard for: Device 2×4 Apple logo (cross-canvas asset-ref
+ * lookup) and YouTube OFF-state chevron (FILL-style referenced via
+ * `styleIdForStrokeFill`, which historically used the wrong field on
+ * the style-definition node and silently fell back to the consumer's
+ * stale stroke cache).
  */
 
 import {
   buildFigStyleRegistry,
   resolveNodeStyleIds,
+  resolvePaintRef,
+  formatNodeLocator,
+  styleRefHasKey,
   styleRefKey,
   styleRefKeys,
 } from "./style-registry";
+import { EMPTY_FIG_STYLE_REGISTRY } from "../domain/document";
 import type { FigNode, FigPaint } from "../types";
 
 function solidPaint(r: number, g: number, b: number): FigPaint {
@@ -43,7 +58,7 @@ function node(overrides: Partial<FigNode>): FigNode {
   } as FigNode;
 }
 
-describe("styleRefKey / styleRefKeys", () => {
+describe("styleRefKey / styleRefKeys / styleRefHasKey", () => {
   it("returns the guid string when the reference carries a guid", () => {
     expect(styleRefKey({ guid: { sessionID: 15, localID: 133 } })).toBe("15:133");
   });
@@ -69,82 +84,149 @@ describe("styleRefKey / styleRefKeys", () => {
   it("returns empty array for an undefined reference", () => {
     expect(styleRefKeys(undefined)).toEqual([]);
   });
-});
 
-describe("buildFigStyleRegistry: guid path", () => {
-  it("indexes guid-referenced styles by the definition node's guid", () => {
-    // Consumer references a style by guid; definition node's own
-    // fillPaints is the authoritative paint value.
-    const defNode = node({
-      guid: { sessionID: 1, localID: 100 },
-      fillPaints: [solidPaint(0, 0, 0)],
-    });
-    const consumer = node({
-      guid: { sessionID: 1, localID: 200 },
-      styleIdForFill: { guid: { sessionID: 1, localID: 100 } },
-      fillPaints: [solidPaint(1, 1, 1)], // stale
-    });
-    const map = new Map([
-      ["1:100", defNode],
-      ["1:200", consumer],
-    ]);
-    const registry = buildFigStyleRegistry(map);
-    expect(registry.fills.get("1:100")).toEqual([solidPaint(0, 0, 0)]);
+  it("styleRefHasKey is false for empty/undefined refs and true otherwise", () => {
+    expect(styleRefHasKey(undefined)).toBe(false);
+    expect(styleRefHasKey({})).toBe(false);
+    expect(styleRefHasKey({ assetRef: { key: "" } })).toBe(false);
+    expect(styleRefHasKey({ guid: { sessionID: 1, localID: 2 } })).toBe(true);
+    expect(styleRefHasKey({ assetRef: { key: "x" } })).toBe(true);
+  });
+
+  it("styleRefHasKey treats Figma's 0xffffffff:0xffffffff sentinel as no reference", () => {
+    // Figma's Kiwi schema uses both-uint32-max as a "no guid" sentinel
+    // inside an otherwise-present FigStyleId slot. Treat it as absent so
+    // resolution falls through cleanly to inline paints / base style.
+    const sentinel = { guid: { sessionID: 0xffffffff, localID: 0xffffffff } };
+    expect(styleRefHasKey(sentinel)).toBe(false);
+    // Mixed: sentinel guid + real assetRef.key still has the key.
+    expect(styleRefHasKey({ guid: { sessionID: 0xffffffff, localID: 0xffffffff }, assetRef: { key: "x" } })).toBe(true);
   });
 });
 
-describe("buildFigStyleRegistry: assetRef path", () => {
-  it("indexes assetRef-referenced styles via a local proxy whose key matches", () => {
-    // Proxy node has styleType.name === "FILL" and a `key` matching
-    // the consumer's assetRef.key. Its own fillPaints is authoritative.
+describe("buildFigStyleRegistry", () => {
+  it("indexes a FILL style-definition node under its GUID using fillPaints", () => {
+    const def = node({
+      guid: { sessionID: 1, localID: 100 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [solidPaint(0, 0, 0)],
+    });
+    const registry = buildFigStyleRegistry(new Map([["1:100", def]]));
+    expect(registry.get("1:100")).toEqual([solidPaint(0, 0, 0)]);
+  });
+
+  it("indexes a STROKE style-definition node under its GUID using strokePaints", () => {
+    const def = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 2, name: "STROKE" },
+      strokePaints: [solidPaint(0.5, 0.5, 0.5)],
+    });
+    const registry = buildFigStyleRegistry(new Map([["1:101", def]]));
+    expect(registry.get("1:101")).toEqual([solidPaint(0.5, 0.5, 0.5)]);
+  });
+
+  it("indexes a style-definition under both GUID and assetRef key when both are present", () => {
     const proxy = node({
       guid: { sessionID: 15, localID: 133 },
-      name: "Black",
       styleType: { value: 1, name: "FILL" },
       key: "c3ebcfd9acc3408d6578662e147b484f2e0b567d",
       fillPaints: [solidPaint(0, 0, 0)],
     });
-    const consumer = node({
-      guid: { sessionID: 15, localID: 500 },
-      styleIdForFill: {
-        assetRef: {
-          key: "c3ebcfd9acc3408d6578662e147b484f2e0b567d",
-          version: "3:2",
-        },
-      },
-      fillPaints: [solidPaint(1, 1, 1)], // stale
-    });
-    const map = new Map([
-      ["15:133", proxy],
-      ["15:500", consumer],
-    ]);
-    const registry = buildFigStyleRegistry(map);
-    expect(registry.fills.get("c3ebcfd9acc3408d6578662e147b484f2e0b567d"))
+    const registry = buildFigStyleRegistry(new Map([["15:133", proxy]]));
+    expect(registry.get("15:133")).toEqual([solidPaint(0, 0, 0)]);
+    expect(registry.get("c3ebcfd9acc3408d6578662e147b484f2e0b567d"))
       .toEqual([solidPaint(0, 0, 0)]);
   });
 
-  it("ignores nodes whose styleType is not FILL for the fills map", () => {
-    // Only FILL-typed proxies should populate the fills map.
-    const strokeProxy = node({
-      guid: { sessionID: 15, localID: 140 },
-      styleType: { value: 2, name: "STROKE" },
-      key: "strokekey",
-      strokePaints: [solidPaint(0.5, 0.5, 0.5)],
-    });
-    const registry = buildFigStyleRegistry(new Map([["15:140", strokeProxy]]));
-    expect(registry.fills.get("strokekey")).toBeUndefined();
-    expect(registry.strokes.get("strokekey")).toEqual([solidPaint(0.5, 0.5, 0.5)]);
-  });
-
-  it("skips nodes that have styleType but no key (dangling style defs)", () => {
-    const danglingProxy = node({
-      guid: { sessionID: 15, localID: 141 },
-      styleType: { value: 1, name: "FILL" },
-      // no `key`
+  it("does not index nodes without styleType, even if they carry fillPaints", () => {
+    // A regular RECTANGLE with fillPaints is not a style-definition.
+    const rect = node({
+      guid: { sessionID: 2, localID: 200 },
       fillPaints: [solidPaint(0, 0, 0)],
     });
-    const registry = buildFigStyleRegistry(new Map([["15:141", danglingProxy]]));
-    expect(registry.fills.size).toBe(0);
+    const registry = buildFigStyleRegistry(new Map([["2:200", rect]]));
+    expect(registry.size).toBe(0);
+  });
+
+  it("skips style-definitions whose implied paint field is empty", () => {
+    // FILL styleType but no fillPaints → cannot contribute to registry.
+    const empty = node({
+      guid: { sessionID: 3, localID: 300 },
+      styleType: { value: 1, name: "FILL" },
+      // no fillPaints
+    });
+    const registry = buildFigStyleRegistry(new Map([["3:300", empty]]));
+    expect(registry.size).toBe(0);
+  });
+
+  it("does not cross-fall back fillPaints to strokePaints based on consumer intent", () => {
+    // A FILL style stores its paint in fillPaints. Even if a consumer
+    // references it via styleIdForStrokeFill, the build-time indexing
+    // uses the style's own type, not the consumer's intent. The
+    // single-map SoT means both consumer intents resolve through the
+    // same paint array — no fallback needed at build time.
+    const fillStyle = node({
+      guid: { sessionID: 7, localID: 80 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [solidPaint(1, 1, 1)],
+    });
+    const registry = buildFigStyleRegistry(new Map([["7:80", fillStyle]]));
+    // Same lookup key works regardless of intent — registry is intent-agnostic.
+    expect(registry.get("7:80")).toEqual([solidPaint(1, 1, 1)]);
+  });
+});
+
+describe("resolvePaintRef", () => {
+  it("returns undefined for an undefined reference", () => {
+    expect(resolvePaintRef(undefined, EMPTY_FIG_STYLE_REGISTRY, {
+      intent: "fill",
+      locator: () => "test",
+    })).toBeUndefined();
+  });
+
+  it("returns undefined for a reference with no usable key", () => {
+    expect(resolvePaintRef({}, EMPTY_FIG_STYLE_REGISTRY, {
+      intent: "fill",
+      locator: () => "test",
+    })).toBeUndefined();
+  });
+
+  it("resolves a guid reference through the registry", () => {
+    const def = node({
+      guid: { sessionID: 1, localID: 100 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [solidPaint(0, 0, 0)],
+    });
+    const registry = buildFigStyleRegistry(new Map([["1:100", def]]));
+    const resolved = resolvePaintRef(
+      { guid: { sessionID: 1, localID: 100 } },
+      registry,
+      { intent: "fill", locator: () => "test" },
+    );
+    expect(resolved).toEqual([solidPaint(0, 0, 0)]);
+  });
+
+  it("resolves the same paint via either intent (SoT regression guard for the OFF chevron)", () => {
+    // FILL-type style 7:80, referenced as both fill and stroke.
+    const fillStyle = node({
+      guid: { sessionID: 7, localID: 80 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [solidPaint(1, 1, 1)],
+    });
+    const registry = buildFigStyleRegistry(new Map([["7:80", fillStyle]]));
+    const ref = { guid: { sessionID: 7, localID: 80 } };
+    const fill = resolvePaintRef(ref, registry, { intent: "fill", locator: () => "x" });
+    const stroke = resolvePaintRef(ref, registry, { intent: "stroke", locator: () => "x" });
+    expect(fill).toEqual([solidPaint(1, 1, 1)]);
+    expect(stroke).toEqual([solidPaint(1, 1, 1)]);
+  });
+
+  it("throws when a reference carries a key that the registry does not contain", () => {
+    expect(() => resolvePaintRef(
+      { guid: { sessionID: 99, localID: 99 } },
+      EMPTY_FIG_STYLE_REGISTRY,
+      { intent: "fill", locator: () => "node 99:99 (Test)" },
+    )).toThrow(/Unresolved styleId for fill on node 99:99 \(Test\): \{"guid":\{"sessionID":99,"localID":99\}\} not found/);
   });
 });
 
@@ -172,13 +254,35 @@ describe("resolveNodeStyleIds", () => {
     });
   });
 
-  it("returns the node unchanged when neither guid nor assetRef resolves", () => {
+  it("throws when a consumer's styleIdForFill cannot be resolved", () => {
     const consumer = node({
+      guid: { sessionID: 15, localID: 500 },
+      name: "Consumer",
       styleIdForFill: { assetRef: { key: "no-such-key" } },
       fillPaints: [solidPaint(1, 1, 1)],
     });
-    const registry = buildFigStyleRegistry(new Map());
-    // Same fillPaints (reference-equal) ⇒ resolver returns the original node.
-    expect(resolveNodeStyleIds(consumer, registry)).toBe(consumer);
+    expect(() => resolveNodeStyleIds(consumer, EMPTY_FIG_STYLE_REGISTRY))
+      .toThrow(/Unresolved styleId for fill on 15:500 \(Consumer\)/);
+  });
+
+  it("returns the node unchanged when no style references are present", () => {
+    const consumer = node({
+      guid: { sessionID: 15, localID: 501 },
+      fillPaints: [solidPaint(1, 1, 1)],
+    });
+    expect(resolveNodeStyleIds(consumer, EMPTY_FIG_STYLE_REGISTRY)).toBe(consumer);
+  });
+});
+
+describe("formatNodeLocator", () => {
+  it("formats a node with guid and name", () => {
+    expect(formatNodeLocator({
+      guid: { sessionID: 34, localID: 785 },
+      name: "Vector",
+    })).toBe("34:785 (Vector)");
+  });
+
+  it("falls back to <no-guid> and ? for missing fields", () => {
+    expect(formatNodeLocator({})).toBe("<no-guid> (?)");
   });
 });

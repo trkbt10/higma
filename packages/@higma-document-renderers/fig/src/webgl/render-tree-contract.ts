@@ -163,10 +163,11 @@ function auditText(node: Extract<RenderNode, { type: "text" }>, stats: MutableSt
   }
   if (node.content.mode === "glyphs") {
     stats.glyphTexts += 1;
-    if (node.content.d.length > 0 && node.width <= 0) {
+    const totalDLength = node.content.runs.reduce((acc, r) => acc + r.d.length, 0);
+    if (totalDLength > 0 && node.width <= 0) {
       addIssue(stats, node, "glyph text with path data must have positive width");
     }
-    if (node.content.d.length === 0 && node.sourceTextLineLayout === undefined) {
+    if (totalDLength === 0 && node.sourceTextLineLayout === undefined) {
       addIssue(stats, node, "glyph text must have path data or explicit line-layout resolution before WebGL rendering");
     }
     return;

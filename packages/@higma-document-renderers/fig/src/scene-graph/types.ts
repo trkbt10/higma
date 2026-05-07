@@ -313,6 +313,23 @@ export type PathContour = {
   readonly fillOverride?: Fill;
 };
 
+// `GlyphContour` and `TextRun` are scene-graph-flavoured re-exports of
+// the shared text-rendering types. The annotation/run shapes live in
+// `text/paths/types` and `text/runs/types` respectively (the SoT). The
+// scene-graph layer combines its own `PathContour` (with mandatory
+// `windingRule`) with the shared `GlyphCharacterIndex` annotation so
+// the field name and meaning are not duplicated.
+import type { GlyphCharacterIndex } from "../text/paths/types";
+import type { TextRun } from "../text/runs/types";
+export type { TextRun };
+
+/**
+ * A scene-graph glyph contour: scene-graph's `PathContour` plus the
+ * shared `GlyphCharacterIndex` annotation. SoT for run grouping in the
+ * scene-graph → render-tree pipeline.
+ */
+export type GlyphContour = PathContour & GlyphCharacterIndex;
+
 // =============================================================================
 // Corner Radius
 // =============================================================================
@@ -490,10 +507,24 @@ export type TextNode = SceneNodeBase & {
   /** Hyperlink URL — wraps the text in an SVG <a> element */
   readonly hyperlink?: string;
   /** Pre-outlined glyph path contours (from opentype or derived data) */
-  readonly glyphContours?: readonly PathContour[];
+  readonly glyphContours?: readonly GlyphContour[];
   /** Decoration paths (underlines, strikethroughs) as contours */
   readonly decorationContours?: readonly PathContour[];
-  /** Fill color and opacity for text */
+  /**
+   * Per-character fill runs covering `[0, characters.length)`. A single
+   * base-fill run is the degenerate case used when no character-level
+   * style overrides are present. SoT for "what colour applies to which
+   * character" — every text-bearing renderer consumes this list rather
+   * than re-deriving the colour from raw fillPaints + override table.
+   */
+  readonly runs: readonly TextRun[];
+  /**
+   * Base fill (= the runs[0] equivalent for unstyled text). Retained
+   * because decorations (underline, strikethrough) always paint with
+   * the base fill regardless of per-character overrides, and because
+   * the line-mode renderer that does not yet split per run uses this
+   * as its single fill.
+   */
   readonly fill: { readonly color: Color; readonly opacity: number };
   /** Text line layout for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;

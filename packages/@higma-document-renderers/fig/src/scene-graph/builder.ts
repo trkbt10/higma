@@ -27,7 +27,7 @@ import {
 import type { FigFillGeometry, FigPaint } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/domain";
-import { styleRefKeys, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
+import { resolvePaintRef, formatNodeLocator, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
 import { dfsById } from "@higma-primitives/tree";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import {
@@ -563,33 +563,13 @@ function applySymbolOverridesToChildren(
     // descendants. SSoT: `forwardOverrideToDescendantInstance`.
     forwardOverrideToDescendantInstance(override, children, symbolMap, "overrides");
 
-    const targetFills = resolveStyleRef(target.styleIdForFill, styleRegistry.fills);
+    const targetFills = resolvePaintRef(target.styleIdForFill, styleRegistry, { intent: "fill", locator: () => formatNodeLocator(target) });
     if (targetFills) { target.fills = targetFills; }
-    const targetStrokes = resolveStyleRef(target.styleIdForStrokeFill, styleRegistry.strokes);
+    const targetStrokes = resolvePaintRef(target.styleIdForStrokeFill, styleRegistry, { intent: "stroke", locator: () => formatNodeLocator(target) });
     if (targetStrokes) { target.strokes = targetStrokes; }
   }
 }
 
-/**
- * Resolve a style reference to a paint array via the registry.
- *
- * A `FigStyleId` may carry up to two keys: a local `guid` (same-file
- * definition) and an `assetRef.key` (team-library import). The registry
- * stores both namespaces in a single map, so we try each key in turn and
- * return the first hit. Returns undefined when neither key resolves.
- */
-function resolveStyleRef(
-  ref: { readonly guid?: { readonly sessionID: number; readonly localID: number }; readonly assetRef?: { readonly key: string } } | undefined,
-  map: ReadonlyMap<string, readonly FigPaint[]>,
-): readonly FigPaint[] | undefined {
-  for (const k of styleRefKeys(ref)) {
-    const v = map.get(k);
-    if (v) {
-      return v;
-    }
-  }
-  return undefined;
-}
 
 /**
  * Apply component property assignments to cloned children.
@@ -1036,11 +1016,11 @@ function resolveDesignInstance(
     }
     // If self-overrides set styleIdForFill/styleIdForStrokeFill, resolve
     // through guid or assetRef.key via the style registry.
-    const mergedFills = resolveStyleRef(merged.styleIdForFill, ctx.styleRegistry.fills);
+    const mergedFills = resolvePaintRef(merged.styleIdForFill, ctx.styleRegistry, { intent: "fill", locator: () => formatNodeLocator(merged) });
     if (mergedFills) {
       merged.fills = mergedFills;
     }
-    const mergedStrokes = resolveStyleRef(merged.styleIdForStrokeFill, ctx.styleRegistry.strokes);
+    const mergedStrokes = resolvePaintRef(merged.styleIdForStrokeFill, ctx.styleRegistry, { intent: "stroke", locator: () => formatNodeLocator(merged) });
     if (mergedStrokes) {
       merged.strokes = mergedStrokes;
     }
@@ -1380,7 +1360,10 @@ function resolveOverrideEntryPaints(
   styleRegistry: FigStyleRegistry,
 ): readonly FigPaint[] | undefined {
   // Priority 1: styleIdForFill via style registry (guid or assetRef.key)
-  const resolved = resolveStyleRef(entry.styleIdForFill, styleRegistry.fills);
+  const resolved = resolvePaintRef(entry.styleIdForFill, styleRegistry, {
+    intent: "fill",
+    locator: () => `vector style-override entry styleID=${(entry as { styleID?: number }).styleID ?? "?"}`,
+  });
   if (resolved) {
     return resolved;
   }
@@ -1525,6 +1508,7 @@ function buildTextNode(node: FigDesignNode, ctx: BuildContext): TextNode {
   const textData = convertTextNode(node, {
     blobs: ctx.blobs,
     fontResolver: ctx.textFontResolver,
+    styleRegistry: ctx.styleRegistry,
   });
 
   // Resolve textAutoResize from domain textData
@@ -1548,6 +1532,7 @@ function buildTextNode(node: FigDesignNode, ctx: BuildContext): TextNode {
     hyperlink: node.textData?.hyperlink?.url,
     glyphContours: textData.glyphContours,
     decorationContours: textData.decorationContours,
+    runs: textData.runs,
     fill: textData.fill,
     textLineLayout: textData.textLineLayout,
   };

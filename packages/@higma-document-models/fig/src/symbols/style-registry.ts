@@ -2,26 +2,40 @@
  * @file Style Registry — resolves styleId references to FigPaint arrays
  *
  * Figma's .fig format uses `styleIdForFill` / `styleIdForStrokeFill` to
- * reference shared styles. A `StyleId` carries up to two reference keys:
+ * reference shared styles. A `FigStyleId` carries up to two reference
+ * keys:
  *
  * 1. `guid` — a local GUID pointing at a style-definition node in the
  *    same file.
  * 2. `assetRef.key` — a team-library asset key pointing at a style
  *    imported from another Figma file. Figma emits a local proxy node
  *    (typically on the Internal Only Canvas) whose own `key` matches
- *    this assetRef.key and whose own `fillPaints` / `strokePaints`
- *    carry the resolved paint value. The proxy has `styleType` set
- *    (e.g. FILL).
+ *    this assetRef.key and whose own `styleType` + paint array carry
+ *    the authoritative paint.
  *
- * Both key spaces are stored in a single map; GUID keys are formatted
- * via `guidToString` and assetRef keys are stored verbatim. The two
- * namespaces do not collide because GUID strings have the form
- * "sessionID:localID" (digits and a colon only) whereas assetRef keys
- * are hex content hashes.
+ * SoT (Source of Truth) summary:
  *
- * When a `symbolOverride` sets `styleIdForFill` on a child node, the
- * child's `fillPaints` (inherited from the SYMBOL) becomes stale and must
- * be replaced with the paint array resolved through this registry.
+ *  - The paint of a style-definition node lives in exactly one place,
+ *    determined by `styleType`: `FILL` styles store paint in
+ *    `fillPaints`, `STROKE` styles in `strokePaints`. Anything else
+ *    (no `styleType` set, or `styleType` outside the paint family)
+ *    is not a style-definition node from the registry's perspective.
+ *
+ *  - Consumers may reference the same style as either a fill (via
+ *    `styleIdForFill`) or a stroke (via `styleIdForStrokeFill`); these
+ *    intents are independent of where the paint is stored on the
+ *    style. The registry therefore exposes a single map keyed by
+ *    `guidToString(...)` or `assetRef.key`, returning the same paint
+ *    array regardless of how the consumer intends to use it.
+ *
+ *  - Both key namespaces share one map: GUID strings have the form
+ *    "sessionID:localID" (digits + colon only) whereas assetRef keys
+ *    are hex content hashes — they don't collide.
+ *
+ * No fallbacks: a consumer setting `styleIdForFill`/`styleIdForStrokeFill`
+ * to an entry that the registry does not contain is treated as a
+ * malformed reference by the resolution helpers, which throw rather
+ * than silently returning the consumer's stale local paint cache.
  */
 
 import type { FigNode, MutableFigNode, FigPaint, FigStyleId } from "../types";
@@ -64,61 +78,158 @@ export function styleRefKeys(ref: FigStyleId | undefined): readonly string[] {
 }
 
 /**
+ * Extract the authoritative paint array from a style-definition node.
+ *
+ * SoT: a node is a style-definition iff `styleType` is set; the paint
+ * lives in the field implied by `styleType` (FILL → `fillPaints`,
+ * STROKE → `strokePaints`). Returns `undefined` when the node is not a
+ * paint-style definition or when the implied field is empty (the latter
+ * is treated as "this style contributes nothing"; consumers that try to
+ * resolve such a reference will throw at lookup time).
+ *
+ * No fallback between fillPaints/strokePaints: which field carries the
+ * paint is determined by the style's own type, not by the consumer's
+ * intent. Consumer-side intent (use as fill vs stroke) is independent
+ * and handled at the `lookupStylePaint` boundary.
+ */
+function getStylePaint(node: FigNode): readonly FigPaint[] | undefined {
+  const typeName = node.styleType?.name;
+  if (typeName === "FILL") {
+    if (node.fillPaints && node.fillPaints.length > 0) { return node.fillPaints; }
+    return undefined;
+  }
+  if (typeName === "STROKE") {
+    if (node.strokePaints && node.strokePaints.length > 0) { return node.strokePaints; }
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
  * Build a style registry from a node map.
  *
- * Two indexing strategies are merged into a single map:
+ * Walks every node and indexes the ones that are style definitions
+ * (`styleType` set). Each style is registered under its GUID (via
+ * `guidToString`) and, when present, its `key` (assetRef hash). The
+ * two namespaces share one map because their string forms can't
+ * collide ("session:local" vs hex digest).
  *
- * - GUID path: for every node that references a style via
- *   `styleIdForFill.guid` or `styleIdForStrokeFill.guid`, look up the
- *   referenced node by GUID and store its own paint array.
- * - AssetRef path: for every node that IS a style-definition proxy
- *   (has a non-empty `key` and a `styleType` — Figma emits these on
- *   the Internal Only Canvas to resolve assetRef references locally),
- *   store its paint array under its `key`.
- *
- * Consumer nodes may carry stale `fillPaints` caches that don't match
- * the style definition, so we always look up the definition directly.
+ * The resulting map is keyed by the union of both reference forms a
+ * consumer might use — so a `styleIdForFill` carrying either a guid or
+ * an assetRef.key resolves through a single `Map.get`.
  */
 export function buildFigStyleRegistry(nodeMap: ReadonlyMap<string, FigNode>): FigStyleRegistry {
-  const fills = new Map<string, readonly FigPaint[]>();
-  const strokes = new Map<string, readonly FigPaint[]>();
-
-  // Strategy 1: Resolve guid-based references.
-  const fillGuids = new Set<string>();
-  const strokeGuids = new Set<string>();
+  const map = new Map<string, readonly FigPaint[]>();
   for (const [, node] of nodeMap) {
-    if (node.styleIdForFill?.guid) {
-      fillGuids.add(guidToString(node.styleIdForFill.guid));
-    }
-    if (node.styleIdForStrokeFill?.guid) {
-      strokeGuids.add(guidToString(node.styleIdForStrokeFill.guid));
-    }
+    const paint = getStylePaint(node);
+    if (!paint) { continue; }
+    if (node.guid) { map.set(guidToString(node.guid), paint); }
+    if (typeof node.key === "string" && node.key.length > 0) { map.set(node.key, paint); }
   }
-  for (const g of fillGuids) {
-    const n = nodeMap.get(g);
-    if (n?.fillPaints && n.fillPaints.length > 0) fills.set(g, n.fillPaints);
-  }
-  for (const g of strokeGuids) {
-    const n = nodeMap.get(g);
-    if (n?.strokePaints && n.strokePaints.length > 0) strokes.set(g, n.strokePaints);
-  }
+  return map;
+}
 
-  // Strategy 2: Register every node that is itself a style-definition
-  // proxy under its assetRef key. A proxy has both `styleType` and a
-  // non-empty `key`; its paint array is authoritative for any consumer
-  // whose `styleIdForFill.assetRef.key` matches that key.
-  for (const [, node] of nodeMap) {
-    if (!node.styleType || typeof node.key !== "string" || node.key.length === 0) continue;
-    const typeName = node.styleType.name;
-    if (typeName === "FILL" && node.fillPaints && node.fillPaints.length > 0) {
-      fills.set(node.key, node.fillPaints);
-    }
-    if (typeName === "STROKE" && node.strokePaints && node.strokePaints.length > 0) {
-      strokes.set(node.key, node.strokePaints);
-    }
+/**
+ * Look up the paint array referenced by a `FigStyleId`.
+ *
+ * Tries `guid` first (authoritative same-file reference) then
+ * `assetRef.key` (team-library import). Returns `undefined` only when
+ * the reference itself is empty (no guid and no assetRef.key) — caller
+ * is responsible for deciding what an empty reference means in their
+ * context. When the reference HAS at least one key but neither key
+ * resolves, the registry is malformed for that consumer's needs and
+ * the function still returns `undefined` so the caller can throw with
+ * a context-specific error.
+ */
+function lookupStylePaint(
+  ref: FigStyleId | undefined,
+  registry: FigStyleRegistry,
+): readonly FigPaint[] | undefined {
+  if (!ref) { return undefined; }
+  if (ref.guid && !isSentinelGuid(ref.guid)) {
+    const paint = registry.get(guidToString(ref.guid));
+    if (paint) { return paint; }
   }
+  if (ref.assetRef?.key) {
+    const paint = registry.get(ref.assetRef.key);
+    if (paint) { return paint; }
+  }
+  return undefined;
+}
 
-  return { fills, strokes };
+/**
+ * Sentinel guid (`0xffffffff:0xffffffff`) Figma uses to mean "no reference"
+ * inside a `FigStyleId` slot — the field is structurally present but
+ * carries no actual guid. The Kiwi schema reserves uint32 max in both
+ * components to distinguish "no guid" from a real same-file reference.
+ */
+const NO_REF_SENTINEL = 0xffffffff;
+
+function isSentinelGuid(guid: FigStyleId["guid"]): boolean {
+  if (!guid) { return false; }
+  return guid.sessionID === NO_REF_SENTINEL && guid.localID === NO_REF_SENTINEL;
+}
+
+/**
+ * Whether a style reference carries any lookup key. An empty `FigStyleId`
+ * (object present but no guid and no assetRef.key) and a reference whose
+ * only guid is the `0xffffffff:0xffffffff` "no-ref" sentinel are both
+ * treated as "no reference", since no lookup can succeed against them.
+ */
+export function styleRefHasKey(ref: FigStyleId | undefined): ref is FigStyleId {
+  if (!ref) { return false; }
+  if (ref.guid && !isSentinelGuid(ref.guid)) { return true; }
+  if (typeof ref.assetRef?.key === "string" && ref.assetRef.key.length > 0) { return true; }
+  return false;
+}
+
+/**
+ * Resolve a paint reference through the registry.
+ *
+ * This is the single SoT consumers use to turn a `styleIdForFill` or
+ * `styleIdForStrokeFill` into a paint array. Throws when the reference
+ * carries a key but the registry has no entry for it — that's a
+ * malformed reference (dangling style guid or missing asset-ref proxy)
+ * which historically the codebase masked by silently using the
+ * consumer's stale cached `fillPaints`/`strokePaints`. Throwing here
+ * makes such inconsistencies visible at the conversion boundary
+ * instead of leaking into rendered output.
+ *
+ * `diagnostic.locator` produces a string identifying the resolution
+ * site (e.g. "node 34:785 (Vector)") so the thrown error names the
+ * actual offending node — keep the call cheap, it's only invoked on
+ * the throw path.
+ */
+export function resolvePaintRef(
+  ref: FigStyleId | undefined,
+  registry: FigStyleRegistry,
+  diagnostic: { readonly intent: "fill" | "stroke"; readonly locator: () => string },
+): readonly FigPaint[] | undefined {
+  if (!styleRefHasKey(ref)) { return undefined; }
+  const paint = lookupStylePaint(ref, registry);
+  if (paint) { return paint; }
+  throw new Error(
+    `Unresolved styleId for ${diagnostic.intent} on ${diagnostic.locator()}: ` +
+    `${JSON.stringify(ref)} not found in style registry`,
+  );
+}
+
+/**
+ * Format `"<sessionID:localID> (<name>)"` for diagnostic output.
+ *
+ * Accepts either a raw FigNode (`guid: FigGuid`) or a domain
+ * FigDesignNode (`id: FigNodeId`, the string-form of the GUID) so the
+ * same locator can serve both layers without callers having to convert.
+ */
+export function formatNodeLocator(node: {
+  readonly guid?: { readonly sessionID: number; readonly localID: number };
+  readonly id?: string;
+  readonly name?: string | undefined;
+}): string {
+  const guidStr = node.guid
+    ? guidToString(node.guid)
+    : (typeof node.id === "string" && node.id.length > 0 ? node.id : "<no-guid>");
+  return `${guidStr} (${node.name ?? "?"})`;
 }
 
 // =============================================================================
@@ -128,74 +239,58 @@ export function buildFigStyleRegistry(nodeMap: ReadonlyMap<string, FigNode>): Fi
 /**
  * Resolve styleIdForFill / styleIdForStrokeFill on an immutable FigNode.
  *
- * If the node's `styleIdForFill` references a style in the registry,
- * returns a new node with `fillPaints` replaced by the registry value.
- * Returns the original node unchanged if no resolution is needed.
+ * If the node's `styleIdForFill` resolves through the registry, returns
+ * a new node with `fillPaints` replaced by the registry value (and the
+ * same for stroke). The original node is returned unchanged when no
+ * resolvable references are present.
  *
- * This handles the case where a node's `fillPaints` is stale
- * (style was changed after the node's fillPaints cache was set).
+ * Stale-cache repair: a node's own `fillPaints` may have been captured
+ * when the referenced style had a different paint. The registry's
+ * value is the SoT, so we always replace when a resolution succeeds —
+ * even when the new value is structurally equal to the cache, the
+ * identity-comparison `!==` is enough to detect "we resolved through a
+ * style" vs "we left the cache".
  */
 export function resolveNodeStyleIds(
   node: FigNode,
   registry: FigStyleRegistry,
 ): FigNode {
-  if (!node.styleIdForFill && !node.styleIdForStrokeFill) {
+  const fillResolved = resolvePaintRef(node.styleIdForFill, registry, { intent: "fill", locator: () => formatNodeLocator(node) });
+  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry, { intent: "stroke", locator: () => formatNodeLocator(node) });
+
+  if (fillResolved === undefined && strokeResolved === undefined) {
     return node;
   }
 
   let fillPaints = node.fillPaints;
   let strokePaints = node.strokePaints;
   let changed = false;
-
-  const fillResolved = resolvePaintFromRegistry(node.styleIdForFill, registry.fills);
   if (fillResolved && fillResolved !== fillPaints) {
     fillPaints = fillResolved;
     changed = true;
   }
-
-  const strokeResolved = resolvePaintFromRegistry(node.styleIdForStrokeFill, registry.strokes);
   if (strokeResolved && strokeResolved !== strokePaints) {
     strokePaints = strokeResolved;
     changed = true;
   }
-
-  if (!changed) {
-    return node;
-  }
-
+  if (!changed) { return node; }
   return { ...node, fillPaints, strokePaints } as FigNode;
-}
-
-/**
- * Resolve a paint array through a registry using any of the reference's
- * keys. Tries guid first (authoritative same-file reference), falls back
- * to assetRef.key when present. Returns undefined when neither hits.
- */
-function resolvePaintFromRegistry(
-  ref: FigStyleId | undefined,
-  map: ReadonlyMap<string, readonly FigPaint[]>,
-): readonly FigPaint[] | undefined {
-  for (const k of styleRefKeys(ref)) {
-    const v = map.get(k);
-    if (v) return v;
-  }
-  return undefined;
 }
 
 /**
  * Resolve styleIdForFill / styleIdForStrokeFill on a mutable node clone.
  *
  * Used inside `applyOverrides` where nodes are MutableFigNode clones
- * created by `deepCloneNode`.
+ * created by `deepCloneNode`. Mirrors `resolveNodeStyleIds` but mutates
+ * in place.
  */
 export function resolveStyleIdOnMutableNode(
   node: MutableFigNode,
   registry: FigStyleRegistry,
 ): void {
-  const fills = resolvePaintFromRegistry(node.styleIdForFill, registry.fills);
-  if (fills) node.fillPaints = fills;
-
-  const strokes = resolvePaintFromRegistry(node.styleIdForStrokeFill, registry.strokes);
-  if (strokes) node.strokePaints = strokes;
+  const fillResolved = resolvePaintRef(node.styleIdForFill, registry, { intent: "fill", locator: () => formatNodeLocator(node) });
+  if (fillResolved) { node.fillPaints = fillResolved; }
+  const strokeResolved = resolvePaintRef(node.styleIdForStrokeFill, registry, { intent: "stroke", locator: () => formatNodeLocator(node) });
+  if (strokeResolved) { node.strokePaints = strokeResolved; }
 }
 

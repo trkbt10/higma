@@ -150,6 +150,17 @@ export type TextStyleOverride = {
   readonly fontSize?: number;
   readonly fontName?: FigFontName;
   readonly fillPaints?: readonly FigPaint[];
+  /**
+   * Reference to a shared FILL style for this character range. When present,
+   * the resolved paint from the style registry overrides any inline
+   * `fillPaints` on this entry — same SoT precedence as on a regular node.
+   */
+  readonly styleIdForFill?: FigStyleId;
+  /**
+   * Reference to a shared FILL/STROKE style used as a stroke for this
+   * character range. Symmetric to `styleIdForFill`.
+   */
+  readonly styleIdForStrokeFill?: FigStyleId;
   readonly textDecoration?: KiwiEnumValue;
   readonly textCase?: KiwiEnumValue;
   readonly lineHeight?: { readonly value: number; readonly units: KiwiEnumValue };
@@ -659,22 +670,29 @@ export type FigPage = {
 // =============================================================================
 
 /**
- * Maps style GUID strings to their resolved paint arrays.
+ * Maps a style reference key to the authoritative paint array stored
+ * on the corresponding style-definition node.
  *
- * Built from (styleIdForFill, fillPaints) pairs found across all nodes
- * in a document. Used to resolve stale paint caches when nodes or
- * per-path overrides reference shared styles.
+ * One map covers both fill-style and stroke-style references because a
+ * Figma style's paint is stored on the style node itself
+ * (`fillPaints` for FILL-type styles, `strokePaints` for STROKE-type
+ * styles), and a consumer may legitimately reference the same style as
+ * either a fill (`styleIdForFill`) or a stroke (`styleIdForStrokeFill`).
+ * Splitting the registry by consumer-side intent (fills vs strokes)
+ * historically caused FILL-styles-used-as-stroke to silently fall back
+ * to the consumer's stale cached `strokePaints` — this single-map SoT
+ * eliminates that whole class of mismatch.
+ *
+ * Keys come from one of two namespaces, which never collide:
+ *  - GUID strings ("sessionID:localID") for same-file references.
+ *  - assetRef hash strings (hex digest) for team-library imports.
+ *
+ * Built by `buildFigStyleRegistry` from a document-wide `nodeMap`.
  */
-export type FigStyleRegistry = {
-  readonly fills: ReadonlyMap<string, readonly FigPaint[]>;
-  readonly strokes: ReadonlyMap<string, readonly FigPaint[]>;
-};
+export type FigStyleRegistry = ReadonlyMap<string, readonly FigPaint[]>;
 
-/** Empty style registry — no styles to resolve */
-export const EMPTY_FIG_STYLE_REGISTRY: FigStyleRegistry = {
-  fills: new Map(),
-  strokes: new Map(),
-};
+/** Empty style registry — no styles to resolve. */
+export const EMPTY_FIG_STYLE_REGISTRY: FigStyleRegistry = new Map();
 
 // =============================================================================
 // Design Document

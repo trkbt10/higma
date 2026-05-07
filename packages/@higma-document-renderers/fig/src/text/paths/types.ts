@@ -24,6 +24,30 @@ export type PathContour = {
 };
 
 /**
+ * Shared glyph annotation: the source-character index that a glyph
+ * outline corresponds to. SoT for "which character does this contour
+ * paint?" — both `text/paths/GlyphContour` (commands are font/types
+ * PathCommand) and `scene-graph/GlyphContour` (commands are
+ * scene-graph PathCommand) intersect with this annotation rather than
+ * each redeclaring the field.
+ *
+ * `firstCharacter` is `undefined` for contours that don't map to a
+ * single source character — Figma's auto-inserted ellipsis glyph for
+ * truncated text, opentype.js fallback line contours, and so on. The
+ * run grouper folds those into the base run.
+ */
+export type GlyphCharacterIndex = {
+  readonly firstCharacter: number | undefined;
+};
+
+/**
+ * A text-glyph outline contour, annotated with the source character
+ * the glyph corresponds to. See `GlyphCharacterIndex` for the
+ * annotation semantics.
+ */
+export type GlyphContour = PathContour & GlyphCharacterIndex;
+
+/**
  * Decoration rectangle (underline, strikethrough)
  */
 export type DecorationRect = {
@@ -37,8 +61,8 @@ export type DecorationRect = {
  * Result of text path extraction
  */
 export type TextPathResult = {
-  /** Glyph outline paths (one per line or combined) */
-  readonly glyphContours: readonly PathContour[];
+  /** Glyph outline paths, one entry per source glyph. */
+  readonly glyphContours: readonly GlyphContour[];
   /** Decoration paths (underlines, strikethroughs) */
   readonly decorations: readonly DecorationRect[];
 };

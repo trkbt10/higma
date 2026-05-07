@@ -477,6 +477,8 @@ export type RenderTextNode = RenderNodeBase<TextNode> & {
   readonly type: "text";
   readonly width: number;
   readonly height: number;
+  /** Base fill (= the source `fill` colour) — used for decorations and as
+   * the default for line mode. Per-character fills live on `content.runs`. */
   readonly fillColor: string;
   readonly fillOpacity?: number;
   /** Clip path ID when textAutoResize is NONE or TRUNCATE */
@@ -502,10 +504,34 @@ export type RenderTextNode = RenderNodeBase<TextNode> & {
   readonly sourceTextAutoResize: TextAutoResize;
 };
 
+/**
+ * One per-fill segment in glyph mode: a chunk of the glyph + decoration
+ * path data that should be painted with `fillColor`/`fillOpacity`.
+ *
+ * Glyph contours are pre-grouped by which `TextRun` their `firstCharacter`
+ * falls into; decorations land on a single base run because Figma applies
+ * them at the line level, not per character.
+ *
+ * SoT also re-used by the shared `format-rendering.ts` text formatter
+ * (which produces the same shape from `TextRendering` rather than from
+ * a `RenderTextNode`) — no separate inline declaration of the
+ * `{ fillColor, fillOpacity, d }` triple anywhere downstream.
+ */
+export type RenderTextGlyphRun = {
+  readonly fillColor: string;
+  readonly fillOpacity: number;
+  /** Combined SVG path `d` for this run's glyph (and any decoration) contours. */
+  readonly d: string;
+};
+
 export type RenderTextGlyphs = {
   readonly mode: "glyphs";
-  /** Combined SVG path d string for all glyph + decoration contours */
-  readonly d: string;
+  /**
+   * Per-fill path segments. `runs.length === 1` is the common case
+   * (uniform fill); `> 1` indicates character-level style overrides.
+   * Empty array == empty source text.
+   */
+  readonly runs: readonly RenderTextGlyphRun[];
 };
 
 export type RenderTextLines = {

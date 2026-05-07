@@ -41,6 +41,7 @@ function makeTextNode(overrides: Partial<TextNode> = {}): TextNode {
     width: 100,
     height: 20,
     textAutoResize: "WIDTH_AND_HEIGHT",
+    runs: [{ start: 0, end: 0, fillColor: "#000000", fillOpacity: 1 }],
     fill: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
     ...overrides,
   };
@@ -418,11 +419,11 @@ describe("Text tessellation pipeline", () => {
     });
 
     it("tessellates a node with glyph contours", () => {
-      const contours: PathContour[] = [
+      const contours = [
         outerRect({ x: 0, y: 0, w: 5, h: 14 }),   // 'l'
         outerRect({ x: 8, y: 4, w: 5, h: 10 }),   // 'i' stem
         outerRect({ x: 8, y: 0, w: 5, h: 3 }),    // 'i' dot
-      ];
+      ].map((c, i) => ({ ...c, firstCharacter: i }));
 
       const node = makeTextNode({ glyphContours: contours });
       const result = tessellateTextNode(node);
@@ -435,7 +436,7 @@ describe("Text tessellation pipeline", () => {
     });
 
     it("includes decoration vertices when present", () => {
-      const glyphs: PathContour[] = [outerRect({ x: 0, y: 0, w: 40, h: 12 })];
+      const glyphs = [{ ...outerRect({ x: 0, y: 0, w: 40, h: 12 }), firstCharacter: 0 }];
       const decorations: PathContour[] = [outerRect({ x: 0, y: 14, w: 40, h: 1 })];
 
       const node = makeTextNode({
@@ -451,7 +452,7 @@ describe("Text tessellation pipeline", () => {
 
     it("preserves fill color and opacity", () => {
       const node = makeTextNode({
-        glyphContours: [outerRect({ x: 0, y: 0, w: 10, h: 10 })],
+        glyphContours: [{ ...outerRect({ x: 0, y: 0, w: 10, h: 10 }), firstCharacter: 0 }],
         fill: { color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 0.5 },
       });
       const result = tessellateTextNode(node);

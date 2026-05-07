@@ -6,8 +6,9 @@
  * paths both funnel through here.
  */
 
-import type { TextRendering } from "../../../text/rendering";
+import type { TextRendering, TextRenderingGlyphs } from "../../../text/rendering";
 import type { PathContour } from "../../../text/paths/types";
+import type { RenderTextGlyphRun } from "../../../scene-graph/render-tree";
 import { path as svgPath, text, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";
 import { buildTextAttrs } from "./attrs";
@@ -48,6 +49,55 @@ function contoursToPathD(contours: readonly PathContour[], precision: number): s
   return parts.join("");
 }
 
+/**
+ * Build per-run path-data segments for glyph mode.
+ *
+ * Each `TextRun` lists a `[start, end)` source-character range and the
+ * resolved `fillColor`/`fillOpacity`. Glyph contours carry a
+ * `firstCharacter` annotation (from `derivedTextData.glyphs[].firstCharacter`)
+ * that we use to bucket each contour into the run that owns its source
+ * character. Decorations have no character index and always paint with
+ * the base (first) run.
+ */
+function buildPerRunPathData(rendering: TextRenderingGlyphs, precision: number): readonly RenderTextGlyphRun[] {
+  const runs = rendering.runs;
+  if (runs.length === 0) { return []; }
+
+  function runIndexForChar(i: number): number {
+    for (let r = 0; r < runs.length; r++) {
+      if (i >= runs[r].start && i < runs[r].end) { return r; }
+    }
+    return -1;
+  }
+
+  const buckets = new Map<number, PathContour[]>();
+  for (const c of rendering.glyphContours) {
+    const ci = c.firstCharacter;
+    const idx = ci === undefined ? -1 : runIndexForChar(ci);
+    const key = idx >= 0 ? idx : 0;
+    const list = buckets.get(key) ?? [];
+    list.push(c);
+    buckets.set(key, list);
+  }
+  const baseList = buckets.get(0) ?? [];
+  for (const dec of rendering.decorationContours) {
+    baseList.push(dec);
+  }
+  if (baseList.length > 0) { buckets.set(0, baseList); }
+
+  const out: RenderTextGlyphRun[] = [];
+  for (let r = 0; r < runs.length; r++) {
+    const list = buckets.get(r);
+    if (!list || list.length === 0) { continue; }
+    out.push({
+      fillColor: runs[r].fillColor,
+      fillOpacity: runs[r].fillOpacity,
+      d: contoursToPathD(list, precision),
+    });
+  }
+  return out;
+}
+
 /** Wrap rendered text body in a group when transform/opacity is present. */
 function wrapGroup(body: SvgString, transform: string | undefined, opacity: number): SvgString {
   if (!transform && opacity >= 1) {
@@ -77,21 +127,26 @@ export function formatTextRenderingToSvg(rendering: TextRendering): SvgString {
   const transformStr = buildTransformAttr(rendering.transform);
 
   if (rendering.kind === "glyphs") {
-    const glyphD = contoursToPathD(rendering.glyphContours, PATH_PRECISION);
-    const decoD = contoursToPathD(rendering.decorationContours, PATH_PRECISION);
-    const combined = glyphD + decoD;
-    if (combined === "") {
+    // Group glyph contours by TextRun. Decorations always paint with the
+    // base run's fill (Figma applies them at the line level, not per
+    // character). Glyphs without `firstCharacter` (e.g. opentype fallback
+    // line contours, Figma ellipsis glyph) are folded into the base run.
+    const runs = rendering.runs;
+    const runPaths = runs.length > 0 ? buildPerRunPathData(rendering, PATH_PRECISION) : [];
+    const totalCommands = runPaths.reduce((acc, r) => acc + r.d.length, 0);
+    if (totalCommands === 0) {
       if (rendering.props.characters.trim().length > 0) {
         throw new Error("SVG text renderer received glyph rendering with no visible contours for non-empty text");
       }
       return EMPTY_SVG;
     }
-    const pathEl = svgPath({
-      d: combined,
-      fill: rendering.fillColor,
-      "fill-opacity": rendering.fillOpacity < 1 ? rendering.fillOpacity : undefined,
-    });
-    return wrapGroup(pathEl, transformStr, rendering.opacity);
+    const elements: SvgString[] = runPaths.map((r) => svgPath({
+      d: r.d,
+      fill: r.fillColor,
+      "fill-opacity": r.fillOpacity < 1 ? r.fillOpacity : undefined,
+    }));
+    const body: SvgString = elements.length === 1 ? elements[0] : g({}, ...elements);
+    return wrapGroup(body, transformStr, rendering.opacity);
   }
 
   // kind === "lines"

@@ -135,6 +135,13 @@ export type FigTextStyleOverrideEntry = {
   readonly fontSize?: number;
   readonly fontName?: FigFontName;
   readonly fillPaints?: readonly FigPaint[];
+  /**
+   * Style references at the per-character override level. Carry the same
+   * shape as the node-level fields so the renderer's run resolver can
+   * route them through the same `FigStyleRegistry` SoT.
+   */
+  readonly styleIdForFill?: FigStyleId;
+  readonly styleIdForStrokeFill?: FigStyleId;
   readonly textDecoration?: KiwiEnumValue;
   readonly textCase?: KiwiEnumValue;
   readonly lineHeight?: FigValueWithUnits;

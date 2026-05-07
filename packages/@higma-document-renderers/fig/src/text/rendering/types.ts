@@ -14,11 +14,12 @@
  * React JSX, WebGL tessellation) happens in the thin render layers on top.
  */
 
-import type { PathContour } from "../paths/types";
+import type { GlyphContour, PathContour } from "../paths/types";
 import type { ExtractedTextProps, TextAlignHorizontal, TextAlignVertical } from "../layout/types";
 import type { TextLayout } from "../layout/compute-layout";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { AbstractFont } from "../../font/types";
+import type { TextRun } from "../runs";
 
 /**
  * Resolved per-line-height metric for line-mode rendering.
@@ -101,11 +102,29 @@ export type TextTruncation = {
  */
 export type TextRenderingGlyphs = {
   readonly kind: "glyphs";
-  /** Glyph outline contours in screen coordinates. */
-  readonly glyphContours: readonly PathContour[];
+  /**
+   * Glyph outline contours in screen coordinates, each annotated with the
+   * source `firstCharacter` so renderers can group glyphs by `runs[i]`.
+   */
+  readonly glyphContours: readonly GlyphContour[];
   /** Decoration rectangles (underline, strikethrough) in screen coordinates. */
   readonly decorationContours: readonly PathContour[];
-  /** Fill color (CSS string, e.g. "#333333"). */
+  /**
+   * Per-character fill runs covering `[0, props.characters.length)`.
+   * Always non-empty for non-empty text; a single base-fill run is the
+   * degenerate case used when no `characterStyleIDs` are present.
+   *
+   * SoT: every renderer (SVG `<path>` per run, WebGL tessellation, future
+   * Canvas2D) groups glyphs by which run their `firstCharacter` falls
+   * into and applies that run's fill — never re-derives "what colour for
+   * character N" from raw fillPaints + override table.
+   */
+  readonly runs: readonly TextRun[];
+  /**
+   * Fill of the base run, retained as a convenience for renderers that
+   * draw decorations (underlines, strikethroughs) which always pick up
+   * the base fill regardless of per-character overrides.
+   */
   readonly fillColor: string;
   /** Fill alpha in [0, 1]. */
   readonly fillOpacity: number;
@@ -155,7 +174,16 @@ export type TextRenderingLines = {
   readonly textAlignVertical: TextAlignVertical;
   /** Text decoration. */
   readonly textDecoration: "NONE" | "UNDERLINE" | "STRIKETHROUGH";
-  /** Fill color (CSS string). */
+  /**
+   * Per-character fill runs covering `[0, props.characters.length)`.
+   * Lines-mode renderers must intersect runs with each line's character
+   * range to emit the right colour per substring; lines mode is currently
+   * single-fill in the SVG backend (one `<text>` per line, no `<tspan>`),
+   * so `runs.length > 1` here is a signal that the source text uses
+   * character-level styling that the lines backend does not yet split.
+   */
+  readonly runs: readonly TextRun[];
+  /** Fill color (CSS string) — base run, used for decorations. */
   readonly fillColor: string;
   /** Fill alpha in [0, 1]. */
   readonly fillOpacity: number;

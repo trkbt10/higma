@@ -18,10 +18,25 @@ type PathGeometry = {
   readonly backgroundMaskVertices: Float32Array;
 };
 
-type TextGlyphGeometry = {
+/**
+ * Per-fill-run glyph geometry: each entry corresponds to one
+ * `RenderTextGlyphRun` (i.e. one CSS-hex fill colour) and carries the
+ * tessellated triangles for the contours that paint with that fill.
+ *
+ * Decorations (underlines / strikethroughs) are folded into the base
+ * run by the render-tree resolver, so this cache treats them as just
+ * more contours of run 0.
+ */
+export type TextGlyphRunGeometry = {
+  readonly fillColor: string;
+  readonly fillOpacity: number;
   readonly contours: readonly PathContour[];
   readonly vertices: Float32Array;
   readonly prepared: ReturnType<typeof prepareFanTriangles>;
+};
+
+type TextGlyphGeometry = {
+  readonly runs: readonly TextGlyphRunGeometry[];
 };
 
 export type WebGLGeometryCache = {
@@ -122,12 +137,21 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
       if (node.content.mode !== "glyphs") {
         throw new Error(`WebGL text glyph geometry cache requires glyph content for text node ${node.id}`);
       }
-      const contours = svgPathDToContours({ d: node.content.d });
-      const value = {
-        contours,
-        vertices: tessellateContours(contours, 0.1, true),
-        prepared: prepareFanTriangles(contours, 0.1),
-      };
+      // One tessellation pass per fill-run keeps WebGL aligned with the
+      // SVG path emitter (which also outputs one <path> per run). The
+      // renderer iterates these runs and submits a stencil-fill draw
+      // call per run with the run's fillColor / fillOpacity.
+      const runs: TextGlyphRunGeometry[] = node.content.runs.map((run) => {
+        const contours = svgPathDToContours({ d: run.d });
+        return {
+          fillColor: run.fillColor,
+          fillOpacity: run.fillOpacity,
+          contours,
+          vertices: tessellateContours(contours, 0.1, true),
+          prepared: prepareFanTriangles(contours, 0.1),
+        };
+      });
+      const value: TextGlyphGeometry = { runs };
       textGlyphGeometry.set(node, value);
       return value;
     },

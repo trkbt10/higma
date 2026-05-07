@@ -88,7 +88,7 @@ function createPathRenderContext(fontLoader: FontLoader): PathRenderContext {
     blobs: [] as FigBlob[],
     images: new Map(),
     showHiddenNodes: false,
-    styleRegistry: { fills: new Map(), strokes: new Map() },
+    styleRegistry: new Map(),
     fontLoader,
   };
 }
@@ -121,7 +121,7 @@ describe("path-render", () => {
         blobs: [] as FigBlob[],
         images: new Map(),
         showHiddenNodes: false,
-        styleRegistry: { fills: new Map(), strokes: new Map() },
+        styleRegistry: new Map(),
         fontLoader: createFakeFontLoader({}),
       };
 

@@ -26,19 +26,22 @@ function wrapTextClip(content: ReactNode, textClipId: string | undefined): React
 function RenderTextNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
 
-  // Glyph contours (pre-outlined paths)
+  // Glyph contours (pre-outlined paths) — one <path> per fill run.
   if (node.content.mode === "glyphs") {
-    if (node.content.d === "") {
+    const runs = node.content.runs;
+    if (runs.length === 0) {
       return null;
     }
 
-    let glyphContent: ReactNode = (
+    const paths = runs.map((run, i) => (
       <path
-        d={node.content.d}
-        fill={node.fillColor}
-        fillOpacity={node.fillOpacity}
+        key={i}
+        d={run.d}
+        fill={run.fillColor}
+        fillOpacity={run.fillOpacity < 1 ? run.fillOpacity : undefined}
       />
-    );
+    ));
+    let glyphContent: ReactNode = paths.length === 1 ? paths[0] : <>{paths}</>;
     glyphContent = wrapHyperlink(glyphContent, node.hyperlink);
 
     return (

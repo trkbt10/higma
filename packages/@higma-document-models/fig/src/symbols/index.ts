@@ -63,6 +63,9 @@ export {
   buildFigStyleRegistry,
   resolveNodeStyleIds,
   resolveStyleIdOnMutableNode,
+  resolvePaintRef,
+  formatNodeLocator,
+  styleRefHasKey,
   styleRefKey,
   styleRefKeys,
 } from "./style-registry";

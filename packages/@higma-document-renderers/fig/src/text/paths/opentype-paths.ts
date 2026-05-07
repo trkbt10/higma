@@ -6,7 +6,7 @@
  */
 
 import type { AbstractFont } from "../../font/types";
-import type { PathContour, DecorationRect, TextPathResult } from "./types";
+import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "./types";
 import type { TextAlignHorizontal } from "../layout/types";
 import { convertQuadraticsToCubic } from "./bezier";
 
@@ -122,7 +122,7 @@ export function createUnderlineRect(
 export function extractTextPathData(
   { lines, font, fontSize, x, baseY, lineHeight, align, letterSpacing, textDecoration }: { lines: readonly string[]; font: AbstractFont; fontSize: number; x: number; baseY: number; lineHeight: number; align: TextAlignHorizontal; letterSpacing?: number; textDecoration?: "NONE" | "UNDERLINE" | "STRIKETHROUGH"; }
 ): TextPathResult {
-  const glyphContours: PathContour[] = [];
+  const glyphContours: GlyphContour[] = [];
   const decorations: DecorationRect[] = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -141,7 +141,15 @@ export function extractTextPathData(
     });
 
     if (contour) {
-      glyphContours.push(contour);
+      // opentype.js mode emits one contour per visual line — there is no
+      // per-glyph character index, so the run grouper treats this contour
+      // as belonging to the base run (firstCharacter undefined).
+      const glyphContour: GlyphContour = {
+        commands: contour.commands,
+        windingRule: contour.windingRule,
+        firstCharacter: undefined,
+      };
+      glyphContours.push(glyphContour);
     }
 
     if (textDecoration === "UNDERLINE") {

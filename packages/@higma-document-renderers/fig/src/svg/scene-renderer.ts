@@ -1211,15 +1211,20 @@ function formatTextNode(node: RenderTextNode): SvgString {
   const defsStr = formatDefs(node.defs);
 
   if (node.content.mode === "glyphs") {
-    if (node.content.d === "") {
+    const runs = node.content.runs;
+    if (runs.length === 0) {
       return EMPTY_SVG;
     }
-    const glyphPath = path({
-      d: node.content.d,
-      fill: node.fillColor,
-      "fill-opacity": node.fillOpacity,
-    });
-    const glyphContent = node.hyperlink ? svgAnchor({ href: node.hyperlink }, glyphPath) : glyphPath;
+    // One <path> per fill run. The render-tree resolver already grouped
+    // glyph contours by their TextRun and attached the resolved
+    // fillColor/fillOpacity, so the formatter just emits each run as-is.
+    const runPaths: SvgString[] = runs.map((run) => path({
+      d: run.d,
+      fill: run.fillColor,
+      "fill-opacity": run.fillOpacity < 1 ? run.fillOpacity : undefined,
+    }));
+    const glyphBody: SvgString = runPaths.length === 1 ? runPaths[0] : g({}, ...runPaths);
+    const glyphContent = node.hyperlink ? svgAnchor({ href: node.hyperlink }, glyphBody) : glyphBody;
     const content = clipSvgContent(glyphContent, node.textClipId);
 
     const parts: SvgString[] = [];

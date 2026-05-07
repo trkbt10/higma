@@ -25,7 +25,8 @@ import {
   buildGuidTranslationMap,
   analyzeOverrideSets,
   resolveSymbolGuidStr,
-  styleRefKeys,
+  resolvePaintRef,
+  formatNodeLocator,
   isInstanceSelfOverride,
   createFigResolveContext,
 } from "@higma-document-models/fig/symbols";
@@ -109,34 +110,38 @@ function hasPaintEntries(paints: readonly FigPaint[] | undefined): paints is rea
 }
 
 /**
- * Look up a paint array in a style registry, trying each key the
- * reference carries (guid first, then assetRef.key).
+ * Resolve node fills via the style registry SoT.
+ *
+ * Priority:
+ *  1. `styleIdForFill` — when set, the registry's paint wins over the
+ *     node's potentially-stale local `fillPaints`. `resolvePaintRef`
+ *     throws if the reference carries a key but the registry has no
+ *     entry, surfacing dangling style references rather than masking
+ *     them with the cached local paint.
+ *  2. `backgroundPaints` — frame backgrounds.
+ *  3. `fillPaints` — the node's own paints, used only when no style
+ *     reference is set (i.e. the node is the SoT for its own fill).
  */
-function lookupPaintByRef(
-  ref: FigNode["styleIdForFill"],
-  map: ReadonlyMap<string, readonly FigPaint[]>,
-): readonly FigPaint[] | undefined {
-  for (const k of styleRefKeys(ref)) {
-    const v = map.get(k);
-    if (v) {return v;}
-  }
-  return undefined;
-}
-
-/** Resolve node fills from styles, frame backgrounds, then legacy fillPaints. */
 function resolveNodeFills(node: FigNode, styleRegistry: FigStyleRegistry): readonly FigPaint[] {
-  const resolved = lookupPaintByRef(node.styleIdForFill, styleRegistry.fills);
-  if (resolved) {return resolved;}
+  const resolved = resolvePaintRef(node.styleIdForFill, styleRegistry, { intent: "fill", locator: () => formatNodeLocator(node) });
+  if (resolved) { return resolved; }
   if (hasPaintEntries(node.backgroundPaints)) {
     return node.backgroundPaints;
   }
   return node.fillPaints ?? [];
 }
 
-/** Resolve node strokes from styles, then legacy strokePaints. */
+/**
+ * Resolve node strokes via the style registry SoT.
+ *
+ * Mirrors `resolveNodeFills`: `styleIdForStrokeFill` (when set) is the
+ * SoT and resolves through the same registry — Figma allows referencing
+ * a FILL-type style as a stroke, so the resolution doesn't depend on
+ * which intent the consumer has.
+ */
 function resolveNodeStrokes(node: FigNode, styleRegistry: FigStyleRegistry): readonly FigPaint[] {
-  const resolved = lookupPaintByRef(node.styleIdForStrokeFill, styleRegistry.strokes);
-  if (resolved) {return resolved;}
+  const resolved = resolvePaintRef(node.styleIdForStrokeFill, styleRegistry, { intent: "stroke", locator: () => formatNodeLocator(node) });
+  if (resolved) { return resolved; }
   return node.strokePaints ?? [];
 }
 
@@ -437,6 +442,13 @@ function convertKiwiOverrideTable(
       fontSize: entry.fontSize,
       fontName: entry.fontName,
       fillPaints: entry.fillPaints,
+      // The Kiwi-level entry is a sparse NodeChange that may carry style
+      // references (`styleIdForFill` / `styleIdForStrokeFill`). Forward
+      // both into the typed domain representation so the renderer's run
+      // resolver can route through the same style-registry SoT used for
+      // regular nodes.
+      styleIdForFill: entry.styleIdForFill,
+      styleIdForStrokeFill: entry.styleIdForStrokeFill,
       textDecoration: entry.textDecoration,
       textCase: entry.textCase,
       lineHeight: entry.lineHeight,

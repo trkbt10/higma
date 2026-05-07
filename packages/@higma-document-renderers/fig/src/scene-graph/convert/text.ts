@@ -4,12 +4,13 @@
  * Accepts FigDesignNode (domain object) directly.
  */
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigDesignNode, FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
+import type { TextRun } from "../../text/runs";
+import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
 import { textAlignHorizontalToAnchor } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";
-import type { PathContour, Color, TextLineLayout } from "../types";
+import type { PathContour, GlyphContour, Color, TextLineLayout } from "../types";
 
 /** Map Figma text decoration value to scene graph text decoration string */
 function mapTextDecoration(decoration: string | undefined): "underline" | "strikethrough" | undefined {
@@ -63,6 +64,18 @@ function normalizeContours(contours: readonly {
 }
 
 /**
+ * Glyph variant of `normalizeContours` that retains each contour's
+ * `firstCharacter` annotation so downstream code can group glyphs by
+ * `TextRun`. Bridges the text-paths shape (font/types PathCommand) into
+ * the scene-graph shape (which adds optional arc commands for general
+ * paths but never carries them for text glyphs).
+ */
+function normalizeGlyphContours(contours: readonly PathGlyphContour[]): GlyphContour[] {
+  const base = normalizeContours(contours);
+  return base.map((c, i) => ({ ...c, firstCharacter: contours[i].firstCharacter }));
+}
+
+/**
  * Parse fill color string to Color
  */
 function parseHexColor(hex: string): Color {
@@ -77,11 +90,16 @@ function parseHexColor(hex: string): Color {
  * Result of text conversion for scene graph
  */
 export type TextConversionResult = {
-  /** Glyph outline contours (if derived data available) */
-  readonly glyphContours?: readonly PathContour[];
+  /** Glyph outline contours (if derived data available), per-glyph annotated. */
+  readonly glyphContours?: readonly GlyphContour[];
   /** Decoration contours (underlines, strikethroughs) */
   readonly decorationContours?: readonly PathContour[];
-  /** Text fill color */
+  /**
+   * Per-character fill runs covering `[0, characters.length)`. Single base
+   * run when no character-level style overrides are present.
+   */
+  readonly runs: readonly TextRun[];
+  /** Base text fill (used for decorations and as the fallback for line mode). */
   readonly fill: { readonly color: Color; readonly opacity: number };
   /** Text line layout data for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;
@@ -90,6 +108,13 @@ export type TextConversionResult = {
 export type TextConversionOptions = {
   readonly blobs: readonly FigBlob[];
   readonly fontResolver?: TextFontResolver;
+  /**
+   * Document-wide style registry — required when a TEXT carries
+   * `characterStyleIDs` whose override entries reference shared FILL styles
+   * via `styleIdForFill`. Without it, run resolution treats the registry
+   * as empty and the no-fallback policy throws on unresolved references.
+   */
+  readonly styleRegistry?: FigStyleRegistry;
 };
 
 /**
@@ -129,6 +154,7 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
   const rendering = resolveTextRendering(node, {
     blobs: options.blobs,
     fontResolver: options.fontResolver,
+    styleRegistry: options.styleRegistry,
   });
   const fontVariationSettings = buildFontVariationSettings(node.textData?.fontVariations);
 
@@ -147,6 +173,7 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
     };
     return {
       fill: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 0 },
+      runs: [],
       textLineLayout: empty,
     };
   }
@@ -157,17 +184,19 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
   const textLineLayout: TextLineLayout = buildTextLineLayout(rendering, props, fontVariationSettings);
 
   if (rendering.kind === "glyphs") {
-    const glyphContours = normalizeContours(rendering.glyphContours);
+    const glyphContours = normalizeGlyphContours(rendering.glyphContours);
     const decorationContours = normalizeContours(rendering.decorationContours);
     return {
       glyphContours,
       decorationContours: decorationContours.length > 0 ? decorationContours : undefined,
+      runs: rendering.runs,
       fill: { color, opacity: rendering.fillOpacity },
       textLineLayout,
     };
   }
 
   return {
+    runs: rendering.runs,
     fill: { color, opacity: rendering.fillOpacity },
     textLineLayout,
   };

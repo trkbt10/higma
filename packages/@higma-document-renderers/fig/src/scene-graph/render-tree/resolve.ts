@@ -59,6 +59,7 @@ import type {
   RenderEllipseNode,
   RenderPathNode,
   RenderTextNode,
+  RenderTextGlyphRun,
   RenderImageNode,
   RenderDef,
   ResolvedWrapperAttrs,
@@ -160,6 +161,16 @@ function resolveFrameChildClipId(
   if (!node.clipsContent || children.length === 0) {
     return undefined;
   }
+  // A frame with a 0-width or 0-height clip rect is degenerate: an SVG
+  // <clipPath> using that rect would clip every child to a region with
+  // no area, hiding even children that draw outside the rect (e.g. a
+  // 0-height container holding LINE shapes whose stroke extends along
+  // y=0). Figma's own SVG export skips the clip in this case — we
+  // honour the same semantics rather than emitting an "impossible"
+  // clip and silently swallowing the contents.
+  if (node.width <= 0 || node.height <= 0) {
+    return undefined;
+  }
   const childClipId = ids.getNextId("clip");
   defs.push({
     type: "clip-path",
@@ -192,16 +203,72 @@ function resolveTextClipId(node: TextNode, ids: IdGenerator, defs: RenderDef[]):
 
 function resolveTextContent(node: TextNode): RenderTextNode["content"] {
   if (node.glyphContours && node.glyphContours.length > 0) {
-    const contourData = [
-      ...node.glyphContours.map((contour) => contourToSvgD(contour)),
-      ...(node.decorationContours?.map((contour) => contourToSvgD(contour)) ?? []),
-    ];
-    return { mode: "glyphs", d: contourData.join("") };
+    const runs = buildGlyphContentRuns(node);
+    return { mode: "glyphs", runs };
   }
   if (node.textLineLayout) {
     return { mode: "lines", layout: node.textLineLayout };
   }
-  return { mode: "glyphs", d: "" };
+  return { mode: "glyphs", runs: [] };
+}
+
+/**
+ * Group glyph contours by which `TextRun` their `firstCharacter` falls
+ * into and serialise per-run path data. Decorations always paint with
+ * the base run's fill — Figma applies underline / strikethrough at the
+ * line level, not per character — so they're appended to the first run
+ * (or to a synthesised base run if `runs[]` is empty).
+ *
+ * SoT: `node.runs` is the authoritative list of (start, end, fillColor,
+ * fillOpacity); this function never re-derives fills from raw paints.
+ *
+ * Glyphs whose `firstCharacter` is `undefined` (e.g. opentype fallback
+ * line contours, Figma's auto-inserted ellipsis glyph) inherit the base
+ * run — same precedence as decorations.
+ */
+function buildGlyphContentRuns(node: TextNode): readonly RenderTextGlyphRun[] {
+  const sourceRuns = node.runs;
+  // Resolve which run a glyph at character index `i` belongs to. Returns
+  // run index or -1 when no run covers that character (shouldn't happen
+  // for well-formed inputs because runs cover [0, characters.length)).
+  function runIndexForChar(i: number): number {
+    for (let r = 0; r < sourceRuns.length; r++) {
+      if (i >= sourceRuns[r].start && i < sourceRuns[r].end) { return r; }
+    }
+    return -1;
+  }
+  // Bucket glyphs by run index. `-1` collects glyphs without a character
+  // index — they fold into the base run (run 0) below.
+  const byRun = new Map<number, string[]>();
+  for (const contour of node.glyphContours ?? []) {
+    const ci = contour.firstCharacter;
+    const idx = ci === undefined ? -1 : runIndexForChar(ci);
+    const key = idx >= 0 ? idx : 0;
+    const list = byRun.get(key) ?? [];
+    list.push(contourToSvgD(contour));
+    byRun.set(key, list);
+  }
+  // Decorations always go with the base run (key 0).
+  if (node.decorationContours && node.decorationContours.length > 0) {
+    const list = byRun.get(0) ?? [];
+    for (const c of node.decorationContours) {
+      list.push(contourToSvgD(c));
+    }
+    byRun.set(0, list);
+  }
+  // Emit runs in source order; skip runs that received no contours so
+  // the result list is a tight set of paint operations.
+  const out: RenderTextGlyphRun[] = [];
+  for (let r = 0; r < sourceRuns.length; r++) {
+    const list = byRun.get(r);
+    if (!list || list.length === 0) { continue; }
+    out.push({
+      fillColor: sourceRuns[r].fillColor,
+      fillOpacity: sourceRuns[r].fillOpacity,
+      d: list.join(""),
+    });
+  }
+  return out;
 }
 
 function resolveImageDataUri(node: ImageNode): string | undefined {

@@ -16,6 +16,7 @@ export type {
   RenderPathContour,
   RenderTextNode,
   RenderTextGlyphs,
+  RenderTextGlyphRun,
   RenderTextLines,
   RenderImageNode,
   RenderDef,
@@ -49,3 +50,6 @@ export {
   type RenderTreeResolutionCache,
   type RenderTreeResolutionResult,
 } from "./resolve";
+
+// Ellipse arc path
+export { buildEllipseArcPathD } from "./ellipse-arc-path";

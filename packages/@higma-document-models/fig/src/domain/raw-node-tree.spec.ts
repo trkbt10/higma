@@ -126,6 +126,69 @@ describe("tree-builder", () => {
       expect(result.roots).toHaveLength(1);
       expect(result.roots[0].children).toBeUndefined();
     });
+
+    it("orders siblings by parentIndex.position regardless of nodeChanges order", () => {
+      // Figma stores child z-order via fractional indexing in
+      // `parentIndex.position`. The flat nodeChanges list isn't required
+      // to follow that order, so the tree builder must sort by position
+      // — otherwise top-level frames stack in arbitrary order, e.g. a
+      // bottom navigation drawn under the main content.
+      const PARENT: FigGuid = { sessionID: 0, localID: 1 };
+      const nodes: FigNode[] = [
+        createTestNode({ typeName: "CANVAS", typeValue: 2, guid: PARENT, name: "Page" }),
+        // Deliberately reverse the position-sort order in the input list:
+        // input is C → A → B, expected sibling order is A → B → C.
+        createTestNode({
+          typeName: "FRAME",
+          typeValue: 4,
+          guid: { sessionID: 0, localID: 12 },
+          name: "C",
+          parentIndex: { guid: PARENT, position: "!" },
+        }),
+        createTestNode({
+          typeName: "FRAME",
+          typeValue: 4,
+          guid: { sessionID: 0, localID: 10 },
+          name: "A",
+          parentIndex: { guid: PARENT, position: " }" },
+        }),
+        createTestNode({
+          typeName: "FRAME",
+          typeValue: 4,
+          guid: { sessionID: 0, localID: 11 },
+          name: "B",
+          parentIndex: { guid: PARENT, position: " ~" },
+        }),
+      ];
+
+      const result = buildNodeTree(nodes);
+      const page = result.roots[0]!;
+      expect(page.children?.map((c) => c!.name)).toEqual(["A", "B", "C"]);
+    });
+
+    it("preserves nodeChanges order as a stable tiebreaker for equal positions", () => {
+      // Equal positions shouldn't occur in well-formed files, but if they
+      // do (malformed input) the comparator must remain stable so the
+      // result is deterministic.
+      const PARENT: FigGuid = { sessionID: 0, localID: 1 };
+      const nodes: FigNode[] = [
+        createTestNode({ typeName: "CANVAS", typeValue: 2, guid: PARENT, name: "Page" }),
+        createTestNode({
+          typeName: "FRAME", typeValue: 4,
+          guid: { sessionID: 0, localID: 10 }, name: "first",
+          parentIndex: { guid: PARENT, position: "!" },
+        }),
+        createTestNode({
+          typeName: "FRAME", typeValue: 4,
+          guid: { sessionID: 0, localID: 11 }, name: "second",
+          parentIndex: { guid: PARENT, position: "!" },
+        }),
+      ];
+
+      const result = buildNodeTree(nodes);
+      const page = result.roots[0]!;
+      expect(page.children?.map((c) => c!.name)).toEqual(["first", "second"]);
+    });
   });
 
   describe("getNodeType", () => {

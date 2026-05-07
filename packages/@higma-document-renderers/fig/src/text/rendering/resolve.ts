@@ -8,10 +8,12 @@
  * previously lived in each renderer.
  */
 
-import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigBlob, FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
+import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { DerivedTextData } from "@higma-document-models/fig/domain";
-import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData } from "@higma-document-models/fig/types";
+import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigPaint, FigGuid } from "@higma-document-models/fig/types";
 import { defensiveMark } from "@higma-document-models/fig/diagnostics/defensive";
+import { guidToString } from "@higma-document-models/fig/domain";
 import { extractTextProps } from "../layout/extract-props";
 import type { TextNodeInput } from "../layout/extract-props";
 import type { ExtractedTextProps } from "../layout/types";
@@ -20,6 +22,8 @@ import { computeTextLayout } from "../layout/compute-layout";
 import { extractDerivedTextPathData, hasDerivedGlyphs } from "../paths/derived-paths";
 import { extractTextPathData } from "../paths/opentype-paths";
 import type { PathContour } from "../paths/types";
+import { resolveTextRuns } from "../runs";
+import type { TextRun } from "../runs";
 import type {
   TextRendering,
   TextRenderingGlyphs,
@@ -253,7 +257,51 @@ function readPositiveFontLineHeight(fontLineHeight: unknown): number | undefined
 export type ResolveTextContext = {
   readonly blobs?: readonly FigBlob[];
   readonly fontResolver?: TextFontResolver;
+  /**
+   * Document-wide style registry for resolving per-character override
+   * `styleIdForFill` references in `textData.styleOverrideTable`. When
+   * absent, runs collapse to a single base-fill run; a node carrying
+   * `characterStyleIDs` plus override `styleIdForFill` then trips the
+   * registry's no-fallback policy.
+   */
+  readonly styleRegistry?: FigStyleRegistry;
 };
+
+/**
+ * Read per-character style metadata from a TEXT node, accepting both the
+ * domain shape (`FigDesignNode.textData.{characterStyleIDs,styleOverrideTable}`)
+ * and the raw Kiwi shape (`FigNode.textData.*`). Returns `undefined` for
+ * each field when the node carries no character-level styling.
+ */
+function readPerCharStyleData(node: TruncatableTextNode): {
+  characterStyleIDs: readonly number[] | undefined;
+  styleOverrideTable: readonly TextStyleOverride[] | undefined;
+} {
+  // Both FigDesignNode and FigNode put the data under `textData`. The shape
+  // matches our domain `TextStyleOverride[]` for FigDesignNode and the raw
+  // FigKiwiTextData for FigNode — the structural overlap (styleID, fillPaints,
+  // styleIdForFill) is sufficient for `resolveTextRuns`.
+  const textData = (node as { textData?: { characterStyleIDs?: readonly number[]; styleOverrideTable?: readonly unknown[] } }).textData;
+  return {
+    characterStyleIDs: textData?.characterStyleIDs,
+    styleOverrideTable: textData?.styleOverrideTable as readonly TextStyleOverride[] | undefined,
+  };
+}
+
+/**
+ * Diagnostic label for unresolved style references during run resolution.
+ *
+ * Accepts both FigNode (`.guid`) and FigDesignNode (`.id`) shapes so the
+ * locator works at any layer of the conversion pipeline.
+ */
+function formatTextNodeLocator(node: TruncatableTextNode): string {
+  const shaped = node as { guid?: FigGuid; id?: string; name?: string };
+  const guidStr = shaped.guid
+    ? guidToString(shaped.guid)
+    : (typeof shaped.id === "string" && shaped.id.length > 0 ? shaped.id : "<no-guid>");
+  const name = shaped.name ?? "?";
+  return `text node ${guidStr} (${name})`;
+}
 
 /**
  * Build decoration contours from axis-aligned rectangles.
@@ -278,12 +326,13 @@ function decorationsToContours(
 function resolveFontGlyphRendering(params: {
   readonly displayProps: ReturnType<typeof extractTextProps>;
   readonly layout: ReturnType<typeof computeTextLayout>;
+  readonly runs: readonly TextRun[];
   readonly fillColor: string;
   readonly fillOpacity: number;
   readonly truncation: TextTruncation | undefined;
   readonly fontResolver: TextFontResolver | undefined;
 }): TextRenderingGlyphs | undefined {
-  const { displayProps, layout, fillColor, fillOpacity, truncation, fontResolver } = params;
+  const { displayProps, layout, runs, fillColor, fillOpacity, truncation, fontResolver } = params;
   if (!fontResolver) {
     return undefined;
   }
@@ -318,6 +367,7 @@ function resolveFontGlyphRendering(params: {
     kind: "glyphs",
     glyphContours: pathData.glyphContours,
     decorationContours: decorationsToContours(pathData.decorations),
+    runs,
     fillColor,
     fillOpacity,
     transform: displayProps.transform,
@@ -363,6 +413,21 @@ export function resolveTextRendering(
 
   const { color: fillColor, opacity: fillOpacity } = getFillColorAndOpacity(props.fillPaints);
 
+  // Resolve per-character fill runs through the shared SoT. The base run's
+  // colour matches `fillColor` above; additional runs come from
+  // `textData.characterStyleIDs` + `textData.styleOverrideTable`. The
+  // registry is consulted lazily — only nodes with overrides referencing
+  // shared styles actually require it.
+  const { characterStyleIDs, styleOverrideTable } = readPerCharStyleData(node);
+  const runs = resolveTextRuns({
+    characters: props.characters,
+    baseFillPaints: props.fillPaints,
+    characterStyleIDs,
+    styleOverrideTable,
+    styleRegistry: ctx.styleRegistry ?? EMPTY_FIG_STYLE_REGISTRY,
+    locator: () => formatTextNodeLocator(node),
+  });
+
   // Resolve truncation from the node and its derivedTextData. Both FigNode
   // and FigDesignNode may expose `textTruncation` at the top or inside
   // `textData`; either is acceptable.
@@ -393,6 +458,7 @@ export function resolveTextRendering(
         kind: "glyphs",
         glyphContours: pathData.glyphContours,
         decorationContours: decorationsToContours(pathData.decorations),
+        runs,
         fillColor,
         fillOpacity,
         transform: props.transform,
@@ -422,6 +488,7 @@ export function resolveTextRendering(
   const fontGlyphs = resolveFontGlyphRendering({
     displayProps,
     layout,
+    runs,
     fillColor,
     fillOpacity,
     truncation,
@@ -442,6 +509,7 @@ export function resolveTextRendering(
     textAlignHorizontal: displayProps.textAlignHorizontal,
     textAlignVertical: displayProps.textAlignVertical,
     textDecoration: displayProps.textDecoration,
+    runs,
     fillColor,
     fillOpacity,
     transform: displayProps.transform,

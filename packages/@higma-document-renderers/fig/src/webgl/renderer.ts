@@ -1472,23 +1472,33 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderTextFromTree(node: RenderTextNode, transform: AffineMatrix, opacity: number): void {
-    const color = node.sourceFillColor;
     const fillOpacity = node.sourceFillOpacity;
 
     // Use RenderTree content as the single source of truth.
     // Both SVG and WebGL consume the same content representation.
     if (node.content.mode === "glyphs") {
-      // Glyph path: parse the SVG path d string (SoT) and render via stencil.
-      if (node.content.d.length === 0) { return; }
+      // One stencil-fill draw per fill-run, mirroring the SVG emitter
+      // which writes one <path> per run. The geometry cache returns
+      // pre-tessellated triangles per run keyed off the same node, so
+      // re-rendering the same TEXT node only re-issues draws — it does
+      // not re-tessellate.
+      if (node.content.runs.length === 0) { return; }
 
-      const { prepared } = geometryCache.getTextGlyphGeometry(node);
-      if (prepared) {
+      const { runs } = geometryCache.getTextGlyphGeometry(node);
+      for (const runGeo of runs) {
+        const { prepared } = runGeo;
+        if (!prepared) { continue; }
         const { bounds } = prepared;
         const coverQuad = generateCoverQuad(bounds);
         const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
+        const runColor = hexToColor(runGeo.fillColor);
         drawStencilFill({
-          prepared, coverQuad, transform, opacity: opacity * fillOpacity,
-          elementSize, fills: [{ type: "solid", color, opacity: 1 }],
+          prepared,
+          coverQuad,
+          transform,
+          opacity: opacity * fillOpacity * runGeo.fillOpacity,
+          elementSize,
+          fills: [{ type: "solid", color: runColor, opacity: 1 }],
           fillRule: "evenodd",
         });
       }

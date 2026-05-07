@@ -65,6 +65,23 @@ function getParentGuid(node: FigNode): FigGuid | undefined {
 }
 
 /**
+ * Extract the parent-relative position string from a node's parentIndex.
+ *
+ * Figma stores child z-order via fractional indexing: each `parentIndex.position`
+ * is an ASCII string whose lexicographic order matches the visual stacking order
+ * (lowest = bottommost layer, drawn first in SVG). Reordering a child rewrites
+ * only its own position string, so the canonical sibling order is the
+ * lexicographic sort of these strings — NOT the order children appear in the
+ * flat `nodeChanges` array, which the binary format does not constrain.
+ *
+ * Returns the empty string when absent so the comparator gives a stable
+ * fallback rather than throwing on malformed input.
+ */
+function getParentPosition(node: FigNode): string {
+  return node.parentIndex?.position ?? "";
+}
+
+/**
  * Build a node with its children attached
  */
 function buildNodeWithChildren(
@@ -108,7 +125,17 @@ export function buildNodeTree(nodeChanges: readonly FigNode[]): NodeTreeResult {
     }
   }
 
-  // Build parent -> children map
+  // Build parent -> children map.
+  //
+  // The flat `nodeChanges` array is unordered with respect to siblings — the
+  // Kiwi binary format places no constraint on the relative position of two
+  // entries that share a parent. The authoritative sibling order lives in
+  // `parentIndex.position` (Figma's fractional-index string). Sort each
+  // bucket lexicographically before exposing it, otherwise downstream
+  // renderers see siblings in arbitrary order and stack frames at the wrong
+  // z-depth (e.g. a top header drawn under the main content area). Stable
+  // sort means equal-position entries (which shouldn't occur in well-formed
+  // files but can in malformed ones) retain their nodeChanges order.
   const childrenMap = new Map<string, FigNode[]>();
   for (const node of nodeChanges) {
     const parentGuid = getParentGuid(node);
@@ -119,6 +146,15 @@ export function buildNodeTree(nodeChanges: readonly FigNode[]): NodeTreeResult {
       }
       childrenMap.get(parentKey)!.push(node);
     }
+  }
+  for (const siblings of childrenMap.values()) {
+    siblings.sort((a, b) => {
+      const pa = getParentPosition(a);
+      const pb = getParentPosition(b);
+      if (pa < pb) { return -1; }
+      if (pa > pb) { return 1; }
+      return 0;
+    });
   }
 
   // Recursively build tree nodes

@@ -7,7 +7,7 @@
 
 import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
 import type { PathCommand } from "../../font/types";
-import type { PathContour, DecorationRect, TextPathResult } from "./types";
+import type { GlyphContour, DecorationRect, TextPathResult } from "./types";
 import type {
   DerivedGlyph,
   DerivedDecoration,
@@ -142,7 +142,7 @@ export function extractDerivedTextPathData(
   blobs: readonly FigBlob[],
   alignmentOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): TextPathResult {
-  const glyphContours: PathContour[] = [];
+  const glyphContours: GlyphContour[] = [];
 
   if (derivedTextData.glyphs) {
     // When the node has `truncationStartIndex >= 0`, Figma's layout engine
@@ -169,7 +169,7 @@ export function extractDerivedTextPathData(
       }
       const commands = extractDerivedGlyphCommands(glyph, blobs, alignmentOffset);
       if (commands && commands.length > 0) {
-        glyphContours.push({ commands });
+        glyphContours.push({ commands, firstCharacter: glyph.firstCharacter });
       }
     }
   }
