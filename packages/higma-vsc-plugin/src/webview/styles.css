@@ -139,7 +139,10 @@ button {
 .higma-fig-stage {
   flex: 1 1 auto;
   position: relative;
-  overflow: auto;
+  /* Infinite-canvas model: the stage is a fixed-size viewport into a
+   * pannable world. Pan/zoom is state, not DOM scrolling — so we clip
+   * with `overflow: hidden` rather than exposing scrollbars. */
+  overflow: hidden;
   /* Solid editor background with a *very* faint dot pattern so the
    * canvas plate stands out without distracting from the design. The
    * earlier 16px high-contrast checker drowned the content; Figma's
@@ -151,14 +154,46 @@ button {
     transparent 1px
   );
   background-size: 24px 24px;
+  /* Disable browser overscroll/refresh gestures so wheel pans don't
+   * bounce the surrounding page or trigger pull-to-refresh. */
+  overscroll-behavior: contain;
+  /* Block native text selection that would otherwise start on Space+
+   * drag pans. Selection is not used inside the stage. */
+  user-select: none;
+  -webkit-user-select: none;
+  /* Tell the browser we're handling wheel/touch ourselves so it does
+   * not pre-emptively scroll on first wheel notch. */
+  touch-action: none;
+}
+
+.higma-fig-stage[data-pan-mode="true"] {
+  cursor: grab;
+}
+
+.higma-fig-stage[data-panning="true"],
+.higma-fig-stage[data-pan-mode="true"][data-panning="true"] {
+  cursor: grabbing;
 }
 
 .higma-fig-canvas {
-  position: relative;
-  margin: 24px auto;
-  background: var(--vscode-editor-background);
-  box-shadow: 0 0 0 1px var(--vscode-panel-border, var(--vscode-contrastBorder, rgba(127, 127, 127, 0.2)));
-  transform-origin: 0 0;
+  /* The DOM canvas always covers the visible stage; pan/zoom are
+   * applied inside the renderer (world→surface) rather than by
+   * resizing this element. So a 50k×50k design at 8× zoom uses the
+   * same DOM footprint as one at 100% — only the GL/SVG draw window
+   * widens. */
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+.higma-fig-canvas > .higma-fig-webgl-canvas {
+  /* The GL canvas's inline width/height are set imperatively by
+   * `syncWebGLCanvasRenderSurface`; CSS only positions it at the
+   * surface origin and removes the default inline-block whitespace. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
 }
 
 .higma-fig-status {

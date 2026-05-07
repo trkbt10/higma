@@ -2,59 +2,53 @@
  * @file Selection / hover bounding box rendered over the rendered fig
  * canvas.
  *
- * The overlay is positioned in *page-bounds* coordinate space (the
- * same space the renderer's viewBox uses), then scaled by the active
- * zoom. Coordinates are translated by `bounds.x / bounds.y` so a node
- * at world (50, 50) draws at (50 - bounds.x, 50 - bounds.y) inside
- * the canvas, regardless of which corner of page-space the canvas
- * starts at.
+ * Overlay rectangles are positioned in *surface-px* (the same coords
+ * the canvas DOM lives in) by applying the viewport transform to the
+ * world-space node bounds: `surface = world * scale + translate`.
+ * That mirrors the inverse the renderer uses when sampling the world
+ * window for paint, so a hover box always lands exactly on the node
+ * the renderer drew — regardless of pan or zoom.
  *
- * The cursor tooltip lives outside the scaled inner stage so that
- * `transform: scale(zoom)` does not shrink the text — it is mounted
- * by `FigViewer` as a sibling of the stage and given absolute
- * cursor-relative coordinates in screen pixels.
+ * The cursor tooltip is mounted by `FigViewer` as a sibling of the
+ * stage at fixed-position client px so it never inherits any canvas
+ * styling that could clip or distort it.
  */
 
 import type { NodeBounds } from "../geometry/node-bounds";
-import type { PageBounds } from "../page-bounds";
+import type { ViewportTransform } from "../FigViewer";
 
 type Props = {
-  readonly pageBounds: PageBounds;
-  readonly zoom: number;
+  readonly viewport: ViewportTransform;
   readonly hovered: NodeBounds | null;
   readonly selected: NodeBounds | null;
 };
 
-function rectStyle(node: NodeBounds, page: PageBounds, zoom: number): React.CSSProperties {
+function rectStyle(node: NodeBounds, viewport: ViewportTransform): React.CSSProperties {
   return {
     position: "absolute",
-    left: (node.x - page.x) * zoom,
-    top: (node.y - page.y) * zoom,
-    width: node.width * zoom,
-    height: node.height * zoom,
+    left: node.x * viewport.scale + viewport.translateX,
+    top: node.y * viewport.scale + viewport.translateY,
+    width: node.width * viewport.scale,
+    height: node.height * viewport.scale,
     pointerEvents: "none",
   };
 }
 
 
-
-
-
-
-export function HoverOverlay({ pageBounds, zoom, hovered, selected }: Props) {
+export function HoverOverlay({ viewport, hovered, selected }: Props) {
   return (
     <>
       {hovered && hovered.id !== selected?.id && (
         <div
           className="higma-fig-overlay higma-fig-overlay--hover"
-          style={rectStyle(hovered, pageBounds, zoom)}
+          style={rectStyle(hovered, viewport)}
           data-testid="fig-overlay-hover"
         />
       )}
       {selected && (
         <div
           className="higma-fig-overlay higma-fig-overlay--selected"
-          style={rectStyle(selected, pageBounds, zoom)}
+          style={rectStyle(selected, viewport)}
           data-testid="fig-overlay-selected"
         />
       )}

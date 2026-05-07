@@ -240,7 +240,26 @@ export function useWebGLViewport({
       initializeTimerRef.current = window.setTimeout(requestInitialize, initializationDelayMs);
     };
 
-    scheduleInitialization();
+    // Pan/zoom rebuilds `sceneGraph` (the renderer-runtime hook stamps
+    // a fresh viewport onto the cached content scene each tick), so
+    // this effect re-fires constantly during interaction. The
+    // first-mount path goes through `scheduleInitialization` →
+    // overlay → precompile → prepare → render. Doing that on every
+    // viewport tick would flash the loading overlay and tear-and-redo
+    // the whole pipeline. Once the renderer exists *and* it has
+    // already prepared the resources for this scene's content, only
+    // the world-window rectangle has changed — we can render directly
+    // and keep `phase: "ready"` (no overlay flash).
+    const existing = rendererRef.current;
+    if (
+      existing &&
+      typeof window !== "undefined" &&
+      existing.isScenePrepared(sceneGraph)
+    ) {
+      requestRender(existing, sceneGraph, pixelRatio);
+    } else {
+      scheduleInitialization();
+    }
 
     return () => {
       cancelInitializationSchedule();

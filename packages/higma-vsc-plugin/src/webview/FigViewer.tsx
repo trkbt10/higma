@@ -1,17 +1,23 @@
 /**
  * @file Top-level viewer: 3-pane layout (Layers | Stage | Inspect)
- * with shared selection, hover, and zoom state.
+ * with shared selection, hover, and viewport state.
  *
  * The viewer owns:
  *   - the active page selection
  *   - the hovered and selected node ids
- *   - the zoom state (fit + manual modes)
+ *   - the viewport transform (pan + zoom) and fit mode
  *   - the export request state (busy + error message)
  *
- * Hit-testing happens on the canvas via mousemove → page-coord
- * conversion → `findNodeAtPoint`. The layers panel and inspect panel
- * read the same selected/hovered ids so all three views stay
- * coherent without an extra synchronisation layer.
+ * Viewport model — same shape as the editor's infinite canvas:
+ *   - The DOM canvas is sized to the *visible stage*, not the design.
+ *     A 50k×50k page at 8× zoom would otherwise materialise a 400k×400k
+ *     element and break layout / WebGL allocation.
+ *   - Pan + zoom are state (`translateX/Y`, `scale`). The renderer is
+ *     fed a world-space window — `viewport.x = -tx/scale`,
+ *     `viewport.width = surfaceWidth/scale` — and it handles the
+ *     world→surface mapping internally. No CSS scrollbars, no CSS
+ *     `transform: scale(...)` on a giant inner div.
+ *   - Hit-testing inverts the same transform: `world = (canvas - t) / s`.
  *
  * Styling relies entirely on `--vscode-*` CSS custom properties so
  * the viewer adapts to the active editor theme without per-theme
@@ -47,15 +53,29 @@ const ZOOM_LEVELS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8] as const;
 const MIN_ZOOM = ZOOM_LEVELS[0];
 const MAX_ZOOM = ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
 const FIT_PADDING = 48;
+// Tuned so that a single notch of a typical mouse wheel (deltaY≈100,
+// deltaMode=0) produces ~1.16× / ~0.86× — close to Figma's per-notch
+// zoom step but smooth for trackpad pinch which streams small deltas.
+const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+// Distance the pointer must travel (in CSS px) before a press counts as
+// a pan rather than a click. Smaller than this and the click handler
+// still fires so a quick middle-click does not feel like dead input.
+const PAN_MOVE_THRESHOLD = 3;
 
 type FigViewerProps = {
   readonly fileName: string;
   readonly document: FigDesignDocument;
 };
 
-type ZoomMode =
-  | { readonly kind: "fit" }
-  | { readonly kind: "manual"; readonly value: number };
+export type ViewportTransform = {
+  readonly translateX: number;
+  readonly translateY: number;
+  readonly scale: number;
+};
+
+type ZoomMode = "fit" | "manual";
+
+type Size = { readonly width: number; readonly height: number };
 
 type Cursor = { readonly x: number; readonly y: number };
 
@@ -73,6 +93,49 @@ function nextZoomLevel(current: number, direction: 1 | -1): number {
   const reversedLevels = ZOOM_LEVELS.slice().reverse();
   const below = reversedLevels.find((level) => level < current - 0.0001);
   return below ?? MIN_ZOOM;
+}
+
+/**
+ * Re-scale around a fixed surface-px point — the standard "zoom toward
+ * cursor" map. Keeping the world point under `(centerX, centerY)`
+ * invariant gives `t' = c - (c - t) * (s'/s)`.
+ */
+function rescaleAround(
+  vp: ViewportTransform,
+  newScale: number,
+  centerX: number,
+  centerY: number,
+): ViewportTransform {
+  if (newScale === vp.scale) {return vp;}
+  const ratio = newScale / vp.scale;
+  return {
+    scale: newScale,
+    translateX: centerX - ratio * (centerX - vp.translateX),
+    translateY: centerY - ratio * (centerY - vp.translateY),
+  };
+}
+
+/**
+ * Build the viewport that places `pageBounds` centred inside a stage of
+ * `surface` size, scaled to fit with `padding` margin on each side.
+ *
+ * Differs from `getCenteredViewport` in `@higma-editor-kernel`: that one
+ * assumes the slide's world origin is (0, 0). A fig page's content can
+ * start at any `(bounds.x, bounds.y)`, so the centring math has to bake
+ * in that offset — otherwise an artboard placed at world (10000, 10000)
+ * would render entirely off-screen on first paint.
+ */
+function fitViewport(
+  pageBounds: PageBounds,
+  surface: Size,
+  padding: number,
+): ViewportTransform {
+  const availW = Math.max(1, surface.width - padding * 2);
+  const availH = Math.max(1, surface.height - padding * 2);
+  const scale = clampZoom(Math.min(availW / pageBounds.width, availH / pageBounds.height));
+  const translateX = (surface.width - pageBounds.width * scale) / 2 - pageBounds.x * scale;
+  const translateY = (surface.height - pageBounds.height * scale) / 2 - pageBounds.y * scale;
+  return { translateX, translateY, scale };
 }
 
 
@@ -134,11 +197,9 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
     [selectedId, activePage],
   );
 
-  const [zoomMode, setZoomMode] = useState<ZoomMode>({ kind: "fit" });
-  const [stageSize, setStageSize] = useState<{ readonly width: number; readonly height: number }>({
-    width: 0,
-    height: 0,
-  });
+  const [zoomMode, setZoomMode] = useState<ZoomMode>("fit");
+  const [manualViewport, setManualViewport] = useState<ViewportTransform | null>(null);
+  const [stageSize, setStageSize] = useState<Size>({ width: 0, height: 0 });
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -153,30 +214,68 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
     return () => observer.disconnect();
   }, []);
 
-  const fitZoom = useMemo(() => {
-    if (!pageBounds || stageSize.width <= 0 || stageSize.height <= 0) {return 1;}
-    const availableWidth = Math.max(1, stageSize.width - FIT_PADDING * 2);
-    const availableHeight = Math.max(1, stageSize.height - FIT_PADDING * 2);
-    const ratio = Math.min(availableWidth / pageBounds.width, availableHeight / pageBounds.height);
-    return clampZoom(ratio);
+  // Reset to fit mode whenever the page changes — the manual viewport
+  // points at world coords from the prior page that may not exist in
+  // the new page (e.g. the new top-level frame is at (0, 0) but the
+  // old translate kept the renderer pointed at (10000, 10000)).
+  useEffect(() => {
+    setZoomMode("fit");
+    setManualViewport(null);
+  }, [activePageId]);
+
+  // Fit viewport is recomputed from `pageBounds + stageSize`. It also
+  // serves as the seed for `manualViewport` whenever the user makes
+  // their first interaction — that way, "switch from fit to manual"
+  // never visibly snaps the page.
+  const fittedViewport = useMemo<ViewportTransform | null>(() => {
+    if (!pageBounds || stageSize.width <= 0 || stageSize.height <= 0) {return null;}
+    return fitViewport(pageBounds, stageSize, FIT_PADDING);
   }, [pageBounds, stageSize]);
 
-  const effectiveZoom = zoomMode.kind === "fit" ? fitZoom : zoomMode.value;
+  const viewport = useMemo<ViewportTransform>(() => {
+    if (zoomMode === "fit" && fittedViewport) {return fittedViewport;}
+    return manualViewport ?? fittedViewport ?? { translateX: 0, translateY: 0, scale: 1 };
+  }, [zoomMode, fittedViewport, manualViewport]);
+
+  // Refs so the imperative wheel/pointer handlers always read the
+  // freshest viewport without re-attaching listeners every frame.
+  const viewportRef = useRef(viewport);
+  const stageSizeRef = useRef(stageSize);
+  useEffect(() => {
+    viewportRef.current = viewport;
+  }, [viewport]);
+  useEffect(() => {
+    stageSizeRef.current = stageSize;
+  }, [stageSize]);
+
+  // Commit a new viewport — always switches into manual mode so the fit
+  // calculation does not stomp the user's pan/zoom on the next render.
+  const commitViewport = useCallback((next: ViewportTransform) => {
+    setManualViewport(next);
+    setZoomMode("manual");
+  }, []);
 
   const handleZoomIn = useCallback(() => {
-    setZoomMode((prev) => {
-      const base = prev.kind === "fit" ? fitZoom : prev.value;
-      return { kind: "manual", value: nextZoomLevel(base, 1) };
-    });
-  }, [fitZoom]);
+    const current = viewportRef.current;
+    const stageNow = stageSizeRef.current;
+    const next = clampZoom(nextZoomLevel(current.scale, 1));
+    commitViewport(rescaleAround(current, next, stageNow.width / 2, stageNow.height / 2));
+  }, [commitViewport]);
   const handleZoomOut = useCallback(() => {
-    setZoomMode((prev) => {
-      const base = prev.kind === "fit" ? fitZoom : prev.value;
-      return { kind: "manual", value: nextZoomLevel(base, -1) };
-    });
-  }, [fitZoom]);
-  const handleFit = useCallback(() => setZoomMode({ kind: "fit" }), []);
-  const handleResetZoom = useCallback(() => setZoomMode({ kind: "manual", value: 1 }), []);
+    const current = viewportRef.current;
+    const stageNow = stageSizeRef.current;
+    const next = clampZoom(nextZoomLevel(current.scale, -1));
+    commitViewport(rescaleAround(current, next, stageNow.width / 2, stageNow.height / 2));
+  }, [commitViewport]);
+  const handleFit = useCallback(() => {
+    setZoomMode("fit");
+    setManualViewport(null);
+  }, []);
+  const handleResetZoom = useCallback(() => {
+    const current = viewportRef.current;
+    const stageNow = stageSizeRef.current;
+    commitViewport(rescaleAround(current, 1, stageNow.width / 2, stageNow.height / 2));
+  }, [commitViewport]);
 
   const handlePageChange = useCallback((id: FigPageId) => {
     setActivePageId(id);
@@ -185,20 +284,157 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
     setActivePageId(toPageId(event.target.value));
   }, []);
 
+  // Surface px under cursor → world (page) px. Same inverse the
+  // renderer applies internally: `world = (canvasLocal - t) / s`.
   const cursorToPagePoint = useCallback(
     (clientX: number, clientY: number): { readonly x: number; readonly y: number } | null => {
       const canvas = canvasRef.current;
-      if (!canvas || !pageBounds) {return null;}
+      if (!canvas) {return null;}
       const rect = canvas.getBoundingClientRect();
-      const localX = (clientX - rect.left) / effectiveZoom;
-      const localY = (clientY - rect.top) / effectiveZoom;
-      return { x: localX + pageBounds.x, y: localY + pageBounds.y };
+      const localX = clientX - rect.left;
+      const localY = clientY - rect.top;
+      return {
+        x: (localX - viewport.translateX) / viewport.scale,
+        y: (localY - viewport.translateY) / viewport.scale,
+      };
     },
-    [pageBounds, effectiveZoom],
+    [viewport],
   );
 
-  const handleStageMouseMove = useCallback(
-    (event: React.MouseEvent<HTMLDivElement>) => {
+  // Native (non-passive) wheel listener so we can preventDefault when
+  // the gesture is a zoom (Ctrl/Cmd + wheel, or trackpad pinch which
+  // browsers also surface as a ctrlKey wheel event). Plain wheel without
+  // modifier pans (Figma's convention): the page scrolls in surface px.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) {return;}
+    const onWheel = (event: WheelEvent) => {
+      const canvas = canvasRef.current;
+      if (!canvas) {return;}
+      const rect = canvas.getBoundingClientRect();
+      // Normalise deltaMode so line- and page-mode wheels still produce
+      // sensible step sizes. deltaMode 0 (pixels) is the common case.
+      const lineHeight = 16;
+      const pageHeight = rect.height || 1;
+      let dx = event.deltaX;
+      let dy = event.deltaY;
+      if (event.deltaMode === 1) {dx *= lineHeight; dy *= lineHeight;}
+      else if (event.deltaMode === 2) {dx *= pageHeight; dy *= pageHeight;}
+
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const current = viewportRef.current;
+        const factor = Math.exp(-dy * WHEEL_ZOOM_SENSITIVITY);
+        const next = clampZoom(current.scale * factor);
+        if (next === current.scale) {return;}
+        const cx = event.clientX - rect.left;
+        const cy = event.clientY - rect.top;
+        commitViewport(rescaleAround(current, next, cx, cy));
+        return;
+      }
+      // Plain wheel = pan. preventDefault stops the surrounding page
+      // from scrolling (the stage container itself has no scrollbars).
+      event.preventDefault();
+      const current = viewportRef.current;
+      commitViewport({
+        ...current,
+        translateX: current.translateX - dx,
+        translateY: current.translateY - dy,
+      });
+    };
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, [commitViewport]);
+
+  // Drag-pan: middle-mouse drag, or Space+left-drag (Figma convention).
+  // While Space is held, plain left-drag pans instead of selecting; the
+  // click handler suppresses selection if the press actually moved.
+  const [spacePan, setSpacePan] = useState(false);
+  const [panning, setPanning] = useState(false);
+  const panStateRef = useRef<{
+    pointerId: number;
+    startTranslateX: number;
+    startTranslateY: number;
+    startScale: number;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  } | null>(null);
+  const suppressNextClickRef = useRef(false);
+
+  useEffect(() => {
+    const isFormTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) {return false;}
+      if (target.isContentEditable) {return true;}
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space") {return;}
+      if (event.repeat) {return;}
+      if (isFormTarget(event.target)) {return;}
+      // Stop the page from scrolling on Space; that conflicts with
+      // hold-space-to-pan. We do not stopPropagation, so other key
+      // handlers still see the event.
+      event.preventDefault();
+      setSpacePan(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "Space") {return;}
+      setSpacePan(false);
+    };
+    // `keydown`/`keyup` from the window so the pan toggle works no
+    // matter where focus sits — including the body when nothing has
+    // been clicked yet.
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
+
+  const handleStagePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const startPan = event.button === 1 || (event.button === 0 && spacePan);
+      if (!startPan) {return;}
+      // preventDefault stops Chrome's middle-click autoscroll cursor
+      // and the text selection that Space+drag would otherwise start.
+      event.preventDefault();
+      const stage = stageRef.current;
+      if (!stage) {return;}
+      stage.setPointerCapture(event.pointerId);
+      const start = viewportRef.current;
+      panStateRef.current = {
+        pointerId: event.pointerId,
+        startTranslateX: start.translateX,
+        startTranslateY: start.translateY,
+        startScale: start.scale,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        moved: false,
+      };
+      setPanning(true);
+    },
+    [spacePan],
+  );
+
+  const handleStagePointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const pan = panStateRef.current;
+      if (pan && pan.pointerId === event.pointerId) {
+        const dx = event.clientX - pan.startClientX;
+        const dy = event.clientY - pan.startClientY;
+        if (!pan.moved && Math.hypot(dx, dy) > PAN_MOVE_THRESHOLD) {
+          pan.moved = true;
+        }
+        commitViewport({
+          scale: pan.startScale,
+          translateX: pan.startTranslateX + dx,
+          translateY: pan.startTranslateY + dy,
+        });
+        return;
+      }
       setCursor({ x: event.clientX, y: event.clientY });
       const point = cursorToPagePoint(event.clientX, event.clientY);
       if (!point) {
@@ -208,16 +444,49 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
       const hit = findNodeAtPoint(nodeBounds, point);
       setHoveredId(hit ? hit.id : null);
     },
-    [cursorToPagePoint, nodeBounds],
+    [commitViewport, cursorToPagePoint, nodeBounds],
   );
 
-  const handleStageMouseLeave = useCallback(() => {
+  const finishPan = useCallback((pointerId: number) => {
+    const pan = panStateRef.current;
+    if (!pan || pan.pointerId !== pointerId) {return;}
+    const stage = stageRef.current;
+    if (stage && stage.hasPointerCapture(pointerId)) {
+      stage.releasePointerCapture(pointerId);
+    }
+    if (pan.moved) {suppressNextClickRef.current = true;}
+    panStateRef.current = null;
+    setPanning(false);
+  }, []);
+
+  const handleStagePointerUp = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      finishPan(event.pointerId);
+    },
+    [finishPan],
+  );
+
+  const handleStagePointerCancel = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      finishPan(event.pointerId);
+    },
+    [finishPan],
+  );
+
+  const handleStagePointerLeave = useCallback(() => {
+    if (panStateRef.current) {return;}
     setHoveredId(null);
     setCursor(null);
   }, []);
 
   const handleStageClick = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false;
+        return;
+      }
+      // Space-held click is part of the pan gesture — never a select.
+      if (spacePan) {return;}
       const point = cursorToPagePoint(event.clientX, event.clientY);
       if (!point) {
         setSelectedId(null);
@@ -226,7 +495,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
       const hit = findNodeAtPoint(nodeBounds, point);
       setSelectedId(hit ? hit.id : null);
     },
-    [cursorToPagePoint, nodeBounds],
+    [cursorToPagePoint, nodeBounds, spacePan],
   );
 
   const [exporting, setExporting] = useState(false);
@@ -327,7 +596,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
             aria-label="Reset zoom to 100%"
             title="Reset zoom to 100%"
           >
-            {Math.round(effectiveZoom * 100)}%
+            {Math.round(viewport.scale * 100)}%
           </button>
           <button
             type="button"
@@ -344,7 +613,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
             onClick={handleFit}
             aria-label="Fit to window"
             title="Fit to window"
-            aria-pressed={zoomMode.kind === "fit"}
+            aria-pressed={zoomMode === "fit"}
           >
             Fit
           </button>
@@ -364,14 +633,20 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         <div
           className="higma-fig-stage"
           ref={stageRef}
-          onMouseMove={handleStageMouseMove}
-          onMouseLeave={handleStageMouseLeave}
+          data-pan-mode={spacePan ? "true" : "false"}
+          data-panning={panning ? "true" : "false"}
+          onPointerDown={handleStagePointerDown}
+          onPointerMove={handleStagePointerMove}
+          onPointerUp={handleStagePointerUp}
+          onPointerCancel={handleStagePointerCancel}
+          onPointerLeave={handleStagePointerLeave}
           onClick={handleStageClick}
         >
           <FigStageContent
             page={activePage}
-            bounds={pageBounds}
-            effectiveZoom={effectiveZoom}
+            hasContent={pageBounds !== null}
+            viewport={viewport}
+            surface={stageSize}
             images={document.images}
             blobs={document.blobs}
             symbolMap={document.components}
@@ -400,8 +675,11 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
 
 type FigStageContentProps = {
   readonly page: FigPage | null;
-  readonly bounds: PageBounds | null;
-  readonly effectiveZoom: number;
+  /** True when the page has at least one renderable child. */
+  readonly hasContent: boolean;
+  readonly viewport: ViewportTransform;
+  /** CSS-pixel size of the visible stage. Drives surface + render-window sizing. */
+  readonly surface: Size;
   readonly images: FigDesignDocument["images"];
   readonly blobs: FigDesignDocument["blobs"];
   readonly symbolMap: FigDesignDocument["components"];
@@ -413,10 +691,13 @@ type FigStageContentProps = {
   readonly canvasRef: React.RefObject<HTMLDivElement | null>;
 };
 
+const MIN_RENDER_DIM = 1;
+
 function FigStageContent({
   page,
-  bounds,
-  effectiveZoom,
+  hasContent,
+  viewport,
+  surface,
   images,
   blobs,
   symbolMap,
@@ -427,18 +708,30 @@ function FigStageContent({
   selectedNode,
   canvasRef,
 }: FigStageContentProps) {
+  // The renderer wants surface = visible CSS px and viewport = the
+  // *world*-space rectangle visible inside that surface. Inverting our
+  // transform: a surface px (sx, sy) maps to world ((sx - tx) / s,
+  // (sy - ty) / s), so the visible world top-left is (-tx/s, -ty/s)
+  // and the visible world size is (surfaceW / s, surfaceH / s).
+  const surfaceWidth = Math.max(MIN_RENDER_DIM, surface.width);
+  const surfaceHeight = Math.max(MIN_RENDER_DIM, surface.height);
+  const worldX = -viewport.translateX / viewport.scale;
+  const worldY = -viewport.translateY / viewport.scale;
+  const worldW = surfaceWidth / viewport.scale;
+  const worldH = surfaceHeight / viewport.scale;
+
   // The scene graph is built unconditionally so React still has a
   // stable hook order across "no page" and "ready" states. When
-  // there is no page, the hook returns null and the WebGL viewport
+  // there is no page the hook returns null and the WebGL viewport
   // skips renderer initialisation.
   const sceneGraph = useFigSceneGraph({
     page,
-    canvasWidth: bounds?.width ?? 0,
-    canvasHeight: bounds?.height ?? 0,
-    viewportX: bounds?.x ?? 0,
-    viewportY: bounds?.y ?? 0,
-    viewportWidth: bounds?.width ?? 0,
-    viewportHeight: bounds?.height ?? 0,
+    canvasWidth: surfaceWidth,
+    canvasHeight: surfaceHeight,
+    viewportX: worldX,
+    viewportY: worldY,
+    viewportWidth: Math.max(MIN_RENDER_DIM, worldW),
+    viewportHeight: Math.max(MIN_RENDER_DIM, worldH),
     images,
     blobs,
     symbolMap,
@@ -446,40 +739,18 @@ function FigStageContent({
     textFontResolver,
   });
 
-  if (!page || !bounds) {
+  if (!page || !hasContent) {
     return <div className="higma-fig-status">This file does not contain any pages to render.</div>;
   }
-  const cssWidth = bounds.width * effectiveZoom;
-  const cssHeight = bounds.height * effectiveZoom;
   return (
-    <div
-      className="higma-fig-canvas"
-      ref={canvasRef}
-      style={{ width: cssWidth, height: cssHeight }}
-    >
-      {/* The WebGL renderer paints at logical (un-zoomed) CSS px and
-       *  imperatively sets the canvas's inline width/height. We honour
-       *  that contract by sizing the inner wrapper to the logical
-       *  bounds and applying zoom via CSS transform — the same pattern
-       *  the SVG renderer used. */}
-      <div
-        className="higma-fig-canvas__inner"
-        style={{
-          width: bounds.width,
-          height: bounds.height,
-          transform: `scale(${effectiveZoom})`,
-          transformOrigin: "0 0",
-        }}
-      >
-        <WebGLViewport
-          sceneGraph={sceneGraph}
-          renderOptions={renderOptions}
-          viewportScale={effectiveZoom}
-        />
-      </div>
+    <div className="higma-fig-canvas" ref={canvasRef}>
+      <WebGLViewport
+        sceneGraph={sceneGraph}
+        renderOptions={renderOptions}
+        viewportScale={viewport.scale}
+      />
       <HoverOverlay
-        pageBounds={bounds}
-        zoom={effectiveZoom}
+        viewport={viewport}
         hovered={hoveredNode}
         selected={selectedNode}
       />
