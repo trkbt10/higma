@@ -24,14 +24,11 @@
 import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type { ColorToken, TokenColor } from "./types";
 import { toCssSlug, uniqueId } from "./name";
+import { clamp01, round3 } from "../lib/css-format/numeric";
 
 /** 3-decimal canonical form, used as a Map key. */
 function colorKey(color: FigColor): string {
   return `${round3(color.r)},${round3(color.g)},${round3(color.b)},${round3(color.a)}`;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
 }
 
 function toTokenColor(color: FigColor): TokenColor {
@@ -63,15 +60,6 @@ function paintToColor(paint: FigPaint): FigColor | undefined {
   };
 }
 
-function clamp01(n: number): number {
-  if (n < 0) {
-    return 0;
-  }
-  if (n > 1) {
-    return 1;
-  }
-  return n;
-}
 
 export type ColorTokenTable = {
   readonly tokens: ReadonlyMap<string, ColorToken>;

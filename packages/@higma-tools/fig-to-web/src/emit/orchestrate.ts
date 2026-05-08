@@ -28,6 +28,9 @@ import { emitComponentFile, emitPageFile } from "./render/files";
 import { buildTokensFromFrames, tokensToCss } from "../tokens";
 import { createImageRegistry } from "./assets/images";
 import { emitFigmaSvgForFrame } from "./figma-export/figma-svg";
+import { doctype, el, raw, text } from "../lib/html-tree/builder";
+import { serialize } from "../lib/html-tree/serialize";
+import type { HtmlNode } from "../lib/html-tree/types";
 
 export type EmitResult = {
   readonly files: readonly EmitFile[];
@@ -71,37 +74,39 @@ function emitTokensFile(source: FigSource, frames: readonly FigNode[]): {
   };
 }
 
+const IMPORT_MAP_JSON = [
+  "{",
+  `  "imports": {`,
+  `    "react": "https://esm.sh/react@19.2.4",`,
+  `    "react/jsx-runtime": "https://esm.sh/react@19.2.4/jsx-runtime",`,
+  `    "react/jsx-dev-runtime": "https://esm.sh/react@19.2.4/jsx-dev-runtime",`,
+  `    "react-dom/client": "https://esm.sh/react-dom@19.2.4/client"`,
+  "  }",
+  "}",
+].join("\n");
+
 function emitIndexHtml(fontFamilies: readonly string[]): EmitFile {
-  const fontLinks = renderFontLinks(fontFamilies);
-  const html = [
-    `<!doctype html>`,
-    `<html lang="en">`,
-    `<head>`,
-    `  <meta charset="utf-8" />`,
-    `  <meta name="viewport" content="width=device-width, initial-scale=1" />`,
-    `  <title>fig-to-web preview</title>`,
-    ...fontLinks,
-    `  <link rel="stylesheet" href="./tokens.css" />`,
-    `  <link rel="stylesheet" href="./preview.css" />`,
-    `  <script type="importmap">`,
-    `  {`,
-    `    "imports": {`,
-    `      "react": "https://esm.sh/react@19.2.4",`,
-    `      "react/jsx-runtime": "https://esm.sh/react@19.2.4/jsx-runtime",`,
-    `      "react/jsx-dev-runtime": "https://esm.sh/react@19.2.4/jsx-dev-runtime",`,
-    `      "react-dom/client": "https://esm.sh/react-dom@19.2.4/client"`,
-    `    }`,
-    `  }`,
-    `  </script>`,
-    `</head>`,
-    `<body>`,
-    `  <div id="root"></div>`,
-    `  <script type="module" src="./main.js"></script>`,
-    `</body>`,
-    `</html>`,
-    ``,
-  ].join("\n");
-  return { path: "index.html", contents: html };
+  const head: HtmlNode[] = [
+    el("meta", { charset: "utf-8" }),
+    el("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
+    el("title", {}, [text("fig-to-web preview")]),
+    ...renderFontLinks(fontFamilies),
+    el("link", { rel: "stylesheet", href: "./tokens.css" }),
+    el("link", { rel: "stylesheet", href: "./preview.css" }),
+    el("script", { type: "importmap" }, [raw(IMPORT_MAP_JSON)]),
+  ];
+  const body: HtmlNode[] = [
+    el("div", { id: "root" }),
+    el("script", { type: "module", src: "./main.js" }),
+  ];
+  const document: HtmlNode[] = [
+    doctype(),
+    el("html", { lang: "en" }, [
+      el("head", {}, head),
+      el("body", {}, body),
+    ]),
+  ];
+  return { path: "index.html", contents: `${serialize(document)}\n` };
 }
 
 /**
@@ -121,7 +126,7 @@ function emitIndexHtml(fontFamilies: readonly string[]): EmitFile {
  * vendor fonts) are silently skipped — the consumer still has the
  * fallback stack, and we'd rather degrade than 404.
  */
-function renderFontLinks(families: readonly string[]): readonly string[] {
+function renderFontLinks(families: readonly string[]): readonly HtmlNode[] {
   if (families.length === 0) {
     return [];
   }
@@ -130,9 +135,9 @@ function renderFontLinks(families: readonly string[]): readonly string[] {
     .join("&");
   const href = `https://fonts.googleapis.com/css2?${params}&display=swap`;
   return [
-    `  <link rel="preconnect" href="https://fonts.googleapis.com" />`,
-    `  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />`,
-    `  <link rel="stylesheet" href="${href}" />`,
+    el("link", { rel: "preconnect", href: "https://fonts.googleapis.com" }),
+    el("link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }),
+    el("link", { rel: "stylesheet", href }),
   ];
 }
 

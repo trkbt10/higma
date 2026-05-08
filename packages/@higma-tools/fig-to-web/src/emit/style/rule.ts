@@ -24,6 +24,7 @@
  */
 import type { FigMatrix, FigNode, FigPaint, FigSolidPaint, FigStrokeWeight } from "@higma-document-models/fig/types";
 import type { TokenIndex } from "../../tokens";
+import { solidPaintToCss as solidPaintToCssShared } from "../../lib/css-format/paint";
 
 const RULE_NODE_TYPES: ReadonlySet<string> = new Set([
   "LINE",
@@ -156,23 +157,9 @@ function resolveStrokeColor(paints: readonly FigPaint[] | undefined, index: Toke
 }
 
 function solidPaintToCss(paint: FigSolidPaint, index: TokenIndex): string {
-  const tokenId = index.colorIdForPaint(paint);
-  if (tokenId) {
-    return `var(--${tokenId})`;
-  }
-  const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
-  const a = paint.color.a * opacity;
-  const r = Math.round(paint.color.r * 255);
-  const g = Math.round(paint.color.g * 255);
-  const b = Math.round(paint.color.b * 255);
-  if (a >= 0.999) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  return `rgba(${r}, ${g}, ${b}, ${round3(a)})`;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
+  // Threshold 0.999 absorbs floating-point noise in nearly-opaque
+  // exports — see PaintTokenResolver for the SoT contract.
+  return solidPaintToCssShared(paint, index, { opaqueThreshold: 0.999 });
 }
 
 function hasDashes(node: FigNode): boolean {

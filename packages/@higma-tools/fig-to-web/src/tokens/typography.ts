@@ -20,6 +20,7 @@
 import type { FigFontName, FigNode, FigValueWithUnits } from "@higma-document-models/fig/types";
 import type { TypographyToken } from "./types";
 import { toCssSlug, uniqueId } from "./name";
+import { round2 } from "../lib/css-format/numeric";
 
 /** Map common Figma weight-style strings to numeric font-weight. */
 const WEIGHT_BY_STYLE: ReadonlyMap<string, number> = new Map([
@@ -79,10 +80,6 @@ function letterSpacingToCss(value: FigValueWithUnits | undefined): string | unde
       return undefined;
   }
   throw new Error(`typography: unknown letterSpacing units "${value.units.name}"`);
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 export type TypographyDescriptor = {

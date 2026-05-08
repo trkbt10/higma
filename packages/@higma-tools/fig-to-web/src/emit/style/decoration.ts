@@ -46,6 +46,7 @@ import type { FigEffect, FigNode } from "@higma-document-models/fig/types";
 import type { StyleInputs } from "./style";
 import { paintsToBackgroundStyle } from "./paint";
 import { effectsToBoxShadow } from "../../tokens";
+import { formatPx } from "../../lib/css-format/numeric";
 
 const SIZE_TOLERANCE = 0.5;
 const POSITION_TOLERANCE = 0.5;
@@ -202,13 +203,6 @@ function decorationRadius(node: FigNode): string | undefined {
     return formatPx(node.cornerRadius);
   }
   return undefined;
-}
-
-function formatPx(n: number): string {
-  if (Number.isInteger(n)) {
-    return `${n}px`;
-  }
-  return `${Math.round(n * 100) / 100}px`;
 }
 
 function decorationShadow(node: FigNode, inputs: StyleInputs): string | undefined {

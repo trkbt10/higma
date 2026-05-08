@@ -36,6 +36,7 @@
  * frame's own style and when laying out its children.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import { round2 } from "../../lib/css-format/numeric";
 
 // Tolerances reflect float32→float64 round-trip noise plus designer-set
 // values that pass through Figma's UI rounding. 0.5px was too tight in
@@ -261,10 +262,6 @@ function inferInset(box: Box, containerW: number, containerH: number): InferredI
     paddingBottom,
     paddingLeft,
   };
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
 }
 
 function inferStack(

@@ -21,20 +21,10 @@ import type {
   TokenSet,
   TypographyToken,
 } from "./types";
+import { figColorToCss } from "../lib/css-format/color";
 
 function colorToCss(c: ColorToken): string {
-  const v = c.value;
-  const r = Math.round(v.r * 255);
-  const g = Math.round(v.g * 255);
-  const b = Math.round(v.b * 255);
-  if (v.a === 1) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  return `rgba(${r}, ${g}, ${b}, ${round3(v.a)})`;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
+  return figColorToCss(c.value);
 }
 
 function colorComment(token: ColorToken): string {

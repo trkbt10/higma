@@ -11,9 +11,17 @@
  * Naming uses the px value verbatim: `--spacing-8`, `--radius-12`.
  * Negative values (e.g. negative gap) are not expected from auto-layout
  * and would not survive `Math.round` collapse, so they are rejected.
+ *
+ * Spacing and radius walkers share one recursive shell — the only
+ * thing that differs between them is *which* numeric fields each
+ * extracts from a node. Encoding that as a `collect` callback keeps
+ * the recursion in one place; before the SoT extract this file had
+ * two near-identical recursive functions and the indexion-refactor
+ * audit flagged them as 85% structural duplicates.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { RadiusToken, SpacingToken } from "./types";
+import { round2 } from "../lib/css-format/numeric";
 
 export type SpacingTokenTable = {
   readonly tokens: ReadonlyMap<string, SpacingToken>;
@@ -39,73 +47,81 @@ function recordValue(map: Map<number, number>, value: number | undefined): void 
   map.set(rounded, (map.get(rounded) ?? 0) + 1);
 }
 
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+/**
+ * Recursive walker shared by spacing and radius collection.
+ * `collect` decides which numeric fields contribute to the count for
+ * the current node; the walker handles the tree descent so neither
+ * caller needs to re-implement child recursion.
+ */
+function visitTree(
+  node: FigNode,
+  counts: Map<number, number>,
+  collect: (node: FigNode, record: (value: number | undefined) => void) => void,
+): void {
+  collect(node, (value) => recordValue(counts, value));
+  for (const child of node.children ?? []) {
+    if (child) {
+      visitTree(child, counts, collect);
+    }
+  }
+}
+
+/**
+ * Tally numeric values across the subtree per the supplied collector,
+ * keep only those used at least `MIN_USES_FOR_TOKEN` times, and
+ * materialise them as `<prefix>-<value>` tokens. Both spacing and
+ * radius collection follow this exact shape — the only thing that
+ * varies is the field set the collector reads.
+ */
+function tallyTokens<T extends { readonly id: string; readonly value: number }>(
+  usageNodes: readonly FigNode[],
+  prefix: string,
+  collect: (node: FigNode, record: (value: number | undefined) => void) => void,
+): ReadonlyMap<string, T> {
+  const counts = new Map<number, number>();
+  for (const node of usageNodes) {
+    visitTree(node, counts, collect);
+  }
+  const tokens = new Map<string, T>();
+  for (const [value, hits] of counts) {
+    if (hits < MIN_USES_FOR_TOKEN) {
+      continue;
+    }
+    const id = `${prefix}-${formatNumber(value)}`;
+    tokens.set(id, { id, value } as T);
+  }
+  return tokens;
+}
+
+function collectSpacing(node: FigNode, record: (value: number | undefined) => void): void {
+  record(node.stackSpacing);
+  record(node.stackPadding);
+  record(node.stackVerticalPadding);
+  record(node.stackHorizontalPadding);
+  record(node.stackPaddingRight);
+  record(node.stackPaddingBottom);
+  record(node.stackCounterSpacing);
+}
+
+function collectRadii(node: FigNode, record: (value: number | undefined) => void): void {
+  record(node.cornerRadius);
+  for (const radius of node.rectangleCornerRadii ?? []) {
+    record(radius);
+  }
+  record(node.rectangleTopLeftCornerRadius);
+  record(node.rectangleTopRightCornerRadius);
+  record(node.rectangleBottomLeftCornerRadius);
+  record(node.rectangleBottomRightCornerRadius);
 }
 
 /** Walk the targeted subtrees and collect spacing tokens. */
 export function buildSpacingTokens(usageNodes: readonly FigNode[]): SpacingTokenTable {
-  const counts = new Map<number, number>();
-  for (const node of usageNodes) {
-    visit(node, counts);
-  }
-  const tokens = new Map<string, SpacingToken>();
-  for (const [value, hits] of counts) {
-    if (hits < MIN_USES_FOR_TOKEN) {
-      continue;
-    }
-    const id = `spacing-${formatNumber(value)}`;
-    tokens.set(id, { id, value });
-  }
-  return { tokens };
-}
-
-function visit(node: FigNode, counts: Map<number, number>): void {
-  recordValue(counts, node.stackSpacing);
-  recordValue(counts, node.stackPadding);
-  recordValue(counts, node.stackVerticalPadding);
-  recordValue(counts, node.stackHorizontalPadding);
-  recordValue(counts, node.stackPaddingRight);
-  recordValue(counts, node.stackPaddingBottom);
-  recordValue(counts, node.stackCounterSpacing);
-  for (const child of node.children ?? []) {
-    if (child) {
-      visit(child, counts);
-    }
-  }
+  return { tokens: tallyTokens<SpacingToken>(usageNodes, "spacing", collectSpacing) };
 }
 
 /** Walk the targeted subtrees and collect corner-radius tokens. */
 export function buildRadiusTokens(usageNodes: readonly FigNode[]): RadiusTokenTable {
-  const counts = new Map<number, number>();
-  for (const node of usageNodes) {
-    visitRadii(node, counts);
-  }
-  const tokens = new Map<string, RadiusToken>();
-  for (const [value, hits] of counts) {
-    if (hits < MIN_USES_FOR_TOKEN) {
-      continue;
-    }
-    const id = `radius-${formatNumber(value)}`;
-    tokens.set(id, { id, value });
-  }
-  return { tokens };
-}
-
-function visitRadii(node: FigNode, counts: Map<number, number>): void {
-  recordValue(counts, node.cornerRadius);
-  for (const radius of node.rectangleCornerRadii ?? []) {
-    recordValue(counts, radius);
-  }
-  recordValue(counts, node.rectangleTopLeftCornerRadius);
-  recordValue(counts, node.rectangleTopRightCornerRadius);
-  recordValue(counts, node.rectangleBottomLeftCornerRadius);
-  recordValue(counts, node.rectangleBottomRightCornerRadius);
-  for (const child of node.children ?? []) {
-    if (child) {
-      visitRadii(child, counts);
-    }
-  }
+  return { tokens: tallyTokens<RadiusToken>(usageNodes, "radius", collectRadii) };
 }
 
 /**

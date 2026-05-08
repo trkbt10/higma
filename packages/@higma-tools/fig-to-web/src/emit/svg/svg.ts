@@ -21,12 +21,15 @@
  *   - emit additional stroke paths when stroke paints are present,
  *   - apply CSS via the SVG's `fill` attribute (NOT `background`) so the
  *     paint is the actual rendered ink rather than the bounding-box.
+ *
+ * The functions here return `JsxNode` trees so the JSX emitter can
+ * splice them into its own structured output without ever touching
+ * raw markup strings — every attribute crosses through the
+ * `jsx-tree` serializer's JSON-string escape.
  */
 import type {
-  FigColor,
   FigFillGeometry,
   FigNode,
-  FigPaint,
   FigStrokeWeight,
   FigVectorPath,
   KiwiEnumValue,
@@ -36,6 +39,9 @@ import { decodeBlobToSvgPath } from "@higma-document-models/fig/domain";
 import type { FigSource } from "../../fig-source";
 import type { TokenIndex } from "../../tokens";
 import { synthesizeShapePath } from "./synth-shape";
+import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
+import { el, flagProp, strProp } from "../../lib/jsx-tree/builder";
+import { firstSolidPaintCss } from "../../lib/css-format/paint";
 
 const VECTOR_NODE_TYPES: ReadonlySet<string> = new Set([
   "VECTOR",
@@ -178,14 +184,11 @@ export function isVectorOnlyContainer(node: FigNode): boolean {
   if (children.length === 0) {
     return false;
   }
-  // Every child must itself be a pure-vector subtree.
   for (const child of children) {
     if (!isPureVectorSubtree(child)) {
       return false;
     }
   }
-  // At least one vector somewhere — otherwise the wrapper is just empty
-  // and a regular collapse already handled it.
   return countVectors(node) > 0;
 }
 
@@ -194,52 +197,6 @@ function countVectors(node: FigNode): number {
     return 1;
   }
   return visibleChildren(node).reduce((sum, child) => sum + countVectors(child), 0);
-}
-
-function colorToCss(c: FigColor): string {
-  const r = Math.round(c.r * 255);
-  const g = Math.round(c.g * 255);
-  const b = Math.round(c.b * 255);
-  if (c.a === 1) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  return `rgba(${r}, ${g}, ${b}, ${round3(c.a)})`;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
-
-/** Resolve a single visible solid paint to its CSS colour string. */
-function paintColor(paint: FigPaint, index: TokenIndex): string | undefined {
-  if (paint.visible === false) {
-    return undefined;
-  }
-  if (paint.type !== "SOLID") {
-    return undefined;
-  }
-  const tokenId = index.colorIdForPaint(paint);
-  if (tokenId) {
-    return `var(--${tokenId})`;
-  }
-  const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
-  if (opacity === 1) {
-    return colorToCss(paint.color);
-  }
-  return colorToCss({ ...paint.color, a: paint.color.a * opacity });
-}
-
-function firstSolidColor(paints: readonly FigPaint[] | undefined, index: TokenIndex): string | undefined {
-  if (!paints) {
-    return undefined;
-  }
-  for (const paint of paints) {
-    const c = paintColor(paint, index);
-    if (c) {
-      return c;
-    }
-  }
-  return undefined;
 }
 
 function maxStrokeWidth(weight: FigStrokeWeight | undefined): number | undefined {
@@ -252,15 +209,15 @@ function maxStrokeWidth(weight: FigStrokeWeight | undefined): number | undefined
   return Math.max(weight.top, weight.right, weight.bottom, weight.left);
 }
 
-function windingRuleAttr(rule: string | KiwiEnumValue | undefined): string {
+function windingRuleProp(rule: string | KiwiEnumValue | undefined): JsxProp | undefined {
   if (!rule) {
-    return "";
+    return undefined;
   }
   const name = typeof rule === "string" ? rule : rule.name;
   if (name === "EVENODD" || name === "ODD") {
-    return ` fill-rule="evenodd"`;
+    return strProp("fill-rule", "evenodd");
   }
-  return "";
+  return undefined;
 }
 
 /**
@@ -380,19 +337,22 @@ export type VectorEmitInputs = {
   readonly index: TokenIndex;
 };
 
-function renderStrokeAttrs(
+function strokeProps(
   strokeFill: string | undefined,
   strokeWidth: number | undefined,
   dashes: readonly number[] | undefined,
-): string {
+): readonly JsxProp[] {
   if (!strokeFill || !strokeWidth) {
-    return "";
+    return [];
   }
-  const base = ` stroke=${JSON.stringify(strokeFill)} stroke-width=${JSON.stringify(`${strokeWidth}`)}`;
+  const out: JsxProp[] = [
+    strProp("stroke", strokeFill),
+    strProp("stroke-width", `${strokeWidth}`),
+  ];
   if (dashes && dashes.length > 0) {
-    return `${base} stroke-dasharray=${JSON.stringify(dashes.join(" "))}`;
+    out.push(strProp("stroke-dasharray", dashes.join(" ")));
   }
-  return base;
+  return out;
 }
 
 /**
@@ -415,13 +375,17 @@ function strokeDashesFor(node: FigNode): readonly number[] | undefined {
  * Render an SVG element for a vector-shaped node. Returns undefined when
  * the node has no usable geometry — the caller falls back to a plain
  * div so the visual still occupies the right amount of space.
+ *
+ * `wrapperProps` carry node-level attributes the JSX emitter already
+ * prepared (`data-fig-*`, `className`, `style`); this function adds
+ * the SVG-specific props (`viewBox`, `preserveAspectRatio`, `fill`,
+ * `stroke*`, `xmlns`, `aria-hidden`, `overflow`) on top.
  */
 export function emitVectorSvg(
   node: FigNode,
   inputs: VectorEmitInputs,
-  styleSrc: string,
-  attrsAndIndent: { dataAttrs: string; indent: string; classAttr?: string },
-): string | undefined {
+  wrapperProps: readonly JsxProp[],
+): JsxNode | undefined {
   const paths = collectPathsFor(node, inputs.source.loaded.blobs);
   if (paths.length === 0) {
     return undefined;
@@ -435,8 +399,8 @@ export function emitVectorSvg(
   // and clip the stroke. Pad the box and viewBox by the stroke width
   // so the rendered stroke survives — the same behaviour the
   // authoritative Figma SVG renderer relies on.
-  const fill = firstSolidColor(node.fillPaints, inputs.index);
-  const strokeFill = firstSolidColor(node.strokePaints, inputs.index);
+  const fill = firstSolidPaintCss(node.fillPaints, inputs.index);
+  const strokeFill = firstSolidPaintCss(node.strokePaints, inputs.index);
   const strokeWidth = maxStrokeWidth(node.strokeWeight);
   const dims = expandDegenerateBox(rawWidth, rawHeight, strokeWidth);
   if (!dims) {
@@ -450,45 +414,56 @@ export function emitVectorSvg(
   // applying SVG-element-level fill/stroke shared across paths.
   const dashes = strokeDashesFor(node);
   const styling = computeSvgStyling(paths, fill, strokeFill, strokeWidth, dashes);
-  const pathElements = paths
-    .map((p) => renderPathElement(p, styling, fill, strokeFill, strokeWidth, dashes))
-    .join("");
+  const pathChildren: JsxNode[] = paths.map((p) =>
+    renderPathElement(p, styling, fill, strokeFill, strokeWidth, dashes),
+  );
 
   const viewBox = `${dims.viewBoxX} ${dims.viewBoxY} ${dims.viewBoxW} ${dims.viewBoxH}`;
-  const classAttr = attrsAndIndent.classAttr ?? "";
-  // SVG's default `overflow: hidden` clips any path coordinate that
-  // falls outside `viewBox`. That mis-clips two cases this emitter
-  // routinely hits:
-  //
-  //   1. **Degenerate vectors** (zero-thickness LINE / single-axis
-  //      VECTOR) — stroke needs to extend past the collapsed axis.
-  //
-  //   2. **Strokes with `strokeAlign: CENTER` (Figma's default) or
-  //      `OUTSIDE`** — the rendered outline extends `strokeWeight/2`
-  //      (CENTER) or `strokeWeight` (OUTSIDE) past `node.size` on
-  //      every side, plus more for `strokeCap: ROUND`/`SQUARE` at
-  //      path endpoints. Figma's layout uses the *centerline* bbox
-  //      (`node.size`) so the SVG element keeps `width`/`height` at
-  //      `node.size` for layout fidelity, and `overflow="visible"`
-  //      lets the rendered stroke overshoot — the parent's
-  //      `clipsContent` handles real clipping where the design wants
-  //      it. Without this, the e-commerce plant-shop hero's two
-  //      hand-drawn squiggles (`Vector 186/187`) lost their endpoints
-  //      to a 2 px clip.
-  //
-  // Always emitting `overflow="visible"` is safe: pure fill paths
-  // whose geometry sits inside the viewBox render identically either
-  // way, and parents that clip (icon frames, scrollable cards) rely
-  // on the surrounding container's `overflow: hidden`, not the SVG
-  // element's own.
-  const overflowAttr = ` overflow="visible"`;
-
-  return `${attrsAndIndent.indent}<svg${attrsAndIndent.dataAttrs}${classAttr} style={${styleSrc}}${overflowAttr} viewBox=${JSON.stringify(viewBox)} preserveAspectRatio="none"${styling.svgFillAttr}${styling.svgStrokeAttrs} xmlns="http://www.w3.org/2000/svg" aria-hidden>${pathElements}</svg>`;
+  const svgProps: JsxProp[] = [
+    ...wrapperProps,
+    // SVG's default `overflow: hidden` clips any path coordinate that
+    // falls outside `viewBox`. That mis-clips two cases this emitter
+    // routinely hits:
+    //
+    //   1. **Degenerate vectors** (zero-thickness LINE / single-axis
+    //      VECTOR) — stroke needs to extend past the collapsed axis.
+    //
+    //   2. **Strokes with `strokeAlign: CENTER` (Figma's default) or
+    //      `OUTSIDE`** — the rendered outline extends `strokeWeight/2`
+    //      (CENTER) or `strokeWeight` (OUTSIDE) past `node.size` on
+    //      every side, plus more for `strokeCap: ROUND`/`SQUARE` at
+    //      path endpoints. Figma's layout uses the *centerline* bbox
+    //      (`node.size`) so the SVG element keeps `width`/`height` at
+    //      `node.size` for layout fidelity, and `overflow="visible"`
+    //      lets the rendered stroke overshoot — the parent's
+    //      `clipsContent` handles real clipping where the design wants
+    //      it. Without this, the e-commerce plant-shop hero's two
+    //      hand-drawn squiggles (`Vector 186/187`) lost their endpoints
+    //      to a 2 px clip.
+    //
+    // Always emitting `overflow="visible"` is safe: pure fill paths
+    // whose geometry sits inside the viewBox render identically either
+    // way, and parents that clip (icon frames, scrollable cards) rely
+    // on the surrounding container's `overflow: hidden`, not the SVG
+    // element's own.
+    strProp("overflow", "visible"),
+    strProp("viewBox", viewBox),
+    strProp("preserveAspectRatio", "none"),
+  ];
+  if (styling.svgFill !== undefined) {
+    svgProps.push(strProp("fill", styling.svgFill));
+  }
+  for (const p of styling.svgStroke) {
+    svgProps.push(p);
+  }
+  svgProps.push(strProp("xmlns", "http://www.w3.org/2000/svg"));
+  svgProps.push(flagProp("aria-hidden"));
+  return el("svg", { props: svgProps, children: pathChildren, layout: "inline" });
 }
 
 type SvgStyling = {
-  readonly svgFillAttr: string;
-  readonly svgStrokeAttrs: string;
+  readonly svgFill: string | undefined;
+  readonly svgStroke: readonly JsxProp[];
   readonly perPath: boolean;
 };
 
@@ -506,25 +481,25 @@ function computeSvgStyling(
   dashes: readonly number[] | undefined,
 ): SvgStyling {
   if (paths.length === 0) {
-    return { svgFillAttr: "", svgStrokeAttrs: "", perPath: false };
+    return { svgFill: undefined, svgStroke: [], perPath: false };
   }
   const allStroke = paths.every((p) => p.source === "stroke");
   const allFill = paths.every((p) => p.source !== "stroke");
   if (allStroke) {
     return {
-      svgFillAttr: strokeFill ? ` fill=${JSON.stringify(strokeFill)}` : ` fill="none"`,
-      svgStrokeAttrs: "",
+      svgFill: strokeFill ?? "none",
+      svgStroke: [],
       perPath: false,
     };
   }
   if (allFill) {
     return {
-      svgFillAttr: fill ? ` fill=${JSON.stringify(fill)}` : ` fill="none"`,
-      svgStrokeAttrs: renderStrokeAttrs(strokeFill, strokeWidth, dashes),
+      svgFill: fill ?? "none",
+      svgStroke: strokeProps(strokeFill, strokeWidth, dashes),
       perPath: false,
     };
   }
-  return { svgFillAttr: "", svgStrokeAttrs: "", perPath: true };
+  return { svgFill: undefined, svgStroke: [], perPath: true };
 }
 
 function renderPathElement(
@@ -534,24 +509,32 @@ function renderPathElement(
   strokeFill: string | undefined,
   strokeWidth: number | undefined,
   dashes: readonly number[] | undefined,
-): string {
-  if (!styling.perPath) {
-    return `<path d=${JSON.stringify(p.d)}${windingRuleAttr(p.rule)} />`;
+): JsxNode {
+  const props: JsxProp[] = [strProp("d", p.d)];
+  if (styling.perPath) {
+    props.push(perPathFillProp(p.source, fill, strokeFill));
+    if (p.source !== "stroke") {
+      for (const sp of strokeProps(strokeFill, strokeWidth, dashes)) {
+        props.push(sp);
+      }
+    }
   }
-  const fa = perPathFillAttr(p.source, fill, strokeFill);
-  const sa = p.source === "stroke" ? "" : renderStrokeAttrs(strokeFill, strokeWidth, dashes);
-  return `<path d=${JSON.stringify(p.d)}${fa}${sa}${windingRuleAttr(p.rule)} />`;
+  const winding = windingRuleProp(p.rule);
+  if (winding) {
+    props.push(winding);
+  }
+  return el("path", { props });
 }
 
-function perPathFillAttr(
+function perPathFillProp(
   source: "fill" | "stroke" | undefined,
   fill: string | undefined,
   strokeFill: string | undefined,
-): string {
+): JsxProp {
   if (source === "stroke") {
-    return strokeFill ? ` fill=${JSON.stringify(strokeFill)}` : ` fill="none"`;
+    return strProp("fill", strokeFill ?? "none");
   }
-  return fill ? ` fill=${JSON.stringify(fill)}` : ` fill="none"`;
+  return strProp("fill", fill ?? "none");
 }
 
 /**
@@ -680,8 +663,8 @@ function collectVectorPaths(
     return [];
   }
   const matrix = multiplyMatrix(parent, matrixOfNode(node));
-  const fill = firstSolidColor(node.fillPaints, index);
-  const stroke = firstSolidColor(node.strokePaints, index);
+  const fill = firstSolidPaintCss(node.fillPaints, index);
+  const stroke = firstSolidPaintCss(node.strokePaints, index);
   const strokeWidth = maxStrokeWidth(node.strokeWeight);
   const strokeDashes = strokeDashesFor(node);
   return paths.map((p) => ({
@@ -704,21 +687,32 @@ function collectDescendantPaths(container: FigNode, inputs: VectorEmitInputs): r
   return out;
 }
 
-function pathAttributesFor(p: ComposedPath): string {
+function pathPropsFor(p: ComposedPath): readonly JsxProp[] {
   // Stroke-sourced paths already encode the widened outline; we paint
   // them as a fill using the stroke colour and skip the SVG `stroke`
   // attribute (otherwise the line gets stroked again on top of its
   // own outline and renders at twice the authored thickness).
+  const out: JsxProp[] = [];
   if (p.source === "stroke") {
-    const fill = p.stroke ? ` fill=${JSON.stringify(p.stroke)}` : ` fill="none"`;
-    return `${fill}${windingRuleAttr(p.rule)}${renderMatrixAttr(p.matrix)}`;
+    out.push(strProp("fill", p.stroke ?? "none"));
+  } else {
+    out.push(strProp("fill", p.fill ?? "none"));
+    for (const sp of strokeProps(p.stroke, p.strokeWidth, p.strokeDashes)) {
+      out.push(sp);
+    }
   }
-  const fill = p.fill ? ` fill=${JSON.stringify(p.fill)}` : ` fill="none"`;
-  const stroke = renderStrokeAttrs(p.stroke, p.strokeWidth, p.strokeDashes);
-  return `${fill}${stroke}${windingRuleAttr(p.rule)}${renderMatrixAttr(p.matrix)}`;
+  const winding = windingRuleProp(p.rule);
+  if (winding) {
+    out.push(winding);
+  }
+  const matrix = matrixProp(p.matrix);
+  if (matrix) {
+    out.push(matrix);
+  }
+  return out;
 }
 
-function renderMatrixAttr(m: AffineMatrix): string {
+function matrixProp(m: AffineMatrix): JsxProp | undefined {
   if (
     Math.abs(m.a - 1) < 1e-9
     && Math.abs(m.b) < 1e-9
@@ -727,7 +721,7 @@ function renderMatrixAttr(m: AffineMatrix): string {
     && Math.abs(m.e) < 1e-9
     && Math.abs(m.f) < 1e-9
   ) {
-    return "";
+    return undefined;
   }
   if (
     Math.abs(m.a - 1) < 1e-9
@@ -735,9 +729,9 @@ function renderMatrixAttr(m: AffineMatrix): string {
     && Math.abs(m.c) < 1e-9
     && Math.abs(m.d - 1) < 1e-9
   ) {
-    return ` transform=${JSON.stringify(`translate(${m.e} ${m.f})`)}`;
+    return strProp("transform", `translate(${m.e} ${m.f})`);
   }
-  return ` transform=${JSON.stringify(`matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})`)}`;
+  return strProp("transform", `matrix(${m.a} ${m.b} ${m.c} ${m.d} ${m.e} ${m.f})`);
 }
 
 /**
@@ -755,9 +749,8 @@ function renderMatrixAttr(m: AffineMatrix): string {
 export function emitMergedVectorSvg(
   node: FigNode,
   inputs: VectorEmitInputs,
-  styleSrc: string,
-  attrsAndIndent: { dataAttrs: string; indent: string },
-): string | undefined {
+  wrapperProps: readonly JsxProp[],
+): JsxNode | undefined {
   if (!node.size) {
     return undefined;
   }
@@ -771,8 +764,12 @@ export function emitMergedVectorSvg(
     return undefined;
   }
   const viewBox = `0 0 ${width} ${height}`;
-  const pathElements = paths
-    .map((p) => `<path d=${JSON.stringify(p.d)}${pathAttributesFor(p)} />`)
-    .join("");
-  return `${attrsAndIndent.indent}<svg${attrsAndIndent.dataAttrs} style={${styleSrc}} viewBox=${JSON.stringify(viewBox)} xmlns="http://www.w3.org/2000/svg" aria-hidden>${pathElements}</svg>`;
+  const pathChildren: JsxNode[] = paths.map((p) => el("path", { props: [strProp("d", p.d), ...pathPropsFor(p)] }));
+  const svgProps: JsxProp[] = [
+    ...wrapperProps,
+    strProp("viewBox", viewBox),
+    strProp("xmlns", "http://www.w3.org/2000/svg"),
+    flagProp("aria-hidden"),
+  ];
+  return el("svg", { props: svgProps, children: pathChildren, layout: "inline" });
 }

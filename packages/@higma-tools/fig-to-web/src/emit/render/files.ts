@@ -32,6 +32,15 @@ import type { PropBindings } from "../plan/prop-bindings";
 import { buildPropBindings } from "../plan/prop-bindings";
 import { buildReparentResult } from "../layout/reparent";
 import { applyRowClustering } from "../layout/cluster";
+import { serialize as serializeJsx } from "../../lib/jsx-tree/serialize";
+
+/**
+ * Indentation depth used when serializing the JSX body to live
+ * inside `return (\n  ...\n  );`. Two levels of two spaces puts the
+ * outer `<div>` at column 4, matching the indentation prefix of the
+ * surrounding `return (...)` block.
+ */
+const JSX_BODY_DEPTH = 2;
 
 export type EmitOpts = {
   readonly debugAttrs: boolean;
@@ -192,7 +201,8 @@ export function emitPageFile(
   // SYMBOL — so `EMPTY_BINDINGS` lets the JSX emitter render
   // hard-coded TEXT characters verbatim.
   const context = makeContext(source, registry, index, target.filePath, opts, EMPTY_BINDINGS, target.node);
-  const body = emitFrameJsx(target.node, context, "page-root");
+  const bodyNode = emitFrameJsx(target.node, context, "page-root");
+  const body = serializeJsx(bodyNode, { depth: JSX_BODY_DEPTH });
   const importsSrc = renderImports(context.imports);
   const header = fileHeader(target.componentName, "page", target.node.name ?? "");
   const propTypeName = renderPropTypeName(target.componentName);
@@ -248,7 +258,11 @@ function emitVariantCase(
   // centered text against a rounded background. Reusing
   // `emitFrameJsx` keeps the variant case in lockstep with every
   // other "wrap a single root frame in a `<div>`" call site.
-  const frameJsx = emitFrameJsx(variantNode, context, "component-root");
+  const frameNode = emitFrameJsx(variantNode, context, "component-root");
+  // Variant case body lands four levels deep: `function { switch
+  // { case X: return ( <jsx> ); } }` — `JSX_BODY_DEPTH + 2` keeps the
+  // outer `<div>` aligned with the closing `)` paren.
+  const frameJsx = serializeJsx(frameNode, { depth: JSX_BODY_DEPTH + 2 });
   return [
     `    case ${JSON.stringify(variantValue)}:`,
     `      return (`,
@@ -304,7 +318,8 @@ export function emitComponentFile(
     return { path: target.filePath, contents: `${lines.join("\n")}\n` };
   }
 
-  const body = emitFrameJsx(target.node, context, "component-root");
+  const bodyNode = emitFrameJsx(target.node, context, "component-root");
+  const body = serializeJsx(bodyNode, { depth: JSX_BODY_DEPTH });
   const importsSrc = renderImports(context.imports);
   const header = fileHeader(target.componentName, "component", target.node.name ?? "");
 

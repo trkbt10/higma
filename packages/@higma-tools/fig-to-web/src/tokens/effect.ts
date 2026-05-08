@@ -17,8 +17,10 @@
  * stacks rarely have stable Figma names in raw exports — even when
  * Figma does name effect-styles, none surface in this fixture.
  */
-import type { FigColor, FigEffect, FigNode } from "@higma-document-models/fig/types";
+import type { FigEffect, FigNode } from "@higma-document-models/fig/types";
 import type { ShadowToken } from "./types";
+import { figColorToCss } from "../lib/css-format/color";
+import { formatPx } from "../lib/css-format/numeric";
 
 export type ShadowTokenTable = {
   readonly tokens: ReadonlyMap<string, ShadowToken>;
@@ -30,20 +32,6 @@ function effectTypeName(effect: FigEffect): string | undefined {
     return effect.type;
   }
   return effect.type.name;
-}
-
-function colorToCss(c: FigColor): string {
-  const r = Math.round(c.r * 255);
-  const g = Math.round(c.g * 255);
-  const b = Math.round(c.b * 255);
-  if (c.a === 1) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  return `rgba(${r}, ${g}, ${b}, ${round3(c.a)})`;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
 }
 
 /** Convert one shadow effect to a single CSS box-shadow segment. */
@@ -61,15 +49,7 @@ function shadowToCss(effect: FigEffect): string | undefined {
   const spread = effect.spread ?? 0;
   const color = effect.color ?? { r: 0, g: 0, b: 0, a: 1 };
   const inset = type === "INNER_SHADOW" ? "inset " : "";
-  return `${inset}${formatPx(offsetX)} ${formatPx(offsetY)} ${formatPx(blur)} ${formatPx(spread)} ${colorToCss(color)}`;
-}
-
-function formatPx(n: number): string {
-  return `${round2(n)}px`;
-}
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+  return `${inset}${formatPx(offsetX)} ${formatPx(offsetY)} ${formatPx(blur)} ${formatPx(spread)} ${figColorToCss(color)}`;
 }
 
 /**

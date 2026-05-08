@@ -77,6 +77,9 @@ import type {
   FigSource,
   FrameTarget,
 } from "../src";
+import { doctype, el, raw, text } from "../src/lib/html-tree/builder";
+import { serialize } from "../src/lib/html-tree/serialize";
+import type { HtmlNode } from "../src/lib/html-tree/types";
 
 import type { FigNode } from "@higma-document-models/fig/types";
 import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
@@ -290,20 +293,28 @@ const ISOLATE_TSX = [
 ].join("\n");
 
 function buildIsolateHtml(headInner: string): string {
-  return [
-    `<!doctype html>`,
-    `<html lang="en">`,
-    `<head>`,
-    headInner,
-    `  <style>html, body { margin: 0; padding: 0; background: #fff; } #root > * { width: max-content; }</style>`,
-    `</head>`,
-    `<body>`,
-    `  <div id="root"></div>`,
-    `  <script type="module" src="./isolate.js"></script>`,
-    `</body>`,
-    `</html>`,
-    ``,
-  ].join("\n");
+  // `headInner` is the inner HTML of `<head>` from the orchestrator-
+  // generated `index.html`, which is itself produced by the html-tree
+  // serializer — so it has already been escape-correct on every
+  // attribute and text node. Embed it as `raw` to preserve the
+  // already-validated markup; every other node here goes through the
+  // builder.
+  const document: HtmlNode[] = [
+    doctype(),
+    el("html", { lang: "en" }, [
+      el("head", {}, [
+        raw(headInner),
+        el("style", {}, [
+          text("html, body { margin: 0; padding: 0; background: #fff; } #root > * { width: max-content; }"),
+        ]),
+      ]),
+      el("body", {}, [
+        el("div", { id: "root" }),
+        el("script", { type: "module", src: "./isolate.js" }),
+      ]),
+    ]),
+  ];
+  return `${serialize(document)}\n`;
 }
 
 async function emitIsolateFiles(outDir: string): Promise<void> {

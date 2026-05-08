@@ -1,10 +1,13 @@
 /**
- * @file Render a FigNode subtree to JSX source code.
+ * @file Render a FigNode subtree to a JSX tree.
  *
- * The output is a *string* of TSX, not a React element tree, because
- * the consumer is a code generator: we write `.tsx` files to disk for
- * humans to read, edit, and bundle. Producing strings directly keeps
- * indentation and prop ordering explicit.
+ * The output is a `JsxNode` value (from `src/lib/jsx-tree`) — never a
+ * raw markup string. The single serializer in `lib/jsx-tree`
+ * eventually emits TSX, funnelling every Figma-author string
+ * (TEXT characters, layer names, font family overrides) through
+ * JSON-string escaping at the boundary. Building strings in this
+ * file would put each call site back in charge of its own escaping;
+ * the typed tree makes that impossible.
  *
  * Layout fidelity: every emit recurs with a `parentLayout` argument
  * that says whether THIS node sits inside a flex (auto-layout) parent
@@ -44,6 +47,8 @@ import { guidToString, safeChildren as safeChildrenDomain } from "@higma-documen
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { resolvePaintRef } from "@higma-document-models/fig/symbols";
 import type { FigPaint, FigStyleId } from "@higma-document-models/fig/types";
+import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
+import { el, expr, exprProp, flagProp, strProp, styleProp, text } from "../../lib/jsx-tree/builder";
 
 const TEXT_NODE_TYPE = "TEXT";
 const INSTANCE_NODE_TYPE = "INSTANCE";
@@ -115,10 +120,6 @@ function parentContextOf(options: EmitOptions): ParentContext | undefined {
   return { alignItems: options.parentAlignItems, content: options.parentContent };
 }
 
-function indent(depth: number): string {
-  return "  ".repeat(depth);
-}
-
 /**
  * Resolve a TEXT node's display string. Figma stores the visible
  * characters in `textData.characters`; the top-level `characters`
@@ -133,37 +134,6 @@ function textCharacters(node: FigNode): string {
     return node.characters;
   }
   return "";
-}
-
-function escapeJsxText(text: string): string {
-  return text
-    .replace(/\\/g, "\\\\")
-    .replace(/`/g, "\\`")
-    .replace(/\$\{/g, "\\${");
-}
-
-function styleEntries(style: Record<string, string>): string {
-  const entries = Object.entries(style);
-  if (entries.length === 0) {
-    return "";
-  }
-  const parts = entries.map(([key, value]) => `${formatStyleKey(key)}: ${JSON.stringify(value)}`);
-  return parts.join(", ");
-}
-
-/**
- * Style record keys are normally JS-identifier-safe camelCase
- * properties (`backgroundImage`, `borderRadius`). CSS custom
- * properties (`--color-c19`) are not — they need to be quoted as
- * string keys in the JSX style object literal so the parser doesn't
- * see them as a `--` decrement followed by an identifier. Quote any
- * key that doesn't start with a letter / `_` / `$`.
- */
-function formatStyleKey(key: string): string {
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)) {
-    return key;
-  }
-  return JSON.stringify(key);
 }
 
 /**
@@ -222,28 +192,23 @@ function isRendered(node: FigNode): boolean {
   return true;
 }
 
-function styleObjectLiteral(style: Record<string, string>, transform: string | undefined): string {
+/**
+ * Compose the `style` prop for a node. When a non-translation
+ * transform is present, append `transform` and pin
+ * `transform-origin: 0 0` so the rotation pivot matches Figma's
+ * authored `(0,0)` corner — CSS's default `50% 50%` would visibly
+ * displace every rotated node by the centre-vs-corner offset.
+ */
+function styleAsProp(style: Record<string, string>, transform: string | undefined): JsxProp {
   if (!transform) {
-    return `{${styleEntries(style)}}`;
+    return styleProp(style);
   }
-  // Pin `transform-origin` to the top-left corner whenever a rotation
-  // / scale / skew matrix is applied. Figma encodes node-local `(0,0)`
-  // as the rotation pivot — the matrix's translation part `(m02, m12)`
-  // is the post-rotation position of that pivot in parent coordinates,
-  // which is what we already write into `left` / `top`. CSS's default
-  // `transform-origin: 50% 50%` rotates around the element's centre
-  // instead, so without this override every rotated node ends up
-  // displaced by `((1-cosθ)*w/2 + sinθ*h/2, (1-cosθ)*h/2 - sinθ*w/2)`
-  // from where Figma drew it. Authoring `transformOrigin` here keeps
-  // the override paired with every emitted `transform` so the two
-  // never desynchronise.
-  const merged = { ...style, transform, transformOrigin: "0 0" };
-  return `{${styleEntries(merged)}}`;
+  return styleProp({ ...style, transform, transformOrigin: "0 0" });
 }
 
-/** Render a top-level frame as a self-contained JSX expression. */
-export function emitFrameJsx(node: FigNode, context: EmitContext, root: RootMode): string {
-  return emitNodeJsx(node, context, { rootMode: root, parentLayout: "none", depth: 2 });
+/** Render a top-level frame as a self-contained JSX tree. */
+export function emitFrameJsx(node: FigNode, context: EmitContext, root: RootMode): JsxNode {
+  return emitNodeJsx(node, context, { rootMode: root, parentLayout: "none" });
 }
 
 /**
@@ -251,22 +216,21 @@ export function emitFrameJsx(node: FigNode, context: EmitContext, root: RootMode
  * the parent wrapper is owned by another emitter — for example, a
  * variant case wraps each branch in its own `<div>`.
  */
-export function emitNodeChildrenJsx(node: FigNode, context: EmitContext, depth: number): string {
+export function emitNodeChildrenJsx(node: FigNode, context: EmitContext): readonly JsxNode[] {
   const parentLayout = parentLayoutOf(node);
-  const lines: string[] = [];
+  const out: JsxNode[] = [];
   for (const child of safeChildren(node, context)) {
     if (!isRendered(child)) {
       continue;
     }
-    lines.push(emitNodeJsx(child, context, { rootMode: undefined, parentLayout, depth }));
+    out.push(emitNodeJsx(child, context, { rootMode: undefined, parentLayout }));
   }
-  return lines.join("\n");
+  return out;
 }
 
 type EmitOptions = {
   readonly rootMode: RootMode | undefined;
   readonly parentLayout: ParentLayout;
-  readonly depth: number;
   /**
    * Translation accumulated from collapsed transparent-wrapper
    * ancestors. The emitter adds this to the node's own translation
@@ -292,7 +256,7 @@ type EmitOptions = {
   readonly parentContent?: { readonly width: number; readonly height: number };
 };
 
-function emitNodeJsx(node: FigNode, context: EmitContext, options: EmitOptions): string {
+function emitNodeJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
   // Page / component roots emit their own wrapper unconditionally —
   // collapsing the root would erase the file's outer shell. Other
   // nodes flow through `collapseChain` which walks past any
@@ -341,11 +305,10 @@ function addBias(
   return { dx: current.dx + dx, dy: current.dy + dy };
 }
 
-function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOptions): string {
-  const { rootMode, parentLayout, depth } = options;
-  const indentStr = indent(depth);
+function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
+  const { rootMode, parentLayout } = options;
   const dataAttrs = dataAttributes(node, context.debugAttrs);
-  const rootClassAttr = rootClassAttribute(rootMode);
+  const rootClass = rootClassProp(rootMode);
 
   // Vector-only container collapse: a plain container whose entire
   // subtree is composed of vector shapes becomes one merged SVG. The
@@ -356,11 +319,13 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   // therefore computed without an inference result.
   if (rootMode === undefined && isVectorOnlyContainer(node)) {
     const svgStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options));
-    const svgStyleSrc = styleObjectLiteral(svgStyle, transformForNode(node, rootMode, parentLayout));
-    const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index }, svgStyleSrc, {
-      dataAttrs,
-      indent: indentStr,
-    });
+    const transform = transformForNode(node, rootMode, parentLayout);
+    const wrapperProps: JsxProp[] = [...dataAttrs];
+    if (rootClass) {
+      wrapperProps.push(rootClass);
+    }
+    wrapperProps.push(styleAsProp(svgStyle, transform));
+    const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index }, wrapperProps);
     if (merged) {
       return merged;
     }
@@ -380,24 +345,25 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   const computedStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, inferred, parentContextOf(options));
   const style = mergeAbsorbedStyle(computedStyle, absorbed.style);
   const transform = transformForNode(node, rootMode, parentLayout);
-  const styleSrc = styleObjectLiteral(style, transform);
 
   const orderedChildren = childrenForEmit(node, baseChildren, inferred);
+  const props: JsxProp[] = [...dataAttrs];
+  if (rootClass) {
+    props.push(rootClass);
+  }
+  props.push(styleAsProp(style, transform));
   if (orderedChildren.length === 0) {
-    return emitLeafJsx(node, context, style, styleSrc, dataAttrs, indentStr, rootClassAttr);
+    return emitLeafJsx(node, context, style, props);
   }
   const childParentLayout = effectiveChildParentLayout(node, inferred);
   const childContext = childContextFor(node, inferred, childParentLayout);
-  const inner = orderedChildren
-    .map((child) => emitNodeJsx(child, context, {
-      rootMode: undefined,
-      parentLayout: childParentLayout,
-      depth: depth + 1,
-      parentAlignItems: childContext.alignItems,
-      parentContent: childContext.content,
-    }))
-    .join("\n");
-  return `${indentStr}<div${dataAttrs}${rootClassAttr} style={${styleSrc}}>\n${inner}\n${indentStr}</div>`;
+  const children = orderedChildren.map((child) => emitNodeJsx(child, context, {
+    rootMode: undefined,
+    parentLayout: childParentLayout,
+    parentAlignItems: childContext.alignItems,
+    parentContent: childContext.content,
+  }));
+  return el("div", { props, children, layout: "block" });
 }
 
 /**
@@ -406,11 +372,11 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
  * subtree. Emitted only on page / component roots; descendants
  * inherit the scope through the ancestor selector.
  */
-function rootClassAttribute(rootMode: RootMode | undefined): string {
+function rootClassProp(rootMode: RootMode | undefined): JsxProp | undefined {
   if (rootMode === undefined) {
-    return "";
+    return undefined;
   }
-  return ` className="fig-page"`;
+  return strProp("className", "fig-page");
 }
 
 /**
@@ -608,11 +574,8 @@ function emitLeafJsx(
   node: FigNode,
   context: EmitContext,
   style: Record<string, string>,
-  styleSrc: string,
-  dataAttrs: string,
-  indentStr: string,
-  rootClassAttr: string,
-): string {
+  baseProps: readonly JsxProp[],
+): JsxNode {
   // Plain horizontal / vertical rules — but only when the layout
   // would otherwise collapse the SVG to zero pixels (flex children
   // with size.x or size.y = 0). `style.ts :: applyPlainRule` runs
@@ -621,35 +584,31 @@ function emitLeafJsx(
   // path (which the existing SVG `overflow:visible` trick already
   // handles correctly) doesn't get re-routed and pixel-shifted.
   if (style.background !== undefined && isPlainRule(node, context.index)) {
-    return `${indentStr}<div${dataAttrs}${rootClassAttr} style={${styleSrc}} aria-hidden />`;
+    return el("div", { props: [...baseProps, flagProp("aria-hidden")] });
   }
   if (isVectorShaped(node)) {
-    const svg = emitVectorSvg(node, { source: context.source, index: context.index }, styleSrc, {
-      dataAttrs,
-      indent: indentStr,
-      classAttr: rootClassAttr,
-    });
+    const svg = emitVectorSvg(node, { source: context.source, index: context.index }, baseProps);
     if (svg) {
       return svg;
     }
-    return `${indentStr}<div${dataAttrs}${rootClassAttr} style={${styleSrc}} aria-hidden />`;
+    return el("div", { props: [...baseProps, flagProp("aria-hidden")] });
   }
-  return `${indentStr}<div${dataAttrs}${rootClassAttr} style={${styleSrc}} />`;
+  return el("div", { props: [...baseProps] });
 }
 
-function emitTextJsx(node: FigNode, context: EmitContext, options: EmitOptions): string {
-  const { rootMode, parentLayout, depth } = options;
+function emitTextJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
+  const { rootMode, parentLayout } = options;
   const style = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options));
   const transform = transformForNode(node, rootMode, parentLayout);
-  const styleSrc = styleObjectLiteral(style, transform);
   const dataAttrs = dataAttributes(node, context.debugAttrs);
+  const baseProps: JsxProp[] = [...dataAttrs, styleAsProp(style, transform)];
   const characters = textCharacters(node);
-  const runsBody = renderRunsBody(node, context, characters, style);
-  if (runsBody !== undefined) {
-    return `${indent(depth)}<span${dataAttrs} style={${styleSrc}}>${runsBody}</span>`;
+  const runChildren = renderRunsBody(node, context, characters, style);
+  if (runChildren !== undefined) {
+    return el("span", { props: baseProps, children: runChildren, layout: "inline" });
   }
   const body = renderTextBody(node, context, characters);
-  return `${indent(depth)}<span${dataAttrs} style={${styleSrc}}>${body}</span>`;
+  return el("span", { props: baseProps, children: [body], layout: "inline" });
 }
 
 /**
@@ -666,11 +625,8 @@ function renderRunsBody(
   context: EmitContext,
   characters: string,
   baseStyle: Record<string, string>,
-): string | undefined {
+): readonly JsxNode[] | undefined {
   if (textCharsArePropBound(node, context)) {
-    // Prop-bound text resolves at runtime; the SYMBOL-authored runs
-    // would not match the override string anyway, and splitting into
-    // child spans here would fix the run shape to the SYMBOL default.
     return undefined;
   }
   const runs = resolveTextRuns(node, context.index);
@@ -683,10 +639,10 @@ function renderRunsBody(
   const baseFamily = node.fontName?.family;
   const baseStyleName = node.fontName?.style;
   const baseFontSize = typeof node.fontSize === "number" ? node.fontSize : undefined;
-  const segments: string[] = [];
+  const segments: JsxNode[] = [];
   for (const run of runs) {
-    const text = characters.slice(run.start, run.end);
-    if (text.length === 0) {
+    const slice = characters.slice(run.start, run.end);
+    if (slice.length === 0) {
       continue;
     }
     const runStyle = buildRunInlineStyle(run, {
@@ -696,12 +652,16 @@ function renderRunsBody(
       baseColor: baseStyle.color,
     }, context);
     if (Object.keys(runStyle).length === 0) {
-      segments.push(`{\`${escapeJsxText(text)}\`}`);
+      segments.push(text(slice));
       continue;
     }
-    segments.push(`<span style={${styleObjectLiteral(runStyle, undefined)}}>{\`${escapeJsxText(text)}\`}</span>`);
+    segments.push(el("span", {
+      props: [styleProp(runStyle)],
+      children: [text(slice)],
+      layout: "inline",
+    }));
   }
-  return segments.join("");
+  return segments;
 }
 
 function buildRunInlineStyle(
@@ -723,7 +683,10 @@ function buildRunInlineStyle(
   // lookup would miss. Inline weights/sizes/families are correct
   // for any single-run deviation.
   if (run.fontFamily !== undefined && run.fontFamily !== base.family) {
-    out.fontFamily = `"${run.fontFamily}"`;
+    // Wrap the family in quotes so multi-word names render as a
+    // single value. JSON-string escaping in the serializer keeps
+    // any special character in the family name safe.
+    out.fontFamily = `"${run.fontFamily.replace(/"/g, '\\"')}"`;
   }
   if (run.fontStyle !== undefined && run.fontStyle !== base.styleName) {
     const weight = fontStyleToWeight(run.fontStyle);
@@ -776,7 +739,7 @@ function textCharsArePropBound(node: FigNode, context: EmitContext): boolean {
 }
 
 /**
- * Resolve the JSX expression that fills a TEXT node.
+ * Resolve the JSX body that fills a TEXT node.
  *
  * If the node is bound to a TEXT-typed component prop (via
  * `componentPropRefs[].componentPropNodeField === "TEXT_DATA"`), the
@@ -786,12 +749,12 @@ function textCharsArePropBound(node: FigNode, context: EmitContext): boolean {
  *
  * Otherwise the span renders the literal SYMBOL-default characters.
  */
-function renderTextBody(node: FigNode, context: EmitContext, characters: string): string {
+function renderTextBody(node: FigNode, context: EmitContext, characters: string): JsxNode {
   const binding = context.propBindings.get(guidToString(node.guid));
   if (binding?.field === "TEXT_DATA") {
-    return `{${propIdentForBinding(binding.decl.name)}}`;
+    return expr(propIdentForBinding(binding.decl.name));
   }
-  return `{\`${escapeJsxText(characters)}\`}`;
+  return text(characters);
 }
 
 /**
@@ -816,7 +779,7 @@ function propIdentForBinding(name: string): string {
   return /^[0-9]/.test(camel) ? `p${camel}` : camel;
 }
 
-function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptions): string {
+function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
   const target = lookupInstanceTarget(context.source, context.registry, node);
   if (!target) {
     return emitContainerJsx(node, context, options);
@@ -843,13 +806,19 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   const variantNode = pickVariantNode(target, variant);
   const overrideVars = resolveInstancePaintOverrides(node, variantNode ?? target.node, context);
   const mergedWrapStyle = Object.keys(overrideVars).length > 0 ? { ...wrapStyle, ...overrideVars } : wrapStyle;
-  const wrapStyleSrc = styleObjectLiteral(mergedWrapStyle, wrapTransform);
+  const wrapStyleProp = styleAsProp(mergedWrapStyle, wrapTransform);
 
-  const variantAttr = renderVariantAttr(variant);
-  const assignmentAttrs = renderAssignmentAttrs(node, target);
+  const componentProps: JsxProp[] = [];
+  const variantProp = variantPropOf(variant);
+  if (variantProp) {
+    componentProps.push(variantProp);
+  }
+  for (const p of assignmentProps(node, target)) {
+    componentProps.push(p);
+  }
 
-  const wrapperAttrs = context.debugAttrs && node.name ? ` data-fig-instance=${JSON.stringify(node.name)}` : "";
-  const componentTag = `<${target.componentName}${variantAttr}${assignmentAttrs} />`;
+  const componentTag = el(target.componentName, { props: componentProps });
+
   // SYMBOLs render at their authored natural size; an INSTANCE that
   // resizes the symbol (Figma's standard scaling — e.g. a 127×28
   // logo dropped into a 90×20 slot) needs a CSS scale transform on
@@ -858,7 +827,13 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   // having `overflow: visible` (the Figma default for INSTANCE) so
   // the scaled content paints at the wrapper's outer dimensions.
   const inner = wrapForScale(node, target, componentTag);
-  return `${indent(options.depth)}<div${wrapperAttrs} style={${wrapStyleSrc}}>${inner}</div>`;
+
+  const wrapperProps: JsxProp[] = [];
+  if (context.debugAttrs && node.name) {
+    wrapperProps.push(strProp("data-fig-instance", node.name));
+  }
+  wrapperProps.push(wrapStyleProp);
+  return el("div", { props: wrapperProps, children: [inner], layout: "inline" });
 }
 
 /**
@@ -1066,8 +1041,8 @@ const SCALE_EPSILON = 1e-3;
 function wrapForScale(
   instance: FigNode,
   target: { readonly node: FigNode; readonly variants: ReadonlyMap<string, FigNode> },
-  componentTag: string,
-): string {
+  componentTag: JsxNode,
+): JsxNode {
   const symbolSize = naturalSymbolSize(instance, target);
   if (!symbolSize || !instance.size) {
     return componentTag;
@@ -1083,8 +1058,17 @@ function wrapForScale(
   if (Math.abs(sx - sy) > SCALE_RATIO_TOLERANCE) {
     return componentTag;
   }
-  const scaleStyle = `{transform: ${JSON.stringify(`scale(${sx}, ${sy})`)}, transformOrigin: "top left", width: ${JSON.stringify(`${symbolSize.x}px`)}, height: ${JSON.stringify(`${symbolSize.y}px`)}}`;
-  return `<div style={${scaleStyle}}>${componentTag}</div>`;
+  const scaleStyle: Record<string, string> = {
+    transform: `scale(${sx}, ${sy})`,
+    transformOrigin: "top left",
+    width: `${symbolSize.x}px`,
+    height: `${symbolSize.y}px`,
+  };
+  return el("div", {
+    props: [styleProp(scaleStyle)],
+    children: [componentTag],
+    layout: "inline",
+  });
 }
 
 const SCALE_RATIO_TOLERANCE = 0.05;
@@ -1120,14 +1104,17 @@ function naturalSymbolSize(
  * prop attributes targeting the component's typed props.
  *
  * Each assignment is matched to a propDecl by `defID`. The literal
- * value flows through as a JSX expression — strings are
- * `JSON.stringify`d, booleans / numbers go raw, and unmatched
- * assignment shapes (e.g. INSTANCE_SWAP referencing a runtime
- * symbolID) are skipped because there is no clean React equivalent
- * yet (a future iteration would resolve to the component import).
+ * value flows through as a JSX prop — strings as `JsxProp.string`
+ * (the serializer JSON-escapes), booleans / numbers as JSX
+ * expressions. INSTANCE_SWAP referencing a runtime symbolID is
+ * skipped because there is no clean React equivalent yet (a future
+ * iteration would resolve to the component import).
  */
-function renderAssignmentAttrs(instance: FigNode, target: { readonly props: readonly { readonly defId: string; readonly name: string; readonly kind: string }[] }): string {
-  const parts: string[] = [];
+function assignmentProps(
+  instance: FigNode,
+  target: { readonly props: readonly { readonly defId: string; readonly name: string; readonly kind: string }[] },
+): readonly JsxProp[] {
+  const out: JsxProp[] = [];
   for (const a of instance.componentPropAssignments ?? []) {
     if (!a.defID) {
       continue;
@@ -1137,9 +1124,9 @@ function renderAssignmentAttrs(instance: FigNode, target: { readonly props: read
     if (!decl) {
       continue;
     }
-    const attr = formatAssignmentAttr(decl, a.value);
-    if (attr) {
-      parts.push(attr);
+    const prop = formatAssignmentProp(decl, a.value);
+    if (prop) {
+      out.push(prop);
     }
   }
   // Walk `symbolData.symbolOverrides` for descendant text/visibility
@@ -1162,9 +1149,9 @@ function renderAssignmentAttrs(instance: FigNode, target: { readonly props: read
     if (typeof characters !== "string") {
       continue;
     }
-    parts.push(`${jsxAttrKey(decl.name)}=${JSON.stringify(characters)}`);
+    out.push(strProp(decl.name, characters));
   }
-  return parts.length === 0 ? "" : ` ${parts.join(" ")}`;
+  return out;
 }
 
 type SymbolOverride = {
@@ -1189,50 +1176,38 @@ function lastGuidOf(override: SymbolOverride): string | undefined {
   return guidToString(last);
 }
 
-function formatAssignmentAttr(
+function formatAssignmentProp(
   decl: { readonly name: string; readonly kind: string },
   value: { readonly textValue?: { readonly characters: string }; readonly boolValue?: boolean; readonly numberValue?: number; readonly floatValue?: number },
-): string | undefined {
-  const attrKey = jsxAttrKey(decl.name);
+): JsxProp | undefined {
   switch (decl.kind) {
     case "string": {
       const chars = value.textValue?.characters;
       if (typeof chars !== "string") {
         return undefined;
       }
-      return `${attrKey}=${JSON.stringify(chars)}`;
+      return strProp(decl.name, chars);
     }
     case "boolean": {
       if (typeof value.boolValue !== "boolean") {
         return undefined;
       }
-      return `${attrKey}={${value.boolValue}}`;
+      return exprProp(decl.name, `${value.boolValue}`);
     }
     case "number": {
       const n = typeof value.numberValue === "number" ? value.numberValue : value.floatValue;
       if (typeof n !== "number") {
         return undefined;
       }
-      return `${attrKey}={${n}}`;
+      return exprProp(decl.name, `${n}`);
     }
     case "variant":
-      // Already handled via `renderVariantAttr` from the instance's
+      // Already handled via `variantPropOf` from the instance's
       // resolved SYMBOL — skip here to avoid double-emission.
       return undefined;
     default:
       return undefined;
   }
-}
-
-function jsxAttrKey(name: string): string {
-  if (name === "variant") {
-    return "variant";
-  }
-  // JSX accepts non-identifier attribute keys as quoted strings.
-  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)) {
-    return name;
-  }
-  return JSON.stringify(name);
 }
 
 function transformForNode(
@@ -1249,11 +1224,11 @@ function transformForNode(
   return transformFromMatrix(node.transform);
 }
 
-function renderVariantAttr(variant: string | undefined): string {
+function variantPropOf(variant: string | undefined): JsxProp | undefined {
   if (variant === undefined) {
-    return "";
+    return undefined;
   }
-  return ` variant=${JSON.stringify(variant)}`;
+  return strProp("variant", variant);
 }
 
 function flowsInParent(parent: ParentLayout, node: FigNode): boolean {
@@ -1291,14 +1266,14 @@ function countSharedPrefix(a: readonly string[], b: readonly string[]): number {
   return max;
 }
 
-function dataAttributes(node: FigNode, debug: boolean): string {
+function dataAttributes(node: FigNode, debug: boolean): readonly JsxProp[] {
   if (!debug) {
-    return "";
+    return [];
   }
-  const attrs: string[] = [];
+  const out: JsxProp[] = [];
   if (node.name) {
-    attrs.push(`data-fig-name=${JSON.stringify(node.name)}`);
+    out.push(strProp("data-fig-name", node.name));
   }
-  attrs.push(`data-fig-type=${JSON.stringify(node.type.name)}`);
-  return ` ${attrs.join(" ")}`;
+  out.push(strProp("data-fig-type", node.type.name));
+  return out;
 }

@@ -29,15 +29,16 @@
  * whichever encoding the paint actually carries.
  */
 import type {
-  FigColor,
   FigGradientPaint,
   FigGradientStop,
   FigImagePaint,
   FigNode,
   FigPaint,
-  FigSolidPaint,
 } from "@higma-document-models/fig/types";
 import type { TokenIndex } from "../../tokens";
+import { figColorToCss } from "../../lib/css-format/color";
+import { clamp01, round3 } from "../../lib/css-format/numeric";
+import { solidPaintToCss } from "../../lib/css-format/paint";
 
 export type ImageResolver = (paint: FigImagePaint) => string | undefined;
 
@@ -47,30 +48,6 @@ export type PaintResult = {
   readonly css: string | undefined;
 };
 
-function colorToCss(c: FigColor): string {
-  const r = Math.round(c.r * 255);
-  const g = Math.round(c.g * 255);
-  const b = Math.round(c.b * 255);
-  if (c.a === 1) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  return `rgba(${r}, ${g}, ${b}, ${round3(c.a)})`;
-}
-
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
-
-function clamp01(n: number): number {
-  if (n < 0) {
-    return 0;
-  }
-  if (n > 1) {
-    return 1;
-  }
-  return n;
-}
-
 function sortedStops(stops: readonly FigGradientStop[]): readonly FigGradientStop[] {
   return [...stops].sort((a, b) => a.position - b.position);
 }
@@ -78,7 +55,7 @@ function sortedStops(stops: readonly FigGradientStop[]): readonly FigGradientSto
 function stopsCss(stops: readonly FigGradientStop[]): string {
   const ordered = sortedStops(stops);
   return ordered
-    .map((stop) => `${colorToCss(stop.color)} ${round3(clamp01(stop.position) * 100)}%`)
+    .map((stop) => `${figColorToCss(stop.color)} ${round3(clamp01(stop.position) * 100)}%`)
     .join(", ");
 }
 
@@ -211,27 +188,8 @@ function imageBackgroundLayer(paint: FigImagePaint, resolver: ImageResolver): {
   }
 }
 
-function paintOpacity(paint: FigPaint): number {
-  if (typeof paint.opacity === "number") {
-    return paint.opacity;
-  }
-  return 1;
-}
-
 function isVisible(paint: FigPaint): boolean {
   return paint.visible !== false;
-}
-
-function solidLayer(paint: FigSolidPaint, index: TokenIndex): string | undefined {
-  const tokenId = index.colorIdForPaint(paint);
-  if (tokenId) {
-    return `var(--${tokenId})`;
-  }
-  const opacity = paintOpacity(paint);
-  if (opacity === 1) {
-    return colorToCss(paint.color);
-  }
-  return colorToCss({ ...paint.color, a: paint.color.a * opacity });
 }
 
 type BackgroundLayer = {
@@ -266,7 +224,7 @@ function paintToLayer(paint: FigPaint, index: TokenIndex, resolver: ImageResolve
   }
   switch (paint.type) {
     case "SOLID": {
-      const css = solidLayer(paint, index);
+      const css = solidPaintToCss(paint, index);
       return css ? { image: css } : undefined;
     }
     case "GRADIENT_LINEAR":
@@ -315,7 +273,7 @@ export function paintsToBackgroundStyle(
 
   // Single SOLID — keep the simple form.
   if (visible.length === 1 && visible[0]?.type === "SOLID") {
-    const css = solidLayer(visible[0], index);
+    const css = solidPaintToCss(visible[0], index);
     return css ? { background: css } : {};
   }
 
@@ -347,7 +305,7 @@ export function paintsToBackgroundStyle(
 function pickBottomSolid(visible: readonly FigPaint[], index: TokenIndex): string | undefined {
   for (const paint of visible) {
     if (paint.type === "SOLID") {
-      return solidLayer(paint, index);
+      return solidPaintToCss(paint, index);
     }
   }
   return undefined;
@@ -397,7 +355,7 @@ export function paintsForText(
     return {};
   }
   if (visible.length === 1 && visible[0]?.type === "SOLID") {
-    const css = solidLayer(visible[0], index);
+    const css = solidPaintToCss(visible[0], index);
     return css ? { color: css } : {};
   }
   const fancy = paintsToBackgroundStyle(paints, index, resolver);

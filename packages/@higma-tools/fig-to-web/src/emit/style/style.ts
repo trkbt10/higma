@@ -37,6 +37,7 @@ import type {
   FigValueWithUnits,
 } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
+import { formatPx, round3 } from "../../lib/css-format/numeric";
 import type { TokenIndex } from "../../tokens";
 import { effectsToBoxShadow } from "../../tokens";
 import type { ImageResolver } from "./paint";
@@ -172,16 +173,6 @@ export type ParentLayout = "flex-row" | "flex-column" | "static" | "none";
 /** Per-child sizing along a flex axis, mirroring Figma's stack sizing enum. */
 type AxisSizing = "fixed" | "fill" | "hug";
 
-function round3(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
-
-function formatPx(n: number): string {
-  if (Number.isInteger(n)) {
-    return `${n}px`;
-  }
-  return `${Math.round(n * 100) / 100}px`;
-}
 
 function strokeWidth(weight: FigStrokeWeight | undefined): number | undefined {
   if (weight === undefined) {
