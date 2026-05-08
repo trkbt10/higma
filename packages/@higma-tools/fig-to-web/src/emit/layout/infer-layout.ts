@@ -37,9 +37,15 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 
-const GAP_TOLERANCE = 0.5;
-const ALIGN_TOLERANCE = 0.5;
-const INSET_TOLERANCE = 0.5;
+// Tolerances reflect float32→float64 round-trip noise plus designer-set
+// values that pass through Figma's UI rounding. 0.5px was too tight in
+// practice — gaps like 23.5/24.0/24.5 between three sibling cards
+// (genuinely intended as a uniform 24px gap) failed inference and the
+// frame fell back to absolute. 1.5px accommodates that noise without
+// admitting visibly uneven layouts.
+const GAP_TOLERANCE = 1.5;
+const ALIGN_TOLERANCE = 1.5;
+const INSET_TOLERANCE = 1.5;
 const MIN_CHILDREN_FOR_STACK = 2;
 
 export type InferredLayout = {
@@ -67,6 +73,37 @@ export type InferredInset = {
 };
 
 export type InferenceResult = InferredLayout | InferredInset | undefined;
+
+/**
+ * Children that opt out of layout via `stackPositioning: ABSOLUTE`
+ * are not considered when inferring a flex stack. Splitting them up
+ * front lets callers render them as positioned overlays inside an
+ * inferred flex / inset container — matching how Figma renders them.
+ */
+export type SeparatedChildren = {
+  readonly flow: readonly FigNode[];
+  readonly absolute: readonly FigNode[];
+};
+
+/**
+ * Partition a child list by `stackPositioning`. Children whose
+ * positioning is `ABSOLUTE` are returned in `absolute`; the rest go
+ * into `flow`. Mirrors how Figma's auto-layout treats absolute
+ * children inside an auto-layout container — they participate in the
+ * paint order but not in the stack flow.
+ */
+export function separateAbsoluteChildren(children: readonly FigNode[]): SeparatedChildren {
+  const flow: FigNode[] = [];
+  const absolute: FigNode[] = [];
+  for (const child of children) {
+    if (child.stackPositioning?.name === "ABSOLUTE") {
+      absolute.push(child);
+      continue;
+    }
+    flow.push(child);
+  }
+  return { flow, absolute };
+}
 
 type Box = {
   readonly node: FigNode;
@@ -154,17 +191,18 @@ export function inferLayout(frame: FigNode, childrenOverride?: readonly FigNode[
   if (!frame.size) {
     return undefined;
   }
-  const children = childrenOverride ?? visibleChildren(frame);
-  if (children.length === 0) {
+  const allChildren = childrenOverride ?? visibleChildren(frame);
+  if (allChildren.length === 0) {
     return undefined;
   }
-  // Skip when any child opts out of layout (Figma's stackPositioning
-  // ABSOLUTE only applies inside an auto-layout parent, but authors
-  // sometimes set it ahead of upgrading the frame — respect it).
-  for (const child of children) {
-    if (child.stackPositioning?.name === "ABSOLUTE") {
-      return undefined;
-    }
+  // Children with `stackPositioning: ABSOLUTE` opt out of the stack
+  // and must not skew gap / alignment math. Filter them before
+  // measuring; the caller is expected to render them as positioned
+  // overlays inside the inferred flex container (matching Figma's
+  // own rendering of "absolute inside auto-layout").
+  const children = allChildren.filter((child) => child.stackPositioning?.name !== "ABSOLUTE");
+  if (children.length === 0) {
+    return undefined;
   }
   const boxes = boxesOf(children);
   if (boxes.length !== children.length) {
@@ -205,10 +243,16 @@ export function inferLayout(frame: FigNode, childrenOverride?: readonly FigNode[
 }
 
 function inferInset(box: Box, containerW: number, containerH: number): InferredInset {
-  const paddingLeft = round2(box.x);
-  const paddingTop = round2(box.y);
-  const paddingRight = round2(containerW - (box.x + box.w));
-  const paddingBottom = round2(containerH - (box.y + box.h));
+  // Clamp to non-negative — browsers ignore negative padding and the
+  // emitter rendering `padding: -1px` produces an off-by-1 shift on
+  // any frame whose authored child slightly overflows the container.
+  // The original absolute fallback used `top: -1px` which IS honoured;
+  // padding's clamp-to-zero is not. Refuse to surface negative insets
+  // here so the layout remains visually faithful.
+  const paddingLeft = Math.max(0, round2(box.x));
+  const paddingTop = Math.max(0, round2(box.y));
+  const paddingRight = Math.max(0, round2(containerW - (box.x + box.w)));
+  const paddingBottom = Math.max(0, round2(containerH - (box.y + box.h)));
   return {
     direction: "inset",
     child: box.node,

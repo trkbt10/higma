@@ -210,8 +210,13 @@ type RunOverrideEntry = {
   readonly styleID: number;
   readonly fontName?: FigFontName;
   readonly fontSize?: number;
-  readonly lineHeight?: { readonly value: number; readonly units: { readonly name: string } };
-  readonly letterSpacing?: { readonly value: number; readonly units: { readonly name: string } };
+  // `units` is a `KiwiEnumValue<string>` — `{ value, name }` — same
+  // shape `FigValueWithUnits` carries. The earlier definition omitted
+  // `value` and forced two callers to dig the field out via untyped
+  // casts; keeping the field here lets `lineHeightToCss` /
+  // `letterSpacingToCss` accept the entry directly.
+  readonly lineHeight?: FigValueWithUnits;
+  readonly letterSpacing?: FigValueWithUnits;
 };
 
 function referencedStyleIds(cIds: readonly number[] | undefined): ReadonlySet<number> {

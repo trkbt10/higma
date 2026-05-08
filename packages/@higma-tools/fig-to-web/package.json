@@ -8,9 +8,9 @@
     "fig-to-web": "./src/cli/bin.ts"
   },
   "scripts": {
-    "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-web/src",
+    "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-web/src packages/@higma-tools/fig-to-web/spec",
     "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
-    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-tools/fig-to-web/src'"
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-tools/fig-to-web/src' '../../../packages/@higma-tools/fig-to-web/spec'"
   },
   "exports": {
     ".": {
@@ -39,6 +39,12 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-primitives/tree": "workspace:*"
+  },
+  "devDependencies": {
+    "@higma-codecs/png": "workspace:*",
+    "@resvg/resvg-js": "^2.6.2",
+    "pixelmatch": "^7.2.0",
+    "puppeteer": "^24.42.0"
   },
   "higma": {
     "boundary": {

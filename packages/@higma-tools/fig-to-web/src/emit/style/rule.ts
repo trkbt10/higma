@@ -22,7 +22,7 @@
  * elaborate (partial dashes, gradients, multi-segment paths) keeps
  * the existing SVG path so we don't regress on richer line styling.
  */
-import type { FigMatrix, FigNode, FigPaint, FigStrokeWeight } from "@higma-document-models/fig/types";
+import type { FigMatrix, FigNode, FigPaint, FigSolidPaint, FigStrokeWeight } from "@higma-document-models/fig/types";
 import type { TokenIndex } from "../../tokens";
 
 const RULE_NODE_TYPES: ReadonlySet<string> = new Set([
@@ -129,8 +129,16 @@ function resolveStrokeColor(paints: readonly FigPaint[] | undefined, index: Toke
   if (!paints) {
     return undefined;
   }
-  let visibleSolids = 0;
-  let resolved: string | undefined;
+  // Walk visible paints in order. The function refuses any input that
+  // mixes non-SOLID paints OR more than one visible SOLID — gradients
+  // and stacked colours can't be expressed by a single CSS `border`
+  // colour, so the caller falls back to the inline-stroke path. The
+  // mutable accumulator is wrapped in a const-bound ref so we satisfy
+  // the no-`let` rule while still using a plain for-of loop.
+  const stateRef: { visibleSolids: number; resolved: string | undefined } = {
+    visibleSolids: 0,
+    resolved: undefined,
+  };
   for (const paint of paints) {
     if (paint.visible === false) {
       continue;
@@ -138,23 +146,29 @@ function resolveStrokeColor(paints: readonly FigPaint[] | undefined, index: Toke
     if (paint.type !== "SOLID") {
       return undefined;
     }
-    visibleSolids += 1;
-    if (visibleSolids > 1) {
+    stateRef.visibleSolids += 1;
+    if (stateRef.visibleSolids > 1) {
       return undefined;
     }
-    const tokenId = index.colorIdForPaint(paint);
-    if (tokenId) {
-      resolved = `var(--${tokenId})`;
-      continue;
-    }
-    const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
-    const a = paint.color.a * opacity;
-    const r = Math.round(paint.color.r * 255);
-    const g = Math.round(paint.color.g * 255);
-    const b = Math.round(paint.color.b * 255);
-    resolved = a >= 0.999 ? `rgb(${r}, ${g}, ${b})` : `rgba(${r}, ${g}, ${b}, ${round3(a)})`;
+    stateRef.resolved = solidPaintToCss(paint, index);
   }
-  return resolved;
+  return stateRef.resolved;
+}
+
+function solidPaintToCss(paint: FigSolidPaint, index: TokenIndex): string {
+  const tokenId = index.colorIdForPaint(paint);
+  if (tokenId) {
+    return `var(--${tokenId})`;
+  }
+  const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const a = paint.color.a * opacity;
+  const r = Math.round(paint.color.r * 255);
+  const g = Math.round(paint.color.g * 255);
+  const b = Math.round(paint.color.b * 255);
+  if (a >= 0.999) {
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  return `rgba(${r}, ${g}, ${b}, ${round3(a)})`;
 }
 
 function round3(n: number): number {

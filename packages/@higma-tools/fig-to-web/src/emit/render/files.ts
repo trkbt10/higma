@@ -31,6 +31,7 @@ import type { ImageResolver } from "../style/paint";
 import type { PropBindings } from "../plan/prop-bindings";
 import { buildPropBindings } from "../plan/prop-bindings";
 import { buildReparentResult } from "../layout/reparent";
+import { applyRowClustering } from "../layout/cluster";
 
 export type EmitOpts = {
   readonly debugAttrs: boolean;
@@ -38,6 +39,17 @@ export type EmitOpts = {
 };
 
 const EMPTY_BINDINGS: PropBindings = new Map();
+
+function buildLayoutOverlay(rootNode: FigNode): EmitContext["reparent"] {
+  // Reparent first (image-to-fig flat-tree repair), then row-cluster on
+  // top of the reparent overlay so the clustering pass operates on the
+  // already-corrected children list.
+  const base = buildReparentResult(rootNode);
+  const childrenByParent = new Map(base.childrenByParent);
+  const transformByGuid = new Map(base.transformByGuid);
+  applyRowClustering(rootNode, childrenByParent, transformByGuid);
+  return { childrenByParent, transformByGuid };
+}
 
 function makeContext(
   source: FigSource,
@@ -57,7 +69,7 @@ function makeContext(
     imports: new Map(),
     debugAttrs: opts.debugAttrs,
     propBindings,
-    reparent: buildReparentResult(rootNode),
+    reparent: buildLayoutOverlay(rootNode),
   };
 }
 

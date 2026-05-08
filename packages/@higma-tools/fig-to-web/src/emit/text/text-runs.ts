@@ -128,19 +128,20 @@ export function resolveTextRuns(node: FigNode, index: TokenIndex): readonly Text
     overrideById.set(entry.styleID, entry);
   }
 
-  // Sweep collapse identical-id runs.
+  // Sweep collapse identical-id runs. The sweep pointer is held in a
+  // const-bound ref struct so the no-`let` rule is satisfied without
+  // splitting the (deliberately tight) loop into a separate function.
   const segments: { readonly start: number; readonly end: number; readonly styleId: number }[] = [];
-  let runStart = 0;
-  let runId = cIds[0];
+  const sweep: { runStart: number; runId: number } = { runStart: 0, runId: cIds[0] };
   for (let i = 1; i < length; i += 1) {
-    if (cIds[i] === runId) {
+    if (cIds[i] === sweep.runId) {
       continue;
     }
-    segments.push({ start: runStart, end: i, styleId: runId });
-    runStart = i;
-    runId = cIds[i];
+    segments.push({ start: sweep.runStart, end: i, styleId: sweep.runId });
+    sweep.runStart = i;
+    sweep.runId = cIds[i];
   }
-  segments.push({ start: runStart, end: length, styleId: runId });
+  segments.push({ start: sweep.runStart, end: length, styleId: sweep.runId });
 
   return segments.map((seg) => buildRun(seg.start, seg.end, seg.styleId, overrideById, index));
 }
@@ -192,7 +193,12 @@ function resolveOverrideColor(override: RawOverrideEntry, index: TokenIndex): st
     // FigNodes; comparing the object to the string `"SOLID"` always
     // fails and silently drops every override colour. Read the
     // enum's `.name`.
-    const typeName = typeof paint.type === "string" ? paint.type : (paint.type as { readonly name?: string } | undefined)?.name;
+    // Raw `.fig` files can serialise enum values as either the
+    // string literal (`"SOLID"`) or the Kiwi struct (`{ name: "SOLID", value: 0 }`).
+    // TypeScript narrows `paint.type` to the string-literal union, so
+    // we cast through `unknown` to handle the struct shape that real
+    // files surface at runtime without misleading the static checker.
+    const typeName = readEnumName(paint.type);
     if (typeName !== "SOLID") {
       // Gradient / image fills inside a text run are unusual and
       // would need `background-clip: text` machinery; skip to base.
@@ -207,8 +213,27 @@ function resolveOverrideColor(override: RawOverrideEntry, index: TokenIndex): st
   return undefined;
 }
 
+/**
+ * Read a Kiwi enum's `name` field from either the bare string-literal
+ * form or the `{ name, value }` struct form. Real `.fig` files
+ * surface either; TypeScript only sees the literal form because the
+ * domain types pre-narrow most read sites.
+ */
+function readEnumName(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value === "object" && "name" in value) {
+    const name = (value as { readonly name?: unknown }).name;
+    if (typeof name === "string") {
+      return name;
+    }
+  }
+  return undefined;
+}
+
 function colorToCss(paint: FigPaint): string | undefined {
-  const typeName = typeof paint.type === "string" ? paint.type : (paint.type as { readonly name?: string } | undefined)?.name;
+  const typeName = readEnumName(paint.type);
   if (typeName !== "SOLID") {
     return undefined;
   }
@@ -234,12 +259,24 @@ function colorToCss(paint: FigPaint): string | undefined {
  */
 export function hasOverrides(runs: readonly TextRun[]): boolean {
   for (const run of runs) {
-    if (run.color !== undefined) return true;
-    if (run.fontFamily !== undefined) return true;
-    if (run.fontStyle !== undefined) return true;
-    if (run.fontSize !== undefined) return true;
-    if (run.lineHeight !== undefined) return true;
-    if (run.letterSpacing !== undefined) return true;
+    if (run.color !== undefined) {
+      return true;
+    }
+    if (run.fontFamily !== undefined) {
+      return true;
+    }
+    if (run.fontStyle !== undefined) {
+      return true;
+    }
+    if (run.fontSize !== undefined) {
+      return true;
+    }
+    if (run.lineHeight !== undefined) {
+      return true;
+    }
+    if (run.letterSpacing !== undefined) {
+      return true;
+    }
   }
   return false;
 }

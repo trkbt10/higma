@@ -203,6 +203,24 @@ function radiusValue(node: FigNode, index: TokenIndex): string | undefined {
       return `${formatPx(tl)} ${formatPx(tr)} ${formatPx(br)} ${formatPx(bl)}`;
     }
   }
+  // Real Figma .fig files store per-corner radii on individual fields,
+  // not the array. Fall back to those before checking the uniform
+  // `cornerRadius` (which represents the case where every corner shares
+  // a value). See `decoration.ts > perCornerRadiusCss` for parity with
+  // the decoration emit path.
+  const tl = node.rectangleTopLeftCornerRadius;
+  const tr = node.rectangleTopRightCornerRadius;
+  const br = node.rectangleBottomRightCornerRadius;
+  const bl = node.rectangleBottomLeftCornerRadius;
+  if (tl !== undefined || tr !== undefined || br !== undefined || bl !== undefined) {
+    const tlN = tl ?? 0;
+    const trN = tr ?? 0;
+    const brN = br ?? 0;
+    const blN = bl ?? 0;
+    if (tlN > 0 || trN > 0 || brN > 0 || blN > 0) {
+      return `${formatPx(tlN)} ${formatPx(trN)} ${formatPx(brN)} ${formatPx(blN)}`;
+    }
+  }
   const r = typeof node.cornerRadius === "number" ? node.cornerRadius : undefined;
   if (r === undefined) {
     return undefined;
@@ -1024,32 +1042,44 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   if (!style.fontSize && fontSize !== undefined) {
     style.fontSize = formatPx(fontSize);
   }
-  // Per-node override: when the node carries `derivedTextData.baselines`,
-  // its `lineHeight` field is the actual rendered line height in pixels
-  // — Figma's exporter pre-bakes the font's intrinsic line-height into
-  // this number for any `100% PERCENT` style. CSS `line-height: 100%`
-  // is exactly `font-size`, which is `fontSize × ascender_ratio` short
-  // of Figma's rendered first-baseline; using the derived pixel value
-  // instead lines the first baseline up with the SVG renderer's first
-  // glyph row. Single-line text (the dominant case) gets near-perfect
-  // alignment; multi-line text picks up a small per-line drift because
-  // CSS distributes the larger line-box uniformly while Figma keeps
-  // subsequent baselines at `fontSize` apart, but the first-line win
-  // still beats leaving every node 2-3 px high.
-  const derivedLh = readDerivedBaselineLineHeight(node);
-  if (derivedLh !== undefined) {
-    // Figma auto-resizes single-line text to its glyph extent, leaving
-    // `size.y` smaller than the font's natural `derivedLh`. The
-    // padding emitted on the parent (avatar circles, icon chips) is
-    // calibrated for that trimmed extent, so a `lineHeight: derivedLh`
-    // here overflows the stored bounds and pushes the glyph below the
-    // visual centre. Clamp single-line text to its stored height so
-    // the inline box matches the rendered bounds the parent's padding
-    // was sized against.
-    const effective = clampLineHeightToBounds(node, derivedLh);
-    style.lineHeight = formatPx(effective);
-  } else if (!style.lineHeight && lineHeight !== undefined) {
-    style.lineHeight = lineHeight;
+  // Authored line-height in PIXELS is the rendered per-line stride —
+  // honour it verbatim. The derived-baseline path below addresses the
+  // *AUTO / PERCENT* case where Figma's exporter pre-bakes the font's
+  // intrinsic line-height into `derivedTextData.baselines[0].lineHeight`
+  // and CSS would otherwise compute a different value from
+  // `lineHeight: 100%`. When the author set an explicit pixel value
+  // (the e-commerce hero "Buy your dream plants" sets `64px` to pack
+  // its two lines tight against a `font-size: 64`) the derived
+  // baseline lineHeight reflects the font's *natural* box, not the
+  // rendered stride — using it here would expand each line by
+  // `derivedLh - authored` and push every subsequent baseline down.
+  // The `baselines[i+1].lineY - baselines[i].lineY` delta is the
+  // authoritative stride; when it equals the authored value, defer to
+  // the authored value.
+  const explicitPixels = explicitPixelLineHeight(node);
+  if (explicitPixels !== undefined && explicitPixels > 0) {
+    style.lineHeight = formatPx(explicitPixels);
+  } else {
+    // Per-node override for AUTO / PERCENT: when the node carries
+    // `derivedTextData.baselines`, its `lineHeight` field is the
+    // actual rendered line height in pixels — Figma's exporter
+    // pre-bakes the font's intrinsic line-height into this number for
+    // any `100% PERCENT` style. CSS `line-height: 100%` is exactly
+    // `font-size`, which is `fontSize × ascender_ratio` short of
+    // Figma's rendered first-baseline; using the derived pixel value
+    // instead lines the first baseline up with the SVG renderer's
+    // first glyph row.
+    const derivedLh = readDerivedBaselineLineHeight(node);
+    if (derivedLh !== undefined) {
+      // Figma auto-resizes single-line text to its glyph extent, leaving
+      // `size.y` smaller than the font's natural `derivedLh`. Clamp
+      // single-line text to its stored height so the inline box matches
+      // the rendered bounds the parent's padding was sized against.
+      const effective = clampLineHeightToBounds(node, derivedLh);
+      style.lineHeight = formatPx(effective);
+    } else if (!style.lineHeight && lineHeight !== undefined) {
+      style.lineHeight = lineHeight;
+    }
   }
   if (!style.letterSpacing && letterSpacing !== undefined) {
     style.letterSpacing = letterSpacing;
@@ -1065,6 +1095,24 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   applyTextAlignment(node, style);
   applyTextCase(node, style);
   applyTextDecoration(node, style);
+}
+
+/**
+ * Read the authored pixel line-height from `node.lineHeight` when the
+ * units are `PIXELS`. Returns undefined for AUTO / PERCENT (the
+ * caller falls through to the derived baseline path) so this helper
+ * has no implicit defaults — every other unit category is rejected
+ * by name rather than coerced.
+ */
+function explicitPixelLineHeight(node: FigNode): number | undefined {
+  const lh = node.lineHeight;
+  if (!lh) {
+    return undefined;
+  }
+  if (lh.units.name !== "PIXELS") {
+    return undefined;
+  }
+  return lh.value;
 }
 
 /**

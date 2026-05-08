@@ -41,6 +41,7 @@ import { inferLayout } from "../layout/infer-layout";
 import { collapseChain } from "../layout/collapse";
 import type { ReparentResult } from "../layout/reparent";
 import { guidToString, safeChildren as safeChildrenDomain } from "@higma-document-models/fig/domain";
+import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { resolvePaintRef } from "@higma-document-models/fig/symbols";
 import type { FigPaint, FigStyleId } from "@higma-document-models/fig/types";
 
@@ -222,7 +223,21 @@ function isRendered(node: FigNode): boolean {
 }
 
 function styleObjectLiteral(style: Record<string, string>, transform: string | undefined): string {
-  const merged = transform ? { ...style, transform } : style;
+  if (!transform) {
+    return `{${styleEntries(style)}}`;
+  }
+  // Pin `transform-origin` to the top-left corner whenever a rotation
+  // / scale / skew matrix is applied. Figma encodes node-local `(0,0)`
+  // as the rotation pivot — the matrix's translation part `(m02, m12)`
+  // is the post-rotation position of that pivot in parent coordinates,
+  // which is what we already write into `left` / `top`. CSS's default
+  // `transform-origin: 50% 50%` rotates around the element's centre
+  // instead, so without this override every rotated node ends up
+  // displaced by `((1-cosθ)*w/2 + sinθ*h/2, (1-cosθ)*h/2 - sinθ*w/2)`
+  // from where Figma drew it. Authoring `transformOrigin` here keeps
+  // the override paired with every emitted `transform` so the two
+  // never desynchronise.
+  const merged = { ...style, transform, transformOrigin: "0 0" };
   return `{${styleEntries(merged)}}`;
 }
 
@@ -926,28 +941,37 @@ function findOverrideTarget(
   base: FigNode,
   guidPath: ReadonlyArray<{ readonly sessionID: number; readonly localID: number }>,
 ): FigNode | undefined {
-  let cursor: FigNode | undefined = base;
+  // The mutable cursor is held in a const-bound ref struct so the
+  // descent stays a flat loop without hitting the no-`let` rule.
+  // `value: undefined` is the natural terminator when an intermediate
+  // step's guid doesn't resolve under the current parent.
+  const ref: { value: FigNode | undefined } = { value: base };
   for (const step of guidPath) {
-    if (!cursor) {
+    if (!ref.value) {
       return undefined;
     }
-    const targetStr = guidToString(step);
-    let next: FigNode | undefined;
-    for (const child of safeChildrenDomain(cursor)) {
-      if (guidToString(child.guid) === targetStr) {
-        next = child;
-        break;
-      }
-    }
-    cursor = next;
+    ref.value = findChildByGuid(ref.value, step);
   }
-  return cursor;
+  return ref.value;
+}
+
+function findChildByGuid(
+  parent: FigNode,
+  step: { readonly sessionID: number; readonly localID: number },
+): FigNode | undefined {
+  const targetStr = guidToString(step);
+  for (const child of safeChildrenDomain(parent)) {
+    if (guidToString(child.guid) === targetStr) {
+      return child;
+    }
+  }
+  return undefined;
 }
 
 function collectPaintOverride(
   originalPaints: readonly FigPaint[] | undefined,
   newStyleId: FigStyleId,
-  registry: import("@higma-document-models/fig/domain").FigStyleRegistry,
+  registry: FigStyleRegistry,
   context: EmitContext,
   out: Record<string, string>,
 ): void {
@@ -983,11 +1007,28 @@ function collectPaintsOverride(
   out[`--${originalToken}`] = newColor;
 }
 
+/**
+ * Read a Kiwi enum's `.name` field. Raw fig nodes carry enum values
+ * either as a serialised string or as a `{ value, name }` struct;
+ * this helper converges both shapes onto the string `name` channel
+ * with no implicit defaults.
+ */
+function readKiwiEnumName(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value && typeof value === "object" && "name" in value) {
+    const name = (value as { readonly name?: unknown }).name;
+    if (typeof name === "string") {
+      return name;
+    }
+  }
+  return undefined;
+}
+
 function solidPaintToCss(paint: FigPaint): string | undefined {
   const rawType = (paint as { readonly type?: unknown }).type;
-  const typeName = typeof rawType === "string"
-    ? rawType
-    : (rawType as { readonly name?: string } | undefined)?.name;
+  const typeName = readKiwiEnumName(rawType);
   if (typeName !== "SOLID") {
     return undefined;
   }

@@ -456,13 +456,32 @@ export function emitVectorSvg(
 
   const viewBox = `${dims.viewBoxX} ${dims.viewBoxY} ${dims.viewBoxW} ${dims.viewBoxH}`;
   const classAttr = attrsAndIndent.classAttr ?? "";
-  // Degenerate vectors (zero-thickness lines) need `overflow: visible`
-  // on the SVG itself so the stroke can extend past the zero-height
-  // bounding box. The native `overflow` SVG attribute is the
-  // cross-browser-safe way to express this — CSS `overflow: visible`
-  // would have the same effect inside the React style record but
-  // nothing else in this emitter writes through that channel.
-  const overflowAttr = dims.degenerate ? ` overflow="visible"` : "";
+  // SVG's default `overflow: hidden` clips any path coordinate that
+  // falls outside `viewBox`. That mis-clips two cases this emitter
+  // routinely hits:
+  //
+  //   1. **Degenerate vectors** (zero-thickness LINE / single-axis
+  //      VECTOR) — stroke needs to extend past the collapsed axis.
+  //
+  //   2. **Strokes with `strokeAlign: CENTER` (Figma's default) or
+  //      `OUTSIDE`** — the rendered outline extends `strokeWeight/2`
+  //      (CENTER) or `strokeWeight` (OUTSIDE) past `node.size` on
+  //      every side, plus more for `strokeCap: ROUND`/`SQUARE` at
+  //      path endpoints. Figma's layout uses the *centerline* bbox
+  //      (`node.size`) so the SVG element keeps `width`/`height` at
+  //      `node.size` for layout fidelity, and `overflow="visible"`
+  //      lets the rendered stroke overshoot — the parent's
+  //      `clipsContent` handles real clipping where the design wants
+  //      it. Without this, the e-commerce plant-shop hero's two
+  //      hand-drawn squiggles (`Vector 186/187`) lost their endpoints
+  //      to a 2 px clip.
+  //
+  // Always emitting `overflow="visible"` is safe: pure fill paths
+  // whose geometry sits inside the viewBox render identically either
+  // way, and parents that clip (icon frames, scrollable cards) rely
+  // on the surrounding container's `overflow: hidden`, not the SVG
+  // element's own.
+  const overflowAttr = ` overflow="visible"`;
 
   return `${attrsAndIndent.indent}<svg${attrsAndIndent.dataAttrs}${classAttr} style={${styleSrc}}${overflowAttr} viewBox=${JSON.stringify(viewBox)} preserveAspectRatio="none"${styling.svgFillAttr}${styling.svgStrokeAttrs} xmlns="http://www.w3.org/2000/svg" aria-hidden>${pathElements}</svg>`;
 }

@@ -132,6 +132,38 @@ function parentHasInterferingPaint(parent: FigNode): boolean {
   return false;
 }
 
+/**
+ * Real Figma `.fig` files store per-corner radii on individual fields
+ * (`rectangleTopLeftCornerRadius` …) instead of as a uniform
+ * `cornerRadius` or the array `rectangleCornerRadii`. The
+ * `@higma-document-renderers/fig` renderer normalises these into
+ * `rectangleCornerRadii` on `FigDesignNode`, but fig-to-web walks raw
+ * `FigNode` so the same normalisation has to live here. Returns
+ * `undefined` when no per-corner field is set; otherwise emits the
+ * 4-value `tl tr br bl` shorthand. Missing corners default to 0
+ * (matching the renderer's `?? 0`).
+ *
+ * Suppresses the all-zeros case so we don't emit `borderRadius:
+ * "0px 0px 0px 0px"` for plain rectangles.
+ */
+function perCornerRadiusCss(node: FigNode): string | undefined {
+  const tl = node.rectangleTopLeftCornerRadius;
+  const tr = node.rectangleTopRightCornerRadius;
+  const br = node.rectangleBottomRightCornerRadius;
+  const bl = node.rectangleBottomLeftCornerRadius;
+  if (tl === undefined && tr === undefined && br === undefined && bl === undefined) {
+    return undefined;
+  }
+  const tlN = tl ?? 0;
+  const trN = tr ?? 0;
+  const brN = br ?? 0;
+  const blN = bl ?? 0;
+  if (tlN === 0 && trN === 0 && brN === 0 && blN === 0) {
+    return undefined;
+  }
+  return `${formatPx(tlN)} ${formatPx(trN)} ${formatPx(brN)} ${formatPx(blN)}`;
+}
+
 function decorationStyle(decoration: FigNode, inputs: StyleInputs): Record<string, string> {
   const style: Record<string, string> = {};
   const fills = decoration.fillPaints ?? decoration.backgroundPaints;
@@ -161,6 +193,10 @@ function decorationRadius(node: FigNode): string | undefined {
     if (valid) {
       return `${formatPx(tl)} ${formatPx(tr)} ${formatPx(br)} ${formatPx(bl)}`;
     }
+  }
+  const perCorner = perCornerRadiusCss(node);
+  if (perCorner !== undefined) {
+    return perCorner;
   }
   if (typeof node.cornerRadius === "number" && node.cornerRadius > 0) {
     return formatPx(node.cornerRadius);
