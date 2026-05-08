@@ -3,22 +3,27 @@
  *
  * Loads fonts from the filesystem using common system font directories.
  * macOS, Linux, and Windows font paths are supported.
+ *
+ * Weight/style detection delegates to the canonical SoT (`detectWeight` /
+ * `detectStyle`); driver-local re-implementations would drift from the
+ * resolver's interpretation and produce mismatched cache lookups.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "../../font/loader";
-import type { FontLoadOptions, LoadedFont } from "../../font/types";
+import type { FontQuery } from "../../font/query";
+import { figmaFontToQuery } from "../../font/query";
+import type { LoadedFont } from "../../font/types";
 
 type FontNameRecord = Record<string, { en?: string } | undefined>;
+type PlatformFontNameRecord = Record<string, FontNameRecord | undefined>;
 
-/** Type guard to treat opentype.js names as a generic record for accessing non-standard properties */
 function isNameRecord(names: unknown): names is FontNameRecord {
   return typeof names === "object" && names !== null;
 }
 
-/** Convert font names object to a generic record for non-standard property access */
 function toNameRecord(names: unknown): FontNameRecord {
   if (isNameRecord(names)) {
     return names;
@@ -26,12 +31,39 @@ function toNameRecord(names: unknown): FontNameRecord {
   return {};
 }
 
-/** Type guard to treat parsed font as LoadedFont type */
+function isPlatformNameRecord(names: unknown): names is PlatformFontNameRecord {
+  return typeof names === "object" && names !== null;
+}
+
+/**
+ * Read an English-localized name table entry. Tries the top-level record
+ * first, then the Windows and Macintosh platform-specific tables. Some
+ * font files (notably Adobe-tagged TTFs and certain Asian faces) only
+ * populate the platform-scoped tables.
+ */
+function fontNameValue(names: unknown, key: string): string | undefined {
+  const direct = toNameRecord(names)[key]?.en;
+  if (direct !== undefined) {
+    return direct;
+  }
+  if (!isPlatformNameRecord(names)) {
+    return undefined;
+  }
+  const windows = names.windows?.[key]?.en;
+  if (windows !== undefined) {
+    return windows;
+  }
+  const macintosh = names.macintosh?.[key]?.en;
+  if (macintosh !== undefined) {
+    return macintosh;
+  }
+  return undefined;
+}
+
 function isLoadedFontType(font: unknown): font is LoadedFont["font"] {
   return typeof font === "object" && font !== null;
 }
 
-/** Convert parsed opentype font to LoadedFont font type */
 function toLoadedFontType(font: unknown): LoadedFont["font"] {
   if (isLoadedFontType(font)) {
     return font;
@@ -39,20 +71,13 @@ function toLoadedFontType(font: unknown): LoadedFont["font"] {
   throw new Error("Invalid font data");
 }
 
-/**
- * Font file metadata from scanning
- */
+/** Indexed font file metadata. `query` is the canonical face descriptor. */
 type FontFileInfo = {
   readonly path: string;
-  readonly family: string;
-  readonly weight: number;
-  readonly style: "normal" | "italic" | "oblique";
+  readonly query: FontQuery;
   readonly postscriptName?: string;
 };
 
-/**
- * System font directories by platform
- */
 const SYSTEM_FONT_DIRS: Record<string, readonly string[]> = {
   darwin: [
     "/System/Library/Fonts",
@@ -71,44 +96,11 @@ const SYSTEM_FONT_DIRS: Record<string, readonly string[]> = {
   ],
 };
 
-/**
- * Get font directories for current platform
- */
 function getSystemFontDirs(): readonly string[] {
   const platform = process.platform;
   return SYSTEM_FONT_DIRS[platform] ?? [];
 }
 
-/**
- * Get font weight from font name
- */
-function getWeightFromName(name: string): number {
-  const lower = name.toLowerCase();
-  if (lower.includes("thin") || lower.includes("hairline")) {return 100;}
-  if (lower.includes("extralight") || lower.includes("ultralight")) {return 200;}
-  if (lower.includes("light")) {return 300;}
-  if (lower.includes("regular") || lower.includes("normal") || lower.includes("book")) {return 400;}
-  if (lower.includes("medium")) {return 500;}
-  if (lower.includes("semibold") || lower.includes("demibold")) {return 600;}
-  if (lower.includes("extrabold") || lower.includes("ultrabold")) {return 800;}
-  if (lower.includes("bold")) {return 700;}
-  if (lower.includes("black") || lower.includes("heavy")) {return 900;}
-  return 400;
-}
-
-/**
- * Get font style from font name
- */
-function getStyleFromName(name: string): "normal" | "italic" | "oblique" {
-  const lower = name.toLowerCase();
-  if (lower.includes("italic")) {return "italic";}
-  if (lower.includes("oblique")) {return "oblique";}
-  return "normal";
-}
-
-/**
- * Calculate weight distance (closer to 0 is better)
- */
 function weightDistance(requested: number, actual: number): number {
   return Math.abs(requested - actual);
 }
@@ -133,9 +125,6 @@ function isFontFile(filename: string): boolean {
 }
 
 /**
- * Get font info from a font file
- */
-/**
  * Read a font file and parse it via opentype.js.
  *
  * Node's `Buffer.buffer` is typed as `ArrayBufferLike` (so it accepts
@@ -151,39 +140,36 @@ function readFontFile(fontPath: string): ReturnType<typeof parseFont> {
 async function getFontInfo(fontPath: string): Promise<FontFileInfo | null> {
   const font = readFontFile(fontPath);
 
-  // Get font family name - try standard name first, then preferredFamily.
-  const names = toNameRecord(font.names);
-  const family = font.names.fontFamily?.en ?? names.preferredFamily?.en ?? "";
-  const subfamily = font.names.fontSubfamily?.en ?? "";
-  const postscriptName = font.names.postScriptName?.en;
+  const family = fontNameValue(font.names, "fontFamily") ?? fontNameValue(font.names, "preferredFamily") ?? "";
+  const subfamily = fontNameValue(font.names, "fontSubfamily") ?? "";
+  const postscriptName = fontNameValue(font.names, "postScriptName");
 
   if (!family) {return null;}
 
+  // Defer (weight, style) detection to the canonical SoT — `figmaFontToQuery`
+  // applies the same `detectWeight` / `detectStyle` rules a resolver call
+  // would, so driver indexing matches resolver lookups exactly.
+  const query = figmaFontToQuery({ family, style: subfamily || family });
+
   return {
     path: fontPath,
-    family,
-    weight: getWeightFromName(subfamily || family),
-    style: getStyleFromName(subfamily || family),
+    query,
     postscriptName,
   };
 }
 
-/** Attempt to index a single font file. */
 async function tryIndexFontFile(
   fullPath: string,
   index: Map<string, FontFileInfo[]>
 ): Promise<void> {
   const info = await getFontInfo(fullPath);
   if (info) {
-    const familyLower = info.family.toLowerCase();
+    const familyLower = info.query.family.toLowerCase();
     const existing = index.get(familyLower) ?? [];
     index.set(familyLower, [...existing, info]);
   }
 }
 
-/**
- * Index fonts from a directory (recursive)
- */
 async function indexDirectory(
   dir: string,
   index: Map<string, FontFileInfo[]>
@@ -245,46 +231,38 @@ export function createNodeFontLoader(
     return fontIndexRef.value!;
   }
 
-  async function loadFont(options: FontLoadOptions): Promise<LoadedFont | undefined> {
+  async function loadFont(query: FontQuery): Promise<LoadedFont | undefined> {
     const index = await ensureIndex();
-    const familyLower = options.family.toLowerCase();
+    const familyLower = query.family.toLowerCase();
     const variants = index.get(familyLower);
 
     if (!variants || variants.length === 0) {
       return undefined;
     }
 
-    // Find best match
-    const targetWeight = options.weight ?? 400;
-    const targetStyle = options.style ?? "normal";
-
-    // Sort by match quality
+    // Closest-match selection. Style match takes precedence over weight
+    // because a wrong style (italic vs upright) is more visually disruptive
+    // than a near-miss weight.
     const sorted = [...variants].sort((a, b) => {
-      // Prefer latin subset (most common use case)
       const aIsLatin = a.path.includes("-latin-") ? 0 : 1;
       const bIsLatin = b.path.includes("-latin-") ? 0 : 1;
       if (aIsLatin !== bIsLatin) {return aIsLatin - bIsLatin;}
 
-      // Style match is secondary
-      const aStyleMatch = a.style === targetStyle ? 0 : 1;
-      const bStyleMatch = b.style === targetStyle ? 0 : 1;
+      const aStyleMatch = a.query.style === query.style ? 0 : 1;
+      const bStyleMatch = b.query.style === query.style ? 0 : 1;
       if (aStyleMatch !== bStyleMatch) {return aStyleMatch - bStyleMatch;}
 
-      // Weight distance is tertiary
-      return weightDistance(targetWeight, a.weight) - weightDistance(targetWeight, b.weight);
+      return weightDistance(query.weight, a.query.weight) - weightDistance(query.weight, b.query.weight);
     });
 
     const bestMatch = sorted[0];
     if (!bestMatch) {return undefined;}
 
-    // Load the font.
     const font = toLoadedFontType(readFontFile(bestMatch.path));
 
     return {
       font,
-      family: bestMatch.family,
-      weight: bestMatch.weight,
-      style: bestMatch.style,
+      query: bestMatch.query,
       postscriptName: bestMatch.postscriptName,
     };
   }
@@ -299,8 +277,7 @@ export function createNodeFontLoader(
 
     async listFontFamilies(): Promise<readonly string[]> {
       const index = await ensureIndex();
-      // Return original family names (from first variant of each family)
-      return Array.from(index.values()).map((variants) => variants[0].family);
+      return Array.from(index.values()).map((variants) => variants[0].query.family);
     },
 
     async addFontFile(fontPath: string): Promise<void> {
@@ -308,7 +285,7 @@ export function createNodeFontLoader(
       const info = await getFontInfo(fontPath);
 
       if (info) {
-        const familyLower = info.family.toLowerCase();
+        const familyLower = info.query.family.toLowerCase();
         const existing = index.get(familyLower) ?? [];
         index.set(familyLower, [...existing, info]);
       }

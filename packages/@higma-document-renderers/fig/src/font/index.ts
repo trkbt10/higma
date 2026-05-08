@@ -37,6 +37,17 @@ export type {
 export type { FontLoader } from "./loader";
 
 // =============================================================================
+// FontQuery — single source of truth for "which font do we want?"
+// =============================================================================
+
+export {
+  type FontQuery,
+  figmaFontToQuery,
+  fontQueryKey,
+  fontQueryEqual,
+} from "./query";
+
+// =============================================================================
 // Weight Detection
 // =============================================================================
 

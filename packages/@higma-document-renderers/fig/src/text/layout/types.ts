@@ -5,6 +5,7 @@
  */
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
+import type { FontQuery } from "../../font/query";
 
 /**
  * Text data structure from .fig files
@@ -59,15 +60,18 @@ export type TextBoxSize = {
 };
 
 /**
- * Extracted text properties from a Figma node
+ * Extracted text properties from a Figma node.
+ *
+ * `font` is the canonical `FontQuery` describing the node's base font.
+ * Per-character override fonts live on each `TextRun` from the runs
+ * resolver. There are no flat `fontFamily`/`fontWeight`/`fontStyle` fields:
+ * any code that needs the CSS-attribute form unpacks `font` at the boundary.
  */
 export type ExtractedTextProps = {
   readonly transform: FigMatrix | undefined;
   readonly characters: string;
   readonly fontSize: number;
-  readonly fontFamily: string;
-  readonly fontWeight: number | undefined;
-  readonly fontStyle: string | undefined;
+  readonly font: FontQuery;
   readonly letterSpacing: number | undefined;
   readonly lineHeight: number;
   readonly fillPaints: readonly FigPaint[] | undefined;

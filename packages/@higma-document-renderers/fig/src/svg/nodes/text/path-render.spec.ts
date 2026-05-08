@@ -50,14 +50,14 @@ function createFakeFont(supportedChars: string): AbstractFont {
 }
 
 function loadedFont(font: AbstractFont, family: string): LoadedFont {
-  return { font, family, weight: 400, style: "normal" };
+  return { font, query: { family, weight: 400, style: "normal" } };
 }
 
 function createFakeFontLoader(params: {
   readonly primary?: LoadedFont;
 }): FontLoader {
   return {
-    loadFont(_options: FontLoadOptions) {
+    loadFont(_query: FontLoadOptions) {
       return Promise.resolve(params.primary);
     },
     isFontAvailable() {

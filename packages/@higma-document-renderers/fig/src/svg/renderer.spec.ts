@@ -30,13 +30,11 @@ const RECT_FONT: AbstractFont = {
 function createFontLoader(): FontLoader {
   const loaded: LoadedFont = {
     font: RECT_FONT,
-    family: "Unit Test Sans",
-    weight: 400,
-    style: "normal",
+    query: { family: "Unit Test Sans", weight: 400, style: "normal" },
   };
   return {
-    async loadFont(options: FontLoadOptions) {
-      if (options.family !== "Unit Test Sans") {
+    async loadFont(query: FontLoadOptions) {
+      if (query.family !== "Unit Test Sans") {
         return undefined;
       }
       return loaded;

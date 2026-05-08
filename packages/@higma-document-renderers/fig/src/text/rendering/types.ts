@@ -15,10 +15,11 @@
  */
 
 import type { GlyphContour, PathContour } from "../paths/types";
-import type { ExtractedTextProps, TextAlignHorizontal, TextAlignVertical } from "../layout/types";
+import type { ExtractedTextProps } from "../layout/types";
 import type { TextLayout } from "../layout/compute-layout";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { AbstractFont } from "../../font/types";
+import type { FontQuery } from "../../font/query";
 import type { TextRun } from "../runs";
 
 /**
@@ -39,21 +40,20 @@ export type ResolvedFontMetrics = {
 };
 
 /**
- * Request shape for synchronous glyph-outline font resolution.
+ * Synchronous glyph-outline font resolver.
  *
  * Font loading itself is intentionally outside the text resolver. Callers that
  * want renderer-independent outlines must preload/cache fonts and pass this
  * resolver explicitly; absence keeps missing outlines visible to WebGL instead
  * of hiding them behind renderer-local drawing paths.
+ *
+ * The query argument is the canonical `FontQuery` — same shape used to
+ * preload, cache, and dedup. Callers that previously passed loose
+ * `{fontFamily, fontWeight, fontStyle}` triples must call
+ * `figmaFontToQuery` (or use `ExtractedTextProps.font` / `TextRun.font`)
+ * to obtain a query first.
  */
-export type TextFontResolveRequest = {
-  readonly props: ExtractedTextProps;
-  readonly fontFamily: string;
-  readonly fontWeight: number | undefined;
-  readonly fontStyle: string | undefined;
-};
-
-export type TextFontResolver = (request: TextFontResolveRequest) => AbstractFont | undefined;
+export type TextFontResolver = (query: FontQuery) => AbstractFont | undefined;
 
 /**
  * Fully resolved text rendering — discriminated union by strategy.
@@ -158,22 +158,6 @@ export type TextRenderingLines = {
   readonly kind: "lines";
   /** Computed per-line positions (post-truncation). */
   readonly layout: TextLayout;
-  /** Font family (CSS). */
-  readonly fontFamily: string;
-  /** Font size in pixels. */
-  readonly fontSize: number;
-  /** Font weight (100–900). */
-  readonly fontWeight: number | undefined;
-  /** Font style ("italic"/"oblique" or undefined for normal). */
-  readonly fontStyle: string | undefined;
-  /** Letter spacing in pixels (applied on top of font defaults). */
-  readonly letterSpacing: number | undefined;
-  /** Horizontal alignment (maps to SVG text-anchor). */
-  readonly textAlignHorizontal: TextAlignHorizontal;
-  /** Vertical alignment (used for line-height / baseline placement). */
-  readonly textAlignVertical: TextAlignVertical;
-  /** Text decoration. */
-  readonly textDecoration: "NONE" | "UNDERLINE" | "STRIKETHROUGH";
   /**
    * Per-character fill runs covering `[0, props.characters.length)`.
    * Lines-mode renderers must intersect runs with each line's character

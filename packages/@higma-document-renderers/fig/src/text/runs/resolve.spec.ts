@@ -130,6 +130,24 @@ describe("resolveTextRuns", () => {
     expect(runs[1].fillColor).toBe("#000000");
   });
 
+  it("resolves sparse fontName overrides into run font metadata", () => {
+    const overrides: TextStyleOverride[] = [
+      { styleID: 5, fontName: { family: "Amazon Ember", style: "Bold", postscript: "AmazonEmber-Bold" } },
+    ];
+    const runs = resolveTextRuns({
+      characters: "あA",
+      baseFillPaints: [black],
+      characterStyleIDs: [0, 5],
+      styleOverrideTable: overrides,
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      locator: () => "test",
+    });
+    expect(runs).toEqual([
+      { start: 0, end: 1, fillColor: "#000000", fillOpacity: 1 },
+      { start: 1, end: 2, fillColor: "#000000", fillOpacity: 1, font: { family: "Amazon Ember", weight: 700, style: "normal" } },
+    ]);
+  });
+
   it("throws when characterStyleIDs length doesn't match the source", () => {
     // The resolver expects post-normalised input where the length already
     // equals `characters.length` (the conversion layer pads Figma's

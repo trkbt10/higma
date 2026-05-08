@@ -30,17 +30,13 @@ function fontSupportsVisibleText(font: AbstractFont, textValue: string): boolean
 
 async function createTextFontResolver(node: FigNode, fontLoader: FontLoader): Promise<TextFontResolver> {
   const props = extractTextProps(node);
-  const loaded = await fontLoader.loadFont({
-    family: props.fontFamily,
-    weight: props.fontWeight,
-    style: props.fontStyle === "italic" ? "italic" : "normal",
-  });
+  const loaded = await fontLoader.loadFont(props.font);
 
   if (!loaded) {
-    throw new Error(`Shared text renderer requires primary font ${props.fontFamily} ${props.fontWeight}`);
+    throw new Error(`Shared text renderer requires primary font ${props.font.family} ${props.font.weight}`);
   }
   if (!fontSupportsVisibleText(loaded.font, props.characters)) {
-    throw new Error(`Shared text renderer primary font ${props.fontFamily} cannot cover text node ${node.id}`);
+    throw new Error(`Shared text renderer primary font ${props.font.family} cannot cover text node ${node.id}`);
   }
 
   return () => loaded.font;

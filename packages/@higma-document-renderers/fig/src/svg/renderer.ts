@@ -29,9 +29,9 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
 import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
-import type { FontLoader } from "../font";
-import type { FontLoadOptions, LoadedFont } from "../font";
-import type { TextFontResolveRequest, TextFontResolver } from "../text/rendering";
+import type { FontLoader, FontQuery, LoadedFont } from "../font";
+import { figmaFontToQuery, fontQueryKey } from "../font";
+import type { TextFontResolver } from "../text/rendering";
 import type { FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { convertFigNode, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { buildFigStyleRegistry } from "@higma-document-models/fig/symbols";
@@ -126,49 +126,32 @@ export type FigSvgRenderOptions = {
   readonly fontLoader?: FontLoader;
 };
 
-type FontRequest = {
-  readonly family: string;
-  readonly weight: number | undefined;
-  readonly style: "normal" | "italic" | "oblique";
-};
-
-function normalizeRequestStyle(style: string | undefined): "normal" | "italic" | "oblique" {
-  if (style === "italic" || style === "oblique") {
-    return style;
-  }
-  return "normal";
-}
-
-function fontRequestKey(request: FontRequest): string {
-  return `${request.family}\u0000${request.weight ?? "unspecified"}\u0000${request.style}`;
-}
-
-function fontLoadOptions(request: FontRequest): FontLoadOptions {
-  return {
-    family: request.family,
-    weight: request.weight,
-    style: request.style,
-  };
-}
-
-function collectTextFontRequests(nodes: readonly FigDesignNode[]): readonly FontRequest[] {
-  const requests: FontRequest[] = [];
+/**
+ * Walk every TEXT node and collect the unique `FontQuery`s that the
+ * renderer will demand from the resolver — both the base font and every
+ * per-character override entry. Dedupe via the canonical `fontQueryKey`
+ * so the preload set, the resolver lookups, and the cache all agree.
+ */
+function collectTextFontQueries(nodes: readonly FigDesignNode[]): readonly FontQuery[] {
+  const queries: FontQuery[] = [];
   const seen = new Set<string>();
   for (const node of nodes) {
-    collectNodeTextFontRequests(node, requests, seen);
+    collectNodeTextFontQueries(node, queries, seen);
   }
-  return requests;
+  return queries;
 }
 
-function collectNodeTextFontRequests(node: FigDesignNode, requests: FontRequest[], seen: Set<string>): void {
+function collectNodeTextFontQueries(node: FigDesignNode, queries: FontQuery[], seen: Set<string>): void {
   if (node.type === "TEXT") {
     const props = extractTextProps(node);
     if (props.characters.length > 0) {
-      pushFontRequest(requests, seen, {
-        family: props.fontFamily,
-        weight: props.fontWeight,
-        style: normalizeRequestStyle(props.fontStyle),
-      });
+      pushFontQuery(queries, seen, props.font);
+      for (const override of node.textData?.styleOverrideTable ?? []) {
+        if (override.fontName === undefined) {
+          continue;
+        }
+        pushFontQuery(queries, seen, figmaFontToQuery(override.fontName));
+      }
     }
   }
   const children = node.children;
@@ -176,17 +159,17 @@ function collectNodeTextFontRequests(node: FigDesignNode, requests: FontRequest[
     return;
   }
   for (const child of children) {
-    collectNodeTextFontRequests(child, requests, seen);
+    collectNodeTextFontQueries(child, queries, seen);
   }
 }
 
-function pushFontRequest(requests: FontRequest[], seen: Set<string>, request: FontRequest): void {
-  const key = fontRequestKey(request);
+function pushFontQuery(queries: FontQuery[], seen: Set<string>, query: FontQuery): void {
+  const key = fontQueryKey(query);
   if (seen.has(key)) {
     return;
   }
   seen.add(key);
-  requests.push(request);
+  queries.push(query);
 }
 
 async function createPreloadedTextFontResolver(
@@ -196,24 +179,19 @@ async function createPreloadedTextFontResolver(
   if (fontLoader === undefined) {
     return undefined;
   }
-  const requests = collectTextFontRequests(nodes);
+  const queries = collectTextFontQueries(nodes);
   const cache = new Map<string, LoadedFont>();
-  for (const request of requests) {
-    const loaded = await fontLoader.loadFont(fontLoadOptions(request));
+  for (const query of queries) {
+    const loaded = await fontLoader.loadFont(query);
     if (loaded === undefined) {
-      throw new Error(`renderFigToSvg: fontLoader could not load "${request.family}" weight ${request.weight ?? "unspecified"} style ${request.style}`);
+      throw new Error(`renderFigToSvg: fontLoader could not load "${query.family}" weight ${query.weight} style ${query.style}`);
     }
-    cache.set(fontRequestKey(request), loaded);
+    cache.set(fontQueryKey(query), loaded);
   }
-  return (request: TextFontResolveRequest) => {
-    const key = fontRequestKey({
-      family: request.fontFamily,
-      weight: request.fontWeight,
-      style: normalizeRequestStyle(request.fontStyle),
-    });
-    const loaded = cache.get(key);
+  return (query) => {
+    const loaded = cache.get(fontQueryKey(query));
     if (loaded === undefined) {
-      throw new Error(`renderFigToSvg: text font resolver was not preloaded for "${request.fontFamily}" weight ${request.fontWeight ?? "unspecified"} style ${normalizeRequestStyle(request.fontStyle)}`);
+      throw new Error(`renderFigToSvg: text font resolver was not preloaded for "${query.family}" weight ${query.weight} style ${query.style}`);
     }
     return loaded.font;
   };

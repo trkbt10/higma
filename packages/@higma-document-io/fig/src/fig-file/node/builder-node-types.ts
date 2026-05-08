@@ -88,6 +88,7 @@ export type KiwiTextData = {
   readonly styleOverrideTable?: readonly {
     readonly styleID: number;
     readonly fillPaints: readonly Paint[];
+    readonly fontName?: { readonly family: string; readonly style: string; readonly postscript: string };
   }[];
 };
 

@@ -12,6 +12,8 @@
  * rather than re-deriving the colour-per-character mapping.
  */
 
+import type { FontQuery } from "../../font/query";
+
 /** Resolved fill applied to a contiguous run of source characters. */
 export type TextRun = {
   /** Inclusive source-character start index. */
@@ -22,4 +24,11 @@ export type TextRun = {
   readonly fillColor: string;
   /** Resolved alpha in [0, 1]. */
   readonly fillOpacity: number;
+  /**
+   * Font override for this run. `undefined` means "use the text node's
+   * base font" (`ExtractedTextProps.font`). When set, the renderer must
+   * route per-character glyph lookups through this query rather than the
+   * base font.
+   */
+  readonly font?: FontQuery;
 };

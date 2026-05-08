@@ -122,7 +122,10 @@ describe("buildSceneGraph text font resolver", () => {
     const renderTree = resolveRenderTree(sceneGraph);
     const renderText = renderTree.children[0];
 
-    expect(text.glyphContours?.length).toBe(1);
+    // Five glyphs for "Hello" — one contour per source character now that the
+    // opentype path extractor emits per-glyph contours annotated with
+    // `firstCharacter` (mirroring the derivedTextData glyph mode).
+    expect(text.glyphContours?.length).toBe(5);
     expect(text.textLineLayout?.lines[0]?.text).toBe("Hello");
     expect(renderText?.type).toBe("text");
     if (renderText?.type !== "text") {

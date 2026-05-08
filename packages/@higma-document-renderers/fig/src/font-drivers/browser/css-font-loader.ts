@@ -7,7 +7,8 @@
  */
 
 import type { FontLoader } from "../../font/loader";
-import type { FontLoadOptions, LoadedFont } from "../../font/types";
+import type { FontQuery } from "../../font/query";
+import type { LoadedFont } from "../../font/types";
 
 /**
  * Check if CSS Font Loading API is available
@@ -25,7 +26,7 @@ export function isCssFontLoaderSupported(): boolean {
  */
 export function createCssFontLoader(): FontLoader {
   return {
-    async loadFont(_options: FontLoadOptions): Promise<LoadedFont | undefined> {
+    async loadFont(_query: FontQuery): Promise<LoadedFont | undefined> {
       // Cannot load font files with CSS Font Loading API
       return undefined;
     },

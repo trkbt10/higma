@@ -208,16 +208,20 @@ function buildTextLineLayout(
   props: ExtractedTextProps,
   fontVariationSettings: string | undefined,
 ): TextLineLayout {
+  // Unpack the canonical `FontQuery` into the scene-graph layout's CSS-shaped
+  // fields. `font.style === "normal"` is left as undefined on the layout so
+  // downstream renderers omit the attribute (matches Figma's SVG export).
+  const { font } = props;
   return {
     lines: rendering.layout.lines.map((line) => ({
       text: line.text,
       x: line.x,
       y: line.y,
     })),
-    fontFamily: props.fontFamily,
+    fontFamily: font.family,
     fontSize: props.fontSize,
-    fontWeight: props.fontWeight,
-    fontStyle: props.fontStyle,
+    fontWeight: font.weight,
+    fontStyle: font.style !== "normal" ? font.style : undefined,
     letterSpacing: props.letterSpacing,
     lineHeight: rendering.layout.lineHeight,
     textAnchor: textAlignHorizontalToAnchor(props.textAlignHorizontal),

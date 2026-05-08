@@ -2,7 +2,7 @@
  * @file Text measurement type definitions
  */
 
-import type { FontMetrics } from "../../font/index";
+import type { FontMetrics, FontQuery } from "../../font/index";
 
 /**
  * Text measurement result
@@ -51,17 +51,19 @@ export type MultiLineMeasurement = {
 };
 
 /**
- * Font specification for measurement
+ * Font specification for measurement.
+ *
+ * `font` is the canonical `FontQuery` (family + weight + style); the
+ * remaining fields are measurement-specific (size, letter spacing).
+ * Same query passes through to `FontLoader.loadFont` and
+ * `TextFontResolver`, so the measure cache and the resolve cache can
+ * share keys via `fontQueryKey`.
  */
 export type FontSpec = {
-  /** Font family (CSS font-family string) */
-  readonly fontFamily: string;
+  /** Canonical font identity. */
+  readonly font: FontQuery;
   /** Font size in pixels */
   readonly fontSize: number;
-  /** Font weight (100-900) */
-  readonly fontWeight?: number;
-  /** Font style (normal, italic, oblique) */
-  readonly fontStyle?: "normal" | "italic" | "oblique";
   /** Letter spacing in pixels */
   readonly letterSpacing?: number;
 };

@@ -6,6 +6,7 @@
  */
 
 import type { FontLoader, LoadedFont, FontMetrics, AbstractFont } from "../../font/index";
+import { fontQueryKey } from "../../font/query";
 import type { MeasurementProvider, FontSpec, TextMeasurement } from "./types";
 
 /** OpenType.js based measurement provider instance */
@@ -26,20 +27,16 @@ export type OpentypeMeasurementProviderInstance = MeasurementProvider & {
 export function createOpentypeMeasurementProvider(fontLoader: FontLoader): OpentypeMeasurementProviderInstance {
   const fontCache = new Map<string, LoadedFont>();
 
-  function getCacheKey(font: FontSpec): string {
-    return `${font.fontFamily}:${font.fontWeight ?? 400}:${font.fontStyle ?? "normal"}`;
+  function getCacheKey(spec: FontSpec): string {
+    return fontQueryKey(spec.font);
   }
 
-  async function loadFontForSpec(font: FontSpec): Promise<LoadedFont | undefined> {
-    const key = getCacheKey(font);
+  async function loadFontForSpec(spec: FontSpec): Promise<LoadedFont | undefined> {
+    const key = getCacheKey(spec);
     const cached = fontCache.get(key);
     if (cached) {return cached;}
 
-    const loaded = await fontLoader.loadFont({
-      family: font.fontFamily,
-      weight: font.fontWeight,
-      style: font.fontStyle,
-    });
+    const loaded = await fontLoader.loadFont(spec.font);
 
     if (loaded) {
       fontCache.set(key, loaded);
@@ -48,8 +45,8 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
     return loaded;
   }
 
-  function getCachedFont(font: FontSpec): AbstractFont | undefined {
-    const key = getCacheKey(font);
+  function getCachedFont(spec: FontSpec): AbstractFont | undefined {
+    const key = getCacheKey(spec);
     return fontCache.get(key)?.font;
   }
 

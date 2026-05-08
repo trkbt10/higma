@@ -1,42 +1,41 @@
 /**
  * @file Font caching utilities
+ *
+ * Cache keys come from the SoT `fontQueryKey`. Every cache and dedup site
+ * in the codebase must use it — no ad-hoc separators or default-handling.
  */
 
+import { fontQueryKey, type FontQuery } from "./query";
 import type { FontLoader } from "./loader";
-import type { FontLoadOptions, LoadedFont } from "./types";
+import type { LoadedFont } from "./types";
 
 /** Font cache for loaded fonts */
 export type FontCache = {
   /** Get cached font */
-  get(options: FontLoadOptions): LoadedFont | undefined;
+  get(query: FontQuery): LoadedFont | undefined;
   /** Set cached font */
-  set(options: FontLoadOptions, font: LoadedFont): void;
+  set(query: FontQuery, font: LoadedFont): void;
   /** Check if font is cached */
-  has(options: FontLoadOptions): boolean;
+  has(query: FontQuery): boolean;
   /** Clear cache */
   clear(): void;
   /** Get cache size */
   readonly size: number;
 };
 
-/** Generate cache key from font load options */
-function getCacheKey(options: FontLoadOptions): string {
-  return `${options.family}:${options.weight ?? 400}:${options.style ?? "normal"}`;
-}
-
 /** Create a font cache */
 export function createFontCache(): FontCache {
   const cache = new Map<string, LoadedFont>();
 
   return {
-    get(options) {
-      return cache.get(getCacheKey(options));
+    get(query) {
+      return cache.get(fontQueryKey(query));
     },
-    set(options, font) {
-      cache.set(getCacheKey(options), font);
+    set(query, font) {
+      cache.set(fontQueryKey(query), font);
     },
-    has(options) {
-      return cache.has(getCacheKey(options));
+    has(query) {
+      return cache.has(fontQueryKey(query));
     },
     clear() {
       cache.clear();
@@ -50,7 +49,7 @@ export function createFontCache(): FontCache {
 /** Caching wrapper for font loaders */
 export type CachingFontLoader = FontLoader & {
   /** Read a loaded font without triggering I/O or permission prompts. */
-  getCachedFont(options: FontLoadOptions): LoadedFont | undefined;
+  getCachedFont(query: FontQuery): LoadedFont | undefined;
   /** Clear the font cache */
   clearCache(): void;
 };
@@ -60,15 +59,15 @@ export function createCachingFontLoader(innerLoader: FontLoader): CachingFontLoa
   const fontCache = createFontCache();
 
   return {
-    async loadFont(options) {
-      const cached = fontCache.get(options);
+    async loadFont(query) {
+      const cached = fontCache.get(query);
       if (cached) {
         return cached;
       }
 
-      const font = await innerLoader.loadFont(options);
+      const font = await innerLoader.loadFont(query);
       if (font) {
-        fontCache.set(options, font);
+        fontCache.set(query, font);
       }
 
       return font;
@@ -85,8 +84,8 @@ export function createCachingFontLoader(innerLoader: FontLoader): CachingFontLoa
       return [];
     },
 
-    getCachedFont(options) {
-      return fontCache.get(options);
+    getCachedFont(query) {
+      return fontCache.get(query);
     },
 
     clearCache() {

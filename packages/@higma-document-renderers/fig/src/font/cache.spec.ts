@@ -1,13 +1,14 @@
 /** @file Font cache tests. */
 
-import type { FontLoadOptions, LoadedFont } from "./types";
+import type { FontQuery } from "./query";
+import type { LoadedFont } from "./types";
 import type { FontLoader } from "./loader";
 import { createCachingFontLoader } from "./cache";
 
+const INTER_QUERY: FontQuery = { family: "Inter", weight: 400, style: "normal" };
+
 const LOADED_FONT: LoadedFont = {
-  family: "Inter",
-  weight: 400,
-  style: "normal",
+  query: INTER_QUERY,
   font: {
     unitsPerEm: 1000,
     ascender: 800,
@@ -20,7 +21,7 @@ const LOADED_FONT: LoadedFont = {
 function createLoader(): { readonly loader: FontLoader; readonly calls: { value: number } } {
   const calls = { value: 0 };
   const loader: FontLoader = {
-    async loadFont(_options: FontLoadOptions) {
+    async loadFont(_query: FontQuery) {
       calls.value += 1;
       return LOADED_FONT;
     },
@@ -35,14 +36,13 @@ describe("createCachingFontLoader", () => {
   it("caches explicitly requested primary fonts", async () => {
     const { loader, calls } = createLoader();
     const cachingLoader = createCachingFontLoader(loader);
-    const options: FontLoadOptions = { family: "Inter", weight: 400, style: "normal" };
 
-    expect(cachingLoader.getCachedFont(options)).toBeUndefined();
+    expect(cachingLoader.getCachedFont(INTER_QUERY)).toBeUndefined();
 
-    await cachingLoader.loadFont(options);
-    await cachingLoader.loadFont(options);
+    await cachingLoader.loadFont(INTER_QUERY);
+    await cachingLoader.loadFont(INTER_QUERY);
 
     expect(calls.value).toBe(1);
-    expect(cachingLoader.getCachedFont(options)).toBe(LOADED_FONT);
+    expect(cachingLoader.getCachedFont(INTER_QUERY)).toBe(LOADED_FONT);
   });
 });

@@ -4,12 +4,17 @@
  * Uses the Local Font Access API to enumerate and load system fonts.
  * Uses CSS Font Loading API for availability checks when Local Font Access is unavailable.
  *
+ * Weight/style detection delegates to the canonical SoT (`figmaFontToQuery`)
+ * — see node-loader for the same contract.
+ *
  * @see https://developer.chrome.com/docs/capabilities/web-apis/local-fonts
  */
 
 import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "../../font/loader";
-import type { AbstractFont, FontLoadOptions, LoadedFont } from "../../font/types";
+import type { FontQuery } from "../../font/query";
+import { figmaFontToQuery } from "../../font/query";
+import type { AbstractFont, LoadedFont } from "../../font/types";
 
 /**
  * Parse font data and return as AbstractFont.
@@ -80,58 +85,6 @@ function isLoadableFontData(font: { readonly family: string; readonly fullName: 
   return "blob" in font && typeof font.blob === "function";
 }
 
-/**
- * Get font weight from font style name
- */
-function getWeightFromStyle(style: string): number {
-  const lower = style.toLowerCase();
-  if (lower.includes("thin") || lower.includes("hairline")) {
-    return 100;
-  }
-  if (lower.includes("extralight") || lower.includes("ultralight")) {
-    return 200;
-  }
-  if (lower.includes("light")) {
-    return 300;
-  }
-  if (lower.includes("regular") || lower.includes("normal") || lower.includes("book")) {
-    return 400;
-  }
-  if (lower.includes("medium")) {
-    return 500;
-  }
-  if (lower.includes("semibold") || lower.includes("demibold")) {
-    return 600;
-  }
-  if (lower.includes("extrabold") || lower.includes("ultrabold")) {
-    return 800;
-  }
-  if (lower.includes("bold")) {
-    return 700;
-  }
-  if (lower.includes("black") || lower.includes("heavy")) {
-    return 900;
-  }
-  return 400;
-}
-
-/**
- * Get font style from font style name
- */
-function getFontStyleFromName(style: string): "normal" | "italic" | "oblique" {
-  const lower = style.toLowerCase();
-  if (lower.includes("italic")) {
-    return "italic";
-  }
-  if (lower.includes("oblique")) {
-    return "oblique";
-  }
-  return "normal";
-}
-
-/**
- * Calculate weight distance (closer to 0 is better)
- */
 function weightDistance(requested: number, actual: number): number {
   return Math.abs(requested - actual);
 }
@@ -181,7 +134,6 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
     const fonts = await window.queryLocalFonts();
     permissionGrantedRef.value = true;
 
-    // Index by family name (lowercase)
     const index = new Map<string, FontData[]>();
     for (const font of fonts) {
       if (!isLoadableFontData(font)) {
@@ -208,35 +160,29 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
     return fontIndexRef.value!;
   }
 
-  async function loadFont(options: FontLoadOptions): Promise<LoadedFont | undefined> {
+  async function loadFont(query: FontQuery): Promise<LoadedFont | undefined> {
     const index = await ensureIndex();
-    const familyLower = options.family.toLowerCase();
+    const familyLower = query.family.toLowerCase();
     const variants = index.get(familyLower);
 
     if (!variants || variants.length === 0) {
       return undefined;
     }
 
-    // Find best match
-    const targetWeight = options.weight ?? 400;
-    const targetStyle = options.style ?? "normal";
-
-    // Sort by match quality
+    // Closest-match selection. Each variant's style string is run through
+    // the same SoT translator the requester used, so comparisons happen
+    // in a normalized space.
     const sorted = [...variants].sort((a, b) => {
-      const aWeight = getWeightFromStyle(a.style);
-      const bWeight = getWeightFromStyle(b.style);
-      const aFontStyle = getFontStyleFromName(a.style);
-      const bFontStyle = getFontStyleFromName(b.style);
+      const aQuery = figmaFontToQuery({ family: a.family, style: a.style });
+      const bQuery = figmaFontToQuery({ family: b.family, style: b.style });
 
-      // Style match is primary
-      const aStyleMatch = aFontStyle === targetStyle ? 0 : 1;
-      const bStyleMatch = bFontStyle === targetStyle ? 0 : 1;
+      const aStyleMatch = aQuery.style === query.style ? 0 : 1;
+      const bStyleMatch = bQuery.style === query.style ? 0 : 1;
       if (aStyleMatch !== bStyleMatch) {
         return aStyleMatch - bStyleMatch;
       }
 
-      // Weight distance is secondary
-      return weightDistance(targetWeight, aWeight) - weightDistance(targetWeight, bWeight);
+      return weightDistance(query.weight, aQuery.weight) - weightDistance(query.weight, bQuery.weight);
     });
 
     const bestMatch = sorted[0];
@@ -244,22 +190,19 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
       return undefined;
     }
 
-    // Load the font data
     const blob = await bestMatch.blob();
     const arrayBuffer = await blob.arrayBuffer();
     const font = parseOpentypeAsAbstractFont(arrayBuffer);
+    const matchedQuery = figmaFontToQuery({ family: bestMatch.family, style: bestMatch.style });
 
     return {
       font,
-      family: bestMatch.family,
-      weight: getWeightFromStyle(bestMatch.style),
-      style: getFontStyleFromName(bestMatch.style),
+      query: matchedQuery,
       postscriptName: bestMatch.postscriptName,
     };
   }
 
   async function isFontAvailable(family: string): Promise<boolean> {
-    // First try Local Font Access API
     const index = await ensureIndex();
     if (index.has(family.toLowerCase())) {
       return true;
@@ -274,7 +217,6 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
 
   async function listFontFamilies(): Promise<readonly string[]> {
     const index = await ensureIndex();
-    // Return original family names (from first variant of each family)
     return Array.from(index.values()).map((variants) => variants[0].family);
   }
 

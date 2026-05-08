@@ -474,6 +474,7 @@ function _createFigFileBuilder() {
     readonly styleOverrideTable: readonly {
       readonly styleID: number;
       readonly fillPaints: TextNodeData["fillPaints"];
+      readonly fontName?: TextNodeData["fontName"];
     }[] | undefined;
   } {
     if (data.styleRuns === undefined || data.styleRuns.length === 0) {
@@ -494,6 +495,7 @@ function _createFigFileBuilder() {
       }
       return {
         styleID,
+        fontName: run.fontName,
         fillPaints: [{
           type: { value: 0, name: "SOLID" as const },
           color: run.fillColor,
@@ -859,6 +861,7 @@ function _createFigFileBuilder() {
       styleOverrideTable?: readonly {
         readonly styleID: number;
         readonly fillPaints: TextNodeData["fillPaints"];
+        readonly fontName?: TextNodeData["fontName"];
       }[];
     };
     // Paint fields

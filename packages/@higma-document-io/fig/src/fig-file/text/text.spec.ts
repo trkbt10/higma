@@ -40,12 +40,13 @@ describe("TextNodeBuilder", () => {
   });
 
   it("sets explicit per-character style runs", () => {
+    const fontName = { family: "Amazon Ember", style: "Regular", postscript: "AmazonEmber-Regular" };
     const node = textNode(1, 0)
       .text("Sale price")
-      .styleRuns([{ start: 5, end: 10, fillColor: { r: 1, g: 0, b: 0, a: 1 } }])
+      .styleRuns([{ start: 5, end: 10, fillColor: { r: 1, g: 0, b: 0, a: 1 }, fontName }])
       .build();
 
-    expect(node.styleRuns).toEqual([{ start: 5, end: 10, fillColor: { r: 1, g: 0, b: 0, a: 1 } }]);
+    expect(node.styleRuns).toEqual([{ start: 5, end: 10, fillColor: { r: 1, g: 0, b: 0, a: 1 }, fontName }]);
   });
 
   it("sets text alignment", () => {

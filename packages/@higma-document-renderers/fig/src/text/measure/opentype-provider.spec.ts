@@ -6,13 +6,15 @@ import * as path from "node:path";
 import { parse as parseFont } from "opentype.js";
 import * as fs from "node:fs";
 import { createOpentypeMeasurementProvider, type OpentypeMeasurementProviderInstance } from "./opentype-provider";
-import type { FontLoader, LoadedFont, FontLoadOptions } from "../../font/index";
+import type { FontLoader, LoadedFont, FontQuery } from "../../font/index";
 
 // Path to Inter font from @fontsource/inter
 const INTER_FONT_PATH = path.resolve(
   process.cwd(),
   "node_modules/@fontsource/inter/files/inter-latin-400-normal.woff"
 );
+
+const INTER_QUERY: FontQuery = { family: "Inter", weight: 400, style: "normal" };
 
 /**
  * Simple font loader that loads from a fixed path
@@ -21,7 +23,7 @@ function createTestFontLoader(fontPath: string): FontLoader {
   const fontRef = { value: null as LoadedFont | null };
 
   return {
-    async loadFont(_options: FontLoadOptions): Promise<LoadedFont | undefined> {
+    async loadFont(_query: FontQuery): Promise<LoadedFont | undefined> {
       if (!fs.existsSync(fontPath)) {
         return undefined;
       }
@@ -32,9 +34,7 @@ function createTestFontLoader(fontPath: string): FontLoader {
 
         fontRef.value = {
           font: parsed,
-          family: "Inter",
-          weight: 400,
-          style: "normal",
+          query: INTER_QUERY,
         };
       }
 
@@ -58,7 +58,7 @@ describe("OpentypeMeasurementProvider", () => {
 
     if (fontAvailableRef.value) {
       // Preload the font
-      await providerRef.value!.preloadFont({ fontFamily: "Inter", fontSize: 16 });
+      await providerRef.value!.preloadFont({ font: INTER_QUERY, fontSize: 16 });
     }
   });
 
@@ -75,7 +75,7 @@ describe("OpentypeMeasurementProvider", () => {
       return;
     }
 
-    const metrics = providerRef.value!.getFontMetrics({ fontFamily: "Inter", fontSize: 16 });
+    const metrics = providerRef.value!.getFontMetrics({ font: INTER_QUERY, fontSize: 16 });
 
     console.log("Inter font metrics:", {
       unitsPerEm: metrics.unitsPerEm,
@@ -95,7 +95,7 @@ describe("OpentypeMeasurementProvider", () => {
       return;
     }
 
-    const ratio = providerRef.value!.getAscenderRatio({ fontFamily: "Inter", fontSize: 16 });
+    const ratio = providerRef.value!.getAscenderRatio({ font: INTER_QUERY, fontSize: 16 });
 
     console.log(`Inter ascender ratio: ${ratio}`);
 
@@ -111,7 +111,7 @@ describe("OpentypeMeasurementProvider", () => {
     }
 
     const measurement = providerRef.value!.measureText("Hello", {
-      fontFamily: "Inter",
+      font: INTER_QUERY,
       fontSize: 16,
     });
 
@@ -130,7 +130,7 @@ describe("OpentypeMeasurementProvider", () => {
     }
 
     const widths = providerRef.value!.measureCharWidths!("ABC", {
-      fontFamily: "Inter",
+      font: INTER_QUERY,
       fontSize: 16,
     });
 

@@ -70,8 +70,9 @@ describe("resolveTextRendering font outlines", () => {
     if (rendering.kind !== "glyphs") {
       return;
     }
-    expect(rendering.glyphContours).toHaveLength(1);
-    expect(rendering.props.fontFamily).toBe("Unit Test Sans");
+    expect(rendering.glyphContours).toHaveLength(5);
+    expect(rendering.glyphContours.map((contour) => contour.firstCharacter)).toEqual([0, 1, 2, 3, 4]);
+    expect(rendering.props.font.family).toBe("Unit Test Sans");
     expect(rendering.layout.lines[0]?.text).toBe("Hello");
   });
 

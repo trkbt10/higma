@@ -5,6 +5,8 @@
  * but don't directly depend on it.
  */
 
+import type { FontQuery } from "./query";
+
 // =============================================================================
 // Abstract Font Types (opentype.js compatible)
 // =============================================================================
@@ -84,32 +86,27 @@ export type AbstractFont = {
 // =============================================================================
 
 /**
- * Loaded font result
+ * Loaded font result.
+ *
+ * The `query` field is the canonical descriptor of which font this is —
+ * loaders return the query of the font they actually loaded, which may
+ * differ from the requested query if the loader did closest-match
+ * substitution (e.g. requested weight 600, family had only 400 + 700).
  */
 export type LoadedFont = {
   /** The loaded font object */
   readonly font: AbstractFont;
-  /** Font family name */
-  readonly family: string;
-  /** Font weight (100-900) */
-  readonly weight: number;
-  /** Font style */
-  readonly style: "normal" | "italic" | "oblique";
+  /** Identity of the loaded font (post-substitution). */
+  readonly query: FontQuery;
   /** PostScript name */
   readonly postscriptName?: string;
 };
 
-/**
- * Font loading options
- */
-export type FontLoadOptions = {
-  /** Font family to load */
-  readonly family: string;
-  /** Desired weight (will find closest match) */
-  readonly weight?: number;
-  /** Desired style */
-  readonly style?: "normal" | "italic" | "oblique";
-};
+// `FontLoadOptions` was previously a separate type with optional `weight`
+// and `style`. It is now identical to `FontQuery` — every loader receives
+// the same concretely-defaulted shape so cache keys, dedup, and resolver
+// lookups all agree.
+export type { FontQuery as FontLoadOptions } from "./query";
 
 // =============================================================================
 // Font Resolution Types

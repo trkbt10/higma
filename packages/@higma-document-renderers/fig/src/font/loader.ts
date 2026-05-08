@@ -3,9 +3,14 @@
  *
  * Provides an abstraction for loading font files in different environments.
  * Node.js can load from filesystem, browsers can use Local Font Access API.
+ *
+ * The query argument is the canonical `FontQuery` — concrete (non-optional)
+ * `weight` and `style`. Driver implementations resolve the closest available
+ * variant; the returned `LoadedFont.query` reports what they actually loaded.
  */
 
-import type { FontLoadOptions, LoadedFont } from "./types";
+import type { FontQuery } from "./query";
+import type { LoadedFont } from "./types";
 
 /**
  * Font loader interface
@@ -16,12 +21,12 @@ import type { FontLoadOptions, LoadedFont } from "./types";
  */
 export type FontLoader = {
   /**
-   * Load a font matching the given options
+   * Load a font matching the given query
    *
-   * @param options - Font loading options
+   * @param query - Canonical font query (family, weight, style)
    * @returns Loaded font or undefined if not found
    */
-  loadFont(options: FontLoadOptions): Promise<LoadedFont | undefined>;
+  loadFont(query: FontQuery): Promise<LoadedFont | undefined>;
 
   /**
    * Check if a font is available
@@ -37,5 +42,4 @@ export type FontLoader = {
    * @returns Array of available font family names
    */
   listFontFamilies?(): Promise<readonly string[]>;
-
 }

@@ -43,6 +43,7 @@
 import type { FigPaint } from "@higma-document-models/fig/types";
 import type { FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
 import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
+import { figmaFontToQuery, type FontQuery } from "../../font/query";
 import { getFillColorAndOpacity } from "../layout/fill";
 import type { TextRun } from "./types";
 
@@ -109,8 +110,8 @@ export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[]
 
   // Memoise per-styleID fills — many runs share the same id, and resolving
   // through the registry is the same answer every time.
-  const fillByStyleId = new Map<number, { color: string; opacity: number }>();
-  function fillForStyleId(styleId: number): { color: string; opacity: number } {
+  const fillByStyleId = new Map<number, ResolvedRunStyle>();
+  function fillForStyleId(styleId: number): ResolvedRunStyle {
     if (styleId === 0) { return baseFill; }
     const cached = fillByStyleId.get(styleId);
     if (cached) { return cached; }
@@ -120,7 +121,9 @@ export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[]
         `Text run resolver: characterStyleIDs references styleID=${styleId} which has no entry in styleOverrideTable on ${locator()}`,
       );
     }
-    const resolved = resolveOverrideFill(override, baseFill, styleRegistry);
+    const fill = resolveOverrideFill(override, baseFill, styleRegistry);
+    const font = resolveOverrideFont(override);
+    const resolved: ResolvedRunStyle = font === undefined ? fill : { ...fill, font };
     fillByStyleId.set(styleId, resolved);
     return resolved;
   }
@@ -138,7 +141,7 @@ export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[]
 function collapseRuns(
   characterStyleIDs: readonly number[],
   length: number,
-  fillForStyleId: (styleId: number) => { readonly color: string; readonly opacity: number },
+  fillForStyleId: (styleId: number) => ResolvedRunStyle,
 ): readonly TextRun[] {
   const runStarts: readonly number[] = characterStyleIDs.flatMap((id, i) => {
     if (i === 0) { return [0]; }
@@ -148,8 +151,36 @@ function collapseRuns(
   return runStarts.map((start, idx) => {
     const end = idx + 1 < runStarts.length ? runStarts[idx + 1] : length;
     const fill = fillForStyleId(characterStyleIDs[start]);
-    return { start, end, fillColor: fill.color, fillOpacity: fill.opacity };
+    const base: TextRun = {
+      start,
+      end,
+      fillColor: fill.color,
+      fillOpacity: fill.opacity,
+    };
+    return fill.font === undefined ? base : { ...base, font: fill.font };
   });
+}
+
+type ResolvedRunStyle = {
+  readonly color: string;
+  readonly opacity: number;
+  /** Override font for the run; `undefined` means "inherit base font". */
+  readonly font?: FontQuery;
+};
+
+/**
+ * Resolve the font override for a styleOverrideTable entry.
+ *
+ * Returns the canonical `FontQuery` when the override carries a `fontName`,
+ * `undefined` otherwise — the run then inherits the node's base font. The
+ * conversion is delegated to `figmaFontToQuery` (the same SoT used by the
+ * preloader and the resolver) so cache lookups match exactly.
+ */
+function resolveOverrideFont(override: TextStyleOverride): FontQuery | undefined {
+  if (override.fontName === undefined) {
+    return undefined;
+  }
+  return figmaFontToQuery(override.fontName);
 }
 
 /**

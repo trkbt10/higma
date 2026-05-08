@@ -8,8 +8,7 @@ import type {
   FontResolverConfig,
   FontAvailabilityChecker,
 } from "./types";
-import { detectWeight, FONT_WEIGHTS } from "./weight";
-import { detectStyle } from "./style";
+import { figmaFontToQuery } from "./query";
 import { COMMON_FONT_MAPPINGS, getDefaultFontStack, isGenericCssFontFamily } from "./mappings";
 
 /**
@@ -102,22 +101,18 @@ export function createFontResolver(config: FontResolverConfig): FontResolverInst
   }
 
   function doResolve(fontRef: FigmaFontRef): ResolvedFont {
-    const { family, style } = fontRef;
+    // Defer (weight, style) detection to the canonical SoT.
+    const query = figmaFontToQuery(fontRef);
 
-    // Detect weight and style from Figma style string
-    const fontWeight = detectWeight(style) ?? FONT_WEIGHTS.REGULAR;
-    const fontStyle = detectStyle(style);
+    const fontFamilyChain = buildFontFamilyChain(query.family);
+    const isExactMatch = checkAvailability(query.family);
 
-    const fontFamilyChain = buildFontFamilyChain(family);
-    const isExactMatch = checkAvailability(family);
-
-    // Build CSS font-family string
     const fontFamily = buildFontFamilyString(fontFamilyChain);
 
     return {
       fontFamily,
-      fontWeight,
-      fontStyle,
+      fontWeight: query.weight,
+      fontStyle: query.style,
       isExactMatch,
       source: fontRef,
       fontFamilyChain,
@@ -138,25 +133,22 @@ export function createFontResolver(config: FontResolverConfig): FontResolverInst
     },
 
     async resolveAsync(fontRef: FigmaFontRef): Promise<ResolvedFont> {
-      const { family, style } = fontRef;
-
-      const fontWeight = detectWeight(style) ?? FONT_WEIGHTS.REGULAR;
-      const fontStyle = detectStyle(style);
-      const fontFamilyChain = buildFontFamilyChain(family);
+      const query = figmaFontToQuery(fontRef);
+      const fontFamilyChain = buildFontFamilyChain(query.family);
 
       // Check availability asynchronously
       if (!resolvedConfig.availabilityChecker) {
-        throw new Error(`Font resolver requires an explicit availabilityChecker for ${family}`);
+        throw new Error(`Font resolver requires an explicit availabilityChecker for ${query.family}`);
       }
-      const availabilityResult = resolvedConfig.availabilityChecker.isAvailable(family);
+      const availabilityResult = resolvedConfig.availabilityChecker.isAvailable(query.family);
       const isExactMatch = await resolveAvailability(availabilityResult);
 
       const fontFamily = buildFontFamilyString(fontFamilyChain);
 
       return {
         fontFamily,
-        fontWeight,
-        fontStyle,
+        fontWeight: query.weight,
+        fontStyle: query.style,
         isExactMatch,
         source: fontRef,
         fontFamilyChain,

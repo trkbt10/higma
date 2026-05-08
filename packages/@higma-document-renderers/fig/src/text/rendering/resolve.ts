@@ -204,16 +204,11 @@ export function resolveTextAscenderRatio(
   if (metrics) {
     return metrics.ascenderRatio;
   }
-  const font = ctx.fontResolver?.({
-    props,
-    fontFamily: props.fontFamily,
-    fontWeight: props.fontWeight,
-    fontStyle: props.fontStyle,
-  });
+  const font = ctx.fontResolver?.(props.font);
   if (font) {
     return font.ascender / font.unitsPerEm;
   }
-  throw new Error(`Text layout requires ascender metrics for font "${props.fontFamily}"`);
+  throw new Error(`Text layout requires ascender metrics for font "${props.font.family}"`);
 }
 
 /**
@@ -340,12 +335,7 @@ function resolveFontGlyphRendering(params: {
   if (!firstLine) {
     return undefined;
   }
-  const font = fontResolver({
-    props: displayProps,
-    fontFamily: displayProps.fontFamily,
-    fontWeight: displayProps.fontWeight,
-    fontStyle: displayProps.fontStyle,
-  });
+  const font = fontResolver(displayProps.font);
   if (!font) {
     return undefined;
   }
@@ -359,6 +349,18 @@ function resolveFontGlyphRendering(params: {
     align: displayProps.textAlignHorizontal,
     letterSpacing: displayProps.letterSpacing,
     textDecoration: displayProps.textDecoration,
+    lineSourceStarts: lineSourceStarts(displayProps.characters, layout.lines),
+    fontForCharacter: (sourceIndex) => {
+      const run = runForCharacter(runs, sourceIndex);
+      if (run?.font === undefined) {
+        return font;
+      }
+      const runFont = fontResolver(run.font);
+      if (!runFont) {
+        throw new Error(`Text rendering requires preloaded run font "${run.font.family}" for character index ${sourceIndex}`);
+      }
+      return runFont;
+    },
   });
   if (pathData.glyphContours.length === 0 && pathData.decorations.length === 0) {
     return undefined;
@@ -376,6 +378,31 @@ function resolveFontGlyphRendering(params: {
     layout,
     truncation,
   };
+}
+
+function runForCharacter(runs: readonly TextRun[], sourceIndex: number): TextRun | undefined {
+  return runs.find((run) => sourceIndex >= run.start && sourceIndex < run.end);
+}
+
+function lineSourceStarts(characters: string, lines: ReturnType<typeof computeTextLayout>["lines"]): readonly number[] {
+  const paragraphStarts = paragraphStartOffsets(characters);
+  return lines.map((line) => {
+    const paragraphStart = paragraphStarts[line.paragraphIndex];
+    if (paragraphStart === undefined) {
+      throw new Error(`Text rendering line references missing paragraph ${line.paragraphIndex}`);
+    }
+    return paragraphStart + line.sourceStart;
+  });
+}
+
+function paragraphStartOffsets(characters: string): readonly number[] {
+  const starts = [0];
+  for (let index = 0; index < characters.length; index++) {
+    if (characters[index] === "\n") {
+      starts.push(index + 1);
+    }
+  }
+  return starts;
 }
 
 /**
@@ -501,14 +528,6 @@ export function resolveTextRendering(
   const lines: TextRenderingLines = {
     kind: "lines",
     layout,
-    fontFamily: displayProps.fontFamily,
-    fontSize: displayProps.fontSize,
-    fontWeight: displayProps.fontWeight,
-    fontStyle: displayProps.fontStyle,
-    letterSpacing: displayProps.letterSpacing,
-    textAlignHorizontal: displayProps.textAlignHorizontal,
-    textAlignVertical: displayProps.textAlignVertical,
-    textDecoration: displayProps.textDecoration,
     runs,
     fillColor,
     fillOpacity,

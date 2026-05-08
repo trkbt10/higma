@@ -3,6 +3,7 @@
  */
 
 import type { FontMetrics } from "../../font/index";
+import { FONT_WEIGHTS } from "../../font/weight";
 import type { MeasurementProvider, FontSpec, TextMeasurement } from "./types";
 
 /** Compute cap height from actual bounding box ascent, or undefined if not available */
@@ -25,15 +26,16 @@ type TextMeasureContext = {
 };
 
 /**
- * Build CSS font string from font spec
+ * Build CSS font string from font spec.
+ *
+ * The canonical `FontQuery` is unpacked here at the boundary into the
+ * `${style} ${weight} ${size}px ${family}` shorthand the Canvas 2D API
+ * accepts. `style === "normal"` is omitted to match CSS shorthand defaults.
  */
-function buildFontString(font: FontSpec): string {
-  const style = font.fontStyle ?? "normal";
-  const weight = font.fontWeight ?? 400;
-  const size = font.fontSize;
-  const family = font.fontFamily;
-
-  return `${style} ${weight} ${size}px ${family}`;
+function buildFontString(spec: FontSpec): string {
+  const { font } = spec;
+  const styleSegment = font.style !== "normal" ? `${font.style} ` : "";
+  return `${styleSegment}${font.weight} ${spec.fontSize}px ${font.family}`;
 }
 
 /**
@@ -86,25 +88,25 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
   }
 
   return {
-    measureText(text: string, font: FontSpec): TextMeasurement {
+    measureText(text: string, spec: FontSpec): TextMeasurement {
       const ctx = getContext();
-      ctx.font = buildFontString(font);
+      ctx.font = buildFontString(spec);
 
       const metrics = ctx.measureText(text);
 
       const width = adjustForLetterSpacing(
         metrics.width,
         text.length,
-        font.letterSpacing
+        spec.letterSpacing
       );
       const ascent =
         metrics.fontBoundingBoxAscent ??
         metrics.actualBoundingBoxAscent ??
-        font.fontSize * 0.8;
+        spec.fontSize * 0.8;
       const descent =
         metrics.fontBoundingBoxDescent ??
         metrics.actualBoundingBoxDescent ??
-        font.fontSize * 0.2;
+        spec.fontSize * 0.2;
 
       return {
         width,
@@ -114,12 +116,12 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
       };
     },
 
-    measureCharWidths(text: string, font: FontSpec): readonly number[] {
+    measureCharWidths(text: string, spec: FontSpec): readonly number[] {
       const ctx = getContext();
-      ctx.font = buildFontString(font);
+      ctx.font = buildFontString(spec);
 
       const widths: number[] = [];
-      const letterSpacing = font.letterSpacing ?? 0;
+      const letterSpacing = spec.letterSpacing ?? 0;
 
       for (let i = 0; i < text.length; i++) {
         const char = text[i];
@@ -130,27 +132,27 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
       return widths;
     },
 
-    getFontMetrics(font: FontSpec): FontMetrics {
+    getFontMetrics(spec: FontSpec): FontMetrics {
       const ctx = getContext();
-      ctx.font = buildFontString(font);
+      ctx.font = buildFontString(spec);
 
       const metrics = ctx.measureText("Xg");
 
       const ascender =
         metrics.fontBoundingBoxAscent ??
         metrics.actualBoundingBoxAscent ??
-        font.fontSize * 0.8;
+        spec.fontSize * 0.8;
       const descender =
         metrics.fontBoundingBoxDescent ??
         metrics.actualBoundingBoxDescent ??
-        font.fontSize * 0.2;
+        spec.fontSize * 0.2;
 
       return {
         unitsPerEm: 1000,
-        ascender: (ascender / font.fontSize) * 1000,
-        descender: -(descender / font.fontSize) * 1000,
+        ascender: (ascender / spec.fontSize) * 1000,
+        descender: -(descender / spec.fontSize) * 1000,
         lineGap: 0,
-        capHeight: computeCapHeight(metrics.actualBoundingBoxAscent, font.fontSize),
+        capHeight: computeCapHeight(metrics.actualBoundingBoxAscent, spec.fontSize),
       };
     },
   };
@@ -166,8 +168,12 @@ export function createMeasurementProvider(): MeasurementProvider {
     typeof OffscreenCanvas !== "undefined"
   ) {
     const provider = createCanvasMeasurementProvider();
-    // Test if it works
-    provider.measureText("test", { fontFamily: "sans-serif", fontSize: 12 });
+    // Probe with a minimal `FontQuery`-shaped spec so the canonical
+    // descriptor is exercised end-to-end before returning the provider.
+    provider.measureText("test", {
+      font: { family: "sans-serif", weight: FONT_WEIGHTS.REGULAR, style: "normal" },
+      fontSize: 12,
+    });
     return provider;
   }
 

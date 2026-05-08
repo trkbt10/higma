@@ -67,6 +67,5 @@ export type {
   TextRenderingGlyphs,
   TextRenderingLines,
   ResolveTextContext,
-  TextFontResolveRequest,
   TextFontResolver,
 } from "./rendering";

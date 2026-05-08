@@ -23,7 +23,7 @@ import type {
   TextCase,
   TextDecoration,
 } from "./types";
-import { detectWeight, isItalic, FONT_WEIGHTS } from "../../font";
+import { figmaFontToQuery } from "../../font/query";
 
 /**
  * Structured text data fields.
@@ -177,9 +177,7 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   if (hasVisibleText && !fontName?.family) {
     throw new Error("TEXT node requires fontName.family for non-empty characters");
   }
-  const fontFamily = fontName?.family ?? "";
-  const fontWeight = detectWeight(fontName?.style) ?? FONT_WEIGHTS.REGULAR;
-  const fontStyle = isItalic(fontName?.style) ? "italic" : undefined;
+  const font = figmaFontToQuery(fontName);
 
   // Letter spacing
   const letterSpacingRaw = td?.letterSpacing ?? raw?.letterSpacing;
@@ -220,9 +218,7 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
     transform,
     characters: transformedCharacters,
     fontSize,
-    fontFamily,
-    fontWeight,
-    fontStyle,
+    font,
     letterSpacing: letterSpacing !== 0 ? letterSpacing : undefined,
     lineHeight,
     fillPaints: node.fills ?? node.fillPaints,

@@ -10,16 +10,30 @@ import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "
 import type { TextAlignHorizontal } from "../layout/types";
 import { convertQuadraticsToCubic } from "./bezier";
 
+type FontForCharacter = (sourceIndex: number) => AbstractFont;
+
 /**
  * Calculate width of text using font metrics
  */
 export function calculateTextWidth(
   { text, font, fontSize, letterSpacing}: { text: string; font: AbstractFont; fontSize: number; letterSpacing?: number; }
 ): number {
-  const scale = fontSize / font.unitsPerEm;
+  return calculateMixedFontTextWidth({
+    text,
+    fontSize,
+    letterSpacing,
+    fontForCharacter: () => font,
+  });
+}
+
+function calculateMixedFontTextWidth(
+  { text, fontSize, letterSpacing, fontForCharacter, sourceStart = 0}: { text: string; fontSize: number; letterSpacing?: number; fontForCharacter: FontForCharacter; sourceStart?: number; }
+): number {
   const spacing = letterSpacing ?? 0;
   const widthRef = { value: 0 };
   for (let i = 0; i < text.length; i++) {
+    const font = fontForCharacter(sourceStart + i);
+    const scale = fontSize / font.unitsPerEm;
     const glyph = font.charToGlyph(text[i]);
     const advanceWidth = glyph.advanceWidth ?? 0;
     widthRef.value += advanceWidth * scale;
@@ -63,19 +77,46 @@ function getAlignmentOffset(
 export function extractLinePathCommands(
   { text, font, fontSize, x, y, align, letterSpacing}: { text: string; font: AbstractFont; fontSize: number; x: number; y: number; align: TextAlignHorizontal; letterSpacing?: number; }
 ): PathContour | null {
-  const totalWidth = calculateTextWidth({ text, font, fontSize, letterSpacing });
-  const adjustedX = getAlignmentOffset(align, totalWidth, x);
-
-  const fontPath = font.getPath(text, adjustedX, y, fontSize, {
-    letterSpacing: letterSpacing ?? 0,
+  const contours = extractGlyphPathContours({
+    text,
+    fontSize,
+    x,
+    y,
+    align,
+    letterSpacing,
+    fontForCharacter: () => font,
+    sourceStart: 0,
   });
-
-  const commands = convertQuadraticsToCubic(fontPath.commands);
+  const commands = contours.flatMap((contour) => contour.commands);
   if (commands.length === 0) {
     return null;
   }
 
   return { commands };
+}
+
+function extractGlyphPathContours(
+  { text, fontSize, x, y, align, letterSpacing, fontForCharacter, sourceStart}: { text: string; fontSize: number; x: number; y: number; align: TextAlignHorizontal; letterSpacing?: number; fontForCharacter: FontForCharacter; sourceStart: number; }
+): GlyphContour[] {
+  const totalWidth = calculateMixedFontTextWidth({ text, fontSize, letterSpacing, fontForCharacter, sourceStart });
+  const spacing = letterSpacing ?? 0;
+  const cursor = { x: getAlignmentOffset(align, totalWidth, x) };
+  const contours: GlyphContour[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const font = fontForCharacter(sourceStart + i);
+    const scale = fontSize / font.unitsPerEm;
+    const glyph = font.charToGlyph(text[i]);
+    const path = glyph.getPath(cursor.x, y, fontSize);
+    const commands = convertQuadraticsToCubic(path.commands);
+    if (commands.length > 0) {
+      contours.push({ commands, firstCharacter: sourceStart + i });
+    }
+    cursor.x += (glyph.advanceWidth ?? 0) * scale;
+    if (i < text.length - 1) {
+      cursor.x += spacing;
+    }
+  }
+  return contours;
 }
 
 /**
@@ -120,7 +161,7 @@ export function createUnderlineRect(
  * @returns TextPathResult with glyph contours and decorations
  */
 export function extractTextPathData(
-  { lines, font, fontSize, x, baseY, lineHeight, align, letterSpacing, textDecoration }: { lines: readonly string[]; font: AbstractFont; fontSize: number; x: number; baseY: number; lineHeight: number; align: TextAlignHorizontal; letterSpacing?: number; textDecoration?: "NONE" | "UNDERLINE" | "STRIKETHROUGH"; }
+  { lines, font, fontSize, x, baseY, lineHeight, align, letterSpacing, textDecoration, fontForCharacter, lineSourceStarts }: { lines: readonly string[]; font: AbstractFont; fontSize: number; x: number; baseY: number; lineHeight: number; align: TextAlignHorizontal; letterSpacing?: number; textDecoration?: "NONE" | "UNDERLINE" | "STRIKETHROUGH"; fontForCharacter?: FontForCharacter; lineSourceStarts?: readonly number[]; }
 ): TextPathResult {
   const glyphContours: GlyphContour[] = [];
   const decorations: DecorationRect[] = [];
@@ -130,27 +171,18 @@ export function extractTextPathData(
     if (!lineText) {continue;}
 
     const y = baseY + i * lineHeight;
-    const contour = extractLinePathCommands({
+    const contours = extractGlyphPathContours({
       text: lineText,
-      font,
       fontSize,
       x,
       y,
       align,
       letterSpacing,
+      fontForCharacter: fontForCharacter ?? (() => font),
+      sourceStart: lineSourceStarts?.[i] ?? 0,
     });
 
-    if (contour) {
-      // opentype.js mode emits one contour per visual line — there is no
-      // per-glyph character index, so the run grouper treats this contour
-      // as belonging to the base run (firstCharacter undefined).
-      const glyphContour: GlyphContour = {
-        commands: contour.commands,
-        windingRule: contour.windingRule,
-        firstCharacter: undefined,
-      };
-      glyphContours.push(glyphContour);
-    }
+    glyphContours.push(...contours);
 
     if (textDecoration === "UNDERLINE") {
       const rect = createUnderlineRect({

@@ -47,6 +47,7 @@ export type TextStyleRunData = {
   readonly start: number;
   readonly end: number;
   readonly fillColor: Paint["color"];
+  readonly fontName?: FontName;
 };
 
 export type TextNodeData = {

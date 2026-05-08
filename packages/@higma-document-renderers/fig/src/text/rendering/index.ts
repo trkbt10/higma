@@ -16,6 +16,5 @@ export type {
   TextRenderingLines,
   TextTruncation,
   ResolvedFontMetrics,
-  TextFontResolveRequest,
   TextFontResolver,
 } from "./types";

@@ -18,11 +18,13 @@
  * browser just measured against — keeping layout self-consistent
  * with what the user actually sees.
  *
- * The resolver memoises results per `(family|weight|style)` triple so
- * a 100-line component does not re-issue 100 canvas measurements.
+ * The resolver memoises results per `FontQuery` triple via the
+ * canonical `fontQueryKey` so a 100-line component does not re-issue
+ * 100 canvas measurements.
  */
 
 import type { AbstractFont, FontPath } from "../../font/types";
+import { fontQueryKey } from "../../font/query";
 import type { TextFontResolver } from "../../text/rendering";
 
 const UNITS_PER_EM = 1000;
@@ -50,12 +52,11 @@ function quoteFamily(family: string): string {
 
 function buildFontShorthand(params: {
   readonly family: string;
-  readonly weight: number | undefined;
-  readonly style: string | undefined;
+  readonly weight: number;
+  readonly style: string;
 }): string {
-  const styleSegment = params.style && params.style !== "normal" ? `${params.style} ` : "";
-  const weightSegment = params.weight !== undefined ? `${params.weight} ` : "";
-  return `${styleSegment}${weightSegment}${MEASURE_FONT_SIZE}px ${quoteFamily(params.family)}`;
+  const styleSegment = params.style !== "normal" ? `${params.style} ` : "";
+  return `${styleSegment}${params.weight} ${MEASURE_FONT_SIZE}px ${quoteFamily(params.family)}`;
 }
 
 function readMetricsAscent(metrics: TextMetrics): number | undefined {
@@ -148,8 +149,8 @@ export function createCanvasMetricsTextFontResolver(): TextFontResolver {
   const holder = createContextHolder();
   const cache = new Map<string, AbstractFont | null>();
 
-  return (request) => {
-    const key = `${request.fontFamily}|${request.fontWeight ?? ""}|${request.fontStyle ?? ""}`;
+  return (query) => {
+    const key = fontQueryKey(query);
     const cached = cache.get(key);
     if (cached !== undefined) {
       return cached ?? undefined;
@@ -160,9 +161,9 @@ export function createCanvasMetricsTextFontResolver(): TextFontResolver {
       return undefined;
     }
     ctx.font = buildFontShorthand({
-      family: request.fontFamily,
-      weight: request.fontWeight,
-      style: request.fontStyle,
+      family: query.family,
+      weight: query.weight,
+      style: query.style,
     });
     const metrics = ctx.measureText(MEASURE_SAMPLE);
     const ascent = readMetricsAscent(metrics);

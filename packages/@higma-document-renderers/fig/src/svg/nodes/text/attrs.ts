@@ -1,5 +1,10 @@
 /**
  * @file SVG text attribute building
+ *
+ * Unpacks the canonical `ExtractedTextProps.font` (FontQuery) into the
+ * three flat CSS attributes the SVG `<text>` element accepts. This is the
+ * single boundary where the structured query becomes presentation data —
+ * other layers continue to speak `FontQuery`.
  */
 
 import type { text } from "../../primitives";
@@ -21,7 +26,6 @@ export type SvgTextAttrs = Parameters<typeof text>[0];
  * @param props - Extracted text properties
  * @param fillColor - Resolved fill color (hex)
  * @param fillOpacity - Fill opacity (0-1)
- * @param lineCount - Number of text lines (for vertical alignment)
  * @returns Attributes for SVG text element
  */
 export function buildTextAttrs(
@@ -29,15 +33,16 @@ export function buildTextAttrs(
 ): SvgTextAttrs {
   const textAnchor = getTextAnchor(props.textAlignHorizontal);
   const x = getAlignedX(props.textAlignHorizontal, props.size?.width);
+  const { font } = props;
 
   return {
     x,
     fill: fillColor,
     "fill-opacity": fillOpacity < 1 ? fillOpacity : undefined,
-    "font-family": props.fontFamily,
+    "font-family": font.family,
     "font-size": props.fontSize,
-    "font-weight": props.fontWeight,
-    "font-style": props.fontStyle,
+    "font-weight": font.weight,
+    "font-style": font.style !== "normal" ? font.style : undefined,
     "letter-spacing": props.letterSpacing,
     "text-anchor": textAnchor !== "start" ? textAnchor : undefined,
   };
