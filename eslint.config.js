@@ -134,23 +134,7 @@ export default tseslint.config(
     files: ["packages/**/*.ts", "packages/**/*.tsx"],
     ignores: ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
     rules: {
-      "custom/no-cross-package-reexport": [
-        "error",
-        {
-          packagePrefixes: [
-            "@higma-primitives/",
-            "@higma-codecs/",
-            "@higma-figma-schema/",
-            "@higma-figma-containers/",
-            "@higma-document-models/",
-            "@higma-document-io/",
-            "@higma-document-renderers/",
-            "@higma-document-editors/",
-            "@higma-editor-kernel/",
-            "@higma-editor-surfaces/",
-          ],
-        },
-      ],
+      "custom/no-cross-package-reexport": "error",
       "custom/no-cross-boundary-export": "error",
       "custom/enforce-package-boundaries": "error",
     },

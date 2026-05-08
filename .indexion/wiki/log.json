@@ -659,10 +659,18 @@
     "affected_pages": []
   },
   {
-    "timestamp": "1777949981570",
+    "timestamp": "0",
     "operation": "index build",
     "actor": "indexion",
     "summary": "Built index: 2 categories, 10 hub pages + vectors",
+    "details": {},
+    "affected_pages": []
+  },
+  {
+    "timestamp": "1778201807961",
+    "operation": "index build",
+    "actor": "indexion",
+    "summary": "Built index: 2 categories, 10 hub pages",
     "details": {},
     "affected_pages": []
   }

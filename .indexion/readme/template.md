@@ -1,4 +1,8 @@
-# higma
+<p align="center">
+  <img src="brand/higma.svg" alt="higma logo" width="180" />
+</p>
+
+<h1 align="center">higma</h1>
 
 {{include:docs/intro.md}}
 

@@ -27,7 +27,7 @@ Most-linked pages that serve as knowledge hubs:
 
 ### packages
 
-- [Higuma Overview](wiki://overview)
+- [higma Overview](wiki://overview)
 - [Core Concepts](wiki://core-concepts)
 - [Architecture](wiki://architecture)
 - [@higma/fig Package](wiki://fig-package)

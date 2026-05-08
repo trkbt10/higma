@@ -1,6 +1,10 @@
-# Higuma
+<p align="center">
+  <img src="../../brand/higma.svg" alt="higma logo" width="180" />
+</p>
 
-Higuma は Figma の `.fig` ファイルをパース、レンダリング、編集するためのTypeScriptモノレポです。
+<h1 align="center">higma</h1>
+
+higma は Figma の `.fig` ファイルをパース、レンダリング、編集するためのTypeScriptモノレポです。
 
 ## プロジェクトの目的
 

@@ -3,7 +3,7 @@
   "pages": [
     {
       "id": "overview",
-      "title": "Higuma Overview",
+      "title": "higma Overview",
       "file": "overview.md",
       "sources": [
         "packages/@higma/"
