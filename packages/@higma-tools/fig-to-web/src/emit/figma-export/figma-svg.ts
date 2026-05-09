@@ -21,6 +21,7 @@
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
+import { figRawResources } from "@higma-document-io/fig/context";
 import type { WebFontPlan } from "@higma-document-models/fig/font";
 import type { FigSource } from "../../fig-source";
 import type { EmitFile, FrameTarget } from "../types";
@@ -65,19 +66,15 @@ export async function emitFigmaSvgForFrame(
   // produces metric drift between this authoritative render and the
   // browser's React render.
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
+  // SoT: spread the canonical four-field bundle from the IO layer
+  // instead of re-listing `symbolMap` / `styleRegistry` / `blobs` /
+  // `images` by hand. Re-deriving any of them inline would diverge
+  // from the post-style-resolution maps other consumers see.
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
-    blobs: source.blobs,
-    images: source.images,
+    ...figRawResources(source),
     normalizeRootTransform: true,
-    // SoT: consume `symbolMap` and `styleRegistry` from the
-    // FigSymbolContext — the IO layer already produced one map and
-    // one registry shared by every consumer. Re-deriving here (e.g.
-    // by walking `source.tree.roots`) would diverge from the
-    // post-style-resolution map other consumers see.
-    symbolMap: source.symbolMap,
-    styleRegistry: source.styleRegistry,
     fontLoader,
     // The authoritative SVG is loaded inside an `<iframe>` running in a
     // normal web browser whose backbuffer is sRGB. Image paints flagged

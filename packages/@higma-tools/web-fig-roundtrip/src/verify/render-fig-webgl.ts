@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import { createServer, type ViteDevServer } from "vite";
-import { createFigDesignDocument } from "@higma-document-io/fig/context";
+import { createFigDesignDocument, figDocumentResources } from "@higma-document-io/fig/context";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeFontLoaderWithFontsource } from "@higma-document-renderers/fig/font-drivers/node";
@@ -135,12 +135,9 @@ export async function renderFigViewports(
     const width = Math.round(sz.x);
     const height = Math.round(sz.y);
     const sceneGraph = buildSceneGraph([normalizeRootNode(w.node)], {
-      blobs: document.blobs,
-      images: document.images,
+      ...figDocumentResources(document),
       canvasSize: { width, height },
       viewport: { x: 0, y: 0, width, height },
-      symbolMap: document.components,
-      styleRegistry: document.styleRegistry,
       showHiddenNodes: false,
       warnings: [],
       textFontResolver: fontResolver,

@@ -27,7 +27,7 @@ import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { guidToString, safeChildren } from "@higma-document-models/fig/domain";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import { figRawResources, type FigSymbolContext } from "@higma-document-io/fig/context";
 
 /**
  * Context the renderer needs from the loaded fig. Accept the full
@@ -99,13 +99,8 @@ export function createNodeRenderer(ctx: NodeRenderContext): NodeRenderer {
     const result = await renderFigToSvg([node], {
       width: node.size.x,
       height: node.size.y,
-      blobs: ctx.blobs,
-      images: ctx.images,
+      ...figRawResources(ctx),
       normalizeRootTransform: true,
-      symbolMap: ctx.symbolMap,
-      // Reuse the registry the IO context already built, instead of
-      // making the renderer derive an identical one per call.
-      styleRegistry: ctx.styleRegistry,
       fontLoader,
     });
     const svg = String(result.svg);

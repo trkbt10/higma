@@ -292,17 +292,40 @@ function buildPropDecls(
     return [{ kind: "variant", name: "variant", defId: "synthetic", values, defaultValue: fallbackDefault }];
   }
 
-  const out: ComponentPropDecl[] = [];
-  for (const def of defs) {
-    if (!def.id || !def.name) {
-      continue;
+  return collapseVariantDecls(
+    defs
+      .filter((def) => Boolean(def.id) && Boolean(def.name))
+      .map((def) => mapPropDef(def, variants))
+      .filter((decl): decl is ComponentPropDecl => decl !== undefined),
+  );
+}
+
+/**
+ * Figma allows a COMPONENT_SET to declare multiple VARIANT-typed
+ * `componentPropDefs` (one per variant axis: "State", "Size", "Color", …).
+ * The emit pipeline collapses every axis into a single `variant` prop
+ * whose value is the combined variant key produced by `buildVariantMap`
+ * (e.g. "State=Hover, Size=Large"). That collapse means we must emit
+ * exactly **one** variant declaration in `target.props`; otherwise the
+ * `variant = …` destructure pattern contains the same identifier multiple
+ * times and the bundle fails with "cannot be bound multiple times in the
+ * same parameter list". First-VARIANT-wins for `defId` (used by JSX prop
+ * bindings); values come from the variant map regardless.
+ *
+ * Implemented as `reduce` rather than a `for` + `let` flag so the
+ * accumulator's "have we already emitted a variant?" state is encoded in
+ * the result array itself — the project's no-`let` lint rule is a
+ * structural guard for exactly this kind of imperative dedup-flag pattern.
+ */
+function collapseVariantDecls(
+  decls: readonly ComponentPropDecl[],
+): readonly ComponentPropDecl[] {
+  return decls.reduce<ComponentPropDecl[]>((acc, decl) => {
+    if (decl.kind === "variant" && acc.some((existing) => existing.kind === "variant")) {
+      return acc;
     }
-    const decl = mapPropDef(def, variants);
-    if (decl) {
-      out.push(decl);
-    }
-  }
-  return out;
+    return [...acc, decl];
+  }, []);
 }
 
 function mapPropDef(

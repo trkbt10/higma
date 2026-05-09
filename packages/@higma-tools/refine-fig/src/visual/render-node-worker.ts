@@ -25,7 +25,11 @@
 import { createInterface } from "node:readline";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { createFigSymbolContext, type FigSymbolContext } from "@higma-document-io/fig/context";
+import {
+  createFigSymbolContext,
+  figRawResources,
+  type FigSymbolContext,
+} from "@higma-document-io/fig/context";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
 import {
@@ -99,11 +103,8 @@ async function handleRequest(req: WorkerRequest, w: WorkerCtx): Promise<WorkerRe
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
-    blobs: w.ctx.blobs,
-    images: w.ctx.images,
+    ...figRawResources(w.ctx),
     normalizeRootTransform: true,
-    symbolMap: w.ctx.symbolMap,
-    styleRegistry: w.ctx.styleRegistry,
     fontLoader: w.fontLoader,
   });
   const svg = String(result.svg);

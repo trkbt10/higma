@@ -9,7 +9,11 @@ import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
-import { createFigSymbolContext, type FigSymbolContext } from "@higma-document-io/fig/context";
+import {
+  createFigSymbolContext,
+  figRawResources,
+  type FigSymbolContext,
+} from "@higma-document-io/fig/context";
 
 export type RenderedFrame = {
   readonly name: string;
@@ -119,11 +123,8 @@ async function renderOne(
   const result = await renderFigToSvg([frame], {
     width: frame.size.x,
     height: frame.size.y,
-    blobs: ctx.blobs,
-    images: ctx.images,
+    ...figRawResources(ctx),
     normalizeRootTransform: true,
-    symbolMap: ctx.symbolMap,
-    styleRegistry: ctx.styleRegistry,
     fontLoader,
   });
   const svg = String(result.svg);
