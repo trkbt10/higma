@@ -1,7 +1,7 @@
 /** @file SVG renderer font-loader integration tests. */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { AbstractFont, FontLoader, FontLoadOptions, FontPath, LoadedFont } from "../font";
+import type { AbstractFont, FontLoader, FontLoadOptions, FontPath, LoadedFont } from "@higma-document-models/fig/font";
 import { renderFigToSvg } from "./renderer";
 
 const RECT_PATH: FontPath = {

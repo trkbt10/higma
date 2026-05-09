@@ -18,8 +18,8 @@ import type { GlyphContour, PathContour } from "../paths/types";
 import type { ExtractedTextProps } from "../layout/types";
 import type { TextLayout } from "../layout/compute-layout";
 import type { FigMatrix } from "@higma-document-models/fig/types";
-import type { AbstractFont } from "../../font/types";
-import type { FontQuery } from "../../font/query";
+import type { AbstractFont } from "@higma-document-models/fig/font";
+import type { FontQuery } from "@higma-document-models/fig/font";
 import type { TextRun } from "../runs";
 
 /**

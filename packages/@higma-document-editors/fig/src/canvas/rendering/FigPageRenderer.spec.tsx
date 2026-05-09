@@ -14,7 +14,7 @@ import type { FigPage } from "@higma-document-models/fig/domain";
 import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { FigPageRenderer } from "./FigPageRenderer";
 import type { FigEditorRendererKind } from "./renderer-kind";
-import type { AbstractFont } from "@higma-document-renderers/fig/font";
+import type { AbstractFont } from "@higma-document-models/fig/font";
 import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 
 const docPromise = createDemoFigDesignDocument();

@@ -41,6 +41,8 @@ import type {
   TextNodeIR,
   ViewportIR,
 } from "@higma-bridges/web-fig";
+import { resolveCornerRadius } from "@higma-bridges/web-fig";
+import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
 
 /** Build a `.fig` byte buffer from the IR. ZIP-wrapped, ready to open in Figma. */
 /** Convert ViewportIR into a `.fig` (zip-wrapped) byte buffer plus IR id → fig localID map. */
@@ -258,7 +260,7 @@ function emitRectangle(
       .name(node.name || "Rectangle")
       .size(node.box.width, node.box.height)
       .position(node.box.x, node.box.y)
-      .cornerRadius(tl);
+      .cornerRadius(resolveCornerRadius(tl, node.box));
     const finalBuilder = firstSolid ? baseBuilder.fill(firstSolid) : baseBuilder;
     file.addRoundedRectangle(finalBuilder.build());
   } else {
@@ -317,48 +319,19 @@ function counterAlignToFig(align: "start" | "center" | "end" | "stretch"): Stack
   }
 }
 
+/**
+ * Build a Figma `fontName.style` label from an IR text style.
+ *
+ * Routes through the canonical `fontQueryToStyleName` + `normalizeWeight`
+ * SoT so the label format here always matches what `figmaFontToQuery`
+ * will parse back to the same numeric weight on the round-trip side.
+ * Re-implementing the weight→label mapping locally would silently
+ * drift from `detectWeight` and corrupt every weight bucket.
+ */
 function fontStyleName(style: TextNodeIR["textStyle"]): string {
-  if (style.fontStyle === "italic") {
-    return weightLabel(style.fontWeight, "Italic");
-  }
-  if (style.fontStyle === "oblique") {
-    return weightLabel(style.fontWeight, "Italic");
-  }
-  return weightLabel(style.fontWeight, "Regular");
-}
-
-function weightLabel(weight: number, italicSuffix: "Italic" | "Regular"): string {
-  const label = weightTextFor(weight);
-  if (italicSuffix === "Italic") {
-    return label === "Regular" ? "Italic" : `${label} Italic`;
-  }
-  return label;
-}
-
-function weightTextFor(weight: number): string {
-  if (weight <= 100) {
-    return "Thin";
-  }
-  if (weight <= 200) {
-    return "ExtraLight";
-  }
-  if (weight <= 300) {
-    return "Light";
-  }
-  if (weight <= 400) {
-    return "Regular";
-  }
-  if (weight <= 500) {
-    return "Medium";
-  }
-  if (weight <= 600) {
-    return "SemiBold";
-  }
-  if (weight <= 700) {
-    return "Bold";
-  }
-  if (weight <= 800) {
-    return "ExtraBold";
-  }
-  return "Black";
+  return fontQueryToStyleName({
+    family: style.fontFamily,
+    weight: normalizeWeight(style.fontWeight),
+    style: style.fontStyle,
+  });
 }

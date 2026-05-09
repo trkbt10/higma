@@ -15,7 +15,7 @@ import { PageListPanel } from "../panels/pages/PageListPanel";
 import { PropertyPanel } from "../panels/properties/PropertyPanel";
 import { LayerPanel } from "../panels/layers/LayerPanel";
 import type { FigEditorRendererKind } from "../canvas/rendering/renderer-kind";
-import type { CachingFontLoader } from "@higma-document-renderers/fig/font";
+import type { CachingFontLoader } from "@higma-document-models/fig/font";
 
 // =============================================================================
 // Types

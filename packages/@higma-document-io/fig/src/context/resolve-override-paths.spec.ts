@@ -60,7 +60,13 @@ function instanceNode(
   localID: number,
   name: string,
   symbolID: { sessionID: number; localID: number },
-  overrides: readonly { guidPath: { guids: readonly { sessionID: number; localID: number }[] }; styleIdForFill?: unknown; overriddenSymbolID?: { sessionID: number; localID: number } }[] = [],
+  overrides: readonly {
+    guidPath: { guids: readonly { sessionID: number; localID: number }[] };
+    styleIdForFill?: unknown;
+    overriddenSymbolID?: { sessionID: number; localID: number };
+    size?: { x: number; y: number };
+    proportionsConstrained?: boolean;
+  }[] = [],
 ): FigNode {
   return {
     guid: guid(20, localID),
@@ -132,6 +138,49 @@ describe("resolveOverridePaths — SSoT for override path resolution", () => {
     expect(() =>
       convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []),
     ).not.toThrow();
+  });
+
+  it("INSTANCE self-overrides with `{size, proportionsConstrained}` and an unreachable per-instance ghost guid are routed to the SYMBOL root, not thrown", () => {
+    // Regression: the Figma Community E-commerce template's
+    // `arrow-left` INSTANCEs author a `{size, proportionsConstrained}`
+    // override whose `guidPath` first guid (e.g. 1027:7310) lives in a
+    // per-instance ghost session that is never bound to a node in the
+    // file's nodeMap. The session also only carries this single entry,
+    // so the ≥2-entries-per-session ghost-session escape hatch does not
+    // fire. The unreachable-guid throw used to short-circuit before the
+    // self-override rerouter could rescue it; the rerouter itself
+    // would not have classified the entry either, because
+    // `proportionsConstrained` was missing from
+    // `INSTANCE_SELF_OVERRIDE_FIELDS`. Both gaps are closed by treating
+    // `proportionsConstrained` as a self-override field and admitting
+    // self-override entries through the unreachable-guid filter so the
+    // rerouter can redirect their path to the SYMBOL root.
+    const logoRaw = vectorNode(100, "Logo");
+    const brandSym = symbolNode(10, "Brand", [logoRaw]);
+    const symbolMap = new Map<string, FigNode>([
+      ["10:10", brandSym],
+      ["10:100", logoRaw],
+    ]);
+
+    const instance = instanceNode(1, "Brand", guid(10, 10), [
+      {
+        guidPath: { guids: [guid(1027, 7310)] },
+        size: { x: 16, y: 16 },
+        proportionsConstrained: true,
+      },
+    ]);
+
+    const components = new Map<string, FigDesignNode>();
+    expect(() =>
+      convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []),
+    ).not.toThrow();
+
+    const node = convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []);
+    expect(node.overrides?.length).toBe(1);
+    // The rerouter redirects the self-override path to the SYMBOL root
+    // (effective symbolID = 10:10) so downstream consumers see a path
+    // that targets the INSTANCE itself, not the unreachable ghost guid.
+    expect(node.overrides![0].guidPath!.guids[0]).toEqual(guid(10, 10));
   });
 
   it("no symbolMap → overrides pass through in raw INSTANCE namespace", () => {

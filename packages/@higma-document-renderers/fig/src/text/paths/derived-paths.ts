@@ -6,7 +6,7 @@
  */
 
 import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
-import type { PathCommand } from "../../font/types";
+import type { PathCommand } from "@higma-document-models/fig/font";
 import type { GlyphContour, DecorationRect, TextPathResult } from "./types";
 import type {
   DerivedGlyph,

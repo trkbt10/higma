@@ -5,7 +5,7 @@
  * Both SVG and WebGL backends consume these.
  */
 
-import type { AbstractFont } from "../../font/types";
+import type { AbstractFont } from "@higma-document-models/fig/font";
 import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "./types";
 import type { TextAlignHorizontal } from "../layout/types";
 import { convertQuadraticsToCubic } from "./bezier";

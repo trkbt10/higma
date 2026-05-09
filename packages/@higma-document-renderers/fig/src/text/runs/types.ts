@@ -12,7 +12,7 @@
  * rather than re-deriving the colour-per-character mapping.
  */
 
-import type { FontQuery } from "../../font/query";
+import type { FontQuery } from "@higma-document-models/fig/font";
 
 /** Resolved fill applied to a contiguous run of source characters. */
 export type TextRun = {

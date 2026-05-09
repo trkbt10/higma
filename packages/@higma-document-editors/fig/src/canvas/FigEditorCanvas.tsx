@@ -87,7 +87,7 @@ import {
 import { getVectorPathDraftHandleLabel } from "../vector-path/draft-labels";
 import type { MenuEntry } from "@higma-editor-kernel/ui/context-menu";
 import { ContextMenu } from "@higma-editor-kernel/ui/context-menu";
-import type { CachingFontLoader } from "@higma-document-renderers/fig/font";
+import type { CachingFontLoader } from "@higma-document-models/fig/font";
 import { resolveFigUserIntent } from "../context/fig-editor/user-intent";
 import { allowsFigUserOperation, resolveFigUserOperationDomain } from "../context/fig-editor/user-operation";
 

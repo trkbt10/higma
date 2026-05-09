@@ -15,6 +15,7 @@ export type {
   FrameNodeIR,
   GradientStopIR,
   ImagePaintIR,
+  LengthIR,
   LinearGradientPaintIR,
   MultiViewportIR,
   NodeBaseIR,
@@ -30,8 +31,17 @@ export type {
   TextRunIR,
   TextStyleIR,
   VectorNodeIR,
+  VectorPathIR,
   ViewportIR,
 } from "./ir";
+
+export {
+  pxLength,
+  percentLength,
+  resolveLength,
+  resolveCornerRadius,
+  resolveBlockInset,
+} from "./length";
 
 export {
   figAutoLayoutToIR,

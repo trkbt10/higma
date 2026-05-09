@@ -26,7 +26,7 @@ import type { FigNode, FigGuid, FigComponentPropDef, FigVariantPropSpec } from "
 import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
 import type { ComponentPropDecl, ComponentTarget, EmitRegistry, FrameTarget } from "../types";
 import type { FigSource } from "../../fig-source";
-import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "../../tokens";
+import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "@higma-primitives/identifier";
 
 /**
  * Resolve the canvas ancestor of a node. Walks up `parentIndex`

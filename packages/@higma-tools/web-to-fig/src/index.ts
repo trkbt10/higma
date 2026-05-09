@@ -22,7 +22,9 @@ export { normalizeViewport } from "./normalize";
 export type { BuildDocumentResult, EmitFigOptions, EmitFigResult, MultiFigBuildResult } from "./emit";
 export { buildDocument, buildMultiFigFileBytes, emitFig, irToSpecGraph } from "./emit";
 
-export type { ComparisonOutcome, RenderedFrame, VerificationReport, VerifiedBreakpoint } from "./verify";
-export { comparePng, renderFigBytes, verifyFidelity } from "./verify";
+// Visual-fidelity verification lives in `@higma-tools/web-fig-roundtrip`
+// because it needs to import `@higma-tools/fig-to-web` (a same-scope
+// sibling). web-to-fig stays focused on the capture-to-emit half of
+// the pipeline.
 
 export { CliUsageError, parseArgs, runCli } from "./cli";

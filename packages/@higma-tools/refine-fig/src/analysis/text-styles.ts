@@ -17,28 +17,16 @@
  */
 import type { FigNode, FigValueWithUnits } from "@higma-document-models/fig/types";
 import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { figmaFontToQuery } from "@higma-document-models/fig/font";
 
-const WEIGHT_BY_STYLE: ReadonlyMap<string, number> = new Map([
-  ["thin", 100],
-  ["extralight", 200],
-  ["ultralight", 200],
-  ["light", 300],
-  ["regular", 400],
-  ["normal", 400],
-  ["book", 400],
-  ["medium", 500],
-  ["semibold", 600],
-  ["demibold", 600],
-  ["bold", 700],
-  ["extrabold", 800],
-  ["ultrabold", 800],
-  ["black", 900],
-  ["heavy", 900],
-]);
-
-function styleToWeight(style: string): number {
-  const norm = style.toLowerCase().replace(/[^a-z]/g, "");
-  return WEIGHT_BY_STYLE.get(norm) ?? 400;
+/**
+ * Numeric weight for a Figma fontName.style string. Routes through the
+ * canonical `figmaFontToQuery` SoT so this analysis layer's clusters
+ * key on the same numeric weight every other consumer (token emit,
+ * scene-graph, run resolver) sees.
+ */
+function styleToWeight(family: string, style: string): number {
+  return figmaFontToQuery({ family, style }).weight;
 }
 
 function valueWithUnitsKey(v: FigValueWithUnits | undefined): string {
@@ -108,7 +96,7 @@ function describe(node: FigNode): TypographyDescriptor | undefined {
   return {
     fontFamily: fontName.family,
     fontStyle: fontName.style,
-    fontWeight: styleToWeight(fontName.style),
+    fontWeight: styleToWeight(fontName.family, fontName.style),
     fontSize,
     lineHeightKey: valueWithUnitsKey(node.lineHeight),
     letterSpacingKey: valueWithUnitsKey(node.letterSpacing),

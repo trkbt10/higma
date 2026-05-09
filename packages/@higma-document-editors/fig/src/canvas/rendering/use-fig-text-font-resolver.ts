@@ -1,56 +1,33 @@
 /** @file Explicit text font preloading for renderer-neutral glyph outlines. */
 
 import { useEffect, useMemo, useState } from "react";
-import type { FigDesignNode, FigPage } from "@higma-document-models/fig/domain";
+import type { FigPage } from "@higma-document-models/fig/domain";
+import {
+  collectFontQueries,
+  fontQueryKey,
+  type FontQuery,
+} from "@higma-document-models/fig/font";
 import { createCachedTextFontResolver, type TextFontResolver } from "@higma-document-renderers/fig/text";
-import type { CachingFontLoader, FontLoadOptions } from "@higma-document-renderers/fig/font";
-import { detectWeight, isItalic, isOblique } from "@higma-document-renderers/fig/font";
+import type { CachingFontLoader } from "@higma-document-models/fig/font";
 
 export type UseFigTextFontResolverParams = {
   readonly page: FigPage | null | undefined;
   readonly fontLoader: CachingFontLoader | undefined;
 };
 
-function normalizeStyle(style: string | undefined): "normal" | "italic" | "oblique" {
-  if (isItalic(style)) {
-    return "italic";
-  }
-  if (isOblique(style)) {
-    return "oblique";
-  }
-  return "normal";
-}
-
-function fontKey(options: FontLoadOptions): string {
-  return `${options.family}:${options.weight ?? 400}:${options.style ?? "normal"}`;
-}
-
-function collectTextFontOptionsFromNode(node: FigDesignNode): readonly FontLoadOptions[] {
-  const selfOptions = textNodeFontOptions(node);
-  const childOptions = node.children?.flatMap(collectTextFontOptionsFromNode) ?? [];
-  return [...selfOptions, ...childOptions];
-}
-
-function textNodeFontOptions(node: FigDesignNode): readonly FontLoadOptions[] {
-  if (node.type !== "TEXT" || !node.textData) {
-    return [];
-  }
-  return [{
-    family: node.textData.fontName.family,
-    weight: detectWeight(node.textData.fontName.style),
-    style: normalizeStyle(node.textData.fontName.style),
-  }];
-}
-
-function collectTextFontOptions(page: FigPage | null | undefined): readonly FontLoadOptions[] {
+/**
+ * Walk the page's TEXT subtrees through the canonical
+ * `collectFontQueries` SoT and surface the deduplicated `FontQuery`
+ * list. The hook itself owns no detection logic — all weight / style
+ * normalisation lives in the SoT, so cache keys, override fonts, and
+ * INSTANCE-resolved SYMBOL bodies all share one interpretation.
+ */
+function pageFontQueries(page: FigPage | null | undefined): readonly FontQuery[] {
   if (!page) {
     return [];
   }
-  const byKey = new Map<string, FontLoadOptions>();
-  for (const options of page.children.flatMap(collectTextFontOptionsFromNode)) {
-    byKey.set(fontKey(options), options);
-  }
-  return [...byKey.values()];
+  const { queries } = collectFontQueries({ roots: page.children });
+  return queries;
 }
 
 /** Preload fonts and expose a synchronous resolver for SceneGraph construction. */
@@ -58,19 +35,22 @@ export function useFigTextFontResolver({
   page,
   fontLoader,
 }: UseFigTextFontResolverParams): TextFontResolver | undefined {
-  const fontOptions = useMemo(() => collectTextFontOptions(page), [page]);
+  const fontQueries = useMemo(() => pageFontQueries(page), [page]);
   const [loadedVersion, setLoadedVersion] = useState(0);
   const [loadedKey, setLoadedKey] = useState("");
-  const requiredKey = useMemo(() => fontOptions.map(fontKey).sort().join("\u001f"), [fontOptions]);
+  const requiredKey = useMemo(
+    () => fontQueries.map(fontQueryKey).sort().join(""),
+    [fontQueries],
+  );
 
   useEffect(() => {
-    if (!fontLoader || fontOptions.length === 0) {
+    if (!fontLoader || fontQueries.length === 0) {
       setLoadedKey("");
       return;
     }
     const cancelledRef = { value: false };
-    void Promise.all(fontOptions.map(async (options) => {
-      await fontLoader.loadFont(options);
+    void Promise.all(fontQueries.map(async (query) => {
+      await fontLoader.loadFont(query);
     })).then(() => {
       if (!cancelledRef.value) {
         setLoadedKey(requiredKey);
@@ -80,15 +60,15 @@ export function useFigTextFontResolver({
     return () => {
       cancelledRef.value = true;
     };
-  }, [fontLoader, fontOptions, requiredKey]);
+  }, [fontLoader, fontQueries, requiredKey]);
 
   return useMemo(() => {
     if (!fontLoader) {
       return undefined;
     }
-    if (fontOptions.length > 0 && loadedKey !== requiredKey) {
+    if (fontQueries.length > 0 && loadedKey !== requiredKey) {
       return undefined;
     }
     return createCachedTextFontResolver(fontLoader);
-  }, [fontLoader, fontOptions.length, loadedKey, requiredKey, loadedVersion]);
+  }, [fontLoader, fontQueries.length, loadedKey, requiredKey, loadedVersion]);
 }

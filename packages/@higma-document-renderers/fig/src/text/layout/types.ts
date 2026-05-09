@@ -5,7 +5,7 @@
  */
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
-import type { FontQuery } from "../../font/query";
+import type { FontQuery } from "@higma-document-models/fig/font";
 
 /**
  * Text data structure from .fig files

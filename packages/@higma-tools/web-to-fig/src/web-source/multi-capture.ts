@@ -6,7 +6,7 @@
  * values then reflect the media-query state for that breakpoint, not
  * the desktop layout reflowed.
  */
-import { captureViewport, type CaptureOptions, type CaptureResult } from "./capture";
+import { captureViewportInBrowser, launchBrowser, type CaptureOptions, type CaptureResult } from "./capture";
 
 export type Breakpoint = {
   /** Stable label used as the breakpoint id in IR/Fig output. */
@@ -29,23 +29,34 @@ export type CapturedBreakpoint = {
   readonly result: CaptureResult;
 };
 
-/** Capture a URL at every breakpoint sequentially and return the bundle. */
+/**
+ * Capture a URL at every breakpoint, sharing one Chromium process
+ * across all viewports. Each breakpoint gets its own browser
+ * **context** (so cookies, viewport size, and DPR stay isolated),
+ * but launching Chromium once amortises the multi-second startup
+ * across all captures. Captures run in parallel against the shared
+ * browser and the results are returned in input-breakpoint order.
+ */
 export async function captureMultiViewport(
   options: MultiCaptureOptions,
 ): Promise<readonly CapturedBreakpoint[]> {
-  const captured: CapturedBreakpoint[] = [];
-  for (const bp of options.breakpoints) {
-    const result = await captureViewport({
-      url: options.url,
-      viewport: { width: bp.width, height: bp.height },
-      devicePixelRatio: bp.devicePixelRatio ?? 1,
-      waitUntil: options.waitUntil,
-      timeoutMs: options.timeoutMs,
-      captureScreenshot: options.captureScreenshot,
+  const browser = await launchBrowser();
+  try {
+    const tasks = options.breakpoints.map(async (bp) => {
+      const result = await captureViewportInBrowser(browser, {
+        url: options.url,
+        viewport: { width: bp.width, height: bp.height },
+        devicePixelRatio: bp.devicePixelRatio ?? 1,
+        waitUntil: options.waitUntil,
+        timeoutMs: options.timeoutMs,
+        captureScreenshot: options.captureScreenshot,
+      });
+      return { breakpoint: bp, result } satisfies CapturedBreakpoint;
     });
-    captured.push({ breakpoint: bp, result });
+    return await Promise.all(tasks);
+  } finally {
+    await browser.close();
   }
-  return captured;
 }
 
 /** Default mobile / tablet / desktop trio used by the CLI and verifiers. */

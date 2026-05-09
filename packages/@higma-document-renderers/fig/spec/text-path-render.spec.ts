@@ -14,7 +14,7 @@ import { parseFigFile } from "@higma-document-io/fig/parser";
 import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
-import { createCachingFontLoader, type CachingFontLoader } from "../src/font";
+import { createCachingFontLoader, type CachingFontLoader } from "@higma-document-models/fig/font";
 import { renderTextNodeAsPath, type PathRenderContext } from "../src/svg/nodes/text/path-render";
 import { createFigSvgRenderContext } from "../src/svg/context";
 

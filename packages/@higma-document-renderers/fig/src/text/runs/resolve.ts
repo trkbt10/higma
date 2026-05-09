@@ -43,7 +43,7 @@
 import type { FigPaint } from "@higma-document-models/fig/types";
 import type { FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
 import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
-import { figmaFontToQuery, type FontQuery } from "../../font/query";
+import { figmaFontToQuery, type FontQuery } from "@higma-document-models/fig/font";
 import { getFillColorAndOpacity } from "../layout/fill";
 import type { TextRun } from "./types";
 

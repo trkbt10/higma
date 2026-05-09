@@ -29,10 +29,6 @@
       "types": "./src/emit/index.ts",
       "default": "./src/emit/index.ts"
     },
-    "./verify": {
-      "types": "./src/verify/index.ts",
-      "default": "./src/verify/index.ts"
-    },
     "./cli": {
       "types": "./src/cli/index.ts",
       "default": "./src/cli/index.ts"
@@ -45,13 +41,8 @@
     "@higma-document-renderers/fig": "workspace:*"
   },
   "devDependencies": {
-    "@fontsource/inter": "^5.2.5",
     "@playwright/test": "^1.59.1",
-    "@resvg/resvg-js": "^2.6.2",
-    "@types/pngjs": "^6.0.5",
-    "pixelmatch": "^7.2.0",
-    "playwright": "^1.59.1",
-    "pngjs": "^7.0.0"
+    "playwright": "^1.59.1"
   },
   "higma": {
     "boundary": {

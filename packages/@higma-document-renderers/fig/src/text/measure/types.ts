@@ -2,7 +2,7 @@
  * @file Text measurement type definitions
  */
 
-import type { FontMetrics, FontQuery } from "../../font/index";
+import type { FontMetrics, FontQuery } from "@higma-document-models/fig/font";
 
 /**
  * Text measurement result

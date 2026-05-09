@@ -5,8 +5,8 @@
  * Requires FontLoader to load font files.
  */
 
-import type { FontLoader, LoadedFont, FontMetrics, AbstractFont } from "../../font/index";
-import { fontQueryKey } from "../../font/query";
+import type { FontLoader, LoadedFont, FontMetrics, AbstractFont } from "@higma-document-models/fig/font";
+import { fontQueryKey } from "@higma-document-models/fig/font";
 import type { MeasurementProvider, FontSpec, TextMeasurement } from "./types";
 
 /** OpenType.js based measurement provider instance */

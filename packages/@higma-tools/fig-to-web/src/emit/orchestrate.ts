@@ -21,6 +21,7 @@
  * build step is required by the consumer of the output.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import { buildWebFontPlan, collectFontQueries, type WebFontPlan } from "@higma-document-models/fig/font";
 import type { FigSource } from "../fig-source";
 import type { EmitFile, EmitRegistry, FrameTarget } from "./types";
 import { buildRegistry } from "./plan/registry";
@@ -28,6 +29,7 @@ import { emitComponentFile, emitPageFile } from "./render/files";
 import { buildTokensFromFrames, tokensToCss } from "../tokens";
 import { createImageRegistry } from "./assets/images";
 import { emitFigmaSvgForFrame } from "./figma-export/figma-svg";
+import { renderFontLinkNodes } from "./font-links";
 import { doctype, el, raw, text } from "../lib/html-tree/builder";
 import { serialize } from "../lib/html-tree/serialize";
 import type { HtmlNode } from "../lib/html-tree/types";
@@ -85,12 +87,12 @@ const IMPORT_MAP_JSON = [
   "}",
 ].join("\n");
 
-function emitIndexHtml(fontFamilies: readonly string[]): EmitFile {
+function emitIndexHtml(fontPlan: WebFontPlan): EmitFile {
   const head: HtmlNode[] = [
     el("meta", { charset: "utf-8" }),
     el("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
     el("title", {}, [text("fig-to-web preview")]),
-    ...renderFontLinks(fontFamilies),
+    ...renderFontLinkNodes(fontPlan),
     el("link", { rel: "stylesheet", href: "./tokens.css" }),
     el("link", { rel: "stylesheet", href: "./preview.css" }),
     el("script", { type: "importmap" }, [raw(IMPORT_MAP_JSON)]),
@@ -110,43 +112,17 @@ function emitIndexHtml(fontFamilies: readonly string[]): EmitFile {
 }
 
 /**
- * Build Google Fonts `<link>` elements for every distinct font family
- * referenced by typography tokens.
- *
- * Why this matters: Figma authors typically pick a specific
- * web/system font (Roboto, Inter, SF Pro, ...) and expect that font to
- * render. Without an explicit @font-face declaration the browser
- * falls back to the next entry in the font-family stack — usually
- * `system-ui` here — which renders with different metrics, breaking
- * pixel-faithful comparison against the source Figma view.
- *
- * The link uses Google Fonts' CSS2 API with a comprehensive weight
- * range so any token referencing a family resolves regardless of its
- * `fontWeight`. Families Google Fonts does not host (e.g. proprietary
- * vendor fonts) are silently skipped — the consumer still has the
- * fallback stack, and we'd rather degrade than 404.
+ * Walk the source's TEXT nodes (and INSTANCE-resolved SYMBOLs) to
+ * collect the exact (family, weight, style) the rendered output
+ * actually needs, then turn that into a `WebFontPlan` whose Google
+ * Fonts URL only requests those weights — never a 100..900 sweep.
  */
-function renderFontLinks(families: readonly string[]): readonly HtmlNode[] {
-  if (families.length === 0) {
-    return [];
-  }
-  const params = families
-    .map((family) => `family=${encodeURIComponent(family)}:wght@100;200;300;400;500;600;700;800;900`)
-    .join("&");
-  const href = `https://fonts.googleapis.com/css2?${params}&display=swap`;
-  return [
-    el("link", { rel: "preconnect", href: "https://fonts.googleapis.com" }),
-    el("link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }),
-    el("link", { rel: "stylesheet", href }),
-  ];
-}
-
-function uniqueFontFamilies(typography: ReadonlyMap<string, { readonly fontFamily: string }>): readonly string[] {
-  const seen = new Set<string>();
-  for (const token of typography.values()) {
-    seen.add(token.fontFamily);
-  }
-  return [...seen].sort();
+function buildSourceFontPlan(source: FigSource, frames: readonly FigNode[]): WebFontPlan {
+  const { queries } = collectFontQueries({
+    roots: frames,
+    symbolMap: source.nodesByGuid,
+  });
+  return buildWebFontPlan(queries);
 }
 
 function emitPreviewCss(): EmitFile {
@@ -208,6 +184,72 @@ function emitPreviewCss(): EmitFile {
     ``,
   ].join("\n");
   return { path: "preview.css", contents: css };
+}
+
+/**
+ * Build a standalone HTML + entry-tsx pair for a single frame.
+ *
+ * The resulting `pages/<canvasSlug>/<slug>/index.html` mounts ONLY
+ * the React component for the frame, with the same fonts and tokens
+ * the dual-pane preview uses. The verifier hits this URL in
+ * Chromium to screenshot exactly what a downstream consumer would
+ * see when they render the emitted React output — independent of
+ * the dual-pane dev shell (which exists for human comparison, not
+ * automated diffing).
+ */
+function emitStandaloneFiles(target: FrameTarget, fontPlan: WebFontPlan): readonly EmitFile[] {
+  const baseDir = `pages/${target.canvasSlug}/${target.slug}`;
+  const htmlPath = `${baseDir}/index.html`;
+  const entryPath = `${baseDir}/standalone.tsx`;
+  // The entry tsx imports the generated page component via a
+  // relative path that climbs from `pages/<canvas>/<slug>/` back to
+  // `pages/<canvas>/<slug>.tsx`.
+  const componentImport = `../${target.slug}`;
+  const entryCode = [
+    `/**`,
+    ` * @file Standalone entry for the "${target.componentName}" frame.`,
+    ` *`,
+    ` * Mounts the generated React component on its own page so the`,
+    ` * verifier can screenshot the React render directly. The dual-pane`,
+    ` * preview shell remains the human-facing UI.`,
+    ` */`,
+    `import { StrictMode } from "react";`,
+    `import { createRoot } from "react-dom/client";`,
+    `import { ${target.componentName} } from ${JSON.stringify(componentImport)};`,
+    ``,
+    `const container = document.getElementById("root");`,
+    `if (!container) {`,
+    `  throw new Error("standalone preview: #root element missing");`,
+    `}`,
+    `createRoot(container).render(<StrictMode><${target.componentName} /></StrictMode>);`,
+    ``,
+  ].join("\n");
+  const entryFile: EmitFile = { path: entryPath, contents: entryCode };
+
+  // The HTML resolves tokens.css / preview.css from the output root —
+  // standalone pages live three levels deep so the relative root is
+  // `../../../`.
+  const head: HtmlNode[] = [
+    el("meta", { charset: "utf-8" }),
+    el("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
+    el("title", {}, [text(`fig-to-web · ${target.node.name ?? target.componentName}`)]),
+    ...renderFontLinkNodes(fontPlan),
+    el("link", { rel: "stylesheet", href: "../../../tokens.css" }),
+    el("script", { type: "importmap" }, [raw(IMPORT_MAP_JSON)]),
+  ];
+  const body: HtmlNode[] = [
+    el("div", { id: "root" }),
+    el("script", { type: "module", src: "./standalone.js" }),
+  ];
+  const document: HtmlNode[] = [
+    doctype(),
+    el("html", { lang: "en" }, [
+      el("head", {}, head),
+      el("body", { style: "margin:0;padding:0;background:#fff;color:#000" }, body),
+    ]),
+  ];
+  const htmlFile: EmitFile = { path: htmlPath, contents: `${serialize(document)}\n` };
+  return [entryFile, htmlFile];
 }
 
 function emitMainTsx(): EmitFile {
@@ -381,11 +423,11 @@ export async function emitFromFrames(
     files.push(emitComponentFile(source, registry, tokens.registryInputs.index, target, opts));
   }
 
-  const fontFamilies = uniqueFontFamilies(tokens.registryInputs.tokens.typography);
+  const fontPlan = buildSourceFontPlan(source, frames);
   const figmaPairs = await Promise.all(
     [...registry.frames.values()].map(async (target) => ({
       target,
-      figma: await emitFigmaSvgForFrame(source, target, fontFamilies),
+      figma: await emitFigmaSvgForFrame(source, target, fontPlan),
     })),
   );
   for (const { figma } of figmaPairs) {
@@ -397,10 +439,35 @@ export async function emitFromFrames(
   }
 
   files.push(emitIndexFile(registry));
-  files.push(emitIndexHtml(fontFamilies));
+  files.push(emitIndexHtml(fontPlan));
   files.push(emitPreviewCss());
   files.push(emitMainTsx());
   files.push(emitAppTsx(figmaPairs.map(({ target, figma }) => ({ target, figmaSlug: figma?.slug }))));
+  // Standalone HTML + entry per frame — the React-only render path
+  // the visual-fidelity verifier consumes. Distinct from the
+  // dual-pane preview shell so dev humans and automation each get a
+  // surface tailored to their use case.
+  for (const target of registry.frames.values()) {
+    for (const file of emitStandaloneFiles(target, fontPlan)) {
+      files.push(file);
+    }
+  }
 
   return { files, registry, assets: imageRegistry.collected() };
+}
+
+/**
+ * Enumerate the standalone HTML entries produced by `emitFromFrames`.
+ *
+ * Returned paths are relative to the emit output root and align with
+ * each frame target's `<canvasSlug>/<slug>` directory. The verifier
+ * uses these to drive Chromium and pixel-diff the React render.
+ */
+export function listStandalonePaths(registry: EmitRegistry): readonly { readonly target: FrameTarget; readonly htmlPath: string; readonly entryPath: string }[] {
+  const out: { readonly target: FrameTarget; readonly htmlPath: string; readonly entryPath: string }[] = [];
+  for (const target of registry.frames.values()) {
+    const base = `pages/${target.canvasSlug}/${target.slug}`;
+    out.push({ target, htmlPath: `${base}/index.html`, entryPath: `${base}/standalone.tsx` });
+  }
+  return out;
 }

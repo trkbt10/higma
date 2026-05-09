@@ -6,7 +6,7 @@
  */
 
 import { pathCommandsToSvgPath } from "@higma-document-models/fig/domain";
-import type { PathCommand } from "../../font/types";
+import type { PathCommand } from "@higma-document-models/fig/font";
 import type { DecorationRect } from "./types";
 
 /**

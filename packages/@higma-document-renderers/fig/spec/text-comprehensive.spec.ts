@@ -16,7 +16,7 @@ import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@hi
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
-import { createCachingFontLoader } from "../src/font";
+import { createCachingFontLoader } from "@higma-document-models/fig/font";
 
 // =============================================================================
 // Paths

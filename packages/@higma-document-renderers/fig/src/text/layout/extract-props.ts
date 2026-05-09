@@ -23,7 +23,7 @@ import type {
   TextCase,
   TextDecoration,
 } from "./types";
-import { figmaFontToQuery } from "../../font/query";
+import { figmaFontToQuery } from "@higma-document-models/fig/font";
 
 /**
  * Structured text data fields.

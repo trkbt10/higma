@@ -29,16 +29,16 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
 import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
-import type { FontLoader, FontQuery, LoadedFont } from "../font";
-import { figmaFontToQuery, fontQueryKey } from "../font";
-import type { TextFontResolver } from "../text/rendering";
+import type { FontLoader, FontQuery } from "@higma-document-models/fig/font";
+import { collectFontQueries, preloadFonts, fontQueryKey } from "@higma-document-models/fig/font";
+import { createCachedTextFontResolver, type TextFontResolver } from "../text/rendering";
 import type { FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigmaRenderExportSettings } from "../scene-graph/render";
 import { convertFigNode, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { buildFigStyleRegistry } from "@higma-document-models/fig/symbols";
 import { buildSceneGraph } from "../scene-graph/builder";
 import { resolveRenderTree } from "../scene-graph/render-tree";
 import { formatRenderTreeToSvg } from "./scene-renderer";
-import { extractTextProps } from "../text/layout";
 
 // =============================================================================
 // Transform Normalization
@@ -124,6 +124,18 @@ export type FigSvgRenderOptions = {
   readonly symbolMap?: ReadonlyMap<string, FigNode>;
   /** Explicit font loader used to preload TEXT fonts before scene-graph resolution. */
   readonly fontLoader?: FontLoader;
+  /**
+   * Export-time rendering settings that control how Figma image paints
+   * are decoded and re-encoded (color profile, image resampling, PDF
+   * quality). The renderer never invents these — when an image paint
+   * carries `imageShouldColorManage: true` and the caller has not set
+   * `exportSettings.colorProfile`, conversion fails fast in
+   * `requireManagedImageColorProfile`. SVG callers targeting a normal
+   * web browser viewport should pass `{ colorProfile: "SRGB" }`
+   * explicitly; callers targeting Display P3 must additionally provide
+   * `displayP3IccProfile` bytes.
+   */
+  readonly exportSettings?: FigmaRenderExportSettings;
 };
 
 /**
@@ -136,66 +148,11 @@ function collectTextFontQueries(
   nodes: readonly FigDesignNode[],
   symbolMap?: ReadonlyMap<string, FigDesignNode>,
 ): readonly FontQuery[] {
-  const queries: FontQuery[] = [];
-  const seen = new Set<string>();
-  const visitedSymbols = new Set<string>();
-  for (const node of nodes) {
-    collectNodeTextFontQueries(node, queries, seen, symbolMap, visitedSymbols);
-  }
-  return queries;
-}
-
-function collectNodeTextFontQueries(
-  node: FigDesignNode,
-  queries: FontQuery[],
-  seen: Set<string>,
-  symbolMap?: ReadonlyMap<string, FigDesignNode>,
-  visitedSymbols?: Set<string>,
-): void {
-  if (node.type === "TEXT") {
-    const props = extractTextProps(node);
-    if (props.characters.length > 0) {
-      pushFontQuery(queries, seen, props.font);
-      for (const override of node.textData?.styleOverrideTable ?? []) {
-        if (override.fontName === undefined) {
-          continue;
-        }
-        pushFontQuery(queries, seen, figmaFontToQuery(override.fontName));
-      }
-    }
-  }
-  // INSTANCE nodes draw their content from the SYMBOL they reference.
-  // Without resolving the symbolId here the preload set misses every
-  // TEXT child living inside a SYMBOL definition — the resolver then
-  // throws "not preloaded" once the scene-graph builder pulls those
-  // children into the rendered tree. Visit the SYMBOL's children too,
-  // de-duped by symbolId so cyclic / repeated INSTANCEs don't loop.
-  if (node.type === "INSTANCE" && symbolMap && visitedSymbols) {
-    const symbolId = node.symbolId;
-    if (symbolId !== undefined && !visitedSymbols.has(symbolId)) {
-      visitedSymbols.add(symbolId);
-      const symbol = symbolMap.get(symbolId);
-      if (symbol !== undefined) {
-        collectNodeTextFontQueries(symbol, queries, seen, symbolMap, visitedSymbols);
-      }
-    }
-  }
-  const children = node.children;
-  if (children === undefined) {
-    return;
-  }
-  for (const child of children) {
-    collectNodeTextFontQueries(child, queries, seen, symbolMap, visitedSymbols);
-  }
-}
-
-function pushFontQuery(queries: FontQuery[], seen: Set<string>, query: FontQuery): void {
-  const key = fontQueryKey(query);
-  if (seen.has(key)) {
-    return;
-  }
-  seen.add(key);
-  queries.push(query);
+  // Tree walk + override + INSTANCE recursion is the canonical SoT in
+  // `@higma-document-models/fig/font/context`. Re-implementing it
+  // here would drift on edge cases (override fonts in symbols,
+  // cyclic INSTANCE references) the SoT spec already covers.
+  return collectFontQueries({ roots: nodes, symbolMap }).queries;
 }
 
 async function createPreloadedTextFontResolver(
@@ -207,21 +164,19 @@ async function createPreloadedTextFontResolver(
     return undefined;
   }
   const queries = collectTextFontQueries(nodes, symbolMap);
-  const cache = new Map<string, LoadedFont>();
-  for (const query of queries) {
-    const loaded = await fontLoader.loadFont(query);
-    if (loaded === undefined) {
-      throw new Error(`renderFigToSvg: fontLoader could not load "${query.family}" weight ${query.weight} style ${query.style}`);
-    }
-    cache.set(fontQueryKey(query), loaded);
-  }
-  return (query) => {
-    const loaded = cache.get(fontQueryKey(query));
-    if (loaded === undefined) {
-      throw new Error(`renderFigToSvg: text font resolver was not preloaded for "${query.family}" weight ${query.weight} style ${query.style}`);
-    }
-    return loaded.font;
-  };
+  // `preloadFonts` (SoT) loads each query, throws on failure when no
+  // fallback chain is configured — exactly the renderer's no-fallback
+  // policy. The returned `cache` is keyed by `fontQueryKey`.
+  const result = await preloadFonts({ queries, loader: fontLoader });
+  return createCachedTextFontResolver({
+    getCachedFont: (query) => {
+      const loaded = result.cache.get(fontQueryKey(query));
+      if (loaded === undefined) {
+        throw new Error(`renderFigToSvg: text font resolver was not preloaded for "${query.family}" weight ${query.weight} style ${query.style}`);
+      }
+      return loaded;
+    },
+  });
 }
 
 // =============================================================================
@@ -323,7 +278,7 @@ export async function renderFigToSvg(
     textFontResolver,
   });
 
-  const renderTree = resolveRenderTree(sceneGraph);
+  const renderTree = resolveRenderTree(sceneGraph, { exportSettings: options.exportSettings });
   const svgOutput: SvgString = formatRenderTreeToSvg(renderTree, {
     backgroundColor: options.backgroundColor,
   });

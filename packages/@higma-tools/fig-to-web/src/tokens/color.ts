@@ -23,7 +23,7 @@
  */
 import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type { ColorToken, TokenColor } from "./types";
-import { toCssSlug, uniqueId } from "./name";
+import { toCssSlug, uniqueId } from "@higma-primitives/identifier";
 import { clamp01, round3 } from "../lib/css-format/numeric";
 
 /** 3-decimal canonical form, used as a Map key. */

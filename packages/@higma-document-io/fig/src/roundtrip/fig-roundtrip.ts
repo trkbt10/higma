@@ -91,6 +91,37 @@ export function addNodeChange(loaded: LoadedFigFile, node: FigNode): void {
   loaded.nodeChanges.push(node);
 }
 
+/**
+ * Allocate the next free `(sessionID, localID)` for a brand-new node.
+ *
+ * Picks a sessionID strictly larger than every sessionID already in
+ * the file's `nodeChanges`, and starts localIDs at 1 underneath it.
+ * Subsequent calls increment localID, so a series of allocations all
+ * land in the same fresh sessionID — clean to spot in diffs and
+ * impossible to collide with the file's existing GUIDs.
+ *
+ * Returns a stateful allocator: keep a single instance for an entire
+ * mutation pass and call `next()` once per new node.
+ */
+export type GuidAllocator = {
+  readonly next: () => { readonly sessionID: number; readonly localID: number };
+};
+
+export function createGuidAllocator(loaded: LoadedFigFile): GuidAllocator {
+  const maxSession = loaded.nodeChanges.reduce((max, node) => {
+    const s = node.guid?.sessionID ?? 0;
+    return s > max ? s : max;
+  }, 0);
+  const sessionID = maxSession + 1;
+  const counter = { localID: 0 };
+  return {
+    next: () => {
+      counter.localID = counter.localID + 1;
+      return { sessionID, localID: counter.localID };
+    },
+  };
+}
+
 /** Find a node by name. */
 export function findNodeByName(loaded: LoadedFigFile, name: string): FigNode | undefined {
   return loaded.nodeChanges.find((node) => node.name === name);
@@ -99,4 +130,38 @@ export function findNodeByName(loaded: LoadedFigFile, name: string): FigNode | u
 /** Find nodes by type. */
 export function findNodesByType(loaded: LoadedFigFile, typeName: string): FigNode[] {
   return loaded.nodeChanges.filter((node) => node.type?.name === typeName);
+}
+
+/**
+ * Replace a single nodeChange entry. Indexed by guid string. The
+ * replacement is a shallow merge over the original — passing only the
+ * fields you actually want to change. This is the SoT entry-point for
+ * roundtrip-time mutations: callers do not reach into the array
+ * directly, and they do not structurally cast a `FigNode` to a
+ * widened object shape.
+ *
+ * No-op when the guid is unknown. The returned boolean indicates
+ * whether a node was matched and updated.
+ */
+export function patchNodeChange(
+  loaded: LoadedFigFile,
+  guidString: string,
+  patch: Partial<FigNode>,
+): boolean {
+  const idx = loaded.nodeChanges.findIndex((n) => {
+    const g = n.guid;
+    if (!g) {
+      return false;
+    }
+    return `${g.sessionID}:${g.localID}` === guidString;
+  });
+  if (idx < 0) {
+    return false;
+  }
+  const original = loaded.nodeChanges[idx];
+  if (!original) {
+    return false;
+  }
+  loaded.nodeChanges[idx] = { ...original, ...patch };
+  return true;
 }

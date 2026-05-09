@@ -2,7 +2,7 @@
  * @file Tests for text-rendering glyph outline resolution.
  */
 
-import type { AbstractFont, FontPath } from "../../font/types";
+import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
 import { resolveTextRendering } from "./resolve";
 import type { TextFontResolver } from "./types";
 

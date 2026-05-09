@@ -10,6 +10,14 @@ import { SHAPE_NODE_TYPES, WINDING_RULE_VALUES, type WindingRule } from "@higma-
 type VectorNodeBuilderMethods = {
   windingRule: (rule: WindingRule) => VectorNodeBuilder;
   vectorNetworkBlob: (blobIndex: number) => VectorNodeBuilder;
+  /**
+   * Append an SVG path `d` string. Multiple `.path(...)` calls add
+   * additional sub-paths to the same VECTOR node — each becomes one
+   * `fillGeometry` slot at write time. The fig-file builder turns
+   * each `d` into a path-command blob (the same byte format
+   * `encodeRectangleBlob` uses) and registers it via `addBlob`.
+   */
+  path: (d: string) => VectorNodeBuilder;
   build: () => VectorNodeData;
 };
 
@@ -34,9 +42,14 @@ function createVectorNodeBuilder(localID: number, parentID: number): VectorNodeB
   const state = createBaseShapeState(localID, parentID);
   state.name = "Vector";
   state.fillPaints = [colorOrPaintToPaint({ r: 0.5, g: 0.5, b: 0.5, a: 1 })];
-  const extra: { windingRule: WindingRule; vectorNetworkBlob: number | undefined } = {
+  const extra: {
+    windingRule: WindingRule;
+    vectorNetworkBlob: number | undefined;
+    paths: string[];
+  } = {
     windingRule: "NONZERO",
     vectorNetworkBlob: undefined,
+    paths: [],
   };
 
   const builder = {} as VectorNodeBuilder;
@@ -51,12 +64,19 @@ function createVectorNodeBuilder(localID: number, parentID: number): VectorNodeB
       extra.vectorNetworkBlob = blobIndex;
       return builder;
     },
+    /** Append an SVG path `d` string. */
+    path(d: string) {
+      extra.paths.push(d);
+      return builder;
+    },
     build(): VectorNodeData {
       const vectorData = buildVectorData(extra, state);
       return {
         ...buildBaseData(state),
         nodeType: SHAPE_NODE_TYPES.VECTOR,
         vectorData,
+        paths: extra.paths.length > 0 ? extra.paths : undefined,
+        windingRule: extra.windingRule === "EVENODD" ? "EVENODD" : "NONZERO",
         handleMirroring: { value: WINDING_RULE_VALUES[extra.windingRule], name: extra.windingRule },
       };
     },

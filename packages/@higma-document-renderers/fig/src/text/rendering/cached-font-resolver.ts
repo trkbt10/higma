@@ -6,8 +6,8 @@
  * fix `figmaFontToQuery` (the SoT), not this adapter.
  */
 
-import type { FontQuery } from "../../font/query";
-import type { LoadedFont } from "../../font/types";
+import type { FontQuery } from "@higma-document-models/fig/font";
+import type { LoadedFont } from "@higma-document-models/fig/font";
 import type { TextFontResolver } from "./types";
 
 export type CachedTextFontSource = {

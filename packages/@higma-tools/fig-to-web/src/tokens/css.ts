@@ -22,6 +22,7 @@ import type {
   TypographyToken,
 } from "./types";
 import { figColorToCss } from "../lib/css-format/color";
+import { buildCssFontFamily } from "@higma-document-models/fig/font";
 
 function colorToCss(c: ColorToken): string {
   return figColorToCss(c.value);
@@ -38,19 +39,17 @@ function escapeCommentText(input: string): string {
   return input.replace(/\*\//g, "*\\/");
 }
 
+/**
+ * Emit the CSS `font-family` value for a token's family.
+ *
+ * Delegates to the canonical `buildCssFontFamily` SoT, which routes
+ * through `COMMON_FONT_MAPPINGS` (Inter, Roboto, SF Pro, …) before
+ * falling back to a category-default stack. Re-implementing the
+ * fallback chain here would silently disagree with the inline
+ * `style.ts` emitter and the renderer's resolver.
+ */
 function quoteFontFamily(family: string): string {
-  // Always end with a generic-family fallback so missing custom fonts
-  // degrade gracefully. The CSS spec mandates a generic family at the
-  // end of the stack — we pick `system-ui` as the closest neutral
-  // proxy for design-tool sans-serif.
-  return `${quoteFontName(family)}, system-ui, -apple-system, "Segoe UI", sans-serif`;
-}
-
-function quoteFontName(family: string): string {
-  if (/^[A-Za-z][A-Za-z0-9 _-]*$/.test(family)) {
-    return `"${family}"`;
-  }
-  return JSON.stringify(family);
+  return buildCssFontFamily(family);
 }
 
 function emitColorBlock(colors: ReadonlyMap<string, ColorToken>): string {

@@ -5,7 +5,7 @@
  * Both SVG serialization and WebGL tessellation consume these types.
  */
 
-import type { PathCommand } from "../../font/types";
+import type { PathCommand } from "@higma-document-models/fig/font";
 
 /**
  * A single glyph's outline path data

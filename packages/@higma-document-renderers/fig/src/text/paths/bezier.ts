@@ -5,7 +5,7 @@
  * Figma exports all curves as cubic beziers even for TrueType fonts.
  */
 
-import type { PathCommand } from "../../font/types";
+import type { PathCommand } from "@higma-document-models/fig/font";
 
 /**
  * Convert an array of path commands, replacing quadratic beziers with cubics

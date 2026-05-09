@@ -29,13 +29,16 @@ import type {
   TextNodeIR,
   TextStyleIR,
   VectorNodeIR,
+  VectorPathIR,
 } from "../ir/types";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import type { FigPaint, FigStrokeWeight } from "@higma-document-models/fig/types";
+import { figmaFontToQuery } from "@higma-document-models/fig/font";
 import { figPaintToIR } from "./paint";
 import { figEffectToIR } from "./effect";
 import { figBlendModeToIR } from "./blend-mode";
 import { figAutoLayoutToIR } from "./auto-layout";
+import { pxLength } from "../length";
 
 /** Convert a FigDesignNode (read-side) into the bridge IR. */
 export function figNodeToIR(node: FigDesignNode): NodeIR {
@@ -110,7 +113,18 @@ function textToIR(node: FigDesignNode): TextNodeIR {
 }
 
 function vectorToIR(node: FigDesignNode): VectorNodeIR {
-  const path = node.vectorPaths?.[0]?.data ?? "";
+  const paths: VectorPathIR[] = (node.vectorPaths ?? [])
+    .filter((vp) => vp.data !== undefined && vp.data.length > 0)
+    .map((vp) => {
+      const winding = vp.windingRule;
+      const isEvenOdd = typeof winding === "string"
+        ? winding === "EVENODD"
+        : winding?.name === "EVENODD";
+      return {
+        d: vp.data!,
+        fillRule: isEvenOdd ? "evenodd" : "nonzero",
+      };
+    });
   return {
     kind: "vector",
     id: node.id,
@@ -120,7 +134,7 @@ function vectorToIR(node: FigDesignNode): VectorNodeIR {
     style: styleFromNode(node),
     visible: node.visible,
     sizing: sizingPlaceholder(),
-    path,
+    paths,
   };
 }
 
@@ -199,10 +213,10 @@ function strokeAlignToIR(align: FigDesignNode["strokeAlign"]): StrokeIR["align"]
 function cornerRadiiFromNode(node: FigDesignNode): StyleIR["cornerRadius"] {
   if (node.rectangleCornerRadii && node.rectangleCornerRadii.length === 4) {
     const [tl, tr, br, bl] = node.rectangleCornerRadii;
-    return [tl ?? 0, tr ?? 0, br ?? 0, bl ?? 0];
+    return [pxLength(tl ?? 0), pxLength(tr ?? 0), pxLength(br ?? 0), pxLength(bl ?? 0)];
   }
   if (typeof node.cornerRadius === "number" && node.cornerRadius > 0) {
-    const r = node.cornerRadius;
+    const r = pxLength(node.cornerRadius);
     return [r, r, r, r];
   }
   return undefined;
@@ -213,12 +227,15 @@ function autoLayoutFromNode(node: FigDesignNode): AutoLayoutIR {
 }
 
 function textStyleFromTextData(td: NonNullable<FigDesignNode["textData"]>): TextStyleIR {
-  const fontFamily = td.fontName.family;
-  const styleName = td.fontName.style;
+  // SoT: `figmaFontToQuery` is the single normalisation point for
+  // (family, style-string) → (family, numeric weight, CSS style). Anything
+  // that re-implements weight/style detection here drifts from cache keys
+  // and resolver lookups elsewhere.
+  const query = figmaFontToQuery(td.fontName);
   return {
-    fontFamily,
-    fontStyle: fontStyleFromStyleName(styleName),
-    fontWeight: weightFromStyleName(styleName),
+    fontFamily: query.family,
+    fontStyle: query.style,
+    fontWeight: query.weight,
     fontSize: td.fontSize,
     lineHeight: lineHeightFromTextData(td),
     letterSpacing: td.letterSpacing?.value ?? 0,
@@ -226,17 +243,6 @@ function textStyleFromTextData(td: NonNullable<FigDesignNode["textData"]>): Text
     textTransform: textCaseFromName(td.textCase?.name),
     textDecoration: textDecorationFromName(td.textDecoration?.name),
   };
-}
-
-function fontStyleFromStyleName(styleName: string): TextStyleIR["fontStyle"] {
-  const lower = styleName.toLowerCase();
-  if (lower.includes("italic")) {
-    return "italic";
-  }
-  if (lower.includes("oblique")) {
-    return "oblique";
-  }
-  return "normal";
 }
 
 function lineHeightFromTextData(td: NonNullable<FigDesignNode["textData"]>): TextStyleIR["lineHeight"] {
@@ -247,38 +253,6 @@ function lineHeightFromTextData(td: NonNullable<FigDesignNode["textData"]>): Tex
     return { unit: "px", value: td.lineHeight.value };
   }
   return { unit: "normal" };
-}
-
-function weightFromStyleName(name: string): number {
-  const lower = name.toLowerCase();
-  if (lower.includes("thin") || lower.includes("hairline")) {
-    return 100;
-  }
-  if (lower.includes("extralight") || lower.includes("ultra light")) {
-    return 200;
-  }
-  if (lower.includes("light")) {
-    return 300;
-  }
-  if (lower.includes("regular") || lower === "italic" || lower === "oblique") {
-    return 400;
-  }
-  if (lower.includes("medium")) {
-    return 500;
-  }
-  if (lower.includes("semibold") || lower.includes("demibold")) {
-    return 600;
-  }
-  if (lower.includes("bold")) {
-    return 700;
-  }
-  if (lower.includes("extrabold") || lower.includes("ultrabold")) {
-    return 800;
-  }
-  if (lower.includes("black") || lower.includes("heavy")) {
-    return 900;
-  }
-  return 400;
 }
 
 function textAlignFromName(name: string | undefined): TextStyleIR["textAlign"] {

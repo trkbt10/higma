@@ -12,7 +12,7 @@ import { parse as parseFont } from "opentype.js";
 import { parseFigFile } from "@higma-document-io/fig/parser";
 import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { FontLoader, FontLoadOptions, LoadedFont } from "../src/svg/nodes/text/font/loader";
+import type { FontLoader, FontLoadOptions, LoadedFont } from "@higma-document-models/fig/font";
 import { renderTextNodeAsPath, type PathRenderContext } from "../src/svg/nodes/text/path-render";
 import { createFigSvgRenderContext } from "../src/svg/context";
 
@@ -63,9 +63,11 @@ function createOfficialInterFontLoader(): FontLoader {
 
       return {
         font: fontRef.value,
-        family: "Inter",
-        weight: options.weight ?? 400,
-        style: options.style ?? "normal",
+        // FontQuery is the canonical descriptor of the loaded face.
+        // Echo the requested options back since this mock loader has
+        // a single physical font file and isn't doing real
+        // closest-match substitution.
+        query: options,
       };
     },
 

@@ -19,8 +19,12 @@
  *     documents handle `<head>`-less rendering.
  */
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
+import { createCachingFontLoader } from "@higma-document-models/fig/font";
+import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
+import type { WebFontPlan } from "@higma-document-models/fig/font";
 import type { FigSource } from "../../fig-source";
 import type { EmitFile, FrameTarget } from "../types";
+import { renderFontLinkNodes } from "../font-links";
 import { doctype, el, raw, text } from "../../lib/html-tree/builder";
 import { serialize } from "../../lib/html-tree/serialize";
 import type { HtmlNode } from "../../lib/html-tree/types";
@@ -34,21 +38,33 @@ export type FigmaSvgFiles = {
 
 /**
  * Render one frame to authoritative Figma SVG and wrap it for iframe
- * embedding in the preview shell. `fontFamilies` is the same set of
- * Google Fonts families the host page links — without it the iframe
- * would silently fall back to the browser's default serif and the
- * pixel diff against the React render becomes meaningless on every
- * text layer.
+ * embedding in the preview shell. `fontPlan` is the same web-font
+ * descriptor the host page links — without it the iframe would
+ * silently fall back to the browser's default serif and the pixel
+ * diff against the React render becomes meaningless on every text
+ * layer.
  */
 export async function emitFigmaSvgForFrame(
   source: FigSource,
   target: FrameTarget,
-  fontFamilies: readonly string[],
+  fontPlan: WebFontPlan,
 ): Promise<FigmaSvgFiles | undefined> {
   const node = target.node;
   if (!node.size) {
     return undefined;
   }
+  // The renderer's text path needs OS-resolved font metrics whenever
+  // the .fig itself does not embed them via `derivedTextData`.
+  // Hand-authored figs from Figma typically embed metrics; .figs that
+  // come from web-to-fig do not. Pass an OS-only loader so the same
+  // resolution rules the host browser uses are applied here. The
+  // bundle's own `<link>` elements (built from `fontPlan`) load
+  // missing web fonts on the client — we deliberately do *not* pull
+  // them in via `@fontsource` here; that path silently substitutes
+  // the bundle even when the OS already carries the family, which
+  // produces metric drift between this authoritative render and the
+  // browser's React render.
+  const fontLoader = createCachingFontLoader(createNodeFontLoader());
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
@@ -56,6 +72,15 @@ export async function emitFigmaSvgForFrame(
     images: source.loaded.images ?? new Map(),
     normalizeRootTransform: true,
     symbolMap: source.tree.nodeMap,
+    fontLoader,
+    // The authoritative SVG is loaded inside an `<iframe>` running in a
+    // normal web browser whose backbuffer is sRGB. Image paints flagged
+    // `imageShouldColorManage` therefore convert to SRGB so the iframe
+    // shows the same colours the React render produces. Passing this
+    // explicitly is required by the renderer's fail-fast colour
+    // contract (`requireManagedImageColorProfile` throws if the caller
+    // has not made the choice).
+    exportSettings: { colorProfile: "SRGB" },
   });
   const svgString = String(result.svg);
   const slug = svgSlugFor(target);
@@ -63,7 +88,7 @@ export async function emitFigmaSvgForFrame(
   const htmlPath = `figma/${slug}.html`;
   return {
     svg: { path: svgPath, contents: svgString },
-    html: { path: htmlPath, contents: htmlDocFor(svgString, fontFamilies) },
+    html: { path: htmlPath, contents: htmlDocFor(svgString, fontPlan) },
     slug,
   };
 }
@@ -82,11 +107,11 @@ function svgSlugFor(target: FrameTarget): string {
  * through the `html-tree` serializer so user-controlled font names
  * cannot inject markup.
  */
-function htmlDocFor(svg: string, fontFamilies: readonly string[]): string {
+function htmlDocFor(svg: string, fontPlan: WebFontPlan): string {
   const head: HtmlNode[] = [
     el("meta", { charset: "utf-8" }),
     el("meta", { name: "viewport", content: "width=device-width, initial-scale=1" }),
-    ...renderFontLinks(fontFamilies),
+    ...renderFontLinkNodes(fontPlan),
     el("style", {}, [
       text("html, body { margin: 0; padding: 0; background: #fff; } svg { display: block; }"),
     ]),
@@ -99,19 +124,4 @@ function htmlDocFor(svg: string, fontFamilies: readonly string[]): string {
     ]),
   ];
   return `${serialize(document)}\n`;
-}
-
-function renderFontLinks(families: readonly string[]): readonly HtmlNode[] {
-  if (families.length === 0) {
-    return [];
-  }
-  const params = families
-    .map((family) => `family=${encodeURIComponent(family)}:wght@100;200;300;400;500;600;700;800;900`)
-    .join("&");
-  const href = `https://fonts.googleapis.com/css2?${params}&display=swap`;
-  return [
-    el("link", { rel: "preconnect", href: "https://fonts.googleapis.com" }),
-    el("link", { rel: "preconnect", href: "https://fonts.gstatic.com", crossorigin: "" }),
-    el("link", { rel: "stylesheet", href }),
-  ];
 }

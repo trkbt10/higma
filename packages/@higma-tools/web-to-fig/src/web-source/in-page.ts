@@ -22,6 +22,24 @@ export type RawSnapshotJson = {
   readonly imageRefs: ReadonlyArray<{ readonly id: string; readonly url: string }>;
 };
 
+/**
+ * SVG path captured from the in-page walker. Mirrors `RawSvgPath` in
+ * `snapshot.ts` exactly so the JSON payload can be re-hydrated
+ * without coercion.
+ */
+export type SvgPathJson = {
+  readonly d: string;
+  readonly fill?: string;
+  readonly stroke?: string;
+  readonly strokeWidth?: number;
+  readonly fillRule?: "nonzero" | "evenodd";
+};
+
+export type SvgContentJson = {
+  readonly viewBox?: { readonly minX: number; readonly minY: number; readonly width: number; readonly height: number };
+  readonly paths: readonly SvgPathJson[];
+};
+
 export type ElementJson = {
   readonly id: string;
   readonly tag: string;
@@ -30,6 +48,7 @@ export type ElementJson = {
   readonly visible: boolean;
   readonly computedStyle: Readonly<Record<string, string>>;
   readonly imageId?: string;
+  readonly svgContent?: SvgContentJson;
   readonly text?: string;
   readonly children: readonly ElementJson[];
 };
@@ -54,6 +73,11 @@ export function captureSnapshot(): RawSnapshotJson {
     "background-position",
     "background-repeat",
     "background-size",
+    "mask-image",
+    "-webkit-mask-image",
+    "mask-size",
+    "mask-position",
+    "mask-repeat",
     "border-top-width",
     "border-right-width",
     "border-bottom-width",
@@ -143,22 +167,76 @@ export function captureSnapshot(): RawSnapshotJson {
       return false;
     }
     const r = el.getBoundingClientRect();
-    if (r.width === 0 && r.height === 0) {
-      return false;
+    // Both axes must be > 0 for the element to occupy any pixels.
+    // Sites use `height: 0` (or `width: 0`) as a "render this in the
+    // DOM but show nothing" trick — typically for consent bars and
+    // measurement helpers that animate open later. These should not
+    // be captured as visible.
+    if (r.width > 0 && r.height > 0) {
+      return true;
     }
-    return true;
+    // Inline-only elements (`<span>`, `<a>`) hit `boundingClientRect`
+    // 0×0 even when they contain wrapped text — the union rect is
+    // empty when the runs straddle a line break. Falling back to
+    // `getClientRects()` lets us keep those text-bearing nodes
+    // visible.
+    const rects = el.getClientRects();
+    for (let i = 0; i < rects.length; i += 1) {
+      const rect = rects[i]!;
+      if (rect.width !== 0 || rect.height !== 0) {
+        return true;
+      }
+    }
+    // Inline `<svg>` reports a 0×0 bounding rect when its host has
+    // intrinsic geometry but the SVG itself doesn't — common inside
+    // an icon button (`<yt-icon><svg>...</svg></yt-icon>`) where the
+    // wrapper sizes the icon. Trust the parent's layout *only* in the
+    // genuinely 0×0 case. SVGs with `width=N height=0` (or vice
+    // versa) are sprite-sheet containers (Polymer/legacy YouTube put
+    // their icon `<symbol>` definitions inside a body-level
+    // `<svg width="100%" height="0">`) — those carry full-canvas
+    // path geometry that paints across the whole frame if we
+    // declare them visible. Excluding the partially-collapsed case
+    // matches what the browser renders.
+    if ((el.tagName === "SVG" || el.tagName === "svg") && r.width === 0 && r.height === 0) {
+      return true;
+    }
+    return false;
   }
 
   function extractImageUrl(el: Element, style: Record<string, string>): string | undefined {
     if (el.tagName === "IMG") {
-      const src = (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src;
-      if (src) {
+      const img = el as HTMLImageElement;
+      // `<img src="">` resolves `currentSrc`/`src` to the document's
+      // own URL (the spec says an empty `src` resolves against the
+      // base URL). Treat that case — and the explicitly-empty
+      // `getAttribute("src")` — as "no image", so we don't register
+      // the host page itself as an asset to fetch.
+      const rawSrc = img.getAttribute("src");
+      if (!rawSrc || rawSrc.length === 0) {
+        return undefined;
+      }
+      const src = img.currentSrc || img.src;
+      if (src && src !== window.location.href) {
         return src;
       }
     }
+    // Inline `<svg>` is captured separately via `extractSvgContent` —
+    // emit treats it as a vector node, not an image fill.
     const bg = style["background-image"];
     if (bg && bg !== "none") {
       const match = bg.match(/url\((['"]?)([^'")]+)\1\)/);
+      if (match) {
+        return match[2];
+      }
+    }
+    // CSS `mask-image` is the third major path icon frameworks use
+    // (Polymer's `<yt-icon>`, Material symbols, …). The visible
+    // glyph is sourced from a URL the browser pulls in just like a
+    // background image — surface it the same way.
+    const mask = style["mask-image"] ?? style["-webkit-mask-image"];
+    if (mask && mask !== "none") {
+      const match = mask.match(/url\((['"]?)([^'")]+)\1\)/);
       if (match) {
         return match[2];
       }
@@ -188,17 +266,125 @@ export function captureSnapshot(): RawSnapshotJson {
     };
   }
 
+  function extractSvgContent(el: Element): SvgContentJson | undefined {
+    if (el.tagName !== "SVG" && el.tagName !== "svg") {
+      return undefined;
+    }
+    const svgEl = el as SVGSVGElement;
+    const paths: SvgPathJson[] = [];
+    // Resolve `<use>` references where possible by following the
+    // `href`/`xlink:href` attribute. The shadow DOM ones (custom
+    // elements) won't resolve via querySelector because the target
+    // sits in another document — those are dropped silently.
+    function collectPaths(root: Element): void {
+      const queue: Element[] = [root];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (current.tagName === "path" || current.tagName === "PATH") {
+          const d = current.getAttribute("d");
+          if (d && d.length > 0) {
+            const computed = window.getComputedStyle(current);
+            const fillAttr = current.getAttribute("fill") ?? computed.fill;
+            const strokeAttr = current.getAttribute("stroke") ?? computed.stroke;
+            const strokeWidthAttr = current.getAttribute("stroke-width") ?? computed.strokeWidth;
+            const fillRuleAttr = current.getAttribute("fill-rule") ?? computed.fillRule;
+            const path: SvgPathJson = {
+              d,
+              fill: fillAttr && fillAttr !== "none" ? fillAttr : undefined,
+              stroke: strokeAttr && strokeAttr !== "none" ? strokeAttr : undefined,
+              strokeWidth: strokeWidthAttr ? parseFloat(strokeWidthAttr) : undefined,
+              fillRule: fillRuleAttr === "evenodd" ? "evenodd" : undefined,
+            };
+            paths.push(path);
+          }
+        } else if (current.tagName === "use" || current.tagName === "USE") {
+          const useEl = current as SVGUseElement;
+          const href = useEl.getAttribute("href") ?? useEl.getAttribute("xlink:href");
+          if (href && href.startsWith("#")) {
+            const target = svgEl.ownerDocument?.getElementById(href.slice(1));
+            if (target) {
+              queue.push(target);
+              continue;
+            }
+          }
+        }
+        for (const child of Array.from(current.children)) {
+          queue.push(child);
+        }
+      }
+    }
+    collectPaths(svgEl);
+    const viewBoxAttr = svgEl.getAttribute("viewBox");
+    let viewBox: SvgContentJson["viewBox"];
+    if (viewBoxAttr) {
+      const parts = viewBoxAttr.trim().split(/[\s,]+/).map((s) => parseFloat(s));
+      if (parts.length === 4 && parts.every((p) => Number.isFinite(p))) {
+        viewBox = { minX: parts[0]!, minY: parts[1]!, width: parts[2]!, height: parts[3]! };
+      }
+    }
+    if (paths.length === 0) {
+      return undefined;
+    }
+    return { viewBox, paths };
+  }
+
+  function effectiveRectFor(el: Element): { x: number; y: number; width: number; height: number } {
+    const r = el.getBoundingClientRect();
+    if (r.width !== 0 && r.height !== 0) {
+      return rectFrom(r);
+    }
+    // Inline `<svg>` reports its bounding box as 0×0 even though its
+    // child paths paint visible glyphs. Use the parent's content
+    // rect as the effective box so the IR carries a non-zero size
+    // for icon assets.
+    //
+    // Only inherit when *both* axes of the parent rect are positive.
+    // A "1280 × 0" or "0 × 768" rect (typical body-level sprite
+    // container `<svg width="100%" height="0">`) would otherwise
+    // bake in a degenerate axis: Figma's renderer leaves degenerate
+    // VECTOR nodes undefined, so smuggling a 1280-wide / 0-tall path
+    // through silently drops it on Figma proper but trips the WebGL
+    // renderer's path filler into painting a giant black slab.
+    // Keeping the original 0×0 makes `isVisible` mark the node not
+    // visible and `normalizeFrame` filters it out.
+    if (el.tagName === "SVG" || el.tagName === "svg") {
+      const parent = el.parentElement;
+      if (parent) {
+        const pr = parent.getBoundingClientRect();
+        if (pr.width > 0 && pr.height > 0) {
+          return rectFrom(pr);
+        }
+      }
+    }
+    return rectFrom(r);
+  }
+
   function walk(el: Element, path: string): ElementJson {
     const style = pickComputedStyle(el);
     const visible = isVisible(el, style);
-    const rect = rectFrom(el.getBoundingClientRect());
+    const rect = effectiveRectFor(el);
     const contentRect = contentRectFor(el, style);
-    const imageUrl = extractImageUrl(el, style);
+    const svgContent = extractSvgContent(el);
+    const imageUrl = svgContent === undefined ? extractImageUrl(el, style) : undefined;
     const imageId = imageUrl ? registerImage(imageUrl) : undefined;
     const text = directText(el);
-    const children: ElementJson[] = Array.from(el.children).map(
-      (child, index) => walk(child, `${path}/${index}`),
-    );
+    // Inline SVG content is captured as a vector node; do not
+    // recurse into its `<path>` / `<g>` descendants — they would
+    // emit as confused frame children otherwise.
+    //
+    // Custom elements (Polymer / Lit / etc.) hide visible content
+    // inside their shadow root — walking only `el.children` would
+    // skip every YouTube `<yt-icon>` / `<yt-img-shadow>` / search
+    // box. Combine light-DOM children with the shadow root's
+    // children so the snapshot captures both layers.
+    const lightChildren = Array.from(el.children);
+    const shadowChildren = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot
+      ? Array.from((el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot!.children)
+      : [];
+    const allChildren = [...shadowChildren, ...lightChildren];
+    const children: ElementJson[] = svgContent !== undefined
+      ? []
+      : allChildren.map((child, index) => walk(child, `${path}/${index}`));
     return {
       id: path,
       tag: el.tagName.toLowerCase(),
@@ -207,6 +393,7 @@ export function captureSnapshot(): RawSnapshotJson {
       visible,
       computedStyle: style,
       imageId,
+      svgContent,
       text: text.length > 0 ? text : undefined,
       children,
     };

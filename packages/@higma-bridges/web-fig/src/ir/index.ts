@@ -13,6 +13,7 @@ export type {
   FrameNodeIR,
   GradientStopIR,
   ImagePaintIR,
+  LengthIR,
   LinearGradientPaintIR,
   MultiViewportIR,
   NodeBaseIR,
@@ -28,5 +29,6 @@ export type {
   TextRunIR,
   TextStyleIR,
   VectorNodeIR,
+  VectorPathIR,
   ViewportIR,
 } from "./types";

@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { parse as parseFont } from "opentype.js";
 import * as fs from "node:fs";
 import { createOpentypeMeasurementProvider, type OpentypeMeasurementProviderInstance } from "./opentype-provider";
-import type { FontLoader, LoadedFont, FontQuery } from "../../font/index";
+import type { FontLoader, LoadedFont, FontQuery } from "@higma-document-models/fig/font";
 
 // Path to Inter font from @fontsource/inter
 const INTER_FONT_PATH = path.resolve(

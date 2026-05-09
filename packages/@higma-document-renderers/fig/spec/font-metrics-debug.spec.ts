@@ -3,7 +3,7 @@
  */
 
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
-import { createCachingFontLoader, type CachingFontLoader } from "../src/font";
+import { createCachingFontLoader, type CachingFontLoader } from "@higma-document-models/fig/font";
 
 describe("Font metrics investigation", () => {
   const fontLoaderRef = { value: undefined as CachingFontLoader | undefined };

@@ -5,7 +5,7 @@
 import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 
-import type { FontLoader } from "./font";
+import type { FontLoader } from "@higma-document-models/fig/font";
 import type { FigResolver } from "./symbols/fig-resolver";
 
 // =============================================================================

@@ -1,0 +1,47 @@
+{
+  "name": "@higma-tools/web-fig-roundtrip",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-tools/web-fig-roundtrip/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../.."
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./verify": {
+      "types": "./src/verify/index.ts",
+      "default": "./src/verify/index.ts"
+    }
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.5",
+    "@fontsource/noto-sans-jp": "^5.2.5",
+    "@fontsource/roboto": "^5.2.5",
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-document-renderers/fig": "workspace:*",
+    "@higma-tools/fig-to-web": "workspace:*",
+    "@higma-tools/web-to-fig": "workspace:*",
+    "puppeteer": "^24.42.0",
+    "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "@higma-codecs/png": "workspace:*",
+    "@types/pngjs": "^6.0.5",
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.59.1",
+    "pngjs": "^7.0.0"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "tools",
+      "product": "web-fig-roundtrip"
+    }
+  }
+}

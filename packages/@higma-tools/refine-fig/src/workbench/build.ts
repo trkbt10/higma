@@ -24,6 +24,7 @@ import { mkdirSync as fsMkdirSync, writeFileSync as fsWriteFileSync } from "node
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
+import { isItalic } from "@higma-document-models/fig/font";
 import type { RefineSource } from "../refine-source/load";
 import type { Inventory, SubtreeClusterEntry, PaletteEntry, TypographyEntry } from "../inventory";
 import { createWorkerClient, type WorkerClient } from "../visual/worker-client";
@@ -333,9 +334,13 @@ function renderTypographySample(entry: TypographyEntry, width: number): Uint8Arr
   const family = escapeXml(entry.descriptor.fontFamily);
   const style = entry.descriptor.fontStyle;
   const weight = entry.descriptor.fontWeight;
+  // Italic detection routes through the canonical `isItalic` SoT so
+  // a workbench preview never disagrees with the renderer's resolver
+  // about whether a style string asks for italic.
+  const fontStyleAttr = isItalic(style) ? "italic" : "normal";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
     + `<rect width="${width}" height="${height}" fill="#ffffff"/>`
-    + `<text x="${padding}" y="${padding + Math.round(fontSize)}" font-family="${family}" font-size="${fontSize}" font-weight="${weight}" font-style="${style.toLowerCase().includes("italic") ? "italic" : "normal"}" fill="#111">${escaped}</text>`
+    + `<text x="${padding}" y="${padding + Math.round(fontSize)}" font-family="${family}" font-size="${fontSize}" font-weight="${weight}" font-style="${fontStyleAttr}" fill="#111">${escaped}</text>`
     + `</svg>`;
   return svgToPng(svg, width);
 }

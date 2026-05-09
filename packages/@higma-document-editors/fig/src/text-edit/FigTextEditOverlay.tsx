@@ -194,9 +194,13 @@ export function FigTextEditOverlay({
   const textProps = useMemo(() => extractTextProps(node), [node]);
 
   // --- CSS font string (single source — used for both measurement and cursor context) ---
+  // Unpack the canonical FontQuery into CSS shorthand. ExtractedTextProps
+  // carries `font: FontQuery` rather than flat fontFamily/Weight/Style
+  // fields so cache keys, override fonts, and resolver lookups all use
+  // one normalisation. The CSS shorthand still wants the legacy form.
   const fontStr = useMemo(
-    () => `${textProps.fontStyle ?? "normal"} ${textProps.fontWeight ?? "normal"} ${textProps.fontSize}px ${textProps.fontFamily}`,
-    [textProps.fontFamily, textProps.fontSize, textProps.fontWeight, textProps.fontStyle],
+    () => `${textProps.font.style} ${textProps.font.weight} ${textProps.fontSize}px ${textProps.font.family}`,
+    [textProps.font.family, textProps.fontSize, textProps.font.weight, textProps.font.style],
   );
 
   // --- Compute layout using the SAME function as SVG renderer ---

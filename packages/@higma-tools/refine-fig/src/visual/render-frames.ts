@@ -4,7 +4,7 @@
  * compare two refinement runs frame-by-frame.
  */
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
-import { createCachingFontLoader } from "@higma-document-renderers/fig/font";
+import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";

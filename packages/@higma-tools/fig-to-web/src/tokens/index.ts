@@ -15,5 +15,4 @@ export type {
 export { buildTokensFromFrames } from "./extract";
 export type { TokenBuildResult } from "./extract";
 export { tokensToCss } from "./css";
-export { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "./name";
 export { effectsToBoxShadow } from "./effect";

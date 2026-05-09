@@ -6,9 +6,9 @@
  * load font files.
  */
 
-import type { FontLoader } from "../../font/loader";
-import type { FontQuery } from "../../font/query";
-import type { LoadedFont } from "../../font/types";
+import type { FontLoader } from "@higma-document-models/fig/font";
+import type { FontQuery } from "@higma-document-models/fig/font";
+import type { LoadedFont } from "@higma-document-models/fig/font";
 
 /**
  * Check if CSS Font Loading API is available

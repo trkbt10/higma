@@ -18,9 +18,12 @@
  */
 import { createHash } from "node:crypto";
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
-import { createCachingFontLoader, figmaFontToQuery } from "@higma-document-renderers/fig/font";
+import {
+  createCachingFontLoader,
+  collectFontQueries,
+  type FontLoader,
+} from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
-import type { FontLoader } from "@higma-document-renderers/fig/font";
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
@@ -135,11 +138,20 @@ export function createNodeRenderer(ctx: NodeRenderContext): NodeRenderer {
  * `loadFont` call can succeed for one weight while resvg later
  * panics on a different weight referenced inside the same subtree.
  * Asking the loader first short-circuits that whole code path.
+ *
+ * Tree-walking + override + INSTANCE traversal is delegated to the
+ * canonical `collectFontQueries` SoT in
+ * `@higma-document-models/fig/font` — re-implementing it here would
+ * drift on edge cases the SoT spec already covers.
  */
 async function unresolvableFonts(node: FigNode, loader: FontLoader): Promise<string | undefined> {
-  const queries = new Map<string, ReturnType<typeof figmaFontToQuery>>();
-  collectFontQueries(node, queries);
-  for (const query of queries.values()) {
+  // refine-fig's render-node entry point operates on a single subtree
+  // without a separate symbol map (INSTANCE traversal happens at the
+  // workbench layer). Pass `roots: [node]` and no symbolMap; SYMBOLs
+  // referenced from inside a TEXT node will surface as override
+  // entries, which `collectFontQueries` walks too.
+  const { queries } = collectFontQueries({ roots: [node] });
+  for (const query of queries) {
     if (!query.family) {
       continue;
     }
@@ -149,22 +161,6 @@ async function unresolvableFonts(node: FigNode, loader: FontLoader): Promise<str
     }
   }
   return undefined;
-}
-
-function collectFontQueries(
-  node: FigNode,
-  out: Map<string, ReturnType<typeof figmaFontToQuery>>,
-): void {
-  if (node.type?.name === "TEXT" && node.fontName) {
-    const q = figmaFontToQuery(node.fontName);
-    const key = `${q.family}|${q.weight}|${q.style}`;
-    if (!out.has(key)) {
-      out.set(key, q);
-    }
-  }
-  for (const child of safeChildren(node)) {
-    collectFontQueries(child, out);
-  }
 }
 
 function svgToPng(svg: string, width: number): Uint8Array {

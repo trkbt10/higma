@@ -23,8 +23,8 @@
  * 100 canvas measurements.
  */
 
-import type { AbstractFont, FontPath } from "../../font/types";
-import { fontQueryKey } from "../../font/query";
+import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
+import { fontQueryKey, buildCssFontShorthand } from "@higma-document-models/fig/font";
 import type { TextFontResolver } from "../../text/rendering";
 
 const UNITS_PER_EM = 1000;
@@ -46,18 +46,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function quoteFamily(family: string): string {
-  return /^["'].*["']$/.test(family) ? family : `"${family.replace(/"/g, '\\"')}"`;
-}
-
-function buildFontShorthand(params: {
-  readonly family: string;
-  readonly weight: number;
-  readonly style: string;
-}): string {
-  const styleSegment = params.style !== "normal" ? `${params.style} ` : "";
-  return `${styleSegment}${params.weight} ${MEASURE_FONT_SIZE}px ${quoteFamily(params.family)}`;
-}
+// `buildCssFontShorthand` SoT lives in `@higma-document-models/fig/font`;
+// re-implementing the shorthand format here would silently disagree
+// with `provider.ts` measurement on family-name quoting and break
+// caching keyed by the shorthand itself.
 
 function readMetricsAscent(metrics: TextMetrics): number | undefined {
   if (isFiniteNumber(metrics.fontBoundingBoxAscent) && metrics.fontBoundingBoxAscent > 0) {
@@ -160,10 +152,11 @@ export function createCanvasMetricsTextFontResolver(): TextFontResolver {
       cache.set(key, null);
       return undefined;
     }
-    ctx.font = buildFontShorthand({
+    ctx.font = buildCssFontShorthand({
       family: query.family,
       weight: query.weight,
       style: query.style,
+      fontSize: MEASURE_FONT_SIZE,
     });
     const metrics = ctx.measureText(MEASURE_SAMPLE);
     const ascent = readMetricsAscent(metrics);

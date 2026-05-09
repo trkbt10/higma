@@ -12,11 +12,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseFont } from "opentype.js";
-import type { FontLoader } from "../../font/loader";
-import type { FontQuery } from "../../font/query";
-import { figmaFontToQuery } from "../../font/query";
-import { GENERIC_FONT_STACKS } from "../../font/mappings";
-import type { LoadedFont } from "../../font/types";
+import type { FontLoader } from "@higma-document-models/fig/font";
+import type { FontQuery } from "@higma-document-models/fig/font";
+import { figmaFontToQuery } from "@higma-document-models/fig/font";
+import { GENERIC_FONT_STACKS } from "@higma-document-models/fig/font";
+import type { LoadedFont } from "@higma-document-models/fig/font";
 import { extractTtcFaces, isTtc } from "./ttc";
 
 type FontNameRecord = Record<string, { en?: string } | undefined>;
@@ -303,13 +303,20 @@ async function indexDirectory(
 }
 
 /**
- * Look up an indexed family with CSS-generic stack lookup.
+ * Look up an indexed family with CSS-generic stack lookup, then
+ * cascade to a generic-family stack as a last resort.
  *
- * If the requested name is not present verbatim, walk the matching
- * generic stack (`system-ui` → SF / Helvetica Neue / Arial / ...) and
- * return the first family the system actually has installed. Without
- * this, a node-loader caller asking for `system-ui` would always get
- * `undefined` even on a Mac with the canonical stack fonts present.
+ * Resolution order:
+ *   1. Direct match on the requested family.
+ *   2. If the request is itself a generic keyword (`system-ui`,
+ *      `serif`, etc.), walk that keyword's stack.
+ *   3. Otherwise treat the request as a likely sans-serif (web pages
+ *      ask for `Roboto`, `Inter`, …) and walk the `sans-serif` stack
+ *      so callers get *something* on the page rather than the
+ *      "fontLoader could not load" preload error. Same for the
+ *      monospace / serif keywords if the family happens to look like
+ *      a proportional serif. Without this cascade every external
+ *      web font request fails in headless capture.
  */
 function resolveVariants(
   index: Map<string, FontFileInfo[]>,
@@ -319,7 +326,8 @@ function resolveVariants(
   if (direct && direct.length > 0) {
     return direct;
   }
-  const stack = GENERIC_FONT_STACKS.get(family.toLowerCase());
+  const stack = GENERIC_FONT_STACKS.get(family.toLowerCase())
+    ?? GENERIC_FONT_STACKS.get("sans-serif");
   if (!stack) {
     return undefined;
   }

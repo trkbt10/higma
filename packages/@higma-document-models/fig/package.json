@@ -49,6 +49,14 @@
     "./diagnostics/defensive": {
       "types": "./src/diagnostics/defensive.ts",
       "default": "./src/diagnostics/defensive.ts"
+    },
+    "./font": {
+      "types": "./src/font/index.ts",
+      "default": "./src/font/index.ts"
+    },
+    "./font/context": {
+      "types": "./src/font/context/index.ts",
+      "default": "./src/font/context/index.ts"
     }
   },
   "dependencies": {

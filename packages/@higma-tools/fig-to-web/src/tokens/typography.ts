@@ -19,30 +19,18 @@
  */
 import type { FigFontName, FigNode, FigValueWithUnits } from "@higma-document-models/fig/types";
 import type { TypographyToken } from "./types";
-import { toCssSlug, uniqueId } from "./name";
+import { figmaFontToQuery } from "@higma-document-models/fig/font";
+import { toCssSlug, uniqueId } from "@higma-primitives/identifier";
 import { round2 } from "../lib/css-format/numeric";
 
-/** Map common Figma weight-style strings to numeric font-weight. */
-const WEIGHT_BY_STYLE: ReadonlyMap<string, number> = new Map([
-  ["thin", 100],
-  ["extralight", 200],
-  ["ultralight", 200],
-  ["light", 300],
-  ["regular", 400],
-  ["normal", 400],
-  ["medium", 500],
-  ["semibold", 600],
-  ["demibold", 600],
-  ["bold", 700],
-  ["extrabold", 800],
-  ["ultrabold", 800],
-  ["black", 900],
-  ["heavy", 900],
-]);
-
-function styleToWeight(style: string): number | undefined {
-  const normalised = style.toLowerCase().replace(/[^a-z]/g, "");
-  return WEIGHT_BY_STYLE.get(normalised);
+/**
+ * Numeric weight for a Figma fontName.style string. Single SoT lives in
+ * `figmaFontToQuery` (used by every other consumer); we route through it
+ * so tokens, runs, and renderer cache keys agree.
+ */
+function styleToWeight(family: string, style: string): number {
+  const query = figmaFontToQuery({ family, style });
+  return query.weight;
 }
 
 function lineHeightToCss(value: FigValueWithUnits | undefined): string | undefined {
@@ -247,7 +235,7 @@ function register(
     id,
     fontFamily: d.fontFamily,
     fontStyle: d.fontStyle,
-    fontWeight: styleToWeight(d.fontStyle),
+    fontWeight: styleToWeight(d.fontFamily, d.fontStyle),
     fontSize: d.fontSize,
     lineHeight: d.lineHeight,
     letterSpacing: d.letterSpacing,

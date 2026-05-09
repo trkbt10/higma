@@ -11,6 +11,7 @@
  */
 import type { ColorIR, GradientStopIR, LinearGradientPaintIR, PaintIR } from "@higma-bridges/web-fig";
 import { cssToColorIR } from "@higma-bridges/web-fig";
+import { FONT_WEIGHTS } from "@higma-document-models/fig/font";
 
 /** Parse a `<length>` like `12px` / `0.5px`. Throws on non-px units. */
 export function parsePx(value: string): number {
@@ -31,18 +32,57 @@ export function parsePx(value: string): number {
   throw new Error(`parsePx: expected a px length, got "${value}"`);
 }
 
-/** Parse `font-weight` from computed style (always returns a number 1..1000). */
+/**
+ * Lenient `parsePx` — returns `fallback` instead of throwing when the
+ * input is `undefined`, an empty string, or a CSS keyword like
+ * `normal`. Use at every caller that reads a property which can
+ * legitimately be a keyword in computed style (`gap: normal`,
+ * `column-gap: normal`, `letter-spacing: normal`, …).
+ */
+export function parsePxOr(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "auto" || trimmed === "none" || trimmed === "normal") {
+    return fallback;
+  }
+  if (trimmed.endsWith("px")) {
+    const n = parseFloat(trimmed.slice(0, -2));
+    if (!Number.isFinite(n)) {
+      return fallback;
+    }
+    return n;
+  }
+  return fallback;
+}
+
+/**
+ * Parse `font-weight` from computed style (always returns a number 1..1000).
+ *
+ * The CSS `font-weight` keyword set (`normal` / `bold` / `bolder` /
+ * `lighter`) maps to the same numeric weight space `FontQuery` uses,
+ * so we route the keyword cases through `FONT_WEIGHTS` rather than
+ * inline literals. Anything that hard-codes `400` for "normal" or
+ * `700` for "bold" elsewhere is duplicating this knowledge.
+ *
+ * `bolder` / `lighter` are CSS-specific relative keywords; they map
+ * to the nearest standard weight that browsers actually compute when
+ * the parent's resolved weight is the spec's default 400. We accept
+ * that approximation because the input here is already-resolved
+ * computed style rather than authored markup.
+ */
 export function parseFontWeight(value: string): number {
   const trimmed = value.trim();
   switch (trimmed) {
     case "normal":
-      return 400;
+      return FONT_WEIGHTS.REGULAR;
     case "bold":
-      return 700;
+      return FONT_WEIGHTS.BOLD;
     case "bolder":
-      return 700;
+      return FONT_WEIGHTS.BOLD;
     case "lighter":
-      return 300;
+      return FONT_WEIGHTS.LIGHT;
   }
   const n = parseFloat(trimmed);
   if (!Number.isFinite(n)) {

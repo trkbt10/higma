@@ -26,7 +26,7 @@ import { FigInspectorProvider } from "../src/inspector/FigInspectorContext";
 import { FileDropZone } from "./components/FileDropZone";
 import { RendererDebugView } from "./components/RendererDebugView";
 import { createBrowserFontLoader } from "@higma-document-renderers/fig/font-drivers/browser";
-import { createCachingFontLoader } from "@higma-document-renderers/fig/font";
+import { createCachingFontLoader } from "@higma-document-models/fig/font";
 
 injectCSSVariables();
 

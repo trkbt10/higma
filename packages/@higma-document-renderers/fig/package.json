@@ -37,10 +37,6 @@
       "types": "./src/react/index.ts",
       "default": "./src/react/index.ts"
     },
-    "./font": {
-      "types": "./src/font/index.ts",
-      "default": "./src/font/index.ts"
-    },
     "./font-drivers/node": {
       "types": "./src/font-drivers/node/index.ts",
       "default": "./src/font-drivers/node/index.ts"

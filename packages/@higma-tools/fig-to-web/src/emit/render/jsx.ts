@@ -27,6 +27,7 @@
  *     parents.
  */
 import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import { figmaFontToQuery, isItalic } from "@higma-document-models/fig/font";
 import type { TokenIndex } from "../../tokens";
 import type { EmitRegistry } from "../types";
 import type { ParentContext, ParentLayout, RootMode, StyleInputs } from "../style/style";
@@ -689,11 +690,18 @@ function buildRunInlineStyle(
     out.fontFamily = `"${run.fontFamily.replace(/"/g, '\\"')}"`;
   }
   if (run.fontStyle !== undefined && run.fontStyle !== base.styleName) {
-    const weight = fontStyleToWeight(run.fontStyle);
-    if (weight !== undefined) {
-      out.fontWeight = `${weight}`;
-    }
-    if (isItalicStyleName(run.fontStyle)) {
+    // SoT: weight + style detection routes through `figmaFontToQuery`
+    // so per-run overrides match cache keys / resolver lookups
+    // elsewhere. `figmaFontToQuery` requires a non-empty `family`
+    // structurally; we use the run's family (or the base, or an
+    // empty placeholder) — none of those affect the detected
+    // numeric weight or italic style which is what we read.
+    const query = figmaFontToQuery({
+      family: run.fontFamily ?? base.family ?? "",
+      style: run.fontStyle,
+    });
+    out.fontWeight = `${query.weight}`;
+    if (isItalic(run.fontStyle)) {
       out.fontStyle = "italic";
     }
   }
@@ -701,36 +709,6 @@ function buildRunInlineStyle(
     out.fontSize = `${run.fontSize}px`;
   }
   return out;
-}
-
-const FONT_WEIGHT_BY_STYLE_NAME: ReadonlyMap<string, number> = new Map([
-  ["thin", 100],
-  ["extralight", 200],
-  ["ultralight", 200],
-  ["light", 300],
-  ["regular", 400],
-  ["normal", 400],
-  ["medium", 500],
-  ["semibold", 600],
-  ["demibold", 600],
-  ["bold", 700],
-  ["extrabold", 800],
-  ["ultrabold", 800],
-  ["black", 900],
-  ["heavy", 900],
-]);
-
-function fontStyleToWeight(styleName: string): number | undefined {
-  const norm = styleName.toLowerCase().replace(/italic|oblique/g, "").replace(/[^a-z]/g, "");
-  if (norm.length === 0) {
-    return 400;
-  }
-  return FONT_WEIGHT_BY_STYLE_NAME.get(norm);
-}
-
-function isItalicStyleName(styleName: string): boolean {
-  const lower = styleName.toLowerCase();
-  return lower.includes("italic") || lower.includes("oblique");
 }
 
 function textCharsArePropBound(node: FigNode, context: EmitContext): boolean {

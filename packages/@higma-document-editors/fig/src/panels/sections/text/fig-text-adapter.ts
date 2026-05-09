@@ -11,6 +11,7 @@
 
 import type { TextData } from "@higma-document-models/fig/domain";
 import type { KiwiEnumValue } from "@higma-document-models/fig/types";
+import { figmaFontToQuery, fontQueryToStyleName, isItalic, FONT_WEIGHTS } from "@higma-document-models/fig/font";
 import type { TextFormatting, ParagraphFormatting, HorizontalAlignment } from "@higma-editor-surfaces/controls/text";
 
 // =============================================================================
@@ -43,14 +44,19 @@ function makeKiwiEnum(name: string, value: number): KiwiEnumValue {
 
 /**
  * Extract generic TextFormatting from fig's TextData.
+ *
+ * Bold / italic come from the canonical `figmaFontToQuery` SoT —
+ * weight ≥ 600 maps to bold, italic detection delegates to
+ * `isItalic`. Re-implementing `style.includes("bold")` here would
+ * disagree with cache keys and resolver lookups elsewhere.
  */
 export function figTextToFormatting(td: TextData): TextFormatting {
-  const style = td.fontName.style.toLowerCase();
+  const query = figmaFontToQuery(td.fontName);
   return {
     fontFamily: td.fontName.family,
     fontSize: td.fontSize,
-    bold: style.includes("bold"),
-    italic: style.includes("italic"),
+    bold: query.weight >= FONT_WEIGHTS.SEMI_BOLD,
+    italic: query.style === "italic" || query.style === "oblique",
     underline: kiwiName(td.textDecoration) === "UNDERLINE",
     strikethrough: kiwiName(td.textDecoration) === "STRIKETHROUGH",
     letterSpacing: td.letterSpacing?.value,
@@ -75,15 +81,29 @@ export function applyFormattingUpdate(td: TextData, update: Partial<TextFormatti
   }
 
   // Bold/italic: reconstruct fontName.style from toggles.
-  // Fig stores font style as a string like "Regular", "Bold", "Bold Italic".
+  //
+  // Read the current state via the canonical `figmaFontToQuery` SoT so
+  // we always agree with the resolver / cache about what the prior
+  // state was. Then build the next style string via the inverse
+  // canonical SoT (`fontQueryToStyleName`) so the result round-trips
+  // back to the same FontQuery on the next read. Anywhere that hand-
+  // assembles "Bold Italic" risks emitting a label `detectWeight`
+  // doesn't recognise.
   if (update.bold !== undefined || update.italic !== undefined) {
-    const currentStyle = result.fontName.style.toLowerCase();
-    const isBold = update.bold ?? currentStyle.includes("bold");
-    const isItalic = update.italic ?? currentStyle.includes("italic");
-    const parts: string[] = [];
-    if (isBold) {parts.push("Bold");}
-    if (isItalic) {parts.push("Italic");}
-    const newStyle = parts.length > 0 ? parts.join(" ") : "Regular";
+    const currentQuery = figmaFontToQuery(result.fontName);
+    const currentBold = currentQuery.weight >= FONT_WEIGHTS.SEMI_BOLD;
+    const currentItalic = isItalic(result.fontName.style);
+    const nextBold = update.bold ?? currentBold;
+    const nextItalic = update.italic ?? currentItalic;
+    // Bold toggle picks 700 vs 400 — preserving non-bold weights other
+    // than 400 (Light, Medium, …) on a pure italic toggle is out of
+    // scope of a simple bold/italic editor; consumers needing fine-grained
+    // weight control go through the FontFamilySelect picker instead.
+    const newStyle = fontQueryToStyleName({
+      family: result.fontName.family,
+      weight: nextBold ? FONT_WEIGHTS.BOLD : FONT_WEIGHTS.REGULAR,
+      style: nextItalic ? "italic" : "normal",
+    });
     result = {
       ...result,
       fontName: { ...result.fontName, style: newStyle },

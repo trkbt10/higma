@@ -37,6 +37,7 @@ import type {
   FigValueWithUnits,
 } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
+import { buildCssFontFamily } from "@higma-document-models/fig/font";
 import { formatPx, round3 } from "../../lib/css-format/numeric";
 import type { TokenIndex } from "../../tokens";
 import { effectsToBoxShadow } from "../../tokens";
@@ -1204,15 +1205,18 @@ function applyTextDecoration(node: FigNode, style: Record<string, string>): void
   }
 }
 
+/**
+ * Build the CSS `font-family` value for a Figma family name.
+ *
+ * Delegates to the canonical `buildCssFontFamily` SoT, which routes
+ * through `COMMON_FONT_MAPPINGS` (Inter, Roboto, SF Pro, …) before
+ * falling back to a category-default stack. Hard-coding a partial
+ * `system-ui, -apple-system, sans-serif` chain here would silently
+ * disagree with the renderer's resolver and the typography token
+ * emitter on which fallback applies.
+ */
 function quoteFontFamily(family: string): string {
-  return `${quoteFontName(family)}, system-ui, -apple-system, "Segoe UI", sans-serif`;
-}
-
-function quoteFontName(family: string): string {
-  if (/^[A-Za-z][A-Za-z0-9 _-]*$/.test(family)) {
-    return `"${family}"`;
-  }
-  return JSON.stringify(family);
+  return buildCssFontFamily(family);
 }
 
 /**

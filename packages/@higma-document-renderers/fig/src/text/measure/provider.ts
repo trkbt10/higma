@@ -2,8 +2,8 @@
  * @file Measurement provider implementations
  */
 
-import type { FontMetrics } from "../../font/index";
-import { FONT_WEIGHTS } from "../../font/weight";
+import type { FontMetrics } from "@higma-document-models/fig/font";
+import { FONT_WEIGHTS, buildCssFontShorthand } from "@higma-document-models/fig/font";
 import type { MeasurementProvider, FontSpec, TextMeasurement } from "./types";
 
 /** Compute cap height from actual bounding box ascent, or undefined if not available */
@@ -28,14 +28,20 @@ type TextMeasureContext = {
 /**
  * Build CSS font string from font spec.
  *
- * The canonical `FontQuery` is unpacked here at the boundary into the
- * `${style} ${weight} ${size}px ${family}` shorthand the Canvas 2D API
- * accepts. `style === "normal"` is omitted to match CSS shorthand defaults.
+ * Routes through the canonical `buildCssFontShorthand` SoT so the
+ * shorthand format here matches the canvas-metrics-resolver and any
+ * other call site exactly. Re-implementing the format locally would
+ * silently disagree on family quoting (Canvas 2D rejects unquoted
+ * names with spaces) and break measurement caching keyed by the
+ * shorthand itself.
  */
 function buildFontString(spec: FontSpec): string {
-  const { font } = spec;
-  const styleSegment = font.style !== "normal" ? `${font.style} ` : "";
-  return `${styleSegment}${font.weight} ${spec.fontSize}px ${font.family}`;
+  return buildCssFontShorthand({
+    family: spec.font.family,
+    weight: spec.font.weight,
+    style: spec.font.style,
+    fontSize: spec.fontSize,
+  });
 }
 
 /**

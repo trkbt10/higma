@@ -11,10 +11,10 @@
  */
 
 import { parse as parseFont } from "opentype.js";
-import type { FontLoader } from "../../font/loader";
-import type { FontQuery } from "../../font/query";
-import { figmaFontToQuery } from "../../font/query";
-import type { AbstractFont, LoadedFont } from "../../font/types";
+import type { FontLoader } from "@higma-document-models/fig/font";
+import type { FontQuery } from "@higma-document-models/fig/font";
+import { figmaFontToQuery } from "@higma-document-models/fig/font";
+import type { AbstractFont, LoadedFont } from "@higma-document-models/fig/font";
 
 /**
  * Parse font data and return as AbstractFont.

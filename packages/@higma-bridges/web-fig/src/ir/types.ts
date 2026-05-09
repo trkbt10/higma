@@ -30,6 +30,27 @@ export type BoxIR = {
   readonly height: number;
 };
 
+/**
+ * CSS `<length-percentage>` carrier — the Single Source of Truth for
+ * any field whose source value can be either a literal pixel length
+ * (`24px`) or a percentage of an axis on the owning element
+ * (`50%` border-radius, `2em` padding once `getComputedStyle`
+ * resolves to px). The capture layer stores the original value
+ * verbatim; the emit layer resolves percentages against the owning
+ * element's box at the call site that knows the axis (width,
+ * height, or min(width,height)) the percentage references.
+ *
+ * Storing pre-resolved px upstream would require the normaliser to
+ * know each property's percentage axis (radius → min, padding-top →
+ * width, padding-left → width, gap → main axis), which fragments the
+ * resolution rules across the codebase. Carrying the unit through to
+ * emit keeps the SoT in one place — the resolver function in
+ * `@higma-bridges/web-fig/length`.
+ */
+export type LengthIR =
+  | { readonly kind: "px"; readonly value: number }
+  | { readonly kind: "percent"; readonly value: number };
+
 /** Normalised RGBA color. Each channel is in `[0, 1]`. */
 export type ColorIR = {
   readonly r: number;
@@ -189,8 +210,13 @@ export type StyleIR = {
   readonly effects: readonly EffectIR[];
   /** Multiplied with descendant opacities. Default 1. */
   readonly opacity: number;
-  /** Per-corner radius, top-left, top-right, bottom-right, bottom-left. */
-  readonly cornerRadius?: readonly [number, number, number, number];
+  /**
+   * Per-corner radius, top-left, top-right, bottom-right, bottom-left.
+   * Stored as `<length-percentage>` so capture preserves the original
+   * unit; emit resolves any percentage against `min(width, height)`
+   * of the owning element via `resolveLength` from the bridge.
+   */
+  readonly cornerRadius?: readonly [LengthIR, LengthIR, LengthIR, LengthIR];
   /** Whether overflow is clipped to the box. */
   readonly clipsContent: boolean;
   /** CSS `mix-blend-mode` value. `normal` is the default. */
@@ -305,11 +331,42 @@ export type RectNodeIR = NodeBaseIR & {
   readonly kind: "rectangle";
 };
 
-/** Vector blob carrying SVG path data. Round-trips via `<svg>`. */
+/**
+ * Vector content captured from inline `<svg>` markup. The IR is the
+ * single source of truth for resolved SVG drawing — emit paths /
+ * sub-paths verbatim into the fig's VECTOR nodes so the round-trip
+ * keeps the original geometry. We deliberately do NOT downcast to
+ * an image fill: that would force the renderer to rasterise icons
+ * and lose Figma's native vector editing surface.
+ *
+ * `paths` carries each `<path d="…">` within the SVG, with the
+ * resolved fill / stroke / nonzero-rule colour pre-translated into
+ * IR `PaintIR` values. `viewBox` is kept verbatim so emit can
+ * compose path coordinates against the right reference frame even
+ * when the captured `<svg>` had no explicit `width`/`height`.
+ */
+export type VectorPathIR = {
+  /** SVG path `d` attribute. */
+  readonly d: string;
+  /** Resolved `fill` (CSS computed style on the path). Undefined for unfilled. */
+  readonly fill?: PaintIR;
+  /** Resolved stroke as a single SOLID/IMAGE paint (Figma's vector model). */
+  readonly stroke?: PaintIR;
+  /** Stroke weight in SVG user units. */
+  readonly strokeWeight?: number;
+  /**
+   * `nonzero` (default) or `evenodd`. Translated 1:1 to Figma's
+   * `windingRule` field at emit time.
+   */
+  readonly fillRule?: "nonzero" | "evenodd";
+};
+
 export type VectorNodeIR = NodeBaseIR & {
   readonly kind: "vector";
-  /** SVG path `d` attribute. */
-  readonly path: string;
+  /** Captured `<svg viewBox="x y w h">` reference frame. Defaults to the node box. */
+  readonly viewBox?: { readonly minX: number; readonly minY: number; readonly width: number; readonly height: number };
+  /** Captured SVG paths. */
+  readonly paths: readonly VectorPathIR[];
 };
 
 export type NodeIR = FrameNodeIR | TextNodeIR | RectNodeIR | VectorNodeIR;
@@ -336,7 +393,23 @@ export type ViewportIR = {
   /** Device-pixel-ratio at capture time. 1 for Figma. */
   readonly devicePixelRatio: number;
   readonly background: ColorIR;
+  /**
+   * The static-flow content tree rooted at the captured surface's
+   * outermost element. `position: fixed` / `sticky` subtrees are
+   * lifted out into `viewportLayer` so they can be emitted at
+   * viewport-anchored absolute coordinates without distorting the
+   * static layout's auto-layout inference.
+   */
   readonly root: FrameNodeIR;
+  /**
+   * Subtrees that paint at viewport-anchored coordinates regardless
+   * of how the static content scrolls / reflows — i.e. anything CSS
+   * declared `position: fixed` (or `sticky` once it has stuck).
+   * Each entry's `box` is in viewport-absolute coordinates (top-left
+   * = (0, 0) of the viewport), and its `sizing.mode === "absolute"`
+   * so the emitter pins it as `stackPositioning: ABSOLUTE`.
+   */
+  readonly viewportLayer: readonly NodeIR[];
   readonly assets: ReadonlyMap<string, AssetIR>;
 };
 

@@ -24,6 +24,32 @@ export type RawRect = {
 };
 
 /**
+ * Captured `<path>` data from a host `<svg>` element. Resolved colours
+ * use the path's own computed style (Cascade — including
+ * `<svg>`-level inheritance) so the IR stage doesn't need to
+ * re-resolve CSS variables.
+ */
+export type RawSvgPath = {
+  readonly d: string;
+  readonly fill?: string;
+  readonly stroke?: string;
+  readonly strokeWidth?: number;
+  readonly fillRule?: "nonzero" | "evenodd";
+};
+
+/**
+ * Captured `<svg>` content — the structural information required to
+ * round-trip through the bridge as a vector node rather than a
+ * raster image. Only inline SVG with a flat `<path>` set is
+ * captured at the moment; nested `<g>` and `<use>` references are a
+ * future extension and will surface as additional fields here.
+ */
+export type RawSvgContent = {
+  readonly viewBox?: { readonly minX: number; readonly minY: number; readonly width: number; readonly height: number };
+  readonly paths: readonly RawSvgPath[];
+};
+
+/**
  * One captured DOM element. Only the computed-style properties
  * relevant to the bridge IR are pulled — adding a property here
  * requires extending the IR and the normalizer in tandem.
@@ -42,6 +68,8 @@ export type RawElement = {
   readonly computedStyle: Readonly<Record<string, string>>;
   /** `<img>` src or first `background-image` url; resolves into the snapshot.images map. */
   readonly imageId?: string;
+  /** Captured SVG geometry when `tag === "svg"`. */
+  readonly svgContent?: RawSvgContent;
   /** Concatenated direct text content. Empty for non-leaf containers. */
   readonly text?: string;
   readonly children: readonly RawElement[];

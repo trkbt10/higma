@@ -13,7 +13,7 @@
  */
 
 import { transformGlyphCommands, extractDerivedTextPathData } from "./derived-paths";
-import type { PathCommand } from "../../font/types";
+import type { PathCommand } from "@higma-document-models/fig/font";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { DerivedTextData } from "@higma-document-models/fig/domain";
 

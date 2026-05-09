@@ -1,8 +1,8 @@
 /**
  * @file Public entry — viewport capture surface.
  */
-export type { CaptureOptions, CaptureResult } from "./capture";
-export { captureViewport, jsonToSnapshot } from "./capture";
+export type { BrowserLike, CaptureOptions, CaptureResult } from "./capture";
+export { captureViewport, captureViewportInBrowser, launchBrowser, jsonToSnapshot } from "./capture";
 
 export type { ElementJson, RawSnapshotJson } from "./in-page";
 export { captureSnapshot } from "./in-page";

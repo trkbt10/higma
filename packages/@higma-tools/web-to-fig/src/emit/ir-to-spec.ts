@@ -21,8 +21,10 @@ import {
   irAutoLayoutToFig,
   irEffectToFig,
   irPaintToFig,
+  resolveCornerRadius,
 } from "@higma-bridges/web-fig";
 import type { FigPaint } from "@higma-document-models/fig/types";
+import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
 import type {
   FrameNodeSpec,
   NodeSpec,
@@ -90,19 +92,18 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
     characters: node.characters,
     fontSize: node.textStyle.fontSize,
     fontFamily: node.textStyle.fontFamily,
-    fontStyle: figFontStyleNameOf(node.textStyle.fontStyle),
+    // SoT: combine numeric weight + style into the canonical Figma
+    // `fontName.style` label via `fontQueryToStyleName`. The previous
+    // implementation only looked at the italic/oblique flag and dropped
+    // `fontWeight` entirely, which silently turned every Bold web style
+    // into a "Regular" Figma label.
+    fontStyle: fontQueryToStyleName({
+      family: node.textStyle.fontFamily,
+      weight: normalizeWeight(node.textStyle.fontWeight),
+      style: node.textStyle.fontStyle,
+    }),
     lineHeight: irLineHeightToPx(node.textStyle.lineHeight),
   };
-}
-
-function figFontStyleNameOf(style: "normal" | "italic" | "oblique"): "Regular" | "Italic" | "Oblique" {
-  if (style === "italic") {
-    return "Italic";
-  }
-  if (style === "oblique") {
-    return "Oblique";
-  }
-  return "Regular";
 }
 
 function irLineHeightToPx(lh: { readonly unit: "px"; readonly value: number } | { readonly unit: "ratio"; readonly value: number } | { readonly unit: "normal" }): number | undefined {
@@ -115,6 +116,12 @@ function irLineHeightToPx(lh: { readonly unit: "px"; readonly value: number } | 
 function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeSpec | RoundedRectNodeSpec {
   const radii = node.style.cornerRadius;
   if (radii) {
+    const resolved: readonly [number, number, number, number] = [
+      resolveCornerRadius(radii[0], node.box),
+      resolveCornerRadius(radii[1], node.box),
+      resolveCornerRadius(radii[2], node.box),
+      resolveCornerRadius(radii[3], node.box),
+    ];
     return {
       type: "ROUNDED_RECTANGLE",
       name: node.name,
@@ -128,7 +135,7 @@ function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeS
       effects: node.style.effects.map(irEffectToFig),
       opacity: node.style.opacity,
       visible: node.visible,
-      rectangleCornerRadii: radii,
+      rectangleCornerRadii: resolved,
     };
   }
   return {
@@ -161,7 +168,10 @@ function vectorSpec(node: NodeIR & { readonly kind: "vector" }): VectorNodeSpec 
     effects: node.style.effects.map(irEffectToFig),
     opacity: node.style.opacity,
     visible: node.visible,
-    vectorPaths: [{ windingRule: "NONZERO", data: node.path }],
+    vectorPaths: node.paths.map((p) => ({
+      windingRule: p.fillRule === "evenodd" ? "EVENODD" : "NONZERO",
+      data: p.d,
+    })),
   };
 }
 

@@ -28,12 +28,15 @@ import type {
   NodeIR,
   PaintIR,
   StyleIR,
+  LengthIR,
   TextNodeIR,
   TextRunIR,
   TextStyleIR,
+  VectorNodeIR,
+  VectorPathIR,
   ViewportIR,
 } from "@higma-bridges/web-fig";
-import { inferAutoLayout } from "@higma-bridges/web-fig";
+import { inferAutoLayout, percentLength, pxLength } from "@higma-bridges/web-fig";
 import type {
   RawAsset,
   RawElement,
@@ -45,6 +48,7 @@ import {
   parseColor,
   parseFontWeight,
   parsePx,
+  parsePxOr,
 } from "./parse-css";
 import { buildParagraphContent, isParagraphHost } from "./paragraph";
 
@@ -54,10 +58,21 @@ export function normalizeViewport(
   options: { readonly breakpoint?: string } = {},
 ): ViewportIR {
   const assets = normalizeAssets(snapshot.assets);
-  const root = normalizeNode(snapshot.root, undefined);
+  // Lift `position: fixed` / `sticky` subtrees out of the static
+  // tree before normalising — they paint at viewport-anchored
+  // coordinates that the static layout's auto-layout inference
+  // cannot model. The lifted subtrees become a separate viewport
+  // layer the emitter wires onto each viewport's wrapper FRAME.
+  const lifted = liftViewportLayer(snapshot.root);
+  const root = normalizeNode(lifted.root, undefined);
   if (root.kind !== "frame") {
     throw new Error("normalizeViewport: document root must normalize to a frame");
   }
+  // Normalise every lifted subtree as if it were a new top-level
+  // surface. Box coordinates come from the captured rect directly
+  // (viewport-absolute), so the emitter can place them inside the
+  // viewport's wrapper FRAME at exactly (rect.x, rect.y).
+  const viewportLayer = lifted.layer.map((el) => normalizeViewportLayerEntry(el));
   return {
     source: snapshot.source,
     breakpoint: options.breakpoint ?? "default",
@@ -65,8 +80,80 @@ export function normalizeViewport(
     devicePixelRatio: snapshot.devicePixelRatio,
     background: parseColor(snapshot.background),
     root,
+    viewportLayer,
     assets,
   };
+}
+
+/**
+ * Normalise a fixed / sticky subtree into a single IR node anchored
+ * to the viewport. The captured rect already lives in
+ * `getBoundingClientRect` (viewport) coordinates, so we feed the
+ * subtree to the standard normaliser using the document root as a
+ * synthetic parent — `boxRelative` then gives `(rect.x, rect.y)`
+ * verbatim, which is what the wrapper FRAME expects.
+ */
+function normalizeViewportLayerEntry(el: RawElement): NodeIR {
+  // Synthesize a "viewport" parent whose contentRect starts at (0, 0)
+  // so `boxRelative` returns the subtree's viewport-absolute
+  // coordinates unchanged.
+  const synthetic: RawElement = {
+    id: "__viewport__",
+    tag: "viewport",
+    rect: { x: 0, y: 0, width: 0, height: 0 },
+    contentRect: { x: 0, y: 0, width: 0, height: 0 },
+    visible: true,
+    computedStyle: { position: "static", display: "block" },
+    children: [],
+  };
+  const node = normalizeNode(el, synthetic);
+  // Force ABSOLUTE positioning so the emitter pins the subtree to
+  // the wrapper FRAME's coordinate system.
+  if (node.kind === "frame") {
+    return { ...node, sizing: { mode: "absolute" } };
+  }
+  if (node.kind === "text") {
+    return { ...node, sizing: { mode: "absolute" } };
+  }
+  if (node.kind === "vector") {
+    return { ...node, sizing: { mode: "absolute" } };
+  }
+  return { ...node, sizing: { mode: "absolute" } };
+}
+
+/**
+ * Walk the tree, collect every `position: fixed` / `sticky` subtree
+ * into a flat list, and return a *shallow new* tree with those
+ * subtrees pruned out of their original parents. Pruning prevents
+ * `boxRelative` from baking in negative offsets when the static
+ * parent sits below the viewport top.
+ */
+function liftViewportLayer(root: RawElement): { root: RawElement; layer: readonly RawElement[] } {
+  const layer: RawElement[] = [];
+  function rewrite(el: RawElement): RawElement {
+    const newChildren: RawElement[] = [];
+    let changed = false;
+    for (const c of el.children) {
+      const pos = c.computedStyle.position;
+      if (pos === "fixed" || pos === "sticky") {
+        // Capture the fixed subtree as-is (its descendants stay
+        // intact). Sticky-but-not-yet-stuck elements still flow
+        // normally; we don't have a way to tell at capture time, so
+        // treat both the same — a fixed-in-flow `sticky` element is
+        // only common at the top of long-scroll pages, and Figma's
+        // ABSOLUTE pin matches its visual position either way.
+        layer.push(c);
+        changed = true;
+        continue;
+      }
+      const rewritten = rewrite(c);
+      if (rewritten !== c) changed = true;
+      newChildren.push(rewritten);
+    }
+    if (!changed) return el;
+    return { ...el, children: newChildren };
+  }
+  return { root: rewrite(root), layer };
 }
 
 function normalizeAssets(raw: ReadonlyMap<string, RawAsset>): ReadonlyMap<string, AssetIR> {
@@ -78,6 +165,9 @@ function normalizeAssets(raw: ReadonlyMap<string, RawAsset>): ReadonlyMap<string
 }
 
 function normalizeNode(el: RawElement, parent: RawElement | undefined): NodeIR {
+  if (el.svgContent !== undefined) {
+    return normalizeSvgVector(el, parent);
+  }
   const isText = el.text !== undefined && el.children.length === 0 && el.text.length > 0;
   if (isText) {
     return normalizeText(el, parent);
@@ -88,13 +178,50 @@ function normalizeNode(el: RawElement, parent: RawElement | undefined): NodeIR {
   return normalizeFrame(el, parent);
 }
 
+function normalizeSvgVector(el: RawElement, parent: RawElement | undefined): VectorNodeIR {
+  const localBox = boxForElement(el, parent);
+  const svg = el.svgContent!;
+  const paths: VectorPathIR[] = svg.paths.map((p) => ({
+    d: p.d,
+    fill: p.fill ? cssPaintToIR(p.fill) : undefined,
+    stroke: p.stroke ? cssPaintToIR(p.stroke) : undefined,
+    strokeWeight: p.strokeWidth,
+    fillRule: p.fillRule,
+  }));
+  return {
+    kind: "vector",
+    id: el.id,
+    componentKey: el.id,
+    name: el.tag,
+    box: localBox,
+    style: normalizeStyle(el),
+    visible: el.visible,
+    sizing: normalizeChildSizing(el, parent),
+    viewBox: svg.viewBox,
+    paths,
+  };
+}
+
+function cssPaintToIR(value: string): PaintIR | undefined {
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "none" || trimmed === "transparent") {
+    return undefined;
+  }
+  if (trimmed === "currentColor") {
+    // Without the cascading colour we can't resolve `currentColor`
+    // here. Skip — the renderer falls back to its default fill.
+    return undefined;
+  }
+  return { kind: "solid", color: parseColor(trimmed) };
+}
+
 /**
  * Collapse a paragraph host (block-level element whose subtree is
  * entirely inline) into a single TEXT IR. Inline children that
  * deviate from the paragraph's base computed style become runs.
  */
 function normalizeParagraph(el: RawElement, parent: RawElement | undefined): TextNodeIR {
-  const localBox = boxRelative(el.rect, parent?.contentRect);
+  const localBox = boxForElement(el, parent);
   const style = textStyleForParagraph(el);
   const content = buildParagraphContent(el);
   // Figma's `styleOverrideTable` carries per-run colour and font, but
@@ -165,7 +292,7 @@ function textFillFromComputed(color: string | undefined): PaintIR | undefined {
 function normalizeFrame(el: RawElement, parent: RawElement | undefined): FrameNodeIR {
   const childrenRaw = el.children.filter((c) => c.visible);
   const childrenIR = childrenRaw.map((child) => normalizeNode(child, el));
-  const localBox = boxRelative(el.rect, parent?.contentRect);
+  const localBox = boxForElement(el, parent);
   const autoLayout = resolveAutoLayout(el, childrenRaw);
   return {
     kind: "frame",
@@ -186,7 +313,7 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined): FrameNo
 }
 
 function normalizeText(el: RawElement, parent: RawElement | undefined): TextNodeIR {
-  const localBox = boxRelative(el.rect, parent?.contentRect);
+  const localBox = boxForElement(el, parent);
   // Figma represents text color via the node's own `fills` (a single
   // SOLID). The TEXT node's CSS computed `color` is the glyph color;
   // its `background-color` is irrelevant. Replace the inherited
@@ -222,6 +349,23 @@ function boxRelative(rect: BoxIR, parentContent: BoxIR | undefined): BoxIR {
   };
 }
 
+/**
+ * Choose the coordinate system for an element. Always parent-relative
+ * (`child.rect.x - parent.contentRect.x`, same for y) — Figma stacks
+ * child transforms on top of the parent's, so we need the local delta
+ * regardless of whether the child is in flow or `position: fixed`.
+ *
+ * For `fixed` / `sticky` children the local delta is often negative
+ * (the captured DOM parent starts somewhere down the page while the
+ * child is anchored at viewport y=0); the renderer handles the negative
+ * offset correctly because we mark the child as
+ * `stackPositioning: ABSOLUTE` — it opts out of auto-layout flow but
+ * stays in the parent's coordinate space.
+ */
+function boxForElement(el: RawElement, parent: RawElement | undefined): BoxIR {
+  return boxRelative(el.rect, parent?.contentRect);
+}
+
 function normalizeStyle(el: RawElement): StyleIR {
   const cs = el.computedStyle;
   const fills = collectFills(el);
@@ -252,33 +396,42 @@ function collectFills(el: RawElement): readonly PaintIR[] {
   for (const img of images) {
     out.push(img);
   }
+  // `<img>` content surfaces as an image fill — `<svg>` is handled
+  // separately via `normalizeSvgVector` (vector node). Without this
+  // path raster icons emit as empty frames and the screenshot diff
+  // blows up. The asset is already registered via `extractImageUrl`
+  // in the in-page walker; we just need to express the relationship
+  // in the IR.
+  if (el.tag === "img" && el.imageId !== undefined) {
+    const dup = images.some((p) => p.kind === "image" && p.imageId === el.imageId);
+    if (!dup) {
+      out.push({ kind: "image", imageId: el.imageId, scaleMode: "contain" });
+    }
+  }
   return out;
 }
 
 function collectStrokes(el: RawElement): StyleIR["strokes"] {
   const cs = el.computedStyle;
   const widths = [
-    parsePx(cs["border-top-width"] ?? "0"),
-    parsePx(cs["border-right-width"] ?? "0"),
-    parsePx(cs["border-bottom-width"] ?? "0"),
-    parsePx(cs["border-left-width"] ?? "0"),
+    parsePxOr(cs["border-top-width"], 0),
+    parsePxOr(cs["border-right-width"], 0),
+    parsePxOr(cs["border-bottom-width"], 0),
+    parsePxOr(cs["border-left-width"], 0),
   ];
   const max = Math.max(...widths);
   if (max <= 0) {
     return [];
   }
-  if (!widths.every((w) => w === max)) {
-    // Asymmetric borders aren't representable by a single Figma stroke;
-    // the bridge contract has a single per-node stroke. Rejecting here
-    // is the fail-fast choice — extending the IR with per-edge strokes
-    // is the correct fix when the use case arises.
-    throw new Error(
-      `collectStrokes: asymmetric border widths ${widths.join("/")} on element ${el.id} are not yet supported by the IR`,
-    );
-  }
+  // Real-world pages frequently use one-edge borders (table dividers,
+  // tab strips, focus outlines). Figma's IR carries a single stroke
+  // per node, so we approximate asymmetric borders with the widest
+  // edge — better than aborting the whole capture. A future IR
+  // extension that models per-edge strokes would replace this
+  // narrowing.
   const colorRaw = cs["border-top-color"];
   if (!colorRaw) {
-    throw new Error(`collectStrokes: border width ${max}px without border-color on element ${el.id}`);
+    return [];
   }
   return [{
     paint: { kind: "solid", color: parseColor(colorRaw) },
@@ -311,14 +464,35 @@ function collectEffects(cs: Readonly<Record<string, string>>): readonly EffectIR
 }
 
 function collectCornerRadii(cs: Readonly<Record<string, string>>): StyleIR["cornerRadius"] {
-  const tl = parsePx(cs["border-top-left-radius"] ?? "0");
-  const tr = parsePx(cs["border-top-right-radius"] ?? "0");
-  const br = parsePx(cs["border-bottom-right-radius"] ?? "0");
-  const bl = parsePx(cs["border-bottom-left-radius"] ?? "0");
-  if (tl === 0 && tr === 0 && br === 0 && bl === 0) {
+  // `border-*-radius` may be `<length>` (`12px`) or `<percentage>`
+  // (`50%` for full circles). The IR carries both verbatim through a
+  // `LengthIR` and resolves percentages at emit time against the
+  // owning element's `min(width, height)` (CSS Backgrounds 3 §5.3).
+  // The single source of truth for that resolution lives in
+  // `@higma-bridges/web-fig/length.resolveCornerRadius`.
+  const tl = parseLength(cs["border-top-left-radius"]);
+  const tr = parseLength(cs["border-top-right-radius"]);
+  const br = parseLength(cs["border-bottom-right-radius"]);
+  const bl = parseLength(cs["border-bottom-left-radius"]);
+  if (isZero(tl) && isZero(tr) && isZero(br) && isZero(bl)) {
     return undefined;
   }
   return [tl, tr, br, bl];
+}
+
+function isZero(length: LengthIR): boolean {
+  return length.value === 0;
+}
+
+function parseLength(value: string | undefined): LengthIR {
+  if (value === undefined) {return pxLength(0);}
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "0" || trimmed === "0px") {return pxLength(0);}
+  if (trimmed.endsWith("%")) {
+    const n = parseFloat(trimmed.slice(0, -1));
+    return percentLength(Number.isFinite(n) ? n : 0);
+  }
+  return pxLength(parsePxOr(trimmed, 0));
 }
 
 function clipsContentFor(cs: Readonly<Record<string, string>>): boolean {
@@ -360,10 +534,24 @@ function resolveAutoLayout(el: RawElement, childrenRaw: readonly RawElement[]): 
   if (cs.display === "flex" || cs.display === "inline-flex") {
     return autoLayoutFromFlex(cs);
   }
-  if (childrenRaw.length === 0) {
+  // Viewport-anchored children (`fixed` / `sticky`) don't sit inside
+  // the parent's content box — their getBoundingClientRect is the
+  // viewport's, so feeding them to `inferAutoLayout` produces a bogus
+  // negative offset that distorts the inferred direction / gap. Drop
+  // them from inference; they re-enter the tree as ABSOLUTE-positioned
+  // children at emit time and stay where the browser put them.
+  // `position: absolute` children stay in this list because their
+  // rects are still inside the captured DOM ancestor (their nearest
+  // positioned ancestor *is* a real DOM node), so the layout maths
+  // still works for them.
+  const flowChildren = childrenRaw.filter((c) => {
+    const p = c.computedStyle.position;
+    return p !== "fixed" && p !== "sticky";
+  });
+  if (flowChildren.length === 0) {
     return { direction: "none" };
   }
-  const childBoxes = childrenRaw.map((c) => boxRelative(c.rect, el.contentRect));
+  const childBoxes = flowChildren.map((c) => boxRelative(c.rect, el.contentRect));
   const inferred = inferAutoLayout({
     parent: { x: 0, y: 0, width: el.contentRect.width, height: el.contentRect.height },
     children: childBoxes,
@@ -387,11 +575,11 @@ function resolveAutoLayout(el: RawElement, childrenRaw: readonly RawElement[]): 
 function autoLayoutFromFlex(cs: Readonly<Record<string, string>>): AutoLayoutIR {
   const fd = cs["flex-direction"] ?? "row";
   const direction = fd === "column" || fd === "column-reverse" ? "column" : "row";
-  const gap = parsePx(cs.gap ?? cs["row-gap"] ?? cs["column-gap"] ?? "0");
-  const paddingTop = parsePx(cs["padding-top"] ?? "0");
-  const paddingRight = parsePx(cs["padding-right"] ?? "0");
-  const paddingBottom = parsePx(cs["padding-bottom"] ?? "0");
-  const paddingLeft = parsePx(cs["padding-left"] ?? "0");
+  const gap = parsePxOr(cs.gap ?? cs["row-gap"] ?? cs["column-gap"], 0);
+  const paddingTop = parsePxOr(cs["padding-top"], 0);
+  const paddingRight = parsePxOr(cs["padding-right"], 0);
+  const paddingBottom = parsePxOr(cs["padding-bottom"], 0);
+  const paddingLeft = parsePxOr(cs["padding-left"], 0);
   return {
     direction,
     gap,
@@ -451,14 +639,35 @@ function normalizeChildSizing(el: RawElement, parent: RawElement | undefined): C
   if (!parent) {
     return { mode: "absolute" };
   }
-  const parentDisplay = parent.computedStyle.display;
-  if (parentDisplay === "flex" || parentDisplay === "inline-flex") {
-    // We don't yet have the granularity to disambiguate hug vs fill
-    // from computed style alone; the round-trip is lossless on the
-    // box dimensions because the IR carries width/height anyway.
-    return { mode: "flow", primary: "fixed", counter: "fixed" };
+  // Viewport-anchored CSS positions (`fixed`, and `sticky` once it
+  // sticks) detach the element from its DOM ancestor's content box —
+  // their `getBoundingClientRect()` is whatever the viewport says,
+  // not "child rect inside parent contentRect". If we left them in
+  // flow, `boxRelative` would emit large negative offsets (the parent
+  // is somewhere below the viewport top while the child is at y=0)
+  // and the auto-layout inferer would treat the negative-offset
+  // child as a regular sibling. Mark them out-of-flow so the emitter
+  // can flip on `stackPositioning: ABSOLUTE`.
+  //
+  // `position: absolute` is intentionally *not* treated this way:
+  // its containing block is the nearest positioned DOM ancestor,
+  // which the `getBoundingClientRect()` already accounts for, and
+  // the absolute child's rect *does* lie inside the captured DOM
+  // ancestor. Treating `absolute` the same as `fixed` would
+  // misclassify YouTube's ~190 absolute layout helpers and break
+  // their parents' auto-layout.
+  const pos = el.computedStyle.position;
+  if (pos === "fixed" || pos === "sticky") {
+    return { mode: "absolute" };
   }
-  return { mode: "absolute" };
+  // Default to flow with fixed primary/counter axis. `inferAutoLayout`
+  // (run inside fig-to-web at render time) decides whether the parent
+  // becomes a real flex container by inspecting the child boxes — we
+  // don't second-guess it here. Marking every non-flex-parented child
+  // as ABSOLUTE used to be the default; it caused fig-to-web to render
+  // every block-flow child as a positioned overlay and mis-render
+  // sub-trees whose layout the inferer would otherwise have detected.
+  return { mode: "flow", primary: "fixed", counter: "fixed" };
 }
 
 function normalizeTextStyle(el: RawElement): TextStyleIR {

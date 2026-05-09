@@ -14,7 +14,7 @@ import type { FrameNode } from "./types";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import { toNodeId, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { FigPaint, FigEffect } from "@higma-document-models/fig/types";
-import type { AbstractFont, FontPath } from "../font/types";
+import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
 
 // =============================================================================
 // Test Helpers

@@ -42,6 +42,7 @@ import {
   encodeRectangleBlob,
   encodeRoundedRectangleBlob,
   encodeEllipseBlob,
+  encodeSvgPathBlob,
 } from "../geometry";
 import { resolveChildConstraints } from "@higma-document-models/fig/symbols";
 import { getEffectiveSymbolID } from "@higma-document-models/fig/symbols";
@@ -703,6 +704,25 @@ function _createFigFileBuilder() {
       effects: data.effects,
       mask: data.mask,
     });
+    // Encode each SVG path into a `fillGeometry` blob — same byte
+    // format `encodeRectangleBlob` uses (header 0x01, start
+    // position float32 pair, then LineTo / CubicTo command
+    // triples). Confirmed against Figma's own `.fig` exports: the
+    // VECTOR nodes there carry their drawing this way.
+    if (data.paths !== undefined && data.paths.length > 0) {
+      const winding = data.windingRule === "EVENODD"
+        ? { value: 1, name: "EVENODD" as const }
+        : { value: 0, name: "NONZERO" as const };
+      node.fillGeometry = data.paths.map((d) => {
+        const blob = encodeSvgPathBlob(d);
+        const blobIndex = addBlob({ bytes: [...blob.bytes] });
+        return {
+          windingRule: winding,
+          commandsBlob: blobIndex,
+          styleID: 0,
+        };
+      });
+    }
     nodes.push(node);
     return data.localID;
   }
@@ -1011,7 +1031,14 @@ function _createFigFileBuilder() {
       node.stackPrimaryAlignContent = data.stackPrimaryAlignContent;
     }
     if (data.stackWrap !== undefined) {
-      node.stackWrap = data.stackWrap;
+      // The Figma Kiwi schema models `stackWrap` as the `StackWrap`
+      // enum (NO_WRAP=0, WRAP=1) — encoding the raw boolean would
+      // throw at the value codec ("Expected object for type
+      // StackWrap"). Translate booleans here so callers can keep
+      // working with the natural `true`/`false` shape.
+      node.stackWrap = data.stackWrap
+        ? { value: 1, name: "WRAP" }
+        : { value: 0, name: "NO_WRAP" };
     }
     if (data.stackCounterSpacing !== undefined) {
       node.stackCounterSpacing = data.stackCounterSpacing;

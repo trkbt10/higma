@@ -42,3 +42,12 @@ export {
   listFrameTargets,
   pickFrameByName,
 } from "./emit";
+
+/**
+ * Programmatic entry to the same pipeline `bin.ts` invokes from the
+ * command line. Required by `@higma-tools/web-fig-roundtrip`'s
+ * verifier, which needs to drive emit + bundle from inside a Node
+ * process without spawning a child CLI.
+ */
+export { runCli, parseArgs, USAGE, CliUsageError } from "./cli";
+export type { CliOptions, CliConsole } from "./cli";

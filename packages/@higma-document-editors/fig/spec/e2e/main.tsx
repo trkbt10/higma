@@ -33,7 +33,7 @@ import {
   type FontLoadOptions,
   type FontPath,
   type LoadedFont,
-} from "@higma-document-renderers/fig/font";
+} from "@higma-document-models/fig/font";
 
 injectCSSVariables();
 
@@ -92,9 +92,10 @@ const TEST_FONT_LOADER = createCachingFontLoader({
   async loadFont(options: FontLoadOptions): Promise<LoadedFont> {
     return {
       font: TEST_FONT,
-      family: options.family,
-      weight: options.weight ?? 400,
-      style: options.style ?? "normal",
+      // FontQuery — echo the requested options back. The mock has a
+      // single physical font and isn't doing real closest-match
+      // substitution. Real loaders return the actually-loaded query.
+      query: options,
       postscriptName: `${options.family}-Test`,
     };
   },

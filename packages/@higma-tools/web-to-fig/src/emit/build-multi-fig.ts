@@ -16,11 +16,13 @@
 import {
   createFigFile,
   frameNode,
+  imagePaint,
   instanceNode,
   roundedRectNode,
   rectNode,
   symbolNode,
   textNode,
+  vectorNode,
   type TextStyleRunData,
 } from "@higma-document-io/fig/fig-file";
 import type {
@@ -36,9 +38,11 @@ import type {
   PaintIR,
   RectNodeIR,
   TextNodeIR,
+  VectorNodeIR,
   ViewportIR,
 } from "@higma-bridges/web-fig";
-import { inferAutoLayout } from "@higma-bridges/web-fig";
+import { inferAutoLayout, resolveCornerRadius } from "@higma-bridges/web-fig";
+import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
 
 const BREAKPOINT_GUTTER = 64;
 
@@ -86,6 +90,23 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
 
   const idCounter = createIdCounter();
   const idMap = new Map<string, ReadonlyMap<string, number>>();
+
+  // Register every asset captured by the in-page walker as a fig
+  // image and remember the SHA-1 ref the writer assigned. Each
+  // image fill in the IR carries the original `imageId`; emit-time
+  // we look that ID up here to produce a paint with the right
+  // `imageRef`. Without this pass `<img>` and inline `<svg>`
+  // content emits as empty frames.
+  const imageRefMap = new Map<string, string>();
+  for (const viewport of multi.viewports) {
+    for (const [, asset] of viewport.assets) {
+      if (imageRefMap.has(asset.id)) {
+        continue;
+      }
+      const ref = await file.addImage(asset.bytes, asset.mime);
+      imageRefMap.set(asset.id, ref);
+    }
+  }
 
   // Pick the widest viewport as the SYMBOL's authoring source.
   const representative = pickRepresentative(multi.viewports);
@@ -167,6 +188,7 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
         idCounter,
         idMap: symbolPerNode,
         parentCounterAlign: symbolCounterAlign,
+        imageRefs: imageRefMap,
       });
     }
   }
@@ -195,18 +217,25 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
     const padBottom = clampNonNeg(viewport.box.height - (contentBox.y + contentBox.height));
     const padLeft = clampNonNeg(contentBox.x);
     const padRight = clampNonNeg(viewport.box.width - (contentBox.x + contentBox.width));
-    file.addFrame(
-      frameNode(wrapperLocalID, canvasID)
-        .name(`${viewport.breakpoint} / ${Math.round(viewport.box.width)}×${Math.round(viewport.box.height)}`)
-        .size(viewport.box.width, viewport.box.height)
-        .position(layoutCursor.x, 0)
-        .background(viewport.background)
-        .clipsContent(true)
-        .autoLayout("VERTICAL")
-        .padding({ top: padTop, right: padRight, bottom: padBottom, left: padLeft })
-        .gap(0)
-        .build(),
-    );
+    // The captured background is the body's `getComputedStyle().
+    // backgroundColor`. Sites whose body has no explicit color
+    // resolve that to `rgba(0,0,0,0)` — visually identical to white
+    // because the surrounding browser chrome paints behind it. Don't
+    // emit a fill in that case: a `(r=0,g=0,b=0,α=0)` SOLID paint
+    // confuses renderers that ignore the alpha channel and paints a
+    // solid black rectangle. White is the correct default the
+    // browser would paint for a transparent body.
+    const wrapperBuilder = frameNode(wrapperLocalID, canvasID)
+      .name(`${viewport.breakpoint} / ${Math.round(viewport.box.width)}×${Math.round(viewport.box.height)}`)
+      .size(viewport.box.width, viewport.box.height)
+      .position(layoutCursor.x, 0)
+      .clipsContent(true)
+      .autoLayout("VERTICAL")
+      .padding({ top: padTop, right: padRight, bottom: padBottom, left: padLeft })
+      .gap(0);
+    const bg = viewport.background;
+    const wrapperFinal = bg.a > 0 ? wrapperBuilder.background(bg) : wrapperBuilder.background({ r: 1, g: 1, b: 1, a: 1 });
+    file.addFrame(wrapperFinal.build());
     const instanceLocalID = idCounter.next();
     // The INSTANCE pattern observed in a hand-edited Figma sample:
     //   - `childAlignSelf=STRETCH` makes the INSTANCE fill the
@@ -230,9 +259,27 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
         .primarySizing("HUG")
         .build(),
     );
-    layoutCursor.x += viewport.box.width + BREAKPOINT_GUTTER;
+    // Emit the viewport-anchored layer (fixed / sticky subtrees) as
+    // additional children of the wrapper FRAME. Their boxes are
+    // already in viewport-absolute coordinates, which equal
+    // wrapper-local coordinates because the wrapper itself spans the
+    // viewport. Each is `stackPositioning: ABSOLUTE`, so the
+    // wrapper's VERTICAL auto-layout doesn't move the INSTANCE to
+    // accommodate them.
     const perViewport = new Map<string, number>();
     perViewport.set(`__instance__:${viewport.root.id}`, instanceLocalID);
+    for (const layerNode of viewport.viewportLayer) {
+      emitNode({
+        file,
+        parentID: wrapperLocalID,
+        node: layerNode,
+        idCounter,
+        idMap: perViewport,
+        parentCounterAlign: undefined,
+        imageRefs: imageRefMap,
+      });
+    }
+    layoutCursor.x += viewport.box.width + BREAKPOINT_GUTTER;
     idMap.set(viewport.breakpoint, perViewport);
   }
   file.addInternalCanvas(docID);
@@ -455,19 +502,75 @@ type EmitArgs = {
    * counter axis of the parent".
    */
   readonly parentCounterAlign?: ParentCounterAlign;
+  /** IR `imageId` → fig SHA-1 image ref. */
+  readonly imageRefs: ReadonlyMap<string, string>;
 };
 
 function emitNode(args: EmitArgs): number {
   switch (args.node.kind) {
     case "frame":
-      return emitFrame(args.file, args.parentID, args.node, args.idCounter, args.idMap, args.parentCounterAlign);
+      return emitFrame(args.file, args.parentID, args.node, args.idCounter, args.idMap, args.parentCounterAlign, args.imageRefs);
     case "text":
       return emitText(args.file, args.parentID, args.node, args.idCounter, args.idMap, args.parentCounterAlign);
     case "rectangle":
-      return emitRectangle(args.file, args.parentID, args.node, args.idCounter, args.idMap);
+      return emitRectangle(args.file, args.parentID, args.node, args.idCounter, args.idMap, args.imageRefs);
     case "vector":
-      throw new Error("buildMultiFigFileBytes: VECTOR IR nodes are not yet supported");
+      return emitVector(args.file, args.parentID, args.node, args.idCounter, args.idMap);
   }
+}
+
+function emitVector(
+  file: ReturnType<typeof createFigFile>,
+  parentID: number,
+  node: VectorNodeIR,
+  idCounter: IdCounter,
+  idMap: Map<string, number>,
+): number {
+  // Degenerate VECTORs (one or both axes collapsed to 0) are
+  // undefined territory in Figma — observed first-hand to render as
+  // an oversized black rectangle in some renderers and as nothing at
+  // all in others. Skip them at emit time: a path geometry without a
+  // bounding box can't be cropped consistently, and the "no node"
+  // outcome matches what the captured page actually shows on screen
+  // (the parent collapsed it for a reason).
+  if (node.box.width <= 0 || node.box.height <= 0) {
+    return -1;
+  }
+  const localID = idCounter.next();
+  // The vector pulls its visible style from the first path's fill —
+  // Figma's VECTOR carries one fill stack per node, with per-path
+  // overrides living elsewhere (`vectorData.styleOverrideTable`).
+  // Picking the leading path's fill is the right approximation
+  // until that override table is wired through.
+  const firstFill = node.paths.find((p) => p.fill?.kind === "solid")?.fill;
+  const fillColor = firstFill && firstFill.kind === "solid" ? firstFill.color : undefined;
+  let builder = vectorNode(localID, parentID)
+    .name(node.name || "Vector")
+    .size(node.box.width, node.box.height)
+    .position(node.box.x, node.box.y);
+  for (const path of node.paths) {
+    builder = builder.path(path.d);
+  }
+  // Winding rule comes from the first path that declares one.
+  const winding = node.paths.find((p) => p.fillRule !== undefined)?.fillRule;
+  if (winding === "evenodd") {
+    builder = builder.windingRule("EVENODD");
+  }
+  if (fillColor) {
+    builder = builder.fill({
+      type: { value: 0, name: "SOLID" },
+      color: fillColor,
+      opacity: 1,
+      visible: true,
+      blendMode: { value: 1, name: "NORMAL" },
+    });
+  }
+  if (node.sizing.mode === "absolute") {
+    builder = builder.positioning("ABSOLUTE");
+  }
+  file.addVector(builder.build());
+  idMap.set(node.id, localID);
+  return localID;
 }
 
 function emitFrame(
@@ -477,6 +580,7 @@ function emitFrame(
   idCounter: IdCounter,
   idMap: Map<string, number>,
   parentCounterAlign: ParentCounterAlign | undefined,
+  imageRefs: ReadonlyMap<string, string>,
 ): number {
   const localID = idCounter.next();
   const baseBuilder = frameNode(localID, parentID)
@@ -485,15 +589,23 @@ function emitFrame(
     .position(node.box.x, node.box.y)
     .clipsContent(node.style.clipsContent)
     .opacity(node.style.opacity);
-  const withFill = applyFrameBackground(baseBuilder, node.style.fills);
+  const withFill = applyFrameBackground(baseBuilder, node.style.fills, imageRefs);
   const withLayout = applyAutoLayoutToFrame(withFill, node.autoLayout);
   // Apply child-side counter-axis stretch when the parent's IR
   // counterAlign is "stretch" — the schema's
   // `stackCounterAlignItems` only allows MIN/CENTER/MAX/BASELINE, so
   // STRETCH must travel as `stackChildAlignSelf=STRETCH` instead.
-  const finalBuilder = parentCounterAlign === "stretch"
+  const withChildAlign = parentCounterAlign === "stretch"
     ? withLayout.childAlignSelf("STRETCH")
     : withLayout;
+  // Out-of-flow children (position:fixed / sticky / absolute) opt
+  // out of the parent's auto-layout via `stackPositioning=ABSOLUTE`.
+  // Without this they would be laid out in flow with negative offsets
+  // (a fixed header at viewport y=0 inside a body div at y=200 ends
+  // up at flow-y=-200 and gets clipped or rearranged).
+  const finalBuilder = node.sizing.mode === "absolute"
+    ? withChildAlign.positioning("ABSOLUTE")
+    : withChildAlign;
   file.addFrame(finalBuilder.build());
   idMap.set(node.id, localID);
 
@@ -507,6 +619,7 @@ function emitFrame(
       parentCounterAlign: node.autoLayout.direction !== "none"
         ? node.autoLayout.counterAlign
         : undefined,
+      imageRefs,
     });
   }
   return localID;
@@ -515,7 +628,27 @@ function emitFrame(
 function applyFrameBackground(
   builder: ReturnType<typeof frameNode>,
   fills: ViewportIR["root"]["style"]["fills"],
+  imageRefs: ReadonlyMap<string, string>,
 ): ReturnType<typeof frameNode> {
+  // Image fills win over solid backgrounds: `<img>` and inline
+  // `<svg>` carry the visible content, while any `background-color`
+  // typically renders behind them. We emit a single image paint —
+  // the fig builder's `fill()` API replaces the whole stack — and
+  // delegate the optional bg colour to the renderer's fallback when
+  // the image can't decode.
+  for (const fill of fills) {
+    if (fill.kind === "image") {
+      const ref = imageRefs.get(fill.imageId);
+      if (ref !== undefined) {
+        const paint = imagePaint(ref)
+          .scaleMode(scaleModeToFigName(fill.scaleMode))
+          .opacity(fill.opacity ?? 1)
+          .visible(fill.visible ?? true)
+          .build();
+        return builder.fill(paint);
+      }
+    }
+  }
   const firstSolid = solidColorOf(fills);
   if (firstSolid) {
     return builder.background(firstSolid);
@@ -525,6 +658,15 @@ function applyFrameBackground(
   // default opaque white so an ancestor's color shows through, the
   // way the browser renders see-through wrappers.
   return builder.noFill();
+}
+
+function scaleModeToFigName(mode: "cover" | "contain" | "tile" | "stretch"): "FILL" | "FIT" | "TILE" | "STRETCH" {
+  switch (mode) {
+    case "cover": return "FILL";
+    case "contain": return "FIT";
+    case "tile": return "TILE";
+    case "stretch": return "STRETCH";
+  }
 }
 
 function applyAutoLayoutToFrame(
@@ -600,7 +742,8 @@ function emitText(
   const firstSolid = solidColorOf(node.style.fills);
   const withColor = firstSolid ? decorated.color(firstSolid) : decorated;
   const withRuns = applyRuns(withColor, node);
-  file.addTextNode(withRuns.build());
+  const positioned = node.sizing.mode === "absolute" ? withRuns.positioning("ABSOLUTE") : withRuns;
+  file.addTextNode(positioned.build());
   idMap.set(node.id, localID);
   return localID;
 }
@@ -702,7 +845,9 @@ function emitRectangle(
   node: RectNodeIR,
   idCounter: IdCounter,
   idMap: Map<string, number>,
+  imageRefs: ReadonlyMap<string, string>,
 ): number {
+  void imageRefs;
   const localID = idCounter.next();
   const firstSolid = solidColorOf(node.style.fills);
   if (node.style.cornerRadius) {
@@ -711,15 +856,17 @@ function emitRectangle(
       .name(node.name || "Rectangle")
       .size(node.box.width, node.box.height)
       .position(node.box.x, node.box.y)
-      .cornerRadius(tl);
-    const finalBuilder = firstSolid ? baseBuilder.fill(firstSolid) : baseBuilder;
+      .cornerRadius(resolveCornerRadius(tl, node.box));
+    const filled = firstSolid ? baseBuilder.fill(firstSolid) : baseBuilder;
+    const finalBuilder = node.sizing.mode === "absolute" ? filled.positioning("ABSOLUTE") : filled;
     file.addRoundedRectangle(finalBuilder.build());
   } else {
     const baseBuilder = rectNode(localID, parentID)
       .name(node.name || "Rectangle")
       .size(node.box.width, node.box.height)
       .position(node.box.x, node.box.y);
-    const finalBuilder = firstSolid ? baseBuilder.fill(firstSolid) : baseBuilder;
+    const filled = firstSolid ? baseBuilder.fill(firstSolid) : baseBuilder;
+    const finalBuilder = node.sizing.mode === "absolute" ? filled.positioning("ABSOLUTE") : filled;
     file.addRectangle(finalBuilder.build());
   }
   idMap.set(node.id, localID);
@@ -768,48 +915,19 @@ function counterAlignToFig(align: "start" | "center" | "end" | "stretch"): Stack
   }
 }
 
+/**
+ * Build a Figma `fontName.style` label from an IR text style.
+ *
+ * Routes through the canonical `fontQueryToStyleName` + `normalizeWeight`
+ * SoT so the label format here always matches what `figmaFontToQuery`
+ * will parse back to the same numeric weight on the round-trip side.
+ * Re-implementing the weight→label mapping locally would silently
+ * drift from `detectWeight` and corrupt every weight bucket.
+ */
 function fontStyleName(style: TextNodeIR["textStyle"]): string {
-  if (style.fontStyle === "italic") {
-    return weightLabel(style.fontWeight, "Italic");
-  }
-  if (style.fontStyle === "oblique") {
-    return weightLabel(style.fontWeight, "Italic");
-  }
-  return weightLabel(style.fontWeight, "Regular");
-}
-
-function weightLabel(weight: number, italicSuffix: "Italic" | "Regular"): string {
-  const label = weightTextFor(weight);
-  if (italicSuffix === "Italic") {
-    return label === "Regular" ? "Italic" : `${label} Italic`;
-  }
-  return label;
-}
-
-function weightTextFor(weight: number): string {
-  if (weight <= 100) {
-    return "Thin";
-  }
-  if (weight <= 200) {
-    return "ExtraLight";
-  }
-  if (weight <= 300) {
-    return "Light";
-  }
-  if (weight <= 400) {
-    return "Regular";
-  }
-  if (weight <= 500) {
-    return "Medium";
-  }
-  if (weight <= 600) {
-    return "SemiBold";
-  }
-  if (weight <= 700) {
-    return "Bold";
-  }
-  if (weight <= 800) {
-    return "ExtraBold";
-  }
-  return "Black";
+  return fontQueryToStyleName({
+    family: style.fontFamily,
+    weight: normalizeWeight(style.fontWeight),
+    style: style.fontStyle,
+  });
 }

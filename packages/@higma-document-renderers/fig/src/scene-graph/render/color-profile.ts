@@ -139,9 +139,17 @@ function validateIccProfile(data: Uint8Array): void {
   }
 }
 
-function extractDescTag(data: Uint8Array, offset: number, size: number): string | undefined {
-  if (size < 12 || readAscii(data, offset, 4) !== "desc") {
-    return undefined;
+// `profileDescriptionTag` always has signature `desc` (ICC.1:2010, Annex
+// "Required tags"). Its data type is what differs by ICC version:
+//   - v2 → `textDescriptionType` ("desc" type signature)
+//   - v4 → `multiLocalizedUnicodeType` ("mluc" type signature)
+// `extractDescTag` reads the v2 layout; `extractMlucTag` reads the v4
+// layout. Both expect `offset` to point at the start of the tag data
+// (i.e. at the type signature), and `size` to be the tag's declared
+// byte length.
+function extractDescTag(data: Uint8Array, offset: number, size: number): string {
+  if (size < 12) {
+    return "";
   }
   const textLength = readUint32(data, offset + 8);
   if (textLength === 0) {
@@ -150,9 +158,9 @@ function extractDescTag(data: Uint8Array, offset: number, size: number): string 
   return readAscii(data, offset + 12, textLength);
 }
 
-function extractMlucTag(data: Uint8Array, offset: number, size: number): string | undefined {
-  if (size < 16 || readAscii(data, offset, 4) !== "mluc") {
-    return undefined;
+function extractMlucTag(data: Uint8Array, offset: number, size: number): string {
+  if (size < 16) {
+    return "";
   }
   const count = readUint32(data, offset + 8);
   const recordSize = readUint32(data, offset + 12);
@@ -184,21 +192,41 @@ function decodeUtf16Be(data: Uint8Array): string {
 function extractIccDescription(data: Uint8Array): string | undefined {
   validateIccProfile(data);
   const tagCount = readUint32(data, ICC_TAG_COUNT_OFFSET);
+  // The profileDescriptionTag (ICC.1:2010 §9.2.41) always has tag
+  // signature `desc`. Its data type — which lives at the first 4 bytes
+  // of the tag data — is `desc` for v2 profiles and `mluc` for v4
+  // profiles. Branching on the *type signature* (not the tag
+  // signature) is the only correct way to read this field; the prior
+  // implementation, which also searched for a tag whose *signature*
+  // was `mluc`, was reading nonexistent tags and falsely reporting
+  // missing descriptions on every v4 profile. Real-world Figma .figs
+  // (e.g. Figma Community's E-commerce template) embed v4.3 sRGB
+  // profiles whose descriptions are stored in `mluc` tag data.
   for (let index = 0; index < tagCount; index++) {
     const recordOffset = ICC_TAG_COUNT_OFFSET + 4 + index * ICC_TAG_RECORD_LENGTH;
     if (recordOffset + ICC_TAG_RECORD_LENGTH > data.length) {
       throw new Error("ICC profile tag table exceeds profile data");
     }
     const signature = readAscii(data, recordOffset, 4);
-    if (signature !== "desc" && signature !== "mluc") {
+    if (signature !== "desc") {
       continue;
     }
     const tagOffset = readUint32(data, recordOffset + 4);
     const tagSize = readUint32(data, recordOffset + 8);
     if (tagOffset + tagSize > data.length) {
-      throw new Error(`ICC ${signature} tag exceeds profile data`);
+      throw new Error("ICC desc tag exceeds profile data");
     }
-    return signature === "desc" ? extractDescTag(data, tagOffset, tagSize) : extractMlucTag(data, tagOffset, tagSize);
+    if (tagSize < 4) {
+      throw new Error("ICC desc tag is missing its type signature");
+    }
+    const typeSignature = readAscii(data, tagOffset, 4);
+    if (typeSignature === "desc") {
+      return extractDescTag(data, tagOffset, tagSize);
+    }
+    if (typeSignature === "mluc") {
+      return extractMlucTag(data, tagOffset, tagSize);
+    }
+    throw new Error(`ICC desc tag has unsupported type signature: ${typeSignature}`);
   }
   return undefined;
 }
@@ -210,7 +238,7 @@ export function identifySupportedIccProfile(profile: PngImage["iccProfile"]): Fi
   }
   const description = extractIccDescription(profile.data);
   if (!description) {
-    throw new Error("ICC profile does not contain a desc or mluc profile description");
+    throw new Error("ICC profile is missing the required profileDescriptionTag (desc)");
   }
   const normalized = description.trim().replace(/\s+/gu, " ").toLowerCase();
   if (SUPPORTED_DISPLAY_P3_ICC_DESCRIPTIONS.has(normalized)) {

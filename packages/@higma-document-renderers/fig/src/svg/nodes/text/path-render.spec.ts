@@ -10,7 +10,7 @@ import {
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { AbstractFont, FontLoader, FontLoadOptions, LoadedFont } from "../../../font";
+import type { AbstractFont, FontLoader, FontLoadOptions, LoadedFont } from "@higma-document-models/fig/font";
 
 function createFakeFont(supportedChars: string): AbstractFont {
   return {

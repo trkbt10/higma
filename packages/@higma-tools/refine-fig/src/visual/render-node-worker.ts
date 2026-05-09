@@ -30,9 +30,12 @@ import { buildNodeTree, guidToString, safeChildren } from "@higma-document-model
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
-import { createCachingFontLoader, figmaFontToQuery } from "@higma-document-renderers/fig/font";
+import {
+  createCachingFontLoader,
+  collectFontQueries,
+  type FontLoader,
+} from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
-import type { FontLoader } from "@higma-document-renderers/fig/font";
 import { Resvg } from "@resvg/resvg-js";
 
 type WorkerRequest = {
@@ -69,10 +72,17 @@ function indexNodes(node: FigNode, out: Map<string, FigNode>): void {
   }
 }
 
+/**
+ * Walk the subtree and ask the font loader about every distinct
+ * `(family, weight, style)` referenced by a TEXT node. Returns the
+ * first family that the loader cannot satisfy, or `undefined` when
+ * every TEXT-required face resolves. Tree walking + override
+ * traversal is delegated to the canonical `collectFontQueries`
+ * SoT — re-implementing it here would drift on edge cases.
+ */
 async function unresolvableFonts(node: FigNode, loader: FontLoader): Promise<string | undefined> {
-  const queries = new Map<string, ReturnType<typeof figmaFontToQuery>>();
-  collectFontQueries(node, queries);
-  for (const query of queries.values()) {
+  const { queries } = collectFontQueries({ roots: [node] });
+  for (const query of queries) {
     if (!query.family) {
       continue;
     }
@@ -82,22 +92,6 @@ async function unresolvableFonts(node: FigNode, loader: FontLoader): Promise<str
     }
   }
   return undefined;
-}
-
-function collectFontQueries(
-  node: FigNode,
-  out: Map<string, ReturnType<typeof figmaFontToQuery>>,
-): void {
-  if (node.type?.name === "TEXT" && node.fontName) {
-    const q = figmaFontToQuery(node.fontName);
-    const key = `${q.family}|${q.weight}|${q.style}`;
-    if (!out.has(key)) {
-      out.set(key, q);
-    }
-  }
-  for (const child of safeChildren(node)) {
-    collectFontQueries(child, out);
-  }
 }
 
 async function handleRequest(
