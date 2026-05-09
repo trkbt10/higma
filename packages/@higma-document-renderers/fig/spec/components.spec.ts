@@ -12,8 +12,8 @@ import {
   findNodesByType,
   getNodeType,
   type FigBlob,
-  type FigImage,
 } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -44,7 +44,7 @@ type ParsedData = {
   layers: Map<string, LayerInfo>;
   symbols: Map<string, FigNode>;
   blobs: readonly FigBlob[];
-  images: ReadonlyMap<string, FigImage>;
+  images: ReadonlyMap<string, FigPackageImage>;
   nodeMap: ReadonlyMap<string, FigNode>;
 };
 

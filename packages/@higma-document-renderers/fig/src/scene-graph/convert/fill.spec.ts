@@ -12,9 +12,9 @@ import type {
   FigGradientPaint,
 } from "@higma-document-models/fig/types";
 import { getPaintType } from "@higma-document-models/fig/color";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 
-const NO_IMAGES: ReadonlyMap<string, FigImage> = new Map();
+const NO_IMAGES: ReadonlyMap<string, FigPackageImage> = new Map();
 
 function isObject(value: unknown): value is { readonly type: unknown } {
   return typeof value === "object" && value !== null && "type" in value;
@@ -115,7 +115,7 @@ describe("convertPaintToFill", () => {
   describe("image paint", () => {
     it("preserves API imageTransform and TILE scalingFactor", () => {
       const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigImage> = new Map([["img-ref", image]]);
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
       const paint: FigImagePaint = {
         type: "IMAGE",
         imageRef: "img-ref",
@@ -140,7 +140,7 @@ describe("convertPaintToFill", () => {
 
     it("preserves paintFilter and explicit color management", () => {
       const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigImage> = new Map([["img-ref", image]]);
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
       const paint: FigImagePaint = {
         type: "IMAGE",
         imageRef: "img-ref",
@@ -160,7 +160,7 @@ describe("convertPaintToFill", () => {
 
     it("converts decoded Kiwi enum image paints", () => {
       const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigImage> = new Map([["img-ref", image]]);
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
       const raw = {
         type: { value: 5, name: "IMAGE" },
         imageRef: "img-ref",

@@ -7,7 +7,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
+import { buildNodeTree, type FigBlob } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -43,7 +44,7 @@ type ParsedData = {
   canvases: readonly FigNode[];
   layers: Map<string, LayerInfo>;
   blobs: readonly FigBlob[];
-  images: ReadonlyMap<string, FigImage>;
+  images: ReadonlyMap<string, FigPackageImage>;
   nodeMap: ReadonlyMap<string, FigNode>;
 };
 

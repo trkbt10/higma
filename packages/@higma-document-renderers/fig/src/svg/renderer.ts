@@ -26,7 +26,8 @@
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
+import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
 import type { FontLoader, FontQuery } from "@higma-document-models/fig/font";
@@ -113,7 +114,7 @@ export type FigSvgRenderOptions = {
   /** Binary blobs from the parsed .fig file (required for path geometry). */
   readonly blobs: readonly FigBlob[];
   /** Image map from the parsed .fig file (required for IMAGE paints). */
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Optional background color (CSS color string). */
   readonly backgroundColor?: string;
   /** Translate roots so the top-left is at (0, 0). */

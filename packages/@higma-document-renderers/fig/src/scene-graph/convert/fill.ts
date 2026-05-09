@@ -6,7 +6,7 @@
  */
 
 import type { FigPaint, FigColor, FigGradientPaint, FigImagePaint } from "@higma-document-models/fig/types";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
   getPaintType,
   asGradientPaint,
@@ -120,7 +120,7 @@ function extractImageTransform(imagePaint: FigImagePaint): AffineMatrix | undefi
  * @param images - Image lookup map
  * @returns Scene graph Fill, or null if unsupported
  */
-export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, FigImage>): Fill | null {
+export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, FigPackageImage>): Fill | null {
   const opacity = paint.opacity ?? 1;
   const paintType = getPaintType(paint);
   const blendMode = extractPaintBlendMode(paint);
@@ -253,7 +253,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
  */
 export function convertPaintsToFills(
   paints: readonly FigPaint[] | undefined,
-  images: ReadonlyMap<string, FigImage>,
+  images: ReadonlyMap<string, FigPackageImage>,
 ): Fill[] {
   if (!paints || paints.length === 0) {
     return [];

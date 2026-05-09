@@ -26,7 +26,8 @@ import {
 } from "@higma-document-models/fig/domain";
 import type { FigFillGeometry, FigPaint } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
-import { guidToString, type FigImage, type FigBlob } from "@higma-document-models/fig/domain";
+import { guidToString, type FigBlob } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import { resolvePaintRef, resolveStyledPaint, reresolveOverridesForVariant } from "@higma-document-models/fig/symbols";
 import { dfsById } from "@higma-primitives/tree";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
@@ -93,7 +94,7 @@ function isMaskNode(node: FigDesignNode): boolean {
 function selectPaintsForFills(
   isStrokeGeometry: boolean,
   paints: { strokePaints: readonly FigPaint[] | undefined; fillPaints: readonly FigPaint[] | undefined },
-  images: ReadonlyMap<string, FigImage>
+  images: ReadonlyMap<string, FigPackageImage>
 ): Fill[] {
   const source = isStrokeGeometry ? paints.strokePaints : paints.fillPaints;
   return convertPaintsToFills(source, images);
@@ -114,7 +115,7 @@ function resolveVectorFills(
   treatAsFill: boolean,
   strokePaints: readonly FigPaint[] | undefined,
   fillPaints: readonly FigPaint[] | undefined,
-  images: ReadonlyMap<string, FigImage>,
+  images: ReadonlyMap<string, FigPackageImage>,
 ): Fill[] {
   if (reconstructed) { return []; }
   return selectPaintsForFills(treatAsFill, { strokePaints, fillPaints }, images);
@@ -155,7 +156,7 @@ export type BuildSceneGraphOptions = {
   /** Binary blobs from .fig file. Pass `[]` if the tree has no path data. */
   readonly blobs: readonly FigBlob[];
   /** Image lookup map. Pass `new Map()` if no IMAGE paints are present. */
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Canvas size. */
   readonly canvasSize: { width: number; height: number };
   /** World-space window to render into the output canvas. */
@@ -214,7 +215,7 @@ type SceneBuilderNode = MutableFigDesignNode & {
 
 type BuildContext = {
   readonly blobs: readonly FigBlob[];
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
   readonly styleRegistry: FigStyleRegistry;
   readonly showHiddenNodes: boolean;

@@ -2,7 +2,8 @@
  * @file Figma renderer types (renderer-specific only)
  */
 
-import type { FigBlob, FigImage } from "@higma-document-models/fig/domain";
+import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 
 import type { FontLoader } from "@higma-document-models/fig/font";
@@ -34,7 +35,7 @@ export type FigSvgRenderContext = {
   /** Blobs from parsed .fig file for path decoding */
   readonly blobs: readonly FigBlob[];
   /** Images extracted from .fig file (keyed by imageRef) */
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Whether to render hidden nodes (visible: false) */
   readonly showHiddenNodes: boolean;
   /** Instance resolver for SYMBOL/COMPONENT/INSTANCE resolution */
@@ -51,7 +52,7 @@ export type FigSvgRenderContext = {
 export type FigSvgRenderContextConfig = {
   readonly canvasSize?: { width: number; height: number };
   readonly blobs?: readonly FigBlob[];
-  readonly images?: ReadonlyMap<string, FigImage>;
+  readonly images?: ReadonlyMap<string, FigPackageImage>;
   /** Whether to render hidden nodes (visible: false) */
   readonly showHiddenNodes?: boolean;
   /** Instance resolver for SYMBOL/COMPONENT/INSTANCE resolution */

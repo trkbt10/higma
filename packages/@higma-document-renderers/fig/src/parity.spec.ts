@@ -11,9 +11,7 @@
  * strings) as emitted by the parser after kiwi→domain normalisation.
  */
 
-import type {
-  FigImage,
-} from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type {
   FigGradientPaint,
   FigSolidPaint,
@@ -31,7 +29,7 @@ import { convertPaintToFill } from "./scene-graph/convert/fill";
 import { convertEffectsToScene } from "./scene-graph/convert/effects";
 import { convertStrokeToSceneStroke } from "./scene-graph/convert/stroke";
 
-const NO_IMAGES: ReadonlyMap<string, FigImage> = new Map();
+const NO_IMAGES: ReadonlyMap<string, FigPackageImage> = new Map();
 
 describe("Paint parity", () => {
   const linearGradient: FigGradientPaint = {
