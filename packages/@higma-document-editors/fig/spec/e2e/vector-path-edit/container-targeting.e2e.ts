@@ -24,7 +24,7 @@ import {
   shiftClickNode,
   topmostAt,
   rightClickAnchorHandle,
-} from "../shared-document-editors/fig-harness";
+} from "../shared/fig-editor-harness";
 
 test.describe("vector path edit targeting under containers", () => {
   test.beforeEach(async ({ page }) => {

@@ -19,7 +19,7 @@ import {
   renderedSvgMarkup,
   selectionBoxPageBounds,
   topmostAt,
-} from "../shared-document-editors/fig-harness";
+} from "../shared/fig-editor-harness";
 
 test.describe("vector pen draft editing", () => {
   test.beforeEach(async ({ page }) => {

@@ -17,7 +17,7 @@ import {
   rightClickAnchorHandle,
   topmostAt,
   vectorHandleCount,
-} from "../shared-document-editors/fig-harness";
+} from "../shared/fig-editor-harness";
 
 test.describe("existing vector path editing", () => {
   test.beforeEach(async ({ page }) => {

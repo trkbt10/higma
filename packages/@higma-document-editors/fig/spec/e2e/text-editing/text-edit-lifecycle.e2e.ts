@@ -12,7 +12,7 @@ import {
   getCanvasTextareaValue,
   isCanvasTextEditActive,
   openEditor,
-} from "../shared-document-editors/fig-harness";
+} from "../shared/fig-editor-harness";
 
 test.describe("fig editor text edit lifecycle", () => {
   test.beforeEach(async ({ page }) => {

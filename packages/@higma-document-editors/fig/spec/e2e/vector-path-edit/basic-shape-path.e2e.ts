@@ -17,7 +17,7 @@ import {
   selectionBoxPageBounds,
   topmostAt,
   vectorHandleCount,
-} from "../shared-document-editors/fig-harness";
+} from "../shared/fig-editor-harness";
 
 test.describe("basic shape path editing", () => {
   test.beforeEach(async ({ page }) => {

@@ -13,7 +13,7 @@ import {
   isCanvasTextEditActive,
   nodeScreenRect,
   openEditor,
-} from "../shared-document-editors/fig-harness";
+} from "../shared/fig-editor-harness";
 
 test.describe("fig editor text selection chrome", () => {
   test.beforeEach(async ({ page }) => {
