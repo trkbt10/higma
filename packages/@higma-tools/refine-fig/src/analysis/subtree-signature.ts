@@ -1,0 +1,214 @@
+/**
+ * @file Structural signatures for FigNode subtrees.
+ *
+ * Two flavours, used together by the duplicate-cluster detector:
+ *
+ *   - `structuralSignature(node, maxDepth)` — depth-bounded
+ *     parenthesised type string. Catches "same shape" subtrees that
+ *     differ only by literal content (colour values, exact text).
+ *
+ *   - `roleSignature(node, maxDepth)` — same shape but each node
+ *     contributes a role hint instead of just its raw type. The hint
+ *     is derived from heuristics over the node's geometry and
+ *     children: a 1-character TEXT inside a 24×24 FRAME is "icon"; a
+ *     ROUNDED_RECTANGLE the size of a hit-target is "button-bg"; an
+ *     ELLIPSE next to text-pair is "avatar-row". This makes it much
+ *     less likely to cluster two unrelated subtrees that happen to
+ *     share `FRAME(VECTOR(),VECTOR())`.
+ *
+ * Signatures are deterministic and order-sensitive. Both are stable
+ * across loads as long as the node tree shape is stable.
+ */
+import type { FigNode } from "@higma-document-models/fig/types";
+import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+
+const DEFAULT_DEPTH = 4;
+
+/** Compute a depth-bounded structural signature like `FRAME(VECTOR,TEXT)`. */
+export function structuralSignature(node: FigNode, maxDepth = DEFAULT_DEPTH): string {
+  return walkStructural(node, 0, maxDepth);
+}
+
+function walkStructural(node: FigNode, depth: number, maxDepth: number): string {
+  const t = getNodeType(node);
+  if (depth >= maxDepth) {
+    return t;
+  }
+  const kids = safeChildren(node)
+    .map((c) => walkStructural(c, depth + 1, maxDepth))
+    .join(",");
+  if (!kids) {
+    return t;
+  }
+  return `${t}(${kids})`;
+}
+
+/** A coarse role hint — used to tighten signatures so unrelated clusters don't merge. */
+export type NodeRoleHint =
+  | "icon"
+  | "avatar"
+  | "button-bg"
+  | "thumbnail"
+  | "text-line"
+  | "text-block"
+  | "row"
+  | "card"
+  | "container"
+  | "decoration"
+  | "raw";
+
+const ICON_TYPES = new Set(["VECTOR", "BOOLEAN_OPERATION"]);
+
+function isSquareish(node: FigNode): boolean {
+  const sz = node.size;
+  if (!sz) {
+    return false;
+  }
+  if (sz.x <= 0 || sz.y <= 0) {
+    return false;
+  }
+  const ratio = sz.x / sz.y;
+  return ratio >= 0.85 && ratio <= 1.18;
+}
+
+function geometricArea(node: FigNode): number {
+  const sz = node.size;
+  if (!sz) {
+    return 0;
+  }
+  return sz.x * sz.y;
+}
+
+function isCircular(node: FigNode): boolean {
+  return getNodeType(node) === "ELLIPSE" && isSquareish(node);
+}
+
+function isIconCandidate(node: FigNode): boolean {
+  if (!isSquareish(node)) {
+    return false;
+  }
+  const sz = node.size;
+  if (!sz) {
+    return false;
+  }
+  if (sz.x > 64) {
+    return false;
+  }
+  const kids = safeChildren(node);
+  if (kids.length === 0) {
+    return false;
+  }
+  return kids.every((c) => ICON_TYPES.has(getNodeType(c)));
+}
+
+function isAvatarCandidate(node: FigNode): boolean {
+  if (getNodeType(node) === "ELLIPSE" && isSquareish(node)) {
+    const sz = node.size;
+    return sz !== undefined && sz.x >= 16 && sz.x <= 96;
+  }
+  if (getNodeType(node) === "FRAME" && isSquareish(node)) {
+    const kids = safeChildren(node);
+    const sole = kids.length === 1 ? kids[0] : undefined;
+    if (sole && getNodeType(sole) === "ELLIPSE") {
+      const sz = node.size;
+      return sz !== undefined && sz.x >= 16 && sz.x <= 96;
+    }
+  }
+  return false;
+}
+
+function isThumbnailCandidate(node: FigNode): boolean {
+  const t = getNodeType(node);
+  if (t !== "FRAME" && t !== "RECTANGLE" && t !== "ROUNDED_RECTANGLE") {
+    return false;
+  }
+  const sz = node.size;
+  if (!sz) {
+    return false;
+  }
+  // Wide media surfaces (≥ 100px) — typical for a video/card thumbnail.
+  if (sz.x < 100) {
+    return false;
+  }
+  const fp = node.fillPaints ?? [];
+  const hasImage = fp.some((p) => p.type === "IMAGE");
+  if (hasImage) {
+    return true;
+  }
+  return geometricArea(node) >= 16000 && safeChildren(node).length === 0;
+}
+
+function isButtonBgCandidate(node: FigNode): boolean {
+  const t = getNodeType(node);
+  if (t !== "ROUNDED_RECTANGLE" && t !== "RECTANGLE") {
+    return false;
+  }
+  const sz = node.size;
+  if (!sz) {
+    return false;
+  }
+  // Roughly button-sized: 60–320 wide, 24–64 tall.
+  if (sz.x < 40 || sz.x > 480) {
+    return false;
+  }
+  if (sz.y < 20 || sz.y > 80) {
+    return false;
+  }
+  return true;
+}
+
+/** Coarse role hint based on geometry + child kinds. */
+export function roleHintFor(node: FigNode): NodeRoleHint {
+  const t = getNodeType(node);
+  if (t === "TEXT") {
+    const chars = node.characters ?? "";
+    return chars.length > 24 ? "text-block" : "text-line";
+  }
+  if (isIconCandidate(node)) {
+    return "icon";
+  }
+  if (isAvatarCandidate(node)) {
+    return "avatar";
+  }
+  if (isCircular(node)) {
+    return "decoration";
+  }
+  if (isButtonBgCandidate(node)) {
+    return "button-bg";
+  }
+  if (isThumbnailCandidate(node)) {
+    return "thumbnail";
+  }
+  if (t === "FRAME" || t === "GROUP") {
+    const kids = safeChildren(node);
+    if (kids.length >= 3) {
+      return "row";
+    }
+    if (kids.length >= 1) {
+      return "container";
+    }
+    return "card";
+  }
+  return "raw";
+}
+
+/** Like `structuralSignature` but each entry is annotated with its `roleHintFor` tag. */
+export function roleSignature(node: FigNode, maxDepth = DEFAULT_DEPTH): string {
+  return walkRole(node, 0, maxDepth);
+}
+
+function walkRole(node: FigNode, depth: number, maxDepth: number): string {
+  const t = getNodeType(node);
+  const hint = roleHintFor(node);
+  const head = `${t}<${hint}>`;
+  if (depth >= maxDepth) {
+    return head;
+  }
+  const kids = safeChildren(node)
+    .map((c) => walkRole(c, depth + 1, maxDepth))
+    .join(",");
+  if (!kids) {
+    return head;
+  }
+  return `${head}(${kids})`;
+}
