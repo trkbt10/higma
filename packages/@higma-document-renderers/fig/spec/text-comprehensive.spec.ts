@@ -12,7 +12,8 @@ import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, findNodesByType, type FigBlob, type FigImage } from "@higma-document-models/fig/domain";
+import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 import { createNodeFontLoaderWithFontsource } from "../src/font-drivers/node";
@@ -43,7 +44,7 @@ type ParsedData = {
   canvases: Map<string, FigNode>;
   frames: Map<string, FrameInfo>;
   blobs: readonly FigBlob[];
-  images: ReadonlyMap<string, FigImage>;
+  images: ReadonlyMap<string, FigPackageImage>;
   nodeMap: ReadonlyMap<string, FigNode>;
 };
 

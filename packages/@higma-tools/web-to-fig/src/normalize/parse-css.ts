@@ -170,7 +170,13 @@ export function parseBackgroundImage(
   for (const token of tokens) {
     const tok = token.trim();
     if (tok.startsWith("linear-gradient(")) {
-      out.push(parseLinearGradient(tok));
+      try {
+        out.push(parseLinearGradient(tok));
+      } catch (err) {
+        throw new Error(
+          `parseBackgroundImage: failed parsing "${tok}" within "${value}": ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       continue;
     }
     if (tok.startsWith("url(")) {
@@ -189,7 +195,7 @@ function parseLinearGradient(input: string): LinearGradientPaintIR {
   const inner = input.slice("linear-gradient(".length, -1);
   const parts = splitTopLevelCommas(inner);
   if (parts.length === 0) {
-    throw new Error(`parseLinearGradient: empty body in "${input}"`);
+    throw new Error(`parseLinearGradient: empty body in "${input}" (inner="${inner}")`);
   }
   const first = parts[0]!.trim();
   const hasAngleHeader = first.endsWith("deg") || first.startsWith("to ");
@@ -234,15 +240,20 @@ function parseAngleSpec(value: string): number {
 }
 
 function parseGradientStop(value: string, index: number, total: number): GradientStopIR {
-  const parts = value.split(/\s+/);
-  if (parts.length === 1) {
+  // Naive whitespace split would break `rgb(210, 231, 255)` and
+  // `rgba(...)` because their internal commas are followed by
+  // spaces. Instead we look for an explicit position suffix
+  // (`<color> <percent>`) — and we only split on whitespace that
+  // sits at the *top level* of the stop token.
+  const split = splitOnTopLevelWhitespace(value);
+  if (split.length === 1) {
     return {
       position: total === 1 ? 0 : index / (total - 1),
-      color: parseColor(parts[0]!),
+      color: parseColor(split[0]!),
     };
   }
-  const color = parseColor(parts[0]!);
-  const positionToken = parts[1]!;
+  const color = parseColor(split[0]!);
+  const positionToken = split[1]!;
   if (!positionToken.endsWith("%")) {
     throw new Error(`parseGradientStop: only percent stops supported, got "${value}"`);
   }
@@ -305,6 +316,38 @@ function parseSingleShadow(input: string): { readonly inset: boolean; readonly c
  * step in its own function would obscure the linear nature of the
  * scan without changing the semantics.
  */
+/**
+ * Split on whitespace at parenthesis depth 0. Used to isolate the
+ * `<color> <percent>` halves of a gradient stop without slicing
+ * the spaces inside `rgb(210, 231, 255)`.
+ */
+function splitOnTopLevelWhitespace(value: string): readonly string[] {
+  // eslint-disable-next-line no-restricted-syntax -- state machine: depth & last-cut intrinsically mutable
+  let depth = 0;
+  // eslint-disable-next-line no-restricted-syntax -- see above
+  let last = 0;
+  const out: string[] = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const c = value[i]!;
+    if (c === "(") {
+      depth += 1;
+    } else if (c === ")") {
+      depth -= 1;
+    } else if (depth === 0 && (c === " " || c === "\t")) {
+      const piece = value.slice(last, i);
+      if (piece.length > 0) {
+        out.push(piece);
+      }
+      last = i + 1;
+    }
+  }
+  const tail = value.slice(last);
+  if (tail.length > 0) {
+    out.push(tail);
+  }
+  return out;
+}
+
 function splitTopLevelCommas(value: string): readonly string[] {
   // eslint-disable-next-line no-restricted-syntax -- state machine: depth & last-cut intrinsically mutable
   let depth = 0;

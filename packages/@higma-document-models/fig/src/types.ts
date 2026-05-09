@@ -2,6 +2,7 @@
  * @file Fig format types
  */
 
+import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import type { CompressionType } from "@higma-codecs/compression";
 
 // =============================================================================

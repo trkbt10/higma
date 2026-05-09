@@ -89,10 +89,33 @@ function collectTextLength(el: RawElement): number {
   return direct + pseudo + childTotal;
 }
 
+/** Tags whose elements are inline-level but carry replaced content
+ * (raster, vector, video, embedded frames). Paragraph collapse must
+ * exclude any subtree that contains them, otherwise the surrounding
+ * `<figure>` / `<a>` etc. become a TEXT IR node and the image is
+ * silently dropped.
+ */
+const REPLACED_INLINE_TAGS = new Set([
+  "img",
+  "video",
+  "picture",
+  "canvas",
+  "iframe",
+  "object",
+  "embed",
+  "input",
+]);
+
 function everyDescendantIsInline(el: RawElement): boolean {
   for (const child of el.children) {
     if (!child.visible) {
       continue;
+    }
+    if (REPLACED_INLINE_TAGS.has(child.tag)) {
+      return false;
+    }
+    if (child.svgContent !== undefined) {
+      return false;
     }
     if (!isInlineDisplay(child.computedStyle.display)) {
       return false;
