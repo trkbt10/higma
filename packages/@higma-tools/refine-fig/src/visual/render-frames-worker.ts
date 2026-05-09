@@ -13,8 +13,8 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree, getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { createFigSymbolContext } from "@higma-document-io/fig/context";
+import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { createWorkerClient } from "./worker-client";
 
@@ -43,9 +43,12 @@ export async function renderFramesViaWorker(
 ): Promise<readonly WorkerRenderedFrame[]> {
   const { figPath, maxWidth = 720, onSkipFrame } = options;
   const bytes = new Uint8Array(await readFile(figPath));
-  const loaded = await loadFigFile(bytes);
-  const tree = buildNodeTree(loaded.nodeChanges);
-  const frames = discoverTopLevelFrames(tree.roots);
+  // Build the SoT context just to enumerate top-level frames. The
+  // worker subprocess loads its own copy from `figPath` and consumes
+  // the same SoT internally — we don't pass the context across the
+  // process boundary.
+  const ctx = await createFigSymbolContext(bytes);
+  const frames = discoverTopLevelFrames(ctx.roots);
 
   const tmpRoot = join(tmpdir(), `refine-fig-verify-${process.pid}-${Date.now()}`);
   await mkdir(tmpRoot, { recursive: true });

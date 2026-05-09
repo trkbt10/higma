@@ -25,10 +25,8 @@
 import { createInterface } from "node:readline";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { createFigSymbolContext, type FigSymbolContext } from "@higma-document-io/fig/context";
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
 import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
 import {
   createCachingFontLoader,
@@ -50,26 +48,13 @@ type WorkerResponse =
   | { readonly id: string; readonly ok: false; readonly error: string };
 
 async function setup(figPath: string): Promise<{
-  readonly loaded: LoadedFigFile;
-  readonly nodes: ReadonlyMap<string, FigNode>;
+  readonly ctx: FigSymbolContext;
   readonly fontLoader: FontLoader;
 }> {
   const bytes = new Uint8Array(await readFile(figPath));
-  const loaded = await loadFigFile(bytes);
-  const tree = buildNodeTree(loaded.nodeChanges);
-  const nodes = new Map<string, FigNode>();
-  for (const root of tree.roots) {
-    indexNodes(root, nodes);
-  }
+  const ctx = await createFigSymbolContext(bytes);
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
-  return { loaded, nodes, fontLoader };
-}
-
-function indexNodes(node: FigNode, out: Map<string, FigNode>): void {
-  out.set(guidToString(node.guid), node);
-  for (const child of safeChildren(node)) {
-    indexNodes(child, out);
-  }
+  return { ctx, fontLoader };
 }
 
 /**
@@ -94,11 +79,10 @@ async function unresolvableFonts(node: FigNode, loader: FontLoader): Promise<str
   return undefined;
 }
 
-async function handleRequest(
-  req: WorkerRequest,
-  ctx: { readonly loaded: LoadedFigFile; readonly nodes: ReadonlyMap<string, FigNode>; readonly fontLoader: FontLoader },
-): Promise<WorkerResponse> {
-  const node = ctx.nodes.get(req.nodeGuid);
+type WorkerCtx = { readonly ctx: FigSymbolContext; readonly fontLoader: FontLoader };
+
+async function handleRequest(req: WorkerRequest, w: WorkerCtx): Promise<WorkerResponse> {
+  const node = w.ctx.nodesByGuid.get(req.nodeGuid);
   if (!node) {
     return { id: req.id, ok: false, error: `node ${req.nodeGuid} not found` };
   }
@@ -108,18 +92,19 @@ async function handleRequest(
   if (!Number.isFinite(node.size.x) || !Number.isFinite(node.size.y) || node.size.x <= 0 || node.size.y <= 0) {
     return { id: req.id, ok: false, error: `node ${req.nodeGuid} has non-positive size ${node.size.x}×${node.size.y}` };
   }
-  const missingFont = await unresolvableFonts(node, ctx.fontLoader);
+  const missingFont = await unresolvableFonts(node, w.fontLoader);
   if (missingFont) {
     return { id: req.id, ok: false, error: `font "${missingFont}" not available on host` };
   }
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
-    blobs: ctx.loaded.blobs ?? [],
-    images: ctx.loaded.images ?? new Map(),
+    blobs: w.ctx.blobs,
+    images: w.ctx.images,
     normalizeRootTransform: true,
-    symbolMap: ctx.nodes,
-    fontLoader: ctx.fontLoader,
+    symbolMap: w.ctx.symbolMap,
+    styleRegistry: w.ctx.styleRegistry,
+    fontLoader: w.fontLoader,
   });
   const svg = String(result.svg);
   // Always raster at the requested width regardless of native size.
@@ -142,7 +127,7 @@ async function main(): Promise<void> {
   if (!figPath) {
     throw new Error("render-node-worker: missing fig path argv[2]");
   }
-  const ctx = await setup(figPath);
+  const w = await setup(figPath);
 
   // Signal readiness so the parent knows it can start writing requests.
   process.stdout.write(`{"ready":true}\n`);
@@ -154,17 +139,14 @@ async function main(): Promise<void> {
       continue;
     }
     const req: WorkerRequest = JSON.parse(trimmed) as WorkerRequest;
-    const response = await safeHandle(req, ctx);
+    const response = await safeHandle(req, w);
     process.stdout.write(`${JSON.stringify(response)}\n`);
   }
 }
 
-async function safeHandle(
-  req: WorkerRequest,
-  ctx: { readonly loaded: LoadedFigFile; readonly nodes: ReadonlyMap<string, FigNode>; readonly fontLoader: FontLoader },
-): Promise<WorkerResponse> {
+async function safeHandle(req: WorkerRequest, w: WorkerCtx): Promise<WorkerResponse> {
   try {
-    return await handleRequest(req, ctx);
+    return await handleRequest(req, w);
   } catch (err) {
     return { id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) };
   }

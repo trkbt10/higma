@@ -68,10 +68,16 @@ export async function emitFigmaSvgForFrame(
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
-    blobs: source.loaded.blobs ?? [],
-    images: source.loaded.images ?? new Map(),
+    blobs: source.blobs,
+    images: source.images,
     normalizeRootTransform: true,
-    symbolMap: source.tree.nodeMap,
+    // SoT: consume `symbolMap` and `styleRegistry` from the
+    // FigSymbolContext — the IO layer already produced one map and
+    // one registry shared by every consumer. Re-deriving here (e.g.
+    // by walking `source.tree.roots`) would diverge from the
+    // post-style-resolution map other consumers see.
+    symbolMap: source.symbolMap,
+    styleRegistry: source.styleRegistry,
     fontLoader,
     // The authoritative SVG is loaded inside an `<iframe>` running in a
     // normal web browser whose backbuffer is sRGB. Image paints flagged

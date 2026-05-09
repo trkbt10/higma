@@ -8,8 +8,8 @@ import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { buildNodeTree, getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
-import { loadFigFile } from "@higma-document-io/fig/roundtrip";
+import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+import { createFigSymbolContext, type FigSymbolContext } from "@higma-document-io/fig/context";
 
 export type RenderedFrame = {
   readonly name: string;
@@ -36,16 +36,14 @@ export async function renderFrames(
   bytes: Uint8Array,
   options: RenderFramesOptions = {},
 ): Promise<readonly RenderedFrame[]> {
-  const loaded = await loadFigFile(bytes);
-  const tree = buildNodeTree(loaded.nodeChanges);
-  const symbolMap = indexNodes(tree.roots);
+  const ctx = await createFigSymbolContext(bytes);
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
   const dpr = options.devicePixelRatio ?? 1;
 
   const tolerate = options.tolerateRenderErrors === true;
   const onSkip = options.onSkipFrame;
   const out: RenderedFrame[] = [];
-  for (const root of tree.roots) {
+  for (const root of ctx.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
@@ -62,7 +60,7 @@ export async function renderFrames(
           throw new Error(`renderFrames: frame "${frame.name ?? "?"}" has no size`);
         }
         const name = `${canvas.name ?? "(unnamed)"} / ${frame.name ?? "(unnamed)"}`;
-        const rendered = await tryRenderFrame({ frame, blobs: loaded.blobs ?? [], images: loaded.images ?? new Map(), symbolMap, fontLoader, dpr, tolerate });
+        const rendered = await tryRenderFrame({ frame, ctx, fontLoader, dpr, tolerate });
         if (rendered.kind === "skipped") {
           onSkip?.(name, rendered.error);
           continue;
@@ -80,9 +78,7 @@ type FrameRenderAttempt =
 
 type RenderArgs = {
   readonly frame: FigNode;
-  readonly blobs: Awaited<ReturnType<typeof loadFigFile>>["blobs"];
-  readonly images: Awaited<ReturnType<typeof loadFigFile>>["images"];
-  readonly symbolMap: ReadonlyMap<string, FigNode>;
+  readonly ctx: FigSymbolContext;
   readonly fontLoader: ReturnType<typeof createCachingFontLoader>;
   readonly dpr: number;
   readonly tolerate: boolean;
@@ -116,38 +112,24 @@ async function tryRenderFrame(args: RenderArgs): Promise<FrameRenderAttempt> {
 async function renderOne(
   args: RenderArgs,
 ): Promise<{ readonly width: number; readonly height: number; readonly svg: string; readonly png: Uint8Array }> {
-  const { frame, blobs, images, symbolMap, fontLoader, dpr } = args;
+  const { frame, ctx, fontLoader, dpr } = args;
   if (!frame.size) {
     throw new Error("renderOne: frame has no size");
   }
   const result = await renderFigToSvg([frame], {
     width: frame.size.x,
     height: frame.size.y,
-    blobs,
-    images,
+    blobs: ctx.blobs,
+    images: ctx.images,
     normalizeRootTransform: true,
-    symbolMap,
+    symbolMap: ctx.symbolMap,
+    styleRegistry: ctx.styleRegistry,
     fontLoader,
   });
   const svg = String(result.svg);
   const fitWidth = Math.max(1, Math.round(frame.size.x * dpr));
   const png = svgToPng(svg, fitWidth);
   return { width: frame.size.x, height: frame.size.y, svg, png };
-}
-
-function indexNodes(roots: readonly FigNode[]): ReadonlyMap<string, FigNode> {
-  const out = new Map<string, FigNode>();
-  for (const root of roots) {
-    walk(root, out);
-  }
-  return out;
-}
-
-function walk(node: FigNode, out: Map<string, FigNode>): void {
-  out.set(guidToString(node.guid), node);
-  for (const child of safeChildren(node)) {
-    walk(child, out);
-  }
 }
 
 function svgToPng(svg: string, width: number): Uint8Array {

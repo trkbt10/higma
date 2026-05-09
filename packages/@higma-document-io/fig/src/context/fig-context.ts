@@ -14,6 +14,7 @@ import type { FigDesignDocument, FigPage } from "@higma-document-models/fig/doma
 import { buildNodeTree, DEFAULT_PAGE_BACKGROUND, EMPTY_FIG_STYLE_REGISTRY, toPageId } from "@higma-document-models/fig/domain";
 import { asBlobArray, normaliseNodeChanges } from "../parser";
 import { treeToDocument } from "./tree-to-document";
+import { createFigSymbolContextFromLoaded } from "./symbol-context";
 
 export type CreateFigDesignDocumentFromKiwiCanvasOptions = {
   readonly canvasVisibility: "user-visible" | "all";
@@ -27,10 +28,16 @@ export type CreateFigDesignDocumentFromKiwiCanvasOptions = {
  * Create a FigDesignDocument from a LoadedFigFile.
  *
  * Use this when you already have a loaded file (e.g., from loadFigFile()).
+ *
+ * Internally goes through `createFigSymbolContextFromLoaded` so the raw
+ * tree, nodeMap, and styleRegistry are derived once and shared with
+ * `treeToDocument`. Callers that already hold a `FigSymbolContext`
+ * should call `treeToDocument(ctx.tree, loaded, { styleRegistry: ctx.styleRegistry })`
+ * directly instead of re-deriving here.
  */
 export function createFigDesignDocumentFromLoaded(loaded: LoadedFigFile): FigDesignDocument {
-  const tree = buildNodeTree(loaded.nodeChanges);
-  return treeToDocument(tree, loaded);
+  const ctx = createFigSymbolContextFromLoaded(loaded);
+  return treeToDocument(ctx.tree, loaded, { styleRegistry: ctx.styleRegistry });
 }
 
 /**

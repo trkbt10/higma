@@ -26,14 +26,16 @@ import {
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 
-export type NodeRenderContext = {
-  readonly loaded: LoadedFigFile;
-  /** Document-wide map from `sessionID:localID` to FigNode (used for INSTANCE resolution). */
-  readonly symbolMap: ReadonlyMap<string, FigNode>;
-};
+/**
+ * Context the renderer needs from the loaded fig. Accept the full
+ * `FigSymbolContext` SoT — the node renderer reads `blobs`, `images`,
+ * and `symbolMap` from it, so callers do not need to know which
+ * subset is required at any given call.
+ */
+export type NodeRenderContext = FigSymbolContext;
 
 export type RenderedNode = {
   readonly key: string;
@@ -97,10 +99,13 @@ export function createNodeRenderer(ctx: NodeRenderContext): NodeRenderer {
     const result = await renderFigToSvg([node], {
       width: node.size.x,
       height: node.size.y,
-      blobs: ctx.loaded.blobs ?? [],
-      images: ctx.loaded.images ?? new Map(),
+      blobs: ctx.blobs,
+      images: ctx.images,
       normalizeRootTransform: true,
       symbolMap: ctx.symbolMap,
+      // Reuse the registry the IO context already built, instead of
+      // making the renderer derive an identical one per call.
+      styleRegistry: ctx.styleRegistry,
       fontLoader,
     });
     const svg = String(result.svg);

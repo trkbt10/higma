@@ -17,10 +17,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import { createServer, type ViteDevServer } from "vite";
-import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree } from "@higma-document-models/fig/domain";
-import { treeToDocument } from "@higma-document-io/fig/context";
-import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
+import { createFigDesignDocument } from "@higma-document-io/fig/context";
+import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeFontLoaderWithFontsource } from "@higma-document-renderers/fig/font-drivers/node";
 import {
@@ -101,9 +99,11 @@ export async function renderFigViewports(
   figBytes: Uint8Array,
   options: { readonly breakpoints?: readonly string[] } = {},
 ): Promise<readonly FigDirectRenderResult[]> {
-  const loaded = await loadFigFile(figBytes);
-  const tree = buildNodeTree(loaded.nodeChanges);
-  const document = treeToDocument(tree, loaded);
+  // SoT: `createFigDesignDocument` owns the
+  // `loadFigFile → buildNodeTree → treeToDocument` orchestration. The
+  // verifier consumes `document.components` (already-resolved SYMBOLs)
+  // for INSTANCE references rather than building its own raw symbolMap.
+  const document = await createFigDesignDocument(figBytes);
   const wantedBreakpoints = new Set(options.breakpoints ?? ["mobile", "tablet", "desktop"]);
 
   const wrappers: { breakpoint: string; node: FigDesignNode }[] = [];

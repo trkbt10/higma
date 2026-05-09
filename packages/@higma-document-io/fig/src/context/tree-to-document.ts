@@ -97,19 +97,6 @@ function collectComponentsRecursive(
   }, { getChildren: (node) => node.children ?? [] });
 }
 
-/**
- * Collect all FigNodes in a tree into a flat Map keyed by GUID string.
- */
-function collectNodeMap(ctx: FigResolveContext, roots: readonly FigNode[]): ReadonlyMap<string, FigNode> {
-  const map = new Map<string, FigNode>();
-  walkTree(roots, (node) => {
-    if (node.guid) {
-      map.set(ctx.guidString(node.guid), node);
-    }
-  }, { getChildren: ctx.safeChildren });
-  return map;
-}
-
 function readDocumentColorProfile(tree: NodeTreeResult): FigNode["documentColorProfile"] {
   for (const root of tree.roots) {
     if (getNodeType(root) === "DOCUMENT") {
@@ -119,16 +106,38 @@ function readDocumentColorProfile(tree: NodeTreeResult): FigNode["documentColorP
   return undefined;
 }
 
+export type TreeToDocumentOptions = {
+  /**
+   * Pre-built style registry. When provided, `treeToDocument` skips
+   * its own derivation. Production callers that already have a
+   * `FigSymbolContext` should pass `ctx.styleRegistry` to avoid
+   * re-walking the nodeMap. The registry must have been built from
+   * the same `tree.nodeMap` — passing a registry derived from a
+   * different document is undefined behaviour.
+   */
+  readonly styleRegistry?: FigStyleRegistry;
+};
+
 /** Convert a parsed raw node tree into the shared FigDesignDocument domain model. */
 export function treeToDocument(
   tree: NodeTreeResult,
   source: TreeToDocumentSource,
+  options: TreeToDocumentOptions = {},
 ): FigDesignDocument {
   const ctx = createFigResolveContext();
   const components = new Map<string, FigDesignNode>();
   const pages: FigPage[] = [];
-  const nodeMap = collectNodeMap(ctx, tree.roots);
-  const styleRegistry = nodeMap.size > 0 ? buildFigStyleRegistry(nodeMap) : EMPTY_FIG_STYLE_REGISTRY;
+  // SoT: `buildNodeTree` already returns the GUID → FigNode map under
+  // `tree.nodeMap`. Re-walking the tree here would produce the same
+  // content from the same source, so we consume the parser's output
+  // directly.
+  const nodeMap = tree.nodeMap;
+  const styleRegistry = (() => {
+    if (options.styleRegistry !== undefined) {
+      return options.styleRegistry;
+    }
+    return nodeMap.size > 0 ? buildFigStyleRegistry(nodeMap) : EMPTY_FIG_STYLE_REGISTRY;
+  })();
   const loaded = isLoadedFigFile(source) ? source : undefined;
 
   for (const root of tree.roots) {

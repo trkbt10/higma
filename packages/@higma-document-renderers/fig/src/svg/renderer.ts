@@ -120,8 +120,34 @@ export type FigSvgRenderOptions = {
   readonly normalizeRootTransform?: boolean;
   /** Include nodes with `visible: false` (for style inspection views). */
   readonly showHiddenNodes?: boolean;
-  /** Raw symbolMap from `buildNodeTree` (required for INSTANCE resolution). */
-  readonly symbolMap?: ReadonlyMap<string, FigNode>;
+  /**
+   * Raw `sessionID:localID → FigNode` map. Required for INSTANCE
+   * resolution: every INSTANCE node looks up its referenced SYMBOL
+   * here. Inputs that are guaranteed to contain no INSTANCE nodes pass
+   * `new Map()` to make the absence explicit.
+   *
+   * Production callers should obtain this from
+   * `FigSymbolContext.symbolMap`
+   * (`@higma-document-io/fig/context`) — that context is the SoT for
+   * "loaded fig + every map a downstream consumer needs". Building the
+   * map ad-hoc at the call site (e.g. by re-walking `tree.roots`) is a
+   * SoT violation and historically caused divergent results when one
+   * call site applied style resolution and another did not.
+   */
+  readonly symbolMap: ReadonlyMap<string, FigNode>;
+  /**
+   * Pre-built document-wide style registry. Optional — when omitted,
+   * the renderer derives one from `symbolMap` via
+   * `buildFigStyleRegistry`.
+   *
+   * Production callers that have a `FigSymbolContext` should pass
+   * `ctx.styleRegistry` to skip re-derivation. This is a passthrough
+   * field, not a way to inject a different registry: the SoT for
+   * "what shared styles exist in this document" is the registry the
+   * IO context built. The renderer accepts it here purely to amortise
+   * the build across multiple per-frame renders of the same file.
+   */
+  readonly styleRegistry?: FigStyleRegistry;
   /** Explicit font loader used to preload TEXT fonts before scene-graph resolution. */
   readonly fontLoader?: FontLoader;
   /**
@@ -220,13 +246,22 @@ export async function renderFigToSvg(
   const { width, height, blobs, images } = options;
   const warnings: string[] = [];
 
-  // Build style registry from the raw FigNode symbolMap BEFORE domain
-  // conversion. The registry resolves styleIdForFill/styleIdForStrokeFill
-  // references to authoritative paints during convertFigNode, and is also
-  // passed to buildSceneGraph for per-path vector style overrides.
+  // Style registry resolves styleIdForFill/styleIdForStrokeFill references
+  // during `convertFigNode`, and is also passed to buildSceneGraph for
+  // per-path vector style overrides.
+  //
+  // Production callers (figma-svg, render-frames, render-node, etc.)
+  // pass `options.styleRegistry` from a `FigSymbolContext` — that context
+  // already built one when the file was loaded, so re-deriving here would
+  // duplicate work. When the caller omits it, we fall back to building
+  // from the raw symbolMap; an empty symbolMap (no INSTANCE/no styles)
+  // yields the empty registry constant.
   const rawSymbolMap = options.symbolMap;
   const styleRegistry: FigStyleRegistry = (() => {
-    if (rawSymbolMap) {
+    if (options.styleRegistry !== undefined) {
+      return options.styleRegistry;
+    }
+    if (rawSymbolMap.size > 0) {
       return buildFigStyleRegistry(rawSymbolMap);
     }
     return EMPTY_FIG_STYLE_REGISTRY;
@@ -236,12 +271,7 @@ export async function renderFigToSvg(
   // objects. `components` is populated as a side-effect by convertFigNode
   // whenever it encounters a COMPONENT/COMPONENT_SET/SYMBOL.
   const components = new Map<string, FigDesignNode>();
-  const designSymbolMap = (() => {
-    if (rawSymbolMap) {
-      return convertSymbolMap(rawSymbolMap, components, styleRegistry, blobs);
-    }
-    return new Map<string, FigDesignNode>();
-  })();
+  const designSymbolMap = convertSymbolMap(rawSymbolMap, components, styleRegistry, blobs);
 
   const designNodes: FigDesignNode[] = nodes.map((n) => convertFigNode(n, components, styleRegistry, rawSymbolMap, blobs));
 

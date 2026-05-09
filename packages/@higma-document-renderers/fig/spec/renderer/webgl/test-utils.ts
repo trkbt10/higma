@@ -4,8 +4,8 @@
  * Common functions for loading .fig fixtures, rendering SVG/WebGL,
  * and comparing output images via pixelmatch.
  *
- * Uses the correct pipeline:
- *   loadFigFile → buildNodeTree → treeToDocument → FigDesignDocument
+ * Uses the SoT entry point:
+ *   createFigDesignDocument → FigDesignDocument
  *   → buildSceneGraph (FigDesignNode[]) → RenderTree → SVG/WebGL
  */
 import * as fs from "node:fs";
@@ -14,9 +14,7 @@ import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { createServer, type ViteDevServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer";
-import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree } from "@higma-document-models/fig/domain";
-import { treeToDocument } from "@higma-document-io/fig/context";
+import { createFigDesignDocument } from "@higma-document-io/fig/context";
 import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "../../../src/scene-graph/builder";
 import type { SceneGraph } from "../../../src/scene-graph/types";
@@ -165,18 +163,18 @@ function selectFixturePages({
 // =============================================================================
 
 /**
- * Load and parse a .fig fixture file into frames via the full domain pipeline.
+ * Load and parse a .fig fixture file into frames via the SoT entry point.
  *
- * Pipeline: loadFigFile → buildNodeTree → treeToDocument → FigDesignDocument
+ * `createFigDesignDocument` owns the
+ * `loadFigFile → buildNodeTree → treeToDocument` orchestration; consumers
+ * never re-orchestrate the steps.
  *
  * @param figPath - Absolute path to the .fig file
  * @param canvasFilter - Optional canvas name to filter (e.g. "Twitter")
  */
 export async function loadFigFixture(figPath: string, canvasFilter?: string): Promise<FixtureData> {
   const data = fs.readFileSync(figPath);
-  const loaded = await loadFigFile(new Uint8Array(data));
-  const tree = buildNodeTree(loaded.nodeChanges);
-  const document = treeToDocument(tree, loaded);
+  const document = await createFigDesignDocument(new Uint8Array(data));
 
   const frames = new Map<string, FrameInfo>();
   const targetPages = selectFixturePages({ document, canvasFilter });

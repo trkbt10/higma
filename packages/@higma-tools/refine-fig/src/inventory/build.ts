@@ -51,7 +51,9 @@ export async function buildInventory(
   if (options.skipClusters) {
     return { palette, typography, subtreeClusters: [], unrenderable: [] };
   }
-  const renderer = createNodeRenderer({ loaded: source.loaded, symbolMap: source.nodesByGuid });
+  // `RefineSource` extends `FigSymbolContext`, so we can pass the
+  // source itself — no need to pluck out individual fields.
+  const renderer = createNodeRenderer(source);
   const dup = await detectDuplicates(source.topFrames, renderer);
   const subtreeClusters: SubtreeClusterEntry[] = dup.clusters.map((c) => ({
     clusterId: c.clusterId,

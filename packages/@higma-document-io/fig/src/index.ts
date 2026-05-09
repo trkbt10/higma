@@ -23,6 +23,9 @@ export {
   createFigDesignDocumentFromLoaded,
   createFigDesignDocumentFromKiwiCanvas,
   createEmptyFigDesignDocument,
+  createFigSymbolContext,
+  createFigSymbolContextFromLoaded,
+  type FigSymbolContext,
 } from "./context";
 
 // Page operations
