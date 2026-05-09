@@ -24,7 +24,7 @@ import type {
   FigPageId,
 } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigDerivedTextData, FigMatrix, KiwiEnumValue } from "@higma-document-models/fig/types";
 import {
   createCachingFontLoader,
@@ -233,7 +233,7 @@ function makeRectNode(
 }
 
 const TEST_IMAGE_REF = "fixture-image.png";
-const TEST_IMAGE: FigImage = {
+const TEST_IMAGE: FigPackageImage = {
   ref: TEST_IMAGE_REF,
   mimeType: "image/png",
   data: createFixtureImageBytes(),

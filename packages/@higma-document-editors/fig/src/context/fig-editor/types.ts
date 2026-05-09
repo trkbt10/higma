@@ -6,7 +6,7 @@
  */
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { BooleanOperationType } from "@higma-document-renderers/fig/scene-graph";
 import type { UndoRedoHistory } from "@higma-editor-kernel/core/history";
@@ -111,7 +111,7 @@ export type FigEditorState = {
 export type FigEditorAction =
   // Document
   | { readonly type: "SET_DOCUMENT"; readonly document: FigDesignDocument }
-  | { readonly type: "ADD_IMAGE_ASSET"; readonly image: FigImage; readonly source: FigNodeMutationSource }
+  | { readonly type: "ADD_IMAGE_ASSET"; readonly image: FigPackageImage; readonly source: FigNodeMutationSource }
 
   // Page management
   | { readonly type: "SELECT_PAGE"; readonly pageId: FigPageId }

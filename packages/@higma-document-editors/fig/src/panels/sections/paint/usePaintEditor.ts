@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, type ChangeEvent, type RefObject } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigImageScaleMode, FigPaint } from "@higma-document-models/fig/types";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
@@ -13,7 +13,7 @@ import { applyAppearanceOperation, AppearanceOp } from "./appearance-domain";
 export type PaintEditorConfig = {
   readonly node: FigDesignNode;
   readonly target: PropertyMutationTarget;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly dispatch: (action: FigEditorAction) => void;
   readonly kind: PaintListKind;
 };

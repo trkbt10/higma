@@ -62,6 +62,12 @@ export type ElementJson = {
   readonly imageId?: string;
   readonly svgContent?: SvgContentJson;
   readonly text?: string;
+  /**
+   * Per-position direct-text fragments. See `RawElement.textFragments`
+   * in `snapshot.ts` for semantics — this is the JSON-friendly mirror
+   * of that field. Length equals `children.length + 1` when present.
+   */
+  readonly textFragments?: readonly string[];
   readonly pseudo?: readonly PseudoJson[];
   readonly children: readonly ElementJson[];
 };
@@ -257,12 +263,74 @@ export function captureSnapshot(): RawSnapshotJson {
     return undefined;
   }
 
+  /**
+   * Concatenate every direct text node into a single string.
+   *
+   * The order between a text node and its sibling elements is *not*
+   * preserved here — the consumer assumes "all direct text first,
+   * then children". For paragraphs whose source order is `<a>X</a>Y`
+   * (text after element) the run order produced by the normaliser
+   * therefore disagrees with the visual flow. `interleavedTextSlots`
+   * fixes that by emitting per-position text fragments; this helper
+   * stays as a convenience for the rare callers that genuinely
+   * want the concatenated form.
+   */
   function directText(el: Element): string {
     return Array.from(el.childNodes)
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent ?? "")
       .join("")
       .trim();
+  }
+
+  /**
+   * Build a parallel array (one slot per element child) of the text
+   * that immediately precedes each element child plus a trailing
+   * tail-text slot. The output length equals `el.children.length + 1`.
+   *
+   * Example for `<div>foo<a>bar</a> baz<b>qux</b></div>`:
+   *   [ "foo", " baz", "" ]
+   * which the normaliser interleaves with the rendered children to
+   * produce the visual "foo bar baz qux" sequence.
+   *
+   * Whitespace handling matches the legacy `directText` for the
+   * common case (`.trim()` on both ends), but inter-element runs of
+   * whitespace are preserved verbatim — they're what carries the
+   * inter-anchor space in `<a>foo</a> <a>bar</a>`.
+   */
+  function interleavedTextSlots(el: Element): string[] {
+    const elementChildren = Array.from(el.children);
+    const slots: string[] = new Array(elementChildren.length + 1).fill("");
+    const cursor = { value: 0 };
+    for (const node of Array.from(el.childNodes)) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const idx = elementChildren.indexOf(node as Element);
+        if (idx >= 0) {
+          cursor.value = idx + 1;
+        }
+        continue;
+      }
+      if (node.nodeType !== Node.TEXT_NODE) {
+        continue;
+      }
+      const text = node.textContent ?? "";
+      slots[cursor.value] = (slots[cursor.value] ?? "") + text;
+    }
+    // Collapse runs of whitespace into a single space — that's what
+    // the browser renders. Leading / trailing whitespace at the
+    // outermost slot edges (before any element + after every element)
+    // is stripped to keep the IR free of decorative line breaks the
+    // browser hides.
+    return slots.map((slot, i) => {
+      const collapsed = slot.replace(/\s+/g, " ");
+      if (i === 0) {
+        return collapsed.replace(/^\s+/, "");
+      }
+      if (i === slots.length - 1) {
+        return collapsed.replace(/\s+$/, "");
+      }
+      return collapsed;
+    });
   }
 
   function contentRectFor(el: Element, style: Record<string, string>): { x: number; y: number; width: number; height: number } {

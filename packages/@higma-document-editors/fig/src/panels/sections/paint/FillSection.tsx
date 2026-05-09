@@ -6,7 +6,7 @@
  */
 
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import type { PropertyMutationTarget } from "../../properties/property-mutation-target";
 import { AddIcon } from "@higma-editor-kernel/ui/icons";
@@ -17,7 +17,7 @@ import { sectionContainerStyle, addButtonStyle, IMAGE_ACCEPT_TYPES } from "./pai
 type FillSectionProps = {
   readonly node: FigDesignNode;
   readonly target: PropertyMutationTarget;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly dispatch: (action: FigEditorAction) => void;
 };
 

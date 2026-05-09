@@ -19,7 +19,7 @@
  *   which is how `LoadedFigFile.images` is keyed.
  */
 import type { FigImagePaint } from "@higma-document-models/fig/types";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 
 export type ImageAsset = {
   /** Path relative to the output root, e.g. `"assets/1234abcd.png"`. */
@@ -63,11 +63,11 @@ export function paintImageRef(paint: FigImagePaint): string | undefined {
   return undefined;
 }
 
-function extensionFor(image: FigImage): string {
+function extensionFor(image: FigPackageImage): string {
   return EXTENSION_BY_MIME.get(image.mimeType) ?? "bin";
 }
 
-function assetPathFor(ref: string, image: FigImage): string {
+function assetPathFor(ref: string, image: FigPackageImage): string {
   return `assets/${ref}.${extensionFor(image)}`;
 }
 
@@ -80,7 +80,7 @@ function assetPathFor(ref: string, image: FigImage): string {
  * directories from filling up with every asset in the source file
  * regardless of which frames the user picked.
  */
-export function createImageRegistry(images: ReadonlyMap<string, FigImage>): ImageRegistry {
+export function createImageRegistry(images: ReadonlyMap<string, FigPackageImage>): ImageRegistry {
   const collected = new Map<string, ImageAsset>();
   return {
     resolve: (paint: FigImagePaint) => {

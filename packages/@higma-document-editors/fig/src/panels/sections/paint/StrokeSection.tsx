@@ -7,7 +7,7 @@
 
 import { useCallback } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigStrokeAlign, FigStrokeCap, FigStrokeJoin } from "@higma-document-models/fig/types";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { Input } from "@higma-editor-kernel/ui/primitives/Input";
@@ -45,7 +45,7 @@ const strokeJoinOptions: readonly SelectOption<FigStrokeJoin>[] = [
 type StrokeSectionProps = {
   readonly node: FigDesignNode;
   readonly target: PropertyMutationTarget;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly dispatch: (action: FigEditorAction) => void;
 };
 

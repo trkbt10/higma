@@ -1,6 +1,6 @@
 /** @file Fig image asset helpers for fill/stroke editors. */
 
-import type { FigImage } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 
 export type CreateFigImageAssetParams = {
   readonly data: Uint8Array;
@@ -9,7 +9,7 @@ export type CreateFigImageAssetParams = {
 };
 
 /** Build a stable image asset entry and ref for a browser-selected file. */
-export function createFigImageAsset({ data, mimeType, fileName }: CreateFigImageAssetParams): FigImage {
+export function createFigImageAsset({ data, mimeType, fileName }: CreateFigImageAssetParams): FigPackageImage {
   if (data.length === 0) {
     throw new Error("Image asset data is empty");
   }

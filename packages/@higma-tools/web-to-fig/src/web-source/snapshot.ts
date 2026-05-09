@@ -91,6 +91,17 @@ export type RawElement = {
   readonly svgContent?: RawSvgContent;
   /** Concatenated direct text content. Empty for non-leaf containers. */
   readonly text?: string;
+  /**
+   * Per-position direct-text fragments. `textFragments[i]` is the
+   * direct text node that immediately precedes
+   * `children[i]`; `textFragments[children.length]` carries any
+   * trailing text after the last child. Length equals
+   * `children.length + 1`. Empty strings mean "no text in that
+   * position". Populated only when the element actually has
+   * interleaved text + element children — leaf-text nodes use the
+   * legacy `text` field instead.
+   */
+  readonly textFragments?: readonly string[];
   /** Captured `::before` / `::after` pseudo-element strings. */
   readonly pseudo?: readonly RawPseudoContent[];
   readonly children: readonly RawElement[];
