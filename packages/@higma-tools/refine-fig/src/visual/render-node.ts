@@ -101,7 +101,11 @@ export function createNodeRenderer(ctx: NodeRenderContext): NodeRenderer {
       fontLoader,
     });
     const svg = String(result.svg);
-    const fitWidth = Math.max(1, Math.min(max, Math.round(node.size.x)));
+    // Always raster up to `max` regardless of native size — the
+    // workbench needs visible PNGs. Tiny icons (19×19, 24×24)
+    // otherwise render at their native pixel count and look empty
+    // when laid into a contact-sheet cell.
+    const fitWidth = Math.max(1, max);
     const png = svgToPng(svg, fitWidth);
     const rendered: RenderedNode = {
       key,

@@ -217,27 +217,33 @@ export async function detectDuplicates(
         reason: error instanceof Error ? error.message : String(error),
       });
     });
-    for (const v of visual) {
+    visual.forEach((v, visualOrdinal) => {
       if (v.members.length < MIN_BUCKET_SIZE) {
-        continue;
+        return;
       }
       const node = members[0]?.node;
       if (!node) {
-        continue;
+        return;
       }
       const sig = roleSignature(node, MAX_DEPTH);
       const struct = structuralSignature(node, MAX_DEPTH);
       const avgW = v.members.reduce((sum, m) => sum + m.width, 0) / v.members.length;
       const avgH = v.members.reduce((sum, m) => sum + m.height, 0) / v.members.length;
+      // Disambiguate visual sub-clusters that share role signature
+      // and coarse size class but differ at the visual-hash level
+      // (e.g. two icons of the same shape and same coarse size that
+      // are visually distinct). The ordinal only fires when more
+      // than one visual cluster comes out of the same key bucket.
+      const disambiguator = visualOrdinal === 0 ? "" : `_v${visualOrdinal}`;
       clusters.push({
-        clusterId: `${slugFromSignature(sig)}-${key}`.replace(/\W+/g, "_"),
+        clusterId: `${slugFromSignature(sig)}-${key}${disambiguator}`.replace(/\W+/g, "_"),
         roleSignature: sig,
         structuralSignature: struct,
         members: v.members,
         sizeClass: { width: Math.round(avgW), height: Math.round(avgH) },
         suggestedName: suggestNameFor(node, sig),
       });
-    }
+    });
   }
   // Sort by member count desc to make the report easy to read.
   clusters.sort((a, b) => b.members.length - a.members.length);

@@ -1,25 +1,22 @@
 /**
  * @file `@higma-tools/refine-fig` — public entry.
  *
- * Three layers, exported as sub-paths in package.json:
+ * Layers exposed as sub-paths in package.json:
  *
- *   - analysis  — palette, typography, naming, duplicate-cluster
- *                 detection. All pure functions over a refine source.
- *   - plan      — a serialisable `RefinePlan` shape combining the
- *                 analyses, ready for human review or apply.
- *   - apply     — mutate a `LoadedFigFile` per plan (in place).
- *   - visual    — render any FigNode subtree to PNG with memoisation
- *                 plus perceptual hashing for visual diff.
+ *   - inventory  — facts about the file (palette, typography, clusters)
+ *   - analysis   — low-level helpers shared between inventory and the
+ *                  upcoming plan layer (palette / signature / hashing)
+ *   - visual     — render any FigNode subtree to PNG with memoisation,
+ *                  perceptual hash, frame-level renderer + diff
  *
- * Top-level convenience exports cover the most common entry points
- * (`loadRefineSource`, `buildPlan`, `applyPlan`) so a script can wire
- * the full pipeline with a single import.
+ * Plan / apply / workbench were removed as part of the redesign that
+ * moves naming and proxy creation out of heuristics and onto an agent
+ * authored decisions JSON. They will be reintroduced as the rebuild
+ * lands.
  */
 export { loadRefineSource } from "./refine-source/load";
 export type { RefineSource } from "./refine-source/load";
-export { buildPlan } from "./plan";
-export type { BuildPlanOptions, RefinePlan } from "./plan";
-export { applyPlan } from "./apply";
-export type { ApplyResult } from "./apply";
+export { buildInventory } from "./inventory";
+export type { Inventory } from "./inventory";
 export { createNodeRenderer, perceptualHash, combinedDistance } from "./visual";
 export type { NodeRenderer, RenderedNode, PerceptualHash } from "./visual";

@@ -21,6 +21,26 @@
       "types": "./src/analysis/index.ts",
       "default": "./src/analysis/index.ts"
     },
+    "./inventory": {
+      "types": "./src/inventory/index.ts",
+      "default": "./src/inventory/index.ts"
+    },
+    "./decisions": {
+      "types": "./src/decisions/index.ts",
+      "default": "./src/decisions/index.ts"
+    },
+    "./workbench": {
+      "types": "./src/workbench/index.ts",
+      "default": "./src/workbench/index.ts"
+    },
+    "./proxies": {
+      "types": "./src/proxies/index.ts",
+      "default": "./src/proxies/index.ts"
+    },
+    "./componentize": {
+      "types": "./src/componentize/index.ts",
+      "default": "./src/componentize/index.ts"
+    },
     "./plan": {
       "types": "./src/plan/index.ts",
       "default": "./src/plan/index.ts"
@@ -28,6 +48,10 @@
     "./apply": {
       "types": "./src/apply/index.ts",
       "default": "./src/apply/index.ts"
+    },
+    "./structure-diff": {
+      "types": "./src/structure-diff/index.ts",
+      "default": "./src/structure-diff/index.ts"
     },
     "./visual": {
       "types": "./src/visual/index.ts",

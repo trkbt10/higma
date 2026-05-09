@@ -1,45 +1,49 @@
 /**
- * @file refine-fig CLI orchestration.
+ * @file refine-fig CLI orchestration — currently mid-rebuild.
  *
- * Three commands, all reading and writing real files:
- *
- *   refine-fig analyze <input.fig> --out <dir>          → plan.json
- *   refine-fig apply   <input.fig> --plan <plan.json> --out <out.fig>
- *   refine-fig verify  <before.fig> <after.fig> --out <dir>
- *
- * `analyze` always renders for duplicate detection (use
- * `--skip-duplicates` to skip) and writes a human-readable summary
- * alongside the JSON plan.
- *
- * `apply` reads a plan + the original .fig, mutates the loaded file
- * per plan (rename + fill-style bind), saves to disk.
- *
- * `verify` renders both files frame by frame, pixel-diffs them at
- * matching frame names, and writes png triplets to `<dir>/<frame>/`.
+ * The skill is being rewritten around an `inventory → decisions →
+ * plan → apply → verify` flow. While that work lands the only
+ * commands wired up are `inventory` (facts about the file) and
+ * `verify` (pixel-diff two files frame by frame). The `apply` /
+ * `workbench` / `analyze` entry points will be reintroduced once
+ * the new pipeline modules are in place.
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { loadRefineSource } from "../refine-source/load";
-import { createNodeRenderer } from "../visual";
-import type { NodeRenderer } from "../visual";
-import { buildPlan, parseRefinePlan } from "../plan";
+import { saveFigFile } from "@higma-document-io/fig/roundtrip";
+import { guidToString } from "@higma-document-models/fig/domain";
+import { comparePng, renderFramesViaWorker } from "../visual";
+import type { WorkerRenderedFrame } from "../visual";
+import { buildInventory } from "../inventory";
+import type { Inventory } from "../inventory";
+import { scaffoldDecisions, parseDecisions } from "../decisions";
+import { buildWorkbench } from "../workbench";
+import { buildPlan } from "../plan";
 import type { RefinePlan } from "../plan";
 import { applyPlan } from "../apply";
-import { saveFigFile } from "@higma-document-io/fig/roundtrip";
-import { renderFrames, comparePng } from "../visual";
-import { buildWorkbench } from "../workbench/build";
+import { diffStructure } from "../structure-diff";
+import { loadFigFile } from "@higma-document-io/fig/roundtrip";
+
+type Command = "inventory" | "workbench" | "scaffold" | "plan" | "apply" | "verify" | "diff";
 
 type ParsedArgs = {
-  readonly command: "analyze" | "apply" | "verify" | "workbench";
+  readonly command: Command;
   readonly positional: readonly string[];
   readonly options: ReadonlyMap<string, string>;
   readonly flags: ReadonlySet<string>;
 };
 
+const COMMANDS: ReadonlySet<Command> = new Set(["inventory", "workbench", "scaffold", "plan", "apply", "verify", "diff"]);
+
+function isCommand(value: string): value is Command {
+  return (COMMANDS as ReadonlySet<string>).has(value);
+}
+
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const command = argv[0];
-  if (command !== "analyze" && command !== "apply" && command !== "verify" && command !== "workbench") {
-    throw new Error(`refine-fig: unknown command "${command ?? ""}". Expected analyze | workbench | apply | verify.`);
+  if (!command || !isCommand(command)) {
+    throw new Error(`refine-fig: unknown command "${command ?? ""}". Expected ${[...COMMANDS].join(" | ")}.`);
   }
   const positional: string[] = [];
   const options = new Map<string, string>();
@@ -77,42 +81,50 @@ async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
 
-function pickRenderer(
-  source: Awaited<ReturnType<typeof loadRefineSource>>,
-  skip: boolean,
-): NodeRenderer | undefined {
-  if (skip) {
-    return undefined;
-  }
-  return createNodeRenderer({ loaded: source.loaded, symbolMap: source.nodesByGuid });
-}
-
-async function commandAnalyze(args: ParsedArgs): Promise<void> {
+async function commandInventory(args: ParsedArgs): Promise<void> {
   const input = args.positional[0];
   if (!input) {
-    throw new Error("refine-fig analyze: missing input .fig path");
+    throw new Error("refine-fig inventory: missing input .fig path");
   }
   const outDir = requireOption(args, "out");
-  const skipDuplicates = args.flags.has("skip-duplicates");
-
+  const skipClusters = args.flags.has("skip-clusters");
   const inputPath = resolve(input);
   const bytes = new Uint8Array(await readFile(inputPath));
   const source = await loadRefineSource(bytes);
-  const renderer = pickRenderer(source, skipDuplicates);
-
-  const plan = await buildPlan(source, renderer, {
-    file: basename(inputPath),
-    bytes: bytes.byteLength,
-    skipDuplicateDetection: skipDuplicates,
-  });
-
+  const inventory = await buildInventory(source, { figPath: inputPath, skipClusters });
   await ensureDir(outDir);
-  const planPath = join(outDir, "plan.json");
-  await writeFile(planPath, JSON.stringify(plan, null, 2));
-  const summaryPath = join(outDir, "summary.md");
-  await writeFile(summaryPath, formatSummary(plan));
-  process.stdout.write(`refine-fig analyze: wrote ${planPath}\n`);
-  process.stdout.write(`refine-fig analyze: wrote ${summaryPath}\n`);
+  await writeInventory(outDir, basename(inputPath), bytes.byteLength, inventory);
+  // Keep saveFigFile import alive — needed by future apply work.
+  void saveFigFile;
+  process.stdout.write(
+    `refine-fig inventory: palette=${inventory.palette.length} typography=${inventory.typography.length} clusters=${inventory.subtreeClusters.length}\n`,
+  );
+}
+
+type StoredInventory = Inventory & { readonly source: { readonly file: string; readonly bytes: number } };
+
+async function writeInventory(outDir: string, file: string, bytes: number, inventory: Inventory): Promise<void> {
+  const stored: StoredInventory = { source: { file, bytes }, ...inventory };
+  const path = join(outDir, "inventory.json");
+  await writeFile(path, JSON.stringify(stored, null, 2));
+}
+
+async function readInventoryFromDisk(outDir: string): Promise<Inventory> {
+  const text = await readFile(join(outDir, "inventory.json"), "utf8");
+  const parsed: unknown = JSON.parse(text);
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("refine-fig: inventory.json is not an object");
+  }
+  // Trust the on-disk inventory shape — it was produced by this CLI
+  // in the previous step; validating it again here would duplicate
+  // the inventory module's own type contract.
+  const inventory = parsed as StoredInventory;
+  return {
+    palette: inventory.palette,
+    typography: inventory.typography,
+    subtreeClusters: inventory.subtreeClusters,
+    unrenderable: inventory.unrenderable,
+  };
 }
 
 async function commandWorkbench(args: ParsedArgs): Promise<void> {
@@ -120,29 +132,61 @@ async function commandWorkbench(args: ParsedArgs): Promise<void> {
   if (!input) {
     throw new Error("refine-fig workbench: missing input .fig path");
   }
-  const planPath = requireOption(args, "plan");
+  const inventoryDir = requireOption(args, "inventory");
   const outDir = requireOption(args, "out");
   const inputPath = resolve(input);
+  const inventory = await readInventoryFromDisk(resolve(inventoryDir));
   const bytes = new Uint8Array(await readFile(inputPath));
-  const planText = await readFile(resolve(planPath), "utf8");
-  const plan: RefinePlan = parseRefinePlan(planText);
   const source = await loadRefineSource(bytes);
   await ensureDir(outDir);
-  const result = await buildWorkbench(source, plan, {
-    outDir,
-    figPath: inputPath,
-    file: basename(inputPath),
-    bytes: bytes.byteLength,
-  });
+  const manifest = await buildWorkbench(source, inventory, { outDir, figPath: inputPath });
+  await writeFile(join(outDir, "index.json"), JSON.stringify(manifest, null, 2));
   process.stdout.write(
-    `refine-fig workbench: renames=${result.manifest.renames.length} bindings=${result.manifest.bindings.length} clusters=${result.manifest.clusters.length}\n`,
+    `refine-fig workbench: clusters=${manifest.clusters.length} palette=${manifest.palette.length} typography=${manifest.typography.length}`
+    + (manifest.skipped.renderFailures > 0 ? ` (${manifest.skipped.renderFailures} render failures)` : "")
+    + "\n",
   );
-  if (result.skippedRenames > 0 || result.skippedBindings > 0 || result.skippedClusterMembers > 0) {
-    process.stdout.write(
-      `refine-fig workbench: skipped renames=${result.skippedRenames} bindings=${result.skippedBindings} cluster-members=${result.skippedClusterMembers} (likely missing OS fonts; see summary.md)\n`,
-    );
+}
+
+async function commandScaffold(args: ParsedArgs): Promise<void> {
+  const inventoryDir = requireOption(args, "inventory");
+  const outFile = requireOption(args, "out");
+  const inventory = await readInventoryFromDisk(resolve(inventoryDir));
+  const decisions = scaffoldDecisions(inventory);
+  await writeFile(resolve(outFile), JSON.stringify(decisions, null, 2));
+  process.stdout.write(
+    `refine-fig scaffold: clusters=${Object.keys(decisions.clusters).length} palette=${Object.keys(decisions.palette).length} typography=${Object.keys(decisions.typography).length}\n`,
+  );
+}
+
+async function commandPlan(args: ParsedArgs): Promise<void> {
+  const input = args.positional[0];
+  if (!input) {
+    throw new Error("refine-fig plan: missing input .fig path");
   }
-  process.stdout.write(`refine-fig workbench: index at ${join(outDir, "index.json")}\n`);
+  const inventoryDir = requireOption(args, "inventory");
+  const decisionsPath = requireOption(args, "decisions");
+  const outFile = requireOption(args, "out");
+  const inputPath = resolve(input);
+  const inventory = await readInventoryFromDisk(resolve(inventoryDir));
+  const decisions = parseDecisions(await readFile(resolve(decisionsPath), "utf8"));
+  const bytes = new Uint8Array(await readFile(inputPath));
+  const source = await loadRefineSource(bytes);
+  const plan = buildPlan(source, inventory, decisions, { file: basename(inputPath), bytes: bytes.byteLength });
+  await mkdir(dirname(resolve(outFile)), { recursive: true });
+  await writeFile(resolve(outFile), JSON.stringify(plan, null, 2));
+  process.stdout.write(`refine-fig plan: ${formatPlanSummary(plan)}\n`);
+}
+
+function formatPlanSummary(plan: RefinePlan): string {
+  const parts: string[] = [`actions=${plan.actions.length}`];
+  if (plan.diagnostics.skippedNonIconClusters.length > 0) {
+    parts.push(`skippedNonIconClusters=${plan.diagnostics.skippedNonIconClusters.length}`);
+  }
+  if (plan.diagnostics.missingTemplates.length > 0) {
+    parts.push(`missingTemplates=${plan.diagnostics.missingTemplates.length}`);
+  }
+  return parts.join(" ");
 }
 
 async function commandApply(args: ParsedArgs): Promise<void> {
@@ -152,23 +196,63 @@ async function commandApply(args: ParsedArgs): Promise<void> {
   }
   const planPath = requireOption(args, "plan");
   const outFig = requireOption(args, "out");
-
   const inputPath = resolve(input);
-  const bytes = new Uint8Array(await readFile(inputPath));
   const planText = await readFile(resolve(planPath), "utf8");
-  const plan: RefinePlan = parseRefinePlan(planText);
-
+  const plan: RefinePlan = JSON.parse(planText) as RefinePlan;
+  const bytes = new Uint8Array(await readFile(inputPath));
   const source = await loadRefineSource(bytes);
-  const result = applyPlan(source.loaded, plan);
+  const ctx = applyContextFromSource(source);
+  const result = applyPlan(source.loaded, plan, ctx);
   const out = await saveFigFile(source.loaded);
-
-  await ensureDir(dirname(resolve(outFig)));
+  await mkdir(dirname(resolve(outFig)), { recursive: true });
   await writeFile(resolve(outFig), out);
-
   process.stdout.write(
-    `refine-fig apply: renamed=${result.renamed} bound=${result.bound} skipped-renames=${result.skippedRenames.length} skipped-bindings=${result.skippedBindings.length}\n`,
+    `refine-fig apply: createdFillProxies=${result.fillProxiesCreated}`
+    + ` createdTextProxies=${result.textProxiesCreated}`
+    + ` boundFill=${result.fillBound}`
+    + ` boundText=${result.textBound}`
+    + ` clustersPromoted=${result.clustersPromoted}`
+    + ` instancesRewritten=${result.instancesRewritten}`
+    + ` renamed=${result.renamed}`
+    + ` skipped=${result.skipped.length}\n`,
   );
-  process.stdout.write(`refine-fig apply: wrote ${outFig}\n`);
+}
+
+function applyContextFromSource(source: Awaited<ReturnType<typeof loadRefineSource>>): { internalCanvasGuid: string; fillTemplateGuid: string | undefined; textTemplateGuid: string | undefined } {
+  if (!source.internalCanvas) {
+    throw new Error("refine-fig apply: source has no Internal Only Canvas; new proxies cannot be inserted");
+  }
+  return {
+    internalCanvasGuid: guidToString(source.internalCanvas.guid),
+    fillTemplateGuid: source.fillStyleProxies[0] ? guidToString(source.fillStyleProxies[0].guid) : undefined,
+    textTemplateGuid: source.textStyleProxies[0] ? guidToString(source.textStyleProxies[0].guid) : undefined,
+  };
+}
+
+async function commandDiff(args: ParsedArgs): Promise<void> {
+  const before = args.positional[0];
+  const after = args.positional[1];
+  if (!before || !after) {
+    throw new Error("refine-fig diff: usage: diff <before.fig> <after.fig> [--out <report.json>]");
+  }
+  const beforeBytes = new Uint8Array(await readFile(resolve(before)));
+  const afterBytes = new Uint8Array(await readFile(resolve(after)));
+  const beforeLoaded = await loadFigFile(beforeBytes);
+  const afterLoaded = await loadFigFile(afterBytes);
+  const report = diffStructure(beforeLoaded, afterLoaded);
+  const outPath = args.options.get("out");
+  if (outPath) {
+    await mkdir(dirname(resolve(outPath)), { recursive: true });
+    await writeFile(resolve(outPath), JSON.stringify(report, null, 2));
+  }
+  process.stdout.write(
+    `refine-fig diff: missing=${report.summary.missing} added=${report.summary.added}`
+    + ` parentMoved=${report.summary.parentMoved} typeChanged=${report.summary.typeChanged}`
+    + ` imageFillLost=${report.summary.imageFillLost} imageFillOrphan=${report.summary.imageFillOrphan}`
+    + ` blobRewired=${report.summary.blobRewired}`
+    + (outPath ? ` (full report → ${outPath})` : "")
+    + "\n",
+  );
 }
 
 async function commandVerify(args: ParsedArgs): Promise<void> {
@@ -179,15 +263,17 @@ async function commandVerify(args: ParsedArgs): Promise<void> {
   }
   const outDir = requireOption(args, "out");
   await ensureDir(outDir);
-  const beforeBytes = new Uint8Array(await readFile(resolve(before)));
-  const afterBytes = new Uint8Array(await readFile(resolve(after)));
   const onSkip = (label: string) => (name: string, err: unknown): void => {
     process.stdout.write(
       `  [${label}] skipped frame "${name}" — ${err instanceof Error ? err.message : String(err)}\n`,
     );
   };
-  const beforeFrames = await renderFrames(beforeBytes, { tolerateRenderErrors: true, onSkipFrame: onSkip("before") });
-  const afterFrames = await renderFrames(afterBytes, { tolerateRenderErrors: true, onSkipFrame: onSkip("after") });
+  // Each render goes through the long-lived subprocess worker so a
+  // resvg native panic on one frame restarts the worker rather than
+  // killing this process. Verify is the most panic-prone command
+  // because it renders both versions of every top-level frame.
+  const beforeFrames = await renderFramesViaWorker({ figPath: resolve(before), onSkipFrame: onSkip("before") });
+  const afterFrames = await renderFramesViaWorker({ figPath: resolve(after), onSkipFrame: onSkip("after") });
   const byName = new Map(beforeFrames.map((f) => [f.name, f] as const));
   const tally = await accumulateVerify(afterFrames, byName, outDir);
   if (tally.comparedFrames > 0) {
@@ -205,8 +291,8 @@ type VerifyTally = {
 };
 
 async function accumulateVerify(
-  afterFrames: readonly { readonly name: string; readonly png: Uint8Array }[],
-  byName: ReadonlyMap<string, { readonly name: string; readonly png: Uint8Array }>,
+  afterFrames: readonly WorkerRenderedFrame[],
+  byName: ReadonlyMap<string, WorkerRenderedFrame>,
   outDir: string,
 ): Promise<VerifyTally> {
   const init: VerifyTally = { totalDiffPixels: 0, totalPixels: 0, comparedFrames: 0 };
@@ -241,124 +327,23 @@ async function accumulateVerify(
   }, Promise.resolve(init));
 }
 
-function formatSummary(plan: RefinePlan): string {
-  const lines: string[] = [];
-  lines.push(`# refine-fig — ${plan.source.file}`);
-  lines.push("");
-  lines.push(`- size: ${plan.source.bytes.toLocaleString()} bytes`);
-  lines.push(`- canvases: ${plan.source.canvases.join(", ")}`);
-  lines.push(`- top frames: ${plan.source.topFrameCount}`);
-  lines.push(`- nodes walked: ${plan.source.nodeCount}`);
-  lines.push("");
-  lines.push("## Stats");
-  lines.push(`- palette entries: ${plan.stats.paletteEntries}`);
-  lines.push(`- typography clusters: ${plan.stats.typographyClusters}`);
-  lines.push(`- duplicate clusters: ${plan.stats.duplicateClusters}`);
-  if (plan.stats.unrenderableSubtrees > 0) {
-    lines.push(`- unrenderable subtrees (skipped during duplicate detection): ${plan.stats.unrenderableSubtrees}`);
-  }
-  lines.push("");
-  lines.push("## Renames (proposed)");
-  lines.push(`Total: **${plan.renames.length}**`);
-  for (const r of plan.renames.slice(0, 30)) {
-    lines.push(`- \`${r.oldName}\` → \`${r.newName}\` _(${r.reason})_`);
-  }
-  if (plan.renames.length > 30) {
-    lines.push(`- … and ${plan.renames.length - 30} more`);
-  }
-  lines.push("");
-  lines.push("## Fill-style bindings (apply v1)");
-  lines.push(`Total: **${plan.fillStyleBindings.length}**`);
-  // Group by proxyName for readability.
-  const byProxy = new Map<string, number>();
-  for (const b of plan.fillStyleBindings) {
-    byProxy.set(b.proxyName, (byProxy.get(b.proxyName) ?? 0) + 1);
-  }
-  for (const [name, count] of [...byProxy.entries()].sort((a, b) => b[1] - a[1])) {
-    lines.push(`- ${name}: ${count} nodes`);
-  }
-  lines.push("");
-  lines.push("## Fill-style proposals (reported only)");
-  lines.push(`Total: **${plan.fillStyleProposals.length}** — these need new style proxies in the design tool.`);
-  for (const p of plan.fillStyleProposals) {
-    lines.push(`- \`${p.suggestedName}\` (${p.role}) ${p.colorHex} — ${p.bindings.length} usages`);
-  }
-  lines.push("");
-  lines.push("## Text-style proposals (reported only)");
-  lines.push(`Total: **${plan.textStyleProposals.length}**`);
-  for (const t of plan.textStyleProposals) {
-    const d = t.descriptor;
-    lines.push(`- \`${t.suggestedName}\` (${t.role}) — ${d.fontFamily} ${d.fontStyle} ${d.fontSize}px (${t.bindings.length} usages)`);
-  }
-  lines.push("");
-  lines.push("## Host fonts required");
-  lines.push(
-    "The renderer (used by duplicate detection and the verify pass) resolves fonts from the host OS only — no bundled fallbacks. Install every face below before running `verify` for full coverage.",
-  );
-  const facesNeeded = collectFontFaces(plan.typographyClusters);
-  for (const face of facesNeeded) {
-    lines.push(`- ${face.family} ${face.style} (weight ${face.weight}) — ${face.uses} text node${face.uses === 1 ? "" : "s"}`);
-  }
-  lines.push("");
-  lines.push("## Component candidates (reported only)");
-  lines.push(`Total: **${plan.componentCandidates.length}**`);
-  for (const c of plan.componentCandidates) {
-    lines.push(
-      `- \`${c.suggestedName}\` (${c.sizeClass.width}×${c.sizeClass.height}) — ${c.memberGuids.length} clones`,
-    );
-  }
-  lines.push("");
-  return lines.join("\n");
-}
-
-type RequiredFace = {
-  readonly family: string;
-  readonly style: string;
-  readonly weight: number;
-  readonly uses: number;
-};
-
-/**
- * Aggregate the typography clusters from a plan into the unique
- * (family, style, weight) faces the renderer would need from the host
- * OS. Pure derivation — same SoT as `analyseTypography`, no second
- * walk of the document.
- */
-function collectFontFaces(
-  clusters: ReadonlyArray<{
-    readonly fontFamily: string;
-    readonly fontStyle: string;
-    readonly fontWeight: number;
-    readonly usageCount: number;
-  }>,
-): readonly RequiredFace[] {
-  const byFace = new Map<string, RequiredFace & { uses: number }>();
-  for (const c of clusters) {
-    const key = `${c.fontFamily}|${c.fontStyle}|${c.fontWeight}`;
-    const existing = byFace.get(key);
-    if (existing) {
-      existing.uses = existing.uses + c.usageCount;
-      continue;
-    }
-    byFace.set(key, {
-      family: c.fontFamily,
-      style: c.fontStyle,
-      weight: c.fontWeight,
-      uses: c.usageCount,
-    });
-  }
-  return [...byFace.values()].sort((a, b) => b.uses - a.uses);
-}
-
 /** Top-level CLI entry. */
 export async function runCli(argv: readonly string[]): Promise<void> {
   const args = parseArgs(argv);
-  if (args.command === "analyze") {
-    await commandAnalyze(args);
+  if (args.command === "inventory") {
+    await commandInventory(args);
     return;
   }
   if (args.command === "workbench") {
     await commandWorkbench(args);
+    return;
+  }
+  if (args.command === "scaffold") {
+    await commandScaffold(args);
+    return;
+  }
+  if (args.command === "plan") {
+    await commandPlan(args);
     return;
   }
   if (args.command === "apply") {
@@ -367,6 +352,10 @@ export async function runCli(argv: readonly string[]): Promise<void> {
   }
   if (args.command === "verify") {
     await commandVerify(args);
+    return;
+  }
+  if (args.command === "diff") {
+    await commandDiff(args);
     return;
   }
   throw new Error(`refine-fig: unknown command "${args.command}"`);

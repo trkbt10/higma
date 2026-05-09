@@ -1,116 +1,96 @@
 /**
- * @file Materialise a "visual workbench" on disk so the agent can
- * Read each candidate change with its rendered PNG side-by-side.
+ * @file Materialise the visual workbench from an `Inventory`.
  *
- * Why this is the skill's primary surface, not the apply step:
+ * The workbench is the agent's primary surface. For every fact in
+ * the inventory it produces a PNG (or set of PNGs) the agent can
+ * `Read`:
  *
- *   - Heuristic naming is unreliable on its own. "row" / "card" /
- *     "icon" are placeholders dressed up. The agent's job is to look
- *     at the rendered subtree, read the surrounding TEXT, and pick a
- *     name that actually signifies *something*.
+ *   - clusters/<id>/contact-sheet.png  — every member of a cluster
+ *     in one image, so the agent can decide name + variant.
+ *   - clusters/<id>/members/<i>.png    — each clone individually.
+ *   - palette/<key>.png                — colour swatch + an in-situ
+ *     usage rendering so the agent sees how it appears in context.
+ *   - typography/<key>.png             — sample render of a TEXT
+ *     descriptor.
  *
- *   - Fill-style bindings can erase image / gradient layers if the
- *     analyser misjudged the paint stack. Side-by-side before / after
- *     PNGs let the agent confirm the rebind is visually neutral
- *     before committing.
- *
- *   - Component clusters live or die on a contact sheet. Naming a
- *     cluster correctly requires seeing all its members at once.
- *
- * The renderer is OS-font-only (per project policy). Subtrees that
- * fail to render are reported in the manifest with a `null` png path
- * so the agent can decide whether to install fonts and re-run, or
- * skip those proposals.
+ * The renderer panics on a small set of inputs (resvg native bug),
+ * so every render is delegated to the long-lived subprocess worker
+ * created by `worker-client.ts`. Failed renders are reported in the
+ * manifest with an empty PNG path so the agent can still author a
+ * decision for that entry.
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdirSync as fsMkdirSync, writeFileSync as fsWriteFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
-import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
-import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
 import type { RefineSource } from "../refine-source/load";
-import type { RefinePlan } from "../plan/types";
+import type { Inventory, SubtreeClusterEntry, PaletteEntry, TypographyEntry } from "../inventory";
 import { createWorkerClient, type WorkerClient } from "../visual/worker-client";
-import type { WorkbenchManifest, RenameWorkbenchEntry, BindingWorkbenchEntry, ClusterWorkbenchEntry, ClusterMemberEntry } from "./types";
 
 export type BuildWorkbenchOptions = {
   readonly outDir: string;
-  readonly file: string;
-  readonly bytes: number;
-  /** Path to the input .fig file — passed to the render-node worker subprocess. */
   readonly figPath: string;
-  /** Maximum raster width for context renders. Default 512. */
-  readonly contextWidth?: number;
-  /** Maximum raster width for node renders. Default 256. */
-  readonly nodeWidth?: number;
+  /** Maximum raster width for member renders. Default 256. */
+  readonly memberWidth?: number;
+  /** Maximum raster width for typography samples. Default 512. */
+  readonly sampleWidth?: number;
 };
 
-export type BuildWorkbenchResult = {
-  readonly manifest: WorkbenchManifest;
-  readonly skippedRenames: number;
-  readonly skippedBindings: number;
-  readonly skippedClusterMembers: number;
+export type ClusterManifestEntry = {
+  readonly clusterId: string;
+  readonly roleSignature: string;
+  readonly memberCount: number;
+  readonly sizeClass: { readonly width: number; readonly height: number };
+  readonly contactSheetPng: string;
+  readonly members: readonly { readonly nodeGuid: string; readonly nodeName: string; readonly png: string }[];
 };
 
-/**
- * Build the workbench. Renders each candidate's PNG via a long-lived
- * subprocess worker; if the worker panics during a render (a known
- * resvg failure mode for some inputs), the worker is respawned and
- * the offending request is recorded as un-renderable.
- */
+export type PaletteManifestEntry = {
+  readonly key: string;
+  readonly hex: string;
+  readonly usageCount: number;
+  readonly bindEligibleCount: number;
+  readonly existingProxyName: string | undefined;
+  readonly swatchPng: string;
+  readonly samplePng: string | undefined;
+};
+
+export type TypographyManifestEntry = {
+  readonly key: string;
+  readonly fontFamily: string;
+  readonly fontStyle: string;
+  readonly fontSize: number;
+  readonly usageCount: number;
+  readonly existingProxyName: string | undefined;
+  readonly samplePng: string | undefined;
+};
+
+export type WorkbenchManifest = {
+  readonly clusters: readonly ClusterManifestEntry[];
+  readonly palette: readonly PaletteManifestEntry[];
+  readonly typography: readonly TypographyManifestEntry[];
+  readonly skipped: { readonly renderFailures: number };
+};
+
+/** Build the workbench. Renders go through a respawning subprocess worker. */
 export async function buildWorkbench(
   source: RefineSource,
-  plan: RefinePlan,
+  inventory: Inventory,
   options: BuildWorkbenchOptions,
-): Promise<BuildWorkbenchResult> {
-  const { outDir, contextWidth = 512, nodeWidth = 256 } = options;
-  const renamesDir = join(outDir, "renames");
-  const bindingsDir = join(outDir, "bindings");
-  const clustersDir = join(outDir, "clusters");
-  await ensureDir(renamesDir);
-  await ensureDir(bindingsDir);
-  await ensureDir(clustersDir);
+): Promise<WorkbenchManifest> {
+  const { outDir, figPath, memberWidth = 256, sampleWidth = 512 } = options;
+  await ensureDir(join(outDir, "clusters"));
+  await ensureDir(join(outDir, "palette"));
+  await ensureDir(join(outDir, "typography"));
 
-  const skippedTracker = { renames: 0, bindings: 0, clusterMembers: 0 };
-  const worker = createWorkerClient(options.figPath);
+  const worker = createWorkerClient(figPath);
+  const skipped = { renderFailures: 0 };
   try {
-    const renames = await collectRenameEntries({
-      plan,
-      source,
-      worker,
-      outDir: renamesDir,
-      contextWidth,
-      nodeWidth,
-      skipped: skippedTracker,
-    });
-    const bindings = await collectBindingEntries({
-      plan,
-      source,
-      worker,
-      outDir: bindingsDir,
-      nodeWidth,
-      skipped: skippedTracker,
-    });
-    const clusters = await collectClusterEntries({
-      plan,
-      source,
-      worker,
-      outDir: clustersDir,
-      nodeWidth,
-      skipped: skippedTracker,
-    });
-    const manifest: WorkbenchManifest = {
-      source: { file: options.file, bytes: options.bytes },
-      renames,
-      bindings,
-      clusters,
-    };
-    await writeFile(join(outDir, "index.json"), JSON.stringify(manifest, null, 2));
-    return {
-      manifest,
-      skippedRenames: skippedTracker.renames,
-      skippedBindings: skippedTracker.bindings,
-      skippedClusterMembers: skippedTracker.clusterMembers,
-    };
+    const clusters = await collectClusters(inventory.subtreeClusters, worker, join(outDir, "clusters"), memberWidth, skipped);
+    const palette = await collectPalette(source, inventory.palette, worker, join(outDir, "palette"), memberWidth, skipped);
+    const typography = collectTypography(inventory.typography, join(outDir, "typography"), sampleWidth);
+    return { clusters, palette, typography, skipped };
   } finally {
     await worker.close();
   }
@@ -121,297 +101,268 @@ async function ensureDir(path: string): Promise<void> {
 }
 
 // ============================================================================
-// Renames
+// Clusters
 // ============================================================================
 
-type CollectRenameArgs = {
-  readonly plan: RefinePlan;
-  readonly source: RefineSource;
-  readonly worker: WorkerClient;
-  readonly outDir: string;
-  readonly contextWidth: number;
-  readonly nodeWidth: number;
-  readonly skipped: { renames: number; bindings: number; clusterMembers: number };
-};
-
-async function collectRenameEntries(args: CollectRenameArgs): Promise<readonly RenameWorkbenchEntry[]> {
-  const { plan, source, worker, outDir, contextWidth, nodeWidth, skipped } = args;
-  const out: RenameWorkbenchEntry[] = [];
-  for (const action of plan.renames) {
-    const node = source.nodesByGuid.get(action.nodeGuid);
-    if (!node) {
-      skipped.renames = skipped.renames + 1;
-      continue;
+async function collectClusters(
+  clusters: readonly SubtreeClusterEntry[],
+  worker: WorkerClient,
+  outDir: string,
+  memberWidth: number,
+  skipped: { renderFailures: number },
+): Promise<readonly ClusterManifestEntry[]> {
+  const out: ClusterManifestEntry[] = [];
+  for (const cluster of clusters) {
+    const dir = join(outDir, safeFsName(cluster.clusterId));
+    const memberDir = join(dir, "members");
+    await ensureDir(memberDir);
+    const memberRenders: { nodeGuid: string; nodeName: string; png: string }[] = [];
+    for (let i = 0; i < cluster.members.length; i = i + 1) {
+      const m = cluster.members[i];
+      if (!m) {
+        continue;
+      }
+      const file = join(memberDir, `${i}.png`);
+      const result = await worker.render({ nodeGuid: m.nodeGuid, maxWidth: memberWidth, outPath: file });
+      if (result.kind === "ok") {
+        memberRenders.push({ nodeGuid: m.nodeGuid, nodeName: m.nodeName, png: result.outPath });
+      } else {
+        skipped.renderFailures = skipped.renderFailures + 1;
+      }
     }
-    const ancestor = pickRenderableAncestor(node, source);
-    const slug = action.nodeGuid.replace(/[^A-Za-z0-9]+/g, "_");
-    const dir = join(outDir, slug);
-    await ensureDir(dir);
-    const nodeResult = await worker.render({ nodeGuid: action.nodeGuid, maxWidth: nodeWidth, outPath: join(dir, "node.png") });
-    const ancestorGuid = ancestor ? guidToString(ancestor.guid) : action.nodeGuid;
-    const contextResult = await worker.render({ nodeGuid: ancestorGuid, maxWidth: contextWidth, outPath: join(dir, "context.png") });
-    if (nodeResult.kind === "failed" && contextResult.kind === "failed") {
-      skipped.renames = skipped.renames + 1;
-      continue;
-    }
+    const contactPath = join(dir, "contact-sheet.png");
+    const contactSheetPng = renderContactSheet(memberRenders, contactPath);
+    await writeContactSheet(memberRenders, contactPath);
     out.push({
-      nodeGuid: action.nodeGuid,
-      currentName: action.oldName,
-      suggestedName: action.newName,
-      reason: action.reason,
-      nodePng: nodeResult.kind === "ok" ? nodeResult.outPath : "",
-      contextPng: contextResult.kind === "ok" ? contextResult.outPath : "",
-      ancestorNames: collectAncestorNames(node, source),
-      dominantText: findDominantText(node),
+      clusterId: cluster.clusterId,
+      roleSignature: cluster.roleSignature,
+      memberCount: cluster.members.length,
+      sizeClass: cluster.sizeClass,
+      contactSheetPng,
+      members: memberRenders,
     });
   }
   return out;
 }
 
-function pickRenderableAncestor(node: FigNode, source: RefineSource): FigNode | undefined {
-  const lineage = findLineage(node, source.topFrames);
-  // Walk back up to a frame ancestor at most ~4 levels — closer than
-  // the page surface but bigger than the node alone.
-  if (lineage.length === 0) {
+function renderContactSheet(
+  members: readonly { readonly png: string }[],
+  outPath: string,
+): string {
+  if (members.length === 0) {
+    return "";
+  }
+  return outPath;
+}
+
+async function writeContactSheet(
+  members: readonly { readonly png: string }[],
+  outPath: string,
+): Promise<void> {
+  if (members.length === 0) {
+    return;
+  }
+  const cellW = 256;
+  const cellH = 192;
+  const cols = Math.min(6, Math.max(1, Math.ceil(Math.sqrt(members.length))));
+  const rows = Math.ceil(members.length / cols);
+  const totalW = cellW * cols;
+  const totalH = cellH * rows;
+  // Inline each member PNG as a base64 data URL — Resvg's image
+  // handling is reliable on data: URLs and avoids the file:// path
+  // resolution surprises that caused contact sheets to render blank.
+  const cellPromises = members.map(async (m, i) => {
+    const x = (i % cols) * cellW;
+    const y = Math.floor(i / cols) * cellH;
+    const buf = await readFileBytes(m.png);
+    const dataUrl = `data:image/png;base64,${buf.toString("base64")}`;
+    return `<image href="${dataUrl}" x="${x}" y="${y}" width="${cellW}" height="${cellH}" preserveAspectRatio="xMidYMid meet" />`;
+  });
+  const cells = (await Promise.all(cellPromises)).join("");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}"><rect width="${totalW}" height="${totalH}" fill="#f5f5f5"/>${cells}</svg>`;
+  const png = svgToPng(svg, totalW);
+  await writeFile(outPath, png);
+}
+
+async function readFileBytes(path: string): Promise<Buffer> {
+  return Buffer.from(await readFile(path));
+}
+
+// ============================================================================
+// Palette
+// ============================================================================
+
+async function collectPalette(
+  source: RefineSource,
+  palette: readonly PaletteEntry[],
+  worker: WorkerClient,
+  outDir: string,
+  memberWidth: number,
+  skipped: { renderFailures: number },
+): Promise<readonly PaletteManifestEntry[]> {
+  const out: PaletteManifestEntry[] = [];
+  for (const entry of palette) {
+    const slug = safeFsName(entry.key.replace(/[^A-Za-z0-9]+/g, "_"));
+    const dir = join(outDir, slug);
+    await ensureDir(dir);
+    const swatchPath = join(dir, "swatch.png");
+    await writeFile(swatchPath, swatchPng(entry.hex));
+    // In-situ sample: pick the first eligible usage's smallest enclosing
+    // ancestor that we can render. Falls back to an empty string when
+    // nothing renders cleanly.
+    const samplePng = await renderInSituSampleIfAny(worker, source, entry, join(dir, "sample.png"), memberWidth, skipped);
+    out.push({
+      key: entry.key,
+      hex: entry.hex,
+      usageCount: entry.usages.length,
+      bindEligibleCount: entry.usages.filter((u) => u.bindEligible).length,
+      existingProxyName: entry.existingProxyName,
+      swatchPng: swatchPath,
+      samplePng,
+    });
+  }
+  return out;
+}
+
+async function renderInSituSampleIfAny(
+  worker: WorkerClient,
+  source: RefineSource,
+  entry: PaletteEntry,
+  outPath: string,
+  width: number,
+  skipped: { renderFailures: number },
+): Promise<string | undefined> {
+  const sampleNode = pickPaletteSampleNodeGuid(source, entry);
+  if (!sampleNode) {
     return undefined;
   }
-  const lastIndex = lineage.length - 1;
-  const target = lineage[Math.max(0, lastIndex - 2)];
-  return target;
+  return tryRenderPaletteSample(worker, sampleNode, outPath, width, skipped);
 }
 
-function collectAncestorNames(node: FigNode, source: RefineSource): readonly string[] {
-  const lineage = findLineage(node, source.topFrames);
-  return lineage.map((n) => n.name ?? "(unnamed)");
-}
-
-function findLineage(target: FigNode, roots: readonly FigNode[]): readonly FigNode[] {
-  const targetGuid = guidToString(target.guid);
-  for (const root of roots) {
-    const path = pathFromRoot(root, targetGuid, []);
-    if (path) {
-      return path;
-    }
+async function tryRenderPaletteSample(
+  worker: WorkerClient,
+  nodeGuid: string,
+  outPath: string,
+  width: number,
+  skipped: { renderFailures: number },
+): Promise<string | undefined> {
+  const result = await worker.render({ nodeGuid, maxWidth: width, outPath });
+  if (result.kind === "ok") {
+    return outPath;
   }
-  return [];
+  skipped.renderFailures = skipped.renderFailures + 1;
+  return undefined;
 }
 
-function pathFromRoot(node: FigNode, target: string, acc: readonly FigNode[]): readonly FigNode[] | undefined {
-  const next = [...acc, node];
-  if (guidToString(node.guid) === target) {
-    return next;
-  }
-  for (const child of safeChildren(node)) {
-    const found = pathFromRoot(child, target, next);
-    if (found) {
-      return found;
+function pickPaletteSampleNodeGuid(source: RefineSource, entry: PaletteEntry): string | undefined {
+  for (const u of entry.usages) {
+    const node = source.nodesByGuid.get(u.nodeGuid);
+    if (!node) {
+      continue;
     }
+    if (!node.size || node.size.x <= 0 || node.size.y <= 0) {
+      continue;
+    }
+    return u.nodeGuid;
   }
   return undefined;
 }
 
-function findDominantText(node: FigNode): string | undefined {
-  const out: { depth: number; text: string }[] = [];
-  walkText(node, 0, 4, out);
-  if (out.length === 0) {
-    return undefined;
-  }
-  out.sort((a, b) => {
-    if (a.depth !== b.depth) {
-      return a.depth - b.depth;
-    }
-    return b.text.length - a.text.length;
-  });
-  return out[0]?.text;
-}
-
-function walkText(node: FigNode, depth: number, maxDepth: number, out: { depth: number; text: string }[]): void {
-  if (depth > maxDepth) {
-    return;
-  }
-  if (getNodeType(node) === "TEXT") {
-    const chars = (node.characters ?? "").trim();
-    if (chars) {
-      out.push({ depth, text: chars });
-    }
-    return;
-  }
-  for (const child of safeChildren(node)) {
-    walkText(child, depth + 1, maxDepth, out);
-  }
+function swatchPng(hex: string): Uint8Array {
+  const sanitised = hex.replace(/[^#0-9a-fA-F]/g, "");
+  const fill = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(sanitised) ? sanitised : "#cccccc";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="160" viewBox="0 0 256 160"><rect width="256" height="160" fill="${fill}" stroke="#222" stroke-width="2"/></svg>`;
+  return svgToPng(svg, 256);
 }
 
 // ============================================================================
-// Bindings
+// Typography
 // ============================================================================
 
-type CollectBindingArgs = {
-  readonly plan: RefinePlan;
-  readonly source: RefineSource;
-  readonly worker: WorkerClient;
-  readonly outDir: string;
-  readonly nodeWidth: number;
-  readonly skipped: { renames: number; bindings: number; clusterMembers: number };
-};
-
-async function collectBindingEntries(args: CollectBindingArgs): Promise<readonly BindingWorkbenchEntry[]> {
-  const { plan, source, worker, outDir, nodeWidth, skipped } = args;
-  const out: BindingWorkbenchEntry[] = [];
-  for (const action of plan.fillStyleBindings) {
-    const node = source.nodesByGuid.get(action.nodeGuid);
-    if (!node) {
-      skipped.bindings = skipped.bindings + 1;
-      continue;
-    }
-    const slug = action.nodeGuid.replace(/[^A-Za-z0-9]+/g, "_");
+function collectTypography(
+  typography: readonly TypographyEntry[],
+  outDir: string,
+  sampleWidth: number,
+): readonly TypographyManifestEntry[] {
+  const out: TypographyManifestEntry[] = [];
+  for (const entry of typography) {
+    const slug = safeFsName(entry.key.replace(/[^A-Za-z0-9]+/g, "_"));
     const dir = join(outDir, slug);
-    await ensureDir(dir);
-    // After: same node — once bound, the renderer reads through the
-    // style registry. Since the proxy's paint already matches the
-    // current cached fill (by construction of the binding action),
-    // an "after" render is structurally identical to "before". We
-    // still write it so the agent can pixel-diff and confirm there's
-    // no regression. (When the proxy paint diverges from the cache,
-    // pixel-diff will surface that immediately.)
-    const beforeResult = await worker.render({ nodeGuid: action.nodeGuid, maxWidth: nodeWidth, outPath: join(dir, "before.png") });
-    const afterResult = await worker.render({ nodeGuid: action.nodeGuid, maxWidth: nodeWidth, outPath: join(dir, "after.png") });
-    if (beforeResult.kind === "failed" && afterResult.kind === "failed") {
-      skipped.bindings = skipped.bindings + 1;
-      continue;
+    // Sample is drawn synchronously via Resvg's native font support.
+    // The descriptor's font may not be installed on this OS — in
+    // that case Resvg substitutes silently and the agent reads the
+    // sample with the substitution baked in (which is honest, since
+    // any downstream render in this environment will substitute too).
+    const samplePath = join(dir, "sample.png");
+    const samplePng = renderTypographySample(entry, sampleWidth);
+    if (samplePng) {
+      mkdirSync(dir);
+      writeSync(samplePath, samplePng);
+      out.push({
+        key: entry.key,
+        fontFamily: entry.descriptor.fontFamily,
+        fontStyle: entry.descriptor.fontStyle,
+        fontSize: entry.descriptor.fontSize,
+        usageCount: entry.usages.length,
+        existingProxyName: entry.existingProxyName,
+        samplePng: samplePath,
+      });
+    } else {
+      out.push({
+        key: entry.key,
+        fontFamily: entry.descriptor.fontFamily,
+        fontStyle: entry.descriptor.fontStyle,
+        fontSize: entry.descriptor.fontSize,
+        usageCount: entry.usages.length,
+        existingProxyName: entry.existingProxyName,
+        samplePng: undefined,
+      });
     }
-    out.push({
-      nodeGuid: action.nodeGuid,
-      nodeName: action.nodeName,
-      proxyGuid: action.proxyGuid,
-      proxyName: action.proxyName,
-      colorHex: action.colorHex,
-      paintStack: summarisePaints(node.fillPaints),
-      beforePng: beforeResult.kind === "ok" ? beforeResult.outPath : "",
-      afterPng: afterResult.kind === "ok" ? afterResult.outPath : "",
-    });
   }
   return out;
 }
 
-function summarisePaints(paints: readonly FigPaint[] | undefined): readonly { readonly type: string; readonly summary: string }[] {
-  if (!paints) {
-    return [];
-  }
-  return paints.map((p) => {
-    if (p.type === "SOLID" && p.color) {
-      const c = p.color;
-      const hex = `#${[c.r, c.g, c.b].map((v) => Math.round(v * 255).toString(16).padStart(2, "0")).join("")}`;
-      const visible = p.visible === false ? " hidden" : "";
-      const opacity = typeof p.opacity === "number" && p.opacity < 1 ? ` opacity=${p.opacity.toFixed(2)}` : "";
-      return { type: "SOLID", summary: `${hex}${opacity}${visible}` };
-    }
-    if (p.type === "IMAGE") {
-      const ref = p.imageRef ?? "(no ref)";
-      return { type: "IMAGE", summary: `imageRef=${ref}` };
-    }
-    if (p.type.startsWith("GRADIENT_")) {
-      return { type: p.type, summary: "(gradient)" };
-    }
-    return { type: p.type, summary: "(other)" };
-  });
+function renderTypographySample(entry: TypographyEntry, width: number): Uint8Array | undefined {
+  const sample = entry.usages.find((u) => u.characterCount > 0)?.characters
+    ?? `${entry.descriptor.fontFamily} ${entry.descriptor.fontStyle} ${entry.descriptor.fontSize}px`;
+  // Modest height: one line at the given fontSize plus padding.
+  const fontSize = entry.descriptor.fontSize;
+  const padding = 16;
+  const height = Math.max(48, Math.round(fontSize * 1.5) + padding * 2);
+  const escaped = escapeXml(sample);
+  const family = escapeXml(entry.descriptor.fontFamily);
+  const style = entry.descriptor.fontStyle;
+  const weight = entry.descriptor.fontWeight;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+    + `<rect width="${width}" height="${height}" fill="#ffffff"/>`
+    + `<text x="${padding}" y="${padding + Math.round(fontSize)}" font-family="${family}" font-size="${fontSize}" font-weight="${weight}" font-style="${style.toLowerCase().includes("italic") ? "italic" : "normal"}" fill="#111">${escaped}</text>`
+    + `</svg>`;
+  return svgToPng(svg, width);
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 // ============================================================================
-// Clusters
+// IO helpers
 // ============================================================================
 
-type CollectClusterArgs = {
-  readonly plan: RefinePlan;
-  readonly source: RefineSource;
-  readonly worker: WorkerClient;
-  readonly outDir: string;
-  readonly nodeWidth: number;
-  readonly skipped: { renames: number; bindings: number; clusterMembers: number };
-};
-
-async function collectClusterEntries(args: CollectClusterArgs): Promise<readonly ClusterWorkbenchEntry[]> {
-  const { plan, source, worker, outDir, nodeWidth, skipped } = args;
-  const out: ClusterWorkbenchEntry[] = [];
-  for (const cluster of plan.componentCandidates) {
-    const dir = join(outDir, cluster.clusterId);
-    const memberDir = join(dir, "members");
-    await ensureDir(memberDir);
-    const members = await collectClusterMembers(cluster.memberGuids, source, worker, memberDir, nodeWidth, skipped);
-    const contactSheet = await renderContactSheet(members, join(dir, "contact-sheet.png"));
-    out.push({
-      clusterId: cluster.clusterId,
-      suggestedName: cluster.suggestedName,
-      roleSignature: cluster.roleSignature,
-      contactSheetPng: contactSheet,
-      members,
-    });
+/**
+ * Some cluster ids include the full role signature, which can run
+ * past 1000 characters. Filesystems on macOS / Linux cap component
+ * length at ~255 bytes, so we hash any long id and prefix with a
+ * short readable head taken from the original id (so directories
+ * still hint at the cluster type when scanned in `ls`).
+ */
+function safeFsName(id: string): string {
+  if (id.length <= 80) {
+    return id;
   }
-  return out;
+  const head = id.slice(0, 40);
+  const digest = createHash("sha1").update(id).digest("hex").slice(0, 12);
+  return `${head}__${digest}`;
 }
-
-async function collectClusterMembers(
-  guids: readonly string[],
-  source: RefineSource,
-  worker: WorkerClient,
-  dir: string,
-  nodeWidth: number,
-  skipped: { renames: number; bindings: number; clusterMembers: number },
-): Promise<readonly ClusterMemberEntry[]> {
-  const out: ClusterMemberEntry[] = [];
-  for (let i = 0; i < guids.length; i = i + 1) {
-    const guid = guids[i];
-    if (!guid) {
-      continue;
-    }
-    const node = source.nodesByGuid.get(guid);
-    if (!node) {
-      skipped.clusterMembers = skipped.clusterMembers + 1;
-      continue;
-    }
-    const file = join(dir, `${i}.png`);
-    const result = await worker.render({ nodeGuid: guid, maxWidth: nodeWidth, outPath: file });
-    if (result.kind === "failed") {
-      skipped.clusterMembers = skipped.clusterMembers + 1;
-      continue;
-    }
-    out.push({
-      nodeGuid: guid,
-      nodeName: node.name ?? "(unnamed)",
-      width: node.size?.x ?? 0,
-      height: node.size?.y ?? 0,
-      png: result.outPath,
-    });
-  }
-  return out;
-}
-
-async function renderContactSheet(members: readonly ClusterMemberEntry[], outPath: string): Promise<string> {
-  if (members.length === 0) {
-    return "";
-  }
-  // Compose an SVG that <image>s each member PNG into a grid. Resvg
-  // will rasterise the result. This avoids pulling in a separate
-  // image-composition library.
-  const cellW = 256;
-  const cellH = 192;
-  const cols = Math.min(6, Math.ceil(Math.sqrt(members.length)));
-  const rows = Math.ceil(members.length / cols);
-  const totalW = cellW * cols;
-  const totalH = cellH * rows;
-  const cells = members.map((m, i) => {
-    const x = (i % cols) * cellW;
-    const y = Math.floor(i / cols) * cellH;
-    return `<image href="file://${m.png}" x="${x}" y="${y}" width="${cellW}" height="${cellH}" preserveAspectRatio="xMidYMid meet" />`;
-  }).join("");
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}"><rect width="${totalW}" height="${totalH}" fill="#f5f5f5"/>${cells}</svg>`;
-  const png = svgToPng(svg, totalW);
-  await writeFile(outPath, png);
-  return outPath;
-}
-
-// ============================================================================
-// Contact sheet composition
-// ============================================================================
 
 function svgToPng(svg: string, width: number): Uint8Array {
   const resvg = new Resvg(svg, {
@@ -421,4 +372,12 @@ function svgToPng(svg: string, width: number): Uint8Array {
   });
   const png = resvg.render().asPng();
   return new Uint8Array(png.buffer, png.byteOffset, png.byteLength);
+}
+
+function mkdirSync(path: string): void {
+  fsMkdirSync(path, { recursive: true });
+}
+
+function writeSync(path: string, data: Uint8Array): void {
+  fsWriteFileSync(path, data);
 }

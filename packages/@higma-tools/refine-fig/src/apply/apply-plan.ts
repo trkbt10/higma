@@ -1,78 +1,153 @@
 /**
  * @file Apply a `RefinePlan` to a `LoadedFigFile`.
  *
- * Curate contract:
+ * Walks the plan in order. The only state shared across actions is
+ * the token table — proxy creation actions register the new GUID
+ * for their `token`, and bind actions resolve `{ kind: "token" }`
+ * proxy refs against it.
  *
- *   The agent reviews the visual workbench and edits the plan. Two
- *   simple flags drop a proposal:
- *
- *     - rename: set `suggestedName` to "" → drop. Otherwise the
- *       value (which the agent may relabel) is used verbatim.
- *
- *     - fill-style-bind: set `proxyGuid` to "" → drop. Relabeling the
- *       proxy is not supported — the proxy GUID is the address of an
- *       existing style node, not a free-text field.
- *
- *   Component candidates and text-style proposals are reported only
- *   in v1; nothing is applied for them, so editing them has no effect.
- *
- * v1 mutation scope:
- *
- *   - rename                — set the node's `name`.
- *   - fill-style-bind       — set the node's `styleIdForFill = { guid }`,
- *                             pointing at an existing FILL-style proxy.
- *                             The inline `fillPaints` cache is left in
- *                             place so older Figma renderers still see
- *                             the colour (Figma itself caches like this).
- *
- * Mutation goes through `patchNodeChange` — the only blessed entry-point
- * for editing `LoadedFigFile.nodeChanges`. Apply does no structural
- * casting on `FigNode`; the type-safe surface is the patch object.
- *
- * Safety invariants (paint-stack eligibility, proxy GUID match) are
- * the analyser's responsibility (see `bindablePaintsFor` in
- * `analysis/palette.ts`). Apply trusts the curated plan and applies
- * patches as-is — re-checking here would be a duplicate SoT.
+ * Apply does no policy. It refuses unknown action kinds and reports
+ * skipped actions with a structured reason. Safety invariants
+ * (paint stack eligibility, leaf-icon-only) are the plan layer's
+ * responsibility — re-checking here would duplicate the SoT.
  */
-import type { FigNode, FigStyleId } from "@higma-document-models/fig/types";
-import { patchNodeChange } from "@higma-document-io/fig/roundtrip";
 import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
-import { guidToString } from "@higma-document-models/fig/domain";
-import type { RefinePlan } from "../plan/types";
+import { createGuidAllocator, patchNodeChange } from "@higma-document-io/fig/roundtrip";
+import { synthesiseFillProxy, synthesiseTextProxy } from "../proxies";
+import { promoteIconCluster } from "../componentize";
+import type {
+  PlanAction,
+  ActionCreateFillProxy,
+  ActionCreateTextProxy,
+  ActionBindFillStyle,
+  ActionBindTextStyle,
+  ActionPromoteIconCluster,
+  ActionRename,
+  ProxyRef,
+  RefinePlan,
+} from "../plan";
 
 export type ApplyResult = {
+  readonly fillProxiesCreated: number;
+  readonly textProxiesCreated: number;
+  readonly fillBound: number;
+  readonly textBound: number;
+  readonly clustersPromoted: number;
+  readonly instancesRewritten: number;
   readonly renamed: number;
-  readonly bound: number;
-  readonly skippedRenames: readonly SkippedAction[];
-  readonly skippedBindings: readonly SkippedAction[];
+  readonly skipped: readonly { readonly action: PlanAction; readonly reason: string }[];
 };
 
-export type SkippedAction = {
-  readonly nodeGuid: string;
-  readonly reason: string;
+export type ApplyContext = {
+  readonly internalCanvasGuid: string;
+  /** GUID of any existing FILL-style proxy in the file, used as a template. */
+  readonly fillTemplateGuid: string | undefined;
+  /** GUID of any existing TEXT-style proxy in the file, used as a template. */
+  readonly textTemplateGuid: string | undefined;
 };
 
-/** Apply the v1 subset of a plan to a loaded file. Mutates `loaded.nodeChanges`. */
-export function applyPlan(loaded: LoadedFigFile, plan: RefinePlan): ApplyResult {
-  const byGuid = indexLoadedNodes(loaded);
-  const renameOutcome = applyRenames(loaded, plan, byGuid);
-  const bindOutcome = applyBindings(loaded, plan, byGuid);
-  return {
-    renamed: renameOutcome.applied,
-    bound: bindOutcome.applied,
-    skippedRenames: renameOutcome.skipped,
-    skippedBindings: bindOutcome.skipped,
+/** Apply every action in plan order, mutating `loaded.nodeChanges`. */
+export function applyPlan(loaded: LoadedFigFile, plan: RefinePlan, ctx: ApplyContext): ApplyResult {
+  const allocator = createGuidAllocator(loaded);
+  const tokens = new Map<string, string>();
+  const skipped: { action: PlanAction; reason: string }[] = [];
+  const counts = {
+    fillProxiesCreated: 0,
+    textProxiesCreated: 0,
+    fillBound: 0,
+    textBound: 0,
+    clustersPromoted: 0,
+    instancesRewritten: 0,
+    renamed: 0,
   };
-}
 
-function indexLoadedNodes(loaded: LoadedFigFile): ReadonlyMap<string, FigNode> {
-  const out = new Map<string, FigNode>();
-  for (const node of loaded.nodeChanges) {
-    if (node.guid) {
-      out.set(guidToString(node.guid), node);
+  for (const action of plan.actions) {
+    if (action.kind === "create-fill-proxy") {
+      applyCreateFill(action, loaded, ctx, allocator, tokens, counts, skipped);
+      continue;
+    }
+    if (action.kind === "create-text-proxy") {
+      applyCreateText(action, loaded, ctx, allocator, tokens, counts, skipped);
+      continue;
+    }
+    if (action.kind === "bind-fill-style") {
+      applyBindFill(action, loaded, tokens, counts, skipped);
+      continue;
+    }
+    if (action.kind === "bind-text-style") {
+      applyBindText(action, loaded, tokens, counts, skipped);
+      continue;
+    }
+    if (action.kind === "promote-icon-cluster") {
+      applyPromote(action, loaded, counts, skipped);
+      continue;
+    }
+    if (action.kind === "rename") {
+      applyRename(action, loaded, counts, skipped);
+      continue;
     }
   }
-  return out;
+  return { ...counts, skipped };
+}
+
+function applyCreateFill(
+  action: ActionCreateFillProxy,
+  loaded: LoadedFigFile,
+  ctx: ApplyContext,
+  allocator: ReturnType<typeof createGuidAllocator>,
+  tokens: Map<string, string>,
+  counts: { fillProxiesCreated: number },
+  skipped: { action: PlanAction; reason: string }[],
+): void {
+  if (!ctx.fillTemplateGuid) {
+    skipped.push({ action, reason: "no FILL-style proxy template available in this file" });
+    return;
+  }
+  const created = synthesiseFillProxy({
+    loaded,
+    internalCanvasGuid: ctx.internalCanvasGuid,
+    templateProxyGuid: ctx.fillTemplateGuid,
+    allocator,
+    name: action.name,
+    color: action.color,
+  });
+  tokens.set(action.token, created.guid);
+  counts.fillProxiesCreated = counts.fillProxiesCreated + 1;
+}
+
+function applyCreateText(
+  action: ActionCreateTextProxy,
+  loaded: LoadedFigFile,
+  ctx: ApplyContext,
+  allocator: ReturnType<typeof createGuidAllocator>,
+  tokens: Map<string, string>,
+  counts: { textProxiesCreated: number },
+  skipped: { action: PlanAction; reason: string }[],
+): void {
+  if (!ctx.textTemplateGuid) {
+    skipped.push({ action, reason: "no TEXT-style proxy template available in this file" });
+    return;
+  }
+  const created = synthesiseTextProxy({
+    loaded,
+    internalCanvasGuid: ctx.internalCanvasGuid,
+    templateProxyGuid: ctx.textTemplateGuid,
+    allocator,
+    name: action.name,
+    descriptor: {
+      fontName: { family: action.fontFamily, style: action.fontStyle, postscript: "" },
+      fontSize: action.fontSize,
+    },
+  });
+  tokens.set(action.token, created.guid);
+  counts.textProxiesCreated = counts.textProxiesCreated + 1;
+}
+
+function resolveProxy(ref: ProxyRef, tokens: ReadonlyMap<string, string>): string | undefined {
+  if (ref.kind === "existing") {
+    return ref.guid;
+  }
+  return tokens.get(ref.token);
 }
 
 function parseGuidString(s: string): { sessionID: number; localID: number } {
@@ -88,68 +163,86 @@ function parseGuidString(s: string): { sessionID: number; localID: number } {
   return { sessionID, localID };
 }
 
-type ActionOutcome = {
-  readonly applied: number;
-  readonly skipped: readonly SkippedAction[];
-};
-
-function applyRenames(
+function applyBindFill(
+  action: ActionBindFillStyle,
   loaded: LoadedFigFile,
-  plan: RefinePlan,
-  byGuid: ReadonlyMap<string, FigNode>,
-): ActionOutcome {
-  const init: { applied: number; skipped: SkippedAction[] } = { applied: 0, skipped: [] };
-  return plan.renames.reduce<ActionOutcome>((acc, action) => {
-    const trimmed = (action.newName ?? "").trim();
-    if (trimmed === "") {
-      return appendSkip(acc, action.nodeGuid, "dropped by curator (empty newName)");
-    }
-    const node = byGuid.get(action.nodeGuid);
-    if (!node) {
-      return appendSkip(acc, action.nodeGuid, "node not in nodeChanges");
-    }
-    if (node.name !== action.oldName) {
-      return appendSkip(
-        acc,
-        action.nodeGuid,
-        `name drifted: expected "${action.oldName}", saw "${node.name ?? "(unset)"}"`,
-      );
-    }
-    const updated = patchNodeChange(loaded, action.nodeGuid, { name: trimmed });
-    if (!updated) {
-      return appendSkip(acc, action.nodeGuid, "patchNodeChange could not match guid");
-    }
-    return { applied: acc.applied + 1, skipped: acc.skipped };
-  }, init);
+  tokens: ReadonlyMap<string, string>,
+  counts: { fillBound: number },
+  skipped: { action: PlanAction; reason: string }[],
+): void {
+  const proxyGuid = resolveProxy(action.proxy, tokens);
+  if (!proxyGuid) {
+    skipped.push({ action, reason: "proxy token did not resolve" });
+    return;
+  }
+  const ok = patchNodeChange(loaded, action.nodeGuid, {
+    styleIdForFill: { guid: parseGuidString(proxyGuid) },
+  });
+  if (!ok) {
+    skipped.push({ action, reason: "node not in nodeChanges" });
+    return;
+  }
+  counts.fillBound = counts.fillBound + 1;
 }
 
-function applyBindings(
+function applyBindText(
+  action: ActionBindTextStyle,
   loaded: LoadedFigFile,
-  plan: RefinePlan,
-  byGuid: ReadonlyMap<string, FigNode>,
-): ActionOutcome {
-  const init: { applied: number; skipped: SkippedAction[] } = { applied: 0, skipped: [] };
-  return plan.fillStyleBindings.reduce<ActionOutcome>((acc, action) => {
-    const trimmedProxy = (action.proxyGuid ?? "").trim();
-    if (trimmedProxy === "") {
-      return appendSkip(acc, action.nodeGuid, "dropped by curator (empty proxyGuid)");
-    }
-    if (!byGuid.has(action.nodeGuid)) {
-      return appendSkip(acc, action.nodeGuid, "node not in nodeChanges");
-    }
-    const styleIdForFill: FigStyleId = { guid: parseGuidString(trimmedProxy) };
-    const updated = patchNodeChange(loaded, action.nodeGuid, { styleIdForFill });
-    if (!updated) {
-      return appendSkip(acc, action.nodeGuid, "patchNodeChange could not match guid");
-    }
-    return { applied: acc.applied + 1, skipped: acc.skipped };
-  }, init);
+  tokens: ReadonlyMap<string, string>,
+  counts: { textBound: number },
+  skipped: { action: PlanAction; reason: string }[],
+): void {
+  const proxyGuid = resolveProxy(action.proxy, tokens);
+  if (!proxyGuid) {
+    skipped.push({ action, reason: "proxy token did not resolve" });
+    return;
+  }
+  const ok = patchNodeChange(loaded, action.nodeGuid, {
+    textStyleId: parseGuidString(proxyGuid),
+  });
+  if (!ok) {
+    skipped.push({ action, reason: "node not in nodeChanges" });
+    return;
+  }
+  counts.textBound = counts.textBound + 1;
 }
 
-function appendSkip(
-  acc: { readonly applied: number; readonly skipped: readonly SkippedAction[] },
-  nodeGuid: string,
-  reason: string,
-): ActionOutcome {
-  return { applied: acc.applied, skipped: [...acc.skipped, { nodeGuid, reason }] };
+function applyPromote(
+  action: ActionPromoteIconCluster,
+  loaded: LoadedFigFile,
+  counts: { clustersPromoted: number; instancesRewritten: number },
+  skipped: { action: PlanAction; reason: string }[],
+): void {
+  try {
+    const result = promoteIconCluster({
+      loaded,
+      clusterName: action.clusterName,
+      memberGuids: action.memberGuids,
+      exemplarGuid: action.exemplarGuid,
+    });
+    counts.clustersPromoted = counts.clustersPromoted + 1;
+    counts.instancesRewritten = counts.instancesRewritten + result.instanceGuids.length;
+  } catch (err) {
+    skipped.push({ action, reason: err instanceof Error ? err.message : String(err) });
+  }
 }
+
+function applyRename(
+  action: ActionRename,
+  loaded: LoadedFigFile,
+  counts: { renamed: number },
+  skipped: { action: PlanAction; reason: string }[],
+): void {
+  const trimmed = action.newName.trim();
+  if (!trimmed) {
+    skipped.push({ action, reason: "empty newName" });
+    return;
+  }
+  const ok = patchNodeChange(loaded, action.nodeGuid, { name: trimmed });
+  if (!ok) {
+    skipped.push({ action, reason: "node not in nodeChanges" });
+    return;
+  }
+  counts.renamed = counts.renamed + 1;
+}
+

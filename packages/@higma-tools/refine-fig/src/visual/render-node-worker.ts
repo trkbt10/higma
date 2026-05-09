@@ -128,7 +128,10 @@ async function handleRequest(
     fontLoader: ctx.fontLoader,
   });
   const svg = String(result.svg);
-  const fitWidth = Math.max(1, Math.min(req.maxWidth, Math.round(node.size.x)));
+  // Always raster at the requested width regardless of native size.
+  // Workbench cells need visible images; downscaling-only behaviour
+  // produced 19×19 PNGs that vanished inside the contact sheet.
+  const fitWidth = Math.max(1, req.maxWidth);
   const resvg = new Resvg(svg, {
     fitTo: { mode: "width", value: fitWidth },
     background: "transparent",

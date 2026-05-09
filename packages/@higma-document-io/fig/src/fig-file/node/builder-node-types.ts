@@ -170,7 +170,7 @@ export type BuilderNode = {
   stackPrimaryAlignItems?: KiwiEnum;
   stackCounterAlignItems?: KiwiEnum;
   stackPrimaryAlignContent?: KiwiEnum;
-  stackWrap?: boolean;
+  stackWrap?: KiwiEnum;
   stackCounterSpacing?: number;
   itemReverseZIndex?: boolean;
 

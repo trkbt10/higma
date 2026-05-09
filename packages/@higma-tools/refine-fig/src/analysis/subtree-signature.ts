@@ -157,6 +157,18 @@ function isButtonBgCandidate(node: FigNode): boolean {
   return true;
 }
 
+function isHorizontalShape(node: FigNode): boolean {
+  const sz = node.size;
+  if (!sz) {
+    return false;
+  }
+  if (sz.x <= 0 || sz.y <= 0) {
+    return false;
+  }
+  // 4:1 or wider — the frame is materially "long horizontally".
+  return sz.x / sz.y >= 4;
+}
+
 /** Coarse role hint based on geometry + child kinds. */
 export function roleHintFor(node: FigNode): NodeRoleHint {
   const t = getNodeType(node);
@@ -181,7 +193,18 @@ export function roleHintFor(node: FigNode): NodeRoleHint {
   }
   if (t === "FRAME" || t === "GROUP") {
     const kids = safeChildren(node);
+    // A "row" is *any* frame whose layout is dominantly horizontal:
+    // either by child count (≥ 3 children) or by aspect ratio (a
+    // long thin frame with at least 2 children is typically a
+    // toolbar / header / list-item row even when it only carries a
+    // logo on the left and an icon cluster on the right). Without
+    // the aspect-ratio rule, header-style frames misclassify as
+    // "container" and the naming pipeline ends up borrowing whatever
+    // text happens to live inside, which is rarely the frame's role.
     if (kids.length >= 3) {
+      return "row";
+    }
+    if (kids.length >= 2 && isHorizontalShape(node)) {
       return "row";
     }
     if (kids.length >= 1) {

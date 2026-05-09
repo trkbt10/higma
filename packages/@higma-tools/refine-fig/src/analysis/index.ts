@@ -9,5 +9,3 @@ export { structuralSignature, roleSignature, roleHintFor } from "./subtree-signa
 export type { NodeRoleHint } from "./subtree-signature";
 export { detectDuplicates } from "./duplicate-clusters";
 export type { DuplicateAnalysis, DuplicateCluster, DuplicateMember, UnrenderableNote } from "./duplicate-clusters";
-export { proposeRenames } from "./naming";
-export type { RenameProposal } from "./naming";
