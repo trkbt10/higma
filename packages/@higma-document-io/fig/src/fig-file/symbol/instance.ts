@@ -8,10 +8,12 @@ import type { InstanceNodeData } from "./types";
 import {
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
+  STACK_COUNTER_ALIGN_VALUES,
   CONSTRAINT_TYPE_VALUES,
   toEnumValue,
   type StackPositioning,
   type StackSizing,
+  type StackCounterAlign,
   type ConstraintType,
 } from "@higma-document-models/fig/constants";
 
@@ -51,6 +53,14 @@ export type InstanceNodeBuilder = {
   positioning: (mode: StackPositioning) => InstanceNodeBuilder;
   primarySizing: (sizing: StackSizing) => InstanceNodeBuilder;
   counterSizing: (sizing: StackSizing) => InstanceNodeBuilder;
+  /**
+   * Override the auto-layout counter-axis alignment for this INSTANCE
+   * within its parent's auto-layout. STRETCH makes the INSTANCE fill
+   * the parent's counter dimension — required for the responsive
+   * page-component pattern where the wrapper FRAME's width drives
+   * the SYMBOL's text re-flow.
+   */
+  childAlignSelf: (align: StackCounterAlign) => InstanceNodeBuilder;
   horizontalConstraint: (constraint: ConstraintType) => InstanceNodeBuilder;
   verticalConstraint: (constraint: ConstraintType) => InstanceNodeBuilder;
   build: () => InstanceNodeData;
@@ -71,6 +81,7 @@ type InstanceBuilderState = {
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildAlignSelf: StackCounterAlign | undefined;
   horizontalConstraint: ConstraintType | undefined;
   verticalConstraint: ConstraintType | undefined;
 };
@@ -92,6 +103,7 @@ function createInstanceNodeBuilder(localID: number, parentID: number, symbolID: 
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildAlignSelf: undefined,
     horizontalConstraint: undefined,
     verticalConstraint: undefined,
   };
@@ -111,6 +123,7 @@ function createInstanceNodeBuilder(localID: number, parentID: number, symbolID: 
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
     primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
     counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    childAlignSelf(align: StackCounterAlign) { state.stackChildAlignSelf = align; return builder; },
     horizontalConstraint(constraint: ConstraintType) { state.horizontalConstraint = constraint; return builder; },
     verticalConstraint(constraint: ConstraintType) { state.verticalConstraint = constraint; return builder; },
 
@@ -130,6 +143,7 @@ function createInstanceNodeBuilder(localID: number, parentID: number, symbolID: 
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildAlignSelf: toEnumValue(state.stackChildAlignSelf, STACK_COUNTER_ALIGN_VALUES),
         horizontalConstraint: toEnumValue(state.horizontalConstraint, CONSTRAINT_TYPE_VALUES),
         verticalConstraint: toEnumValue(state.verticalConstraint, CONSTRAINT_TYPE_VALUES),
       };

@@ -11,6 +11,13 @@ export const SYSTEM_UI_STACK = [
   "system-ui",
   "-apple-system",
   "BlinkMacSystemFont",
+  // macOS's `system-ui` resolves to SFNS.ttf, but that file is a
+  // variable font: opentype.js exposes only its default-axis (Regular)
+  // instance, so weight 700 renders identically to weight 400. Putting
+  // the SFNS-derived families ahead of `Helvetica Neue` would defeat
+  // every Bold heading. Until variable-font axis instancing lands in
+  // the loader, prefer `Helvetica Neue` (.ttc with proper Bold variant)
+  // and only fall back to SFNS when nothing better is installed.
   "Segoe UI",
   "Roboto",
   "Helvetica Neue",

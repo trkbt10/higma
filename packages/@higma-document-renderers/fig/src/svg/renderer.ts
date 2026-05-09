@@ -132,16 +132,26 @@ export type FigSvgRenderOptions = {
  * per-character override entry. Dedupe via the canonical `fontQueryKey`
  * so the preload set, the resolver lookups, and the cache all agree.
  */
-function collectTextFontQueries(nodes: readonly FigDesignNode[]): readonly FontQuery[] {
+function collectTextFontQueries(
+  nodes: readonly FigDesignNode[],
+  symbolMap?: ReadonlyMap<string, FigDesignNode>,
+): readonly FontQuery[] {
   const queries: FontQuery[] = [];
   const seen = new Set<string>();
+  const visitedSymbols = new Set<string>();
   for (const node of nodes) {
-    collectNodeTextFontQueries(node, queries, seen);
+    collectNodeTextFontQueries(node, queries, seen, symbolMap, visitedSymbols);
   }
   return queries;
 }
 
-function collectNodeTextFontQueries(node: FigDesignNode, queries: FontQuery[], seen: Set<string>): void {
+function collectNodeTextFontQueries(
+  node: FigDesignNode,
+  queries: FontQuery[],
+  seen: Set<string>,
+  symbolMap?: ReadonlyMap<string, FigDesignNode>,
+  visitedSymbols?: Set<string>,
+): void {
   if (node.type === "TEXT") {
     const props = extractTextProps(node);
     if (props.characters.length > 0) {
@@ -154,12 +164,28 @@ function collectNodeTextFontQueries(node: FigDesignNode, queries: FontQuery[], s
       }
     }
   }
+  // INSTANCE nodes draw their content from the SYMBOL they reference.
+  // Without resolving the symbolId here the preload set misses every
+  // TEXT child living inside a SYMBOL definition — the resolver then
+  // throws "not preloaded" once the scene-graph builder pulls those
+  // children into the rendered tree. Visit the SYMBOL's children too,
+  // de-duped by symbolId so cyclic / repeated INSTANCEs don't loop.
+  if (node.type === "INSTANCE" && symbolMap && visitedSymbols) {
+    const symbolId = node.symbolId;
+    if (symbolId !== undefined && !visitedSymbols.has(symbolId)) {
+      visitedSymbols.add(symbolId);
+      const symbol = symbolMap.get(symbolId);
+      if (symbol !== undefined) {
+        collectNodeTextFontQueries(symbol, queries, seen, symbolMap, visitedSymbols);
+      }
+    }
+  }
   const children = node.children;
   if (children === undefined) {
     return;
   }
   for (const child of children) {
-    collectNodeTextFontQueries(child, queries, seen);
+    collectNodeTextFontQueries(child, queries, seen, symbolMap, visitedSymbols);
   }
 }
 
@@ -175,11 +201,12 @@ function pushFontQuery(queries: FontQuery[], seen: Set<string>, query: FontQuery
 async function createPreloadedTextFontResolver(
   nodes: readonly FigDesignNode[],
   fontLoader: FontLoader | undefined,
+  symbolMap?: ReadonlyMap<string, FigDesignNode>,
 ): Promise<TextFontResolver | undefined> {
   if (fontLoader === undefined) {
     return undefined;
   }
-  const queries = collectTextFontQueries(nodes);
+  const queries = collectTextFontQueries(nodes, symbolMap);
   const cache = new Map<string, LoadedFont>();
   for (const query of queries) {
     const loaded = await fontLoader.loadFont(query);
@@ -282,7 +309,7 @@ export async function renderFigToSvg(
     }
     return designNodes;
   })();
-  const textFontResolver = await createPreloadedTextFontResolver(normalizedNodes, options.fontLoader);
+  const textFontResolver = await createPreloadedTextFontResolver(normalizedNodes, options.fontLoader, mergedSymbolMap);
 
   const sceneGraph = buildSceneGraph(normalizedNodes, {
     blobs,

@@ -18,6 +18,14 @@ const ZERO_SUBSTITUTE_RENDERING_DIRS: readonly string[] = [
 
 const ALLOWED_EXCEPTION_FILES = new Set([
   "src/scene-graph/boolean-operation.ts",
+  // Indexing the system-font catalogue is a multi-file batch where
+  // one unreadable file (corrupt cmap, exotic kern subtable, missing
+  // decoder) must NOT abort the rest of the scan. The catch in
+  // node-loader drops a single offending file from the index —
+  // callers asking for that family still get `undefined` so the
+  // failure remains observable at the loadFont call site, just not
+  // at indexing time.
+  "src/font-drivers/node/node-loader.ts",
   "spec/renderer/webgl/comparison.spec.ts",
   "spec/renderer/webgl/harness/main.ts",
 ]);

@@ -1,0 +1,32 @@
+/**
+ * @file Public IR types — the contract between fig-to-web and web-to-fig.
+ */
+export type {
+  AssetIR,
+  AutoLayoutIR,
+  AxisSizingIR,
+  BlurEffectIR,
+  BoxIR,
+  ChildSizingIR,
+  ColorIR,
+  EffectIR,
+  FrameNodeIR,
+  GradientStopIR,
+  ImagePaintIR,
+  LinearGradientPaintIR,
+  MultiViewportIR,
+  NodeBaseIR,
+  NodeIR,
+  PaintIR,
+  RectNodeIR,
+  ShadowEffectIR,
+  SolidPaintIR,
+  StrokeAlignIR,
+  StrokeIR,
+  StyleIR,
+  TextNodeIR,
+  TextRunIR,
+  TextStyleIR,
+  VectorNodeIR,
+  ViewportIR,
+} from "./types";

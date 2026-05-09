@@ -12,6 +12,8 @@ import {
   TEXT_DECORATION_VALUES,
   TEXT_CASE_VALUES,
   NUMBER_UNITS_VALUES,
+  STACK_ALIGN_VALUES,
+  STACK_COUNTER_ALIGN_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
   toEnumValue,
@@ -21,6 +23,8 @@ import {
   type TextDecoration,
   type TextCase,
   type NumberUnits,
+  type StackAlign,
+  type StackCounterAlign,
   type StackPositioning,
   type StackSizing,
 } from "@higma-document-models/fig/constants";
@@ -69,6 +73,7 @@ export type TextNodeBuilder = {
   positioning: (mode: StackPositioning) => TextNodeBuilder;
   primarySizing: (sizing: StackSizing) => TextNodeBuilder;
   counterSizing: (sizing: StackSizing) => TextNodeBuilder;
+  childAlignSelf: (align: StackCounterAlign) => TextNodeBuilder;
   visible: (v: boolean) => TextNodeBuilder;
   opacity: (o: number) => TextNodeBuilder;
   derivedTextData: (data: DerivedTextNodeData) => TextNodeBuilder;
@@ -97,6 +102,7 @@ type TextBuilderState = {
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildAlignSelf: StackCounterAlign | undefined;
   visible: boolean;
   opacity: number;
   derivedTextData: DerivedTextNodeData | undefined;
@@ -126,6 +132,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildAlignSelf: undefined,
     visible: true,
     opacity: 1,
     derivedTextData: undefined,
@@ -150,6 +157,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
     primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
     counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    childAlignSelf(align: StackCounterAlign) { state.stackChildAlignSelf = align; return builder; },
     visible(v: boolean) { state.visible = v; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
     derivedTextData(data: DerivedTextNodeData) { state.derivedTextData = data; return builder; },
@@ -195,6 +203,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildAlignSelf: toEnumValue(state.stackChildAlignSelf, STACK_COUNTER_ALIGN_VALUES),
       };
     },
   };

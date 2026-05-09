@@ -73,17 +73,22 @@ describe("FrameNodeBuilder", () => {
     });
 
     it("creates vertical auto-layout frame", () => {
+      // `stackCounterAlignItems` is encoded as the Figma `StackAlign`
+      // enum, which does not include STRETCH (that lives on
+      // `StackCounterAlign` for `stackChildAlignSelf`). The legal
+      // parent-level values are MIN / CENTER / MAX / BASELINE — pick
+      // CENTER here as a representative non-default alignment.
       const node = frameNode(1, 0)
         .autoLayout("VERTICAL")
         .gap(16)
         .primaryAlign("CENTER")
-        .counterAlign("STRETCH")
+        .counterAlign("CENTER")
         .build();
 
       expect(node.stackMode).toEqual({ value: 2, name: "VERTICAL" });
       expect(node.stackSpacing).toBe(16);
       expect(node.stackPrimaryAlignItems).toEqual({ value: 1, name: "CENTER" });
-      expect(node.stackCounterAlignItems).toEqual({ value: 3, name: "STRETCH" });
+      expect(node.stackCounterAlignItems).toEqual({ value: 1, name: "CENTER" });
     });
 
     it("sets uniform padding", () => {
@@ -129,19 +134,23 @@ describe("FrameNodeBuilder", () => {
     });
 
     it("creates wrap layout", () => {
+      // `stackPrimaryAlignContent` decodes against Figma's `StackAlign`
+      // enum (MIN / CENTER / MAX / BASELINE — no SPACE_BETWEEN). The
+      // wrap-mode content alignment is therefore one of those four;
+      // pick CENTER as the representative non-default value.
       const node = frameNode(1, 0)
         .autoLayout("WRAP")
         .wrap(true)
         .gap(8)
         .counterGap(12)
-        .contentAlign("SPACE_BETWEEN")
+        .contentAlign("CENTER")
         .build();
 
       expect(node.stackMode).toEqual({ value: 3, name: "WRAP" });
       expect(node.stackWrap).toBe(true);
       expect(node.stackSpacing).toBe(8);
       expect(node.stackCounterSpacing).toBe(12);
-      expect(node.stackPrimaryAlignContent).toEqual({ value: 5, name: "SPACE_BETWEEN" });
+      expect(node.stackPrimaryAlignContent).toEqual({ value: 1, name: "CENTER" });
     });
 
     it("sets reverse z-index", () => {

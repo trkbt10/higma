@@ -1,28 +1,17 @@
 /**
  * @file FigColor → CSS string conversion.
  *
- * Single SoT for the four-channel `(r,g,b,a)` projection that was
- * previously copy-pasted into svg.ts, paint.ts, effect.ts, color.ts
- * and the typography path. All copies were byte-identical; keeping
- * them aligned by hand was a SoT violation waiting to drift.
- *
- * Output rules:
- *   - alpha = 1 → `rgb(r, g, b)` (the readable form Figma authors
- *     expect to see in DevTools).
- *   - alpha < 1 → `rgba(r, g, b, a)` with alpha rounded to 3
- *     decimals so floating-point noise doesn't leak into emitted
- *     CSS.
+ * Thin wrapper over the bridge's `colorIRToCss`. FigColor and ColorIR
+ * are structurally identical (normalised RGBA in `[0,1]`), so this
+ * file owns just the type-narrowing wrapper that lets fig-to-web's
+ * existing call sites pass a `FigColor` without an explicit IR
+ * conversion. The encoding rules — alpha-1 emits `rgb(...)`, otherwise
+ * `rgba(...)` with 3-decimal alpha — live in the bridge.
  */
 import type { FigColor } from "@higma-document-models/fig/types";
-import { round3 } from "./numeric";
+import { colorIRToCss } from "@higma-bridges/web-fig/style";
 
 /** Convert a normalised `FigColor` (each channel in `[0, 1]`) to a CSS colour string. */
 export function figColorToCss(c: FigColor): string {
-  const r = Math.round(c.r * 255);
-  const g = Math.round(c.g * 255);
-  const b = Math.round(c.b * 255);
-  if (c.a === 1) {
-    return `rgb(${r}, ${g}, ${b})`;
-  }
-  return `rgba(${r}, ${g}, ${b}, ${round3(c.a)})`;
+  return colorIRToCss({ r: c.r, g: c.g, b: c.b, a: c.a });
 }

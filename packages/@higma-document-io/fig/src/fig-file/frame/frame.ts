@@ -13,12 +13,16 @@ import {
   SVG_ID_MODE_VALUES,
   STACK_MODE_VALUES,
   STACK_ALIGN_VALUES,
+  STACK_JUSTIFY_VALUES,
+  STACK_COUNTER_ALIGN_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
   CONSTRAINT_TYPE_VALUES,
   toEnumValue,
   type StackMode,
   type StackAlign,
+  type StackJustify,
+  type StackCounterAlign,
   type StackPositioning,
   type StackSizing,
   type ConstraintType,
@@ -71,6 +75,13 @@ export type FrameNodeBuilder = {
   position: (x: number, y: number) => FrameNodeBuilder;
   background: (c: Color) => FrameNodeBuilder;
   fill: (paint: Paint) => FrameNodeBuilder;
+  /**
+   * Drop the frame's fill stack entirely so it renders without a
+   * solid background. Useful for transparent web containers (the
+   * captured `<html>` / wrapping `<div>`s) where the default opaque
+   * white would otherwise paint over an ancestor's background.
+   */
+  noFill: () => FrameNodeBuilder;
   stroke: (color: Color) => FrameNodeBuilder;
   strokeWeight: (weight: number) => FrameNodeBuilder;
   opacity: (o: number) => FrameNodeBuilder;
@@ -80,7 +91,7 @@ export type FrameNodeBuilder = {
   autoLayout: (mode: StackMode) => FrameNodeBuilder;
   gap: (spacing: number) => FrameNodeBuilder;
   padding: (value: number | StackPadding) => FrameNodeBuilder;
-  primaryAlign: (align: StackAlign) => FrameNodeBuilder;
+  primaryAlign: (align: StackJustify) => FrameNodeBuilder;
   counterAlign: (align: StackAlign) => FrameNodeBuilder;
   contentAlign: (align: StackAlign) => FrameNodeBuilder;
   wrap: (enabled?: boolean) => FrameNodeBuilder;
@@ -89,6 +100,7 @@ export type FrameNodeBuilder = {
   positioning: (mode: StackPositioning) => FrameNodeBuilder;
   primarySizing: (sizing: StackSizing) => FrameNodeBuilder;
   counterSizing: (sizing: StackSizing) => FrameNodeBuilder;
+  childAlignSelf: (align: StackCounterAlign) => FrameNodeBuilder;
   horizontalConstraint: (constraint: ConstraintType) => FrameNodeBuilder;
   verticalConstraint: (constraint: ConstraintType) => FrameNodeBuilder;
   addExportSettings: (settings: ExportSettings) => FrameNodeBuilder;
@@ -114,7 +126,7 @@ type FrameBuilderState = {
   stackMode: StackMode | undefined;
   stackSpacing: number | undefined;
   stackPadding: StackPadding | undefined;
-  stackPrimaryAlignItems: StackAlign | undefined;
+  stackPrimaryAlignItems: StackJustify | undefined;
   stackCounterAlignItems: StackAlign | undefined;
   stackPrimaryAlignContent: StackAlign | undefined;
   stackWrap: boolean | undefined;
@@ -123,6 +135,7 @@ type FrameBuilderState = {
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildAlignSelf: StackCounterAlign | undefined;
   horizontalConstraint: ConstraintType | undefined;
   verticalConstraint: ConstraintType | undefined;
 };
@@ -155,6 +168,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildAlignSelf: undefined,
     horizontalConstraint: undefined,
     verticalConstraint: undefined,
   };
@@ -165,6 +179,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     position(x: number, y: number) { state.x = x; state.y = y; return builder; },
     background(c: Color) { state.fillPaints = [solidPaint(c)]; return builder; },
     fill(paint: Paint) { state.fillPaints = [paint]; return builder; },
+    noFill() { state.fillPaints = []; return builder; },
     stroke(color: Color) { state.strokeColor = color; return builder; },
     strokeWeight(weight: number) { state.strokeWeight = weight; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
@@ -184,9 +199,9 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
       }
       return builder;
     },
-    /** Set primary axis alignment (justify-content equivalent) */
-    primaryAlign(align: StackAlign) { state.stackPrimaryAlignItems = align; return builder; },
-    /** Set counter axis alignment (align-items equivalent) */
+    /** Set primary axis alignment (justify-content equivalent). Uses StackJustify enum. */
+    primaryAlign(align: StackJustify) { state.stackPrimaryAlignItems = align; return builder; },
+    /** Set counter axis alignment (align-items equivalent). Uses StackAlign — STRETCH must travel through each child's `childAlignSelf("STRETCH")` instead, since the StackAlign enum has no STRETCH variant. */
     counterAlign(align: StackAlign) { state.stackCounterAlignItems = align; return builder; },
     /** Set content alignment for wrap mode (align-content equivalent) */
     contentAlign(align: StackAlign) { state.stackPrimaryAlignContent = align; return builder; },
@@ -208,6 +223,8 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
     /** Set sizing along counter axis (when inside auto-layout parent) */
     counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    /** Override the auto-layout counter-axis alignment for this child. Uses StackCounterAlign enum (STRETCH is valid). */
+    childAlignSelf(align: StackCounterAlign) { state.stackChildAlignSelf = align; return builder; },
     /** Set horizontal constraint */
     horizontalConstraint(constraint: ConstraintType) { state.horizontalConstraint = constraint; return builder; },
     /** Set vertical constraint */
@@ -253,7 +270,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         stackMode: toEnumValue(state.stackMode, STACK_MODE_VALUES),
         stackSpacing: state.stackSpacing,
         stackPadding: state.stackPadding,
-        stackPrimaryAlignItems: toEnumValue(state.stackPrimaryAlignItems, STACK_ALIGN_VALUES),
+        stackPrimaryAlignItems: toEnumValue(state.stackPrimaryAlignItems, STACK_JUSTIFY_VALUES),
         stackCounterAlignItems: toEnumValue(state.stackCounterAlignItems, STACK_ALIGN_VALUES),
         stackPrimaryAlignContent: toEnumValue(state.stackPrimaryAlignContent, STACK_ALIGN_VALUES),
         stackWrap: state.stackWrap,
@@ -262,6 +279,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildAlignSelf: toEnumValue(state.stackChildAlignSelf, STACK_COUNTER_ALIGN_VALUES),
         horizontalConstraint: toEnumValue(state.horizontalConstraint, CONSTRAINT_TYPE_VALUES),
         verticalConstraint: toEnumValue(state.verticalConstraint, CONSTRAINT_TYPE_VALUES),
       };

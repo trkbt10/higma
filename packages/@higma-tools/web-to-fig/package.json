@@ -1,0 +1,63 @@
+{
+  "name": "@higma-tools/web-to-fig",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "web-to-fig": "./src/cli/bin.ts"
+  },
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-tools/web-to-fig/src packages/@higma-tools/web-to-fig/spec",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-tools/web-to-fig/src' '../../../packages/@higma-tools/web-to-fig/spec'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./web-source": {
+      "types": "./src/web-source/index.ts",
+      "default": "./src/web-source/index.ts"
+    },
+    "./normalize": {
+      "types": "./src/normalize/index.ts",
+      "default": "./src/normalize/index.ts"
+    },
+    "./emit": {
+      "types": "./src/emit/index.ts",
+      "default": "./src/emit/index.ts"
+    },
+    "./verify": {
+      "types": "./src/verify/index.ts",
+      "default": "./src/verify/index.ts"
+    },
+    "./cli": {
+      "types": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-bridges/web-fig": "workspace:*",
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-document-renderers/fig": "workspace:*"
+  },
+  "devDependencies": {
+    "@fontsource/inter": "^5.2.5",
+    "@playwright/test": "^1.59.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/pngjs": "^6.0.5",
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.59.1",
+    "pngjs": "^7.0.0"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "tools",
+      "product": "fig"
+    }
+  }
+}

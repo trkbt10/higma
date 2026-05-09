@@ -248,6 +248,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildAlignSelf: data.stackChildAlignSelf,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
     });
@@ -292,6 +293,8 @@ function _createFigFileBuilder() {
       stackWrap: data.stackWrap,
       stackCounterSpacing: data.stackCounterSpacing,
       itemReverseZIndex: data.itemReverseZIndex,
+      stackPrimarySizing: data.stackPrimarySizing,
+      stackCounterSizing: data.stackCounterSizing,
     });
     nodes.push(node);
     return data.localID;
@@ -319,6 +322,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildAlignSelf: data.stackChildAlignSelf,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
     });
@@ -461,6 +465,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildAlignSelf: data.stackChildAlignSelf,
     });
     if (data.derivedTextData) {
       node.derivedTextData = data.derivedTextData;
@@ -889,6 +894,7 @@ function _createFigFileBuilder() {
     stackPositioning?: { value: number; name: string };
     stackPrimarySizing?: { value: number; name: string };
     stackCounterSizing?: { value: number; name: string };
+    stackChildAlignSelf?: { value: number; name: string };
     horizontalConstraint?: { value: number; name: string };
     verticalConstraint?: { value: number; name: string };
     // Symbol/Instance fields
@@ -1023,6 +1029,9 @@ function _createFigFileBuilder() {
     }
     if (data.stackCounterSizing) {
       node.stackCounterSizing = data.stackCounterSizing;
+    }
+    if (data.stackChildAlignSelf) {
+      node.stackChildAlignSelf = data.stackChildAlignSelf;
     }
     if (data.horizontalConstraint) {
       node.horizontalConstraint = data.horizontalConstraint;

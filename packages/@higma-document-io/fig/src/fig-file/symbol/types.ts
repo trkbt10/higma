@@ -6,8 +6,10 @@ import type { Paint, StackPadding } from "../types";
 import type {
   StackMode,
   StackAlign,
+  StackJustify,
   StackPositioning,
   StackSizing,
+  StackCounterAlign,
   ConstraintType,
 } from "@higma-document-models/fig/constants";
 import type { ExportSettings } from "../frame";
@@ -36,12 +38,14 @@ export type SymbolNodeData = {
   readonly stackMode?: { value: number; name: StackMode };
   readonly stackSpacing?: number;
   readonly stackPadding?: StackPadding;
-  readonly stackPrimaryAlignItems?: { value: number; name: StackAlign };
+  readonly stackPrimaryAlignItems?: { value: number; name: StackJustify };
   readonly stackCounterAlignItems?: { value: number; name: StackAlign };
   readonly stackPrimaryAlignContent?: { value: number; name: StackAlign };
   readonly stackWrap?: boolean;
   readonly stackCounterSpacing?: number;
   readonly itemReverseZIndex?: boolean;
+  readonly stackPrimarySizing?: { value: number; name: StackSizing };
+  readonly stackCounterSizing?: { value: number; name: StackSizing };
 };
 
 export type InstanceNodeData = {
@@ -70,6 +74,7 @@ export type InstanceNodeData = {
   readonly stackPositioning?: { value: number; name: StackPositioning };
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
+  readonly stackChildAlignSelf?: { value: number; name: StackCounterAlign };
   readonly horizontalConstraint?: { value: number; name: ConstraintType };
   readonly verticalConstraint?: { value: number; name: ConstraintType };
 };

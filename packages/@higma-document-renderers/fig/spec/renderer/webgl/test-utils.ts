@@ -15,7 +15,7 @@ import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { createServer, type ViteDevServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { buildNodeTree } from "@higma-document-io/fig/parser";
+import { buildNodeTree } from "@higma-document-models/fig/domain";
 import { treeToDocument } from "@higma-document-io/fig/context";
 import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "../../../src/scene-graph/builder";

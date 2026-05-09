@@ -35,6 +35,7 @@
     }
   },
   "dependencies": {
+    "@higma-bridges/web-fig": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",

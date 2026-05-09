@@ -57,12 +57,16 @@ describe("SymbolNodeBuilder", () => {
     });
 
     it("creates vertical auto-layout symbol", () => {
+      // `stackCounterAlignItems` decodes against the Figma `StackAlign`
+      // enum (no STRETCH variant). STRETCH is a per-child override
+      // (`stackChildAlignSelf`) — at the parent level the legal values
+      // are MIN / CENTER / MAX / BASELINE.
       const node = symbolNode(1, 0)
         .autoLayout("VERTICAL")
         .gap(16)
         .padding(24)
         .primaryAlign("MIN")
-        .counterAlign("STRETCH")
+        .counterAlign("CENTER")
         .build();
 
       expect(node.stackMode).toEqual({ value: 2, name: "VERTICAL" });
@@ -74,22 +78,25 @@ describe("SymbolNodeBuilder", () => {
         left: 24,
       });
       expect(node.stackPrimaryAlignItems).toEqual({ value: 0, name: "MIN" });
-      expect(node.stackCounterAlignItems).toEqual({ value: 3, name: "STRETCH" });
+      expect(node.stackCounterAlignItems).toEqual({ value: 1, name: "CENTER" });
     });
 
     it("creates wrap layout symbol", () => {
+      // `stackPrimaryAlignContent` is also `StackAlign` (no
+      // SPACE_BETWEEN). Pick CENTER as a representative non-default
+      // value.
       const node = symbolNode(1, 0)
         .wrap(true)
         .gap(10)
         .counterGap(15)
-        .contentAlign("SPACE_BETWEEN")
+        .contentAlign("CENTER")
         .build();
 
       expect(node.stackMode).toEqual({ value: 3, name: "WRAP" });
       expect(node.stackWrap).toBe(true);
       expect(node.stackSpacing).toBe(10);
       expect(node.stackCounterSpacing).toBe(15);
-      expect(node.stackPrimaryAlignContent).toEqual({ value: 5, name: "SPACE_BETWEEN" });
+      expect(node.stackPrimaryAlignContent).toEqual({ value: 1, name: "CENTER" });
     });
 
     it("sets reverse z-index", () => {

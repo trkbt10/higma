@@ -22,6 +22,7 @@ export {
   type DerivedTextNodeData,
   type DerivedGlyphData,
   type DerivedBaselineData,
+  type TextStyleRunData,
 } from "./text";
 
 // Frame node builder (from frame/)

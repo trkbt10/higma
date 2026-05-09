@@ -10,9 +10,13 @@ import { DEFAULT_SVG_EXPORT_SETTINGS } from "../frame";
 import {
   STACK_MODE_VALUES,
   STACK_ALIGN_VALUES,
+  STACK_JUSTIFY_VALUES,
+  STACK_SIZING_VALUES,
   toEnumValue,
   type StackMode,
   type StackAlign,
+  type StackJustify,
+  type StackSizing,
 } from "@higma-document-models/fig/constants";
 
 /** Symbol node builder instance */
@@ -21,6 +25,13 @@ export type SymbolNodeBuilder = {
   size: (width: number, height: number) => SymbolNodeBuilder;
   position: (x: number, y: number) => SymbolNodeBuilder;
   background: (c: Color) => SymbolNodeBuilder;
+  /**
+   * Drop the SYMBOL's fill stack so it renders without a solid
+   * background. Mirrors `frameNode.noFill()` — useful for transparent
+   * page-component definitions that should let the wrapper's bg
+   * show through every INSTANCE.
+   */
+  noFill: () => SymbolNodeBuilder;
   clipsContent: (clips: boolean) => SymbolNodeBuilder;
   cornerRadius: (radius: number) => SymbolNodeBuilder;
   visible: (v: boolean) => SymbolNodeBuilder;
@@ -28,11 +39,21 @@ export type SymbolNodeBuilder = {
   autoLayout: (mode: StackMode) => SymbolNodeBuilder;
   gap: (spacing: number) => SymbolNodeBuilder;
   padding: (value: number | StackPadding) => SymbolNodeBuilder;
-  primaryAlign: (align: StackAlign) => SymbolNodeBuilder;
+  primaryAlign: (align: StackJustify) => SymbolNodeBuilder;
   counterAlign: (align: StackAlign) => SymbolNodeBuilder;
   contentAlign: (align: StackAlign) => SymbolNodeBuilder;
   wrap: (enabled?: boolean) => SymbolNodeBuilder;
   counterGap: (spacing: number) => SymbolNodeBuilder;
+  /**
+   * Set the SYMBOL's own primary-axis sizing (FIXED / FILL / HUG).
+   * HUG (= `RESIZE_TO_FIT_WITH_IMPLICIT_SIZE` on the wire) lets the
+   * SYMBOL's authored height grow with its auto-layout content —
+   * required for a responsive page component whose paragraphs
+   * re-wrap into different line counts per INSTANCE width.
+   */
+  primarySizing: (sizing: StackSizing) => SymbolNodeBuilder;
+  /** Set the SYMBOL's own counter-axis sizing (FIXED / FILL / HUG). */
+  counterSizing: (sizing: StackSizing) => SymbolNodeBuilder;
   reverseZIndex: (enabled?: boolean) => SymbolNodeBuilder;
   addExportSettings: (settings: ExportSettings) => SymbolNodeBuilder;
   exportAsSVG: () => SymbolNodeBuilder;
@@ -46,6 +67,7 @@ type SymbolBuilderState = {
   x: number;
   y: number;
   fillColor: Color;
+  hasFill: boolean;
   clipsContent: boolean;
   cornerRadius: number | undefined;
   visible: boolean;
@@ -54,12 +76,14 @@ type SymbolBuilderState = {
   stackMode: StackMode | undefined;
   stackSpacing: number | undefined;
   stackPadding: StackPadding | undefined;
-  stackPrimaryAlignItems: StackAlign | undefined;
+  stackPrimaryAlignItems: StackJustify | undefined;
   stackCounterAlignItems: StackAlign | undefined;
   stackPrimaryAlignContent: StackAlign | undefined;
   stackWrap: boolean | undefined;
   stackCounterSpacing: number | undefined;
   itemReverseZIndex: boolean | undefined;
+  stackPrimarySizing: StackSizing | undefined;
+  stackCounterSizing: StackSizing | undefined;
 };
 
 /** Create a symbol node builder */
@@ -71,6 +95,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     x: 0,
     y: 0,
     fillColor: { r: 1, g: 1, b: 1, a: 1 },
+    hasFill: true,
     clipsContent: true,
     cornerRadius: undefined,
     visible: true,
@@ -85,13 +110,16 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     stackWrap: undefined,
     stackCounterSpacing: undefined,
     itemReverseZIndex: undefined,
+    stackPrimarySizing: undefined,
+    stackCounterSizing: undefined,
   };
 
   const builder: SymbolNodeBuilder = {
     name(n: string) { state.name = n; return builder; },
     size(width: number, height: number) { state.width = width; state.height = height; return builder; },
     position(x: number, y: number) { state.x = x; state.y = y; return builder; },
-    background(c: Color) { state.fillColor = c; return builder; },
+    background(c: Color) { state.fillColor = c; state.hasFill = true; return builder; },
+    noFill() { state.hasFill = false; return builder; },
     clipsContent(clips: boolean) { state.clipsContent = clips; return builder; },
     cornerRadius(radius: number) { state.cornerRadius = radius; return builder; },
     visible(v: boolean) { state.visible = v; return builder; },
@@ -106,7 +134,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
       }
       return builder;
     },
-    primaryAlign(align: StackAlign) { state.stackPrimaryAlignItems = align; return builder; },
+    primaryAlign(align: StackJustify) { state.stackPrimaryAlignItems = align; return builder; },
     counterAlign(align: StackAlign) { state.stackCounterAlignItems = align; return builder; },
     contentAlign(align: StackAlign) { state.stackPrimaryAlignContent = align; return builder; },
     wrap(enabled: boolean = true) {
@@ -117,6 +145,8 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
       return builder;
     },
     counterGap(spacing: number) { state.stackCounterSpacing = spacing; return builder; },
+    primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
+    counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
     reverseZIndex(enabled: boolean = true) { state.itemReverseZIndex = enabled; return builder; },
     addExportSettings(settings: ExportSettings) { state.exportSettings.push(settings); return builder; },
     exportAsSVG() { state.exportSettings.push(DEFAULT_SVG_EXPORT_SETTINGS); return builder; },
@@ -128,7 +158,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
         name: state.name,
         size: { x: state.width, y: state.height },
         transform: createTranslationMatrix(state.x, state.y),
-        fillPaints: [{ type: { value: 0, name: "SOLID" }, color: state.fillColor, opacity: 1, visible: true, blendMode: { value: 1, name: "NORMAL" } }],
+        fillPaints: buildFillPaints(state.hasFill, state.fillColor),
         visible: state.visible,
         opacity: state.opacity,
         clipsContent: state.clipsContent,
@@ -137,17 +167,32 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
         stackMode: toEnumValue(state.stackMode, STACK_MODE_VALUES),
         stackSpacing: state.stackSpacing,
         stackPadding: state.stackPadding,
-        stackPrimaryAlignItems: toEnumValue(state.stackPrimaryAlignItems, STACK_ALIGN_VALUES),
+        stackPrimaryAlignItems: toEnumValue(state.stackPrimaryAlignItems, STACK_JUSTIFY_VALUES),
         stackCounterAlignItems: toEnumValue(state.stackCounterAlignItems, STACK_ALIGN_VALUES),
         stackPrimaryAlignContent: toEnumValue(state.stackPrimaryAlignContent, STACK_ALIGN_VALUES),
         stackWrap: state.stackWrap,
         stackCounterSpacing: state.stackCounterSpacing,
         itemReverseZIndex: state.itemReverseZIndex,
+        stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
+        stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
       };
     },
   };
 
   return builder;
+}
+
+function buildFillPaints(hasFill: boolean, color: Color): SymbolNodeData["fillPaints"] {
+  if (!hasFill) {
+    return [];
+  }
+  return [{
+    type: { value: 0, name: "SOLID" },
+    color,
+    opacity: 1,
+    visible: true,
+    blendMode: { value: 1, name: "NORMAL" },
+  }];
 }
 
 /**

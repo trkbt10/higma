@@ -1,0 +1,48 @@
+{
+  "name": "@higma-bridges/web-fig",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-bridges/web-fig/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-bridges/web-fig/src' '../../../packages/@higma-bridges/web-fig/spec'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./ir": {
+      "types": "./src/ir/index.ts",
+      "default": "./src/ir/index.ts"
+    },
+    "./adapters": {
+      "types": "./src/adapters/index.ts",
+      "default": "./src/adapters/index.ts"
+    },
+    "./style": {
+      "types": "./src/style/index.ts",
+      "default": "./src/style/index.ts"
+    },
+    "./layout": {
+      "types": "./src/layout/index.ts",
+      "default": "./src/layout/index.ts"
+    },
+    "./viewport": {
+      "types": "./src/viewport/index.ts",
+      "default": "./src/viewport/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-primitives/tree": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 6,
+      "family": "bridge"
+    }
+  }
+}

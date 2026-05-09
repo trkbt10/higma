@@ -7,6 +7,8 @@ import type { EffectData } from "../effect/types";
 import type {
   StackMode,
   StackAlign,
+  StackJustify,
+  StackCounterAlign,
   StackPositioning,
   StackSizing,
   ConstraintType,
@@ -60,7 +62,7 @@ export type FrameNodeData = {
   readonly stackMode?: { value: number; name: StackMode };
   readonly stackSpacing?: number;
   readonly stackPadding?: StackPadding;
-  readonly stackPrimaryAlignItems?: { value: number; name: StackAlign };
+  readonly stackPrimaryAlignItems?: { value: number; name: StackJustify };
   readonly stackCounterAlignItems?: { value: number; name: StackAlign };
   readonly stackPrimaryAlignContent?: { value: number; name: StackAlign };
   readonly stackWrap?: boolean;
@@ -71,6 +73,8 @@ export type FrameNodeData = {
   readonly stackPositioning?: { value: number; name: StackPositioning };
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
+  /** Counter-axis alignment override for this child within an auto-layout parent. */
+  readonly stackChildAlignSelf?: { value: number; name: StackCounterAlign };
   readonly horizontalConstraint?: { value: number; name: ConstraintType };
   readonly verticalConstraint?: { value: number; name: ConstraintType };
 };
