@@ -30,17 +30,27 @@ export type FigDerivedSymbolData = readonly FigKiwiSymbolOverride[];
  * Field-name set that an authored INSTANCE may override on its own
  * SYMBOL root (the "self" slot).
  *
- * These are the only fields Figma's authoring UI lets you set
- * directly on an INSTANCE without descending into a SYMBOL
- * descendant: the INSTANCE's display name, its outer size, and the
- * variable / parameter bindings that drive component-property
- * resolution for the SYMBOL it points at. Any override entry whose
- * defined field-set is a subset of this list addresses the INSTANCE
- * itself, not a descendant of its SYMBOL.
+ * These are the fields Figma's authoring UI lets you set directly on
+ * an INSTANCE without descending into a SYMBOL descendant: the
+ * INSTANCE's display name, its outer size, the "Constrain proportions"
+ * flag that pairs with size on the resize handles, and the variable /
+ * parameter bindings that drive component-property resolution for the
+ * SYMBOL it points at. Any override entry whose defined field-set is a
+ * subset of this list addresses the INSTANCE itself, not a descendant
+ * of its SYMBOL.
+ *
+ * Real-world fixtures (e.g. the Figma Community E-commerce template's
+ * `arrow-left` INSTANCEs) emit `{size, proportionsConstrained}`
+ * self-overrides whose path-first guid is the INSTANCE's per-instance
+ * ghost-allocated guid (a session that is never bound to a node in the
+ * file). Those entries must be classified as self-overrides so the
+ * domain-conversion `resolveOverridePaths` rerouter sends them to the
+ * SYMBOL root instead of throwing on the unreachable guid.
  */
 export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = new Set([
   "name",
   "size",
+  "proportionsConstrained",
   "variableConsumptionMap",
   "parameterConsumptionMap",
 ]);

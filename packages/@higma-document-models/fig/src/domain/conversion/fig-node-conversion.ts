@@ -863,6 +863,21 @@ function resolveOverridePaths(
       if (ghostSessions.has(g.sessionID)) {
         return true;
       }
+      // INSTANCE self-overrides legitimately address the INSTANCE
+      // itself with a per-instance ghost guid (a session never bound
+      // to a node in the file). The single-entry shape — e.g. the
+      // E-commerce template's `arrow-left` INSTANCEs that emit
+      // `{size, proportionsConstrained}` against `[1027:7310]` —
+      // doesn't qualify under the ≥2-entries-per-session ghost-session
+      // heuristic and would otherwise throw before the reroute step
+      // below can rescue it. Classify here using the same shared SoT
+      // (`isInstanceSelfOverride`) the runtime resolver uses; the
+      // rerouter immediately below redirects the path to the SYMBOL
+      // root so the unreachable guid never reaches the translation
+      // primitive.
+      if (isInstanceSelfOverride(e)) {
+        return true;
+      }
       throw new Error(`Override path references unreachable guid ${ctx.guidString(g)}`);
     });
     // Re-route self-override entries' paths to the SYMBOL root before

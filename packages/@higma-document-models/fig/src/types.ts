@@ -448,6 +448,12 @@ export type FigKiwiSymbolOverridePayload = {
   readonly rectangleBottomLeftCornerRadius?: number;
   readonly rectangleBottomRightCornerRadius?: number;
   readonly rectangleCornerRadiiIndependent?: boolean;
+  // "Constrain proportions" flag — Figma's UI lets authors toggle this
+  // directly on an INSTANCE (paired with `size`) without descending into
+  // a SYMBOL descendant, so the parser surfaces it on override entries
+  // whose path-first guid is the INSTANCE's own ghost-allocated guid.
+  // Treated as an INSTANCE-self field by the self-override classifier.
+  readonly proportionsConstrained?: boolean;
   readonly fillGeometry?: readonly FigFillGeometry[];
   readonly strokeGeometry?: readonly FigFillGeometry[];
   readonly vectorPaths?: readonly FigVectorPath[];
