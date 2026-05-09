@@ -43,6 +43,22 @@ tester.run("no-reexport-outside-entry", rule, {
       code: `export type Foo = { a: number };`,
       filename: `${cwd}/src/types.ts`,
     },
+    // Non-entry files: structural derivations of an imported type construct a
+    // new type, so they are not pass-through republications.
+    {
+      code: `import type { Foo } from "./foo";\nexport type FooList = readonly Foo[];`,
+      filename: `${cwd}/src/lib/derive.ts`,
+    },
+    {
+      code: `import { fn } from "./fn";\nexport type Args = Parameters<typeof fn>[0];`,
+      filename: `${cwd}/src/lib/derive.ts`,
+    },
+    // Non-entry files: a locally-defined identifier may be exported under any
+    // name; only identifiers that came from an `import` are considered re-exports.
+    {
+      code: `const local = 1;\nexport { local };`,
+      filename: `${cwd}/src/lib/local.ts`,
+    },
   ],
   invalid: [
     // Non-entry file with re-export
@@ -65,6 +81,33 @@ tester.run("no-reexport-outside-entry", rule, {
       code: `export * as utils from "./utils";`,
       filename: `${cwd}/src/sub/mod.ts`,
       errors: [{ messageId: "noReexport" }],
+    },
+    // Indirect re-export: import then export the same name from a non-entry file.
+    {
+      code: `import { foo } from "./foo";\nexport { foo };`,
+      filename: `${cwd}/src/lib/relay.ts`,
+      errors: [{ messageId: "noIndirectReexport" }],
+    },
+    {
+      code: `import type { Bar } from "./bar";\nexport type { Bar };`,
+      filename: `${cwd}/src/lib/relay.ts`,
+      errors: [{ messageId: "noIndirectReexport" }],
+    },
+    {
+      code: `import { foo } from "@some/pkg";\nexport { foo };`,
+      filename: `${cwd}/src/lib/relay.ts`,
+      errors: [{ messageId: "noIndirectReexport" }],
+    },
+    // Indirect type alias re-export: `export type Alias = ImportedType;`
+    {
+      code: `import type { Bar } from "./bar";\nexport type Baz = Bar;`,
+      filename: `${cwd}/src/lib/relay.ts`,
+      errors: [{ messageId: "noIndirectTypeAliasReexport" }],
+    },
+    {
+      code: `import type { Bar } from "@some/pkg";\nexport type Baz = Bar;`,
+      filename: `${cwd}/src/lib/relay.ts`,
+      errors: [{ messageId: "noIndirectTypeAliasReexport" }],
     },
   ],
 });

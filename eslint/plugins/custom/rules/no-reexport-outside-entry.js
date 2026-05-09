@@ -67,6 +67,12 @@ export default {
     schema: [],
     messages: {
       noReexport: "Re-export is only allowed in entry point files (src/index.ts(x) or package.json exports).",
+      noIndirectReexport:
+        "Indirect re-export of '{{name}}' (imported from '{{source}}') is only allowed in entry point files. " +
+        "This file is not an entry point; consumers should import '{{name}}' directly from its origin.",
+      noIndirectTypeAliasReexport:
+        "Indirect type alias re-export ('{{alias}}' = '{{name}}', imported from '{{source}}') is only allowed " +
+        "in entry point files. This file is not an entry point; consumers should import '{{name}}' directly.",
     },
   },
   create(context) {
@@ -105,14 +111,78 @@ export default {
       return {};
     }
 
-    // This file is not an entry point — forbid re-exports
+    /** @type {Map<string, string>} localName → import source */
+    const localImports = new Map();
+
+    function trackImport(node) {
+      const sourcePath = node.source?.value;
+      if (typeof sourcePath !== "string") {
+        return;
+      }
+      for (const specifier of node.specifiers || []) {
+        const localName = specifier.local?.name;
+        if (localName) {
+          localImports.set(localName, sourcePath);
+        }
+      }
+    }
+
     function check(node) {
       if (node.source) {
         context.report({ node, messageId: "noReexport" });
+        return;
+      }
+
+      // Indirect named re-export: `import { X } from "..."; export { X };`
+      // (or with type-only specifiers). The imported origin can be either a
+      // package or a local relative path — non-entry files must not republish
+      // identifiers regardless of where they came from.
+      for (const specifier of node.specifiers || []) {
+        const localName = specifier.local?.name;
+        if (!localName) {
+          continue;
+        }
+        const importedSource = localImports.get(localName);
+        if (importedSource) {
+          context.report({
+            node: specifier,
+            messageId: "noIndirectReexport",
+            data: { name: localName, source: importedSource },
+          });
+        }
+      }
+
+      // Indirect type alias pass-through: `export type Alias = ImportedType;`
+      // Only flag bare type references with no type arguments — a generic
+      // instantiation like `Parameters<typeof X>[0]` constructs a new type
+      // and is not a republication of the imported identifier.
+      if (node.declaration?.type === "TSTypeAliasDeclaration") {
+        const typeAnnotation = node.declaration.typeAnnotation;
+        if (
+          typeAnnotation?.type === "TSTypeReference" &&
+          !typeAnnotation.typeArguments &&
+          !typeAnnotation.typeParameters &&
+          typeAnnotation.typeName?.type === "Identifier"
+        ) {
+          const referenced = typeAnnotation.typeName.name;
+          const importedSource = localImports.get(referenced);
+          if (importedSource) {
+            context.report({
+              node: node.declaration,
+              messageId: "noIndirectTypeAliasReexport",
+              data: {
+                alias: node.declaration.id?.name,
+                name: referenced,
+                source: importedSource,
+              },
+            });
+          }
+        }
       }
     }
 
     return {
+      ImportDeclaration: trackImport,
       ExportAllDeclaration: check,
       ExportNamedDeclaration: check,
     };

@@ -80,6 +80,10 @@ export default {
       indirectNamespaceExport:
         "Re-exporting namespace '{{name}}' from '{{source}}'. " +
         "Consumers should import directly from the source package.",
+      indirectTypeAliasReexport:
+        "Re-publishing type '{{source}}' as '{{alias}}' via type alias. " +
+        "This is a structural pass-through of an imported package type. " +
+        "Consumers should import '{{name}}' directly from '{{source}}'.",
     },
   },
 
@@ -186,6 +190,38 @@ export default {
       }
     }
 
+    function checkExportedTypeAlias(node) {
+      if (node.declaration?.type !== "TSTypeAliasDeclaration") {
+        return;
+      }
+      const typeAnnotation = node.declaration.typeAnnotation;
+      if (!typeAnnotation || typeAnnotation.type !== "TSTypeReference") {
+        return;
+      }
+      if (typeAnnotation.typeArguments || typeAnnotation.typeParameters) {
+        return;
+      }
+      const typeName = typeAnnotation.typeName;
+      if (!typeName || typeName.type !== "Identifier") {
+        return;
+      }
+      const referenced = typeName.name;
+      const importInfo = externalImports.get(referenced);
+      if (!importInfo) {
+        return;
+      }
+
+      context.report({
+        node: node.declaration,
+        messageId: "indirectTypeAliasReexport",
+        data: {
+          alias: node.declaration.id?.name,
+          name: referenced,
+          source: importInfo.source,
+        },
+      });
+    }
+
     function checkExportDefaultDeclaration(node) {
       if (node.declaration?.type === "Identifier") {
         const name = node.declaration.name;
@@ -210,6 +246,7 @@ export default {
         checkDirectReexport(node);
         checkIndirectReexport(node);
         checkExportedVariableDeclaration(node);
+        checkExportedTypeAlias(node);
       },
       ExportDefaultDeclaration: checkExportDefaultDeclaration,
     };

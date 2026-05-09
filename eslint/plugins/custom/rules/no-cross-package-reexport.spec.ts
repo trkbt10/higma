@@ -22,6 +22,20 @@ describe("no-cross-package-reexport", () => {
       {
         code: 'export { localValue } from "../local";',
       },
+      // Local-relative type alias passes through — no external package involved.
+      {
+        code: 'import type { Bar } from "./bar";\nexport type Baz = Bar;',
+      },
+      // Structural derivations from an imported package type construct a new
+      // type and therefore are not bare republications.
+      {
+        code:
+          'import { useMemo } from "react";\n' +
+          'export type UseMemoArgs = Parameters<typeof useMemo>[0];',
+      },
+      {
+        code: 'import type { Foo } from "@some/pkg";\nexport type FooList = readonly Foo[];',
+      },
     ],
     invalid: [
       {
@@ -71,6 +85,19 @@ describe("no-cross-package-reexport", () => {
       {
         code: 'import React from "react";\nexport default React;',
         errors: [{ messageId: "indirectDefaultExport" }],
+      },
+      // Bare type alias republication of an imported package type.
+      {
+        code:
+          'import type { FigDesignDocument } from "@higma-document-models/fig/domain";\n' +
+          'export type FigFamilyDesignDocument = FigDesignDocument;',
+        errors: [{ messageId: "indirectTypeAliasReexport" }],
+      },
+      {
+        code:
+          'import type { FigDocumentResources } from "@higma-document-io/fig/context";\n' +
+          'export type FigFamilyDocumentResources = FigDocumentResources;',
+        errors: [{ messageId: "indirectTypeAliasReexport" }],
       },
     ],
   });

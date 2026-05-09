@@ -4,9 +4,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import process from "node:process";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = process.cwd();
+const ruleFilePath = fileURLToPath(import.meta.url);
+// Resolve the repo root from this rule's own location rather than process.cwd()
+// so per-package eslint invocations (which set cwd to the package directory)
+// still locate `packages/`. Layout: <repoRoot>/eslint/plugins/custom/rules/<this>.
+const repoRoot = path.resolve(path.dirname(ruleFilePath), "..", "..", "..", "..");
 const packagesRoot = path.join(repoRoot, "packages");
 
 let packageCache;
