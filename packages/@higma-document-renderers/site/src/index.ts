@@ -8,6 +8,17 @@ import {
   type FigmaRenderOutline,
   type FigmaRenderOutlineEntry,
 } from "@higma-figma-analysis/render-outline";
+import {
+  asOptionalRecord,
+  asRecord,
+  buildNodeMatrix,
+  readEnumName,
+  readGuidString,
+  readNumber,
+  readParentGuidString,
+  readString,
+  type SiteAffineMatrix,
+} from "./internal/site-node-helpers";
 
 export {
   applySiteCmsFieldEditsToNodeChanges,
@@ -156,42 +167,6 @@ export type SiteRenderPlan = {
   readonly surfaces: readonly SiteRenderSurface[];
 };
 
-function asRecord(value: unknown, fieldName: string): Record<string, unknown> {
-  if (value && typeof value === "object") {
-    return value as Record<string, unknown>;
-  }
-  throw new Error(`Expected ${fieldName} to be an object`);
-}
-
-function asOptionalRecord(value: unknown, fieldName: string): Record<string, unknown> | null {
-  if (value === undefined || value === null) {
-    return null;
-  }
-  return asRecord(value, fieldName);
-}
-
-function readString(value: unknown, fieldName: string): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  throw new Error(`Expected ${fieldName} to be a string`);
-}
-
-function readNumber(value: unknown, fieldName: string): number {
-  if (typeof value === "number") {
-    return value;
-  }
-  throw new Error(`Expected ${fieldName} to be a number`);
-}
-
-function readEnumName(value: unknown, fieldName: string): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  const record = asRecord(value, fieldName);
-  return readString(record.name, `${fieldName}.name`);
-}
-
 function readEntries(value: unknown, fieldName: string): readonly unknown[] {
   if (Array.isArray(value)) {
     return value;
@@ -321,66 +296,8 @@ function readCmsRichTextStyleClasses(value: unknown): readonly string[] {
   return readEntries(value, "cmsRichTextStyleMap").map(readCmsRichTextStyleClass);
 }
 
-function readGuidString(node: Record<string, unknown>): string | null {
-  const guid = asOptionalRecord(node.guid, "node.guid");
-  if (!guid) {
-    return null;
-  }
-  return `${readNumber(guid.sessionID, "node.guid.sessionID")}:${readNumber(guid.localID, "node.guid.localID")}`;
-}
-
 function readNodeTypeName(node: Record<string, unknown>, nodeId: string): string {
   return readEnumName(node.type, `node ${nodeId}.type`);
-}
-
-function readParentGuidString(node: Record<string, unknown>): string | null {
-  const parentIndex = asOptionalRecord(node.parentIndex, "node.parentIndex");
-  if (!parentIndex) {
-    return null;
-  }
-  const guid = asRecord(parentIndex.guid, "node.parentIndex.guid");
-  return `${readNumber(guid.sessionID, "node.parentIndex.guid.sessionID")}:${readNumber(guid.localID, "node.parentIndex.guid.localID")}`;
-}
-
-type SiteAffineMatrix = {
-  readonly m00: number;
-  readonly m01: number;
-  readonly m02: number;
-  readonly m10: number;
-  readonly m11: number;
-  readonly m12: number;
-};
-
-const IDENTITY_MATRIX: SiteAffineMatrix = {
-  m00: 1,
-  m01: 0,
-  m02: 0,
-  m10: 0,
-  m11: 1,
-  m12: 0,
-};
-
-function multiplyMatrix(parent: SiteAffineMatrix, child: SiteAffineMatrix): SiteAffineMatrix {
-  return {
-    m00: parent.m00 * child.m00 + parent.m01 * child.m10,
-    m01: parent.m00 * child.m01 + parent.m01 * child.m11,
-    m02: parent.m00 * child.m02 + parent.m01 * child.m12 + parent.m02,
-    m10: parent.m10 * child.m00 + parent.m11 * child.m10,
-    m11: parent.m10 * child.m01 + parent.m11 * child.m11,
-    m12: parent.m10 * child.m02 + parent.m11 * child.m12 + parent.m12,
-  };
-}
-
-function readNodeTransform(node: Record<string, unknown>, nodeId: string): SiteAffineMatrix {
-  const transform = asRecord(node.transform, `node ${nodeId}.transform`);
-  return {
-    m00: readNumber(transform.m00, `node ${nodeId}.transform.m00`),
-    m01: readNumber(transform.m01, `node ${nodeId}.transform.m01`),
-    m02: readNumber(transform.m02, `node ${nodeId}.transform.m02`),
-    m10: readNumber(transform.m10, `node ${nodeId}.transform.m10`),
-    m11: readNumber(transform.m11, `node ${nodeId}.transform.m11`),
-    m12: readNumber(transform.m12, `node ${nodeId}.transform.m12`),
-  };
 }
 
 function readNodeSize(node: Record<string, unknown>, nodeId: string): { readonly width: number; readonly height: number } {
@@ -389,36 +306,6 @@ function readNodeSize(node: Record<string, unknown>, nodeId: string): { readonly
     width: readNumber(size.x, `node ${nodeId}.size.x`),
     height: readNumber(size.y, `node ${nodeId}.size.y`),
   };
-}
-
-function nodeLocalMatrix(node: Record<string, unknown>, nodeId: string): SiteAffineMatrix {
-  if (node.transform) {
-    return readNodeTransform(node, nodeId);
-  }
-  if (!readParentGuidString(node)) {
-    return IDENTITY_MATRIX;
-  }
-  throw new Error(`Site render bounds require transform for non-root node ${nodeId}`);
-}
-
-function buildNodeMatrix(
-  nodeId: string,
-  nodesById: ReadonlyMap<string, Record<string, unknown>>,
-  visited: ReadonlySet<string> = new Set(),
-): SiteAffineMatrix {
-  if (visited.has(nodeId)) {
-    throw new Error(`Site render bounds parent cycle at ${nodeId}`);
-  }
-  const node = nodesById.get(nodeId);
-  if (!node) {
-    throw new Error(`Site render bounds could not find node ${nodeId}`);
-  }
-  const parentId = readParentGuidString(node);
-  const local = nodeLocalMatrix(node, nodeId);
-  if (!parentId) {
-    return local;
-  }
-  return multiplyMatrix(buildNodeMatrix(parentId, nodesById, new Set([...visited, nodeId])), local);
 }
 
 function transformPoint(

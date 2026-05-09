@@ -63,6 +63,7 @@
     }
   },
   "dependencies": {
+    "@higma-codecs/png-compare": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
@@ -71,7 +72,6 @@
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
     "@types/pngjs": "^6.0.5",
-    "pixelmatch": "^7.2.0",
     "pngjs": "^7.0.0"
   },
   "higma": {

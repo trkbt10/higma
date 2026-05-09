@@ -1,10 +1,17 @@
 /**
- * @file Pixel-diff two PNG buffers.
+ * @file Pixel-diff two PNG byte buffers.
  *
- * Same shape and threshold defaults as the higma fidelity verifier;
- * inlined here so the refinement skill does not have to depend on
- * sibling tool packages (cross-tool deps within `@higma-tools/*` are
- * forbidden by the package-boundary rule).
+ * Single source of truth for the visual-fidelity comparison primitive used
+ * by `@higma-tools/refine-fig` and `@higma-tools/web-fig-roundtrip`. Both
+ * tools need to compare a renderer's PNG output against a Playwright
+ * screenshot, but cross-tool deps within `@higma-tools/*` are forbidden by
+ * the package-boundary rule, so the primitive lives one layer below.
+ *
+ * The comparison is *strict* on dimensions: if the two images do not agree
+ * on width/height the function returns a `mismatched-dimensions` outcome
+ * instead of pretending the comparison happened. The caller decides whether
+ * to crop, scale, or fail. We never silently resize — the contract is
+ * "what dimensions did the renderer produce vs the browser".
  */
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
@@ -25,6 +32,7 @@ export type ComparisonOutcome =
     };
 
 export type CompareOptions = {
+  /** pixelmatch threshold in [0,1]; lower = stricter. Default 0.1. */
   readonly threshold?: number;
 };
 

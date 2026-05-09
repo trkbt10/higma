@@ -8,7 +8,7 @@
  * stage's mousemove/click handlers fully active beneath it.
  */
 
-import type { WebGLViewportPreparationStatus } from "./webgl-status";
+import type { WebGLViewportPreparationStatus } from "@higma-document-renderers/fig/webgl/preparation-status";
 
 type Props = {
   readonly status: WebGLViewportPreparationStatus;

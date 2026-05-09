@@ -23,7 +23,7 @@ export {
 import type { CompressionType } from "./types";
 import { compressDeflateRaw, decompressDeflateRaw, type DeflateLevel } from "./deflate";
 import { compressZstd, decompressZstd } from "./zstd";
-import { detectCompression } from "./detect";
+import { detectCompression, isZstdCompressed } from "./detect";
 
 /**
  * Decompress data based on detected or specified compression type.
@@ -65,4 +65,20 @@ export async function compress(
     case "none":
       return data;
   }
+}
+
+/**
+ * Decompress a fig-family payload chunk.
+ *
+ * The fig binary format stores either zstd-compressed bytes (detectable via
+ * magic) or raw-deflate bytes (no header, no magic). When the chunk does not
+ * start with the zstd magic, the format mandates raw deflate — there is no
+ * other valid encoding. Centralised here so every fig-family runtime decodes
+ * payload chunks the same way.
+ */
+export function decompressFigChunk(data: Uint8Array): Uint8Array {
+  if (isZstdCompressed(data)) {
+    return decompressZstd(data);
+  }
+  return decompressDeflateRaw(data);
 }

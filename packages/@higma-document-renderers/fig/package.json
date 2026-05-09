@@ -104,6 +104,14 @@
     "./webgl": {
       "types": "./src/webgl/index.ts",
       "default": "./src/webgl/index.ts"
+    },
+    "./webgl/preparation-status": {
+      "types": "./src/webgl/preparation-status.ts",
+      "default": "./src/webgl/preparation-status.ts"
+    },
+    "./webgl/react": {
+      "types": "./src/webgl/react/index.ts",
+      "default": "./src/webgl/react/index.ts"
     }
   },
   "devDependencies": {

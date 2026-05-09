@@ -30,6 +30,10 @@
       "types": "./src/encoder.ts",
       "default": "./src/encoder.ts"
     },
+    "./fig-schema-encoder": {
+      "types": "./src/fig-schema-encoder.ts",
+      "default": "./src/fig-schema-encoder.ts"
+    },
     "./stream": {
       "types": "./src/stream.ts",
       "default": "./src/stream.ts"

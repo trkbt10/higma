@@ -1,9 +1,9 @@
 /**
- * @file Unit tests for schema-encoder.ts
+ * @file Unit tests for fig-schema-encoder.ts
  */
 
-import { encodeFigSchema } from "./schema-encoder";
-import type { KiwiSchema } from "@higma-codecs/kiwi/types";
+import { encodeFigSchema } from "./fig-schema-encoder";
+import type { KiwiSchema } from "./types";
 
 describe("encodeFigSchema", () => {
   it("encodes empty schema", () => {

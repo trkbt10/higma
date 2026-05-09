@@ -1,4 +1,11 @@
-/** @file WebGL viewport resource preparation status model. */
+/**
+ * @file WebGL viewport resource preparation status model.
+ *
+ * Single source of truth for the loading-overlay copy and progress steps
+ * shown by the editor and the vsc-plugin webview while the WebGL viewport
+ * is warming up. Both consumers render identical phase ordering so the
+ * loading UX is consistent across surfaces.
+ */
 
 export type WebGLViewportPreparationPhase =
   | "scheduled"

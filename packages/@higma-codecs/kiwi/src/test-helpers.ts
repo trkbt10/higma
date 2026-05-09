@@ -5,8 +5,10 @@
 import { deflateRaw } from "pako";
 import type { KiwiSchema, KiwiDefinition } from "./types";
 import { KIWI_TYPE } from "./schema";
-import { ByteBuffer } from "./byte-buffer";
 import { StreamingFigEncoder } from "./stream";
+import { encodeFigSchema } from "./fig-schema-encoder";
+
+export { encodeFigSchema };
 
 // =============================================================================
 // Minimal Test Schema
@@ -183,44 +185,6 @@ export function createTestMessage(nodes: Record<string, unknown>[]): Record<stri
     ackID: 0,
     nodeChanges: nodes,
   };
-}
-
-// =============================================================================
-// Schema Encoding (for fig format)
-// =============================================================================
-
-/**
- * Encode schema in fig-kiwi format (null-terminated strings).
- */
-export function encodeFigSchema(schema: KiwiSchema): Uint8Array {
-  const buffer = new ByteBuffer();
-
-  buffer.writeVarUint(schema.definitions.length);
-
-  for (const def of schema.definitions) {
-    writeNullString(buffer, def.name);
-    buffer.writeByte(def.kind === "ENUM" ? 0 : def.kind === "STRUCT" ? 1 : 2);
-    buffer.writeVarUint(def.fields.length);
-
-    for (const field of def.fields) {
-      writeNullString(buffer, field.name);
-      buffer.writeVarInt(field.typeId);
-      buffer.writeByte(field.isArray ? 1 : 0);
-      buffer.writeVarUint(field.value);
-    }
-  }
-
-  return buffer.toUint8Array();
-}
-
-/** Write null-terminated string to buffer */
-function writeNullString(buffer: ByteBuffer, value: string): void {
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(value);
-  for (const byte of bytes) {
-    buffer.writeByte(byte);
-  }
-  buffer.writeByte(0);
 }
 
 // =============================================================================

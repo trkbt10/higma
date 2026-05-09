@@ -1,9 +1,15 @@
 /**
- * @file Schema encoder for fig-kiwi roundtrip output
+ * @file Fig-family Kiwi schema encoder.
+ *
+ * Sister of `encodeSchema` in `./encoder.ts`: encodes a Kiwi schema using
+ * the null-terminated string variant required by the `.fig` binary format
+ * and fig-family canvas payloads. `encodeSchema` writes length-prefixed
+ * strings; this writer writes C-style null-terminated strings, which is
+ * the on-wire format the fig family expects.
  */
 
-import { ByteBuffer } from "@higma-codecs/kiwi/byte-buffer";
-import type { KiwiSchema } from "@higma-codecs/kiwi/types";
+import { ByteBuffer } from "./byte-buffer";
+import type { KiwiSchema } from "./types";
 
 function writeNullString(buffer: ByteBuffer, value: string): void {
   const encoder = new TextEncoder();
@@ -26,7 +32,8 @@ function encodeDefinitionKind(kind: string): number {
 }
 
 /**
- * Encode a Kiwi schema into the null-terminated string variant used by fig-kiwi.
+ * Encode a Kiwi schema into the null-terminated string variant used by
+ * fig-family canvases and the `.fig` file format.
  */
 export function encodeFigSchema(schema: KiwiSchema): Uint8Array {
   const buffer = new ByteBuffer();

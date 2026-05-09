@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "@higma-tools/fig-to-web";
 import type { CapturedBreakpoint } from "@higma-tools/web-to-fig/web-source";
-import { comparePng, type ComparisonOutcome } from "./compare";
+import { comparePng, type ComparisonOutcome } from "@higma-codecs/png-compare";
 import { startStaticPreview, type StaticPreview } from "./preview-server";
 import { renderPreview, type RenderedPreviewFrame } from "./render-preview";
 

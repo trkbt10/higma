@@ -37,7 +37,7 @@ import type { BooleanOperationNodeData } from "./boolean-builder";
 import { SHAPE_NODE_TYPES, NODE_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { buildFigCanvasHeader } from "@higma-figma-containers/canvas/header";
 import { createEmptyZipPackage } from "@higma-primitives/zip";
-import { encodeFigSchema } from "./schema-encoder";
+import { encodeFigSchema } from "@higma-codecs/kiwi/fig-schema-encoder";
 import {
   encodeRectangleBlob,
   encodeRoundedRectangleBlob,

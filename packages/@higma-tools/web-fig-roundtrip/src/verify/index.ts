@@ -2,9 +2,6 @@
  * @file Public verify entry — full web → fig → web round-trip
  * verification driving fig-to-web's actual user-visible render.
  */
-export type { ComparisonOutcome, CompareOptions } from "./compare";
-export { comparePng } from "./compare";
-
 export type { RenderedPreviewFrame, RenderPreviewOptions } from "./render-preview";
 export { renderPreview } from "./render-preview";
 

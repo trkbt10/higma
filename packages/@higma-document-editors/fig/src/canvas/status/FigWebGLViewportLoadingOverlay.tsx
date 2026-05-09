@@ -1,7 +1,7 @@
 /** @file Canvas status overlay for WebGL viewport resource preparation. */
 
 import type { ViewportLayerFrame } from "../layout/viewport-render-plan";
-import type { WebGLViewportPreparationStatus } from "./webgl-viewport-preparation-status";
+import type { WebGLViewportPreparationStatus } from "@higma-document-renderers/fig/webgl/preparation-status";
 
 type FigWebGLViewportLoadingOverlayProps = {
   readonly frame: ViewportLayerFrame;

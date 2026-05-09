@@ -2,7 +2,7 @@
  * @file Product-free fig-family Kiwi canvas decoding.
  */
 
-import { decompressDeflateRaw, decompressZstd, isZstdCompressed } from "@higma-codecs/compression";
+import { decompressFigChunk } from "@higma-codecs/compression";
 import { decodeFigMessage, decodeFigSchema, splitFigChunks } from "@higma-codecs/kiwi/decoder";
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import {
@@ -28,13 +28,6 @@ export type FigmaKiwiCanvas = {
   readonly metadata: FigPackageMetadata | null;
   readonly thumbnail: Uint8Array | null;
 };
-
-function decompressFigChunk(data: Uint8Array): Uint8Array {
-  if (isZstdCompressed(data)) {
-    return decompressZstd(data);
-  }
-  return decompressDeflateRaw(data);
-}
 
 function asArray(value: unknown): readonly unknown[] {
   if (Array.isArray(value)) {

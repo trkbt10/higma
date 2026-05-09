@@ -2,8 +2,9 @@
  * @file Product-free roundtrip IO for fig-family Kiwi canvases.
  */
 
-import { compressDeflateRaw, compressZstd, decompressDeflateRaw, decompressZstd, isZstdCompressed } from "@higma-codecs/compression";
+import { compressDeflateRaw, compressZstd, decompressFigChunk } from "@higma-codecs/compression";
 import { decodeFigMessage, decodeFigSchema, splitFigChunks } from "@higma-codecs/kiwi/decoder";
+import { encodeFigSchema } from "@higma-codecs/kiwi/fig-schema-encoder";
 import { StreamingFigEncoder } from "@higma-codecs/kiwi/stream";
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import { buildFigCanvasHeader, getFigCanvasPayload, parseFigCanvasHeader } from "@higma-figma-containers/canvas";
@@ -18,7 +19,6 @@ import {
 import type { FigCanvasMagic } from "@higma-figma-schema/profiles";
 
 import { denormaliseFigFamilyNodeForEncode, normaliseFigFamilyNodeChanges } from "./node-normalization";
-import { encodeFigSchema } from "./schema-encoder";
 
 export type FigFamilyImage = FigPackageImage;
 export type FigFamilyMetadata = FigPackageMetadata;
@@ -59,13 +59,6 @@ function resolveSchemaBytes<NodeChange, BlobValue>(
     return compressDeflateRaw(encodeFigSchema(loaded.schema));
   }
   return loaded.compressedSchema;
-}
-
-function decompressFigChunk(data: Uint8Array): Uint8Array {
-  if (isZstdCompressed(data)) {
-    return decompressZstd(data);
-  }
-  return decompressDeflateRaw(data);
 }
 
 async function extractZipContents(data: Uint8Array): Promise<ExtractedFigFamilyData> {

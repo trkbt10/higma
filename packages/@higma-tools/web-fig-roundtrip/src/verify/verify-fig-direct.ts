@@ -9,7 +9,7 @@
  * no fig-to-web layer in between.
  */
 import type { CapturedBreakpoint } from "@higma-tools/web-to-fig/web-source";
-import { comparePng, type ComparisonOutcome } from "./compare";
+import { comparePng, type ComparisonOutcome } from "@higma-codecs/png-compare";
 import {
   renderFigViewports,
   startWebglHarness,
