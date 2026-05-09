@@ -14,7 +14,8 @@
  * generator into a larger build pipeline.
  */
 export { findCanvas, findInternalCanvas, loadFigSource } from "./fig-source";
-export type { FigSource } from "./fig-source";
+// `FigSymbolContext` (the type returned by `loadFigSource`) lives in
+// `@higma-document-io/fig/context` — consumers must import it directly.
 
 export type {
   ColorToken,

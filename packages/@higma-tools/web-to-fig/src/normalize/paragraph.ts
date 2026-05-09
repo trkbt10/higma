@@ -84,7 +84,9 @@ function isInlineDisplay(display: string | undefined): boolean {
 
 function collectTextLength(el: RawElement): number {
   const direct = (el.text ?? "").length;
-  return el.children.reduce((acc, child) => acc + collectTextLength(child), direct);
+  const pseudo = (el.pseudo ?? []).reduce((acc, p) => acc + p.text.length, 0);
+  const childTotal = el.children.reduce((acc, child) => acc + collectTextLength(child), 0);
+  return direct + pseudo + childTotal;
 }
 
 function everyDescendantIsInline(el: RawElement): boolean {
@@ -252,10 +254,13 @@ function sameStyle(a: BaseStyle, b: BaseStyle): boolean {
  * Walk an element's inline subtree depth-first in document order,
  * collapsing whitespace exactly the way browsers do for inline
  * content. Each text run encountered along the way is pushed with
- * the inline ancestor's effective style.
+ * the inline ancestor's effective style. `::before` / `::after`
+ * pseudo-element text is bracketed around the element's own text
+ * + descendants, mirroring the CSS Generated Content rules.
  */
 function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
   const ownStyle = mergeStyle(el, base);
+  pushPseudo(el, "before", ownStyle, writer);
   // Direct text on this element comes before its inline children —
   // the snapshot walker captures only direct text nodes per element,
   // not interleaved text/element ordering. For the paragraphs we
@@ -271,6 +276,32 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
       continue;
     }
     walkInline(child, ownStyle, writer);
+  }
+  pushPseudo(el, "after", ownStyle, writer);
+}
+
+function pushPseudo(
+  el: RawElement,
+  which: "before" | "after",
+  hostStyle: BaseStyle,
+  writer: RunWriter,
+): void {
+  const pseudoEntries = el.pseudo ?? [];
+  for (const entry of pseudoEntries) {
+    if (entry.which !== which) {
+      continue;
+    }
+    const cs = entry.computedStyle;
+    const style: BaseStyle = {
+      color: cs.color ? parseColor(cs.color) : hostStyle.color,
+      fontFamily: cs["font-family"] ? extractFamilyName(cs["font-family"]) : hostStyle.fontFamily,
+      fontWeight: cs["font-weight"] ? parseFontWeight(cs["font-weight"]) : hostStyle.fontWeight,
+      fontStyle: extractFontStyle(cs["font-style"]) ?? hostStyle.fontStyle,
+      textDecoration: cs["text-decoration-line"]
+        ? extractDecoration(cs["text-decoration-line"])
+        : hostStyle.textDecoration,
+    };
+    writer.push(entry.text, style);
   }
 }
 

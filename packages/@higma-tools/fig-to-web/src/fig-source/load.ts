@@ -25,23 +25,18 @@ import {
   type FigSymbolContext,
 } from "@higma-document-io/fig/context";
 
-/**
- * Re-export of the IO context type under the legacy `FigSource` name.
- *
- * The shape (loaded / tree / nodesByGuid / symbolMap / styleRegistry /
- * blobs / images / metadata) is identical — there is one SoT for "what a
- * loaded .fig file plus its derived maps looks like" and it lives in
- * `@higma-document-io/fig/context`.
- */
-export type FigSource = FigSymbolContext;
+// `FigSource` was historically an alias of `FigSymbolContext`; consumers
+// must now import `FigSymbolContext` directly from
+// `@higma-document-io/fig/context`. This module exposes only the
+// fig-to-web-specific helpers below.
 
 /** Read the bytes of a fig file and assemble its raw tree view. */
-export async function loadFigSource(buffer: Uint8Array): Promise<FigSource> {
+export async function loadFigSource(buffer: Uint8Array): Promise<FigSymbolContext> {
   return createFigSymbolContext(buffer);
 }
 
 /** Locate the user-visible CANVAS with the given name (typically "Design"). */
-export function findCanvas(source: FigSource, canvasName: string): FigNode | undefined {
+export function findCanvas(source: FigSymbolContext, canvasName: string): FigNode | undefined {
   for (const root of source.tree.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
@@ -56,7 +51,7 @@ export function findCanvas(source: FigSource, canvasName: string): FigNode | und
 }
 
 /** Locate the (single) Internal Only Canvas — Figma's holder for shared style proxies. */
-export function findInternalCanvas(source: FigSource): FigNode | undefined {
+export function findInternalCanvas(source: FigSymbolContext): FigNode | undefined {
   for (const root of source.tree.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;

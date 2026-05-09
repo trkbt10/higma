@@ -26,7 +26,7 @@ import type { ComponentPropDecl, ComponentTarget, EmitFile, EmitRegistry, FrameT
 import type { EmitContext } from "./jsx";
 import { emitFrameJsx } from "./jsx";
 import type { TokenIndex } from "../../tokens";
-import type { FigSource } from "../../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import type { ImageResolver } from "../style/paint";
 import type { PropBindings } from "../plan/prop-bindings";
 import { buildPropBindings } from "../plan/prop-bindings";
@@ -61,7 +61,7 @@ function buildLayoutOverlay(rootNode: FigNode): EmitContext["reparent"] {
 }
 
 function makeContext(
-  source: FigSource,
+  source: FigSymbolContext,
   registry: EmitRegistry,
   index: TokenIndex,
   emittingFile: string,
@@ -191,7 +191,7 @@ function jsIdentForKey(propName: string): string {
 
 /** Render one TSX file for a target page (top-level Figma frame). */
 export function emitPageFile(
-  source: FigSource,
+  source: FigSymbolContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: FrameTarget,
@@ -229,7 +229,7 @@ export function emitPageFile(
 }
 
 function emitVariantSwitch(
-  source: FigSource,
+  source: FigSymbolContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: ComponentTarget,
@@ -243,7 +243,7 @@ function emitVariantSwitch(
 }
 
 function emitVariantCase(
-  _source: FigSource,
+  _source: FigSymbolContext,
   _registry: EmitRegistry,
   _index: TokenIndex,
   variantValue: string,
@@ -273,7 +273,7 @@ function emitVariantCase(
 
 /** Render one TSX file for a referenced SYMBOL / variant-set target. */
 export function emitComponentFile(
-  source: FigSource,
+  source: FigSymbolContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: ComponentTarget,

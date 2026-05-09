@@ -15,7 +15,7 @@ export {
   isFigmaZipFile,
 } from "./fig-file";
 
-export type { ParsedFigFile, FigImage } from "./fig-file";
+export type { ParsedFigFile } from "./fig-file";
 
 export {
   normaliseNodeChanges,

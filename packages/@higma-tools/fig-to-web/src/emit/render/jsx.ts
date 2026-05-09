@@ -37,7 +37,7 @@ import { absorbBackgroundDecoration } from "../style/decoration";
 import { isPlainRule } from "../style/rule";
 import type { PropBindings } from "../plan/prop-bindings";
 import { lookupInstanceTarget, variantValueForInstance } from "../plan/registry";
-import type { FigSource } from "../../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import { emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "../svg/svg";
 import { hasOverrides, resolveTextRuns } from "../text/text-runs";
 import type { InferenceResult } from "../layout/infer-layout";
@@ -58,7 +58,7 @@ const NON_RENDERED_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 export type EmitContext = {
-  readonly source: FigSource;
+  readonly source: FigSymbolContext;
   readonly registry: EmitRegistry;
   readonly index: TokenIndex;
   readonly imageResolver: ImageResolver;

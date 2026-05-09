@@ -8,7 +8,7 @@
  */
 
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { FigmaKiwiCanvas } from "@higma-figma-runtime/kiwi-canvas";
 import type { FigDesignDocument, FigPage } from "@higma-document-models/fig/domain";
 import { buildNodeTree, DEFAULT_PAGE_BACKGROUND, EMPTY_FIG_STYLE_REGISTRY, toPageId } from "@higma-document-models/fig/domain";

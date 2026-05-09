@@ -25,7 +25,7 @@
 import type { FigNode, FigGuid, FigComponentPropDef, FigVariantPropSpec } from "@higma-document-models/fig/types";
 import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
 import type { ComponentPropDecl, ComponentTarget, EmitRegistry, FrameTarget } from "../types";
-import type { FigSource } from "../../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "@higma-primitives/identifier";
 
 /**
@@ -34,12 +34,12 @@ import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "@higma-primitive
  * Returns undefined when the node is not part of any canvas — this
  * never happens in well-formed fig files.
  */
-function ancestorCanvas(source: FigSource, node: FigNode): FigNode | undefined {
+function ancestorCanvas(source: FigSymbolContext, node: FigNode): FigNode | undefined {
   return walkAncestors(source, node, (candidate) => getNodeType(candidate) === "CANVAS");
 }
 
 function walkAncestors(
-  source: FigSource,
+  source: FigSymbolContext,
   start: FigNode,
   predicate: (node: FigNode) => boolean,
 ): FigNode | undefined {
@@ -48,7 +48,7 @@ function walkAncestors(
 }
 
 function stepUp(
-  source: FigSource,
+  source: FigSymbolContext,
   node: FigNode,
   predicate: (node: FigNode) => boolean,
   seen: Set<string>,
@@ -107,7 +107,7 @@ function isVariantSetRoot(node: FigNode): boolean {
  * Resolve an INSTANCE's component target — either the SYMBOL's
  * variant-set root (when one exists) or the SYMBOL itself.
  */
-function resolveInstanceTarget(source: FigSource, instance: FigNode): FigNode | undefined {
+function resolveInstanceTarget(source: FigSymbolContext, instance: FigNode): FigNode | undefined {
   const symbolGuid = getSymbolGuid(instance);
   if (!symbolGuid) {
     return undefined;
@@ -380,7 +380,7 @@ function collectInstancesIn(node: FigNode, out: FigNode[]): void {
   }
 }
 
-function canvasSlugFor(source: FigSource, node: FigNode): string {
+function canvasSlugFor(source: FigSymbolContext, node: FigNode): string {
   const canvas = ancestorCanvas(source, node);
   if (canvas?.name) {
     return toCssSlug(canvas.name);
@@ -394,7 +394,7 @@ function canvasSlugFor(source: FigSource, node: FigNode): string {
  * Two passes are run: one for pages (frames the user picked), then one
  * for the components that those pages reference via INSTANCE.
  */
-export function buildRegistry(source: FigSource, frames: readonly FigNode[]): EmitRegistry {
+export function buildRegistry(source: FigSymbolContext, frames: readonly FigNode[]): EmitRegistry {
   const frameRegistry = new Map<string, FrameTarget>();
   const componentRegistry = new Map<string, ComponentTarget>();
   const componentNameUsed = new Set<string>();
@@ -429,7 +429,7 @@ export function buildRegistry(source: FigSource, frames: readonly FigNode[]): Em
 }
 
 function registerInstanceTarget(
-  source: FigSource,
+  source: FigSymbolContext,
   instance: FigNode,
   componentRegistry: Map<string, ComponentTarget>,
   componentNameUsed: Set<string>,
@@ -465,7 +465,7 @@ function registerInstanceTarget(
 
 /** Resolve the component target for an INSTANCE node, or undefined when missing. */
 export function lookupInstanceTarget(
-  source: FigSource,
+  source: FigSymbolContext,
   registry: EmitRegistry,
   instance: FigNode,
 ): ComponentTarget | undefined {
@@ -482,7 +482,7 @@ export function lookupInstanceTarget(
  * Returns undefined when the component is not a variant set.
  */
 export function variantValueForInstance(
-  source: FigSource,
+  source: FigSymbolContext,
   registry: EmitRegistry,
   instance: FigNode,
 ): string | undefined {

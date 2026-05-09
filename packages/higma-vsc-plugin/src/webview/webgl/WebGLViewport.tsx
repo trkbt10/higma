@@ -14,13 +14,13 @@
  */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { useWebGLViewport } from "./use-webgl-viewport";
 import { WebGLLoadingOverlay } from "./WebGLLoadingOverlay";
 
 type Props = {
   readonly sceneGraph: SceneGraph | null;
-  readonly renderOptions?: FigFamilyRenderOptions;
+  readonly renderOptions?: SceneGraphRenderOptions;
   /** Active zoom (the viewport transform's `scale`). The renderer paints
    *  the world-space `sceneGraph.viewport` rect onto the surface itself,
    *  so this value is *not* used as a CSS transform. It only feeds the

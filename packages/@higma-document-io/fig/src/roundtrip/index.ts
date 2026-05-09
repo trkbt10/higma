@@ -14,9 +14,6 @@ export {
   createGuidAllocator,
   findNodeByName,
   findNodesByType,
-  type FigImage,
-  type FigMetadata,
-  type LoadedFigFile,
   type SaveFigOptions,
   type GuidAllocator,
 } from "./fig-roundtrip";

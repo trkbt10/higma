@@ -127,14 +127,12 @@ export function getInstanceSymbolOverrides(
 // Symbol Resolution
 // =============================================================================
 
-/**
- * Resolve a GUID string from symbolMap, with localID fallback.
- * Re-exported from `./symbol-map-lookup` — that's the SoT module.
- * (Kept as a re-export here so external consumers that imported it
- * from `symbol-resolver`/`@higma-document-models/fig/symbols` don't break.)
- */
+// `resolveSymbolGuidStr` and `SymbolMapResolution` are owned by
+// `./symbol-map-lookup` (the SoT module). External consumers must import
+// them directly from `@higma-document-models/fig/symbols` (which re-exports
+// from `./symbol-map-lookup`); this module imports them only for internal
+// use.
 import { resolveSymbolGuidStr, type SymbolMapResolution } from "./symbol-map-lookup";
-export { resolveSymbolGuidStr, type SymbolMapResolution };
 
 // =============================================================================
 // INSTANCE reference resolution — Single Source of Truth

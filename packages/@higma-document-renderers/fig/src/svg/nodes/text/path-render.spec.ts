@@ -10,7 +10,7 @@ import {
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { AbstractFont, FontLoader, FontLoadOptions, LoadedFont } from "@higma-document-models/fig/font";
+import type { AbstractFont, FontLoader, FontQuery, LoadedFont } from "@higma-document-models/fig/font";
 
 function createFakeFont(supportedChars: string): AbstractFont {
   return {
@@ -57,7 +57,7 @@ function createFakeFontLoader(params: {
   readonly primary?: LoadedFont;
 }): FontLoader {
   return {
-    loadFont(_query: FontLoadOptions) {
+    loadFont(_query: FontQuery) {
       return Promise.resolve(params.primary);
     },
     isFontAvailable() {

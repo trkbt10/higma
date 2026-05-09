@@ -1,7 +1,7 @@
 /** @file WebGL viewport layer composition for the fig editor. */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigWebGLViewportLoadingOverlay } from "../status/FigWebGLViewportLoadingOverlay";
 import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";
 import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";
@@ -9,7 +9,7 @@ import { useWebGLViewportRenderer } from "./use-webgl-viewport-renderer";
 
 type FigWebGLViewportLayerProps = {
   readonly sceneGraph: SceneGraph;
-  readonly renderOptions?: FigFamilyRenderOptions;
+  readonly renderOptions?: SceneGraphRenderOptions;
   readonly viewportScale: number;
   readonly placement?: ViewportLayerPlacement;
   readonly initializationDelayMs?: number;

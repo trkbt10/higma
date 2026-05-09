@@ -29,13 +29,11 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import { guidToString, safeChildren } from "@higma-document-models/fig/domain";
 import { figRawResources, type FigSymbolContext } from "@higma-document-io/fig/context";
 
-/**
- * Context the renderer needs from the loaded fig. Accept the full
- * `FigSymbolContext` SoT — the node renderer reads `blobs`, `images`,
- * and `symbolMap` from it, so callers do not need to know which
- * subset is required at any given call.
- */
-export type NodeRenderContext = FigSymbolContext;
+// The renderer accepts the full `FigSymbolContext` SoT (owned by
+// `@higma-document-io/fig/context`) — it reads `blobs`, `images`, and
+// `symbolMap` from it. Consumers must import `FigSymbolContext` directly
+// from its origin package; this module deliberately does not republish it
+// under a `NodeRenderContext` alias.
 
 export type RenderedNode = {
   readonly key: string;
@@ -62,7 +60,7 @@ export type NodeRenderer = {
  * loader and renderer are shared across every render so the OpenType
  * cache hits across calls.
  */
-export function createNodeRenderer(ctx: NodeRenderContext): NodeRenderer {
+export function createNodeRenderer(ctx: FigSymbolContext): NodeRenderer {
   const cache: Cache = new Map();
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
   const counter = { hits: 0, misses: 0 };

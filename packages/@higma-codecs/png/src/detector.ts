@@ -7,8 +7,6 @@
 
 import { PNG_SIGNATURE } from "./constants";
 
-export { PNG_SIGNATURE };
-
 /**
  * Check if data starts with PNG signature
  *

@@ -1,15 +1,53 @@
 /**
- * @file Node.js font loader implementation
+ * @file Node.js font loader implementation.
  *
- * Loads fonts from the filesystem using common system font directories.
- * macOS, Linux, and Windows font paths are supported.
+ * OS-correct font resolution: the loader asks the host operating
+ * system itself which fonts are installed, then indexes those files
+ * and answers `(family, weight, style)` queries against the index.
  *
- * Weight/style detection delegates to the canonical SoT (`detectWeight` /
- * `detectStyle`); driver-local re-implementations would drift from the
- * resolver's interpretation and produce mismatched cache lookups.
+ * Discovery strategy per platform:
+ *
+ *   darwin
+ *     Scan the directories CoreText / Font Book consult:
+ *     `/System/Library/Fonts`, `/Library/Fonts`, `~/Library/Fonts`.
+ *     CoreText itself walks these same paths, so the disk view
+ *     matches what the OS resolves.
+ *
+ *   linux
+ *     Invoke `fc-list` — fontconfig is the Linux OS-canonical
+ *     resolver. This honours every `<dir>` entry from
+ *     `/etc/fonts/fonts.conf`, `/etc/fonts/conf.d/*.conf`, and
+ *     `~/.config/fontconfig/fonts.conf`, so we resolve against the
+ *     same catalogue every other Linux GUI app uses. If `fc-list`
+ *     is unavailable we fall back to scanning the canonical
+ *     XDG / FHS dirs.
+ *
+ *   win32
+ *     Read the Fonts registry keys (`HKLM` + `HKCU`) — that is the
+ *     OS's record of which fonts are installed; the directory
+ *     `C:\Windows\Fonts` is only the default storage location.
+ *     If `reg.exe` is unavailable we fall back to scanning the
+ *     canonical Fonts dirs.
+ *
+ * Weight/style detection delegates to the canonical SoT
+ * (`figmaFontToQuery`); driver-local re-implementations would drift
+ * from the resolver's interpretation and produce mismatched cache
+ * lookups.
+ *
+ * Fail-fast policy: when the requested family is not present in the
+ * index, `loadFont` returns `undefined`. The path-renderer caller
+ * treats that as a hard error (see `path-render.ts`). The loader
+ * does NOT silently substitute a generic-stack fallback for
+ * arbitrary user families — that would mask missing-font installs
+ * as successful renders. Only requests that themselves name a CSS
+ * generic keyword (`sans-serif`, `serif`, `monospace`, `system-ui`,
+ * ...) walk the keyword's published stack; that is CSS-defined
+ * behaviour, not a defensive rescue.
  */
 
-import * as fs from "node:fs";
+import { spawn } from "node:child_process";
+import * as fsDefault from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "@higma-document-models/fig/font";
@@ -18,6 +56,18 @@ import { figmaFontToQuery } from "@higma-document-models/fig/font";
 import { GENERIC_FONT_STACKS } from "@higma-document-models/fig/font";
 import type { LoadedFont } from "@higma-document-models/fig/font";
 import { extractTtcFaces, isTtc } from "./ttc";
+import { discoverDarwin } from "./discover-darwin";
+import { discoverLinux } from "./discover-linux";
+import { discoverWin32 } from "./discover-win32";
+import { classifyFontFile, scanFontDirectories } from "./discover-dirs";
+import type {
+  DiscoveredFontFile,
+  DiscoveryEnv,
+  DiscoveryExec,
+  DiscoveryFs,
+  DiscoveryResult,
+  DiscoverySource,
+} from "./discover-types";
 
 type FontNameRecord = Record<string, { en?: string } | undefined>;
 type PlatformFontNameRecord = Record<string, FontNameRecord | undefined>;
@@ -74,7 +124,7 @@ function toLoadedFontType(font: unknown): LoadedFont["font"] {
 }
 
 /**
- * Indexed font file metadata. `query` is the canonical face descriptor.
+ * Indexed font face metadata. `query` is the canonical face descriptor.
  *
  * `faceIndex` selects a single face inside a `.ttc` collection (0 for
  * standalone files). The loader copies that face out to a fresh
@@ -87,55 +137,118 @@ type FontFileInfo = {
   readonly faceIndex: number;
 };
 
-const SYSTEM_FONT_DIRS: Record<string, readonly string[]> = {
-  darwin: [
-    "/System/Library/Fonts",
-    "/Library/Fonts",
-    `${process.env.HOME}/Library/Fonts`,
-  ],
-  linux: [
-    "/usr/share/fonts",
-    "/usr/local/share/fonts",
-    `${process.env.HOME}/.fonts`,
-    `${process.env.HOME}/.local/share/fonts`,
-  ],
-  win32: [
-    "C:\\Windows\\Fonts",
-    `${process.env.LOCALAPPDATA}\\Microsoft\\Windows\\Fonts`,
-  ],
+/**
+ * Pluggable host-environment surface — `fs` access, current platform,
+ * exec for OS resolver invocations, and the env vars used to locate
+ * per-user font dirs. The default factory wires this to the real
+ * `node:fs`, `child_process`, and `process` so production call sites
+ * are unchanged. Unit tests inject a fake to drive platform-specific
+ * discovery without touching the host filesystem.
+ */
+export type NodeFontLoaderEnv = {
+  readonly fs: DiscoveryFs;
+  readonly exec: DiscoveryExec;
+  readonly platform: NodeJS.Platform;
+  /** Absolute path to the user's home directory (`os.homedir()`). */
+  readonly homeDir: string | undefined;
+  /** Resolved `%LOCALAPPDATA%` (Windows) — empty/undefined when missing. */
+  readonly localAppData: string | undefined;
+  /** Resolved `%WINDIR%` / `%SystemRoot%` (Windows). */
+  readonly windowsDir: string | undefined;
+  /** `$XDG_DATA_HOME` for Linux per-user font discovery. */
+  readonly xdgDataHome: string | undefined;
+  /** `$XDG_CONFIG_HOME` — reserved for future fontconfig user-config parsing. */
+  readonly xdgConfigHome: string | undefined;
+  /** `process.cwd()` — used by the `@fontsource` discovery helper. */
+  readonly cwd: string;
 };
 
-function getSystemFontDirs(): readonly string[] {
-  const platform = process.platform;
-  return SYSTEM_FONT_DIRS[platform] ?? [];
+function defaultExec(): DiscoveryExec {
+  return {
+    run(cmd: string, args: readonly string[]): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const child = spawn(cmd, [...args], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const stdoutChunks: Buffer[] = [];
+        const stderrChunks: Buffer[] = [];
+        child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+        child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+        child.on("error", (err) => reject(err));
+        child.on("close", (code) => {
+          if (code === 0) {
+            resolve(Buffer.concat(stdoutChunks).toString("utf8"));
+            return;
+          }
+          const stderr = Buffer.concat(stderrChunks).toString("utf8");
+          reject(new Error(`${cmd} exited with code ${code ?? "null"}: ${stderr}`));
+        });
+      });
+    },
+  };
+}
+
+function defaultNodeFontLoaderEnv(): NodeFontLoaderEnv {
+  return {
+    fs: fsDefault,
+    exec: defaultExec(),
+    platform: process.platform,
+    homeDir: os.homedir() || undefined,
+    localAppData: process.env.LOCALAPPDATA || undefined,
+    windowsDir: process.env.WINDIR || process.env.SystemRoot || undefined,
+    xdgDataHome: process.env.XDG_DATA_HOME || undefined,
+    xdgConfigHome: process.env.XDG_CONFIG_HOME || undefined,
+    cwd: process.cwd(),
+  };
+}
+
+function toDiscoveryEnv(env: NodeFontLoaderEnv): DiscoveryEnv {
+  return {
+    fs: env.fs,
+    exec: env.exec,
+    homeDir: env.homeDir,
+    localAppData: env.localAppData,
+    windowsDir: env.windowsDir,
+    xdgDataHome: env.xdgDataHome,
+    xdgConfigHome: env.xdgConfigHome,
+  };
+}
+
+async function discoverForPlatform(env: NodeFontLoaderEnv): Promise<DiscoveryResult> {
+  const discovery = toDiscoveryEnv(env);
+  switch (env.platform) {
+    case "darwin":
+      return discoverDarwin(discovery);
+    case "linux":
+      return discoverLinux(discovery);
+    case "win32":
+      return discoverWin32(discovery);
+    default:
+      // Unknown platform — return an empty catalogue rather than
+      // pretending one of the strategies applies. Callers will see
+      // `loadFont` return `undefined` and surface the missing OS
+      // support at the call site.
+      return { files: [], source: "empty" };
+  }
 }
 
 function weightDistance(requested: number, actual: number): number {
   return Math.abs(requested - actual);
 }
 
-/** Node font loader with additional capabilities */
+/** Node font loader with additional capabilities. */
 export type NodeFontLoaderInstance = FontLoader & {
-  /** List available font families */
+  /** List available font families. */
   listFontFamilies(): Promise<readonly string[]>;
-  /** Add a custom font file */
+  /** Add a custom font file. */
   addFontFile(fontPath: string): Promise<void>;
+  /**
+   * Discovery source used to populate the catalogue (e.g. `linux-fontconfig`,
+   * `darwin-dirs`). Awaits index construction. Useful for diagnostics
+   * and tests.
+   */
+  catalogueSource(): Promise<DiscoverySource>;
 };
-
-/**
- * Check if a file's extension marks it as parseable by this loader.
- *
- * `.ttc` is included — TrueType Collections are decomposed into their
- * embedded faces by `extractTtcFaces` before the parser sees them.
- *
- * `.woff2` is intentionally excluded. opentype.js needs an external
- * brotli decompressor to read WOFF2; until that decoder is wired in,
- * indexing a `.woff2` file would just throw.
- */
-function isFontFile(filename: string): boolean {
-  const ext = path.extname(filename).toLowerCase();
-  return [".ttf", ".otf", ".ttc", ".woff"].includes(ext);
-}
 
 /**
  * Read a font file off disk into a fresh `ArrayBuffer`.
@@ -148,7 +261,7 @@ function isFontFile(filename: string): boolean {
  * We copy the exact byte range we own into a brand-new ArrayBuffer
  * here so downstream consumers always see clean input.
  */
-function readFontFileBytes(fontPath: string): ArrayBuffer {
+function readFontFileBytes(fs: DiscoveryFs, fontPath: string): ArrayBuffer {
   const data = fs.readFileSync(fontPath);
   const copy = new ArrayBuffer(data.byteLength);
   new Uint8Array(copy).set(data);
@@ -161,8 +274,12 @@ function readFontFileBytes(fontPath: string): ArrayBuffer {
  * For `.ttc` collections, `faceIndex` selects which face to return
  * (0..N-1). For single-face files `faceIndex` must be 0.
  */
-function parseFaceAt(fontPath: string, faceIndex: number): ReturnType<typeof parseFont> {
-  const buffer = readFontFileBytes(fontPath);
+function parseFaceAt(
+  fs: DiscoveryFs,
+  fontPath: string,
+  faceIndex: number,
+): ReturnType<typeof parseFont> {
+  const buffer = readFontFileBytes(fs, fontPath);
   if (isTtc(buffer)) {
     const faces = extractTtcFaces(buffer);
     const face = faces[faceIndex];
@@ -177,20 +294,31 @@ function parseFaceAt(fontPath: string, faceIndex: number): ReturnType<typeof par
   return parseFont(buffer);
 }
 
-async function getFontInfos(fontPath: string): Promise<readonly FontFileInfo[]> {
-  const buffer = readFontFileBytes(fontPath);
+async function getFontInfos(
+  fs: DiscoveryFs,
+  discovered: DiscoveredFontFile,
+): Promise<readonly FontFileInfo[]> {
+  const buffer = readFontFileBytes(fs, discovered.path);
   if (isTtc(buffer)) {
     const faces = extractTtcFaces(buffer);
+    if (discovered.faceIndex !== undefined) {
+      const face = faces[discovered.faceIndex];
+      if (!face) {
+        return [];
+      }
+      const info = describeFace(parseFont(face), discovered.path, discovered.faceIndex);
+      return info ? [info] : [];
+    }
     const out: FontFileInfo[] = [];
     for (let i = 0; i < faces.length; i += 1) {
-      const info = describeFace(parseFont(faces[i]!), fontPath, i);
+      const info = describeFace(parseFont(faces[i]!), discovered.path, i);
       if (info) {
         out.push(info);
       }
     }
     return out;
   }
-  const info = describeFace(parseFont(buffer), fontPath, 0);
+  const info = describeFace(parseFont(buffer), discovered.path, 0);
   return info ? [info] : [];
 }
 
@@ -253,70 +381,58 @@ function deriveSubfamilyFromFilename(fontPath: string): string | undefined {
   return match ? match[1] : undefined;
 }
 
-async function tryIndexFontFile(
-  fullPath: string,
-  index: Map<string, FontFileInfo[]>,
-): Promise<void> {
-  // Indexing must be resilient: the system font directory always
-  // contains at least one file the parser can't read on a given
-  // version of opentype.js. Catching and skipping per-file means a
-  // bad apple doesn't sink the whole index. Throwing during the
-  // parse would only mask the rest of the system font catalogue.
-  const infos = await safelyReadFontInfos(fullPath);
-  for (const info of infos) {
-    const familyLower = info.query.family.toLowerCase();
-    const existing = index.get(familyLower) ?? [];
-    index.set(familyLower, [...existing, info]);
+async function indexDiscoveredFiles(
+  fs: DiscoveryFs,
+  files: readonly DiscoveredFontFile[],
+): Promise<Map<string, FontFileInfo[]>> {
+  const index = new Map<string, FontFileInfo[]>();
+  for (const file of files) {
+    // Indexing must be resilient: an OS-installed font directory always
+    // contains at least one file the parser can't read on a given
+    // version of opentype.js. Catching and skipping per-file means a
+    // bad apple doesn't sink the whole index. Throwing during the
+    // parse would only mask the rest of the system font catalogue.
+    const infos = await safelyReadFontInfos(fs, file);
+    for (const info of infos) {
+      const familyLower = info.query.family.toLowerCase();
+      const existing = index.get(familyLower) ?? [];
+      index.set(familyLower, [...existing, info]);
+    }
   }
+  return index;
 }
 
-async function safelyReadFontInfos(fontPath: string): Promise<readonly FontFileInfo[]> {
+async function safelyReadFontInfos(
+  fs: DiscoveryFs,
+  discovered: DiscoveredFontFile,
+): Promise<readonly FontFileInfo[]> {
   // Unparseable fonts (corrupt cmap, missing decoder, exotic
   // subtables) silently drop out of the index — callers asking for
   // them via loadFont will get `undefined`. Throwing here would
   // sink the entire system-font scan.
   try {
-    return await getFontInfos(fontPath);
+    return await getFontInfos(fs, discovered);
   } catch (err) {
     void err;
     return [];
   }
 }
 
-async function indexDirectory(
-  dir: string,
-  index: Map<string, FontFileInfo[]>
-): Promise<void> {
-  if (!fs.existsSync(dir)) {return;}
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      await indexDirectory(fullPath, index);
-    } else if (isFontFile(entry.name)) {
-      await tryIndexFontFile(fullPath, index);
-    }
-  }
-}
-
 /**
- * Look up an indexed family with CSS-generic stack lookup, then
- * cascade to a generic-family stack as a last resort.
+ * Look up an indexed family.
  *
- * Resolution order:
- *   1. Direct match on the requested family.
- *   2. If the request is itself a generic keyword (`system-ui`,
- *      `serif`, etc.), walk that keyword's stack.
- *   3. Otherwise treat the request as a likely sans-serif (web pages
- *      ask for `Roboto`, `Inter`, …) and walk the `sans-serif` stack
- *      so callers get *something* on the page rather than the
- *      "fontLoader could not load" preload error. Same for the
- *      monospace / serif keywords if the family happens to look like
- *      a proportional serif. Without this cascade every external
- *      web font request fails in headless capture.
+ * Resolution rules:
+ *   1. Direct case-insensitive match on the requested family.
+ *   2. If the request is itself a CSS generic keyword
+ *      (`sans-serif`, `serif`, `monospace`, `system-ui`, `cursive`,
+ *      `fantasy`), walk the keyword's published stack and return the
+ *      first match. This is CSS-correct behaviour, not a defensive
+ *      rescue: a request that explicitly asks for the generic keyword
+ *      means "any font in this category".
+ *   3. Otherwise return `undefined`. The caller treats that as a
+ *      hard failure (the path renderer throws). The loader never
+ *      silently substitutes an unrelated family for a missing one —
+ *      that would mask real install gaps as successful renders.
  */
 function resolveVariants(
   index: Map<string, FontFileInfo[]>,
@@ -326,8 +442,7 @@ function resolveVariants(
   if (direct && direct.length > 0) {
     return direct;
   }
-  const stack = GENERIC_FONT_STACKS.get(family.toLowerCase())
-    ?? GENERIC_FONT_STACKS.get("sans-serif");
+  const stack = GENERIC_FONT_STACKS.get(family.toLowerCase());
   if (!stack) {
     return undefined;
   }
@@ -341,45 +456,107 @@ function resolveVariants(
 }
 
 /**
- * Create a Node.js font loader with default settings
+ * Rank candidate variants for a query.
+ *
+ * Order of priority:
+ *   1. style match (italic vs upright) — a wrong style is more
+ *      visually disruptive than a near-miss weight.
+ *   2. weight distance — minimal absolute delta from the requested
+ *      numeric weight.
+ *   3. postscriptName / path lex order — deterministic tiebreaker so
+ *      two equally-good faces in the same family always resolve to
+ *      the same one.
  */
-export function createNodeFontLoader(
-  options?: { fontDirs?: readonly string[]; includeSystemFontDirs?: boolean }
+function rankVariants(variants: readonly FontFileInfo[], query: FontQuery): readonly FontFileInfo[] {
+  return [...variants].sort((a, b) => {
+    const aStyleMatch = a.query.style === query.style ? 0 : 1;
+    const bStyleMatch = b.query.style === query.style ? 0 : 1;
+    if (aStyleMatch !== bStyleMatch) {
+      return aStyleMatch - bStyleMatch;
+    }
+
+    const aWeight = weightDistance(query.weight, a.query.weight);
+    const bWeight = weightDistance(query.weight, b.query.weight);
+    if (aWeight !== bWeight) {
+      return aWeight - bWeight;
+    }
+
+    const aPs = a.postscriptName ?? a.path;
+    const bPs = b.postscriptName ?? b.path;
+    if (aPs < bPs) {
+      return -1;
+    }
+    if (aPs > bPs) {
+      return 1;
+    }
+    return a.faceIndex - b.faceIndex;
+  });
+}
+
+export type CreateNodeFontLoaderOptions = {
+  /**
+   * Additional directories to scan beyond the OS catalogue. Useful for
+   * shipping bundled fonts alongside an application.
+   */
+  readonly fontDirs?: readonly string[];
+  /**
+   * Whether to consult the OS-canonical catalogue for the host
+   * platform. Defaults to `true`; pass `false` to use only
+   * `fontDirs`. Setting `false` with no `fontDirs` produces an
+   * empty index — every `loadFont` call returns `undefined`.
+   */
+  readonly includeSystemFontDirs?: boolean;
+};
+
+/**
+ * Public helper exposed for unit tests — internal callers should use
+ * `createNodeFontLoader`. Tests inject a fake `NodeFontLoaderEnv` so
+ * per-platform discovery can be exercised without touching the host
+ * filesystem.
+ */
+export function createNodeFontLoaderWithEnv(
+  env: NodeFontLoaderEnv,
+  options?: CreateNodeFontLoaderOptions,
 ): NodeFontLoaderInstance {
   const customFontDirs = options?.fontDirs ?? [];
   const includeSystemFontDirs = options?.includeSystemFontDirs ?? true;
-  const fontIndexRef = { value: null as Map<string, FontFileInfo[]> | null };
-  const indexPromiseRef = { value: null as Promise<void> | null };
+  const stateRef = {
+    value: null as { readonly index: Map<string, FontFileInfo[]>; readonly source: DiscoverySource } | null,
+  };
+  const buildPromiseRef = { value: null as Promise<void> | null };
 
-  function getFontDirs(): readonly string[] {
+  async function buildIndex(): Promise<void> {
+    const customFiles = scanFontDirectories(env.fs, customFontDirs);
+
     if (!includeSystemFontDirs) {
-      return customFontDirs;
-    }
-    return [...customFontDirs, ...getSystemFontDirs()];
-  }
-
-  async function buildFontIndex(): Promise<void> {
-    const index = new Map<string, FontFileInfo[]>();
-    const dirs = getFontDirs();
-
-    for (const dir of dirs) {
-      await indexDirectory(dir, index);
+      const index = await indexDiscoveredFiles(env.fs, customFiles);
+      stateRef.value = {
+        index,
+        source: customFontDirs.length > 0 ? "custom-dirs" : "empty",
+      };
+      return;
     }
 
-    fontIndexRef.value = index;
+    const osDiscovery = await discoverForPlatform(env);
+    // OS files first so user-supplied custom dirs win on duplicate
+    // family names — callers shipping a bundled "Inter" expect their
+    // copy to take precedence over an older system install.
+    const merged = mergeDiscovered([...osDiscovery.files], customFiles);
+    const index = await indexDiscoveredFiles(env.fs, merged);
+
+    const source: DiscoverySource = customFiles.length > 0 ? "custom-dirs" : osDiscovery.source;
+    stateRef.value = { index, source };
   }
 
   async function ensureIndex(): Promise<Map<string, FontFileInfo[]>> {
-    if (fontIndexRef.value) {
-      return fontIndexRef.value;
+    if (stateRef.value) {
+      return stateRef.value.index;
     }
-
-    if (!indexPromiseRef.value) {
-      indexPromiseRef.value = buildFontIndex();
+    if (!buildPromiseRef.value) {
+      buildPromiseRef.value = buildIndex();
     }
-
-    await indexPromiseRef.value;
-    return fontIndexRef.value!;
+    await buildPromiseRef.value;
+    return stateRef.value!.index;
   }
 
   async function loadFont(query: FontQuery): Promise<LoadedFont | undefined> {
@@ -390,25 +567,13 @@ export function createNodeFontLoader(
       return undefined;
     }
 
-    // Closest-match selection. Style match takes precedence over weight
-    // because a wrong style (italic vs upright) is more visually disruptive
-    // than a near-miss weight.
-    const sorted = [...variants].sort((a, b) => {
-      const aIsLatin = a.path.includes("-latin-") ? 0 : 1;
-      const bIsLatin = b.path.includes("-latin-") ? 0 : 1;
-      if (aIsLatin !== bIsLatin) {return aIsLatin - bIsLatin;}
-
-      const aStyleMatch = a.query.style === query.style ? 0 : 1;
-      const bStyleMatch = b.query.style === query.style ? 0 : 1;
-      if (aStyleMatch !== bStyleMatch) {return aStyleMatch - bStyleMatch;}
-
-      return weightDistance(query.weight, a.query.weight) - weightDistance(query.weight, b.query.weight);
-    });
-
+    const sorted = rankVariants(variants, query);
     const bestMatch = sorted[0];
-    if (!bestMatch) {return undefined;}
+    if (!bestMatch) {
+      return undefined;
+    }
 
-    const font = toLoadedFontType(parseFaceAt(bestMatch.path, bestMatch.faceIndex));
+    const font = toLoadedFontType(parseFaceAt(env.fs, bestMatch.path, bestMatch.faceIndex));
 
     return {
       font,
@@ -427,12 +592,41 @@ export function createNodeFontLoader(
 
     async listFontFamilies(): Promise<readonly string[]> {
       const index = await ensureIndex();
-      return Array.from(index.values()).map((variants) => variants[0].query.family);
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const variants of index.values()) {
+        const name = variants[0]?.query.family;
+        if (!name) {
+          continue;
+        }
+        const key = name.toLowerCase();
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        out.push(name);
+      }
+      return out;
     },
 
     async addFontFile(fontPath: string): Promise<void> {
+      const kind = classifyFontFile(fontPath);
+      if (kind === "woff2") {
+        // Caller asked for an explicit `.woff2` add. opentype.js cannot
+        // decompress brotli-encoded WOFF2 without an external decoder
+        // wired in; rather than silently no-op (which would make the
+        // family disappear from `loadFont` later) throw at the call
+        // site so the configuration error is observable.
+        throw new Error(
+          `addFontFile: WOFF2 (.woff2) is not supported by the Node font loader (${fontPath}). ` +
+            `Provide the .woff or .ttf/.otf variant instead.`,
+        );
+      }
+      if (kind === "unknown") {
+        throw new Error(`addFontFile: unsupported font extension: ${fontPath}`);
+      }
       const index = await ensureIndex();
-      const infos = await getFontInfos(fontPath);
+      const infos = await getFontInfos(env.fs, { path: fontPath });
       for (const info of infos) {
         const familyLower = info.query.family.toLowerCase();
         const existing = index.get(familyLower) ?? [];
@@ -440,28 +634,70 @@ export function createNodeFontLoader(
       }
     },
 
+    async catalogueSource(): Promise<DiscoverySource> {
+      await ensureIndex();
+      return stateRef.value!.source;
+    },
   };
 }
 
+function mergeDiscovered(
+  primary: DiscoveredFontFile[],
+  secondary: readonly DiscoveredFontFile[],
+): readonly DiscoveredFontFile[] {
+  const seen = new Set<string>();
+  const out: DiscoveredFontFile[] = [];
+  for (const file of [...primary, ...secondary]) {
+    const key = `${file.path}\t${file.faceIndex ?? -1}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(file);
+  }
+  return out;
+}
+
 /**
- * Create a Node.js font loader that includes @fontsource fonts
+ * Create a Node.js font loader wired to the host OS's font catalogue.
  *
- * Automatically scans node_modules/@fontsource for installed font packages.
+ * Tests should use `createNodeFontLoaderWithEnv` with a fake
+ * `NodeFontLoaderEnv`.
+ */
+export function createNodeFontLoader(
+  options?: CreateNodeFontLoaderOptions,
+): NodeFontLoaderInstance {
+  return createNodeFontLoaderWithEnv(defaultNodeFontLoaderEnv(), options);
+}
+
+/**
+ * Create a Node.js font loader that supplements the OS catalogue with
+ * `@fontsource` packages installed under `node_modules`.
+ *
+ * `@fontsource` is NOT an OS resolver — it is a JavaScript-package-
+ * distributed bundle of web fonts. This helper exists so tools that
+ * want to render with a specific bundled-font version (web roundtrip
+ * comparisons, deterministic snapshot generation) can opt in. It is
+ * not the right entry point for general OS-correct rendering; use
+ * `createNodeFontLoader()` for that.
  */
 export function createNodeFontLoaderWithFontsource(): NodeFontLoaderInstance {
+  const env = defaultNodeFontLoaderEnv();
   const fontsourceDirs: string[] = [];
 
-  // Look for @fontsource packages in node_modules
-  const nodeModulesPath = path.resolve(process.cwd(), "node_modules/@fontsource");
-  if (fs.existsSync(nodeModulesPath)) {
-    const packages = fs.readdirSync(nodeModulesPath);
+  const nodeModulesPath = path.resolve(env.cwd, "node_modules/@fontsource");
+  if (env.fs.existsSync(nodeModulesPath)) {
+    const packages = env.fs.readdirSync(nodeModulesPath, { withFileTypes: true });
     for (const pkg of packages) {
-      const filesDir = path.join(nodeModulesPath, pkg, "files");
-      if (fs.existsSync(filesDir)) {
+      if (!pkg.isDirectory()) {
+        continue;
+      }
+      const filesDir = path.join(nodeModulesPath, pkg.name, "files");
+      if (env.fs.existsSync(filesDir)) {
         fontsourceDirs.push(filesDir);
       }
     }
   }
 
-  return createNodeFontLoader({ fontDirs: fontsourceDirs });
+  return createNodeFontLoaderWithEnv(env, { fontDirs: fontsourceDirs });
 }

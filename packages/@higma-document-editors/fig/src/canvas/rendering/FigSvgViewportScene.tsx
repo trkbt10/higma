@@ -3,12 +3,12 @@
 import type { CSSProperties } from "react";
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";
 
 type FigSvgViewportSceneProps = {
   readonly sceneGraph: SceneGraph;
-  readonly renderOptions?: FigFamilyRenderOptions;
+  readonly renderOptions?: SceneGraphRenderOptions;
   readonly placement?: ViewportLayerPlacement;
 };
 

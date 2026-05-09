@@ -2,12 +2,12 @@
  * @file Site editor render surface tests.
  */
 
-import type { FigFamilyPage } from "@higma-figma-runtime/react-renderer";
+import type { FigPage } from "@higma-document-models/fig/domain";
 
 import { createSiteEditorTestDocument } from "../spec/shared/site-editor-test-fixture";
 import { createSiteEditorWorkspace, createSiteFigRenderSurface } from "./site-editor-workspace";
 
-function collectNodeNames(nodes: FigFamilyPage["children"]): readonly string[] {
+function collectNodeNames(nodes: FigPage["children"]): readonly string[] {
   return nodes.flatMap((node) => {
     const childNames = collectNodeNames(node.children ?? []);
     return [node.name, ...childNames];

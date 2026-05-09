@@ -2,13 +2,6 @@
  * @file Fig format types
  */
 
-import type {
-  KiwiDefinition as CodecKiwiDefinition,
-  KiwiDefinitionKind as CodecKiwiDefinitionKind,
-  KiwiField as CodecKiwiField,
-  KiwiPrimitiveType as CodecKiwiPrimitiveType,
-  KiwiSchema as CodecKiwiSchema,
-} from "@higma-codecs/kiwi/types";
 import type { CompressionType } from "@higma-codecs/compression";
 
 // =============================================================================
@@ -28,21 +21,11 @@ export type FigHeader = {
 // =============================================================================
 // Kiwi Schema Types
 // =============================================================================
-
-/** Kiwi primitive types */
-export type KiwiPrimitiveType = CodecKiwiPrimitiveType;
-
-/** Kiwi definition kinds */
-export type KiwiDefinitionKind = CodecKiwiDefinitionKind;
-
-/** Kiwi field definition */
-export type KiwiField = CodecKiwiField;
-
-/** Kiwi definition (enum, struct, or message) */
-export type KiwiDefinition = CodecKiwiDefinition;
-
-/** Kiwi schema */
-export type KiwiSchema = CodecKiwiSchema;
+//
+// Kiwi schema shapes (`KiwiPrimitiveType`, `KiwiDefinitionKind`, `KiwiField`,
+// `KiwiDefinition`, `KiwiSchema`) are owned by `@higma-codecs/kiwi/types`.
+// Consumers must import them directly from there — this module deliberately
+// does not republish them under domain-prefixed aliases.
 
 // =============================================================================
 // Parsed Fig File Types

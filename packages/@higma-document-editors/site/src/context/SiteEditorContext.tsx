@@ -30,10 +30,10 @@ import {
   previewSiteUnitMoves,
   resolveSiteUnitBounds,
   updateSiteUnitMoveDraft,
-  type SiteUnitBounds,
   type SiteUnitMove,
   type SiteUnitMoveDraft,
 } from "../domain/site-unit-bounds";
+import type { EditorCanvasItemBounds } from "@higma-editor-surfaces/controls/canvas";
 import {
   createActiveSiteUnitBounds,
   createSiteCanvasRegions,
@@ -45,7 +45,7 @@ import {
 export type SiteEditorEditState = {
   readonly document: SiteDocument;
   readonly figRenderSurface: SiteFigRenderSurface;
-  readonly unitBounds: readonly SiteUnitBounds[];
+  readonly unitBounds: readonly EditorCanvasItemBounds[];
   readonly unitMoves: readonly SiteUnitMove[];
   readonly cmsFieldEdits: readonly SiteCmsFieldEdit[];
 };
@@ -56,7 +56,7 @@ export type SiteEditorContextValue = {
   readonly document: SiteDocument;
   readonly figRenderSurface: SiteFigRenderSurface;
   readonly unitSelection: SiteUnitSelection;
-  readonly unitBounds: readonly SiteUnitBounds[];
+  readonly unitBounds: readonly EditorCanvasItemBounds[];
   readonly unitMoves: readonly SiteUnitMove[];
   readonly cmsFieldEdits: readonly SiteCmsFieldEdit[];
   readonly canvasRegions: readonly SiteCanvasRegion[];
@@ -66,7 +66,7 @@ export type SiteEditorContextValue = {
   readonly activeBreakpointName: string | null;
   readonly selectedUnitId: string;
   readonly selectedUnit: SiteEditableUnit;
-  readonly selectedUnitBounds: SiteUnitBounds;
+  readonly selectedUnitBounds: EditorCanvasItemBounds;
   readonly setActiveSurfaceId: (surfaceId: string) => void;
   readonly setActiveBreakpointId: (breakpointId: string) => void;
   readonly setSelectedUnitId: (unitId: string) => void;

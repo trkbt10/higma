@@ -23,7 +23,7 @@ import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { figRawResources } from "@higma-document-io/fig/context";
 import type { WebFontPlan } from "@higma-document-models/fig/font";
-import type { FigSource } from "../../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import type { EmitFile, FrameTarget } from "../types";
 import { renderFontLinkNodes } from "../font-links";
 import { doctype, el, raw, text } from "../../lib/html-tree/builder";
@@ -46,7 +46,7 @@ export type FigmaSvgFiles = {
  * layer.
  */
 export async function emitFigmaSvgForFrame(
-  source: FigSource,
+  source: FigSymbolContext,
   target: FrameTarget,
   fontPlan: WebFontPlan,
 ): Promise<FigmaSvgFiles | undefined> {

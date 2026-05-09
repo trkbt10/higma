@@ -15,7 +15,7 @@ import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/sce
 import { FigPageRenderer } from "./FigPageRenderer";
 import type { FigEditorRendererKind } from "./renderer-kind";
 import type { AbstractFont } from "@higma-document-models/fig/font";
-import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 
 const docPromise = createDemoFigDesignDocument();
 const ONE_PIXEL_PNG = Uint8Array.from(Buffer.from(
@@ -157,7 +157,7 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
 
   it("passes explicit render settings to the SVG backend for color-managed image fills", async () => {
     const doc = await docPromise;
-    const renderOptions: FigFamilyRenderOptions = { exportSettings: { colorProfile: "SRGB" } };
+    const renderOptions: SceneGraphRenderOptions = { exportSettings: { colorProfile: "SRGB" } };
     const html = renderToStaticMarkup(
       createElement(FigPageRenderer, {
         page: doc.pages[0],

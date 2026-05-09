@@ -36,7 +36,7 @@ import type {
 } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import { decodeBlobToSvgPath } from "@higma-document-models/fig/domain";
-import type { FigSource } from "../../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import type { TokenIndex } from "../../tokens";
 import { synthesizeShapePath } from "./synth-shape";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
@@ -333,7 +333,7 @@ function pathFromGeometry(geom: FigFillGeometry, blobs: readonly FigBlob[]): { d
 }
 
 export type VectorEmitInputs = {
-  readonly source: FigSource;
+  readonly source: FigSymbolContext;
   readonly index: TokenIndex;
 };
 

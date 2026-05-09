@@ -18,8 +18,10 @@
     }
   },
   "dependencies": {
+    "@higma-document-models/fig": "workspace:*",
     "@higma-document-models/site": "workspace:*",
     "@higma-document-io/site": "workspace:*",
+    "@higma-document-renderers/fig": "workspace:*",
     "@higma-document-renderers/site": "workspace:*",
     "@higma-editor-kernel/core": "workspace:*",
     "@higma-editor-kernel/ui": "workspace:*",

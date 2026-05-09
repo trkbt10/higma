@@ -12,7 +12,7 @@ import { parse as parseFont } from "opentype.js";
 import { parseFigFile } from "@higma-document-io/fig/parser";
 import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { FontLoader, FontLoadOptions, LoadedFont } from "@higma-document-models/fig/font";
+import type { FontLoader, FontQuery, LoadedFont } from "@higma-document-models/fig/font";
 import { renderTextNodeAsPath, type PathRenderContext } from "../src/svg/nodes/text/path-render";
 import { createFigSvgRenderContext } from "../src/svg/context";
 
@@ -51,7 +51,7 @@ function createOfficialInterFontLoader(): FontLoader {
   const fontRef = { value: null as ReturnType<typeof parseFont> | null };
 
   return {
-    async loadFont(options: FontLoadOptions): Promise<LoadedFont | undefined> {
+    async loadFont(options: FontQuery): Promise<LoadedFont | undefined> {
       if (!fontRef.value) {
         if (!fs.existsSync(OFFICIAL_INTER_PATH)) {
           console.log("Official Inter font not found at:", OFFICIAL_INTER_PATH);

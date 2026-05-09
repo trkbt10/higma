@@ -9,7 +9,7 @@
  * seen in computed-style output throws, so silent approximation is
  * impossible.
  */
-import type { ColorIR, GradientStopIR, LinearGradientPaintIR, PaintIR } from "@higma-bridges/web-fig";
+import type { ColorIR, GradientStopIR, ImagePaintIR, LinearGradientPaintIR, PaintIR } from "@higma-bridges/web-fig";
 import { cssToColorIR } from "@higma-bridges/web-fig";
 import { FONT_WEIGHTS } from "@higma-document-models/fig/font";
 
@@ -91,6 +91,54 @@ export function parseFontWeight(value: string): number {
   return n;
 }
 
+export type BackgroundLayer = {
+  /** CSS `background-size`. Defaults to `auto` per the CSS spec. */
+  readonly size?: string;
+  /** CSS `background-repeat`. Defaults to `repeat` per the CSS spec. */
+  readonly repeat?: string;
+};
+
+/**
+ * Map a CSS `background-size` / `background-repeat` pair onto the
+ * IR's `scaleMode` enum (`cover | contain | tile | stretch`).
+ *
+ *   `cover`                       → cover
+ *   `contain`                     → contain
+ *   `100% 100%` / `100%`          → stretch
+ *   `auto` (or omitted) + repeat  → tile (intrinsic size, repeated)
+ *   `auto` (or omitted) + no-rep. → contain (intrinsic-size single
+ *                                   instance has no faithful IR map;
+ *                                   `contain` keeps the image inside
+ *                                   the container and preserves its
+ *                                   aspect ratio, which is closer to
+ *                                   the source than the previous
+ *                                   blanket `cover` fallback)
+ *
+ * Pre-this-function the normaliser hard-coded `"cover"` for every
+ * background, which forced images like Wikipedia's
+ * "Wikipedia-logo-v2-200px-transparent.png" decorative overlay to
+ * paint across the whole frame instead of staying at their intrinsic
+ * footprint. The new map respects the captured CSS so decorative
+ * overlays land in roughly the right place.
+ */
+function backgroundScaleMode(layer: BackgroundLayer): ImagePaintIR["scaleMode"] {
+  const size = (layer.size ?? "auto").trim().toLowerCase();
+  if (size === "cover") {
+    return "cover";
+  }
+  if (size === "contain") {
+    return "contain";
+  }
+  if (size === "100% 100%" || size === "100%") {
+    return "stretch";
+  }
+  const repeat = (layer.repeat ?? "repeat").trim().toLowerCase();
+  if (repeat === "no-repeat") {
+    return "contain";
+  }
+  return "tile";
+}
+
 /**
  * Parse `background-image` into a list of paints. The leftmost gradient
  * paints last in CSS but first in our IR's bottom-up `fills` array, so
@@ -100,14 +148,25 @@ export function parseFontWeight(value: string): number {
  *   - `none` → no paints
  *   - `linear-gradient(<angle>?, <stops>)`
  *   - `url(...)` → an image paint
+ *
+ * `layer` carries the matching `background-size` / `background-repeat`
+ * so the image paint inherits a `scaleMode` faithful to the CSS
+ * declaration. Callers that don't pass it get the spec defaults
+ * (`auto` / `repeat`), which collapses to a `tile` paint — every
+ * site uses sized backgrounds explicitly anyway.
  */
-export function parseBackgroundImage(value: string, imageId: string | undefined): readonly PaintIR[] {
+export function parseBackgroundImage(
+  value: string,
+  imageId: string | undefined,
+  layer: BackgroundLayer = {},
+): readonly PaintIR[] {
   const trimmed = value.trim();
   if (trimmed === "none" || trimmed === "") {
     return [];
   }
   const tokens = splitTopLevelCommas(trimmed);
   const out: PaintIR[] = [];
+  const scaleMode = backgroundScaleMode(layer);
   for (const token of tokens) {
     const tok = token.trim();
     if (tok.startsWith("linear-gradient(")) {
@@ -118,7 +177,7 @@ export function parseBackgroundImage(value: string, imageId: string | undefined)
       if (!imageId) {
         throw new Error(`parseBackgroundImage: url() found but no imageId provided for "${value}"`);
       }
-      out.push({ kind: "image", imageId, scaleMode: "cover" });
+      out.push({ kind: "image", imageId, scaleMode });
       continue;
     }
     throw new Error(`parseBackgroundImage: unsupported background-image token "${tok}"`);

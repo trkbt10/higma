@@ -25,7 +25,6 @@ export type {
   FontPath,
   PathCommand,
   LoadedFont,
-  FontLoadOptions,
   FigmaFontRef,
   ResolvedFont,
   FontAvailability,

@@ -8,19 +8,22 @@ import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-container
 import type { FigBlob } from "./blob-path";
 import type { FigNode } from "../types";
 
-/** Metadata from a loaded fig-family package. */
-export type FigMetadata = FigPackageMetadata;
-export type FigImage = FigPackageImage;
-
-/** Loaded fig-family file state preserved on a domain document for export. */
+/**
+ * Loaded fig-family file state preserved on a domain document for export.
+ *
+ * Image and metadata shapes are owned by `@higma-figma-containers/package`
+ * (`FigPackageImage` / `FigPackageMetadata`) — the package SoT for what a
+ * loaded `.fig` zip carries. Consumers must import those names directly from
+ * `@higma-figma-containers/package`; domain does not re-publish them.
+ */
 export type LoadedFigFile = {
   readonly schema: KiwiSchema;
   readonly compressedSchema: Uint8Array;
   readonly version: string;
   readonly nodeChanges: FigNode[];
   readonly blobs: readonly FigBlob[];
-  readonly images: ReadonlyMap<string, FigImage>;
-  readonly metadata: FigMetadata | null;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
+  readonly metadata: FigPackageMetadata | null;
   readonly thumbnail: Uint8Array | null;
   readonly messageHeader: Record<string, unknown>;
 };

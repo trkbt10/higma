@@ -26,6 +26,15 @@ const ALLOWED_EXCEPTION_FILES = new Set([
   // failure remains observable at the loadFont call site, just not
   // at indexing time.
   "src/font-drivers/node/node-loader.ts",
+  // Discovery of the OS catalogue depends on external resolvers
+  // (`fc-list` on Linux, `reg.exe` on Windows). When the binary is
+  // missing or the OS is sandboxed away from it we must fall back
+  // to direct directory scanning — that is the documented OS-
+  // correct degraded mode. The catch wraps the resolver invocation
+  // and returns `undefined`; the caller observes the `linux-dirs`
+  // / `win32-dirs` source value in `catalogueSource()`.
+  "src/font-drivers/node/discover-linux.ts",
+  "src/font-drivers/node/discover-win32.ts",
   "spec/renderer/webgl/comparison.spec.ts",
   "spec/renderer/webgl/harness/main.ts",
 ]);

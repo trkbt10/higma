@@ -9,10 +9,10 @@ import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/dom
 import type { PathCommand } from "@higma-document-models/fig/font";
 import type { GlyphContour, DecorationRect, TextPathResult } from "./types";
 import type {
-  DerivedGlyph,
-  DerivedDecoration,
-  DerivedTextData,
-} from "@higma-document-models/fig/domain";
+  FigDerivedGlyph,
+  FigDerivedDecoration,
+  FigDerivedTextData,
+} from "@higma-document-models/fig/types";
 
 /**
  * Transform normalized glyph path commands to screen coordinates
@@ -79,7 +79,7 @@ export function transformGlyphCommands(
  * @returns PathCommand array in screen coordinates, or null
  */
 export function extractDerivedGlyphCommands(
-  glyph: DerivedGlyph,
+  glyph: FigDerivedGlyph,
   blobs: readonly FigBlob[],
   alignmentOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): PathCommand[] | null {
@@ -105,7 +105,7 @@ export function extractDerivedGlyphCommands(
  * Extract decoration rectangles from derived text data
  */
 export function extractDerivedDecorations(
-  decorations: readonly DerivedDecoration[] | undefined,
+  decorations: readonly FigDerivedDecoration[] | undefined,
   alignmentOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): DecorationRect[] {
   if (!decorations || decorations.length === 0) {
@@ -138,7 +138,7 @@ export function extractDerivedDecorations(
  * @returns TextPathResult with glyph contours and decorations
  */
 export function extractDerivedTextPathData(
-  derivedTextData: DerivedTextData,
+  derivedTextData: FigDerivedTextData,
   blobs: readonly FigBlob[],
   alignmentOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): TextPathResult {
@@ -182,6 +182,6 @@ export function extractDerivedTextPathData(
 /**
  * Check if derived text data has glyph paths
  */
-export function hasDerivedGlyphs(derivedTextData: DerivedTextData | undefined): boolean {
+export function hasDerivedGlyphs(derivedTextData: FigDerivedTextData | undefined): boolean {
   return !!(derivedTextData?.glyphs && derivedTextData.glyphs.length > 0);
 }

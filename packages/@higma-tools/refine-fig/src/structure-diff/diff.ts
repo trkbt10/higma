@@ -29,7 +29,7 @@
  * delta so the agent can confirm the change was intended.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
 
 export type StructureDelta =

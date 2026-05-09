@@ -38,7 +38,7 @@ import { figPaintToIR } from "./paint";
 import { figEffectToIR } from "./effect";
 import { figBlendModeToIR } from "./blend-mode";
 import { figAutoLayoutToIR } from "./auto-layout";
-import { pxLength } from "../length";
+import { pxLength } from "../length/resolve";
 
 /** Convert a FigDesignNode (read-side) into the bridge IR. */
 export function figNodeToIR(node: FigDesignNode): NodeIR {

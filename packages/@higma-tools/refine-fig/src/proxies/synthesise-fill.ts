@@ -22,7 +22,8 @@
  * version string is opaque metadata.
  */
 import type { FigColor, FigNode } from "@higma-document-models/fig/types";
-import type { LoadedFigFile, GuidAllocator } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
+import type { GuidAllocator } from "@higma-document-io/fig/roundtrip";
 import { addNodeChange } from "@higma-document-io/fig/roundtrip";
 
 export type SynthesiseFillProxyArgs = {

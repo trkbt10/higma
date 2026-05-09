@@ -72,5 +72,3 @@ export function writePng(image: PngImage): Uint8Array {
     iccProfile: image.iccProfile,
   });
 }
-
-export type { PngChromaticity, PngIccProfile };

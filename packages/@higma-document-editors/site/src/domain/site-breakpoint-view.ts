@@ -3,9 +3,10 @@
  */
 
 import type { SiteBreakpointVariant, SiteRenderViewport } from "@higma-document-renderers/site";
+import type { EditorCanvasItemBounds } from "@higma-editor-surfaces/controls/canvas";
 
 import type { SiteEditableUnit } from "../site-editor-workspace";
-import { createSiteUnitBounds, type SiteUnitBounds, type SiteUnitMove } from "./site-unit-bounds";
+import { createSiteUnitBounds, type SiteUnitMove } from "./site-unit-bounds";
 
 export type SiteCanvasRegion = {
   readonly x: number;
@@ -60,7 +61,7 @@ function findUnit(units: readonly SiteEditableUnit[], unitId: string): SiteEdita
   return unit;
 }
 
-function rootMoveDelta(unit: SiteEditableUnit, movedBounds: SiteUnitBounds): { readonly x: number; readonly y: number } {
+function rootMoveDelta(unit: SiteEditableUnit, movedBounds: EditorCanvasItemBounds): { readonly x: number; readonly y: number } {
   return {
     x: movedBounds.x - unit.bounds.x,
     y: movedBounds.y - unit.bounds.y,
@@ -84,10 +85,10 @@ function findVariantForUnit(
 
 function projectResponsiveSetBounds(
   unit: SiteEditableUnit,
-  bounds: SiteUnitBounds,
+  bounds: EditorCanvasItemBounds,
   variants: readonly SiteBreakpointVariant[],
   breakpointName: string | null,
-): SiteUnitBounds {
+): EditorCanvasItemBounds {
   if (!breakpointName) {
     return bounds;
   }
@@ -111,7 +112,7 @@ export function createActiveSiteUnitBounds(params: {
   readonly moves: readonly SiteUnitMove[];
   readonly variants: readonly SiteBreakpointVariant[];
   readonly breakpointName: string | null;
-}): readonly SiteUnitBounds[] {
+}): readonly EditorCanvasItemBounds[] {
   const baseBounds = createSiteUnitBounds(params.units, params.moves);
   return baseBounds.map((bounds) => {
     const unit = findUnit(params.units, bounds.id);

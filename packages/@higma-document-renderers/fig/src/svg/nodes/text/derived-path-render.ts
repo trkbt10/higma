@@ -7,7 +7,11 @@
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import type { DerivedTextData, DerivedGlyph, DerivedDecoration } from "@higma-document-models/fig/domain";
+import type {
+  FigDerivedTextData,
+  FigDerivedGlyph,
+  FigDerivedDecoration,
+} from "@higma-document-models/fig/types";
 import { decodePathCommands, type FigBlob, type PathCommand } from "@higma-document-models/fig/domain";
 import type { FigSvgRenderContext } from "../../../types";
 import { path, g, type SvgString, EMPTY_SVG } from "../../primitives";
@@ -84,7 +88,7 @@ function transformPathCommands(
  * Decorations include underlines and strikethroughs.
  * They are stored as simple rectangles in derivedTextData.decorations.
  */
-function renderDecorationPaths(decorations: readonly DerivedDecoration[] | undefined, precision: number = 5): string {
+function renderDecorationPaths(decorations: readonly FigDerivedDecoration[] | undefined, precision: number = 5): string {
   if (!decorations || decorations.length === 0) {
     return "";
   }
@@ -113,7 +117,7 @@ function renderDecorationPaths(decorations: readonly DerivedDecoration[] | undef
 /**
  * Render a single glyph as SVG path
  */
-function renderGlyphPath(glyph: DerivedGlyph, blobs: readonly FigBlob[], precision: number = 5): string | undefined {
+function renderGlyphPath(glyph: FigDerivedGlyph, blobs: readonly FigBlob[], precision: number = 5): string | undefined {
   if (glyph.commandsBlob === undefined) {
     return undefined;
   }
@@ -149,10 +153,7 @@ function renderGlyphPath(glyph: DerivedGlyph, blobs: readonly FigBlob[], precisi
  */
 export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRenderContext): SvgString {
   const props = extractTextProps(node);
-  // FigNode.derivedTextData is already typed as FigDerivedTextData | undefined;
-  // the local alias `DerivedTextData` from @higma-document-models/fig/domain is structurally
-  // the same type, so no cast is needed.
-  const derivedTextData: DerivedTextData | undefined = node.derivedTextData;
+  const derivedTextData: FigDerivedTextData | undefined = node.derivedTextData;
 
   if (!derivedTextData?.glyphs || derivedTextData.glyphs.length === 0) {
     if (props.characters.length > 0) {

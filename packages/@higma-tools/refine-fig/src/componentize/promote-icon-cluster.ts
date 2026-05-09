@@ -40,7 +40,7 @@
  *          `loaded.nodeChanges`.
  */
 import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
 
 const LEAF_ICON_ALLOWED = new Set(["VECTOR", "BOOLEAN_OPERATION", "FRAME", "GROUP"]);

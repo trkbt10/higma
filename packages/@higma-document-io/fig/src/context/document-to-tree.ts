@@ -10,7 +10,7 @@
  */
 
 import type { FigNode, FigGuid, FigParentIndex, KiwiEnumValue, FigComponentPropValue } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { ComponentPropertyValue, FigDesignDocument, FigDesignNode, FigPage } from "@higma-document-models/fig/domain";
 import { guidToString, parseId, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNodeId, FigPageId } from "@higma-document-models/fig/domain";

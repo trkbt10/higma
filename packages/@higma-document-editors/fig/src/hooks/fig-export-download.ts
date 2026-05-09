@@ -2,7 +2,7 @@
  * @file Browser download helpers for fig exports.
  */
 
-import type { FigMetadata } from "@higma-document-io/fig/roundtrip";
+import type { FigPackageMetadata } from "@higma-figma-containers/package";
 import type { FigExportResult } from "@higma-document-io/fig/export";
 
 type FigDownloadAnchor = {
@@ -60,7 +60,7 @@ function isInvalidFilenameCharacter(character: string): boolean {
 }
 
 /** Resolves the browser download filename for a .fig export. */
-export function resolveFigExportFilename(metadata: FigMetadata | null): string {
+export function resolveFigExportFilename(metadata: FigPackageMetadata | null): string {
   const sourceName = metadata?.fileName ?? DEFAULT_FIG_EXPORT_NAME;
   return `${sanitizeFilenameBase(sourceName)}${FIG_EXTENSION}`;
 }

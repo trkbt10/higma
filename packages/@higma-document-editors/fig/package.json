@@ -8,6 +8,7 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
+    "@higma-figma-containers/package": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-editor-kernel/core": "workspace:*",
     "@higma-editor-surfaces/controls": "workspace:*",

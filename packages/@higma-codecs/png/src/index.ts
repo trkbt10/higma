@@ -5,7 +5,8 @@
  */
 
 export { encodeRgbaToPngDataUrl, encodeRgbaToPng } from "./encoder";
-export { isPng, PNG_SIGNATURE } from "./detector";
+export { isPng } from "./detector";
+export { PNG_SIGNATURE } from "./constants";
 export { pack as packPng } from "./pngjs/packer";
 export { parseSync as parsePng } from "./pngjs/parser-sync";
 export type { PngChromaticity, PngIccProfile, PngData, PackerOptions } from "./pngjs/packer";

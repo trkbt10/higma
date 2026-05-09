@@ -20,10 +20,6 @@ export type {
   TextStyleOverride,
   SymbolOverride,
   MutableFigDesignNode,
-  DerivedBaseline,
-  DerivedGlyph,
-  DerivedDecoration,
-  DerivedTextData,
   ComponentPropertyType,
   ComponentPropertyValue,
   ComponentPropertyDef,
@@ -34,7 +30,7 @@ export type {
   FigStyleRegistry,
   FigDesignBlob,
 } from "./document";
-export type { FigImage, FigMetadata, LoadedFigFile } from "./roundtrip-state";
+export type { LoadedFigFile } from "./roundtrip-state";
 export type { FigGuid, NodeTreeResult } from "./raw-node-tree";
 export type { FigBlob, PathCommand, SvgPathOptions } from "./blob-path";
 

@@ -18,7 +18,8 @@ import type {
   FigVectorPath, FigVectorData, FigStyleId, FigFillGeometry, FigGuid, FigExportSetting,
   BlendMode,
 } from "../types";
-import type { LoadedFigFile, FigImage, FigMetadata } from "./roundtrip-state";
+import type { LoadedFigFile } from "./roundtrip-state";
+import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-containers/package";
 import type { FigNodeId, FigPageId } from "./node-id";
 import {
   applyOverrideToNode as applyOverrideToNodeImpl,
@@ -188,15 +189,9 @@ export type TextStyleOverride = {
 // Derived Text Data (for high-fidelity text rendering)
 // =============================================================================
 
-/**
- * Domain aliases for Kiwi-level derived text data types.
- * SoT is in types.ts (FigDerived* types); these are re-exports for
- * backward compatibility with domain consumers.
- */
-export type DerivedBaseline = FigDerivedBaseline;
-export type DerivedGlyph = FigDerivedGlyph;
-export type DerivedDecoration = FigDerivedDecoration;
-export type DerivedTextData = FigDerivedTextData;
+// SSoT for derived text data lives in `@higma-document-models/fig/types`
+// (`FigDerived*`). Consumers must import those names directly from there;
+// this module deliberately does not re-publish them under shorter aliases.
 
 // =============================================================================
 // Component/Instance Data Types
@@ -261,7 +256,7 @@ export type SymbolOverrideFields = {
   readonly cornerSmoothing?: number;
   readonly blendMode?: BlendMode;
   // Text-derived.
-  readonly derivedTextData?: DerivedTextData;
+  readonly derivedTextData?: FigDerivedTextData;
   // Style references.
   readonly styleIdForFill?: FigStyleId;
   readonly styleIdForStrokeFill?: FigStyleId;
@@ -583,7 +578,7 @@ export type FigDesignNode = {
    * When present, renderers use this for exact Figma-parity output
    * instead of font measurement.
    */
-  readonly derivedTextData?: DerivedTextData;
+  readonly derivedTextData?: FigDerivedTextData;
 
   // Component/instance specifics
   /**
@@ -780,14 +775,14 @@ export type FigDesignDocument = {
   /** Components (SYMBOL/COMPONENT nodes) indexed by their node ID */
   readonly components: ReadonlyMap<string, FigDesignNode>;
   /** Images extracted from the .fig ZIP */
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   /**
    * Binary blobs for geometry decoding (fillGeometry/strokeGeometry,
    * derived text paths, etc.). Indexed by blob reference numbers on nodes.
    */
   readonly blobs: readonly FigDesignBlob[];
   /** File metadata (name, export date, etc.) */
-  readonly metadata: FigMetadata | null;
+  readonly metadata: FigPackageMetadata | null;
 
   /**
    * Style registry mapping style GUIDs to resolved paint arrays.

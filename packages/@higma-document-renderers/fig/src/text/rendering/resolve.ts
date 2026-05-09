@@ -10,7 +10,6 @@
 
 import type { FigBlob, FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { DerivedTextData } from "@higma-document-models/fig/domain";
 import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigPaint, FigGuid } from "@higma-document-models/fig/types";
 import { defensiveMark } from "@higma-document-models/fig/diagnostics/defensive";
 import { guidToString } from "@higma-document-models/fig/domain";
@@ -22,8 +21,8 @@ import { computeTextLayout } from "../layout/compute-layout";
 import { extractDerivedTextPathData, hasDerivedGlyphs } from "../paths/derived-paths";
 import { extractTextPathData } from "../paths/opentype-paths";
 import type { PathContour } from "../paths/types";
-import { resolveTextRuns } from "../runs";
-import type { TextRun } from "../runs";
+import { resolveTextRuns } from "../runs/resolve";
+import type { TextRun } from "../runs/types";
 import type {
   TextRendering,
   TextRenderingGlyphs,
@@ -105,7 +104,7 @@ function computeVerticalAlignmentOffset(
  */
 function resolveTruncation(
   textTruncation: KiwiEnumValue | string | undefined,
-  derivedTextData: DerivedTextData | undefined,
+  derivedTextData: FigDerivedTextData | undefined,
 ): TextTruncation | undefined {
   const mode = typeof textTruncation === "string" ? textTruncation : textTruncation?.name;
   if (mode !== "ENDING") {
@@ -410,7 +409,7 @@ function paragraphStartOffsets(characters: string): readonly number[] {
  * Both FigNode and FigDesignNode expose it structurally.
  */
 type TruncatableTextNode = TextNodeInput & {
-  readonly derivedTextData?: DerivedTextData;
+  readonly derivedTextData?: FigDerivedTextData;
   readonly textTruncation?: KiwiEnumValue | string;
   readonly textData?: TextNodeInput["textData"] & {
     readonly textTruncation?: KiwiEnumValue | string;

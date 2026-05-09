@@ -20,8 +20,10 @@ import type { FigCanvasMagic } from "@higma-figma-schema/profiles";
 
 import { denormaliseFigFamilyNodeForEncode, normaliseFigFamilyNodeChanges } from "./node-normalization";
 
-export type FigFamilyImage = FigPackageImage;
-export type FigFamilyMetadata = FigPackageMetadata;
+// Image / metadata shapes are owned by `@higma-figma-containers/package`
+// (`FigPackageImage` / `FigPackageMetadata`). This module deliberately does
+// not re-publish them under shorter aliases — callers must import those
+// names directly from their origin package.
 
 export type LoadedFigFamilyFile<NodeChange = Record<string, unknown>, BlobValue = unknown> = {
   readonly schema: KiwiSchema;
@@ -30,25 +32,25 @@ export type LoadedFigFamilyFile<NodeChange = Record<string, unknown>, BlobValue 
   readonly canvasMagic: FigCanvasMagic;
   readonly nodeChanges: readonly NodeChange[];
   readonly blobs: readonly BlobValue[];
-  readonly images: ReadonlyMap<string, FigFamilyImage>;
-  readonly metadata: FigFamilyMetadata | null;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
+  readonly metadata: FigPackageMetadata | null;
   readonly thumbnail: Uint8Array | null;
   readonly messageHeader: Record<string, unknown>;
 };
 
 export type SaveFigFamilyOptions = {
-  readonly metadata?: Partial<FigFamilyMetadata>;
+  readonly metadata?: Partial<FigPackageMetadata>;
   readonly thumbnail?: Uint8Array;
-  readonly images?: ReadonlyMap<string, FigFamilyImage>;
+  readonly images?: ReadonlyMap<string, FigPackageImage>;
   readonly reencodeSchema?: boolean;
   readonly canvasMagic: FigCanvasMagic;
 };
 
 type ExtractedFigFamilyData = {
   readonly data: Uint8Array;
-  readonly metadata: FigFamilyMetadata | null;
+  readonly metadata: FigPackageMetadata | null;
   readonly thumbnail: Uint8Array | null;
-  readonly images: Map<string, FigFamilyImage>;
+  readonly images: Map<string, FigPackageImage>;
 };
 
 function resolveSchemaBytes<NodeChange, BlobValue>(
@@ -79,7 +81,7 @@ async function extractFigData(data: Uint8Array): Promise<ExtractedFigFamilyData>
     data,
     metadata: null,
     thumbnail: null,
-    images: new Map<string, FigFamilyImage>(),
+    images: new Map<string, FigPackageImage>(),
   };
 }
 
@@ -147,7 +149,7 @@ function createHeaderFields<NodeChange, BlobValue>(
   return headerFields;
 }
 
-function writeMetadata(zip: ReturnType<typeof createFigPackage>, metadata: Partial<FigFamilyMetadata>): void {
+function writeMetadata(zip: ReturnType<typeof createFigPackage>, metadata: Partial<FigPackageMetadata>): void {
   if (metadata.raw || metadata.clientMeta || metadata.fileName || metadata.exportedAt) {
     zip.writeText("meta.json", JSON.stringify(buildFigPackageMetadataJson(metadata)));
   }
@@ -155,8 +157,8 @@ function writeMetadata(zip: ReturnType<typeof createFigPackage>, metadata: Parti
 
 function writeImages(
   zip: ReturnType<typeof createFigPackage>,
-  loadedImages: ReadonlyMap<string, FigFamilyImage>,
-  optionImages: ReadonlyMap<string, FigFamilyImage> | undefined,
+  loadedImages: ReadonlyMap<string, FigPackageImage>,
+  optionImages: ReadonlyMap<string, FigPackageImage> | undefined,
 ): void {
   const allImages = new Map(loadedImages);
   if (optionImages) {

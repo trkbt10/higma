@@ -12,7 +12,7 @@
 
 import { figmaFontToQuery, fontQueryKey, type FontQuery } from "../query";
 import type { FigFontName, FigGuid, FigNode } from "../../types";
-import type { FigDesignNode, TextStyleOverride } from "../../domain/document";
+import type { FigDesignNode } from "../../domain/document";
 
 /**
  * Structural shape that both `FigNode` (raw kiwi) and `FigDesignNode`
@@ -154,5 +154,3 @@ function readSymbolKey(node: FontBearingNode): string | undefined {
   return undefined;
 }
 
-/** Re-export for callers that want to filter override entries themselves. */
-export type { TextStyleOverride };

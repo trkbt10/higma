@@ -1,11 +1,22 @@
 /**
  * @file Shared React renderer boundary for decoded fig-family documents.
+ *
+ * Type vocabulary
+ * ---------------
+ * Names like `FigDesignDocument`, `FigPage`, `FigDocumentResources`,
+ * `SceneGraphRenderOptions`, and `FigPackageImage` are owned by the SoT
+ * packages they live in (`@higma-document-models/fig/domain`,
+ * `@higma-document-io/fig/context`, `@higma-document-renderers/fig/scene-graph/render`,
+ * `@higma-figma-containers/package`). Consumers must import those names
+ * directly from their origin packages — runtime deliberately does not
+ * republish them under shorter `FigFamily*` aliases.
  */
 
 import { useMemo, useRef } from "react";
 import { createFigDesignDocumentFromKiwiCanvas } from "@higma-document-io/fig";
 import type { FigDocumentResources } from "@higma-document-io/fig/context";
-import type { FigDesignDocument, FigDesignNode, FigPage, FigStyleRegistry, FigImage } from "@higma-document-models/fig/domain";
+import type { FigDesignDocument, FigDesignNode, FigPage, FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
   buildSceneGraphWithCache,
   type BuildSceneGraphOptions,
@@ -18,25 +29,6 @@ import type {
 } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
-
-export type FigFamilyDesignDocument = FigDesignDocument;
-export type FigFamilyPage = FigPage;
-
-/**
- * Renderer-facing resource bundle.
- *
- * `FigDocumentResources` (from `@higma-document-io/fig/context`) is the
- * canonical SoT shape; runtime exposes the same shape under
- * `FigFamilyDocumentResources` so peer-product packages
- * (`@higma-document-editors/site` / `deck` / `buzz`, `higma-vsc-plugin`)
- * obtain it through this layer instead of importing across the
- * `enforce-package-boundaries` line into `@higma-document-io/fig`.
- *
- * The structural alias keeps both names interchangeable at the type level
- * — code coming from the IO context and code coming from runtime see the
- * exact same shape, so there is no "two resource types in flight" problem.
- */
-export type FigFamilyDocumentResources = FigDocumentResources;
 
 /**
  * Build the renderer-facing resource bundle from a fig-family document.
@@ -54,7 +46,7 @@ export type FigFamilyDocumentResources = FigDocumentResources;
  * "components" name. A single accessor stops every consumer from
  * destructuring four fields by hand and renaming `components` inline.
  */
-export function figFamilyDocumentResources(document: FigDesignDocument): FigFamilyDocumentResources {
+export function figFamilyDocumentResources(document: FigDesignDocument): FigDocumentResources {
   return {
     symbolMap: document.components,
     styleRegistry: document.styleRegistry,
@@ -64,7 +56,6 @@ export function figFamilyDocumentResources(document: FigDesignDocument): FigFami
 }
 export type FigFamilyKiwiCanvas = Parameters<typeof createFigDesignDocumentFromKiwiCanvas>[0];
 export type FigFamilyDesignDocumentOptions = Parameters<typeof createFigDesignDocumentFromKiwiCanvas>[1];
-export type FigFamilyRenderOptions = SceneGraphRenderOptions;
 
 /** Convert a decoded fig-family canvas into the shared fig renderer domain model. */
 export function createFigFamilyDesignDocument(
@@ -82,7 +73,7 @@ export type UseFigSceneGraphParams = {
   readonly viewportY?: number;
   readonly viewportWidth?: number;
   readonly viewportHeight?: number;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly blobs: BuildSceneGraphOptions["blobs"];
   readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
   readonly styleRegistry: FigStyleRegistry;
@@ -116,7 +107,7 @@ export type UseFigSceneGraphFromResourcesParams = {
 
 type SceneGraphCacheRef = {
   readonly page: FigPage;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly blobs: BuildSceneGraphOptions["blobs"];
   readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
   readonly styleRegistry: FigStyleRegistry;
@@ -135,7 +126,7 @@ function canReuseSceneGraphCache({
 }: {
   readonly previous: SceneGraphCacheRef | undefined;
   readonly page: FigPage;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly blobs: BuildSceneGraphOptions["blobs"];
   readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
   readonly styleRegistry: FigStyleRegistry;
@@ -161,7 +152,7 @@ function resolvePreviousSceneGraphCache({
 }: {
   readonly previous: SceneGraphCacheRef | undefined;
   readonly page: FigPage;
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly blobs: BuildSceneGraphOptions["blobs"];
   readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
   readonly styleRegistry: FigStyleRegistry;

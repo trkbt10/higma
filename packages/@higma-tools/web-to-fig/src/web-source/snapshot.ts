@@ -50,6 +50,25 @@ export type RawSvgContent = {
 };
 
 /**
+ * Captured `::before` / `::after` pseudo-element content. Pseudo-
+ * elements aren't reachable through the DOM tree so the in-page
+ * walker queries `getComputedStyle(el, "::before"|"::after")` for
+ * every visible element and surfaces non-empty `content` strings
+ * here. The normaliser turns them into synthetic TEXT IR children
+ * placed at the host's content-box edge — close enough for the
+ * fidelity diff because these are usually short separators
+ * (" / ", "•", "→") whose layout is anchored to the host.
+ *
+ * Image / `attr()` / counter content is not yet captured; only the
+ * literal-string form (the most common in the wild) is.
+ */
+export type RawPseudoContent = {
+  readonly which: "before" | "after";
+  readonly text: string;
+  readonly computedStyle: Readonly<Record<string, string>>;
+};
+
+/**
  * One captured DOM element. Only the computed-style properties
  * relevant to the bridge IR are pulled — adding a property here
  * requires extending the IR and the normalizer in tandem.
@@ -72,6 +91,8 @@ export type RawElement = {
   readonly svgContent?: RawSvgContent;
   /** Concatenated direct text content. Empty for non-leaf containers. */
   readonly text?: string;
+  /** Captured `::before` / `::after` pseudo-element strings. */
+  readonly pseudo?: readonly RawPseudoContent[];
   readonly children: readonly RawElement[];
 };
 

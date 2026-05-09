@@ -17,7 +17,6 @@ export {
 export {
   resolveInstanceNode,
   resolveInstanceReferences,
-  resolveSymbolGuidStr,
   mergeSymbolProperties,
   applySelfOverridesToMergedNode,
   cloneSymbolChildren,
@@ -32,6 +31,12 @@ export {
   type CloneSymbolChildrenOptions,
   type FigDerivedSymbolData,
 } from "./symbol-resolver";
+
+// Symbol map lookup — SoT for "GUID string → SYMBOL node in this map".
+export {
+  resolveSymbolGuidStr,
+  type SymbolMapResolution,
+} from "./symbol-map-lookup";
 
 export {
   buildSymbolDependencyGraph,

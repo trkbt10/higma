@@ -18,7 +18,8 @@
   "dependencies": {
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
-    "@higma-document-renderers/fig": "workspace:*"
+    "@higma-document-renderers/fig": "workspace:*",
+    "@higma-figma-containers/package": "workspace:*"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"

@@ -11,7 +11,7 @@
  * (paint stack eligibility, leaf-icon-only) are the plan layer's
  * responsibility — re-checking here would duplicate the SoT.
  */
-import type { LoadedFigFile } from "@higma-document-io/fig/roundtrip";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { createGuidAllocator, patchNodeChange } from "@higma-document-io/fig/roundtrip";
 import { synthesiseFillProxy, synthesiseTextProxy } from "../proxies";
 import { promoteIconCluster } from "../componentize";

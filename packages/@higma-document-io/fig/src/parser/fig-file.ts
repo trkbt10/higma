@@ -19,23 +19,21 @@ import { normaliseNodeChanges, asBlobArray } from "./normalize";
 // Parsed Fig File Result
 // =============================================================================
 
-/**
- * Image data extracted from .fig file
- */
-export type FigImage = FigPackageImage;
+// Image data is `FigPackageImage` (SoT in `@higma-figma-containers/package`).
+// Consumers must import that name directly.
 
 /**
  * Validate image data extracted by fig parser IO.
  */
-export function assertFigImage(image: FigImage): void {
+export function assertFigPackageImage(image: FigPackageImage): void {
   if (image.ref.length === 0) {
-    throw new Error("FigImage requires a non-empty image reference");
+    throw new Error("FigPackageImage requires a non-empty image reference");
   }
   if (image.data.length === 0) {
-    throw new Error("FigImage requires image bytes");
+    throw new Error("FigPackageImage requires image bytes");
   }
   if (image.mimeType.length === 0) {
-    throw new Error("FigImage requires a MIME type");
+    throw new Error("FigPackageImage requires a MIME type");
   }
 }
 
@@ -50,7 +48,7 @@ export type ParsedFigFile = {
   /** Blobs containing path data, images, etc. */
   readonly blobs: readonly FigBlob[];
   /** Images extracted from the ZIP (keyed by imageRef) */
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Raw message data */
   readonly message: Record<string, unknown>;
 };
@@ -62,7 +60,7 @@ export type ParsedFigFile = {
 /**
  * Parse raw fig-kiwi data (not ZIP wrapped)
  */
-function parseRawFigData(data: Uint8Array, images: ReadonlyMap<string, FigImage> = new Map()): ParsedFigFile {
+function parseRawFigData(data: Uint8Array, images: ReadonlyMap<string, FigPackageImage> = new Map()): ParsedFigFile {
   const decoded = decodeRawFigmaKiwiCanvas(data, images);
   const nodeChanges = normaliseNodeChanges(decoded.nodeChanges);
   const blobs = asBlobArray(decoded.blobs);

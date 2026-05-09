@@ -289,8 +289,102 @@ function textFillFromComputed(color: string | undefined): PaintIR | undefined {
   return { kind: "solid", color: parseColor(color) };
 }
 
+/**
+ * Inline-replaced descendants (e.g. `<a><img></a>`) need to climb out
+ * of inline wrappers whose `getBoundingClientRect()` hugs the
+ * surrounding line box rather than the replaced child's geometry.
+ * If we left them inside, `boxRelative(child.rect, wrapper.contentRect)`
+ * yields a large negative offset and the image paints offscreen.
+ *
+ * `collectFlowChildren` walks `el.children` in document order; an
+ * inline-display child that *contains* an inline-replaced element
+ * (img, svg, video, picture, canvas) and whose own bounding rect is
+ * smaller than the replaced descendant is unwrapped — its
+ * descendants surface as direct children of `el`. The wrapper's
+ * own visual contributions (fills / strokes) are skipped, which is
+ * acceptable because anchors / spans default to `transparent`
+ * background in every CSS we've seen in practice; inline link
+ * colour is already lifted via the paragraph run-style merge.
+ *
+ * Wrappers that carry `pseudo` content stay intact so their
+ * `::before`/`::after` glyphs aren't dropped.
+ */
+function collectFlowChildren(el: RawElement): RawElement[] {
+  const out: RawElement[] = [];
+  for (const child of el.children) {
+    if (!child.visible) {
+      continue;
+    }
+    if (shouldUnwrapInlineWrapper(child)) {
+      // Recurse so multi-level wrappers (`<a><span><img></span></a>`)
+      // collapse all the way down.
+      out.push(...collectFlowChildren(child));
+      continue;
+    }
+    out.push(child);
+  }
+  return out;
+}
+
+function shouldUnwrapInlineWrapper(el: RawElement): boolean {
+  const display = el.computedStyle.display;
+  if (display !== "inline" && display !== "inline-block") {
+    return false;
+  }
+  if (el.pseudo !== undefined && el.pseudo.length > 0) {
+    return false;
+  }
+  if (el.text !== undefined && el.text.length > 0) {
+    return false;
+  }
+  // Replaced descendants whose intrinsic geometry exceeds the
+  // wrapper's line-box bounds are the symptom — keep the wrapper
+  // intact when no such descendant exists, so plain `<a>foo</a>`
+  // links continue to participate in paragraph detection.
+  return containsOversizedReplaced(el);
+}
+
+function containsOversizedReplaced(el: RawElement): boolean {
+  const replacedTags = new Set(["img", "video", "picture", "canvas", "iframe"]);
+  for (const child of el.children) {
+    if (!child.visible) {
+      continue;
+    }
+    if (replacedTags.has(child.tag)) {
+      if (child.rect.height > el.rect.height + 1 || child.rect.width > el.rect.width + 1) {
+        return true;
+      }
+    }
+    if (child.svgContent !== undefined) {
+      if (child.rect.height > el.rect.height + 1 || child.rect.width > el.rect.width + 1) {
+        return true;
+      }
+    }
+    if (containsOversizedReplaced(child)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function normalizeFrame(el: RawElement, parent: RawElement | undefined): FrameNodeIR {
-  const childrenRaw = el.children.filter((c) => c.visible);
+  // Inline wrappers (e.g. `<figure><a><img/></a></figure>` where the
+  // anchor is `display: inline`) carry a `getBoundingClientRect()`
+  // that hugs the inline text-flow line they participate in, *not*
+  // the geometry of any replaced descendants. Using such a wrapper
+  // as the coordinate-system parent for `boxRelative` makes a
+  // 150×112 image land at a negative y inside a 150×16 anchor —
+  // visibly offscreen above the frame.
+  //
+  // We collapse those inline wrappers: their children re-parent to
+  // *this* frame so the relative box maths uses a sensible
+  // block-level reference. The wrapper itself contributes nothing
+  // visible (no fills, no strokes — `<a>` defaults to inheriting
+  // the surrounding text color, which the run-style merge already
+  // handles); skipping it preserves visual fidelity. Wrappers that
+  // *do* carry pseudo content stay so their `::before` / `::after`
+  // glyphs survive into the IR.
+  const childrenRaw = collectFlowChildren(el);
   const childrenIR = childrenRaw.map((child) => normalizeNode(child, el));
   const localBox = boxForElement(el, parent);
   const autoLayout = resolveAutoLayout(el, childrenRaw);
@@ -392,7 +486,10 @@ function collectFills(el: RawElement): readonly PaintIR[] {
   if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
     out.push({ kind: "solid", color: parseColor(bg) });
   }
-  const images = parseBackgroundImage(cs["background-image"] ?? "none", el.imageId);
+  const images = parseBackgroundImage(cs["background-image"] ?? "none", el.imageId, {
+    size: cs["background-size"],
+    repeat: cs["background-repeat"],
+  });
   for (const img of images) {
     out.push(img);
   }

@@ -65,12 +65,11 @@
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type {
   FigBlob,
-  FigImage,
-  FigMetadata,
   FigStyleRegistry,
   LoadedFigFile,
   NodeTreeResult,
 } from "@higma-document-models/fig/domain";
+import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-containers/package";
 import {
   buildNodeTree,
   EMPTY_FIG_STYLE_REGISTRY,
@@ -139,10 +138,10 @@ export type FigSymbolContext = {
   readonly blobs: readonly FigBlob[];
 
   /** Images — alias of `loaded.images` exposed for ergonomics. */
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
 
   /** Metadata — alias of `loaded.metadata` exposed for ergonomics. */
-  readonly metadata: FigMetadata | null;
+  readonly metadata: FigPackageMetadata | null;
 };
 
 /** Build a `FigSymbolContext` from a buffer of raw `.fig` bytes. */

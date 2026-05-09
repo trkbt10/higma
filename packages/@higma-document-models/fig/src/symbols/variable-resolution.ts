@@ -356,9 +356,3 @@ export function resolveVariantOverride(
   return { resolvedSymbolID: best.guid };
 }
 
-/**
- * Re-export the `FigVariableID` type for callers that need to
- * inspect alias targets (e.g. a future library-aware resolver
- * wanting to log unresolved variables).
- */
-export type { FigVariableID };

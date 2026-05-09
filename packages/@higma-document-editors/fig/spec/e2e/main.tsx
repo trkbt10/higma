@@ -30,7 +30,7 @@ import {
   createCachingFontLoader,
   type AbstractFont,
   type FontLoader,
-  type FontLoadOptions,
+  type FontQuery,
   type FontPath,
   type LoadedFont,
 } from "@higma-document-models/fig/font";
@@ -89,7 +89,7 @@ const TEST_FONT: AbstractFont = {
 };
 
 const TEST_FONT_LOADER = createCachingFontLoader({
-  async loadFont(options: FontLoadOptions): Promise<LoadedFont> {
+  async loadFont(options: FontQuery): Promise<LoadedFont> {
     return {
       font: TEST_FONT,
       // FontQuery — echo the requested options back. The mock has a

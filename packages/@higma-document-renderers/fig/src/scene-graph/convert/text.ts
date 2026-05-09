@@ -6,7 +6,7 @@
 
 import type { FigDesignNode, FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
-import type { TextRun } from "../../text/runs";
+import type { TextRun } from "../../text/runs/types";
 import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
 import { textAlignHorizontalToAnchor } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";

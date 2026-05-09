@@ -15,7 +15,7 @@
 import { transformGlyphCommands, extractDerivedTextPathData } from "./derived-paths";
 import type { PathCommand } from "@higma-document-models/fig/font";
 import type { FigBlob } from "@higma-document-models/fig/domain";
-import type { DerivedTextData } from "@higma-document-models/fig/domain";
+import type { FigDerivedTextData } from "@higma-document-models/fig/types";
 
 describe("transformGlyphCommands", () => {
   const commands: PathCommand[] = [
@@ -92,7 +92,7 @@ describe("extractDerivedTextPathData: glyph-mode truncation", () => {
   }
 
   it("drops glyphs whose firstCharacter >= truncationStartIndex", () => {
-    const dtd: DerivedTextData = {
+    const dtd: FigDerivedTextData = {
       truncationStartIndex: 2,
       glyphs: [
         glyph(0, 0, 0),
@@ -106,7 +106,7 @@ describe("extractDerivedTextPathData: glyph-mode truncation", () => {
   });
 
   it("keeps the ellipsis glyph whose firstCharacter is undefined", () => {
-    const dtd: DerivedTextData = {
+    const dtd: FigDerivedTextData = {
       truncationStartIndex: 2,
       glyphs: [
         glyph(0, 0, 0),
@@ -120,7 +120,7 @@ describe("extractDerivedTextPathData: glyph-mode truncation", () => {
   });
 
   it("renders all glyphs when truncationStartIndex is absent or negative", () => {
-    const dtd: DerivedTextData = {
+    const dtd: FigDerivedTextData = {
       glyphs: [
         glyph(0, 0, 0),
         glyph(1, 10, 0),

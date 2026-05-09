@@ -1,7 +1,7 @@
 /** @file WebGL viewport renderer lifecycle and resource preparation hook. */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import {
   useWebGLViewportPipeline,
   type WebGLViewportPipelineState,
@@ -9,22 +9,24 @@ import {
 
 type UseWebGLViewportRendererParams = {
   readonly sceneGraph: SceneGraph;
-  readonly renderOptions?: FigFamilyRenderOptions;
+  readonly renderOptions?: SceneGraphRenderOptions;
   readonly viewportScale: number;
   readonly initializationDelayMs?: number;
 };
-
-export type WebGLViewportRendererState = WebGLViewportPipelineState;
 
 /**
  * Manage WebGL renderer creation, resource preparation, rendering, and metrics.
  *
  * Surfaces renderer metrics on the canvas dataset (`data-webgl-*`) so the
  * editor's WebGL Playwright tests can assert on prepare/render counts.
+ *
+ * The hook returns a `WebGLViewportPipelineState` (owned by
+ * `@higma-document-renderers/fig/webgl/react`) — consumers that need the
+ * type must import that name directly from its origin.
  */
 export function useWebGLViewportRenderer(
   params: UseWebGLViewportRendererParams,
-): WebGLViewportRendererState {
+): WebGLViewportPipelineState {
   return useWebGLViewportPipeline({
     ...params,
     errorContext: "useWebGLViewportRenderer",

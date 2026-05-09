@@ -9,7 +9,7 @@
  */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import {
   useWebGLViewportPipeline,
   type WebGLViewportPipelineState,
@@ -17,7 +17,7 @@ import {
 
 type UseWebGLViewportParams = {
   readonly sceneGraph: SceneGraph | null;
-  readonly renderOptions?: FigFamilyRenderOptions;
+  readonly renderOptions?: SceneGraphRenderOptions;
   /** CSS-pixel scale (1 == 100%). Combines with devicePixelRatio. */
   readonly viewportScale: number;
   /**
@@ -28,9 +28,7 @@ type UseWebGLViewportParams = {
   readonly initializationDelayMs?: number;
 };
 
-export type WebGLViewportState = WebGLViewportPipelineState;
-
-export function useWebGLViewport(params: UseWebGLViewportParams): WebGLViewportState {
+export function useWebGLViewport(params: UseWebGLViewportParams): WebGLViewportPipelineState {
   return useWebGLViewportPipeline({
     ...params,
     errorContext: "useWebGLViewport",

@@ -31,8 +31,9 @@
  * React editor.
  */
 
-import type { FigDesignDocument, FigDesignNode, FigImage, FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigDesignDocument, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigSymbolContext } from "./symbol-context";
 
@@ -47,7 +48,7 @@ export type FigDocumentResources = {
   readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
   readonly styleRegistry: FigStyleRegistry;
   readonly blobs: FigDesignDocument["blobs"];
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
 };
 
 /**
@@ -84,7 +85,7 @@ export type FigRawResources = {
   readonly symbolMap: ReadonlyMap<string, FigNode>;
   readonly styleRegistry: FigStyleRegistry;
   readonly blobs: readonly FigBlob[];
-  readonly images: ReadonlyMap<string, FigImage>;
+  readonly images: ReadonlyMap<string, FigPackageImage>;
 };
 
 /**

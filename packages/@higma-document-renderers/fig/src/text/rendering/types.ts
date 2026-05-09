@@ -20,7 +20,7 @@ import type { TextLayout } from "../layout/compute-layout";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { AbstractFont } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";
-import type { TextRun } from "../runs";
+import type { TextRun } from "../runs/types";
 
 /**
  * Resolved per-line-height metric for line-mode rendering.

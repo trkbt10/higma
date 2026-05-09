@@ -10,7 +10,7 @@
  * stray colours from a hidden CANVAS the user did not select.
  */
 import type { FigEffect, FigNode, FigPaint } from "@higma-document-models/fig/types";
-import type { FigSource } from "../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import { findInternalCanvas } from "../fig-source";
 import type { TokenIndex, TokenSet } from "./types";
 import { buildColorTokens, lookupColorId } from "./color";
@@ -18,7 +18,7 @@ import { buildTypographyTokens, lookupTypographyId } from "./typography";
 import { buildRadiusTokens, buildSpacingTokens, lookupRadiusId, lookupSpacingId } from "./spacing";
 import { buildShadowTokens, lookupShadowId } from "./effect";
 
-function styleFillProxies(source: FigSource): readonly FigNode[] {
+function styleFillProxies(source: FigSymbolContext): readonly FigNode[] {
   const internal = findInternalCanvas(source);
   if (!internal) {
     return [];
@@ -45,7 +45,7 @@ export type TokenBuildResult = {
  * source restricted to the supplied target frames.
  */
 export function buildTokensFromFrames(
-  source: FigSource,
+  source: FigSymbolContext,
   frames: readonly FigNode[],
 ): TokenBuildResult {
   const proxies = styleFillProxies(source);

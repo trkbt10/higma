@@ -313,15 +313,13 @@ export type PathContour = {
   readonly fillOverride?: Fill;
 };
 
-// `GlyphContour` and `TextRun` are scene-graph-flavoured re-exports of
-// the shared text-rendering types. The annotation/run shapes live in
-// `text/paths/types` and `text/runs/types` respectively (the SoT). The
-// scene-graph layer combines its own `PathContour` (with mandatory
-// `windingRule`) with the shared `GlyphCharacterIndex` annotation so
-// the field name and meaning are not duplicated.
+// `GlyphContour` here combines scene-graph's `PathContour` (which mandates
+// a `windingRule`) with the shared `GlyphCharacterIndex` annotation owned
+// by `text/paths/types`. `TextRun` is owned by `text/runs/types`. Both
+// names must be imported from those origin modules — scene-graph
+// deliberately does not republish them.
 import type { GlyphCharacterIndex } from "../text/paths/types";
 import type { TextRun } from "../text/runs/types";
-export type { TextRun };
 
 /**
  * A scene-graph glyph contour: scene-graph's `PathContour` plus the

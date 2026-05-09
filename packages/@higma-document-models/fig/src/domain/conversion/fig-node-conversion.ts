@@ -13,7 +13,7 @@
 import type {
   FigNode, FigNodeType, FigMatrix, FigVector, FigPaint, FigEffect,
   KiwiEnumValue, FigTextStyleOverrideEntry, FigComponentPropValue,
-  FigKiwiSymbolOverride,
+  FigKiwiSymbolOverride, FigDerivedTextData,
 } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import type { FigBlob } from "../blob-path";
@@ -37,7 +37,6 @@ import type { GuidTranslationMap, FigResolveContext } from "@higma-document-mode
 import { defensiveMark } from "@higma-document-models/fig/diagnostics";
 import type {
   FigDesignNode, AutoLayoutProps, LayoutConstraints, TextData, TextStyleOverride, SymbolOverride,
-  DerivedTextData,
   ComponentPropertyDef, ComponentPropertyRef, ComponentPropertyAssignment, ComponentPropertyType, ComponentPropertyNodeField, ComponentPropertyValue,
   FigStyleRegistry,
 } from "../document";
@@ -1273,7 +1272,7 @@ export function convertFigNode(
     layoutGrids: resolveNodeGrids(node, styleRegistry),
 
     textData: nodeType === "TEXT" ? extractTextData(node, styleRegistry) : undefined,
-    derivedTextData: node.derivedTextData as DerivedTextData | undefined,
+    derivedTextData: node.derivedTextData as FigDerivedTextData | undefined,
 
     symbolId: resolveSymbolIdForDomain(node),
     overrides: resolvedOverrides,

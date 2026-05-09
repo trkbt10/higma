@@ -41,7 +41,7 @@ export {
   resolveLength,
   resolveCornerRadius,
   resolveBlockInset,
-} from "./length";
+} from "./length/resolve";
 
 export {
   figAutoLayoutToIR,

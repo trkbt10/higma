@@ -40,6 +40,18 @@ export type SvgContentJson = {
   readonly paths: readonly SvgPathJson[];
 };
 
+/**
+ * Captured `::before` / `::after` pseudo-element entry. Only literal
+ * `content: "..."` is surfaced; `attr()`, `counter()`, image / URL
+ * forms are not — those need richer modelling than the IR's TEXT
+ * node currently supports.
+ */
+export type PseudoJson = {
+  readonly which: "before" | "after";
+  readonly text: string;
+  readonly computedStyle: Readonly<Record<string, string>>;
+};
+
 export type ElementJson = {
   readonly id: string;
   readonly tag: string;
@@ -50,6 +62,7 @@ export type ElementJson = {
   readonly imageId?: string;
   readonly svgContent?: SvgContentJson;
   readonly text?: string;
+  readonly pseudo?: readonly PseudoJson[];
   readonly children: readonly ElementJson[];
 };
 
@@ -359,6 +372,109 @@ export function captureSnapshot(): RawSnapshotJson {
     return rectFrom(r);
   }
 
+  function pseudoStyleSubset(pseudoStyle: CSSStyleDeclaration): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const prop of RELEVANT_STYLE_PROPS) {
+      out[prop] = pseudoStyle.getPropertyValue(prop);
+    }
+    return out;
+  }
+
+  /**
+   * Decode a CSS `content` value into the literal text it injects.
+   *
+   * `getComputedStyle(el, "::before").content` returns the value
+   * post-resolution: literal strings come back wrapped in matching
+   * `"` or `'` quotes (e.g. `"\" / \""`); `attr(href)` resolves to
+   * the attribute value also quoted; `none`/`normal`/empty mean the
+   * pseudo doesn't paint anything. We only handle the literal-string
+   * form here because the IR's TEXT node has no concept of
+   * `attr()` / `counter()` / `url(...)` injection.
+   */
+  function decodeContentValue(raw: string): string | undefined {
+    const trimmed = raw.trim();
+    if (trimmed === "" || trimmed === "none" || trimmed === "normal") {
+      return undefined;
+    }
+    // Multiple content tokens (`"foo " attr(href)`) merge in document
+    // order. We only honour the leading literal-string token; any
+    // remaining tokens that aren't literal strings drop the whole
+    // pseudo (rather than half-render it).
+    if (trimmed[0] !== '"' && trimmed[0] !== "'") {
+      return undefined;
+    }
+    const quote = trimmed[0]!;
+    if (trimmed[trimmed.length - 1] !== quote) {
+      return undefined;
+    }
+    return trimmed.slice(1, -1);
+  }
+
+  function readPseudo(el: Element): PseudoJson[] {
+    const out: PseudoJson[] = [];
+    for (const which of ["before", "after"] as const) {
+      const pseudoStyle = window.getComputedStyle(el, `::${which}`);
+      const decoded = decodeContentValue(pseudoStyle.content);
+      if (decoded === undefined) {
+        continue;
+      }
+      // `display: none` pseudos paint nothing — skip so the IR
+      // doesn't synthesise empty TEXT children for a styling-only
+      // sentinel.
+      if (pseudoStyle.display === "none") {
+        continue;
+      }
+      out.push({
+        which,
+        text: decoded,
+        computedStyle: pseudoStyleSubset(pseudoStyle),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Surface the visible string a form control paints. The DOM tree
+   * has no child node carrying that text, so without this fallback
+   * the search box, button labels, and select options render as
+   * empty rectangles. We honour:
+   *   - `<input value="...">` and `<textarea>` text content
+   *   - `<input placeholder="...">` when `value` is empty
+   *   - `<button>` / `<option>` direct text (already covered by
+   *     `directText`, but the formControlText pull keeps the API
+   *     uniform)
+   */
+  function formControlText(el: Element): string | undefined {
+    if (el.tagName === "INPUT") {
+      const input = el as HTMLInputElement;
+      if (input.type === "hidden" || input.type === "checkbox" || input.type === "radio") {
+        return undefined;
+      }
+      const value = input.value;
+      if (value && value.length > 0) {
+        return value;
+      }
+      const placeholder = input.placeholder;
+      if (placeholder && placeholder.length > 0) {
+        return placeholder;
+      }
+      return undefined;
+    }
+    if (el.tagName === "TEXTAREA") {
+      const ta = el as HTMLTextAreaElement;
+      const value = ta.value;
+      if (value && value.length > 0) {
+        return value;
+      }
+      const placeholder = ta.placeholder;
+      if (placeholder && placeholder.length > 0) {
+        return placeholder;
+      }
+      return undefined;
+    }
+    return undefined;
+  }
+
   function walk(el: Element, path: string): ElementJson {
     const style = pickComputedStyle(el);
     const visible = isVisible(el, style);
@@ -367,7 +483,16 @@ export function captureSnapshot(): RawSnapshotJson {
     const svgContent = extractSvgContent(el);
     const imageUrl = svgContent === undefined ? extractImageUrl(el, style) : undefined;
     const imageId = imageUrl ? registerImage(imageUrl) : undefined;
-    const text = directText(el);
+    const directTextValue = directText(el);
+    // Form controls have no child text node carrying the painted
+    // string, so we lift `value` / `placeholder` up into the
+    // element's `text` field. The normaliser then treats the
+    // control as a self-contained paragraph host.
+    const formText = formControlText(el);
+    const text = formText !== undefined && directTextValue.length === 0
+      ? formText
+      : directTextValue;
+    const pseudo = readPseudo(el);
     // Inline SVG content is captured as a vector node; do not
     // recurse into its `<path>` / `<g>` descendants — they would
     // emit as confused frame children otherwise.
@@ -395,6 +520,7 @@ export function captureSnapshot(): RawSnapshotJson {
       imageId,
       svgContent,
       text: text.length > 0 ? text : undefined,
+      pseudo: pseudo.length > 0 ? pseudo : undefined,
       children,
     };
   }

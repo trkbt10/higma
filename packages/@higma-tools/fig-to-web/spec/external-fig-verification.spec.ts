@@ -59,7 +59,6 @@ import type {
   EmitFile,
   EmitRegistry,
   EmitResult,
-  FigSource,
   FrameTarget,
   RadiusToken,
   ShadowToken,
@@ -67,6 +66,7 @@ import type {
   TokenSet,
   TypographyToken,
 } from "../src";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import { lookupInstanceTarget, variantValueForInstance } from "../src/emit";
 
 import type { FigNode } from "@higma-document-models/fig/types";
@@ -125,7 +125,7 @@ function discoverFigPaths(): readonly string[] {
 
 type PipelineResult = {
   readonly figPath: string;
-  readonly source: FigSource;
+  readonly source: FigSymbolContext;
   readonly canvases: readonly FigNode[];
   readonly canvasName: string;
   readonly canvas: FigNode;
@@ -136,7 +136,7 @@ type PipelineResult = {
   readonly fileByPath: ReadonlyMap<string, EmitFile>;
 };
 
-function listUserVisibleCanvases(source: FigSource): readonly FigNode[] {
+function listUserVisibleCanvases(source: FigSymbolContext): readonly FigNode[] {
   const out: FigNode[] = [];
   for (const root of source.tree.roots) {
     if (getNodeType(root) !== "DOCUMENT") {

@@ -161,6 +161,21 @@ export async function renderFigViewports(
  * depend on a particular OS having those installed. The fallback
  * chain (Noto Sans JP first, then Roboto) is declared up front and
  * the SoT preloader logs every substitution — no try/catch swallows.
+ *
+ * CJK substitution: `@fontsource/noto-sans-jp` is shipped as ~1100
+ * unicode-range subsets, each holding a few hundred glyphs. The Node
+ * loader treats every subset as a separate face indexed under
+ * "Noto Sans JP" and picks one by closest-weight match — but a
+ * single subset only covers a tiny slice of CJK code points, so most
+ * glyphs miss and render as `.notdef` (tofu). When the rendered
+ * document carries any CJK character, we therefore prefer a system
+ * CJK face (Hiragino Sans on macOS, Noto Sans CJK on Linux) which
+ * carries the full glyph repertoire in one file. The override
+ * happens at resolver level — every `FontQuery` (regardless of the
+ * page-declared family) returns the CJK face, so a captured
+ * `font-family: "sans-serif"` doesn't silently route through
+ * `Helvetica Neue` (which the SANS_SERIF_STACK cascade picks first
+ * but which lacks CJK glyphs).
  */
 async function buildFontResolver(
   roots: readonly FigDesignNode[],
@@ -180,6 +195,14 @@ async function buildFontResolver(
   const FALLBACK_LATIN: FontQuery = { family: "Roboto", weight: 400, style: "normal" };
 
   const loader = createCachingFontLoader(createNodeFontLoaderWithFontsource());
+
+  const cjkFace = documentHasCjk(roots, symbolMap)
+    ? await loadCjkFace(loader)
+    : undefined;
+  if (cjkFace !== undefined) {
+    return () => cjkFace.font;
+  }
+
   const result = await preloadFonts({
     queries,
     loader,
@@ -209,6 +232,128 @@ async function buildFontResolver(
     }
     return lazyFallback.font;
   };
+}
+
+/**
+ * Try a small list of system CJK families in priority order and
+ * return the first one whose loaded face actually paints the test
+ * glyph 「日」 with a non-`.notdef` outline. Each candidate must be
+ * wide enough that *every* CJK glyph the captured page carries
+ * resolves to a real outline — the renderer has no per-character
+ * fallback, so a partial-coverage face would still produce tofu.
+ *
+ * Why the glyph probe matters: the Node font loader's
+ * `resolveVariants` cascades through the SANS_SERIF_STACK when a
+ * family isn't directly indexed, so a query for "Hiragino Sans"
+ * (which the macOS index does NOT carry under that exact name —
+ * only "Hiragino Sans GB W3" / "W6") returns Helvetica Neue, whose
+ * 「日」 glyph index is 0 (.notdef). Picking it as the CJK face
+ * silently re-introduces tofu. The probe filters those out.
+ */
+async function loadCjkFace(loader: ReturnType<typeof createCachingFontLoader>): Promise<LoadedFont | undefined> {
+  const CJK_CANDIDATES: readonly FontQuery[] = [
+    // macOS — Hiragino is indexed by the loader as "Hiragino Sans GB
+    // W3" / "W6" (the embedded family name carries the weight token).
+    { family: "Hiragino Sans GB W3", weight: 400, style: "normal" },
+    { family: "Hiragino Sans GB W6", weight: 700, style: "normal" },
+    { family: "Hiragino Kaku Gothic ProN", weight: 400, style: "normal" },
+    // Linux distributions that ship Noto CJK as a single TTC.
+    { family: "Noto Sans CJK JP", weight: 400, style: "normal" },
+    { family: "Noto Sans CJK", weight: 400, style: "normal" },
+    // Windows.
+    { family: "Yu Gothic", weight: 400, style: "normal" },
+    { family: "Meiryo", weight: 400, style: "normal" },
+    { family: "MS Gothic", weight: 400, style: "normal" },
+  ];
+  for (const candidate of CJK_CANDIDATES) {
+    const loaded = await loader.loadFont(candidate);
+    if (loaded === undefined) {
+      continue;
+    }
+    if (loaded.font.charToGlyph("日").index !== 0) {
+      return loaded;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Detect whether any TEXT character in `roots` (or in the SYMBOLs
+ * `roots` reference) lies in a Unicode block CJK fonts traditionally
+ * cover. Detection is conservative: we check the most common JP / CN
+ * / KR / kana / Hangul ranges plus the CJK Symbols and Punctuation
+ * block, which catches the half-width / full-width punctuation that
+ * Latin fonts often miss too. A single hit anywhere in the document
+ * flips the resolver into CJK-priority mode for the whole render.
+ */
+function documentHasCjk(
+  roots: readonly FigDesignNode[],
+  symbolMap: ReadonlyMap<string, FigDesignNode>,
+): boolean {
+  const visited = new Set<string>();
+  function walk(node: FigDesignNode | undefined): boolean {
+    if (!node) {
+      return false;
+    }
+    const text = node.textData?.characters;
+    if (text !== undefined && hasCjkChar(text)) {
+      return true;
+    }
+    const symbolId = node.symbolId;
+    if (symbolId !== undefined && !visited.has(symbolId)) {
+      visited.add(symbolId);
+      const target = symbolMap.get(symbolId);
+      if (target !== undefined && walk(target)) {
+        return true;
+      }
+    }
+    for (const child of node.children ?? []) {
+      if (walk(child)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  for (const root of roots) {
+    if (walk(root)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasCjkChar(s: string): boolean {
+  for (let i = 0; i < s.length; i += 1) {
+    const code = s.charCodeAt(i);
+    // CJK Unified Ideographs.
+    if (code >= 0x4e00 && code <= 0x9fff) {
+      return true;
+    }
+    // Hiragana, Katakana, Katakana phonetic extensions.
+    if (code >= 0x3040 && code <= 0x30ff) {
+      return true;
+    }
+    if (code >= 0x31f0 && code <= 0x31ff) {
+      return true;
+    }
+    // Hangul syllables.
+    if (code >= 0xac00 && code <= 0xd7af) {
+      return true;
+    }
+    // CJK Symbols and Punctuation.
+    if (code >= 0x3000 && code <= 0x303f) {
+      return true;
+    }
+    // Halfwidth and Fullwidth Forms (covers Japanese full-width Latin).
+    if (code >= 0xff00 && code <= 0xffef) {
+      return true;
+    }
+    // CJK Unified Ideographs Extension A.
+    if (code >= 0x3400 && code <= 0x4dbf) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

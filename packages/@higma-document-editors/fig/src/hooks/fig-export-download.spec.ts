@@ -1,6 +1,6 @@
 /** @file Fig export download helper tests. */
 
-import type { FigMetadata } from "@higma-document-io/fig/roundtrip";
+import type { FigPackageMetadata } from "@higma-figma-containers/package";
 import {
   createFigExportBlob,
   downloadFigExport,
@@ -9,13 +9,13 @@ import {
 
 describe("resolveFigExportFilename", () => {
   it("uses sanitized metadata filename and preserves one fig extension", () => {
-    const metadata: FigMetadata = { fileName: " Project/File.fig " };
+    const metadata: FigPackageMetadata = { fileName: " Project/File.fig " };
 
     expect(resolveFigExportFilename(metadata)).toBe("Project-File.fig");
   });
 
   it("uses an explicit untitled filename when metadata has no usable name", () => {
-    const metadata: FigMetadata = { fileName: " / " };
+    const metadata: FigPackageMetadata = { fileName: " / " };
 
     expect(resolveFigExportFilename(metadata)).toBe("untitled.fig");
   });

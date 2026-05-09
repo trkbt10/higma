@@ -82,6 +82,13 @@ export async function captureViewportInBrowser(
   });
   try {
     const page = await context.newPage();
+    // Subscribe to image responses *before* navigation so the
+    // listener catches every byte the browser pays for. Playwright
+    // hands us the response body the browser already loaded, so we
+    // never re-issue a fetch for the same bytes — the page's own
+    // request, with the page's own cookies / origin / cache state,
+    // is the SoT for "what bytes ended up in the rendered DOM".
+    const responseCache = startImageResponseCache(page);
     await page.goto(options.url, {
       waitUntil: options.waitUntil ?? "domcontentloaded",
       timeout: options.timeoutMs,
@@ -91,17 +98,99 @@ export async function captureViewportInBrowser(
     // injection) rather than guessing with sleeps or `networkidle`.
     // See wait-for-ready.ts for the full strategy.
     await waitForReady(page, { timeoutMs: options.timeoutMs });
+    // Drain any still-pending response-body reads so the asset
+    // cache reflects every byte the browser actually loaded.
+    await responseCache.settle();
     const json = await page.evaluate(captureSnapshot);
     // Pull image bytes directly out of the browser's already-decoded
     // bitmap cache. Each rendered `<img>` has finished decoding by
     // the time the page is on-screen, so we can read it back through
     // a canvas without any second-round network fetch.
-    const assets = await readAssetsFromBrowser(page, json.imageRefs);
+    const assets = await readAssetsFromBrowser(page, json.imageRefs, responseCache);
     const snapshot = jsonToSnapshot(json, assets);
     const screenshot = options.captureScreenshot ? await screenshotPage(page) : undefined;
     return { snapshot, screenshotBytes: screenshot };
   } finally {
     await context.close();
+  }
+}
+
+/**
+ * Cache of image response bytes the page itself loaded during
+ * navigation. Keyed by absolute URL. The renderer's downstream
+ * pipeline only knows PNG / JPEG headers, so non-(PNG|JPEG)
+ * responses are rasterised inside the page (see
+ * `rasterizeWithCanvas`) before being stored.
+ *
+ * Building this cache via `page.on('response')` is intentional:
+ * Playwright is already brokering every network exchange the
+ * browser made. Asking for bytes a second time — whether through
+ * Node's `fetch`, Playwright's `request` API, or an in-page
+ * `fetch` — is a parallel SoT for "what did this URL resolve to"
+ * and would introduce drift on cookies, redirects, and cache
+ * variance.
+ */
+type ResponseCache = {
+  /** Wait for every still-pending body to settle, then return. */
+  settle(): Promise<void>;
+  bodyForUrl(url: string): Uint8Array | undefined;
+};
+
+function startImageResponseCache(page: PageLike): ResponseCache {
+  const bodies = new Map<string, Uint8Array>();
+  const inflight: Promise<void>[] = [];
+  page.on("response", (response) => {
+    // Each handler invocation kicks off a microtask chain that
+    // ends in a `bodies.set`. We track the chain so `settle()`
+    // can wait for it before the caller starts reading the cache.
+    const work = (async () => {
+      const headers = await response.allHeaders();
+      const ct = (headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+      if (!isImageMime(ct)) {
+        return;
+      }
+      // `response.body()` may throw on a navigation-cancelled or
+      // redirected response. We deliberately let that propagate as
+      // `undefined` (caller falls back to the canvas read).
+      const body = await safeResponseBody(response);
+      if (body === undefined) {
+        return;
+      }
+      bodies.set(response.url(), new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+    })();
+    inflight.push(work);
+  });
+  return {
+    bodyForUrl: (url) => bodies.get(url),
+    async settle() {
+      // Drain any pending bodies so the snapshot reads a stable
+      // cache. New responses can still land between draining and
+      // the read (e.g. from a long-poll), but by `waitForReady`
+      // every visible image is `complete`, so any straggler is by
+      // definition not on the captured surface.
+      while (inflight.length > 0) {
+        const batch = inflight.splice(0, inflight.length);
+        await Promise.all(batch);
+      }
+    },
+  };
+}
+
+function isImageMime(mime: string): boolean {
+  return mime === "image/png"
+    || mime === "image/jpeg"
+    || mime === "image/jpg"
+    || mime === "image/gif"
+    || mime === "image/webp"
+    || mime === "image/svg+xml"
+    || mime === "image/avif";
+}
+
+async function safeResponseBody(response: ResponseLike): Promise<Buffer | undefined> {
+  try {
+    return await response.body();
+  } catch {
+    return undefined;
   }
 }
 
@@ -119,6 +208,12 @@ async function screenshotPage(page: { screenshot(opts: { readonly fullPage: bool
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
+type ResponseLike = {
+  url(): string;
+  allHeaders(): Promise<Readonly<Record<string, string>>>;
+  body(): Promise<Buffer>;
+};
+
 type PageLike = {
   goto(url: string, opts: { readonly waitUntil: string; readonly timeout: number | undefined }): Promise<unknown>;
   evaluate<T>(fn: () => T): Promise<T>;
@@ -126,6 +221,7 @@ type PageLike = {
   waitForFunction<T>(fn: () => T, arg?: unknown, opts?: { readonly timeout: number }): Promise<unknown>;
   waitForLoadState(state: "load" | "domcontentloaded" | "networkidle"): Promise<void>;
   screenshot(opts: { readonly fullPage: boolean; readonly type: "png" }): Promise<Buffer>;
+  on(event: "response", handler: (response: ResponseLike) => void | Promise<void>): void;
 };
 
 type PlaywrightLike = {
@@ -166,24 +262,34 @@ function isPlaywrightLike(mod: unknown): mod is PlaywrightLike {
 }
 
 /**
- * Pull each captured image's bytes directly out of the browser's
- * already-decoded bitmap cache. The page is on-screen at this point,
- * so every `<img>` whose `complete === true` has its decoded data
- * sitting in GPU/CPU memory — drawing it onto a canvas and reading
- * the result back through `toDataURL` gives us the bytes without
- * touching the network. URLs that never finished loading (lazy
- * thumbnails, errored fetches, blob URLs that died with the page
- * lifecycle) are silently dropped.
+ * Pull each captured image's bytes from the browser's already-loaded
+ * resource state. Two paths converge here, in this order:
  *
- * Why not refetch from the host: a second-round HTTP fetch would
- * pay the full network cost again, and on cookie-jar-heavy sites
- * (YouTube, etc.) Playwright's APIRequest helper trips on
- * Set-Cookie headers and aborts the whole capture. The browser
- * itself already paid the bandwidth; we just borrow the result.
+ *   1. The Playwright response cache — every image response the
+ *      browser received during navigation is already in our hands
+ *      (see `startImageResponseCache`). For PNG / JPEG bytes we
+ *      hand them straight through to the IR; for non-(PNG|JPEG)
+ *      formats (SVG, WebP, GIF, AVIF) we rasterise inside the
+ *      page so the downstream renderer's
+ *      `getImageDimensions` (PNG / JPEG only) can read the
+ *      header. Either way the byte source is the original
+ *      response — no second fetch.
+ *
+ *   2. For URLs the response cache did not see (cached
+ *      `<img>` tags whose response landed before our listener
+ *      attached, or `data:` URIs) the canvas read on the live
+ *      `<img>` element provides the pixels. Cross-origin images
+ *      without `crossorigin` taint the canvas — those are
+ *      dropped, which is the same behaviour as before.
+ *
+ * Neither path issues a fetch from Node or via `window.fetch`.
+ * Playwright is brokering all bytes; we only ever consume what
+ * the page already loaded.
  */
 async function readAssetsFromBrowser(
   page: PageLike,
   refs: RawSnapshotJson["imageRefs"],
+  responseCache: ResponseCache,
 ): Promise<ReadonlyMap<string, RawAsset>> {
   const out = new Map<string, RawAsset>();
   for (const ref of refs) {
@@ -200,6 +306,54 @@ async function readAssetsFromBrowser(
   }
   const remoteRefs = refs.filter((r) => !r.url.startsWith("data:") && !r.url.startsWith("blob:"));
   if (remoteRefs.length === 0) {
+    return out;
+  }
+  // First pass: serve refs from the Playwright response cache.
+  // PNG / JPEG (verified via magic bytes) flow straight through;
+  // everything else (SVG, WebP, GIF, AVIF, …) gets rasterised
+  // inside the page so the renderer's PNG/JPEG-only dimension
+  // reader can decode it. We never trust `Content-Type` alone —
+  // some Wikimedia thumbnails ship `image/png` headers for WebP
+  // bodies after on-the-fly transcoding races.
+  const needsRaster: { ref: typeof remoteRefs[number]; bytes: Uint8Array; mime: string }[] = [];
+  for (const ref of remoteRefs) {
+    const bytes = responseCache.bodyForUrl(ref.url);
+    if (bytes === undefined) {
+      continue;
+    }
+    const sniffed = sniffMimeFromBytes(bytes);
+    if (sniffed !== undefined) {
+      out.set(ref.id, { id: ref.id, mime: sniffed, bytes });
+      continue;
+    }
+    // The blob ctor inside the rasteriser only needs *some* MIME
+    // hint to dispatch the right `Image` decode path. Browsers
+    // sniff the bytes themselves anyway, so the value here is
+    // mostly informational — but `image/svg+xml` keeps SVG
+    // dispatch deterministic across vendors.
+    needsRaster.push({ ref, bytes, mime: bytesLookLikeSvg(bytes) ? "image/svg+xml" : "image/webp" });
+  }
+  if (needsRaster.length > 0) {
+    const rasterised = await rasterizeImageBytesAsPng(
+      page,
+      needsRaster.map((n) => ({ bytes: n.bytes, mime: n.mime })),
+    );
+    for (let i = 0; i < needsRaster.length; i += 1) {
+      const png = rasterised[i];
+      if (png === null || png === undefined) {
+        continue;
+      }
+      const ref = needsRaster[i]!.ref;
+      out.set(ref.id, { id: ref.id, mime: "image/png", bytes: png });
+    }
+  }
+  // Second pass: anything still missing falls back to the canvas
+  // read on the live `<img>`. Same-origin images that loaded
+  // *before* our `response` listener attached (Playwright sends
+  // events on a microtask boundary that has no ordering guarantee
+  // versus `goto`'s resolution on cached pages) come through here.
+  const stillNeed = remoteRefs.filter((r) => !out.has(r.id));
+  if (stillNeed.length === 0) {
     return out;
   }
   const dataUrls = await page.evaluate(
@@ -233,10 +387,10 @@ async function readAssetsFromBrowser(
       }
       return urls.map((url) => readImage(url));
     },
-    remoteRefs.map((r) => r.url),
+    stillNeed.map((r) => r.url),
   );
-  for (let i = 0; i < remoteRefs.length; i += 1) {
-    const ref = remoteRefs[i]!;
+  for (let i = 0; i < stillNeed.length; i += 1) {
+    const ref = stillNeed[i]!;
     const dataUrl = dataUrls[i];
     if (dataUrl === null || dataUrl === undefined) {
       continue;
@@ -248,6 +402,118 @@ async function readAssetsFromBrowser(
     out.set(ref.id, { id: ref.id, mime: decoded.mime, bytes: decoded.bytes });
   }
   return out;
+}
+
+/**
+ * Send each `(bytes, mime)` pair through `page.evaluate` and let the
+ * page's `Image` decoder + canvas turn it into PNG bytes the
+ * downstream renderer can read dimensions from. Order of results
+ * matches order of input. The browser handles every format the
+ * `<img>` element handles natively (SVG, WebP, GIF, AVIF, ...) — we
+ * never decode the bytes ourselves, and never re-fetch them.
+ */
+async function rasterizeImageBytesAsPng(
+  page: PageLike,
+  inputs: readonly { bytes: Uint8Array; mime: string }[],
+): Promise<readonly (Uint8Array | null)[]> {
+  // Marshal binary across `page.evaluate` as base64. Playwright
+  // serialises arguments via JSON; passing a `Uint8Array` directly
+  // would lose the byte payload.
+  const marshalled = inputs.map((i) => ({
+    base64: bytesToBase64(i.bytes),
+    mime: i.mime,
+  }));
+  const dataUrls = await page.evaluate(
+    async (items: readonly { base64: string; mime: string }[]) => {
+      function base64ToBytes(b64: string): Uint8Array {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) {
+          out[i] = bin.charCodeAt(i);
+        }
+        return out;
+      }
+      async function rasterise(item: { base64: string; mime: string }): Promise<string | null> {
+        const bytes = base64ToBytes(item.base64);
+        // `Blob` accepts BufferSource members; pass the typed
+        // array directly through a `BlobPart`-compatible cast.
+        // The Uint8Array's underlying ArrayBuffer is narrowed to
+        // SharedArrayBuffer | ArrayBuffer in TS lib.dom 5.x — but
+        // every browser's Blob ctor accepts both at runtime.
+        const blob = new Blob([bytes as unknown as BlobPart], { type: item.mime });
+        const objectUrl = URL.createObjectURL(blob);
+        try {
+          const image = await new Promise<HTMLImageElement | null>((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
+            img.src = objectUrl;
+          });
+          if (!image || image.naturalWidth === 0) {
+            return null;
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            return null;
+          }
+          ctx.drawImage(image, 0, 0);
+          return canvas.toDataURL("image/png");
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      }
+      return await Promise.all(items.map((it) => rasterise(it)));
+    },
+    marshalled,
+  );
+  return dataUrls.map((dataUrl) => {
+    if (dataUrl === null || dataUrl === undefined) {
+      return null;
+    }
+    const decoded = decodeDataUrl(dataUrl);
+    if (decoded === undefined) {
+      return null;
+    }
+    return decoded.bytes;
+  });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+}
+
+/**
+ * Quick magic-byte sniff so a response without a `Content-Type`
+ * (or a generic `application/octet-stream`) still routes to the
+ * right downstream pass. Only PNG / JPEG short-circuit the
+ * rasterisation pass; everything else (SVG, WebP, …) returns
+ * `undefined` here and falls through to the in-page rasteriser.
+ */
+function sniffMimeFromBytes(bytes: Uint8Array): RawAsset["mime"] | undefined {
+  if (bytes.length >= 8
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  return undefined;
+}
+
+function bytesLookLikeSvg(bytes: Uint8Array): boolean {
+  // Look at the first 256 bytes for an XML or SVG opening tag.
+  // SVG files commonly start with `<?xml ...?>` then `<svg`; some
+  // omit the XML declaration. Either form maps to the SVG decode
+  // path inside the page.
+  const head = String.fromCharCode(...bytes.subarray(0, Math.min(256, bytes.length)));
+  if (head.startsWith("<?xml")) {
+    return head.includes("<svg");
+  }
+  return head.trimStart().startsWith("<svg");
 }
 
 function decodeDataUrl(url: string): { mime: RawAsset["mime"]; bytes: Uint8Array } | undefined {
@@ -300,6 +566,7 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     imageId: json.imageId,
     svgContent: json.svgContent,
     text: json.text,
+    pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };
 }

@@ -22,7 +22,7 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import { buildWebFontPlan, collectFontQueries, type WebFontPlan } from "@higma-document-models/fig/font";
-import type { FigSource } from "../fig-source";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import type { EmitFile, EmitRegistry, FrameTarget } from "./types";
 import { buildRegistry } from "./plan/registry";
 import { emitComponentFile, emitPageFile } from "./render/files";
@@ -64,7 +64,7 @@ function emitIndexFile(registry: EmitRegistry): EmitFile {
   return { path: "index.ts", contents: lines.join("\n") };
 }
 
-function emitTokensFile(source: FigSource, frames: readonly FigNode[]): {
+function emitTokensFile(source: FigSymbolContext, frames: readonly FigNode[]): {
   readonly file: EmitFile;
   readonly registryInputs: ReturnType<typeof buildTokensFromFrames>;
 } {
@@ -117,7 +117,7 @@ function emitIndexHtml(fontPlan: WebFontPlan): EmitFile {
  * actually needs, then turn that into a `WebFontPlan` whose Google
  * Fonts URL only requests those weights — never a 100..900 sweep.
  */
-function buildSourceFontPlan(source: FigSource, frames: readonly FigNode[]): WebFontPlan {
+function buildSourceFontPlan(source: FigSymbolContext, frames: readonly FigNode[]): WebFontPlan {
   const { queries } = collectFontQueries({
     roots: frames,
     symbolMap: source.nodesByGuid,
@@ -402,7 +402,7 @@ export type EmitFromFramesOptions = {
  * graph builder, whose font / image decode steps are async.
  */
 export async function emitFromFrames(
-  source: FigSource,
+  source: FigSymbolContext,
   frames: readonly FigNode[],
   options: EmitFromFramesOptions = {},
 ): Promise<EmitResult> {

@@ -6,7 +6,6 @@ import type { EditorCanvasItemBounds } from "@higma-editor-surfaces/controls/can
 
 import type { SiteEditableUnit } from "../site-editor-workspace";
 
-export type SiteUnitBounds = EditorCanvasItemBounds;
 
 export type SiteUnitMove = {
   readonly unitId: string;
@@ -23,7 +22,7 @@ export type SiteUnitMoveDraft = {
   readonly originMove: SiteUnitMove;
 };
 
-function readUnitBounds(unit: SiteEditableUnit): SiteUnitBounds {
+function readUnitBounds(unit: SiteEditableUnit): EditorCanvasItemBounds {
   return {
     id: unit.id,
     x: unit.bounds.x,
@@ -83,7 +82,7 @@ function readMovedUnitBounds(
   unit: SiteEditableUnit,
   moves: readonly SiteUnitMove[],
   unitsById: ReadonlyMap<string, SiteEditableUnit>,
-): SiteUnitBounds {
+): EditorCanvasItemBounds {
   const baseBounds = readUnitBounds(unit);
   const delta = movedUnitDelta(unit, moves, unitsById);
   return {
@@ -97,7 +96,7 @@ function readMovedUnitBounds(
 export function createSiteUnitBounds(
   units: readonly SiteEditableUnit[],
   moves: readonly SiteUnitMove[] = [],
-): readonly SiteUnitBounds[] {
+): readonly EditorCanvasItemBounds[] {
   if (units.length === 0) {
     throw new Error("Site unit bounds require at least one editable unit");
   }
@@ -106,7 +105,7 @@ export function createSiteUnitBounds(
 }
 
 /** Resolve bounds for a specific site unit. */
-export function resolveSiteUnitBounds(bounds: readonly SiteUnitBounds[], unitId: string): SiteUnitBounds {
+export function resolveSiteUnitBounds(bounds: readonly EditorCanvasItemBounds[], unitId: string): EditorCanvasItemBounds {
   const unitBounds = bounds.find((item) => item.id === unitId);
   if (!unitBounds) {
     throw new Error(`Site unit bounds for ${unitId} do not exist`);
@@ -190,7 +189,7 @@ export function commitSiteUnitMove(params: {
 /** Commit an absolute position edit for the currently visible unit bounds. */
 export function moveSiteUnitBoundsToPosition(params: {
   readonly moves: readonly SiteUnitMove[];
-  readonly bounds: SiteUnitBounds;
+  readonly bounds: EditorCanvasItemBounds;
   readonly x: number;
   readonly y: number;
 }): readonly SiteUnitMove[] {

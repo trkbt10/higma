@@ -74,9 +74,9 @@ import {
 import type {
   EmitFile,
   EmitRegistry,
-  FigSource,
   FrameTarget,
 } from "../src";
+import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import { doctype, el, raw, text } from "../src/lib/html-tree/builder";
 import { serialize } from "../src/lib/html-tree/serialize";
 import type { HtmlNode } from "../src/lib/html-tree/types";
@@ -152,7 +152,7 @@ function diffThreshold(): number {
 // Fig discovery (canvas + frames)
 // =============================================================================
 
-function listUserVisibleCanvases(source: FigSource): readonly FigNode[] {
+function listUserVisibleCanvases(source: FigSymbolContext): readonly FigNode[] {
   const out: FigNode[] = [];
   for (const root of source.tree.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
@@ -439,7 +439,7 @@ type VisualState = {
   readonly figPath: string;
   readonly outDir: string;
   readonly diffDir: string;
-  readonly source: FigSource;
+  readonly source: FigSymbolContext;
   readonly registry: EmitRegistry;
   readonly frames: readonly FigNode[];
   readonly browser: Browser;

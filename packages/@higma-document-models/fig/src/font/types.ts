@@ -98,13 +98,6 @@ export type LoadedFont = {
   readonly postscriptName?: string;
 };
 
-/**
- * Alias for backwards compatibility — every loader receives the same
- * concretely-defaulted shape so cache keys, dedup, and resolver lookups
- * all agree.
- */
-export type FontLoadOptions = FontQuery;
-
 // =============================================================================
 // Font Resolution Types
 // =============================================================================
