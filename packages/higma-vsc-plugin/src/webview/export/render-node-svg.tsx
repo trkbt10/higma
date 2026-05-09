@@ -26,9 +26,10 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
-  FigFamilyPageRenderer,
+  FigFamilyPageRendererFromResources,
   createFigFamilyRenderOptions,
 } from "@higma-figma-runtime/react-renderer";
+import { figDocumentResources } from "@higma-document-io/fig/context";
 import { createCanvasMetricsTextFontResolver } from "@higma-document-renderers/fig/font-drivers/browser";
 import type {
   FigDesignDocument,
@@ -90,7 +91,7 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
   try {
     flushSync(() => {
       root.render(
-        <FigFamilyPageRenderer
+        <FigFamilyPageRendererFromResources
           page={syntheticPage}
           canvasWidth={width}
           canvasHeight={height}
@@ -98,10 +99,7 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
           viewportY={0}
           viewportWidth={width}
           viewportHeight={height}
-          images={args.document.images}
-          blobs={args.document.blobs}
-          symbolMap={args.document.components}
-          styleRegistry={args.document.styleRegistry}
+          resources={figDocumentResources(args.document)}
           renderOptions={args.renderOptions}
           textFontResolver={args.textFontResolver}
         />,

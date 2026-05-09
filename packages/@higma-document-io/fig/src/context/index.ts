@@ -20,3 +20,10 @@ export {
   createFigSymbolContextFromLoaded,
   type FigSymbolContext,
 } from "./symbol-context";
+
+export {
+  figDocumentResources,
+  figRawResources,
+  type FigDocumentResources,
+  type FigRawResources,
+} from "./document-resources";

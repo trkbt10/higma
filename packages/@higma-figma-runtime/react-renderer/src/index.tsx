@@ -4,6 +4,7 @@
 
 import { useMemo, useRef } from "react";
 import { createFigDesignDocumentFromKiwiCanvas } from "@higma-document-io/fig";
+import type { FigDocumentResources } from "@higma-document-io/fig/context";
 import type { FigDesignDocument, FigDesignNode, FigPage, FigStyleRegistry, FigImage } from "@higma-document-models/fig/domain";
 import {
   buildSceneGraphWithCache,
@@ -20,6 +21,47 @@ import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 
 export type FigFamilyDesignDocument = FigDesignDocument;
 export type FigFamilyPage = FigPage;
+
+/**
+ * Renderer-facing resource bundle.
+ *
+ * `FigDocumentResources` (from `@higma-document-io/fig/context`) is the
+ * canonical SoT shape; runtime exposes the same shape under
+ * `FigFamilyDocumentResources` so peer-product packages
+ * (`@higma-document-editors/site` / `deck` / `buzz`, `higma-vsc-plugin`)
+ * obtain it through this layer instead of importing across the
+ * `enforce-package-boundaries` line into `@higma-document-io/fig`.
+ *
+ * The structural alias keeps both names interchangeable at the type level
+ * — code coming from the IO context and code coming from runtime see the
+ * exact same shape, so there is no "two resource types in flight" problem.
+ */
+export type FigFamilyDocumentResources = FigDocumentResources;
+
+/**
+ * Build the renderer-facing resource bundle from a fig-family document.
+ *
+ * Independent re-implementation (not a re-export of
+ * `figDocumentResources`) so runtime stays free of the
+ * `no-cross-package-reexport` lint, while peer-product editor packages
+ * still have a single, stable accessor for the four maps.
+ *
+ * The contract is byte-identical to
+ * `@higma-document-io/fig/context::figDocumentResources`: the bundle
+ * aliases `document.components` to `symbolMap` because the scene-graph
+ * builder, the React renderer, and the WebGL backend all expect the
+ * renderer's `symbolMap` vocabulary, while the document model owns the
+ * "components" name. A single accessor stops every consumer from
+ * destructuring four fields by hand and renaming `components` inline.
+ */
+export function figFamilyDocumentResources(document: FigDesignDocument): FigFamilyDocumentResources {
+  return {
+    symbolMap: document.components,
+    styleRegistry: document.styleRegistry,
+    blobs: document.blobs,
+    images: document.images,
+  };
+}
 export type FigFamilyKiwiCanvas = Parameters<typeof createFigDesignDocumentFromKiwiCanvas>[0];
 export type FigFamilyDesignDocumentOptions = Parameters<typeof createFigDesignDocumentFromKiwiCanvas>[1];
 export type FigFamilyRenderOptions = SceneGraphRenderOptions;
@@ -50,6 +92,26 @@ export type UseFigSceneGraphParams = {
 export type FigFamilyPageRendererProps = UseFigSceneGraphParams & {
   readonly sceneGraph?: SceneGraph | null;
   readonly renderOptions?: SceneGraphRenderOptions;
+};
+
+/**
+ * Bundle-shaped variant of `UseFigSceneGraphParams`.
+ *
+ * Consumers that already hold a `FigDocumentResources` (the SoT bundle from
+ * `@higma-document-io/fig/context`) pass it as a single prop instead of
+ * destructuring the four fields by hand at every call site. Internally this
+ * delegates to the four-field hook so the cache invariants stay identical.
+ */
+export type UseFigSceneGraphFromResourcesParams = {
+  readonly page: FigPage | null | undefined;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly viewportX?: number;
+  readonly viewportY?: number;
+  readonly viewportWidth?: number;
+  readonly viewportHeight?: number;
+  readonly resources: FigDocumentResources;
+  readonly textFontResolver?: TextFontResolver;
 };
 
 type SceneGraphCacheRef = {
@@ -219,6 +281,60 @@ export function useFigSceneGraph({
   }, [contentSceneGraph, canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight]);
 }
 
+/**
+ * Bundle-shaped variant: identical contract to `useFigSceneGraph` but accepts
+ * a `FigDocumentResources` (`@higma-document-io/fig/context`'s SoT) instead
+ * of four separate props.
+ *
+ * Implemented by destructuring `resources` once and forwarding to the
+ * four-prop hook so the cache invariants — including the per-field reference
+ * checks in `canReuseSceneGraphCache` — stay identical for both entry points.
+ * Callers that hold a stable `resources` reference (the editor's
+ * `useFigDocumentResources` hook) get cache hits across renders that don't
+ * change the document.
+ */
+export function useFigSceneGraphFromResources({
+  page,
+  canvasWidth,
+  canvasHeight,
+  viewportX,
+  viewportY,
+  viewportWidth,
+  viewportHeight,
+  resources,
+  textFontResolver,
+}: UseFigSceneGraphFromResourcesParams): SceneGraph | null {
+  return useFigSceneGraph({
+    page,
+    canvasWidth,
+    canvasHeight,
+    viewportX,
+    viewportY,
+    viewportWidth,
+    viewportHeight,
+    images: resources.images,
+    blobs: resources.blobs,
+    symbolMap: resources.symbolMap,
+    styleRegistry: resources.styleRegistry,
+    textFontResolver,
+  });
+}
+
+/**
+ * Bundle-shaped variant of `FigFamilyPageRendererProps`.
+ *
+ * Same contract as `FigFamilyPageRendererProps` but accepts a
+ * `FigDocumentResources` (the SoT bundle exposed by
+ * `@higma-document-io/fig/context`) instead of the four loose props.
+ * Site / deck / buzz canvases hold `figSurface.resources` once and pass it
+ * down — see `figDocumentResources(figSurface.document)` for the
+ * conversion when the surface still carries a raw `FigDesignDocument`.
+ */
+export type FigFamilyPageRendererFromResourcesProps = UseFigSceneGraphFromResourcesParams & {
+  readonly sceneGraph?: SceneGraph | null;
+  readonly renderOptions?: SceneGraphRenderOptions;
+};
+
 /** Render a fig-family page as React-owned SVG nodes. */
 export function FigFamilyPageRenderer({
   sceneGraph: sceneGraphProp,
@@ -226,6 +342,42 @@ export function FigFamilyPageRenderer({
   ...params
 }: FigFamilyPageRendererProps) {
   const builtSceneGraph = useFigSceneGraph(params);
+  const sceneGraph = sceneGraphProp ?? builtSceneGraph;
+
+  if (!sceneGraph) {
+    return <g data-fig-family-page-renderer-empty="" />;
+  }
+
+  return (
+    <svg
+      data-fig-family-page-renderer=""
+      viewBox={resolveViewBox(sceneGraph)}
+      preserveAspectRatio="none"
+      width={sceneGraph.width}
+      height={sceneGraph.height}
+      overflow="visible"
+      pointerEvents="none"
+      aria-hidden="true"
+    >
+      <FigSceneRenderer sceneGraph={sceneGraph} renderOptions={renderOptions} />
+    </svg>
+  );
+}
+
+/**
+ * Resource-bundle variant of `FigFamilyPageRenderer`.
+ *
+ * Forwards the bundle through `useFigSceneGraphFromResources` (which itself
+ * delegates to `useFigSceneGraph`) so site / deck / buzz canvases consume a
+ * single `resources` prop instead of destructuring `images / blobs /
+ * symbolMap / styleRegistry` at every call site.
+ */
+export function FigFamilyPageRendererFromResources({
+  sceneGraph: sceneGraphProp,
+  renderOptions,
+  ...params
+}: FigFamilyPageRendererFromResourcesProps) {
+  const builtSceneGraph = useFigSceneGraphFromResources(params);
   const sceneGraph = sceneGraphProp ?? builtSceneGraph;
 
   if (!sceneGraph) {

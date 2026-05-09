@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { createFigDesignDocument } from "@higma-document-io/fig";
+import { figDocumentResources } from "@higma-document-io/fig/context";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 import { FigPageRenderer } from "./FigPageRenderer";
 
@@ -40,10 +41,7 @@ function renderFullPage(): string {
       page,
       canvasWidth: 2400,
       canvasHeight: 600,
-      images: doc.images,
-      blobs: doc.blobs,
-      symbolMap: doc.components,
-      styleRegistry: doc.styleRegistry,
+      resources: figDocumentResources(doc),
     }),
   );
 }

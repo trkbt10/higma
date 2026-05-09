@@ -9,7 +9,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Buffer } from "node:buffer";
-import { createDemoFigDesignDocument } from "@higma-document-io/fig/context";
+import { createDemoFigDesignDocument, figDocumentResources } from "@higma-document-io/fig/context";
 import type { FigPage } from "@higma-document-models/fig/domain";
 import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { FigPageRenderer } from "./FigPageRenderer";
@@ -55,10 +55,7 @@ async function renderPage(
       page,
       canvasWidth: width,
       canvasHeight: height,
-      images: doc.images,
-      blobs: doc.blobs,
-      symbolMap: doc.components,
-      styleRegistry: doc.styleRegistry,
+      resources: figDocumentResources(doc),
       renderer,
       textFontResolver: () => testFont,
     }),
@@ -140,10 +137,7 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
         page,
         canvasWidth: 980,
         canvasHeight: 700,
-        images: doc.images,
-        blobs: doc.blobs,
-        symbolMap: doc.components,
-        styleRegistry: doc.styleRegistry,
+        resources: figDocumentResources(doc),
         renderer: "svg",
         viewportX: 125,
         viewportY: -50,
@@ -169,10 +163,7 @@ describe("FigPageRenderer — selectable renderer backend shell", () => {
         page: doc.pages[0],
         canvasWidth: 1,
         canvasHeight: 1,
-        images: doc.images,
-        blobs: doc.blobs,
-        symbolMap: doc.components,
-        styleRegistry: doc.styleRegistry,
+        resources: figDocumentResources(doc),
         renderer: "svg",
         sceneGraph: createManagedImageSceneGraph(),
         renderOptions,

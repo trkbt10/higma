@@ -11,14 +11,16 @@ import {
   useState,
   useCallback,
   type CSSProperties,
-  type ReactNode } from "react"; import type { ParsedFigFile,
-} from "@higma-document-io/fig/parser";
-import { parseFigFile } from "@higma-document-io/fig/parser";
-import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { treeToDocument } from "@higma-document-io/fig/context";
-import { buildNodeTree, findNodesByType, type FigDesignDocument, type FigDesignNode } from "@higma-document-models/fig/domain";
+  type ReactNode } from "react";
+import {
+  createFigDesignDocumentFromLoaded,
+  createFigSymbolContext,
+  figDocumentResources,
+  figRawResources,
+  type FigSymbolContext,
+} from "@higma-document-io/fig/context";
+import { findNodesByType, type FigDesignDocument, type FigDesignNode } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { preResolveSymbols } from "@higma-document-models/fig/symbols";
 import { renderCanvas } from "@higma-document-renderers/fig/svg";
 import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
@@ -404,31 +406,36 @@ const fontLoader = createCachingFontLoader(browserFontLoader);
 
 /** Render SVG/WebGL debug output for one loaded fig file. */
 export function RendererDebugView({ raw }: Props) {
-  const [parsedFile, setParsedFile] = useState<ParsedFigFile | null>(null);
+  // SoT: drive every renderer (SVG, WebGL, scene-graph) from the same
+  // `FigSymbolContext`. The IO context layer owns the single
+  // `loadFigFile → buildNodeTree → resolveStyles` orchestration; deriving
+  // a separate `parseFigFile` view here used to give the SVG renderer a
+  // raw `nodeMap` while WebGL got a style-resolved one — same file, two
+  // shapes, drift on style overrides. The context yields one resolved
+  // tree consumed by both backends.
+  const [ctx, setCtx] = useState<FigSymbolContext | null>(null);
   const [designDoc, setDesignDoc] = useState<FigDesignDocument | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
   useEffect(() => {
     if (raw.length === 0) {
-      setParsedFile(null);
+      setCtx(null);
       setDesignDoc(null);
       return;
     }
     const cancelled = { value: false };
-
-    // Parse both low-level (for SVG renderer) and domain (for WebGL/SceneGraph)
-    Promise.all([
-      parseFigFile(raw),
-      loadFigFile(raw).then((loaded) => {
-        const tree = buildNodeTree(loaded.nodeChanges);
-        return treeToDocument(tree, loaded);
-      }),
-    ]).then(
-      ([parsed, doc]) => {
-        if (!cancelled.value) {
-          setParsedFile(parsed);
-          setDesignDoc(doc);
+    createFigSymbolContext(raw).then(
+      (loadedCtx) => {
+        if (cancelled.value) {
+          return;
         }
+        // Reuse the same context for the FigDesignDocument so the two
+        // views share one resolved tree and one styleRegistry — the
+        // renderer-debug toggle never sees two different versions of
+        // "the same file".
+        const doc = createFigDesignDocumentFromLoaded(loadedCtx.loaded);
+        setCtx(loadedCtx);
+        setDesignDoc(doc);
       },
       (err) => {
         if (!cancelled.value) {
@@ -440,11 +447,11 @@ export function RendererDebugView({ raw }: Props) {
   }, [raw]);
 
   if (parseError) {return <div style={loadingStyle}>Parse error: {parseError}</div>;}
-  if (!parsedFile || !designDoc) {return <div style={loadingStyle}>Parsing .fig for renderer debug...</div>;}
-  return <RendererDebugContent parsedFile={parsedFile} designDoc={designDoc} />;
+  if (!ctx || !designDoc) {return <div style={loadingStyle}>Parsing .fig for renderer debug...</div>;}
+  return <RendererDebugContent ctx={ctx} designDoc={designDoc} />;
 }
 
-function RendererDebugContent({ parsedFile, designDoc }: { parsedFile: ParsedFigFile; designDoc: FigDesignDocument }) {
+function RendererDebugContent({ ctx, designDoc }: { ctx: FigSymbolContext; designDoc: FigDesignDocument }) {
   const [selectedCanvasIndex, setSelectedCanvasIndex] = useState(0);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const [showHiddenNodes, setShowHiddenNodes] = useState(false);
@@ -455,17 +462,23 @@ function RendererDebugContent({ parsedFile, designDoc }: { parsedFile: ParsedFig
   const [inspectorEnabled, setInspectorEnabled] = useState(false);
   const [rendererMode, setRendererMode] = useState<RendererMode>("svg");
 
-  const { canvases, nodeCount, symbolMap, symbolResolveWarnings } = useMemo(() => {
-    const { roots, nodeMap } = buildNodeTree(parsedFile.nodeChanges);
-    const canvasNodes = findNodesByType(roots, "CANVAS").filter(isUserVisibleCanvasNode);
+  // SoT: every map a downstream consumer needs (raw symbolMap for SVG,
+  // styleRegistry, blobs, images) flows through `figRawResources(ctx)`.
+  // The IO context already pre-resolves style references during build,
+  // so an extra `preResolveSymbols` pass would either re-do the same
+  // work or silently diverge from the canonical resolver — neither is
+  // acceptable.
+  const rawResources = useMemo(() => figRawResources(ctx), [ctx]);
+  const designResources = useMemo(() => figDocumentResources(designDoc), [designDoc]);
+  const { canvases, nodeCount } = useMemo(() => {
+    const canvasNodes = findNodesByType(ctx.roots, "CANVAS").filter(isUserVisibleCanvasNode);
     const canvasInfos: CanvasInfo[] = canvasNodes.map((canvas) => {
       const frames = collectFrameInfos(canvas.children ?? []);
       return { node: canvas, name: canvas.name ?? "Unnamed Page", frames };
     });
-    const warnings: string[] = [];
-    preResolveSymbols(nodeMap, { warnings });
-    return { canvases: canvasInfos, nodeCount: parsedFile.nodeChanges.length, symbolMap: nodeMap, symbolResolveWarnings: warnings };
-  }, [parsedFile]);
+    return { canvases: canvasInfos, nodeCount: ctx.loaded.nodeChanges.length };
+  }, [ctx]);
+  const symbolResolveWarnings: readonly string[] = useMemo(() => [], []);
 
   const combinedWarnings = useMemo(() => [...symbolResolveWarnings, ...renderResult.warnings], [symbolResolveWarnings, renderResult.warnings]);
   const currentCanvas = canvases[selectedCanvasIndex];
@@ -504,12 +517,12 @@ function RendererDebugContent({ parsedFile, designDoc }: { parsedFile: ParsedFig
       }
       const normalizedNode = normalizeDesignNodeForFrameRender(designNode);
       return buildSceneGraph([normalizedNode], {
-        blobs: designDoc.blobs,
-        images: designDoc.images,
+        blobs: designResources.blobs,
+        images: designResources.images,
         canvasSize: { width: currentFrame.width, height: currentFrame.height },
         viewport: { x: 0, y: 0, width: currentFrame.width, height: currentFrame.height },
-        symbolMap: designDoc.components,
-        styleRegistry: designDoc.styleRegistry,
+        symbolMap: designResources.symbolMap,
+        styleRegistry: designResources.styleRegistry,
         showHiddenNodes,
         warnings: [],
         textFontResolver,
@@ -518,7 +531,7 @@ function RendererDebugContent({ parsedFile, designDoc }: { parsedFile: ParsedFig
       console.error("Failed to build scene graph:", e);
       return null;
     }
-  }, [rendererMode, currentFrame, currentCanvas, designDoc, showHiddenNodes, textFontResolver]);
+  }, [rendererMode, currentFrame, currentCanvas, designDoc, designResources, showHiddenNodes, textFontResolver]);
 
   useEffect(() => {
     if (!currentFrame) {
@@ -529,10 +542,19 @@ function RendererDebugContent({ parsedFile, designDoc }: { parsedFile: ParsedFig
     setIsRendering(true);
     renderCanvas(
       { children: [currentFrame.node] },
-      { width: currentFrame.width, height: currentFrame.height, blobs: parsedFile.blobs, images: parsedFile.images, showHiddenNodes, symbolMap, fontLoader: fontAccessGranted ? fontLoader : undefined },
+      {
+        width: currentFrame.width,
+        height: currentFrame.height,
+        blobs: rawResources.blobs,
+        images: rawResources.images,
+        symbolMap: rawResources.symbolMap,
+        styleRegistry: rawResources.styleRegistry,
+        showHiddenNodes,
+        fontLoader: fontAccessGranted ? fontLoader : undefined,
+      },
     ).then((result) => { if (!cancelRef.value) { setRenderResult(result); setIsRendering(false); } });
     return () => { cancelRef.value = true; };
-  }, [currentFrame, parsedFile.blobs, parsedFile.images, showHiddenNodes, fontAccessGranted, symbolMap]);
+  }, [currentFrame, rawResources, showHiddenNodes, fontAccessGranted]);
 
   const handleRequestFontAccess = async () => {
     try {

@@ -11,6 +11,10 @@ export { FigEditor } from "./editor/FigEditor";
 export { FigEditorProvider, useFigEditor, useFigEditorOptional, useFigDrag } from "./context/FigEditorContext";
 export { useExportFig } from "./hooks/use-export-fig";
 export { useFigFileLoad } from "./hooks/use-fig-file-load";
+export {
+  useFigDocumentResources,
+  useFigDocumentResourcesFor,
+} from "./hooks/use-fig-document-resources";
 
 // Types
 export type {

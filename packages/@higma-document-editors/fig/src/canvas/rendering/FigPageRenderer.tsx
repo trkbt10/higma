@@ -6,9 +6,9 @@
  * SVG or WebGL backend.
  */
 
-import type { FigPage, FigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigImage } from "@higma-document-models/fig/domain";
-import type { BuildSceneGraphOptions, SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { FigPage } from "@higma-document-models/fig/domain";
+import type { FigDocumentResources } from "@higma-document-io/fig/context";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { useFigSceneGraph, type FigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
 import { FigSvgViewportScene } from "./FigSvgViewportScene";
@@ -24,20 +24,17 @@ type FigPageRendererProps = {
   readonly page: FigPage;
   readonly canvasWidth: number;
   readonly canvasHeight: number;
-  readonly images: ReadonlyMap<string, FigImage>;
-  /** Binary blobs for geometry decoding (from FigDesignDocument.blobs) */
-  readonly blobs: BuildSceneGraphOptions["blobs"];
-  /** Symbol/component map for INSTANCE resolution */
   /**
-   * Symbol map for INSTANCE resolution. Pass an empty Map when the page
-   * has no INSTANCE references — the component does not silently default.
+   * Renderer-facing resource bundle (`symbolMap` / `styleRegistry` /
+   * `blobs` / `images`).
+   *
+   * SoT: obtain via `useFigDocumentResources()` (or
+   * `figDocumentResources(document)`) — never destructure a
+   * `FigDesignDocument` inline. Keeping every consumer on the bundle
+   * means the four maps cannot drift relative to each other on a future
+   * document refactor.
    */
-  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
-  /**
-   * Style registry for per-path style override resolution. Pass
-   * `EMPTY_FIG_STYLE_REGISTRY` when the page carries no shared styles.
-   */
-  readonly styleRegistry: FigStyleRegistry;
+  readonly resources: FigDocumentResources;
   readonly renderer?: FigEditorRendererKind;
   readonly renderOptions?: FigFamilyRenderOptions;
   readonly sceneGraph?: SceneGraph | null;
@@ -69,10 +66,7 @@ export function FigPageRenderer({
   page,
   canvasWidth,
   canvasHeight,
-  images,
-  blobs,
-  symbolMap,
-  styleRegistry,
+  resources,
   renderer = "svg",
   renderOptions,
   sceneGraph: sceneGraphProp,
@@ -94,10 +88,10 @@ export function FigPageRenderer({
     viewportY,
     viewportWidth,
     viewportHeight,
-    images,
-    blobs,
-    symbolMap,
-    styleRegistry,
+    images: resources.images,
+    blobs: resources.blobs,
+    symbolMap: resources.symbolMap,
+    styleRegistry: resources.styleRegistry,
     textFontResolver,
   });
   const sceneGraph = sceneGraphProp ?? builtSceneGraph;

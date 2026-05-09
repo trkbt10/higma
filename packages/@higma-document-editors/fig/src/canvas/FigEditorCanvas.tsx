@@ -35,9 +35,10 @@ import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import { findNodeById } from "@higma-document-io/fig/node-ops";
 import { useFigEditor, useFigDrag } from "../context/FigEditorContext";
+import { useFigDocumentResources } from "../hooks/use-fig-document-resources";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
-import { createFigFamilyRenderOptions, useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+import { createFigFamilyRenderOptions, useFigSceneGraphFromResources } from "@higma-figma-runtime/react-renderer";
 import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
 import { resolveViewportRenderWindow } from "./layout/viewport-render-plan";
 import { computeAbsoluteTransform, flattenAllNodeBounds } from "./interaction/bounds";
@@ -154,6 +155,10 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
     creationMode,
     textEdit,
   } = useFigEditor();
+  // SoT: every renderer-facing resource (`symbolMap` / `styleRegistry` /
+  // `blobs` / `images`) flows through this single bundle reference, so the
+  // memoization keys below cover all four maps with one dep entry.
+  const resources = useFigDocumentResources();
 
   // Drag state is in a separate context so that high-frequency preview
   // updates (PREVIEW_MOVE/RESIZE/ROTATE at 40-60Hz) only re-render this
@@ -297,7 +302,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
     [activePage, dispatch, document.blobs],
   );
 
-  const sceneGraph = useFigSceneGraph({
+  const sceneGraph = useFigSceneGraphFromResources({
     page: renderWindow ? activePage : null,
     canvasWidth: renderWindow?.surfaceWidth ?? MIN_RENDER_WINDOW_SIZE,
     canvasHeight: renderWindow?.surfaceHeight ?? MIN_RENDER_WINDOW_SIZE,
@@ -305,10 +310,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
     viewportY: renderWindow?.y ?? 0,
     viewportWidth: renderWindow?.width ?? MIN_RENDER_WINDOW_SIZE,
     viewportHeight: renderWindow?.height ?? MIN_RENDER_WINDOW_SIZE,
-    images: document.images,
-    blobs: document.blobs,
-    symbolMap: document.components,
-    styleRegistry: document.styleRegistry,
+    resources,
     textFontResolver,
   });
   const renderOptions = useMemo(() => createFigFamilyRenderOptions(document), [document]);
@@ -1468,10 +1470,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
         page={activePage}
         canvasWidth={renderWindow.surfaceWidth}
         canvasHeight={renderWindow.surfaceHeight}
-        images={document.images}
-        blobs={document.blobs}
-        symbolMap={document.components}
-        styleRegistry={document.styleRegistry}
+        resources={resources}
         renderer={renderer}
         renderOptions={renderOptions}
         sceneGraph={sceneGraph}
@@ -1486,7 +1485,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
         textFontResolver={textFontResolver}
       />
     );
-  }, [activePage, sceneGraph, renderer, renderOptions, renderWindow, document.images, document.blobs, document.components, document.styleRegistry, viewportScale, webglInitializationDelayMs, textFontResolver]);
+  }, [activePage, sceneGraph, renderer, renderOptions, renderWindow, resources, viewportScale, webglInitializationDelayMs, textFontResolver]);
 
   const handleViewportChange = useCallback((viewport: EditorCanvasViewportContentContext["viewport"], context: EditorCanvasViewportContentContext) => {
     setViewportScale(viewport.scale);

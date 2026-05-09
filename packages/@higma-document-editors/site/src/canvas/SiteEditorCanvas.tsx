@@ -8,7 +8,10 @@ import {
   type CanvasPageCoords,
   type EditorCanvasItemBounds,
 } from "@higma-editor-surfaces/controls/canvas";
-import { FigFamilyPageRenderer } from "@higma-figma-runtime/react-renderer";
+import {
+  FigFamilyPageRendererFromResources,
+  figFamilyDocumentResources,
+} from "@higma-figma-runtime/react-renderer";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
 
@@ -194,6 +197,13 @@ export function SiteEditorCanvas() {
     [editableUnits],
   );
   const figSurface = figRenderSurface;
+  // SoT: drive the renderer with the canonical resource bundle the IO
+  // context produces, accessed through runtime's
+  // `figFamilyDocumentResources` to honour the
+  // `enforce-package-boundaries` rule (site cannot import from the fig
+  // IO product directly). The four maps cannot drift relative to each
+  // other because they all flow through this single accessor.
+  const figResources = useMemo(() => figFamilyDocumentResources(figSurface.document), [figSurface.document]);
   const renderRevision = useMemo(
     () => unitMoves.map((move) => `${move.unitId}:${move.deltaX}:${move.deltaY}`).join("|"),
     [unitMoves],
@@ -233,15 +243,12 @@ export function SiteEditorCanvas() {
     >
       <defs>{clipPath}</defs>
       <g clipPath="url(#site-active-breakpoint-clip)">
-        <FigFamilyPageRenderer
+        <FigFamilyPageRendererFromResources
           key={renderRevision}
           page={figSurface.page}
           canvasWidth={extents.width}
           canvasHeight={extents.height}
-          images={figSurface.document.images}
-          blobs={figSurface.document.blobs}
-          symbolMap={figSurface.document.components}
-          styleRegistry={figSurface.document.styleRegistry}
+          resources={figResources}
           renderOptions={figSurface.renderOptions}
           viewportX={-extents.offsetX}
           viewportY={-extents.offsetY}

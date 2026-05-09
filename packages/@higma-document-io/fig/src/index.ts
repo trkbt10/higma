@@ -26,6 +26,10 @@ export {
   createFigSymbolContext,
   createFigSymbolContextFromLoaded,
   type FigSymbolContext,
+  figDocumentResources,
+  figRawResources,
+  type FigDocumentResources,
+  type FigRawResources,
 } from "./context";
 
 // Page operations
