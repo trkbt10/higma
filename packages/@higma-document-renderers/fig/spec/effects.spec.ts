@@ -313,6 +313,7 @@ describe("Effect Type Coverage", () => {
       height: layer.size.height,
       blobs: data.blobs,
       images: data.images,
+      symbolMap: data.nodeMap,
     });
 
     // Drop shadows should create filter elements
@@ -347,6 +348,7 @@ describe("Effect Type Coverage", () => {
       height: layer.size.height,
       blobs: data.blobs,
       images: data.images,
+      symbolMap: data.nodeMap,
     });
 
     // Look for opacity attribute

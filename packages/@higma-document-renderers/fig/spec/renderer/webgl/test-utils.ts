@@ -14,7 +14,7 @@ import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { createServer, type ViteDevServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer";
-import { createFigDesignDocument } from "@higma-document-io/fig/context";
+import { createFigDesignDocument, figDocumentResources } from "@higma-document-io/fig/context";
 import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "../../../src/scene-graph/builder";
 import type { SceneGraph } from "../../../src/scene-graph/types";
@@ -217,12 +217,9 @@ function normalizeRootNode(node: FigDesignNode): FigDesignNode {
 export function buildFrameSceneGraph(frame: FrameInfo, data: FixtureData): SceneGraph {
   const normalizedNode = normalizeRootNode(frame.node);
   return buildSceneGraph([normalizedNode], {
-    blobs: data.document.blobs,
-    images: data.document.images,
+    ...figDocumentResources(data.document),
     canvasSize: { width: frame.width, height: frame.height },
     viewport: { x: 0, y: 0, width: frame.width, height: frame.height },
-    symbolMap: data.document.components,
-    styleRegistry: data.document.styleRegistry,
     showHiddenNodes: false,
     warnings: [],
     textFontResolver: undefined,
