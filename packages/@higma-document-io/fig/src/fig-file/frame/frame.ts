@@ -86,6 +86,8 @@ export type FrameNodeBuilder = {
   noFill: () => FrameNodeBuilder;
   stroke: (color: Color) => FrameNodeBuilder;
   strokeWeight: (weight: number) => FrameNodeBuilder;
+  bordersTakeSpace: (enabled: boolean) => FrameNodeBuilder;
+  borderWeights: (opts: { top: number; right: number; bottom: number; left: number }) => FrameNodeBuilder;
   opacity: (o: number) => FrameNodeBuilder;
   effects: (effects: readonly EffectData[]) => FrameNodeBuilder;
   clipsContent: (clips: boolean) => FrameNodeBuilder;
@@ -122,6 +124,12 @@ type FrameBuilderState = {
   fillPaints: Paint[];
   strokeColor: Color | undefined;
   strokeWeight: number | undefined;
+  bordersTakeSpace: boolean | undefined;
+  borderTopWeight: number | undefined;
+  borderRightWeight: number | undefined;
+  borderBottomWeight: number | undefined;
+  borderLeftWeight: number | undefined;
+  borderStrokeWeightsIndependent: boolean | undefined;
   opacity: number;
   effects: readonly EffectData[] | undefined;
   clipsContent: boolean;
@@ -158,6 +166,12 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
     strokeColor: undefined,
     strokeWeight: undefined,
+    bordersTakeSpace: undefined,
+    borderTopWeight: undefined,
+    borderRightWeight: undefined,
+    borderBottomWeight: undefined,
+    borderLeftWeight: undefined,
+    borderStrokeWeightsIndependent: undefined,
     opacity: 1,
     effects: undefined,
     clipsContent: true,
@@ -192,6 +206,17 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     noFill() { state.fillPaints = []; return builder; },
     stroke(color: Color) { state.strokeColor = color; return builder; },
     strokeWeight(weight: number) { state.strokeWeight = weight; return builder; },
+    bordersTakeSpace(enabled: boolean) { state.bordersTakeSpace = enabled; return builder; },
+    borderWeights(opts: { top: number; right: number; bottom: number; left: number }) {
+      state.borderTopWeight = opts.top;
+      state.borderRightWeight = opts.right;
+      state.borderBottomWeight = opts.bottom;
+      state.borderLeftWeight = opts.left;
+      if (opts.top !== opts.right || opts.right !== opts.bottom || opts.bottom !== opts.left) {
+        state.borderStrokeWeightsIndependent = true;
+      }
+      return builder;
+    },
     opacity(o: number) { state.opacity = o; return builder; },
     effects(e: readonly EffectData[]) { state.effects = e; return builder; },
     clipsContent(clips: boolean) { state.clipsContent = clips; return builder; },
@@ -275,6 +300,12 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         fillPaints: state.fillPaints,
         strokePaints: state.strokeColor ? [solidStroke(state.strokeColor)] : undefined,
         strokeWeight: state.strokeWeight ?? 0,
+        bordersTakeSpace: state.bordersTakeSpace,
+        borderTopWeight: state.borderTopWeight,
+        borderRightWeight: state.borderRightWeight,
+        borderBottomWeight: state.borderBottomWeight,
+        borderLeftWeight: state.borderLeftWeight,
+        borderStrokeWeightsIndependent: state.borderStrokeWeightsIndependent,
         visible: true,
         opacity: state.opacity,
         clipsContent: state.clipsContent,

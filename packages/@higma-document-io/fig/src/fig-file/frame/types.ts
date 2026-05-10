@@ -51,6 +51,12 @@ export type FrameNodeData = {
   readonly fillPaints: readonly Paint[];
   readonly strokePaints?: readonly Stroke[];
   readonly strokeWeight?: number;
+  readonly bordersTakeSpace?: boolean;
+  readonly borderTopWeight?: number;
+  readonly borderRightWeight?: number;
+  readonly borderBottomWeight?: number;
+  readonly borderLeftWeight?: number;
+  readonly borderStrokeWeightsIndependent?: boolean;
   readonly visible: boolean;
   readonly opacity: number;
   readonly clipsContent: boolean;

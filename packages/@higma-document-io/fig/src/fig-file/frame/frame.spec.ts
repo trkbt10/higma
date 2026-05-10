@@ -58,6 +58,20 @@ describe("FrameNodeBuilder", () => {
   });
 
   describe("AutoLayout - Frame Level", () => {
+    it("sets stroke layout fields", () => {
+      const node = frameNode(1, 0)
+        .bordersTakeSpace(true)
+        .borderWeights({ top: 1, right: 2, bottom: 3, left: 4 })
+        .build();
+
+      expect(node.bordersTakeSpace).toBe(true);
+      expect(node.borderTopWeight).toBe(1);
+      expect(node.borderRightWeight).toBe(2);
+      expect(node.borderBottomWeight).toBe(3);
+      expect(node.borderLeftWeight).toBe(4);
+      expect(node.borderStrokeWeightsIndependent).toBe(true);
+    });
+
     it("sets aspect ratio lock fields", () => {
       const node = frameNode(1, 0)
         .lockAspectRatio(16, 9)

@@ -230,6 +230,12 @@ function _createFigFileBuilder() {
       fillPaints: data.fillPaints,
       strokePaints: data.strokePaints,
       strokeWeight: data.strokeWeight,
+      bordersTakeSpace: data.bordersTakeSpace,
+      borderTopWeight: data.borderTopWeight,
+      borderRightWeight: data.borderRightWeight,
+      borderBottomWeight: data.borderBottomWeight,
+      borderLeftWeight: data.borderLeftWeight,
+      borderStrokeWeightsIndependent: data.borderStrokeWeightsIndependent,
       visible: data.visible,
       opacity: data.opacity,
       clipsContent: data.clipsContent,
@@ -980,6 +986,12 @@ function _createFigFileBuilder() {
     // Shape stroke fields
     strokePaints?: readonly Stroke[];
     strokeWeight?: number;
+    bordersTakeSpace?: boolean;
+    borderTopWeight?: number;
+    borderRightWeight?: number;
+    borderBottomWeight?: number;
+    borderLeftWeight?: number;
+    borderStrokeWeightsIndependent?: boolean;
     strokeCap?: { value: number; name: string };
     strokeJoin?: { value: number; name: string };
     strokeAlign?: { value: number; name: string };
@@ -1051,6 +1063,24 @@ function _createFigFileBuilder() {
     }
     if (data.proportionsConstrained !== undefined) {
       node.proportionsConstrained = data.proportionsConstrained;
+    }
+    if (data.bordersTakeSpace !== undefined) {
+      node.bordersTakeSpace = data.bordersTakeSpace;
+    }
+    if (data.borderTopWeight !== undefined) {
+      node.borderTopWeight = data.borderTopWeight;
+    }
+    if (data.borderRightWeight !== undefined) {
+      node.borderRightWeight = data.borderRightWeight;
+    }
+    if (data.borderBottomWeight !== undefined) {
+      node.borderBottomWeight = data.borderBottomWeight;
+    }
+    if (data.borderLeftWeight !== undefined) {
+      node.borderLeftWeight = data.borderLeftWeight;
+    }
+    if (data.borderStrokeWeightsIndependent !== undefined) {
+      node.borderStrokeWeightsIndependent = data.borderStrokeWeightsIndependent;
     }
 
     // AutoLayout - frame level (for FRAME and SYMBOL)

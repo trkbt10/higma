@@ -382,6 +382,12 @@ export function createTextSchema(): KiwiSchema {
           { name: "stackWrap", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 46 },
           { name: "stackCounterSpacing", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 47 },
           { name: "stackReverseZIndex", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 271 },
+          { name: "bordersTakeSpace", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 294 },
+          { name: "borderTopWeight", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 295 },
+          { name: "borderBottomWeight", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 296 },
+          { name: "borderLeftWeight", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 297 },
+          { name: "borderRightWeight", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 298 },
+          { name: "borderStrokeWeightsIndependent", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 299 },
 
           // AutoLayout fields - child level (50-59)
           { name: "stackPositioning", type: "StackPositioning", typeId: 22, isArray: false, value: 50 },

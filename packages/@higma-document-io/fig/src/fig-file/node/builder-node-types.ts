@@ -153,6 +153,12 @@ export type BuilderNode = {
   strokeJoin?: KiwiEnum;
   strokeAlign?: KiwiEnum;
   dashPattern?: readonly number[];
+  bordersTakeSpace?: boolean;
+  borderTopWeight?: number;
+  borderRightWeight?: number;
+  borderBottomWeight?: number;
+  borderLeftWeight?: number;
+  borderStrokeWeightsIndependent?: boolean;
 
   // ---- Frame ----
   frameMaskDisabled?: boolean;
