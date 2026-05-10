@@ -574,7 +574,10 @@ function runRectPositionEquality(layerName: LayerName, actualSvg: string, render
   }
 }
 
-async function runAutoLayoutEndToEndVerificationGate(layerName: LayerName, fileName: string): Promise<void> {
+async function runExpandedAutoLayoutWorkflowGenerationValidationAndTestGate(
+  layerName: LayerName,
+  fileName: string,
+): Promise<void> {
   const data = await loadFigFile();
   const layer = data.layers.get(layerName);
 
@@ -624,7 +627,7 @@ describe("AutoLayout Rendering", () => {
 
   for (const [layerName, fileName] of Object.entries(LAYER_FILE_MAP) as Array<[LayerName, string]>) {
     it(`renders "${layerName}" with correct layout`, async () => {
-      await runAutoLayoutEndToEndVerificationGate(layerName, fileName);
+      await runExpandedAutoLayoutWorkflowGenerationValidationAndTestGate(layerName, fileName);
     });
   }
 });
