@@ -43,6 +43,7 @@ import type {
 } from "@higma-bridges/web-fig";
 import { inferAutoLayout, resolveCornerRadius } from "@higma-bridges/web-fig";
 import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
+import { splitSubpaths } from "./split-subpaths";
 
 const BREAKPOINT_GUTTER = 64;
 
@@ -475,8 +476,18 @@ function emitVector(
     .name(node.name || "Vector")
     .size(node.box.width, node.box.height)
     .position(node.box.x, node.box.y);
+  // Split each `d` on every `M`/`m` boundary so multi-subpath paths
+  // (icons authored as `M ... Z M ... Z`, compound silhouettes,
+  // open-then-closed clusters) land in Figma as a list of independent
+  // `vectorPath` entries. Without the split Figma's renderer keeps
+  // the pen position across the implicit subpath boundary inside one
+  // `vectorPath`, which connects parts that should render
+  // independently — the symptom users observed as "things that
+  // shouldn't be linked are linked".
   for (const path of node.paths) {
-    builder = builder.path(path.d);
+    for (const subpath of splitSubpaths(path.d)) {
+      builder = builder.path(subpath);
+    }
   }
   // Winding rule comes from the first path that declares one.
   const winding = node.paths.find((p) => p.fillRule !== undefined)?.fillRule;
@@ -684,13 +695,50 @@ function emitText(
     ? baseBuilder.childAlignSelf("STRETCH")
     : baseBuilder;
   const decorated = applyTextDecoration(stretched, node.textStyle);
+  // CSS `text-align` carries horizontal alignment intent from the
+  // captured page (e.g. `text-align: center` on a centred heading).
+  // Pass it through to Figma's `textAlignHorizontal` so labels arrive
+  // with the authored alignment instead of every TEXT collapsing to
+  // LEFT.
+  const horizontally = applyTextAlignHorizontal(decorated, node.textStyle);
+  const vertically = applyTextAlignVertical(horizontally, node.textStyle);
   const firstSolid = solidColorOf(node.style.fills);
-  const withColor = firstSolid ? decorated.color(firstSolid) : decorated;
+  const withColor = firstSolid ? vertically.color(firstSolid) : vertically;
   const withRuns = applyRuns(withColor, node);
   const positioned = node.sizing.mode === "absolute" ? withRuns.positioning("ABSOLUTE") : withRuns;
   file.addTextNode(positioned.build());
   idMap.set(node.id, localID);
   return localID;
+}
+
+function applyTextAlignHorizontal(
+  builder: ReturnType<typeof textNode>,
+  style: TextNodeIR["textStyle"],
+): ReturnType<typeof textNode> {
+  switch (style.textAlign) {
+    case "center":
+      return builder.alignHorizontal("CENTER");
+    case "right":
+      return builder.alignHorizontal("RIGHT");
+    case "justify":
+      return builder.alignHorizontal("JUSTIFIED");
+    case "left":
+      return builder;
+  }
+}
+
+function applyTextAlignVertical(
+  builder: ReturnType<typeof textNode>,
+  style: TextNodeIR["textStyle"],
+): ReturnType<typeof textNode> {
+  switch (style.textAlignVertical) {
+    case "center":
+      return builder.alignVertical("CENTER");
+    case "bottom":
+      return builder.alignVertical("BOTTOM");
+    case "top":
+      return builder;
+  }
 }
 
 function applyTextDecoration(

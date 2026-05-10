@@ -517,6 +517,7 @@ function maskSvgContentJsonToRaw(json: NonNullable<ElementJson["maskSvgContent"]
       stroke: p.stroke,
       strokeWidth: p.strokeWidth,
       fillRule: p.fillRule,
+      transform: p.transform,
     })),
   };
 }

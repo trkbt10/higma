@@ -25,6 +25,7 @@ import {
   roundedRectNode,
   rectNode,
   textNode,
+  vectorNode,
   type TextStyleRunData,
 } from "@higma-document-io/fig/fig-file";
 import type {
@@ -39,10 +40,12 @@ import type {
   PaintIR,
   RectNodeIR,
   TextNodeIR,
+  VectorNodeIR,
   ViewportIR,
 } from "@higma-bridges/web-fig";
 import { resolveCornerRadius } from "@higma-bridges/web-fig";
 import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
+import { splitSubpaths } from "./split-subpaths";
 
 /** Build a `.fig` byte buffer from the IR. ZIP-wrapped, ready to open in Figma. */
 /** Convert ViewportIR into a `.fig` (zip-wrapped) byte buffer plus IR id → fig localID map. */
@@ -92,12 +95,93 @@ function emitNode(args: EmitArgs): number {
     case "rectangle":
       return emitRectangle(args.file, args.parentID, args.node, args.idCounter, args.idMap);
     case "vector":
-      // Vector emission would need fig-file's `vectorNode` plus the
-      // raw path bytes; not implemented yet because the round-trip
-      // spec for example.com doesn't exercise it. Throw so consumers
-      // are informed instead of silently dropping the shape.
-      throw new Error("buildFigFileBytes: VECTOR IR nodes are not yet supported by the fig writer");
+      return emitVector(args.file, args.parentID, args.node, args.idCounter, args.idMap);
   }
+}
+
+/**
+ * Emit a VECTOR IR node by feeding each captured `<path d>` into
+ * `vectorNode` and registering through `addVector`. The fig-file
+ * encoder converts every `d` to a path-command blob the Figma
+ * reader understands. Multiple paths in one IR node become multiple
+ * `fillGeometry` slots on the same VECTOR — that is how Figma's own
+ * `.fig` exports represent SVGs with several sub-paths.
+ *
+ * The IR's `paths[i].fill` carries the resolved per-path colour;
+ * `vectorNode` exposes only one fill set (Figma's vector model
+ * collapses multi-fill SVGs into a single fill bag). We pick the
+ * first path's solid fill as the node-level fill — close enough for
+ * decorative icons, which is what almost every captured `<svg>` in
+ * the wild is. Stroke is folded the same way. Mixed-colour SVGs
+ * lose information here; correct handling would mean emitting one
+ * VECTOR per path inside a wrapper FRAME. Leaving that as a future
+ * extension because no real-world fixture in the spec corpus needs
+ * it yet.
+ */
+function emitVector(
+  file: ReturnType<typeof createFigFile>,
+  parentID: number,
+  node: VectorNodeIR,
+  idCounter: IdCounter,
+  idMap: Map<string, number>,
+): number {
+  const localID = idCounter.next();
+  const baseBuilder = vectorNode(localID, parentID)
+    .name(node.name || "Vector")
+    .size(node.box.width, node.box.height)
+    .position(node.box.x, node.box.y);
+  const winding = pickWindingRule(node);
+  const withWinding = winding === "EVENODD" ? baseBuilder.windingRule("EVENODD") : baseBuilder;
+  const withFill = applyVectorFill(withWinding, node);
+  // Split each captured `d` on every `M`/`m` boundary so multi-
+  // subpath geometry lands in Figma as a list of independent
+  // `vectorPath` entries — keeps Figma's pen position from connecting
+  // parts that should render as separate strokes / silhouettes.
+  const withPaths = node.paths.reduce(
+    (b, p) => {
+      if (p.d.length === 0) {
+        return b;
+      }
+      return splitSubpaths(p.d).reduce(
+        (acc, segment) => (segment.length > 0 ? acc.path(segment) : acc),
+        b,
+      );
+    },
+    withFill,
+  );
+  file.addVector(withPaths.build());
+  idMap.set(node.id, localID);
+  return localID;
+}
+
+function pickWindingRule(node: VectorNodeIR): "NONZERO" | "EVENODD" {
+  for (const p of node.paths) {
+    if (p.fillRule === "evenodd") {
+      return "EVENODD";
+    }
+  }
+  return "NONZERO";
+}
+
+/**
+ * Pick the dominant solid fill across the IR's path list and apply
+ * it to the vector builder. Falls back to the node-level
+ * `style.fills` when no path declared its own colour.
+ */
+function applyVectorFill(
+  builder: ReturnType<typeof vectorNode>,
+  node: VectorNodeIR,
+): ReturnType<typeof vectorNode> {
+  for (const p of node.paths) {
+    if (p.fill && p.fill.kind === "solid") {
+      return builder.fill(p.fill.color);
+    }
+  }
+  const fromStyle = solidColorOf(node.style.fills);
+  if (fromStyle) {
+    return builder.fill(fromStyle);
+  }
+  return builder;
 }
 
 function emitFrame(
@@ -218,12 +302,55 @@ function emitText(
     .size(node.box.width, node.box.height)
     .position(node.box.x, node.box.y)
     .autoResize(resizeMode);
+  // Honour the captured CSS `text-align` so labels that the page
+  // authored as centred / right-aligned / justified arrive in Figma
+  // with the same horizontal alignment. Without this every TEXT node
+  // resolves to LEFT regardless of source intent.
+  const aligned = applyTextAlign(baseBuilder, node.textStyle);
   const firstSolid = solidColorOf(node.style.fills);
-  const withColor = firstSolid ? baseBuilder.color(firstSolid) : baseBuilder;
+  const withColor = firstSolid ? aligned.color(firstSolid) : aligned;
   const withRuns = applyTextRuns(withColor, node);
   file.addTextNode(withRuns.build());
   idMap.set(node.id, localID);
   return localID;
+}
+
+function applyTextAlign(
+  builder: ReturnType<typeof textNode>,
+  style: TextNodeIR["textStyle"],
+): ReturnType<typeof textNode> {
+  const horizontal = applyTextAlignHorizontal(builder, style);
+  return applyTextAlignVertical(horizontal, style);
+}
+
+function applyTextAlignHorizontal(
+  builder: ReturnType<typeof textNode>,
+  style: TextNodeIR["textStyle"],
+): ReturnType<typeof textNode> {
+  switch (style.textAlign) {
+    case "center":
+      return builder.alignHorizontal("CENTER");
+    case "right":
+      return builder.alignHorizontal("RIGHT");
+    case "justify":
+      return builder.alignHorizontal("JUSTIFIED");
+    case "left":
+      return builder;
+  }
+}
+
+function applyTextAlignVertical(
+  builder: ReturnType<typeof textNode>,
+  style: TextNodeIR["textStyle"],
+): ReturnType<typeof textNode> {
+  switch (style.textAlignVertical) {
+    case "center":
+      return builder.alignVertical("CENTER");
+    case "bottom":
+      return builder.alignVertical("BOTTOM");
+    case "top":
+      return builder;
+  }
 }
 
 function applyTextRuns(

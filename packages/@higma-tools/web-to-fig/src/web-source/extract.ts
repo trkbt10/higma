@@ -855,9 +855,18 @@ function assembleDocument(inlined: InlinedSnippet, title: string | undefined, se
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+  const fused = fuseBodyIntoWrapper(inlined.snippetHtml, {
+    sourceUrl: inlined.hostUrl,
+    selector,
+    background: inlined.background,
+  });
   // The spec runner reads `data-source-url` / `data-selector` /
-  // `data-background` to reconstruct provenance metadata without
-  // re-parsing the HTML.
+  // `data-background` from the outer `<body>` to reconstruct
+  // provenance without re-parsing the HTML — `fuseBodyIntoWrapper`
+  // makes sure those attributes survive even when the captured
+  // subtree was the page's own `<body>` (which would otherwise
+  // create a nested `<body>` that browsers tag-soup-rescue, dropping
+  // the inner element's inline style and any data-attributes).
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -869,9 +878,101 @@ body { background: ${inlined.background}; }
 ${inlined.fontFaceCss}
 </style>
 </head>
-<body data-source-url="${inlined.hostUrl}" data-selector="${selector.replace(/"/g, "&quot;")}" data-background="${inlined.background.replace(/"/g, "&quot;")}">
-${inlined.snippetHtml}
+<body${fused.bodyAttributes}>
+${fused.bodyChildren}
 </body>
 </html>
 `;
+}
+
+/**
+ * When the captured subtree is the page's own `<body>`, the inner
+ * `<body ...>...</body>` would nest inside our wrapper `<body>`,
+ * which browsers silently rescue by stripping the inner element and
+ * dropping its inline style — exactly the inheritance the normaliser
+ * relies on for the captured `<body>`'s computed style. Detect the
+ * nested-body case and instead merge the inner element's attributes
+ * onto the wrapper body, surfacing the descendants directly. For
+ * non-`<body>` snippets the inputs pass through unchanged.
+ *
+ * Returns `bodyAttributes` (everything between `<body` and the
+ * closing `>` — leading space included) and `bodyChildren` (the
+ * children HTML for the wrapper body to host).
+ */
+function fuseBodyIntoWrapper(
+  snippet: string,
+  provenance: { readonly sourceUrl: string; readonly selector: string; readonly background: string },
+): { readonly bodyAttributes: string; readonly bodyChildren: string } {
+  const provenanceAttrs = ` data-source-url="${provenance.sourceUrl}"`
+    + ` data-selector="${provenance.selector.replace(/"/g, "&quot;")}"`
+    + ` data-background="${provenance.background.replace(/"/g, "&quot;")}"`;
+  const open = sliceFirstTag(snippet, "body");
+  if (open === undefined) {
+    return { bodyAttributes: provenanceAttrs, bodyChildren: snippet };
+  }
+  const closeIndex = snippet.lastIndexOf("</body>");
+  if (closeIndex === -1 || closeIndex < open.endIndex) {
+    return { bodyAttributes: provenanceAttrs, bodyChildren: snippet };
+  }
+  const inner = snippet.slice(open.endIndex, closeIndex);
+  // Carry only the captured body's element attributes that the
+  // normaliser actually reads — `style="..."` (computed style),
+  // `class`, and a stable `data-was-body` marker so a curious
+  // reader can still tell the wrapper subsumed a real body. The
+  // captured body's own `style` is what the normaliser inherits
+  // through the synthetic root, so it MUST stay.
+  const carried = pickCarriedAttributes(open.attributes);
+  return {
+    bodyAttributes: `${provenanceAttrs} data-was-body="true"${carried}`,
+    bodyChildren: inner,
+  };
+}
+
+/**
+ * Locate the first occurrence of `<tag` in `html`, honouring
+ * quoted attribute values so `>` characters inside attribute
+ * values don't terminate the tag prematurely. Returns the
+ * attribute substring (everything between `<tag` and `>`,
+ * exclusive) plus the index where the tag's `>` sits. Undefined
+ * when the tag isn't found.
+ */
+function sliceFirstTag(
+  html: string,
+  tag: string,
+): { readonly attributes: string; readonly endIndex: number } | undefined {
+  const re = new RegExp(`<${tag}\\b`, "i");
+  const start = html.search(re);
+  if (start === -1) {
+    return undefined;
+  }
+  let i = start + 1 + tag.length;
+  let quote: '"' | "'" | undefined;
+  while (i < html.length) {
+    const ch = html[i]!;
+    if (quote !== undefined) {
+      if (ch === quote) {
+        quote = undefined;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return { attributes: html.slice(start + 1 + tag.length, i), endIndex: i + 1 };
+    }
+    i += 1;
+  }
+  return undefined;
+}
+
+/** Carry the captured body's `style` and `class`; drop everything else (including the source page's own data-* clutter). */
+function pickCarriedAttributes(raw: string): string {
+  const out: string[] = [];
+  const styleMatch = raw.match(/\sstyle="([^"]*)"/);
+  if (styleMatch !== null) {
+    out.push(`style="${styleMatch[1]}"`);
+  }
+  const classMatch = raw.match(/\sclass="([^"]*)"/);
+  if (classMatch !== null) {
+    out.push(`class="${classMatch[1]}"`);
+  }
+  return out.length === 0 ? "" : ` ${out.join(" ")}`;
 }

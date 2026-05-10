@@ -24,10 +24,30 @@ export type RawRect = {
 };
 
 /**
+ * 2x3 affine matrix in column-major order. Maps (x, y) to
+ * (a*x + c*y + e, b*x + d*y + f).
+ */
+export type RawAffine = {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+  readonly e: number;
+  readonly f: number;
+};
+
+/**
  * Captured `<path>` data from a host `<svg>` element. Resolved colours
  * use the path's own computed style (Cascade — including
  * `<svg>`-level inheritance) so the IR stage doesn't need to
  * re-resolve CSS variables.
+ *
+ * `transform` is the accumulated `<g transform>` chain (plus any
+ * `transform` on the path / shape itself) of every ancestor between
+ * the path and the host `<svg>`. The host-side normaliser bakes it
+ * into `d` via `transformPathData` so the final geometry lands in the
+ * SVG viewport's coordinate frame. `undefined` means identity (no
+ * transform anywhere along the chain).
  */
 export type RawSvgPath = {
   readonly d: string;
@@ -35,6 +55,7 @@ export type RawSvgPath = {
   readonly stroke?: string;
   readonly strokeWidth?: number;
   readonly fillRule?: "nonzero" | "evenodd";
+  readonly transform?: RawAffine;
 };
 
 /**

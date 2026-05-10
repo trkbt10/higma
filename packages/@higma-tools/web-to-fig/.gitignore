@@ -4,3 +4,17 @@
 # meant to be ephemeral; promote anything worth keeping into a
 # proper spec under `spec/cases/<name>/` instead.
 .tmp/
+
+# Full-page fixtures and their `.fig` snapshots. The extractor
+# inlines every image / font / mask asset as a `data:` URL by
+# design, so a `body`-rooted snapshot of a real page weighs tens
+# to hundreds of MB and rotates daily. Each `cases-fullpage/<case>/`
+# ships an `extract.sh` so a developer can regenerate locally; we
+# never commit the materialised fixture or snapshot.
+spec/cases-fullpage/*/fixture.html
+spec/cases-fullpage/*/snapshot.fig
+
+# Snapshot fig dumps from partial-selector cases — also produced
+# by spec runs (via runHtmlCase's `dumpFigTo`) and not source of
+# truth for any assertion.
+spec/cases/*/snapshot.fig

@@ -53,6 +53,7 @@ import {
   parsePxOr,
 } from "./parse-css";
 import { buildParagraphContent, isParagraphHost } from "./paragraph";
+import { transformPathData } from "../web-source/svg-utils";
 
 /** Translate a captured `RawViewportSnapshot` into the bridge IR. */
 export function normalizeViewport(
@@ -237,15 +238,17 @@ function hasAuthoredChrome(el: RawElement): boolean {
 
 /**
  * Build a FRAME IR carrying the chrome (fills / strokes / effects /
- * corner radius) and a single TEXT child holding the label. The
- * FRAME's box matches the element's rect; the child TEXT's box is
- * the same rect with origin (0, 0) since it sits at the FRAME's
- * top-left.
+ * corner radius) and a single TEXT child holding the label.
  *
- * Padding lives on the chrome's authored CSS — at this granularity
- * the TEXT child's rect equals the FRAME box, so the renderer paints
- * the label in the FRAME's full content area. A future iteration
- * could push CSS padding into FRAME autoLayout for centred labels.
+ * Centring contract: the inner TEXT inherits the chrome's
+ * `text-align` and the chrome's flex/grid `align-items` via
+ * `normalizeTextStyle`'s textAlign/textAlignVertical mapping. The
+ * inner TEXT's box covers the chrome's *content area* (rect minus
+ * CSS padding), so Figma's `textAlignHorizontal` / `textAlignVertical`
+ * place the glyphs inside that content rect just like CSS does. The
+ * chrome FRAME itself stays `autoLayout: { direction: "none" }` —
+ * pushing centring into FRAME auto-layout would compete with the TEXT
+ * node's own alignment and double-shift the glyphs.
  */
 function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, breakpoint: string): FrameNodeIR {
   const localBox = boxForElement(el, parent);
@@ -255,8 +258,14 @@ function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, 
     children: [],
     pseudo: el.pseudo,
     text: el.text,
-    rect: el.rect,
-    contentRect: el.contentRect,
+    // The inner TEXT lives in the chrome's *content* rect, i.e. the
+    // captured rect minus CSS padding. Without this the TEXT box
+    // covers the whole chrome (border + padding included), and the
+    // captured `padding-*` is silently dropped — `<button>` UA padding
+    // pushes the label into the chrome's edge and Figma's
+    // textAlignHorizontal/Vertical centre against the wrong rect.
+    rect: contentRectFromPadding(el),
+    contentRect: contentRectFromPadding(el),
     computedStyle: {
       ...el.computedStyle,
       // Strip chrome so the inner TEXT carries only glyph styling.
@@ -273,9 +282,34 @@ function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, 
       "box-shadow": "none",
     },
   };
-  const inner = normalizeText(innerTextElement, el, breakpoint);
-  // The inner TEXT's box was computed parent-relative against `el`,
-  // which (since el === inner's parent) lands the TEXT at (0, 0).
+  // Inner TEXT inherits the chrome's *flex/grid* vertical centring
+  // intent through `textAlignVerticalFromCss`, but only when the
+  // chrome itself is a flex/grid container. For non-flex chrome (the
+  // dominant real-world case — `<button>` UA, `<a class="btn">`,
+  // `<span class="badge">`) the page expresses vertical centring by
+  // matching the line stride to the chrome height. We surface that
+  // implicit intent on single-line leaf-text hosts so a centred chrome
+  // label always renders centred regardless of CSS strategy.
+  const verticalCentringNeeded = leafTextWantsVerticalCentre(el, innerTextElement);
+  const innerTextWithVCentre: RawElement = verticalCentringNeeded
+    ? {
+        ...innerTextElement,
+        computedStyle: {
+          ...innerTextElement.computedStyle,
+          // Force the leaf normaliser into the flex-centring branch so
+          // the IR carries `textAlignVertical: center` even when the
+          // captured chrome is `display: block`.
+          display: "flex",
+          "align-items": "center",
+        },
+      }
+    : innerTextElement;
+  const inner = normalizeText(innerTextWithVCentre, el, breakpoint);
+  // Asymmetric `border-*` on the chrome (e.g. a `<button>` with only a
+  // `border-bottom`) needs the same per-edge synth as a regular FRAME
+  // — otherwise `collectStrokes` returns no stroke and the partial
+  // border vanishes.
+  const borderEdgeChildren = synthesiseBorderEdgeFrames(el, breakpoint);
   return {
     kind: "frame",
     id: el.id,
@@ -287,8 +321,97 @@ function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, 
     sizing: normalizeChildSizing(el, parent),
     transform: parseTransformIR(el.computedStyle.transform),
     autoLayout: { direction: "none" },
-    children: [inner],
+    children: [inner, ...borderEdgeChildren],
   };
+}
+
+/**
+ * Compute the chrome's CSS *content* rect — i.e. the captured rect
+ * minus border and padding. The inner TEXT lives here so its
+ * `textAlignHorizontal` / `textAlignVertical` centre the glyphs
+ * inside the content area, exactly like CSS centres them.
+ *
+ * Border widths are read from computed style; padding is the four
+ * `padding-*` values. `getBoundingClientRect` (which feeds `el.rect`)
+ * already gives the *border box*, so subtracting border + padding
+ * lands the inner rect on the content edge.
+ */
+function contentRectFromPadding(el: RawElement): { x: number; y: number; width: number; height: number } {
+  const cs = el.computedStyle;
+  const borderTop = parsePxOr(cs["border-top-width"], 0);
+  const borderRight = parsePxOr(cs["border-right-width"], 0);
+  const borderBottom = parsePxOr(cs["border-bottom-width"], 0);
+  const borderLeft = parsePxOr(cs["border-left-width"], 0);
+  const paddingTop = parsePxOr(cs["padding-top"], 0);
+  const paddingRight = parsePxOr(cs["padding-right"], 0);
+  const paddingBottom = parsePxOr(cs["padding-bottom"], 0);
+  const paddingLeft = parsePxOr(cs["padding-left"], 0);
+  const x = el.rect.x + borderLeft + paddingLeft;
+  const y = el.rect.y + borderTop + paddingTop;
+  const width = Math.max(0, el.rect.width - borderLeft - borderRight - paddingLeft - paddingRight);
+  const height = Math.max(0, el.rect.height - borderTop - borderBottom - paddingTop - paddingBottom);
+  return { x, y, width, height };
+}
+
+/**
+ * Decide whether a leaf-text chrome wants vertical centring based on
+ * its CSS strategy. Returns true when:
+ *
+ *   - The chrome is `display: flex|grid` with `align-items: center`
+ *     (handled by the regular normaliser, no extra signal needed —
+ *     this branch returns true purely for symmetry).
+ *   - The chrome is non-flex *and* the captured content rect height
+ *     exceeds the line stride by more than half a line. That's the
+ *     canonical "single-line label inside a tall pill / chip /
+ *     button" pattern where CSS expects a vertical centre via
+ *     `line-height = height` or symmetric padding. Without the
+ *     promotion the label sticks to the content rect's top.
+ *
+ * Multi-line chromes (`text` height ≈ multiple line strides, e.g. a
+ * rich `<button>` with wrapped content) keep `top` anchoring, matching
+ * CSS's flow direction.
+ */
+function leafTextWantsVerticalCentre(host: RawElement, inner: RawElement): boolean {
+  const display = host.computedStyle.display ?? "";
+  if (display === "flex" || display === "inline-flex" || display === "grid" || display === "inline-grid") {
+    return (host.computedStyle["align-items"] ?? "").trim() === "center";
+  }
+  // Form controls — `<input>`, `<select>`, `<button>`, `<textarea>` —
+  // paint their visible text vertically centred inside the UA chrome
+  // by default (regardless of CSS display). The captured fixture has
+  // `display: inline-block` (or just `inline`) on these so the
+  // generic flex-detection branch above misses them. Hard-wire the
+  // tag list so promoted form controls always centre their label.
+  const tag = host.tag;
+  if (tag === "input" || tag === "select" || tag === "button" || tag === "textarea") {
+    return true;
+  }
+  const fontSize = parsePxOr(inner.computedStyle["font-size"], 16);
+  const lineHeightRaw = inner.computedStyle["line-height"] ?? "normal";
+  const lineStride = lineStridePxFromCss(lineHeightRaw, fontSize);
+  if (lineStride <= 0) {
+    return false;
+  }
+  // Half a line of slack accommodates ascender / descender padding
+  // that the browser adds to a single line. Anything taller than
+  // 1.5 line-strides is treated as deliberately roomy chrome.
+  return inner.rect.height > lineStride * 1.5;
+}
+
+function lineStridePxFromCss(value: string, fontSize: number): number {
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed === "normal") {
+    return fontSize * 1.2;
+  }
+  if (trimmed.endsWith("px")) {
+    const n = parseFloat(trimmed.slice(0, -2));
+    return Number.isFinite(n) ? n : fontSize * 1.2;
+  }
+  const ratio = parseFloat(trimmed);
+  if (Number.isFinite(ratio)) {
+    return fontSize * ratio;
+  }
+  return fontSize * 1.2;
 }
 
 /**
@@ -324,8 +447,12 @@ function normalizeMaskVector(el: RawElement, parent: RawElement | undefined, bre
   const hostBox = boxForElement(el, parent);
   const svg = el.maskSvgContent!;
   const tint = maskTintForElement(el);
+  // Same transform-baking as the inline-`<svg>` case — mask SVGs are
+  // routinely authored with `<g transform="translate(...)">` for
+  // multi-piece silhouettes; without baking the inner paths render
+  // at origin regardless of the captured ancestor chain.
   const paths: VectorPathIR[] = svg.paths.map((p) => ({
-    d: p.d,
+    d: p.transform === undefined ? p.d : transformPathData(p.d, p.transform),
     fill: tint,
     stroke: undefined,
     strokeWeight: undefined,
@@ -425,8 +552,16 @@ function maskTintForElement(el: RawElement): PaintIR {
 function normalizeSvgVector(el: RawElement, parent: RawElement | undefined, breakpoint: string): VectorNodeIR {
   const localBox = boxForElement(el, parent);
   const svg = el.svgContent!;
+  // Bake every captured `<g transform>` (and any explicit
+  // `transform` on the path / shape itself) into the path data so
+  // Figma's VECTOR receives geometry already in the SVG viewport's
+  // coordinate frame. Without this multi-piece icons authored as
+  // `<g transform="translate(...)"><path/></g>` land in Figma at
+  // origin (0, 0) regardless of the captured transform — the visible
+  // failure was disconnected icon parts colliding inside one VECTOR
+  // node.
   const paths: VectorPathIR[] = svg.paths.map((p) => ({
-    d: p.d,
+    d: p.transform === undefined ? p.d : transformPathData(p.d, p.transform),
     fill: p.fill ? cssPaintToIR(p.fill) : undefined,
     stroke: p.stroke ? cssPaintToIR(p.stroke) : undefined,
     strokeWeight: p.strokeWidth,
@@ -530,12 +665,27 @@ function promoteUniformDecoration(
 }
 
 function textStyleForParagraph(el: RawElement): StyleIR {
+  // Figma TEXT nodes carry glyph fills only — they have no
+  // surface-level border / corner-radius / overflow clip. Returning
+  // the host's `normalizeStyle()` verbatim leaks `border-bottom: 1px`
+  // (typical underlined-link CSS) onto the TEXT node, where it
+  // renders as a stroke around every glyph instead of as the inline
+  // underline the page authored. Strip strokes / cornerRadius /
+  // clipsContent so the text node is glyph-only — the wrapping FRAME
+  // (when promoted via `promoteLeafTextToFrame`) carries the chrome
+  // that needed those fields.
   const baseStyle = normalizeStyle(el);
   const baseTextFill = textFillFromComputed(el.computedStyle.color);
-  if (!baseTextFill) {
-    return baseStyle;
-  }
-  return { ...baseStyle, fills: [baseTextFill] };
+  const textOnly: StyleIR = {
+    fills: baseTextFill ? [baseTextFill] : baseStyle.fills,
+    strokes: [],
+    effects: baseStyle.effects,
+    opacity: baseStyle.opacity,
+    cornerRadius: undefined,
+    clipsContent: false,
+    blendMode: baseStyle.blendMode,
+  };
+  return textOnly;
 }
 
 function textFillFromComputed(color: string | undefined): PaintIR | undefined {
@@ -690,6 +840,12 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoi
   const childrenIR = childrenRaw.map((child) => normalizeNode(child, el, breakpoint));
   const reorderedIR = reorderByZIndex(childrenRaw, childrenIR);
   const synthChildren = synthesiseNaturalBackgroundFrames(el, breakpoint);
+  // Asymmetric / partial borders (e.g. `border-bottom: 1px solid`) are
+  // not representable as a single Figma stroke without painting the
+  // whole node's perimeter. Synthesise an absolute-positioned thin
+  // FRAME per visible edge so only the edges the page authored
+  // render.
+  const borderEdgeChildren = synthesiseBorderEdgeFrames(el, breakpoint);
   const localBox = boxForElement(el, parent);
   const autoLayout = resolveAutoLayout(el, childrenRaw);
   return {
@@ -707,7 +863,10 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoi
     sizing: normalizeChildSizing(el, parent),
     transform: parseTransformIR(el.computedStyle.transform),
     autoLayout,
-    children: [...synthChildren, ...reorderedIR],
+    // Border edges paint last so they sit on top of any background
+    // image / fill / decorative children, matching how CSS layers
+    // borders above the content area.
+    children: [...synthChildren, ...reorderedIR, ...borderEdgeChildren],
   };
 }
 
@@ -1105,26 +1264,26 @@ function collectFills(el: RawElement): readonly PaintIR[] {
 
 function collectStrokes(el: RawElement): StyleIR["strokes"] {
   const cs = el.computedStyle;
-  const edges = [
-    { side: "top", width: parsePxOr(cs["border-top-width"], 0), color: cs["border-top-color"] },
-    { side: "right", width: parsePxOr(cs["border-right-width"], 0), color: cs["border-right-color"] },
-    { side: "bottom", width: parsePxOr(cs["border-bottom-width"], 0), color: cs["border-bottom-color"] },
-    { side: "left", width: parsePxOr(cs["border-left-width"], 0), color: cs["border-left-color"] },
-  ];
+  const edges = collectBorderEdges(cs);
   const max = Math.max(...edges.map((e) => e.width));
   if (max <= 0) {
     return [];
   }
-  // Real-world pages frequently use one-edge borders (table dividers,
-  // tab strips, focus outlines). Figma's IR carries a single stroke
-  // per node, so we approximate asymmetric borders with the widest
-  // edge — better than aborting the whole capture. A future IR
-  // extension that models per-edge strokes would replace this
-  // narrowing. Pick the colour from the *widest* edge, not from
-  // `border-top-color` unconditionally — when only `border-bottom`
-  // is authored the top edge defaults to the element's `color`
-  // cascade, which would silently paint a wrong-colour stroke.
-  const dominant = edges.reduce((best, edge) => (edge.width > best.width ? edge : best), edges[0]!);
+  // Symmetry guard: only fold the per-edge captures into a single
+  // `style.strokes[0]` entry when every visible edge agrees on width
+  // *and* colour. CSS pages routinely use one-edge borders for
+  // dividers (table-row separators, tab strips, focus underlines) and
+  // two-edge borders for inset rules (top + bottom on a quote block).
+  // Painting a uniform stroke around the whole node in those cases
+  // turns "decorative bottom rule" into "outlined card", a high-
+  // visibility regression. Asymmetric borders are surfaced as
+  // synthetic edge-line FRAMEs in `synthesiseBorderEdgeFrames`
+  // instead, and the FRAME-level stroke is left empty so Figma
+  // doesn't double-paint.
+  if (!bordersAreUniform(edges)) {
+    return [];
+  }
+  const dominant = edges.find((e) => e.width > 0)!;
   if (!dominant.color) {
     return [];
   }
@@ -1133,6 +1292,146 @@ function collectStrokes(el: RawElement): StyleIR["strokes"] {
     weight: max,
     align: "center",
   }];
+}
+
+type BorderEdge = {
+  readonly side: "top" | "right" | "bottom" | "left";
+  readonly width: number;
+  readonly color: string | undefined;
+  readonly style: string | undefined;
+};
+
+function collectBorderEdges(cs: Readonly<Record<string, string>>): readonly BorderEdge[] {
+  return [
+    {
+      side: "top",
+      width: parsePxOr(cs["border-top-width"], 0),
+      color: cs["border-top-color"],
+      style: cs["border-top-style"],
+    },
+    {
+      side: "right",
+      width: parsePxOr(cs["border-right-width"], 0),
+      color: cs["border-right-color"],
+      style: cs["border-right-style"],
+    },
+    {
+      side: "bottom",
+      width: parsePxOr(cs["border-bottom-width"], 0),
+      color: cs["border-bottom-color"],
+      style: cs["border-bottom-style"],
+    },
+    {
+      side: "left",
+      width: parsePxOr(cs["border-left-width"], 0),
+      color: cs["border-left-color"],
+      style: cs["border-left-style"],
+    },
+  ];
+}
+
+/**
+ * True when every edge with non-zero width carries the same width
+ * and colour, *and* every visible edge has the same `border-style`
+ * (`solid` / `dashed` / `dotted`). The IR's single-stroke surface can
+ * fold this case losslessly. Anything else needs the per-edge synth
+ * to avoid painting strokes the page never authored.
+ */
+function bordersAreUniform(edges: readonly BorderEdge[]): boolean {
+  const visible = edges.filter((e) => e.width > 0);
+  if (visible.length === 0) {
+    return true;
+  }
+  if (visible.length !== 4) {
+    // A 1- / 2- / 3-edge border is, by definition, asymmetric.
+    return false;
+  }
+  const [first, ...rest] = visible;
+  for (const e of rest) {
+    if (Math.abs(e.width - first!.width) > 0.5) {
+      return false;
+    }
+    if ((e.color ?? "") !== (first!.color ?? "")) {
+      return false;
+    }
+    if ((e.style ?? "") !== (first!.style ?? "")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Build absolute-positioned edge-line FRAMEs for the asymmetric
+ * border case. Each visible edge becomes a thin filled FRAME whose
+ * `box` lives on the parent's *content + border* rectangle (the
+ * border-box itself), painted in the captured `border-*-color`. The
+ * children sit on top of the parent's content because `style.strokes`
+ * was deliberately left empty above — there is no double-paint.
+ *
+ * Coordinate frame: returned boxes are *parent-local* (origin =
+ * parent's top-left), so the caller can splice them straight into
+ * the FRAME's `children` array. The local coordinates match what
+ * `boxRelative` produces for any other absolute child, so Figma's
+ * coordinate maths stays uniform.
+ *
+ * Out of scope: dashed / dotted strokes — the synthesised line is
+ * always solid. Real fidelity for those would require either a
+ * dedicated stroke-dash IR or per-segment vector geometry; both are
+ * larger features than the per-edge case warrants. The captured
+ * `border-style` is preserved on the IR so a downstream pass can
+ * upgrade later.
+ */
+function synthesiseBorderEdgeFrames(el: RawElement, breakpoint: string): readonly FrameNodeIR[] {
+  const cs = el.computedStyle;
+  const edges = collectBorderEdges(cs);
+  if (bordersAreUniform(edges)) {
+    return [];
+  }
+  const frames: FrameNodeIR[] = [];
+  const w = el.rect.width;
+  const h = el.rect.height;
+  for (const edge of edges) {
+    if (edge.width <= 0) {continue;}
+    if (!edge.color) {continue;}
+    if (edge.style === "none" || edge.style === "hidden") {continue;}
+    const box = edgeBox(edge.side, edge.width, w, h);
+    if (box.width <= 0 || box.height <= 0) {continue;}
+    frames.push({
+      kind: "frame",
+      id: `${el.id}/__border-${edge.side}__`,
+      componentKey: `${breakpoint}::${el.id}/__border-${edge.side}__`,
+      name: `border-${edge.side}`,
+      box,
+      style: {
+        fills: [{ kind: "solid", color: parseColor(edge.color) }],
+        strokes: [],
+        effects: [],
+        opacity: 1,
+        cornerRadius: undefined,
+        clipsContent: false,
+        blendMode: "normal",
+      },
+      visible: true,
+      sizing: { mode: "absolute" },
+      autoLayout: { direction: "none" },
+      children: [],
+    });
+  }
+  return frames;
+}
+
+function edgeBox(side: BorderEdge["side"], width: number, hostW: number, hostH: number): BoxIR {
+  switch (side) {
+    case "top":
+      return { x: 0, y: 0, width: hostW, height: width };
+    case "bottom":
+      return { x: 0, y: hostH - width, width: hostW, height: width };
+    case "left":
+      return { x: 0, y: 0, width, height: hostH };
+    case "right":
+      return { x: hostW - width, y: 0, width, height: hostH };
+  }
 }
 
 function collectEffects(cs: Readonly<Record<string, string>>): readonly EffectIR[] {
@@ -1246,7 +1545,18 @@ function resolveAutoLayout(el: RawElement, childrenRaw: readonly RawElement[]): 
   //     it as a child with `sizing.mode === "absolute"`.
   const flowChildren = childrenRaw.filter((c) => {
     const p = c.computedStyle.position;
-    return p !== "fixed" && p !== "sticky" && p !== "absolute";
+    if (p === "fixed" || p === "sticky" || p === "absolute") {
+      return false;
+    }
+    // `float: left|right` is also out-of-flow for the purposes of
+    // auto-layout inference. Including a floated image would push
+    // the inferred direction towards the float edge and break the
+    // padding maths for its in-flow siblings.
+    const flt = (c.computedStyle.float ?? "none").trim();
+    if (flt === "left" || flt === "right") {
+      return false;
+    }
+    return true;
   });
   if (flowChildren.length === 0) {
     return { direction: "none" };
@@ -1351,6 +1661,16 @@ function normalizeChildSizing(el: RawElement, parent: RawElement | undefined): C
   if (pos === "fixed" || pos === "sticky" || pos === "absolute") {
     return { mode: "absolute" };
   }
+  // CSS `float: left|right` similarly removes the element from inline
+  // flow and re-flows siblings around it. Figma auto-layout has no
+  // float concept, so map floated children to ABSOLUTE — the captured
+  // rect already reflects the post-float geometry, and ABSOLUTE
+  // pinning matches the captured visual without trying to re-derive a
+  // flow stack that only makes sense in CSS.
+  const flt = (el.computedStyle.float ?? "none").trim();
+  if (flt === "left" || flt === "right") {
+    return { mode: "absolute" };
+  }
   // Default to flow with fixed primary/counter axis. `inferAutoLayout`
   // (run inside fig-to-web at render time) decides whether the parent
   // becomes a real flex container by inspecting the child boxes — we
@@ -1381,9 +1701,56 @@ function normalizeTextStyle(el: RawElement): TextStyleIR {
     lineHeight,
     letterSpacing,
     textAlign,
+    textAlignVertical: textAlignVerticalFromCss(cs),
     textTransform: transform,
     textDecoration: decoration,
   };
+}
+
+/**
+ * Translate the host element's CSS into Figma's vertical text
+ * alignment.
+ *
+ * CSS does not have a direct text-vertical-align, so we read the
+ * intent from the element's *own* computed style:
+ *
+ *   - `display: flex` / `inline-flex` + `align-items: center` (the
+ *     canonical "centred button label" pattern) ⇒ `center`. The
+ *     element being a leaf-text host means the flex container holds a
+ *     single text run, so the only line of glyphs inherits the cross-
+ *     axis centring.
+ *   - same display + `align-items: flex-end` / `end` ⇒ `bottom`.
+ *   - `display: grid` with `place-items` / `align-items` resolving to
+ *     a centred / end value ⇒ same mapping.
+ *
+ * Anything else falls back to `top` (Figma's default), matching how
+ * an ordinary `<p>` paragraph anchors its first line at the box top.
+ *
+ * The mapping is intentionally conservative: we only promote when the
+ * CSS unambiguously asserts vertical centring on the captured element.
+ * Pages that drive vertical centring through `padding-top` or a tall
+ * `line-height` keep the default — the existing rect / line-stride
+ * geometry already places the glyphs correctly without re-anchoring.
+ */
+function textAlignVerticalFromCss(
+  cs: Readonly<Record<string, string>>,
+): TextStyleIR["textAlignVertical"] {
+  const display = cs.display ?? "";
+  const isFlex = display === "flex" || display === "inline-flex";
+  const isGrid = display === "grid" || display === "inline-grid";
+  if (!isFlex && !isGrid) {
+    return "top";
+  }
+  const alignItems = (cs["align-items"] ?? "normal").trim();
+  switch (alignItems) {
+    case "center":
+      return "center";
+    case "flex-end":
+    case "end":
+      return "bottom";
+    default:
+      return "top";
+  }
 }
 
 function cssFontStyle(value: string | undefined): TextStyleIR["fontStyle"] {

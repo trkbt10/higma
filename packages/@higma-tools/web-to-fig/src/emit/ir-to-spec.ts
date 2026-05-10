@@ -23,8 +23,16 @@ import {
   irPaintToFig,
   resolveCornerRadius,
 } from "@higma-bridges/web-fig";
-import type { FigPaint } from "@higma-document-models/fig/types";
+import type { FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
 import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
+import {
+  TEXT_ALIGN_H_VALUES,
+  TEXT_ALIGN_V_VALUES,
+  type TextAlignHorizontal,
+  type TextAlignVertical,
+} from "@higma-document-models/fig/constants";
+import type { TextStyleIR } from "@higma-bridges/web-fig";
+import { splitSubpaths } from "./split-subpaths";
 import type {
   FrameNodeSpec,
   NodeSpec,
@@ -137,7 +145,53 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
       style: node.textStyle.fontStyle,
     }),
     lineHeight: irLineHeightToPx(node.textStyle.lineHeight),
+    textAlignHorizontal: textAlignHToFig(node.textStyle.textAlign),
+    textAlignVertical: textAlignVToFig(node.textStyle.textAlignVertical),
   };
+}
+
+/**
+ * Translate the IR's CSS `text-align` value (`left` / `center` / ...) into
+ * Figma's TextAlignHorizontal enum value. Returns undefined for the
+ * default `left` so the spec stays terse for the dominant case (Figma's
+ * fallback is also LEFT). Anything else is encoded explicitly.
+ */
+function textAlignHToFig(
+  value: TextStyleIR["textAlign"],
+): KiwiEnumValue<TextAlignHorizontal> | undefined {
+  if (value === "left") {
+    return undefined;
+  }
+  switch (value) {
+    case "center":
+      return { value: TEXT_ALIGN_H_VALUES.CENTER, name: "CENTER" };
+    case "right":
+      return { value: TEXT_ALIGN_H_VALUES.RIGHT, name: "RIGHT" };
+    case "justify":
+      return { value: TEXT_ALIGN_H_VALUES.JUSTIFIED, name: "JUSTIFIED" };
+  }
+}
+
+/**
+ * Translate the IR's vertical text alignment (`top` / `center` /
+ * `bottom`) into Figma's TextAlignVertical enum value. Returns
+ * undefined for the default `top` so the spec stays terse — Figma's
+ * fallback is also TOP. Used when the captured element's flex /
+ * grid container expressed cross-axis centring around its single
+ * text child (see normaliser's `textAlignVerticalFromCss`).
+ */
+function textAlignVToFig(
+  value: TextStyleIR["textAlignVertical"],
+): KiwiEnumValue<TextAlignVertical> | undefined {
+  if (value === "top") {
+    return undefined;
+  }
+  switch (value) {
+    case "center":
+      return { value: TEXT_ALIGN_V_VALUES.CENTER, name: "CENTER" };
+    case "bottom":
+      return { value: TEXT_ALIGN_V_VALUES.BOTTOM, name: "BOTTOM" };
+  }
 }
 
 function irLineHeightToPx(lh: { readonly unit: "px"; readonly value: number } | { readonly unit: "ratio"; readonly value: number } | { readonly unit: "normal" }): number | undefined {
@@ -189,6 +243,18 @@ function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeS
 }
 
 function vectorSpec(node: NodeIR & { readonly kind: "vector" }): VectorNodeSpec {
+  // Each captured `d` may carry multiple SVG subpaths (multi-piece
+  // icons, compound silhouettes, glyph clusters). Splitting on every
+  // `M` / `m` boundary turns those into independent `vectorPath`
+  // entries — Figma resets its pen position between entries, so
+  // subpaths that should render as separate strokes / silhouettes
+  // never get connected by a stray fill or stroke.
+  const vectorPaths = node.paths.flatMap((p) =>
+    splitSubpaths(p.d).map((segment) => ({
+      windingRule: (p.fillRule === "evenodd" ? "EVENODD" : "NONZERO") as "EVENODD" | "NONZERO",
+      data: segment,
+    })),
+  );
   return {
     type: "VECTOR",
     name: node.name,
@@ -202,10 +268,7 @@ function vectorSpec(node: NodeIR & { readonly kind: "vector" }): VectorNodeSpec 
     effects: node.style.effects.map(irEffectToFig),
     opacity: node.style.opacity,
     visible: node.visible,
-    vectorPaths: node.paths.map((p) => ({
-      windingRule: p.fillRule === "evenodd" ? "EVENODD" : "NONZERO",
-      data: p.d,
-    })),
+    vectorPaths,
   };
 }
 

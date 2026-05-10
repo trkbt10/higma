@@ -66,6 +66,7 @@ function textIR(overrides: Partial<TextNodeIR> = {}): TextNodeIR {
       lineHeight: { unit: "normal" },
       letterSpacing: 0,
       textAlign: "left",
+      textAlignVertical: "top",
       textTransform: "none",
       textDecoration: "none",
     },
@@ -274,6 +275,7 @@ describe("irToSpecGraph — text", () => {
         lineHeight: { unit: "px", value: 32 },
         letterSpacing: 0,
         textAlign: "left",
+        textAlignVertical: "top",
         textTransform: "none",
         textDecoration: "none",
       },
@@ -299,6 +301,7 @@ describe("irToSpecGraph — text", () => {
         lineHeight: { unit: "normal" },
         letterSpacing: 0,
         textAlign: "left",
+        textAlignVertical: "top",
         textTransform: "none",
         textDecoration: "none",
       },
@@ -319,6 +322,7 @@ describe("irToSpecGraph — text", () => {
         lineHeight: { unit: "ratio", value: 1.5 },
         letterSpacing: 0,
         textAlign: "left",
+        textAlignVertical: "top",
         textTransform: "none",
         textDecoration: "none",
       },
@@ -327,6 +331,57 @@ describe("irToSpecGraph — text", () => {
       throw new Error();
     }
     expect(graph.spec.lineHeight).toBeUndefined();
+  });
+
+  it("emits no horizontal/vertical alignment for the IR default (`left` / `top`) so the spec stays terse", () => {
+    const graph = irToSpecGraph(textIR());
+    if (graph.spec.type !== "TEXT") {
+      throw new Error();
+    }
+    expect(graph.spec.textAlignHorizontal).toBeUndefined();
+    expect(graph.spec.textAlignVertical).toBeUndefined();
+  });
+
+  it("encodes IR `textAlign: center` as Figma `textAlignHorizontal: CENTER`", () => {
+    const graph = irToSpecGraph(textIR({
+      textStyle: {
+        fontFamily: "Inter",
+        fontStyle: "normal",
+        fontWeight: 400,
+        fontSize: 16,
+        lineHeight: { unit: "normal" },
+        letterSpacing: 0,
+        textAlign: "center",
+        textAlignVertical: "top",
+        textTransform: "none",
+        textDecoration: "none",
+      },
+    }));
+    if (graph.spec.type !== "TEXT") {
+      throw new Error();
+    }
+    expect(graph.spec.textAlignHorizontal?.name).toBe("CENTER");
+  });
+
+  it("encodes IR `textAlignVertical: center` as Figma `textAlignVertical: CENTER`", () => {
+    const graph = irToSpecGraph(textIR({
+      textStyle: {
+        fontFamily: "Inter",
+        fontStyle: "normal",
+        fontWeight: 400,
+        fontSize: 16,
+        lineHeight: { unit: "normal" },
+        letterSpacing: 0,
+        textAlign: "left",
+        textAlignVertical: "center",
+        textTransform: "none",
+        textDecoration: "none",
+      },
+    }));
+    if (graph.spec.type !== "TEXT") {
+      throw new Error();
+    }
+    expect(graph.spec.textAlignVertical?.name).toBe("CENTER");
   });
 });
 

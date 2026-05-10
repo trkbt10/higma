@@ -23,9 +23,33 @@ export type RawSnapshotJson = {
 };
 
 /**
+ * 2x3 affine matrix in column-major order. Maps (x, y) to
+ * (a*x + c*y + e, b*x + d*y + f). Mirrors the type of the same name
+ * in `svg-utils.ts`.
+ */
+export type SvgAffineJson = {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+  readonly e: number;
+  readonly f: number;
+};
+
+/**
  * SVG path captured from the in-page walker. Mirrors `RawSvgPath` in
  * `snapshot.ts` exactly so the JSON payload can be re-hydrated
  * without coercion.
+ *
+ * `transform` carries the accumulated `<g transform>` chain of every
+ * ancestor between the path / shape and the host `<svg>`. The host-
+ * side normaliser bakes it into `d` via `transformPathData` so Figma
+ * receives geometry already in the SVG viewport's coordinate frame —
+ * matching what the page paints. Without this layer multi-piece
+ * icons authored as `<g transform="translate(...)"><path/></g>`
+ * arrive in Figma at the wrong location and visibly merge with
+ * neighbouring subpaths because their unbaked `d` lands outside the
+ * VECTOR's box.
  */
 export type SvgPathJson = {
   readonly d: string;
@@ -33,6 +57,7 @@ export type SvgPathJson = {
   readonly stroke?: string;
   readonly strokeWidth?: number;
   readonly fillRule?: "nonzero" | "evenodd";
+  readonly transform?: SvgAffineJson;
 };
 
 export type SvgContentJson = {
@@ -109,6 +134,12 @@ export function captureSnapshot(): RawSnapshotJson {
     "background-position",
     "background-repeat",
     "background-size",
+    // CSS `float` removes a child from inline flow and floats it left
+    // / right. Figma auto-layout has no float concept, so the
+    // normaliser maps floated children to ABSOLUTE so their captured
+    // bounding rect anchors them in the correct geometry without
+    // pulling siblings out of flow.
+    "float",
     "mask-image",
     "-webkit-mask-image",
     "mask-size",
@@ -235,6 +266,27 @@ export function captureSnapshot(): RawSnapshotJson {
     if (r.width > 0 && r.height > 0) {
       return true;
     }
+    // Block-level structural elements whose `getBoundingClientRect`
+    // collapses on one axis but whose `offsetWidth`/`offsetHeight` /
+    // `scrollWidth`/`scrollHeight` reports the real layout size. The
+    // canonical case is `<html>` / `<body>` on a captured `body`-only
+    // fixture where the browser's compositor reports a viewport-tall
+    // body rect but the standalone document needs the scrollHeight
+    // signal. Same for `<table>` descendants whose CSS table layout
+    // computes correctly into offset metrics even when the bounding
+    // rect is empty.
+    const tagLow = el.tagName.toLowerCase();
+    const isStructuralFallback = tagLow === "html" || tagLow === "body"
+      || tagLow === "table" || tagLow === "thead" || tagLow === "tbody"
+      || tagLow === "tfoot" || tagLow === "tr" || tagLow === "td" || tagLow === "th"
+      || tagLow === "colgroup" || tagLow === "col";
+    if (isStructuralFallback && el instanceof HTMLElement) {
+      const w = Math.max(el.scrollWidth, el.offsetWidth, el.clientWidth);
+      const h = Math.max(el.scrollHeight, el.offsetHeight, el.clientHeight);
+      if (w > 0 && h > 0) {
+        return true;
+      }
+    }
     // Inline-only elements (`<span>`, `<a>`) hit `boundingClientRect`
     // 0×0 even when they contain wrapped text — the union rect is
     // empty when the runs straddle a line break. Falling back to
@@ -282,14 +334,41 @@ export function captureSnapshot(): RawSnapshotJson {
     const out: string[] = [];
     if (el.tagName === "IMG") {
       const img = el as HTMLImageElement;
-      const rawSrc = img.getAttribute("src");
-      if (rawSrc && rawSrc.length > 0) {
-        const src = img.currentSrc || img.src;
-        if (src && src !== window.location.href) {
-          out.push(src);
+      // Resolve the most authoritative source URL the browser knows
+      // about. `currentSrc` is the post-srcset/picture decision; `src`
+      // is the authored attribute (already absolutised by the
+      // HTMLImageElement). Lazy-loaders also stash the real URL in
+      // `data-src` / `data-original` / `data-lazy-src` while the
+      // `src` attribute serves a placeholder — we honour those when
+      // the live `currentSrc` is empty or points at a data URI smaller
+      // than 200 bytes (the canonical 1×1 placeholder size). The order
+      // of the lazy-loader fallbacks matches the most common
+      // conventions in production CMSes (WordPress, MediaWiki,
+      // Lazysizes, etc.).
+      const candidates: string[] = [];
+      const live = img.currentSrc || img.src;
+      if (live && live.length > 0) {
+        candidates.push(live);
+      }
+      const lazyAttrs = ["data-src", "data-original", "data-lazy-src", "data-srcset"];
+      for (const attr of lazyAttrs) {
+        const v = img.getAttribute(attr);
+        if (v && v.length > 0) {
+          candidates.push(v);
         }
       }
+      const chosen = chooseImageSrc(candidates);
+      if (chosen && chosen !== window.location.href) {
+        out.push(chosen);
+      }
     }
+    // `<picture>` does not paint anything itself — its child `<img>`
+    // is what carries the resolved geometry. We don't intercept here;
+    // the walker descends into the picture and pulls the img's
+    // currentSrc on its own visit. The same applies to `<video>`
+    // poster: handled by the CSS poster image attribute below if the
+    // page authored one as a `background-image`, otherwise out of
+    // scope for the current IR.
     const bg = style["background-image"];
     if (bg && bg !== "none") {
       for (const u of extractUrlTokens(bg)) {
@@ -297,6 +376,34 @@ export function captureSnapshot(): RawSnapshotJson {
       }
     }
     return out;
+  }
+
+  /**
+   * Pick the most useful image URL from a list of candidates. Skips
+   * tiny placeholder data URIs (1×1 GIFs, 1×1 PNGs that lazy-loaders
+   * inject as the `src` placeholder while a `data-src` carries the
+   * real URL). Picks the first non-placeholder candidate.
+   */
+  function chooseImageSrc(candidates: readonly string[]): string | undefined {
+    for (const c of candidates) {
+      if (!isPlaceholderDataUri(c)) {
+        return c;
+      }
+    }
+    // Every candidate looked like a placeholder — return the first
+    // one anyway so the registry still gets *something* (better a
+    // placeholder than nothing).
+    return candidates[0];
+  }
+
+  function isPlaceholderDataUri(url: string): boolean {
+    if (!url.startsWith("data:")) {
+      return false;
+    }
+    // Sub-200-byte data URIs are essentially always 1×1 placeholders
+    // (gif87a / 1x1 PNG / "blank.gif" base64 patterns). Real captured
+    // images are always orders of magnitude bigger.
+    return url.length < 200;
   }
 
   /**
@@ -481,44 +588,262 @@ export function captureSnapshot(): RawSnapshotJson {
     }
     const svgEl = el as SVGSVGElement;
     const paths: SvgPathJson[] = [];
+
+    // ---- Inline mirrors of `svg-utils.ts` helpers ----
+    //
+    // Playwright's `page.evaluate` serialises the function body into
+    // the page context and outer-module bindings (the `parseSvgTransform`
+    // / `shapeToPathData` exports) are unreachable. So the algorithms
+    // below intentionally *duplicate* those helpers verbatim. The SoT
+    // is `svg-utils.ts` (where they are unit-tested); any drift in
+    // either copy is a bug to be reconciled — keep the two in sync
+    // when you change one.
+    type Affine = { a: number; b: number; c: number; d: number; e: number; f: number };
+    const IDENTITY: Affine = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+    function multiply(m1: Affine, m2: Affine): Affine {
+      return {
+        a: m1.a * m2.a + m1.c * m2.b,
+        b: m1.b * m2.a + m1.d * m2.b,
+        c: m1.a * m2.c + m1.c * m2.d,
+        d: m1.b * m2.c + m1.d * m2.d,
+        e: m1.a * m2.e + m1.c * m2.f + m1.e,
+        f: m1.b * m2.e + m1.d * m2.f + m1.f,
+      };
+    }
+    function transformFnToAffine(name: string, args: number[]): Affine {
+      switch (name) {
+        case "matrix":
+          if (args.length !== 6) {return IDENTITY;}
+          return { a: args[0]!, b: args[1]!, c: args[2]!, d: args[3]!, e: args[4]!, f: args[5]! };
+        case "translate":
+          return { a: 1, b: 0, c: 0, d: 1, e: args[0] ?? 0, f: args[1] ?? 0 };
+        case "scale": {
+          const sx = args[0] ?? 1;
+          const sy = args.length > 1 ? args[1]! : sx;
+          return { a: sx, b: 0, c: 0, d: sy, e: 0, f: 0 };
+        }
+        case "rotate": {
+          const angle = (args[0] ?? 0) * Math.PI / 180;
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+          if (args.length >= 3) {
+            const cx = args[1]!;
+            const cy = args[2]!;
+            const t1: Affine = { a: 1, b: 0, c: 0, d: 1, e: cx, f: cy };
+            const r: Affine = { a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 };
+            const t2: Affine = { a: 1, b: 0, c: 0, d: 1, e: -cx, f: -cy };
+            return multiply(multiply(t1, r), t2);
+          }
+          return { a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 };
+        }
+        case "skewx": {
+          const tan = Math.tan((args[0] ?? 0) * Math.PI / 180);
+          return { a: 1, b: 0, c: tan, d: 1, e: 0, f: 0 };
+        }
+        case "skewy": {
+          const tan = Math.tan((args[0] ?? 0) * Math.PI / 180);
+          return { a: 1, b: tan, c: 0, d: 1, e: 0, f: 0 };
+        }
+        default:
+          return IDENTITY;
+      }
+    }
+    function parseTransform(value: string | null): Affine {
+      if (value === null || value === undefined) {return IDENTITY;}
+      const trimmed = value.trim();
+      if (trimmed.length === 0) {return IDENTITY;}
+      const re = /([a-zA-Z]+)\s*\(([^)]*)\)/g;
+      const acc: Affine[] = [];
+      for (let m = re.exec(trimmed); m !== null; m = re.exec(trimmed)) {
+        const name = m[1]!.toLowerCase();
+        const args = m[2]!
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+          .map((s) => parseFloat(s))
+          .filter((n) => Number.isFinite(n));
+        acc.push(transformFnToAffine(name, args));
+      }
+      return acc.reduce((a, b) => multiply(a, b), IDENTITY);
+    }
+    function isIdentity(m: Affine): boolean {
+      return m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.e === 0 && m.f === 0;
+    }
+    function composeTransform(parent: Affine, own: Affine): Affine {
+      if (isIdentity(own)) {
+        return parent;
+      }
+      return multiply(parent, own);
+    }
+    function makeTranslateAffine(tx: number, ty: number): Affine {
+      if (tx === 0 && ty === 0) {
+        return IDENTITY;
+      }
+      return { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty };
+    }
+    function getNumAttr(node: Element, name: string, fallback: number): number {
+      const raw = node.getAttribute(name);
+      if (raw === null) {return fallback;}
+      const trimmed = raw.trim();
+      if (trimmed.length === 0) {return fallback;}
+      const n = parseFloat(trimmed);
+      return Number.isFinite(n) ? n : fallback;
+    }
+    const KAPPA = 0.5522847498307933;
+    function shapeToD(node: Element): string | undefined {
+      const tag = node.tagName.toLowerCase();
+      switch (tag) {
+        case "rect": {
+          const x = getNumAttr(node, "x", 0);
+          const y = getNumAttr(node, "y", 0);
+          const w = getNumAttr(node, "width", 0);
+          const h = getNumAttr(node, "height", 0);
+          if (w <= 0 || h <= 0) {return undefined;}
+          const rxRaw = getNumAttr(node, "rx", NaN);
+          const ryRaw = getNumAttr(node, "ry", NaN);
+          const rxResolved = Number.isFinite(rxRaw) ? rxRaw : (Number.isFinite(ryRaw) ? ryRaw : 0);
+          const ryResolved = Number.isFinite(ryRaw) ? ryRaw : (Number.isFinite(rxRaw) ? rxRaw : 0);
+          const rx = Math.min(Math.max(0, rxResolved), w / 2);
+          const ry = Math.min(Math.max(0, ryResolved), h / 2);
+          if (rx === 0 && ry === 0) {
+            return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`;
+          }
+          const cx = rx * KAPPA;
+          const cy = ry * KAPPA;
+          return [
+            `M ${x + rx} ${y}`,
+            `H ${x + w - rx}`,
+            `C ${x + w - rx + cx} ${y}, ${x + w} ${y + ry - cy}, ${x + w} ${y + ry}`,
+            `V ${y + h - ry}`,
+            `C ${x + w} ${y + h - ry + cy}, ${x + w - rx + cx} ${y + h}, ${x + w - rx} ${y + h}`,
+            `H ${x + rx}`,
+            `C ${x + rx - cx} ${y + h}, ${x} ${y + h - ry + cy}, ${x} ${y + h - ry}`,
+            `V ${y + ry}`,
+            `C ${x} ${y + ry - cy}, ${x + rx - cx} ${y}, ${x + rx} ${y}`,
+            "Z",
+          ].join(" ");
+        }
+        case "circle": {
+          const ccx = getNumAttr(node, "cx", 0);
+          const ccy = getNumAttr(node, "cy", 0);
+          const r = getNumAttr(node, "r", 0);
+          if (r <= 0) {return undefined;}
+          const ox = r * KAPPA;
+          return [
+            `M ${ccx - r} ${ccy}`,
+            `C ${ccx - r} ${ccy - ox}, ${ccx - ox} ${ccy - r}, ${ccx} ${ccy - r}`,
+            `C ${ccx + ox} ${ccy - r}, ${ccx + r} ${ccy - ox}, ${ccx + r} ${ccy}`,
+            `C ${ccx + r} ${ccy + ox}, ${ccx + ox} ${ccy + r}, ${ccx} ${ccy + r}`,
+            `C ${ccx - ox} ${ccy + r}, ${ccx - r} ${ccy + ox}, ${ccx - r} ${ccy}`,
+            "Z",
+          ].join(" ");
+        }
+        case "ellipse": {
+          const ecx = getNumAttr(node, "cx", 0);
+          const ecy = getNumAttr(node, "cy", 0);
+          const erx = getNumAttr(node, "rx", 0);
+          const ery = getNumAttr(node, "ry", 0);
+          if (erx <= 0 || ery <= 0) {return undefined;}
+          const ox = erx * KAPPA;
+          const oy = ery * KAPPA;
+          return [
+            `M ${ecx - erx} ${ecy}`,
+            `C ${ecx - erx} ${ecy - oy}, ${ecx - ox} ${ecy - ery}, ${ecx} ${ecy - ery}`,
+            `C ${ecx + ox} ${ecy - ery}, ${ecx + erx} ${ecy - oy}, ${ecx + erx} ${ecy}`,
+            `C ${ecx + erx} ${ecy + oy}, ${ecx + ox} ${ecy + ery}, ${ecx} ${ecy + ery}`,
+            `C ${ecx - ox} ${ecy + ery}, ${ecx - erx} ${ecy + oy}, ${ecx - erx} ${ecy}`,
+            "Z",
+          ].join(" ");
+        }
+        case "line": {
+          const x1 = getNumAttr(node, "x1", 0);
+          const y1 = getNumAttr(node, "y1", 0);
+          const x2 = getNumAttr(node, "x2", 0);
+          const y2 = getNumAttr(node, "y2", 0);
+          return `M ${x1} ${y1} L ${x2} ${y2}`;
+        }
+        case "polygon":
+        case "polyline": {
+          const raw = (node.getAttribute("points") ?? "").trim();
+          const tokens = raw.split(/[\s,]+/).map((s) => parseFloat(s)).filter((n) => Number.isFinite(n));
+          if (tokens.length < 4 || tokens.length % 2 !== 0) {return undefined;}
+          const segs: string[] = [`M ${tokens[0]!} ${tokens[1]!}`];
+          for (let i = 2; i < tokens.length; i += 2) {
+            segs.push(`L ${tokens[i]!} ${tokens[i + 1]!}`);
+          }
+          if (tag === "polygon") {segs.push("Z");}
+          return segs.join(" ");
+        }
+        default:
+          return undefined;
+      }
+    }
+    // ---- end inline mirror ----
+
     // Resolve `<use>` references where possible by following the
     // `href`/`xlink:href` attribute. The shadow DOM ones (custom
     // elements) won't resolve via querySelector because the target
     // sits in another document — those are dropped silently.
+    function recordPath(d: string, source: Element, transform: Affine): void {
+      if (!d || d.length === 0) {return;}
+      const computed = window.getComputedStyle(source);
+      const fillAttr = source.getAttribute("fill") ?? computed.fill;
+      const strokeAttr = source.getAttribute("stroke") ?? computed.stroke;
+      const strokeWidthAttr = source.getAttribute("stroke-width") ?? computed.strokeWidth;
+      const fillRuleAttr = source.getAttribute("fill-rule") ?? computed.fillRule;
+      const path: SvgPathJson = {
+        d,
+        fill: fillAttr && fillAttr !== "none" ? fillAttr : undefined,
+        stroke: strokeAttr && strokeAttr !== "none" ? strokeAttr : undefined,
+        strokeWidth: strokeWidthAttr ? parseFloat(strokeWidthAttr) : undefined,
+        fillRule: fillRuleAttr === "evenodd" ? "evenodd" : undefined,
+        transform: isIdentity(transform) ? undefined : transform,
+      };
+      paths.push(path);
+    }
     function collectPaths(root: Element): void {
-      const queue: Element[] = [root];
+      type Frame = { node: Element; transform: Affine };
+      const queue: Frame[] = [{ node: root, transform: IDENTITY }];
       while (queue.length > 0) {
-        const current = queue.shift()!;
-        if (current.tagName === "path" || current.tagName === "PATH") {
+        const frame = queue.shift()!;
+        const current = frame.node;
+        // Compose the current node's `transform` attribute on top of
+        // the inherited matrix. `<g transform>` is the canonical
+        // case; `<path transform>` and `<rect transform>` are
+        // permitted by SVG and we honour them here too.
+        const ownTransform = parseTransform(current.getAttribute("transform"));
+        const accumulated = composeTransform(frame.transform, ownTransform);
+        const tag = current.tagName.toLowerCase();
+        if (tag === "path") {
           const d = current.getAttribute("d");
           if (d && d.length > 0) {
-            const computed = window.getComputedStyle(current);
-            const fillAttr = current.getAttribute("fill") ?? computed.fill;
-            const strokeAttr = current.getAttribute("stroke") ?? computed.stroke;
-            const strokeWidthAttr = current.getAttribute("stroke-width") ?? computed.strokeWidth;
-            const fillRuleAttr = current.getAttribute("fill-rule") ?? computed.fillRule;
-            const path: SvgPathJson = {
-              d,
-              fill: fillAttr && fillAttr !== "none" ? fillAttr : undefined,
-              stroke: strokeAttr && strokeAttr !== "none" ? strokeAttr : undefined,
-              strokeWidth: strokeWidthAttr ? parseFloat(strokeWidthAttr) : undefined,
-              fillRule: fillRuleAttr === "evenodd" ? "evenodd" : undefined,
-            };
-            paths.push(path);
+            recordPath(d, current, accumulated);
           }
-        } else if (current.tagName === "use" || current.tagName === "USE") {
+        } else if (tag === "rect" || tag === "circle" || tag === "ellipse"
+          || tag === "line" || tag === "polygon" || tag === "polyline") {
+          const d = shapeToD(current);
+          if (d !== undefined) {
+            recordPath(d, current, accumulated);
+          }
+        } else if (tag === "use") {
           const useEl = current as SVGUseElement;
           const href = useEl.getAttribute("href") ?? useEl.getAttribute("xlink:href");
           if (href && href.startsWith("#")) {
             const target = svgEl.ownerDocument?.getElementById(href.slice(1));
             if (target) {
-              queue.push(target);
+              // `<use>` may carry its own x/y offset which acts as a
+              // translate on top of the referenced subtree.
+              const ux = getNumAttr(useEl, "x", 0);
+              const uy = getNumAttr(useEl, "y", 0);
+              const useOffset = makeTranslateAffine(ux, uy);
+              const useTransform = composeTransform(accumulated, useOffset);
+              queue.push({ node: target, transform: useTransform });
               continue;
             }
           }
         }
         for (const child of Array.from(current.children)) {
-          queue.push(child);
+          queue.push({ node: child, transform: accumulated });
         }
       }
     }
@@ -563,6 +888,48 @@ export function captureSnapshot(): RawSnapshotJson {
         if (pr.width > 0 && pr.height > 0) {
           return rectFrom(pr);
         }
+      }
+    }
+    // Block-level structural elements (`<html>`, `<body>`, table
+    // descendants) sometimes report 0 on one axis even when their
+    // descendants paint thousands of pixels:
+    //
+    //   - `<html>` and `<body>` collapse to viewport height when the
+    //     document has no positioned content yet `scrollHeight` reports
+    //     the real authored height. This happens on full-page captures
+    //     where `body` is the extraction selector — the standalone
+    //     fixture's `<body>` carries every column, footer, and modal
+    //     descendant under a 0-height root.
+    //   - `<table>`, `<thead>`, `<tbody>`, `<tfoot>`, `<tr>` and
+    //     `<colgroup>` participate in CSS table layout, where browsers
+    //     occasionally report a degenerate `getBoundingClientRect()`
+    //     for the wrapper while every child cell is sized correctly.
+    //     Using `offsetWidth` / `offsetHeight` from the underlying
+    //     HTMLElement closes the gap because table layout DOES expose
+    //     non-zero offset metrics even when the bounding rect is empty.
+    //
+    // `scrollWidth` / `scrollHeight` is the right escape hatch for
+    // `<html>` / `<body>` (they may be larger than the viewport when
+    // overflow is allowed). `offsetWidth` / `offsetHeight` is the
+    // right one for table descendants because CSS table layout pins
+    // it to the rendered cell geometry.
+    const tag = el.tagName.toLowerCase();
+    if (tag === "html" || tag === "body") {
+      const html = el as HTMLElement;
+      const w = Math.max(html.scrollWidth, html.offsetWidth, html.clientWidth);
+      const h = Math.max(html.scrollHeight, html.offsetHeight, html.clientHeight);
+      if (w > 0 && h > 0) {
+        return { x: r.x, y: r.y, width: w, height: h };
+      }
+    }
+    const isTablePart = tag === "table" || tag === "thead" || tag === "tbody"
+      || tag === "tfoot" || tag === "tr" || tag === "colgroup" || tag === "col"
+      || tag === "td" || tag === "th";
+    if (isTablePart && el instanceof HTMLElement) {
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      if (w > 0 && h > 0) {
+        return { x: r.x, y: r.y, width: w, height: h };
       }
     }
     return rectFrom(r);
@@ -646,6 +1013,8 @@ export function captureSnapshot(): RawSnapshotJson {
       if (input.type === "hidden" || input.type === "checkbox" || input.type === "radio") {
         return undefined;
       }
+      // Submit/reset/button type inputs paint their `value` as the
+      // label inside the UA chrome — same as a `<button>` would.
       const value = input.value;
       if (value && value.length > 0) {
         return value;
@@ -665,6 +1034,21 @@ export function captureSnapshot(): RawSnapshotJson {
       const placeholder = ta.placeholder;
       if (placeholder && placeholder.length > 0) {
         return placeholder;
+      }
+      return undefined;
+    }
+    if (el.tagName === "SELECT") {
+      // The selected `<option>` text is what the UA chrome renders
+      // as the closed control's label. Skipping it would leave the
+      // dropdown blank in the captured snapshot.
+      const select = el as HTMLSelectElement;
+      const idx = select.selectedIndex;
+      if (idx >= 0 && idx < select.options.length) {
+        const opt = select.options[idx]!;
+        const text = opt.text || opt.label || opt.value;
+        if (text && text.length > 0) {
+          return text;
+        }
       }
       return undefined;
     }

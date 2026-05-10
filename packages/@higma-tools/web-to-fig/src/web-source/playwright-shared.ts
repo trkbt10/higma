@@ -176,7 +176,10 @@ async function captureResponseBody(
   mimeFilter: (mime: string) => boolean,
   bodies: Map<string, { bytes: Uint8Array; mime: string }>,
 ): Promise<void> {
-  const headers = await response.allHeaders();
+  const headers = await safeAllHeaders(response);
+  if (headers === undefined) {
+    return;
+  }
   const mime = (headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
   if (!mimeFilter(mime)) {
     return;
@@ -189,6 +192,20 @@ async function captureResponseBody(
     bytes: new Uint8Array(body.buffer, body.byteOffset, body.byteLength),
     mime,
   });
+}
+
+async function safeAllHeaders(response: ResponseLike): Promise<Record<string, string> | undefined> {
+  // `response.allHeaders()` may throw when the page / context has
+  // already been closed (e.g. an in-flight response listener fires
+  // after the Playwright caller resolved its result and tore down the
+  // browser). The cache simply omits these entries — the dropped
+  // bytes are responses that arrived too late to be useful anyway.
+  try {
+    return await response.allHeaders();
+  } catch (_err: unknown) {
+    void _err;
+    return undefined;
+  }
 }
 
 async function safeResponseBody(response: ResponseLike): Promise<Buffer | undefined> {
