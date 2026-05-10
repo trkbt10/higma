@@ -16,7 +16,7 @@ export type EnumValue<T extends string> = { value: number; name: T };
  */
 export function toEnumValue<T extends string>(
   name: T | undefined,
-  values: Record<T, number>
+  values: Readonly<Record<T, number>>
 ): EnumValue<T> | undefined {
   if (name === undefined) {
     return undefined;
