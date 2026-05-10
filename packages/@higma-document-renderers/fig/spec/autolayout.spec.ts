@@ -336,6 +336,37 @@ function expectAutoZReverseOrder(svg: string): void {
   expect(renderedOrder).toEqual(["#4d4de5", "#4de54d", "#e54d4d"]);
 }
 
+function requiredNumber(value: number | undefined, label: string): number {
+  if (value === undefined) {
+    throw new Error(`Missing numeric value for ${label}`);
+  }
+  return value;
+}
+
+function renderedParentStrokeWeight(svg: string, layerName: string): number {
+  const strokeRect = extractRectPositions(svg).find((rect) => rect.stroke !== undefined);
+  if (!strokeRect) {
+    throw new Error(`Missing rendered parent stroke for ${layerName}`);
+  }
+  const strokeWidth = requiredNumber(strokeRect.strokeWidth, `${layerName} parent stroke width`);
+  return strokeWidth / 2;
+}
+
+function expectStrokeTakeSpace(svg: string, layerName: "auto-strokes-on" | "auto-strokes-off"): void {
+  const parentWidth = getSvgSize(svg).width;
+  const padding = 8;
+  const bordersTakeSpace = layerName === "auto-strokes-on";
+  const strokeWeight = renderedParentStrokeWeight(svg, layerName);
+  const strokeInset = bordersTakeSpace ? strokeWeight : 0;
+  const child = contentRectsFor(svg).find((rect) => rect.width === 40 && rect.height === 30);
+  if (!child) {
+    throw new Error(`Missing child rect for ${layerName}`);
+  }
+  const innerContentSpan = parentWidth - 2 * padding - (bordersTakeSpace ? 2 * strokeWeight : 0);
+  expect(child.x).toBe(padding + strokeInset);
+  expect(innerContentSpan).toBe(bordersTakeSpace ? 108 : 124);
+}
+
 const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
   "auto-grid-2x3": [
     { x: 16, y: 16, width: 40, height: 30 },
@@ -509,6 +540,9 @@ describe("AutoLayout Rendering", () => {
       expectRectsClose(contentRectsFor(svg), expected);
       if (layerName === "auto-z-reverse") {
         expectAutoZReverseOrder(svg);
+      }
+      if (layerName === "auto-strokes-on" || layerName === "auto-strokes-off") {
+        expectStrokeTakeSpace(svg, layerName);
       }
     });
   }
