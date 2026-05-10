@@ -21,13 +21,18 @@ describe("case paragraph-with-nested-em-strong", () => {
   });
 
   it("emits one run for the italic span and one for the bold span", () => {
-    expect(text.runs).toHaveLength(2);
+    const runs = text.runs ?? [];
+    expect(runs).toHaveLength(2);
   });
 
   it("encodes italic on the title range with no fontWeight deviation", () => {
+    const runs = text.runs ?? [];
+    if (runs.length < 1) {
+      throw new Error("expected an italic run");
+    }
     const titleStart = PREFIX.length;
     const titleEnd = titleStart + TITLE.length;
-    const italicRun = text.runs[0]!;
+    const italicRun = runs[0]!;
     expect(italicRun.start).toBe(titleStart);
     expect(italicRun.end).toBe(titleEnd);
     expect(italicRun.fontStyle).toBe("italic");
@@ -35,9 +40,13 @@ describe("case paragraph-with-nested-em-strong", () => {
   });
 
   it("encodes bold on the author range with no fontStyle deviation", () => {
+    const runs = text.runs ?? [];
+    if (runs.length < 2) {
+      throw new Error("expected a bold run");
+    }
     const authorStart = PREFIX.length + TITLE.length + MIDDLE.length;
     const authorEnd = authorStart + AUTHOR.length;
-    const boldRun = text.runs[1]!;
+    const boldRun = runs[1]!;
     expect(boldRun.start).toBe(authorStart);
     expect(boldRun.end).toBe(authorEnd);
     expect(boldRun.fontWeight).toBe(700);

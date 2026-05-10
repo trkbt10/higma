@@ -27,17 +27,22 @@ describe("case paragraph-with-multiple-links", () => {
   });
 
   it("emits exactly one run per `<a>` (no coalescing across the prose gap)", () => {
-    expect(text.runs).toHaveLength(2);
+    const runs = text.runs ?? [];
+    expect(runs).toHaveLength(2);
   });
 
   it("anchors both runs to the link character ranges", () => {
+    const runs = text.runs ?? [];
+    if (runs.length < 2) {
+      throw new Error("expected two link runs");
+    }
     const firstStart = PREFIX.length;
     const firstEnd = firstStart + FIRST_LINK.length;
     const secondStart = firstEnd + MIDDLE.length;
     const secondEnd = secondStart + SECOND_LINK.length;
-    expect(text.runs[0]!.start).toBe(firstStart);
-    expect(text.runs[0]!.end).toBe(firstEnd);
-    expect(text.runs[1]!.start).toBe(secondStart);
-    expect(text.runs[1]!.end).toBe(secondEnd);
+    expect(runs[0]!.start).toBe(firstStart);
+    expect(runs[0]!.end).toBe(firstEnd);
+    expect(runs[1]!.start).toBe(secondStart);
+    expect(runs[1]!.end).toBe(secondEnd);
   });
 });
