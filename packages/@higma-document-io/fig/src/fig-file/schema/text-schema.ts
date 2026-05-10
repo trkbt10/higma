@@ -381,7 +381,7 @@ export function createTextSchema(): KiwiSchema {
           { name: "stackPrimaryAlignContent", type: "StackAlign", typeId: 21, isArray: false, value: 45 },
           { name: "stackWrap", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 46 },
           { name: "stackCounterSpacing", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 47 },
-          { name: "itemReverseZIndex", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 48 },
+          { name: "stackReverseZIndex", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 271 },
 
           // AutoLayout fields - child level (50-59)
           { name: "stackPositioning", type: "StackPositioning", typeId: 22, isArray: false, value: 50 },

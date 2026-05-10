@@ -134,7 +134,7 @@ type FrameBuilderState = {
   stackPrimaryAlignContent: StackAlign | undefined;
   stackWrap: boolean | undefined;
   stackCounterSpacing: number | undefined;
-  itemReverseZIndex: boolean | undefined;
+  stackReverseZIndex: boolean | undefined;
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
@@ -168,7 +168,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     stackPrimaryAlignContent: undefined,
     stackWrap: undefined,
     stackCounterSpacing: undefined,
-    itemReverseZIndex: undefined,
+    stackReverseZIndex: undefined,
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
@@ -218,7 +218,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     /** Set counter axis spacing (for wrap mode) */
     counterGap(spacing: number) { state.stackCounterSpacing = spacing; return builder; },
     /** Reverse z-index order of items */
-    reverseZIndex(enabled: boolean = true) { state.itemReverseZIndex = enabled; return builder; },
+    reverseZIndex(enabled: boolean = true) { state.stackReverseZIndex = enabled; return builder; },
     /** Set positioning mode when inside auto-layout parent */
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
     /** Set sizing along primary axis (when inside auto-layout parent) */
@@ -279,7 +279,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         stackPrimaryAlignContent: toEnumValue(state.stackPrimaryAlignContent, STACK_ALIGN_VALUES),
         stackWrap: state.stackWrap,
         stackCounterSpacing: state.stackCounterSpacing,
-        itemReverseZIndex: state.itemReverseZIndex,
+        stackReverseZIndex: state.stackReverseZIndex,
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),

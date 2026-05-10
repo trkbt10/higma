@@ -172,7 +172,7 @@ export type BuilderNode = {
   stackPrimaryAlignContent?: KiwiEnum;
   stackWrap?: KiwiEnum;
   stackCounterSpacing?: number;
-  itemReverseZIndex?: boolean;
+  stackReverseZIndex?: boolean;
 
   // ---- AutoLayout (child-level) ----
   stackPositioning?: KiwiEnum;

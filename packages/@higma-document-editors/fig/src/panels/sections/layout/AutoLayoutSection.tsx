@@ -50,7 +50,7 @@ export function AutoLayoutSection({ node, target, dispatch }: AutoLayoutSectionP
     stackPrimaryAlignContent: node.autoLayout?.stackPrimaryAlignContent,
     stackWrap: node.autoLayout?.stackWrap ?? false,
     stackCounterSpacing: node.autoLayout?.stackCounterSpacing,
-    itemReverseZIndex: node.autoLayout?.itemReverseZIndex,
+    stackReverseZIndex: node.autoLayout?.stackReverseZIndex,
   };
 
   const updateAutoLayout = useCallback(
@@ -66,7 +66,7 @@ export function AutoLayoutSection({ node, target, dispatch }: AutoLayoutSectionP
           stackPrimaryAlignContent: current.autoLayout?.stackPrimaryAlignContent,
           stackWrap: current.autoLayout?.stackWrap ?? false,
           stackCounterSpacing: current.autoLayout?.stackCounterSpacing,
-          itemReverseZIndex: current.autoLayout?.itemReverseZIndex,
+          stackReverseZIndex: current.autoLayout?.stackReverseZIndex,
         }) }),
       }));
     },
@@ -111,7 +111,7 @@ export function AutoLayoutSection({ node, target, dispatch }: AutoLayoutSectionP
   }, [updateAutoLayout]);
 
   const updateReverseZIndex = useCallback((checked: boolean) => {
-    updateAutoLayout((current) => ({ ...current, itemReverseZIndex: checked }));
+    updateAutoLayout((current) => ({ ...current, stackReverseZIndex: checked }));
   }, [updateAutoLayout]);
 
   return (
@@ -158,7 +158,7 @@ export function AutoLayoutSection({ node, target, dispatch }: AutoLayoutSectionP
           </FieldRow>
           <FieldRow>
             <Toggle checked={Boolean(layout.stackWrap)} onChange={updateWrap} label="Wrap" />
-            <Toggle checked={Boolean(layout.itemReverseZIndex)} onChange={updateReverseZIndex} label="Reverse Z" />
+            <Toggle checked={Boolean(layout.stackReverseZIndex)} onChange={updateReverseZIndex} label="Reverse Z" />
           </FieldRow>
         </>
       )}

@@ -159,7 +159,7 @@ describe("FrameNodeBuilder", () => {
         .reverseZIndex(true)
         .build();
 
-      expect(node.itemReverseZIndex).toBe(true);
+      expect(node.stackReverseZIndex).toBe(true);
     });
 
     it("auto-enables wrap mode when wrap() is called", () => {

@@ -84,7 +84,7 @@ type SymbolBuilderState = {
   stackPrimaryAlignContent: StackAlign | undefined;
   stackWrap: boolean | undefined;
   stackCounterSpacing: number | undefined;
-  itemReverseZIndex: boolean | undefined;
+  stackReverseZIndex: boolean | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
   stackChildPrimaryGrow: number | undefined;
@@ -113,7 +113,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     stackPrimaryAlignContent: undefined,
     stackWrap: undefined,
     stackCounterSpacing: undefined,
-    itemReverseZIndex: undefined,
+    stackReverseZIndex: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
     stackChildPrimaryGrow: undefined,
@@ -150,7 +150,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     primarySizing(sizing: StackSizingInput) { state.stackPrimarySizing = resolveStackSizingInput(sizing); return builder; },
     counterSizing(sizing: StackSizingInput) { state.stackCounterSizing = resolveStackSizingInput(sizing); return builder; },
     primaryGrow(grow: number) { state.stackChildPrimaryGrow = grow; return builder; },
-    reverseZIndex(enabled: boolean = true) { state.itemReverseZIndex = enabled; return builder; },
+    reverseZIndex(enabled: boolean = true) { state.stackReverseZIndex = enabled; return builder; },
     addExportSettings(settings: ExportSettings) { state.exportSettings.push(settings); return builder; },
     exportAsSVG() { state.exportSettings.push(DEFAULT_SVG_EXPORT_SETTINGS); return builder; },
 
@@ -175,7 +175,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
         stackPrimaryAlignContent: toEnumValue(state.stackPrimaryAlignContent, STACK_ALIGN_VALUES),
         stackWrap: state.stackWrap,
         stackCounterSpacing: state.stackCounterSpacing,
-        itemReverseZIndex: state.itemReverseZIndex,
+        stackReverseZIndex: state.stackReverseZIndex,
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
         stackChildPrimaryGrow: state.stackChildPrimaryGrow,

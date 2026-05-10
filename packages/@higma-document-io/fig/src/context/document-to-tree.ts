@@ -144,7 +144,7 @@ function designNodeToFigNode(
     if (node.autoLayout.stackPrimaryAlignContent !== undefined) { base.stackPrimaryAlignContent = node.autoLayout.stackPrimaryAlignContent; }
     if (node.autoLayout.stackWrap !== undefined) { base.stackWrap = node.autoLayout.stackWrap; }
     if (node.autoLayout.stackCounterSpacing !== undefined) { base.stackCounterSpacing = node.autoLayout.stackCounterSpacing; }
-    if (node.autoLayout.itemReverseZIndex !== undefined) { base.itemReverseZIndex = node.autoLayout.itemReverseZIndex; }
+    if (node.autoLayout.stackReverseZIndex !== undefined) { base.stackReverseZIndex = node.autoLayout.stackReverseZIndex; }
   }
 
   // Layout constraints

@@ -248,7 +248,7 @@ const MODELED_FIELDS: ReadonlySet<string> = new Set([
   "sectionContentsHidden",
   "stackMode", "stackSpacing", "stackPadding",
   "stackPrimaryAlignItems", "stackCounterAlignItems", "stackPrimaryAlignContent",
-  "stackWrap", "stackCounterSpacing", "itemReverseZIndex",
+  "stackWrap", "stackCounterSpacing", "stackReverseZIndex",
   "stackPositioning", "stackPrimarySizing", "stackCounterSizing",
   "stackChildAlignSelf", "stackChildPrimaryGrow",
   "horizontalConstraint", "verticalConstraint",
@@ -365,7 +365,7 @@ function extractAutoLayout(node: FigNode): AutoLayoutProps | undefined {
     stackPrimaryAlignContent: node.stackPrimaryAlignContent,
     stackWrap: node.stackWrap,
     stackCounterSpacing: node.stackCounterSpacing,
-    itemReverseZIndex: node.itemReverseZIndex,
+    stackReverseZIndex: node.stackReverseZIndex,
   };
 }
 

@@ -244,7 +244,7 @@ function _createFigFileBuilder() {
       stackPrimaryAlignContent: data.stackPrimaryAlignContent,
       stackWrap: data.stackWrap,
       stackCounterSpacing: data.stackCounterSpacing,
-      itemReverseZIndex: data.itemReverseZIndex,
+      stackReverseZIndex: data.stackReverseZIndex,
       // AutoLayout - child level
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
@@ -294,7 +294,7 @@ function _createFigFileBuilder() {
       stackPrimaryAlignContent: data.stackPrimaryAlignContent,
       stackWrap: data.stackWrap,
       stackCounterSpacing: data.stackCounterSpacing,
-      itemReverseZIndex: data.itemReverseZIndex,
+      stackReverseZIndex: data.stackReverseZIndex,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
       stackChildPrimaryGrow: data.stackChildPrimaryGrow,
@@ -944,7 +944,7 @@ function _createFigFileBuilder() {
     stackPrimaryAlignContent?: { value: number; name: string };
     stackWrap?: boolean;
     stackCounterSpacing?: number;
-    itemReverseZIndex?: boolean;
+    stackReverseZIndex?: boolean;
     // AutoLayout - child level
     stackPositioning?: { value: number; name: string };
     stackPrimarySizing?: { value: number; name: string };
@@ -1079,8 +1079,8 @@ function _createFigFileBuilder() {
     if (data.stackCounterSpacing !== undefined) {
       node.stackCounterSpacing = data.stackCounterSpacing;
     }
-    if (data.itemReverseZIndex !== undefined) {
-      node.itemReverseZIndex = data.itemReverseZIndex;
+    if (data.stackReverseZIndex !== undefined) {
+      node.stackReverseZIndex = data.stackReverseZIndex;
     }
 
     // AutoLayout - child level (for any node inside auto-layout)

@@ -67,7 +67,7 @@ export type FrameNodeData = {
   readonly stackPrimaryAlignContent?: { value: number; name: StackAlign };
   readonly stackWrap?: boolean;
   readonly stackCounterSpacing?: number;
-  readonly itemReverseZIndex?: boolean;
+  readonly stackReverseZIndex?: boolean;
 
   // AutoLayout - child level (constraints)
   readonly stackPositioning?: { value: number; name: StackPositioning };

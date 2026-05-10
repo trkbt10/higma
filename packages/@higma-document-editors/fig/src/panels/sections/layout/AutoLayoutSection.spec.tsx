@@ -47,7 +47,7 @@ describe("AutoLayoutSection", () => {
       stackPadding: { top: 1, right: 2, bottom: 3, left: 4 },
       stackWrap: true,
       stackCounterSpacing: 8,
-      itemReverseZIndex: true,
+      stackReverseZIndex: true,
     });
     const html = renderToStaticMarkup(createElement(AutoLayoutSection, {
       node,

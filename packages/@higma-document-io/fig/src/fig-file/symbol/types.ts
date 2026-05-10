@@ -43,7 +43,7 @@ export type SymbolNodeData = {
   readonly stackPrimaryAlignContent?: { value: number; name: StackAlign };
   readonly stackWrap?: boolean;
   readonly stackCounterSpacing?: number;
-  readonly itemReverseZIndex?: boolean;
+  readonly stackReverseZIndex?: boolean;
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
   readonly stackChildPrimaryGrow?: number;

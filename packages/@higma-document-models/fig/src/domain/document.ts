@@ -48,7 +48,7 @@ export type AutoLayoutProps = {
   readonly stackPrimaryAlignContent?: KiwiEnumValue;
   readonly stackWrap?: boolean;
   readonly stackCounterSpacing?: number;
-  readonly itemReverseZIndex?: boolean;
+  readonly stackReverseZIndex?: boolean;
 };
 
 /**

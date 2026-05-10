@@ -684,7 +684,7 @@ export type FigNode = {
   /** Spacing between wrapped rows/columns */
   readonly stackCounterSpacing?: number;
   /** Reverse z-order of children */
-  readonly itemReverseZIndex?: boolean;
+  readonly stackReverseZIndex?: boolean;
 
   // ---- AutoLayout (child-level) ----
   /** How this child is positioned in the parent stack (AUTO or ABSOLUTE) */
