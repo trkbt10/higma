@@ -1,0 +1,18 @@
+; Engine configuration file.
+; Godot 4.x project skeleton used only to render fig-to-godot-emitted
+; scenes to PNG for visual roundtrip tests. Contains no game code.
+;
+; Format and key set documented at:
+;   https://docs.godotengine.org/en/stable/tutorials/scripting/godot_default_project.html
+
+config_version=5
+
+[application]
+
+config/name="fig-to-godot render harness"
+config/features=PackedStringArray("4.6", "Forward Plus")
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+renderer/rendering_method.mobile="forward_plus"

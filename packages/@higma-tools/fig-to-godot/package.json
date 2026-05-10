@@ -1,0 +1,49 @@
+{
+  "name": "@higma-tools/fig-to-godot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "fig-to-godot": "./src/cli/bin.ts"
+  },
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-godot/src packages/@higma-tools/fig-to-godot/spec",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-tools/fig-to-godot/src' '../../../packages/@higma-tools/fig-to-godot/spec'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./emit": {
+      "types": "./src/emit/index.ts",
+      "default": "./src/emit/index.ts"
+    },
+    "./godot-tree": {
+      "types": "./src/godot-tree/index.ts",
+      "default": "./src/godot-tree/index.ts"
+    },
+    "./render": {
+      "types": "./src/render/index.ts",
+      "default": "./src/render/index.ts"
+    },
+    "./cli": {
+      "types": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-primitives/identifier": "workspace:*"
+  },
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "tools",
+      "product": "fig"
+    }
+  }
+}
