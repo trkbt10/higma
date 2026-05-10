@@ -1,32 +1,46 @@
 /**
  * @file Stroke-related constants for Figma fig format
+ *
+ * Numeric enum values are pinned to the canonical Figma Kiwi schema
+ * via `@higma-figma-schema/profiles`. The schema is the SoT.
  */
 
-/** Stroke cap values */
-export const STROKE_CAP_VALUES = {
-  NONE: 0,
-  ROUND: 1,
-  SQUARE: 2,
-  ARROW_LINES: 3,
-  ARROW_EQUILATERAL: 4,
-} as const;
+import { requireFigEnumTable } from "@higma-figma-schema/profiles/schema";
 
-export type StrokeCap = keyof typeof STROKE_CAP_VALUES;
+/**
+ * Stroke cap values — derived from the Figma Kiwi schema (`StrokeCap`).
+ *
+ * The schema declares additional FigJam-specific shapes (DIAMOND_FILLED,
+ * TRIANGLE_FILLED, HIGHLIGHT, WASHI_TAPE_*, CIRCLE_FILLED, ERD_*). They
+ * are not surfaced through this constant because the design-product
+ * builders here do not emit them; if a real file carries those caps we
+ * read them as raw `{value, name}` pairs and write them back unchanged
+ * via the runtime layer.
+ */
+export const STROKE_CAP_VALUES = requireFigEnumTable("StrokeCap", [
+  "NONE",
+  "ROUND",
+  "SQUARE",
+  "ARROW_LINES",
+  "ARROW_EQUILATERAL",
+]);
 
-/** Stroke join values */
-export const STROKE_JOIN_VALUES = {
-  MITER: 0,
-  BEVEL: 1,
-  ROUND: 2,
-} as const;
+export type StrokeCap = "NONE" | "ROUND" | "SQUARE" | "ARROW_LINES" | "ARROW_EQUILATERAL";
 
-export type StrokeJoin = keyof typeof STROKE_JOIN_VALUES;
+/** Stroke join values — derived from the Figma Kiwi schema (`StrokeJoin`). */
+export const STROKE_JOIN_VALUES = requireFigEnumTable("StrokeJoin", [
+  "MITER",
+  "BEVEL",
+  "ROUND",
+]);
 
-/** Stroke align values */
-export const STROKE_ALIGN_VALUES = {
-  CENTER: 0,
-  INSIDE: 1,
-  OUTSIDE: 2,
-} as const;
+export type StrokeJoin = "MITER" | "BEVEL" | "ROUND";
 
-export type StrokeAlign = keyof typeof STROKE_ALIGN_VALUES;
+/** Stroke align values — derived from the Figma Kiwi schema (`StrokeAlign`). */
+export const STROKE_ALIGN_VALUES = requireFigEnumTable("StrokeAlign", [
+  "CENTER",
+  "INSIDE",
+  "OUTSIDE",
+]);
+
+export type StrokeAlign = "CENTER" | "INSIDE" | "OUTSIDE";

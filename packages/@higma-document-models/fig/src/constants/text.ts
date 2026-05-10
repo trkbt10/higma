@@ -1,61 +1,66 @@
 /**
  * @file Text-related constants for Figma fig format
+ *
+ * Numeric enum values are pinned to the canonical Figma Kiwi schema
+ * via `@higma-figma-schema/profiles`. The schema is the SoT.
  */
 
-/** Text horizontal alignment values */
-export const TEXT_ALIGN_H_VALUES = {
-  LEFT: 0,
-  CENTER: 1,
-  RIGHT: 2,
-  JUSTIFIED: 3,
-} as const;
+import { requireFigEnumTable } from "@higma-figma-schema/profiles/schema";
 
-export type TextAlignHorizontal = keyof typeof TEXT_ALIGN_H_VALUES;
+/** Text horizontal alignment values — schema `TextAlignHorizontal`. */
+export const TEXT_ALIGN_H_VALUES = requireFigEnumTable("TextAlignHorizontal", [
+  "LEFT",
+  "CENTER",
+  "RIGHT",
+  "JUSTIFIED",
+]);
 
-/** Text vertical alignment values */
-export const TEXT_ALIGN_V_VALUES = {
-  TOP: 0,
-  CENTER: 1,
-  BOTTOM: 2,
-} as const;
+export type TextAlignHorizontal = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
 
-export type TextAlignVertical = keyof typeof TEXT_ALIGN_V_VALUES;
+/** Text vertical alignment values — schema `TextAlignVertical`. */
+export const TEXT_ALIGN_V_VALUES = requireFigEnumTable("TextAlignVertical", [
+  "TOP",
+  "CENTER",
+  "BOTTOM",
+]);
 
-/** Text auto resize values */
-export const TEXT_AUTO_RESIZE_VALUES = {
-  NONE: 0,
-  WIDTH_AND_HEIGHT: 1,
-  HEIGHT: 2,
-} as const;
+export type TextAlignVertical = "TOP" | "CENTER" | "BOTTOM";
 
-export type TextAutoResize = keyof typeof TEXT_AUTO_RESIZE_VALUES;
+/** Text auto resize values — schema `TextAutoResize`. */
+export const TEXT_AUTO_RESIZE_VALUES = requireFigEnumTable("TextAutoResize", [
+  "NONE",
+  "WIDTH_AND_HEIGHT",
+  "HEIGHT",
+]);
 
-/** Text decoration values */
-export const TEXT_DECORATION_VALUES = {
-  NONE: 0,
-  UNDERLINE: 1,
-  STRIKETHROUGH: 2,
-} as const;
+export type TextAutoResize = "NONE" | "WIDTH_AND_HEIGHT" | "HEIGHT";
 
-export type TextDecoration = keyof typeof TEXT_DECORATION_VALUES;
+/** Text decoration values — schema `TextDecoration`. */
+export const TEXT_DECORATION_VALUES = requireFigEnumTable("TextDecoration", [
+  "NONE",
+  "UNDERLINE",
+  "STRIKETHROUGH",
+]);
 
-/** Text case values */
-export const TEXT_CASE_VALUES = {
-  ORIGINAL: 0,
-  UPPER: 1,
-  LOWER: 2,
-  TITLE: 3,
-  SMALL_CAPS: 4,
-  SMALL_CAPS_FORCED: 5,
-} as const;
+export type TextDecoration = "NONE" | "UNDERLINE" | "STRIKETHROUGH";
 
-export type TextCase = keyof typeof TEXT_CASE_VALUES;
+/** Text case values — schema `TextCase`. */
+export const TEXT_CASE_VALUES = requireFigEnumTable("TextCase", [
+  "ORIGINAL",
+  "UPPER",
+  "LOWER",
+  "TITLE",
+  "SMALL_CAPS",
+  "SMALL_CAPS_FORCED",
+]);
 
-/** Number units values */
-export const NUMBER_UNITS_VALUES = {
-  RAW: 0,
-  PIXELS: 1,
-  PERCENT: 2,
-} as const;
+export type TextCase = "ORIGINAL" | "UPPER" | "LOWER" | "TITLE" | "SMALL_CAPS" | "SMALL_CAPS_FORCED";
 
-export type NumberUnits = keyof typeof NUMBER_UNITS_VALUES;
+/** Number units values — schema `NumberUnits`. */
+export const NUMBER_UNITS_VALUES = requireFigEnumTable("NumberUnits", [
+  "RAW",
+  "PIXELS",
+  "PERCENT",
+]);
+
+export type NumberUnits = "RAW" | "PIXELS" | "PERCENT";

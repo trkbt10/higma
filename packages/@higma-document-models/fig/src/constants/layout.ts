@@ -1,16 +1,21 @@
 /**
  * @file Layout/AutoLayout-related constants for Figma fig format
+ *
+ * Numeric enum values are pinned to the canonical Figma Kiwi schema
+ * via `@higma-figma-schema/profiles`. The schema is the SoT.
  */
 
-/** Stack mode values (for AutoLayout) */
-export const STACK_MODE_VALUES = {
-  NONE: 0,
-  HORIZONTAL: 1,
-  VERTICAL: 2,
-  GRID: 3,
-} as const;
+import { requireFigEnumTable } from "@higma-figma-schema/profiles/schema";
 
-export type StackMode = keyof typeof STACK_MODE_VALUES;
+/** Stack mode values — schema `StackMode`. */
+export const STACK_MODE_VALUES = requireFigEnumTable("StackMode", [
+  "NONE",
+  "HORIZONTAL",
+  "VERTICAL",
+  "GRID",
+]);
+
+export type StackMode = "NONE" | "HORIZONTAL" | "VERTICAL" | "GRID";
 
 /**
  * Counter-axis alignment for parent FRAMEs (`stackCounterAlignItems`).
@@ -23,14 +28,14 @@ export type StackMode = keyof typeof STACK_MODE_VALUES;
  * round-trip decodes back as BASELINE — a silent corruption that
  * breaks auto-layout INSTANCE reflow.
  */
-export const STACK_ALIGN_VALUES = {
-  MIN: 0,
-  CENTER: 1,
-  MAX: 2,
-  BASELINE: 3,
-} as const;
+export const STACK_ALIGN_VALUES = requireFigEnumTable("StackAlign", [
+  "MIN",
+  "CENTER",
+  "MAX",
+  "BASELINE",
+]);
 
-export type StackAlign = keyof typeof STACK_ALIGN_VALUES;
+export type StackAlign = "MIN" | "CENTER" | "MAX" | "BASELINE";
 
 /**
  * Primary-axis alignment for parent FRAMEs (`stackPrimaryAlignItems`).
@@ -39,15 +44,15 @@ export type StackAlign = keyof typeof STACK_ALIGN_VALUES;
  * variants live here — note the value order (`SPACE_EVENLY` precedes
  * `SPACE_BETWEEN`).
  */
-export const STACK_JUSTIFY_VALUES = {
-  MIN: 0,
-  CENTER: 1,
-  MAX: 2,
-  SPACE_EVENLY: 3,
-  SPACE_BETWEEN: 4,
-} as const;
+export const STACK_JUSTIFY_VALUES = requireFigEnumTable("StackJustify", [
+  "MIN",
+  "CENTER",
+  "MAX",
+  "SPACE_EVENLY",
+  "SPACE_BETWEEN",
+]);
 
-export type StackJustify = keyof typeof STACK_JUSTIFY_VALUES;
+export type StackJustify = "MIN" | "CENTER" | "MAX" | "SPACE_EVENLY" | "SPACE_BETWEEN";
 
 /**
  * Per-child counter-axis alignment override (`stackChildAlignSelf`).
@@ -57,33 +62,37 @@ export type StackJustify = keyof typeof STACK_JUSTIFY_VALUES;
  * captured CSS resolves to a counter-stretch, every child carries this
  * override and the parent stays at MIN.
  */
-export const STACK_COUNTER_ALIGN_VALUES = {
-  MIN: 0,
-  CENTER: 1,
-  MAX: 2,
-  STRETCH: 3,
-  AUTO: 4,
-  BASELINE: 5,
-} as const;
+export const STACK_COUNTER_ALIGN_VALUES = requireFigEnumTable("StackCounterAlign", [
+  "MIN",
+  "CENTER",
+  "MAX",
+  "STRETCH",
+  "AUTO",
+  "BASELINE",
+]);
 
-export type StackCounterAlign = keyof typeof STACK_COUNTER_ALIGN_VALUES;
+export type StackCounterAlign = "MIN" | "CENTER" | "MAX" | "STRETCH" | "AUTO" | "BASELINE";
 
-/** Stack positioning values (for child constraints in AutoLayout) */
-export const STACK_POSITIONING_VALUES = {
-  AUTO: 0,
-  ABSOLUTE: 1,
-} as const;
+/** Stack positioning values — schema `StackPositioning`. */
+export const STACK_POSITIONING_VALUES = requireFigEnumTable("StackPositioning", [
+  "AUTO",
+  "ABSOLUTE",
+]);
 
-export type StackPositioning = keyof typeof STACK_POSITIONING_VALUES;
+export type StackPositioning = "AUTO" | "ABSOLUTE";
 
-/** Stack sizing values (for child sizing in AutoLayout) */
-export const STACK_SIZING_VALUES = {
-  FIXED: 0,
-  RESIZE_TO_FIT: 1,
-  RESIZE_TO_FIT_WITH_IMPLICIT_SIZE: 2,
-} as const;
+/**
+ * Stack sizing values — schema `StackSize` (the Kiwi name; the
+ * project's TypeScript surface keeps the historical
+ * `StackSizing` alias because every consumer already imports it).
+ */
+export const STACK_SIZING_VALUES = requireFigEnumTable("StackSize", [
+  "FIXED",
+  "RESIZE_TO_FIT",
+  "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE",
+]);
 
-export type StackSizing = keyof typeof STACK_SIZING_VALUES;
+export type StackSizing = "FIXED" | "RESIZE_TO_FIT" | "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE";
 export type StackSizingInput = StackSizing | "HUG";
 
 /** Resolve builder sizing input to Figma's canonical StackSize enum name. */
@@ -99,21 +108,42 @@ export function resolveStackSizingInput(sizing: StackSizingInput): StackSizing {
   throw new Error(`Unknown StackSizing input: ${sizing}`);
 }
 
-/** Constraint type values (for fixed positioning) */
-export const CONSTRAINT_TYPE_VALUES = {
-  MIN: 0,
-  CENTER: 1,
-  MAX: 2,
-  STRETCH: 3,
-  SCALE: 4,
-} as const;
+/**
+ * Constraint type values — schema `ConstraintType`.
+ *
+ * The schema additionally declares `FIXED_MIN` (5) and `FIXED_MAX`
+ * (6). These are emitted by newer Figma builds; round-tripping a
+ * file that uses them is preserved through the runtime layer even
+ * though no domain-level builder surfaces them yet.
+ */
+export const CONSTRAINT_TYPE_VALUES = requireFigEnumTable("ConstraintType", [
+  "MIN",
+  "CENTER",
+  "MAX",
+  "STRETCH",
+  "SCALE",
+]);
 
-export type ConstraintType = keyof typeof CONSTRAINT_TYPE_VALUES;
+export type ConstraintType = "MIN" | "CENTER" | "MAX" | "STRETCH" | "SCALE";
 
-/** Winding rule values (for vector paths) */
-export const WINDING_RULE_VALUES = {
-  NONZERO: 0,
-  EVENODD: 1,
-} as const;
+/**
+ * Winding rule values — schema `WindingRule`.
+ *
+ * The Figma Kiwi schema names the non-zero/odd winding rules
+ * `NONZERO` and `ODD`. The repo historically used `EVENODD` (the
+ * SVG/CSS name) for the "1" branch — that worked at the encode
+ * level because the numeric value matched, but the round-trip
+ * read-side compared the `name` string and got fooled. Both names
+ * are kept here and mapped to the same value; consumers that read
+ * `name` should treat `EVENODD` and `ODD` as equivalent. New
+ * encode paths should prefer `ODD` so the on-disk shape mirrors a
+ * genuine Figma export exactly.
+ */
+const WINDING_RULE_BASE = requireFigEnumTable("WindingRule", ["NONZERO", "ODD"]);
 
-export type WindingRule = keyof typeof WINDING_RULE_VALUES;
+export const WINDING_RULE_VALUES = Object.freeze({
+  ...WINDING_RULE_BASE,
+  EVENODD: WINDING_RULE_BASE.ODD,
+});
+
+export type WindingRule = "NONZERO" | "ODD" | "EVENODD";

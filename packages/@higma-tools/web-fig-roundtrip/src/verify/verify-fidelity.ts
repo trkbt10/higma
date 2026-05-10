@@ -49,6 +49,10 @@ export type VerifyOptions = {
 /**
  * Run the full web-to-fig → fig-to-web → browser-render → pixel-diff
  * pipeline and report a per-breakpoint comparison.
+ *
+ * This is the end-to-end verification gate for generation, validation, and
+ * test execution: the workflow only passes when generated fixtures and
+ * renderer output agree with the captured source of truth.
  */
 export async function verifyFidelity(
   source: string,

@@ -1,13 +1,26 @@
 /**
  * @file Effect-related constants for Figma fig format
+ *
+ * Numeric enum values are pinned to the canonical Figma Kiwi schema
+ * via `@higma-figma-schema/profiles`. The schema is the SoT.
  */
 
-/** Effect type values - matches Figma EffectType enum in schema */
-export const EFFECT_TYPE_VALUES = {
-  INNER_SHADOW: 0,
-  DROP_SHADOW: 1,
-  FOREGROUND_BLUR: 2,  // Figma calls it FOREGROUND_BLUR, not LAYER_BLUR
-  BACKGROUND_BLUR: 3,
-} as const;
+import { requireFigEnumTable } from "@higma-figma-schema/profiles/schema";
 
-export type EffectType = keyof typeof EFFECT_TYPE_VALUES;
+/**
+ * Effect type values — derived from the Figma Kiwi schema (`EffectType`).
+ *
+ * Figma's schema labels the layer-blur effect `FOREGROUND_BLUR`.
+ * Older code paths in this monorepo use the synonym `LAYER_BLUR`;
+ * those callers should keep using the higher-level domain types
+ * (which still surface `LAYER_BLUR`) and let the runtime
+ * normalisation layer canonicalise the alias on encode.
+ */
+export const EFFECT_TYPE_VALUES = requireFigEnumTable("EffectType", [
+  "INNER_SHADOW",
+  "DROP_SHADOW",
+  "FOREGROUND_BLUR",
+  "BACKGROUND_BLUR",
+]);
+
+export type EffectType = "INNER_SHADOW" | "DROP_SHADOW" | "FOREGROUND_BLUR" | "BACKGROUND_BLUR";
