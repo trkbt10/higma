@@ -184,8 +184,16 @@ function printValue(value: GodotValue): string {
 /**
  * Print a Godot float literal. Integer-valued floats print as `1.0`
  * (Godot's editor convention), other values trim trailing zeros after
- * `toFixed(6)`. NaN / Infinity throw — neither is representable in
+ * `toFixed(8)`. NaN / Infinity throw — neither is representable in
  * `.tscn` numeric properties.
+ *
+ * Why 8 decimals (not 6): Figma stores colours as float32 like
+ * `0.949999988`. `toFixed(6)` rounds to `"0.950000"` → `0.95`, which
+ * `* 255` yields `242.25` → may round to 243 instead of the
+ * reference's 242. `toFixed(8)` preserves enough precision (`"0.94999999"`)
+ * that Godot's reparse multiplies to `241.99...` and rounds to 242.
+ * The extra two digits cost ~30 bytes per StyleBox; tiny price for
+ * pixel-byte fidelity.
  */
 export function printFloat(value: number): string {
   if (!Number.isFinite(value)) {
@@ -194,7 +202,7 @@ export function printFloat(value: number): string {
   if (Number.isInteger(value)) {
     return `${value.toString(10)}.0`;
   }
-  return trimDecimalZeroes(value.toFixed(6));
+  return trimDecimalZeroes(value.toFixed(8));
 }
 
 function trimDecimalZeroes(s: string): string {

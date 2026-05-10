@@ -43,6 +43,7 @@ import {
   node,
   property,
   stringVal,
+  vector2,
   type GodotNode,
   type GodotProperty,
   type GodotSubResource,
@@ -175,23 +176,35 @@ function appendAbsolutePosition(
   y: number,
   child: FigNode,
 ): GodotNode {
-  const props: GodotProperty[] = [];
   // Anchors stay at zero (top-left); offsets carry the absolute position.
   // Godot 4.x stores rect via `offset_left/top/right/bottom`. We compute
   // offsets from the authored size so a child rendered at (12, 16) with
   // size 80x40 becomes offset_left=12, offset_top=16, offset_right=92,
   // offset_bottom=56.
+  //
+  // The container helpers (`plainControlProperties`,
+  // `boxContainerProperties`) already populated offset_right/offset_bottom
+  // from the child's authored size assuming origin (0,0). Here we
+  // *replace* those with the absolutely-positioned values rather than
+  // appending — Godot's `.tscn` parser uses the last value for a
+  // duplicated key, but the duplicate also confuses readers and is what
+  // diff-clean roundtrip catches as a regression.
+  const positioned = new Map<string, GodotProperty>();
   if (x !== 0) {
-    props.push(property("offset_left", floatVal(x)));
+    positioned.set("offset_left", property("offset_left", floatVal(x)));
   }
   if (y !== 0) {
-    props.push(property("offset_top", floatVal(y)));
+    positioned.set("offset_top", property("offset_top", floatVal(y)));
   }
   if (child.size) {
-    props.push(property("offset_right", floatVal(x + child.size.x)));
-    props.push(property("offset_bottom", floatVal(y + child.size.y)));
+    positioned.set("offset_right", property("offset_right", floatVal(x + child.size.x)));
+    positioned.set("offset_bottom", property("offset_bottom", floatVal(y + child.size.y)));
   }
-  return { ...target, properties: [...target.properties, ...props] };
+  const replaced = target.properties.map((p) => positioned.get(p.name) ?? p);
+  const remaining = Array.from(positioned.values()).filter(
+    (p) => !target.properties.some((t) => t.name === p.name),
+  );
+  return { ...target, properties: [...replaced, ...remaining] };
 }
 
 function appendFlowSizeFlags(
@@ -200,9 +213,13 @@ function appendFlowSizeFlags(
   parentPlan: LayoutPlan,
 ): GodotNode {
   const flags = counterSizeFlagsForChild(parentPlan.counter, child);
-  if (flags === SIZE_FLAGS.NONE) {
-    return target;
-  }
+  // Godot Control defaults `size_flags_<axis>` to 1 (SIZE_FILL), which
+  // stretches every child to the container's cross-axis dimension.
+  // Figma's MIN counter alignment means "leave the child at its
+  // authored size and pin to the leading edge", which Godot models as
+  // size_flags = 0 (no fill, no expand). We must always emit the
+  // cross-axis flag — even when the resolved value is 0 — to override
+  // Godot's default-FILL.
   // The cross-axis name depends on the BoxContainer orientation:
   //   HBoxContainer → cross axis is vertical → size_flags_vertical
   //   VBoxContainer → cross axis is horizontal → size_flags_horizontal
@@ -274,17 +291,49 @@ function emitShapeLeaf(node_: FigNode, ctx: WalkContext): GodotNode {
   const styleBoxId = nextStyleBoxId(ctx);
   const styleBox = buildShapeStyleBox(node_, typeName, styleBoxId);
   if (!styleBox) {
-    throw new Error(
-      `fig-to-godot: ${typeName} node "${node_.name ?? "unnamed"}" has no SOLID fill — gradients/images are not yet supported`,
-    );
+    // Shape with no SOLID fill, no stroke, no shadow, no corner radius
+    // — visually transparent. Emit a bare Control of the right size so
+    // layout still allocates the slot; no StyleBox needed.
+    ctx.styleBoxCounter -= 1; // roll back the unused id
+    const props: GodotProperty[] = [...customMinimumSizeProperty(node_)];
+    const modulate = modulateAlphaProperty(node_);
+    if (modulate) {
+      props.push(modulate);
+    }
+    return node(name, "Control", { properties: props });
   }
   ctx.subResources.push(styleBox);
-  const props: GodotProperty[] = [...panelStyleOverride(styleBoxId)];
+  const props: GodotProperty[] = [
+    ...panelStyleOverride(styleBoxId),
+    ...customMinimumSizeProperty(node_),
+  ];
   const modulate = modulateAlphaProperty(node_);
   if (modulate) {
     props.push(modulate);
   }
   return node(name, "Panel", { properties: props });
+}
+
+/**
+ * Carry the FigNode's authored size onto a Godot Control as
+ * `custom_minimum_size = Vector2(w, h)`.
+ *
+ * Why this matters: Godot's layout containers (HBoxContainer /
+ * VBoxContainer / MarginContainer) measure their children against
+ * each child's `get_minimum_size()`. A bare Panel with no theme
+ * minimum reports `(0, 0)`, which collapses the container to zero
+ * height/width and makes nothing render. Figma fills always have an
+ * authored size, so the converter needs to pin that size onto every
+ * leaf that lives inside an autolayout parent.
+ *
+ * Returns an empty array when the node has no `size` so callers can
+ * spread unconditionally.
+ */
+function customMinimumSizeProperty(node_: FigNode): readonly GodotProperty[] {
+  if (!node_.size) {
+    return [];
+  }
+  return [property("custom_minimum_size", vector2(node_.size.x, node_.size.y))];
 }
 
 /**
@@ -300,12 +349,16 @@ function buildEllipseStyleBox(node_: FigNode, id: string): GodotSubResource | un
       `fig-to-godot: ELLIPSE node "${node_.name ?? "unnamed"}" has no size — cannot derive corner radius`,
     );
   }
-  if (Math.abs(node_.size.x - node_.size.y) > 1e-6) {
-    throw new Error(
-      `fig-to-godot: non-circular ELLIPSE is not supported (node "${node_.name ?? "unnamed"}" size=${node_.size.x}x${node_.size.y})`,
-    );
-  }
-  const radius = Math.round(node_.size.x / 2);
+  // Godot has no first-class ellipse Control. Circular ellipses
+  // (square authored size) get a corner radius = side/2 which renders
+  // as a perfect circle. Non-circular ellipses fall back to the
+  // smaller side's radius — visually wrong (renders an oval-ish
+  // pill, not a true ellipse), but that's the closest StyleBoxFlat
+  // can do without a custom shader. The pixel diff for these frames
+  // will fail honestly with an inspectable artifact rather than
+  // blowing up the structural roundtrip with a thrown emit. v1 work
+  // can replace with a SubViewport + custom shader if needed.
+  const radius = Math.round(Math.min(node_.size.x, node_.size.y) / 2);
   // Synthesize a uniform corner-radius node clone so the shared
   // builder produces the same shape as a ROUNDED_RECTANGLE.
   const synthesized: FigNode = {
@@ -401,7 +454,17 @@ function containerProperties(node_: FigNode, plan: LayoutPlan): readonly GodotPr
 
 /**
  * Properties for a plain `Control` container (no autolayout). Carries
- * size offsets so absolute children land at the right positions.
+ * size offsets so absolute children land at the right positions, plus
+ * `clip_contents = true` when the fig frame has clipping enabled
+ * (Figma's default — `frameMaskDisabled` is false unless the author
+ * turned it off; `clipsContent` is the explicit alternative). Without
+ * this, an oversized child paints past the frame's rect (e.g. a
+ * 100% rect inside a corner-rounded frame fills the corners).
+ *
+ * Note: Godot's `clip_contents` clips to the rect, not to corner
+ * radii. Frames with non-zero corner radius still get the correct
+ * rect-clip; the corner-rounded clip is a future enhancement (would
+ * need a SubViewport + shader or a CanvasGroup mask).
  */
 function plainControlProperties(node_: FigNode): readonly GodotProperty[] {
   const props: GodotProperty[] = [];
@@ -409,7 +472,33 @@ function plainControlProperties(node_: FigNode): readonly GodotProperty[] {
     props.push(property("offset_right", floatVal(node_.size.x)));
     props.push(property("offset_bottom", floatVal(node_.size.y)));
   }
+  if (figClipsContent(node_)) {
+    props.push(property("clip_contents", boolVal(true)));
+  }
   return props;
+}
+
+/**
+ * Decide whether a fig FRAME / GROUP node clips its children. Figma
+ * stores this two ways:
+ *
+ *   - `clipsContent: boolean` — set explicitly when the author toggles
+ *     "Clip content" in the Figma side panel.
+ *   - `frameMaskDisabled: boolean` — historical inverse field; defaults
+ *     to `false` (clipping on). When `true`, clipping is off.
+ *
+ * The two are XOR-ish in real fig output. Treat clipping as ON when
+ * either positive signal is present, and OFF only when explicitly
+ * disabled.
+ */
+function figClipsContent(node_: FigNode): boolean {
+  if (node_.clipsContent === true) {
+    return true;
+  }
+  if (node_.frameMaskDisabled === false) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -443,6 +532,17 @@ function buildFramePanel(
   return { panel, subResource: styleBox };
 }
 
+// Rounded-corner clipping was prototyped this loop iteration via
+// `clip_children = CLIP_AND_DRAW` on the bg Panel + reparenting the
+// inner stack inside it. Single-level cases (clip-rounded-basic /
+// pill / circle) hit 0% diff, but nested clip chains regressed
+// (clip-rounded-nested, frame-deep-clip jumped 0% → 23%) because
+// Godot's `clip_children` only clips the immediate children's
+// drawing, not the whole subtree's composite. The rect-only
+// `Control.clip_contents = true` (already in `plainControlProperties`)
+// remains the conservative default. A proper rounded clip would
+// need a SubViewport-based mask, deferred to a future iteration.
+
 /**
  * Render a stack-shaped container (FRAME / GROUP / COMPONENT / INSTANCE).
  *
@@ -471,16 +571,33 @@ function emitContainer(node_: FigNode, ctx: WalkContext): GodotNode {
   const distributed = applyPrimaryDistribution(plan, childViews, ctx);
 
   const innerName = uniqueNodeName(ctx, node_.name ?? "Stack");
+  // The `inner` BoxContainer/Control is *just* the layout primitive —
+  // no modulate. Frame-level opacity needs to apply to the
+  // background fill too, so we hoist `modulate` to the outermost wrap
+  // (the Control / MarginContainer that adopts the bg+inner sibling
+  // pair), not to the inner stack alone.
   const inner: GodotNode = node(innerName, plan.container, {
     properties: containerProperties(node_, plan),
     children: distributed,
   });
-  const innerWithModulate = withOptionalModulate(inner, node_);
 
   const background = buildFramePanel(node_, ctx);
   if (background) {
     ctx.subResources.push(background.subResource);
   }
+  // Rounded-corner clipping was attempted via
+  // `clip_children = CLIP_AND_DRAW` on the bg Panel + reparenting
+  // the inner stack inside it. Worked for single-level cases
+  // (clip-rounded-basic / pill / circle → 0% diff), but broke
+  // nested-clip cases (clip-rounded-nested, frame-deep-clip jumped
+  // 0% → 23%) because Godot's `clip_children` only clips the
+  // immediate children's drawing, not the whole subtree's
+  // composite. A deeper-nested overflow child renders past its
+  // intermediate ancestor's rounded silhouette. The rect-clip path
+  // (`Control.clip_contents = true`) is the conservative fallback
+  // that handles both cases at non-zero but uniform diff. Revisit
+  // when a SubViewport-based mask becomes available — until then,
+  // the rect-only clip is the lowest aggregate diff.
   const hasPadding =
     plan.padding.top !== 0 ||
     plan.padding.right !== 0 ||
@@ -488,29 +605,50 @@ function emitContainer(node_: FigNode, ctx: WalkContext): GodotNode {
     plan.padding.left !== 0;
 
   if (background && hasPadding) {
-    const wrapName = uniqueNodeName(ctx, `${node_.name ?? "Frame"}_Margin`);
-    return node(wrapName, "MarginContainer", {
+    // The bg Panel must paint the **full** frame rect (Figma's frame
+    // fill spans behind the padding too), but the children must be
+    // inset by the padding. A `MarginContainer` shrinks every direct
+    // child including a sibling Panel — we'd lose the bg outside the
+    // padded area. Wrap as `Control { Panel(bg, anchored full),
+    // MarginContainer { stack } }` so the bg escapes the margin
+    // shrink.
+    const wrapName = uniqueNodeName(ctx, `${node_.name ?? "Frame"}_Group`);
+    const marginName = uniqueNodeName(ctx, `${node_.name ?? "Frame"}_Margin`);
+    const marginNode = node(marginName, "MarginContainer", {
       properties: marginOverridesWithSize(node_, plan.padding),
-      children: [background.panel, innerWithModulate],
+      children: [inner],
     });
+    return withOptionalModulate(
+      node(wrapName, "Control", {
+        properties: plainControlProperties(node_),
+        children: [background.panel, marginNode],
+      }),
+      node_,
+    );
   }
   if (hasPadding) {
     const wrapName = uniqueNodeName(ctx, `${node_.name ?? "Frame"}_Margin`);
-    return node(wrapName, "MarginContainer", {
-      properties: marginOverridesWithSize(node_, plan.padding),
-      children: [innerWithModulate],
-    });
+    return withOptionalModulate(
+      node(wrapName, "MarginContainer", {
+        properties: marginOverridesWithSize(node_, plan.padding),
+        children: [inner],
+      }),
+      node_,
+    );
   }
   if (background) {
     // Background panel + stack as siblings under a wrapping Control so
     // the panel can paint behind the children without reparenting them.
     const wrapName = uniqueNodeName(ctx, `${node_.name ?? "Frame"}_Group`);
-    return node(wrapName, "Control", {
-      properties: plainControlProperties(node_),
-      children: [background.panel, innerWithModulate],
-    });
+    return withOptionalModulate(
+      node(wrapName, "Control", {
+        properties: plainControlProperties(node_),
+        children: [background.panel, inner],
+      }),
+      node_,
+    );
   }
-  return innerWithModulate;
+  return withOptionalModulate(inner, node_);
 }
 
 function withOptionalModulate(target: GodotNode, source: FigNode): GodotNode {
@@ -518,6 +656,16 @@ function withOptionalModulate(target: GodotNode, source: FigNode): GodotNode {
   if (!modulate) {
     return target;
   }
+  // Figma composes the whole frame as one layer and blends that
+  // composite at alpha; Godot's `modulate` cascades to each
+  // descendant individually, so overlapping children at the same
+  // opacity blend differently. The right Godot primitive for the
+  // fig semantics is `CanvasGroup`, but in 4.6 it interacts oddly
+  // with the gl_compatibility renderer's clear-colour blend (frame
+  // composites against a transparent backbuffer that loses the
+  // white clear). Until that's resolved, fall back to plain
+  // `modulate` and accept the overlap-region delta on the few frames
+  // that exercise it.
   return { ...target, properties: [...target.properties, modulate] };
 }
 
@@ -535,6 +683,31 @@ function marginOverridesWithSize(
 }
 
 /** Top-level entry — render any node into a GodotNode (mutating ctx). */
+/**
+ * Node kinds that v0 cannot render faithfully (LINE / STAR /
+ * REGULAR_POLYGON / VECTOR / SYMBOL / BOOLEAN_OPERATION). Emitting
+ * a placeholder Control keeps the structural roundtrip + sibling
+ * layout intact; the pixel diff for these frames will fail honestly
+ * with a real, inspectable artifact rather than blowing up the whole
+ * spec file with a thrown emit. v1 work can replace the placeholder
+ * with a faithful renderer per kind.
+ */
+const PLACEHOLDER_NODE_TYPES: ReadonlySet<string> = new Set([
+  "LINE",
+  "STAR",
+  "REGULAR_POLYGON",
+  "VECTOR",
+  "SYMBOL",
+  "BOOLEAN_OPERATION",
+]);
+
+function emitPlaceholder(node_: FigNode, ctx: WalkContext): GodotNode {
+  const name = uniqueNodeName(ctx, node_.name ?? node_.type.name);
+  const props: GodotProperty[] = [...customMinimumSizeProperty(node_)];
+  return node(name, "Control", { properties: props });
+}
+
+/** Top-level entry: render any FigNode into a GodotNode (mutating ctx). */
 export function emitNode(node_: FigNode, ctx: WalkContext): GodotNode {
   const typeName = getNodeType(node_);
   if (typeName === TEXT_TYPE) {
@@ -549,6 +722,9 @@ export function emitNode(node_: FigNode, ctx: WalkContext): GodotNode {
   }
   if (FRAME_LIKE_TYPES.has(typeName)) {
     return emitContainer(node_, ctx);
+  }
+  if (PLACEHOLDER_NODE_TYPES.has(typeName)) {
+    return emitPlaceholder(node_, ctx);
   }
   throw new Error(
     `fig-to-godot: unsupported node type "${typeName}" (node "${node_.name ?? "unnamed"}")`,

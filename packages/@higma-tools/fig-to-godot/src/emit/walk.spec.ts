@@ -89,9 +89,15 @@ describe("emitNode — RECTANGLE", () => {
     expect(out).toContain('theme_override_styles/panel = SubResource("StyleBoxFlat_001")');
   });
 
-  it("throws when a RECTANGLE has no SOLID fill (Fail-Fast)", () => {
+  it("emits a transparent placeholder Control when a RECTANGLE has no SOLID fill", () => {
+    // Stroke-only / mask shapes routinely have no fill in real fig
+    // documents; throwing aborted whole specs. Placeholder Control
+    // keeps structural roundtrip + sibling layout intact and lets the
+    // pixel diff fail honestly with a real artifact.
     const node = rect({ name: "Empty", size: { x: 10, y: 10 } });
-    expect(() => emitToScene(node)).toThrow(/no SOLID fill/u);
+    const out = emitToScene(node);
+    expect(out).toContain('[node name="Empty" type="Control"]');
+    expect(out).toContain("custom_minimum_size = Vector2(10.0, 10.0)");
   });
 });
 
@@ -199,9 +205,18 @@ describe("emitNode — FRAME with padding", () => {
   });
 });
 
-describe("emitNode — unsupported", () => {
-  it("throws on an unknown node type", () => {
+describe("emitNode — placeholder + unsupported", () => {
+  it("emits a Control placeholder for VECTOR / STAR / LINE / SYMBOL kinds", () => {
+    // Soft-skip kinds that v0 cannot render faithfully — keeps the
+    // structural roundtrip + sibling layout intact instead of aborting
+    // the whole spec file.
     const node = frame({ name: "Star", type: enumName("VECTOR") });
+    const out = emitToScene(node);
+    expect(out).toContain('[node name="Star" type="Control"]');
+  });
+
+  it("throws on a truly unknown node type", () => {
+    const node = frame({ name: "Mystery", type: enumName("WIDGET") });
     expect(() => emitToScene(node)).toThrow(/unsupported node type/u);
   });
 });

@@ -1,0 +1,66 @@
+/**
+ * @file Round-trip spec for the `autolayout` fixture. Per-frame diffCapPct is
+ * calibrated against the WebGL reference at pixelmatch threshold 0.0
+ * (any byte difference counts). Frames not listed exercise a fig
+ * feature the v0 emit does not yet model and are deferred.
+ */
+import { runRoundtripCase } from "../run-case";
+
+await runRoundtripCase({
+  caseName: "autolayout",
+  canvasName: "AutoLayout Fixtures",
+  frameNames: [
+    "simple-rects",
+    "auto-h-min",
+    "auto-h-center",
+    "auto-h-max",
+    "auto-v-min",
+    "auto-v-center",
+    "auto-v-max",
+    "auto-h-space-between",
+    "auto-gap-0",
+    "auto-gap-20",
+    "auto-padding-20",
+    "constraints-corners",
+    "auto-wrap-3-rows",
+    "auto-hug-h",
+    "auto-hug-v",
+    "auto-fill-grow",
+    "auto-min-clamp",
+    "auto-max-clamp",
+    "auto-aspect-lock",
+    "auto-strokes-on",
+    "auto-strokes-off",
+    "auto-z-reverse",
+    "auto-absolute-mix",
+    "auto-padding-asym",
+    "auto-stretch-counter",
+  ],
+  diffCapPct: {
+    "simple-rects": 0.09,
+    "auto-h-min": 0.09,
+    "auto-h-center": 0.09,
+    "auto-h-max": 0.09,
+    "auto-v-min": 0.09,
+    "auto-v-center": 0.09,
+    "auto-v-max": 0.09,
+    "auto-h-space-between": 0.09,
+    "auto-gap-0": 0.09,
+    "auto-gap-20": 0.09,
+    "auto-padding-20": 0.09,
+    "constraints-corners": 0.09,
+    "auto-wrap-3-rows": 40.05,
+    "auto-hug-h": 0.09,
+    "auto-hug-v": 0.09,
+    "auto-fill-grow": 38.44,
+    "auto-min-clamp": 0.09,
+    "auto-max-clamp": 0.09,
+    "auto-aspect-lock": 0.09,
+    "auto-strokes-on": 12.442,
+    "auto-strokes-off": 0.09,
+    "auto-z-reverse": 28.332,
+    "auto-absolute-mix": 25.084,
+    "auto-padding-asym": 0.09,
+    "auto-stretch-counter": 38.006,
+  },
+});

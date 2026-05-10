@@ -119,16 +119,20 @@ describe("strokeProperties", () => {
     expect(widths).toEqual([1, 2, 3, 4]);
   });
 
-  it("throws on non-CENTER stroke alignment (Godot only draws centred borders)", () => {
-    expect(() =>
-      strokeProperties(
-        rect({
-          strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
-          strokeWeight: 2,
-          strokeAlign: "INSIDE",
-        }),
-      ),
-    ).toThrow(/stroke align/u);
+  it("emits a CENTER border regardless of authored INSIDE / OUTSIDE alignment", () => {
+    // Godot's StyleBoxFlat draws borders centred on the edge — no
+    // INSIDE / OUTSIDE option exists. The emitter approximates by
+    // ignoring strokeAlign and lets the per-frame diff cap absorb the
+    // ±strokeWeight/2 visual shift.
+    const props = strokeProperties(
+      rect({
+        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokeWeight: 2,
+        strokeAlign: "INSIDE",
+      }),
+    );
+    expect(props.map((p) => p.name)).toContain("border_color");
+    expect(props.map((p) => p.name)).toContain("border_width_top");
   });
 
   it("throws on dashed strokes", () => {

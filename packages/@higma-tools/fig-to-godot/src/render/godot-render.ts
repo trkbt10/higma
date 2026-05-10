@@ -199,6 +199,14 @@ async function runGodot(options: RunGodotOptions): Promise<void> {
   const args = [
     "--audio-driver",
     "Dummy",
+    // Force the gl_compatibility (OpenGL ES 3.0 / WebGL 2) rendering
+    // backend. The default forward_plus pipeline applies sRGB → Linear
+    // → sRGB conversion when sampling StyleBox colors, desaturating
+    // the output relative to the WebGL reference PNGs the
+    // fig-to-swiftui peer ships. gl_compatibility treats StyleBox
+    // `bg_color` as the literal pixel colour, matching the reference.
+    "--rendering-driver",
+    "opengl3",
     "--path",
     options.projectDir,
     "-s",

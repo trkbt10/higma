@@ -10,9 +10,23 @@ config_version=5
 [application]
 
 config/name="fig-to-godot render harness"
-config/features=PackedStringArray("4.6", "Forward Plus")
+config/features=PackedStringArray("4.6", "GL Compatibility")
 
 [rendering]
 
-renderer/rendering_method="forward_plus"
-renderer/rendering_method.mobile="forward_plus"
+; Use the gl_compatibility renderer (OpenGL ES 3.0 / WebGL 2 backend).
+; The forward_plus renderer applies sRGB → Linear → sRGB conversion
+; when sampling StyleBox colors, which desaturates the output relative
+; to the WebGL reference PNGs that the fig-to-swiftui peer ships. The
+; gl_compatibility renderer treats StyleBox `bg_color` as the literal
+; pixel colour, matching the reference exactly.
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+; The WebGL reference PNGs the fig-to-swiftui peer ships are
+; rendered against the canvas's default white background. Match
+; that here so frame-level opacity (`modulate.a < 1`) blends to the
+; same final pixel values; without this the SubViewport clear-colour
+; stays at Godot's default (transparent / black) and any frame with
+; opacity diverges from the reference by the difference between the
+; two clear colours.
+environment/defaults/default_clear_color=Color(1, 1, 1, 1)
