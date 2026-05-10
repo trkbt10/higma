@@ -1,7 +1,7 @@
 {
   "feature": "autolayout-expansion",
-  "phase": "design-generated",
-  "updated_at": "2026-05-10T03:44:40Z",
+  "phase": "tasks-generated",
+  "updated_at": "2026-05-10T03:46:28Z",
   "approvals": {
     "requirements": {
       "generated": true,
@@ -12,8 +12,8 @@
       "approved": true
     },
     "tasks": {
-      "generated": false,
-      "approved": false
+      "generated": true,
+      "approved": true
     }
   }
 }
