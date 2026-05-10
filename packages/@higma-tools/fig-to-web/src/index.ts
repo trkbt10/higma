@@ -1,19 +1,19 @@
 /**
  * @file Public entry — programmatic API for fig-to-web.
  *
- * The package exposes three layers:
+ * The package exposes three layers (the `findCanvas` /
+ * `findInternalCanvas` helpers live in `@higma-document-io/fig/context`
+ * — the no-cross-package-reexport rule forbids re-exporting them
+ * here, so consumers import them from that package directly):
  *
- *   1. `fig-source` — load a `.fig` and walk it as raw FigNodes.
+ *   1. `loadFigSource` — load a `.fig` buffer into a symbol-resolved
+ *      context. Defined locally because the rule also forbids
+ *      re-exporting `createFigSymbolContext`.
  *   2. `tokens` — extract design tokens (colors / typography /
  *      spacing / radii / shadows) and serialise them to CSS.
  *   3. `emit` — convert target frames into TSX file contents.
- *
- * The CLI lives in `./cli/bin.ts` and consumes only the public
- * functions re-exported below; downstream consumers can either go
- * through the CLI or call `emitFromFrames` directly to integrate the
- * generator into a larger build pipeline.
  */
-export { findCanvas, findInternalCanvas, loadFigSource } from "./fig-source";
+export { loadFigSource } from "./fig-source/load";
 // `FigSymbolContext` (the type returned by `loadFigSource`) lives in
 // `@higma-document-io/fig/context` — consumers must import it directly.
 

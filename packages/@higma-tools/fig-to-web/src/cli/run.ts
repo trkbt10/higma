@@ -11,8 +11,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { CliOptions } from "./args";
-import { findCanvas, loadFigSource } from "../fig-source";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import { findCanvas, type FigSymbolContext } from "@higma-document-io/fig/context";
+import { loadFigSource } from "../fig-source/load";
 import { emitFromFrames, listFrameTargets, pickFrameByName } from "../emit";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { bundlePreview } from "./bundle";

@@ -17,10 +17,6 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./fig-source": {
-      "types": "./src/fig-source/index.ts",
-      "default": "./src/fig-source/index.ts"
-    },
     "./tokens": {
       "types": "./src/tokens/index.ts",
       "default": "./src/tokens/index.ts"

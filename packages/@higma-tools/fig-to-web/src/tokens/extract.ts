@@ -11,7 +11,7 @@
  */
 import type { FigEffect, FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type { FigSymbolContext } from "@higma-document-io/fig/context";
-import { findInternalCanvas } from "../fig-source";
+import { findInternalCanvas } from "@higma-document-io/fig/context";
 import type { TokenIndex, TokenSet } from "./types";
 import { buildColorTokens, lookupColorId } from "./color";
 import { buildTypographyTokens, lookupTypographyId } from "./typography";
