@@ -408,6 +408,12 @@ function expectGridPlacement(svg: string, layerName: "auto-grid-2x3" | "auto-nes
   );
 }
 
+function expectClampSize(svg: string, layerName: "auto-min-clamp" | "auto-max-clamp"): void {
+  const size = getSvgSize(svg);
+  const expected = layerName === "auto-min-clamp" ? { width: 200, height: 120 } : { width: 80, height: 240 };
+  expect(size).toEqual(expected);
+}
+
 const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
   "auto-grid-2x3": [
     { x: 16, y: 16, width: 40, height: 30 },
@@ -590,6 +596,9 @@ describe("AutoLayout Rendering", () => {
       }
       if (layerName === "auto-grid-2x3" || layerName === "auto-nested") {
         expectGridPlacement(svg, layerName);
+      }
+      if (layerName === "auto-min-clamp" || layerName === "auto-max-clamp") {
+        expectClampSize(svg, layerName);
       }
     });
   }
