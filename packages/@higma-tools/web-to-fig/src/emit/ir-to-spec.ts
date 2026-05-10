@@ -57,6 +57,7 @@ export function irToSpecGraph(node: NodeIR): SpecGraph {
 }
 
 function frameSpec(node: NodeIR & { readonly kind: "frame" }): FrameNodeSpec {
+  const radii = resolveFrameCornerRadii(node);
   return {
     type: "FRAME",
     name: node.name,
@@ -72,7 +73,40 @@ function frameSpec(node: NodeIR & { readonly kind: "frame" }): FrameNodeSpec {
     visible: node.visible,
     clipsContent: node.style.clipsContent,
     autoLayout: irAutoLayoutToFigOrUndefined(node.autoLayout),
+    cornerRadius: radii?.uniform,
+    rectangleCornerRadii: radii?.perCorner,
   };
+}
+
+/**
+ * Translate the IR's per-corner `LengthIR` quartet onto the FRAME spec's
+ * two-field corner-radius surface. Figma stores a single `cornerRadius`
+ * when every corner is uniform, and a `rectangleCornerRadii` quartet
+ * otherwise — keeping both around lets the renderer pick the cheaper
+ * uniform path while still supporting authored asymmetric corners
+ * (`border-top-left-radius: 8px` only). Returns undefined when the IR
+ * has no radii at all (the common case for a structural `<div>`).
+ */
+function resolveFrameCornerRadii(
+  node: NodeIR & { readonly kind: "frame" },
+): { readonly uniform?: number; readonly perCorner?: readonly [number, number, number, number] } | undefined {
+  const radii = node.style.cornerRadius;
+  if (!radii) {
+    return undefined;
+  }
+  const resolved: readonly [number, number, number, number] = [
+    resolveCornerRadius(radii[0], node.box),
+    resolveCornerRadius(radii[1], node.box),
+    resolveCornerRadius(radii[2], node.box),
+    resolveCornerRadius(radii[3], node.box),
+  ];
+  if (resolved.every((r) => r === resolved[0])) {
+    if (resolved[0] === 0) {
+      return undefined;
+    }
+    return { uniform: resolved[0] };
+  }
+  return { perCorner: resolved };
 }
 
 function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {

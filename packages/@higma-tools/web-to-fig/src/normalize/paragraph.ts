@@ -90,7 +90,17 @@ function collectTextLength(el: RawElement): number {
     ? el.textFragments.reduce((acc, slot) => acc + slot.length, 0)
     : (el.text ?? "").length;
   const pseudo = (el.pseudo ?? []).reduce((acc, p) => acc + p.text.length, 0);
-  const childTotal = el.children.reduce((acc, child) => acc + collectTextLength(child), 0);
+  // Only count visible descendants — invisible children (e.g.
+  // `<option>` inside a `<select>`, `display: none` siblings) do
+  // not contribute glyphs to the host's paragraph. Without this
+  // filter, a `<select>` whose options carry text labels was
+  // mis-classified as a paragraph host with empty visible content,
+  // producing a TEXT IR with `characters: ""` instead of a FRAME
+  // representing the form control.
+  const childTotal = el.children.reduce(
+    (acc, child) => acc + (child.visible ? collectTextLength(child) : 0),
+    0,
+  );
   return direct + pseudo + childTotal;
 }
 
@@ -293,6 +303,15 @@ function sameStyle(a: BaseStyle, b: BaseStyle): boolean {
  * before all children" ordering used by leaf-text nodes.
  */
 function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
+  // `<br>` inside a paragraph is an inline forced line break: CSS
+  // semantics say it inserts a newline between the surrounding
+  // text fragments. Without this branch the walker drops the `<br>`
+  // entirely (it has no text and no children), and "line one<br>line
+  // two" collapses to "line oneline two".
+  if (el.tag === "br") {
+    writer.push("\n", base);
+    return;
+  }
   const ownStyle = mergeStyle(el, base);
   pushPseudo(el, "before", ownStyle, writer);
   if (el.textFragments && el.textFragments.length === el.children.length + 1) {

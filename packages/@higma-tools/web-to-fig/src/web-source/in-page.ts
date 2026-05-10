@@ -121,6 +121,9 @@ export function captureSnapshot(): RawSnapshotJson {
     "border-bottom-width",
     "border-left-width",
     "border-top-color",
+    "border-right-color",
+    "border-bottom-color",
+    "border-left-color",
     "border-top-style",
     "border-radius",
     "border-top-left-radius",
@@ -159,6 +162,7 @@ export function captureSnapshot(): RawSnapshotJson {
     "transform",
     "visibility",
     "align-items",
+    "z-index",
   ];
   const imageRegistry = new Map<string, string>();
 

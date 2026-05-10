@@ -32,6 +32,7 @@ import type {
   TextNodeIR,
   TextRunIR,
   TextStyleIR,
+  TransformIR,
   VectorNodeIR,
   VectorPathIR,
   ViewportIR,
@@ -175,12 +176,119 @@ function normalizeNode(el: RawElement, parent: RawElement | undefined, breakpoin
   }
   const isText = el.text !== undefined && el.children.length === 0 && el.text.length > 0;
   if (isText) {
+    // `<button>Click me</button>` and similar leaf-text elements with
+    // authored chrome (`background-color`, `border-radius`, border)
+    // would lose every chrome surface if normalised as a bare TEXT —
+    // Figma's TEXT node carries glyph fills, not a background paint
+    // or a corner radius. Promote those to a FRAME wrapping a TEXT
+    // child so the button's chrome lives on the FRAME and the label
+    // lives on the TEXT.
+    if (hasAuthoredChrome(el)) {
+      return promoteLeafTextToFrame(el, parent, breakpoint);
+    }
     return normalizeText(el, parent, breakpoint);
   }
   if (isParagraphHost(el)) {
     return normalizeParagraph(el, parent, breakpoint);
   }
   return normalizeFrame(el, parent, breakpoint);
+}
+
+/**
+ * True when a leaf-text element carries CSS chrome that the IR's
+ * TEXT node cannot represent without dropping fidelity:
+ *   - opaque `background-color` (would be lost — TEXT has no bg fill)
+ *   - any non-zero `border-*` width (would be lost — TEXT has no border)
+ *   - any non-zero corner radius (would be lost — TEXT has no radius)
+ *   - non-trivial box-shadow (would be lost — TEXT has no effects)
+ *
+ * Pure CSS `color` does not count — that IS the glyph fill on the
+ * TEXT node, which is what TEXT IR expects.
+ */
+function hasAuthoredChrome(el: RawElement): boolean {
+  const cs = el.computedStyle;
+  const bg = cs["background-color"];
+  if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
+    return true;
+  }
+  const borderTotal = parsePxOr(cs["border-top-width"], 0)
+    + parsePxOr(cs["border-right-width"], 0)
+    + parsePxOr(cs["border-bottom-width"], 0)
+    + parsePxOr(cs["border-left-width"], 0);
+  if (borderTotal > 0) {
+    return true;
+  }
+  const radii = [
+    cs["border-top-left-radius"],
+    cs["border-top-right-radius"],
+    cs["border-bottom-right-radius"],
+    cs["border-bottom-left-radius"],
+  ];
+  for (const r of radii) {
+    if (r && r !== "0px" && r !== "0") {
+      return true;
+    }
+  }
+  if (cs["box-shadow"] && cs["box-shadow"] !== "none") {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Build a FRAME IR carrying the chrome (fills / strokes / effects /
+ * corner radius) and a single TEXT child holding the label. The
+ * FRAME's box matches the element's rect; the child TEXT's box is
+ * the same rect with origin (0, 0) since it sits at the FRAME's
+ * top-left.
+ *
+ * Padding lives on the chrome's authored CSS — at this granularity
+ * the TEXT child's rect equals the FRAME box, so the renderer paints
+ * the label in the FRAME's full content area. A future iteration
+ * could push CSS padding into FRAME autoLayout for centred labels.
+ */
+function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, breakpoint: string): FrameNodeIR {
+  const localBox = boxForElement(el, parent);
+  const innerTextElement: RawElement = {
+    ...el,
+    id: `${el.id}/__label__`,
+    children: [],
+    pseudo: el.pseudo,
+    text: el.text,
+    rect: el.rect,
+    contentRect: el.contentRect,
+    computedStyle: {
+      ...el.computedStyle,
+      // Strip chrome so the inner TEXT carries only glyph styling.
+      "background-color": "rgba(0, 0, 0, 0)",
+      "background-image": "none",
+      "border-top-width": "0px",
+      "border-right-width": "0px",
+      "border-bottom-width": "0px",
+      "border-left-width": "0px",
+      "border-top-left-radius": "0px",
+      "border-top-right-radius": "0px",
+      "border-bottom-right-radius": "0px",
+      "border-bottom-left-radius": "0px",
+      "box-shadow": "none",
+    },
+  };
+  const inner = normalizeText(innerTextElement, el, breakpoint);
+  // The inner TEXT's box was computed parent-relative against `el`,
+  // which (since el === inner's parent) lands the TEXT at (0, 0).
+  return {
+    kind: "frame",
+    id: el.id,
+    componentKey: variantKey(el, breakpoint),
+    name: el.tag,
+    box: localBox,
+    style: normalizeStyle(el),
+    visible: el.visible,
+    sizing: normalizeChildSizing(el, parent),
+    transform: parseTransformIR(el.computedStyle.transform),
+    autoLayout: { direction: "none" },
+    children: [inner],
+  };
 }
 
 /**
@@ -233,6 +341,7 @@ function normalizeMaskVector(el: RawElement, parent: RawElement | undefined, bre
     style: normalizeStyle(el),
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
+    transform: parseTransformIR(el.computedStyle.transform),
     viewBox: svg.viewBox,
     paths,
   };
@@ -332,6 +441,7 @@ function normalizeSvgVector(el: RawElement, parent: RawElement | undefined, brea
     style: normalizeStyle(el),
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
+    transform: parseTransformIR(el.computedStyle.transform),
     viewBox: svg.viewBox,
     paths,
   };
@@ -393,6 +503,7 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined, brea
     style,
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
+    transform: parseTransformIR(el.computedStyle.transform),
     characters: content.characters,
     textStyle,
     runs: content.runs.length > 0 ? content.runs : undefined,
@@ -577,6 +688,7 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoi
   // glyphs survive into the IR.
   const childrenRaw = collectFlowChildren(el);
   const childrenIR = childrenRaw.map((child) => normalizeNode(child, el, breakpoint));
+  const reorderedIR = reorderByZIndex(childrenRaw, childrenIR);
   const synthChildren = synthesiseNaturalBackgroundFrames(el, breakpoint);
   const localBox = boxForElement(el, parent);
   const autoLayout = resolveAutoLayout(el, childrenRaw);
@@ -593,9 +705,55 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoi
     style: normalizeStyle(el),
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
+    transform: parseTransformIR(el.computedStyle.transform),
     autoLayout,
-    children: [...synthChildren, ...childrenIR],
+    children: [...synthChildren, ...reorderedIR],
   };
+}
+
+/**
+ * Apply CSS painting order: lower z-index paints first (= earlier in
+ * the array), higher z-index paints last (= later, on top). Stable
+ * within equal z-indices so source order is preserved among siblings
+ * that share a stacking level.
+ *
+ * `z-index: auto` resolves to 0 for the purpose of ordering against
+ * positioned siblings; this matches the simple-stacking-context
+ * behaviour CSS specifies for elements that don't establish their
+ * own stacking context. Full stacking-context modelling (negative
+ * z-index below in-flow, ::before/::after rules, etc.) is out of
+ * scope; the simple ascending sort handles the dominant real-world
+ * case (badges, dropdowns, sticky toolbars within a single context).
+ */
+function reorderByZIndex(rawChildren: readonly RawElement[], irChildren: readonly NodeIR[]): readonly NodeIR[] {
+  if (rawChildren.length !== irChildren.length) {
+    throw new Error(
+      `reorderByZIndex: raw/IR child count mismatch (${rawChildren.length} vs ${irChildren.length})`,
+    );
+  }
+  if (rawChildren.length < 2) {
+    return irChildren;
+  }
+  const indexed = irChildren.map((node, i) => ({
+    node,
+    z: parseZIndex(rawChildren[i]!.computedStyle["z-index"]),
+    sourceIndex: i,
+  }));
+  indexed.sort((a, b) => {
+    if (a.z !== b.z) {
+      return a.z - b.z;
+    }
+    return a.sourceIndex - b.sourceIndex;
+  });
+  return indexed.map((entry) => entry.node);
+}
+
+function parseZIndex(value: string | undefined): number {
+  if (!value || value === "auto") {
+    return 0;
+  }
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : 0;
 }
 
 /**
@@ -820,7 +978,22 @@ function normalizeText(el: RawElement, parent: RawElement | undefined, breakpoin
   // inline children) is a separate task — at the current granularity
   // every TEXT node represents exactly one inline run.
   const style = textStyleForParagraph(el);
-  const characters = el.text ?? "";
+  // CSS Generated Content: `::before` content prepends the host's
+  // text, `::after` appends. A leaf-text element (e.g. `<li>` with
+  // a `::before { content: "•"; }`) loses the pseudo glyphs unless
+  // we splice them into the characters string. Per-pseudo style
+  // overrides aren't expressed in `runs` here because the leaf-text
+  // path doesn't carry runs at all — the dominant real-world case
+  // (bullet / arrow / separator) shares the host's colour anyway.
+  const before = (el.pseudo ?? [])
+    .filter((p) => p.which === "before")
+    .map((p) => p.text)
+    .join("");
+  const after = (el.pseudo ?? [])
+    .filter((p) => p.which === "after")
+    .map((p) => p.text)
+    .join("");
+  const characters = before + (el.text ?? "") + after;
   return {
     kind: "text",
     id: el.id,
@@ -830,6 +1003,7 @@ function normalizeText(el: RawElement, parent: RawElement | undefined, breakpoin
     style,
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
+    transform: parseTransformIR(el.computedStyle.transform),
     characters,
     textStyle: normalizeTextStyle(el),
   };
@@ -931,13 +1105,13 @@ function collectFills(el: RawElement): readonly PaintIR[] {
 
 function collectStrokes(el: RawElement): StyleIR["strokes"] {
   const cs = el.computedStyle;
-  const widths = [
-    parsePxOr(cs["border-top-width"], 0),
-    parsePxOr(cs["border-right-width"], 0),
-    parsePxOr(cs["border-bottom-width"], 0),
-    parsePxOr(cs["border-left-width"], 0),
+  const edges = [
+    { side: "top", width: parsePxOr(cs["border-top-width"], 0), color: cs["border-top-color"] },
+    { side: "right", width: parsePxOr(cs["border-right-width"], 0), color: cs["border-right-color"] },
+    { side: "bottom", width: parsePxOr(cs["border-bottom-width"], 0), color: cs["border-bottom-color"] },
+    { side: "left", width: parsePxOr(cs["border-left-width"], 0), color: cs["border-left-color"] },
   ];
-  const max = Math.max(...widths);
+  const max = Math.max(...edges.map((e) => e.width));
   if (max <= 0) {
     return [];
   }
@@ -946,13 +1120,16 @@ function collectStrokes(el: RawElement): StyleIR["strokes"] {
   // per node, so we approximate asymmetric borders with the widest
   // edge — better than aborting the whole capture. A future IR
   // extension that models per-edge strokes would replace this
-  // narrowing.
-  const colorRaw = cs["border-top-color"];
-  if (!colorRaw) {
+  // narrowing. Pick the colour from the *widest* edge, not from
+  // `border-top-color` unconditionally — when only `border-bottom`
+  // is authored the top edge defaults to the element's `color`
+  // cascade, which would silently paint a wrong-colour stroke.
+  const dominant = edges.reduce((best, edge) => (edge.width > best.width ? edge : best), edges[0]!);
+  if (!dominant.color) {
     return [];
   }
   return [{
-    paint: { kind: "solid", color: parseColor(colorRaw) },
+    paint: { kind: "solid", color: parseColor(dominant.color) },
     weight: max,
     align: "center",
   }];
@@ -1052,19 +1229,24 @@ function resolveAutoLayout(el: RawElement, childrenRaw: readonly RawElement[]): 
   if (cs.display === "flex" || cs.display === "inline-flex") {
     return autoLayoutFromFlex(cs);
   }
-  // Viewport-anchored children (`fixed` / `sticky`) don't sit inside
-  // the parent's content box — their getBoundingClientRect is the
-  // viewport's, so feeding them to `inferAutoLayout` produces a bogus
-  // negative offset that distorts the inferred direction / gap. Drop
-  // them from inference; they re-enter the tree as ABSOLUTE-positioned
-  // children at emit time and stay where the browser put them.
-  // `position: absolute` children stay in this list because their
-  // rects are still inside the captured DOM ancestor (their nearest
-  // positioned ancestor *is* a real DOM node), so the layout maths
-  // still works for them.
+  // Out-of-flow children (`fixed`, `sticky`, AND `absolute`) must
+  // not feed `inferAutoLayout`. `fixed` / `sticky` were already
+  // excluded; `absolute` is added here too because:
+  //
+  //   - CSS removes absolutely-positioned children from the normal
+  //     flow; the parent's autoLayout intent is determined by its
+  //     in-flow siblings only.
+  //   - A real-world badge / dropdown / overlay sits in the parent's
+  //     content rect by happenstance, but its position contradicts
+  //     any consistent gap/direction the in-flow siblings would
+  //     suggest. Including it would corrupt the inferred direction.
+  //   - The absolute child still has a sensible parent-relative box
+  //     (the parent IS a positioned ancestor in this fixture, so
+  //     `boxRelative` returns the right offset), so the IR can keep
+  //     it as a child with `sizing.mode === "absolute"`.
   const flowChildren = childrenRaw.filter((c) => {
     const p = c.computedStyle.position;
-    return p !== "fixed" && p !== "sticky";
+    return p !== "fixed" && p !== "sticky" && p !== "absolute";
   });
   if (flowChildren.length === 0) {
     return { direction: "none" };
@@ -1157,25 +1339,16 @@ function normalizeChildSizing(el: RawElement, parent: RawElement | undefined): C
   if (!parent) {
     return { mode: "absolute" };
   }
-  // Viewport-anchored CSS positions (`fixed`, and `sticky` once it
-  // sticks) detach the element from its DOM ancestor's content box —
-  // their `getBoundingClientRect()` is whatever the viewport says,
-  // not "child rect inside parent contentRect". If we left them in
-  // flow, `boxRelative` would emit large negative offsets (the parent
-  // is somewhere below the viewport top while the child is at y=0)
-  // and the auto-layout inferer would treat the negative-offset
-  // child as a regular sibling. Mark them out-of-flow so the emitter
-  // can flip on `stackPositioning: ABSOLUTE`.
-  //
-  // `position: absolute` is intentionally *not* treated this way:
-  // its containing block is the nearest positioned DOM ancestor,
-  // which the `getBoundingClientRect()` already accounts for, and
-  // the absolute child's rect *does* lie inside the captured DOM
-  // ancestor. Treating `absolute` the same as `fixed` would
-  // misclassify YouTube's ~190 absolute layout helpers and break
-  // their parents' auto-layout.
+  // Out-of-flow positions (`fixed`, `sticky`, `absolute`) are marked
+  // with `mode: "absolute"` so the emitter pins the element with
+  // `stackPositioning: ABSOLUTE` and the autolayout inferer (run via
+  // `resolveAutoLayout`) knows to skip them. The previous code only
+  // marked `fixed` / `sticky`; an `absolute` badge or overlay was
+  // being treated as a flow child in IR, which led the figma side to
+  // attempt to fit it into the parent's stack and shifted other
+  // children's positions.
   const pos = el.computedStyle.position;
-  if (pos === "fixed" || pos === "sticky") {
+  if (pos === "fixed" || pos === "sticky" || pos === "absolute") {
     return { mode: "absolute" };
   }
   // Default to flow with fixed primary/counter axis. `inferAutoLayout`
@@ -1283,4 +1456,51 @@ function transformFromCss(value: string | undefined): TextStyleIR["textTransform
     default:
       return "none";
   }
+}
+
+/**
+ * Parse a CSS `transform` computed-style value into IR matrix form.
+ *
+ * `getComputedStyle` always emits the resolved matrix:
+ *   - `matrix(a, b, c, d, tx, ty)` for 2D
+ *   - `matrix3d(...)` for 3D (rare on layout-driven content)
+ *   - `none` when no transform applies
+ *
+ * Returns:
+ *   - `undefined` for `none` / `matrix3d(...)` (3D not yet in IR) /
+ *     parse failures.
+ *   - `undefined` for the identity matrix `matrix(1, 0, 0, 1, 0, 0)`
+ *     so the IR field stays absent in the no-op case.
+ *   - `undefined` for *pure translation* `matrix(1, 0, 0, 1, tx, ty)`
+ *     because the browser already baked the translate into the rect
+ *     via `getBoundingClientRect`. Surfacing it again would
+ *     double-count the offset at emit time.
+ *   - The full matrix otherwise (rotation, scale, skew, mixed).
+ */
+function parseTransformIR(value: string | undefined): TransformIR | undefined {
+  if (!value || value === "none") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("matrix(") || !trimmed.endsWith(")")) {
+    // matrix3d / unsupported function — leave undefined rather than
+    // silently emitting a 2D approximation. A future patch can teach
+    // the IR a 3D matrix type if real-world captures ever need it.
+    return undefined;
+  }
+  const inner = trimmed.slice("matrix(".length, -1);
+  const parts = inner.split(",").map((s) => parseFloat(s.trim()));
+  if (parts.length !== 6 || parts.some((n) => !Number.isFinite(n))) {
+    return undefined;
+  }
+  const [a, b, c, d, tx, ty] = parts as [number, number, number, number, number, number];
+  // Identity → no IR transform needed.
+  if (a === 1 && b === 0 && c === 0 && d === 1 && tx === 0 && ty === 0) {
+    return undefined;
+  }
+  // Pure translation → already baked into rect.
+  if (a === 1 && b === 0 && c === 0 && d === 1) {
+    return undefined;
+  }
+  return { a, b, c, d, tx, ty };
 }

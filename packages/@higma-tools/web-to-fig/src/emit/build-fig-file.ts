@@ -121,8 +121,9 @@ function emitFrame(
 
   const withFill = applyFrameBackground(baseBuilder, node.style.fills);
   const withLayout = applyAutoLayoutToFrame(withFill, node.autoLayout);
+  const withCorners = applyFrameCornerRadius(withLayout, node);
 
-  file.addFrame(withLayout.build());
+  file.addFrame(withCorners.build());
   idMap.set(node.id, localID);
 
   for (const child of node.children) {
@@ -136,6 +137,33 @@ function emitFrame(
     });
   }
   return localID;
+}
+
+/**
+ * Apply the IR's per-corner radius to the frame builder. Figma's
+ * frame builder owns a single `cornerRadius` getter (asymmetric
+ * `rectangleCornerRadii` is exposed only on `roundedRectNode`); when
+ * the four corners agree we feed that uniform value, otherwise we
+ * fall back to the largest corner so a CSS panel with mixed corners
+ * still appears rounded rather than square. Improving this further
+ * requires teaching the frame builder about per-corner radii — out
+ * of scope for the web-to-fig fix; assert the loss instead of
+ * silently swallowing it.
+ */
+function applyFrameCornerRadius(
+  builder: ReturnType<typeof frameNode>,
+  node: FrameNodeIR,
+): ReturnType<typeof frameNode> {
+  const radii = node.style.cornerRadius;
+  if (!radii) {
+    return builder;
+  }
+  const resolved = radii.map((r) => resolveCornerRadius(r, node.box));
+  const max = Math.max(...resolved);
+  if (max <= 0) {
+    return builder;
+  }
+  return builder.cornerRadius(max);
 }
 
 function applyFrameBackground(
