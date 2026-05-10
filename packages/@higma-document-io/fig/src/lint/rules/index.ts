@@ -13,6 +13,7 @@ import { parentRefsRule } from "./parent-refs";
 import { requiredNodesRule } from "./required-nodes";
 import { schemaCoverageRule } from "./schema-coverage";
 import { shapeFieldsRule } from "./shape-fields";
+import { symbolInstanceRule } from "./symbol-instance";
 import { visibleBlobsRule } from "./visible-blobs";
 import { zipPackageRule } from "./zip-package";
 import type { LintRule } from "../types";
@@ -26,4 +27,5 @@ export const FIG_LINT_RULES: readonly LintRule[] = [
   visibleBlobsRule,
   parentRefsRule,
   imageRefsRule,
+  symbolInstanceRule,
 ];

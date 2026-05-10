@@ -48,6 +48,24 @@ import { resolveChildConstraints } from "@higma-document-models/fig/symbols";
 import { getEffectiveSymbolID } from "@higma-document-models/fig/symbols";
 import { generatePlaceholderThumbnail } from "../thumbnail";
 
+function windingRuleForPath(windingRule: VectorNodeData["windingRule"]): { readonly value: number; readonly name: "EVENODD" | "NONZERO" } {
+  if (windingRule === "EVENODD") {
+    return { value: 1, name: "EVENODD" };
+  }
+  return { value: 0, name: "NONZERO" };
+}
+
+function stackWrapEnum(enabled: boolean): { readonly value: number; readonly name: "WRAP" | "NO_WRAP" } {
+  if (enabled) {
+    return { value: 1, name: "WRAP" };
+  }
+  return { value: 0, name: "NO_WRAP" };
+}
+
+function optionalVector(value: { readonly x: number; readonly y: number }): { readonly value: { readonly x: number; readonly y: number } } {
+  return { value };
+}
+
 
 
 
@@ -255,6 +273,10 @@ function _createFigFileBuilder() {
       stackReverseZIndex: data.stackReverseZIndex,
       minSize: data.minSize,
       maxSize: data.maxSize,
+      gridRows: data.gridRows,
+      gridColumns: data.gridColumns,
+      gridRowGap: data.gridRowGap,
+      gridColumnGap: data.gridColumnGap,
       // AutoLayout - child level
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
@@ -765,9 +787,7 @@ function _createFigFileBuilder() {
     // triples). Confirmed against Figma's own `.fig` exports: the
     // VECTOR nodes there carry their drawing this way.
     if (data.paths !== undefined && data.paths.length > 0) {
-      const winding = data.windingRule === "EVENODD"
-        ? { value: 1, name: "EVENODD" as const }
-        : { value: 0, name: "NONZERO" as const };
+      const winding = windingRuleForPath(data.windingRule);
       node.fillGeometry = data.paths.map((d) => {
         const blob = encodeSvgPathBlob(d);
         const blobIndex = addBlob({ bytes: [...blob.bytes] });
@@ -975,6 +995,10 @@ function _createFigFileBuilder() {
     stackReverseZIndex?: boolean;
     minSize?: { x: number; y: number };
     maxSize?: { x: number; y: number };
+    gridRows?: { readonly entries: readonly { readonly id: { readonly sessionID: number; readonly localID: number }; readonly position: string }[] };
+    gridColumns?: { readonly entries: readonly { readonly id: { readonly sessionID: number; readonly localID: number }; readonly position: string }[] };
+    gridRowGap?: number;
+    gridColumnGap?: number;
     // AutoLayout - child level
     stackPositioning?: { value: number; name: string };
     stackPrimarySizing?: { value: number; name: string };
@@ -1132,9 +1156,7 @@ function _createFigFileBuilder() {
       // throw at the value codec ("Expected object for type
       // StackWrap"). Translate booleans here so callers can keep
       // working with the natural `true`/`false` shape.
-      node.stackWrap = data.stackWrap
-        ? { value: 1, name: "WRAP" }
-        : { value: 0, name: "NO_WRAP" };
+      node.stackWrap = stackWrapEnum(data.stackWrap);
     }
     if (data.stackCounterSpacing !== undefined) {
       node.stackCounterSpacing = data.stackCounterSpacing;
@@ -1143,10 +1165,22 @@ function _createFigFileBuilder() {
       node.stackReverseZIndex = data.stackReverseZIndex;
     }
     if (data.minSize !== undefined) {
-      node.minSize = data.minSize;
+      node.minSize = optionalVector(data.minSize);
     }
     if (data.maxSize !== undefined) {
-      node.maxSize = data.maxSize;
+      node.maxSize = optionalVector(data.maxSize);
+    }
+    if (data.gridRows !== undefined) {
+      node.gridRows = data.gridRows;
+    }
+    if (data.gridColumns !== undefined) {
+      node.gridColumns = data.gridColumns;
+    }
+    if (data.gridRowGap !== undefined) {
+      node.gridRowGap = data.gridRowGap;
+    }
+    if (data.gridColumnGap !== undefined) {
+      node.gridColumnGap = data.gridColumnGap;
     }
 
     // AutoLayout - child level (for any node inside auto-layout)

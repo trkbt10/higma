@@ -214,12 +214,21 @@ function figImageToIR(paint: FigImagePaint): ImagePaintIR {
 }
 
 function irImageToFig(paint: ImagePaintIR): FigImagePaint {
+  const figScale = irScaleModeToFig(paint.scaleMode);
+  // TILE paints in Figma always carry a `scalingFactor` (the
+  // multiplier applied to the image's natural dimensions before it
+  // tiles). The IR doesn't carry per-paint scaling yet, so default
+  // to `1` — the image paints at its intrinsic size, which matches
+  // CSS `background-size: auto`. The renderer's
+  // `image-pattern-finalize` rejects TILE without a factor; emitting
+  // `1` here keeps the pipeline lossless for the natural-size case.
   return {
     type: "IMAGE",
     imageRef: paint.imageId,
-    scaleMode: irScaleModeToFig(paint.scaleMode),
+    scaleMode: figScale,
     visible: paint.visible,
     opacity: paint.opacity,
+    scalingFactor: figScale === "TILE" ? 1 : undefined,
   };
 }
 

@@ -46,6 +46,15 @@ export type VerifyOptions = {
   readonly devicePixelRatio?: number;
 };
 
+function assertEndToEndVerificationGateHasInputs(figBytes: Uint8Array, captures: readonly CapturedBreakpoint[]): void {
+  if (figBytes.byteLength === 0) {
+    throw new Error("End-to-end verification gate requires generated .fig bytes.");
+  }
+  if (captures.length === 0) {
+    throw new Error("End-to-end verification gate requires captured source-of-truth breakpoints.");
+  }
+}
+
 /**
  * Run the full web-to-fig → fig-to-web → browser-render → pixel-diff
  * pipeline and report a per-breakpoint comparison.
@@ -60,6 +69,7 @@ export async function verifyFidelity(
   captures: readonly CapturedBreakpoint[],
   options: VerifyOptions = {},
 ): Promise<VerificationReport> {
+  assertEndToEndVerificationGateHasInputs(figBytes, captures);
   const workDir = await mkdtemp(join(tmpdir(), "web-fig-roundtrip-verify-"));
   const figPath = join(workDir, "input.fig");
   const outDir = join(workDir, "out");

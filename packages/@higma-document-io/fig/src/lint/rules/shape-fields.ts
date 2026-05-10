@@ -13,11 +13,14 @@
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { LintFinding, LintRule } from "../types";
 
+// Node types that real Figma exports always emit with explicit
+// stroke metadata (verified across shipped fixtures). GROUP and
+// BOOLEAN_OPERATION are excluded because they are pure containers
+// — Figma never emits stroke fields on them and adding them risks
+// altering auto-layout sizing for downstream importers.
 const SHAPE_NODE_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "GROUP",
   "SECTION",
-  "BOOLEAN_OPERATION",
   "SYMBOL",
   "INSTANCE",
   "RECTANGLE",

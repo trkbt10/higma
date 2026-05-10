@@ -158,16 +158,34 @@ type CubicBezierParams = {
   y3: number;
   tolerance: number;
   points: number[];
+  /** Recursion budget. Defaults to `BEZIER_MAX_DEPTH` at the call
+   * site; callers must always pass an explicit value because
+   * degenerate inputs (start === end with non-collinear controls
+   * — common in mask-icon path data) make the flatness predicate
+   * never converge, and an unbounded recursion overflows the
+   * stack. */
+  depth: number;
 };
+
+/**
+ * 20 subdivisions reduces the error by 2^20 ≈ 1M, which is below
+ * one pixel for any path that fits in a typical viewport. Without
+ * this cap a degenerate cubic (e.g. `x0===x3 && y0===y3` with
+ * `x1!==x0` — a closed loop) recurses indefinitely because the
+ * flatness measure stays > tolerance forever. Hit at the wild on
+ * yahoo.co.jp's mask-image icons.
+ */
+const BEZIER_MAX_DEPTH = 20;
 
 /**
  * Flatten a cubic bezier curve into line segments
  *
- * Uses De Casteljau subdivision with adaptive tolerance.
- * Produces enough segments for visual quality while minimizing vertex count.
+ * Uses De Casteljau subdivision with adaptive tolerance and a
+ * hard recursion cap. Produces enough segments for visual quality
+ * while minimizing vertex count.
  */
 function flattenCubicBezier(params: CubicBezierParams): void {
-  const { x0, y0, x1, y1, x2, y2, x3, y3, tolerance, points } = params;
+  const { x0, y0, x1, y1, x2, y2, x3, y3, tolerance, points, depth } = params;
   // Check if the curve is flat enough (all control points close to line)
   const dx = x3 - x0;
   const dy = y3 - y0;
@@ -175,8 +193,12 @@ function flattenCubicBezier(params: CubicBezierParams): void {
   const d2 = Math.abs((x2 - x3) * dy - (y2 - y3) * dx);
   const dd = d1 + d2;
 
-  if (dd * dd < tolerance * (dx * dx + dy * dy)) {
-    // Flat enough - add endpoint
+  if (dd * dd < tolerance * (dx * dx + dy * dy) || depth <= 0) {
+    // Flat enough OR subdivision budget exhausted — add endpoint.
+    // The depth gate is correctness, not just a performance guard:
+    // a degenerate curve (start === end) leaves the flatness
+    // predicate's RHS at zero forever and the LHS positive, so
+    // without the gate the recursion never returns.
     points.push(x3, y3);
     return;
   }
@@ -195,8 +217,8 @@ function flattenCubicBezier(params: CubicBezierParams): void {
   const x0123 = (x012 + x123) * 0.5;
   const y0123 = (y012 + y123) * 0.5;
 
-  flattenCubicBezier({ x0, y0, x1: x01, y1: y01, x2: x012, y2: y012, x3: x0123, y3: y0123, tolerance, points });
-  flattenCubicBezier({ x0: x0123, y0: y0123, x1: x123, y1: y123, x2: x23, y2: y23, x3, y3, tolerance, points });
+  flattenCubicBezier({ x0, y0, x1: x01, y1: y01, x2: x012, y2: y012, x3: x0123, y3: y0123, tolerance, points, depth: depth - 1 });
+  flattenCubicBezier({ x0: x0123, y0: y0123, x1: x123, y1: y123, x2: x23, y2: y23, x3, y3, tolerance, points, depth: depth - 1 });
 }
 
 /** Parameters for flattening a quadratic bezier curve */
@@ -221,7 +243,7 @@ function flattenQuadBezier(params: QuadBezierParams): void {
   const cy1 = y0 + (2 / 3) * (y1 - y0);
   const cx2 = x2 + (2 / 3) * (x1 - x2);
   const cy2 = y2 + (2 / 3) * (y1 - y2);
-  flattenCubicBezier({ x0, y0, x1: cx1, y1: cy1, x2: cx2, y2: cy2, x3: x2, y3: y2, tolerance, points });
+  flattenCubicBezier({ x0, y0, x1: cx1, y1: cy1, x2: cx2, y2: cy2, x3: x2, y3: y2, tolerance, points, depth: BEZIER_MAX_DEPTH });
 }
 
 // =============================================================================
@@ -273,6 +295,7 @@ export function flattenPathCommands(
           y3: cmd.y,
           tolerance,
           points,
+          depth: BEZIER_MAX_DEPTH,
         });
         currentXRef.value = cmd.x;
         currentYRef.value = cmd.y;
@@ -314,6 +337,7 @@ export function flattenPathCommands(
             x3: seg.x3, y3: seg.y3,
             tolerance,
             points,
+            depth: BEZIER_MAX_DEPTH,
           });
         }
         currentXRef.value = cmd.x;

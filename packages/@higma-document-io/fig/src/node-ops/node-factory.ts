@@ -152,6 +152,15 @@ function assertCreateNodeOptions(options: CreateNodeFromSpecOptions): void {
 function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesignNode {
   switch (spec.type) {
     case "FRAME":
+      return {
+        ...base,
+        clipsContent: spec.clipsContent ?? true,
+        autoLayout: spec.autoLayout,
+        cornerRadius: spec.cornerRadius,
+        rectangleCornerRadii: spec.rectangleCornerRadii,
+        children: [],
+      };
+
     case "COMPONENT":
       return {
         ...base,

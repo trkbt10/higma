@@ -11,3 +11,13 @@ export {
   type FigSchemaProfile,
   type FigSchemaProfileName,
 } from "./profiles";
+
+export {
+  FIGMA_KIWI_SCHEMA,
+  getFigEnumTable,
+  requireFigEnumTable,
+  reverseFigEnumTable,
+  type FigSchema,
+  type FigSchemaDefinition,
+  type FigEnumTable,
+} from "./schema";

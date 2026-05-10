@@ -14,16 +14,11 @@
  * never removes core ones).
  */
 
-import figmaSchema from "../../fig-file/figma-schema.json";
+import { FIGMA_KIWI_SCHEMA, type FigSchema } from "@higma-figma-schema/profiles/schema";
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import type { LintRule } from "../types";
 
-// The bundled schema JSON ships with a slightly looser `kind` typing
-// than the strict KiwiSchema (string vs union). We only read the
-// definition names here, so a structural projection is enough; this
-// keeps the file free of `as unknown` while still typing the data.
-type SchemaShape = { readonly definitions: readonly { readonly name: string }[] };
-const REFERENCE_SCHEMA: SchemaShape = figmaSchema;
+const REFERENCE_SCHEMA: FigSchema = FIGMA_KIWI_SCHEMA;
 
 const HARD_REQUIRED_DEFINITIONS: readonly string[] = [
   "Message",
@@ -44,7 +39,7 @@ const HARD_REQUIRED_DEFINITIONS: readonly string[] = [
   "ParentIndex",
 ];
 
-function collectDefinitionNames(schema: KiwiSchema | SchemaShape): ReadonlySet<string> {
+function collectDefinitionNames(schema: KiwiSchema | FigSchema): ReadonlySet<string> {
   return new Set(schema.definitions.map((definition) => definition.name));
 }
 

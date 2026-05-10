@@ -41,6 +41,10 @@ describe("fig-family node normalization", () => {
   });
 
   it("denormalizes string enum values without mutating the source node", () => {
+    // CROP is the editor's UI alias for FILL — the Figma Kiwi
+    // schema's `ImageScaleMode` only defines STRETCH/FIT/FILL/TILE
+    // (values 0..3). The roundtrip layer canonicalises CROP to
+    // FILL on encode so on-disk bytes always match the schema.
     const node = {
       strokeJoin: "ROUND",
       fillPaints: [{ type: "IMAGE", imageScaleMode: "CROP" }],
@@ -51,7 +55,7 @@ describe("fig-family node normalization", () => {
 
     expect(encoded).toMatchObject({
       strokeJoin: { value: 2, name: "ROUND" },
-      fillPaints: [{ type: { value: 5, name: "IMAGE" }, imageScaleMode: { value: 4, name: "CROP" } }],
+      fillPaints: [{ type: { value: 5, name: "IMAGE" }, imageScaleMode: { value: 2, name: "FILL" } }],
       effects: [{ type: { value: 2, name: "FOREGROUND_BLUR" }, blendMode: { value: 1, name: "NORMAL" } }],
     });
     expect(node).toEqual({

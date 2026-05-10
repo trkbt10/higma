@@ -9,13 +9,34 @@
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type { LintRule } from "../types";
 
+function bytesToHex(bytes: readonly number[]): string {
+  return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Read the image ref string from any of the shapes a parsed
+ * FigPaint can carry. The Kiwi binary stores `image.hash` as a
+ * byte array, the project's encoder also writes `imageRef` as a
+ * hex string, and round-tripped buffers may surface either.
+ * Falling back to the byte array keeps the rule honest against
+ * real Figma exports.
+ */
 function imageRef(paint: FigPaint): string | null {
-  const ref = (paint as { image?: { hash?: string }; imageRef?: string }).image?.hash
-    ?? (paint as { imageRef?: string }).imageRef;
-  if (typeof ref !== "string" || ref.length === 0) {
-    return null;
+  const wide = paint as {
+    image?: { hash?: string | readonly number[] };
+    imageRef?: string;
+  };
+  const hashField = wide.image?.hash;
+  if (typeof hashField === "string" && hashField.length > 0) {
+    return hashField;
   }
-  return ref;
+  if (Array.isArray(hashField) && hashField.length > 0) {
+    return bytesToHex(hashField);
+  }
+  if (typeof wide.imageRef === "string" && wide.imageRef.length > 0) {
+    return wide.imageRef;
+  }
+  return null;
 }
 
 function collectImagePaints(nodes: readonly FigNode[]): readonly { ref: string; nodeIndex: number; paintIndex: number }[] {

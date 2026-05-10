@@ -21,6 +21,8 @@ export {
   type FigSymbolContext,
 } from "./symbol-context";
 
+export { findCanvas, findInternalCanvas } from "./canvas-lookup";
+
 export {
   figDocumentResources,
   figRawResources,

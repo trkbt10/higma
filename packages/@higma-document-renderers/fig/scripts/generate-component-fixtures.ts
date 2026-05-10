@@ -18,6 +18,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFigFile, frameNode, symbolNode, instanceNode, textNode, roundedRectNode } from "@higma-document-io/fig/fig-file";
+import type { Color } from "@higma-document-io/fig/fig-file";
+
+// Helper: turn three RGB components into a Color object the modern
+// builder API accepts. The fixture has historically used 0..1 floats
+// to match Figma's color space.
+function rgb(r: number, g: number, b: number): Color {
+  return { r, g, b, a: 1 };
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/components");
@@ -35,6 +43,8 @@ async function generateComponentFixtures(): Promise<void> {
   // Create document and canvas
   const docID = figFile.addDocument("Components");
   const canvasID = figFile.addCanvas(docID, "Components Canvas");
+  // Internal Only Canvas is required by Figma's importer (see CLAUDE.md).
+  figFile.addInternalCanvas(docID);
 
   const nextIDRef = { value: 10 };
 
@@ -47,7 +57,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("Button")
       .size(120, 40)
       .position(50, 50)
-      .background(0.2, 0.5, 0.9)
+      .background(rgb(0.2, 0.5, 0.9))
       .cornerRadius(8)
       .autoLayout("HORIZONTAL")
       .gap(8)
@@ -65,7 +75,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("bg")
       .size(120, 40)
       .position(0, 0)
-      .fill(0.2, 0.5, 0.9)
+      .fill(rgb(0.2, 0.5, 0.9))
       .cornerRadius(8)
       .build(),
   );
@@ -78,7 +88,7 @@ async function generateComponentFixtures(): Promise<void> {
       .text("Click Me")
       .font("Inter", "Medium")
       .fontSize(14)
-      .color(1, 1, 1)
+      .color(rgb(1, 1, 1))
       .size(60, 20)
       .position(30, 10)
       .build(),
@@ -93,7 +103,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("instance-single")
       .size(160, 80)
       .position(50, 150)
-      .background(0.95, 0.95, 0.95)
+      .background(rgb(0.95, 0.95, 0.95))
       .clipsContent(true)
       .exportAsSVG()
       .build(),
@@ -113,7 +123,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("instance-multi")
       .size(160, 160)
       .position(50, 250)
-      .background(0.95, 0.95, 0.95)
+      .background(rgb(0.95, 0.95, 0.95))
       .autoLayout("VERTICAL")
       .gap(10)
       .padding(20)
@@ -142,7 +152,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("instance-override-fill")
       .size(300, 80)
       .position(50, 430)
-      .background(0.95, 0.95, 0.95)
+      .background(rgb(0.95, 0.95, 0.95))
       .autoLayout("HORIZONTAL")
       .gap(20)
       .padding(20)
@@ -164,7 +174,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("Red Override")
       .size(120, 40)
       .position(160, 20)
-      .overrideBackground(0.9, 0.2, 0.2)
+      .overrideBackground(rgb(0.9, 0.2, 0.2))
       .build(),
   );
 
@@ -177,7 +187,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("Card")
       .size(180, 100)
       .position(250, 50)
-      .background(1, 1, 1)
+      .background(rgb(1, 1, 1))
       .cornerRadius(12)
       .autoLayout("VERTICAL")
       .gap(8)
@@ -194,7 +204,7 @@ async function generateComponentFixtures(): Promise<void> {
       .text("Card Title")
       .font("Inter", "Bold")
       .fontSize(16)
-      .color(0.1, 0.1, 0.1)
+      .color(rgb(0.1, 0.1, 0.1))
       .size(148, 20)
       .position(16, 16)
       .build(),
@@ -215,7 +225,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("instance-nested")
       .size(220, 140)
       .position(250, 150)
-      .background(0.9, 0.9, 0.95)
+      .background(rgb(0.9, 0.9, 0.95))
       .clipsContent(true)
       .exportAsSVG()
       .build(),
@@ -235,7 +245,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("instance-in-autolayout")
       .size(400, 80)
       .position(250, 310)
-      .background(0.95, 0.95, 0.95)
+      .background(rgb(0.95, 0.95, 0.95))
       .autoLayout("HORIZONTAL")
       .gap(16)
       .padding(20)
@@ -267,7 +277,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("Icon")
       .size(24, 24)
       .position(500, 50)
-      .background(0.5, 0.5, 0.5)
+      .background(rgb(0.5, 0.5, 0.5))
       .cornerRadius(4)
       .exportAsSVG()
       .build(),
@@ -282,7 +292,7 @@ async function generateComponentFixtures(): Promise<void> {
       .name("instance-icons")
       .size(200, 60)
       .position(250, 410)
-      .background(0.95, 0.95, 0.95)
+      .background(rgb(0.95, 0.95, 0.95))
       .autoLayout("HORIZONTAL")
       .gap(8)
       .padding(18)

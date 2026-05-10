@@ -184,8 +184,8 @@ export function createFigSymbolContextFromLoaded(loaded: LoadedFigFile): FigSymb
 /**
  * SoT for "walk a forest of FigNode roots and index every node by
  * GUID string". Replaces five copies of the same recursive `walk` helper
- * across `@higma-tools/fig-to-web/fig-source/load`,
- * `@higma-tools/refine-fig/refine-source/load`,
+ * across `@higma-tools/fig-source/load` (which all `fig-to-*` converters
+ * now share), `@higma-tools/refine-fig/refine-source/load`,
  * `@higma-tools/refine-fig/visual/render-frames`,
  * `@higma-tools/refine-fig/visual/render-node-worker`, and
  * `@higma-tools/refine-fig/structure-diff/diff`.

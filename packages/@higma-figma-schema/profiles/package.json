@@ -18,6 +18,10 @@
       "types": "./src/profiles.ts",
       "default": "./src/profiles.ts"
     },
+    "./schema": {
+      "types": "./src/schema.ts",
+      "default": "./src/schema.ts"
+    },
     "./node-types": {
       "types": "./src/node-types.ts",
       "default": "./src/node-types.ts"

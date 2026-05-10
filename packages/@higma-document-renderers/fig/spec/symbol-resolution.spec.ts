@@ -303,13 +303,17 @@ describe("Symbol Resolution", () => {
   // Structure validation
   // --------------------------------------------------------------------------
 
-  it("fixture has 3 canvases with expected symbols and frames", async () => {
+  it("fixture has the expected named canvases (plus the Internal Only canvas)", async () => {
     if (!fs.existsSync(FIG_FILE)) {
       return;
     }
     const data = await loadFigFile();
 
-    expect(data.canvases.length).toBe(5);
+    // Real Figma exports always carry an "Internal Only Canvas"
+    // alongside the user-authored canvases. The fixture contains
+    // 5 named canvases (Components, Clipping, Deep Nesting,
+    // Constraints, Variants) + the internal canvas = 6 total.
+    expect(data.canvases.length).toBe(6);
     const canvasNames = data.canvases.map((c) => c.name);
     expect(canvasNames).toContain(CANVAS_COMPONENTS);
     expect(canvasNames).toContain(CANVAS_CLIPPING);
@@ -366,6 +370,11 @@ describe("Symbol Resolution", () => {
 
     const totalUnresolvedRef = { value: 0 };
     for (const canvas of data.canvases) {
+      // Skip the "Internal Only Canvas" — it carries no renderable
+      // children and would fail size derivation in renderCanvas.
+      if ((canvas as FigNode & { internalOnly?: boolean }).internalOnly) {
+        continue;
+      }
       const result = await renderCanvas(canvas, {
         blobs: data.blobs,
         images: data.images,

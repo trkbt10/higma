@@ -38,7 +38,7 @@ import {
   extractGeometryProps,
   extractEffectsProps,
 } from "./extract";
-import { applyAutoLayoutPrimaryAxis, type PrimaryAxisChild, type PrimaryAxisParent } from "./autolayout-primary";
+import { resolveAutoLayoutFrame, type PrimaryAxisChild, type PrimaryAxisParent } from "./autolayout-primary";
 import type {
   SceneGraph,
   SceneNode,
@@ -1823,7 +1823,7 @@ function positionResolvedInstanceChildren<C extends PrimaryAxisChild>(
   children: readonly C[],
 ): readonly C[] {
   if (sizeChanged && !dsdPinsTransform) {
-    return applyAutoLayoutPrimaryAxis(parent, children);
+    return resolveAutoLayoutFrame(parent, children).children;
   }
   return children;
 }
@@ -1864,18 +1864,18 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     case "COMPONENT":
     case "COMPONENT_SET":
     case "SYMBOL": {
-      const stretched = applyCounterAxisStretch(node, children);
-      const childNodes = buildChildren(stretched, ctx);
-      return cacheBuiltNode(node, buildFrameNode(node, ctx, childNodes), ctx);
+      const resolved = resolveAutoLayoutFrame(node, children);
+      const childNodes = buildChildren(resolved.children, ctx);
+      return cacheBuiltNode(node, buildFrameNode(resolved.parent, ctx, childNodes), ctx);
     }
 
     case "INTERACTIVE_SLIDE_ELEMENT": {
       if (shouldRenderInteractiveSlideElementAsPath(node, children)) {
         return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
       }
-      const stretched = applyCounterAxisStretch(node, children);
-      const childNodes = buildChildren(stretched, ctx);
-      return cacheBuiltNode(node, buildFrameNode(node, ctx, childNodes), ctx);
+      const resolved = resolveAutoLayoutFrame(node, children);
+      const childNodes = buildChildren(resolved.children, ctx);
+      return cacheBuiltNode(node, buildFrameNode(resolved.parent, ctx, childNodes), ctx);
     }
 
     case "INSTANCE": {
@@ -1889,7 +1889,6 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       // inside the resolver (clones from `symbol.children`).
       const ownChildren = cloneOwnInstanceChildren(children);
       const resolved = resolveDesignInstance(node, ownChildren, ctx);
-      const stretched = applyCounterAxisStretch(resolved.effectiveNode, resolved.children);
       // Primary-axis re-solve gate (SoT for "when does our layout solver
       // override authored child positions"):
       //
@@ -1910,9 +1909,10 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       const dsdPinsTransform = (node.derivedSymbolData ?? []).some((e) =>
         e.transform !== undefined && (e.guidPath?.guids?.length ?? 0) === 1,
       );
-      const positioned = positionResolvedInstanceChildren(sizeChanged, dsdPinsTransform, resolved.effectiveNode, stretched);
-      const childNodes = buildChildren(positioned, ctx);
-      return cacheBuiltNode(node, buildFrameNode(resolved.effectiveNode, ctx, childNodes), ctx);
+      const positioned = positionResolvedInstanceChildren(sizeChanged, dsdPinsTransform, resolved.effectiveNode, resolved.children);
+      const layoutResolved = resolveAutoLayoutFrame(resolved.effectiveNode, positioned);
+      const childNodes = buildChildren(layoutResolved.children, ctx);
+      return cacheBuiltNode(node, buildFrameNode(layoutResolved.parent, ctx, childNodes), ctx);
     }
 
     case "GROUP": {

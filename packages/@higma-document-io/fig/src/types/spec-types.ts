@@ -78,6 +78,20 @@ export type FrameNodeSpec = BaseNodeSpec & {
   readonly clipsContent?: boolean;
   readonly autoLayout?: AutoLayoutProps;
   readonly backgroundColor?: FigColor;
+  /**
+   * Optional uniform corner radius. CSS `border-radius` on a non-leaf
+   * container (a `<div>` with descendants) maps to this field on the
+   * resulting FRAME — leaving the field off would silently flatten
+   * rounded panels into square ones during web-to-fig conversion.
+   */
+  readonly cornerRadius?: number;
+  /**
+   * Optional per-corner radii in TL/TR/BR/BL order. Set when CSS
+   * authors asymmetric corners (e.g. only `border-top-left-radius`).
+   * Mutually exclusive with `cornerRadius`; the factory honours
+   * whichever the caller supplied.
+   */
+  readonly rectangleCornerRadii?: readonly [number, number, number, number];
 };
 
 export type GroupNodeSpec = BaseNodeSpec & {

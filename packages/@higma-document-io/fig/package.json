@@ -17,7 +17,8 @@
     "@higma-primitives/tree": "workspace:*",
     "@higma-primitives/zip": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
-    "@higma-codecs/kiwi": "workspace:*"
+    "@higma-codecs/kiwi": "workspace:*",
+    "pako": "^2.1.0"
   },
   "scripts": {
     "lint": "cd ../../.. && eslint packages/@higma-document-io/fig/src",

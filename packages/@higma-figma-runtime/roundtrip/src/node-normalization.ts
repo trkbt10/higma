@@ -136,6 +136,21 @@ function lookupEnum(values: Readonly<Record<string, number>>, name: unknown): Fi
   return { value: values[name], name };
 }
 
+/**
+ * Reduce a wide UI-level scale-mode label to a name the Figma Kiwi
+ * schema actually defines. Mirrors `canonicaliseImageScaleMode`
+ * from `@higma-document-models/fig/constants` but lives here too
+ * so the runtime layer does not need to depend on the higher-level
+ * model package. CROP is the editor's UI alias for FILL — Figma's
+ * binary format does not declare it.
+ */
+function canonicaliseImageScaleModeName(name: string): string {
+  if (name === "CROP") {
+    return "FILL";
+  }
+  return name;
+}
+
 function denormalizePaintInPlace(paint: Record<string, unknown>): void {
   if (typeof paint.type === "string") {
     paint.type = lookupEnum(FIG_PAINT_TYPE_VALUES, paint.type);
@@ -144,10 +159,10 @@ function denormalizePaintInPlace(paint: Record<string, unknown>): void {
     paint.blendMode = lookupEnum(FIG_BLEND_MODE_VALUES, paint.blendMode);
   }
   if (typeof paint.scaleMode === "string") {
-    paint.scaleMode = lookupEnum(FIG_IMAGE_SCALE_MODE_VALUES, paint.scaleMode);
+    paint.scaleMode = lookupEnum(FIG_IMAGE_SCALE_MODE_VALUES, canonicaliseImageScaleModeName(paint.scaleMode));
   }
   if (typeof paint.imageScaleMode === "string") {
-    paint.imageScaleMode = lookupEnum(FIG_IMAGE_SCALE_MODE_VALUES, paint.imageScaleMode);
+    paint.imageScaleMode = lookupEnum(FIG_IMAGE_SCALE_MODE_VALUES, canonicaliseImageScaleModeName(paint.imageScaleMode));
   }
 }
 

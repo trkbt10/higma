@@ -53,9 +53,13 @@ const DARK_BG: Color = { r: 0.11, g: 0.11, b: 0.118, a: 1 };
 // ID allocator
 // =============================================================================
 
-const nextID = 100;
+// Mutable counter held in a ref object so the script avoids a top-level
+// `let`. Each `id()` call returns the next localID and advances state.
+const nextIDRef = { value: 100 };
 function id(): number {
-  return nextID++;
+  const current = nextIDRef.value;
+  nextIDRef.value = current + 1;
+  return current;
 }
 
 // =============================================================================
@@ -67,6 +71,8 @@ async function generate(): Promise<void> {
 
   const figFile = createFigFile();
   const docID = figFile.addDocument("SymbolResolution");
+  // Internal Only Canvas is required by Figma's importer (see CLAUDE.md).
+  figFile.addInternalCanvas(docID);
 
   // =========================================================================
   // Canvas 1: "Components" — UI component patterns
@@ -80,7 +86,14 @@ async function generate(): Promise<void> {
   );
   const iconCircleBg = id();
   figFile.addEllipse(
-    ellipseNode(iconCircleBg, iconCircleID).name("icon-bg").size(24, 24).position(0, 0).fill(IOS_BLUE).build(),
+    ellipseNode(iconCircleBg, iconCircleID)
+      .name("icon-bg")
+      .size(24, 24)
+      .position(0, 0)
+      .fill(IOS_BLUE)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
+      .build(),
   );
 
   // --- Symbol: Badge (18x18 notification badge, fully rounded) ---
@@ -95,8 +108,18 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
+  // Center dot scales proportionally with the badge
   const badgeDot = id();
-  figFile.addEllipse(ellipseNode(badgeDot, badgeID).name("dot").size(6, 6).position(6, 6).fill(WHITE).build());
+  figFile.addEllipse(
+    ellipseNode(badgeDot, badgeID)
+      .name("dot")
+      .size(6, 6)
+      .position(6, 6)
+      .fill(WHITE)
+      .horizontalConstraint("CENTER")
+      .verticalConstraint("CENTER")
+      .build(),
+  );
 
   // --- Symbol: IconWithBadge (32x32 frame, IconCircle + Badge at top-right) ---
   const iconBadgeID = id();
@@ -108,10 +131,27 @@ async function generate(): Promise<void> {
       .clipsContent(false) // badge extends beyond icon bounds
       .build(),
   );
+  // Icon fills the IconWithBadge frame; badge stays anchored to the top-right corner.
   const ibIcon = id();
-  figFile.addInstance(instanceNode(ibIcon, iconBadgeID, iconCircleID).name("icon").size(24, 24).position(4, 8).build());
+  figFile.addInstance(
+    instanceNode(ibIcon, iconBadgeID, iconCircleID)
+      .name("icon")
+      .size(24, 24)
+      .position(4, 8)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
+      .build(),
+  );
   const ibBadge = id();
-  figFile.addInstance(instanceNode(ibBadge, iconBadgeID, badgeID).name("badge").size(18, 18).position(18, -4).build());
+  figFile.addInstance(
+    instanceNode(ibBadge, iconBadgeID, badgeID)
+      .name("badge")
+      .size(18, 18)
+      .position(18, -4)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("MIN")
+      .build(),
+  );
 
   // --- Symbol: ButtonBase (120x44, rounded rect, blue fill) ---
   const buttonBaseID = id();
@@ -125,6 +165,7 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
+  // Inner pill expands with the button (10px margin L/R, 8px T/B).
   const btnLabel = id();
   figFile.addRoundedRectangle(
     roundedRectNode(btnLabel, buttonBaseID)
@@ -134,6 +175,8 @@ async function generate(): Promise<void> {
       .fill(WHITE)
       .opacity(0.15)
       .cornerRadius(6)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -148,6 +191,7 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
+  // Bottom stripe spans the full header width and stays pinned to the bottom edge.
   const headerStripe = id();
   figFile.addRoundedRectangle(
     roundedRectNode(headerStripe, cardHeaderID)
@@ -156,6 +200,8 @@ async function generate(): Promise<void> {
       .position(0, 44)
       .fill(BLACK)
       .opacity(0.1)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MAX")
       .build(),
   );
 
@@ -170,6 +216,9 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
+  // Two side-by-side content tiles. Left tile keeps its 16px gap from the left edge,
+  // right tile keeps its 16px gap from the right edge — together they share the
+  // remaining width so the body resizes evenly.
   const bodyRect1 = id();
   figFile.addRoundedRectangle(
     roundedRectNode(bodyRect1, cardBodyID)
@@ -178,6 +227,8 @@ async function generate(): Promise<void> {
       .position(16, 16)
       .fill(IOS_GRAY_BG)
       .cornerRadius(8)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("STRETCH")
       .build(),
   );
   const bodyRect2 = id();
@@ -188,6 +239,8 @@ async function generate(): Promise<void> {
       .position(144, 16)
       .fill(IOS_GRAY_BG)
       .cornerRadius(8)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -203,18 +256,39 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
+  // Header pins to the top, body absorbs vertical slack, footer pins to the bottom.
+  // All three span the card's full width.
   const cardHeaderInst = id();
   figFile.addInstance(
-    instanceNode(cardHeaderInst, cardID, cardHeaderID).name("header").size(280, 48).position(0, 0).build(),
+    instanceNode(cardHeaderInst, cardID, cardHeaderID)
+      .name("header")
+      .size(280, 48)
+      .position(0, 0)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MIN")
+      .build(),
   );
   const cardBodyInst = id();
   figFile.addInstance(
-    instanceNode(cardBodyInst, cardID, cardBodyID).name("body").size(280, 120).position(0, 48).build(),
+    instanceNode(cardBodyInst, cardID, cardBodyID)
+      .name("body")
+      .size(280, 120)
+      .position(0, 48)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
+      .build(),
   );
-  // Footer rect
+  // Footer rect — pinned to the bottom edge.
   const cardFooter = id();
   figFile.addRoundedRectangle(
-    roundedRectNode(cardFooter, cardID).name("footer").size(280, 32).position(0, 168).fill(IOS_GRAY_BG).build(),
+    roundedRectNode(cardFooter, cardID)
+      .name("footer")
+      .size(280, 32)
+      .position(0, 168)
+      .fill(IOS_GRAY_BG)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MAX")
+      .build(),
   );
 
   // --- Symbol: NavItem (48x56, icon + label area) ---
@@ -222,9 +296,17 @@ async function generate(): Promise<void> {
   figFile.addSymbol(
     symbolNode(navItemID, canvas1).name("NavItem").size(48, 56).position(1600, -600).clipsContent(false).build(),
   );
+  // Icon stays centered horizontally and pinned to the top; label spans the
+  // bottom of the NavItem so it stretches with width changes.
   const navIcon = id();
   figFile.addInstance(
-    instanceNode(navIcon, navItemID, iconBadgeID).name("icon-badge").size(32, 32).position(8, 4).build(),
+    instanceNode(navIcon, navItemID, iconBadgeID)
+      .name("icon-badge")
+      .size(32, 32)
+      .position(8, 4)
+      .horizontalConstraint("CENTER")
+      .verticalConstraint("MIN")
+      .build(),
   );
   const navLabel = id();
   figFile.addRoundedRectangle(
@@ -234,6 +316,8 @@ async function generate(): Promise<void> {
       .position(4, 42)
       .fill(IOS_GRAY_2)
       .cornerRadius(2)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MAX")
       .build(),
   );
 
@@ -249,6 +333,14 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
+  // Anchor first/last items to the bar's edges so they keep an equal margin
+  // when the bar resizes; middle items scale proportionally.
+  const navConstraints: Array<{ h: "MIN" | "MAX" | "SCALE"; v: "MIN" | "MAX" | "STRETCH" | "CENTER" }> = [
+    { h: "MIN", v: "STRETCH" },
+    { h: "SCALE", v: "STRETCH" },
+    { h: "SCALE", v: "STRETCH" },
+    { h: "MAX", v: "STRETCH" },
+  ];
   for (let i = 0; i < 4; i++) {
     const navI = id();
     figFile.addInstance(
@@ -256,10 +348,12 @@ async function generate(): Promise<void> {
         .name(`nav-${i}`)
         .size(48, 56)
         .position(24 + i * 72, 4)
+        .horizontalConstraint(navConstraints[i].h)
+        .verticalConstraint(navConstraints[i].v)
         .build(),
     );
   }
-  // Separator line
+  // Top separator — full width, pinned to the top edge.
   const navSep = id();
   figFile.addRoundedRectangle(
     roundedRectNode(navSep, navBarID)
@@ -268,6 +362,8 @@ async function generate(): Promise<void> {
       .position(0, 0)
       .fill(IOS_GRAY_3)
       .opacity(0.5)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MIN")
       .build(),
   );
 
@@ -457,12 +553,21 @@ async function generate(): Promise<void> {
       .size(80, 80)
       .position(-8, -8)
       .fill(IOS_PURPLE)
+      .horizontalConstraint("SCALE")
+      .verticalConstraint("SCALE")
       .build(),
   );
-  // Smaller accent circle
+  // Smaller accent circle — stays centered as the avatar grows.
   const avatarAccent = id();
   figFile.addEllipse(
-    ellipseNode(avatarAccent, avatarFrameID).name("accent").size(20, 20).position(22, 22).fill(IOS_ORANGE).build(),
+    ellipseNode(avatarAccent, avatarFrameID)
+      .name("accent")
+      .size(20, 20)
+      .position(22, 22)
+      .fill(IOS_ORANGE)
+      .horizontalConstraint("CENTER")
+      .verticalConstraint("CENTER")
+      .build(),
   );
 
   // --- Symbol: RoundedContainer (200x120, 16px radius, clips, gray bg) ---
@@ -477,7 +582,8 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  // Child that extends beyond right and bottom edges
+  // Child that extends beyond right and bottom edges — keeps its origin pinned
+  // so the overflow remains visible when the container resizes.
   const rcOverflow = id();
   figFile.addRoundedRectangle(
     roundedRectNode(rcOverflow, roundedContainerID)
@@ -486,9 +592,11 @@ async function generate(): Promise<void> {
       .position(60, 40)
       .fill(IOS_RED)
       .cornerRadius(8)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("MIN")
       .build(),
   );
-  // Child at top-left corner (should be visible)
+  // Child at top-left corner — stays anchored to the corner.
   const rcCorner = id();
   figFile.addRoundedRectangle(
     roundedRectNode(rcCorner, roundedContainerID)
@@ -497,6 +605,8 @@ async function generate(): Promise<void> {
       .position(12, 12)
       .fill(IOS_BLUE)
       .cornerRadius(8)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("MIN")
       .build(),
   );
 
@@ -512,13 +622,16 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  // Contains instance of RoundedContainer — nested rounded clip
+  // Contains instance of RoundedContainer — nested rounded clip.
+  // The inner container fills the outer's content area minus 20px padding.
   const nroInst = id();
   figFile.addInstance(
     instanceNode(nroInst, nestedOuterID, roundedContainerID)
       .name("inner-container")
       .size(200, 120)
       .position(20, 20)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -538,7 +651,13 @@ async function generate(): Promise<void> {
   );
   const ccInst = id();
   figFile.addInstance(
-    instanceNode(ccInst, clipChainID, nestedOuterID).name("nested-outer").size(240, 160).position(20, 10).build(),
+    instanceNode(ccInst, clipChainID, nestedOuterID)
+      .name("nested-outer")
+      .size(240, 160)
+      .position(20, 10)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
+      .build(),
   );
 
   // --- Symbol: MixedClipFrame (200x140, 24px radius, clips) ---
@@ -554,30 +673,63 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  // Top-left corner rect (should be clipped by rounded corner)
+  // Each corner rect stays anchored to its own corner so all four corners
+  // remain visible after the frame resizes.
   const mcTL = id();
   figFile.addRoundedRectangle(
-    roundedRectNode(mcTL, mixedClipID).name("top-left").size(60, 40).position(0, 0).fill(IOS_RED).build(),
+    roundedRectNode(mcTL, mixedClipID)
+      .name("top-left")
+      .size(60, 40)
+      .position(0, 0)
+      .fill(IOS_RED)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("MIN")
+      .build(),
   );
-  // Top-right corner rect
   const mcTR = id();
   figFile.addRoundedRectangle(
-    roundedRectNode(mcTR, mixedClipID).name("top-right").size(60, 40).position(140, 0).fill(IOS_GREEN).build(),
+    roundedRectNode(mcTR, mixedClipID)
+      .name("top-right")
+      .size(60, 40)
+      .position(140, 0)
+      .fill(IOS_GREEN)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("MIN")
+      .build(),
   );
-  // Bottom-left corner rect
   const mcBL = id();
   figFile.addRoundedRectangle(
-    roundedRectNode(mcBL, mixedClipID).name("bottom-left").size(60, 40).position(0, 100).fill(IOS_BLUE).build(),
+    roundedRectNode(mcBL, mixedClipID)
+      .name("bottom-left")
+      .size(60, 40)
+      .position(0, 100)
+      .fill(IOS_BLUE)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("MAX")
+      .build(),
   );
-  // Bottom-right corner rect
   const mcBR = id();
   figFile.addRoundedRectangle(
-    roundedRectNode(mcBR, mixedClipID).name("bottom-right").size(60, 40).position(140, 100).fill(IOS_ORANGE).build(),
+    roundedRectNode(mcBR, mixedClipID)
+      .name("bottom-right")
+      .size(60, 40)
+      .position(140, 100)
+      .fill(IOS_ORANGE)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("MAX")
+      .build(),
   );
-  // Center ellipse
+  // Center ellipse stays centered.
   const mcCenter = id();
   figFile.addEllipse(
-    ellipseNode(mcCenter, mixedClipID).name("center").size(80, 60).position(60, 40).fill(IOS_PURPLE).build(),
+    ellipseNode(mcCenter, mixedClipID)
+      .name("center")
+      .size(80, 60)
+      .position(60, 40)
+      .fill(IOS_PURPLE)
+      .horizontalConstraint("CENTER")
+      .verticalConstraint("CENTER")
+      .build(),
   );
 
   // --- Canvas 2: Test Frames ---
@@ -768,6 +920,8 @@ async function generate(): Promise<void> {
       .fill(WHITE)
       .opacity(0.3)
       .cornerRadius(4)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -783,13 +937,25 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  figFile.addInstance(instanceNode(id(), level2ID, level1ID).name("left").size(80, 48).position(10, 10).build());
+  // Left half stays anchored to the left edge, right half to the right edge —
+  // together they share the L2 frame's width.
+  figFile.addInstance(
+    instanceNode(id(), level2ID, level1ID)
+      .name("left")
+      .size(80, 48)
+      .position(10, 10)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("STRETCH")
+      .build(),
+  );
   figFile.addInstance(
     instanceNode(id(), level2ID, level1ID)
       .name("right")
       .size(80, 48)
       .position(90, 10)
       .overrideBackground(IOS_GREEN)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -805,11 +971,27 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  figFile.addInstance(instanceNode(id(), level3ID, level2ID).name("pair").size(180, 68).position(20, 10).build());
-  // Decoration bar below the pair
+  figFile.addInstance(
+    instanceNode(id(), level3ID, level2ID)
+      .name("pair")
+      .size(180, 68)
+      .position(20, 10)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MIN")
+      .build(),
+  );
+  // Decoration bar below the pair — pinned to the bottom edge.
   const l3Bar = id();
   figFile.addRoundedRectangle(
-    roundedRectNode(l3Bar, level3ID).name("bar").size(180, 8).position(20, 86).fill(IOS_ORANGE).cornerRadius(4).build(),
+    roundedRectNode(l3Bar, level3ID)
+      .name("bar")
+      .size(180, 8)
+      .position(20, 86)
+      .fill(IOS_ORANGE)
+      .cornerRadius(4)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("MAX")
+      .build(),
   );
 
   // Level 4: L3 + badge indicator
@@ -824,9 +1006,25 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  figFile.addInstance(instanceNode(id(), level4ID, level3ID).name("decorated").size(220, 108).position(20, 16).build());
-  // Badge instance at top-right
-  figFile.addInstance(instanceNode(id(), level4ID, badgeID).name("badge").size(18, 18).position(234, 8).build());
+  figFile.addInstance(
+    instanceNode(id(), level4ID, level3ID)
+      .name("decorated")
+      .size(220, 108)
+      .position(20, 16)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
+      .build(),
+  );
+  // Badge stays anchored to the top-right corner.
+  figFile.addInstance(
+    instanceNode(id(), level4ID, badgeID)
+      .name("badge")
+      .size(18, 18)
+      .position(234, 8)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("MIN")
+      .build(),
+  );
 
   // Level 5: L4 + frame wrapper with shadow effect
   const level5ID = id();
@@ -841,9 +1039,15 @@ async function generate(): Promise<void> {
       .build(),
   );
   figFile.addInstance(
-    instanceNode(id(), level5ID, level4ID).name("with-badge").size(260, 140).position(20, 20).build(),
+    instanceNode(id(), level5ID, level4ID)
+      .name("with-badge")
+      .size(260, 140)
+      .position(20, 20)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
+      .build(),
   );
-  // Drop shadow rect behind (simulating card shadow)
+  // Outer shadow rect — sits behind the inner content with a uniform inset.
   const l5Shadow = id();
   figFile.addRoundedRectangle(
     roundedRectNode(l5Shadow, level5ID)
@@ -854,6 +1058,8 @@ async function generate(): Promise<void> {
       .stroke(IOS_GRAY_3)
       .strokeWeight(1)
       .cornerRadius(22)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -870,12 +1076,24 @@ async function generate(): Promise<void> {
       .clipsContent(true)
       .build(),
   );
-  // Uses level1 from this canvas + buttonBase from canvas1
+  // Element pinned to the left edge, button pinned to the right edge.
   figFile.addInstance(
-    instanceNode(id(), crossCanvasID, level1ID).name("element").size(80, 48).position(10, 26).build(),
+    instanceNode(id(), crossCanvasID, level1ID)
+      .name("element")
+      .size(80, 48)
+      .position(10, 26)
+      .horizontalConstraint("MIN")
+      .verticalConstraint("CENTER")
+      .build(),
   );
   figFile.addInstance(
-    instanceNode(id(), crossCanvasID, buttonBaseID).name("button").size(60, 32).position(92, 34).build(),
+    instanceNode(id(), crossCanvasID, buttonBaseID)
+      .name("button")
+      .size(60, 32)
+      .position(92, 34)
+      .horizontalConstraint("MAX")
+      .verticalConstraint("CENTER")
+      .build(),
   );
 
   // --- Canvas 3: Test Frames ---
@@ -1054,6 +1272,8 @@ async function generate(): Promise<void> {
       .fill(IOS_BLUE)
       .cornerRadius(8)
       .effects([dropShadow().offset(0, 4).blur(8).color(CARD_SHADOW).build()])
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("STRETCH")
       .build(),
   );
 
@@ -1356,6 +1576,8 @@ async function generate(): Promise<void> {
       .fill(WHITE)
       .opacity(0.2)
       .cornerRadius(4)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("CENTER")
       .build(),
   );
 
@@ -1380,6 +1602,8 @@ async function generate(): Promise<void> {
       .fill(WHITE)
       .opacity(0.3)
       .cornerRadius(4)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("CENTER")
       .build(),
   );
 
@@ -1404,6 +1628,8 @@ async function generate(): Promise<void> {
       .fill(WHITE)
       .opacity(0.1)
       .cornerRadius(4)
+      .horizontalConstraint("STRETCH")
+      .verticalConstraint("CENTER")
       .build(),
   );
 
@@ -1508,7 +1734,7 @@ async function generate(): Promise<void> {
 
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`\n=== Structure ===`);
-  console.log(`5 canvases, ${nextID - 100} nodes total\n`);
+  console.log(`5 canvases, ${nextIDRef.value - 100} nodes total\n`);
 
   console.log(`Canvas 1: "Components" — UI component patterns`);
   console.log(`  Test frames (8): button-inherit, button-override, card-with-header,`);
