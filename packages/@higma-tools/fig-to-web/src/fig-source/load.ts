@@ -14,6 +14,7 @@
  */
 import { createFigSymbolContext, type FigSymbolContext } from "@higma-document-io/fig/context";
 
+/** Decode the bytes of a `.fig` file into a symbol-resolved context. */
 export async function loadFigSource(buffer: Uint8Array): Promise<FigSymbolContext> {
   return createFigSymbolContext(buffer);
 }
