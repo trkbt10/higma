@@ -90,6 +90,7 @@ export type FrameNodeBuilder = {
   effects: (effects: readonly EffectData[]) => FrameNodeBuilder;
   clipsContent: (clips: boolean) => FrameNodeBuilder;
   cornerRadius: (radius: number) => FrameNodeBuilder;
+  lockAspectRatio: (width: number, height: number) => FrameNodeBuilder;
   autoLayout: (mode: StackMode) => FrameNodeBuilder;
   gap: (spacing: number) => FrameNodeBuilder;
   padding: (value: number | StackPadding) => FrameNodeBuilder;
@@ -125,6 +126,8 @@ type FrameBuilderState = {
   effects: readonly EffectData[] | undefined;
   clipsContent: boolean;
   cornerRadius: number | undefined;
+  targetAspectRatio: { x: number; y: number } | undefined;
+  proportionsConstrained: boolean | undefined;
   exportSettings: ExportSettings[];
   stackMode: StackMode | undefined;
   stackSpacing: number | undefined;
@@ -159,6 +162,8 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     effects: undefined,
     clipsContent: true,
     cornerRadius: undefined,
+    targetAspectRatio: undefined,
+    proportionsConstrained: undefined,
     exportSettings: [],
     stackMode: undefined,
     stackSpacing: undefined,
@@ -191,6 +196,11 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     effects(e: readonly EffectData[]) { state.effects = e; return builder; },
     clipsContent(clips: boolean) { state.clipsContent = clips; return builder; },
     cornerRadius(radius: number) { state.cornerRadius = radius; return builder; },
+    lockAspectRatio(width: number, height: number) {
+      state.targetAspectRatio = { x: width, y: height };
+      state.proportionsConstrained = true;
+      return builder;
+    },
     /** Set the auto-layout mode (direction) */
     autoLayout(mode: StackMode) { state.stackMode = mode; return builder; },
     /** Set gap between items (main axis spacing) */
@@ -269,6 +279,8 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         opacity: state.opacity,
         clipsContent: state.clipsContent,
         cornerRadius: state.cornerRadius,
+        targetAspectRatio: state.targetAspectRatio,
+        proportionsConstrained: state.proportionsConstrained,
         exportSettings: state.exportSettings.length > 0 ? state.exportSettings : undefined,
         effects: state.effects,
         stackMode: toEnumValue(state.stackMode, STACK_MODE_VALUES),

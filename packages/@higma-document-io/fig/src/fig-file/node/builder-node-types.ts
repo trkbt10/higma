@@ -158,6 +158,8 @@ export type BuilderNode = {
   frameMaskDisabled?: boolean;
   cornerRadius?: number;
   rectangleCornerRadii?: readonly [number, number, number, number];
+  targetAspectRatio?: KiwiVector;
+  proportionsConstrained?: boolean;
 
   // ---- AutoLayout (frame-level) ----
   stackMode?: KiwiEnum;

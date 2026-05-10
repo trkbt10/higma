@@ -14,7 +14,7 @@ import { compressZstd } from "@higma-codecs/compression";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import type { BuilderNode, KiwiDerivedSymbolEntry, KiwiGuid } from "./builder-node-types";
 import { toKiwiRecord } from "./builder-node-types";
-import figmaSchemaJson from "../figma-schema.json";
+import { FIGMA_KIWI_SCHEMA as figmaSchemaJson } from "@higma-figma-schema/profiles/schema";
 import type { TextNodeData } from "../text";
 import type { FrameNodeData } from "../frame";
 import type { StackPadding } from "../types";
@@ -234,6 +234,8 @@ function _createFigFileBuilder() {
       opacity: data.opacity,
       clipsContent: data.clipsContent,
       cornerRadius: data.cornerRadius,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       effects: data.effects,
       // AutoLayout - frame level
       stackMode: data.stackMode,
@@ -285,6 +287,8 @@ function _createFigFileBuilder() {
       opacity: data.opacity,
       clipsContent: data.clipsContent,
       cornerRadius: data.cornerRadius,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       // AutoLayout - frame level
       stackMode: data.stackMode,
       stackSpacing: data.stackSpacing,
@@ -584,6 +588,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       arcData: data.arcData,
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
@@ -624,6 +630,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
@@ -657,6 +665,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       pointCount: data.pointCount,
       starInnerRadius: data.starInnerRadius,
       stackPositioning: data.stackPositioning,
@@ -692,6 +702,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       pointCount: data.pointCount,
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
@@ -726,6 +738,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       vectorData: data.vectorData,
       handleMirroring: data.handleMirroring,
       stackPositioning: data.stackPositioning,
@@ -786,6 +800,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
@@ -832,6 +848,8 @@ function _createFigFileBuilder() {
       strokeJoin: data.strokeJoin,
       strokeAlign: data.strokeAlign,
       dashPattern: data.dashPattern,
+      targetAspectRatio: data.targetAspectRatio,
+      proportionsConstrained: data.proportionsConstrained,
       cornerRadius: data.cornerRadius,
       rectangleCornerRadii: data.rectangleCornerRadii,
       stackPositioning: data.stackPositioning,
@@ -935,6 +953,8 @@ function _createFigFileBuilder() {
     // Frame fields
     clipsContent?: boolean;
     cornerRadius?: number;
+    targetAspectRatio?: { x: number; y: number };
+    proportionsConstrained?: boolean;
     // AutoLayout - frame level
     stackMode?: { value: number; name: string };
     stackSpacing?: number;
@@ -1025,6 +1045,12 @@ function _createFigFileBuilder() {
     }
     if (data.cornerRadius !== undefined) {
       node.cornerRadius = data.cornerRadius;
+    }
+    if (data.targetAspectRatio !== undefined) {
+      node.targetAspectRatio = data.targetAspectRatio;
+    }
+    if (data.proportionsConstrained !== undefined) {
+      node.proportionsConstrained = data.proportionsConstrained;
     }
 
     // AutoLayout - frame level (for FRAME and SYMBOL)

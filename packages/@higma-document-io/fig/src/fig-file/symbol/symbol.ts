@@ -36,6 +36,7 @@ export type SymbolNodeBuilder = {
   noFill: () => SymbolNodeBuilder;
   clipsContent: (clips: boolean) => SymbolNodeBuilder;
   cornerRadius: (radius: number) => SymbolNodeBuilder;
+  lockAspectRatio: (width: number, height: number) => SymbolNodeBuilder;
   visible: (v: boolean) => SymbolNodeBuilder;
   opacity: (o: number) => SymbolNodeBuilder;
   autoLayout: (mode: StackMode) => SymbolNodeBuilder;
@@ -73,6 +74,8 @@ type SymbolBuilderState = {
   hasFill: boolean;
   clipsContent: boolean;
   cornerRadius: number | undefined;
+  targetAspectRatio: { x: number; y: number } | undefined;
+  proportionsConstrained: boolean | undefined;
   visible: boolean;
   opacity: number;
   exportSettings: ExportSettings[];
@@ -102,6 +105,8 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     hasFill: true,
     clipsContent: true,
     cornerRadius: undefined,
+    targetAspectRatio: undefined,
+    proportionsConstrained: undefined,
     visible: true,
     opacity: 1,
     exportSettings: [],
@@ -127,6 +132,11 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     noFill() { state.hasFill = false; return builder; },
     clipsContent(clips: boolean) { state.clipsContent = clips; return builder; },
     cornerRadius(radius: number) { state.cornerRadius = radius; return builder; },
+    lockAspectRatio(width: number, height: number) {
+      state.targetAspectRatio = { x: width, y: height };
+      state.proportionsConstrained = true;
+      return builder;
+    },
     visible(v: boolean) { state.visible = v; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
     autoLayout(mode: StackMode) { state.stackMode = mode; return builder; },
@@ -166,6 +176,8 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
         opacity: state.opacity,
         clipsContent: state.clipsContent,
         cornerRadius: state.cornerRadius,
+        targetAspectRatio: state.targetAspectRatio,
+        proportionsConstrained: state.proportionsConstrained,
         exportSettings: state.exportSettings.length > 0 ? state.exportSettings : undefined,
         stackMode: toEnumValue(state.stackMode, STACK_MODE_VALUES),
         stackSpacing: state.stackSpacing,

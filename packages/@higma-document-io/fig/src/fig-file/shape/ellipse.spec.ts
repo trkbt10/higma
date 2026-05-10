@@ -79,6 +79,15 @@ describe("EllipseNodeBuilder", () => {
     expect(result.transform.m11).toBeCloseTo(Math.cos(rad));
   });
 
+  it("sets aspect ratio lock fields", () => {
+    const result = ellipseNode(1, 0)
+      .lockAspectRatio(4, 3)
+      .build();
+
+    expect(result.targetAspectRatio).toEqual({ x: 4, y: 3 });
+    expect(result.proportionsConstrained).toBe(true);
+  });
+
   it("applies child constraints", () => {
     const result = ellipseNode(1, 0)
       .positioning("ABSOLUTE")

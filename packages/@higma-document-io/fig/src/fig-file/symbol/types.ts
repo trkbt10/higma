@@ -32,6 +32,8 @@ export type SymbolNodeData = {
   readonly opacity: number;
   readonly clipsContent: boolean;
   readonly cornerRadius?: number;
+  readonly targetAspectRatio?: { readonly x: number; readonly y: number };
+  readonly proportionsConstrained?: boolean;
   readonly exportSettings?: readonly ExportSettings[];
 
   // AutoLayout - frame level (symbols support auto-layout)

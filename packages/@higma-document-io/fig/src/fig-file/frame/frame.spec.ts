@@ -58,6 +58,15 @@ describe("FrameNodeBuilder", () => {
   });
 
   describe("AutoLayout - Frame Level", () => {
+    it("sets aspect ratio lock fields", () => {
+      const node = frameNode(1, 0)
+        .lockAspectRatio(16, 9)
+        .build();
+
+      expect(node.targetAspectRatio).toEqual({ x: 16, y: 9 });
+      expect(node.proportionsConstrained).toBe(true);
+    });
+
     it("creates horizontal auto-layout frame", () => {
       const node = frameNode(1, 0)
         .autoLayout("HORIZONTAL")

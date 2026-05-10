@@ -39,6 +39,8 @@ export type BaseShapeNodeData = {
   readonly strokeJoin?: { value: number; name: StrokeJoin };
   readonly strokeAlign?: { value: number; name: StrokeAlign };
   readonly dashPattern?: readonly number[];
+  readonly targetAspectRatio?: { readonly x: number; readonly y: number };
+  readonly proportionsConstrained?: boolean;
   readonly visible: boolean;
   readonly opacity: number;
   // Child constraint properties

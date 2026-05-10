@@ -42,6 +42,8 @@ export type BaseShapeState = {
   strokeJoin?: StrokeJoin;
   strokeAlign?: StrokeAlign;
   dashPattern?: number[];
+  targetAspectRatio?: { readonly x: number; readonly y: number };
+  proportionsConstrained?: boolean;
   visible: boolean;
   opacity: number;
   stackPositioning?: StackPositioning;
@@ -87,6 +89,7 @@ export type BaseShapeBuilderMethods<TBuilder> = {
   strokeJoin: (join: StrokeJoin) => TBuilder;
   strokeAlign: (align: StrokeAlign) => TBuilder;
   dashPattern: (pattern: number[]) => TBuilder;
+  lockAspectRatio: (width: number, height: number) => TBuilder;
   visible: (v: boolean) => TBuilder;
   opacity: (o: number) => TBuilder;
   positioning: (mode: StackPositioning) => TBuilder;
@@ -115,6 +118,7 @@ export type FluentShapeBuilder<TCustom> = TCustom & {
   strokeJoin: (join: StrokeJoin) => FluentShapeBuilder<TCustom>;
   strokeAlign: (align: StrokeAlign) => FluentShapeBuilder<TCustom>;
   dashPattern: (pattern: number[]) => FluentShapeBuilder<TCustom>;
+  lockAspectRatio: (width: number, height: number) => FluentShapeBuilder<TCustom>;
   visible: (v: boolean) => FluentShapeBuilder<TCustom>;
   opacity: (o: number) => FluentShapeBuilder<TCustom>;
   positioning: (mode: StackPositioning) => FluentShapeBuilder<TCustom>;
@@ -146,6 +150,11 @@ export function attachBaseShapeMethods<TBuilder>(state: BaseShapeState, builder:
     strokeJoin(join: StrokeJoin) { state.strokeJoin = join; return builder; },
     strokeAlign(align: StrokeAlign) { state.strokeAlign = align; return builder; },
     dashPattern(pattern: number[]) { state.dashPattern = pattern; return builder; },
+    lockAspectRatio(width: number, height: number) {
+      state.targetAspectRatio = { x: width, y: height };
+      state.proportionsConstrained = true;
+      return builder;
+    },
     visible(v: boolean) { state.visible = v; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
@@ -223,6 +232,8 @@ export function buildBaseData(state: BaseShapeState): BaseShapeNodeData {
     strokeJoin: toEnumValue(state.strokeJoin, STROKE_JOIN_VALUES) ?? { value: 0, name: "MITER" },
     strokeAlign: toEnumValue(state.strokeAlign, STROKE_ALIGN_VALUES) ?? { value: 0, name: "CENTER" },
     dashPattern: state.dashPattern,
+    targetAspectRatio: state.targetAspectRatio,
+    proportionsConstrained: state.proportionsConstrained,
     visible: state.visible,
     opacity: state.opacity,
     stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
