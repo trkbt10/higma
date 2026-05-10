@@ -83,7 +83,12 @@ function isInlineDisplay(display: string | undefined): boolean {
 }
 
 function collectTextLength(el: RawElement): number {
-  const direct = (el.text ?? "").length;
+  // Prefer textFragments so the count reflects what the ordered
+  // walker will emit; fall back to the legacy `text` length when
+  // the snapshot didn't supply fragments.
+  const direct = el.textFragments
+    ? el.textFragments.reduce((acc, slot) => acc + slot.length, 0)
+    : (el.text ?? "").length;
   const pseudo = (el.pseudo ?? []).reduce((acc, p) => acc + p.text.length, 0);
   const childTotal = el.children.reduce((acc, child) => acc + collectTextLength(child), 0);
   return direct + pseudo + childTotal;
@@ -280,25 +285,45 @@ function sameStyle(a: BaseStyle, b: BaseStyle): boolean {
  * the inline ancestor's effective style. `::before` / `::after`
  * pseudo-element text is bracketed around the element's own text
  * + descendants, mirroring the CSS Generated Content rules.
+ *
+ * When `el.textFragments` is present we use it to interleave direct
+ * text with inline children in document order (the case for
+ * `<p>foo<a>bar</a>baz</p>` — the visible flow is foo·bar·baz, not
+ * foobaz·bar). Otherwise we fall back to the legacy "all direct text
+ * before all children" ordering used by leaf-text nodes.
  */
 function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
   const ownStyle = mergeStyle(el, base);
   pushPseudo(el, "before", ownStyle, writer);
-  // Direct text on this element comes before its inline children —
-  // the snapshot walker captures only direct text nodes per element,
-  // not interleaved text/element ordering. For the paragraphs we
-  // currently target (single inline child per paragraph in
-  // example.com) this ordering matches the visible output. When
-  // multi-text-run paragraphs appear the snapshot needs richer
-  // ordering — out of scope here, kept simple deliberately.
-  if (el.text !== undefined && el.text.length > 0) {
-    writer.push(el.text, ownStyle);
-  }
-  for (const child of el.children) {
-    if (!child.visible) {
-      continue;
+  if (el.textFragments && el.textFragments.length === el.children.length + 1) {
+    for (let i = 0; i < el.children.length; i += 1) {
+      const slot = el.textFragments[i] ?? "";
+      if (slot.length > 0) {
+        writer.push(slot, ownStyle);
+      }
+      const child = el.children[i]!;
+      if (!child.visible) {
+        continue;
+      }
+      walkInline(child, ownStyle, writer);
     }
-    walkInline(child, ownStyle, writer);
+    const tail = el.textFragments[el.children.length] ?? "";
+    if (tail.length > 0) {
+      writer.push(tail, ownStyle);
+    }
+  } else {
+    // Legacy path — leaf-text element (no children) or pre-fragment
+    // snapshot data. Direct text comes first, then the inline
+    // children in DOM order.
+    if (el.text !== undefined && el.text.length > 0) {
+      writer.push(el.text, ownStyle);
+    }
+    for (const child of el.children) {
+      if (!child.visible) {
+        continue;
+      }
+      walkInline(child, ownStyle, writer);
+    }
   }
   pushPseudo(el, "after", ownStyle, writer);
 }

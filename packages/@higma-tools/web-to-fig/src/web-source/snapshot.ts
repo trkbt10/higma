@@ -85,8 +85,52 @@ export type RawElement = {
   readonly visible: boolean;
   /** Subset of `getComputedStyle(...)` keyed verbatim. */
   readonly computedStyle: Readonly<Record<string, string>>;
-  /** `<img>` src or first `background-image` url; resolves into the snapshot.images map. */
+  /**
+   * `<img>` src or *first* `background-image` URL. Kept for legacy
+   * call sites that only need the dominant image (e.g. img-tag
+   * normalisation). Multi-layer backgrounds also populate
+   * `imageIds` below, with `imageId` mirroring `imageIds[0]`.
+   */
   readonly imageId?: string;
+  /**
+   * Per-layer image ids for `background-image` URL layers. Index
+   * matches the CSS source order — `imageIds[0]` is the
+   * top-most paint layer (the one a CSS author wrote first).
+   * Populated even for single-layer backgrounds so consumers can
+   * walk a uniform shape.
+   */
+  readonly imageIds?: readonly string[];
+  /**
+   * Intrinsic pixel dimensions of `imageId`'s asset. Populated
+   * host-side by sniffing the response bytes. Required for
+   * `background-size: auto` semantics — the renderer must paint
+   * the image at intrinsic size, which the IR can only express by
+   * synthesising a child frame whose box equals the natural size.
+   */
+  readonly imageNaturalWidth?: number;
+  readonly imageNaturalHeight?: number;
+  /**
+   * CSS `mask-image` URL captured separately from `imageId`. The
+   * browser uses the mask asset's alpha channel to silhouette the
+   * element's `background-color` / `color`; surfacing the asset
+   * itself as an image fill (which we used to do) renders the
+   * mask bitmap instead. Host-side resolves this id into either
+   * `maskSvgContent` (when the URL responded with an SVG —
+   * preferred, lets us render a clean vector path filled with the
+   * host's CSS colour) or to a raster asset (when the mask is a
+   * raster).
+   */
+  readonly maskImageId?: string;
+  /**
+   * Vector geometry for the captured `mask-image` SVG, parsed
+   * host-side from the SVG bytes the browser already downloaded.
+   * When present the normaliser emits a vector node whose paths
+   * are filled with the host element's CSS `color`.
+   */
+  readonly maskSvgContent?: RawSvgContent;
+  /** Intrinsic pixel size of the `maskImageId` asset. */
+  readonly maskNaturalWidth?: number;
+  readonly maskNaturalHeight?: number;
   /** Captured SVG geometry when `tag === "svg"`. */
   readonly svgContent?: RawSvgContent;
   /** Concatenated direct text content. Empty for non-leaf containers. */

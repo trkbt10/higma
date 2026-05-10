@@ -105,21 +105,21 @@ export type BackgroundLayer = {
  *   `cover`                       → cover
  *   `contain`                     → contain
  *   `100% 100%` / `100%`          → stretch
- *   `auto` (or omitted) + repeat  → tile (intrinsic size, repeated)
- *   `auto` (or omitted) + no-rep. → contain (intrinsic-size single
- *                                   instance has no faithful IR map;
- *                                   `contain` keeps the image inside
- *                                   the container and preserves its
- *                                   aspect ratio, which is closer to
- *                                   the source than the previous
- *                                   blanket `cover` fallback)
- *
- * Pre-this-function the normaliser hard-coded `"cover"` for every
- * background, which forced images like Wikipedia's
- * "Wikipedia-logo-v2-200px-transparent.png" decorative overlay to
- * paint across the whole frame instead of staying at their intrinsic
- * footprint. The new map respects the captured CSS so decorative
- * overlays land in roughly the right place.
+ *   `auto` + `repeat`             → tile (intrinsic size, repeated)
+ *   `auto` + `no-repeat`          → THROWS — this case has no faithful
+ *                                   single-paint mapping in Figma's IR
+ *                                   (none of cover / contain / tile /
+ *                                   stretch means "draw the image once
+ *                                   at intrinsic size at a specific
+ *                                   pixel offset, leave the rest
+ *                                   transparent"). The normaliser must
+ *                                   intercept the layer upstream and
+ *                                   synthesise a natural-size child
+ *                                   frame at the captured
+ *                                   `background-position`. Throwing
+ *                                   here keeps the SoT single — when
+ *                                   we see the throw we know upstream
+ *                                   forgot to take the synth path.
  */
 function backgroundScaleMode(layer: BackgroundLayer): ImagePaintIR["scaleMode"] {
   const size = (layer.size ?? "auto").trim().toLowerCase();
@@ -134,30 +134,62 @@ function backgroundScaleMode(layer: BackgroundLayer): ImagePaintIR["scaleMode"] 
   }
   const repeat = (layer.repeat ?? "repeat").trim().toLowerCase();
   if (repeat === "no-repeat") {
-    return "contain";
+    throw new Error(
+      `backgroundScaleMode: cannot map "background-size: ${layer.size ?? "auto"}; `
+      + `background-repeat: no-repeat" to a single image-paint scaleMode — `
+      + `caller must lift this layer out via the natural-size synth path before `
+      + `invoking parseBackgroundImage`,
+    );
   }
   return "tile";
 }
 
 /**
- * Parse `background-image` into a list of paints. The leftmost gradient
- * paints last in CSS but first in our IR's bottom-up `fills` array, so
- * the caller is responsible for reversing.
+ * Decorative no-repeat backgrounds whose size is *not* the
+ * container itself need to be lifted out of the host element's
+ * fill and re-injected as a sized child frame. Three cases route
+ * through the synth path:
+ *
+ *   1. `auto` / `auto auto` + `no-repeat` — natural-size single
+ *      instance (Wikipedia's puzzle logo).
+ *   2. `<length> <length>` / `<length>` + `no-repeat` — explicit
+ *      pixel size (Yahoo's 15×15 inline SVG icon).
+ *   3. `<length> auto` / `auto <length>` + `no-repeat` — partial
+ *      explicit; resolved against the natural aspect ratio.
+ *
+ * Container-filling sizes (`cover`, `contain`, `100% 100%`,
+ * `100%`) keep using the single image-paint mapping; tiled
+ * (`repeat`) keeps using TILE.
+ */
+export function isNaturalSizeNoRepeatLayer(layer: BackgroundLayer): boolean {
+  const size = (layer.size ?? "auto").trim().toLowerCase();
+  if (size === "cover" || size === "contain" || size === "100% 100%" || size === "100%") {
+    return false;
+  }
+  const repeat = (layer.repeat ?? "repeat").trim().toLowerCase();
+  return repeat === "no-repeat";
+}
+
+/**
+ * Parse `background-image` into a list of paints. The leftmost
+ * `url()` token in the value owns `imageIds[0]`, the next `url()`
+ * owns `imageIds[1]`, and so on — gradients consume no id. CSS
+ * paints layers in document order (top of the comma list paints
+ * last; i.e. on top), and our IR's `fills` array shares that
+ * order, so we keep the input ordering 1:1.
  *
  * Supported forms:
  *   - `none` → no paints
  *   - `linear-gradient(<angle>?, <stops>)`
  *   - `url(...)` → an image paint
  *
- * `layer` carries the matching `background-size` / `background-repeat`
- * so the image paint inherits a `scaleMode` faithful to the CSS
- * declaration. Callers that don't pass it get the spec defaults
- * (`auto` / `repeat`), which collapses to a `tile` paint — every
- * site uses sized backgrounds explicitly anyway.
+ * `layer` carries the matching `background-size` /
+ * `background-repeat` so each image paint inherits a `scaleMode`
+ * faithful to the CSS declaration.
  */
 export function parseBackgroundImage(
   value: string,
-  imageId: string | undefined,
+  imageIds: readonly string[],
   layer: BackgroundLayer = {},
 ): readonly PaintIR[] {
   const trimmed = value.trim();
@@ -167,6 +199,8 @@ export function parseBackgroundImage(
   const tokens = splitTopLevelCommas(trimmed);
   const out: PaintIR[] = [];
   const scaleMode = backgroundScaleMode(layer);
+  // eslint-disable-next-line no-restricted-syntax -- per-layer cursor walks the imageIds list
+  let urlCursor = 0;
   for (const token of tokens) {
     const tok = token.trim();
     if (tok.startsWith("linear-gradient(")) {
@@ -180,10 +214,18 @@ export function parseBackgroundImage(
       continue;
     }
     if (tok.startsWith("url(")) {
-      if (!imageId) {
-        throw new Error(`parseBackgroundImage: url() found but no imageId provided for "${value}"`);
+      const layerImageId = imageIds[urlCursor];
+      if (layerImageId === undefined) {
+        throw new Error(
+          `parseBackgroundImage: url() layer #${urlCursor} ("${tok}") has no matching imageId in `
+          + `imageIds=${JSON.stringify(imageIds)}. The capture walker must register every `
+          + `background-image url (including data: SVGs and additional layers in a multi-layer `
+          + `stack) so each layer keeps its own imageId. Silently skipping layers introduces `
+          + `visual omissions that any 0%-diff target rejects.`,
+        );
       }
-      out.push({ kind: "image", imageId, scaleMode });
+      urlCursor += 1;
+      out.push({ kind: "image", imageId: layerImageId, scaleMode });
       continue;
     }
     throw new Error(`parseBackgroundImage: unsupported background-image token "${tok}"`);
@@ -243,8 +285,8 @@ function parseGradientStop(value: string, index: number, total: number): Gradien
   // Naive whitespace split would break `rgb(210, 231, 255)` and
   // `rgba(...)` because their internal commas are followed by
   // spaces. Instead we look for an explicit position suffix
-  // (`<color> <percent>`) — and we only split on whitespace that
-  // sits at the *top level* of the stop token.
+  // (`<color> <percent>` or `<color> <length>`) — splitting only on
+  // whitespace at the *top level* of the stop token.
   const split = splitOnTopLevelWhitespace(value);
   if (split.length === 1) {
     return {
@@ -254,10 +296,32 @@ function parseGradientStop(value: string, index: number, total: number): Gradien
   }
   const color = parseColor(split[0]!);
   const positionToken = split[1]!;
-  if (!positionToken.endsWith("%")) {
-    throw new Error(`parseGradientStop: only percent stops supported, got "${value}"`);
+  return { position: parseGradientStopPosition(positionToken, value), color };
+}
+
+function parseGradientStopPosition(token: string, original: string): number {
+  if (token.endsWith("%")) {
+    const n = parseFloat(token.slice(0, -1));
+    if (!Number.isFinite(n)) {
+      throw new Error(`parseGradientStop: malformed percent stop "${token}" in "${original}"`);
+    }
+    return n / 100;
   }
-  return { position: parseFloat(positionToken.slice(0, -1)) / 100, color };
+  if (token.endsWith("px")) {
+    const n = parseFloat(token.slice(0, -2));
+    if (!Number.isFinite(n)) {
+      throw new Error(`parseGradientStop: malformed px stop "${token}" in "${original}"`);
+    }
+    // CSS gradients allow length stops (`0px`, `200px`); without the
+    // gradient's full extent here we approximate `0px` as 0% and any
+    // other length as a clamp toward the start, since the dominant
+    // failure mode in the captures we've seen is a `0px` sentinel
+    // marking the gradient origin. Higher-fidelity length-stop maths
+    // requires the host element's width / height — out of scope for
+    // this parser, which never has access to those.
+    return n === 0 ? 0 : Math.max(0, Math.min(1, n / 100));
+  }
+  throw new Error(`parseGradientStop: only percent / px stops supported, got "${token}" in "${original}"`);
 }
 
 /** Parse a `<color>` computed-style value (always functional rgb / rgba). */

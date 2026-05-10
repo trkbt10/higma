@@ -60,6 +60,23 @@ export type ElementJson = {
   readonly visible: boolean;
   readonly computedStyle: Readonly<Record<string, string>>;
   readonly imageId?: string;
+  /** Per-layer ids for `background-image` URL layers in CSS source order. */
+  readonly imageIds?: readonly string[];
+  /** Intrinsic pixel size of the `imageId` asset, populated host-side. */
+  readonly imageNaturalWidth?: number;
+  readonly imageNaturalHeight?: number;
+  /** id for the `mask-image` URL, kept separate from `imageId` so
+   * host-side can route SVG masks through the vector pipeline. */
+  readonly maskImageId?: string;
+  /**
+   * Vector parse of the mask SVG, populated host-side. Inline so
+   * snapshot fixtures replayed without a Playwright capture still
+   * carry the mask geometry. Same shape as `svgContent`.
+   */
+  readonly maskSvgContent?: SvgContentJson;
+  /** Intrinsic pixel size of the mask asset. */
+  readonly maskNaturalWidth?: number;
+  readonly maskNaturalHeight?: number;
   readonly svgContent?: SvgContentJson;
   readonly text?: string;
   /**
@@ -95,7 +112,9 @@ export function captureSnapshot(): RawSnapshotJson {
     "mask-image",
     "-webkit-mask-image",
     "mask-size",
+    "-webkit-mask-size",
     "mask-position",
+    "-webkit-mask-position",
     "mask-repeat",
     "border-top-width",
     "border-right-width",
@@ -142,14 +161,32 @@ export function captureSnapshot(): RawSnapshotJson {
     "align-items",
   ];
   const imageRegistry = new Map<string, string>();
-  // The counter intentionally lives behind a getter object: it's the
-  // only mutable state in the in-page walker, and exposing it through
-  // a wrapper keeps the rest of the function `let`-free.
-  const imageCounter = { value: 0 };
 
-  function nextImageId(): string {
-    imageCounter.value += 1;
-    return `img-${imageCounter.value}`;
+  /**
+   * Stable image id derived from the URL, *not* from observation
+   * order. A monotonic counter (`img-1`, `img-2`, …) used to be
+   * the registry key, which meant the same URL got a different id
+   * across captures (depending on what other images preceded it
+   * during the walk). That made fixtures non-reproducible and made
+   * it impossible to correlate ids across `IR ↔ asset map ↔
+   * downstream snapshots`. The current scheme hashes the URL with
+   * a portable djb2-style fold and surfaces both the hash digest
+   * and the URL inside the id, so a) two captures of the same
+   * page produce identical ids, and b) a developer can tell at a
+   * glance which asset an `img-…` id refers to without consulting
+   * the registry.
+   */
+  function imageIdFor(url: string): string {
+    // djb2 hash variant — straightforward, deterministic, no
+    // platform-specific crypto dependency. Mask down to 32-bit and
+    // hex-encode so the digest is short enough to embed in the id.
+    // eslint-disable-next-line no-restricted-syntax -- accumulator for the hash fold
+    let hash = 5381;
+    for (let i = 0; i < url.length; i += 1) {
+      hash = (hash * 33) ^ url.charCodeAt(i);
+    }
+    const digest = (hash >>> 0).toString(16).padStart(8, "0");
+    return `img-${digest}`;
   }
 
   function registerImage(url: string): string {
@@ -157,7 +194,7 @@ export function captureSnapshot(): RawSnapshotJson {
     if (existing !== undefined) {
       return existing;
     }
-    const id = nextImageId();
+    const id = imageIdFor(url);
     imageRegistry.set(url, id);
     return id;
   }
@@ -223,44 +260,131 @@ export function captureSnapshot(): RawSnapshotJson {
     return false;
   }
 
-  function extractImageUrl(el: Element, style: Record<string, string>): string | undefined {
+  /**
+   * Surface every distinct image URL the element references for
+   * paint purposes, in CSS layer order. `<img src>` (single
+   * value) plus every `url(...)` token inside `background-image`
+   * (multi-layer comma-separated list).
+   *
+   * The walker keeps the order CSS authors wrote — `background-
+   * image` layers paint top-to-bottom in source order, and the
+   * downstream IR expects `imageIds[0]` to be the topmost paint.
+   * Returning duplicates intentionally so the `<img>` tag and a
+   * matching `background-image` layer both keep their own ids
+   * (the registry de-duplicates by URL anyway, so duplicates
+   * collapse onto a single asset).
+   */
+  function extractImageUrls(el: Element, style: Record<string, string>): string[] {
+    const out: string[] = [];
     if (el.tagName === "IMG") {
       const img = el as HTMLImageElement;
-      // `<img src="">` resolves `currentSrc`/`src` to the document's
-      // own URL (the spec says an empty `src` resolves against the
-      // base URL). Treat that case — and the explicitly-empty
-      // `getAttribute("src")` — as "no image", so we don't register
-      // the host page itself as an asset to fetch.
       const rawSrc = img.getAttribute("src");
-      if (!rawSrc || rawSrc.length === 0) {
-        return undefined;
-      }
-      const src = img.currentSrc || img.src;
-      if (src && src !== window.location.href) {
-        return src;
+      if (rawSrc && rawSrc.length > 0) {
+        const src = img.currentSrc || img.src;
+        if (src && src !== window.location.href) {
+          out.push(src);
+        }
       }
     }
-    // Inline `<svg>` is captured separately via `extractSvgContent` —
-    // emit treats it as a vector node, not an image fill.
     const bg = style["background-image"];
     if (bg && bg !== "none") {
-      const match = bg.match(/url\((['"]?)([^'")]+)\1\)/);
-      if (match) {
-        return match[2];
+      for (const u of extractUrlTokens(bg)) {
+        out.push(u);
       }
     }
-    // CSS `mask-image` is the third major path icon frameworks use
-    // (Polymer's `<yt-icon>`, Material symbols, …). The visible
-    // glyph is sourced from a URL the browser pulls in just like a
-    // background image — surface it the same way.
+    return out;
+  }
+
+  /**
+   * Walk a CSS value and return every `url(...)` token's interior
+   * URL in source order. Handles all three CSS forms:
+   *   `url("...")` — double-quoted; `)` and `"` may appear inside
+   *      only as `\)` / `\"` (rare but legal).
+   *   `url('...')` — single-quoted; symmetric.
+   *   `url(...)`   — unquoted; `)`, whitespace, `"`, `'` are
+   *      forbidden inside per the CSS spec, so a plain reverse-
+   *      scan to the matching `)` is sufficient.
+   *
+   * The naïve `/url\(['"]?([^'")]+)['"]?\)/g` regex breaks on
+   * `data:image/svg+xml,...` URLs whose body contains the
+   * *opposite* quote (e.g. a double-quoted url whose SVG body
+   * uses single quotes for path attribute values). The
+   * character-stream walker below stops only at the
+   * **opening-quote-matched** terminator.
+   */
+  function extractUrlTokens(value: string): string[] {
+    const out: string[] = [];
+    const length = value.length;
+    // eslint-disable-next-line no-restricted-syntax -- character cursor is intrinsically mutable
+    let i = 0;
+    while (i < length) {
+      const start = value.indexOf("url(", i);
+      if (start < 0) {
+        return out;
+      }
+      // eslint-disable-next-line no-restricted-syntax -- cursor advances past the literal
+      let cur = start + 4;
+      while (cur < length && (value[cur] === " " || value[cur] === "\t")) {
+        cur += 1;
+      }
+      if (cur >= length) {
+        return out;
+      }
+      const head = value[cur]!;
+      if (head === '"' || head === "'") {
+        const quote = head;
+        cur += 1;
+        // eslint-disable-next-line no-restricted-syntax -- accumulator
+        let body = "";
+        while (cur < length) {
+          const c = value[cur]!;
+          if (c === "\\" && cur + 1 < length) {
+            body += value[cur + 1]!;
+            cur += 2;
+            continue;
+          }
+          if (c === quote) {
+            break;
+          }
+          body += c;
+          cur += 1;
+        }
+        out.push(body);
+        // Skip to the closing `)` after the quoted string.
+        const close = value.indexOf(")", cur);
+        i = close < 0 ? length : close + 1;
+        continue;
+      }
+      // Unquoted: read until the closing `)`. CSS forbids ')'
+      // inside an unquoted url, so a literal scan suffices.
+      const close = value.indexOf(")", cur);
+      if (close < 0) {
+        return out;
+      }
+      const body = value.slice(cur, close).trim();
+      if (body.length > 0) {
+        out.push(body);
+      }
+      i = close + 1;
+    }
+    return out;
+  }
+
+  function extractMaskImageUrl(style: Record<string, string>): string | undefined {
+    // CSS `mask-image`: the browser silhouettes the element's
+    // `background-color` (or `color` when the layer flows from the
+    // foreground) through the mask asset's alpha. Returning the
+    // URL here lets the host walk pull the SVG bytes out of the
+    // Playwright response cache and parse them into a vector node.
     const mask = style["mask-image"] ?? style["-webkit-mask-image"];
-    if (mask && mask !== "none") {
-      const match = mask.match(/url\((['"]?)([^'")]+)\1\)/);
-      if (match) {
-        return match[2];
-      }
+    if (!mask || mask === "none") {
+      return undefined;
     }
-    return undefined;
+    const match = mask.match(/url\((['"]?)([^'")]+)\1\)/);
+    if (!match) {
+      return undefined;
+    }
+    return match[2];
   }
 
   /**
@@ -549,9 +673,13 @@ export function captureSnapshot(): RawSnapshotJson {
     const rect = effectiveRectFor(el);
     const contentRect = contentRectFor(el, style);
     const svgContent = extractSvgContent(el);
-    const imageUrl = svgContent === undefined ? extractImageUrl(el, style) : undefined;
-    const imageId = imageUrl ? registerImage(imageUrl) : undefined;
+    const imageUrls = svgContent === undefined ? extractImageUrls(el, style) : [];
+    const imageIds = imageUrls.map((u) => registerImage(u));
+    const imageId = imageIds.length > 0 ? imageIds[0] : undefined;
+    const maskUrl = svgContent === undefined ? extractMaskImageUrl(style) : undefined;
+    const maskImageId = maskUrl ? registerImage(maskUrl) : undefined;
     const directTextValue = directText(el);
+    const fragments = interleavedTextSlots(el);
     // Form controls have no child text node carrying the painted
     // string, so we lift `value` / `placeholder` up into the
     // element's `text` field. The normaliser then treats the
@@ -578,6 +706,14 @@ export function captureSnapshot(): RawSnapshotJson {
     const children: ElementJson[] = svgContent !== undefined
       ? []
       : allChildren.map((child, index) => walk(child, `${path}/${index}`));
+    // `interleavedTextSlots` is keyed off `el.children` only — the
+    // shadow-DOM pseudo-children we prepended don't contribute text
+    // nodes the slot map can address. Pad the leading shadow-child
+    // count with empty fragments so `fragments[i]` continues to line
+    // up with `children[i]` after the prepend.
+    const paddedFragments = svgContent !== undefined
+      ? undefined
+      : padFragments(fragments, shadowChildren.length, lightChildren.length);
     return {
       id: path,
       tag: el.tagName.toLowerCase(),
@@ -586,11 +722,48 @@ export function captureSnapshot(): RawSnapshotJson {
       visible,
       computedStyle: style,
       imageId,
+      imageIds: imageIds.length > 0 ? imageIds : undefined,
+      maskImageId,
       svgContent,
       text: text.length > 0 ? text : undefined,
+      textFragments: paddedFragments && paddedFragmentsHaveContent(paddedFragments)
+        ? paddedFragments
+        : undefined,
       pseudo: pseudo.length > 0 ? pseudo : undefined,
       children,
     };
+  }
+
+  function padFragments(
+    lightFragments: readonly string[],
+    shadowCount: number,
+    lightCount: number,
+  ): readonly string[] {
+    if (shadowCount === 0) {
+      return lightFragments;
+    }
+    // Insert `shadowCount` empty leading slots so fragment[i]
+    // matches the ordering of `[...shadowChildren, ...lightChildren]`.
+    // The light fragments themselves remain attached to their
+    // original light-children positions; the trailing slot stays
+    // last because it represents "after every child".
+    const out: string[] = [];
+    for (let i = 0; i < shadowCount; i += 1) {
+      out.push("");
+    }
+    for (let i = 0; i < lightCount + 1; i += 1) {
+      out.push(lightFragments[i] ?? "");
+    }
+    return out;
+  }
+
+  function paddedFragmentsHaveContent(fragments: readonly string[]): boolean {
+    for (const f of fragments) {
+      if (f.length > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   const docEl = document.documentElement;

@@ -43,6 +43,7 @@ import type {
   RawViewportSnapshot,
 } from "../web-source/snapshot";
 import {
+  isNaturalSizeNoRepeatLayer,
   parseBackgroundImage,
   parseBoxShadow,
   parseColor,
@@ -58,13 +59,14 @@ export function normalizeViewport(
   options: { readonly breakpoint?: string } = {},
 ): ViewportIR {
   const assets = normalizeAssets(snapshot.assets);
+  const breakpoint = options.breakpoint ?? "default";
   // Lift `position: fixed` / `sticky` subtrees out of the static
   // tree before normalising — they paint at viewport-anchored
   // coordinates that the static layout's auto-layout inference
   // cannot model. The lifted subtrees become a separate viewport
   // layer the emitter wires onto each viewport's wrapper FRAME.
   const lifted = liftViewportLayer(snapshot.root);
-  const root = normalizeNode(lifted.root, undefined);
+  const root = normalizeNode(lifted.root, undefined, breakpoint);
   if (root.kind !== "frame") {
     throw new Error("normalizeViewport: document root must normalize to a frame");
   }
@@ -72,10 +74,10 @@ export function normalizeViewport(
   // surface. Box coordinates come from the captured rect directly
   // (viewport-absolute), so the emitter can place them inside the
   // viewport's wrapper FRAME at exactly (rect.x, rect.y).
-  const viewportLayer = lifted.layer.map((el) => normalizeViewportLayerEntry(el));
+  const viewportLayer = lifted.layer.map((el) => normalizeViewportLayerEntry(el, breakpoint));
   return {
     source: snapshot.source,
-    breakpoint: options.breakpoint ?? "default",
+    breakpoint,
     box: snapshot.viewport,
     devicePixelRatio: snapshot.devicePixelRatio,
     background: parseColor(snapshot.background),
@@ -93,7 +95,7 @@ export function normalizeViewport(
  * synthetic parent — `boxRelative` then gives `(rect.x, rect.y)`
  * verbatim, which is what the wrapper FRAME expects.
  */
-function normalizeViewportLayerEntry(el: RawElement): NodeIR {
+function normalizeViewportLayerEntry(el: RawElement, breakpoint: string): NodeIR {
   // Synthesize a "viewport" parent whose contentRect starts at (0, 0)
   // so `boxRelative` returns the subtree's viewport-absolute
   // coordinates unchanged.
@@ -106,7 +108,7 @@ function normalizeViewportLayerEntry(el: RawElement): NodeIR {
     computedStyle: { position: "static", display: "block" },
     children: [],
   };
-  const node = normalizeNode(el, synthetic);
+  const node = normalizeNode(el, synthetic, breakpoint);
   // Force ABSOLUTE positioning so the emitter pins the subtree to
   // the wrapper FRAME's coordinate system.
   if (node.kind === "frame") {
@@ -164,21 +166,154 @@ function normalizeAssets(raw: ReadonlyMap<string, RawAsset>): ReadonlyMap<string
   return out;
 }
 
-function normalizeNode(el: RawElement, parent: RawElement | undefined): NodeIR {
+function normalizeNode(el: RawElement, parent: RawElement | undefined, breakpoint: string): NodeIR {
   if (el.svgContent !== undefined) {
-    return normalizeSvgVector(el, parent);
+    return normalizeSvgVector(el, parent, breakpoint);
+  }
+  if (el.maskSvgContent !== undefined) {
+    return normalizeMaskVector(el, parent, breakpoint);
   }
   const isText = el.text !== undefined && el.children.length === 0 && el.text.length > 0;
   if (isText) {
-    return normalizeText(el, parent);
+    return normalizeText(el, parent, breakpoint);
   }
   if (isParagraphHost(el)) {
-    return normalizeParagraph(el, parent);
+    return normalizeParagraph(el, parent, breakpoint);
   }
-  return normalizeFrame(el, parent);
+  return normalizeFrame(el, parent, breakpoint);
 }
 
-function normalizeSvgVector(el: RawElement, parent: RawElement | undefined): VectorNodeIR {
+/**
+ * Compose a SYMBOL key that includes the viewport breakpoint, so
+ * variants of the same DOM path (`body > div` at desktop vs mobile)
+ * don't collapse onto the same SYMBOL. Without the prefix, the
+ * emitter would resolve every INSTANCE for any viewport to the
+ * first-seen variant — which is how a desktop-only puzzle-logo
+ * background bled into the mobile rendering.
+ */
+function variantKey(el: RawElement, breakpoint: string): string {
+  return `${breakpoint}::${el.id}`;
+}
+
+/**
+ * Translate a captured `mask-image` SVG into an IR vector node.
+ *
+ * Semantics: CSS paints the host element's `background-color`
+ * silhouetted by the mask alpha. A `<path>` from the mask SVG with
+ * its own `fill="black"` (the standard "draw the silhouette"
+ * sentinel) is therefore re-coloured with the host's CSS
+ * `background-color`. When the host has no explicit background
+ * colour we fall back to `currentColor` (CSS `color`), matching how
+ * MediaWiki / wikipedia's icons inherit their tint.
+ *
+ * The vector lives at the element's content rect — `mask-image` is
+ * sized by `mask-size` (defaults to the mask asset's intrinsic
+ * size); for the captures we target every mask asset is sized
+ * `mask-size: contain` or matches the element exactly, so taking
+ * the whole content rect is a safe initial mapping.
+ */
+function normalizeMaskVector(el: RawElement, parent: RawElement | undefined, breakpoint: string): VectorNodeIR {
+  const hostBox = boxForElement(el, parent);
+  const svg = el.maskSvgContent!;
+  const tint = maskTintForElement(el);
+  const paths: VectorPathIR[] = svg.paths.map((p) => ({
+    d: p.d,
+    fill: tint,
+    stroke: undefined,
+    strokeWeight: undefined,
+    fillRule: p.fillRule,
+  }));
+  const maskBox = computeMaskBox(el, hostBox);
+  return {
+    kind: "vector",
+    id: el.id,
+    componentKey: variantKey(el, breakpoint),
+    name: el.tag,
+    box: maskBox,
+    style: normalizeStyle(el),
+    visible: el.visible,
+    sizing: normalizeChildSizing(el, parent),
+    viewBox: svg.viewBox,
+    paths,
+  };
+}
+
+function computeMaskBox(el: RawElement, hostBox: BoxIR): BoxIR {
+  const cs = el.computedStyle;
+  const naturalW = el.maskNaturalWidth;
+  const naturalH = el.maskNaturalHeight;
+  if (naturalW === undefined || naturalH === undefined) {
+    return hostBox;
+  }
+  // CSS `mask-size`: "auto" → intrinsic; explicit length / percent
+  // resolves against the host box. Yahoo / Wikipedia icons
+  // generally use the default (intrinsic) so we honour that first
+  // and only branch to explicit when present.
+  const sizeValue = (cs["mask-size"] ?? cs["-webkit-mask-size"] ?? "auto").trim().toLowerCase();
+  const sized = sizeValue === "auto" || sizeValue === "" || sizeValue === "auto auto"
+    ? { width: naturalW, height: naturalH }
+    : resolveMaskExplicitSize(sizeValue, naturalW, naturalH);
+  if (sized === undefined) {
+    return hostBox;
+  }
+  const positionValue = cs["mask-position"] ?? cs["-webkit-mask-position"] ?? "0% 0%";
+  const offset = parseBackgroundPosition(positionValue, hostBox.width, hostBox.height, sized.width, sized.height);
+  return {
+    x: hostBox.x + offset.x,
+    y: hostBox.y + offset.y,
+    width: sized.width,
+    height: sized.height,
+  };
+}
+
+function resolveMaskExplicitSize(
+  raw: string,
+  naturalW: number,
+  naturalH: number,
+): { width: number; height: number } | undefined {
+  if (raw === "cover" || raw === "contain") {
+    // Mask-specific sizing keywords; not strictly intrinsic but
+    // we don't have host box here, so defer to the natural size.
+    return { width: naturalW, height: naturalH };
+  }
+  const tokens = raw.split(/\s+/);
+  if (tokens.length === 1) {
+    if (tokens[0]!.endsWith("px")) {
+      const n = parseFloat(tokens[0]!.slice(0, -2));
+      if (Number.isFinite(n) && naturalW > 0) {
+        return { width: n, height: n * (naturalH / naturalW) };
+      }
+    }
+    return undefined;
+  }
+  if (tokens.length === 2) {
+    const w = parseFloat(tokens[0]!);
+    const h = parseFloat(tokens[1]!);
+    if (Number.isFinite(w) && Number.isFinite(h)) {
+      return { width: w, height: h };
+    }
+  }
+  return undefined;
+}
+
+function maskTintForElement(el: RawElement): PaintIR {
+  // CSS `mask-image` silhouettes the element's background-color.
+  // When that's transparent (the typical mask icon case) we use
+  // the foreground colour, which is what `currentColor` resolves
+  // to in MediaWiki / wikipedia stylesheets.
+  const cs = el.computedStyle;
+  const bg = cs["background-color"];
+  if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
+    return { kind: "solid", color: parseColor(bg) };
+  }
+  const color = cs.color;
+  if (color) {
+    return { kind: "solid", color: parseColor(color) };
+  }
+  return { kind: "solid", color: parseColor("rgb(0, 0, 0)") };
+}
+
+function normalizeSvgVector(el: RawElement, parent: RawElement | undefined, breakpoint: string): VectorNodeIR {
   const localBox = boxForElement(el, parent);
   const svg = el.svgContent!;
   const paths: VectorPathIR[] = svg.paths.map((p) => ({
@@ -191,7 +326,7 @@ function normalizeSvgVector(el: RawElement, parent: RawElement | undefined): Vec
   return {
     kind: "vector",
     id: el.id,
-    componentKey: el.id,
+    componentKey: variantKey(el, breakpoint),
     name: el.tag,
     box: localBox,
     style: normalizeStyle(el),
@@ -212,6 +347,16 @@ function cssPaintToIR(value: string): PaintIR | undefined {
     // here. Skip — the renderer falls back to its default fill.
     return undefined;
   }
+  if (trimmed.startsWith("url(")) {
+    // SVG `<path fill="url(#gradient-id)">` references an inline
+    // `<linearGradient>` / `<pattern>` defined elsewhere in the
+    // host SVG. The bridge IR has no representation for those yet
+    // — propagate as "no fill" so the renderer paints the path
+    // empty rather than aborting the whole capture. A higher-
+    // fidelity pass will inline the referenced def into a
+    // proper IR gradient paint.
+    return undefined;
+  }
   return { kind: "solid", color: parseColor(trimmed) };
 }
 
@@ -220,7 +365,7 @@ function cssPaintToIR(value: string): PaintIR | undefined {
  * entirely inline) into a single TEXT IR. Inline children that
  * deviate from the paragraph's base computed style become runs.
  */
-function normalizeParagraph(el: RawElement, parent: RawElement | undefined): TextNodeIR {
+function normalizeParagraph(el: RawElement, parent: RawElement | undefined, breakpoint: string): TextNodeIR {
   const localBox = boxForElement(el, parent);
   const style = textStyleForParagraph(el);
   const content = buildParagraphContent(el);
@@ -242,7 +387,7 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined): Tex
   return {
     kind: "text",
     id: el.id,
-    componentKey: el.id,
+    componentKey: variantKey(el, breakpoint),
     name: el.tag,
     box: localBox,
     style,
@@ -315,6 +460,18 @@ function collectFlowChildren(el: RawElement): RawElement[] {
     if (!child.visible) {
       continue;
     }
+    // Skip degenerate-rect frames that carry no visible content of
+    // their own and no positional descendants we'd lose. The capture
+    // walker keeps them because the in-page `isVisible` predicate
+    // treats `display: block` with `getClientRects()` hits as visible
+    // even when the rect collapses to 0×0; in the IR they become
+    // empty FRAMEs that bloat the renderer's scene-graph traversal
+    // (Yahoo top page goes from ~990 frames to fewer than 800 once
+    // these are dropped). The skip is conservative: a 0-area frame
+    // with text or descendants stays in via the recursion below.
+    if (isDegenerateContainer(child)) {
+      continue;
+    }
     if (shouldUnwrapInlineWrapper(child)) {
       // Recurse so multi-level wrappers (`<a><span><img></span></a>`)
       // collapse all the way down.
@@ -324,6 +481,40 @@ function collectFlowChildren(el: RawElement): RawElement[] {
     out.push(child);
   }
   return out;
+}
+
+function isDegenerateContainer(el: RawElement): boolean {
+  if (el.rect.width > 0 && el.rect.height > 0) {
+    return false;
+  }
+  if (el.text !== undefined && el.text.length > 0) {
+    return false;
+  }
+  if (el.imageId !== undefined || el.maskImageId !== undefined || el.svgContent !== undefined) {
+    return false;
+  }
+  if (el.pseudo !== undefined && el.pseudo.length > 0) {
+    return false;
+  }
+  // Any descendant with non-zero size keeps the wrapper alive so
+  // we don't accidentally drop a hidden ancestor of a visible
+  // grandchild.
+  return !descendantHasArea(el);
+}
+
+function descendantHasArea(el: RawElement): boolean {
+  for (const c of el.children) {
+    if (!c.visible) {
+      continue;
+    }
+    if (c.rect.width > 0 && c.rect.height > 0) {
+      return true;
+    }
+    if (descendantHasArea(c)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function shouldUnwrapInlineWrapper(el: RawElement): boolean {
@@ -367,7 +558,7 @@ function containsOversizedReplaced(el: RawElement): boolean {
   return false;
 }
 
-function normalizeFrame(el: RawElement, parent: RawElement | undefined): FrameNodeIR {
+function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoint: string): FrameNodeIR {
   // Inline wrappers (e.g. `<figure><a><img/></a></figure>` where the
   // anchor is `display: inline`) carry a `getBoundingClientRect()`
   // that hugs the inline text-flow line they participate in, *not*
@@ -385,28 +576,240 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined): FrameNo
   // *do* carry pseudo content stay so their `::before` / `::after`
   // glyphs survive into the IR.
   const childrenRaw = collectFlowChildren(el);
-  const childrenIR = childrenRaw.map((child) => normalizeNode(child, el));
+  const childrenIR = childrenRaw.map((child) => normalizeNode(child, el, breakpoint));
+  const synthChildren = synthesiseNaturalBackgroundFrames(el, breakpoint);
   const localBox = boxForElement(el, parent);
   const autoLayout = resolveAutoLayout(el, childrenRaw);
   return {
     kind: "frame",
     id: el.id,
-    // The DOM path is stable across viewports for the example.com
-    // structure under test. Using it directly as the componentKey
-    // groups identical logical components into a shared SYMBOL at
-    // emit time.
-    componentKey: el.id,
+    // SYMBOL key includes the viewport breakpoint so desktop /
+    // tablet / mobile variants of the same DOM path don't collapse
+    // onto a single SYMBOL — the bug that bled the desktop puzzle
+    // logo background into mobile rendering.
+    componentKey: variantKey(el, breakpoint),
     name: el.tag,
     box: localBox,
     style: normalizeStyle(el),
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
     autoLayout,
-    children: childrenIR,
+    children: [...synthChildren, ...childrenIR],
   };
 }
 
-function normalizeText(el: RawElement, parent: RawElement | undefined): TextNodeIR {
+/**
+ * Build IR child frames for any `background-image: url(...)` layer
+ * whose `background-size` is `auto` (intrinsic) and whose
+ * `background-repeat` is `no-repeat`. Each synthesised frame has:
+ *   - `box` set to (posX, posY, naturalWidth, naturalHeight) where
+ *     `posX/posY` come from `background-position` and the natural
+ *     dimensions come from `imageNaturalWidth/Height` populated by
+ *     `decorateImageNaturalSize`.
+ *   - a single image-paint fill in `cover` mode. The image-paint is
+ *     `cover` (Figma `FILL`) because the synth frame's own box is
+ *     exactly the image's intrinsic size, so cover ≡ contain ≡ stretch
+ *     here, and `cover` keeps the renderer on the well-tested path.
+ *
+ * If the host advertises `auto + no-repeat` but `imageId` /
+ * `imageNaturalWidth/Height` aren't both available, we throw —
+ * the visual is unrecoverable without those, and "silent skip"
+ * would re-introduce the omission this synth is meant to fix.
+ */
+function synthesiseNaturalBackgroundFrames(el: RawElement, breakpoint: string): readonly FrameNodeIR[] {
+  const cs = el.computedStyle;
+  const layer = {
+    size: cs["background-size"],
+    repeat: cs["background-repeat"],
+  };
+  if (!isNaturalSizeNoRepeatLayer(layer)) {
+    return [];
+  }
+  const bgImage = cs["background-image"] ?? "none";
+  if (bgImage === "none" || bgImage === "") {
+    return [];
+  }
+  if (!bgImage.includes("url(")) {
+    return [];
+  }
+  const imageId = el.imageId;
+  if (imageId === undefined) {
+    return [];
+  }
+  const naturalW = el.imageNaturalWidth;
+  const naturalH = el.imageNaturalHeight;
+  // CSS `background-size` resolution: when neither axis is `auto`
+  // we use the explicit values verbatim; when both are `auto` we
+  // need the asset's intrinsic dimensions; mixed `<length> auto`
+  // resolves the auto axis from the natural aspect ratio.
+  const sized = resolveBackgroundSize(cs["background-size"] ?? "auto", naturalW, naturalH);
+  if (sized === undefined) {
+    throw new Error(
+      `synthesiseNaturalBackgroundFrames: element <${el.tag} id=${el.id}> declares `
+      + `background-size: ${cs["background-size"] ?? "auto"} with no-repeat but no `
+      + `intrinsic image dimensions were captured for imageId="${imageId}". The host `
+      + `snapshot must populate imageNaturalWidth/Height before normalisation can render `
+      + `the layer.`,
+    );
+  }
+  const offset = parseBackgroundPosition(
+    cs["background-position"] ?? "0% 0%",
+    el.contentRect.width,
+    el.contentRect.height,
+    sized.width,
+    sized.height,
+  );
+  return [
+    {
+      kind: "frame",
+      id: `${el.id}/__bg__`,
+      componentKey: `${breakpoint}::${el.id}/__bg__`,
+      name: `bg-${el.tag}`,
+      box: {
+        x: offset.x,
+        y: offset.y,
+        width: sized.width,
+        height: sized.height,
+      },
+      style: {
+        fills: [{ kind: "image", imageId, scaleMode: "stretch" }],
+        strokes: [],
+        effects: [],
+        opacity: 1,
+        cornerRadius: undefined,
+        clipsContent: false,
+        blendMode: "normal",
+      },
+      visible: true,
+      sizing: { mode: "absolute" },
+      autoLayout: { direction: "none" },
+      children: [],
+    },
+  ];
+}
+
+/**
+ * Resolve a CSS `background-size` value into pixel dimensions.
+ *
+ *   `auto` / `auto auto` → (naturalW, naturalH)
+ *   `<length> <length>`  → explicit
+ *   `<length>`           → that length on x, intrinsic ratio on y
+ *   `<length> auto`      → explicit x, ratio-derived y
+ *   `auto <length>`      → ratio-derived x, explicit y
+ *
+ * Returns `undefined` when the resolution requires intrinsic
+ * dimensions but they aren't available — caller throws.
+ */
+function resolveBackgroundSize(
+  raw: string,
+  naturalW: number | undefined,
+  naturalH: number | undefined,
+): { width: number; height: number } | undefined {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === "auto" || trimmed === "auto auto" || trimmed === "") {
+    if (naturalW === undefined || naturalH === undefined) {
+      return undefined;
+    }
+    return { width: naturalW, height: naturalH };
+  }
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.length === 1) {
+    const x = parsePxLength(tokens[0]!);
+    if (x === undefined) {
+      return undefined;
+    }
+    if (naturalW === undefined || naturalH === undefined || naturalW === 0) {
+      return undefined;
+    }
+    return { width: x, height: x * (naturalH / naturalW) };
+  }
+  if (tokens.length !== 2) {
+    return undefined;
+  }
+  const xToken = tokens[0]!;
+  const yToken = tokens[1]!;
+  if (xToken === "auto" && yToken === "auto") {
+    if (naturalW === undefined || naturalH === undefined) {
+      return undefined;
+    }
+    return { width: naturalW, height: naturalH };
+  }
+  if (xToken === "auto") {
+    const y = parsePxLength(yToken);
+    if (y === undefined || naturalW === undefined || naturalH === undefined || naturalH === 0) {
+      return undefined;
+    }
+    return { width: y * (naturalW / naturalH), height: y };
+  }
+  if (yToken === "auto") {
+    const x = parsePxLength(xToken);
+    if (x === undefined || naturalW === undefined || naturalH === undefined || naturalW === 0) {
+      return undefined;
+    }
+    return { width: x, height: x * (naturalH / naturalW) };
+  }
+  const x = parsePxLength(xToken);
+  const y = parsePxLength(yToken);
+  if (x === undefined || y === undefined) {
+    return undefined;
+  }
+  return { width: x, height: y };
+}
+
+function parsePxLength(token: string): number | undefined {
+  if (token.endsWith("px")) {
+    const n = parseFloat(token.slice(0, -2));
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a CSS `background-position` value into pixel offsets
+ * relative to the host element's content rect.
+ *
+ * Inputs come from `getComputedStyle`, which always normalises the
+ * value to two space-separated tokens, each either `<length>` (in
+ * px) or `<percentage>`. The percentage form is resolved against
+ * `(containerSize - imageSize)` per the CSS spec, *not* simply
+ * `containerSize`.
+ */
+function parseBackgroundPosition(
+  raw: string,
+  containerW: number,
+  containerH: number,
+  imgW: number,
+  imgH: number,
+): { x: number; y: number } {
+  const tokens = raw.trim().split(/\s+/);
+  if (tokens.length !== 2) {
+    throw new Error(`parseBackgroundPosition: expected two tokens, got "${raw}"`);
+  }
+  const x = resolvePositionAxis(tokens[0]!, containerW, imgW);
+  const y = resolvePositionAxis(tokens[1]!, containerH, imgH);
+  return { x, y };
+}
+
+function resolvePositionAxis(token: string, containerExtent: number, imageExtent: number): number {
+  const trimmed = token.trim();
+  if (trimmed.endsWith("px")) {
+    const n = parseFloat(trimmed.slice(0, -2));
+    if (!Number.isFinite(n)) {
+      throw new Error(`resolvePositionAxis: malformed px value "${token}"`);
+    }
+    return n;
+  }
+  if (trimmed.endsWith("%")) {
+    const n = parseFloat(trimmed.slice(0, -1));
+    if (!Number.isFinite(n)) {
+      throw new Error(`resolvePositionAxis: malformed percent value "${token}"`);
+    }
+    return ((containerExtent - imageExtent) * n) / 100;
+  }
+  throw new Error(`resolvePositionAxis: unsupported background-position token "${token}"`);
+}
+
+function normalizeText(el: RawElement, parent: RawElement | undefined, breakpoint: string): TextNodeIR {
   const localBox = boxForElement(el, parent);
   // Figma represents text color via the node's own `fills` (a single
   // SOLID). The TEXT node's CSS computed `color` is the glyph color;
@@ -417,19 +820,21 @@ function normalizeText(el: RawElement, parent: RawElement | undefined): TextNode
   // inline children) is a separate task — at the current granularity
   // every TEXT node represents exactly one inline run.
   const style = textStyleForParagraph(el);
+  const characters = el.text ?? "";
   return {
     kind: "text",
     id: el.id,
-    componentKey: el.id,
+    componentKey: variantKey(el, breakpoint),
     name: el.tag,
     box: localBox,
     style,
     visible: el.visible,
     sizing: normalizeChildSizing(el, parent),
-    characters: el.text ?? "",
+    characters,
     textStyle: normalizeTextStyle(el),
   };
 }
+
 
 function boxRelative(rect: BoxIR, parentContent: BoxIR | undefined): BoxIR {
   if (!parentContent) {
@@ -486,12 +891,28 @@ function collectFills(el: RawElement): readonly PaintIR[] {
   if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
     out.push({ kind: "solid", color: parseColor(bg) });
   }
-  const images = parseBackgroundImage(cs["background-image"] ?? "none", el.imageId, {
+  const layer = {
     size: cs["background-size"],
     repeat: cs["background-repeat"],
-  });
-  for (const img of images) {
-    out.push(img);
+  };
+  // `auto + no-repeat` carries no faithful single-paint mapping in
+  // Figma — the IR's image-paint scaleModes either tile, stretch,
+  // contain, or cover, none of which mean "paint once at natural
+  // size at a specified pixel offset, leave the rest transparent".
+  // The synth path below converts it into a natural-size child
+  // frame at the captured `background-position`. Skipping the
+  // paint here prevents the throw inside `parseBackgroundImage`.
+  if (!isNaturalSizeNoRepeatLayer(layer)) {
+    // `<img>` consumes `imageIds[0]` for its `src` attribute (handled
+    // below); the remaining ids belong to `background-image` layers
+    // in CSS source order. Non-image elements pass the full list
+    // straight through.
+    const allIds = el.imageIds ?? (el.imageId !== undefined ? [el.imageId] : []);
+    const layerImageIds = el.tag === "img" ? allIds.slice(1) : allIds;
+    const images = parseBackgroundImage(cs["background-image"] ?? "none", layerImageIds, layer);
+    for (const img of images) {
+      out.push(img);
+    }
   }
   // `<img>` content surfaces as an image fill — `<svg>` is handled
   // separately via `normalizeSvgVector` (vector node). Without this
@@ -500,7 +921,7 @@ function collectFills(el: RawElement): readonly PaintIR[] {
   // in the in-page walker; we just need to express the relationship
   // in the IR.
   if (el.tag === "img" && el.imageId !== undefined) {
-    const dup = images.some((p) => p.kind === "image" && p.imageId === el.imageId);
+    const dup = out.some((p) => p.kind === "image" && p.imageId === el.imageId);
     if (!dup) {
       out.push({ kind: "image", imageId: el.imageId, scaleMode: "contain" });
     }

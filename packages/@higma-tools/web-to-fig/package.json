@@ -5,7 +5,8 @@
   "type": "module",
   "sideEffects": false,
   "bin": {
-    "web-to-fig": "./src/cli/bin.ts"
+    "web-to-fig": "./src/cli/bin.ts",
+    "web-to-fig-extract": "./src/cli/extract-bin.ts"
   },
   "scripts": {
     "lint": "cd ../../.. && eslint packages/@higma-tools/web-to-fig/src packages/@higma-tools/web-to-fig/spec",

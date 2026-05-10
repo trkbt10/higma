@@ -14,8 +14,8 @@
  * `@higma-tools/fig-to-web`: any IR `@higma-tools/web-to-fig` produces
  * is a valid input for the inverse direction (and vice versa).
  */
-export type { Breakpoint, CaptureOptions, CaptureResult, CapturedBreakpoint, MultiCaptureOptions, RawViewportSnapshot } from "./web-source";
-export { DEFAULT_BREAKPOINTS, captureMultiViewport, captureViewport, jsonToSnapshot } from "./web-source";
+export type { Breakpoint, CaptureOptions, CaptureResult, CapturedBreakpoint, CdpExtractOptions, ExtractOptions, ExtractResult, MultiCaptureOptions, RawViewportSnapshot, UrlExtractOptions } from "./web-source";
+export { DEFAULT_BREAKPOINTS, captureMultiViewport, captureViewport, extractElement, jsonToSnapshot } from "./web-source";
 
 export { normalizeViewport } from "./normalize";
 
@@ -27,4 +27,5 @@ export { buildDocument, buildMultiFigFileBytes, emitFig, irToSpecGraph } from ".
 // sibling). web-to-fig stays focused on the capture-to-emit half of
 // the pipeline.
 
-export { CliUsageError, parseArgs, runCli } from "./cli";
+export type { CdpExtractCliOptions, ExtractCliOptions, UrlExtractCliOptions } from "./cli";
+export { CliUsageError, parseArgs, parseExtractArgs, runCli, runExtractCli } from "./cli";

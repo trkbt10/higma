@@ -108,91 +108,16 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
     }
   }
 
-  // Pick the widest viewport as the SYMBOL's authoring source.
-  const representative = pickRepresentative(multi.viewports);
-
-  // The SYMBOL takes the place of the representative viewport's
-  // root frame: same auto-layout, same size, same clip behaviour.
-  // The captured root carries the html-level padding (typical CSS
-  // body-margin offsets land here as `pad=120/256/120/256` on
-  // example.com) — it must be preserved on the SYMBOL itself, not
-  // dropped when the wrapper is replaced. Without this the SYMBOL
-  // would lay out body at (0,0) and an INSTANCE resize would not
-  // re-flow the inner content because there are no constraints to
-  // drive.
-  const symbolLocalID = idCounter.next();
-  const symbolStartX = symbolColumnX(multi.viewports);
-  const symbolPerNode = new Map<string, number>();
-  // The SYMBOL spans the captured content rect (body) of the
-  // representative viewport — the actual wrap width the browser
-  // used. Wrapping html-level padding into the wrapper FRAME
-  // instead of the SYMBOL keeps the SYMBOL focused on the
-  // semantic page content; the wrapper handles the page-level
-  // centering and top/bottom inset.
-  const repContentBox = pickContentRect(representative);
-  const repBodyNode = representative.root.children.find((c) => c.visible) ?? representative.root;
-  // Many CSS layouts wrap the visible page content in a single
-  // `<body><div>...</div></body>` shell where the `<div>` is itself an
-  // auto-layout column container. Emitting both as nested FRAMEs makes
-  // the inner `<div>` a fixed-size leaf inside the SYMBOL — so when the
-  // INSTANCE reflows, the SYMBOL's outer auto-layout sees the inner
-  // FRAME's static height and clips overflow. Collapse the
-  // single-auto-layout-child wrapper into the SYMBOL itself: SYMBOL
-  // takes the inner container's auto-layout and emits the inner's
-  // children directly. The collapse only fires when the wrapper is
-  // structurally identical to a positioning shell (one auto-layout
-  // child filling its content rect), so multi-child bodies are
-  // preserved as authored.
-  const collapsed = collapseAutoLayoutWrapper(repBodyNode);
-  const symbolStyleNode = collapsed.styleNode;
-  const symbolLayoutNode = collapsed.layoutNode;
-  const symbolBuilder = applySymbolAutoLayout(
-    symbolNode(symbolLocalID, canvasID)
-      .name("Page")
-      .size(repContentBox.width, repContentBox.height)
-      .position(symbolStartX, 0)
-      .clipsContent(symbolStyleNode.style.clipsContent)
-      .opacity(symbolStyleNode.style.opacity)
-      .noFill()
-      // The SYMBOL's primary axis hugs its content. INSTANCE-time
-      // counter-axis resize re-wraps every STRETCH child paragraph
-      // and `HEIGHT` expands each text node's height; the SYMBOL's
-      // own height must follow the resolved children rather than
-      // staying at the authoring extent. Without HUG the SYMBOL
-      // height stays fixed and the INSTANCE clips the re-wrapped
-      // overflow. Counter axis stays FIXED so the SYMBOL keeps the
-      // representative content width as its base (the INSTANCE's
-      // own counter sizing then stretches it per viewport).
-      .primarySizing("HUG")
-      .counterSizing("FIXED"),
-    symbolLayoutNode.kind === "frame" ? symbolLayoutNode.autoLayout : { direction: "none" },
-  );
-  file.addSymbol(symbolBuilder.build());
-  symbolPerNode.set(repBodyNode.id, symbolLocalID);
-  if (collapsed.styleNode !== collapsed.layoutNode) {
-    symbolPerNode.set(collapsed.layoutNode.id, symbolLocalID);
-  }
-  // The SYMBOL's children come from the (possibly collapsed) inner
-  // container. Each child's box is already in collapsed-host-relative
-  // coordinates because the wrapper had zero padding and the inner
-  // container started at (0,0).
-  if (symbolLayoutNode.kind === "frame") {
-    const symbolCounterAlign = symbolLayoutNode.autoLayout.direction !== "none"
-      ? symbolLayoutNode.autoLayout.counterAlign
-      : undefined;
-    for (const child of symbolLayoutNode.children) {
-      emitNode({
-        file,
-        parentID: symbolLocalID,
-        node: child,
-        idCounter,
-        idMap: symbolPerNode,
-        parentCounterAlign: symbolCounterAlign,
-        imageRefs: imageRefMap,
-      });
-    }
-  }
-  idMap.set(`__symbol__:${representative.breakpoint}`, symbolPerNode);
+  // SYMBOL/INSTANCE collapse intentionally disabled. Earlier
+  // iterations authored a single SYMBOL from the widest viewport
+  // and instantiated it for the others, but real responsive sites
+  // (Wikipedia, Yahoo, Zozo) ship genuinely different element
+  // trees per breakpoint — desktop-only puzzle-logo banners,
+  // mobile-only icon strips, sticky topbars that exist only above
+  // 1024px. A shared SYMBOL bakes the dominant viewport's
+  // structure into all the others and the diff diverges. Each
+  // viewport now emits its own independent FRAME tree so per-
+  // breakpoint DOM differences survive into the .fig.
 
   // Each viewport wrapper hosts a single INSTANCE pointing at the
   // SYMBOL. The wrapper carries the body's background colour so
@@ -225,49 +150,51 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
     // confuses renderers that ignore the alpha channel and paints a
     // solid black rectangle. White is the correct default the
     // browser would paint for a transparent body.
+    // The wrapper FRAME is laid out by absolute positioning, not
+    // auto-layout. With SYMBOL/INSTANCE collapse removed, there's
+    // nothing for the wrapper's auto-layout to drive — each child
+    // FRAME knows its own viewport-absolute position. Auto-layout
+    // would instead stack children at the padding origin and clobber
+    // the captured x/y. Authoring the body wrapper as a single
+    // absolutely-positioned FRAME at (contentBox.x, contentBox.y)
+    // keeps the captured layout intact while still letting the
+    // wrapper carry the body background colour.
     const wrapperBuilder = frameNode(wrapperLocalID, canvasID)
       .name(`${viewport.breakpoint} / ${Math.round(viewport.box.width)}×${Math.round(viewport.box.height)}`)
       .size(viewport.box.width, viewport.box.height)
       .position(layoutCursor.x, 0)
-      .clipsContent(true)
-      .autoLayout("VERTICAL")
-      .padding({ top: padTop, right: padRight, bottom: padBottom, left: padLeft })
-      .gap(0);
+      .clipsContent(true);
     const bg = viewport.background;
     const wrapperFinal = bg.a > 0 ? wrapperBuilder.background(bg) : wrapperBuilder.background({ r: 1, g: 1, b: 1, a: 1 });
     file.addFrame(wrapperFinal.build());
-    const instanceLocalID = idCounter.next();
-    // The INSTANCE pattern observed in a hand-edited Figma sample:
-    //   - `childAlignSelf=STRETCH` makes the INSTANCE fill the
-    //     wrapper FRAME's counter axis (= horizontal width).
-    //   - `primarySizing=HUG` lets the INSTANCE's height follow the
-    //     SYMBOL's resolved (post-wrap) content height.
-    //   - `counterSizing=FIXED` is the default for STRETCH children;
-    //     the wrapper's counter axis drives the INSTANCE's width.
-    // This is the canonical Figma "responsive page" pattern: resize
-    // the wrapper FRAME (or its counter axis) and the INSTANCE +
-    // SYMBOL re-flow naturally. Authoring `FIXED, FIXED` instead
-    // (the previous emit) leaves the INSTANCE locked to its
-    // emit-time dimensions and breaks every responsive viewport.
-    file.addInstance(
-      instanceNode(instanceLocalID, wrapperLocalID, symbolLocalID)
-        .name(`Page · ${viewport.breakpoint}`)
-        .size(contentBox.width, contentBox.height)
-        .position(0, 0)
-        .childAlignSelf("STRETCH")
-        .counterSizing("FIXED")
-        .primarySizing("HUG")
-        .build(),
-    );
-    // Emit the viewport-anchored layer (fixed / sticky subtrees) as
-    // additional children of the wrapper FRAME. Their boxes are
-    // already in viewport-absolute coordinates, which equal
-    // wrapper-local coordinates because the wrapper itself spans the
-    // viewport. Each is `stackPositioning: ABSOLUTE`, so the
-    // wrapper's VERTICAL auto-layout doesn't move the INSTANCE to
-    // accommodate them.
+    // The captured root's `body` child is the visible page content.
+    // Emit it as a single FRAME inside the wrapper. Its IR `box` is
+    // body-relative (always (0,0,bodyW,bodyH)) and child boxes are
+    // body-content-rect-relative — for `<body>` whose padding is 0
+    // (the default) those equal viewport-absolute coordinates, so
+    // the wrapper hosts the body at (0,0) and every descendant
+    // FRAME's `position(box.x, box.y)` lays out exactly where the
+    // browser put it. We force `stackPositioning=ABSOLUTE` so the
+    // wrapper (no auto-layout) doesn't try to flow-stack children
+    // at the parent origin.
     const perViewport = new Map<string, number>();
-    perViewport.set(`__instance__:${viewport.root.id}`, instanceLocalID);
+    const rootBodyNode = viewport.root.children.find((c) => c.visible) ?? viewport.root;
+    const bodyForEmit = rootBodyNode.kind === "frame"
+      ? { ...rootBodyNode, sizing: { mode: "absolute" as const } }
+      : rootBodyNode;
+    emitNode({
+      file,
+      parentID: wrapperLocalID,
+      node: bodyForEmit,
+      idCounter,
+      idMap: perViewport,
+      parentCounterAlign: undefined,
+      imageRefs: imageRefMap,
+    });
+    // padTop/padBottom/padLeft/padRight unused now — kept the
+    // captured content rect for future positioning sanity checks.
+    void padTop; void padBottom; void padLeft; void padRight;
+    void contentBox;
     for (const layerNode of viewport.viewportLayer) {
       emitNode({
         file,
@@ -609,7 +536,19 @@ function emitFrame(
   file.addFrame(finalBuilder.build());
   idMap.set(node.id, localID);
 
-  for (const child of node.children) {
+  // When this frame has no auto-layout (`direction: "none"`), every
+  // child paints at its captured (x, y) absolute position — no flow
+  // stacking. Force each child's `stackPositioning=ABSOLUTE` before
+  // recursion so the renderer respects the captured offsets instead
+  // of laying flow children out top-to-left at the parent origin.
+  // The recursive emit also normalises any descendants of those
+  // children that themselves have flow sizing — but only when the
+  // immediate parent has no auto-layout, so child auto-layout
+  // (Wikipedia's `<ul>`, etc.) keeps its flow semantics.
+  const childrenForEmit = node.autoLayout.direction === "none"
+    ? node.children.map((c) => c.sizing.mode === "absolute" ? c : { ...c, sizing: { mode: "absolute" as const } })
+    : node.children;
+  for (const child of childrenForEmit) {
     emitNode({
       file,
       parentID: localID,
@@ -640,8 +579,14 @@ function applyFrameBackground(
     if (fill.kind === "image") {
       const ref = imageRefs.get(fill.imageId);
       if (ref !== undefined) {
+        const figScale = scaleModeToFigName(fill.scaleMode);
         const paint = imagePaint(ref)
-          .scaleMode(scaleModeToFigName(fill.scaleMode))
+          .scaleMode(figScale)
+          // CSS `background-size: auto` paints the image at its
+          // intrinsic dimensions; that maps to a TILE paint with
+          // scalingFactor=1. Other scale modes don't consume the
+          // factor — the builder safely omits it.
+          .scale(1)
           .opacity(fill.opacity ?? 1)
           .visible(fill.visible ?? true)
           .build();

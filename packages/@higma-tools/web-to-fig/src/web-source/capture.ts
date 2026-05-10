@@ -15,6 +15,15 @@
 import type { RawAsset, RawElement, RawViewportSnapshot } from "./snapshot";
 import { captureSnapshot, type ElementJson, type RawSnapshotJson } from "./in-page";
 import { waitForReady } from "./wait-for-ready";
+import {
+  type BrowserLike as SharedBrowserLike,
+  type PageLike,
+  type ResponseCache,
+  importPlaywright,
+  isImageMime,
+  launchBrowser as launchBrowserShared,
+  startResponseCache,
+} from "./playwright-shared";
 
 export type CaptureOptions = {
   readonly url: string;
@@ -64,16 +73,13 @@ export async function captureViewport(options: CaptureOptions): Promise<CaptureR
   }
 }
 
-/** A Playwright browser handle. Exposed structurally so callers can use any compatible runtime. */
-export type BrowserLike = Awaited<ReturnType<PlaywrightLike["chromium"]["launch"]>>;
-
 /**
  * Capture a viewport using an externally-supplied browser. Lets a
  * caller orchestrate multiple captures against the same Chromium
  * process — a few hundred ms per viewport instead of seconds.
  */
 export async function captureViewportInBrowser(
-  browser: BrowserLike,
+  browser: SharedBrowserLike,
   options: CaptureOptions,
 ): Promise<CaptureResult> {
   const context = await browser.newContext({
@@ -88,7 +94,7 @@ export async function captureViewportInBrowser(
     // never re-issue a fetch for the same bytes — the page's own
     // request, with the page's own cookies / origin / cache state,
     // is the SoT for "what bytes ended up in the rendered DOM".
-    const responseCache = startImageResponseCache(page);
+    const responseCache = startResponseCache(page, isImageMime);
     await page.goto(options.url, {
       waitUntil: options.waitUntil ?? "domcontentloaded",
       timeout: options.timeoutMs,
@@ -107,97 +113,26 @@ export async function captureViewportInBrowser(
     // the time the page is on-screen, so we can read it back through
     // a canvas without any second-round network fetch.
     const assets = await readAssetsFromBrowser(page, json.imageRefs, responseCache);
-    const snapshot = jsonToSnapshot(json, assets);
+    // Decorate each element carrying a `maskImageId` with the SVG
+    // path geometry parsed from the response bytes. The
+    // `mask-image` URL routes through the same imageRefs registry
+    // as `<img src>` and `background-image`, so the bytes are
+    // already available — we just choose the SVG-vector path
+    // instead of "image fill" because the browser uses the asset
+    // as an alpha mask, not a paint.
+    const idToUrl = new Map<string, string>();
+    for (const ref of json.imageRefs) {
+      idToUrl.set(ref.id, ref.url);
+    }
+    const decoratedRoot = decorateMaskSvg(json.root, idToUrl, responseCache);
+    const dimensionedRoot = decorateImageNaturalSize(decoratedRoot, idToUrl, responseCache, assets);
+    const maskDimensionedRoot = decorateMaskNaturalSize(dimensionedRoot, idToUrl, responseCache, assets);
+    const snapshot = jsonToSnapshot({ ...json, root: maskDimensionedRoot }, assets);
     const screenshot = options.captureScreenshot ? await screenshotPage(page) : undefined;
     return { snapshot, screenshotBytes: screenshot };
   } finally {
     await context.close();
   }
-}
-
-/**
- * Cache of image response bytes the page itself loaded during
- * navigation. Keyed by absolute URL. The renderer's downstream
- * pipeline only knows PNG / JPEG headers, so non-(PNG|JPEG)
- * responses are rasterised inside the page (see
- * `rasterizeWithCanvas`) before being stored.
- *
- * Building this cache via `page.on('response')` is intentional:
- * Playwright is already brokering every network exchange the
- * browser made. Asking for bytes a second time — whether through
- * Node's `fetch`, Playwright's `request` API, or an in-page
- * `fetch` — is a parallel SoT for "what did this URL resolve to"
- * and would introduce drift on cookies, redirects, and cache
- * variance.
- */
-type ResponseCache = {
-  /** Wait for every still-pending body to settle, then return. */
-  settle(): Promise<void>;
-  bodyForUrl(url: string): Uint8Array | undefined;
-};
-
-function startImageResponseCache(page: PageLike): ResponseCache {
-  const bodies = new Map<string, Uint8Array>();
-  const inflight: Promise<void>[] = [];
-  page.on("response", (response) => {
-    // Each handler invocation kicks off a microtask chain that
-    // ends in a `bodies.set`. We track the chain so `settle()`
-    // can wait for it before the caller starts reading the cache.
-    const work = (async () => {
-      const headers = await response.allHeaders();
-      const ct = (headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
-      if (!isImageMime(ct)) {
-        return;
-      }
-      // `response.body()` may throw on a navigation-cancelled or
-      // redirected response. We deliberately let that propagate as
-      // `undefined` (caller falls back to the canvas read).
-      const body = await safeResponseBody(response);
-      if (body === undefined) {
-        return;
-      }
-      bodies.set(response.url(), new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
-    })();
-    inflight.push(work);
-  });
-  return {
-    bodyForUrl: (url) => bodies.get(url),
-    async settle() {
-      // Drain any pending bodies so the snapshot reads a stable
-      // cache. New responses can still land between draining and
-      // the read (e.g. from a long-poll), but by `waitForReady`
-      // every visible image is `complete`, so any straggler is by
-      // definition not on the captured surface.
-      while (inflight.length > 0) {
-        const batch = inflight.splice(0, inflight.length);
-        await Promise.all(batch);
-      }
-    },
-  };
-}
-
-function isImageMime(mime: string): boolean {
-  return mime === "image/png"
-    || mime === "image/jpeg"
-    || mime === "image/jpg"
-    || mime === "image/gif"
-    || mime === "image/webp"
-    || mime === "image/svg+xml"
-    || mime === "image/avif";
-}
-
-async function safeResponseBody(response: ResponseLike): Promise<Buffer | undefined> {
-  try {
-    return await response.body();
-  } catch {
-    return undefined;
-  }
-}
-
-/** Launch a Chromium browser via Playwright. Returns the browser handle. */
-export async function launchBrowser(): Promise<BrowserLike> {
-  const playwright = await importPlaywright();
-  return playwright.chromium.launch();
 }
 
 async function screenshotPage(page: { screenshot(opts: { readonly fullPage: boolean; readonly type: "png"; readonly clip?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } }): Promise<Buffer> }): Promise<Uint8Array> {
@@ -208,58 +143,10 @@ async function screenshotPage(page: { screenshot(opts: { readonly fullPage: bool
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
-type ResponseLike = {
-  url(): string;
-  allHeaders(): Promise<Readonly<Record<string, string>>>;
-  body(): Promise<Buffer>;
-};
-
-type PageLike = {
-  goto(url: string, opts: { readonly waitUntil: string; readonly timeout: number | undefined }): Promise<unknown>;
-  evaluate<T>(fn: () => T): Promise<T>;
-  evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>;
-  waitForFunction<T>(fn: () => T, arg?: unknown, opts?: { readonly timeout: number }): Promise<unknown>;
-  waitForLoadState(state: "load" | "domcontentloaded" | "networkidle"): Promise<void>;
-  screenshot(opts: { readonly fullPage: boolean; readonly type: "png" }): Promise<Buffer>;
-  on(event: "response", handler: (response: ResponseLike) => void | Promise<void>): void;
-};
-
-type PlaywrightLike = {
-  readonly chromium: {
-    launch(): Promise<{
-      newContext(opts: {
-        readonly viewport: { readonly width: number; readonly height: number };
-        readonly deviceScaleFactor: number;
-      }): Promise<{
-        newPage(): Promise<PageLike>;
-        close(): Promise<void>;
-      }>;
-      close(): Promise<void>;
-    }>;
-  };
-};
-
-async function importPlaywright(): Promise<PlaywrightLike> {
-  // Dynamic import keeps the module loadable in environments without
-  // Playwright (the round-trip spec re-hydrates fixtures from disk).
-  // We deliberately do not catch the import failure — a caller that
-  // reaches `captureViewport` without Playwright installed gets a
-  // clear module-not-found error rather than a silent stub.
-  // eslint-disable-next-line no-restricted-syntax -- playwright is an optional runtime dep; static import would force it on every consumer.
-  const mod: unknown = await import("playwright");
-  if (!isPlaywrightLike(mod)) {
-    throw new Error("captureViewport: 'playwright' module loaded but did not expose a chromium launcher");
-  }
-  return mod;
-}
-
-function isPlaywrightLike(mod: unknown): mod is PlaywrightLike {
-  if (typeof mod !== "object" || mod === null) {
-    return false;
-  }
-  const candidate = mod as { readonly chromium?: { readonly launch?: unknown } };
-  return typeof candidate.chromium?.launch === "function";
-}
+/** Launch a Chromium browser via Playwright. Re-exported so existing
+ * callers (multi-capture, the leaf-up harness) keep their import path.
+ * Implementation lives in `playwright-shared.ts`. */
+export const launchBrowser: typeof launchBrowserShared = launchBrowserShared;
 
 /**
  * Pull each captured image's bytes from the browser's already-loaded
@@ -267,7 +154,7 @@ function isPlaywrightLike(mod: unknown): mod is PlaywrightLike {
  *
  *   1. The Playwright response cache — every image response the
  *      browser received during navigation is already in our hands
- *      (see `startImageResponseCache`). For PNG / JPEG bytes we
+ *      (see `startResponseCache` in playwright-shared.ts). For PNG / JPEG bytes we
  *      hand them straight through to the IR; for non-(PNG|JPEG)
  *      formats (SVG, WebP, GIF, AVIF) we rasterise inside the
  *      page so the downstream renderer's
@@ -292,16 +179,42 @@ async function readAssetsFromBrowser(
   responseCache: ResponseCache,
 ): Promise<ReadonlyMap<string, RawAsset>> {
   const out = new Map<string, RawAsset>();
+  // Collect data: SVG references that need in-page rasterisation —
+  // the renderer's `getImageDimensions` only reads PNG / JPEG
+  // headers, so an SVG asset would trip "requires decodable image
+  // dimensions" at render time.
+  const dataSvgToRaster: { ref: typeof refs[number]; bytes: Uint8Array }[] = [];
   for (const ref of refs) {
     if (ref.url.startsWith("data:")) {
       const decoded = decodeDataUrl(ref.url);
       if (decoded !== undefined) {
-        out.set(ref.id, { id: ref.id, mime: decoded.mime, bytes: decoded.bytes });
+        if (decoded.mime === "image/png" || decoded.mime === "image/jpeg") {
+          out.set(ref.id, { id: ref.id, mime: decoded.mime, bytes: decoded.bytes });
+        } else {
+          dataSvgToRaster.push({ ref, bytes: decoded.bytes });
+        }
       }
       continue;
     }
     if (ref.url.startsWith("blob:")) {
       continue;
+    }
+  }
+  if (dataSvgToRaster.length > 0) {
+    const rasterised = await rasterizeImageBytesAsPng(
+      page,
+      dataSvgToRaster.map((d) => ({
+        bytes: d.bytes,
+        mime: bytesLookLikeSvg(d.bytes) ? "image/svg+xml" : "image/webp",
+      })),
+    );
+    for (let i = 0; i < dataSvgToRaster.length; i += 1) {
+      const png = rasterised[i];
+      if (png === null || png === undefined) {
+        continue;
+      }
+      const ref = dataSvgToRaster[i]!.ref;
+      out.set(ref.id, { id: ref.id, mime: "image/png", bytes: png });
     }
   }
   const remoteRefs = refs.filter((r) => !r.url.startsWith("data:") && !r.url.startsWith("blob:"));
@@ -524,11 +437,25 @@ function decodeDataUrl(url: string): { mime: RawAsset["mime"]; bytes: Uint8Array
   const meta = url.slice(5, head);
   const payload = url.slice(head + 1);
   const isBase64 = /;base64$/.test(meta);
-  const mimeRaw = meta.replace(/;base64$/, "") || "application/octet-stream";
-  const mime: RawAsset["mime"] = (mimeRaw === "image/png" || mimeRaw === "image/jpeg"
-    || mimeRaw === "image/gif" || mimeRaw === "image/webp" || mimeRaw === "image/svg+xml")
-    ? mimeRaw
-    : "image/png";
+  // The MIME field of a data URL is `<type>/<subtype>` followed by
+  // optional `;parameter=value` segments (e.g. `;charset=utf-8`).
+  // Trim every `;…` segment off before comparing to the
+  // bridge-supported set, otherwise a legitimate
+  // `image/svg+xml;charset=utf-8` falls into the dead-end "unknown
+  // mime" branch and the SVG body would be mis-stored as
+  // `image/png`.
+  const stripped = meta.replace(/;[^;]+/g, "");
+  const mimeRaw = stripped || "application/octet-stream";
+  if (mimeRaw !== "image/png" && mimeRaw !== "image/jpeg"
+    && mimeRaw !== "image/gif" && mimeRaw !== "image/webp"
+    && mimeRaw !== "image/svg+xml") {
+    throw new Error(
+      `decodeDataUrl: unsupported MIME "${mimeRaw}" in data URL — the bridge only `
+      + `accepts PNG / JPEG / GIF / WebP / SVG. Falling back to a different mime would `
+      + `produce an asset whose bytes don't match the declared format.`,
+    );
+  }
+  const mime: RawAsset["mime"] = mimeRaw;
   const bytes = isBase64
     ? Uint8Array.from(Buffer.from(payload, "base64"))
     : Uint8Array.from(Buffer.from(decodeURIComponent(payload), "binary"));
@@ -564,9 +491,289 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     visible: json.visible,
     computedStyle: json.computedStyle,
     imageId: json.imageId,
+    imageIds: json.imageIds,
+    imageNaturalWidth: json.imageNaturalWidth,
+    imageNaturalHeight: json.imageNaturalHeight,
+    maskImageId: json.maskImageId,
+    maskSvgContent: json.maskSvgContent
+      ? maskSvgContentJsonToRaw(json.maskSvgContent)
+      : undefined,
+    maskNaturalWidth: json.maskNaturalWidth,
+    maskNaturalHeight: json.maskNaturalHeight,
     svgContent: json.svgContent,
     text: json.text,
+    textFragments: json.textFragments,
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };
+}
+
+function maskSvgContentJsonToRaw(json: NonNullable<ElementJson["maskSvgContent"]>): NonNullable<RawElement["maskSvgContent"]> {
+  return {
+    viewBox: json.viewBox,
+    paths: json.paths.map((p) => ({
+      d: p.d,
+      fill: p.fill,
+      stroke: p.stroke,
+      strokeWidth: p.strokeWidth,
+      fillRule: p.fillRule,
+    })),
+  };
+}
+
+/**
+ * Walk every captured element and, where the element references a
+ * `mask-image` whose bytes the response cache holds as SVG, parse
+ * those bytes into `maskSvgContent`. Mask URLs that resolved to a
+ * raster format (PNG, JPEG, …) are left without `maskSvgContent`
+ * — the normaliser then has to either skip them (no faithful
+ * single-paint mapping) or take a separate raster-mask path. The
+ * Wikimedia / MediaWiki masks we care about for the wikipedia
+ * fidelity loop ship as SVG, so the SVG path is the lossless one.
+ *
+ * The function returns a freshly constructed tree so caller code
+ * stays free of mutation.
+ */
+function decorateMaskSvg(
+  el: ElementJson,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+): ElementJson {
+  const decoratedChildren = el.children.map((c) => decorateMaskSvg(c, idToUrl, responseCache));
+  if (el.maskImageId === undefined) {
+    if (decoratedChildren === el.children) {
+      return el;
+    }
+    return { ...el, children: decoratedChildren };
+  }
+  const url = idToUrl.get(el.maskImageId);
+  if (url === undefined) {
+    return { ...el, children: decoratedChildren };
+  }
+  const bytes = url.startsWith("data:")
+    ? decodeMaskDataUrl(url)
+    : responseCache.bodyForUrl(url);
+  if (bytes === undefined) {
+    return { ...el, children: decoratedChildren };
+  }
+  const svg = parseMaskSvg(bytes);
+  if (svg === undefined) {
+    return { ...el, children: decoratedChildren };
+  }
+  return { ...el, children: decoratedChildren, maskSvgContent: svg };
+}
+
+function decodeMaskDataUrl(url: string): Uint8Array | undefined {
+  const head = url.indexOf(",");
+  if (head < 0 || !url.startsWith("data:")) {
+    return undefined;
+  }
+  const meta = url.slice(5, head);
+  const payload = url.slice(head + 1);
+  const isBase64 = /;base64$/.test(meta);
+  if (isBase64) {
+    return Uint8Array.from(Buffer.from(payload, "base64"));
+  }
+  // CSS data URIs commonly URL-encode the SVG body.
+  return Uint8Array.from(Buffer.from(decodeURIComponent(payload), "binary"));
+}
+
+/**
+ * Parse a mask SVG byte buffer into the IR-friendly path /
+ * viewBox shape. Only the shapes the bridge already supports are
+ * extracted; unsupported features (`<g transform>`, `<use>`,
+ * gradient fills) are dropped so the mask renders as the union of
+ * its plain `<path>` geometry filled with the host element's
+ * colour. The bytes come from `mask-image` URLs the browser
+ * already loaded via Playwright; we never re-fetch.
+ */
+/**
+ * Walk the captured tree and stamp each element that owns an
+ * `imageId` with the asset's intrinsic pixel size. Sniff order:
+ *   1. The host-side asset bytes (preferred — they're already
+ *      decoded as PNG via the `<img>` canvas read or via the
+ *      response cache rasteriser, so a PNG IHDR sniff is
+ *      authoritative).
+ *   2. The original response cache bytes — supports PNG, JPEG,
+ *      and SVG viewBox.
+ * Elements whose dimensions can't be determined are left
+ * unmarked; downstream code must fail fast (no defaults) when it
+ * relies on natural size.
+ */
+function decorateImageNaturalSize(
+  el: ElementJson,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+  assets: ReadonlyMap<string, RawAsset>,
+): ElementJson {
+  const decoratedChildren = el.children.map((c) =>
+    decorateImageNaturalSize(c, idToUrl, responseCache, assets),
+  );
+  if (el.imageId === undefined) {
+    return decoratedChildren === el.children ? el : { ...el, children: decoratedChildren };
+  }
+  const dim = sniffNaturalSize(el.imageId, idToUrl, responseCache, assets);
+  return {
+    ...el,
+    imageNaturalWidth: dim?.width,
+    imageNaturalHeight: dim?.height,
+    children: decoratedChildren,
+  };
+}
+
+/**
+ * Same shape as `decorateImageNaturalSize` but for `maskImageId`.
+ * Mask SVGs the browser downloaded sit in the response cache; we
+ * sniff their viewBox / `width`/`height` attributes so the
+ * normaliser can place the mask vector at its intrinsic size
+ * inside the host element rather than scaling the path to fill
+ * the host (which made small icons explode to host-frame size).
+ */
+function decorateMaskNaturalSize(
+  el: ElementJson,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+  assets: ReadonlyMap<string, RawAsset>,
+): ElementJson {
+  const decoratedChildren = el.children.map((c) =>
+    decorateMaskNaturalSize(c, idToUrl, responseCache, assets),
+  );
+  if (el.maskImageId === undefined) {
+    return decoratedChildren === el.children ? el : { ...el, children: decoratedChildren };
+  }
+  const dim = sniffNaturalSize(el.maskImageId, idToUrl, responseCache, assets);
+  return {
+    ...el,
+    maskNaturalWidth: dim?.width,
+    maskNaturalHeight: dim?.height,
+    children: decoratedChildren,
+  };
+}
+
+function sniffNaturalSize(
+  imageId: string,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+  assets: ReadonlyMap<string, RawAsset>,
+): { width: number; height: number } | undefined {
+  const asset = assets.get(imageId);
+  if (asset !== undefined) {
+    const dim = sniffBytesNaturalSize(asset.bytes);
+    if (dim !== undefined) {
+      return dim;
+    }
+  }
+  const url = idToUrl.get(imageId);
+  if (url !== undefined) {
+    if (url.startsWith("data:")) {
+      const decoded = decodeMaskDataUrl(url);
+      if (decoded !== undefined) {
+        const dim = sniffBytesNaturalSize(decoded);
+        if (dim !== undefined) {
+          return dim;
+        }
+      }
+    } else {
+      const bytes = responseCache.bodyForUrl(url);
+      if (bytes !== undefined) {
+        const dim = sniffBytesNaturalSize(bytes);
+        if (dim !== undefined) {
+          return dim;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function sniffBytesNaturalSize(bytes: Uint8Array): { width: number; height: number } | undefined {
+  if (bytes.length >= 24
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const width = view.getUint32(16);
+    const height = view.getUint32(20);
+    if (width > 0 && height > 0) {
+      return { width, height };
+    }
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    for (let i = 0; i < bytes.length - 9; i += 1) {
+      if (bytes[i] === 0xff && (bytes[i + 1] === 0xc0 || bytes[i + 1] === 0xc2)) {
+        const view = new DataView(bytes.buffer, bytes.byteOffset + i + 5, 4);
+        const height = view.getUint16(0);
+        const width = view.getUint16(2);
+        if (width > 0 && height > 0) {
+          return { width, height };
+        }
+      }
+    }
+  }
+  // SVG: width/height attrs or viewBox.
+  const head = String.fromCharCode(...bytes.subarray(0, Math.min(1024, bytes.length)));
+  if (head.includes("<svg")) {
+    const widthMatch = head.match(/<svg[^>]*\swidth\s*=\s*"([^"]+)"/);
+    const heightMatch = head.match(/<svg[^>]*\sheight\s*=\s*"([^"]+)"/);
+    if (widthMatch && heightMatch) {
+      const w = parseFloat(widthMatch[1]!);
+      const h = parseFloat(heightMatch[1]!);
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        return { width: w, height: h };
+      }
+    }
+    const viewBox = head.match(/viewBox\s*=\s*"([^"]+)"/);
+    if (viewBox) {
+      const parts = viewBox[1]!.trim().split(/[\s,]+/).map((s) => parseFloat(s));
+      if (parts.length === 4 && parts.every((n) => Number.isFinite(n)) && parts[2]! > 0 && parts[3]! > 0) {
+        return { width: parts[2]!, height: parts[3]! };
+      }
+    }
+  }
+  return undefined;
+}
+
+function parseMaskSvg(bytes: Uint8Array): NonNullable<ElementJson["maskSvgContent"]> | undefined {
+  const text = new TextDecoder("utf-8").decode(bytes);
+  if (text.indexOf("<svg") < 0) {
+    return undefined;
+  }
+  const viewBoxMatch = text.match(/viewBox\s*=\s*"([^"]+)"/);
+  let viewBox: { minX: number; minY: number; width: number; height: number } | undefined;
+  if (viewBoxMatch) {
+    const parts = viewBoxMatch[1]!.trim().split(/[\s,]+/).map((s) => parseFloat(s));
+    if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
+      viewBox = { minX: parts[0]!, minY: parts[1]!, width: parts[2]!, height: parts[3]! };
+    }
+  }
+  // Mutable accumulator; the function returns its readonly view via
+  // the structural type widening at the `return` site.
+  const paths: { d: string; fill?: string; fillRule?: "evenodd" }[] = [];
+  // `<path d="..." [fill="..."] [fill-rule="..."]>` — capture each
+  // self-closing or open path element. The IR carries the literal
+  // `d`; further normalisation happens at the renderer.
+  const pathRe = /<path\b([^>]*?)\/?>/g;
+  // eslint-disable-next-line no-restricted-syntax -- regex match cursor is intrinsically mutable
+  let m: RegExpExecArray | null;
+  while ((m = pathRe.exec(text)) !== null) {
+    const attrs = m[1]!;
+    const dMatch = attrs.match(/\sd\s*=\s*"([^"]*)"/);
+    if (!dMatch) {
+      continue;
+    }
+    const d = dMatch[1]!;
+    if (d.length === 0) {
+      continue;
+    }
+    const fillMatch = attrs.match(/\sfill\s*=\s*"([^"]*)"/);
+    const fillRuleMatch = attrs.match(/\sfill-rule\s*=\s*"([^"]*)"/);
+    paths.push({
+      d,
+      fill: fillMatch?.[1] ?? undefined,
+      fillRule: fillRuleMatch?.[1] === "evenodd" ? "evenodd" : undefined,
+    });
+  }
+  if (paths.length === 0) {
+    return undefined;
+  }
+  return { viewBox, paths };
 }
