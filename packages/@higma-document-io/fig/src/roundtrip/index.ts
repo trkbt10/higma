@@ -10,6 +10,7 @@ export {
   saveFigFile,
   cloneFigFile,
   addNodeChange,
+  addBlob,
   patchNodeChange,
   createGuidAllocator,
   findNodeByName,

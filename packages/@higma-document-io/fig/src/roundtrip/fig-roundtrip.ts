@@ -18,7 +18,7 @@ import {
   type SaveFigFamilyOptions,
 } from "@higma-figma-runtime/roundtrip";
 import type { FigCanvasMagic } from "@higma-figma-schema/profiles";
-import type { LoadedFigFile } from "@higma-document-models/fig/domain";
+import type { FigBlob, LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 
@@ -89,6 +89,25 @@ export function cloneFigFile(loaded: LoadedFigFile): LoadedFigFile {
 /** Add a node change to a loaded file. */
 export function addNodeChange(loaded: LoadedFigFile, node: FigNode): void {
   loaded.nodeChanges.push(node);
+}
+
+/**
+ * Append a brand-new commands blob to the loaded file and return its
+ * index. The returned index is what `fillGeometry[].commandsBlob` /
+ * `strokeGeometry[].commandsBlob` reference.
+ *
+ * Used by refinement helpers that synthesise nodes whose geometry
+ * does not already exist in the file (e.g. bootstrapping a style
+ * proxy in a file that has none of that kind). The `LoadedFigFile.
+ * blobs` slot is typed `readonly FigBlob[]` so callers cannot rewire
+ * the array, but the underlying instance is the same one the save
+ * path consumes — appending a single entry here is the SoT entry
+ * point for that kind of mutation.
+ */
+export function addBlob(loaded: LoadedFigFile, blob: FigBlob): number {
+  const blobs = loaded.blobs as FigBlob[];
+  blobs.push(blob);
+  return blobs.length - 1;
 }
 
 /**

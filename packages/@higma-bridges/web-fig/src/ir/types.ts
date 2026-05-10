@@ -31,6 +31,35 @@ export type BoxIR = {
 };
 
 /**
+ * 2D affine transform applied to the node *after* its `box` is
+ * placed. CSS shape: `matrix(a, b, c, d, tx, ty)` — i.e.
+ *
+ *     | a  c  tx |
+ *     | b  d  ty |
+ *     | 0  0  1  |
+ *
+ * Translation is normally baked into `box.x/y` by the capture
+ * (browser's `getBoundingClientRect` already returns the post-
+ * transform AABB), so the most common reason to surface a transform
+ * here is rotation or non-uniform scaling that the box dimensions
+ * alone cannot express. The capture rotates the AABB into the box
+ * dimensions and writes the rotation matrix here so the renderer can
+ * apply the actual rotation around the box centre.
+ *
+ * Identity (`a=1, b=0, c=0, d=1, tx=0, ty=0`) is omitted — the IR
+ * uses `transform: undefined` for the no-op case to keep tree
+ * snapshots small.
+ */
+export type TransformIR = {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+  readonly tx: number;
+  readonly ty: number;
+};
+
+/**
  * CSS `<length-percentage>` carrier — the Single Source of Truth for
  * any field whose source value can be either a literal pixel length
  * (`24px`) or a percentage of an axis on the owning element
@@ -274,6 +303,14 @@ export type NodeBaseIR = {
    * direction can't recover authorial intent.
    */
   readonly sizing: ChildSizingIR;
+  /**
+   * Optional 2D affine transform applied after the node is positioned
+   * by its `box`. Surfaced when the captured CSS `transform` is
+   * non-identity AND the transform is not pure translation (translation
+   * is already baked into `box.x/y` by the browser's getBoundingClientRect).
+   * Undefined for the common no-transform case.
+   */
+  readonly transform?: TransformIR;
 };
 
 /** A frame / div / container. */

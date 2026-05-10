@@ -30,6 +30,7 @@ export type {
   TextNodeIR,
   TextRunIR,
   TextStyleIR,
+  TransformIR,
   VectorNodeIR,
   VectorPathIR,
   ViewportIR,

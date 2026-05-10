@@ -93,7 +93,12 @@ export function createTextSchema(): KiwiSchema {
         ["USER_CHANGES", 2],
       ]),
 
-      // 1: NodeType enum (from Figma's schema)
+      // 1: NodeType enum — must agree with the canonical
+      // `figma-schema.json` shipped from `@higma-figma-schema/profiles`.
+      // COMPONENT and COMPONENT_SET are intentionally absent because
+      // the canonical schema does not declare them; Figma's
+      // user-facing "Component" concept is represented by SYMBOL
+      // nodes, and there is no separate variant-set node type.
       createEnumDef("NodeType", [
         ["NONE", 0],
         ["DOCUMENT", 1],
@@ -121,10 +126,11 @@ export function createTextSchema(): KiwiSchema {
         ["MEDIA", 23],
         ["HIGHLIGHT", 24],
         ["SECTION", 25],
-        ["TABLE", 27],
-        ["TABLE_CELL", 28],
-        ["COMPONENT", 29],
-        ["COMPONENT_SET", 30],
+        ["SECTION_OVERLAY", 26],
+        ["WASHI_TAPE", 27],
+        ["VARIABLE", 28],
+        ["TABLE", 29],
+        ["TABLE_CELL", 30],
       ]),
 
       // 2: NodePhase enum
