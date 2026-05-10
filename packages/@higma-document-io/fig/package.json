@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
+  "bin": {
+    "fig-lint": "./src/lint/cli/bin.ts"
+  },
   "dependencies": {
     "@higma-codecs/compression": "workspace:*",
     "@higma-figma-containers/canvas": "workspace:*",
@@ -37,6 +40,14 @@
     "./validator": {
       "types": "./src/validator/index.ts",
       "default": "./src/validator/index.ts"
+    },
+    "./lint": {
+      "types": "./src/lint/index.ts",
+      "default": "./src/lint/index.ts"
+    },
+    "./lint/cli": {
+      "types": "./src/lint/cli/index.ts",
+      "default": "./src/lint/cli/index.ts"
     },
     "./context": {
       "types": "./src/context/index.ts",

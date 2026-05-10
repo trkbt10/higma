@@ -125,7 +125,13 @@ function createImagePaintBuilder(imageRef: string): ImagePaintBuilder {
         imageScaleMode: scaleModeValue,
         scaleMode: scaleModeValue,
         rotation: state.rotation !== 0 ? state.rotation : undefined,
-        scalingFactor: state.scalingFactor !== 1 ? state.scalingFactor : undefined,
+        // TILE paints in Figma require an explicit factor — the
+        // renderer's `image-pattern-finalize` rejects TILE without
+        // one. For non-TILE modes the default `1` is implicit and
+        // we omit the field to keep the on-disk payload minimal.
+        scalingFactor: state.scaleMode === "TILE"
+          ? state.scalingFactor
+          : (state.scalingFactor !== 1 ? state.scalingFactor : undefined),
         filters: state.filters,
       };
     },

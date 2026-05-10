@@ -297,6 +297,10 @@ function _createFigFileBuilder() {
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
     });
+    // Required Figma fields — every importable shape carries these.
+    node.strokeWeight = 1;
+    node.strokeAlign = { value: 1, name: "INSIDE" };
+    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
@@ -327,6 +331,11 @@ function _createFigFileBuilder() {
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
     });
+    // Required Figma fields — instances inherit symbol geometry but
+    // still emit their own stroke metadata in real exports.
+    node.strokeWeight = 1;
+    node.strokeAlign = { value: 1, name: "INSIDE" };
+    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
@@ -349,6 +358,10 @@ function _createFigFileBuilder() {
       visible: data.visible,
       opacity: data.opacity,
     });
+    // Required Figma fields — every importable shape carries these.
+    node.strokeWeight = 0;
+    node.strokeAlign = { value: 1, name: "INSIDE" };
+    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
@@ -430,6 +443,10 @@ function _createFigFileBuilder() {
     });
     // Add boolean operation specific field
     node.booleanOperation = data.booleanOperation;
+    // Required Figma fields — every importable shape carries these.
+    node.strokeWeight = 0;
+    node.strokeAlign = { value: 1, name: "INSIDE" };
+    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
@@ -471,6 +488,11 @@ function _createFigFileBuilder() {
     if (data.derivedTextData) {
       node.derivedTextData = data.derivedTextData;
     }
+    // Required Figma fields — TEXT nodes still emit zero-weight
+    // stroke metadata in real Figma exports.
+    node.strokeWeight = 0;
+    node.strokeAlign = { value: 1, name: "INSIDE" };
+    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
