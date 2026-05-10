@@ -6,6 +6,7 @@
   "sideEffects": false,
   "dependencies": {
     "@higma-codecs/png": "workspace:*",
+    "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
     "@higma-primitives/tree": "workspace:*",

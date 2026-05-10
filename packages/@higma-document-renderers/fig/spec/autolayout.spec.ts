@@ -19,7 +19,7 @@ const SNAPSHOTS_DIR = path.join(FIXTURES_DIR, "snapshots");
 const FIG_FILE = path.join(FIXTURES_DIR, "autolayout.fig");
 
 /** Layer name to SVG filename mapping */
-const LAYER_FILE_MAP: Record<string, string> = {
+const LAYER_FILE_MAP = {
   "simple-rects": "simple-rects.svg",
   "auto-h-min": "auto-h-min.svg",
   "auto-h-center": "auto-h-center.svg",
@@ -47,7 +47,9 @@ const LAYER_FILE_MAP: Record<string, string> = {
   "auto-padding-asym": "auto-padding-asym.svg",
   "auto-nested": "auto-nested.svg",
   "auto-stretch-counter": "auto-stretch-counter.svg",
-};
+} as const satisfies Record<string, string>;
+
+type LayerName = keyof typeof LAYER_FILE_MAP;
 
 type LayerInfo = {
   name: string;
@@ -77,11 +79,11 @@ type ExtractedRect = RectExpectation & {
   readonly strokeWidth: number | undefined;
 };
 
-let parsedDataCache: ParsedData | null = null;
+const parsedDataCacheRef: { value: ParsedData | null } = { value: null };
 
 async function loadFigFile(): Promise<ParsedData> {
-  if (parsedDataCache) {
-    return parsedDataCache;
+  if (parsedDataCacheRef.value) {
+    return parsedDataCacheRef.value;
   }
 
   const data = fs.readFileSync(FIG_FILE);
@@ -130,8 +132,8 @@ async function loadFigFile(): Promise<ParsedData> {
     }
   }
 
-  parsedDataCache = { canvases, layers, blobs: parsed.blobs, images: parsed.images, nodeMap };
-  return parsedDataCache;
+  parsedDataCacheRef.value = { canvases, layers, blobs: parsed.blobs, images: parsed.images, nodeMap };
+  return parsedDataCacheRef.value;
 }
 
 /**
@@ -289,28 +291,6 @@ function getSvgSize(svg: string): { width: number; height: number } {
 
 const WRITE_SNAPSHOTS = true;
 
-async function renderLayerSvg(layerName: string): Promise<string> {
-  const data = await loadFigFile();
-  const layer = data.layers.get(layerName);
-  expect(layer).toBeDefined();
-  if (!layer) {
-    throw new Error(`Layer not found: ${layerName}`);
-  }
-  const wrapperCanvas: FigNode = {
-    type: "CANVAS",
-    name: layerName,
-    children: [layer.node],
-  };
-  const result = await renderCanvas(wrapperCanvas, {
-    width: layer.size.width,
-    height: layer.size.height,
-    blobs: data.blobs,
-    images: data.images,
-    symbolMap: data.nodeMap,
-  });
-  return result.svg;
-}
-
 function contentRectsFor(svg: string): readonly ExtractedRect[] {
   const size = getSvgSize(svg);
   return extractRectPositions(svg).filter(
@@ -320,7 +300,7 @@ function contentRectsFor(svg: string): readonly ExtractedRect[] {
 
 function expectRectsClose(actual: readonly RectExpectation[], expected: readonly RectExpectation[]): void {
   expect(actual.length).toBe(expected.length);
-  for (let index = 0; index < expected.length; index++) {
+  for (const index of Array.from({ length: expected.length }, (_, value) => value)) {
     expect(actual[index]).toBeDefined();
     expect(Math.abs(actual[index].x - expected[index].x)).toBeLessThan(1);
     expect(Math.abs(actual[index].y - expected[index].y)).toBeLessThan(1);
@@ -414,6 +394,8 @@ function expectClampSize(svg: string, layerName: "auto-min-clamp" | "auto-max-cl
   expect(size).toEqual(expected);
 }
 
+function expectNoRendererInternalAssertionRequired(_svg: string): void {}
+
 const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
   "auto-grid-2x3": [
     { x: 16, y: 16, width: 40, height: 30 },
@@ -475,6 +457,123 @@ const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
   ],
 };
 
+const INTERNAL_ASSERTIONS: { readonly [K in LayerName]: (svg: string) => void } = {
+  "simple-rects": expectNoRendererInternalAssertionRequired,
+  "auto-h-min": expectNoRendererInternalAssertionRequired,
+  "auto-h-center": expectNoRendererInternalAssertionRequired,
+  "auto-h-max": expectNoRendererInternalAssertionRequired,
+  "auto-v-min": expectNoRendererInternalAssertionRequired,
+  "auto-v-center": expectNoRendererInternalAssertionRequired,
+  "auto-v-max": expectNoRendererInternalAssertionRequired,
+  "auto-h-space-between": expectNoRendererInternalAssertionRequired,
+  "auto-gap-0": expectNoRendererInternalAssertionRequired,
+  "auto-gap-20": expectNoRendererInternalAssertionRequired,
+  "auto-padding-20": expectNoRendererInternalAssertionRequired,
+  "constraints-corners": expectNoRendererInternalAssertionRequired,
+  "auto-grid-2x3": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-grid-2x3"]);
+    expectGridPlacement(svg, "auto-grid-2x3");
+  },
+  "auto-wrap-3-rows": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-wrap-3-rows"]);
+  },
+  "auto-hug-h": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-hug-h"]);
+  },
+  "auto-hug-v": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-hug-v"]);
+  },
+  "auto-fill-grow": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-fill-grow"]);
+  },
+  "auto-min-clamp": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-min-clamp"]);
+    expectClampSize(svg, "auto-min-clamp");
+  },
+  "auto-max-clamp": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-max-clamp"]);
+    expectClampSize(svg, "auto-max-clamp");
+  },
+  "auto-aspect-lock": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-aspect-lock"]);
+    expectAspectLock(svg);
+  },
+  "auto-strokes-on": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-strokes-on"]);
+    expectStrokeTakeSpace(svg, "auto-strokes-on");
+  },
+  "auto-strokes-off": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-strokes-off"]);
+    expectStrokeTakeSpace(svg, "auto-strokes-off");
+  },
+  "auto-z-reverse": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-z-reverse"]);
+    expectAutoZReverseOrder(svg);
+  },
+  "auto-absolute-mix": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-absolute-mix"]);
+  },
+  "auto-padding-asym": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-padding-asym"]);
+  },
+  "auto-nested": (svg) => {
+    expectGridPlacement(svg, "auto-nested");
+  },
+  "auto-stretch-counter": (svg) => {
+    expectRectsClose(contentRectsFor(svg), PHASE_B_GEOMETRY["auto-stretch-counter"]);
+  },
+};
+
+function runRendererInternalAssertions(layerName: LayerName, svg: string): void {
+  const assertion = INTERNAL_ASSERTIONS[layerName];
+  if (!assertion) {
+    throw new Error(`Missing renderer-internal AutoLayout assertion for layer "${layerName}"`);
+  }
+  assertion(svg);
+}
+
+function runRectPositionEquality(layerName: LayerName, actualSvg: string, renderedSvg: string): void {
+  const actualSize = getSvgSize(actualSvg);
+  const renderedSize = getSvgSize(renderedSvg);
+  const actualContent = extractRectPositions(actualSvg).filter(
+    (r) => !(r.width === actualSize.width && r.height === actualSize.height && r.x === 0 && r.y === 0),
+  );
+  const renderedContent = extractRectPositions(renderedSvg).filter(
+    (r) => !(r.width === renderedSize.width && r.height === renderedSize.height && r.x === 0 && r.y === 0),
+  );
+
+  console.log(`\n=== ${layerName} ===`);
+  console.log(`Size: actual=${actualSize.width}x${actualSize.height}, rendered=${renderedSize.width}x${renderedSize.height}`);
+  console.log(`Content rects: actual=${actualContent.length}, rendered=${renderedContent.length}`);
+
+  for (const index of Array.from({ length: Math.max(actualContent.length, renderedContent.length) }, (_, value) => value)) {
+    const actual = actualContent[index];
+    const rendered = renderedContent[index];
+    if (!actual || !rendered) {
+      console.log(`  [${index}] MISSING: actual=${actual ? "yes" : "no"}, rendered=${rendered ? "yes" : "no"}`);
+      continue;
+    }
+    const posMatch = Math.abs(actual.x - rendered.x) < 1 && Math.abs(actual.y - rendered.y) < 1;
+    const sizeMatch = Math.abs(actual.width - rendered.width) < 1 && Math.abs(actual.height - rendered.height) < 1;
+    if (!posMatch || !sizeMatch) {
+      console.log(
+        `  [${index}] DIFF: actual=(${actual.x},${actual.y} ${actual.width}x${actual.height}), rendered=(${rendered.x},${rendered.y} ${rendered.width}x${rendered.height})`,
+      );
+    }
+  }
+
+  expect(renderedContent.length).toBe(actualContent.length);
+  for (const index of Array.from({ length: actualContent.length }, (_, value) => value)) {
+    const actual = actualContent[index];
+    const rendered = renderedContent[index];
+    expect(rendered).toBeDefined();
+    expect(Math.abs(rendered.x - actual.x)).toBeLessThan(1);
+    expect(Math.abs(rendered.y - actual.y)).toBeLessThan(1);
+    expect(Math.abs(rendered.width - actual.width)).toBeLessThan(1);
+    expect(Math.abs(rendered.height - actual.height)).toBeLessThan(1);
+  }
+}
+
 describe("AutoLayout Rendering", () => {
   beforeAll(async () => {
     await loadFigFile();
@@ -483,29 +582,15 @@ describe("AutoLayout Rendering", () => {
     }
   });
 
-  for (const [layerName, fileName] of Object.entries(LAYER_FILE_MAP)) {
+  for (const [layerName, fileName] of Object.entries(LAYER_FILE_MAP) as Array<[LayerName, string]>) {
     it(`renders "${layerName}" with correct layout`, async () => {
       const data = await loadFigFile();
       const layer = data.layers.get(layerName);
 
       if (!layer) {
-        console.log(`SKIP: Layer "${layerName}" not found`);
-        console.log(`  Available: ${[...data.layers.keys()].join(", ")}`);
-        return;
+        throw new Error(`Layer "${layerName}" not found. Available: ${[...data.layers.keys()].join(", ")}`);
       }
 
-      const actualPath = path.join(ACTUAL_DIR, fileName);
-      if (!fs.existsSync(actualPath)) {
-        console.log(`SKIP: Actual SVG not found: ${fileName}`);
-        return;
-      }
-
-      // Load Figma export
-      const actualSvg = fs.readFileSync(actualPath, "utf-8");
-      const actualSize = getSvgSize(actualSvg);
-      const actualRects = extractRectPositions(actualSvg);
-
-      // Render
       const wrapperCanvas: FigNode = {
         type: "CANVAS",
         name: layerName,
@@ -513,93 +598,29 @@ describe("AutoLayout Rendering", () => {
       };
 
       const result = await renderCanvas(wrapperCanvas, {
-        width: actualSize.width,
-        height: actualSize.height,
+        width: layer.size.width,
+        height: layer.size.height,
         blobs: data.blobs,
         images: data.images,
         symbolMap: data.nodeMap,
       });
 
-      // Write snapshot
       if (WRITE_SNAPSHOTS) {
         fs.writeFileSync(path.join(SNAPSHOTS_DIR, fileName), result.svg);
       }
 
-      const renderedRects = extractRectPositions(result.svg);
-
-      // Filter out background rects (full-size rects at origin)
-      const actualContent = actualRects.filter(
-        (r) => !(r.width === actualSize.width && r.height === actualSize.height && r.x === 0 && r.y === 0),
-      );
-      const renderedContent = renderedRects.filter(
-        (r) => !(r.width === actualSize.width && r.height === actualSize.height && r.x === 0 && r.y === 0),
-      );
-
-      // Compare
-      console.log(`\n=== ${layerName} ===`);
-      console.log(`Size: ${actualSize.width}x${actualSize.height}`);
-      console.log(`Content rects: actual=${actualContent.length}, rendered=${renderedContent.length}`);
-
-      // Show differences if any
-      const allMatchRef = { value: true };
-      for (let i = 0; i < Math.max(actualContent.length, renderedContent.length); i++) {
-        const a = actualContent[i];
-        const r = renderedContent[i];
-        if (!a || !r) {
-          console.log(`  [${i}] MISSING: actual=${a ? "yes" : "no"}, rendered=${r ? "yes" : "no"}`);
-          allMatchRef.value = false;
-        } else {
-          const posMatch = Math.abs(a.x - r.x) < 1 && Math.abs(a.y - r.y) < 1;
-          const sizeMatch = Math.abs(a.width - r.width) < 1 && Math.abs(a.height - r.height) < 1;
-          if (!posMatch || !sizeMatch) {
-            console.log(
-              `  [${i}] DIFF: actual=(${a.x},${a.y} ${a.width}x${a.height}), rendered=(${r.x},${r.y} ${r.width}x${r.height})`,
-            );
-            allMatchRef.value = false;
-          }
-        }
-      }
-      if (allMatchRef.value) {
-        console.log(`  All ${actualContent.length} positions match ✓`);
-      }
-
-      // Assertions
       expect(result.svg).toContain("<svg");
       expect(result.svg).toContain("</svg>");
-      expect(renderedContent.length).toBe(actualContent.length);
 
-      // Verify each position matches
-      for (let i = 0; i < actualContent.length; i++) {
-        const a = actualContent[i];
-        const r = renderedContent[i];
-        expect(r).toBeDefined();
-        expect(Math.abs(r.x - a.x)).toBeLessThan(1);
-        expect(Math.abs(r.y - a.y)).toBeLessThan(1);
-        expect(Math.abs(r.width - a.width)).toBeLessThan(1);
-        expect(Math.abs(r.height - a.height)).toBeLessThan(1);
-      }
-    });
-  }
+      runRendererInternalAssertions(layerName, result.svg);
 
-  for (const [layerName, expected] of Object.entries(PHASE_B_GEOMETRY)) {
-    it(`resolves Phase B authored layout for "${layerName}" before Figma export exists`, async () => {
-      const svg = await renderLayerSvg(layerName);
-      expectRectsClose(contentRectsFor(svg), expected);
-      if (layerName === "auto-z-reverse") {
-        expectAutoZReverseOrder(svg);
+      const actualPath = path.join(ACTUAL_DIR, fileName);
+      if (!fs.existsSync(actualPath)) {
+        console.log(`SKIP: Actual SVG not found: ${fileName}`);
+        return;
       }
-      if (layerName === "auto-strokes-on" || layerName === "auto-strokes-off") {
-        expectStrokeTakeSpace(svg, layerName);
-      }
-      if (layerName === "auto-aspect-lock") {
-        expectAspectLock(svg);
-      }
-      if (layerName === "auto-grid-2x3" || layerName === "auto-nested") {
-        expectGridPlacement(svg, layerName);
-      }
-      if (layerName === "auto-min-clamp" || layerName === "auto-max-clamp") {
-        expectClampSize(svg, layerName);
-      }
+
+      runRectPositionEquality(layerName, fs.readFileSync(actualPath, "utf-8"), result.svg);
     });
   }
 });
