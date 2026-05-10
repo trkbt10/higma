@@ -367,6 +367,11 @@ function expectStrokeTakeSpace(svg: string, layerName: "auto-strokes-on" | "auto
   expect(innerContentSpan).toBe(bordersTakeSpace ? 108 : 124);
 }
 
+function expectAspectLock(svg: string): void {
+  const size = getSvgSize(svg);
+  expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.005);
+}
+
 const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
   "auto-grid-2x3": [
     { x: 16, y: 16, width: 40, height: 30 },
@@ -543,6 +548,9 @@ describe("AutoLayout Rendering", () => {
       }
       if (layerName === "auto-strokes-on" || layerName === "auto-strokes-off") {
         expectStrokeTakeSpace(svg, layerName);
+      }
+      if (layerName === "auto-aspect-lock") {
+        expectAspectLock(svg);
       }
     });
   }
