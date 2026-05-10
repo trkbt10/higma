@@ -290,7 +290,7 @@ export function createTextSchema(): KiwiSchema {
         ["NONE", 0],
         ["HORIZONTAL", 1],
         ["VERTICAL", 2],
-        ["WRAP", 3],
+        ["GRID", 3],
       ]),
 
       // 21: StackAlign enum (for primary/counter axis alignment)

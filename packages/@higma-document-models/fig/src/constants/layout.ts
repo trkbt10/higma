@@ -7,7 +7,7 @@ export const STACK_MODE_VALUES = {
   NONE: 0,
   HORIZONTAL: 1,
   VERTICAL: 2,
-  WRAP: 3,
+  GRID: 3,
 } as const;
 
 export type StackMode = keyof typeof STACK_MODE_VALUES;

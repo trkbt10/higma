@@ -25,7 +25,7 @@ const modeOptions: readonly SelectOption<StackMode>[] = [
   { value: "NONE", label: "None" },
   { value: "HORIZONTAL", label: "Horizontal" },
   { value: "VERTICAL", label: "Vertical" },
-  { value: "WRAP", label: "Wrap" },
+  { value: "GRID", label: "Grid" },
 ];
 
 const alignOptions: readonly SelectOption<StackAlign>[] = [

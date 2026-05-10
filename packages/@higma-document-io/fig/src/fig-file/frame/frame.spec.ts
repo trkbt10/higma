@@ -139,14 +139,14 @@ describe("FrameNodeBuilder", () => {
       // wrap-mode content alignment is therefore one of those four;
       // pick CENTER as the representative non-default value.
       const node = frameNode(1, 0)
-        .autoLayout("WRAP")
+        .autoLayout("HORIZONTAL")
         .wrap(true)
         .gap(8)
         .counterGap(12)
         .contentAlign("CENTER")
         .build();
 
-      expect(node.stackMode).toEqual({ value: 3, name: "WRAP" });
+      expect(node.stackMode).toEqual({ value: 1, name: "HORIZONTAL" });
       expect(node.stackWrap).toBe(true);
       expect(node.stackSpacing).toBe(8);
       expect(node.stackCounterSpacing).toBe(12);
@@ -167,7 +167,7 @@ describe("FrameNodeBuilder", () => {
         .wrap(true)
         .build();
 
-      expect(node.stackMode).toEqual({ value: 3, name: "WRAP" });
+      expect(node.stackMode).toBeUndefined();
       expect(node.stackWrap).toBe(true);
     });
   });

@@ -139,9 +139,6 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     contentAlign(align: StackAlign) { state.stackPrimaryAlignContent = align; return builder; },
     wrap(enabled: boolean = true) {
       state.stackWrap = enabled;
-      if (enabled && !state.stackMode) {
-        state.stackMode = "WRAP";
-      }
       return builder;
     },
     counterGap(spacing: number) { state.stackCounterSpacing = spacing; return builder; },

@@ -86,13 +86,14 @@ describe("SymbolNodeBuilder", () => {
       // SPACE_BETWEEN). Pick CENTER as a representative non-default
       // value.
       const node = symbolNode(1, 0)
+        .autoLayout("HORIZONTAL")
         .wrap(true)
         .gap(10)
         .counterGap(15)
         .contentAlign("CENTER")
         .build();
 
-      expect(node.stackMode).toEqual({ value: 3, name: "WRAP" });
+      expect(node.stackMode).toEqual({ value: 1, name: "HORIZONTAL" });
       expect(node.stackWrap).toBe(true);
       expect(node.stackSpacing).toBe(10);
       expect(node.stackCounterSpacing).toBe(15);

@@ -208,9 +208,6 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     /** Enable wrap mode (auto-wrap items) */
     wrap(enabled: boolean = true) {
       state.stackWrap = enabled;
-      if (enabled && !state.stackMode) {
-        state.stackMode = "WRAP";
-      }
       return builder;
     },
     /** Set counter axis spacing (for wrap mode) */
