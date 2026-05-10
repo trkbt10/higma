@@ -253,6 +253,8 @@ function _createFigFileBuilder() {
       stackWrap: data.stackWrap,
       stackCounterSpacing: data.stackCounterSpacing,
       stackReverseZIndex: data.stackReverseZIndex,
+      minSize: data.minSize,
+      maxSize: data.maxSize,
       // AutoLayout - child level
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
@@ -971,6 +973,8 @@ function _createFigFileBuilder() {
     stackWrap?: boolean;
     stackCounterSpacing?: number;
     stackReverseZIndex?: boolean;
+    minSize?: { x: number; y: number };
+    maxSize?: { x: number; y: number };
     // AutoLayout - child level
     stackPositioning?: { value: number; name: string };
     stackPrimarySizing?: { value: number; name: string };
@@ -1137,6 +1141,12 @@ function _createFigFileBuilder() {
     }
     if (data.stackReverseZIndex !== undefined) {
       node.stackReverseZIndex = data.stackReverseZIndex;
+    }
+    if (data.minSize !== undefined) {
+      node.minSize = data.minSize;
+    }
+    if (data.maxSize !== undefined) {
+      node.maxSize = data.maxSize;
     }
 
     // AutoLayout - child level (for any node inside auto-layout)

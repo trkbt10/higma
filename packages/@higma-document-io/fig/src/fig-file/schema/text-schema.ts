@@ -382,6 +382,8 @@ export function createTextSchema(): KiwiSchema {
           { name: "stackWrap", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 46 },
           { name: "stackCounterSpacing", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 47 },
           { name: "stackReverseZIndex", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 271 },
+          { name: "minSize", type: "Vector", typeId: 5, isArray: false, value: 325 },
+          { name: "maxSize", type: "Vector", typeId: 5, isArray: false, value: 326 },
           { name: "bordersTakeSpace", type: "bool", typeId: KIWI_TYPE.BOOL, isArray: false, value: 294 },
           { name: "borderTopWeight", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 295 },
           { name: "borderBottomWeight", type: "float", typeId: KIWI_TYPE.FLOAT, isArray: false, value: 296 },

@@ -102,6 +102,8 @@ export type FrameNodeBuilder = {
   wrap: (enabled?: boolean) => FrameNodeBuilder;
   counterGap: (spacing: number) => FrameNodeBuilder;
   reverseZIndex: (enabled?: boolean) => FrameNodeBuilder;
+  minSize: (opts: { x: number; y: number }) => FrameNodeBuilder;
+  maxSize: (opts: { x: number; y: number }) => FrameNodeBuilder;
   positioning: (mode: StackPositioning) => FrameNodeBuilder;
   primarySizing: (sizing: StackSizingInput) => FrameNodeBuilder;
   counterSizing: (sizing: StackSizingInput) => FrameNodeBuilder;
@@ -146,6 +148,8 @@ type FrameBuilderState = {
   stackWrap: boolean | undefined;
   stackCounterSpacing: number | undefined;
   stackReverseZIndex: boolean | undefined;
+  minSize: { x: number; y: number } | undefined;
+  maxSize: { x: number; y: number } | undefined;
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
@@ -188,6 +192,8 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     stackWrap: undefined,
     stackCounterSpacing: undefined,
     stackReverseZIndex: undefined,
+    minSize: undefined,
+    maxSize: undefined,
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
@@ -254,6 +260,8 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     counterGap(spacing: number) { state.stackCounterSpacing = spacing; return builder; },
     /** Reverse z-index order of items */
     reverseZIndex(enabled: boolean = true) { state.stackReverseZIndex = enabled; return builder; },
+    minSize(opts: { x: number; y: number }) { state.minSize = opts; return builder; },
+    maxSize(opts: { x: number; y: number }) { state.maxSize = opts; return builder; },
     /** Set positioning mode when inside auto-layout parent */
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
     /** Set sizing along primary axis (when inside auto-layout parent) */
@@ -323,6 +331,8 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         stackWrap: state.stackWrap,
         stackCounterSpacing: state.stackCounterSpacing,
         stackReverseZIndex: state.stackReverseZIndex,
+        minSize: state.minSize,
+        maxSize: state.maxSize,
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),

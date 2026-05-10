@@ -81,6 +81,16 @@ describe("FrameNodeBuilder", () => {
       expect(node.proportionsConstrained).toBe(true);
     });
 
+    it("sets min and max size fields", () => {
+      const node = frameNode(1, 0)
+        .minSize({ x: 120, y: 80 })
+        .maxSize({ x: 360, y: 240 })
+        .build();
+
+      expect(node.minSize).toEqual({ x: 120, y: 80 });
+      expect(node.maxSize).toEqual({ x: 360, y: 240 });
+    });
+
     it("creates horizontal auto-layout frame", () => {
       const node = frameNode(1, 0)
         .autoLayout("HORIZONTAL")

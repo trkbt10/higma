@@ -76,6 +76,8 @@ export type FrameNodeData = {
   readonly stackWrap?: boolean;
   readonly stackCounterSpacing?: number;
   readonly stackReverseZIndex?: boolean;
+  readonly minSize?: { readonly x: number; readonly y: number };
+  readonly maxSize?: { readonly x: number; readonly y: number };
 
   // AutoLayout - child level (constraints)
   readonly stackPositioning?: { value: number; name: StackPositioning };

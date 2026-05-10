@@ -181,6 +181,8 @@ export type BuilderNode = {
   stackWrap?: KiwiEnum;
   stackCounterSpacing?: number;
   stackReverseZIndex?: boolean;
+  minSize?: KiwiVector;
+  maxSize?: KiwiVector;
 
   // ---- AutoLayout (child-level) ----
   stackPositioning?: KiwiEnum;
