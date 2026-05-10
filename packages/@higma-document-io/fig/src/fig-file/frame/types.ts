@@ -78,6 +78,10 @@ export type FrameNodeData = {
   readonly stackReverseZIndex?: boolean;
   readonly minSize?: { readonly x: number; readonly y: number };
   readonly maxSize?: { readonly x: number; readonly y: number };
+  readonly gridRows?: { readonly entries: readonly { readonly id: { readonly sessionID: number; readonly localID: number }; readonly position: string }[] };
+  readonly gridColumns?: { readonly entries: readonly { readonly id: { readonly sessionID: number; readonly localID: number }; readonly position: string }[] };
+  readonly gridRowGap?: number;
+  readonly gridColumnGap?: number;
 
   // AutoLayout - child level (constraints)
   readonly stackPositioning?: { value: number; name: StackPositioning };
