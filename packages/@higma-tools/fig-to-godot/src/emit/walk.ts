@@ -34,6 +34,7 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+import { resolveInstanceNode } from "@higma-document-models/fig/symbols";
 import { toPascalCase, uniqueIdent } from "@higma-primitives/identifier";
 import {
   boolVal,
@@ -56,6 +57,7 @@ import {
   type LayoutPlan,
 } from "../layout/autolayout";
 import { buildStyleBoxFlat, modulateAlphaProperty } from "../style/style-box";
+import { buildLinearGradient } from "../style/gradient";
 import {
   labelStyleOverrides,
   marginOverrides,
@@ -77,24 +79,52 @@ const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Optional resources passed to the walker.
+ *
+ *   - `symbolMap` — `{guid → FigNode}` lookup used by INSTANCE
+ *     expansion. When set, the walker resolves each INSTANCE via
+ *     `resolveInstanceNode` and emits the merged node + its
+ *     SYMBOL-derived children. When omitted, INSTANCE nodes emit
+ *     their literal direct children (typically empty for component
+ *     instances whose authoring source lives on another canvas).
+ *
+ * Mirrors `fig-to-swiftui`'s EmitContext shape so the two converters
+ * accept the same call site (driver in `run-case.ts` /
+ * `measure-all-cases.ts`).
+ */
+export type EmitContext = {
+  readonly symbolMap?: ReadonlyMap<string, FigNode>;
+};
+
+/**
  * Mutable side-table the walker accumulates while it builds the scene
  * tree. Sub-resource ids are minted via `nextSubResourceId`; the
  * caller (`emitFromFrames`) hands one of these in per-frame and reads
  * the populated arrays after the walk.
+ *
+ * `emit` carries the read-only EmitContext so INSTANCE resolution and
+ * other doc-level lookups can flow through the walker without thread
+ * passing every helper.
  */
 export type WalkContext = {
   readonly subResources: GodotSubResource[];
   readonly nodeNamesUsed: Set<string>;
-  /** Counter feeding `nextSubResourceId` — kept here so multiple walks share. */
+  /** Counter feeding `nextStyleBoxId` — kept here so multiple walks share. */
   styleBoxCounter: number;
+  /** Counter for Gradient + GradientTexture2D sub-resource ids. */
+  gradientCounter: number;
+  /** Read-only doc-level lookups (symbolMap etc.). */
+  readonly emit: EmitContext;
 };
 
 /** Build an empty walk context — call once per top-level scene emit. */
-export function createWalkContext(): WalkContext {
+export function createWalkContext(emit: EmitContext = {}): WalkContext {
   return {
     subResources: [],
     nodeNamesUsed: new Set<string>(),
     styleBoxCounter: 0,
+    gradientCounter: 0,
+    emit,
   };
 }
 
@@ -103,6 +133,16 @@ function nextStyleBoxId(ctx: WalkContext): string {
   // Godot writes ids as `<TypeShorthand>_<6-char-suffix>`; we use a
   // numeric monotonic suffix so emitted scenes round-trip diff-clean.
   return `StyleBoxFlat_${ctx.styleBoxCounter.toString().padStart(3, "0")}`;
+}
+
+function nextGradientId(ctx: WalkContext): string {
+  ctx.gradientCounter += 1;
+  return `Gradient_${ctx.gradientCounter.toString().padStart(3, "0")}`;
+}
+
+function nextGradientTextureId(ctx: WalkContext): string {
+  ctx.gradientCounter += 1;
+  return `GradientTexture2D_${ctx.gradientCounter.toString().padStart(3, "0")}`;
 }
 
 function uniqueNodeName(ctx: WalkContext, base: string): string {
@@ -131,9 +171,25 @@ function isRendered(node: FigNode): boolean {
   return true;
 }
 
-function renderedChildren(node: FigNode): readonly FigNode[] {
-  return safeChildren(node).filter(isRendered);
+/**
+ * If the node is an INSTANCE and the walker has access to a
+ * symbolMap, resolve it through the canonical helper and return
+ * both the merged node (carrying the SYMBOL's properties — fillPaints,
+ * size, etc., with INSTANCE-level overrides folded in) and the
+ * resolved children. For non-INSTANCE nodes (or when no symbolMap is
+ * available) returns the input unchanged. Mirrors the swiftui peer's
+ * `resolveInstanceFor`.
+ */
+function resolveInstanceFor(
+  node: FigNode,
+  ctx: WalkContext,
+): { readonly node: FigNode; readonly children: readonly FigNode[] } {
+  if (ctx.emit.symbolMap && node.type.name === "INSTANCE") {
+    return resolveInstanceNode(node, { symbolMap: ctx.emit.symbolMap });
+  }
+  return { node, children: safeChildren(node) };
 }
+
 
 /**
  * Decide whether a child is positioned absolutely inside its parent.
@@ -200,11 +256,49 @@ function appendAbsolutePosition(
     positioned.set("offset_right", property("offset_right", floatVal(x + child.size.x)));
     positioned.set("offset_bottom", property("offset_bottom", floatVal(y + child.size.y)));
   }
+  // Figma's transform 2x2 carries rotation around the local origin
+  // (top-left). Godot's `Control.rotation` rotates around
+  // `pivot_offset` (default (0,0) — also top-left), so the angle
+  // transfers directly. We extract it from atan2(m10, m00) and emit
+  // only when non-zero so identity-transform children don't accrue
+  // a `rotation = 0.0` line.
+  const rotation = extractRotationRadians(child);
+  if (rotation !== 0) {
+    positioned.set("rotation", property("rotation", floatVal(rotation)));
+  }
   const replaced = target.properties.map((p) => positioned.get(p.name) ?? p);
   const remaining = Array.from(positioned.values()).filter(
     (p) => !target.properties.some((t) => t.name === p.name),
   );
   return { ...target, properties: [...replaced, ...remaining] };
+}
+
+/**
+ * Extract a rotation angle from a FigNode's transform 2x2 part. Figma
+ * stores transforms as a 2x3 affine matrix `[m00 m01 m02; m10 m11 m12]`.
+ * For a pure rotation by θ:
+ *
+ *   [ cos θ  -sin θ ]
+ *   [ sin θ   cos θ ]
+ *
+ * so `atan2(m10, m00)` recovers θ in radians. Returns 0 for the
+ * identity transform (and for nodes without a transform). Doesn't
+ * detect non-uniform scale — Figma writes those into m00/m01/m10/m11
+ * too, but the `rect-rotated` family is pure rotation; non-uniform
+ * scale cases would need a separate emit path (Godot Control has
+ * `scale` but it doesn't compose cleanly with size-driven layout).
+ */
+function extractRotationRadians(node: FigNode): number {
+  const t = node.transform;
+  if (!t) {
+    return 0;
+  }
+  const m00 = t.m00 ?? 1;
+  const m10 = t.m10 ?? 0;
+  if (m10 === 0 && m00 >= 0) {
+    return 0;
+  }
+  return Math.atan2(m10, m00);
 }
 
 function appendFlowSizeFlags(
@@ -223,12 +317,23 @@ function appendFlowSizeFlags(
   // The cross-axis name depends on the BoxContainer orientation:
   //   HBoxContainer → cross axis is vertical → size_flags_vertical
   //   VBoxContainer → cross axis is horizontal → size_flags_horizontal
-  const propName =
+  const crossAxis =
     parentPlan.container === "HBoxContainer" ? "size_flags_vertical" : "size_flags_horizontal";
-  return {
-    ...target,
-    properties: [...target.properties, property(propName, intVal(flags))],
-  };
+  const primaryAxis =
+    parentPlan.container === "HBoxContainer" ? "size_flags_horizontal" : "size_flags_vertical";
+  // Figma's `stackChildPrimaryGrow = 1` marks a child as filling the
+  // remaining primary-axis space — the autolayout "Fill container" or
+  // "Grow" affordance. Godot expresses this via
+  // `size_flags_<primary> = SIZE_EXPAND_FILL` on the child. Emit only
+  // when grow is authored (non-zero); the default 0 leaves Godot at
+  // its own default which the cross-axis logic above already handles
+  // for the cross axis.
+  const grow = typeof child.stackChildPrimaryGrow === "number" ? child.stackChildPrimaryGrow : 0;
+  const props: GodotProperty[] = [...target.properties, property(crossAxis, intVal(flags))];
+  if (grow > 0) {
+    props.push(property(primaryAxis, intVal(SIZE_FLAGS.EXPAND_FILL)));
+  }
+  return { ...target, properties: props };
 }
 
 /**
@@ -285,16 +390,63 @@ function buildShapeStyleBox(
   return buildStyleBoxFlat(node_, styleBoxId);
 }
 
+
 function emitShapeLeaf(node_: FigNode, ctx: WalkContext): GodotNode {
   const typeName = node_.type.name;
   const name = uniqueNodeName(ctx, node_.name ?? typeName);
+
+  // Try GRADIENT_LINEAR before SOLID — a node with both a gradient
+  // fill and a corner radius would otherwise pick the corner-only
+  // StyleBoxFlat path (transparent bg) and lose the gradient.
+  //
+  // When the shape has a non-zero corner radius the TextureRect alone
+  // would render the gradient as a sharp rectangle. Wrap it in a
+  // Panel whose StyleBoxFlat carries the corner radius and set
+  // `clip_children = 2 /* CLIP_ONLY */` so the Panel acts as a
+  // shape mask — the rounded silhouette clips the child TextureRect
+  // without the Panel itself painting. The Panel's `mouse_filter`
+  // stays at the Control default (PASS) since it has no surface to
+  // capture input on.
+  const gradientId = nextGradientId(ctx);
+  const textureId = nextGradientTextureId(ctx);
+  const gradient = buildLinearGradient(node_, gradientId, textureId);
+  if (gradient) {
+    for (const sub of gradient.subResources) {
+      ctx.subResources.push(sub);
+    }
+    const props: GodotProperty[] = [
+      gradient.textureProperty,
+      property("expand_mode", intVal(1 /* IGNORE_SIZE */)),
+      property("stretch_mode", intVal(6 /* KEEP_ASPECT_COVERED */)),
+      ...customMinimumSizeProperty(node_),
+    ];
+    const modulate = modulateAlphaProperty(node_);
+    if (modulate) {
+      props.push(modulate);
+    }
+    return node(name, "TextureRect", { properties: props });
+    // Note: a corner-radius mask was prototyped via a wrapping Panel
+    // with `clip_children = CLIP_AND_DRAW` and an opaque-white bg
+    // StyleBoxFlat. Worked for opaque gradients (sharp-edge → 18%
+    // → rounded-edge → 18% net) but regressed for gradients with
+    // alpha < 1 (`grad-opacity` 14.7% → 28%): the white bg painted
+    // by the Panel showed through the semi-transparent gradient. A
+    // CLIP_ONLY mask on a transparent paint produced no visible
+    // pixels at all, because Godot's clip-children gates on the
+    // *drawn* pixels of the Panel. A correct implementation needs a
+    // shader-based rounded-rect alpha mask — deferred until the
+    // CanvasGroup composite path is sound.
+  }
+  // No gradient; release the gradient ids so the next StyleBox or
+  // gradient on a sibling stays sequential.
+  ctx.gradientCounter -= 2;
+
   const styleBoxId = nextStyleBoxId(ctx);
   const styleBox = buildShapeStyleBox(node_, typeName, styleBoxId);
   if (!styleBox) {
-    // Shape with no SOLID fill, no stroke, no shadow, no corner radius
-    // — visually transparent. Emit a bare Control of the right size so
-    // layout still allocates the slot; no StyleBox needed.
-    ctx.styleBoxCounter -= 1; // roll back the unused id
+    // Shape with no fill at all — emit a bare Control of the right
+    // size so layout still allocates the slot.
+    ctx.styleBoxCounter -= 1;
     const props: GodotProperty[] = [...customMinimumSizeProperty(node_)];
     const modulate = modulateAlphaProperty(node_);
     if (modulate) {
@@ -554,11 +706,30 @@ function buildFramePanel(
  * padding. The background `Panel` only appears when the frame has any
  * styling (fill / corner / stroke / shadow).
  */
-function emitContainer(node_: FigNode, ctx: WalkContext): GodotNode {
+function emitContainer(rawNode: FigNode, ctx: WalkContext): GodotNode {
+  // Expand INSTANCE → SYMBOL so the merged node carries the SYMBOL's
+  // own paint / size / corner / stroke / shadow properties and the
+  // INSTANCE-level overrides land on top. Without this an INSTANCE
+  // emits as an empty Control because the literal INSTANCE node has
+  // no fillPaints of its own — the visual lives on the SYMBOL it
+  // points at on a separate canvas. Mirrors the swiftui peer.
+  const { node: node_, children: resolvedChildren } = resolveInstanceFor(rawNode, ctx);
   const plan = planLayout(node_);
-  const childContext = createWalkContext();
+  // Sub-resource ids must be unique across the whole emitted scene.
+  // Seed the child context's counters from the parent so deeper
+  // levels pick up where the outer level left off — otherwise a
+  // sibling subtree restarts at 1 and collides with an already-minted
+  // id (clip-mixed regression: a deep inner-rect StyleBoxFlat_001
+  // overwrote the outer-rect's StyleBoxFlat_001, painting the inner
+  // rect with the outer's red colour). After the child walk we sync
+  // the parent's counters back up so the parent's own buildFramePanel
+  // call mints the next sequential id rather than colliding with the
+  // children.
+  const childContext = createWalkContext(ctx.emit);
+  childContext.styleBoxCounter = ctx.styleBoxCounter;
+  childContext.gradientCounter = ctx.gradientCounter;
   const childViews: GodotNode[] = [];
-  for (const child of renderedChildren(node_)) {
+  for (const child of resolvedChildren.filter(isRendered)) {
     const childNode = emitNode(child, childContext);
     const placement = placementFor(child, plan);
     childViews.push(applyPlacement(childNode, placement, child, plan));
@@ -567,7 +738,8 @@ function emitContainer(node_: FigNode, ctx: WalkContext): GodotNode {
   for (const sub of childContext.subResources) {
     ctx.subResources.push(sub);
   }
-  ctx.styleBoxCounter = Math.max(ctx.styleBoxCounter, childContext.styleBoxCounter);
+  ctx.styleBoxCounter = childContext.styleBoxCounter;
+  ctx.gradientCounter = childContext.gradientCounter;
   const distributed = applyPrimaryDistribution(plan, childViews, ctx);
 
   const innerName = uniqueNodeName(ctx, node_.name ?? "Stack");

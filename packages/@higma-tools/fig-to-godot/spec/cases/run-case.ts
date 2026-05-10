@@ -38,6 +38,7 @@ import {
   buildFrameTarget,
   emitFrameFile,
   listFrameTargets,
+  type EmitContext,
 } from "@higma-tools/fig-to-godot/emit";
 import {
   parseScene,
@@ -119,6 +120,11 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
   const targets = frames.map((node) =>
     buildFrameTarget(node, { outputDir: "Pages", sceneNamesUsed, slugsUsed }),
   );
+  // Doc-level lookups passed to the emit walker. Carrying `symbolMap`
+  // here is what lets INSTANCE nodes resolve to their authoring
+  // SYMBOL — without it, frames built from instances (e.g. the
+  // `constraints` fixture) emit as empty Controls.
+  const emitCtx: EmitContext = { symbolMap: ctx.symbolMap };
   const sized = targets.map((target, idx) => {
     const node = frames[idx]!;
     const size = node.size ?? { x: 200, y: 200 };
@@ -134,7 +140,7 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
     it.each(sized.map(({ target }) => ({ target })))(
       "$target.sceneName — serialize → parse round-trips to the same IR",
       ({ target }) => {
-        const original = buildFrameScene(target);
+        const original = buildFrameScene(target, emitCtx);
         const expected = {
           ...original,
           root: { ...original.root, name: target.sceneName },
@@ -147,7 +153,7 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
 
     it("produces non-empty .tscn text for every frame", () => {
       for (const { target } of sized) {
-        const file = emitFrameFile(target);
+        const file = emitFrameFile(target, emitCtx);
         expect(file.contents).toContain("[gd_scene");
         expect(file.contents.length).toBeGreaterThan(50);
       }
@@ -160,7 +166,7 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
   // pattern OOM'd at ~150 frames under vitest's parallel pool — batch
   // renders share a single Godot process per spec file, holding total
   // memory flat regardless of frame count.
-  const batchPngs = godotAvailable ? await batchRender(sized) : undefined;
+  const batchPngs = godotAvailable ? await batchRender(sized, emitCtx) : undefined;
 
   (godotAvailable ? describe : describe.skip)(
     `pixel diff — ${options.caseName} fixture (Godot vs WebGL reference)`,
@@ -258,9 +264,10 @@ function normalizeProperty(prop: GodotProperty): GodotProperty {
 /** Drive `renderGodotBatch` for the spec's resolved frame list. */
 async function batchRender(
   sized: readonly { target: ReturnType<typeof buildFrameTarget>; width: number; height: number }[],
+  emitCtx: EmitContext,
 ): Promise<readonly Uint8Array[]> {
   const entries = sized.map(({ target, width, height }) => ({
-    sceneText: emitFrameFile(target).contents,
+    sceneText: emitFrameFile(target, emitCtx).contents,
     width,
     height,
   }));

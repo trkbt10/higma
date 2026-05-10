@@ -39,7 +39,7 @@ import {
   type GodotValue,
   vector2,
 } from "../godot-tree";
-import { solidPaintToColor } from "./color";
+import { colorExpr, solidPaintToColor } from "./color";
 
 /**
  * Read a Kiwi enum's `.name`. Effect types appear either as plain
@@ -78,6 +78,97 @@ function firstVisibleSolidPaint(paints: readonly FigPaint[] | undefined): FigSol
 }
 
 /**
+ * Read the blend mode name on a paint, normalising the string-vs-enum
+ * shapes the parser branches produce. Unset / null is treated as
+ * NORMAL — that's Figma's documented default.
+ */
+function paintBlendModeName(paint: FigPaint): string {
+  const bm = (paint as { blendMode?: { name?: string } | string }).blendMode;
+  if (typeof bm === "string") {
+    return bm;
+  }
+  if (bm && typeof bm === "object" && "name" in bm && typeof bm.name === "string") {
+    return bm.name;
+  }
+  return "NORMAL";
+}
+
+/** RGBA in the same 0..1 space FigColor uses, kept as a plain tuple. */
+type Rgba = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
+
+/**
+ * `over` (Porter-Duff source-over) compositor. `top` paints over
+ * `bottom`. All channels in 0..1.
+ */
+function composeOver(bottom: Rgba, top: Rgba): Rgba {
+  const outA = top.a + bottom.a * (1 - top.a);
+  if (outA <= 0) {
+    return { r: 0, g: 0, b: 0, a: 0 };
+  }
+  // Standard non-premultiplied source-over:
+  //   outRGB = (topRGB*topA + bottomRGB*bottomA*(1 - topA)) / outA
+  const k = bottom.a * (1 - top.a);
+  return {
+    r: (top.r * top.a + bottom.r * k) / outA,
+    g: (top.g * top.a + bottom.g * k) / outA,
+    b: (top.b * top.a + bottom.b * k) / outA,
+    a: outA,
+  };
+}
+
+/**
+ * Pre-composite a stack of NORMAL-blend SOLID paints into a single
+ * RGBA. Returns `undefined` when the stack contains anything that
+ * can't be flattened into one colour: a non-SOLID paint, or a
+ * non-NORMAL blend mode. Callers must fall back (e.g. to the topmost
+ * SOLID, or to a gradient TextureRect) in those cases.
+ *
+ * Why composite here: Godot's `StyleBoxFlat` carries exactly one
+ * `bg_color`. A naïve "first SOLID wins" emit drops every under-layer
+ * (`multi-fill-solid` regressed to a flat blue when the authored
+ * stack is blue base + 50% red top → purple). The fig render order
+ * is bottom-up: paints[0] is the lowest layer.
+ */
+function compositeSolidStack(paints: readonly FigPaint[]): Rgba | undefined {
+  const visible = paints.filter((p) => p.visible !== false);
+  if (visible.length === 0) {
+    return undefined;
+  }
+  return foldSolidStack(visible, 0, { r: 0, g: 0, b: 0, a: 0 });
+}
+
+/**
+ * Fold a paint stack into a composited Rgba. Recurses bottom-up
+ * applying `over` for each NORMAL-blend SOLID. Surfaces `undefined`
+ * the moment a non-SOLID or non-NORMAL paint appears so the caller
+ * falls back to the legacy "first SOLID wins" path.
+ */
+function foldSolidStack(
+  paints: readonly FigPaint[],
+  index: number,
+  acc: Rgba,
+): Rgba | undefined {
+  if (index >= paints.length) {
+    return acc;
+  }
+  const paint = paints[index]!;
+  if (paint.type !== "SOLID") {
+    return undefined;
+  }
+  if (paintBlendModeName(paint) !== "NORMAL") {
+    return undefined;
+  }
+  const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const top: Rgba = {
+    r: paint.color.r,
+    g: paint.color.g,
+    b: paint.color.b,
+    a: paint.color.a * paintOpacity,
+  };
+  return foldSolidStack(paints, index + 1, composeOver(acc, top));
+}
+
+/**
  * Resolve the per-corner radius array `[topLeft, topRight, bottomRight,
  * bottomLeft]`. Returns `undefined` when the node carries no
  * radius-bearing field at all. A uniform `cornerRadius` expands to
@@ -104,13 +195,34 @@ function resolveCornerRadii(node: FigNode): readonly [number, number, number, nu
 }
 
 /**
- * Build the `bg_color = Color(...)` property from the first visible
- * SOLID fill. Returns no property when the node has no SOLID fill;
- * gradients and image fills are explicitly out of scope and would
- * silently produce a flat colour if folded in here.
+ * Build the `bg_color = Color(...)` property from the node's fill
+ * stack. Returns no property when the node has no usable SOLID fill.
+ *
+ * Stack handling:
+ *   - Single visible SOLID → emit that paint's colour directly
+ *     (preserves per-channel precision the colorExpr round-tripping
+ *     already calibrates against the WebGL reference).
+ *   - Multiple visible SOLID under NORMAL blend → pre-composite the
+ *     stack via Porter-Duff source-over and emit the resulting
+ *     RGBA. Lossless because Godot's StyleBoxFlat carries exactly
+ *     one bg_color, and a stack of NORMAL-blend SOLIDs always
+ *     collapses to one colour mathematically.
+ *   - Stack contains a gradient or non-NORMAL blend → fall through
+ *     to the first SOLID. The walker's gradient path handles
+ *     gradient-bearing stacks via TextureRect; pure-non-SOLID
+ *     stacks emit no bg_color and fall back to the gradient/empty
+ *     emit downstream.
  */
 export function bgColorProperties(node: FigNode): readonly GodotProperty[] {
-  const fill = firstVisibleSolidPaint(node.fillPaints);
+  const paints = node.fillPaints;
+  if (!paints || paints.length === 0) {
+    return [];
+  }
+  const composed = compositeSolidStack(paints);
+  if (composed) {
+    return [property("bg_color", colorExpr(composed, 1))];
+  }
+  const fill = firstVisibleSolidPaint(paints);
   if (!fill) {
     return [];
   }

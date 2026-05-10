@@ -185,6 +185,11 @@ async function emitCase(
   const frames = listFrameTargets(canvas);
   const sceneNamesUsed = new Set<string>();
   const slugsUsed = new Set<string>();
+  // Plumbing the symbolMap is what lets INSTANCE frames (constraints,
+  // symbol-resolution, decoration-combo's instance-* cases) resolve
+  // to their authoring SYMBOL. Without it those frames emit empty
+  // Controls.
+  const emitCtx = { symbolMap: ctx.symbolMap };
   const jobs: FrameJob[] = [];
   for (const node of frames) {
     const figmaName = node.name ?? "";
@@ -193,7 +198,7 @@ async function emitCase(
     const height = Math.max(1, Math.round(size.y));
     const target = buildFrameTarget(node, { outputDir: "Pages", sceneNamesUsed, slugsUsed });
     try {
-      const file = emitFrameFile(target);
+      const file = emitFrameFile(target, emitCtx);
       jobs.push({ caseName, figmaName, width, height, sceneText: file.contents });
     } catch (err) {
       jobs.push({

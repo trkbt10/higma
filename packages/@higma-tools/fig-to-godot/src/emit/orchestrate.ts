@@ -18,6 +18,7 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import { serializeResource, serializeScene } from "../godot-tree";
 import { buildFrameScene, buildFrameTarget, type FrameTarget, type GodotFile } from "./file";
 import { extractSharedTheme } from "./shared-theme";
+import type { EmitContext } from "./walk";
 
 const PAGES_DIR = "Pages";
 const DEFAULT_THEME_NAME = "Default";
@@ -31,6 +32,12 @@ export type EmitOptions = {
   readonly sharedTheme?: boolean;
   /** Name of the Theme `.tres` file (no extension). Default `"Default"`. */
   readonly themeName?: string;
+  /**
+   * Doc-level lookups passed to the walker. Currently carries the
+   * `symbolMap` used for INSTANCE → SYMBOL resolution. Required for
+   * any fixture that references components defined on another canvas.
+   */
+  readonly emit?: EmitContext;
 };
 
 export type EmitResult = {
@@ -56,6 +63,7 @@ export function emitFromFrames(
   const slugsUsed = new Set<string>();
   const targets: FrameTarget[] = [];
   const builtScenes: ReturnType<typeof buildFrameScene>[] = [];
+  const emit = options.emit ?? {};
   for (const node of frames) {
     const target = buildFrameTarget(node, {
       outputDir: PAGES_DIR,
@@ -63,7 +71,7 @@ export function emitFromFrames(
       slugsUsed,
     });
     targets.push(target);
-    builtScenes.push(buildFrameScene(target));
+    builtScenes.push(buildFrameScene(target, emit));
   }
   if (options.sharedTheme !== true) {
     const files = builtScenes.map((sceneDoc, idx) => ({

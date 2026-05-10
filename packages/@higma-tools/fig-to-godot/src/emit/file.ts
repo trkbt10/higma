@@ -31,7 +31,7 @@ import {
   type GodotProperty,
   type GodotScene,
 } from "../godot-tree";
-import { createWalkContext, emitRootFrame } from "./walk";
+import { createWalkContext, emitRootFrame, type EmitContext } from "./walk";
 
 /** A single Godot scene file produced by the emitter. */
 export type GodotFile = {
@@ -80,9 +80,15 @@ export function buildFrameTarget(
  * Split out from `emitFrameFile` so the orchestrator can run cross-scene
  * passes (e.g. shared-Theme extraction) on the IR before any
  * `.tscn` text is produced.
+ *
+ * The optional `emit` context carries doc-level lookups (currently the
+ * `symbolMap` for INSTANCE → SYMBOL resolution). When omitted, the
+ * walker treats INSTANCE nodes as opaque containers whose direct
+ * children are the only render source — fine for fixtures without
+ * components, lossy for any case that uses them.
  */
-export function buildFrameScene(target: FrameTarget): GodotScene {
-  const ctx = createWalkContext();
+export function buildFrameScene(target: FrameTarget, emit: EmitContext = {}): GodotScene {
+  const ctx = createWalkContext(emit);
   const inner = emitRootFrame(target.node, ctx);
   // The walker produces a node whose name is derived from the FigNode's
   // own name; rename it to the scene-target's PascalCase scene name so
@@ -97,8 +103,8 @@ export function buildFrameScene(target: FrameTarget): GodotScene {
 }
 
 /** Render a complete `.tscn` file for a frame target. */
-export function emitFrameFile(target: FrameTarget): GodotFile {
-  const sceneDoc = buildFrameScene(target);
+export function emitFrameFile(target: FrameTarget, emit: EmitContext = {}): GodotFile {
+  const sceneDoc = buildFrameScene(target, emit);
   return { path: target.filePath, contents: serializeScene(sceneDoc) };
 }
 

@@ -350,6 +350,16 @@ function constructorToValue(
     case "SubResource":
       mustArity(name, args, 1, lineNumber);
       return { kind: "sub-resource", id: unquoteString(args[0]!, lineNumber) };
+    case "PackedFloat32Array":
+    case "PackedColorArray":
+    case "PackedVector2Array":
+    case "PackedInt32Array":
+    case "PackedByteArray":
+      // Packed arrays are emitted as `kind: "raw"` by the gradient
+      // helpers (variable-arity, per-channel layout). Round-trip them
+      // by reconstructing the original raw text — equivalence with
+      // the emit's typed-IR `raw` value passes the structural test.
+      return { kind: "raw", text: `${name}(${args.join(", ")})` };
     default:
       throw new ParseError(`unsupported constructor "${name}"`, lineNumber);
   }
