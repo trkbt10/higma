@@ -170,15 +170,26 @@ function linearGradientExpr(
  */
 function angularGradientExpr(paint: FigGradientPaint, stopsArg: SwiftCallArg): SwiftExpr {
   const t = resolveGradientTransform(paint);
-  // The WebGL renderer projects an angular gradient via
-  //   t = mod(atan2(dy, dx) - startAngle) / 2π
-  // where `startAngle = atan2(-m10, m00) + π/2` (radians, measured
-  // CCW from +x in math convention; equivalent to CW from +y in
-  // screen-y-down). SwiftUI's `AngularGradient(angle:)` matches
-  // exactly: it rotates the gradient by `angle` from its default
-  // (start at 3 o'clock). Passing the same start angle therefore
-  // lands the 0% stop at the same screen position as the WebGL
-  // reference. No additional offset needed.
+  // The WebGL reference renderer projects the angular gradient via
+  //   angle = atan2(dy, dx) − u_rotation
+  //   t     = mod(angle / 2π + 1, 1)
+  // with `u_rotation = atan2(-m10, m00) + π/2` (radians) and `delta =
+  // localPos − center` measured in screen-y-down coords. For an
+  // identity-rotated paint (`m00=1, m10=0`) `u_rotation = π/2`, which
+  // — solving for `t = 0` — puts the 0% stop at 6 o'clock (verified
+  // empirically against the WebGL reference for `angular-circle`:
+  // red bottom, green left, blue right).
+  //
+  // SwiftUI's `AngularGradient(angle:)` measures `angle` CW from
+  // 3 o'clock (the +x axis); the gradient sweeps CW from there. To
+  // place the 0% stop at 6 o'clock we therefore pass +90°. In the
+  // general case `angle = atan2(-m10, m00) + 90°` lands the 0% stop
+  // at the same screen position as the WebGL reference.
+  //
+  // (A previous attempt subtracted 90° on the assumption that Figma's
+  // start sat at 12 o'clock; that assumption was wrong — the WebGL
+  // shader's screen-y-down `atan2(dy, dx)` resolves to +π/2 at the
+  // bottom, not the top.)
   const startAngleDeg = (Math.atan2(-t.m10, t.m00) * 180) / Math.PI + 90;
   return call("AngularGradient", [
     stopsArg,

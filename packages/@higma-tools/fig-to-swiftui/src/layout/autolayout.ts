@@ -246,7 +246,16 @@ export function primaryDistribution(node: FigNode): PrimaryDistribution {
 export function planLayout(node: FigNode): LayoutPlan {
   const stack = pickStackKind(node);
   const padding = resolvePadding(node);
-  const spacing = typeof node.stackSpacing === "number" ? node.stackSpacing : undefined;
+  // Figma's default stackSpacing for an autolayout frame is 0 —
+  // children abut without gaps unless the author explicitly sets
+  // a non-zero value. SwiftUI's HStack(spacing: nil) default is
+  // 8 (platform-suggested touch padding) which would push
+  // children apart for fixtures that author no spacing. We pin
+  // spacing to 0 for autolayout when the field is omitted so the
+  // layout matches Figma exactly.
+  const spacingRaw = typeof node.stackSpacing === "number" ? node.stackSpacing : undefined;
+  const isAutolayout = stack === "HStack" || stack === "VStack";
+  const spacing = spacingRaw ?? (isAutolayout ? 0 : undefined);
   if (stack === "HStack") {
     return {
       stack,

@@ -76,6 +76,7 @@ describe("emitFrameFile", () => {
         '      Text("Hello")',
         "        .font(.system(size: 16, weight: .regular))",
         "    }",
+        "      .clipShape(Rectangle())",
         "  }",
         "}",
         "",

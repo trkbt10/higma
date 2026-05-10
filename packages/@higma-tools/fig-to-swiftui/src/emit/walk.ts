@@ -66,6 +66,7 @@ export type EmitContext = {
 import {
   backgroundBlurModifier,
   backgroundModifier,
+  backgroundWithShadowsModifier,
   blurModifier,
   compositingGroupModifier,
   cornerRadiusModifier,
@@ -74,6 +75,7 @@ import {
   fontModifier,
   foregroundColorModifier,
   frameModifier,
+  hasVisibleFillPaint,
   innerShadowOverlayModifiers,
   offsetModifier,
   opacityModifier,
@@ -97,6 +99,7 @@ import {
   type StackKind,
   type SwiftAlignment,
   type SwiftCallArg,
+  type SwiftExpr,
   type SwiftView,
 } from "../swift-tree";
 
@@ -148,6 +151,60 @@ const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
  *   7. `.rotationEffect(...)` rotates around the view centre.
  *   8. `.opacity(...)` is global and is applied last.
  */
+/**
+ * Choose the right background modifier for a frame-like container:
+ * baked-in drop shadow when the node has both a fill paint and at
+ * least one DROP_SHADOW effect (so the shape's `.shadow(...)`
+ * paints OUTSIDE the silhouette without leaking inside via the
+ * outer view's alpha mask), or the bare `.background(<paint>)` when
+ * neither condition holds.
+ */
+function pickBackgroundModifier(node: FigNode, useBakedShadow: boolean): Modifier | undefined {
+  if (useBakedShadow) {
+    return backgroundWithShadowsModifier(node);
+  }
+  return backgroundModifier(node);
+}
+
+/**
+ * True when the node is a Figma container whose default behaviour
+ * is to clip its children to its silhouette. FRAME / COMPONENT /
+ * INSTANCE / SECTION / COMPONENT_SET clip by default; GROUP nodes
+ * do NOT clip — they're transparent passthrough containers. The
+ * Figma model exposes the field as `frameMaskDisabled` (truthy =
+ * clipping disabled) and `clipsContent` (the canonical clipping
+ * flag, defaulting to true for frames). We accept either.
+ */
+function shouldClipFrame(node: FigNode): boolean {
+  const t = node.type.name;
+  if (t === "GROUP" || t === "BOOLEAN_OPERATION") {
+    return false;
+  }
+  if (t !== "FRAME" && t !== "COMPONENT" && t !== "COMPONENT_SET" && t !== "INSTANCE" && t !== "SECTION") {
+    return false;
+  }
+  const maskDisabled = (node as { frameMaskDisabled?: boolean }).frameMaskDisabled;
+  if (maskDisabled === true) {
+    return false;
+  }
+  const clipsContent = (node as { clipsContent?: boolean }).clipsContent;
+  if (clipsContent === false) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Build the `.clipShape(<silhouette>())` modifier that clips a
+ * frame's children to its silhouette. Uses `shapeExprFor` so the
+ * clip path follows the node's corner radius (rounded rectangle for
+ * non-zero `cornerRadius`, plain `Rectangle` otherwise).
+ */
+function clipShapeModifier(node: FigNode): Modifier {
+  const shape = shapeExprFor(node);
+  return modifier("clipShape", [{ value: shape }]);
+}
+
 function containerModifiers(
   node: FigNode,
   plan: LayoutPlan,
@@ -162,7 +219,51 @@ function containerModifiers(
   if (frame) {
     mods.push(frame);
   }
-  const bg = backgroundModifier(node);
+  const shadows = shadowModifiers(node);
+  const hasFill = hasVisibleFillPaint(node.fillPaints);
+  const useBakedShadow = shadows.length > 0 && hasFill;
+  // Figma frames (FRAME / COMPONENT / INSTANCE / SECTION) clip
+  // their content by default unless `frameMaskDisabled === true`.
+  // SwiftUI's `ZStack` doesn't clip children automatically; we
+  // emit an explicit `.clipShape(<silhouette>)` so any child
+  // whose drawn extent (including drop shadows) leaks past the
+  // frame silhouette gets cut off — the canonical reproduction
+  // is the `clip-shadow` fixture, where Figma's clip stops a
+  // child's shadow at the inner frame edge while SwiftUI's
+  // unclipped ZStack lets the shadow spill into the surrounding
+  // gray canvas. GROUP nodes don't get the clip — Figma renders
+  // groups as transparent passthrough, never as clipping
+  // containers.
+  const wantsFrameClip = shouldClipFrame(node);
+  // INNER_SHADOW sits inside the silhouette, so the overlay must run
+  // *before* the corner-radius clip removes the corners — otherwise
+  // the masked-stroke trick paints over already-clipped pixels.
+  // We push it BEFORE clipShape so the stroke-trick paints inside
+  // the visible foreground area before the clip cuts the rest.
+  for (const inner of innerShadowOverlayModifiers(node)) {
+    mods.push(inner);
+  }
+  const stroke = strokeOverlayModifier(node);
+  if (stroke) {
+    mods.push(stroke);
+  }
+  // Apply the foreground clip BEFORE `.background(...)` and
+  // `.shadow(...)`. SwiftUI's `.background(_)` is appended outside
+  // any earlier `.clipShape(_)`, so the bg layer is NOT clipped by
+  // the foreground silhouette — the bg's own `.shadow(...)`
+  // (`backgroundWithShadowsModifier`) renders outside the silhouette
+  // unimpeded. Without this ordering the outer-chain `.shadow(...)`
+  // would attach to the alpha mask of "ZStack + clipped foreground
+  // + bg" and we'd lose the outside-of-silhouette shadow.
+  if (wantsFrameClip) {
+    mods.push(clipShapeModifier(node));
+  }
+  // Drop-shadow placement on a container: bake the shadow into the
+  // bg shape via `backgroundWithShadowsModifier` so SwiftUI's
+  // `.shadow(...)` paints OUTSIDE the silhouette only. Falls back
+  // to the bare `.background(<paint>)` form when the node has no
+  // fill or no shadow.
+  const bg = pickBackgroundModifier(node, useBakedShadow);
   if (bg) {
     mods.push(bg);
   }
@@ -173,22 +274,28 @@ function containerModifiers(
   if (bgBlur) {
     mods.push(bgBlur);
   }
-  // INNER_SHADOW sits inside the silhouette, so the overlay must run
-  // *before* the corner-radius clip removes the corners — otherwise
-  // the masked-stroke trick paints over already-clipped pixels.
-  for (const inner of innerShadowOverlayModifiers(node)) {
-    mods.push(inner);
+  // Apply outer `.cornerRadius(r)` only when neither the bg shape
+  // nor the foreground clipShape has already imposed the corner
+  // radius. The bg-with-shadow form embeds the radius in its own
+  // shape; the frame-clip emits `<rounded>()` when the node has a
+  // corner radius. Both paths obviate an outer corner-radius clip,
+  // and emitting one anyway would cut off the bg shape's outside
+  // shadow.
+  if (!useBakedShadow && !wantsFrameClip) {
+    const radius = cornerRadiusModifier(node);
+    if (radius) {
+      mods.push(radius);
+    }
   }
-  const stroke = strokeOverlayModifier(node);
-  if (stroke) {
-    mods.push(stroke);
-  }
-  const radius = cornerRadiusModifier(node);
-  if (radius) {
-    mods.push(radius);
-  }
-  for (const shadow of shadowModifiers(node)) {
-    mods.push(shadow);
+  // Apply outer `.shadow(...)` modifiers only when we couldn't bake
+  // the drop shadow into the bg shape (no fill paint, so no
+  // silhouette to bind it to). With a bg fill, baking is preferred —
+  // the shadow then lives inside the shape's own paint chain and
+  // doesn't leak through the fill or attach to children.
+  if (!useBakedShadow) {
+    for (const shadow of shadows) {
+      mods.push(shadow);
+    }
   }
   const blur = blurModifier(node);
   if (blur) {
@@ -535,9 +642,19 @@ function applyPrimaryDistribution(
     case "min":
       return children;
     case "center":
-      return [leaf(spacerExpr()), ...children, leaf(spacerExpr())];
     case "max":
-      return [leaf(spacerExpr()), ...children];
+      // Figma keeps `stackSpacing` between children even with
+      // CENTER / MAX primary alignment — only the *position* of
+      // the packed group changes. SwiftUI realises that via
+      // `.frame(width:..., alignment:)` (set by
+      // `frameAlignmentForPlan`), so we don't need leading /
+      // trailing Spacers. Inserting Spacers would force the
+      // HStack's spacing to also apply between rect↔Spacer pairs,
+      // pushing content past the frame edge for fixtures that
+      // already fill the available extent (auto-h-center has
+      // 3×40 + 2×10 = 140 = full width; with Spacers
+      // SwiftUI would over-allocate by 20px).
+      return children;
     case "space-between": {
       if (children.length < 2) {
         return [leaf(spacerExpr()), ...children];
@@ -611,6 +728,18 @@ function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefine
   if (!paint) {
     return undefined;
   }
+  // Only take the IMAGE-fill emit path when the image is the topmost
+  // visible paint; if a SOLID/GRADIENT paints on top of it, that
+  // upper paint is what the consumer sees and the regular shape-leaf
+  // path (which puts the image into an `.background(<shape>().fill(...))`
+  // overlay via `paintToExpr`) is the right choice. Without this guard
+  // an IMAGE underneath a SOLID would replace the visible SOLID with
+  // the (clipped) image.
+  const visible = (node.fillPaints ?? []).filter((p) => p.visible !== false);
+  const topVisible = visible.length > 0 ? visible[visible.length - 1] : undefined;
+  if (topVisible?.type !== "IMAGE") {
+    return undefined;
+  }
   const ref = resolveImageRef(paint);
   if (!ref) {
     return undefined;
@@ -620,14 +749,24 @@ function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefine
     return undefined;
   }
   const expr = imageExpr(image);
-  const contentMode = contentModeFor(paint.scaleMode ?? paint.imageScaleMode);
-  const mods: Modifier[] = [
-    { name: "resizable", args: [] },
-    {
+  const shape = contentModeFor(paint.scaleMode ?? paint.imageScaleMode);
+  const mods: Modifier[] = [];
+  if (shape.resizing === "tile") {
+    // SwiftUI's tiling resizable mode: `Image(...).resizable(resizingMode: .tile)`
+    // repeats the source bitmap at native pixels across the frame.
+    mods.push({
+      name: "resizable",
+      args: [{ name: "resizingMode", value: { kind: "member", value: "tile" } }],
+    });
+  } else {
+    mods.push({ name: "resizable", args: [] });
+  }
+  if (shape.aspect !== "none") {
+    mods.push({
       name: "aspectRatio",
-      args: [{ name: "contentMode", value: { kind: "member", value: contentMode } }],
-    },
-  ];
+      args: [{ name: "contentMode", value: { kind: "member", value: shape.aspect } }],
+    });
+  }
   // Per-image opacity (Figma's paint-level opacity on the IMAGE
   // paint). Applied directly to the Image view so layers under it
   // composite correctly through the alpha channel.
@@ -666,6 +805,35 @@ function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefine
     name: "clipShape",
     args: [{ value: silhouette }],
   });
+  // Stroke the silhouette as an overlay AFTER the clip so the stroke
+  // paints on top of the clipped image (matching the shape-leaf order
+  // for the regular .fill path). Skipped when the node has no stroke.
+  const strokeOverlay = strokeOverlayModifier(node);
+  if (strokeOverlay) {
+    mods.push(strokeOverlay);
+  }
+  // Shadows / blur / opacity / rotation paint AFTER clipping in the
+  // shape-leaf chain (`shapeModifiers`). The image-fill leaf needs
+  // the same chain so a `RoundedRectangle` filled by a tiled image
+  // and shadowed in Figma renders with the same drop-shadow
+  // silhouette in SwiftUI — without these modifiers the emitted
+  // file would silently drop the node-level shadow / blur, which is
+  // what produced the ~30% visual diff on `image-fill-shadow`.
+  for (const shadow of shadowModifiers(node)) {
+    mods.push(shadow);
+  }
+  const blur = blurModifier(node);
+  if (blur) {
+    mods.push(blur);
+  }
+  const opacity = opacityModifier(node);
+  if (opacity) {
+    mods.push(opacity);
+  }
+  const rotation = rotationModifier(node);
+  if (rotation) {
+    mods.push(rotation);
+  }
   return { kind: "leaf", expr, modifiers: mods };
 }
 
@@ -704,7 +872,7 @@ function collectUnderPaintsFor(node: FigNode, top: FigImagePaint): readonly Modi
 function paintToBackgroundExpr(
   paint: NonNullable<FigNode["fillPaints"]>[number],
   node: FigNode,
-): import("../swift-tree").SwiftExpr | undefined {
+): SwiftExpr | undefined {
   if (paint.type === "SOLID") {
     return solidPaintToColorImported(paint);
   }
@@ -1073,6 +1241,13 @@ function orderForZReverse(
   return [...children].reverse();
 }
 
+function pickStackSpacing(plan: LayoutPlan): number | undefined {
+  if (plan.primary === "space-between" && plan.spacing !== undefined) {
+    return 0;
+  }
+  return plan.spacing;
+}
+
 function applyZIndexForReverse(
   view: SwiftView,
   reverseZ: boolean,
@@ -1278,7 +1453,25 @@ function emitContainer(rawNode: FigNode, ctx: EmitContext): SwiftView {
   // doesn't apply (it's pure absolute positioning).
   const children = resolvedChildren.filter(isRendered);
   const reverseZ = (node as { stackReverseZIndex?: boolean }).stackReverseZIndex === true;
-  const orderedChildren = orderForZReverse(children, reverseZ, plan.stack);
+  // ABSOLUTE-positioned children in an autolayout frame don't
+  // participate in the HStack/VStack flow — they overlay at their
+  // own coordinates. Split them out so the autolayout stack sees
+  // only the flow children, and we wrap the whole composition in a
+  // ZStack at the outer level when absolute children exist.
+  const flowChildren: FigNode[] = [];
+  const absoluteChildren: FigNode[] = [];
+  if (plan.stack === "HStack" || plan.stack === "VStack") {
+    for (const c of children) {
+      if (c.stackPositioning?.name === "ABSOLUTE") {
+        absoluteChildren.push(c);
+      } else {
+        flowChildren.push(c);
+      }
+    }
+  } else {
+    flowChildren.push(...children);
+  }
+  const orderedChildren = orderForZReverse(flowChildren, reverseZ, plan.stack);
   const childViews: SwiftView[] = [];
   orderedChildren.forEach((child, idx) => {
     const childView = emitNode(child, ctx);
@@ -1289,26 +1482,57 @@ function emitContainer(rawNode: FigNode, ctx: EmitContext): SwiftView {
   });
   const distributed = applyPrimaryDistribution(plan, childViews);
   const mods = containerModifiers(node, plan, childViews.length);
-  // When Spacer-based distribution is in effect (CENTER / MAX /
-  // SPACE_BETWEEN) the Figma `stackSpacing` *does not apply* between
-  // every adjacent pair — Figma's SPACE_BETWEEN distributes whatever
-  // space remains after fixed-width children, ignoring stackSpacing.
-  // SwiftUI's HStack(spacing: N) however adds N between *every*
-  // adjacent pair including rect↔Spacer pairs, which over-allocates
-  // and pushes content past the frame edge. Reset spacing to 0 in
-  // those modes so only the Spacers contribute to the distribution.
-  // When the plan has no authored spacing in the first place, leave it
-  // undefined so the serializer omits the argument entirely.
-  const stackSpacing =
-    plan.primary === "min" || plan.spacing === undefined ? plan.spacing : 0;
-  return stack(
+  // SPACE_BETWEEN distributes leftover space, ignoring authored
+  // `stackSpacing` — and SwiftUI's HStack(spacing: N) adds N
+  // between every adjacent pair including rect↔Spacer pairs,
+  // which over-allocates with Spacers in the way. Reset spacing
+  // to 0 only in SPACE_BETWEEN. CENTER / MAX use frame alignment
+  // and keep their authored spacing.
+  const stackSpacing = pickStackSpacing(plan);
+  if (absoluteChildren.length === 0) {
+    return stack(
+      {
+        stack: plan.stack,
+        alignment: plan.alignment,
+        spacing: stackSpacing,
+        modifiers: mods,
+      },
+      distributed,
+    );
+  }
+  // Wrap the autolayout stack PLUS the absolute children in an
+  // outer ZStack. The autolayout stack gets *only* the padding
+  // (so its flow-children get inset correctly); the absolute
+  // children sit at the ZStack's outer origin and use their
+  // Figma-authored frame coords directly via `.offset(...)`.
+  // The outer ZStack carries the rest of the modifier chain
+  // (frame, background, stroke, shadow, etc.).
+  const innerPaddingMods = mods.filter((m) => m.name === "padding");
+  const outerMods = mods.filter((m) => m.name !== "padding");
+  const innerStackView = stack(
     {
       stack: plan.stack,
       alignment: plan.alignment,
       spacing: stackSpacing,
-      modifiers: mods,
+      modifiers: innerPaddingMods,
     },
     distributed,
+  );
+  const absoluteViews = absoluteChildren.map((c) => {
+    const cv = emitNode(c, ctx);
+    return withPlacement(cv, {
+      mode: "absolute",
+      x: c.transform?.m02 ?? 0,
+      y: c.transform?.m12 ?? 0,
+    });
+  });
+  return stack(
+    {
+      stack: "ZStack",
+      alignment: "topLeading",
+      modifiers: outerMods,
+    },
+    [innerStackView, ...absoluteViews],
   );
 }
 

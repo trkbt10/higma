@@ -229,6 +229,32 @@ type RunSwiftOptions = {
   readonly timeoutMs: number;
 };
 
+/**
+ * Cap how much swiftc output we retain in memory. swiftc with
+ * verbose flags (or a deep generic stack trace on a compile
+ * error) can emit megabytes of diagnostic text — we only need
+ * enough of the tail to identify the root cause for the caller's
+ * error message, not the full transcript. Anything past this cap
+ * is dropped at append time, keeping the in-memory footprint
+ * bounded regardless of compile-time noise.
+ */
+const MAX_OUTPUT_RETAINED = 64 * 1024;
+
+function killChildIgnoringRace(child: ReturnType<typeof spawn>): void {
+  try {
+    child.kill("SIGKILL");
+  } catch (err) {
+    // ESRCH means the process has already exited between the
+    // liveness check and the kill — that's the outcome we
+    // wanted. Anything else is genuinely unexpected and we
+    // surface it on stderr so it doesn't get silently lost.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ESRCH") {
+      process.stderr.write(`fig-to-swiftui: kill swift child failed: ${String(err)}\n`);
+    }
+  }
+}
+
 function runSwift(options: RunSwiftOptions): Promise<void> {
   return new Promise<void>((resolveRun, rejectRun) => {
     const child = spawn(
@@ -242,26 +268,55 @@ function runSwift(options: RunSwiftOptions): Promise<void> {
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
-    const stdoutChunks: Buffer[] = [];
-    const stderrChunks: Buffer[] = [];
-    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+    const stdoutBuf = { size: 0, chunks: [] as Buffer[] };
+    const stderrBuf = { size: 0, chunks: [] as Buffer[] };
+    const appendBounded = (buf: typeof stdoutBuf, chunk: Buffer): void => {
+      if (buf.size >= MAX_OUTPUT_RETAINED) {
+        return;
+      }
+      const remaining = MAX_OUTPUT_RETAINED - buf.size;
+      if (chunk.length <= remaining) {
+        buf.chunks.push(chunk);
+        buf.size += chunk.length;
+        return;
+      }
+      buf.chunks.push(chunk.subarray(0, remaining));
+      buf.size = MAX_OUTPUT_RETAINED;
+    };
+    const onStdout = (chunk: Buffer): void => appendBounded(stdoutBuf, chunk);
+    const onStderr = (chunk: Buffer): void => appendBounded(stderrBuf, chunk);
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       rejectRun(new Error(`swift render timed out after ${options.timeoutMs} ms`));
     }, options.timeoutMs);
-    child.once("error", (err) => {
+    const cleanup = (): void => {
       clearTimeout(timer);
+      child.stdout?.off("data", onStdout);
+      child.stderr?.off("data", onStderr);
+      // Best-effort: if the child is still alive when we resolve /
+      // reject (e.g. an `error` event before `exit`), send SIGKILL
+      // so we don't leave a dangling swiftc subprocess. The child
+      // may race into exit between the liveness check and the
+      // kill, in which case `kill` throws ESRCH which we swallow
+      // — the process is already dead, which is what we wanted.
+      if (child.exitCode === null && child.signalCode === null) {
+        killChildIgnoringRace(child);
+      }
+    };
+    child.once("error", (err) => {
+      cleanup();
       rejectRun(err);
     });
     child.once("exit", (code, signal) => {
-      clearTimeout(timer);
+      cleanup();
       if (code === 0) {
         resolveRun();
         return;
       }
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      const stdout = Buffer.concat(stdoutBuf.chunks).toString("utf8");
+      const stderr = Buffer.concat(stderrBuf.chunks).toString("utf8");
       rejectRun(
         new Error(
           `swift render failed (exit=${String(code)} signal=${String(signal)}):\n${stderr || stdout}`,

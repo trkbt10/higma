@@ -73,13 +73,21 @@ export function buildFrameTarget(
  * emitted file is self-contained — no external `+ImageHelpers.swift`
  * for the consumer to include.
  *
+ * The helper is `fileprivate` (file-scoped visibility): when a
+ * consumer compiles multiple emitted Swift files in a single module,
+ * each file's copy of the helper is private to that file and the
+ * Swift compiler does not flag a re-declaration. With the previous
+ * module-scoped definition any module containing two image-bearing
+ * frames failed to compile with "invalid redeclaration of
+ * makeFigToSwiftuiImage(data:options:)".
+ *
  * The helper goes through `CGImageSource` so it stays cross-platform
  * (CoreGraphics + ImageIO are available on iOS / macOS / tvOS /
  * visionOS without AppKit/UIKit). The fallback `systemName:
  * "questionmark.square"` keeps the placeholder visible if the bytes
  * fail to decode rather than silently emitting an empty view.
  */
-const IMAGE_HELPER = `func makeFigToSwiftuiImage(data: Data?, options: Data.Base64DecodingOptions = []) -> Image {
+const IMAGE_HELPER = `fileprivate func makeFigToSwiftuiImage(data: Data?, options: Data.Base64DecodingOptions = []) -> Image {
 ${INDENT}guard let data = data,
 ${INDENT}      let src  = CGImageSourceCreateWithData(data as CFData, nil),
 ${INDENT}      let cg   = CGImageSourceCreateImageAtIndex(src, 0, nil)

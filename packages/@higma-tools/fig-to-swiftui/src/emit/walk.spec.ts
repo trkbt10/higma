@@ -81,9 +81,8 @@ describe("emitNode — RECTANGLE", () => {
     });
     expect(serialize(emitNode(node))).toBe(
       [
-        "Rectangle()",
+        "RoundedRectangle(cornerRadius: 8)",
         "  .fill(Color(red: 1, green: 0, blue: 0))",
-        "  .cornerRadius(8)",
         "  .frame(width: 80, height: 80, alignment: .topLeading)",
       ].join("\n"),
     );
@@ -121,8 +120,12 @@ describe("emitNode — autolayout HStack", () => {
         "}",
         "  .padding(12)",
         "  .frame(width: 200, height: 44, alignment: .leading)",
+        // Frame default clips its children to the silhouette
+        // (Figma's `clipsContent` default = true). The clipShape is
+        // applied BEFORE `.background(...)` so the bg paints behind
+        // the clipped foreground without itself being clipped.
+        "  .clipShape(RoundedRectangle(cornerRadius: 22))",
         "  .background(Color(red: 0, green: 0, blue: 1))",
-        "  .cornerRadius(22)",
       ].join("\n"),
     );
   });
@@ -140,21 +143,32 @@ describe("emitNode — autolayout VStack with primary distribution", () => {
     });
     expect(serialize(emitNode(node))).toBe(
       [
-        "VStack(alignment: .leading) {",
+        "VStack(alignment: .leading, spacing: 0) {",
         '  Text("A")',
         "    .font(.system(size: 12))",
-        "  Spacer()",
+        "  Spacer(minLength: 0)",
         '  Text("B")',
         "    .font(.system(size: 12))",
-        "  Spacer()",
+        "  Spacer(minLength: 0)",
         '  Text("C")',
         "    .font(.system(size: 12))",
         "}",
+        "  .clipShape(Rectangle())",
       ].join("\n"),
     );
   });
 
-  it("uses leading + trailing Spacer values for CENTER distribution", () => {
+  it("CENTER distribution does not insert Spacer values — uses frame alignment instead", () => {
+    // SwiftUI realises Figma's CENTER primary-alignment by setting
+    // `.frame(alignment:)` on the outer HStack/VStack. Inserting
+    // leading + trailing `Spacer()` siblings would also push content
+    // to the centre, but it stacks the parent's `stackSpacing` value
+    // BETWEEN the rect↔Spacer pairs and pushes the children past the
+    // frame edge for fixtures that already fill the available extent
+    // (the auto-h-center fixture is the canonical regression). The
+    // emitter therefore omits the Spacers for CENTER / MAX primary
+    // distribution and relies on `.frame(alignment:)` alone — see
+    // `applyPrimaryDistribution` in walk.ts for the rationale.
     const a = text({ characters: "A", fontSize: 12 });
     const node = frame({
       stackMode: enumName("HORIZONTAL"),
@@ -163,12 +177,11 @@ describe("emitNode — autolayout VStack with primary distribution", () => {
     });
     expect(serialize(emitNode(node))).toBe(
       [
-        "HStack(alignment: .top) {",
-        "  Spacer()",
+        "HStack(alignment: .top, spacing: 0) {",
         '  Text("A")',
         "    .font(.system(size: 12))",
-        "  Spacer()",
         "}",
+        "  .clipShape(Rectangle())",
       ].join("\n"),
     );
   });
@@ -193,6 +206,7 @@ describe("emitNode — non-autolayout frame becomes ZStack", () => {
         "    .offset(x: 24, y: 8)",
         "}",
         "  .frame(width: 320, height: 100, alignment: .topLeading)",
+        "  .clipShape(Rectangle())",
       ].join("\n"),
     );
   });
@@ -207,6 +221,7 @@ describe("emitNode — non-autolayout frame becomes ZStack", () => {
         '  Text("V")',
         "    .font(.system(size: 12))",
         "}",
+        "  .clipShape(Rectangle())",
       ].join("\n"),
     );
   });

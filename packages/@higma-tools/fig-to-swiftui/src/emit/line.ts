@@ -17,6 +17,7 @@
  */
 import type { FigNode, FigStrokeWeight } from "@higma-document-models/fig/types";
 import { solidPaintToColor } from "../style/color";
+import { rotationModifier } from "../style/modifiers";
 import {
   array,
   call,
@@ -85,6 +86,18 @@ export function emitLineLeaf(node: FigNode): SwiftView {
     ]),
     modifier("offset", [namedArg("x", num(0)), namedArg("y", num(-lineWidth / 2))]),
   ];
+  // Figma's LINE is authored as a horizontal segment along the local
+  // x-axis; the on-canvas direction is encoded in `node.transform`'s
+  // rotation block. The path emitted above is also horizontal, so we
+  // need to apply that rotation explicitly. `rotationModifier` reads
+  // the matrix's `(m00, m10)` and emits `.rotationEffect(.degrees(θ),
+  // anchor: .topLeading)` — the same anchor we use for shape leaves
+  // so the parent ZStack's `.offset(x: m02, y: m12)` lands the line's
+  // start point at the authored position.
+  const rotation = rotationModifier(node);
+  if (rotation) {
+    mods.push(rotation);
+  }
   return leaf(call("Path", [{ value: pathClosure }]), mods);
 }
 

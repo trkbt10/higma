@@ -72,7 +72,17 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
   }
 
   output.info(`Emitting ${frames.length} frame${frames.length === 1 ? "" : "s"} → ${options.out}`);
-  const result = emitFromFrames(frames);
+  // Pass the symbol-resolved context so geometry nodes (VECTOR /
+  // STAR / REGULAR_POLYGON) can read their `commandsBlob` data, IMAGE
+  // paints can resolve their bytes, and INSTANCE nodes expand against
+  // their SYMBOL definitions. Without this the emit fails for any
+  // fig file that uses real artwork, not just the Figma-builder
+  // fixtures the spec/cases harness covers.
+  const result = emitFromFrames(frames, {
+    blobs: source.blobs,
+    images: source.images,
+    symbolMap: source.symbolMap,
+  });
 
   for (const file of result.files) {
     const fullPath = resolve(options.out, file.path);

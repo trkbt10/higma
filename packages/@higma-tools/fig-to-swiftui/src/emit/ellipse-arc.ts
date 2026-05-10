@@ -83,21 +83,36 @@ export function emitEllipseArcOrDonut(node: FigNode): SwiftView {
   const start = arc.startingAngle ?? 0;
   const end = arc.endingAngle ?? TWO_PI;
   const inner = arc.innerRadius ?? 0;
-  const pathSrc = buildArcPathSource(w, h, start, end, inner);
-  const pathExpr = call("Path", [{ value: ident(pathSrc) }]);
-  const mods: Modifier[] = [];
   const fillExpr = readFillExpr(node);
-  if (fillExpr) {
-    mods.push(modifier("fill", [{ value: fillExpr }]));
-  }
   const strokeMod = readStrokeMod(node);
-  if (strokeMod) {
-    mods.push(strokeMod);
-  }
   if (!fillExpr && !strokeMod) {
     throw new Error(
       `fig-to-swiftui: ELLIPSE arc/donut "${node.name ?? "unnamed"}" has neither fill nor stroke`,
     );
+  }
+  // Pick the path topology based on innerRadius and whether the
+  // node has a fill. innerRadius < 1 with any positive value gives
+  // a donut. innerRadius 0 with a fill gives a wedge (pie slice).
+  // innerRadius 1 (or stroke-only with no fill) gives a stroke-only
+  // arc, which must omit the centre-to-rim spokes that the wedge
+  // form generates.
+  const mode: ArcPathMode = (() => {
+    if (inner > 0 && inner < 1) {
+      return "donut";
+    }
+    if (!fillExpr && strokeMod) {
+      return "strokeArc";
+    }
+    return "wedge";
+  })();
+  const pathSrc = buildArcPathSource(w, h, start, end, inner, mode);
+  const pathExpr = call("Path", [{ value: ident(pathSrc) }]);
+  const mods: Modifier[] = [];
+  if (fillExpr) {
+    mods.push(modifier("fill", [{ value: fillExpr }]));
+  }
+  if (strokeMod) {
+    mods.push(strokeMod);
   }
   if (node.size) {
     mods.push(
@@ -115,13 +130,32 @@ export function emitEllipseArcOrDonut(node: FigNode): SwiftView {
  * Construct the Swift `Path` closure body for the arc / donut
  * geometry. Coordinates are in the node's local space; the Path
  * is later sized via `.frame(width:height:)`.
+ *
+ * `mode` selects the closure topology:
+ *
+ *   - `"wedge"` — sweep on the outer rim, plus straight lines back
+ *     to the centre. This is the right shape when the path is filled
+ *     (e.g. semicircle / pie slice). Generates `move(center) → addArc
+ *     → close`, which produces two centre-to-rim spokes.
+ *
+ *   - `"strokeArc"` — sweep on the outer rim only, with no centre
+ *     line and no `closeSubpath`. This is the right shape when the
+ *     path is stroked but not filled (e.g. progress-ring with
+ *     `innerRadius=1`). The centre-to-rim line that the wedge form
+ *     emits would otherwise paint a radial spoke through the
+ *     stroked silhouette — a rendering bug visible against the
+ *     `winding-stroke-arc` reference, where Figma renders only the
+ *     outer arc.
  */
+type ArcPathMode = "wedge" | "donut" | "strokeArc";
+
 function buildArcPathSource(
   w: number,
   h: number,
   startFigma: number,
   endFigma: number,
   innerRadiusRatio: number,
+  mode: ArcPathMode,
 ): string {
   const cx = w / 2;
   const cy = h / 2;
@@ -135,7 +169,7 @@ function buildArcPathSource(
   const startSwift = startFigma;
   const endSwift = endFigma;
   const lines: string[] = [];
-  if (innerRadiusRatio > 0 && innerRadiusRatio < 1) {
+  if (mode === "donut") {
     // Donut: outer CW, inner CCW. SwiftUI's `Path.addArc` for a
     // circle is fine but we need an *ellipse* arc — there is no
     // native ellipse-arc API in SwiftUI's Path, so we approximate
@@ -151,8 +185,19 @@ function buildArcPathSource(
     lines.push(`path.addArc(center: CGPoint(x: ${cgFloat(cx)}, y: ${cgFloat(cy)}), radius: ${cgFloat(radiusOuter)}, startAngle: .radians(${cgFloat(startSwift)}), endAngle: .radians(${cgFloat(endSwift)}), clockwise: false)`);
     lines.push(`path.addArc(center: CGPoint(x: ${cgFloat(cx)}, y: ${cgFloat(cy)}), radius: ${cgFloat(radiusInner)}, startAngle: .radians(${cgFloat(endSwift)}), endAngle: .radians(${cgFloat(startSwift)}), clockwise: true)`);
     lines.push(`path.closeSubpath()`);
+  } else if (mode === "strokeArc") {
+    // Stroke-only arc — emit just the outer rim sweep. No initial
+    // `move(center)` (which would force an implicit centre-to-rim
+    // line on the first `addArc`) and no `closeSubpath` (which
+    // would draw a chord between the arc's endpoints, painting a
+    // visible line across the stroked silhouette).
+    const radius = (rxOuter + ryOuter) / 2;
+    lines.push(`path.addArc(center: CGPoint(x: ${cgFloat(cx)}, y: ${cgFloat(cy)}), radius: ${cgFloat(radius)}, startAngle: .radians(${cgFloat(startSwift)}), endAngle: .radians(${cgFloat(endSwift)}), clockwise: false)`);
   } else {
-    // Wedge or full ellipse arc.
+    // Wedge — `move(center) → addArc → close` produces the pie
+    // slice silhouette with two centre-to-rim spokes that close
+    // the fill region. Right when the node has a fill paint;
+    // wrong when the node is stroke-only (use `strokeArc`).
     const radius = (rxOuter + ryOuter) / 2;
     lines.push(`path.move(to: CGPoint(x: ${cgFloat(cx)}, y: ${cgFloat(cy)}))`);
     lines.push(`path.addArc(center: CGPoint(x: ${cgFloat(cx)}, y: ${cgFloat(cy)}), radius: ${cgFloat(radius)}, startAngle: .radians(${cgFloat(startSwift)}), endAngle: .radians(${cgFloat(endSwift)}), clockwise: false)`);

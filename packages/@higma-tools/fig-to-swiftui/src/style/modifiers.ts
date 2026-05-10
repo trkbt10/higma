@@ -39,7 +39,7 @@ import {
 } from "../swift-tree";
 import { colorExpr, solidPaintToColor } from "./color";
 import { uniformCornerRadius } from "./corner-radius";
-import { firstVisibleGradientPaint, gradientExpr } from "./gradient";
+import { gradientExpr } from "./gradient";
 import { shapeExprFor } from "./shape";
 
 /**
@@ -81,6 +81,52 @@ function firstVisibleSolidPaint(paints: readonly FigPaint[] | undefined): FigSol
     }
     if (paint.type === "SOLID") {
       return paint;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Pick the topmost VISIBLE paint of any supported kind (SOLID or
+ * GRADIENT_LINEAR / RADIAL / ANGULAR / DIAMOND). Walks the array in
+ * reverse — Figma renders paints back-to-front, so the LAST visible
+ * paint wins.
+ *
+ * Returns the index too so `extraFillBackgroundModifiers` can walk
+ * the *strictly under* layers without re-applying the topmost.
+ */
+/**
+ * True when the paint stack contains a visible SOLID or
+ * GRADIENT_LINEAR / RADIAL / ANGULAR / DIAMOND paint that the emitter
+ * knows how to render. IMAGE-only stacks are not "fill paints" for
+ * the container path — they take a different code path
+ * (`tryEmitImageFill`). Walkers use this guard to decide whether to
+ * bake drop shadows into the bg shape or fall back to the outer
+ * `.shadow(...)` chain (which loses the silhouette binding).
+ */
+export function hasVisibleFillPaint(paints: readonly FigPaint[] | undefined): boolean {
+  return topmostFillPaintEntry(paints) !== undefined;
+}
+
+function topmostFillPaintEntry(
+  paints: readonly FigPaint[] | undefined,
+): { readonly paint: FigPaint; readonly index: number } | undefined {
+  if (!paints) {
+    return undefined;
+  }
+  for (let i = paints.length - 1; i >= 0; i -= 1) {
+    const paint = paints[i];
+    if (!paint || paint.visible === false) {
+      continue;
+    }
+    if (
+      paint.type === "SOLID" ||
+      paint.type === "GRADIENT_LINEAR" ||
+      paint.type === "GRADIENT_RADIAL" ||
+      paint.type === "GRADIENT_ANGULAR" ||
+      paint.type === "GRADIENT_DIAMOND"
+    ) {
+      return { paint, index: i };
     }
   }
   return undefined;
@@ -167,15 +213,62 @@ export function frameModifier(
  * Returns undefined when no supported visible paint exists.
  */
 export function backgroundModifier(node: FigNode): Modifier | undefined {
-  const solid = firstVisibleSolidPaint(node.fillPaints);
-  if (solid) {
-    return modifier("background", [{ value: solidPaintToColor(solid) }]);
+  const top = topmostFillPaintEntry(node.fillPaints);
+  if (!top) {
+    return undefined;
   }
-  const grad = firstVisibleGradientPaint(node.fillPaints);
-  if (grad) {
-    return modifier("background", [{ value: gradientExpr(grad, sizeOf(node)) }]);
+  const expr = paintToExpr(top.paint, node);
+  if (!expr) {
+    return undefined;
   }
-  return undefined;
+  return modifier("background", [{ value: expr }]);
+}
+
+/**
+ * Build a `.background(<shape>().fill(<paint>).shadow(...))` modifier
+ * that paints the container's fill with the node's drop shadows
+ * baked into the background view itself.
+ *
+ * This is the right shape for a frame-like container: the container's
+ * shadow should fall under the container's silhouette, not under each
+ * of its children. Stacking `.shadow(...)` after `.background(...)` on
+ * the outer view applies the shadow to the container *plus its
+ * children* — every child's silhouette also acquires the shadow halo,
+ * which mismatches Figma's "shadow under the box" semantic and
+ * produces visible haloes around inner content (e.g. white inset
+ * boxes acquiring drop shadows in the `frame-drop-shadow` fixture).
+ *
+ * Returns undefined when the node has no fill — the caller should
+ * still emit shadows via `shadowModifiers` on the outer chain in that
+ * case (no silhouette to bind the shadow to).
+ */
+export function backgroundWithShadowsModifier(node: FigNode): Modifier | undefined {
+  const top = topmostFillPaintEntry(node.fillPaints);
+  if (!top) {
+    return undefined;
+  }
+  const expr = paintToExpr(top.paint, node);
+  if (!expr) {
+    return undefined;
+  }
+  const shadows = shadowModifiers(node);
+  const radius = uniformCornerRadius(node);
+  // For the shape-fill background to follow the container's corner
+  // radius (otherwise the rectangle's sharp corners poke past the
+  // container's `.cornerRadius` clip and the shadow squares off the
+  // corners), use the same `shapeExprFor` silhouette the regular
+  // .fill modifier uses on shape leaves. For containers this is the
+  // node's silhouette: `RoundedRectangle(cornerRadius: r)` when the
+  // node has uniform rounding, else `Rectangle()`.
+  void radius;
+  const bgShape = shapeExprFor(node);
+  const fill = modifier("fill", [{ value: expr }]);
+  const mods: Modifier[] = [fill];
+  for (const s of shadows) {
+    mods.push(s);
+  }
+  const bgView = leaf(bgShape, mods);
+  return modifier("background", [arg(viewExpr(bgView))]);
 }
 
 /** Read the node's size as `{ width, height }` for the gradient
@@ -204,15 +297,15 @@ function sizeOf(node: FigNode): { readonly width: number; readonly height: numbe
  * shape works for both paint kinds.
  */
 export function fillModifier(node: FigNode): Modifier | undefined {
-  const solid = firstVisibleSolidPaint(node.fillPaints);
-  if (solid) {
-    return modifier("fill", [{ value: solidPaintToColor(solid) }]);
+  const top = topmostFillPaintEntry(node.fillPaints);
+  if (!top) {
+    return undefined;
   }
-  const grad = firstVisibleGradientPaint(node.fillPaints);
-  if (grad) {
-    return modifier("fill", [{ value: gradientExpr(grad, sizeOf(node)) }]);
+  const expr = paintToExpr(top.paint, node);
+  if (!expr) {
+    return undefined;
   }
-  return undefined;
+  return modifier("fill", [{ value: expr }]);
 }
 
 /**
@@ -236,19 +329,24 @@ export function extraFillBackgroundModifiers(node: FigNode): readonly Modifier[]
   if (!paints || paints.length === 0) {
     return [];
   }
-  const visiblePaints = paints.filter((p) => p.visible !== false);
-  if (visiblePaints.length < 2) {
+  const top = topmostFillPaintEntry(paints);
+  if (!top) {
     return [];
   }
-  // The TOPMOST paint is consumed by fillModifier; under-layers go
-  // here as `.background(<shape>().fill(<paint>))`. We walk from
-  // top-1 down to 0 so the modifier order paints further-back
-  // layers on top of farther-back ones — SwiftUI's `.background`
-  // stacks each new background BEHIND the existing content.
+  // Under-layers are everything that paints BEHIND the topmost in
+  // Figma's back-to-front compositing. They are the array entries
+  // strictly before `top.index`, in original array order. We walk
+  // them from front-most (top.index - 1) DOWN to 0 so that when we
+  // append `.background(<paint>)` modifiers in modifier-list order,
+  // SwiftUI's `.background` semantic — which stacks each new
+  // background BEHIND the existing one — places them in the right
+  // back-to-front sequence: the first under-paint we visit lands
+  // immediately behind the fill, the last we visit lands at the
+  // very back.
   const out: Modifier[] = [];
-  for (let i = visiblePaints.length - 2; i >= 0; i -= 1) {
-    const paint = visiblePaints[i];
-    if (!paint) {
+  for (let i = top.index - 1; i >= 0; i -= 1) {
+    const paint = paints[i];
+    if (!paint || paint.visible === false) {
       continue;
     }
     const expr = paintToExpr(paint, node);
@@ -416,6 +514,25 @@ function strokeStyleArg(lineWidth: number, dash: readonly number[] | undefined):
 function dashPatternForStroke(node: FigNode): readonly number[] | undefined {
   const dash = node.dashPattern;
   if (!dash || dash.length === 0) {
+    return undefined;
+  }
+  // Match the WebGL reference renderer's empirical behaviour: for
+  // RECTANGLE / ROUNDED_RECTANGLE shapes with INSIDE / OUTSIDE
+  // strokeAlign the renderer's `tessellateRectAlignedStroke` path
+  // emits a solid silhouette and ignores the dash pattern (the
+  // dasharray channel is only honoured by `tessellateStrokeShape*`,
+  // which the rect-aligned path doesn't call). Replicating that
+  // here keeps the SwiftUI emit visually agreeing with the WebGL
+  // reference for fixtures that author dashed inside-strokes on
+  // rounded rectangles (the canonical `stroke-styles` dashed-uniform
+  // / asymmetric / tight cases all hit this branch).
+  const align = strokeAlignName(node.strokeAlign) ?? "INSIDE";
+  if (align === "CENTER") {
+    return dash;
+  }
+  const t = node.type.name;
+  const isRectKind = t === "RECTANGLE" || t === "ROUNDED_RECTANGLE";
+  if (isRectKind) {
     return undefined;
   }
   return dash;
@@ -872,7 +989,16 @@ export function offsetModifier(x: number, y: number): Modifier | undefined {
   return modifier("offset", [namedArg("x", num(x)), namedArg("y", num(y))]);
 }
 
-/** Convenience: build a SwiftUI `Spacer()` expression. */
+/** Convenience: build a SwiftUI `Spacer(minLength: 0)` expression.
+ *
+ * SwiftUI's bare `Spacer()` defaults to `minLength: 8` which is the
+ * platform-suggested touch padding. That's wrong for SPACE_BETWEEN
+ * distribution where children may already fill the available
+ * primary-axis extent — an 8px reserve forces the children to
+ * shrink or overflow. Setting `minLength: 0` lets a Spacer collapse
+ * to zero when there's no slack, matching Figma's distribution
+ * semantics.
+ */
 export function spacerExpr(): SwiftExpr {
-  return ident("Spacer()");
+  return ident("Spacer(minLength: 0)");
 }

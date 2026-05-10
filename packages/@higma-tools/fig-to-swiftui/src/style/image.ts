@@ -22,15 +22,28 @@ import type {
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import { call, ident, member, namedArg, type SwiftExpr } from "../swift-tree";
 
-/** Pick the first visible IMAGE paint in a stack. */
+/**
+ * Pick the topmost visible IMAGE paint in a stack. Figma renders
+ * paints back-to-front (first-in-array = furthest back), so the
+ * topmost paint is the LAST visible entry of the requested kind.
+ *
+ * Picking the last visible IMAGE keeps the chosen paint consistent
+ * with `topmostFillPaintEntry` in `modifiers.ts`: when the same paint
+ * stack carries both a SOLID and an IMAGE, the topmost paint is what
+ * the consumer sees on top, and the `<` index entries are
+ * under-layers. The earlier "first" implementation broke the case
+ * where a SOLID overpainted an IMAGE — the IMAGE was treated as the
+ * topmost paint even though the SOLID actually composited on top.
+ */
 export function firstVisibleImagePaint(
   paints: readonly FigPaint[] | undefined,
 ): FigImagePaint | undefined {
   if (!paints) {
     return undefined;
   }
-  for (const paint of paints) {
-    if (paint.visible === false) {
+  for (let i = paints.length - 1; i >= 0; i -= 1) {
+    const paint = paints[i];
+    if (!paint || paint.visible === false) {
       continue;
     }
     if (paint.type === "IMAGE") {
@@ -83,27 +96,51 @@ export function imageExpr(image: FigPackageImage): SwiftExpr {
 }
 
 /**
- * Map Figma's `scaleMode` to SwiftUI's contentMode + tile flag.
+ * Resolved emit shape for a Figma `imageScaleMode`. Captures both the
+ * SwiftUI `Image` resizing mode (`stretch` is the SwiftUI default,
+ * `tile` repeats the source bitmap) and whether to constrain the
+ * aspect ratio.
  *
- *   - FILL   → `.fill`     (cover)
- *   - FIT    → `.fit`      (contain)
- *   - CROP   → `.fill`     (similar to FILL with explicit crop)
- *   - STRETCH→ `.fit` with .resizable() — anisotropic stretch is
- *              not directly representable, fall back to .fit
- *   - TILE   → `.fit` (tile not yet supported; fall back)
+ *   - FILL   → `aspect: "fill"`, resizing: `stretch` — image scales
+ *              to cover the frame, aspect preserved (cropped at the
+ *              shorter edge).
+ *   - CROP   → same as FILL.
+ *   - FIT    → `aspect: "fit"`, resizing: `stretch` — image scales
+ *              to fit inside the frame, aspect preserved (letterbox).
+ *   - STRETCH→ `aspect: "none"`, resizing: `stretch` — image stretches
+ *              anisotropically to the frame (CSS `object-fit: fill`).
+ *              `.aspectRatio(...)` MUST be omitted; otherwise SwiftUI
+ *              clamps the image into a single fit/fill box and the
+ *              aspect-distortion intent is lost.
+ *   - TILE   → `aspect: "none"`, resizing: `tile` — the source bitmap
+ *              tiles across the frame. SwiftUI realises this via
+ *              `.resizable(resizingMode: .tile)`. Aspect ratio is
+ *              irrelevant for a repeating tile.
  */
-export function contentModeFor(scale: FigImageScaleMode | undefined): "fill" | "fit" {
+export type ImageEmitShape = {
+  readonly aspect: "fill" | "fit" | "none";
+  readonly resizing: "stretch" | "tile";
+};
+
+/**
+ * Resolve a Figma `scaleMode` / `imageScaleMode` value to the
+ * `ImageEmitShape` (resizing × aspect) the SwiftUI emitter needs.
+ * `undefined` defaults to `FILL` to match Figma's authoring default.
+ */
+export function contentModeFor(scale: FigImageScaleMode | undefined): ImageEmitShape {
   if (!scale) {
-    return "fill";
+    return { aspect: "fill", resizing: "stretch" };
   }
   switch (scale) {
     case "FILL":
     case "CROP":
-      return "fill";
+      return { aspect: "fill", resizing: "stretch" };
     case "FIT":
+      return { aspect: "fit", resizing: "stretch" };
     case "STRETCH":
+      return { aspect: "none", resizing: "stretch" };
     case "TILE":
-      return "fit";
+      return { aspect: "none", resizing: "tile" };
   }
 }
 

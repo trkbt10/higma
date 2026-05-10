@@ -71,8 +71,26 @@ export function emitGeometryLeaf(node: FigNode, ctx: EmitContext): SwiftView {
   }
   const commands = readAllCommands(node, blobs);
   if (commands.length === 0) {
-    throw new Error(
-      `fig-to-swiftui: geometry node "${node.name ?? "unnamed"}" has no decodable fillGeometry`,
+    // Real fig files occasionally carry geometry nodes whose
+    // commands blob is missing (e.g. a stroke-only path that has
+    // already been flattened upstream). Rather than fail-fast on
+    // these — which would break emit for an entire frame because
+    // of one malformed node — emit a frame-sized empty `Path`.
+    // The result is invisible at the leaf, and any sibling content
+    // still renders. Surfaces the problem to the consumer via the
+    // empty Path while keeping the CLI usable for one-shot exports
+    // where one missing path is preferable to a hard failure.
+    return leaf(
+      call("Path", [{ value: ident("{ _ in }") }]),
+      node.size
+        ? [
+            modifier("frame", [
+              namedArg("width", num(node.size.x)),
+              namedArg("height", num(node.size.y)),
+              namedArg("alignment", member("topLeading")),
+            ]),
+          ]
+        : [],
     );
   }
   const pathSource = swiftPathSource(commands);
@@ -89,9 +107,21 @@ export function emitGeometryLeaf(node: FigNode, ctx: EmitContext): SwiftView {
     mods.push(strokeMod);
   }
   if (!fillExpr && !strokeMod) {
-    throw new Error(
-      `fig-to-swiftui: geometry node "${node.name ?? "unnamed"}" has neither fill nor stroke`,
-    );
+    // Real fig files sometimes carry geometry nodes with no
+    // visible paint (e.g. mask layers that the upstream pipeline
+    // already absorbed into a `.mask(...)` modifier on a sibling).
+    // Emit a frame-sized empty Path rather than throwing, mirroring
+    // the no-decodable-commands fallback above.
+    if (node.size) {
+      mods.push(
+        modifier("frame", [
+          namedArg("width", num(node.size.x)),
+          namedArg("height", num(node.size.y)),
+          namedArg("alignment", member("topLeading")),
+        ]),
+      );
+    }
+    return leaf(call("Path", [{ value: ident("{ _ in }") }]), mods);
   }
   // Frame the Path against the node's authored size so the path
   // coordinates land within the right outer extent. SwiftUI's
@@ -111,9 +141,12 @@ export function emitGeometryLeaf(node: FigNode, ctx: EmitContext): SwiftView {
   return leaf(pathExpr, mods);
 }
 
-function readAllCommands(node: FigNode, blobs: readonly FigBlob[]): readonly PathCommand[] {
+function decodeBlobList(
+  geometries: readonly { readonly commandsBlob?: number }[] | undefined,
+  blobs: readonly FigBlob[],
+): readonly PathCommand[] {
   const out: PathCommand[] = [];
-  for (const geom of node.fillGeometry ?? []) {
+  for (const geom of geometries ?? []) {
     if (geom.commandsBlob === undefined) {
       continue;
     }
@@ -129,8 +162,24 @@ function readAllCommands(node: FigNode, blobs: readonly FigBlob[]): readonly Pat
       out.push(cmd);
     }
   }
-  if (out.length > 0) {
-    return out;
+  return out;
+}
+
+function readAllCommands(node: FigNode, blobs: readonly FigBlob[]): readonly PathCommand[] {
+  const fillCommands = decodeBlobList(node.fillGeometry, blobs);
+  if (fillCommands.length > 0) {
+    return fillCommands;
+  }
+  // Real-world fig files (e.g. text-decoration underlines, stroke-
+  // only icon strokes) frequently carry only `strokeGeometry`, not
+  // `fillGeometry` — Figma stores the path differently when the
+  // shape is intended to be stroked rather than filled. Fall back
+  // to the stroke channel so the emitter doesn't fail-fast on these
+  // perfectly valid nodes. The path commands are the same shape;
+  // the only difference is which paint channel renders them.
+  const strokeCommands = decodeBlobList(node.strokeGeometry, blobs);
+  if (strokeCommands.length > 0) {
+    return strokeCommands;
   }
   // STAR / REGULAR_POLYGON / LINE nodes don't carry pre-decoded
   // `fillGeometry` blobs in the .fig binary — Figma derives the
@@ -142,7 +191,7 @@ function readAllCommands(node: FigNode, blobs: readonly FigBlob[]): readonly Pat
   if (generated) {
     return generated;
   }
-  return out;
+  return [];
 }
 
 function generateContoursFromPrimitives(node: FigNode): readonly PathCommand[] | undefined {
