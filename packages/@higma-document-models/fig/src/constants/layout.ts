@@ -79,11 +79,25 @@ export type StackPositioning = keyof typeof STACK_POSITIONING_VALUES;
 /** Stack sizing values (for child sizing in AutoLayout) */
 export const STACK_SIZING_VALUES = {
   FIXED: 0,
-  FILL: 1,
-  HUG: 2,
+  RESIZE_TO_FIT: 1,
+  RESIZE_TO_FIT_WITH_IMPLICIT_SIZE: 2,
 } as const;
 
 export type StackSizing = keyof typeof STACK_SIZING_VALUES;
+export type StackSizingInput = StackSizing | "HUG";
+
+/** Resolve builder sizing input to Figma's canonical StackSize enum name. */
+export function resolveStackSizingInput(sizing: StackSizingInput): StackSizing {
+  switch (sizing) {
+    case "FIXED":
+    case "RESIZE_TO_FIT":
+    case "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE":
+      return sizing;
+    case "HUG":
+      return "RESIZE_TO_FIT";
+  }
+  throw new Error(`Unknown StackSizing input: ${sizing}`);
+}
 
 /** Constraint type values (for fixed positioning) */
 export const CONSTRAINT_TYPE_VALUES = {

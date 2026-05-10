@@ -46,6 +46,7 @@ export type SymbolNodeData = {
   readonly itemReverseZIndex?: boolean;
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
+  readonly stackChildPrimaryGrow?: number;
 };
 
 export type InstanceNodeData = {
@@ -74,6 +75,7 @@ export type InstanceNodeData = {
   readonly stackPositioning?: { value: number; name: StackPositioning };
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
+  readonly stackChildPrimaryGrow?: number;
   readonly stackChildAlignSelf?: { value: number; name: StackCounterAlign };
   readonly horizontalConstraint?: { value: number; name: ConstraintType };
   readonly verticalConstraint?: { value: number; name: ConstraintType };

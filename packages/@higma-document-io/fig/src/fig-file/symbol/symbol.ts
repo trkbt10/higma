@@ -13,10 +13,12 @@ import {
   STACK_JUSTIFY_VALUES,
   STACK_SIZING_VALUES,
   toEnumValue,
+  resolveStackSizingInput,
   type StackMode,
   type StackAlign,
   type StackJustify,
   type StackSizing,
+  type StackSizingInput,
 } from "@higma-document-models/fig/constants";
 
 /** Symbol node builder instance */
@@ -51,9 +53,10 @@ export type SymbolNodeBuilder = {
    * required for a responsive page component whose paragraphs
    * re-wrap into different line counts per INSTANCE width.
    */
-  primarySizing: (sizing: StackSizing) => SymbolNodeBuilder;
+  primarySizing: (sizing: StackSizingInput) => SymbolNodeBuilder;
   /** Set the SYMBOL's own counter-axis sizing (FIXED / FILL / HUG). */
-  counterSizing: (sizing: StackSizing) => SymbolNodeBuilder;
+  counterSizing: (sizing: StackSizingInput) => SymbolNodeBuilder;
+  primaryGrow: (grow: number) => SymbolNodeBuilder;
   reverseZIndex: (enabled?: boolean) => SymbolNodeBuilder;
   addExportSettings: (settings: ExportSettings) => SymbolNodeBuilder;
   exportAsSVG: () => SymbolNodeBuilder;
@@ -84,6 +87,7 @@ type SymbolBuilderState = {
   itemReverseZIndex: boolean | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildPrimaryGrow: number | undefined;
 };
 
 /** Create a symbol node builder */
@@ -112,6 +116,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
     itemReverseZIndex: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildPrimaryGrow: undefined,
   };
 
   const builder: SymbolNodeBuilder = {
@@ -142,8 +147,9 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
       return builder;
     },
     counterGap(spacing: number) { state.stackCounterSpacing = spacing; return builder; },
-    primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
-    counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    primarySizing(sizing: StackSizingInput) { state.stackPrimarySizing = resolveStackSizingInput(sizing); return builder; },
+    counterSizing(sizing: StackSizingInput) { state.stackCounterSizing = resolveStackSizingInput(sizing); return builder; },
+    primaryGrow(grow: number) { state.stackChildPrimaryGrow = grow; return builder; },
     reverseZIndex(enabled: boolean = true) { state.itemReverseZIndex = enabled; return builder; },
     addExportSettings(settings: ExportSettings) { state.exportSettings.push(settings); return builder; },
     exportAsSVG() { state.exportSettings.push(DEFAULT_SVG_EXPORT_SETTINGS); return builder; },
@@ -172,6 +178,7 @@ function createSymbolNodeBuilder(localID: number, parentID: number): SymbolNodeB
         itemReverseZIndex: state.itemReverseZIndex,
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildPrimaryGrow: state.stackChildPrimaryGrow,
       };
     },
   };

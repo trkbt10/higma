@@ -15,11 +15,13 @@ import {
   STACK_SIZING_VALUES,
   CONSTRAINT_TYPE_VALUES,
   toEnumValue,
+  resolveStackSizingInput,
   type StrokeCap,
   type StrokeJoin,
   type StrokeAlign,
   type StackPositioning,
   type StackSizing,
+  type StackSizingInput,
   type ConstraintType,
 } from "@higma-document-models/fig/constants";
 
@@ -45,6 +47,7 @@ export type BaseShapeState = {
   stackPositioning?: StackPositioning;
   stackPrimarySizing?: StackSizing;
   stackCounterSizing?: StackSizing;
+  stackChildPrimaryGrow?: number;
   horizontalConstraint?: ConstraintType;
   verticalConstraint?: ConstraintType;
   effects?: readonly EffectData[];
@@ -87,8 +90,9 @@ export type BaseShapeBuilderMethods<TBuilder> = {
   visible: (v: boolean) => TBuilder;
   opacity: (o: number) => TBuilder;
   positioning: (mode: StackPositioning) => TBuilder;
-  primarySizing: (sizing: StackSizing) => TBuilder;
-  counterSizing: (sizing: StackSizing) => TBuilder;
+  primarySizing: (sizing: StackSizingInput) => TBuilder;
+  counterSizing: (sizing: StackSizingInput) => TBuilder;
+  primaryGrow: (grow: number) => TBuilder;
   horizontalConstraint: (constraint: ConstraintType) => TBuilder;
   verticalConstraint: (constraint: ConstraintType) => TBuilder;
   effects: (effects: readonly EffectData[]) => TBuilder;
@@ -114,8 +118,9 @@ export type FluentShapeBuilder<TCustom> = TCustom & {
   visible: (v: boolean) => FluentShapeBuilder<TCustom>;
   opacity: (o: number) => FluentShapeBuilder<TCustom>;
   positioning: (mode: StackPositioning) => FluentShapeBuilder<TCustom>;
-  primarySizing: (sizing: StackSizing) => FluentShapeBuilder<TCustom>;
-  counterSizing: (sizing: StackSizing) => FluentShapeBuilder<TCustom>;
+  primarySizing: (sizing: StackSizingInput) => FluentShapeBuilder<TCustom>;
+  counterSizing: (sizing: StackSizingInput) => FluentShapeBuilder<TCustom>;
+  primaryGrow: (grow: number) => FluentShapeBuilder<TCustom>;
   horizontalConstraint: (constraint: ConstraintType) => FluentShapeBuilder<TCustom>;
   verticalConstraint: (constraint: ConstraintType) => FluentShapeBuilder<TCustom>;
   effects: (effects: readonly EffectData[]) => FluentShapeBuilder<TCustom>;
@@ -144,8 +149,9 @@ export function attachBaseShapeMethods<TBuilder>(state: BaseShapeState, builder:
     visible(v: boolean) { state.visible = v; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
-    primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
-    counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    primarySizing(sizing: StackSizingInput) { state.stackPrimarySizing = resolveStackSizingInput(sizing); return builder; },
+    counterSizing(sizing: StackSizingInput) { state.stackCounterSizing = resolveStackSizingInput(sizing); return builder; },
+    primaryGrow(grow: number) { state.stackChildPrimaryGrow = grow; return builder; },
     horizontalConstraint(constraint: ConstraintType) { state.horizontalConstraint = constraint; return builder; },
     verticalConstraint(constraint: ConstraintType) { state.verticalConstraint = constraint; return builder; },
     effects(e: readonly EffectData[]) { state.effects = e; return builder; },
@@ -222,6 +228,7 @@ export function buildBaseData(state: BaseShapeState): BaseShapeNodeData {
     stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
     stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
     stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+    stackChildPrimaryGrow: state.stackChildPrimaryGrow,
     horizontalConstraint: toEnumValue(state.horizontalConstraint, CONSTRAINT_TYPE_VALUES),
     verticalConstraint: toEnumValue(state.verticalConstraint, CONSTRAINT_TYPE_VALUES),
     effects: state.effects,

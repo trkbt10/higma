@@ -12,21 +12,21 @@ import {
   TEXT_DECORATION_VALUES,
   TEXT_CASE_VALUES,
   NUMBER_UNITS_VALUES,
-  STACK_ALIGN_VALUES,
   STACK_COUNTER_ALIGN_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
   toEnumValue,
+  resolveStackSizingInput,
   type TextAlignHorizontal,
   type TextAlignVertical,
   type TextAutoResize,
   type TextDecoration,
   type TextCase,
   type NumberUnits,
-  type StackAlign,
   type StackCounterAlign,
   type StackPositioning,
   type StackSizing,
+  type StackSizingInput,
 } from "@higma-document-models/fig/constants";
 
 /**
@@ -71,8 +71,9 @@ export type TextNodeBuilder = {
   color: (c: Color) => TextNodeBuilder;
   styleRuns: (runs: readonly TextStyleRunData[]) => TextNodeBuilder;
   positioning: (mode: StackPositioning) => TextNodeBuilder;
-  primarySizing: (sizing: StackSizing) => TextNodeBuilder;
-  counterSizing: (sizing: StackSizing) => TextNodeBuilder;
+  primarySizing: (sizing: StackSizingInput) => TextNodeBuilder;
+  counterSizing: (sizing: StackSizingInput) => TextNodeBuilder;
+  primaryGrow: (grow: number) => TextNodeBuilder;
   childAlignSelf: (align: StackCounterAlign) => TextNodeBuilder;
   visible: (v: boolean) => TextNodeBuilder;
   opacity: (o: number) => TextNodeBuilder;
@@ -102,6 +103,7 @@ type TextBuilderState = {
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildPrimaryGrow: number | undefined;
   stackChildAlignSelf: StackCounterAlign | undefined;
   visible: boolean;
   opacity: number;
@@ -132,6 +134,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildPrimaryGrow: undefined,
     stackChildAlignSelf: undefined,
     visible: true,
     opacity: 1,
@@ -155,8 +158,9 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
     color(c: Color) { state.fillColor = c; return builder; },
     styleRuns(runs: readonly TextStyleRunData[]) { state.styleRuns = runs; return builder; },
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
-    primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
-    counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    primarySizing(sizing: StackSizingInput) { state.stackPrimarySizing = resolveStackSizingInput(sizing); return builder; },
+    counterSizing(sizing: StackSizingInput) { state.stackCounterSizing = resolveStackSizingInput(sizing); return builder; },
+    primaryGrow(grow: number) { state.stackChildPrimaryGrow = grow; return builder; },
     childAlignSelf(align: StackCounterAlign) { state.stackChildAlignSelf = align; return builder; },
     visible(v: boolean) { state.visible = v; return builder; },
     opacity(o: number) { state.opacity = o; return builder; },
@@ -203,6 +207,7 @@ function createTextNodeBuilder(localID: number, parentID: number): TextNodeBuild
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildPrimaryGrow: state.stackChildPrimaryGrow,
         stackChildAlignSelf: toEnumValue(state.stackChildAlignSelf, STACK_COUNTER_ALIGN_VALUES),
       };
     },

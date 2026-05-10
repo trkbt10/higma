@@ -45,6 +45,7 @@ export type BaseShapeNodeData = {
   readonly stackPositioning?: { value: number; name: StackPositioning };
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
+  readonly stackChildPrimaryGrow?: number;
   readonly horizontalConstraint?: { value: number; name: ConstraintType };
   readonly verticalConstraint?: { value: number; name: ConstraintType };
   // Effects (drop shadow, inner shadow, blur, etc.)

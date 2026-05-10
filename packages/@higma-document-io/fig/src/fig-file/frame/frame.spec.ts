@@ -183,12 +183,13 @@ describe("FrameNodeBuilder", () => {
 
     it("sets child sizing", () => {
       const node = frameNode(1, 0)
-        .primarySizing("FILL")
+        .primaryGrow(1)
         .counterSizing("HUG")
         .build();
 
-      expect(node.stackPrimarySizing).toEqual({ value: 1, name: "FILL" });
-      expect(node.stackCounterSizing).toEqual({ value: 2, name: "HUG" });
+      expect(node.stackChildPrimaryGrow).toBe(1);
+      expect(node.stackPrimarySizing).toBeUndefined();
+      expect(node.stackCounterSizing).toEqual({ value: 1, name: "RESIZE_TO_FIT" });
     });
 
     it("sets constraints", () => {

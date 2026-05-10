@@ -178,6 +178,7 @@ export type BuilderNode = {
   stackPositioning?: KiwiEnum;
   stackPrimarySizing?: KiwiEnum;
   stackCounterSizing?: KiwiEnum;
+  stackChildPrimaryGrow?: number;
   stackChildAlignSelf?: KiwiEnum;
   horizontalConstraint?: KiwiEnum;
   verticalConstraint?: KiwiEnum;

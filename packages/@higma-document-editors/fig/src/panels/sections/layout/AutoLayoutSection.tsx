@@ -32,9 +32,7 @@ const alignOptions: readonly SelectOption<StackAlign>[] = [
   { value: "MIN", label: "Min" },
   { value: "CENTER", label: "Center" },
   { value: "MAX", label: "Max" },
-  { value: "STRETCH", label: "Stretch" },
   { value: "BASELINE", label: "Baseline" },
-  { value: "SPACE_BETWEEN", label: "Space between" },
 ];
 
 function enumName<T extends string>(val: KiwiEnumValue | undefined, fallback: T): T {

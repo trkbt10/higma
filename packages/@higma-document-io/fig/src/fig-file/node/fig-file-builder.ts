@@ -249,6 +249,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       stackChildAlignSelf: data.stackChildAlignSelf,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
@@ -296,6 +297,7 @@ function _createFigFileBuilder() {
       itemReverseZIndex: data.itemReverseZIndex,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
     });
     // Required Figma fields — every importable shape carries these.
     node.strokeWeight = 1;
@@ -327,6 +329,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       stackChildAlignSelf: data.stackChildAlignSelf,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
@@ -348,6 +351,12 @@ function _createFigFileBuilder() {
    * Add a GROUP node
    */
   function addGroup(data: GroupNodeData): number {
+    // Real Figma exports omit strokeWeight/strokeAlign/strokeJoin
+    // on GROUP nodes entirely (verified across multiple fixtures).
+    // GROUP is a logical container and Figma derives bounds from
+    // children, so adding empty stroke metadata would diverge from
+    // the SoT and risk altering auto-layout sizing in pathological
+    // cases. Leave the fields absent.
     const node = createNodeChange({
       localID: data.localID,
       parentID: data.parentID,
@@ -358,10 +367,6 @@ function _createFigFileBuilder() {
       visible: data.visible,
       opacity: data.opacity,
     });
-    // Required Figma fields — every importable shape carries these.
-    node.strokeWeight = 0;
-    node.strokeAlign = { value: 1, name: "INSIDE" };
-    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
@@ -430,6 +435,10 @@ function _createFigFileBuilder() {
    * Add a BOOLEAN_OPERATION node
    */
   function addBooleanOperation(data: BooleanOperationNodeData): number {
+    // Like GROUP, real Figma exports omit stroke metadata on
+    // BOOLEAN_OPERATION nodes (verified across all fixtures). The
+    // resulting shape is computed from the operation, not the
+    // boolean node's own stroke. Leave the fields absent.
     const node = createNodeChange({
       localID: data.localID,
       parentID: data.parentID,
@@ -443,10 +452,6 @@ function _createFigFileBuilder() {
     });
     // Add boolean operation specific field
     node.booleanOperation = data.booleanOperation;
-    // Required Figma fields — every importable shape carries these.
-    node.strokeWeight = 0;
-    node.strokeAlign = { value: 1, name: "INSIDE" };
-    node.strokeJoin = { value: 0, name: "MITER" };
     nodes.push(node);
     return data.localID;
   }
@@ -483,6 +488,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       stackChildAlignSelf: data.stackChildAlignSelf,
     });
     if (data.derivedTextData) {
@@ -582,6 +588,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -620,6 +627,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -654,6 +662,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -687,6 +696,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -721,6 +731,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -778,6 +789,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -825,6 +837,7 @@ function _createFigFileBuilder() {
       stackPositioning: data.stackPositioning,
       stackPrimarySizing: data.stackPrimarySizing,
       stackCounterSizing: data.stackCounterSizing,
+      stackChildPrimaryGrow: data.stackChildPrimaryGrow,
       horizontalConstraint: data.horizontalConstraint,
       verticalConstraint: data.verticalConstraint,
       effects: data.effects,
@@ -936,6 +949,7 @@ function _createFigFileBuilder() {
     stackPositioning?: { value: number; name: string };
     stackPrimarySizing?: { value: number; name: string };
     stackCounterSizing?: { value: number; name: string };
+    stackChildPrimaryGrow?: number;
     stackChildAlignSelf?: { value: number; name: string };
     horizontalConstraint?: { value: number; name: string };
     verticalConstraint?: { value: number; name: string };
@@ -1078,6 +1092,9 @@ function _createFigFileBuilder() {
     }
     if (data.stackCounterSizing) {
       node.stackCounterSizing = data.stackCounterSizing;
+    }
+    if (data.stackChildPrimaryGrow !== undefined) {
+      node.stackChildPrimaryGrow = data.stackChildPrimaryGrow;
     }
     if (data.stackChildAlignSelf) {
       node.stackChildAlignSelf = data.stackChildAlignSelf;

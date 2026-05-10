@@ -42,8 +42,9 @@ describe("LayoutConstraintsSection", () => {
   it("renders fixed positioning constraints when absolute", () => {
     const node = makeNode({
       stackPositioning: toEnumValue("ABSOLUTE", STACK_POSITIONING_VALUES)!,
-      stackPrimarySizing: toEnumValue("FILL", STACK_SIZING_VALUES)!,
-      stackCounterSizing: toEnumValue("HUG", STACK_SIZING_VALUES)!,
+      stackPrimarySizing: toEnumValue("RESIZE_TO_FIT", STACK_SIZING_VALUES)!,
+      stackCounterSizing: toEnumValue("RESIZE_TO_FIT_WITH_IMPLICIT_SIZE", STACK_SIZING_VALUES)!,
+      stackChildPrimaryGrow: 1,
       horizontalConstraint: toEnumValue("CENTER", CONSTRAINT_TYPE_VALUES)!,
       verticalConstraint: toEnumValue("STRETCH", CONSTRAINT_TYPE_VALUES)!,
     });
@@ -54,8 +55,9 @@ describe("LayoutConstraintsSection", () => {
     }));
 
     expect(html).toContain('value="ABSOLUTE"');
-    expect(html).toContain('value="FILL"');
-    expect(html).toContain('value="HUG"');
+    expect(html).toContain('value="RESIZE_TO_FIT"');
+    expect(html).toContain('value="RESIZE_TO_FIT_WITH_IMPLICIT_SIZE"');
+    expect(html).toContain('value="1"');
     expect(html).toContain("Horizontal");
     expect(html).toContain("Vertical");
   });

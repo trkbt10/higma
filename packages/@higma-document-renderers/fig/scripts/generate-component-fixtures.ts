@@ -253,7 +253,7 @@ async function generateComponentFixtures(): Promise<void> {
         .name(`Action ${i + 1}`)
         .size(100, 40)
         .position(20 + i * 130, 20)
-        .primarySizing("FILL")
+        .primaryGrow(1)
         .build(),
     );
   }

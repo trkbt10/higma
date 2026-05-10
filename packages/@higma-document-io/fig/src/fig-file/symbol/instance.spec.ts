@@ -87,11 +87,12 @@ describe("InstanceNodeBuilder", () => {
 
     it("sets sizing", () => {
       const node = instanceNode(2, 0, 1)
-        .primarySizing("FILL")
+        .primaryGrow(1)
         .counterSizing("FIXED")
         .build();
 
-      expect(node.stackPrimarySizing).toEqual({ value: 1, name: "FILL" });
+      expect(node.stackChildPrimaryGrow).toBe(1);
+      expect(node.stackPrimarySizing).toBeUndefined();
       expect(node.stackCounterSizing).toEqual({ value: 0, name: "FIXED" });
     });
 

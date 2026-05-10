@@ -9,7 +9,6 @@ import type {
   TextAutoResize,
   TextDecoration,
   TextCase,
-  StackAlign,
   StackCounterAlign,
   StackPositioning,
   StackSizing,
@@ -83,6 +82,7 @@ export type TextNodeData = {
   readonly stackPositioning?: { value: number; name: StackPositioning };
   readonly stackPrimarySizing?: { value: number; name: StackSizing };
   readonly stackCounterSizing?: { value: number; name: StackSizing };
+  readonly stackChildPrimaryGrow?: number;
   /** Counter-axis alignment override for this child within an auto-layout parent. */
   readonly stackChildAlignSelf?: { value: number; name: StackCounterAlign };
 };

@@ -11,8 +11,10 @@ import {
   STACK_COUNTER_ALIGN_VALUES,
   CONSTRAINT_TYPE_VALUES,
   toEnumValue,
+  resolveStackSizingInput,
   type StackPositioning,
   type StackSizing,
+  type StackSizingInput,
   type StackCounterAlign,
   type ConstraintType,
 } from "@higma-document-models/fig/constants";
@@ -51,8 +53,9 @@ export type InstanceNodeBuilder = {
   overrideSymbol: (symbolID: number | SymbolID) => InstanceNodeBuilder;
   addPropertyReference: (ref: string) => InstanceNodeBuilder;
   positioning: (mode: StackPositioning) => InstanceNodeBuilder;
-  primarySizing: (sizing: StackSizing) => InstanceNodeBuilder;
-  counterSizing: (sizing: StackSizing) => InstanceNodeBuilder;
+  primarySizing: (sizing: StackSizingInput) => InstanceNodeBuilder;
+  counterSizing: (sizing: StackSizingInput) => InstanceNodeBuilder;
+  primaryGrow: (grow: number) => InstanceNodeBuilder;
   /**
    * Override the auto-layout counter-axis alignment for this INSTANCE
    * within its parent's auto-layout. STRETCH makes the INSTANCE fill
@@ -81,6 +84,7 @@ type InstanceBuilderState = {
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildPrimaryGrow: number | undefined;
   stackChildAlignSelf: StackCounterAlign | undefined;
   horizontalConstraint: ConstraintType | undefined;
   verticalConstraint: ConstraintType | undefined;
@@ -103,6 +107,7 @@ function createInstanceNodeBuilder(localID: number, parentID: number, symbolID: 
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildPrimaryGrow: undefined,
     stackChildAlignSelf: undefined,
     horizontalConstraint: undefined,
     verticalConstraint: undefined,
@@ -121,8 +126,9 @@ function createInstanceNodeBuilder(localID: number, parentID: number, symbolID: 
     /** Add a component property reference */
     addPropertyReference(ref: string) { state.componentPropertyRefs.push(ref); return builder; },
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
-    primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
-    counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    primarySizing(sizing: StackSizingInput) { state.stackPrimarySizing = resolveStackSizingInput(sizing); return builder; },
+    counterSizing(sizing: StackSizingInput) { state.stackCounterSizing = resolveStackSizingInput(sizing); return builder; },
+    primaryGrow(grow: number) { state.stackChildPrimaryGrow = grow; return builder; },
     childAlignSelf(align: StackCounterAlign) { state.stackChildAlignSelf = align; return builder; },
     horizontalConstraint(constraint: ConstraintType) { state.horizontalConstraint = constraint; return builder; },
     verticalConstraint(constraint: ConstraintType) { state.verticalConstraint = constraint; return builder; },
@@ -143,6 +149,7 @@ function createInstanceNodeBuilder(localID: number, parentID: number, symbolID: 
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildPrimaryGrow: state.stackChildPrimaryGrow,
         stackChildAlignSelf: toEnumValue(state.stackChildAlignSelf, STACK_COUNTER_ALIGN_VALUES),
         horizontalConstraint: toEnumValue(state.horizontalConstraint, CONSTRAINT_TYPE_VALUES),
         verticalConstraint: toEnumValue(state.verticalConstraint, CONSTRAINT_TYPE_VALUES),

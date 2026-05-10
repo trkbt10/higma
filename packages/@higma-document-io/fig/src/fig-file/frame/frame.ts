@@ -19,12 +19,14 @@ import {
   STACK_SIZING_VALUES,
   CONSTRAINT_TYPE_VALUES,
   toEnumValue,
+  resolveStackSizingInput,
   type StackMode,
   type StackAlign,
   type StackJustify,
   type StackCounterAlign,
   type StackPositioning,
   type StackSizing,
+  type StackSizingInput,
   type ConstraintType,
 } from "@higma-document-models/fig/constants";
 
@@ -98,8 +100,9 @@ export type FrameNodeBuilder = {
   counterGap: (spacing: number) => FrameNodeBuilder;
   reverseZIndex: (enabled?: boolean) => FrameNodeBuilder;
   positioning: (mode: StackPositioning) => FrameNodeBuilder;
-  primarySizing: (sizing: StackSizing) => FrameNodeBuilder;
-  counterSizing: (sizing: StackSizing) => FrameNodeBuilder;
+  primarySizing: (sizing: StackSizingInput) => FrameNodeBuilder;
+  counterSizing: (sizing: StackSizingInput) => FrameNodeBuilder;
+  primaryGrow: (grow: number) => FrameNodeBuilder;
   childAlignSelf: (align: StackCounterAlign) => FrameNodeBuilder;
   horizontalConstraint: (constraint: ConstraintType) => FrameNodeBuilder;
   verticalConstraint: (constraint: ConstraintType) => FrameNodeBuilder;
@@ -135,6 +138,7 @@ type FrameBuilderState = {
   stackPositioning: StackPositioning | undefined;
   stackPrimarySizing: StackSizing | undefined;
   stackCounterSizing: StackSizing | undefined;
+  stackChildPrimaryGrow: number | undefined;
   stackChildAlignSelf: StackCounterAlign | undefined;
   horizontalConstraint: ConstraintType | undefined;
   verticalConstraint: ConstraintType | undefined;
@@ -168,6 +172,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     stackPositioning: undefined,
     stackPrimarySizing: undefined,
     stackCounterSizing: undefined,
+    stackChildPrimaryGrow: undefined,
     stackChildAlignSelf: undefined,
     horizontalConstraint: undefined,
     verticalConstraint: undefined,
@@ -217,9 +222,11 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
     /** Set positioning mode when inside auto-layout parent */
     positioning(mode: StackPositioning) { state.stackPositioning = mode; return builder; },
     /** Set sizing along primary axis (when inside auto-layout parent) */
-    primarySizing(sizing: StackSizing) { state.stackPrimarySizing = sizing; return builder; },
+    primarySizing(sizing: StackSizingInput) { state.stackPrimarySizing = resolveStackSizingInput(sizing); return builder; },
     /** Set sizing along counter axis (when inside auto-layout parent) */
-    counterSizing(sizing: StackSizing) { state.stackCounterSizing = sizing; return builder; },
+    counterSizing(sizing: StackSizingInput) { state.stackCounterSizing = resolveStackSizingInput(sizing); return builder; },
+    /** Set Figma's `stackChildPrimaryGrow` for fill-container behavior. */
+    primaryGrow(grow: number) { state.stackChildPrimaryGrow = grow; return builder; },
     /** Override the auto-layout counter-axis alignment for this child. Uses StackCounterAlign enum (STRETCH is valid). */
     childAlignSelf(align: StackCounterAlign) { state.stackChildAlignSelf = align; return builder; },
     /** Set horizontal constraint */
@@ -276,6 +283,7 @@ function createFrameNodeBuilder(localID: number, parentID: number): FrameNodeBui
         stackPositioning: toEnumValue(state.stackPositioning, STACK_POSITIONING_VALUES),
         stackPrimarySizing: toEnumValue(state.stackPrimarySizing, STACK_SIZING_VALUES),
         stackCounterSizing: toEnumValue(state.stackCounterSizing, STACK_SIZING_VALUES),
+        stackChildPrimaryGrow: state.stackChildPrimaryGrow,
         stackChildAlignSelf: toEnumValue(state.stackChildAlignSelf, STACK_COUNTER_ALIGN_VALUES),
         horizontalConstraint: toEnumValue(state.horizontalConstraint, CONSTRAINT_TYPE_VALUES),
         verticalConstraint: toEnumValue(state.verticalConstraint, CONSTRAINT_TYPE_VALUES),

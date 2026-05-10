@@ -82,14 +82,15 @@ describe("EllipseNodeBuilder", () => {
   it("applies child constraints", () => {
     const result = ellipseNode(1, 0)
       .positioning("ABSOLUTE")
-      .primarySizing("FILL")
+      .primaryGrow(1)
       .counterSizing("FIXED")
       .horizontalConstraint("STRETCH")
       .verticalConstraint("CENTER")
       .build();
 
     expect(result.stackPositioning).toEqual({ value: 1, name: "ABSOLUTE" });
-    expect(result.stackPrimarySizing).toEqual({ value: 1, name: "FILL" });
+    expect(result.stackChildPrimaryGrow).toBe(1);
+    expect(result.stackPrimarySizing).toBeUndefined();
     expect(result.stackCounterSizing).toEqual({ value: 0, name: "FIXED" });
     expect(result.horizontalConstraint).toEqual({ value: 3, name: "STRETCH" });
     expect(result.verticalConstraint).toEqual({ value: 1, name: "CENTER" });

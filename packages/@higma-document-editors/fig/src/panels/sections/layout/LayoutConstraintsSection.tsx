@@ -5,11 +5,11 @@ import type { FigDesignNode, LayoutConstraints } from "@higma-document-models/fi
 import type { KiwiEnumValue } from "@higma-document-models/fig/types";
 import {
   CONSTRAINT_TYPE_VALUES,
-  STACK_ALIGN_VALUES,
+  STACK_COUNTER_ALIGN_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
   type ConstraintType,
-  type StackAlign,
+  type StackCounterAlign,
   type StackPositioning,
   type StackSizing,
 } from "@higma-document-models/fig/constants";
@@ -46,8 +46,8 @@ const positioningOptions: readonly SelectOption<StackPositioning>[] = [
 
 const sizingOptions: readonly SelectOption<StackSizing>[] = [
   { value: "FIXED", label: "Fixed" },
-  { value: "FILL", label: "Fill" },
-  { value: "HUG", label: "Hug" },
+  { value: "RESIZE_TO_FIT", label: "Hug" },
+  { value: "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE", label: "Implicit hug" },
 ];
 
 const constraintOptions: readonly SelectOption<ConstraintType>[] = [
@@ -58,7 +58,7 @@ const constraintOptions: readonly SelectOption<ConstraintType>[] = [
   { value: "SCALE", label: "Scale" },
 ];
 
-const alignSelfOptions: readonly SelectOption<StackAlign>[] = [
+const alignSelfOptions: readonly SelectOption<StackCounterAlign>[] = [
   { value: "MIN", label: "Auto" },
   { value: "CENTER", label: "Center" },
   { value: "MAX", label: "Max" },
@@ -134,10 +134,10 @@ export function LayoutConstraintsSection({ node, target, dispatch }: LayoutConst
     }));
   }, [updateConstraints]);
 
-  const updateAlignSelf = useCallback((value: StackAlign) => {
+  const updateAlignSelf = useCallback((value: StackCounterAlign) => {
     updateConstraints((current) => ({
       ...current,
-      stackChildAlignSelf: value === "MIN" ? undefined : toEnumValue(value, STACK_ALIGN_VALUES),
+      stackChildAlignSelf: value === "MIN" ? undefined : toEnumValue(value, STACK_COUNTER_ALIGN_VALUES),
     }));
   }, [updateConstraints]);
 
@@ -165,7 +165,7 @@ export function LayoutConstraintsSection({ node, target, dispatch }: LayoutConst
       </FieldRow>
       <FieldRow>
         <FieldGroup label="Align self" inline labelWidth={70}>
-          <Select value={enumName(constraints.stackChildAlignSelf, "MIN" as StackAlign)} onChange={updateAlignSelf} options={alignSelfOptions} ariaLabel="Layout align self" />
+          <Select value={enumName(constraints.stackChildAlignSelf, "MIN" as StackCounterAlign)} onChange={updateAlignSelf} options={alignSelfOptions} ariaLabel="Layout align self" />
         </FieldGroup>
         <FieldGroup label="Grow" inline labelWidth={44}>
           <Input type="number" ariaLabel="Layout grow" value={constraints.stackChildPrimaryGrow} onChange={(v) => updateGrow(v as number)} />

@@ -312,8 +312,8 @@ export function createTextSchema(): KiwiSchema {
       // 23: StackSizing enum (for child nodes)
       createEnumDef("StackSizing", [
         ["FIXED", 0],
-        ["FILL", 1],
-        ["HUG", 2],
+        ["RESIZE_TO_FIT", 1],
+        ["RESIZE_TO_FIT_WITH_IMPLICIT_SIZE", 2],
       ]),
 
       // 24: ConstraintType enum (for non-AutoLayout constraints)
