@@ -32,6 +32,21 @@ const LAYER_FILE_MAP: Record<string, string> = {
   "auto-gap-20": "auto-gap-20.svg",
   "auto-padding-20": "auto-padding-20.svg",
   "constraints-corners": "constraints-corners.svg",
+  "auto-grid-2x3": "auto-grid-2x3.svg",
+  "auto-wrap-3-rows": "auto-wrap-3-rows.svg",
+  "auto-hug-h": "auto-hug-h.svg",
+  "auto-hug-v": "auto-hug-v.svg",
+  "auto-fill-grow": "auto-fill-grow.svg",
+  "auto-min-clamp": "auto-min-clamp.svg",
+  "auto-max-clamp": "auto-max-clamp.svg",
+  "auto-aspect-lock": "auto-aspect-lock.svg",
+  "auto-strokes-on": "auto-strokes-on.svg",
+  "auto-strokes-off": "auto-strokes-off.svg",
+  "auto-z-reverse": "auto-z-reverse.svg",
+  "auto-absolute-mix": "auto-absolute-mix.svg",
+  "auto-padding-asym": "auto-padding-asym.svg",
+  "auto-nested": "auto-nested.svg",
+  "auto-stretch-counter": "auto-stretch-counter.svg",
 };
 
 type LayerInfo = {
@@ -46,6 +61,20 @@ type ParsedData = {
   blobs: readonly FigBlob[];
   images: ReadonlyMap<string, FigPackageImage>;
   nodeMap: ReadonlyMap<string, FigNode>;
+};
+
+type RectExpectation = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+};
+
+type ExtractedRect = RectExpectation & {
+  readonly id: string;
+  readonly fill: string | undefined;
+  readonly stroke: string | undefined;
+  readonly strokeWidth: number | undefined;
 };
 
 let parsedDataCache: ParsedData | null = null;
@@ -114,8 +143,8 @@ async function loadFigFile(): Promise<ParsedData> {
  * renderer for any non-zero corner radius — see scene-graph/render/
  * rounded-rect-path.ts). Sharp-cornered shapes still emit `<rect>`.
  */
-function extractRectPositions(svg: string): Array<{ id: string; x: number; y: number; width: number; height: number }> {
-  const results: Array<{ id: string; x: number; y: number; width: number; height: number }> = [];
+function extractRectPositions(svg: string): ExtractedRect[] {
+  const results: ExtractedRect[] = [];
   const tokenRegex = /<g[^>]*>|<\/g>|<rect[^>]*\/?>|<path[^>]*\/?>/g;
   const stack: Array<{ tx: number; ty: number }> = [{ tx: 0, ty: 0 }];
   const indexRef = { value: 0 };
@@ -123,6 +152,19 @@ function extractRectPositions(svg: string): Array<{ id: string; x: number; y: nu
   const matrixOf = (s: string): { tx: number; ty: number } => {
     const m = s.match(/transform="matrix\(1,\s*0,\s*0,\s*1,\s*([\d.-]+),\s*([\d.-]+)\)"/);
     return m ? { tx: parseFloat(m[1]), ty: parseFloat(m[2]) } : { tx: 0, ty: 0 };
+  };
+
+  const attrOf = (s: string, attrName: string): string | undefined => {
+    const match = s.match(new RegExp(`\\b${attrName}="([^"]*)"`));
+    return match?.[1];
+  };
+
+  const strokeWidthOf = (s: string): number | undefined => {
+    const strokeWidth = attrOf(s, "stroke-width");
+    if (strokeWidth === undefined) {
+      return undefined;
+    }
+    return parseFloat(strokeWidth);
   };
 
   // Rounded-rect path d-string parser. Our builder emits, for tl=tr=br=bl=r:
@@ -192,6 +234,9 @@ function extractRectPositions(svg: string): Array<{ id: string; x: number; y: nu
       } // not a rounded-rect path, skip
       results.push({
         id,
+        fill: attrOf(tok, "fill"),
+        stroke: attrOf(tok, "stroke"),
+        strokeWidth: strokeWidthOf(tok),
         x: parsed.x + ancestor.tx + local.tx,
         y: parsed.y + ancestor.ty + local.ty,
         width: parsed.width,
@@ -212,11 +257,24 @@ function extractRectPositions(svg: string): Array<{ id: string; x: number; y: nu
     const x = parseFloat(xMatch?.[1] ?? "0") + ancestor.tx + local.tx;
     const y = parseFloat(yMatch?.[1] ?? "0") + ancestor.ty + local.ty;
 
-    results.push({ id, x, y, width, height });
+    results.push({
+      id,
+      fill: attrOf(tok, "fill"),
+      stroke: attrOf(tok, "stroke"),
+      strokeWidth: strokeWidthOf(tok),
+      x,
+      y,
+      width,
+      height,
+    });
     indexRef.value++;
   }
 
   return results;
+}
+
+function extractRectRenderOrder(svg: string): readonly ExtractedRect[] {
+  return contentRectsFor(svg);
 }
 
 /** Get SVG viewBox dimensions */
@@ -230,6 +288,114 @@ function getSvgSize(svg: string): { width: number; height: number } {
 }
 
 const WRITE_SNAPSHOTS = true;
+
+async function renderLayerSvg(layerName: string): Promise<string> {
+  const data = await loadFigFile();
+  const layer = data.layers.get(layerName);
+  expect(layer).toBeDefined();
+  if (!layer) {
+    throw new Error(`Layer not found: ${layerName}`);
+  }
+  const wrapperCanvas: FigNode = {
+    type: "CANVAS",
+    name: layerName,
+    children: [layer.node],
+  };
+  const result = await renderCanvas(wrapperCanvas, {
+    width: layer.size.width,
+    height: layer.size.height,
+    blobs: data.blobs,
+    images: data.images,
+    symbolMap: data.nodeMap,
+  });
+  return result.svg;
+}
+
+function contentRectsFor(svg: string): readonly ExtractedRect[] {
+  const size = getSvgSize(svg);
+  return extractRectPositions(svg).filter(
+    (r) => !(r.width === size.width && r.height === size.height && r.x === 0 && r.y === 0),
+  );
+}
+
+function expectRectsClose(actual: readonly RectExpectation[], expected: readonly RectExpectation[]): void {
+  expect(actual.length).toBe(expected.length);
+  for (let index = 0; index < expected.length; index++) {
+    expect(actual[index]).toBeDefined();
+    expect(Math.abs(actual[index].x - expected[index].x)).toBeLessThan(1);
+    expect(Math.abs(actual[index].y - expected[index].y)).toBeLessThan(1);
+    expect(Math.abs(actual[index].width - expected[index].width)).toBeLessThan(1);
+    expect(Math.abs(actual[index].height - expected[index].height)).toBeLessThan(1);
+  }
+}
+
+function expectAutoZReverseOrder(svg: string): void {
+  const renderedOrder = extractRectRenderOrder(svg)
+    .filter((rect) => rect.width === 60 && rect.height === 50)
+    .map((rect) => rect.fill);
+  expect(renderedOrder).toEqual(["#4d4de5", "#4de54d", "#e54d4d"]);
+}
+
+const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
+  "auto-grid-2x3": [
+    { x: 16, y: 16, width: 40, height: 30 },
+    { x: 68, y: 16, width: 40, height: 30 },
+    { x: 16, y: 54, width: 40, height: 30 },
+    { x: 68, y: 54, width: 40, height: 30 },
+    { x: 16, y: 92, width: 40, height: 30 },
+    { x: 68, y: 92, width: 40, height: 30 },
+  ],
+  "auto-wrap-3-rows": [
+    { x: 0, y: 42, width: 60, height: 20 },
+    { x: 70, y: 42, width: 60, height: 20 },
+    { x: 0, y: 70, width: 60, height: 20 },
+    { x: 70, y: 70, width: 60, height: 20 },
+    { x: 0, y: 98, width: 60, height: 20 },
+  ],
+  "auto-hug-h": [
+    { x: 8, y: 8, width: 30, height: 20 },
+    { x: 48, y: 8, width: 50, height: 30 },
+    { x: 108, y: 8, width: 20, height: 25 },
+  ],
+  "auto-hug-v": [
+    { x: 8, y: 8, width: 30, height: 20 },
+    { x: 8, y: 38, width: 50, height: 30 },
+    { x: 8, y: 78, width: 20, height: 25 },
+  ],
+  "auto-fill-grow": [
+    { x: 10, y: 10, width: 40, height: 30 },
+    { x: 60, y: 10, width: 70, height: 30 },
+    { x: 140, y: 10, width: 50, height: 30 },
+  ],
+  "auto-min-clamp": [
+    { x: 10, y: 10, width: 60, height: 30 },
+    { x: 10, y: 44, width: 60, height: 20 },
+  ],
+  "auto-max-clamp": [
+    { x: 10, y: 10, width: 60, height: 100 },
+    { x: 10, y: 118, width: 60, height: 100 },
+    { x: 10, y: 226, width: 60, height: 100 },
+  ],
+  "auto-aspect-lock": [{ x: 20, y: 20, width: 80, height: 60 }],
+  "auto-strokes-on": [{ x: 16, y: 16, width: 40, height: 30 }],
+  "auto-strokes-off": [{ x: 8, y: 8, width: 40, height: 30 }],
+  "auto-z-reverse": [
+    { x: 80, y: 0, width: 60, height: 50 },
+    { x: 40, y: 0, width: 60, height: 50 },
+    { x: 0, y: 0, width: 60, height: 50 },
+  ],
+  "auto-absolute-mix": [
+    { x: 10, y: 10, width: 40, height: 30 },
+    { x: 60, y: 10, width: 40, height: 30 },
+    { x: 110, y: 10, width: 40, height: 30 },
+    { x: 120, y: 35, width: 50, height: 30 },
+  ],
+  "auto-padding-asym": [{ x: 4, y: 12, width: 100, height: 30 }],
+  "auto-stretch-counter": [
+    { x: 10, y: 10, width: 40, height: 70 },
+    { x: 62, y: 10, width: 50, height: 30 },
+  ],
+};
 
 describe("AutoLayout Rendering", () => {
   beforeAll(async () => {
@@ -333,6 +499,16 @@ describe("AutoLayout Rendering", () => {
         expect(Math.abs(r.y - a.y)).toBeLessThan(1);
         expect(Math.abs(r.width - a.width)).toBeLessThan(1);
         expect(Math.abs(r.height - a.height)).toBeLessThan(1);
+      }
+    });
+  }
+
+  for (const [layerName, expected] of Object.entries(PHASE_B_GEOMETRY)) {
+    it(`resolves Phase B authored layout for "${layerName}" before Figma export exists`, async () => {
+      const svg = await renderLayerSvg(layerName);
+      expectRectsClose(contentRectsFor(svg), expected);
+      if (layerName === "auto-z-reverse") {
+        expectAutoZReverseOrder(svg);
       }
     });
   }
