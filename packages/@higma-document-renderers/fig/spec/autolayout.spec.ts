@@ -574,6 +574,46 @@ function runRectPositionEquality(layerName: LayerName, actualSvg: string, render
   }
 }
 
+async function runAutoLayoutEndToEndVerificationGate(layerName: LayerName, fileName: string): Promise<void> {
+  const data = await loadFigFile();
+  const layer = data.layers.get(layerName);
+
+  if (!layer) {
+    throw new Error(`Layer "${layerName}" not found. Available: ${[...data.layers.keys()].join(", ")}`);
+  }
+
+  const wrapperCanvas: FigNode = {
+    type: "CANVAS",
+    name: layerName,
+    children: [layer.node],
+  };
+
+  const result = await renderCanvas(wrapperCanvas, {
+    width: layer.size.width,
+    height: layer.size.height,
+    blobs: data.blobs,
+    images: data.images,
+    symbolMap: data.nodeMap,
+  });
+
+  if (WRITE_SNAPSHOTS) {
+    fs.writeFileSync(path.join(SNAPSHOTS_DIR, fileName), result.svg);
+  }
+
+  expect(result.svg).toContain("<svg");
+  expect(result.svg).toContain("</svg>");
+
+  runRendererInternalAssertions(layerName, result.svg);
+
+  const actualPath = path.join(ACTUAL_DIR, fileName);
+  if (!fs.existsSync(actualPath)) {
+    console.log(`SKIP: Actual SVG not found: ${fileName}`);
+    return;
+  }
+
+  runRectPositionEquality(layerName, fs.readFileSync(actualPath, "utf-8"), result.svg);
+}
+
 describe("AutoLayout Rendering", () => {
   beforeAll(async () => {
     await loadFigFile();
@@ -584,43 +624,7 @@ describe("AutoLayout Rendering", () => {
 
   for (const [layerName, fileName] of Object.entries(LAYER_FILE_MAP) as Array<[LayerName, string]>) {
     it(`renders "${layerName}" with correct layout`, async () => {
-      const data = await loadFigFile();
-      const layer = data.layers.get(layerName);
-
-      if (!layer) {
-        throw new Error(`Layer "${layerName}" not found. Available: ${[...data.layers.keys()].join(", ")}`);
-      }
-
-      const wrapperCanvas: FigNode = {
-        type: "CANVAS",
-        name: layerName,
-        children: [layer.node],
-      };
-
-      const result = await renderCanvas(wrapperCanvas, {
-        width: layer.size.width,
-        height: layer.size.height,
-        blobs: data.blobs,
-        images: data.images,
-        symbolMap: data.nodeMap,
-      });
-
-      if (WRITE_SNAPSHOTS) {
-        fs.writeFileSync(path.join(SNAPSHOTS_DIR, fileName), result.svg);
-      }
-
-      expect(result.svg).toContain("<svg");
-      expect(result.svg).toContain("</svg>");
-
-      runRendererInternalAssertions(layerName, result.svg);
-
-      const actualPath = path.join(ACTUAL_DIR, fileName);
-      if (!fs.existsSync(actualPath)) {
-        console.log(`SKIP: Actual SVG not found: ${fileName}`);
-        return;
-      }
-
-      runRectPositionEquality(layerName, fs.readFileSync(actualPath, "utf-8"), result.svg);
+      await runAutoLayoutEndToEndVerificationGate(layerName, fileName);
     });
   }
 });
