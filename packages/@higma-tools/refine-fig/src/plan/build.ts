@@ -29,9 +29,7 @@ import type {
   ActionRename,
   ProxyRef,
 } from "./types";
-import { isLeafIconCluster } from "../componentize";
-
-const LEAF_ICON_ROLE_RE = /^FRAME<(container|raw)>\(((FRAME<[^>]+>\((VECTOR|BOOLEAN_OPERATION)<[^>]+>(,(VECTOR|BOOLEAN_OPERATION)<[^>]+>)*\))|(VECTOR|BOOLEAN_OPERATION)<[^>]+>(,(VECTOR|BOOLEAN_OPERATION)<[^>]+>)*)\)$/;
+import { isPromotableCluster } from "../componentize";
 
 export type BuildPlanOptions = {
   readonly file: string;
@@ -46,8 +44,7 @@ export function buildPlan(
   options: BuildPlanOptions,
 ): RefinePlan {
   const actions: PlanAction[] = [];
-  const skippedNonIconClusters: string[] = [];
-  const missingTemplates: { kind: "fill" | "text"; name: string }[] = [];
+  const skippedNonPromotableClusters: string[] = [];
 
   // ---- Fill proxies + bindings ------------------------------------------
   const tokenByPaletteKey = new Map<string, string>();
@@ -61,10 +58,8 @@ export function buildPlan(
       pushFillBindings(actions, entry, { kind: "existing", guid: entry.existingProxyGuid });
       continue;
     }
-    if (source.fillStyleProxies.length === 0) {
-      missingTemplates.push({ kind: "fill", name: decision.name });
-      continue;
-    }
+    // No template? Bootstrap path in apply will build a proxy from
+    // scratch — emit the create action either way.
     const token = `fill:${entry.key}`;
     tokenByPaletteKey.set(entry.key, token);
     const create: ActionCreateFillProxy = {
@@ -87,10 +82,8 @@ export function buildPlan(
       pushTextBindings(actions, entry, { kind: "existing", guid: entry.existingProxyGuid });
       continue;
     }
-    if (source.textStyleProxies.length === 0) {
-      missingTemplates.push({ kind: "text", name: decision.name });
-      continue;
-    }
+    // No template? Bootstrap path in apply will build a proxy from
+    // scratch — emit the create action either way.
     const token = `text:${entry.key}`;
     const create: ActionCreateTextProxy = {
       kind: "create-text-proxy",
@@ -113,11 +106,12 @@ export function buildPlan(
     }
     const exemplarGuid = decision.exemplarGuid ?? pickDeterministicExemplar(cluster);
     if (decision.promoteToSymbol === true) {
-      // We can only honour this if the cluster is a leaf-icon and
-      // the exemplar still resolves to one. Otherwise log + skip
-      // promote, but still emit a rename for every member so the
-      // cluster gets its authored name even without componentize.
-      if (LEAF_ICON_ROLE_RE.test(cluster.roleSignature) && isLeafIconCluster(source.loaded, exemplarGuid)) {
+      // The cluster is promotable iff the exemplar's subtree contains
+      // only renderable, fingerprintable types (no GRADIENT paints,
+      // no unknown node kinds). Otherwise log + skip promote, but
+      // still emit a rename for every member so the cluster gets its
+      // authored name even without componentize.
+      if (isPromotableCluster(source.loaded, exemplarGuid)) {
         const promote: ActionPromoteIconCluster = {
           kind: "promote-icon-cluster",
           clusterId: cluster.clusterId,
@@ -127,7 +121,7 @@ export function buildPlan(
         };
         actions.push(promote);
       } else {
-        skippedNonIconClusters.push(cluster.clusterId);
+        skippedNonPromotableClusters.push(cluster.clusterId);
       }
     }
     // Always emit explicit renames for cluster members (even when
@@ -150,7 +144,7 @@ export function buildPlan(
   return {
     source: { file: options.file, bytes: options.bytes },
     actions,
-    diagnostics: { skippedNonIconClusters, missingTemplates },
+    diagnostics: { skippedNonPromotableClusters },
   };
 }
 

@@ -13,7 +13,7 @@
  */
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { createGuidAllocator, patchNodeChange } from "@higma-document-io/fig/roundtrip";
-import { synthesiseFillProxy, synthesiseTextProxy } from "../proxies";
+import { bootstrapFillProxy, bootstrapTextProxy, synthesiseFillProxy, synthesiseTextProxy } from "../proxies";
 import { promoteIconCluster } from "../componentize";
 import type {
   PlanAction,
@@ -99,20 +99,41 @@ function applyCreateFill(
   counts: { fillProxiesCreated: number },
   skipped: { action: PlanAction; reason: string }[],
 ): void {
-  if (!ctx.fillTemplateGuid) {
-    skipped.push({ action, reason: "no FILL-style proxy template available in this file" });
-    return;
+  void skipped;
+  const created = createFillProxy(action, loaded, ctx, allocator);
+  tokens.set(action.token, created.guid);
+  counts.fillProxiesCreated = counts.fillProxiesCreated + 1;
+}
+
+/**
+ * Pick the right FILL proxy strategy: clone an existing template
+ * when one exists, otherwise bootstrap from scratch. Bootstrap
+ * appends a fresh commands blob and assembles the proxy by hand,
+ * so the create action lands either way.
+ */
+function createFillProxy(
+  action: ActionCreateFillProxy,
+  loaded: LoadedFigFile,
+  ctx: ApplyContext,
+  allocator: ReturnType<typeof createGuidAllocator>,
+): { readonly guid: string } {
+  if (ctx.fillTemplateGuid) {
+    return synthesiseFillProxy({
+      loaded,
+      internalCanvasGuid: ctx.internalCanvasGuid,
+      templateProxyGuid: ctx.fillTemplateGuid,
+      allocator,
+      name: action.name,
+      color: action.color,
+    });
   }
-  const created = synthesiseFillProxy({
+  return bootstrapFillProxy({
     loaded,
     internalCanvasGuid: ctx.internalCanvasGuid,
-    templateProxyGuid: ctx.fillTemplateGuid,
     allocator,
     name: action.name,
     color: action.color,
   });
-  tokens.set(action.token, created.guid);
-  counts.fillProxiesCreated = counts.fillProxiesCreated + 1;
 }
 
 function applyCreateText(
@@ -124,23 +145,44 @@ function applyCreateText(
   counts: { textProxiesCreated: number },
   skipped: { action: PlanAction; reason: string }[],
 ): void {
-  if (!ctx.textTemplateGuid) {
-    skipped.push({ action, reason: "no TEXT-style proxy template available in this file" });
-    return;
-  }
-  const created = synthesiseTextProxy({
-    loaded,
-    internalCanvasGuid: ctx.internalCanvasGuid,
-    templateProxyGuid: ctx.textTemplateGuid,
-    allocator,
-    name: action.name,
-    descriptor: {
-      fontName: { family: action.fontFamily, style: action.fontStyle, postscript: "" },
-      fontSize: action.fontSize,
-    },
-  });
+  void skipped;
+  const created = createTextProxy(action, loaded, ctx, allocator);
   tokens.set(action.token, created.guid);
   counts.textProxiesCreated = counts.textProxiesCreated + 1;
+}
+
+/**
+ * Pick the right TEXT proxy strategy: clone an existing template
+ * when one exists, otherwise bootstrap from scratch. The bootstrap
+ * path emits a proxy whose `derivedTextData` is left for Figma to
+ * rebuild on next open — same fail-fast assumption the synthesise
+ * path already relies on.
+ */
+function createTextProxy(
+  action: ActionCreateTextProxy,
+  loaded: LoadedFigFile,
+  ctx: ApplyContext,
+  allocator: ReturnType<typeof createGuidAllocator>,
+): { readonly guid: string } {
+  const fontName = { family: action.fontFamily, style: action.fontStyle, postscript: "" };
+  if (ctx.textTemplateGuid) {
+    return synthesiseTextProxy({
+      loaded,
+      internalCanvasGuid: ctx.internalCanvasGuid,
+      templateProxyGuid: ctx.textTemplateGuid,
+      allocator,
+      name: action.name,
+      descriptor: { fontName, fontSize: action.fontSize },
+    });
+  }
+  return bootstrapTextProxy({
+    loaded,
+    internalCanvasGuid: ctx.internalCanvasGuid,
+    allocator,
+    name: action.name,
+    fontName,
+    fontSize: action.fontSize,
+  });
 }
 
 function resolveProxy(ref: ProxyRef, tokens: ReadonlyMap<string, string>): string | undefined {

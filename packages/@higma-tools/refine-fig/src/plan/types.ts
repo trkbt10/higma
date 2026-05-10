@@ -59,9 +59,6 @@ export type ActionCreateTextProxy = {
   readonly fontStyle: string;
   readonly fontWeight: number;
   readonly fontSize: number;
-  /** Same shape as `lineHeight` on the source — value + unit. */
-  readonly lineHeight?: { readonly value: number; readonly units: string };
-  readonly letterSpacing?: { readonly value: number; readonly units: string };
 };
 
 export type ProxyRef =
@@ -101,8 +98,6 @@ export type RefinePlan = {
   readonly actions: readonly PlanAction[];
   readonly diagnostics: {
     /** Cluster ids the agent named but the builder declined to promote (e.g. not a leaf-icon cluster). */
-    readonly skippedNonIconClusters: readonly string[];
-    /** Palette/typography proxies the agent named but no template was available. */
-    readonly missingTemplates: readonly { readonly kind: "fill" | "text"; readonly name: string }[];
+    readonly skippedNonPromotableClusters: readonly string[];
   };
 };

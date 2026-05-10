@@ -6,7 +6,6 @@ export type {
   ClusterDecision,
   PaletteDecision,
   TypographyDecision,
-  VariantGroupDecision,
 } from "./types";
 export { scaffoldDecisions } from "./scaffold";
 export { parseDecisions } from "./parse";

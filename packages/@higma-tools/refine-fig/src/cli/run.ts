@@ -181,11 +181,8 @@ async function commandPlan(args: ParsedArgs): Promise<void> {
 
 function formatPlanSummary(plan: RefinePlan): string {
   const parts: string[] = [`actions=${plan.actions.length}`];
-  if (plan.diagnostics.skippedNonIconClusters.length > 0) {
-    parts.push(`skippedNonIconClusters=${plan.diagnostics.skippedNonIconClusters.length}`);
-  }
-  if (plan.diagnostics.missingTemplates.length > 0) {
-    parts.push(`missingTemplates=${plan.diagnostics.missingTemplates.length}`);
+  if (plan.diagnostics.skippedNonPromotableClusters.length > 0) {
+    parts.push(`skippedNonPromotableClusters=${plan.diagnostics.skippedNonPromotableClusters.length}`);
   }
   return parts.join(" ");
 }

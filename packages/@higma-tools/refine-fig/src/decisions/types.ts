@@ -26,9 +26,14 @@
  *
  *   - `typography[styleKey]`    — same shape, for text styles.
  *
- *   - `variantGroups[groupId]`  — the agent groups COMPONENT clusters
- *                                  into a COMPONENT_SET with explicit
- *                                  variant axes.
+ * Note on "components": Figma's on-disk schema (the embedded Kiwi
+ * schema in every `.fig` file as well as the bundled
+ * `figma-schema.json`) declares only `SYMBOL` (value 15) and
+ * `INSTANCE` (value 16) — there is no separate `COMPONENT` or
+ * `COMPONENT_SET` node type. The user-facing "Component" concept is
+ * just a SYMBOL. Variant grouping (Figma's "variant set" UI) does
+ * not have a representation in this schema; promoting a cluster
+ * yields a SYMBOL and INSTANCEs, full stop.
  */
 
 export type ClusterDecision = {
@@ -54,19 +59,8 @@ export type TypographyDecision = {
   readonly name: string;
 };
 
-export type VariantGroupDecision = {
-  /** COMPONENT_SET name as it should appear in the document. */
-  readonly name: string;
-  /** Each entry is one cluster contributing one COMPONENT to the set. */
-  readonly members: readonly {
-    readonly clusterId: string;
-    readonly variantValues: Readonly<Record<string, string>>;
-  }[];
-};
-
 export type Decisions = {
   readonly clusters: Readonly<Record<string, ClusterDecision>>;
   readonly palette: Readonly<Record<string, PaletteDecision>>;
   readonly typography: Readonly<Record<string, TypographyDecision>>;
-  readonly variantGroups: Readonly<Record<string, VariantGroupDecision>>;
 };

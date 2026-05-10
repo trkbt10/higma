@@ -11,7 +11,6 @@ import type {
   ClusterDecision,
   PaletteDecision,
   TypographyDecision,
-  VariantGroupDecision,
 } from "./types";
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -67,23 +66,6 @@ function asTypographyDecision(raw: unknown): TypographyDecision | undefined {
   return { name: raw.name };
 }
 
-function asVariantGroupDecision(raw: unknown): VariantGroupDecision | undefined {
-  if (!isObject(raw)) {
-    return undefined;
-  }
-  if (!isString(raw.name) || !Array.isArray(raw.members)) {
-    return undefined;
-  }
-  const members: { clusterId: string; variantValues: Record<string, string> }[] = [];
-  for (const m of raw.members) {
-    if (!isObject(m) || !isString(m.clusterId) || !isStringRecord(m.variantValues)) {
-      return undefined;
-    }
-    members.push({ clusterId: m.clusterId, variantValues: m.variantValues });
-  }
-  return { name: raw.name, members };
-}
-
 function mapRecord<T>(source: Record<string, unknown>, asT: (raw: unknown) => T | undefined, label: string): Record<string, T> {
   const out: Record<string, T> = {};
   for (const [key, value] of Object.entries(source)) {
@@ -102,13 +84,12 @@ export function parseDecisions(jsonText: string): Decisions {
   if (!isObject(parsed)) {
     throw new Error("parseDecisions: top-level value must be an object");
   }
-  if (!isObject(parsed.clusters) || !isObject(parsed.palette) || !isObject(parsed.typography) || !isObject(parsed.variantGroups)) {
-    throw new Error("parseDecisions: missing one of clusters / palette / typography / variantGroups");
+  if (!isObject(parsed.clusters) || !isObject(parsed.palette) || !isObject(parsed.typography)) {
+    throw new Error("parseDecisions: missing one of clusters / palette / typography");
   }
   return {
     clusters: mapRecord(parsed.clusters, asClusterDecision, "clusters"),
     palette: mapRecord(parsed.palette, asPaletteDecision, "palette"),
     typography: mapRecord(parsed.typography, asTypographyDecision, "typography"),
-    variantGroups: mapRecord(parsed.variantGroups, asVariantGroupDecision, "variantGroups"),
   };
 }

@@ -1,21 +1,41 @@
 /**
- * @file Promote a cluster of repeated icon-shaped subtrees into a
- * single SYMBOL plus N INSTANCEs.
+ * @file Promote a cluster of repeated subtrees into a single SYMBOL
+ * plus N INSTANCEs.
  *
- * Scope (v1):
+ * Scope:
  *
- *   The function only handles **leaf-icon clusters**: a cluster
- *   whose role signature describes a small frame containing only
- *   VECTOR / BOOLEAN_OPERATION / FRAME-of-vectors descendants — no
- *   nested INSTANCE, no TEXT, no IMAGE paints. These are the
- *   clusters where override-path machinery is not needed: the
- *   INSTANCE just renders the SYMBOL's content, no per-instance
- *   state.
+ *   The function handles every cluster whose members are *strictly
+ *   identical* — same descendant types, sizes, geometry blob indices,
+ *   text content, image references, nested-symbol references, and
+ *   opacity. Strict identity means a plain SYMBOL/INSTANCE flip is
+ *   visually equivalent: the INSTANCE renders the SYMBOL's children
+ *   verbatim, no per-instance overrides required.
  *
- *   Anything more complex (rows, cards, nested instances) is
- *   declined. The caller should check the cluster's role signature
- *   before calling, or rely on the pre-flight in `isLeafIconCluster`
- *   exposed below.
+ *   The fingerprint is the safety mechanism. Visual-hash clustering
+ *   (in `analysis/duplicate-clusters`) tolerates small pixel diffs to
+ *   surface candidate clusters; this module's `subtreeFingerprint`
+ *   tightens that to literal field-equality across the visually-
+ *   significant axes. Members that pass the loose hash but differ on
+ *   any of those axes are correctly excluded from `eligibleOthers`
+ *   and stay as plain frames.
+ *
+ *   Allowed descendant types are the renderable shape kinds that
+ *   round-trip cleanly under SYMBOL → INSTANCE without override
+ *   payloads:
+ *
+ *     - VECTOR, BOOLEAN_OPERATION, FRAME, GROUP — same as v1.
+ *     - RECTANGLE, ROUNDED_RECTANGLE, ELLIPSE, LINE, STAR,
+ *       REGULAR_POLYGON — primitive shapes.
+ *     - TEXT — text content is folded into the fingerprint, so only
+ *       members with identical characters/font/style cluster.
+ *     - INSTANCE — only when its `symbolData.symbolID` is identical
+ *       across cluster members (folded into the fingerprint). The
+ *       cluster's SYMBOL holds the descendant INSTANCE; every
+ *       cluster INSTANCE then transitively includes that descendant
+ *       reference.
+ *
+ *   IMAGE paints are accepted iff the `imageRef` is identical across
+ *   members (folded into the fingerprint).
  *
  * Algorithm:
  *
@@ -27,15 +47,9 @@
  *      Descendants stay where they are; their parentIndex still
  *      points at the exemplar's GUID, so they become the SYMBOL's
  *      content automatically.
- *   3. For every *other* member GUID:
- *        - Snapshot the member's parentIndex / transform / size /
- *          opacity / visible / strokeWeight (a few fields Figma
- *          requires on every node).
- *        - Replace the entry with an INSTANCE node carrying those
- *          fields plus `symbolData.symbolID` pointing at the
- *          exemplar. children are not stored explicitly in
- *          `nodeChanges` (they're inferred from parentIndex), so we
- *          just need to drop the descendant entries.
+ *   3. For every *other* fingerprint-equal member GUID:
+ *        - Replace the entry with an INSTANCE node whose
+ *          `symbolData.symbolID` references the exemplar.
  *        - Remove every descendant of the member from
  *          `loaded.nodeChanges`.
  */
@@ -43,7 +57,20 @@ import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
 
-const LEAF_ICON_ALLOWED = new Set(["VECTOR", "BOOLEAN_OPERATION", "FRAME", "GROUP"]);
+const PROMOTABLE_DESCENDANT_TYPES = new Set([
+  "VECTOR",
+  "BOOLEAN_OPERATION",
+  "FRAME",
+  "GROUP",
+  "RECTANGLE",
+  "ROUNDED_RECTANGLE",
+  "ELLIPSE",
+  "LINE",
+  "STAR",
+  "REGULAR_POLYGON",
+  "TEXT",
+  "INSTANCE",
+]);
 
 export type PromoteIconClusterArgs = {
   readonly loaded: LoadedFigFile;
@@ -60,10 +87,19 @@ export type PromoteResult = {
 };
 
 /**
- * Decide whether a cluster's exemplar is a leaf-icon — only such
- * clusters are promoted in v1.
+ * Decide whether a cluster's exemplar is promotable to a SYMBOL.
+ *
+ * The exemplar must be a FRAME / GROUP container, and every
+ * descendant must be one of the renderable types listed in
+ * `PROMOTABLE_DESCENDANT_TYPES`. GRADIENT paints are still refused
+ * because a gradient's `gradientHandlePositions` are positional
+ * relative to the node — when an INSTANCE's transform differs from
+ * the SYMBOL exemplar's, the gradient direction differs too, which
+ * would silently break visual parity. IMAGE paints are accepted; the
+ * fingerprint folds in their `imageRef` so two members differ
+ * fingerprint if they reference different images.
  */
-export function isLeafIconCluster(loaded: LoadedFigFile, exemplarGuid: string): boolean {
+export function isPromotableCluster(loaded: LoadedFigFile, exemplarGuid: string): boolean {
   const exemplar = findByGuid(loaded, exemplarGuid);
   if (!exemplar) {
     return false;
@@ -71,18 +107,27 @@ export function isLeafIconCluster(loaded: LoadedFigFile, exemplarGuid: string): 
   if (exemplar.type?.name !== "FRAME" && exemplar.type?.name !== "GROUP") {
     return false;
   }
-  // Walk descendants; refuse if any non-allowed type appears.
   const descendants = collectSubtree(loaded, exemplarGuid);
   for (const node of descendants) {
     const t = node.type?.name;
-    if (!t || !LEAF_ICON_ALLOWED.has(t)) {
+    if (!t || !PROMOTABLE_DESCENDANT_TYPES.has(t)) {
       return false;
     }
-    if (hasImageOrGradientFill(node)) {
+    if (hasGradientFill(node)) {
       return false;
     }
   }
   return true;
+}
+
+/**
+ * Backwards-compatible alias retained for callers that still spell
+ * the v1 name. New code should use `isPromotableCluster`.
+ *
+ * @deprecated Use `isPromotableCluster`.
+ */
+export function isLeafIconCluster(loaded: LoadedFigFile, exemplarGuid: string): boolean {
+  return isPromotableCluster(loaded, exemplarGuid);
 }
 
 /** Promote an exemplar to a SYMBOL and rewrite the other cluster members into INSTANCEs. */
@@ -91,8 +136,8 @@ export function promoteIconCluster(args: PromoteIconClusterArgs): PromoteResult 
   if (!memberGuids.includes(exemplarGuid)) {
     throw new Error("promoteIconCluster: exemplarGuid must be one of memberGuids");
   }
-  if (!isLeafIconCluster(loaded, exemplarGuid)) {
-    throw new Error("promoteIconCluster: exemplar is not a leaf-icon cluster (v1 scope)");
+  if (!isPromotableCluster(loaded, exemplarGuid)) {
+    throw new Error("promoteIconCluster: exemplar carries a non-promotable descendant (e.g. GRADIENT paint or unsupported node type)");
   }
 
   // 2. Filter members so only those whose subtree is *strictly identical*
@@ -191,11 +236,30 @@ function rewriteMemberToInstance(
 }
 
 /**
- * Stable fingerprint of a subtree's renderable shape — type, size,
- * and the geometry blob index of every descendant. Two members with
- * the same fingerprint render to the same pixels (modulo the wrapper
- * frame's transform, which the INSTANCE preserves). We refuse to
- * componentize members whose fingerprint diverges from the exemplar's.
+ * Stable fingerprint of a subtree's *visually-significant* shape.
+ *
+ * Two members with the same fingerprint render to the same pixels
+ * once their wrapping INSTANCE's transform is applied. The
+ * fingerprint folds in:
+ *
+ *   - root size (the INSTANCE preserves the wrapping transform but
+ *     not the wrapper's size — sizes must already match);
+ *   - per-descendant type, size, and fillGeometry / strokeGeometry
+ *     blob indices (geometry identity);
+ *   - per-descendant fillPaints / strokePaints — paint type, SOLID
+ *     colour quantised to 3 decimals, IMAGE `imageRef`, opacity,
+ *     visibility, blend mode;
+ *   - per-descendant `characters` (TEXT) and font descriptor
+ *     (family / style / size / lineHeight / letterSpacing) — TEXT
+ *     content matters for visual identity;
+ *   - per-descendant `symbolData.symbolID` (INSTANCE) — nested
+ *     INSTANCE references must match for a plain SYMBOL/INSTANCE
+ *     flip to render the same content;
+ *   - per-descendant opacity and corner-radius fields — common
+ *     authoring axes the loose hash does not distinguish.
+ *
+ * Position / transform / parent-relative offset are *not* included;
+ * those are wrapper concerns the INSTANCE legitimately preserves.
  */
 function subtreeFingerprint(loaded: LoadedFigFile, rootGuid: string): string {
   const root = findByGuid(loaded, rootGuid);
@@ -204,20 +268,79 @@ function subtreeFingerprint(loaded: LoadedFigFile, rootGuid: string): string {
   }
   const parts: string[] = [];
   const subtree = collectSubtree(loaded, rootGuid);
-  // Include the root's own size; descendants contribute type + size +
-  // every fillGeometry blob index. Position / transform / colour are
-  // *not* included — those legitimately vary between clones and the
-  // INSTANCE wrapper preserves them.
   parts.push(`root:${Math.round(root.size?.x ?? 0)}x${Math.round(root.size?.y ?? 0)}`);
   for (const node of subtree) {
-    const t = node.type?.name ?? "?";
-    const w = Math.round(node.size?.x ?? 0);
-    const h = Math.round(node.size?.y ?? 0);
-    const fg = (node.fillGeometry ?? []).map((g) => g.commandsBlob ?? -1).join(",");
-    const sg = (node.strokeGeometry ?? []).map((g) => g.commandsBlob ?? -1).join(",");
-    parts.push(`${t}:${w}x${h}:fg=${fg}:sg=${sg}`);
+    parts.push(descendantFingerprint(node));
   }
   return parts.join("|");
+}
+
+function descendantFingerprint(node: FigNode): string {
+  const t = node.type?.name ?? "?";
+  const w = Math.round(node.size?.x ?? 0);
+  const h = Math.round(node.size?.y ?? 0);
+  const fg = (node.fillGeometry ?? []).map((g) => g.commandsBlob ?? -1).join(",");
+  const sg = (node.strokeGeometry ?? []).map((g) => g.commandsBlob ?? -1).join(",");
+  const op = node.opacity ?? 1;
+  const visible = node.visible !== false;
+  const cornerR = node.cornerRadius ?? -1;
+  const fills = paintsFingerprint(node.fillPaints);
+  const strokes = paintsFingerprint(node.strokePaints);
+  const text = textFingerprint(node);
+  const ref = instanceRefFingerprint(node);
+  return `${t}:${w}x${h}:fg=${fg}:sg=${sg}:op=${op}:vis=${visible}:cr=${cornerR}:fills=${fills}:strokes=${strokes}:${text}:${ref}`;
+}
+
+function paintsFingerprint(paints: FigNode["fillPaints"]): string {
+  if (!paints || paints.length === 0) {
+    return "none";
+  }
+  return paints
+    .map((p) => {
+      const visible = p.visible !== false;
+      const op = p.opacity ?? 1;
+      const blend = p.blendMode ?? "NORMAL";
+      if (p.type === "SOLID") {
+        const c = p.color;
+        const r = c ? c.r.toFixed(3) : "0";
+        const g = c ? c.g.toFixed(3) : "0";
+        const b = c ? c.b.toFixed(3) : "0";
+        const a = c ? c.a.toFixed(3) : "1";
+        return `SOLID(${r},${g},${b},${a}):${op}:${visible}:${blend}`;
+      }
+      if (p.type === "IMAGE") {
+        const ref = typeof p.imageRef === "string" ? p.imageRef : "";
+        const scale = p.imageScaleMode ?? "";
+        return `IMAGE(${ref},${scale}):${op}:${visible}:${blend}`;
+      }
+      // GRADIENT paints are filtered out at the gate (`isPromotableCluster`).
+      return `${p.type}:${op}:${visible}:${blend}`;
+    })
+    .join(";");
+}
+
+function textFingerprint(node: FigNode): string {
+  if (node.type?.name !== "TEXT") {
+    return "txt=";
+  }
+  const chars = node.characters ?? "";
+  const family = node.fontName?.family ?? "";
+  const style = node.fontName?.style ?? "";
+  const size = node.fontSize ?? 0;
+  const lineH = node.lineHeight ? `${node.lineHeight.value}${node.lineHeight.units?.name ?? ""}` : "";
+  const letterS = node.letterSpacing ? `${node.letterSpacing.value}${node.letterSpacing.units?.name ?? ""}` : "";
+  return `txt=${chars}|font=${family}/${style}@${size}|lh=${lineH}|ls=${letterS}`;
+}
+
+function instanceRefFingerprint(node: FigNode): string {
+  if (node.type?.name !== "INSTANCE") {
+    return "ref=";
+  }
+  const sid = node.symbolData?.symbolID;
+  if (!sid) {
+    return "ref=none";
+  }
+  return `ref=${sid.sessionID}:${sid.localID}`;
 }
 
 function collectSubtree(loaded: LoadedFigFile, rootGuid: string): readonly FigNode[] {
@@ -261,12 +384,12 @@ function findByGuid(loaded: LoadedFigFile, guidString: string): FigNode | undefi
   return loaded.nodeChanges.find((n) => n.guid && guidToString(n.guid) === guidString);
 }
 
-function hasImageOrGradientFill(node: FigNode): boolean {
+function hasGradientFill(node: FigNode): boolean {
   const fp = node.fillPaints;
   if (!fp) {
     return false;
   }
-  return fp.some((p) => p.type === "IMAGE" || p.type.startsWith("GRADIENT_"));
+  return fp.some((p) => p.type.startsWith("GRADIENT_"));
 }
 
 function parseGuidString(s: string): FigGuid {

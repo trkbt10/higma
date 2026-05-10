@@ -27,6 +27,5 @@ export function scaffoldDecisions(inventory: Inventory): Decisions {
     clusters,
     palette,
     typography,
-    variantGroups: {},
   };
 }
