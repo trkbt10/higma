@@ -108,7 +108,15 @@ export function buildSymbolDependencyGraph(symbolMap: ReadonlyMap<string, FigNod
   const dependencies = new Map<string, Set<string>>();
   const allSymbolIds = new Set<string>();
 
-  // 1. Identify all SYMBOLs and collect their dependencies
+  // 1. Identify all SYMBOLs and collect their dependencies.
+  //
+  // Real Figma `.fig` files only carry SYMBOL (15) / INSTANCE (16) —
+  // the canonical schema declares no COMPONENT or COMPONENT_SET
+  // NodeType, so user-facing components are encoded as plain SYMBOLs.
+  // The COMPONENT / COMPONENT_SET branches below are kept because the
+  // renderer (`@higma-document-renderers/fig`) accepts synthetic
+  // nodes with those type names in its specs; if a caller injects
+  // such a node into the symbolMap we still treat it as a SYMBOL.
   for (const [guidStr, node] of symbolMap) {
     const nodeType = getNodeType(node);
     if (nodeType !== "SYMBOL" && nodeType !== "COMPONENT" && nodeType !== "COMPONENT_SET") { continue; }
@@ -126,7 +134,8 @@ export function buildSymbolDependencyGraph(symbolMap: ReadonlyMap<string, FigNod
       });
     }
 
-    // Filter to only deps that are actually SYMBOLs/COMPONENTs in the map
+    // Filter to only deps that are actually SYMBOL-like (see comment
+    // on the dependency-loop entry condition above).
     const validDeps = new Set<string>();
     for (const dep of deps) {
       const depNode = symbolMap.get(dep);

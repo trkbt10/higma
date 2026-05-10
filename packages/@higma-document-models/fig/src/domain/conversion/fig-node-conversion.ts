@@ -65,7 +65,16 @@ function resolveSymbolIdForDomain(node: FigNode): FigNodeId | undefined {
   return guidToNodeId(guid);
 }
 
-/** Node types that clip content by default in Figma. */
+/**
+ * Node types that clip content by default in Figma.
+ *
+ * COMPONENT / COMPONENT_SET are listed because the scene-graph
+ * builder accepts synthetic nodes carrying those type names (see
+ * `@higma-document-renderers/fig` specs); the canonical Figma schema
+ * does not produce such nodes from real `.fig` files (Figma encodes
+ * user-facing components as plain SYMBOLs), but the renderer's
+ * runtime contract still recognises the names.
+ */
 const CLIPPING_NODE_TYPES: ReadonlySet<FigNodeType> = new Set([
   FIG_NODE_TYPE.FRAME,
   FIG_NODE_TYPE.COMPONENT,

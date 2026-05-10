@@ -130,12 +130,20 @@ function isResolveVariant(expr: FigVariableExpression): boolean {
 }
 
 /**
- * Find the SYMBOL/COMPONENT_SET parent that contains `symbolNode` as
- * one of its variants, walking up `parentIndex.guid`.
+ * Find the variant container that holds `symbolNode` as one of its
+ * variants, walking up `parentIndex.guid`.
  *
  * Returns `undefined` for standalone SYMBOLs whose parent is just a
- * canvas/section/ordinary FRAME (i.e. the SYMBOL is not part of a
- * variant set). These never benefit from RESOLVE_VARIANT.
+ * canvas/section/ordinary FRAME with no sibling variants. These never
+ * benefit from RESOLVE_VARIANT.
+ *
+ * Recognised containers:
+ *   - FRAME with sibling SYMBOLs whose names encode `Prop=Value`
+ *     pairs — this is what real Figma `.fig` files carry, since the
+ *     canonical schema does not declare COMPONENT_SET as a NodeType.
+ *   - COMPONENT_SET — kept for synthetic nodes the scene-graph
+ *     builder accepts in its specs. Real `.fig` files never produce
+ *     this branch.
  */
 function findVariantContainer(
   symbolNode: FigNode,
@@ -149,9 +157,6 @@ function findVariantContainer(
   if (!parent) {
     return undefined;
   }
-  // COMPONENT_SET is the canonical variant container; older fixtures
-  // sometimes use a plain FRAME holding sibling SYMBOLs whose names
-  // encode "Prop=Value" pairs. Both forms are recognised.
   const parentType = getNodeType(parent);
   if (parentType === FIG_NODE_TYPE.COMPONENT_SET) {
     return parent;

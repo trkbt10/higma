@@ -2,7 +2,20 @@
  * @file Node type constants for Figma fig format
  */
 
-/** Node type values matching Figma's schema (from figma-schema.json NodeType enum) */
+/**
+ * Node type values matching Figma's canonical schema
+ * (`@higma-figma-schema/profiles` — `figma-schema.json` NodeType enum).
+ *
+ * Notes:
+ *   - COMPONENT / COMPONENT_SET intentionally absent. Figma's
+ *     user-facing "Component" maps to SYMBOL on disk; there is no
+ *     dedicated NodeType for it, and likewise no variant-set node.
+ *     "Componentize" in this codebase means SYMBOL/INSTANCE
+ *     conversion, full stop.
+ *   - Values past 32 (ASSISTED_LAYOUT, RESPONSIVE_SET, JSX, …) are
+ *     in the canonical schema but unused by this product profile;
+ *     they're omitted here until a caller needs to round-trip them.
+ */
 export const NODE_TYPE_VALUES = {
   NONE: 0,
   DOCUMENT: 1,
