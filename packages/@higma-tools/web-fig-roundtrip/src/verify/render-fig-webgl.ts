@@ -69,8 +69,20 @@ export async function startWebglHarness(): Promise<WebglHarness> {
   const browser = await puppeteer.launch({
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    // Yahoo-class pages produce a fig with thousands of TEXT nodes
+    // and image patterns. Each scene-graph build still completes in
+    // a few seconds, but the default 30s `protocolTimeout` on
+    // `Runtime.callFunctionOn` fires before we get a result. Bump
+    // to 5 minutes so heavy pages don't bail at the boundary.
+    protocolTimeout: 300_000,
   });
   const page = await browser.newPage();
+  // Yahoo-class pages run heavy scene-graph builds that can exceed
+  // puppeteer's default 30s timeout for `evaluate` / waitForFunction.
+  // Bump both the page-level default and the explicit
+  // `protocolTimeout` so these stay aligned with the 5-minute
+  // launch-option budget set on `puppeteer.launch`.
+  page.setDefaultTimeout(300_000);
   page.on("console", (msg) => {
     if (msg.type() === "error" || msg.type() === "warn") {
       process.stderr.write(`[harness ${msg.type()}] ${msg.text()}\n`);
@@ -149,6 +161,68 @@ export async function renderFigViewports(
 }
 
 /**
+ * Render every top-level FRAME / COMPONENT / COMPONENT_SET on the
+ * .fig's pages and return one PNG per frame, keyed by `frame.name`.
+ *
+ * Same machinery as `renderFigViewports` but without the
+ * `<breakpoint>/<name>` slug filter — that filter is web-to-fig's
+ * convention and rejects fig files that weren't authored that way.
+ * Use this entry when consuming arbitrary fig files (e.g. the
+ * fig-to-swiftui visual round-trip loop).
+ *
+ * The `frame` field on each result echoes the source name so the
+ * caller can correlate by name. Duplicate names round-trip through
+ * the result array unchanged — the caller is responsible for
+ * disambiguating if their pipeline can't tolerate duplicates.
+ */
+export async function renderFigFramesByName(
+  harness: WebglHarness,
+  figBytes: Uint8Array,
+  options: { readonly frameNames?: readonly string[] } = {},
+): Promise<readonly { readonly frame: string; readonly png: Uint8Array; readonly width: number; readonly height: number }[]> {
+  const document = await createFigDesignDocument(figBytes);
+  const wantedNames = options.frameNames ? new Set(options.frameNames) : undefined;
+  const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set(["FRAME", "COMPONENT", "COMPONENT_SET"]);
+  const wrappers: { name: string; node: FigDesignNode }[] = [];
+  for (const page of document.pages) {
+    for (const child of page.children) {
+      if (!FRAME_LIKE_TYPES.has(child.type)) {
+        continue;
+      }
+      const name = child.name ?? "";
+      if (wantedNames && !wantedNames.has(name)) {
+        continue;
+      }
+      wrappers.push({ name, node: child });
+    }
+  }
+  const fontResolver = await buildFontResolver(
+    wrappers.map((w) => normalizeRootNode(w.node)),
+    document.components,
+  );
+  const results: { frame: string; png: Uint8Array; width: number; height: number }[] = [];
+  for (const w of wrappers) {
+    const sz = w.node.size;
+    if (!sz) {
+      throw new Error(`renderFigFramesByName: frame "${w.name}" missing size`);
+    }
+    const width = Math.round(sz.x);
+    const height = Math.round(sz.y);
+    const sceneGraph = buildSceneGraph([normalizeRootNode(w.node)], {
+      ...figDocumentResources(document),
+      canvasSize: { width, height },
+      viewport: { x: 0, y: 0, width, height },
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: fontResolver,
+    });
+    const png = await captureWebgl(harness.page, sceneGraph);
+    results.push({ frame: w.name, png, width, height });
+  }
+  return results;
+}
+
+/**
  * Walk every TEXT (and TEXT inside resolved SYMBOLs) in `roots`,
  * collect the unique `FontQuery`s through the canonical SoT
  * (`collectFontQueries` + `preloadFonts`), and return a
@@ -215,16 +289,67 @@ async function buildFontResolver(
     tolerateMissing: false,
   });
 
+  // The Node loader resolves CSS generic keywords (`system-ui`,
+  // `sans-serif`) by walking GENERIC_FONT_STACKS and returning the
+  // first family it finds — that's frequently `Roboto` for `system-ui`,
+  // and the local `@fontsource/roboto` ships as ~80 unicode-range
+  // subsets, only one of which carries the basic Latin block. The
+  // loader's closest-weight match picks a subset at random, so a
+  // Roboto-resolved query for Latin text often returns a face whose
+  // 'E' is glyph 0 (.notdef → tofu). Validate every cached entry
+  // against a Latin probe and replace failing entries with Helvetica
+  // Neue (system-installed, full Latin block) before the resolver
+  // hands them to the renderer.
+  const latinProbe = "ABCabc";
+  // Lookup table of Helvetica Neue weights/styles as they're
+  // requested. When a Roboto subset fails the Latin probe we
+  // replace it with the *same weight + style* Helvetica face, not
+  // a fixed Regular substitute — otherwise an `<h1>` with
+  // `font-weight: 700` would silently render at 400 weight, which
+  // is the regression that surfaced via the leaf-up harness on
+  // example.com (Source bold heading vs rendered regular).
+  const helveticaCache = new Map<string, LoadedFont | undefined>();
+  async function helveticaFor(query: FontQuery): Promise<LoadedFont | undefined> {
+    const key = `${query.weight}-${query.style}`;
+    if (helveticaCache.has(key)) {
+      return helveticaCache.get(key);
+    }
+    const loaded = await loader.loadFont({ family: "Helvetica Neue", weight: query.weight, style: query.style });
+    helveticaCache.set(key, loaded);
+    return loaded;
+  }
+  // Pre-load 400/regular for the lazy fallback below.
+  const helveticaLatin = await loader.loadFont({ family: "Helvetica Neue", weight: 400, style: "normal" });
+  const validatedCache = new Map<string, LoadedFont>();
+  for (const query of queries) {
+    const key = fontQueryKey(query);
+    const loaded = result.cache.get(key);
+    if (loaded === undefined) {
+      continue;
+    }
+    if (faceCoversLatin(loaded.font, latinProbe)) {
+      validatedCache.set(key, loaded);
+      continue;
+    }
+    const replacement = await helveticaFor(query);
+    if (replacement !== undefined) {
+      validatedCache.set(key, replacement);
+    } else if (helveticaLatin !== undefined) {
+      validatedCache.set(key, helveticaLatin);
+    }
+  }
+
   // Resolve the fallback once for lazy queries (fonts referenced from
   // run-level overrides inside SYMBOLs we didn't pre-walk). The
   // preload result already loaded these — pull whichever is present.
-  const lazyFallback = await loader.loadFont(FALLBACK_CJK)
+  const lazyFallback = helveticaLatin
+    ?? await loader.loadFont(FALLBACK_CJK)
     ?? await loader.loadFont(FALLBACK_LATIN);
   if (lazyFallback === undefined) {
-    throw new Error(`renderFigViewports: both fallback fonts (Noto Sans JP, Roboto) failed to load — verify @fontsource packages are installed`);
+    throw new Error(`renderFigViewports: no usable fallback font (Helvetica Neue / Noto Sans JP / Roboto) — verify @fontsource packages are installed and macOS system fonts are accessible`);
   }
 
-  const cache: ReadonlyMap<string, LoadedFont> = result.cache;
+  const cache: ReadonlyMap<string, LoadedFont> = validatedCache;
   return (q: FontQuery) => {
     const loaded = cache.get(fontQueryKey(q));
     if (loaded !== undefined) {
@@ -250,13 +375,39 @@ async function buildFontResolver(
  * 「日」 glyph index is 0 (.notdef). Picking it as the CJK face
  * silently re-introduces tofu. The probe filters those out.
  */
+/**
+ * Quick predicate that the loaded face covers basic Latin glyphs.
+ * `charToGlyph` returns glyph index 0 (the `.notdef` slot) when the
+ * face has no entry for the requested codepoint — `notdef` paints
+ * as a tofu rectangle. Walking a short representative probe lets us
+ * detect a Roboto subset that lacks the basic Latin block before
+ * the renderer hands it to a TEXT node.
+ */
+function faceCoversLatin(font: LoadedFont["font"], probe: string): boolean {
+  for (let i = 0; i < probe.length; i += 1) {
+    if (font.charToGlyph(probe[i]!).index === 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function loadCjkFace(loader: ReturnType<typeof createCachingFontLoader>): Promise<LoadedFont | undefined> {
   const CJK_CANDIDATES: readonly FontQuery[] = [
-    // macOS — Hiragino is indexed by the loader as "Hiragino Sans GB
-    // W3" / "W6" (the embedded family name carries the weight token).
+    // macOS Japanese system fallback. Order matters: Hiragino Sans
+    // (W3) is the literal `system-ui` Japanese fallback Chromium
+    // uses on macOS for `font-family: sans-serif` Japanese pages.
+    // Hiragino Sans GB W3 is the *Simplified Chinese* sibling —
+    // valid CJK coverage but glyph shapes diverge for kanji that
+    // exist in both. Putting GB last avoids the JP-vs-SC pixel
+    // mismatch that surfaced in the leaf-up harness on
+    // ja.wikipedia.
+    { family: "Hiragino Sans W3", weight: 400, style: "normal" },
+    { family: "Hiragino Sans W6", weight: 700, style: "normal" },
+    { family: "Hiragino Kaku Gothic ProN W3", weight: 400, style: "normal" },
+    { family: "Hiragino Kaku Gothic ProN", weight: 400, style: "normal" },
     { family: "Hiragino Sans GB W3", weight: 400, style: "normal" },
     { family: "Hiragino Sans GB W6", weight: 700, style: "normal" },
-    { family: "Hiragino Kaku Gothic ProN", weight: 400, style: "normal" },
     // Linux distributions that ship Noto CJK as a single TTC.
     { family: "Noto Sans CJK JP", weight: 400, style: "normal" },
     { family: "Noto Sans CJK", weight: 400, style: "normal" },
@@ -391,10 +542,45 @@ function uint8ArrayReplacer(_key: string, value: unknown): unknown {
 
 async function captureWebgl(page: Page, sceneGraph: unknown): Promise<Uint8Array> {
   const json = JSON.stringify(sceneGraph, uint8ArrayReplacer);
-  const dataUrl = await page.evaluate(async (sgJson: string) => {
-    const w = window as unknown as { renderSceneGraph: (json: string) => Promise<string> };
-    return await w.renderSceneGraph(sgJson);
-  }, json);
+  // Heavy scene-graphs (yahoo / zozo top pages run hundreds of
+  // image patterns and thousands of TEXT nodes) need more than the
+  // default 30s puppeteer evaluate timeout — bumping the
+  // CDP `Runtime.callFunctionOn` timeout via the
+  // `Connection.setTransport`-level `protocolTimeout` doesn't
+  // propagate cleanly across all puppeteer minor versions, so we
+  // also explicitly drive the rendering call via
+  // `page.exposeFunction` + `page.waitForFunction` to bypass the
+  // `Runtime.callFunctionOn` timeout entirely. The browser-side
+  // `renderSceneGraph` now writes its result into a global slot,
+  // and the host polls until it lands.
+  const slot = `__renderResult_${Math.random().toString(36).slice(2)}`;
+  await page.evaluate((args: { json: string; slot: string }) => {
+    const w = window as unknown as { renderSceneGraph: (json: string) => Promise<string>; [key: string]: unknown };
+    w[args.slot] = "pending";
+    w.renderSceneGraph(args.json).then((dataUrl) => {
+      w[args.slot] = dataUrl;
+    }).catch((err: unknown) => {
+      w[args.slot] = `__error__:${err instanceof Error ? err.message : String(err)}`;
+    });
+  }, { json, slot });
+  // Wait for the slot to flip from `pending` to a data URL or an
+  // `__error__:` payload. `waitForFunction`'s polling timeout uses
+  // `setDefaultTimeout` (set to 5 minutes upstream) which is
+  // independent of `Runtime.callFunctionOn`'s built-in budget.
+  await page.waitForFunction(
+    (slotName: string) => {
+      const v = (window as unknown as Record<string, unknown>)[slotName];
+      return typeof v === "string" && v !== "pending";
+    },
+    { timeout: 300_000, polling: 250 },
+    slot,
+  );
+  const dataUrl = await page.evaluate((slotName: string) => {
+    return (window as unknown as Record<string, unknown>)[slotName] as string;
+  }, slot);
+  if (dataUrl.startsWith("__error__:")) {
+    throw new Error(`captureWebgl: ${dataUrl.slice("__error__:".length)}`);
+  }
   const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
   return Uint8Array.from(Buffer.from(base64, "base64"));
 }

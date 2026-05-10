@@ -1,0 +1,6 @@
+# Package-local scratch directory — debug scripts and intermediate
+# fidelity-loop output land here so they don't pollute the
+# repository-wide `.tmp-output/`. Per AGENTS.md, .tmp scripts are
+# meant to be ephemeral; promote anything worth keeping into a
+# proper spec instead.
+.tmp/

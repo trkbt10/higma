@@ -12,7 +12,7 @@ export type { VerificationReport, VerifiedBreakpoint, VerifyOptions } from "./ve
 export { verifyFidelity } from "./verify-fidelity";
 
 export type { FigDirectRenderResult, WebglHarness } from "./render-fig-webgl";
-export { renderFigViewports, startWebglHarness } from "./render-fig-webgl";
+export { renderFigViewports, renderFigFramesByName, startWebglHarness } from "./render-fig-webgl";
 
 export type { DirectVerificationReport, DirectVerifiedBreakpoint, DirectVerifyOptions } from "./verify-fig-direct";
 export { verifyFigDirect } from "./verify-fig-direct";
