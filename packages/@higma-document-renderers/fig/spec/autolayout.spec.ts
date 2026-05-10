@@ -372,6 +372,42 @@ function expectAspectLock(svg: string): void {
   expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.005);
 }
 
+function gridExpectations(
+  columns: number,
+  rows: number,
+  origin: { readonly x: number; readonly y: number },
+  childSize: { readonly width: number; readonly height: number },
+  gap: { readonly column: number; readonly row: number },
+): readonly RectExpectation[] {
+  return Array.from({ length: columns * rows }, (_, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return {
+      x: origin.x + column * (childSize.width + gap.column),
+      y: origin.y + row * (childSize.height + gap.row),
+      width: childSize.width,
+      height: childSize.height,
+    };
+  });
+}
+
+function expectGridPlacement(svg: string, layerName: "auto-grid-2x3" | "auto-nested"): void {
+  if (layerName === "auto-grid-2x3") {
+    const gridCells = contentRectsFor(svg).filter((rect) => rect.width === 40 && rect.height === 30);
+    expectRectsClose(
+      gridCells,
+      gridExpectations(2, 3, { x: 16, y: 16 }, { width: 40, height: 30 }, { column: 12, row: 8 }),
+    );
+    return;
+  }
+
+  const nestedGridCells = contentRectsFor(svg).filter((rect) => rect.width === 34 && rect.height === 34);
+  expectRectsClose(
+    nestedGridCells,
+    gridExpectations(2, 2, { x: 102, y: 20 }, { width: 34, height: 34 }, { column: 8, row: 8 }),
+  );
+}
+
 const PHASE_B_GEOMETRY: Record<string, readonly RectExpectation[]> = {
   "auto-grid-2x3": [
     { x: 16, y: 16, width: 40, height: 30 },
@@ -551,6 +587,9 @@ describe("AutoLayout Rendering", () => {
       }
       if (layerName === "auto-aspect-lock") {
         expectAspectLock(svg);
+      }
+      if (layerName === "auto-grid-2x3" || layerName === "auto-nested") {
+        expectGridPlacement(svg, layerName);
       }
     });
   }
