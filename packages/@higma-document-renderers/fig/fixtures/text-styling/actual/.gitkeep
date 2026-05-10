@@ -1,0 +1,9 @@
+# Placeholder — Figma export targets
+
+Export the following frames from `text-styling.fig` (one SVG per
+frame, using the frame name as the file name):
+
+  - text-case.svg
+  - text-decoration.svg
+  - auto-resize.svg
+  - style-runs.svg

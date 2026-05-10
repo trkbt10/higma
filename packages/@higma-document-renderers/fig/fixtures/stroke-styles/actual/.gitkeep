@@ -1,0 +1,10 @@
+# Placeholder — Figma export targets
+
+Export the following frames from `stroke-styles.fig` (one SVG per
+frame, using the frame name as the file name):
+
+  - dash-uniform.svg
+  - dash-asymmetric.svg
+  - dash-tight.svg
+  - arrow-lines.svg
+  - arrow-equilateral.svg

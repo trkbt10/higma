@@ -1,0 +1,7 @@
+# Placeholder — Figma export targets
+
+Export the following frames from `mask-and-vector.fig` (one SVG per
+frame, using the frame name as the file name):
+
+  - mask-circle.svg
+  - vector-paths.svg

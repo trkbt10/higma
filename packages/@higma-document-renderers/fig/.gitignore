@@ -1,9 +1,17 @@
-# Generated test artifacts — produced each test run, never checked in.
-# Snapshot baselines live under fixtures/<case>/snapshots/ (and baseline/) and are tracked.
+# Test artifact policy:
+#   fixtures/<case>/<case>.fig    — source of truth, tracked
+#   fixtures/<case>/actual/       — ground-truth SVGs hand-exported from
+#                                   Figma. Tracked. These are expensive
+#                                   to regenerate (manual export) and
+#                                   what tests compare renderer output
+#                                   against, so they are the baseline.
+#   fixtures/<case>/snapshots/    — renderer output, regenerated on
+#                                   every test run. NOT tracked.
+#   fixtures/<case>/__*__/        — debug/diff/output dumps. NOT tracked.
 fixtures/**/__diff__/
 fixtures/**/__output__/
 fixtures/**/__debug__/
-fixtures/**/actual/
+fixtures/**/snapshots/
 
 # Fonts downloaded at runtime by font-drivers tests.
 __fonts__/

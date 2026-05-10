@@ -1,0 +1,12 @@
+# Placeholder — Figma export targets
+
+Export the following frames from `image-scale-modes.fig` (one SVG per
+frame, using the frame name as the file name):
+
+  - scale-stretch.svg
+  - scale-fit.svg
+  - scale-fill.svg
+  - scale-tile.svg
+
+Once the SVGs land here, this `.gitkeep` can stay or be removed —
+git keeps the directory either way.
