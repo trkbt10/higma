@@ -189,7 +189,7 @@ async function emitCase(
   // symbol-resolution, decoration-combo's instance-* cases) resolve
   // to their authoring SYMBOL. Without it those frames emit empty
   // Controls.
-  const emitCtx = { symbolMap: ctx.symbolMap };
+  const emitCtx = { symbolMap: ctx.symbolMap, blobs: ctx.blobs };
   const jobs: FrameJob[] = [];
   for (const node of frames) {
     const figmaName = node.name ?? "";

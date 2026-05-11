@@ -78,7 +78,7 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
   const result = emitFromFrames(frames, {
     sharedTheme: options.sharedTheme,
     themeName: options.themeName,
-    emit: { symbolMap: source.symbolMap },
+    emit: { symbolMap: source.symbolMap, blobs: source.blobs },
   });
 
   for (const file of result.files) {

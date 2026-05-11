@@ -24,7 +24,7 @@ await runRoundtripCase({
     "clip-3level": 0.09,
     "clip-overflow": 0.09,
     "clip-nested-shapes": 0.09,
-    "clip-mixed": 17.65,
+    "clip-mixed": 0.5,
     "clip-shapes-overlap": 0.09,
   },
 });

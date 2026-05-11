@@ -123,8 +123,14 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
   // Doc-level lookups passed to the emit walker. Carrying `symbolMap`
   // here is what lets INSTANCE nodes resolve to their authoring
   // SYMBOL — without it, frames built from instances (e.g. the
-  // `constraints` fixture) emit as empty Controls.
-  const emitCtx: EmitContext = { symbolMap: ctx.symbolMap };
+  // `constraints` fixture) emit as empty Controls. `images` lets
+  // IMAGE paints resolve to their actual PNG/JPEG bytes — required
+  // for the `image-fill` fixtures.
+  const emitCtx: EmitContext = {
+    symbolMap: ctx.symbolMap,
+    blobs: ctx.blobs,
+    images: ctx.images,
+  };
   const sized = targets.map((target, idx) => {
     const node = frames[idx]!;
     const size = node.size ?? { x: 200, y: 200 };
@@ -266,11 +272,15 @@ async function batchRender(
   sized: readonly { target: ReturnType<typeof buildFrameTarget>; width: number; height: number }[],
   emitCtx: EmitContext,
 ): Promise<readonly Uint8Array[]> {
-  const entries = sized.map(({ target, width, height }) => ({
-    sceneText: emitFrameFile(target, emitCtx).contents,
-    width,
-    height,
-  }));
+  const entries = sized.map(({ target, width, height }) => {
+    const file = emitFrameFile(target, emitCtx);
+    return {
+      sceneText: file.contents,
+      companions: file.assets,
+      width,
+      height,
+    };
+  });
   const result = await renderGodotBatch(entries);
   return result.pngs;
 }

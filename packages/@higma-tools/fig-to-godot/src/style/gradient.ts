@@ -212,6 +212,23 @@ export function buildLinearGradient(
   if (!paint) {
     return undefined;
   }
+  return buildGradientFromPaint(paint, node.size, gradientId, textureId);
+}
+
+/**
+ * Like `buildLinearGradient` but takes the gradient paint explicitly,
+ * so multi-paint stacks can build one gradient texture per paint
+ * (each at its own z-order in the polygon list).
+ */
+export function buildGradientFromPaint(
+  paint: FigGradientPaint,
+  size: { readonly x: number; readonly y: number } | undefined,
+  gradientId: string,
+  textureId: string,
+): LinearGradientResult | undefined {
+  if (paint.type !== "GRADIENT_LINEAR" && paint.type !== "GRADIENT_RADIAL") {
+    return undefined;
+  }
   const stops = readStops(paint);
   if (stops.length === 0) {
     return undefined;
@@ -221,6 +238,14 @@ export function buildLinearGradient(
     kind: "raw",
     text: `PackedFloat32Array(${stops.map((s) => s.position).join(", ")})`,
   };
+  // Gradient stop colours are emitted raw (no compensation): Godot's
+  // `Gradient` resource quantises stops with `round(c*255)` (round-
+  // half-up) when rasterising to its byte texture, which matches the
+  // WebGL reference's own byte rounding. Compensating with the
+  // `(byte+0.5)/255` offset used for Polygon2D vertex colours pushes
+  // the stop one byte high here (`0.2 → 51` raw vs `0.2019... → 52`
+  // compensated, verified against `decoration-combo/grad-radius-
+  // linear`).
   const colors: GodotValue = {
     kind: "raw",
     text: `PackedColorArray(${stops
@@ -235,8 +260,8 @@ export function buildLinearGradient(
     property("colors", colors),
   ]);
   const transform = paint.transform ?? {};
-  const w = node.size ? Math.max(1, Math.round(node.size.x)) : 100;
-  const h = node.size ? Math.max(1, Math.round(node.size.y)) : 100;
+  const w = size ? Math.max(1, Math.round(size.x)) : 100;
+  const h = size ? Math.max(1, Math.round(size.y)) : 100;
   // Godot's `GradientTexture2D.fill`: 0=Linear, 1=Radial.
   //
   // The two endpoint conventions diverge on RADIAL:
@@ -264,14 +289,10 @@ export function buildLinearGradient(
     property("fill_from", vector2(fillFrom.x, fillFrom.y)),
     property("fill_to", vector2(fillTo.x, fillTo.y)),
   ]);
-  // Compensate the gradient stop colours for Godot's truncate-by-256
-  // rounding the same way `colorExpr` does for SOLID fills. Godot
-  // applies the same rounding to gradient sample bytes, so without
-  // compensation the gradient pixels drift by 1 byte from the WebGL
-  // reference at every channel half-boundary.
   void colorVal; // (used by SOLID emit; gradient stop colors are inlined raw above)
   return {
     subResources: [gradient, texture],
     textureProperty: property("texture", { kind: "sub-resource", id: textureId }),
   };
 }
+

@@ -39,6 +39,14 @@ export type GodotFile = {
   readonly path: string;
   /** File contents — generated `.tscn` text. */
   readonly contents: string;
+  /**
+   * Optional binary asset companions the scene references via
+   * `[ext_resource]`. Keyed by `res://`-relative path, value is the
+   * asset bytes. The render harness writes these next to the scene
+   * before invoking Godot. Empty when the scene has no external
+   * dependencies.
+   */
+  readonly assets?: ReadonlyMap<string, Uint8Array>;
 };
 
 /** A target frame discovered under the chosen CANVAS. */
@@ -99,13 +107,48 @@ export function buildFrameScene(target: FrameTarget, emit: EmitContext = {}): Go
     name: target.sceneName,
     properties: ensureRootSizeProperties(target, inner.properties),
   };
-  return scene(root, { subResources: ctx.subResources });
+  return scene(root, {
+    subResources: ctx.subResources,
+    extResources: ctx.extResources,
+  });
+}
+
+/**
+ * Variant of `buildFrameScene` that returns the scene IR alongside the
+ * binary asset companions the walker accumulated (image bytes
+ * referenced by `[ext_resource]` declarations). Callers that need to
+ * stage assets onto disk before launching the Godot render use this
+ * shape; callers that only need the scene IR can keep using
+ * `buildFrameScene`.
+ */
+export function buildFrameSceneWithAssets(
+  target: FrameTarget,
+  emit: EmitContext = {},
+): { readonly scene: GodotScene; readonly assets: ReadonlyMap<string, Uint8Array> } {
+  const ctx = createWalkContext(emit);
+  const inner = emitRootFrame(target.node, ctx);
+  const root = {
+    ...inner,
+    name: target.sceneName,
+    properties: ensureRootSizeProperties(target, inner.properties),
+  };
+  return {
+    scene: scene(root, {
+      subResources: ctx.subResources,
+      extResources: ctx.extResources,
+    }),
+    assets: ctx.imageAssets,
+  };
 }
 
 /** Render a complete `.tscn` file for a frame target. */
 export function emitFrameFile(target: FrameTarget, emit: EmitContext = {}): GodotFile {
-  const sceneDoc = buildFrameScene(target, emit);
-  return { path: target.filePath, contents: serializeScene(sceneDoc) };
+  const built = buildFrameSceneWithAssets(target, emit);
+  return {
+    path: target.filePath,
+    contents: serializeScene(built.scene),
+    assets: built.assets,
+  };
 }
 
 /**

@@ -13,6 +13,6 @@ await runRoundtripCase({
     "icon-badge-nesting",
   ],
   diffCapPct: {
-    "icon-badge-nesting": 32.336,
+    "icon-badge-nesting": 3.75,
   },
 });

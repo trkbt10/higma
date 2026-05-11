@@ -86,11 +86,32 @@ describe("cornerRadiusProperties", () => {
 });
 
 describe("strokeProperties", () => {
-  it("emits border_color + four border_width sides for a uniform stroke", () => {
+  it("emits border_color + four border_width sides + four expand_margin sides for a CENTER-aligned stroke", () => {
     const props = strokeProperties(
       rect({
         strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
         strokeWeight: 2,
+      }),
+    );
+    expect(props.map((p) => p.name)).toEqual([
+      "border_color",
+      "border_width_top",
+      "border_width_right",
+      "border_width_bottom",
+      "border_width_left",
+      "expand_margin_top",
+      "expand_margin_right",
+      "expand_margin_bottom",
+      "expand_margin_left",
+    ]);
+  });
+
+  it("omits expand_margin for INSIDE strokeAlign (Godot default)", () => {
+    const props = strokeProperties(
+      rect({
+        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokeWeight: 2,
+        strokeAlign: "INSIDE",
       }),
     );
     expect(props.map((p) => p.name)).toEqual([

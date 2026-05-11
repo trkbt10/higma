@@ -15,6 +15,6 @@ await runRoundtripCase({
   ],
   diffCapPct: {
     "mask-circle": 0.09,
-    "vector-paths": 17.16,
+    "vector-paths": 0.09,
   },
 });

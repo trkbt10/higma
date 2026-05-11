@@ -37,8 +37,13 @@ const DEFAULT_TIMEOUT_MS = 600_000;
 export type GodotBatchEntry = {
   /** Emitted `.tscn` text. */
   readonly sceneText: string;
-  /** Optional companion files keyed by `res://`-relative path. */
-  readonly companions?: ReadonlyMap<string, string>;
+  /**
+   * Optional companion files keyed by `res://`-relative path. Values
+   * are written as-is: a `string` is encoded UTF-8, a `Uint8Array`
+   * is written verbatim (used for binary asset companions like image
+   * textures referenced via `[ext_resource]`).
+   */
+  readonly companions?: ReadonlyMap<string, string | Uint8Array>;
   readonly width: number;
   readonly height: number;
 };
@@ -92,7 +97,11 @@ export async function renderGodotBatch(
       for (const [relPath, contents] of entry.companions) {
         const target = resolve(projectDir, relPath);
         await mkdir(dirname(target), { recursive: true });
-        await writeFile(target, contents, "utf8");
+        if (typeof contents === "string") {
+          await writeFile(target, contents, "utf8");
+        } else {
+          await writeFile(target, contents);
+        }
       }
     }
     manifest.push({ scene: `res://${sceneName}`, out: outName, w: entry.width, h: entry.height });

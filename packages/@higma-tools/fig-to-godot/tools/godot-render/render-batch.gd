@@ -61,16 +61,18 @@ func _initialize() -> void:
 		quit(0)
 		return
 
-	_sub_viewport = SubViewport.new()
-	_sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_sub_viewport.transparent_bg = false
-	_sub_viewport.disable_3d = true
-	root.add_child(_sub_viewport)
 	_load_current()
 
 func _load_current() -> void:
-	if _current_instance != null:
-		_current_instance.queue_free()
+	# Tear down the previous SubViewport entirely. Reusing one across
+	# multiple scenes left state (clear-color, render-target tex, child
+	# layout) bleeding from scene N into scene N+1 — typically as
+	# 100%-mismatched output. A fresh SubViewport per scene is ~10ms
+	# of overhead and gives byte-clean isolation.
+	if _sub_viewport != null:
+		root.remove_child(_sub_viewport)
+		_sub_viewport.queue_free()
+		_sub_viewport = null
 		_current_instance = null
 	var entry: Dictionary = _manifest[_index]
 	var scene_path: String = entry.get("scene", "")
@@ -90,8 +92,13 @@ func _load_current() -> void:
 		printerr("manifest entry %d: instantiate failed for %s" % [_index, scene_path])
 		quit(1)
 		return
+	_sub_viewport = SubViewport.new()
+	_sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	_sub_viewport.transparent_bg = false
+	_sub_viewport.disable_3d = true
 	_sub_viewport.size = Vector2i(w, h)
 	_sub_viewport.add_child(_current_instance)
+	root.add_child(_sub_viewport)
 	_frames_remaining = 2
 
 func _process(_delta: float) -> bool:

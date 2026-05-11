@@ -245,6 +245,21 @@ function parseValue(text: string, lineNumber: number): GodotValue {
   if (/^-?\d+(?:\.\d+)?$/.test(text)) {
     return { kind: "float", value: parseFloat(text) };
   }
+  // Polygon2D's `polygons` is `[PackedInt32Array(...), ...]` — a raw
+  // expression for which we don't have a typed kind. Round-trip it as
+  // `raw`. Same with any other untyped bracketed payload Godot might
+  // emit (PackedColorArray inside arrays, etc.).
+  if (text.startsWith("[")) {
+    return { kind: "raw", text };
+  }
+  // Image sub-resources serialise their `data` field as an inline
+  // dict: `{"data": PackedByteArray(...), "format": "RGBA8", …}`.
+  // Godot's `.tscn` accepts either single-line or multi-line; we emit
+  // single-line so the line-based property parser can recover it as
+  // a single raw value without state-tracking nested braces.
+  if (text.startsWith("{")) {
+    return { kind: "raw", text };
+  }
   throw new ParseError(`cannot parse value "${text}"`, lineNumber);
 }
 

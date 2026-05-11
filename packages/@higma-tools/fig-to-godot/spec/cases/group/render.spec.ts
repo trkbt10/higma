@@ -20,9 +20,9 @@ await runRoundtripCase({
   diffCapPct: {
     "group-basic": 0.09,
     "group-sized": 0.09,
-    "group-rotated": 13.1,
-    "group-opacity": 15.746,
-    "group-nested": 11.714,
+    "group-rotated": 0.81,
+    "group-opacity": 0.09,
+    "group-nested": 0.4,
     "group-hidden": 0.09,
   },
 });

@@ -21,12 +21,12 @@ await runRoundtripCase({
   ],
   diffCapPct: {
     "rect-fill": 0.09,
-    "rect-stroke-only": 5.092,
-    "rect-fill-stroke": 5.134,
-    "rect-rotated": 31.594,
-    "rect-dashed": 5.12,
-    "rect-stroke-align": 15.2,
-    "rect-effect": 17.944,
+    "rect-stroke-only": 0.09,
+    "rect-fill-stroke": 0.09,
+    "rect-rotated": 0.82,
+    "rect-dashed": 1.21,
+    "rect-stroke-align": 0.09,
+    "rect-effect": 15.4,
     "rect-sizes": 0.09,
   },
 });

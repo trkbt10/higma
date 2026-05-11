@@ -20,7 +20,7 @@ await runRoundtripCase({
     "dash-uniform": 0.09,
     "dash-asymmetric": 0.09,
     "dash-tight": 0.09,
-    "arrow-lines": 4.98,
-    "arrow-equilateral": 4.98,
+    "arrow-lines": 0.09,
+    "arrow-equilateral": 0.09,
   },
 });

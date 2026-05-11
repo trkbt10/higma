@@ -18,11 +18,11 @@ await runRoundtripCase({
     "winding-stroke-arc",
   ],
   diffCapPct: {
-    "winding-evenodd-donut": 12.162,
-    "winding-evenodd-ring": 23.642,
-    "winding-donut-stroke": 12.26,
-    "winding-arc-semi": 24.188,
-    "winding-arc-donut": 25.098,
-    "winding-stroke-arc": 11.574,
+    "winding-evenodd-donut": 0.09,
+    "winding-evenodd-ring": 0.09,
+    "winding-donut-stroke": 0.09,
+    "winding-arc-semi": 0.09,
+    "winding-arc-donut": 0.09,
+    "winding-stroke-arc": 0.09,
   },
 });

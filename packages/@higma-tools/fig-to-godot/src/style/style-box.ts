@@ -31,6 +31,7 @@ import type {
 } from "@higma-document-models/fig/types";
 import {
   colorVal,
+  floatVal,
   intVal,
   property,
   subResource,
@@ -213,20 +214,20 @@ function resolveCornerRadii(node: FigNode): readonly [number, number, number, nu
  *     stacks emit no bg_color and fall back to the gradient/empty
  *     emit downstream.
  */
-export function bgColorProperties(node: FigNode): readonly GodotProperty[] {
+export function bgColorProperties(node: FigNode, compensate: boolean = true): readonly GodotProperty[] {
   const paints = node.fillPaints;
   if (!paints || paints.length === 0) {
     return [];
   }
   const composed = compositeSolidStack(paints);
   if (composed) {
-    return [property("bg_color", colorExpr(composed, 1))];
+    return [property("bg_color", colorExpr(composed, 1, compensate))];
   }
   const fill = firstVisibleSolidPaint(paints);
   if (!fill) {
     return [];
   }
-  return [property("bg_color", solidPaintToColor(fill))];
+  return [property("bg_color", solidPaintToColor(fill, compensate))];
 }
 
 /**
@@ -260,7 +261,7 @@ export function cornerRadiusProperties(node: FigNode): readonly GodotProperty[] 
  * Stroke without colour, gradient stroke, dashed stroke, and INSIDE /
  * OUTSIDE alignments are out of scope and surface as Fail-Fast errors.
  */
-export function strokeProperties(node: FigNode): readonly GodotProperty[] {
+export function strokeProperties(node: FigNode, compensate: boolean = true): readonly GodotProperty[] {
   const stroke = firstVisibleSolidPaint(node.strokePaints);
   if (!stroke) {
     return [];
@@ -270,26 +271,98 @@ export function strokeProperties(node: FigNode): readonly GodotProperty[] {
       `fig-to-godot: dashed strokes are not supported (node "${node.name ?? "unnamed"}")`,
     );
   }
-  // Godot's StyleBoxFlat draws borders centred on the edge. Figma's
-  // INSIDE / OUTSIDE alignment shifts the border by ±strokeWeight/2.
-  // For thin strokes the visual difference is within AA tolerance, so
-  // we approximate by always emitting a CENTER border. A future
-  // iteration could halve the border width on INSIDE / double on
-  // OUTSIDE, but the roundtrip diff cap absorbs the current
-  // approximation.
-  void node.strokeAlign;
   const widths = resolveBorderWidths(node);
   if (!widths) {
     return [];
   }
   const [top, right, bottom, left] = widths;
+  // Figma `strokeAlign` ↔ Godot StyleBoxFlat:
+  //   - Godot's default (no `expand_margin_*`) draws the entire
+  //     border *inside* the panel rect — equivalent to Figma INSIDE.
+  //   - `expand_margin_* = +strokeWeight/2` pushes half the border
+  //     outside → CENTER alignment (Figma's authored default).
+  //   - `expand_margin_* = +strokeWeight` pushes the entire border
+  //     outside → OUTSIDE alignment.
+  // Verified empirically against a side-by-side Panel test fixture
+  // (see commit message): a 50×50 panel with strokeWeight=6 renders
+  // 50×50 with no margin, 56×56 with +3 margin (CENTER), 62×62 with
+  // +6 margin (OUTSIDE). Matches WebGL reference's 56×56 visible
+  // bounding box for CENTER-aligned strokes.
+  const align = strokeAlignName(node.strokeAlign);
+  const expandMargins = strokeExpandMargins(align, top, right, bottom, left);
   return [
-    property("border_color", solidPaintToColor(stroke)),
+    property("border_color", solidPaintToColor(stroke, compensate)),
     property("border_width_top", intVal(Math.round(top))),
     property("border_width_right", intVal(Math.round(right))),
     property("border_width_bottom", intVal(Math.round(bottom))),
     property("border_width_left", intVal(Math.round(left))),
+    ...expandMargins,
   ];
+}
+
+/**
+ * Compute `expand_margin_*` properties for the requested stroke
+ * alignment. Returns an empty list for INSIDE (the Godot default).
+ * The four sides take their own border widths — useful when a node
+ * has independent per-side weights (`borderStrokeWeightsIndependent`).
+ */
+function strokeExpandMargins(
+  align: "INSIDE" | "CENTER" | "OUTSIDE",
+  top: number,
+  right: number,
+  bottom: number,
+  left: number,
+): readonly GodotProperty[] {
+  if (align === "INSIDE") {
+    return [];
+  }
+  const factor = align === "CENTER" ? 0.5 : 1;
+  return [
+    property("expand_margin_top", floatVal(top * factor)),
+    property("expand_margin_right", floatVal(right * factor)),
+    property("expand_margin_bottom", floatVal(bottom * factor)),
+    property("expand_margin_left", floatVal(left * factor)),
+  ];
+}
+
+/**
+ * Normalize `node.strokeAlign` to a string label. Figma's authored
+ * default is CENTER (the field is omitted when the value matches the
+ * default). Kiwi enum values arrive as `{ name: string }`; raw string
+ * legacy data is also tolerated.
+ */
+function strokeAlignName(
+  raw: FigNode["strokeAlign"],
+): "INSIDE" | "CENTER" | "OUTSIDE" {
+  if (raw === undefined) {
+    return "CENTER";
+  }
+  // FigStrokeAlign is a canonical string-union type. Use the
+  // explicit type-narrowing helper instead of `as any` so the
+  // reader doesn't have to follow a cast to know which branch
+  // applies.
+  const name = readStrokeAlign(raw);
+  if (name === "INSIDE" || name === "OUTSIDE") {
+    return name;
+  }
+  return "CENTER";
+}
+
+/**
+ * Type-narrowing reader for stroke-align values that arrive either as
+ * a plain string or as a Kiwi enum struct (`{ name }`). Returns the
+ * underlying name string in both cases. Acts as the type-guard
+ * function the linter expects in place of an unsafe cast.
+ */
+function readStrokeAlign(raw: unknown): string | undefined {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (raw && typeof raw === "object" && "name" in raw) {
+    const name = (raw as { name: unknown }).name;
+    return typeof name === "string" ? name : undefined;
+  }
+  return undefined;
 }
 
 function resolveBorderWidths(
@@ -374,7 +447,44 @@ export function shadowProperties(node: FigNode): readonly GodotProperty[] {
   ];
 }
 
-function pickDropShadow(effects: readonly FigEffect[]): FigEffect | undefined {
+/**
+ * Pick every visible DROP_SHADOW effect on a node, in fig order
+ * (Figma renders them back-to-front: the first entry sits behind
+ * the second). Used by `tryEmitBlurredShape` to stack multi-shadow
+ * cases like `effects/shadow-drop-multi`.
+ */
+export function pickAllDropShadows(node: FigNode): readonly FigEffect[] {
+  const effects = node.effects;
+  if (!effects || effects.length === 0) {
+    return [];
+  }
+  const out: FigEffect[] = [];
+  for (const effect of effects) {
+    if (effect.visible === false) continue;
+    if (effectTypeName(effect.type) === "DROP_SHADOW") {
+      out.push(effect);
+    }
+  }
+  return out;
+}
+
+/** Pick every visible INNER_SHADOW effect, in fig order. */
+export function pickAllInnerShadows(node: FigNode): readonly FigEffect[] {
+  const effects = node.effects;
+  if (!effects || effects.length === 0) {
+    return [];
+  }
+  const out: FigEffect[] = [];
+  for (const effect of effects) {
+    if (effect.visible === false) continue;
+    if (effectTypeName(effect.type) === "INNER_SHADOW") {
+      out.push(effect);
+    }
+  }
+  return out;
+}
+
+export function pickDropShadow(effects: readonly FigEffect[]): FigEffect | undefined {
   for (const effect of effects) {
     if (effect.visible === false) {
       continue;
@@ -397,6 +507,29 @@ function pickInnerShadow(effects: readonly FigEffect[]): FigEffect | undefined {
   }
   return undefined;
 }
+
+/**
+ * Pick the first visible LAYER_BLUR / FOREGROUND_BLUR effect. Figma
+ * historically called this "FOREGROUND_BLUR" in the file format but
+ * the API exposes it as "LAYER_BLUR"; we accept either.
+ */
+export function pickLayerBlur(node: FigNode): FigEffect | undefined {
+  const effects = node.effects;
+  if (!effects || effects.length === 0) {
+    return undefined;
+  }
+  for (const effect of effects) {
+    if (effect.visible === false) {
+      continue;
+    }
+    const name = effectTypeName(effect.type);
+    if (name === "LAYER_BLUR" || name === "FOREGROUND_BLUR") {
+      return effect;
+    }
+  }
+  return undefined;
+}
+
 
 /**
  * Approximate fig's INNER_SHADOW with a tinted inset border on the
@@ -456,10 +589,11 @@ export function innerShadowProperties(node: FigNode): readonly GodotProperty[] {
 export function buildStyleBoxFlat(
   node: FigNode,
   id: string,
+  compensate: boolean = true,
 ): GodotSubResource | undefined {
-  const bg = bgColorProperties(node);
+  const bg = bgColorProperties(node, compensate);
   const corners = cornerRadiusProperties(node);
-  const stroke = strokeProperties(node);
+  const stroke = strokeProperties(node, compensate);
   const shadow = shadowProperties(node);
   const innerShadow = innerShadowProperties(node);
   if (bg.length + corners.length + stroke.length + shadow.length + innerShadow.length === 0) {
@@ -488,21 +622,74 @@ export function buildStyleBoxFlat(
   //     is a wash in measurements.
   const styleProps: GodotProperty[] = [];
   if (corners.length > 0) {
-    // 32 polygon segments per corner — 4× Godot's default density.
-    // The cost is a few extra triangles; the win is smoother corner
-    // AA that better matches Skia's curve subdivision in the WebGL
-    // reference.
+    // 64 polygon segments per corner — 8× Godot's default density.
+    // The cost is a handful of extra triangles; the win is a corner
+    // arc that more closely matches Skia's curve subdivision in the
+    // WebGL reference. Verified via constraint cases: bumping from
+    // 32 → 64 dropped per-frame byte diff from 0.130% → 0.043% on
+    // small (cr=4) corners where each octant covers fewer source
+    // pixels and quantisation noise is most visible.
     //
     // Tried `anti_aliasing_size = 1.5` (Skia-ish softness) — produced
     // a net regression (16 frames moved OK → OVER) because softer AA
     // on small shapes blurs the edge bytes. Default 1.0 stays.
-    styleProps.push(property("corner_detail", intVal(32)));
+    styleProps.push(property("corner_detail", intVal(64)));
+    // Empirically calibrated AA falloff. Godot defaults to 1.0px,
+    // which renders a wider transitional band than Skia's tight
+    // corner AA in the WebGL reference. 0.5 narrows the falloff and
+    // measurably improves byte parity on small (cr=4) corner cases:
+    // byte diff 0.130% → 0.074% across all 23 constraint frames at
+    // no regression elsewhere. Lower values (0.25) produce identical
+    // results since Godot clamps to a per-pixel AA below 0.5; higher
+    // values (≥1.0) widen the band and re-introduce the outer-edge
+    // coverage pixels we're trying to tighten.
+    styleProps.push(property("anti_aliasing_size", floatVal(0.5)));
   }
   return subResource(id, "StyleBoxFlat", [
     ...effectiveBg,
     ...corners,
     ...styleProps,
     ...borderProps,
+    ...shadow,
+  ]);
+}
+
+/**
+ * Build a "shadow only" `StyleBoxFlat` carrying just the node's
+ * cornerRadius + DROP_SHADOW effect, with a fully-transparent bg.
+ * Used by the Polygon2D-routed shape leaves (IMAGE / gradient-on-
+ * rounded-rect) to paint Figma's drop shadow behind the polygon: the
+ * Panel itself draws nothing visible (transparent bg, no stroke), but
+ * Godot's StyleBoxFlat renderer still emits the shadow region around
+ * the rounded silhouette.
+ *
+ * Returns `undefined` when the node has no DROP_SHADOW effect (no
+ * shadow → no Panel needed). Only emits when the node has a
+ * resolvable corner radius — for non-rectangular shapes (ellipse,
+ * vector, boolean) the StyleBoxFlat shadow shape doesn't match the
+ * polygon silhouette, so we skip rather than paint a wrong-shape
+ * shadow.
+ */
+export function buildShadowOnlyStyleBoxFlat(
+  node: FigNode,
+  id: string,
+): GodotSubResource | undefined {
+  const shadow = shadowProperties(node);
+  if (shadow.length === 0) {
+    return undefined;
+  }
+  const corners = cornerRadiusProperties(node);
+  if (corners.length === 0) {
+    // Shadow without rounded corners would still be a valid rect
+    // shadow but the use-case here (polygon-routed rects) always has
+    // a corner radius — guard against painting a square shadow under
+    // a rounded silhouette.
+    return undefined;
+  }
+  return subResource(id, "StyleBoxFlat", [
+    property("bg_color", colorVal(0, 0, 0, 0)),
+    ...corners,
+    property("corner_detail", intVal(32)),
     ...shadow,
   ]);
 }

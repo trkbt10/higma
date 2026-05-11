@@ -10,7 +10,7 @@
   "scripts": {
     "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-godot/src packages/@higma-tools/fig-to-godot/spec",
     "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
-    "test": "vitest --run --passWithNoTests --config ./vitest.config.ts ./src ./spec"
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ./src ./spec"
   },
   "exports": {
     ".": {
@@ -37,7 +37,9 @@
   "dependencies": {
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
-    "@higma-primitives/identifier": "workspace:*"
+    "@higma-document-renderers/fig": "workspace:*",
+    "@higma-primitives/identifier": "workspace:*",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@higma-codecs/png-compare": "workspace:*"
