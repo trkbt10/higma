@@ -10,21 +10,48 @@
 /**
  * System UI font stack.
  *
- * macOS' `system-ui` resolves to SFNS.ttf, but that file is a variable
- * font: opentype.js exposes only its default-axis (Regular) instance, so
- * weight 700 renders identically to weight 400. Putting the SFNS-derived
- * families ahead of `Helvetica Neue` would defeat every Bold heading.
- * Until variable-font axis instancing lands in the loader, prefer
- * `Helvetica Neue` (.ttc with proper Bold variant) and only fall back to
- * SFNS when nothing better is installed.
+ * Walking order matters: on macOS the renderer's Node font loader
+ * indexes the OS UI font (`SFNS.ttf`) under the family name `"System
+ * Font"` as declared in its `name` table. That name has to land in the
+ * stack ahead of `"Roboto"` because `@fontsource/roboto` ships ~80
+ * unicode-range subsets — the loader's closest-weight match frequently
+ * picks a subset that doesn't carry the basic Latin block, and the
+ * verifier later detects this via `faceCoversLatin` and substitutes
+ * Helvetica Neue. Keeping SFNS ahead of Roboto avoids that two-step
+ * dance and lets the actual macOS system font reach the renderer.
+ *
+ * Variable-font weight selection: SFNS is a `wght`-axis variable font.
+ * Earlier versions of this stack skipped SFNS because opentype.js only
+ * exposed the default-axis (Regular) instance, which would have made
+ * every Bold heading render at 400. That gap is closed by
+ * `font-drivers/node/variable-font.ts`: the loader now wraps variable
+ * fonts in a view that applies the requested `wght` per render. SFNS
+ * Bold (700) therefore renders at the correct visual weight.
+ *
+ * On Linux / Windows `"System Font"` is not a catalogue entry — the
+ * walk falls through to `Segoe UI` (Windows) or `Helvetica Neue` /
+ * `sans-serif` (Linux fontconfig fallback). The macOS-specific entry
+ * is at the head exactly because it is platform-targeted: it costs
+ * nothing on platforms that don't have it.
+ *
+ * `Roboto` stays in the stack so a page that authored
+ * `font-family: system-ui, Roboto, …` (and ships Roboto via
+ * `@fontsource`) still gets Roboto on a Linux box that has no system
+ * UI font installed; demoting it past `Helvetica Neue` keeps the
+ * macOS-first ordering correct without dropping its safety-net role
+ * on bare Linux test environments.
  */
 export const SYSTEM_UI_STACK = [
   "system-ui",
   "-apple-system",
   "BlinkMacSystemFont",
+  // macOS system font, as exposed by `discoverDarwin` from
+  // `/System/Library/Fonts/SFNS.ttf`. The face's `name.fontFamily.en`
+  // is literally `"System Font"`.
+  "System Font",
   "Segoe UI",
-  "Roboto",
   "Helvetica Neue",
+  "Roboto",
   "Arial",
   "sans-serif",
 ] as const;

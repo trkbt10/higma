@@ -1486,20 +1486,28 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
       const { runs } = geometryCache.getTextGlyphGeometry(node);
       for (const runGeo of runs) {
-        const { prepared } = runGeo;
-        if (!prepared) { continue; }
-        const { bounds } = prepared;
-        const coverQuad = generateCoverQuad(bounds);
-        const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
+        if (runGeo.vertices.length === 0) { continue; }
         const runColor = hexToColor(runGeo.fillColor);
-        drawStencilFill({
-          prepared,
-          coverQuad,
+        // Text glyphs paint via earcut-tessellated triangles, NOT the
+        // INVERT-mode stencil fill we use for general SVG paths. The
+        // stencil-fill path fans triangles from a shared anchor (or per
+        // contour anchor) and relies on parity flips along the swept
+        // edges to colour the interior. For glyph outlines with closed
+        // counters (a, b, d, e, g, o, p, q…) this produces single-pixel
+        // notches inside the bowl whenever an edge crosses exactly on a
+        // pixel boundary the top-left rasterisation rule excludes — the
+        // adjacent triangles "agree" that the pixel is outside even
+        // though it is structurally inside the closed outline. earcut
+        // emits a proper triangulation that covers every interior pixel
+        // exactly once, so no notches; outer/hole detection in
+        // `tessellateContours` handles glyph counters (autoDetectWinding
+        // is the third arg, true → respect Figma's CFF winding).
+        drawSolidFill({
+          ctx: getGlContext(),
+          vertices: runGeo.vertices,
+          color: runColor,
           transform,
           opacity: opacity * fillOpacity * runGeo.fillOpacity,
-          elementSize,
-          fills: [{ type: "solid", color: runColor, opacity: 1 }],
-          fillRule: "evenodd",
         });
       }
       return;

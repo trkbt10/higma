@@ -73,8 +73,62 @@ export type AbstractFont = {
     readonly os2?: {
       readonly sCapHeight?: number;
       readonly sxHeight?: number;
+      /**
+       * Typographic ascender per the OS/2 spec. Per CSS Inline Layout
+       * Level 3, modern browsers derive the line box's ascent / descent
+       * from `sTypoAscender` / `sTypoDescender` regardless of the
+       * `USE_TYPO_METRICS` (`fsSelection` bit 7) flag, which classical
+       * implementations honoured. The renderer's baseline placement
+       * follows the same convention so CJK faces (Noto Sans JP ships
+       * `usWinAscent=1160` and `sTypoAscender=880`, a 5px gap at
+       * fontSize=16) line up with the browser's first-line baseline.
+       */
+      readonly sTypoAscender?: number;
+      /** Typographic descender per the OS/2 spec (negative). */
+      readonly sTypoDescender?: number;
+      /** Typographic line gap per the OS/2 spec. */
+      readonly sTypoLineGap?: number;
     };
   };
+
+  /**
+   * Apply a per-render `opsz` (optical size) axis value, in CSS
+   * pixels, for subsequent `charToGlyph` requests. Implementations
+   * backed by a variable font carry an `opsz` axis (SF Pro, Roboto
+   * Flex, Inter Variable, …) and must propagate the value into the
+   * glyph-path interpolation; static fonts ignore the call.
+   *
+   * Defined here so the renderer's text path emitter can tune optical
+   * size without reaching down into a specific driver. Callers
+   * invoke it once per text run with the run's `fontSize`. Callers
+   * are NOT required to call it — fonts return their default
+   * instance when no setter runs.
+   */
+  setOpticalSize?(fontSizePx: number): void;
+
+  /**
+   * Return the kerning adjustment between two adjacent glyphs in font
+   * units. The renderer's measurer and path walker add this to the
+   * running advance so glyph pairs covered by the font's `kern` table
+   * (legacy) or GPOS pair adjustment lookup (modern) line up with the
+   * browser's measurement. Returns `0` when the font has no entry for
+   * the pair, and may be omitted entirely when the driver can't
+   * surface kern data — callers must treat it as optional and fall
+   * through to plain advance summation.
+   *
+   * Argument shape mirrors opentype.js: callers may pass either the
+   * `AbstractGlyph` object or its numeric glyph index, so the same
+   * underlying Font instance can satisfy both this interface and the
+   * opentype.js native signature without an adapter layer.
+   *
+   * Defined here rather than reaching into opentype.js so non-Node
+   * font drivers (browser, future native) can stay free of the
+   * opentype.js dependency while still feeding the same measurer.
+   */
+  getKerningValue?(
+    leftGlyph: AbstractGlyph | number,
+    rightGlyph: AbstractGlyph | number,
+  ): number;
 };
 
 // =============================================================================
@@ -162,11 +216,21 @@ export type FontAvailabilityChecker = {
 export type FontMetrics = {
   /** Units per em. */
   readonly unitsPerEm: number;
-  /** Ascender (positive, above baseline). */
+  /**
+   * Ascender in font units (positive, above baseline). The metric the
+   * renderer uses for CSS line-box layout — modern browsers source
+   * this from `OS/2.sTypoAscender` when present (CSS Inline L3), with
+   * the `hhea` ascender as the legacy fallback for fonts that don't
+   * carry an OS/2 table.
+   */
   readonly ascender: number;
-  /** Descender (negative, below baseline). */
+  /** Descender in font units (negative, below baseline). Same precedence as `ascender`. */
   readonly descender: number;
-  /** Line gap. */
+  /**
+   * Line gap in font units. The leading the font ships as its
+   * intended inter-line space when `line-height: normal`. Per CSS
+   * Inline L3 the browser uses `OS/2.sTypoLineGap` when available.
+   */
   readonly lineGap: number;
   /** Cap height (height of capital letters). */
   readonly capHeight?: number;

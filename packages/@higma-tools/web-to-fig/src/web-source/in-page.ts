@@ -127,6 +127,26 @@ export type ElementJson = {
    * breakdown".
    */
   readonly textLineRects?: readonly { readonly x: number; readonly y: number; readonly width: number; readonly height: number }[];
+  /**
+   * Per-visual-line baseline Y positions in viewport coordinates,
+   * captured from the browser's text layout pass. One entry per
+   * `textLineRects` entry; renderers use them to place each line's
+   * glyph baseline at the exact spot the browser painted.
+   *
+   * Per-line rather than first-line-only because CSS allows the line
+   * box's baseline to vary line-to-line (inline children with
+   * mismatched font-sizes / line-heights, vertical-align deltas, …).
+   * A single baseline value would collapse that variation; capturing
+   * one per line preserves it.
+   *
+   * Absent for elements with no text-bearing line, when the
+   * browser-side Canvas font-metric API was unavailable, or when not
+   * every line could be measured (we don't mix valid and undefined
+   * entries — see `collectTextLineBaselineYs`). The renderer falls
+   * back to font-metric-derived baseline placement when this field
+   * is absent.
+   */
+  readonly textLineBaselineYs?: readonly number[];
   readonly pseudo?: readonly PseudoJson[];
   readonly children: readonly ElementJson[];
 };
@@ -1296,6 +1316,7 @@ export function captureSnapshot(): RawSnapshotJson {
     // `walk` would lose the closure reference and break in-page
     // execution.
     const textLineRects = text.length > 0 ? collectTextLineRects(el) : undefined;
+    const textLineBaselineYs = text.length > 0 ? collectTextLineBaselineYs(el) : undefined;
     return {
       id: path,
       tag: el.tagName.toLowerCase(),
@@ -1312,6 +1333,7 @@ export function captureSnapshot(): RawSnapshotJson {
         ? paddedFragments
         : undefined,
       textLineRects,
+      textLineBaselineYs,
       pseudo: pseudo.length > 0 ? pseudo : undefined,
       children,
     };
@@ -1343,6 +1365,80 @@ export function captureSnapshot(): RawSnapshotJson {
       return undefined;
     }
     return collected.length > 0 ? collected : undefined;
+  }
+
+  /**
+   * Read per-visual-line baseline Y positions (in viewport
+   * coordinates) from the browser's own typesetting. The renderer
+   * uses these to place each line's glyph baseline at the exact spot
+   * the browser painted, sidestepping the half-leading /
+   * sTypoAscender / CoreText interpretation differences that
+   * font-metric-only baseline derivation cannot fully recover.
+   *
+   * Per-line rather than first-line-only because CSS allows the line
+   * box's baseline to vary line-to-line — `vertical-align`, inline
+   * children with taller `line-height`, image inlines, or
+   * `font-size`-changing spans within a paragraph all reshape the
+   * dominant baseline of the line they appear on. A single
+   * `firstLineBaselineY` would collapse that variation; capturing
+   * one baseline per line preserves it.
+   *
+   * Strategy: walk `Range.getClientRects()` (the same lines
+   * `collectTextLineRects` returns). For each line subtract the
+   * element's `fontBoundingBoxDescent` from the rect's `bottom`. The
+   * element-level font is correct here because text within a single
+   * walker entry shares a font face — runs with different fonts
+   * surface as separate inline elements that get their own walker
+   * entry and per-line baseline.
+   *
+   * Length contract: returned array has the same length as the rect
+   * list `collectTextLineRects` would return. When the descent
+   * metric is unavailable (Canvas API missing or font not parseable)
+   * the whole array is omitted; mixing valid and undefined entries
+   * would force every downstream consumer to handle nullable items,
+   * which buys nothing — the fallback path already covers the
+   * "no baseline available" case for the entire element.
+   */
+  function collectTextLineBaselineYs(el: Element): readonly number[] | undefined {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const lineList = range.getClientRects();
+      const lineRects: DOMRect[] = [];
+      for (let i = 0; i < lineList.length; i += 1) {
+        const r = lineList[i]!;
+        if (r.width > 0 && r.height > 0) {
+          lineRects.push(r);
+        }
+      }
+      if (lineRects.length === 0) {
+        return undefined;
+      }
+      const cs = window.getComputedStyle(el);
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (ctx === null) {
+        return undefined;
+      }
+      // Build a CSS `font` shorthand from the element's computed style
+      // so Canvas's metrics describe the same face the layout used.
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      // `fontBoundingBox*` depends only on the font + size, not the
+      // string — the probe character is arbitrary.
+      const metrics = ctx.measureText("x");
+      const fbDescent = (metrics as TextMetrics & { fontBoundingBoxDescent?: number }).fontBoundingBoxDescent;
+      if (typeof fbDescent !== "number") {
+        return undefined;
+      }
+      const out: number[] = [];
+      for (const r of lineRects) {
+        out.push(r.bottom - fbDescent);
+      }
+      return out;
+    } catch (_err) {
+      void _err;
+      return undefined;
+    }
   }
 
   function padFragments(

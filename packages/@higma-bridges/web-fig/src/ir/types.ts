@@ -227,6 +227,22 @@ export type TextStyleIR = {
   /** Letter-spacing, in px. 0 means default. */
   readonly letterSpacing: number;
   readonly textAlign: "left" | "center" | "right" | "justify";
+  /**
+   * Vertical alignment within the TEXT box.
+   *
+   * CSS does not have a direct text-vertical-align. The IR defaults to
+   * `top` (Figma's `TOP` is the no-op). The web-to-fig normaliser
+   * promotes it to `center` / `bottom` when the captured element's
+   * computed style describes a leaf-text host whose flex container is
+   * centring its single text child vertically (a `display: flex;
+   * align-items: center;` button label, an `inline-flex` chip, etc.).
+   * That promotion lives in `promoteLeafTextToFrame`'s inner-text path
+   * and only runs when a TEXT node is the sole flex child of a
+   * centring container — pages that drive vertical centring through
+   * `padding-top: <height/2>` or `line-height = box-height` keep the
+   * default `top` and rely on glyph metrics to land in place.
+   */
+  readonly textAlignVertical: "top" | "center" | "bottom";
   readonly textTransform: "none" | "uppercase" | "lowercase" | "capitalize";
   readonly textDecoration: "none" | "underline" | "line-through";
 };
@@ -361,6 +377,54 @@ export type TextNodeIR = NodeBaseIR & {
   readonly textStyle: TextStyleIR;
   /** Optional ordered runs. Each run's `[start, end)` must not overlap any other. */
   readonly runs?: readonly TextRunIR[];
+  /**
+   * Captured per-line client rects (from `Range.getClientRects()` on
+   * the source DOM node). Length == number of visual lines the
+   * browser laid the text into; the rects are in the same coordinate
+   * space as `box`. Renderers trust this list as the authoritative
+   * wrap breakdown so the rendered `.fig` reproduces the captured
+   * line count without re-deriving wrap from approximate glyph
+   * advance widths.
+   *
+   * Absent for hand-built IR (synthetic snapshots, multi-fig synth)
+   * and any TEXT node whose source didn't go through a browser walker.
+   */
+  readonly capturedLineRects?: readonly BoxIR[];
+  /**
+   * Per-visual-line baseline Y offsets in the same coordinate space
+   * as `box` (relative to the text node's parent). One entry per
+   * `capturedLineRects` entry; renderers use them to place each
+   * line's glyph baseline at the exact spot the browser painted.
+   *
+   * Why per-line and not just first-line: CSS allows the line box's
+   * baseline to vary line-to-line when inline children with different
+   * font-sizes, line-heights, or vertical-align values share a line.
+   * Even within a single line, the line's baseline can shift downward
+   * if an inline `<span style="line-height:2em">` forces a taller
+   * strut. Capturing baseline per visual line preserves that — a
+   * single `firstLineBaselineY` would collapse the data and produce
+   * the same drift on any wrap whose later lines pick up a different
+   * baseline from the first.
+   *
+   * Browser-side derivation: each line's baseline is computed as
+   * `lineRect.bottom - fontBoundingBoxDescent` against the element's
+   * computed font, so the value matches the layout pass that drew
+   * the actual pixels. The element-level font metric is correct here
+   * because lines sharing a single element share a font; per-run
+   * line-height overrides surface as separate inline elements whose
+   * own walker entry carries its own line list and baselines.
+   *
+   * Absent for hand-built IR (synthetic snapshots, multi-fig synth)
+   * and any TEXT node whose source didn't go through a browser
+   * walker. Renderers fall back to font-metric-derived baseline
+   * placement when this field is absent.
+   *
+   * Length contract: when present, length equals `capturedLineRects`
+   * length. A walker that fails to compute baselines for some lines
+   * but not others omits the whole array rather than mixing valid
+   * and undefined entries.
+   */
+  readonly capturedLineBaselineYs?: readonly number[];
 };
 
 /** Plain rectangle with no children — for backgrounds / dividers. */

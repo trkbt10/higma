@@ -779,6 +779,7 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined, ctx:
     textStyle,
     runs: content.runs.length > 0 ? content.runs : undefined,
     capturedLineRects: capturedLineRectsRelativeTo(el, parent),
+    capturedLineBaselineYs: capturedLineBaselineYsRelativeTo(el, parent),
   };
 }
 
@@ -807,6 +808,35 @@ function capturedLineRectsRelativeTo(
     width: r.width,
     height: r.height,
   }));
+}
+
+/**
+ * Translate the captured viewport-absolute baseline Ys on `el` into
+ * the parent-relative coordinate space the IR's `box` lives in. One
+ * entry per `capturedLineRectsRelativeTo` entry; together they let
+ * the renderer place each line's glyph baseline at the exact Y the
+ * browser painted, without re-deriving it from font metrics.
+ *
+ * Returns `undefined` when no per-line baselines were captured, or
+ * when their count doesn't agree with the line-rect count (a
+ * sanity check — the in-page walker only emits the array when every
+ * line was measured).
+ */
+function capturedLineBaselineYsRelativeTo(
+  el: RawElement,
+  parent: RawElement | undefined,
+): readonly number[] | undefined {
+  const baselines = el.textLineBaselineYs;
+  const rects = el.textLineRects;
+  if (baselines === undefined || rects === undefined) {
+    return undefined;
+  }
+  if (baselines.length !== rects.length) {
+    return undefined;
+  }
+  const parentContent = parent?.contentRect;
+  const offsetY = parentContent ? parentContent.y : 0;
+  return baselines.map((y) => y - offsetY);
 }
 
 function promoteUniformDecoration(
@@ -1330,6 +1360,7 @@ function normalizeText(el: RawElement, parent: RawElement | undefined, ctx: Norm
     characters,
     textStyle: normalizeTextStyle(el, ctx.fontResolver),
     capturedLineRects: capturedLineRectsRelativeTo(el, parent),
+    capturedLineBaselineYs: capturedLineBaselineYsRelativeTo(el, parent),
   };
 }
 

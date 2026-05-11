@@ -175,6 +175,15 @@ export type RawElement = {
    * Absent for non-text elements.
    */
   readonly textLineRects?: readonly RawRect[];
+  /**
+   * Per-visual-line baseline Y positions in viewport coordinates,
+   * captured from the browser's text layout pass. One entry per
+   * `textLineRects` entry. Renderers place each line's glyph
+   * baseline at the captured value to sidestep font-metric-derived
+   * baseline drift. Absent when the element has no text-bearing
+   * line or when the in-page Canvas font-metric API was unavailable.
+   */
+  readonly textLineBaselineYs?: readonly number[];
   /** Captured `::before` / `::after` pseudo-element strings. */
   readonly pseudo?: readonly RawPseudoContent[];
   readonly children: readonly RawElement[];

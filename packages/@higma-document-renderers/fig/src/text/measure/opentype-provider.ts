@@ -109,11 +109,28 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
       return estimateFontMetrics(font);
     }
 
+    // CSS Inline L3 derives the line box's ascent / descent from
+    // `OS/2.sTypoAscender` / `OS/2.sTypoDescender` regardless of the
+    // `USE_TYPO_METRICS` (`fsSelection` bit 7) flag — every modern
+    // browser follows this. The `hhea` ascender (which opentype.js
+    // exposes as `font.ascender`) is the historical fallback for
+    // fonts that don't carry an OS/2 table at all. Reading the typo
+    // metrics here closes a noticeable baseline-position gap on faces
+    // whose `hhea` and `OS/2.sTypo` differ — notably CJK fonts like
+    // Noto Sans JP, where `hhea.ascender = 1160` but
+    // `sTypoAscender = 880` (a 5px first-line baseline gap at
+    // fontSize=16).
+    const os2 = opentypeFont.tables?.os2;
+    const ascender = typeof os2?.sTypoAscender === "number" ? os2.sTypoAscender : opentypeFont.ascender;
+    const descender = typeof os2?.sTypoDescender === "number" ? os2.sTypoDescender : opentypeFont.descender;
+    const typoLineGap = typeof os2?.sTypoLineGap === "number" ? os2.sTypoLineGap : undefined;
+    const hheaLineGap = (opentypeFont.tables?.hhea?.lineGap as number | undefined) ?? 0;
+    const lineGap = typoLineGap ?? hheaLineGap;
     return {
       unitsPerEm: opentypeFont.unitsPerEm,
-      ascender: opentypeFont.ascender,
-      descender: opentypeFont.descender,
-      lineGap: (opentypeFont.tables?.hhea?.lineGap as number) ?? 0,
+      ascender,
+      descender,
+      lineGap,
       capHeight: (opentypeFont.tables?.os2?.sCapHeight as number) ?? undefined,
       xHeight: (opentypeFont.tables?.os2?.sxHeight as number) ?? undefined,
     };

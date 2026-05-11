@@ -16,6 +16,13 @@ export type ViewportFixtureJson = {
   readonly background: ViewportIR["background"];
   readonly box: ViewportIR["box"];
   readonly root: ViewportIR["root"];
+  /**
+   * Lifted-out `position: fixed` / `sticky` subtrees that paint at
+   * viewport-anchored coordinates. Optional in the fixture form so
+   * older fixtures without the field still deserialise; absent means
+   * "no viewport-anchored layer".
+   */
+  readonly viewportLayer?: ViewportIR["viewportLayer"];
   readonly assets: ReadonlyArray<{
     readonly id: string;
     readonly mime: AssetIR["mime"];
@@ -40,6 +47,7 @@ export function serializeViewport(viewport: ViewportIR): ViewportFixtureJson {
     background: viewport.background,
     box: viewport.box,
     root: viewport.root,
+    viewportLayer: viewport.viewportLayer,
     assets,
   };
 }
@@ -57,6 +65,10 @@ export function deserializeViewport(json: ViewportFixtureJson): ViewportIR {
     background: json.background,
     box: json.box,
     root: json.root,
+    // Older fixtures predate the lifted-layer feature; default to an
+    // empty list when absent so the IR's invariant ("viewportLayer is
+    // present and array-shaped") still holds.
+    viewportLayer: json.viewportLayer ?? [],
     assets,
   };
 }

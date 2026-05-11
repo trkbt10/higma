@@ -611,6 +611,7 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     text: json.text,
     textFragments: json.textFragments,
     textLineRects: json.textLineRects,
+    textLineBaselineYs: json.textLineBaselineYs,
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };

@@ -39,8 +39,28 @@ export type AlignYOptions = {
   lineCount: number;
   /** Line height in pixels */
   lineHeight: number;
-  /** Ascender ratio (ascender / unitsPerEm) from font metrics */
+  /**
+   * Ascender ratio (ascender / unitsPerEm) from the font's typographic
+   * metrics — sourced from `OS/2.sTypoAscender` by the measure provider
+   * (CSS Inline L3 convention).
+   */
   ascenderRatio: number;
+  /**
+   * Descender ratio (|descender| / unitsPerEm) from the font's
+   * typographic metrics. Combined with `ascenderRatio` this yields the
+   * font's content-area height. Passed alongside `ascenderRatio` so the
+   * half-leading split honours CSS 2.1 §10.8.1: when `line-height`
+   * exceeds the content-area height the extra space is split half above
+   * and half below, shifting the first-line baseline down by
+   * `(line-height - content-area-height) / 2`.
+   *
+   * Optional for backwards compatibility: when omitted the half-leading
+   * term is zero and the baseline sits exactly at `fontSize *
+   * ascenderRatio` from the top — which is what the renderer did before
+   * the half-leading fix landed, and what the .fig snapshots compiled
+   * against legacy callers expect.
+   */
+  descenderRatio?: number;
 };
 
 /**
@@ -61,14 +81,39 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
     lineCount,
     lineHeight,
     ascenderRatio,
+    descenderRatio,
   } = options;
   if (!Number.isFinite(ascenderRatio) || ascenderRatio <= 0) {
     throw new Error("getAlignedYWithMetrics requires a positive ascenderRatio from font metrics");
   }
 
-  // Baseline offset from top of text box
-  // ascenderRatio determines where baseline sits relative to top of em square
-  const baselineOffset = fontSize * ascenderRatio;
+  // CSS 2.1 §10.8.1 baseline placement with Chromium's integer
+  // rounding on the font's typographic ascent / descent applied.
+  //
+  // Chromium reports `TextMetrics.fontBoundingBoxAscent` /
+  // `fontBoundingBoxDescent` as integers even when the float-precise
+  // values (`OS/2.sTypoAscender × fontSize / unitsPerEm`) are
+  // fractional, and the rendered baseline lands at the integer
+  // position. Pre-rounding ascent / descent before the half-leading
+  // split removes the sub-pixel drift that an all-float formula
+  // leaves on every line.
+  //
+  // The half-leading term carries the CSS rule that when
+  // `line-height` exceeds the content-area height the surplus is
+  // split half-above / half-below. Wrap-boundary fixture (16px lh:22)
+  // depends on this: with halfLeading=0 lines clump 2 px too high.
+  //
+  // Verified against `capturedLineBaselineYs` (browser-truth) for
+  // SFNS body 16px, SFNS headline 24px, Inter 16px / 14px, Noto Sans
+  // JP 16px — every case matches to within 1 px (AA tolerance).
+  const descenderRatioResolved = descenderRatio !== undefined && Number.isFinite(descenderRatio) && descenderRatio >= 0
+    ? descenderRatio
+    : 0;
+  const ascentPx = Math.round(fontSize * ascenderRatio);
+  const descentPx = Math.round(fontSize * descenderRatioResolved);
+  const contentAreaPx = ascentPx + descentPx;
+  const halfLeading = Math.max(0, (lineHeight - contentAreaPx) / 2);
+  const baselineOffset = halfLeading + ascentPx;
 
   // Total text height: from top of first line to baseline of last line
   const totalTextHeight = baselineOffset + (lineCount - 1) * lineHeight;

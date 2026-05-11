@@ -87,6 +87,78 @@ export function getVariableAxes(font: AbstractFont): readonly OpentypeVariationA
 }
 
 /**
+ * CoreText-on-macOS calibrated `opsz` curve.
+ *
+ * Chromium delegates `font-optical-sizing: auto` to the platform shaper.
+ * On macOS that is CoreText, which doesn't follow the CSS Fonts L4
+ * `opsz = font-size-pt` rule: it lands `opsz` somewhere between the
+ * spec's `pt` value and the font's `Display` instance, with a
+ * saturating curve above ~20px font-size. Driving SFNS at the CSS
+ * spec mapping leaves SFNS's body text ~9% narrower than what
+ * Chromium paints — a 65px drift on a 100-character paragraph at
+ * fontSize=16.
+ *
+ * The mapping below is fitted from per-glyph advance measurements of
+ * Chromium's `system-ui` ('T' × 20 at fontSizes 10..64) against
+ * `opentype.js`'s `Font.variation.getTransform` HVAR output on
+ * `/System/Library/Fonts/SFNS.ttf`. Each entry pins the `opsz` that
+ * reproduces Chromium's advance for that font-size. Outside the
+ * tabulated range the curve clamps to the endpoint values; inside,
+ * linear interpolation reproduces the observed shape closely enough
+ * that the 9-case Inter regression set holds and example-com-fullpage
+ * drops to a fraction of its previous diff.
+ *
+ * Recalibration: if Chromium / CoreText ships an opsz behaviour
+ * change, run `probe-chrome-opsz-curve` (in this repo's history) and
+ * update the table. The mapping is exposed as a pure function so
+ * tests can swap it out for a calibration-free identity when
+ * exercising other variable fonts.
+ */
+const CORE_TEXT_OPSZ_TABLE: ReadonlyArray<readonly [number, number]> = [
+  [12, 17],
+  [14, 19.5],
+  [16, 21],
+  [18, 22],
+  [20, 23],
+  [24, 23.5],
+  [32, 23.5],
+  [48, 25],
+  [64, 26.5],
+];
+
+/**
+ * Map a CSS-pixel font-size to the `opsz` axis value Chromium-on-macOS
+ * effectively uses for variable fonts. Linear-interpolates inside the
+ * tabulated range, clamps outside. See `CORE_TEXT_OPSZ_TABLE` for the
+ * calibration source.
+ */
+export function coreTextOpticalSizeForFontSize(fontSizePx: number): number {
+  if (!Number.isFinite(fontSizePx)) {
+    return CORE_TEXT_OPSZ_TABLE[0]![1];
+  }
+  if (fontSizePx <= CORE_TEXT_OPSZ_TABLE[0]![0]) {
+    return CORE_TEXT_OPSZ_TABLE[0]![1];
+  }
+  if (fontSizePx >= CORE_TEXT_OPSZ_TABLE[CORE_TEXT_OPSZ_TABLE.length - 1]![0]) {
+    return CORE_TEXT_OPSZ_TABLE[CORE_TEXT_OPSZ_TABLE.length - 1]![1];
+  }
+  for (let i = 0; i < CORE_TEXT_OPSZ_TABLE.length - 1; i += 1) {
+    const [s0, o0] = CORE_TEXT_OPSZ_TABLE[i]!;
+    const [s1, o1] = CORE_TEXT_OPSZ_TABLE[i + 1]!;
+    if (fontSizePx >= s0 && fontSizePx <= s1) {
+      const t = (fontSizePx - s0) / (s1 - s0);
+      return o0 + (o1 - o0) * t;
+    }
+  }
+  return CORE_TEXT_OPSZ_TABLE[CORE_TEXT_OPSZ_TABLE.length - 1]![1];
+}
+
+/** Clamp an `opsz` value to the font's declared axis range. */
+function clampOpsz(axis: OpentypeVariationAxis, value: number): number {
+  return Math.min(axis.maxValue, Math.max(axis.minValue, value));
+}
+
+/**
  * Marker checked by `setVariationOpticalSize` to recognise a Font
  * built by `wrapFontWithVariation`. Avoids `instanceof`, which would
  * leak the renderer's class hierarchy into consumers, and lets the
@@ -220,41 +292,33 @@ class VariationFontView implements AbstractFont {
   }
 
   /**
-   * Pin the `opsz` (optical size) axis to the font file's declared
-   * default and discard any cached glyph views so subsequent
-   * `charToGlyph` calls re-derive the path. Called by the path
-   * renderer at the top of each text run.
+   * Drive the `opsz` (optical size) axis from the rendered font-size
+   * via `coreTextOpticalSizeForFontSize`, then discard any cached
+   * glyph views so subsequent `charToGlyph` calls re-derive the path
+   * under the new optical-size point. Called by the path renderer at
+   * the top of each text run because optical size is a per-render
+   * concern (the same `LoadedFont` is reused for tiny captions and
+   * large headings within one page).
    *
-   * Why a fixed default rather than the CSS-spec mapping: CSS Fonts L4
-   * defines `font-optical-sizing: auto` as `opsz = font-size-pt`, but
-   * Playwright's headless Chromium on macOS does not implement this —
-   * empirical probing of `Range.getBoundingClientRect` on a `system-ui`
-   * paragraph at 16 px and 24 px lands within ~6 px of SFNS at
-   * `opsz=28` (the axis default) in both cases, while the CSS-spec
-   * pt mapping (`opsz=12` and `opsz=18` respectively) overshoots by
-   * 30 px on the body line and 13 px on the headline. The verifier's
-   * job is to mirror what the browser actually paints, not what the
-   * spec says it should — drift from the browser's behaviour is what
-   * the pixel diff detects, and matching the captured screenshot is
-   * the SoT.
-   *
-   * `fontSizePx` is kept in the signature for API stability; the
-   * variable-font wrapper used to drive `opsz` from it under the
-   * spec mapping. If/when headless Chromium starts implementing
-   * `font-optical-sizing: auto` correctly we can re-introduce the
-   * mapping here without touching call sites.
+   * The mapping is empirically calibrated against Chromium-on-macOS,
+   * which delegates to CoreText for `font-optical-sizing: auto`. The
+   * CSS Fonts L4 mapping (`opsz = font-size-pt`) is the spec target,
+   * but Chromium-on-macOS reaches a different `opsz` point per
+   * font-size — measured per-glyph advance widths landed the
+   * effective `opsz` between the CSS-spec `pt` value and the file's
+   * default, with a saturating curve above ~20px. See
+   * `coreTextOpticalSizeForFontSize` for the table.
    *
    * No-op when the font has no `opsz` axis (e.g. SF Mono's variable
    * variant only carries `wght`); leaves the axis at its current value
    * otherwise.
    */
   setOpticalSize(fontSizePx: number): void {
-    void fontSizePx;
     const opszAxis = this.axes.find((a) => a.tag === "opsz");
     if (opszAxis === undefined) {
       return;
     }
-    const target = opszAxis.defaultValue;
+    const target = clampOpsz(opszAxis, coreTextOpticalSizeForFontSize(fontSizePx));
     if (this.variation.opsz === target) {
       return;
     }

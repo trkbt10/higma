@@ -257,9 +257,69 @@ export function resolveTextAscenderRatio(
   }
   const font = ctx.fontResolver?.(props.font);
   if (font) {
-    return font.ascender / font.unitsPerEm;
+    return typoAscenderUnits(font) / font.unitsPerEm;
   }
   throw new Error(`Text layout requires ascender metrics for font "${props.font.family}"`);
+}
+
+/**
+ * Resolve the descender ratio (|descender| / unitsPerEm). Returns
+ * `undefined` when neither derived metadata nor a font resolver
+ * supplies a descender — the layout code path then falls back to the
+ * legacy "baseline = top + ascent" placement without the half-leading
+ * term. Production paths always have one of the two sources.
+ *
+ * Like `resolveTextAscenderRatio` this prefers `OS/2.sTypoDescender`
+ * over the legacy `hhea` value so the content-area height matches what
+ * modern browsers compute per CSS Inline L3.
+ */
+export function resolveTextDescenderRatio(
+  node: TextNodeInput,
+  props: ExtractedTextProps,
+  ctx: ResolveTextContext,
+): number | undefined {
+  const dtd = node.derivedTextData as FigDerivedTextData | undefined;
+  const baseline = dtd?.baselines?.[0];
+  if (
+    baseline &&
+    typeof baseline.lineDescent === "number" &&
+    baseline.lineDescent > 0 &&
+    typeof baseline.lineHeight === "number" &&
+    baseline.lineHeight > 0
+  ) {
+    const lh = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
+    if (lh !== undefined) {
+      return baseline.lineDescent / (baseline.lineHeight / lh);
+    }
+  }
+  const font = ctx.fontResolver?.(props.font);
+  if (font) {
+    // Convert the descender (negative in font units) to a positive
+    // ratio against unitsPerEm. The metric matches what the measure
+    // provider exposes through `FontMetrics.descender`.
+    return Math.abs(typoDescenderUnits(font)) / font.unitsPerEm;
+  }
+  return undefined;
+}
+
+/**
+ * Read the typographic ascender from an `AbstractFont`. Prefers
+ * `OS/2.sTypoAscender` (CSS Inline L3 convention) with the legacy
+ * `font.ascender` (= `hhea.ascender`) as fallback for fonts without
+ * an OS/2 table.
+ */
+function typoAscenderUnits(font: { readonly ascender: number; readonly tables?: { readonly os2?: { readonly sTypoAscender?: number } } }): number {
+  const typo = font.tables?.os2?.sTypoAscender;
+  return typeof typo === "number" ? typo : font.ascender;
+}
+
+/**
+ * Read the typographic descender (negative in font units). Same
+ * `sTypoDescender`-over-`hhea` precedence as `typoAscenderUnits`.
+ */
+function typoDescenderUnits(font: { readonly descender: number; readonly tables?: { readonly os2?: { readonly sTypoDescender?: number } } }): number {
+  const typo = font.tables?.os2?.sTypoDescender;
+  return typeof typo === "number" ? typo : font.descender;
 }
 
 /**
@@ -518,6 +578,7 @@ export function resolveTextRendering(
   // baselines when a font loader is absent.
   const fontMetrics = resolveFontMetrics(dtd);
   const ascenderRatio = resolveTextAscenderRatio(node, props, ctx);
+  const descenderRatio = resolveTextDescenderRatio(node, props, ctx);
 
   // Glyph-mode when pre-outlined paths are available and we can decode them.
   // Figma has already applied truncation to the glyph positions, so we pass
@@ -531,7 +592,7 @@ export function resolveTextRendering(
     );
     const pathData = extractDerivedTextPathData(dtd!, ctx.blobs, alignmentOffset);
     if (pathData.glyphContours.length > 0 || pathData.decorations.length > 0) {
-      const layout = computeTextLayout({ props, ascenderRatio });
+      const layout = computeTextLayout({ props, ascenderRatio, descenderRatio });
       const glyphs: TextRenderingGlyphs = {
         kind: "glyphs",
         glyphContours: pathData.glyphContours,
@@ -567,6 +628,7 @@ export function resolveTextRendering(
     props: displayProps,
     lines: explicitLines,
     ascenderRatio,
+    descenderRatio,
     measureCharWidths,
   });
 
