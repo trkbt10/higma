@@ -492,6 +492,35 @@ export function buildPolygon2DNodes(
      */
     readonly resolveAngular: (paint: FigGradientPaint, size: { readonly x: number; readonly y: number }) => { readonly id: string; readonly imageWidth: number; readonly imageHeight: number } | undefined;
     readonly resolveDiamond: (paint: FigGradientPaint, size: { readonly x: number; readonly y: number }) => { readonly id: string; readonly imageWidth: number; readonly imageHeight: number } | undefined;
+    /**
+     * Pre-rasterize a linear or radial gradient paint to an inline
+     * `ImageTexture` (instead of Godot's `GradientTexture2D` whose
+     * per-pixel evaluation drifts 1+ bytes vs the WebGL ref). Used
+     * for the BOOLEAN_OPERATION / VECTOR polygon paths where the
+     * silhouette is irregular and the gradient sampler differences
+     * compound — see `bool-gradient-union`.
+     */
+    readonly resolveLinear?: (paint: FigGradientPaint, size: { readonly x: number; readonly y: number }) => { readonly id: string; readonly imageWidth: number; readonly imageHeight: number } | undefined;
+    readonly resolveRadial?: (paint: FigGradientPaint, size: { readonly x: number; readonly y: number }) => { readonly id: string; readonly imageWidth: number; readonly imageHeight: number } | undefined;
+  },
+  options?: {
+    /**
+     * When false, emit polygon fill colours WITHOUT the
+     * `polygon2DByteCompensate` +0.5-bias compensation. Pass false
+     * when the polygon will render into a `CanvasGroup` buffer that
+     * gets `self_modulate` alpha-blended afterwards — the +0.5 bias
+     * survives the float-precision buffer and overshoots the blended
+     * byte by 1. Default true (standalone Polygon2D path).
+     */
+    readonly compensate?: boolean;
+    /**
+     * When true, route LINEAR / RADIAL gradient paints through the
+     * pre-raster path (`resolveLinear` / `resolveRadial`) instead of
+     * Godot's `GradientTexture2D`. The BOOLEAN_OPERATION caller sets
+     * this so the irregular silhouette gets a byte-perfect gradient
+     * texture matching the WebGL ref.
+     */
+    readonly preRasterLinearRadial?: boolean;
   },
 ): Polygon2DBuildResult {
   if (contours.length === 0) {
@@ -521,13 +550,54 @@ export function buildPolygon2DNodes(
       continue;
     }
     if (paint.type === "SOLID") {
-      const polys = buildSolidPolygon(paint, fillContours, uniquify);
+      const polys = buildSolidPolygon(paint, fillContours, uniquify, options?.compensate ?? true);
       for (const p of polys) {
         fillNodes.push(p);
       }
       continue;
     }
     if (paint.type === "GRADIENT_LINEAR" || paint.type === "GRADIENT_RADIAL") {
+      // BOOLEAN_OPERATION / VECTOR paths set
+      // `preRasterLinearRadial` to swap Godot's `GradientTexture2D`
+      // for a CPU-rasterised inline ImageTexture — the WebGL ref's
+      // per-pixel gradient evaluation produces a different byte
+      // stream than GradientTexture2D for the irregular polygon
+      // silhouettes those paths produce (`bool-gradient-union`
+      // 23.23% before this routing).
+      //
+      // WebGL drives the linear-gradient shader's `u_elementSize`
+      // from the merged contour's bounding box, not `node.size`
+      // (see fig WebGL renderer.ts drawStencilFill — passes
+      // `{ width: bounds.maxX - bounds.minX, ... }`). The two diverge
+      // for BOOLEAN_OPERATION nodes whose Figma-authored `size` is
+      // looser than the actual merged contour. Pre-rasterising at
+      // node.size dimensions would produce a gradient sampled along
+      // the wrong axis; rasterising at the contour bounds matches
+      // the WebGL ref byte-for-byte.
+      if (options?.preRasterLinearRadial && rasterizedGradientProvider) {
+        const bounds = contourBoundsOrSize(fillContours, node_.size);
+        if (bounds) {
+          const gradPaint = paint as FigGradientPaint;
+          const sizeForResolve = { x: bounds.width, y: bounds.height };
+          const resolved = paint.type === "GRADIENT_LINEAR"
+            ? rasterizedGradientProvider.resolveLinear?.(gradPaint, sizeForResolve)
+            : rasterizedGradientProvider.resolveRadial?.(gradPaint, sizeForResolve);
+          if (resolved) {
+            const polys = buildRasterizedGradientPolygon(
+              node_,
+              fillContours,
+              uniquify,
+              resolved,
+              { x: bounds.x, y: bounds.y },
+              sizeForResolve,
+            );
+            for (const n of polys) {
+              fillNodes.push(n);
+            }
+            continue;
+          }
+        }
+      }
       if (!gradientIdProvider) {
         continue;
       }
@@ -695,12 +765,63 @@ function firstVisibleSolidStroke(paints: readonly FigPaint[] | undefined): FigSo
   return undefined;
 }
 
+/**
+ * Compute the bounding box of all contour vertices, returning an
+ * `(x, y, width, height)` object. Falls back to `(0, 0, size.x,
+ * size.y)` from the node when contours are empty.
+ *
+ * Used by the BOOLEAN_OPERATION gradient rasterisation path so the
+ * gradient texture spans only the merged silhouette's actual extent
+ * — matching the WebGL ref's `elementSize = bounds.{w,h}` (see
+ * `renderer.ts` `drawStencilFill`).
+ */
+function contourBoundsOrSize(
+  contours: readonly Contour[],
+  fallback: { readonly x: number; readonly y: number } | undefined,
+): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | undefined {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let any = false;
+  for (const c of contours) {
+    for (const p of c.points) {
+      if (p.x < minX) {
+        minX = p.x;
+      }
+      if (p.y < minY) {
+        minY = p.y;
+      }
+      if (p.x > maxX) {
+        maxX = p.x;
+      }
+      if (p.y > maxY) {
+        maxY = p.y;
+      }
+      any = true;
+    }
+  }
+  if (!any) {
+    if (!fallback || fallback.x <= 0 || fallback.y <= 0) {
+      return undefined;
+    }
+    return { x: 0, y: 0, width: fallback.x, height: fallback.y };
+  }
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (width <= 0 || height <= 0) {
+    return undefined;
+  }
+  return { x: minX, y: minY, width, height };
+}
+
 function buildSolidPolygon(
   fill: FigSolidPaint,
   contours: readonly Contour[],
   uniquify: (base: string) => string,
+  compensate: boolean = true,
 ): readonly GodotNode[] {
-  const colorVal = solidPaintToPolygon2DColor(fill);
+  const colorVal = solidPaintToPolygon2DColor(fill, compensate);
   if (contours.length === 1 && !contours[0].partition) {
     const props: GodotProperty[] = [
       property("color", colorVal),
@@ -929,8 +1050,15 @@ function buildRasterizedGradientPolygon(
   contours: readonly Contour[],
   uniquify: (base: string) => string,
   resolved: { readonly id: string; readonly imageWidth: number; readonly imageHeight: number },
+  textureOrigin?: { readonly x: number; readonly y: number },
+  textureSize?: { readonly x: number; readonly y: number },
 ): readonly GodotNode[] {
-  const size = node_.size;
+  // Default to the node's authored size when no explicit texture
+  // mapping size is provided. Callers using a contour-bounds
+  // rasterisation should pass `textureSize = { x: bounds.width,
+  // y: bounds.height }` so UV maps the bounds region to the full
+  // texture, not the node's authored extent.
+  const size = textureSize ?? node_.size;
   if (!size || size.x <= 0 || size.y <= 0) {
     return [];
   }
@@ -962,16 +1090,21 @@ function buildRasterizedGradientPolygon(
       .map((p) => `${formatFloat(p.x)}, ${formatFloat(p.y)}`)
       .join(", ")})`,
   };
-  // Identity UV: texture dimensions equal node size, so the shape-
-  // local x maps to texture-pixel x. The rasterizer (gradient-raster)
-  // sampled each pixel relative to the same coordinate frame, so no
-  // re-scaling is needed.
+  // UV mapping: a shape-local vertex `(Vx, Vy)` samples texture pixel
+  // `((Vx - origin.x) * imgW / size.x, (Vy - origin.y) * imgH / size.y)`.
+  // For the default (no origin) the texture spans `node.size` from the
+  // shape's local origin. For BOOLEAN_OPERATION / VECTOR (caller passes
+  // the contour-bounds origin + size), the texture spans only the
+  // merged contour bounds, so vertices at the bounds' min map to (0, 0)
+  // and at max map to (imgW, imgH).
+  const originX = textureOrigin?.x ?? 0;
+  const originY = textureOrigin?.y ?? 0;
   const sx = resolved.imageWidth / size.x;
   const sy = resolved.imageHeight / size.y;
   const uvValue: GodotValue = {
     kind: "raw",
     text: `PackedVector2Array(${allPoints
-      .map((p) => `${formatFloat(p.x * sx)}, ${formatFloat(p.y * sy)}`)
+      .map((p) => `${formatFloat((p.x - originX) * sx)}, ${formatFloat((p.y - originY) * sy)}`)
       .join(", ")})`,
   };
   const props: GodotProperty[] = [

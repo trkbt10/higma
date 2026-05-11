@@ -184,6 +184,16 @@ export type RawElement = {
    * line or when the in-page Canvas font-metric API was unavailable.
    */
   readonly textLineBaselineYs?: readonly number[];
+  /**
+   * Per-codepoint resolved-font runs over the element's direct text.
+   * Each entry is a half-open `[start, end)` range whose codepoints
+   * all resolved (via Chromium's font fallback) to `fontFamily`.
+   * Reproduces per-glyph fallback so emit can lift CJK fragments in
+   * a Latin-first stack onto separate fig `styleRuns[i].fontName`.
+   *
+   * Absent for non-text elements; never partial.
+   */
+  readonly textCharacterFontRuns?: readonly { readonly start: number; readonly end: number; readonly fontFamily: string }[];
   /** Captured `::before` / `::after` pseudo-element strings. */
   readonly pseudo?: readonly RawPseudoContent[];
   readonly children: readonly RawElement[];

@@ -423,10 +423,12 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter, resolver
   const ownStyle = mergeStyle(el, base, resolver);
   pushPseudo(el, "before", ownStyle, writer, resolver);
   if (el.textFragments && el.textFragments.length === el.children.length + 1) {
+    let slotOffset = 0;
     for (let i = 0; i < el.children.length; i += 1) {
       const slot = el.textFragments[i] ?? "";
       if (slot.length > 0) {
-        writer.push(slot, ownStyle);
+        pushDirectText(el, slot, slotOffset, ownStyle, writer);
+        slotOffset += slot.length;
       }
       const child = el.children[i]!;
       if (!child.visible) {
@@ -436,14 +438,14 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter, resolver
     }
     const tail = el.textFragments[el.children.length] ?? "";
     if (tail.length > 0) {
-      writer.push(tail, ownStyle);
+      pushDirectText(el, tail, slotOffset, ownStyle, writer);
     }
   } else {
     // Legacy path — leaf-text element (no children) or pre-fragment
     // snapshot data. Direct text comes first, then the inline
     // children in DOM order.
     if (el.text !== undefined && el.text.length > 0) {
-      writer.push(el.text, ownStyle);
+      pushDirectText(el, el.text, 0, ownStyle, writer);
     }
     for (const child of el.children) {
       if (!child.visible) {
@@ -453,6 +455,71 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter, resolver
     }
   }
   pushPseudo(el, "after", ownStyle, writer, resolver);
+}
+
+/**
+ * Push a direct-text slot from `el.text` (or one of its
+ * `el.textFragments` slots), splitting it on per-codepoint resolved
+ * font boundaries when `el.textCharacterFontRuns` is available.
+ *
+ * Why split here instead of after `writer.push`: the writer's
+ * collapse-adjacent-runs logic requires every push to carry the
+ * style the codepoints are *actually rendered with*. Pushing the
+ * whole slot under `ownStyle` (which uses the stack-head family)
+ * tells the writer that every codepoint shares one family — fig
+ * `styleRuns` then collapses to a single entry and the per-glyph
+ * fallback the browser performed (CJK in a Latin-first stack,
+ * emoji in any stack) is lost on emit. Splitting on the captured
+ * runs preserves the truth all the way to fig `styleRuns[i]
+ * .fontName`.
+ *
+ * `slotOffsetInElText` is the slot's start index inside `el.text`
+ * — needed because `textCharacterFontRuns` is keyed against the
+ * full `el.text`, not the per-slot fragment string.
+ */
+function pushDirectText(
+  el: RawElement,
+  slot: string,
+  slotOffsetInElText: number,
+  ownStyle: BaseStyle,
+  writer: RunWriter,
+): void {
+  const allRuns = el.textCharacterFontRuns;
+  if (!allRuns || allRuns.length === 0) {
+    writer.push(slot, ownStyle);
+    return;
+  }
+  const slotEnd = slotOffsetInElText + slot.length;
+  // Iterate the per-codepoint runs that intersect this slot's range
+  // in `el.text`, emitting one writer push per intersection.
+  let cursor = 0;
+  for (const run of allRuns) {
+    if (run.end <= slotOffsetInElText) {
+      continue;
+    }
+    if (run.start >= slotEnd) {
+      break;
+    }
+    const localStart = Math.max(0, run.start - slotOffsetInElText);
+    const localEnd = Math.min(slot.length, run.end - slotOffsetInElText);
+    if (localEnd <= cursor) {
+      continue;
+    }
+    if (localStart > cursor) {
+      // Gap between runs (shouldn't happen — runs are contiguous —
+      // but guard anyway). Push the gap under `ownStyle` so no
+      // characters silently disappear.
+      writer.push(slot.slice(cursor, localStart), ownStyle);
+    }
+    const fragmentStyle: BaseStyle = run.fontFamily === ownStyle.fontFamily
+      ? ownStyle
+      : { ...ownStyle, fontFamily: run.fontFamily };
+    writer.push(slot.slice(localStart, localEnd), fragmentStyle);
+    cursor = localEnd;
+  }
+  if (cursor < slot.length) {
+    writer.push(slot.slice(cursor), ownStyle);
+  }
 }
 
 function pushPseudo(

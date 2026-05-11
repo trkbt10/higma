@@ -140,6 +140,16 @@ export async function captureViewportInBrowser(
       return { snapshot, screenshotBytes: screenshot };
     }
     const json = await page.evaluate(captureSnapshot);
+    // Resolve per-codepoint font fallback for every text-bearing
+    // element by routing each grapheme through Chromium's
+    // `CSS.getPlatformFontsForNode` (CDP). This is the only source
+    // of truth for "what platform face did Blink actually pick for
+    // this codepoint" — it includes OS fallbacks (Hiragino, Apple
+    // Color Emoji, etc.) that are invisible to web-only APIs like
+    // `document.fonts.check`. Result: per element, a list of
+    // `[start, end, fontFamily]` runs over the element's `text`.
+    const fontRunsByElementId = await resolvePerCharacterFontRuns(page, json.root);
+    const jsonWithFontRuns = applyFontRunsToTree(json.root, fontRunsByElementId);
     // Pull image bytes directly out of the browser's already-decoded
     // bitmap cache. Each rendered `<img>` has finished decoding by
     // the time the page is on-screen, so we can read it back through
@@ -159,7 +169,7 @@ export async function captureViewportInBrowser(
     // Single fused walk: parses SVG mask content, sniffs image
     // natural size, sniffs mask natural size — what used to be three
     // independent full-tree rewrites in sequence.
-    const decoratedRoot = decorateAll(json.root, idToUrl, responseCache, assets);
+    const decoratedRoot = decorateAll(jsonWithFontRuns, idToUrl, responseCache, assets);
     const snapshot = jsonToSnapshot({ ...json, root: decoratedRoot }, assets);
     const screenshot = options.captureScreenshot
       ? await screenshotPage(page, options.fullPageScreenshot ?? false)
@@ -612,6 +622,7 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     textFragments: json.textFragments,
     textLineRects: json.textLineRects,
     textLineBaselineYs: json.textLineBaselineYs,
+    textCharacterFontRuns: json.textCharacterFontRuns,
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };
@@ -888,4 +899,331 @@ function parseMaskSvg(bytes: Uint8Array): NonNullable<ElementJson["maskSvgConten
     return undefined;
   }
   return { viewBox, paths };
+}
+
+// ===========================================================================
+// Per-codepoint resolved-font lookup (CDP-driven)
+// ===========================================================================
+
+/**
+ * Resolve, for every text-bearing element in the captured tree, the
+ * platform face Chromium actually used for each codepoint of the
+ * element's direct `text`. Chromium's `FontFallbackIterator` is the
+ * only authoritative answer to "which face renders this codepoint?",
+ * and `CSS.getPlatformFontsForNode` is the only API that returns it
+ * (including system fallbacks like Hiragino / Apple Color Emoji
+ * that web-only APIs cannot see).
+ *
+ * Strategy: in-page, wrap each grapheme of every text-bearing
+ * element in a `<span data-fpid="…">`. The wrap is Range-based, so
+ * inline children (`<a>`, `<strong>`) inside a paragraph host stay
+ * intact — only their direct text nodes get split. Then for each
+ * span we pull its CDP nodeId via `DOM.querySelectorAll` and call
+ * `CSS.getPlatformFontsForNode`; the response's `familyName` is
+ * Blink's resolved face. Adjacent same-face graphemes collapse into
+ * a single `[start, end, fontFamily]` run keyed by the original
+ * walker element id. Finally the spans are unwrapped so the DOM
+ * goes back to the shape `captureSnapshot()` already serialised
+ * (image bytes, screenshot, etc. read after this stage see the
+ * original DOM).
+ *
+ * Returns an empty map when the page has no text-bearing element,
+ * or when the CDP session cannot be opened (test stubs, exotic
+ * Playwright forks). Per-element absence is signalled by the map
+ * lacking the element id; downstream consumers fall back to the
+ * element-level resolved family in that case.
+ */
+async function resolvePerCharacterFontRuns(
+  page: PageLike,
+  root: ElementJson,
+): Promise<ReadonlyMap<string, readonly { readonly start: number; readonly end: number; readonly fontFamily: string }[]>> {
+  const elementsToWrap = collectTextBearingElementIds(root);
+  if (elementsToWrap.length === 0) {
+    return new Map();
+  }
+  // Open a dedicated CDP session and enable the DOM + CSS domains
+  // we need. Both `enable` calls are idempotent — Chromium tracks
+  // domain state per session — and required before
+  // `getPlatformFontsForNode` will respond.
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("DOM.enable");
+    await cdp.send("CSS.enable");
+    // Refresh DOM.getDocument *after* the in-page wrap so the
+    // returned root reflects the inserted spans. Without this the
+    // querySelectorAll below may return stale nodeIds for the
+    // wrapper spans.
+    const wrapped = await page.evaluate(wrapTextBearingElementsForFontProbe, elementsToWrap);
+    if (wrapped.entries.length === 0) {
+      return new Map();
+    }
+    const rootDoc = await cdp.send("DOM.getDocument", { depth: -1 });
+    const lookup = await cdp.send("DOM.querySelectorAll", {
+      nodeId: rootDoc.root.nodeId,
+      selector: `[${WRAP_DATA_ATTR}]`,
+    });
+    if (lookup.nodeIds.length !== wrapped.entries.length) {
+      // Mismatch means the DOM changed between wrap and query
+      // (rarely happens — pages aren't supposed to mutate in
+      // headless mid-capture). Fail open: drop the field rather
+      // than associate the wrong nodeIds with our entries.
+      await page.evaluate(unwrapTextBearingElementsForFontProbe);
+      return new Map();
+    }
+    const familyByEntryIndex = new Map<number, string>();
+    for (let i = 0; i < lookup.nodeIds.length; i += 1) {
+      const nodeId = lookup.nodeIds[i]!;
+      try {
+        const fonts = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+        const top = fonts.fonts[0];
+        if (top !== undefined) {
+          familyByEntryIndex.set(i, top.familyName);
+        }
+      } catch (_err) {
+        void _err;
+        // Per-grapheme failure (e.g. node detached mid-loop). Skip;
+        // emit will treat that codepoint as element-level family.
+        continue;
+      }
+    }
+    await page.evaluate(unwrapTextBearingElementsForFontProbe);
+    return collapseRunsByElement(wrapped.entries, familyByEntryIndex);
+  } finally {
+    try {
+      await cdp.detach();
+    } catch (_err) {
+      void _err;
+    }
+  }
+}
+
+const WRAP_DATA_ATTR = "data-w2f-fontprobe";
+
+/**
+ * Walk the captured tree and return the ids of every element that
+ * carries direct text. Skips elements with no `text` so the in-page
+ * wrap path doesn't touch text-less containers (their layout would
+ * be unaffected anyway, but querying every leaf is wasted work).
+ */
+function collectTextBearingElementIds(el: ElementJson): readonly string[] {
+  const out: string[] = [];
+  function walk(node: ElementJson): void {
+    if (node.text !== undefined && node.text.length > 0) {
+      out.push(node.id);
+    }
+    for (const child of node.children) {
+      walk(child);
+    }
+  }
+  walk(el);
+  return out;
+}
+
+/**
+ * In-page: locate each captured element by its xpath-style id, walk
+ * its descendant Text nodes that belong to the element directly
+ * (skipping descendants that themselves were captured as their own
+ * walker entry), and wrap each grapheme in a
+ * `<span data-w2f-fontprobe="elementId|graphemeIndex">`. Returns the
+ * flat list of `{elementId, graphemeIndex, charStart, charEnd,
+ * graphemeText}` entries the host side cross-references with the
+ * `[data-w2f-fontprobe]` querySelector results.
+ *
+ * Inlined inside this function for Playwright serialisation —
+ * external bindings are unreachable in the page context.
+ */
+function wrapTextBearingElementsForFontProbe(
+  elementIds: readonly string[],
+): { readonly entries: readonly { readonly elementId: string; readonly graphemeIndex: number; readonly charStart: number; readonly charEnd: number }[] } {
+  // Inlined literal so Playwright's serialiser keeps it in scope —
+  // module-level constants do not survive page.evaluate.
+  const wrapAttr = "data-w2f-fontprobe";
+  const entries: { elementId: string; graphemeIndex: number; charStart: number; charEnd: number }[] = [];
+  // Re-derive element location from xpath-style id "0/2/1" — the
+  // walker stamps them as `${parentPath}/${childIndexAmongElements}`
+  // starting at "0" for documentElement. We mirror that traversal
+  // here so the host's elementId maps back to a live Element.
+  function locate(id: string): Element | undefined {
+    const parts = id.split("/").map((p) => Number.parseInt(p, 10));
+    if (parts.length === 0 || Number.isNaN(parts[0]!)) {
+      return undefined;
+    }
+    if (parts[0] !== 0) {
+      return undefined;
+    }
+    let node: Element = document.documentElement;
+    for (let i = 1; i < parts.length; i += 1) {
+      const childIndex = parts[i]!;
+      const child = elementChildAt(node, childIndex);
+      if (child === undefined) {
+        return undefined;
+      }
+      node = child;
+    }
+    return node;
+  }
+  function elementChildAt(parent: Element, index: number): Element | undefined {
+    let count = 0;
+    for (const child of Array.from(parent.children)) {
+      if (count === index) {
+        return child;
+      }
+      count += 1;
+    }
+    return undefined;
+  }
+  // Iterate this element's direct Text descendants (skipping any
+  // subtree rooted at a child Element — those have their own walker
+  // entry and own resolved-font lookup).
+  function directTextNodes(el: Element): Text[] {
+    const out: Text[] = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node: Node): number {
+        if (node === el) {
+          return NodeFilter.FILTER_SKIP;
+        }
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let cur: Node | null = walker.nextNode();
+    while (cur !== null) {
+      if (cur.nodeType === Node.TEXT_NODE) {
+        out.push(cur as Text);
+      }
+      cur = walker.nextNode();
+    }
+    return out;
+  }
+  // Use Intl.Segmenter for correct grapheme cluster boundaries
+  // (combining marks, emoji ZWJ sequences). Per-grapheme is the
+  // right granularity — wrapping per UTF-16 unit would split surrogate
+  // pairs across two `<span>`s and Blink would resolve each half to
+  // a different (likely tofu) face.
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  for (const elementId of elementIds) {
+    const el = locate(elementId);
+    if (el === undefined) {
+      continue;
+    }
+    let elementCharCursor = 0;
+    let graphemeCursor = 0;
+    const textNodes = directTextNodes(el);
+    for (const tn of textNodes) {
+      const data = tn.data;
+      if (data.length === 0) {
+        continue;
+      }
+      const parent = tn.parentNode;
+      if (parent === null) {
+        continue;
+      }
+      const fragment = document.createDocumentFragment();
+      let utf16Cursor = 0;
+      for (const segment of segmenter.segment(data)) {
+        const grapheme = segment.segment;
+        const span = document.createElement("span");
+        span.setAttribute(wrapAttr, `${elementId}|${graphemeCursor}`);
+        span.appendChild(document.createTextNode(grapheme));
+        fragment.appendChild(span);
+        entries.push({
+          elementId,
+          graphemeIndex: graphemeCursor,
+          charStart: elementCharCursor + utf16Cursor,
+          charEnd: elementCharCursor + utf16Cursor + grapheme.length,
+        });
+        utf16Cursor += grapheme.length;
+        graphemeCursor += 1;
+      }
+      parent.replaceChild(fragment, tn);
+      elementCharCursor += data.length;
+    }
+  }
+  return { entries };
+}
+
+/**
+ * In-page: undo every wrap performed by
+ * `wrapTextBearingElementsForFontProbe` so the post-probe DOM is
+ * indistinguishable from the snapshot the walker serialised.
+ * Looks up every wrapper span via `[data-w2f-fontprobe]`, replaces
+ * each with its single Text-node child, and finally normalises the
+ * parent so adjacent text fragments merge back into the original
+ * Text node (matters for downstream code that runs `node.data` on
+ * the parent assuming a single child).
+ */
+function unwrapTextBearingElementsForFontProbe(): void {
+  const attr = "data-w2f-fontprobe";
+  const spans = Array.from(document.querySelectorAll(`[${attr}]`));
+  const parents = new Set<Node>();
+  for (const span of spans) {
+    const parent = span.parentNode;
+    if (parent === null) {
+      continue;
+    }
+    while (span.firstChild !== null) {
+      parent.insertBefore(span.firstChild, span);
+    }
+    parent.removeChild(span);
+    parents.add(parent);
+  }
+  for (const parent of parents) {
+    if (parent.nodeType === Node.ELEMENT_NODE) {
+      (parent as Element).normalize();
+    }
+  }
+}
+
+/**
+ * Collapse the per-grapheme entry list into per-element runs of
+ * contiguous same-family graphemes. The resulting `[start, end,
+ * fontFamily]` shape matches `ElementJson.textCharacterFontRuns`
+ * verbatim so the host can drop it straight onto the tree.
+ */
+function collapseRunsByElement(
+  entries: readonly { readonly elementId: string; readonly graphemeIndex: number; readonly charStart: number; readonly charEnd: number }[],
+  familyByEntryIndex: ReadonlyMap<number, string>,
+): ReadonlyMap<string, readonly { readonly start: number; readonly end: number; readonly fontFamily: string }[]> {
+  const byElement = new Map<string, { start: number; end: number; fontFamily: string }[]>();
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i]!;
+    const family = familyByEntryIndex.get(i);
+    if (family === undefined) {
+      continue;
+    }
+    const list = byElement.get(entry.elementId) ?? [];
+    const last = list.length > 0 ? list[list.length - 1] : undefined;
+    if (last !== undefined && last.fontFamily === family && last.end === entry.charStart) {
+      last.end = entry.charEnd;
+    } else {
+      list.push({ start: entry.charStart, end: entry.charEnd, fontFamily: family });
+    }
+    if (!byElement.has(entry.elementId)) {
+      byElement.set(entry.elementId, list);
+    }
+  }
+  return byElement;
+}
+
+/**
+ * Stitch the per-element font-run map onto every `ElementJson`
+ * carrying direct text. Returns a deep-cloned tree so the caller
+ * can swap the root in-place without aliasing the original snapshot
+ * (the original is still in flight through the screenshot path).
+ */
+function applyFontRunsToTree(
+  root: ElementJson,
+  fontRunsByElementId: ReadonlyMap<string, readonly { readonly start: number; readonly end: number; readonly fontFamily: string }[]>,
+): ElementJson {
+  function visit(el: ElementJson): ElementJson {
+    const runs = fontRunsByElementId.get(el.id);
+    const children = el.children.map(visit);
+    if (runs === undefined) {
+      return { ...el, children };
+    }
+    return { ...el, textCharacterFontRuns: runs, children };
+  }
+  return visit(root);
 }

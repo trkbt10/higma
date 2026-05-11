@@ -20,15 +20,23 @@ await runRoundtripCase({
     "shadow-shapes",
     "effects-combined",
   ],
+  // Caps mirror the SwiftUI peer (`fig-to-swiftui/spec/cases/effects`)
+  // where SwiftUI's native `.shadow()`/`.blur()` modifiers + ImageRenderer
+  // hold 0.5% on shadows and 2% on blur. Godot has no gaussian-shadow
+  // primitive in StyleBoxFlat (only `shadow_size` rectangle extension),
+  // so the implementation pre-rasterizes shadows in CPU. The contract
+  // here is "the pre-raster matches the WebGL reference within the same
+  // tolerances SwiftUI matches" — failures below indicate real
+  // implementation gaps, not loose caps.
   diffCapPct: {
-    "shadow-drop-basic": 2.5,
-    "shadow-drop-offset": 3,
-    "shadow-drop-multi": 3,
-    "shadow-drop-color": 14,
-    "shadow-inner": 5.5,
-    "blur-layer": 17,
+    "shadow-drop-basic": 0.5,
+    "shadow-drop-offset": 0.5,
+    "shadow-drop-multi": 0.5,
+    "shadow-drop-color": 0.5,
+    "shadow-inner": 0.5,
+    "blur-layer": 2,
     "opacity-50": 0.09,
-    "shadow-shapes": 2.2,
-    "effects-combined": 10,
+    "shadow-shapes": 0.5,
+    "effects-combined": 0.5,
   },
 });

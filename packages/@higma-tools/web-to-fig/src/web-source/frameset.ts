@@ -368,6 +368,7 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     svgContent: json.svgContent,
     text: json.text,
     textFragments: json.textFragments,
+    textCharacterFontRuns: json.textCharacterFontRuns,
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };

@@ -24,7 +24,7 @@ await runRoundtripCase({
     "bool-subtract": 0.09,
     "bool-intersect": 0.09,
     "bool-exclude": 0.09,
-    "bool-opacity": 18.2,
+    "bool-opacity": 0.5,
     "bool-3-operands": 0.09,
     "bool-donut": 0.78,
     "bool-operation-method": 0.09,

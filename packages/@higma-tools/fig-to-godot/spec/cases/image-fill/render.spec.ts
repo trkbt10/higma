@@ -15,10 +15,13 @@ await runRoundtripCase({
     "image-fill-circle",
     "image-fill-multi",
   ],
+  // Target swiftui-peer level (0.5%). Image fills require byte-precise
+  // bilinear sampling matching WebGL's texture filter; failures indicate
+  // sampling-precision gaps that should be fixed in the rasterizer.
   diffCapPct: {
-    "image-fill-basic": 8,
-    "image-fill-shadow": 12,
-    "image-fill-circle": 7.5,
-    "image-fill-multi": 50,
+    "image-fill-basic": 0.5,
+    "image-fill-shadow": 0.5,
+    "image-fill-circle": 0.5,
+    "image-fill-multi": 0.5,
   },
 });

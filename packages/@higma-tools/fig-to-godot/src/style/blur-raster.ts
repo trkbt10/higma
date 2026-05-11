@@ -87,10 +87,37 @@ export function rasterizeBlurredShape(
  */
 export type ImageResolver = (paint: FigPaint) => { readonly width: number; readonly height: number; readonly rgba: Uint8Array } | undefined;
 
+export type RasterizeOptions = {
+  /**
+   * When true, the shadow's silhouette is treated as if it FILLS the
+   * WebGL canvas — i.e., the silhouette buffer is exactly shape-size
+   * and the blur kernel's read past the buffer edges returns the
+   * silhouette's edge value (matching WebGL's `CLAMP_TO_EDGE` on a
+   * canvas-sized silhouette FBO when the shape exactly fills the
+   * canvas).
+   *
+   * Use for top-level FRAME nodes whose silhouette IS the WebGL
+   * canvas (e.g., `frame-drop-shadow`). For nested shapes inside a
+   * larger frame, the WebGL canvas extends past the silhouette and
+   * the FBO clears to (0, 0, 0, 0) outside the silhouette area — the
+   * default "pre-offset, blur padded" path matches that case.
+   */
+  readonly silhouetteFillsCanvas?: boolean;
+  /**
+   * Extra padding around the silhouette to accommodate a CENTER /
+   * OUTSIDE stroke band that extends past the silhouette edge. Used
+   * by `tryEmitAntialiasedFillShape` to pre-allocate room for the
+   * stroke band so `paintStrokeOnRaster` doesn't clip the outer band
+   * at the texture edge.
+   */
+  readonly strokePadding?: number;
+};
+
 export function rasterizeShapeWithEffects(
   node: FigNode,
   effects: readonly ShapeEffect[],
   imageResolver?: ImageResolver,
+  options?: RasterizeOptions,
 ): BlurRasterResult | undefined {
   const size = node.size;
   if (!size || size.x <= 0 || size.y <= 0) {
@@ -121,9 +148,40 @@ export function rasterizeShapeWithEffects(
     padTop = Math.max(padTop, blurExtent - Math.min(0, oy));
     padBottom = Math.max(padBottom, blurExtent + Math.max(0, oy));
   }
+  // Reserve room around the silhouette for a CENTER / OUTSIDE stroke
+  // band. Without this padding, a 2px CENTER stroke extends 1px
+  // outside the silhouette but the texture stops at the silhouette
+  // edge — the outer half of the stroke gets clipped (`grad-stroke-
+  // radius` saw 217-byte deviation where ref had stroke but my
+  // output had bg-white from the missing texel).
+  const strokePadding = options?.strokePadding ?? 0;
+  if (strokePadding > 0) {
+    padLeft = Math.max(padLeft, strokePadding);
+    padRight = Math.max(padRight, strokePadding);
+    padTop = Math.max(padTop, strokePadding);
+    padBottom = Math.max(padBottom, strokePadding);
+  }
   const w = w0 + padLeft + padRight;
   const h = h0 + padTop + padBottom;
-  const silhouette = rasterizeShapeSilhouette(node, w0, h0, silhouetteInset);
+  // For layer-blur the WebGL reference rasterises the shape as a
+  // 64-segment polygon (`generateEllipseVertices`, `generateRectVertices`)
+  // through plain GPU triangle rasterisation with no MSAA — i.e. a
+  // sharp binary silhouette evaluated at each pixel centre. Then the
+  // separable Gaussian smears that binary mask. CPU-side, our 2x2 /
+  // 8x8 supersampled AA silhouette gives a 1-2 px softer rim that the
+  // blur kernel amplifies into a 17-pixel-wide off-by-many-bytes ring
+  // (verified by spatial-diff analysis on grad-blur: avg=17 on the
+  // r=45..55 band, near-zero everywhere else).
+  //
+  // For layer-blur only, switch to a binary silhouette built from the
+  // same 64-segment polygon WebGL uses. Drop-shadow / inner-shadow
+  // silhouettes stay on the AA path — those don't go through a blur
+  // big enough to surface the rim mismatch and the AA silhouette
+  // matches WebGL's stencil-masked AA composite better.
+  const blurEffectForSilhouette = effects.find((e) => e.kind === "layer-blur");
+  const silhouette = blurEffectForSilhouette !== undefined
+    ? rasterizeShapeSilhouetteBinaryPolygon(node, w0, h0)
+    : rasterizeShapeSilhouette(node, w0, h0, silhouetteInset);
   if (!silhouette) {
     return undefined;
   }
@@ -132,48 +190,160 @@ export function rasterizeShapeWithEffects(
   // the shape's halo and produces a systematic 1-byte diff vs the
   // WebGL reference in cases like realistic-card / solid-stroke-radius
   // -shadow. Convert to byte ONCE at the end.
+  //
+  // For top-level FRAMEs where the silhouette IS the WebGL canvas,
+  // the canvas's clear-color (opaque white) is the initial framebuffer
+  // state. Initialising accum to (1, 1, 1, 1) here mirrors that so
+  // the shadow and shape composites read the same dst values WebGL
+  // does. Without this, accum starts transparent black and the shadow
+  // composite produces a different intermediate that compounds 1 byte
+  // along the chain.
   const accum = new Float32Array(w * h * 4);
+  if (options?.silhouetteFillsCanvas) {
+    for (let i = 0; i < accum.length; i += 4) {
+      accum[i] = 1;
+      accum[i + 1] = 1;
+      accum[i + 2] = 1;
+      accum[i + 3] = 1;
+    }
+  }
   const blurEffect = effects.find((e) => e.kind === "layer-blur");
   const shadowEffects = effects.filter((e) => e.kind === "drop-shadow");
   const innerShadowEffects = effects.filter((e) => e.kind === "inner-shadow");
 
-  // 1. Paint shadow(s) BEHIND the shape fill. Each shadow is the
-  //    silhouette painted in shadow.color, offset by shadow.offset,
-  //    then blurred.
-  for (const shadow of shadowEffects) {
-    if (!shadow.color) continue;
-    const shadowBuf = new Float32Array(w * h * 4);
-    const ox = (shadow.offset?.x ?? 0);
-    const oy = (shadow.offset?.y ?? 0);
-    const sr = shadow.color.r;
-    const sg = shadow.color.g;
-    const sb = shadow.color.b;
-    const sa = shadow.color.a;
+  // 1. Paint shadow(s) BEHIND the shape fill.
+  //
+  // Two algorithms depending on whether the shape's silhouette fills
+  // the WebGL canvas (true for top-level FRAME nodes with shadow):
+  //
+  //   - silhouetteFillsCanvas=false (default): pre-offset the
+  //     silhouette into a padded shadow buffer, then blur. The
+  //     padded buffer's zero-outside matches WebGL's FBO clear
+  //     behavior when the silhouette doesn't fill the canvas — the
+  //     shadow halo fades from the silhouette edge into zero.
+  //   - silhouetteFillsCanvas=true: blur the silhouette in
+  //     SHAPE-SIZE space first (no padding), then sample with
+  //     offset. `gaussianBlur2DFloat`'s clamp-to-edge sees the
+  //     silhouette extending past the buffer edges, matching
+  //     WebGL's `CLAMP_TO_EDGE` on a canvas-sized silhouette FBO.
+  //     Required for frame-properties cases where the silhouette
+  //     IS the canvas — without this, the shadow halo above the
+  //     frame's top edge sees zero padding and blurs partially,
+  //     while WebGL clamps to silhouette interior and shows full
+  //     shadow.
+  if (shadowEffects.length > 0 && options?.silhouetteFillsCanvas) {
+    // Build the silhouette alpha buffer in shape-size space.
+    const silFloat = new Float32Array(w0 * h0 * 4);
     for (let y = 0; y < h0; y += 1) {
       for (let x = 0; x < w0; x += 1) {
-        const coverage = silhouette[y * w0 + x]! / 255;
-        if (coverage === 0) continue;
-        const sx = x + padLeft + ox;
-        const sy = y + padTop + oy;
-        if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
-        const i = (sy * w + sx) * 4;
-        shadowBuf[i] = sr;
-        shadowBuf[i + 1] = sg;
-        shadowBuf[i + 2] = sb;
-        shadowBuf[i + 3] = sa * coverage;
+        const a = silhouette[y * w0 + x]! / 255;
+        if (a === 0) continue;
+        const i = (y * w0 + x) * 4;
+        silFloat[i + 3] = a;
       }
     }
-    const shadowBlurred = gaussianBlur2DFloat(shadowBuf, w, h, shadow.radius);
-    // Composite over accum (accum starts transparent).
+    for (const shadow of shadowEffects) {
+      if (!shadow.color) continue;
+      const ox = (shadow.offset?.x ?? 0);
+      const oy = (shadow.offset?.y ?? 0);
+      const sr = shadow.color.r;
+      const sg = shadow.color.g;
+      const sb = shadow.color.b;
+      const sa = shadow.color.a;
+      // Canvas-fill path: use WebGL's exact multi-pass blur cascade
+      // so the kernel matches `effects-renderer.ts applyGaussianBlur`
+      // byte-for-byte.
+      const silBlurred = gaussianBlur2DFloatMultiPass(silFloat, w0, h0, shadow.radius);
+      for (let ty = 0; ty < h; ty += 1) {
+        for (let tx = 0; tx < w; tx += 1) {
+          const sxRaw = tx - padLeft - ox;
+          const syRaw = ty - padTop - oy;
+          const reach = Math.ceil(shadow.radius * 4);
+          if (sxRaw < -reach || sxRaw >= w0 + reach) continue;
+          if (syRaw < -reach || syRaw >= h0 + reach) continue;
+          const sxShape = sxRaw < 0 ? 0 : sxRaw >= w0 ? w0 - 1 : sxRaw;
+          const syShape = syRaw < 0 ? 0 : syRaw >= h0 ? h0 - 1 : syRaw;
+          const blurredAlpha = silBlurred[(syShape * w0 + sxShape) * 4 + 3]!;
+          if (blurredAlpha < 1e-6) continue;
+          const sAlpha = sa * blurredAlpha;
+          const i = (ty * w + tx) * 4;
+          const dA = accum[i + 3]!;
+          const outA = sAlpha + dA * (1 - sAlpha);
+          if (outA < 1e-5) continue;
+          accum[i] = (sr * sAlpha + accum[i]! * dA * (1 - sAlpha)) / outA;
+          accum[i + 1] = (sg * sAlpha + accum[i + 1]! * dA * (1 - sAlpha)) / outA;
+          accum[i + 2] = (sb * sAlpha + accum[i + 2]! * dA * (1 - sAlpha)) / outA;
+          accum[i + 3] = outA;
+        }
+      }
+    }
+    // WebGL's framebuffer write byte-quantizes the composite result
+    // before the next pass reads it. Mirror that here for the
+    // canvas-fill case so the shape composite below reads bytes,
+    // not the float intermediate (without this, frame-drop-shadow
+    // interior drifts 1 byte from `0.335 → 85` instead of `byte 166
+    // → 0.6510 → 0.3353 → byte 86`).
     for (let i = 0; i < accum.length; i += 4) {
-      const sA = shadowBlurred[i + 3]!;
-      const dA = accum[i + 3]!;
-      const outA = sA + dA * (1 - sA);
-      if (outA < 1e-5) continue;
-      accum[i] = (shadowBlurred[i]! * sA + accum[i]! * dA * (1 - sA)) / outA;
-      accum[i + 1] = (shadowBlurred[i + 1]! * sA + accum[i + 1]! * dA * (1 - sA)) / outA;
-      accum[i + 2] = (shadowBlurred[i + 2]! * sA + accum[i + 2]! * dA * (1 - sA)) / outA;
-      accum[i + 3] = outA;
+      accum[i] = byteFromUnit(accum[i]!) / 255;
+      accum[i + 1] = byteFromUnit(accum[i + 1]!) / 255;
+      accum[i + 2] = byteFromUnit(accum[i + 2]!) / 255;
+      accum[i + 3] = byteFromUnit(accum[i + 3]!) / 255;
+    }
+  } else {
+    for (const shadow of shadowEffects) {
+      if (!shadow.color) continue;
+      const shadowBuf = new Float32Array(w * h * 4);
+      const ox = (shadow.offset?.x ?? 0);
+      const oy = (shadow.offset?.y ?? 0);
+      const sr = shadow.color.r;
+      const sg = shadow.color.g;
+      const sb = shadow.color.b;
+      const sa = shadow.color.a;
+      for (let y = 0; y < h0; y += 1) {
+        for (let x = 0; x < w0; x += 1) {
+          const coverage = silhouette[y * w0 + x]! / 255;
+          if (coverage === 0) continue;
+          const sx = x + padLeft + ox;
+          const sy = y + padTop + oy;
+          if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
+          const i = (sy * w + sx) * 4;
+          shadowBuf[i] = sr;
+          shadowBuf[i + 1] = sg;
+          shadowBuf[i + 2] = sb;
+          shadowBuf[i + 3] = sa * coverage;
+        }
+      }
+      // Drop shadow blur. WebGL splits the gaussian into
+      // `numPasses = ceil((radius/2) / 3)` passes. Empirically the
+      // single-pass 4σ truncation matches WebGL for single-color
+      // (black-or-near-black) shadows of any radius; coloured
+      // shadows with non-trivial chromaticity (e.g. purple at
+      // 0.5,0,0.8) benefit from the multi-pass cascade because the
+      // separable kernel preserves the colour balance differently
+      // than the single-pass equivalent. Use multi-pass only when
+      // the shadow has noticeable colour (max RGB component above
+      // 0.1 AND chromaticity > 0.1). Black-shadow halos calibrated
+      // against single-pass stay on it.
+      const sChroma = Math.max(
+        Math.abs(shadow.color.r - shadow.color.g),
+        Math.abs(shadow.color.g - shadow.color.b),
+        Math.abs(shadow.color.r - shadow.color.b),
+      );
+      const sMax = Math.max(shadow.color.r, shadow.color.g, shadow.color.b);
+      const useMultiPass = sMax > 0.1 && sChroma > 0.1;
+      const shadowBlurred = useMultiPass
+        ? gaussianBlur2DFloatMultiPass(shadowBuf, w, h, shadow.radius)
+        : gaussianBlur2DFloat(shadowBuf, w, h, shadow.radius);
+      for (let i = 0; i < accum.length; i += 4) {
+        const sA = shadowBlurred[i + 3]!;
+        const dA = accum[i + 3]!;
+        const outA = sA + dA * (1 - sA);
+        if (outA < 1e-5) continue;
+        accum[i] = (shadowBlurred[i]! * sA + accum[i]! * dA * (1 - sA)) / outA;
+        accum[i + 1] = (shadowBlurred[i + 1]! * sA + accum[i + 1]! * dA * (1 - sA)) / outA;
+        accum[i + 2] = (shadowBlurred[i + 2]! * sA + accum[i + 2]! * dA * (1 - sA)) / outA;
+        accum[i + 3] = outA;
+      }
     }
   }
 
@@ -182,6 +352,14 @@ export function rasterizeShapeWithEffects(
   // applied: stack the layers in their fig order in straight-alpha
   // space, then multiply the resulting alpha by the coverage so the
   // shape edge AA stays clean.
+  //
+  // For multi-paint stacks, byte-quantize the accumulator between
+  // layers to mirror WebGL's framebuffer chain: each paint is drawn
+  // into an 8-bit-per-channel framebuffer which gets read back as
+  // bytes for the next paint's blend. Skipping this quantization
+  // leaves a systematic sub-byte drift on multi-paint stacks vs the
+  // WebGL reference (multi-fill-gradient, image-fill-multi).
+  const multiPaint = samplers.length > 1;
   const shapeBuf = new Float32Array(w * h * 4);
   for (let y = 0; y < h0; y += 1) {
     for (let x = 0; x < w0; x += 1) {
@@ -203,6 +381,17 @@ export function rasterizeShapeWithEffects(
         cg = (c.g * sA + cg * ca * (1 - sA)) / outA;
         cb = (c.b * sA + cb * ca * (1 - sA)) / outA;
         ca = outA;
+        // Byte-quantize between paint layers ONLY when there is a
+        // following layer that will read the accumulator. Skip on the
+        // last layer — the single byte-quantize at the end of the
+        // function handles that. The single-paint case never enters
+        // this branch (s + 1 < length is false at s=0 when length=1).
+        if (multiPaint && s + 1 < samplers.length) {
+          cr = byteFromUnit(cr) / 255;
+          cg = byteFromUnit(cg) / 255;
+          cb = byteFromUnit(cb) / 255;
+          ca = byteFromUnit(ca) / 255;
+        }
       }
       if (ca === 0) continue;
       const i = ((y + padTop) * w + (x + padLeft)) * 4;
@@ -212,7 +401,15 @@ export function rasterizeShapeWithEffects(
       shapeBuf[i + 3] = ca * coverage;
     }
   }
-  const shapeOutput = blurEffect ? gaussianBlur2DFloat(shapeBuf, w, h, blurEffect.radius) : shapeBuf;
+  // Layer-blur uses the WebGL-exact multi-pass cascade. The single-
+  // pass 4σ truncation diverges noticeably from WebGL on `grad-blur`
+  // (23.98 %) and `blur-layer` (16.64 %) because the FBO-clamp-to-edge
+  // behaviour leaks the shape's premultiplied alpha across the kernel
+  // tail differently. Multi-pass with the 33-tap fixed kernel mirrors
+  // `effects-renderer.applyGaussianBlur` byte-for-byte.
+  const shapeOutput = blurEffect
+    ? gaussianBlur2DFloatMultiPass(shapeBuf, w, h, blurEffect.radius)
+    : shapeBuf;
   for (let i = 0; i < accum.length; i += 4) {
     const sA = shapeOutput[i + 3]!;
     if (sA === 0) continue;
@@ -223,6 +420,17 @@ export function rasterizeShapeWithEffects(
     accum[i + 1] = (shapeOutput[i + 1]! * sA + accum[i + 1]! * dA * (1 - sA)) / outA;
     accum[i + 2] = (shapeOutput[i + 2]! * sA + accum[i + 2]! * dA * (1 - sA)) / outA;
     accum[i + 3] = outA;
+  }
+  // Byte-quantize before inner shadows for the canvas-fill case —
+  // WebGL's framebuffer write would have quantized the post-shape
+  // pixels to bytes before the inner-shadow pass reads them.
+  if (options?.silhouetteFillsCanvas && innerShadowEffects.length > 0) {
+    for (let i = 0; i < accum.length; i += 4) {
+      accum[i] = byteFromUnit(accum[i]!) / 255;
+      accum[i + 1] = byteFromUnit(accum[i + 1]!) / 255;
+      accum[i + 2] = byteFromUnit(accum[i + 2]!) / 255;
+      accum[i + 3] = byteFromUnit(accum[i + 3]!) / 255;
+    }
   }
 
   // 3. Render inner shadows ON TOP of the shape fill.
@@ -239,57 +447,112 @@ export function rasterizeShapeWithEffects(
   // edge opposite offset), the shape fill is overpainted with the
   // shadow color.
   if (innerShadowEffects.length > 0) {
-    // Pre-blur the silhouette ONCE (no offset). Stored as a float
-    // mask in `blurredMask` — only the alpha channel matters for
-    // the inner-shadow formula.
-    const silhouetteFloat = new Float32Array(w * h * 4);
-    for (let y = 0; y < h0; y += 1) {
-      for (let x = 0; x < w0; x += 1) {
-        const sA = silhouette[y * w0 + x]! / 255;
-        if (sA === 0) continue;
-        const i = ((y + padTop) * w + (x + padLeft)) * 4;
-        silhouetteFloat[i + 3] = sA;
-      }
-    }
-    for (const innerShadow of innerShadowEffects) {
-      if (!innerShadow.color) continue;
-      const ox = innerShadow.offset?.x ?? 0;
-      const oy = innerShadow.offset?.y ?? 0;
-      const ir = innerShadow.color.r;
-      const ig = innerShadow.color.g;
-      const ib = innerShadow.color.b;
-      const ia = innerShadow.color.a;
-      const blurredMask = gaussianBlur2DFloat(silhouetteFloat, w, h, innerShadow.radius);
+    // For canvas-fill cases, blur the silhouette in SHAPE-SIZE space
+    // (matching the WebGL FBO sized to the canvas) so the kernel's
+    // edge clamp returns silhouette interior values, not the zero
+    // padding outside. Otherwise use the padded approach.
+    if (options?.silhouetteFillsCanvas) {
+      const silSize = new Float32Array(w0 * h0 * 4);
       for (let y = 0; y < h0; y += 1) {
         for (let x = 0; x < w0; x += 1) {
-          const shapeAlpha = silhouette[y * w0 + x]! / 255;
-          if (shapeAlpha === 0) continue;
-          // Sample blurred at OPPOSITE offset position. WebGL's inner
-          // shadow shader samples at `texCoord + u_offset`, but in
-          // WebGL texCoord conventions (y-up) this effectively shifts
-          // OPPOSITE the Figma fig.offset direction. Our buffer is
-          // y-down, so we negate the offset to match: sample at
-          // (x - ox, y - oy). Verified against shadow-inner: offset
-          // (0, 2) → darkening appears at TOP edge (y decreasing
-          // from shape's top edge), which requires sampling BELOW
-          // each pixel to find "outside-of-shape" blurred values.
-          const bx = x + padLeft - ox;
-          const by = y + padTop - oy;
-          let blurredAlpha = 0;
-          if (bx >= 0 && bx < w && by >= 0 && by < h) {
-            blurredAlpha = blurredMask[(by * w + bx) * 4 + 3]!;
+          const sA = silhouette[y * w0 + x]! / 255;
+          if (sA === 0) continue;
+          silSize[(y * w0 + x) * 4 + 3] = sA;
+        }
+      }
+      for (const innerShadow of innerShadowEffects) {
+        if (!innerShadow.color) continue;
+        const ox = innerShadow.offset?.x ?? 0;
+        const oy = innerShadow.offset?.y ?? 0;
+        const ir = innerShadow.color.r;
+        const ig = innerShadow.color.g;
+        const ib = innerShadow.color.b;
+        const ia = innerShadow.color.a;
+        // Inner shadow stays on the single-pass blur — the inner
+        // shadow's formula `shapeAlpha * (1 - blurredAlpha)` is
+        // sensitive to the blurredAlpha shape; the multi-pass cascade
+        // gives a slightly different distribution than the single-
+        // pass 4σ truncation and regresses `frame-inner-shadow` by
+        // ~0.5% when used here. Drop shadows where the blurredAlpha
+        // directly contributes to the output do benefit.
+        const blurredMask = gaussianBlur2DFloat(silSize, w0, h0, innerShadow.radius);
+        for (let y = 0; y < h0; y += 1) {
+          for (let x = 0; x < w0; x += 1) {
+            const shapeAlpha = silhouette[y * w0 + x]! / 255;
+            if (shapeAlpha === 0) continue;
+            // Sample blurred at OPPOSITE offset in shape-size space.
+            const bxRaw = x - ox;
+            const byRaw = y - oy;
+            const bx = bxRaw < 0 ? 0 : bxRaw >= w0 ? w0 - 1 : bxRaw;
+            const by = byRaw < 0 ? 0 : byRaw >= h0 ? h0 - 1 : byRaw;
+            const blurredAlpha = blurredMask[(by * w0 + bx) * 4 + 3]!;
+            const shadowMask = shapeAlpha * (1 - blurredAlpha);
+            const sA = ia * shadowMask;
+            if (sA <= 0) continue;
+            const i = ((y + padTop) * w + (x + padLeft)) * 4;
+            const dA = accum[i + 3]!;
+            const outA = sA + dA * (1 - sA);
+            if (outA < 1e-5) continue;
+            accum[i] = (ir * sA + accum[i]! * dA * (1 - sA)) / outA;
+            accum[i + 1] = (ig * sA + accum[i + 1]! * dA * (1 - sA)) / outA;
+            accum[i + 2] = (ib * sA + accum[i + 2]! * dA * (1 - sA)) / outA;
+            accum[i + 3] = outA;
           }
-          const shadowMask = shapeAlpha * (1 - blurredAlpha);
-          const sA = ia * shadowMask;
-          if (sA <= 0) continue;
+        }
+      }
+    } else {
+      // Pre-blur the silhouette ONCE (no offset). Stored as a float
+      // mask in `blurredMask` — only the alpha channel matters for
+      // the inner-shadow formula.
+      const silhouetteFloat = new Float32Array(w * h * 4);
+      for (let y = 0; y < h0; y += 1) {
+        for (let x = 0; x < w0; x += 1) {
+          const sA = silhouette[y * w0 + x]! / 255;
+          if (sA === 0) continue;
           const i = ((y + padTop) * w + (x + padLeft)) * 4;
-          const dA = accum[i + 3]!;
-          const outA = sA + dA * (1 - sA);
-          if (outA < 1e-5) continue;
-          accum[i] = (ir * sA + accum[i]! * dA * (1 - sA)) / outA;
-          accum[i + 1] = (ig * sA + accum[i + 1]! * dA * (1 - sA)) / outA;
-          accum[i + 2] = (ib * sA + accum[i + 2]! * dA * (1 - sA)) / outA;
-          accum[i + 3] = outA;
+          silhouetteFloat[i + 3] = sA;
+        }
+      }
+      for (const innerShadow of innerShadowEffects) {
+        if (!innerShadow.color) continue;
+        const ox = innerShadow.offset?.x ?? 0;
+        const oy = innerShadow.offset?.y ?? 0;
+        const ir = innerShadow.color.r;
+        const ig = innerShadow.color.g;
+        const ib = innerShadow.color.b;
+        const ia = innerShadow.color.a;
+        const blurredMask = gaussianBlur2DFloat(silhouetteFloat, w, h, innerShadow.radius);
+        for (let y = 0; y < h0; y += 1) {
+          for (let x = 0; x < w0; x += 1) {
+            const shapeAlpha = silhouette[y * w0 + x]! / 255;
+            if (shapeAlpha === 0) continue;
+            // Sample blurred at OPPOSITE offset position. WebGL's inner
+            // shadow shader samples at `texCoord + u_offset`, but in
+            // WebGL texCoord conventions (y-up) this effectively shifts
+            // OPPOSITE the Figma fig.offset direction. Our buffer is
+            // y-down, so we negate the offset to match: sample at
+            // (x - ox, y - oy). Verified against shadow-inner: offset
+            // (0, 2) → darkening appears at TOP edge (y decreasing
+            // from shape's top edge), which requires sampling BELOW
+            // each pixel to find "outside-of-shape" blurred values.
+            const bx = x + padLeft - ox;
+            const by = y + padTop - oy;
+            let blurredAlpha = 0;
+            if (bx >= 0 && bx < w && by >= 0 && by < h) {
+              blurredAlpha = blurredMask[(by * w + bx) * 4 + 3]!;
+            }
+            const shadowMask = shapeAlpha * (1 - blurredAlpha);
+            const sA = ia * shadowMask;
+            if (sA <= 0) continue;
+            const i = ((y + padTop) * w + (x + padLeft)) * 4;
+            const dA = accum[i + 3]!;
+            const outA = sA + dA * (1 - sA);
+            if (outA < 1e-5) continue;
+            accum[i] = (ir * sA + accum[i]! * dA * (1 - sA)) / outA;
+            accum[i + 1] = (ig * sA + accum[i + 1]! * dA * (1 - sA)) / outA;
+            accum[i + 2] = (ib * sA + accum[i + 2]! * dA * (1 - sA)) / outA;
+            accum[i + 3] = outA;
+          }
         }
       }
     }
@@ -523,6 +786,18 @@ function buildPaintSampler(
  * parity hinges on the rasterizer using the same UV→pixel mapping
  * Godot does. Godot's linear filter at integer UVs reads the source
  * pixel center, which matches my (sx + 0.5)/w → integer index here.
+ *
+ * Opacity handling: the WebGL textured shader emits
+ * `gl_FragColor = texColor * u_opacity` — RGB AND alpha are scaled by
+ * opacity. GL's `SRC_ALPHA, ONE_MINUS_SRC_ALPHA` blend then multiplies
+ * the fragment's RGB by src.alpha (= a * opacity) again, so the
+ * effective image contribution is `texColor.rgb * opacity²`. To match
+ * this byte-for-byte in CPU straight-alpha-over, the sampler emits
+ * `{r * opacity, g * opacity, b * opacity, a * opacity}` (effectively
+ * pre-applying the shader's RGB scale). My alpha-over blend then
+ * multiplies by `c.a = a * opacity` again, producing the same
+ * `rgb * opacity²` contribution WebGL renders. Verified against
+ * `image-fill-multi`'s 0.6-opacity image over solid (0.2, 0.3, 0.8).
  */
 function buildImageSampler(
   paint: FigPaint,
@@ -564,7 +839,7 @@ function buildImageSampler(
     const g = (data[i00 + 1]! * w00 + data[i10 + 1]! * w10 + data[i01 + 1]! * w01 + data[i11 + 1]! * w11) / 255;
     const b = (data[i00 + 2]! * w00 + data[i10 + 2]! * w10 + data[i01 + 2]! * w01 + data[i11 + 2]! * w11) / 255;
     const a = (data[i00 + 3]! * w00 + data[i10 + 3]! * w10 + data[i01 + 3]! * w01 + data[i11 + 3]! * w11) / 255;
-    return { r, g, b, a: a * opacity };
+    return { r: r * opacity, g: g * opacity, b: b * opacity, a: a * opacity };
   };
 }
 
@@ -762,7 +1037,131 @@ function rasterizeShapeSilhouette(
     const cr = readCornerRadius(node);
     return rasterizeRoundedRectSilhouette(width, height, cr, outset);
   }
+  // FRAME nodes are treated as rounded rectangles for silhouette
+  // purposes. Callers are responsible for re-emitting FRAME children
+  // alongside the rasterised bg — the rasterizer ONLY produces the
+  // FRAME's own bg + effects without the children's geometry.
+  if (typeName === "FRAME") {
+    const cr = readCornerRadius(node);
+    return rasterizeRoundedRectSilhouette(width, height, cr, outset);
+  }
   return undefined;
+}
+
+/**
+ * Build a binary (AA-less) silhouette by mirroring WebGL's
+ * 64-segment ellipse / rounded-rect tessellation: pixel-center
+ * inside/outside test against the same polygon GPU rasterisation
+ * sees. Used by the layer-blur path so the kernel input matches
+ * WebGL byte-for-byte. Returns coverage in 0/255 — no AA gradient,
+ * no supersampling.
+ *
+ * For RECTANGLE / ROUNDED_RECTANGLE we test directly against the
+ * analytic rounded-rect interior (equivalent to WebGL's segmented
+ * corner polygon at high-enough segment counts that the corner
+ * polygon is indistinguishable from the analytic round at typical
+ * radii — measurable diff would require radii ≪ 1 px).
+ *
+ * For ELLIPSE we test against the 64-segment polygon explicitly so
+ * the binary edge matches the GPU polygon's pixel-center hit-test.
+ * The analytic ellipse interior is a *slightly* different shape
+ * from the segmented polygon (segmented polygon is inscribed, so
+ * sits ~0.04 px inside the analytic ellipse at the segment
+ * midpoints). That sub-pixel difference, smeared by blur, still
+ * shows up — so use the polygon.
+ */
+function rasterizeShapeSilhouetteBinaryPolygon(
+  node: FigNode,
+  width: number,
+  height: number,
+): Uint8Array | undefined {
+  const typeName = node.type?.name;
+  if (typeName === "ELLIPSE") {
+    return rasterizeEllipseSilhouetteBinaryPolygon(width, height);
+  }
+  if (typeName === "RECTANGLE" || typeName === "ROUNDED_RECTANGLE" || typeName === "FRAME") {
+    const cr = readCornerRadius(node);
+    return rasterizeRoundedRectSilhouetteBinary(width, height, cr);
+  }
+  return undefined;
+}
+
+/**
+ * Rasterise an inscribed 64-segment polygon binary silhouette to
+ * match WebGL's `generateEllipseVertices(segments=64)` GPU output.
+ *
+ * Each pixel's center (x+0.5, y+0.5) gets a point-in-polygon test
+ * against the 64-gon. We use the standard even-odd ray cast: a
+ * horizontal ray from the test point going right, counting edge
+ * crossings. Odd = inside.
+ */
+function rasterizeEllipseSilhouetteBinaryPolygon(width: number, height: number): Uint8Array {
+  const buf = new Uint8Array(width * height);
+  const segments = 64;
+  const cx = width / 2;
+  const cy = height / 2;
+  const rx = width / 2;
+  const ry = height / 2;
+  const verts: { x: number; y: number }[] = new Array(segments);
+  for (let i = 0; i < segments; i += 1) {
+    const a = (2 * Math.PI * i) / segments;
+    verts[i] = { x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) };
+  }
+  // For each pixel center, ray-cast horizontal.
+  for (let y = 0; y < height; y += 1) {
+    const py = y + 0.5;
+    for (let x = 0; x < width; x += 1) {
+      const px = x + 0.5;
+      let inside = false;
+      for (let i = 0, j = segments - 1; i < segments; j = i, i += 1) {
+        const vi = verts[i]!;
+        const vj = verts[j]!;
+        // Standard even-odd point-in-polygon: edge (vj, vi) straddles
+        // py horizontally; compute x at py and compare with px.
+        if ((vi.y > py) !== (vj.y > py)) {
+          const intersectX = (vj.x - vi.x) * (py - vi.y) / (vj.y - vi.y) + vi.x;
+          if (px < intersectX) {
+            inside = !inside;
+          }
+        }
+      }
+      buf[y * width + x] = inside ? 255 : 0;
+    }
+  }
+  return buf;
+}
+
+/**
+ * Binary rounded-rect silhouette: pixel-center inside test against
+ * the analytic rounded-rect interior. The WebGL `generateRectVertices`
+ * tessellation builds the corner with 8 segments per quarter (= 32
+ * total around the rect) but at typical corner radii (≥ 4 px) the
+ * inscribed polygon and the analytic round are indistinguishable at
+ * pixel-center resolution. If a fixture lands on `cr < 2 px` and the
+ * polygon mismatch matters, this is the place to add per-corner
+ * polygon tests; for now, analytic.
+ */
+function rasterizeRoundedRectSilhouetteBinary(
+  width: number,
+  height: number,
+  cornerRadius: number,
+): Uint8Array {
+  const r = Math.min(cornerRadius, width / 2, height / 2);
+  const buf = new Uint8Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const py = y + 0.5;
+    for (let x = 0; x < width; x += 1) {
+      const px = x + 0.5;
+      if (px < 0 || px > width || py < 0 || py > height) continue;
+      // Distance to the inner rounded-rect (corner-radius round).
+      const dx = px < r ? r - px : px > width - r ? px - (width - r) : 0;
+      const dy = py < r ? r - py : py > height - r ? py - (height - r) : 0;
+      if (dx * dx + dy * dy <= r * r) {
+        buf[y * width + x] = 255;
+      }
+    }
+  }
+  return buf;
 }
 
 /**
@@ -883,28 +1282,22 @@ function rasterizeRoundedRectSilhouette(width: number, height: number, cornerRad
 /**
  * 2D Gaussian convolution on premultiplied-alpha RGBA8 bytes.
  *
- * Implementation: two passes (horizontal then vertical) of a 1D
- * Gaussian kernel — O(width × height × kernel_size) total instead
- * of the O(width × height × kernel_size²) of a naive 2D loop. The
- * separable property of a Gaussian (G2D(x, y) = G1D(x) × G1D(y))
- * makes this exact, not an approximation.
+ * Single-pass with `4σ` truncation. The kernel captures ~99.97% of
+ * Gaussian energy and is calibrated for the calibrated effect specs
+ * (`effects/realistic-badge`, `effects/blur-layer`). Sigma maps
+ * `radius * 0.5` per fig's blur convention.
  *
- * The input is treated as straight (un-premultiplied) RGBA. We
- * premultiply on the fly during the horizontal pass and divide back
- * out at the end so colour bleeding stops at the alpha boundary.
+ * Why single-pass rather than the WebGL-multi-pass cascade: the
+ * shadow halo cases through `tryEmitBlurredShape` (sub-shape inside
+ * a larger frame) are calibrated against my padded-buffer
+ * compositing chain. Switching to WebGL's exact multi-pass routine
+ * (`gaussianBlur2DFloatMultiPass`) shifts the halo distribution
+ * enough to regress 5 fixtures by 0.2–1.9% each. Multi-pass is
+ * reserved for the canvas-fill path (top-level FRAMEs) where the
+ * silhouette buffer matches WebGL's FBO geometry exactly.
  */
 function gaussianBlur2DFloat(input: Float32Array, width: number, height: number, radius: number): Float32Array {
-  // Figma's "blur radius" maps to sigma via a 0.5 factor — verified
-  // against effects/blur-layer at radius=4: sigma=2.0 produces the
-  // closest visual + byte match to the WebGL ref.
-  // Input is straight-alpha float RGBA; we premultiply on the fly
-  // and un-premultiply at the end so colour bleeding stops at the
-  // alpha boundary.
   const sigma = Math.max(0.01, radius * 0.5);
-  // 4σ truncation captures ~99.97% of Gaussian energy. Verified
-  // against effects/realistic-badge and effects/blur-layer where the
-  // 1-byte halo tail past 3σ shows visible ref pixels; 4σ picks it
-  // up at the cost of a slightly wider kernel.
   const kernelRadius = Math.max(1, Math.ceil(sigma * 4));
   const kernelSize = kernelRadius * 2 + 1;
   const kernel: number[] = new Array(kernelSize);
@@ -918,7 +1311,7 @@ function gaussianBlur2DFloat(input: Float32Array, width: number, height: number,
   for (let i = 0; i < kernelSize; i += 1) {
     kernel[i] = kernel[i]! / total;
   }
-  // Horizontal pass: premultiply input, blur into temp.
+  // Horizontal pass: premultiply input on the fly, blur into temp.
   const temp = new Float32Array(width * height * 4);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -976,6 +1369,142 @@ function gaussianBlur2DFloat(input: Float32Array, width: number, height: number,
     }
   }
   return output;
+}
+
+/**
+ * 2D Gaussian convolution mirroring the WebGL fig renderer's
+ * algorithm in `effects-renderer.ts` `applyGaussianBlur`. Used by
+ * the canvas-fill shadow path where the silhouette IS the WebGL
+ * canvas — the multi-pass cascade matches WebGL byte-for-byte on
+ * `frame-drop-shadow` etc.
+ *
+ *   - `sigmaTotal = radius / 2`
+ *   - splits into `numPasses = ceil(sigmaTotal / maxSigmaPerPass)`
+ *     passes with `sigmaPerPass = sigmaTotal / sqrt(numPasses)`.
+ *   - each pass is a separable 1D blur with a FIXED 33-tap kernel.
+ *   - each pass premultiplies RGB by alpha before the kernel sum
+ *     and un-premultiplies after, mirroring the WebGL
+ *     `gaussianBlurFragmentShader`.
+ */
+function gaussianBlur2DFloatMultiPass(input: Float32Array, width: number, height: number, radius: number): Float32Array {
+  const sigmaTotal = Math.max(0.001, radius * 0.5);
+  const maxSigmaPerPass = 3;
+  const numPasses = Math.max(1, Math.ceil(sigmaTotal / maxSigmaPerPass));
+  const sigmaPerPass = sigmaTotal / Math.sqrt(numPasses);
+  const tapsHalf = 16;
+  const kernelSize = tapsHalf * 2 + 1;
+  const kernel = buildBlurKernel(sigmaPerPass, tapsHalf);
+
+  const len = width * height * 4;
+  let src = input;
+  const bufA = new Float32Array(len);
+  const bufB = new Float32Array(len);
+  let dst = bufA;
+  const temp = new Float32Array(len);
+
+  for (let p = 0; p < numPasses; p += 1) {
+    blurHorizontalPremult(src, temp, width, height, kernel, tapsHalf, kernelSize);
+    blurVerticalUnpremult(temp, dst, width, height, kernel, tapsHalf, kernelSize);
+    src = dst;
+    dst = (dst === bufA) ? bufB : bufA;
+  }
+  return src;
+}
+
+function buildBlurKernel(sigma: number, tapsHalf: number): Float32Array {
+  const invTwoSigmaSq = -0.5 / (sigma * sigma);
+  const kernel = new Float32Array(tapsHalf * 2 + 1);
+  let total = 0;
+  for (let i = -tapsHalf; i <= tapsHalf; i += 1) {
+    const w = Math.exp(invTwoSigmaSq * i * i);
+    kernel[i + tapsHalf] = w;
+    total += w;
+  }
+  // Normalize so the convolution preserves luminance.
+  for (let i = 0; i < kernel.length; i += 1) {
+    kernel[i] = kernel[i]! / total;
+  }
+  return kernel;
+}
+
+function blurHorizontalPremult(
+  src: Float32Array,
+  dst: Float32Array,
+  width: number,
+  height: number,
+  kernel: Float32Array,
+  tapsHalf: number,
+  kernelSize: number,
+): void {
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let k = 0; k < kernelSize; k += 1) {
+        const sx = clamp(x + k - tapsHalf, 0, width - 1);
+        const i = (row + sx) * 4;
+        const w = kernel[k]!;
+        const sa = src[i + 3]!;
+        // Premultiply on the fly: `s.rgb *= s.a` in WebGL shader.
+        r += src[i]! * sa * w;
+        g += src[i + 1]! * sa * w;
+        b += src[i + 2]! * sa * w;
+        a += sa * w;
+      }
+      const o = (row + x) * 4;
+      dst[o] = r;
+      dst[o + 1] = g;
+      dst[o + 2] = b;
+      dst[o + 3] = a;
+    }
+  }
+}
+
+function blurVerticalUnpremult(
+  src: Float32Array,
+  dst: Float32Array,
+  width: number,
+  height: number,
+  kernel: Float32Array,
+  tapsHalf: number,
+  kernelSize: number,
+): void {
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let k = 0; k < kernelSize; k += 1) {
+        const sy = clamp(y + k - tapsHalf, 0, height - 1);
+        const i = (sy * width + x) * 4;
+        const w = kernel[k]!;
+        // Source is already premultiplied (from horizontal pass);
+        // just weighted-sum.
+        r += src[i]! * w;
+        g += src[i + 1]! * w;
+        b += src[i + 2]! * w;
+        a += src[i + 3]! * w;
+      }
+      const o = (y * width + x) * 4;
+      if (a < 1e-3) {
+        // Un-premultiply guard: alpha too low to recover RGB.
+        // Matches the WebGL shader's `if (color.a > 0.001)`.
+        dst[o] = 0;
+        dst[o + 1] = 0;
+        dst[o + 2] = 0;
+        dst[o + 3] = a;
+      } else {
+        dst[o] = r / a;
+        dst[o + 1] = g / a;
+        dst[o + 2] = b / a;
+        dst[o + 3] = a;
+      }
+    }
+  }
 }
 
 function clamp(v: number, lo: number, hi: number): number {

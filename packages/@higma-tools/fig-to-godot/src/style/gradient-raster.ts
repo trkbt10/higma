@@ -199,6 +199,130 @@ export function rasterizeDiamondGradient(
   return { width, height, rgba };
 }
 
+/**
+ * Rasterize a `GRADIENT_LINEAR` paint at the given pixel grid. Matches
+ * the WebGL reference's `linearGradientFragmentShader`:
+ *
+ *   start, end = invert(fig.transform) applied to (0, 0) and (1, 0)
+ *   gradDir = end - start
+ *   t = dot(localPos - start, gradDir) / |gradDir|²
+ *
+ * Fig's `transform` maps GRADIENT-space → OBJECT-space, so the inverse
+ * gives object→gradient endpoints in normalised element coordinates.
+ * Verified against `bool-gradient-union`: the forward-transform shortcut
+ * the angular/diamond rasterisers use lands on a different gradient
+ * sample for the same pixel and produces a 23% diff vs the WebGL ref.
+ */
+export function rasterizeLinearGradient(
+  paint: FigGradientPaint,
+  width: number,
+  height: number,
+): RasterizedGradient {
+  const stops = readStops(paint);
+  const t = paint.transform ?? {};
+  const m00 = t.m00 ?? 1;
+  const m01 = t.m01 ?? 0;
+  const m02 = t.m02 ?? 0;
+  const m10 = t.m10 ?? 0;
+  const m11 = t.m11 ?? 1;
+  const m12 = t.m12 ?? 0;
+  const det = m00 * m11 - m01 * m10;
+  // Degenerate transform — fall back to horizontal LTR.
+  if (Math.abs(det) < 1e-9) {
+    return rasterizeFallbackLinear(stops, paint, width, height);
+  }
+  const invDet = 1 / det;
+  const inv00 = m11 * invDet;
+  const inv01 = -m01 * invDet;
+  const inv10 = -m10 * invDet;
+  const inv11 = m00 * invDet;
+  const invTx = -(inv00 * m02 + inv01 * m12);
+  const invTy = -(inv10 * m02 + inv11 * m12);
+  // gradient endpoints in object-normalised coords:
+  // start = (invTx, invTy); end = (inv00 + invTx, inv10 + invTy).
+  const startX = invTx;
+  const startY = invTy;
+  const dirX = inv00;
+  const dirY = inv10;
+  const gradLenSq = dirX * dirX + dirY * dirY;
+  if (gradLenSq < 1e-9) {
+    return rasterizeFallbackLinear(stops, paint, width, height);
+  }
+  const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const u = (x + 0.5) / width;
+      const v = (y + 0.5) / height;
+      // t = dot(localPos - start, gradDir) / |gradDir|²
+      const tt = ((u - startX) * dirX + (v - startY) * dirY) / gradLenSq;
+      const c = sampleStops(stops, Math.max(0, Math.min(1, tt)));
+      const i = (y * width + x) * 4;
+      rgba[i] = byteFromUnit(c.r);
+      rgba[i + 1] = byteFromUnit(c.g);
+      rgba[i + 2] = byteFromUnit(c.b);
+      rgba[i + 3] = byteFromUnit(c.a * paintOpacity);
+    }
+  }
+  return { width, height, rgba };
+}
+
+function rasterizeFallbackLinear(
+  stops: readonly FigGradientStop[],
+  paint: FigGradientPaint,
+  width: number,
+  height: number,
+): RasterizedGradient {
+  const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const u = (x + 0.5) / width;
+      const c = sampleStops(stops, Math.max(0, Math.min(1, u)));
+      const i = (y * width + x) * 4;
+      rgba[i] = byteFromUnit(c.r);
+      rgba[i + 1] = byteFromUnit(c.g);
+      rgba[i + 2] = byteFromUnit(c.b);
+      rgba[i + 3] = byteFromUnit(c.a * paintOpacity);
+    }
+  }
+  return { width, height, rgba };
+}
+
+/**
+ * Rasterize a `GRADIENT_RADIAL` paint at the given pixel grid. Fig
+ * stores the centre at `(m02, m12)` and the radius at `m00` (per
+ * `getRadialGradientCenterAndRadius`); the gradient parameter `t` is
+ * the normalised distance from the centre.
+ */
+export function rasterizeRadialGradient(
+  paint: FigGradientPaint,
+  width: number,
+  height: number,
+): RasterizedGradient {
+  const stops = readStops(paint);
+  const t = paint.transform ?? {};
+  const cx = t.m02 ?? 0.5;
+  const cy = t.m12 ?? 0.5;
+  const r = t.m00 ?? 0.5;
+  const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const u = (x + 0.5) / width - cx;
+      const v = (y + 0.5) / height - cy;
+      const dist = Math.sqrt(u * u + v * v) / Math.max(1e-6, r);
+      const c = sampleStops(stops, Math.max(0, Math.min(1, dist)));
+      const i = (y * width + x) * 4;
+      rgba[i] = byteFromUnit(c.r);
+      rgba[i + 1] = byteFromUnit(c.g);
+      rgba[i + 2] = byteFromUnit(c.b);
+      rgba[i + 3] = byteFromUnit(c.a * paintOpacity);
+    }
+  }
+  return { width, height, rgba };
+}
+
 /** Read stops in either Kiwi (`stops`) or API (`gradientStops`) shape. */
 function readStops(paint: FigGradientPaint): readonly FigGradientStop[] {
   if (paint.stops && paint.stops.length > 0) {

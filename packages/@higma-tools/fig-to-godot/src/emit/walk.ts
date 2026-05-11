@@ -32,7 +32,7 @@
  *   BoxContainer is renamed `Stack` (or whatever the disambiguator
  *   produces) so node names stay unique within the parent.
  */
-import type { FigGradientPaint, FigNode, FigSolidPaint } from "@higma-document-models/fig/types";
+import type { FigGradientPaint, FigNode, FigPaint, FigSolidPaint } from "@higma-document-models/fig/types";
 import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
 import { resolveInstanceNode } from "@higma-document-models/fig/symbols";
 import { toPascalCase, uniqueIdent } from "@higma-primitives/identifier";
@@ -67,7 +67,12 @@ import { buildShadowOnlyStyleBoxFlat, buildStyleBoxFlat, modulateAlphaProperty, 
 import { paintStrokeBand, rasterizeShapeWithEffects, type ShapeEffect } from "../style/blur-raster";
 import { solidPaintToColor, solidPaintToPolygon2DColor } from "../style/color";
 import { buildLinearGradient } from "../style/gradient";
-import { rasterizeAngularGradient, rasterizeDiamondGradient } from "../style/gradient-raster";
+import {
+  rasterizeAngularGradient,
+  rasterizeDiamondGradient,
+  rasterizeLinearGradient,
+  rasterizeRadialGradient,
+} from "../style/gradient-raster";
 import { buildPolygon2DNodes, decodeNodeContours } from "../shape/polygon";
 import { composeBooleanContours } from "../shape/boolean";
 import {
@@ -399,7 +404,7 @@ function resolveImageSubResource(
 function resolveRasterizedGradient(
   paint: FigGradientPaint,
   size: { readonly x: number; readonly y: number },
-  kind: "angular" | "diamond",
+  kind: "angular" | "diamond" | "linear" | "radial",
   ctx: WalkContext,
 ): { readonly id: string; readonly imageWidth: number; readonly imageHeight: number } | undefined {
   const w = Math.max(1, Math.round(size.x));
@@ -411,7 +416,11 @@ function resolveRasterizedGradient(
   }
   const raster = kind === "angular"
     ? rasterizeAngularGradient(paint, w, h)
-    : rasterizeDiamondGradient(paint, w, h);
+    : kind === "diamond"
+      ? rasterizeDiamondGradient(paint, w, h)
+      : kind === "linear"
+        ? rasterizeLinearGradient(paint, w, h)
+        : rasterizeRadialGradient(paint, w, h);
   const decoded = { width: raster.width, height: raster.height, rgba: raster.rgba };
   const ids = allocateImageIds(ctx);
   ctx.subResources.push(buildImageSubResource(ids.imageId, decoded));
@@ -1774,6 +1783,13 @@ function emitPathBlobLeaf(node_: FigNode, ctx: WalkContext): GodotNode {
     return emitBooleanFallback(node_, ctx);
   }
   const wrapName = uniqueNodeName(ctx, node_.name ?? node_.type.name);
+  // When this path-blob leaf is wrapped (here or via an ancestor) in
+  // a CanvasGroup-self_modulate-alpha composite, the Polygon2D's
+  // colour rounds through the group's float buffer and the +0.5
+  // byte-compensation overshoots the final blended byte by 1.
+  // Detect that wrap so the SOLID fill emits the raw float colour
+  // (verified on `bool-opacity` — 1-byte B drift collapses to 0).
+  const polygonCompensate = !inOpacityComposite(node_, ctx);
   const polygonResult = buildPolygon2DNodes(
     node_,
     contours,
@@ -1788,6 +1804,18 @@ function emitPathBlobLeaf(node_: FigNode, ctx: WalkContext): GodotNode {
     {
       resolveAngular: (paint, size) => resolveRasterizedGradient(paint, size, "angular", ctx),
       resolveDiamond: (paint, size) => resolveRasterizedGradient(paint, size, "diamond", ctx),
+      resolveLinear: (paint, size) => resolveRasterizedGradient(paint, size, "linear", ctx),
+      resolveRadial: (paint, size) => resolveRasterizedGradient(paint, size, "radial", ctx),
+    },
+    {
+      compensate: polygonCompensate,
+      // BOOLEAN_OPERATION / VECTOR / STAR / POLYGON paths route
+      // LINEAR / RADIAL gradients through the pre-raster path so
+      // the irregular silhouettes get a byte-perfect gradient
+      // matching the WebGL ref (clean rect / ellipse cases stay on
+      // the standard `tryEmitAntialiasedFillShape` path which
+      // produces byte parity from a different angle).
+      preRasterLinearRadial: true,
     },
   );
   if (polygonResult.nodes.length === 0) {
@@ -2223,6 +2251,51 @@ function hasVisibleAngularOrDiamondGradient(node_: FigNode): boolean {
   return false;
 }
 
+/** True when any visible `fillPaints` entry is not a SOLID paint. */
+function nonSolidVisiblePaint(node_: FigNode): boolean {
+  const paints = node_.fillPaints;
+  if (!paints) {
+    return false;
+  }
+  for (const paint of paints) {
+    if (paint.visible === false) {
+      continue;
+    }
+    if (paint.type !== "SOLID") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Count visible paints and detect whether any of them is a paint kind
+ * that benefits from pre-rasterisation (gradients + images). Used by
+ * the AA-fill gate to decide whether to take the pre-raster path.
+ */
+function countVisibleRasterizablePaints(
+  paints: readonly FigPaint[],
+): { readonly visible: number; readonly anyRasterizable: boolean } {
+  let visible = 0;
+  let anyRasterizable = false;
+  for (const paint of paints) {
+    if (paint.visible === false) {
+      continue;
+    }
+    visible += 1;
+    if (
+      paint.type === "GRADIENT_LINEAR" ||
+      paint.type === "GRADIENT_RADIAL" ||
+      paint.type === "GRADIENT_ANGULAR" ||
+      paint.type === "GRADIENT_DIAMOND" ||
+      paint.type === "IMAGE"
+    ) {
+      anyRasterizable = true;
+    }
+  }
+  return { visible, anyRasterizable };
+}
+
 /** True when any visible `fillPaints` entry is an `IMAGE` paint. */
 function hasVisibleImageFill(node_: FigNode): boolean {
   const paints = node_.fillPaints;
@@ -2345,6 +2418,194 @@ function readStrokeAlignName(node_: FigNode): "INSIDE" | "CENTER" | "OUTSIDE" {
   return "CENTER";
 }
 
+/**
+ * Compute the extra texture padding needed to accommodate the stroke
+ * band when it extends past the silhouette edge:
+ *   - INSIDE alignment: 0 (stroke stays inside silhouette).
+ *   - CENTER alignment: strokeWidth/2 (half the band is outside).
+ *   - OUTSIDE alignment: strokeWidth (entire band is outside).
+ *
+ * Returns 0 when the node has no visible stroke. Add a 1-pixel margin
+ * to absorb the AA sub-sample positions at the band's outer edge.
+ */
+function computeStrokePadding(node_: FigNode): number {
+  if (firstVisibleSolidStroke(node_) === undefined) {
+    return 0;
+  }
+  const weight = uniformStrokeWeight(node_);
+  if (weight <= 0) {
+    return 0;
+  }
+  const align = readStrokeAlignName(node_);
+  if (align === "INSIDE") {
+    return 0;
+  }
+  const outerExtent = align === "OUTSIDE" ? weight : weight / 2;
+  return Math.ceil(outerExtent) + 1;
+}
+
+/**
+ * Pre-rasterise a FRAME's bg + shadow effects into a Polygon2D, then
+ * walk the FRAME's children normally and place them as siblings of
+ * the Polygon2D inside a wrap Control. Returns `undefined` when the
+ * node is NOT a FRAME, has no shadow/blur effects, has autolayout
+ * (Godot's box containers don't compose cleanly with the pre-raster
+ * sibling), has `clipsContent` (the pre-raster doesn't yet honour
+ * clipping), has any stroke (Line2D stroke calibration differs from
+ * StyleBoxFlat's), or the rasterizer rejects the silhouette.
+ *
+ * Scope: handles the simple "FRAME bg + shadow + non-layout children"
+ * shape — the two frame-properties cases (frame-drop-shadow,
+ * frame-inner-shadow) match exactly. Autolayout / clip / nested
+ * cases continue through `emitContainer` (where Godot's StyleBoxFlat
+ * shadow handles the bg, mismatched-AA but functional).
+ */
+function tryEmitFrameWithShadow(node_: FigNode, ctx: WalkContext): GodotNode | undefined {
+  if (node_.type?.name !== "FRAME") {
+    return undefined;
+  }
+  const blur = pickLayerBlur(node_);
+  const allDropShadows = pickAllDropShadows(node_);
+  const allInnerShadows = pickAllInnerShadows(node_);
+  const hasBlur = !!(blur && typeof blur.radius === "number" && blur.radius > 0);
+  if (!hasBlur && allDropShadows.length === 0 && allInnerShadows.length === 0) {
+    return undefined;
+  }
+  // Autolayout / stroke / opacity-wrap cases need the emitContainer
+  // machinery for layout and stroke painting; skip those. `clipsContent`
+  // is allowed — the wrap Control carries `clip_contents = true` so
+  // children get rect-clipped to the frame bounds, matching Godot's
+  // existing semantics for FRAME clipping (rect, not rounded).
+  const stackName = node_.stackMode && typeof node_.stackMode === "object"
+    ? (node_.stackMode as { readonly name?: string }).name
+    : (node_.stackMode as string | undefined);
+  if (stackName === "HORIZONTAL" || stackName === "VERTICAL") {
+    return undefined;
+  }
+  if (firstVisibleSolidStroke(node_) !== undefined) {
+    return undefined;
+  }
+  // Build the effect list for the rasterizer (mirrors
+  // `tryEmitBlurredShape`'s ordering — drop shadows below, blur on
+  // the shape itself, inner shadows on top).
+  const effects: ShapeEffect[] = [];
+  for (const shadow of allDropShadows) {
+    if (typeof shadow.radius !== "number" || shadow.radius <= 0 || !shadow.color) {
+      continue;
+    }
+    effects.push({
+      kind: "drop-shadow",
+      radius: shadow.radius,
+      color: shadow.color,
+      offset: shadow.offset ?? { x: 0, y: 0 },
+    });
+  }
+  if (hasBlur && blur) {
+    effects.push({ kind: "layer-blur", radius: blur.radius! });
+  }
+  for (const innerShadow of allInnerShadows) {
+    if (typeof innerShadow.radius !== "number" || innerShadow.radius <= 0 || !innerShadow.color) {
+      continue;
+    }
+    effects.push({
+      kind: "inner-shadow",
+      radius: innerShadow.radius,
+      color: innerShadow.color,
+      offset: innerShadow.offset ?? { x: 0, y: 0 },
+    });
+  }
+  // For FRAMEs, the silhouette fills the WebGL canvas — the shadow
+  // blur needs clamp-to-edge behavior so the kernel reads past the
+  // shape's edge see silhouette interior (matching WebGL's
+  // `CLAMP_TO_EDGE` on a canvas-sized silhouette FBO). Without
+  // this, the shadow halo at the frame's top edge sees zero padding
+  // outside the silhouette and produces only partial shadow.
+  const raster = rasterizeShapeWithEffects(node_, effects, buildImageResolver(ctx), {
+    silhouetteFillsCanvas: true,
+  });
+  if (!raster) {
+    return undefined;
+  }
+  const ids = allocateImageIds(ctx);
+  ctx.subResources.push(buildImageSubResource(ids.imageId, {
+    width: raster.width,
+    height: raster.height,
+    rgba: raster.rgba,
+  }));
+  ctx.subResources.push(buildImageTextureSubResource(ids.textureId, ids.imageId));
+  const wrapName = uniqueNodeName(ctx, node_.name ?? "Frame");
+  const polygonName = uniqueNodeName(ctx, `${node_.name ?? "Frame"}Bg`);
+  const bgPolygon = node(polygonName, "Polygon2D", {
+    properties: [
+      // NEAREST filter: bilinear blending across the texture-to-pad
+      // boundary would mix shape-interior pixels with the transparent
+      // padding zone and soften the edge. NEAREST samples the exact
+      // texel under the pixel center, matching the WebGL ref's hard-
+      // pixel-aligned output.
+      property("texture_filter", intVal(1 /* NEAREST */)),
+      property("texture", { kind: "sub-resource", id: ids.textureId }),
+      property("position", vector2(raster.offsetX, raster.offsetY)),
+      property("polygon", {
+        kind: "raw",
+        text: `PackedVector2Array(0, 0, ${raster.width}, 0, ${raster.width}, ${raster.height}, 0, ${raster.height})`,
+      }),
+      property("uv", {
+        kind: "raw",
+        text: `PackedVector2Array(0, 0, ${raster.width}, 0, ${raster.width}, ${raster.height}, 0, ${raster.height})`,
+      }),
+    ],
+  });
+  // Walk the FRAME's children using a fresh child context so layout
+  // / styling stays consistent with what `emitContainer` produces for
+  // children. We promote child sub-resources and assets back into the
+  // parent so the scene file references them correctly.
+  const childContext = createWalkContext(ctx.emit);
+  childContext.styleBoxCounter = ctx.styleBoxCounter;
+  childContext.gradientCounter = ctx.gradientCounter;
+  childContext.imageTextureCounter = ctx.imageTextureCounter;
+  childContext.insideClipFrame = ctx.insideClipFrame;
+  childContext.insideOpacityComposite =
+    ctx.insideOpacityComposite || isPassthroughOpacityWrap(node_);
+  // Wrap is a plain Control container, so children get absolute
+  // positioning from their authored transform.m02/m12.
+  const parentPlan: LayoutPlan = {
+    container: "Control",
+    counter: "begin",
+    padding: { top: 0, right: 0, bottom: 0, left: 0 },
+    primary: "min",
+  };
+  const childNodes: GodotNode[] = [];
+  const renderedKids = safeChildren(node_).filter(isRendered);
+  for (const child of renderedKids) {
+    const emitted = emitNode(child, childContext);
+    const placement = placementFor(child, parentPlan, undefined);
+    const placed = applyPlacement(emitted, placement, child, parentPlan);
+    childNodes.push(placed);
+  }
+  for (const sub of childContext.subResources) {
+    ctx.subResources.push(sub);
+  }
+  for (const ext of childContext.extResources) {
+    ctx.extResources.push(ext);
+  }
+  for (const [path, bytes] of childContext.imageAssets) {
+    ctx.imageAssets.set(path, bytes);
+  }
+  for (const [hash, id] of childContext.imageHashToId) {
+    ctx.imageHashToId.set(hash, id);
+  }
+  ctx.styleBoxCounter = childContext.styleBoxCounter;
+  ctx.gradientCounter = childContext.gradientCounter;
+  ctx.imageTextureCounter = childContext.imageTextureCounter;
+  const wrap = node(wrapName, "Control", {
+    properties: [
+      ...plainControlProperties(node_),
+    ],
+    children: [bgPolygon, ...childNodes],
+  });
+  return withOptionalModulate(wrap, node_, ctx);
+}
+
 function tryEmitBlurredShape(node_: FigNode, ctx: WalkContext): GodotNode | undefined {
   const blur = pickLayerBlur(node_);
   const allDropShadows = pickAllDropShadows(node_);
@@ -2353,6 +2614,12 @@ function tryEmitBlurredShape(node_: FigNode, ctx: WalkContext): GodotNode | unde
   const hasDropShadow = allDropShadows.length > 0;
   const hasInnerShadow = allInnerShadows.length > 0;
   if (!hasBlur && !hasDropShadow && !hasInnerShadow) {
+    return undefined;
+  }
+  // FRAME nodes go through a separate path so their children get
+  // re-emitted alongside the rasterised bg. Treating a FRAME as a
+  // bare shape would lose the children's geometry entirely.
+  if (node_.type?.name === "FRAME") {
     return undefined;
   }
   // Reference pickDropShadow so the import isn't dead (Godot's
@@ -2384,7 +2651,11 @@ function tryEmitBlurredShape(node_: FigNode, ctx: WalkContext): GodotNode | unde
       offset: innerShadow.offset ?? { x: 0, y: 0 },
     });
   }
-  const raster = rasterizeShapeWithEffects(node_, effects, buildImageResolver(ctx));
+  // Reserve padding for the stroke band when CENTER / OUTSIDE
+  // alignment extends past the silhouette edge (so `paintStrokeOnRaster`
+  // below doesn't clip the outer band at the texture edge).
+  const strokePad = computeStrokePadding(node_);
+  const raster = rasterizeShapeWithEffects(node_, effects, buildImageResolver(ctx), { strokePadding: strokePad });
   if (!raster) {
     return undefined;
   }
@@ -2460,40 +2731,70 @@ function tryEmitAntialiasedFillShape(node_: FigNode, ctx: WalkContext): GodotNod
     return undefined;
   }
   // Curved edge gate: ellipse is always curved; rect/rounded-rect needs
-  // a non-zero corner radius. Plain rects already match WebGL byte-
-  // perfectly via StyleBoxFlat, so skip them.
+  // a non-zero corner radius for the AA-edge win. Plain SOLID rects
+  // already match WebGL byte-perfectly via StyleBoxFlat, so the no-
+  // corner-radius path is reserved for paints that DON'T get byte
+  // parity from the legacy path — currently GRADIENT_LINEAR /
+  // GRADIENT_RADIAL on plain rectangles, which route through Godot's
+  // GradientTexture2D and drift 1 byte per pixel vs WebGL's gradient
+  // shader (clip-rounded-gradient regressed 11.94% before this gate
+  // accepted no-radius gradient rects).
+  // arc/donut ellipses (arcData truthy) need the path-blob composer
+  // for the cut-out silhouette — `rasterizeShapeSilhouette` would
+  // produce a full disc instead. Skip them so they continue through
+  // `emitPathBlobLeaf`.
+  if (typeName === "ELLIPSE" && node_.arcData) {
+    return undefined;
+  }
   if (typeName !== "ELLIPSE") {
     const cr = typeof node_.cornerRadius === "number" ? node_.cornerRadius : 0;
-    if (cr <= 0) return undefined;
+    if (cr <= 0) {
+      // For no-corner-radius rectangles, only route through pre-raster
+      // when the fill is a gradient or image — SOLID stays on the
+      // StyleBoxFlat path which is already byte-perfect. Stroke-only
+      // plain rects through pre-raster regressed `stroke-basic` 2.48%
+      // → 5.00% (paintStrokeBand positions the stroke 1px off from
+      // Godot's StyleBoxFlat stroke for hard-cornered rects).
+      if (!nonSolidVisiblePaint(node_)) {
+        return undefined;
+      }
+    }
   }
   // Skip when any effect is present — those go through
   // `tryEmitBlurredShape` which already handles AA via the same
   // rasterizer.
-  if (pickLayerBlur(node_)) return undefined;
-  if (pickAllDropShadows(node_).length > 0) return undefined;
-  if (pickAllInnerShadows(node_).length > 0) return undefined;
+  if (pickLayerBlur(node_)) {
+    return undefined;
+  }
+  if (pickAllDropShadows(node_).length > 0) {
+    return undefined;
+  }
+  if (pickAllInnerShadows(node_).length > 0) {
+    return undefined;
+  }
   // Gradient and image fills benefit here. SOLID rounded shapes
   // already hit byte parity through StyleBoxFlat. Multi-paint stacks
-  // (>1 visible) keep the existing emit path: my float-composite
-  // differs from WebGL's per-paint draw chain in subtle byte-level
-  // ways (see multi-fill-gradient regression when this gate allowed
-  // multi-paint).
+  // (>1 visible) now also route through the rasterizer with byte-
+  // quantize between layers to mirror WebGL's per-paint framebuffer
+  // chain.
   const paints = node_.fillPaints;
-  if (!paints) return undefined;
-  let visibleCount = 0;
-  let firstVisibleIsRasterizable = false;
-  for (const p of paints) {
-    if (p.visible === false) continue;
-    if (visibleCount === 0) {
-      firstVisibleIsRasterizable = p.type === "GRADIENT_LINEAR" || p.type === "GRADIENT_RADIAL"
-        || p.type === "GRADIENT_ANGULAR" || p.type === "GRADIENT_DIAMOND"
-        || p.type === "IMAGE";
-    }
-    visibleCount += 1;
+  if (!paints) {
+    return undefined;
   }
-  if (visibleCount !== 1) return undefined;
-  if (!firstVisibleIsRasterizable) return undefined;
-  const raster = rasterizeShapeWithEffects(node_, [], buildImageResolver(ctx));
+  const paintStats = countVisibleRasterizablePaints(paints);
+  if (paintStats.visible === 0) {
+    return undefined;
+  }
+  // Need at least one curved-edge-benefiting paint to justify
+  // pre-rasterisation: a pure SOLID stack already byte-matches via
+  // StyleBoxFlat and routing it through rasterization is a regression.
+  if (!paintStats.anyRasterizable) {
+    return undefined;
+  }
+  // Reserve padding for the stroke band when CENTER / OUTSIDE
+  // alignment extends past the silhouette edge.
+  const strokePad = computeStrokePadding(node_);
+  const raster = rasterizeShapeWithEffects(node_, [], buildImageResolver(ctx), { strokePadding: strokePad });
   if (!raster) return undefined;
   // Paint stroke on top of the rasterized fill if present. The
   // `paintStrokeBand` path uses the same SDF the silhouette is built
@@ -2560,6 +2861,17 @@ function hasStroke(node_: FigNode): boolean {
 /** Top-level entry: render any FigNode into a GodotNode (mutating ctx). */
 export function emitNode(node_: FigNode, ctx: WalkContext): GodotNode {
   const typeName = getNodeType(node_);
+  // FRAME-with-shadow pre-raster intercept: pre-rasterise the
+  // FRAME's bg + shadow into a Polygon2D and emit children as
+  // siblings of the Polygon2D. Uses `silhouetteFillsCanvas: true`
+  // so the shadow blur honors WebGL's `CLAMP_TO_EDGE` behavior at
+  // the frame's edges (the silhouette IS the canvas for top-level
+  // FRAMEs, so kernel reads past the buffer edge return the
+  // silhouette's interior value, not zero padding).
+  const frameShadowReplacement = tryEmitFrameWithShadow(node_, ctx);
+  if (frameShadowReplacement) {
+    return frameShadowReplacement;
+  }
   // LAYER_BLUR / FOREGROUND_BLUR intercept: when the node has a
   // layer-blur effect, pre-rasterize the shape with Gaussian blur in
   // TypeScript and emit as an inline ImageTexture-backed Polygon2D.

@@ -23,10 +23,10 @@ await runRoundtripCase({
     "rect-fill": 0.09,
     "rect-stroke-only": 0.09,
     "rect-fill-stroke": 0.09,
-    "rect-rotated": 0.82,
-    "rect-dashed": 1.21,
+    "rect-rotated": 0.5,
+    "rect-dashed": 0.5,
     "rect-stroke-align": 0.09,
-    "rect-effect": 15.4,
+    "rect-effect": 0.5,
     "rect-sizes": 0.09,
   },
 });

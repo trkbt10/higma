@@ -73,6 +73,13 @@ export type PageLike = {
   frames(): readonly FrameLike[];
   /** The page's top-level frame; alias for `frames()[0]` in practice. */
   mainFrame(): FrameLike;
+  /**
+   * Browser context this page belongs to — exposes `newCDPSession`
+   * for code paths that need to call Chrome DevTools Protocol
+   * directly (e.g. per-codepoint resolved-font lookup via
+   * `CSS.getPlatformFontsForNode`, which has no JS-API equivalent).
+   */
+  context(): BrowserContextLike;
 };
 
 /** Subset of `playwright.Browser`. */
@@ -115,6 +122,35 @@ export type BrowserContextLike = {
   /** Existing pages within this context. */
   pages(): readonly PageLike[];
   close(): Promise<void>;
+  /**
+   * Open a Chrome DevTools Protocol session against `page`. Used by
+   * the per-codepoint font resolver (`CSS.getPlatformFontsForNode`),
+   * which is the only Blink API that returns the resolved platform
+   * face including OS fallbacks.
+   */
+  newCDPSession(page: PageLike): Promise<CDPSessionLike>;
+};
+
+/**
+ * Subset of Playwright's `CDPSession`. Only the surface
+ * `resolvePerCharacterFontRuns` consumes is typed; deliberately
+ * narrow because adding broader CDP coverage here would invite
+ * arbitrary protocol access from unrelated code paths.
+ */
+export type CDPSessionLike = {
+  send(method: "DOM.getDocument", params?: { readonly depth?: number }): Promise<{ readonly root: { readonly nodeId: number } }>;
+  send(method: "DOM.querySelectorAll", params: { readonly nodeId: number; readonly selector: string }): Promise<{ readonly nodeIds: readonly number[] }>;
+  send(method: "CSS.enable"): Promise<unknown>;
+  send(method: "DOM.enable"): Promise<unknown>;
+  send(method: "CSS.getPlatformFontsForNode", params: { readonly nodeId: number }): Promise<{
+    readonly fonts: readonly {
+      readonly familyName: string;
+      readonly postScriptName?: string;
+      readonly glyphCount?: number;
+      readonly isCustomFont?: boolean;
+    }[];
+  }>;
+  detach(): Promise<void>;
 };
 
 /**

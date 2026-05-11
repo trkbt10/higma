@@ -487,7 +487,8 @@ export function emitText(
     ? baseBuilder.childAlignSelf("STRETCH")
     : baseBuilder;
   const decorated = applyTextDecoration(stretched, node.textStyle);
-  const horizontally = applyTextAlignHorizontal(decorated, node.textStyle);
+  const cased = applyTextTransform(decorated, node.textStyle);
+  const horizontally = applyTextAlignHorizontal(cased, node.textStyle);
   const vertically = applyTextAlignVertical(horizontally, node.textStyle);
   const firstSolid = solidColorOf(node.style.fills);
   const withColor = firstSolid ? vertically.color(firstSolid) : vertically;
@@ -526,6 +527,32 @@ function applyTextAlignVertical(
     case "bottom":
       return builder.alignVertical("BOTTOM");
     case "top":
+      return builder;
+  }
+}
+
+function applyTextTransform(
+  builder: ReturnType<typeof textNode>,
+  style: TextNodeIR["textStyle"],
+): ReturnType<typeof textNode> {
+  // CSS `text-transform` is a presentation-time character-case mapping
+  // (`uppercase` / `lowercase` / `capitalize`). Figma stores the
+  // equivalent on the TEXT node as `textCase` (`UPPER` / `LOWER` /
+  // `TITLE`) and the renderer's `extract-props.ts:applyTextCase`
+  // applies it before laying out glyphs — exactly the CSS contract.
+  // Without this translation the captured `characters` reach the
+  // renderer untransformed and `text-transform: uppercase` pages render
+  // in the source case (e.g. lowercase glyphs where the page paints
+  // capitals), producing the 0.15 % diff measured on the
+  // `text-fixture-text-transform-uppercase` regression case.
+  switch (style.textTransform) {
+    case "uppercase":
+      return builder.textCase("UPPER");
+    case "lowercase":
+      return builder.textCase("LOWER");
+    case "capitalize":
+      return builder.textCase("TITLE");
+    case "none":
       return builder;
   }
 }
@@ -637,10 +664,20 @@ function resolveEmittedLineHeight(node: TextNodeIR): number {
   if (lh.unit === "ratio") {
     return node.textStyle.fontSize * lh.value;
   }
-  // `normal`: prefer the captured single-line stride over a generic
-  // 1.2 multiplier. Single-line text always satisfies
-  // `box.height > fontSize` because the browser includes ascent
-  // and descent in the line box.
+  // `normal`: prefer the per-line captured stride. The IR's
+  // `capturedLineRects[0].height` is the browser's font-native
+  // line-box height for a single line — same for every line on
+  // single-font text — so it gives the per-line stride directly.
+  // Falling back to `box.height` worked when the text was a single
+  // line (box.height = 1 line stride), but on wrapped text
+  // `box.height = lineCount × stride` and feeding that as
+  // `lineHeight` makes every emitted line the height of the whole
+  // paragraph (the regression observed on
+  // `text-fixture-text-align-justify`).
+  const rects = node.capturedLineRects;
+  if (rects && rects.length > 0 && rects[0]!.height > 0) {
+    return rects[0]!.height;
+  }
   if (node.box.height > 0) {
     return node.box.height;
   }

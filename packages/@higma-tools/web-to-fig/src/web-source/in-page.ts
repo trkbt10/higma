@@ -147,6 +147,28 @@ export type ElementJson = {
    * is absent.
    */
   readonly textLineBaselineYs?: readonly number[];
+  /**
+   * Per-codepoint runs of resolved font family — collapsed to one
+   * entry per `[start, end)` half-open range over the element's
+   * direct `text` whose runs share the same resolved family. This
+   * reproduces Chromium's per-glyph font fallback (`<p style=
+   * "font-family: Inter, 'Noto Sans JP', sans-serif">The fox 狐</p>`
+   * → `[{0..20, "Inter"}, {20..21, "Noto Sans JP"}]`).
+   *
+   * The first family in the CSS `font-family` stack that
+   * `document.fonts.check(font, char)` reports as available for that
+   * codepoint wins — this is the Blink `FontFallbackIterator` order.
+   * The element-level resolved family (carried by
+   * `computedStyle["font-family"]`) is only correct when every
+   * codepoint resolves to the stack head; the moment a fallback
+   * fires (CJK in a Latin-first stack, emoji in any stack) the
+   * element-level value lies. Emit consumers should prefer
+   * per-codepoint runs to per-element resolution.
+   *
+   * Half-open ranges over the same character sequence `text` carries.
+   * Absent for non-text elements.
+   */
+  readonly textCharacterFontRuns?: readonly { readonly start: number; readonly end: number; readonly fontFamily: string }[];
   readonly pseudo?: readonly PseudoJson[];
   readonly children: readonly ElementJson[];
 };

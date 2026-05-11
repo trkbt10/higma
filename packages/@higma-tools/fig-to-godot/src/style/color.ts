@@ -137,10 +137,21 @@ export function solidPaintToColor(paint: FigSolidPaint, compensate: boolean = tr
  * `int(c*256)` path). Polygon2D draws via a vertex buffer whose
  * per-vertex colour is interpolated by the GPU (the `floor(c*255)`
  * path). The two are not interchangeable.
+ *
+ * `compensate` defaults to true (the standalone Polygon2D path that
+ * needs the +0.5 bias to round-trip WebGL). Pass `false` when the
+ * polygon will be rendered into a `CanvasGroup` buffer that gets
+ * `self_modulate`-alpha-blended afterwards: the +0.5 bias survives
+ * the float-precision buffer and overshoots the final blended byte
+ * by 1 (verified on `bool-opacity` — a 0.5-alpha-blended SOLID drift
+ * from 140 → 141 on the B channel).
  */
-export function solidPaintToPolygon2DColor(paint: FigSolidPaint): GodotValue {
+export function solidPaintToPolygon2DColor(paint: FigSolidPaint, compensate: boolean = true): GodotValue {
   const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
   const a = paint.color.a * paintOpacity;
+  if (!compensate) {
+    return colorVal(paint.color.r, paint.color.g, paint.color.b, a);
+  }
   return colorVal(
     polygon2DByteCompensate(paint.color.r),
     polygon2DByteCompensate(paint.color.g),

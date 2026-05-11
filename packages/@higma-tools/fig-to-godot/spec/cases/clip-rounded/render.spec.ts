@@ -14,11 +14,13 @@ await runRoundtripCase({
     "clip-rounded-pill",
     "clip-rounded-nested",
     "clip-rounded-circle",
+    "clip-rounded-gradient",
   ],
   diffCapPct: {
-    "clip-rounded-basic": 0.7,
-    "clip-rounded-pill": 0.8,
+    "clip-rounded-basic": 0.5,
+    "clip-rounded-pill": 0.5,
     "clip-rounded-nested": 0.45,
-    "clip-rounded-circle": 2.4,
+    "clip-rounded-circle": 0.5,
+    "clip-rounded-gradient": 0.1,
   },
 });
