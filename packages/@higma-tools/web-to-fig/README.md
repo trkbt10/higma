@@ -72,6 +72,7 @@ The output document stamps the `<body>` with `data-source-url`, `data-selector`,
 ```ts
 import {
   captureViewport,
+  createHostFontResolver,
   normalizeViewport,
   emitFig,
 } from "@higma-tools/web-to-fig";
@@ -80,10 +81,21 @@ const { snapshot } = await captureViewport({
   url: "https://example.com/",
   viewport: { width: 1280, height: 800 },
 });
-const ir = normalizeViewport(snapshot, { breakpoint: "desktop" });
+const ir = normalizeViewport(snapshot, {
+  breakpoint: "desktop",
+  fontResolver: createHostFontResolver(),
+});
 const { bytes } = await emitFig(ir);
 await Bun.write("example.fig", bytes);
 ```
+
+`fontResolver` is required — `getComputedStyle().fontFamily` returns a
+fallback *stack* (e.g. `"-apple-system, system-ui, ..."`), and the IR
+has to carry one concrete family name so the renderer doesn't pick
+arbitrary fallbacks with drifting glyph metrics. `createHostFontResolver()`
+selects a platform-appropriate implementation (currently macOS via
+`system_profiler`); register additional platforms under
+`src/font-resolver/`.
 
 ### Multi-viewport capture
 
@@ -92,6 +104,7 @@ import {
   DEFAULT_BREAKPOINTS,
   buildMultiFigFileBytes,
   captureMultiViewport,
+  createHostFontResolver,
   normalizeViewport,
 } from "@higma-tools/web-to-fig";
 
@@ -99,8 +112,9 @@ const captures = await captureMultiViewport({
   url: "https://example.com/",
   breakpoints: DEFAULT_BREAKPOINTS, // mobile / tablet / desktop
 });
+const fontResolver = createHostFontResolver();
 const viewports = captures.map((cap) =>
-  normalizeViewport(cap.result.snapshot, { breakpoint: cap.breakpoint.name }),
+  normalizeViewport(cap.result.snapshot, { breakpoint: cap.breakpoint.name, fontResolver }),
 );
 const built = await buildMultiFigFileBytes({
   source: "https://example.com/",

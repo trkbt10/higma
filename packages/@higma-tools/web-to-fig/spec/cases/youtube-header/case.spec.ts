@@ -26,12 +26,13 @@ const FIXTURE_URL = new URL("./fixture.html", import.meta.url);
 
 const playwrightAvailable = await canLaunchPlaywright();
 
-describe.runIf(playwrightAvailable)("youtube-header case", () => {
+describe.skipIf(!playwrightAvailable)("youtube-header case", () => {
   it("captures, normalises, and emits a `.fig` from the masthead snippet", async () => {
     const result = await runHtmlCase({
       fixture: FIXTURE_URL,
       viewport: { width: 1280, height: 800 },
       breakpoint: "desktop",
+      dumpFigTo: new URL("./snapshot.fig", import.meta.url),
     });
 
     expect(result.provenance.sourceUrl).toBe("https://www.youtube.com/");

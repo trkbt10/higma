@@ -21,16 +21,19 @@
  * fixture is byte-pinned and offline-deterministic.
  */
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import {
   type CaptureResult,
   buildMultiFigFileBytes,
-  captureViewport,
+  captureViewportInBrowser,
   emitFig,
   normalizeViewport,
 } from "@higma-tools/web-to-fig";
 import type { ViewportIR } from "@higma-bridges/web-fig";
+import type { FontResolver } from "@higma-tools/web-to-fig/normalize";
+import { sharedBrowser } from "../playwright-pool";
+import { staticFontResolver } from "../test-font-resolver";
 
 export type RunHtmlCaseOptions = {
   /**
@@ -55,6 +58,25 @@ export type RunHtmlCaseOptions = {
    * `"default"` to match `normalizeViewport`'s own default.
    */
   readonly breakpoint?: string;
+  /**
+   * Optional path (or `file://` URL) to write the produced `.fig`
+   * bytes to after a successful run. Co-locating it next to the
+   * fixture (`new URL("./snapshot.fig", import.meta.url)`) lets a
+   * developer open the `.fig` in Figma to visually inspect what the
+   * pipeline produced for this fixture. Skip the option (default)
+   * for a memory-only run.
+   */
+  readonly dumpFigTo?: string | URL;
+  /**
+   * FontResolver used when translating captured `font-family` values
+   * into the IR. Defaults to `staticFontResolver()` (returns the
+   * placeholder `"Test Sans"`) so HTML-fixture cases that don't
+   * exercise font fidelity stay deterministic across OSes. A case
+   * that needs a real OS-installed font (the cases-fullpage diff
+   * loop, in particular) passes its own resolver — typically the
+   * darwin or in-page one wired up at the runner boundary.
+   */
+  readonly fontResolver?: FontResolver;
 };
 
 export type RunHtmlCaseResult = {
@@ -93,7 +115,13 @@ export type FixtureProvenance = {
 export async function runHtmlCase(options: RunHtmlCaseOptions): Promise<RunHtmlCaseResult> {
   const fixtureUrl = toFileUrl(options.fixture);
   const provenance = await readFixtureProvenance(fixtureUrl);
-  const capture = await captureViewport({
+  // Reuse the suite's shared chromium instead of launching a fresh
+  // browser per call. Every spec still gets its own browser context
+  // (Playwright guarantees context isolation), but the
+  // chromium.launch/close churn that used to make wikipedia-class
+  // captures flaky in bun-test parallel scheduling goes away.
+  const browser = await sharedBrowser();
+  const capture = await captureViewportInBrowser(browser, {
     url: fixtureUrl.href,
     viewport: options.viewport,
     devicePixelRatio: options.devicePixelRatio,
@@ -101,8 +129,15 @@ export async function runHtmlCase(options: RunHtmlCaseOptions): Promise<RunHtmlC
     timeoutMs: options.timeoutMs,
     captureScreenshot: options.captureScreenshot,
   });
-  const ir = normalizeViewport(capture.snapshot, { breakpoint: options.breakpoint ?? "default" });
+  const ir = normalizeViewport(capture.snapshot, {
+    breakpoint: options.breakpoint ?? "default",
+    fontResolver: options.fontResolver ?? staticFontResolver(),
+  });
   const figBytes = (await emitFig(ir)).bytes;
+  if (options.dumpFigTo !== undefined) {
+    const dumpPath = fileURLToPath(toFileUrl(options.dumpFigTo));
+    await writeFile(dumpPath, figBytes);
+  }
   return { capture, ir, figBytes, provenance };
 }
 
@@ -119,13 +154,16 @@ export async function runHtmlCaseMulti(
     readonly waitUntil?: RunHtmlCaseOptions["waitUntil"];
     readonly timeoutMs?: number;
     readonly captureScreenshot?: boolean;
+    readonly fontResolver?: FontResolver;
   },
 ): Promise<{ readonly captures: readonly { readonly breakpoint: string; readonly capture: CaptureResult; readonly ir: ViewportIR }[]; readonly figBytes: Uint8Array; readonly provenance: FixtureProvenance }> {
   const fixtureUrl = toFileUrl(options.fixture);
   const provenance = await readFixtureProvenance(fixtureUrl);
+  const browser = await sharedBrowser();
   const captures: { breakpoint: string; capture: CaptureResult; ir: ViewportIR }[] = [];
+  const fontResolver = options.fontResolver ?? staticFontResolver();
   for (const bp of options.breakpoints) {
-    const capture = await captureViewport({
+    const capture = await captureViewportInBrowser(browser, {
       url: fixtureUrl.href,
       viewport: { width: bp.width, height: bp.height },
       devicePixelRatio: bp.devicePixelRatio ?? 1,
@@ -133,7 +171,7 @@ export async function runHtmlCaseMulti(
       timeoutMs: options.timeoutMs,
       captureScreenshot: options.captureScreenshot,
     });
-    const ir = normalizeViewport(capture.snapshot, { breakpoint: bp.name });
+    const ir = normalizeViewport(capture.snapshot, { breakpoint: bp.name, fontResolver });
     captures.push({ breakpoint: bp.name, capture, ir });
   }
   const built = await buildMultiFigFileBytes({
@@ -175,20 +213,49 @@ async function readFixtureProvenance(fixtureUrl: URL): Promise<FixtureProvenance
 }
 
 function pickAttribute(html: string, attr: string): string | undefined {
-  // Match `<body ... data-attr="value" ...>` — the extractor always
-  // emits attributes inside the `<body>` open tag with double quotes,
-  // so a strict pattern is sufficient. Returning `undefined` (rather
-  // than throwing) when the attribute is missing lets hand-rolled
-  // fixtures coexist with extractor-built ones.
-  const bodyOpen = html.match(/<body\b[^>]*>/i);
-  if (bodyOpen === null) {
+  // Match the `<body ...>` open tag honouring quoted attribute values.
+  // A naïve `<body[^>]*>` pattern bails out on the first `>` it sees,
+  // which is wrong for fixtures whose `data-selector` legitimately
+  // contains `>` (e.g. `data-selector="body > div:first-of-type"`).
+  // Returning `undefined` (rather than throwing) when the attribute is
+  // missing lets hand-rolled fixtures coexist with extractor-built ones.
+  const bodyTag = sliceBodyOpenTag(html);
+  if (bodyTag === undefined) {
     return undefined;
   }
-  const attrMatch = bodyOpen[0].match(new RegExp(`\\s${attr}="([^"]*)"`));
+  const attrMatch = bodyTag.match(new RegExp(`\\s${attr}="([^"]*)"`));
   if (attrMatch === null) {
     return undefined;
   }
   return decodeAttributeEntities(attrMatch[1]!);
+}
+
+/**
+ * Slice the `<body ...>` open tag out of `html`, treating `'…'` and
+ * `"…"` regions as opaque so quoted attribute values (which may
+ * legitimately contain `>`) don't cause an early terminator.
+ */
+function sliceBodyOpenTag(html: string): string | undefined {
+  const start = html.search(/<body\b/i);
+  if (start === -1) {
+    return undefined;
+  }
+  let i = start + 5;
+  let quote: '"' | "'" | undefined;
+  while (i < html.length) {
+    const ch = html[i]!;
+    if (quote !== undefined) {
+      if (ch === quote) {
+        quote = undefined;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return html.slice(start, i + 1);
+    }
+    i += 1;
+  }
+  return undefined;
 }
 
 function decodeAttributeEntities(value: string): string {

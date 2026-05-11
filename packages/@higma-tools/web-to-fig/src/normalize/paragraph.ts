@@ -26,6 +26,32 @@
 import type { ColorIR, TextRunIR } from "@higma-bridges/web-fig";
 import type { RawElement } from "../web-source/snapshot";
 import { parseColor, parseFontWeight } from "./parse-css";
+import { parseFontStack, type FontResolver } from "./font-resolver";
+
+/**
+ * Resolve a captured CSS `font-family` value to a single concrete
+ * family name via the injected resolver. The non-empty branch must
+ * never fall back to "first comma-split candidate" — picking
+ * `-apple-system` verbatim was the historical bug that produced the
+ * yellow halo of pixel diffs on every captured glyph.
+ *
+ * `undefined` is allowed here (the inline-run merge path inherits
+ * from the host when the inline element has no own `font-family`),
+ * the empty-string-but-present branch is treated like absent — both
+ * are signals that the inline element is *deferring* to its host.
+ * The host's own font-family is read by `readBaseStyle` and goes
+ * through the resolver explicitly.
+ */
+function resolveOrInherit(
+  raw: string | undefined,
+  resolver: FontResolver,
+  inherited: string,
+): string {
+  if (raw === undefined || raw.trim().length === 0) {
+    return inherited;
+  }
+  return resolver.resolve(parseFontStack(raw));
+}
 
 const BLOCK_DISPLAYS = new Set([
   "block",
@@ -57,15 +83,55 @@ const INLINE_DISPLAYS = new Set([
  *   - own display is block-level
  *   - has at least one descendant character of glyph text
  *   - every descendant element is inline (no nested block child)
+ *   - the tag is not a *structural* container whose box must
+ *     survive as its own FRAME (table cells / rows / list items
+ *     etc.)
  */
 export function isParagraphHost(el: RawElement): boolean {
   if (!isBlockDisplay(el.computedStyle.display)) {
+    return false;
+  }
+  if (isStructuralContainer(el)) {
     return false;
   }
   if (collectTextLength(el) === 0) {
     return false;
   }
   return everyDescendantIsInline(el);
+}
+
+/**
+ * Tags whose layout role *is* their meaning — collapsing them
+ * into a TEXT IR loses the surrounding table grid / list /
+ * description structure even when the cell happens to carry only
+ * inline text. Wikipedia's infobox is the canonical case: every
+ * `<td>` is inline-text-only by content, but turning it into a
+ * paragraph TEXT erases the table entirely. Same for
+ * `<li>` / `<dt>` / `<dd>` (list items) and `<caption>` (table
+ * caption).
+ *
+ * `<p>` / `<h1..6>` / generic `<div>` / `<blockquote>` / `<header>`
+ * / `<footer>` etc. *are* paragraph-collapse candidates because
+ * their box and their text content are interchangeable from a
+ * design-tool perspective.
+ */
+const STRUCTURAL_TAGS = new Set([
+  "td",
+  "th",
+  "tr",
+  "tbody",
+  "thead",
+  "tfoot",
+  "table",
+  "caption",
+  "li",
+  "dt",
+  "dd",
+  "summary",
+]);
+
+function isStructuralContainer(el: RawElement): boolean {
+  return STRUCTURAL_TAGS.has(el.tag);
 }
 
 function isBlockDisplay(display: string | undefined): boolean {
@@ -132,6 +198,17 @@ function everyDescendantIsInline(el: RawElement): boolean {
     if (child.svgContent !== undefined) {
       return false;
     }
+    // An inline element that carries its own visible image
+    // payload (CSS `background-image: url(...)` on `<a>` /
+    // `<span>` / `<i>`, or a `mask-image` SVG that the decorator
+    // already parsed) is acting as a replaced inline — paragraph
+    // collapse here would discard the image entirely (TEXT IR
+    // has no fill stack). Bail out so the surrounding parent
+    // emits a FRAME and the inline keeps a child FRAME with the
+    // image fill / mask vector.
+    if (hasInlinePaintPayload(child)) {
+      return false;
+    }
     if (!isInlineDisplay(child.computedStyle.display)) {
       return false;
     }
@@ -140,6 +217,31 @@ function everyDescendantIsInline(el: RawElement): boolean {
     }
   }
   return true;
+}
+
+/**
+ * Inline element carrying a visible image / mask paint that
+ * paragraph collapse would silently drop. CSS-source signals:
+ *   - `background-image` other than `none` / empty
+ *   - `mask-image` (or vendor-prefixed `-webkit-mask-image`)
+ *   - any decorated `maskSvgContent` / `imageId` on the snapshot
+ *     (the latter covers data URIs that bypassed the literal
+ *     `background-image` check above on edge cases)
+ */
+function hasInlinePaintPayload(el: RawElement): boolean {
+  const cs = el.computedStyle;
+  const bg = (cs["background-image"] ?? "none").trim();
+  if (bg !== "none" && bg !== "") {
+    return true;
+  }
+  const mask = (cs["mask-image"] ?? cs["-webkit-mask-image"] ?? "none").trim();
+  if (mask !== "none" && mask !== "") {
+    return true;
+  }
+  if (el.imageId !== undefined || el.maskImageId !== undefined) {
+    return true;
+  }
+  return false;
 }
 
 export type ParagraphContent = {
@@ -159,20 +261,31 @@ type BaseStyle = {
  * Walk a paragraph subtree in document order, concatenating every
  * text node into `characters`, and emitting a `TextRunIR` whenever
  * the inline ancestor's computed style diverges from the paragraph's
- * base.
+ * base. `resolver` is invoked for every `font-family` value the
+ * inline tree carries — both the paragraph host's and any inline
+ * descendant that overrides the family — so the IR's runs end up
+ * with concrete OS-installed family names rather than the raw CSS
+ * fallback stacks the browser captures.
  */
-export function buildParagraphContent(el: RawElement): ParagraphContent {
-  const baseStyle = readBaseStyle(el);
+export function buildParagraphContent(el: RawElement, resolver: FontResolver): ParagraphContent {
+  const baseStyle = readBaseStyle(el, resolver);
   const writer = createWriter(baseStyle);
-  walkInline(el, baseStyle, writer);
+  walkInline(el, baseStyle, writer, resolver);
   return { characters: writer.characters(), runs: writer.runs() };
 }
 
-function readBaseStyle(el: RawElement): BaseStyle {
+function readBaseStyle(el: RawElement, resolver: FontResolver): BaseStyle {
   const cs = el.computedStyle;
+  const rawFamily = cs["font-family"];
+  if (rawFamily === undefined || rawFamily.trim().length === 0) {
+    throw new Error(
+      `buildParagraphContent: paragraph host <${el.tag} id=${el.id}> has empty font-family — `
+        + "computed style must always carry one per the CSS Fonts spec.",
+    );
+  }
   return {
     color: parseColor(cs.color ?? "rgb(0, 0, 0)"),
-    fontFamily: extractFamilyName(cs["font-family"] ?? "sans-serif"),
+    fontFamily: resolver.resolve(parseFontStack(rawFamily)),
     fontWeight: parseFontWeight(cs["font-weight"] ?? "400"),
     fontStyle: extractFontStyle(cs["font-style"]),
     textDecoration: extractDecoration(cs["text-decoration-line"]),
@@ -190,11 +303,6 @@ function extractDecoration(raw: string | undefined): "none" | "underline" | "lin
     return "line-through";
   }
   return "none";
-}
-
-function extractFamilyName(raw: string): string {
-  const first = raw.split(",")[0]!.trim();
-  return first.replace(/^["']|["']$/g, "");
 }
 
 function extractFontStyle(raw: string | undefined): "normal" | "italic" | "oblique" {
@@ -302,7 +410,7 @@ function sameStyle(a: BaseStyle, b: BaseStyle): boolean {
  * foobaz·bar). Otherwise we fall back to the legacy "all direct text
  * before all children" ordering used by leaf-text nodes.
  */
-function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
+function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter, resolver: FontResolver): void {
   // `<br>` inside a paragraph is an inline forced line break: CSS
   // semantics say it inserts a newline between the surrounding
   // text fragments. Without this branch the walker drops the `<br>`
@@ -312,8 +420,8 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
     writer.push("\n", base);
     return;
   }
-  const ownStyle = mergeStyle(el, base);
-  pushPseudo(el, "before", ownStyle, writer);
+  const ownStyle = mergeStyle(el, base, resolver);
+  pushPseudo(el, "before", ownStyle, writer, resolver);
   if (el.textFragments && el.textFragments.length === el.children.length + 1) {
     for (let i = 0; i < el.children.length; i += 1) {
       const slot = el.textFragments[i] ?? "";
@@ -324,7 +432,7 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
       if (!child.visible) {
         continue;
       }
-      walkInline(child, ownStyle, writer);
+      walkInline(child, ownStyle, writer, resolver);
     }
     const tail = el.textFragments[el.children.length] ?? "";
     if (tail.length > 0) {
@@ -341,10 +449,10 @@ function walkInline(el: RawElement, base: BaseStyle, writer: RunWriter): void {
       if (!child.visible) {
         continue;
       }
-      walkInline(child, ownStyle, writer);
+      walkInline(child, ownStyle, writer, resolver);
     }
   }
-  pushPseudo(el, "after", ownStyle, writer);
+  pushPseudo(el, "after", ownStyle, writer, resolver);
 }
 
 function pushPseudo(
@@ -352,6 +460,7 @@ function pushPseudo(
   which: "before" | "after",
   hostStyle: BaseStyle,
   writer: RunWriter,
+  resolver: FontResolver,
 ): void {
   const pseudoEntries = el.pseudo ?? [];
   for (const entry of pseudoEntries) {
@@ -361,7 +470,7 @@ function pushPseudo(
     const cs = entry.computedStyle;
     const style: BaseStyle = {
       color: cs.color ? parseColor(cs.color) : hostStyle.color,
-      fontFamily: cs["font-family"] ? extractFamilyName(cs["font-family"]) : hostStyle.fontFamily,
+      fontFamily: resolveOrInherit(cs["font-family"], resolver, hostStyle.fontFamily),
       fontWeight: cs["font-weight"] ? parseFontWeight(cs["font-weight"]) : hostStyle.fontWeight,
       fontStyle: extractFontStyle(cs["font-style"]) ?? hostStyle.fontStyle,
       textDecoration: cs["text-decoration-line"]
@@ -372,11 +481,11 @@ function pushPseudo(
   }
 }
 
-function mergeStyle(el: RawElement, base: BaseStyle): BaseStyle {
+function mergeStyle(el: RawElement, base: BaseStyle, resolver: FontResolver): BaseStyle {
   const cs = el.computedStyle;
   return {
     color: cs.color ? parseColor(cs.color) : base.color,
-    fontFamily: cs["font-family"] ? extractFamilyName(cs["font-family"]) : base.fontFamily,
+    fontFamily: resolveOrInherit(cs["font-family"], resolver, base.fontFamily),
     fontWeight: cs["font-weight"] ? parseFontWeight(cs["font-weight"]) : base.fontWeight,
     fontStyle: extractFontStyle(cs["font-style"]) ?? base.fontStyle,
     textDecoration: cs["text-decoration-line"] ? extractDecoration(cs["text-decoration-line"]) : base.textDecoration,

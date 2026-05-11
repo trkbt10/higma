@@ -22,18 +22,31 @@
 import type { FrameNodeIR, NodeIR, TextNodeIR, VectorNodeIR, ViewportIR } from "@higma-bridges/web-fig";
 import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
 import type { RawElement } from "../../src/web-source/snapshot";
+import type { FontResolver } from "../../src/normalize/font-resolver";
 import { buildDocument } from "../../src/emit";
 import { normalizeViewport } from "../../src/normalize";
 import { synthViewport } from "../synth-snapshot";
+import { staticFontResolver } from "../test-font-resolver";
 
 /**
  * Wrap a primitive's `RawElement` (from its `fixture.ts`) into a
  * single-child viewport snapshot and run it through `normalizeViewport`.
  * Returns the resulting `ViewportIR` so the case can drill into
  * `ir.root.children[0]` and assert per-feature properties.
+ *
+ * `fontResolver` defaults to `staticFontResolver()` (returns
+ * `"Test Sans"`) so primitives that don't care about which font name
+ * lands in the IR don't have to thread one through. Cases that *do*
+ * care about font selection — `font-stack-resolves-via-resolver`,
+ * `font-stack-unresolved-throws` — pass an explicit resolver.
  */
-export function normalizeOne(el: RawElement): ViewportIR {
-  return normalizeViewport(synthViewport({ children: [el] }));
+export function normalizeOne(
+  el: RawElement,
+  options: { readonly fontResolver?: FontResolver } = {},
+): ViewportIR {
+  return normalizeViewport(synthViewport({ children: [el] }), {
+    fontResolver: options.fontResolver ?? staticFontResolver(),
+  });
 }
 
 /**
@@ -42,8 +55,11 @@ export function normalizeOne(el: RawElement): ViewportIR {
  * when the case asserts on the document-io surface (FigDesignNode
  * fills / strokes / cornerRadius / autoLayout) rather than the IR.
  */
-export function buildOne(el: RawElement): { readonly doc: FigDesignDocument; readonly ir: ViewportIR } {
-  const ir = normalizeOne(el);
+export function buildOne(
+  el: RawElement,
+  options: { readonly fontResolver?: FontResolver } = {},
+): { readonly doc: FigDesignDocument; readonly ir: ViewportIR } {
+  const ir = normalizeOne(el, options);
   const built = buildDocument(ir);
   return { doc: built.doc, ir };
 }

@@ -52,31 +52,122 @@ import {
   parsePx,
   parsePxOr,
 } from "./parse-css";
+import {
+  parseFontStack,
+  type FontResolver,
+} from "./font-resolver";
 import { buildParagraphContent, isParagraphHost } from "./paragraph";
 import { transformPathData } from "../web-source/svg-utils";
+
+/**
+ * Translate a captured CSS `font-family` value into the single family
+ * name the IR should carry. Centralised here so every text-bearing
+ * surface (`normalizeTextStyle`, `buildParagraphContent`,
+ * `promoteUniformDecoration`) routes through the same resolver — a
+ * second SoT for font selection would re-open the drift between
+ * what was captured and what gets rendered.
+ *
+ * `raw` must be the literal `getComputedStyle().fontFamily` string
+ * captured by the in-page walker. Browsers never return an empty
+ * value for this property (every element has a computed font-family
+ * derived from the UA stylesheet), so receiving an empty string is a
+ * capture-layer bug — we throw rather than fabricating a default,
+ * keeping the resolver as the only path that decides what family
+ * lands in the IR.
+ */
+export function resolveFontFamily(raw: string | undefined, resolver: FontResolver): string {
+  if (raw === undefined || raw.trim().length === 0) {
+    throw new Error(
+      "normalizeViewport: captured element has empty `font-family` — "
+        + "computed style must always carry a font-family per the CSS Fonts spec.",
+    );
+  }
+  return resolver.resolve(parseFontStack(raw));
+}
+
+/**
+ * Options bundle for `normalizeViewport`.
+ *
+ * `fontResolver` is required (no default) because every captured
+ * `font-family` is a stack of fallback candidates — picking one
+ * verbatim is what produces the "halo of yellow pixels around every
+ * glyph" diff in `example-com-fullpage`. The caller has to wire in a
+ * platform-appropriate resolver (e.g. the darwin
+ * `system_profiler`-backed one for local CLI runs, or the in-page
+ * resolver that uses what the browser actually rendered with).
+ */
+export type NormalizeViewportOptions = {
+  readonly fontResolver: FontResolver;
+  readonly breakpoint?: string;
+};
+
+/**
+ * Immutable per-invocation context threaded through every internal
+ * normalize step. Adding a future per-call invariant (clipping
+ * tolerance, mask coordinate space, …) extends this record instead of
+ * widening every internal function signature — and forces callers to
+ * decide explicitly what they want rather than relying on a module-
+ * level mutable variable, which would re-introduce the Magic this
+ * resolver injection is meant to eliminate.
+ */
+type NormalizeContext = {
+  readonly breakpoint: string;
+  readonly fontResolver: FontResolver;
+};
 
 /** Translate a captured `RawViewportSnapshot` into the bridge IR. */
 export function normalizeViewport(
   snapshot: RawViewportSnapshot,
-  options: { readonly breakpoint?: string } = {},
+  options: NormalizeViewportOptions,
 ): ViewportIR {
   const assets = normalizeAssets(snapshot.assets);
   const breakpoint = options.breakpoint ?? "default";
+  const ctx: NormalizeContext = { breakpoint, fontResolver: options.fontResolver };
   // Lift `position: fixed` / `sticky` subtrees out of the static
   // tree before normalising — they paint at viewport-anchored
   // coordinates that the static layout's auto-layout inference
   // cannot model. The lifted subtrees become a separate viewport
   // layer the emitter wires onto each viewport's wrapper FRAME.
   const lifted = liftViewportLayer(snapshot.root);
-  const root = normalizeNode(lifted.root, undefined, breakpoint);
-  if (root.kind !== "frame") {
+  const rootRaw = normalizeNode(lifted.root, undefined, ctx);
+  if (rootRaw.kind !== "frame") {
     throw new Error("normalizeViewport: document root must normalize to a frame");
   }
+  // Pin the root FRAME to the viewport's full extent. The captured
+  // `<html>` element's `getBoundingClientRect` reflects body content
+  // height — for short pages this is *narrower than* the viewport
+  // (e.g. example.com renders only a small centred card and reports
+  // a 336px html height inside a 800px viewport). The root FRAME
+  // should match the actual viewport so the rendered `.fig` covers
+  // the same area the browser paints, with the body's background
+  // colour filling everything outside the centred content. The
+  // captured background is already on the IR's `viewport.background`
+  // and on the root frame's fill, so anchoring the root box to the
+  // viewport rect is the only structural change required.
+  const expandedBox: BoxIR = {
+    x: 0,
+    y: 0,
+    width: Math.max(rootRaw.box.width, snapshot.viewport.width),
+    height: Math.max(rootRaw.box.height, snapshot.viewport.height),
+  };
+  // CSS 2.1 §14.2 — when the root element (`<html>`) has no
+  // background, the browser propagates `<body>`'s background up to
+  // paint the entire canvas. `getComputedStyle(document.body)
+  // .backgroundColor` is what the in-page walker stamps onto
+  // `snapshot.background`; `getComputedStyle(documentElement)` returns
+  // transparent for the typical page where only `<body>` carries a
+  // colour. If the root frame's own fill is empty *and* the captured
+  // canvas colour is non-transparent, mirror the browser by pushing
+  // the canvas colour onto the root frame's fill — otherwise the
+  // rendered `.fig` paints `<body>`'s narrow rect with the colour
+  // and leaves the surrounding viewport unpainted, which is the
+  // `example-com-fullpage` "white margins" diff.
+  const root: FrameNodeIR = applyViewportBackgroundPropagation(rootRaw, expandedBox, snapshot.background);
   // Normalise every lifted subtree as if it were a new top-level
   // surface. Box coordinates come from the captured rect directly
   // (viewport-absolute), so the emitter can place them inside the
   // viewport's wrapper FRAME at exactly (rect.x, rect.y).
-  const viewportLayer = lifted.layer.map((el) => normalizeViewportLayerEntry(el, breakpoint));
+  const viewportLayer = lifted.layer.map((el) => normalizeViewportLayerEntry(el, ctx));
   return {
     source: snapshot.source,
     breakpoint,
@@ -90,6 +181,51 @@ export function normalizeViewport(
 }
 
 /**
+ * Anchor the root FRAME to `expandedBox` and apply CSS 2.1 §14.2
+ * canvas-background propagation: when the captured `<html>` carries
+ * no fill but the in-page walker stamped a non-transparent
+ * `snapshot.background` (from `getComputedStyle(document.body)`), push
+ * that colour onto the root FRAME's fills so the entire viewport
+ * paints with it. Frames that already have an explicit fill (e.g.
+ * authored `<html style="background: red">`) keep theirs untouched.
+ *
+ * The propagation is intentionally one-shot — a deeper `<body>` /
+ * inner wrapper that *also* carries the colour will keep its own fill
+ * too, which is harmless because the colour matches.
+ */
+function applyViewportBackgroundPropagation(
+  rootRaw: FrameNodeIR,
+  expandedBox: BoxIR,
+  rawBackground: string,
+): FrameNodeIR {
+  const hasFill = rootRaw.style.fills.length > 0;
+  if (hasFill) {
+    return { ...rootRaw, box: expandedBox };
+  }
+  if (isTransparentBackground(rawBackground)) {
+    return { ...rootRaw, box: expandedBox };
+  }
+  const fill: PaintIR = { kind: "solid", color: parseColor(rawBackground) };
+  return {
+    ...rootRaw,
+    box: expandedBox,
+    style: { ...rootRaw.style, fills: [fill] },
+  };
+}
+
+function isTransparentBackground(raw: string): boolean {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === "transparent" || trimmed === "rgba(0, 0, 0, 0)" || trimmed === "rgba(0,0,0,0)") {
+    return true;
+  }
+  // Catch other zero-alpha forms — `parseColor` returns a ColorIR
+  // whose `a === 0` is the canonical "no paint" signal regardless of
+  // how the colour was authored (hex, hsla, color-mix etc).
+  const parsed = parseColor(raw);
+  return parsed.a === 0;
+}
+
+/**
  * Normalise a fixed / sticky subtree into a single IR node anchored
  * to the viewport. The captured rect already lives in
  * `getBoundingClientRect` (viewport) coordinates, so we feed the
@@ -97,7 +233,7 @@ export function normalizeViewport(
  * synthetic parent — `boxRelative` then gives `(rect.x, rect.y)`
  * verbatim, which is what the wrapper FRAME expects.
  */
-function normalizeViewportLayerEntry(el: RawElement, breakpoint: string): NodeIR {
+function normalizeViewportLayerEntry(el: RawElement, ctx: NormalizeContext): NodeIR {
   // Synthesize a "viewport" parent whose contentRect starts at (0, 0)
   // so `boxRelative` returns the subtree's viewport-absolute
   // coordinates unchanged.
@@ -110,7 +246,7 @@ function normalizeViewportLayerEntry(el: RawElement, breakpoint: string): NodeIR
     computedStyle: { position: "static", display: "block" },
     children: [],
   };
-  const node = normalizeNode(el, synthetic, breakpoint);
+  const node = normalizeNode(el, synthetic, ctx);
   // Force ABSOLUTE positioning so the emitter pins the subtree to
   // the wrapper FRAME's coordinate system.
   if (node.kind === "frame") {
@@ -168,12 +304,12 @@ function normalizeAssets(raw: ReadonlyMap<string, RawAsset>): ReadonlyMap<string
   return out;
 }
 
-function normalizeNode(el: RawElement, parent: RawElement | undefined, breakpoint: string): NodeIR {
+function normalizeNode(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): NodeIR {
   if (el.svgContent !== undefined) {
-    return normalizeSvgVector(el, parent, breakpoint);
+    return normalizeSvgVector(el, parent, ctx);
   }
   if (el.maskSvgContent !== undefined) {
-    return normalizeMaskVector(el, parent, breakpoint);
+    return normalizeMaskVector(el, parent, ctx);
   }
   const isText = el.text !== undefined && el.children.length === 0 && el.text.length > 0;
   if (isText) {
@@ -185,14 +321,14 @@ function normalizeNode(el: RawElement, parent: RawElement | undefined, breakpoin
     // child so the button's chrome lives on the FRAME and the label
     // lives on the TEXT.
     if (hasAuthoredChrome(el)) {
-      return promoteLeafTextToFrame(el, parent, breakpoint);
+      return promoteLeafTextToFrame(el, parent, ctx);
     }
-    return normalizeText(el, parent, breakpoint);
+    return normalizeText(el, parent, ctx);
   }
   if (isParagraphHost(el)) {
-    return normalizeParagraph(el, parent, breakpoint);
+    return normalizeParagraph(el, parent, ctx);
   }
-  return normalizeFrame(el, parent, breakpoint);
+  return normalizeFrame(el, parent, ctx);
 }
 
 /**
@@ -250,7 +386,7 @@ function hasAuthoredChrome(el: RawElement): boolean {
  * pushing centring into FRAME auto-layout would compete with the TEXT
  * node's own alignment and double-shift the glyphs.
  */
-function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, breakpoint: string): FrameNodeIR {
+function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): FrameNodeIR {
   const localBox = boxForElement(el, parent);
   const innerTextElement: RawElement = {
     ...el,
@@ -304,16 +440,16 @@ function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, 
         },
       }
     : innerTextElement;
-  const inner = normalizeText(innerTextWithVCentre, el, breakpoint);
+  const inner = normalizeText(innerTextWithVCentre, el, ctx);
   // Asymmetric `border-*` on the chrome (e.g. a `<button>` with only a
   // `border-bottom`) needs the same per-edge synth as a regular FRAME
   // — otherwise `collectStrokes` returns no stroke and the partial
   // border vanishes.
-  const borderEdgeChildren = synthesiseBorderEdgeFrames(el, breakpoint);
+  const borderEdgeChildren = synthesiseBorderEdgeFrames(el, ctx.breakpoint);
   return {
     kind: "frame",
     id: el.id,
-    componentKey: variantKey(el, breakpoint),
+    componentKey: variantKey(el, ctx.breakpoint),
     name: el.tag,
     box: localBox,
     style: normalizeStyle(el),
@@ -443,7 +579,7 @@ function variantKey(el: RawElement, breakpoint: string): string {
  * `mask-size: contain` or matches the element exactly, so taking
  * the whole content rect is a safe initial mapping.
  */
-function normalizeMaskVector(el: RawElement, parent: RawElement | undefined, breakpoint: string): VectorNodeIR {
+function normalizeMaskVector(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): VectorNodeIR {
   const hostBox = boxForElement(el, parent);
   const svg = el.maskSvgContent!;
   const tint = maskTintForElement(el);
@@ -462,7 +598,7 @@ function normalizeMaskVector(el: RawElement, parent: RawElement | undefined, bre
   return {
     kind: "vector",
     id: el.id,
-    componentKey: variantKey(el, breakpoint),
+    componentKey: variantKey(el, ctx.breakpoint),
     name: el.tag,
     box: maskBox,
     style: normalizeStyle(el),
@@ -549,7 +685,7 @@ function maskTintForElement(el: RawElement): PaintIR {
   return { kind: "solid", color: parseColor("rgb(0, 0, 0)") };
 }
 
-function normalizeSvgVector(el: RawElement, parent: RawElement | undefined, breakpoint: string): VectorNodeIR {
+function normalizeSvgVector(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): VectorNodeIR {
   const localBox = boxForElement(el, parent);
   const svg = el.svgContent!;
   // Bake every captured `<g transform>` (and any explicit
@@ -570,7 +706,7 @@ function normalizeSvgVector(el: RawElement, parent: RawElement | undefined, brea
   return {
     kind: "vector",
     id: el.id,
-    componentKey: variantKey(el, breakpoint),
+    componentKey: variantKey(el, ctx.breakpoint),
     name: el.tag,
     box: localBox,
     style: normalizeStyle(el),
@@ -610,10 +746,10 @@ function cssPaintToIR(value: string): PaintIR | undefined {
  * entirely inline) into a single TEXT IR. Inline children that
  * deviate from the paragraph's base computed style become runs.
  */
-function normalizeParagraph(el: RawElement, parent: RawElement | undefined, breakpoint: string): TextNodeIR {
+function normalizeParagraph(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): TextNodeIR {
   const localBox = boxForElement(el, parent);
   const style = textStyleForParagraph(el);
-  const content = buildParagraphContent(el);
+  const content = buildParagraphContent(el, ctx.fontResolver);
   // Figma's `styleOverrideTable` carries per-run colour and font, but
   // not per-run text-decoration — the node's `textDecoration` field is
   // applied uniformly to every glyph. When a paragraph host has no
@@ -624,7 +760,7 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined, brea
   // ambiguous case (multiple runs disagree, or a base run mixes with
   // a decorated run) falls back to the host's own decoration to avoid
   // painting underlines onto plain text.
-  const baseTextStyle = normalizeTextStyle(el);
+  const baseTextStyle = normalizeTextStyle(el, ctx.fontResolver);
   const promotedDecoration = promoteUniformDecoration(content.runs, baseTextStyle.textDecoration);
   const textStyle = promotedDecoration === baseTextStyle.textDecoration
     ? baseTextStyle
@@ -632,7 +768,7 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined, brea
   return {
     kind: "text",
     id: el.id,
-    componentKey: variantKey(el, breakpoint),
+    componentKey: variantKey(el, ctx.breakpoint),
     name: el.tag,
     box: localBox,
     style,
@@ -642,7 +778,35 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined, brea
     characters: content.characters,
     textStyle,
     runs: content.runs.length > 0 ? content.runs : undefined,
+    capturedLineRects: capturedLineRectsRelativeTo(el, parent),
   };
+}
+
+/**
+ * Translate the captured viewport-absolute line rects on `el` into
+ * the parent-relative coordinate space the IR's `box` lives in. The
+ * `Range.getClientRects()` walker stamps rects in viewport
+ * coordinates; the renderer's text layout expects them parent-local
+ * so the wrap breakdown lines up with the resolved text box.
+ *
+ * Returns `undefined` for non-text elements and for cases where the
+ * walker couldn't safely query the Range API (shadow hosts, etc).
+ */
+function capturedLineRectsRelativeTo(
+  el: RawElement,
+  parent: RawElement | undefined,
+): readonly BoxIR[] | undefined {
+  const captured = el.textLineRects;
+  if (captured === undefined || captured.length === 0) {
+    return undefined;
+  }
+  const parentContent = parent?.contentRect;
+  return captured.map((r) => ({
+    x: parentContent ? r.x - parentContent.x : r.x,
+    y: parentContent ? r.y - parentContent.y : r.y,
+    width: r.width,
+    height: r.height,
+  }));
 }
 
 function promoteUniformDecoration(
@@ -819,7 +983,7 @@ function containsOversizedReplaced(el: RawElement): boolean {
   return false;
 }
 
-function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoint: string): FrameNodeIR {
+function normalizeFrame(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): FrameNodeIR {
   // Inline wrappers (e.g. `<figure><a><img/></a></figure>` where the
   // anchor is `display: inline`) carry a `getBoundingClientRect()`
   // that hugs the inline text-flow line they participate in, *not*
@@ -837,15 +1001,15 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoi
   // *do* carry pseudo content stay so their `::before` / `::after`
   // glyphs survive into the IR.
   const childrenRaw = collectFlowChildren(el);
-  const childrenIR = childrenRaw.map((child) => normalizeNode(child, el, breakpoint));
+  const childrenIR = childrenRaw.map((child) => normalizeNode(child, el, ctx));
   const reorderedIR = reorderByZIndex(childrenRaw, childrenIR);
-  const synthChildren = synthesiseNaturalBackgroundFrames(el, breakpoint);
+  const synthChildren = synthesiseNaturalBackgroundFrames(el, ctx.breakpoint);
   // Asymmetric / partial borders (e.g. `border-bottom: 1px solid`) are
   // not representable as a single Figma stroke without painting the
   // whole node's perimeter. Synthesise an absolute-positioned thin
   // FRAME per visible edge so only the edges the page authored
   // render.
-  const borderEdgeChildren = synthesiseBorderEdgeFrames(el, breakpoint);
+  const borderEdgeChildren = synthesiseBorderEdgeFrames(el, ctx.breakpoint);
   const localBox = boxForElement(el, parent);
   const autoLayout = resolveAutoLayout(el, childrenRaw);
   return {
@@ -855,7 +1019,7 @@ function normalizeFrame(el: RawElement, parent: RawElement | undefined, breakpoi
     // tablet / mobile variants of the same DOM path don't collapse
     // onto a single SYMBOL — the bug that bled the desktop puzzle
     // logo background into mobile rendering.
-    componentKey: variantKey(el, breakpoint),
+    componentKey: variantKey(el, ctx.breakpoint),
     name: el.tag,
     box: localBox,
     style: normalizeStyle(el),
@@ -1126,7 +1290,7 @@ function resolvePositionAxis(token: string, containerExtent: number, imageExtent
   throw new Error(`resolvePositionAxis: unsupported background-position token "${token}"`);
 }
 
-function normalizeText(el: RawElement, parent: RawElement | undefined, breakpoint: string): TextNodeIR {
+function normalizeText(el: RawElement, parent: RawElement | undefined, ctx: NormalizeContext): TextNodeIR {
   const localBox = boxForElement(el, parent);
   // Figma represents text color via the node's own `fills` (a single
   // SOLID). The TEXT node's CSS computed `color` is the glyph color;
@@ -1156,7 +1320,7 @@ function normalizeText(el: RawElement, parent: RawElement | undefined, breakpoin
   return {
     kind: "text",
     id: el.id,
-    componentKey: variantKey(el, breakpoint),
+    componentKey: variantKey(el, ctx.breakpoint),
     name: el.tag,
     box: localBox,
     style,
@@ -1164,7 +1328,8 @@ function normalizeText(el: RawElement, parent: RawElement | undefined, breakpoin
     sizing: normalizeChildSizing(el, parent),
     transform: parseTransformIR(el.computedStyle.transform),
     characters,
-    textStyle: normalizeTextStyle(el),
+    textStyle: normalizeTextStyle(el, ctx.fontResolver),
+    capturedLineRects: capturedLineRectsRelativeTo(el, parent),
   };
 }
 
@@ -1489,12 +1654,46 @@ function parseLength(value: string | undefined): LengthIR {
   return pxLength(parsePxOr(trimmed, 0));
 }
 
+/**
+ * Decide whether the captured element actually clips its overflowing
+ * content. CSS3's `overflow: clip` reaches the captured computed
+ * style for *every* element on modern Chromium, including the
+ * default-positioned `<html>` / `<body>` / typography blocks where
+ * nothing is meant to be clipped (the value comes from the user-
+ * agent stylesheet's `overflow-block` initial value, which Blink
+ * resolves to `clip` for paged-media boundaries). Trusting that
+ * value verbatim hides text whose advance metrics in the renderer
+ * overshoot the captured paragraph rect by a couple of pixels — the
+ * `s.` of `operations.` is the canonical example on
+ * example-com-fullpage.
+ *
+ * We treat `overflow: clip` as a *real* clip only when the author
+ * paired it with an explicit `overflow-clip-margin` (any value).
+ * Authored `overflow: hidden` always clips because no margin
+ * variant exists for it. This mirrors what a real browser paints —
+ * `overflow: clip` with the default `0px` margin from the UA sheet
+ * does not visibly clip content for typography-only elements.
+ */
 function clipsContentFor(cs: Readonly<Record<string, string>>): boolean {
   const overflow = cs.overflow ?? cs["overflow-x"];
   if (!overflow) {
     return false;
   }
-  return overflow === "hidden" || overflow === "clip";
+  if (overflow === "hidden") {
+    return true;
+  }
+  if (overflow !== "clip") {
+    return false;
+  }
+  // `overflow: clip` is only a true clip when the author opted in
+  // explicitly. The default `overflow-clip-margin: 0px` is what the
+  // UA sheet returns for every element, and Chromium's actual
+  // paint does not clip those elements.
+  const clipMargin = cs["overflow-clip-margin"];
+  if (clipMargin === undefined || clipMargin === "0px" || clipMargin === "normal") {
+    return false;
+  }
+  return true;
 }
 
 function normalizeBlendMode(value: string | undefined): StyleIR["blendMode"] {
@@ -1681,10 +1880,9 @@ function normalizeChildSizing(el: RawElement, parent: RawElement | undefined): C
   return { mode: "flow", primary: "fixed", counter: "fixed" };
 }
 
-function normalizeTextStyle(el: RawElement): TextStyleIR {
+function normalizeTextStyle(el: RawElement, resolver: FontResolver): TextStyleIR {
   const cs = el.computedStyle;
-  const fontFamilyRaw = cs["font-family"] ?? "sans-serif";
-  const fontFamily = fontFamilyRaw.split(",")[0]!.trim().replace(/^["']|["']$/g, "");
+  const fontFamily = resolveFontFamily(cs["font-family"], resolver);
   const fontStyle = cssFontStyle(cs["font-style"]);
   const fontWeight = parseFontWeight(cs["font-weight"] ?? "400");
   const fontSize = parsePx(cs["font-size"] ?? "16px");

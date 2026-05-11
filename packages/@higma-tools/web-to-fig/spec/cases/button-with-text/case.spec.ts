@@ -42,4 +42,22 @@ describe("case button-with-text", () => {
     // Fixture sets `color: rgb(255, 255, 255)` on the button.
     expect(solid.color).toEqual({ r: 1, g: 1, b: 1, a: 1 });
   });
+
+  it("inner TEXT lives in the chrome's content rect (FRAME box minus padding)", () => {
+    const text = asText(frame.children[0]!);
+    // Fixture: 100×32 button with padding-left/right = 12px. The inner
+    // content rect is therefore 76×32 (no vertical padding) starting
+    // at x=12 from the FRAME's local origin.
+    expect(text.box.x).toBe(12);
+    expect(text.box.y).toBe(0);
+    expect(text.box.width).toBe(76);
+    expect(text.box.height).toBe(32);
+  });
+
+  it("inner TEXT promotes to vertical centring because the chrome is taller than one line stride", () => {
+    const text = asText(frame.children[0]!);
+    // Fixture: font-size 14, default line-height (~16.8px) ⇒ chrome
+    // height 32 > 1.5 × stride. Leaf-text host should request CENTER.
+    expect(text.textStyle.textAlignVertical).toBe("center");
+  });
 });

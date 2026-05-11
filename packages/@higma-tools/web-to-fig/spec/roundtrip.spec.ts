@@ -33,6 +33,7 @@ import type { NodeIR } from "@higma-bridges/web-fig";
 import { normalizeViewport } from "../src/normalize";
 import { emitFig, buildDocument } from "../src/emit";
 import { exampleComFixture } from "./example-com-fixture";
+import { staticFontResolver } from "./test-font-resolver";
 
 function summarize(node: NodeIR): unknown {
   return {
@@ -63,7 +64,7 @@ function round(n: number): number {
 
 describe("web-to-fig round-trip", () => {
   it("normalizes the example.com fixture into IR", () => {
-    const ir = normalizeViewport(exampleComFixture);
+    const ir = normalizeViewport(exampleComFixture, { fontResolver: staticFontResolver() });
     expect(ir.source).toBe("https://example.com/");
     expect(ir.box.width).toBe(1280);
     expect(ir.root.kind).toBe("frame");
@@ -86,7 +87,7 @@ describe("web-to-fig round-trip", () => {
   });
 
   it("infers a vertical auto-layout for the card's stacked children", () => {
-    const ir = normalizeViewport(exampleComFixture);
+    const ir = normalizeViewport(exampleComFixture, { fontResolver: staticFontResolver() });
     if (ir.root.kind !== "frame") {
       throw new Error();
     }
@@ -98,7 +99,7 @@ describe("web-to-fig round-trip", () => {
   });
 
   it("builds an exportable FigDesignDocument from the IR", async () => {
-    const ir = normalizeViewport(exampleComFixture);
+    const ir = normalizeViewport(exampleComFixture, { fontResolver: staticFontResolver() });
     const built = buildDocument(ir);
     expect(built.doc.pages).toHaveLength(1);
     const pageChildren = built.doc.pages[0]!.children;
@@ -115,7 +116,7 @@ describe("web-to-fig round-trip", () => {
   });
 
   it("preserves the IR's structural shape after Web → IR → Fig → IR", async () => {
-    const ir1 = normalizeViewport(exampleComFixture);
+    const ir1 = normalizeViewport(exampleComFixture, { fontResolver: staticFontResolver() });
     const exported = await emitFig(ir1);
     expect(exported.bytes.byteLength).toBeGreaterThan(0);
 

@@ -11,6 +11,7 @@
 import { normalizeViewport } from "../normalize";
 import { buildDocument } from "./build-document";
 import { synthEl, synthViewport } from "../../spec/synth-snapshot";
+import { staticFontResolver } from "../../spec/test-font-resolver";
 
 describe("buildDocument — topology", () => {
   it("creates one page containing the viewport's root frame and its descendants", () => {
@@ -32,6 +33,7 @@ describe("buildDocument — topology", () => {
           }),
         ],
       }),
+      { fontResolver: staticFontResolver() },
     );
     const built = buildDocument(ir);
     expect(built.doc.pages).toHaveLength(1);
@@ -57,6 +59,7 @@ describe("buildDocument — topology", () => {
           }),
         ],
       }),
+      { fontResolver: staticFontResolver() },
     );
     const built = buildDocument(ir);
     expect(built.idMap.has("0")).toBe(true);
@@ -82,6 +85,7 @@ describe("buildDocument — assets", () => {
           }),
         ],
       }),
+      { fontResolver: staticFontResolver() },
     );
     const built = buildDocument(ir);
     expect(built.doc.images.has("asset-1")).toBe(true);

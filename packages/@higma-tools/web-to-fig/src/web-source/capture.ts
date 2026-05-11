@@ -17,6 +17,7 @@ import { captureSnapshot, type ElementJson, type RawSnapshotJson } from "./in-pa
 import { waitForReady } from "./wait-for-ready";
 import {
   type BrowserLike as SharedBrowserLike,
+  type FrameLike,
   type PageLike,
   type ResponseCache,
   importPlaywright,
@@ -24,6 +25,14 @@ import {
   launchBrowser as launchBrowserShared,
   startResponseCache,
 } from "./playwright-shared";
+import {
+  type FramesetEntry,
+  type FramesetProbe,
+  assembleFramesetSnapshot,
+  captureFrameContent,
+  matchFrame,
+  probeFrameset,
+} from "./frameset";
 
 export type CaptureOptions = {
   readonly url: string;
@@ -46,6 +55,15 @@ export type CaptureOptions = {
    * Returned as PNG bytes via `screenshotBytes` when set to true.
    */
   readonly captureScreenshot?: boolean;
+  /**
+   * When taking the screenshot, capture the full scrollable
+   * document instead of the visible viewport only. Defaults to
+   * `false` (viewport-sized PNG) so existing callers keep their
+   * behaviour. Set to `true` for cases-fullpage diff loops where
+   * the renderer also produces a full-document `.fig` and the
+   * comparison must include everything below the fold.
+   */
+  readonly fullPageScreenshot?: boolean;
 };
 
 export type CaptureResult = {
@@ -107,6 +125,20 @@ export async function captureViewportInBrowser(
     // Drain any still-pending response-body reads so the asset
     // cache reflects every byte the browser actually loaded.
     await responseCache.settle();
+    // HTML4 `<frameset>` documents have no `<body>` — the
+    // `captureSnapshot()` walk over `document.documentElement` would
+    // emit just the `<frame>` shells (because frame DOM is in a
+    // separate browsing context). Detect this layout and route to
+    // the per-frame capture path which evaluates inside each loaded
+    // sub-document.
+    const probe = await page.evaluate(probeFrameset);
+    if (probe.isFrameset) {
+      const snapshot = await captureFramesetInBrowser(page, probe, responseCache);
+      const screenshot = options.captureScreenshot
+        ? await screenshotPage(page, options.fullPageScreenshot ?? false)
+        : undefined;
+      return { snapshot, screenshotBytes: screenshot };
+    }
     const json = await page.evaluate(captureSnapshot);
     // Pull image bytes directly out of the browser's already-decoded
     // bitmap cache. Each rendered `<img>` has finished decoding by
@@ -124,22 +156,97 @@ export async function captureViewportInBrowser(
     for (const ref of json.imageRefs) {
       idToUrl.set(ref.id, ref.url);
     }
-    const decoratedRoot = decorateMaskSvg(json.root, idToUrl, responseCache);
-    const dimensionedRoot = decorateImageNaturalSize(decoratedRoot, idToUrl, responseCache, assets);
-    const maskDimensionedRoot = decorateMaskNaturalSize(dimensionedRoot, idToUrl, responseCache, assets);
-    const snapshot = jsonToSnapshot({ ...json, root: maskDimensionedRoot }, assets);
-    const screenshot = options.captureScreenshot ? await screenshotPage(page) : undefined;
+    // Single fused walk: parses SVG mask content, sniffs image
+    // natural size, sniffs mask natural size — what used to be three
+    // independent full-tree rewrites in sequence.
+    const decoratedRoot = decorateAll(json.root, idToUrl, responseCache, assets);
+    const snapshot = jsonToSnapshot({ ...json, root: decoratedRoot }, assets);
+    const screenshot = options.captureScreenshot
+      ? await screenshotPage(page, options.fullPageScreenshot ?? false)
+      : undefined;
     return { snapshot, screenshotBytes: screenshot };
   } finally {
     await context.close();
   }
 }
 
-async function screenshotPage(page: { screenshot(opts: { readonly fullPage: boolean; readonly type: "png"; readonly clip?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } }): Promise<Buffer> }): Promise<Uint8Array> {
-  // Capture the visible viewport only — the verification step compares
-  // against an SVG render at the same dimensions, so a `fullPage`
-  // screenshot would include unrendered scroll content.
-  const buf = await page.screenshot({ fullPage: false, type: "png" });
+/**
+ * Frameset capture path. Probes each `<frame>` element on the host
+ * page, finds its corresponding Playwright `Frame` via URL match,
+ * runs `captureSnapshot()` inside each frame's document context, and
+ * stitches the results into a single host-coordinate snapshot.
+ *
+ * Image asset harvesting is performed *after* assembly, against the
+ * union of every per-frame `imageRefs` array. The response cache is
+ * page-wide (Playwright fires `response` events for sub-frame URLs
+ * the same way it fires for the main page), so cached bytes are
+ * already available for both same-origin and cross-origin frames
+ * the page successfully loaded.
+ */
+async function captureFramesetInBrowser(
+  page: PageLike,
+  probe: FramesetProbe,
+  responseCache: ResponseCache,
+): Promise<RawViewportSnapshot> {
+  const allFrames = page.frames();
+  const usedFrames = new Set<FrameLike>();
+  // Capture each frame's snapshot, rejecting frames whose URL we
+  // can't match — a frame element with `src=""` or one whose load
+  // failed will not have a corresponding Playwright Frame.
+  const perFrame: { entry: FramesetEntry; snapshot: RawSnapshotJson }[] = [];
+  for (const entry of probe.frames) {
+    if (entry.src === "" || entry.src === "about:blank") {
+      continue;
+    }
+    const frame = matchFrame(entry, allFrames, usedFrames);
+    if (frame === undefined) {
+      // No Playwright frame matches this `<frame>` `src`. The site
+      // must have failed to load that frame; we skip rather than
+      // synthesise an empty placeholder, so downstream rendering
+      // shows the gap honestly. A future enhancement could surface
+      // the gap as an annotated "load failed" rectangle, but that
+      // belongs in a separate IR concept, not here.
+      continue;
+    }
+    const snapshot = await captureFrameContent(frame, entry.id);
+    perFrame.push({ entry, snapshot });
+  }
+  // Build the union of imageRefs from every frame's snapshot. Each
+  // ref already carries a frame-prefixed id (see `captureFrameContent`).
+  const allRefs: { id: string; url: string }[] = [];
+  for (const f of perFrame) {
+    for (const ref of f.snapshot.imageRefs) {
+      allRefs.push({ id: ref.id, url: ref.url });
+    }
+  }
+  const assets = await readAssetsFromBrowser(page, allRefs, responseCache);
+  // Decorate each frame's root with mask SVG / natural size, then
+  // re-translate per `assembleFramesetSnapshot`. The decorate passes
+  // are ElementJson-shaped, so we keep them in JSON space.
+  const idToUrl = new Map<string, string>();
+  for (const ref of allRefs) {
+    idToUrl.set(ref.id, ref.url);
+  }
+  const decoratedFrames = perFrame.map(({ entry, snapshot }) => {
+    const decorated = decorateAll(snapshot.root, idToUrl, responseCache, assets);
+    return { entry, snapshot: { ...snapshot, root: decorated } };
+  });
+  return assembleFramesetSnapshot(probe, decoratedFrames, assets);
+}
+
+async function screenshotPage(
+  page: { screenshot(opts: { readonly fullPage: boolean; readonly type: "png"; readonly clip?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } }): Promise<Buffer> },
+  fullPage: boolean,
+): Promise<Uint8Array> {
+  // The visual-fidelity verifier runs in two flavours:
+  //   - viewport-only diff (single-viewport breakpoint cases) where
+  //     the renderer's output and the screenshot must agree on the
+  //     viewport rect; full-page would include unrendered scroll
+  //     content.
+  //   - full-page diff (cases-fullpage) where the rendered `.fig`
+  //     is the entire document and the screenshot must match.
+  // Caller passes the right flag for the case at hand.
+  const buf = await page.screenshot({ fullPage, type: "png" });
   return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
 
@@ -503,6 +610,7 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     svgContent: json.svgContent,
     text: json.text,
     textFragments: json.textFragments,
+    textLineRects: json.textLineRects,
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };
@@ -523,45 +631,110 @@ function maskSvgContentJsonToRaw(json: NonNullable<ElementJson["maskSvgContent"]
 }
 
 /**
- * Walk every captured element and, where the element references a
- * `mask-image` whose bytes the response cache holds as SVG, parse
- * those bytes into `maskSvgContent`. Mask URLs that resolved to a
- * raster format (PNG, JPEG, …) are left without `maskSvgContent`
- * — the normaliser then has to either skip them (no faithful
- * single-paint mapping) or take a separate raster-mask path. The
- * Wikimedia / MediaWiki masks we care about for the wikipedia
- * fidelity loop ship as SVG, so the SVG path is the lossless one.
+ * Single-pass decorate that fuses what used to be three separate
+ * full-tree walks (mask SVG parse, image natural size, mask natural
+ * size) into one. The earlier three-pass design rebuilt the entire
+ * tree three times via `children.map(...)`, so a Yahoo-class capture
+ * with ~10k elements paid 3× the per-node allocation cost and held
+ * up to 3 transient tree copies in memory at once.
  *
- * The function returns a freshly constructed tree so caller code
- * stays free of mutation.
+ * Why fuseable: the three passes are independent — each reads only
+ * its own element fields (`maskImageId`, `imageId`, `maskImageId`
+ * again) and produces a disjoint output (`maskSvgContent`,
+ * `imageNaturalWidth/Height`, `maskNaturalWidth/Height`). They never
+ * inspect each other's outputs, so we can decide every annotation
+ * at the same node visit and emit the new element once.
+ *
+ * Per-element allocation: at most one new object per node (only when
+ * any of the three annotations actually applies, or when a child
+ * was rewritten). Untouched subtrees return verbatim, keeping
+ * structural sharing maximal — most nodes on a real capture have
+ * neither mask nor image, and they round-trip through the walk
+ * without an allocation.
  */
-function decorateMaskSvg(
+export function decorateAll(
   el: ElementJson,
   idToUrl: ReadonlyMap<string, string>,
   responseCache: ResponseCache,
+  assets: ReadonlyMap<string, RawAsset>,
 ): ElementJson {
-  const decoratedChildren = el.children.map((c) => decorateMaskSvg(c, idToUrl, responseCache));
-  if (el.maskImageId === undefined) {
-    if (decoratedChildren === el.children) {
-      return el;
-    }
-    return { ...el, children: decoratedChildren };
+  // Walk children first; reuse the input array when nothing changed
+  // to keep structural sharing. A naive `children.map(...)` always
+  // allocates, even when every child returned identically.
+  const newChildren = mapPreserve(el.children, (c) => decorateAll(c, idToUrl, responseCache, assets));
+  // Compute the three annotations independently.
+  const mask = el.maskImageId !== undefined
+    ? resolveMaskSvgContent(el.maskImageId, idToUrl, responseCache)
+    : undefined;
+  const imageDim = el.imageId !== undefined
+    ? sniffNaturalSize(el.imageId, idToUrl, responseCache, assets)
+    : undefined;
+  const maskDim = el.maskImageId !== undefined
+    ? sniffNaturalSize(el.maskImageId, idToUrl, responseCache, assets)
+    : undefined;
+  // Skip the spread when nothing changed — avoids a per-node
+  // allocation for the (very common) case of a non-image leaf.
+  const childrenChanged = newChildren !== el.children;
+  const hasMaskSvg = mask !== undefined;
+  const hasImageDim = imageDim !== undefined;
+  const hasMaskDim = maskDim !== undefined;
+  if (!childrenChanged && !hasMaskSvg && !hasImageDim && !hasMaskDim) {
+    return el;
   }
-  const url = idToUrl.get(el.maskImageId);
+  return {
+    ...el,
+    children: newChildren,
+    maskSvgContent: hasMaskSvg ? mask : el.maskSvgContent,
+    imageNaturalWidth: hasImageDim ? imageDim.width : el.imageNaturalWidth,
+    imageNaturalHeight: hasImageDim ? imageDim.height : el.imageNaturalHeight,
+    maskNaturalWidth: hasMaskDim ? maskDim.width : el.maskNaturalWidth,
+    maskNaturalHeight: hasMaskDim ? maskDim.height : el.maskNaturalHeight,
+  };
+}
+
+/**
+ * Map a readonly array, returning the input verbatim when every
+ * mapped element is referentially equal to its source. Functions as
+ * a structural-sharing helper that lets the decorate walker skip
+ * allocating a new array and a new parent element when no descendant
+ * actually changed.
+ */
+function mapPreserve<T>(input: readonly T[], fn: (item: T) => T): readonly T[] {
+  const out: T[] = [];
+  // eslint-disable-next-line no-restricted-syntax -- structural-sharing flag is intrinsically mutable
+  let changed = false;
+  for (const item of input) {
+    const mapped = fn(item);
+    if (mapped !== item) {
+      changed = true;
+    }
+    out.push(mapped);
+  }
+  return changed ? out : input;
+}
+
+/**
+ * Resolve a mask URL to parsed SVG content via the response cache or
+ * data URL decode. Returns `undefined` when the URL is unknown or
+ * the bytes don't parse as SVG — callers leave the element unchanged
+ * in that case.
+ */
+function resolveMaskSvgContent(
+  maskImageId: string,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+): NonNullable<ElementJson["maskSvgContent"]> | undefined {
+  const url = idToUrl.get(maskImageId);
   if (url === undefined) {
-    return { ...el, children: decoratedChildren };
+    return undefined;
   }
   const bytes = url.startsWith("data:")
     ? decodeMaskDataUrl(url)
     : responseCache.bodyForUrl(url);
   if (bytes === undefined) {
-    return { ...el, children: decoratedChildren };
+    return undefined;
   }
-  const svg = parseMaskSvg(bytes);
-  if (svg === undefined) {
-    return { ...el, children: decoratedChildren };
-  }
-  return { ...el, children: decoratedChildren, maskSvgContent: svg };
+  return parseMaskSvg(bytes);
 }
 
 function decodeMaskDataUrl(url: string): Uint8Array | undefined {
@@ -588,69 +761,6 @@ function decodeMaskDataUrl(url: string): Uint8Array | undefined {
  * colour. The bytes come from `mask-image` URLs the browser
  * already loaded via Playwright; we never re-fetch.
  */
-/**
- * Walk the captured tree and stamp each element that owns an
- * `imageId` with the asset's intrinsic pixel size. Sniff order:
- *   1. The host-side asset bytes (preferred — they're already
- *      decoded as PNG via the `<img>` canvas read or via the
- *      response cache rasteriser, so a PNG IHDR sniff is
- *      authoritative).
- *   2. The original response cache bytes — supports PNG, JPEG,
- *      and SVG viewBox.
- * Elements whose dimensions can't be determined are left
- * unmarked; downstream code must fail fast (no defaults) when it
- * relies on natural size.
- */
-function decorateImageNaturalSize(
-  el: ElementJson,
-  idToUrl: ReadonlyMap<string, string>,
-  responseCache: ResponseCache,
-  assets: ReadonlyMap<string, RawAsset>,
-): ElementJson {
-  const decoratedChildren = el.children.map((c) =>
-    decorateImageNaturalSize(c, idToUrl, responseCache, assets),
-  );
-  if (el.imageId === undefined) {
-    return decoratedChildren === el.children ? el : { ...el, children: decoratedChildren };
-  }
-  const dim = sniffNaturalSize(el.imageId, idToUrl, responseCache, assets);
-  return {
-    ...el,
-    imageNaturalWidth: dim?.width,
-    imageNaturalHeight: dim?.height,
-    children: decoratedChildren,
-  };
-}
-
-/**
- * Same shape as `decorateImageNaturalSize` but for `maskImageId`.
- * Mask SVGs the browser downloaded sit in the response cache; we
- * sniff their viewBox / `width`/`height` attributes so the
- * normaliser can place the mask vector at its intrinsic size
- * inside the host element rather than scaling the path to fill
- * the host (which made small icons explode to host-frame size).
- */
-function decorateMaskNaturalSize(
-  el: ElementJson,
-  idToUrl: ReadonlyMap<string, string>,
-  responseCache: ResponseCache,
-  assets: ReadonlyMap<string, RawAsset>,
-): ElementJson {
-  const decoratedChildren = el.children.map((c) =>
-    decorateMaskNaturalSize(c, idToUrl, responseCache, assets),
-  );
-  if (el.maskImageId === undefined) {
-    return decoratedChildren === el.children ? el : { ...el, children: decoratedChildren };
-  }
-  const dim = sniffNaturalSize(el.maskImageId, idToUrl, responseCache, assets);
-  return {
-    ...el,
-    maskNaturalWidth: dim?.width,
-    maskNaturalHeight: dim?.height,
-    children: decoratedChildren,
-  };
-}
-
 function sniffNaturalSize(
   imageId: string,
   idToUrl: ReadonlyMap<string, string>,

@@ -25,6 +25,26 @@ export type ResponseLike = {
   body(): Promise<Buffer>;
 };
 
+/**
+ * Subset of `playwright.Frame` we touch from the frameset capture
+ * path. Playwright's `Page` is also a `Frame` (the main frame) plus
+ * top-level navigation / event APIs, so each `Page` has an
+ * accompanying `mainFrame()`. Sub-frames (HTML4 `<frameset>` /
+ * `<frame>` and `<iframe>`) only expose the `Frame` surface — they
+ * cannot navigate independently or attach response listeners. We
+ * still need `evaluate` inside a frame's document context to run
+ * `captureSnapshot` against each frame's own DOM, and `url()` so we
+ * can identify which frame we're looking at.
+ */
+export type FrameLike = {
+  url(): string;
+  /** True for the page's top-level frame. */
+  parentFrame(): FrameLike | null;
+  evaluate<T>(fn: () => T): Promise<T>;
+  evaluate<T, A>(fn: (arg: A) => T, arg: A): Promise<T>;
+  waitForLoadState(state: "load" | "domcontentloaded" | "networkidle"): Promise<void>;
+};
+
 /** Subset of `playwright.Page` shared across capture + extract. */
 export type PageLike = {
   /** Current URL the page is on. Available without a `goto` — used by the CDP-connect path to surface the existing tab's URL. */
@@ -44,6 +64,15 @@ export type PageLike = {
   waitForLoadState(state: "load" | "domcontentloaded" | "networkidle"): Promise<void>;
   screenshot(opts: { readonly fullPage: boolean; readonly type: "png" }): Promise<Buffer>;
   on(event: "response", handler: (response: ResponseLike) => void | Promise<void>): void;
+  /**
+   * All frames currently attached to the page — main frame plus every
+   * `<frame>` / `<iframe>` Playwright tracks. The frameset capture
+   * path matches each `<frame>`'s captured `src` against
+   * `frame.url()` to locate its evaluation context.
+   */
+  frames(): readonly FrameLike[];
+  /** The page's top-level frame; alias for `frames()[0]` in practice. */
+  mainFrame(): FrameLike;
 };
 
 /** Subset of `playwright.Browser`. */

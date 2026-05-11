@@ -2,10 +2,11 @@
  * @file Case `position-sticky` — sticky lifts the same way fixed does.
  */
 import { normalizeViewport } from "../../../src/normalize";
+import { staticFontResolver } from "../../test-font-resolver";
 import { stickyToolbarViewport, TOOLBAR_HEIGHT, VIEWPORT_WIDTH } from "./fixture";
 
 describe("case position-sticky", () => {
-  const ir = normalizeViewport(stickyToolbarViewport());
+  const ir = normalizeViewport(stickyToolbarViewport(), { fontResolver: staticFontResolver() });
 
   it("removes the sticky element from the static tree", () => {
     if (ir.root.kind !== "frame") {

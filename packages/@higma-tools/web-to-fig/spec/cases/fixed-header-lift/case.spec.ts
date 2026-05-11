@@ -4,10 +4,11 @@
  * and viewport-anchored coordinates.
  */
 import { normalizeViewport } from "../../../src/normalize";
+import { staticFontResolver } from "../../test-font-resolver";
 import { fixedHeaderViewport, HEADER_HEIGHT, VIEWPORT_WIDTH } from "./fixture";
 
 describe("case fixed-header-lift", () => {
-  const ir = normalizeViewport(fixedHeaderViewport());
+  const ir = normalizeViewport(fixedHeaderViewport(), { fontResolver: staticFontResolver() });
 
   it("removes the fixed subtree from the static `main` frame", () => {
     if (ir.root.kind !== "frame") {

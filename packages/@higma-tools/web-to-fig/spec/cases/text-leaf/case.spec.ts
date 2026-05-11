@@ -4,6 +4,7 @@
  * and the colour landing on `style.fills` as a SOLID paint.
  */
 import { asText, normalizeOne, singleChild } from "../_helpers";
+import { recordingFontResolver, staticFontResolver } from "../../test-font-resolver";
 import {
   DEFAULT_FONT_FAMILY,
   DEFAULT_FONT_SIZE_PX,
@@ -13,7 +14,11 @@ import {
 } from "./fixture";
 
 describe("case text-leaf", () => {
-  const text = asText(singleChild(normalizeOne(textLeaf())));
+  // A resolver that returns the literal authored family name lets the
+  // first three tests inspect the unrelated `textStyle` fields (size,
+  // weight, colour) without coupling them to font-resolver semantics.
+  const passthrough = staticFontResolver(DEFAULT_FONT_FAMILY);
+  const text = asText(singleChild(normalizeOne(textLeaf(), { fontResolver: passthrough })));
 
   it("emits a TEXT node carrying the literal characters", () => {
     expect(text.kind).toBe("text");
@@ -38,10 +43,25 @@ describe("case text-leaf", () => {
     expect(fill.color.b).toBeCloseTo(40 / 255, 3);
   });
 
-  it("strips quoted family fallbacks down to the first family name", () => {
+  it("passes the parsed font-family stack through the FontResolver in source order", () => {
+    const recorder = recordingFontResolver("Inter Resolved");
     const text = asText(
-      singleChild(normalizeOne(textLeaf({ fontFamily: '"Inter", "Helvetica", sans-serif' }))),
+      singleChild(
+        normalizeOne(textLeaf({ fontFamily: '"Inter", "Helvetica", sans-serif' }), {
+          fontResolver: recorder.resolver,
+        }),
+      ),
     );
-    expect(text.textStyle.fontFamily).toBe("Inter");
+    expect(text.textStyle.fontFamily).toBe("Inter Resolved");
+    // The resolver must have received the full parsed stack — *not*
+    // a pre-truncated first-name shortcut. Otherwise the caller would
+    // never get to see `"Helvetica"` or the trailing generic family.
+    expect(recorder.calls.length).toBeGreaterThan(0);
+    const lastCall = recorder.calls[recorder.calls.length - 1]!;
+    expect(lastCall).toEqual([
+      { kind: "name", value: "Inter" },
+      { kind: "name", value: "Helvetica" },
+      { kind: "generic", value: "sans-serif" },
+    ]);
   });
 });

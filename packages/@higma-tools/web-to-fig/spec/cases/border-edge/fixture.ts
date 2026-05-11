@@ -27,6 +27,13 @@ export function withSingleEdgeBorder(
   for (const s of sides) {
     overrides[`border-${s}-width`] = s === side ? `${widthPx}px` : "0px";
     overrides[`border-${s}-color`] = s === side ? color : "rgb(0, 0, 0)";
+    // `border-style` defaults to `none` in the synth-computed
+    // baseline; CSS treats a non-zero width with `border-style: none`
+    // as no border at all. Author the bordered edge as `solid` so the
+    // captured snapshot matches a real page where the author wrote
+    // `border-bottom: 2px solid pink` (a single shorthand declaration
+    // resolves both width and style together).
+    overrides[`border-${s}-style`] = s === side ? "solid" : "none";
   }
   return { ...el, computedStyle: { ...el.computedStyle, ...overrides } };
 }

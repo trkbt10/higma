@@ -32,7 +32,7 @@ import {
   type TextAlignVertical,
 } from "@higma-document-models/fig/constants";
 import type { TextStyleIR } from "@higma-bridges/web-fig";
-import { splitSubpaths } from "./split-subpaths";
+import { splitSubpathsRespectingFillRule } from "./split-subpaths";
 import type {
   FrameNodeSpec,
   NodeSpec,
@@ -145,6 +145,12 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
       style: node.textStyle.fontStyle,
     }),
     lineHeight: irLineHeightToPx(node.textStyle.lineHeight),
+    // Browser-resolved CSS `letter-spacing` arrives in IR as a numeric
+    // CSS-pixel value. Skip the field for the dominant 0px case so the
+    // produced spec stays terse — `node-factory` reads `undefined` as
+    // "no override" and Figma falls back to its default tracking. A
+    // non-zero value flows verbatim with unit PIXELS.
+    letterSpacing: node.textStyle.letterSpacing !== 0 ? node.textStyle.letterSpacing : undefined,
     textAlignHorizontal: textAlignHToFig(node.textStyle.textAlign),
     textAlignVertical: textAlignVToFig(node.textStyle.textAlignVertical),
   };
@@ -243,14 +249,18 @@ function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeS
 }
 
 function vectorSpec(node: NodeIR & { readonly kind: "vector" }): VectorNodeSpec {
-  // Each captured `d` may carry multiple SVG subpaths (multi-piece
-  // icons, compound silhouettes, glyph clusters). Splitting on every
-  // `M` / `m` boundary turns those into independent `vectorPath`
-  // entries — Figma resets its pen position between entries, so
-  // subpaths that should render as separate strokes / silhouettes
-  // never get connected by a stray fill or stroke.
+  // SVG `fill-rule: evenodd` is *cross-subpath* — a donut icon
+  // (outer circle + inner circle in one `d`) draws a hole because
+  // even-odd winding cancels overlapping subpaths together. Splitting
+  // such a path into independent `vectorPath` entries forces Figma to
+  // evaluate winding per-entry and the inner subpath becomes a second
+  // disk on top of the outer one. So we only split when the path
+  // uses nonzero winding (or has no fill-rule), where each subpath
+  // is independently filled and the only reason to split is to stop
+  // Figma drawing a stray join between an open subpath's pen
+  // position and the next subpath's `M`.
   const vectorPaths = node.paths.flatMap((p) =>
-    splitSubpaths(p.d).map((segment) => ({
+    splitSubpathsRespectingFillRule(p.d, p.fillRule).map((segment) => ({
       windingRule: (p.fillRule === "evenodd" ? "EVENODD" : "NONZERO") as "EVENODD" | "NONZERO",
       data: segment,
     })),

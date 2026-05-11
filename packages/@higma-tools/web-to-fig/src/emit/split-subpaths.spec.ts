@@ -6,7 +6,7 @@
  * renderer's pen resets between them. The tests below pin the
  * splitter's behaviour at the cases that matter for that contract.
  */
-import { splitSubpaths } from "./split-subpaths";
+import { splitSubpaths, splitSubpathsRespectingFillRule } from "./split-subpaths";
 
 describe("splitSubpaths", () => {
   it("returns the input verbatim when there is exactly one `M`", () => {
@@ -64,5 +64,48 @@ describe("splitSubpaths", () => {
 
   it("returns the empty string unchanged for an empty input", () => {
     expect(splitSubpaths("")).toEqual([""]);
+  });
+});
+
+describe("splitSubpathsRespectingFillRule", () => {
+  // Donut shape: outer rectangle, inner rectangle, in one path.
+  // SVG's even-odd fill-rule cancels the overlap so a hole appears.
+  const donut = "M 0 0 L 100 0 L 100 100 L 0 100 Z M 25 25 L 75 25 L 75 75 L 25 75 Z";
+
+  it("keeps an even-odd multi-subpath donut path intact", () => {
+    // Splitting would turn the donut hole into a second filled disk
+    // because Figma evaluates winding per-vectorPath entry — the
+    // even-odd cross-subpath cancellation only works inside ONE
+    // entry. So the splitter must return the whole `d` as a single
+    // entry when fillRule === "evenodd".
+    expect(splitSubpathsRespectingFillRule(donut, "evenodd")).toEqual([donut]);
+  });
+
+  it("splits a nonzero multi-subpath path into its M-rooted segments", () => {
+    // Nonzero fill-rule fills each subpath independently anyway, so
+    // splitting only protects against the cross-subpath pen-position
+    // join — same behaviour as `splitSubpaths` directly.
+    expect(splitSubpathsRespectingFillRule(donut, "nonzero")).toEqual([
+      "M 0 0 L 100 0 L 100 100 L 0 100 Z",
+      "M 25 25 L 75 25 L 75 75 L 25 75 Z",
+    ]);
+  });
+
+  it("treats undefined fill-rule as nonzero (the SVG default)", () => {
+    expect(splitSubpathsRespectingFillRule(donut, undefined)).toEqual([
+      "M 0 0 L 100 0 L 100 100 L 0 100 Z",
+      "M 25 25 L 75 25 L 75 75 L 25 75 Z",
+    ]);
+  });
+
+  it("returns the empty string unchanged regardless of fill-rule", () => {
+    expect(splitSubpathsRespectingFillRule("", "evenodd")).toEqual([""]);
+    expect(splitSubpathsRespectingFillRule("", "nonzero")).toEqual([""]);
+  });
+
+  it("does nothing different from the plain splitter for single-subpath input", () => {
+    const single = "M 0 0 L 10 10 L 20 0 Z";
+    expect(splitSubpathsRespectingFillRule(single, "evenodd")).toEqual([single]);
+    expect(splitSubpathsRespectingFillRule(single, "nonzero")).toEqual([single]);
   });
 });

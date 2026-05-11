@@ -69,6 +69,7 @@ export const NEUTRAL_COMPUTED: Readonly<Record<string, string>> = {
   filter: "none",
   "flex-direction": "row",
   "flex-wrap": "nowrap",
+  float: "none",
   "font-family": "sans-serif",
   "font-size": "16px",
   "font-style": "normal",

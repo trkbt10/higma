@@ -5,6 +5,7 @@
  */
 import { normalizeViewport } from "../../../src/normalize";
 import { synthViewport } from "../../synth-snapshot";
+import { staticFontResolver } from "../../test-font-resolver";
 import {
   DIALOG_RECT,
   DIALOG_TITLE,
@@ -14,7 +15,10 @@ import {
 } from "./fixture";
 
 describe("case modal-style-centred-dialog", () => {
-  const ir = normalizeViewport(synthViewport({ viewport: VIEWPORT, children: modalScrimAndDialog() }));
+  const ir = normalizeViewport(
+    synthViewport({ viewport: VIEWPORT, children: modalScrimAndDialog() }),
+    { fontResolver: staticFontResolver() },
+  );
 
   it("lifts both fixed siblings out of the static root", () => {
     if (ir.root.kind !== "frame") {

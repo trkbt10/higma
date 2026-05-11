@@ -15,9 +15,18 @@
  * is a valid input for the inverse direction (and vice versa).
  */
 export type { Breakpoint, CaptureOptions, CaptureResult, CapturedBreakpoint, CdpExtractOptions, ExtractOptions, ExtractResult, MultiCaptureOptions, RawViewportSnapshot, UrlExtractOptions } from "./web-source";
-export { DEFAULT_BREAKPOINTS, captureMultiViewport, captureViewport, extractElement, jsonToSnapshot } from "./web-source";
+export { DEFAULT_BREAKPOINTS, captureMultiViewport, captureViewport, captureViewportInBrowser, extractElement, jsonToSnapshot, launchBrowser } from "./web-source";
 
-export { normalizeViewport } from "./normalize";
+export { normalizeViewport, resolveFontFamily, parseFontStack, UnresolvedFontStackError } from "./normalize";
+export type { FontResolver, FontStackCandidate, GenericFamily, NormalizeViewportOptions } from "./normalize";
+export {
+  createDarwinFontResolver,
+  loadDarwinFontCatalog,
+  parseDarwinFontDump,
+  resolverFromCatalog,
+} from "./font-resolver/darwin";
+export type { DarwinFontCatalog } from "./font-resolver/darwin";
+export { createHostFontResolver } from "./font-resolver/host";
 
 export type { BuildDocumentResult, EmitFigOptions, EmitFigResult, MultiFigBuildResult } from "./emit";
 export { buildDocument, buildMultiFigFileBytes, emitFig, irToSpecGraph } from "./emit";

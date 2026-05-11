@@ -424,4 +424,41 @@ describe("irToSpecGraph — vector", () => {
     expect(graph.spec.vectorPaths![1]!.windingRule).toBe("NONZERO");
     expect(graph.spec.vectorPaths![0]!.data).toBe("M0 0 L10 10");
   });
+
+  it("keeps a donut (multi-subpath, evenodd) intact so the hole survives", () => {
+    // Outer rectangle + inner rectangle in one path, even-odd
+    // fill-rule. SVG renders this as a donut because the inner
+    // subpath cancels the outer's fill. Splitting on `M` would
+    // produce two independent vectorPath entries, each filled
+    // separately, so the inner becomes a second filled disk on
+    // top of the outer instead of a hole.
+    const donut = "M0 0 L100 0 L100 100 L0 100 Z M25 25 L75 25 L75 75 L25 75 Z";
+    const graph = irToSpecGraph(vectorIR({
+      paths: [{ d: donut, fillRule: "evenodd" }],
+    }));
+    expect(graph.spec.type).toBe("VECTOR");
+    if (graph.spec.type !== "VECTOR") {
+      throw new Error();
+    }
+    expect(graph.spec.vectorPaths).toHaveLength(1);
+    expect(graph.spec.vectorPaths![0]!.windingRule).toBe("EVENODD");
+    expect(graph.spec.vectorPaths![0]!.data).toBe(donut);
+  });
+
+  it("still splits multi-subpath nonzero paths", () => {
+    // Nonzero fills each subpath independently, so the per-vectorPath
+    // split is safe — and protects against Figma's pen joining an
+    // open subpath's last point to the next M.
+    const twoSubpaths = "M0 0 L10 10 M20 20 L30 30";
+    const graph = irToSpecGraph(vectorIR({
+      paths: [{ d: twoSubpaths, fillRule: "nonzero" }],
+    }));
+    expect(graph.spec.type).toBe("VECTOR");
+    if (graph.spec.type !== "VECTOR") {
+      throw new Error();
+    }
+    expect(graph.spec.vectorPaths).toHaveLength(2);
+    expect(graph.spec.vectorPaths![0]!.data).toBe("M0 0 L10 10");
+    expect(graph.spec.vectorPaths![1]!.data).toBe("M20 20 L30 30");
+  });
 });

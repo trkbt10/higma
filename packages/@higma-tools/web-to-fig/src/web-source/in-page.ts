@@ -110,6 +110,23 @@ export type ElementJson = {
    * of that field. Length equals `children.length + 1` when present.
    */
   readonly textFragments?: readonly string[];
+  /**
+   * Per-line rects captured via `Range.getClientRects()` over the
+   * element's text content. Length == number of *visual* lines the
+   * browser laid the text into. The renderer trusts this list as
+   * the canonical line-break decision so it doesn't have to
+   * re-derive wrap points (where opentype.js advance metrics
+   * disagree with CoreText's, producing visible mid-paragraph
+   * break drift on captured pages).
+   *
+   * Absent for non-text elements (empty `text` and no `textFragments`).
+   * `text.length` agrees with the sum of characters across all lines —
+   * any disagreement indicates the walker captured text from a
+   * subtree that doesn't contribute to the element's layout (e.g.
+   * `display: none` descendant) and is treated as "no reliable line
+   * breakdown".
+   */
+  readonly textLineRects?: readonly { readonly x: number; readonly y: number; readonly width: number; readonly height: number }[];
   readonly pseudo?: readonly PseudoJson[];
   readonly children: readonly ElementJson[];
 };
@@ -244,6 +261,21 @@ export function captureSnapshot(): RawSnapshotJson {
     for (const prop of RELEVANT_STYLE_PROPS) {
       out[prop] = computed.getPropertyValue(prop);
     }
+    // HTML4 presentation attributes — `<body background="...">`,
+    // `<table background>`, etc. — are still rendered by every
+    // major browser but `getComputedStyle().backgroundImage` returns
+    // `none` because the resolution path is the legacy
+    // "presentation hint", not CSS. Without this fixup the captured
+    // computed style claims the element has no background and the
+    // normaliser's `parseBackgroundImage` discards every imageId we
+    // registered for the legacy attribute. Promote the attribute to
+    // a synthetic `background-image: url(...)` so the rest of the
+    // pipeline (normalize → emit) handles it via the standard
+    // background-image path with no special case downstream.
+    const legacyBg = legacyBackgroundUrl(el);
+    if (legacyBg !== undefined && (out["background-image"] === "" || out["background-image"] === "none")) {
+      out["background-image"] = `url("${legacyBg}")`;
+    }
     return out;
   }
 
@@ -286,6 +318,16 @@ export function captureSnapshot(): RawSnapshotJson {
       if (w > 0 && h > 0) {
         return true;
       }
+      // `<tr>` (and the wrapping `<thead>` / `<tbody>` /
+      // `<tfoot>`) report 0×0 from `offsetWidth/Height` in
+      // browsers that treat row-level tags as anonymous boxes. A
+      // visible cell descendant proves the row is actually
+      // painting; trusting that signal keeps Wikipedia's nested-
+      // table chrome (sidebars, infoboxes, navboxes) from being
+      // dropped wholesale.
+      if (descendantHasPaintArea(el)) {
+        return true;
+      }
     }
     // Inline-only elements (`<span>`, `<a>`) hit `boundingClientRect`
     // 0×0 even when they contain wrapped text — the union rect is
@@ -312,6 +354,50 @@ export function captureSnapshot(): RawSnapshotJson {
     // matches what the browser renders.
     if ((el.tagName === "SVG" || el.tagName === "svg") && r.width === 0 && r.height === 0) {
       return true;
+    }
+    // Lazy-loaded `<img loading="lazy">` outside the initial
+    // viewport reports `getBoundingClientRect()` as 0×0 even when
+    // the element has a real `src` and the browser has decoded the
+    // bytes (the layout is suspended pending intersection). The
+    // image is still part of the captured page surface — dropping
+    // it would silently strip every below-the-fold thumbnail. We
+    // restore visibility when the `<img>` advertises a non-zero
+    // intrinsic size (`naturalWidth` is the post-decode pixel
+    // dimension, which is independent of the lazy layout
+    // suspension). The IR's `imageNaturalWidth/Height` decoration
+    // already feeds these into the synth-frame path, so the image
+    // ends up rendered at its intrinsic size at the captured (x,y).
+    if (el.tagName === "IMG" && r.width === 0 && r.height === 0) {
+      const img = el as HTMLImageElement;
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Walk descendants and return true when any one paints a non-
+   * zero-area rect. Used as the last-resort visibility signal for
+   * structural wrappers (`<tr>` etc.) whose own rect may collapse
+   * to 0×0 even though their cells render. We do NOT honour
+   * descendant `<svg>` here — the caller's existing SVG fallback
+   * handles those.
+   */
+  function descendantHasPaintArea(el: Element): boolean {
+    const children = el.children;
+    for (let i = 0; i < children.length; i += 1) {
+      const child = children[i];
+      if (!(child instanceof HTMLElement)) {
+        continue;
+      }
+      const rect = child.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        return true;
+      }
+      if (descendantHasPaintArea(child)) {
+        return true;
+      }
     }
     return false;
   }
@@ -375,7 +461,50 @@ export function captureSnapshot(): RawSnapshotJson {
         out.push(u);
       }
     }
+    // HTML4 presentation attribute `<body background="...">` /
+    // `<table background>` / `<td background>` /
+    // `<th background>` / `<tr background>`. Browsers still
+    // render these (Abe Hiroshi's frameset site is the canonical
+    // surviving example) but `getComputedStyle().backgroundImage`
+    // returns `none` because the attribute resolves through the
+    // legacy "presentation hint" path, not CSS. We pick it up
+    // explicitly so the host-side response cache can resolve the
+    // bytes.
+    const presentationBg = legacyBackgroundUrl(el);
+    if (presentationBg !== undefined) {
+      out.push(presentationBg);
+    }
     return out;
+  }
+
+  /**
+   * Read the HTML4 `background` attribute on legacy presentation
+   * elements and return the resolved absolute URL, or `undefined`
+   * when no attribute is set. Resolution goes through the element's
+   * own URL parsing (the browser handles absolute / relative paths
+   * the same way it does for CSS `url()`), so a value of
+   * `"image/abehiroshi.jpg"` on
+   * `https://abehiroshi.la.coocan.jp/top.htm` becomes the absolute
+   * `https://abehiroshi.la.coocan.jp/image/abehiroshi.jpg`.
+   */
+  function legacyBackgroundUrl(el: Element): string | undefined {
+    const tag = el.tagName;
+    if (tag !== "BODY" && tag !== "TABLE" && tag !== "TD" && tag !== "TH" && tag !== "TR") {
+      return undefined;
+    }
+    const raw = el.getAttribute("background");
+    if (raw === null || raw.length === 0) {
+      return undefined;
+    }
+    // Resolve relative to the document's base URL. `URL` accepts the
+    // base as the second arg; `document.baseURI` is the canonical
+    // browser-resolved base for relative URLs in attributes.
+    try {
+      return new URL(raw, document.baseURI).href;
+    } catch (_err: unknown) {
+      void _err;
+      return undefined;
+    }
   }
 
   /**
@@ -864,6 +993,23 @@ export function captureSnapshot(): RawSnapshotJson {
 
   function effectiveRectFor(el: Element): { x: number; y: number; width: number; height: number } {
     const r = el.getBoundingClientRect();
+    // For `<html>` and `<body>` the bounding rect intentionally pins
+    // to the viewport (CSS spec: ICB is the initial containing
+    // block) — even on a 7000px-tall document the rect reports
+    // 1280×800. The web-to-fig IR's root must cover the *document*
+    // because that is what the rendered `.fig` represents (full
+    // page capture, not a viewport screenshot). Take the
+    // scrollHeight so the root expands to the document's authored
+    // size.
+    const tag = el.tagName.toLowerCase();
+    if (tag === "html" || tag === "body") {
+      const html = el as HTMLElement;
+      const w = Math.max(r.width, html.scrollWidth, html.offsetWidth, html.clientWidth);
+      const h = Math.max(r.height, html.scrollHeight, html.offsetHeight, html.clientHeight);
+      if (w > 0 && h > 0) {
+        return { x: r.x, y: r.y, width: w, height: h };
+      }
+    }
     if (r.width !== 0 && r.height !== 0) {
       return rectFrom(r);
     }
@@ -908,20 +1054,13 @@ export function captureSnapshot(): RawSnapshotJson {
     //     HTMLElement closes the gap because table layout DOES expose
     //     non-zero offset metrics even when the bounding rect is empty.
     //
-    // `scrollWidth` / `scrollHeight` is the right escape hatch for
-    // `<html>` / `<body>` (they may be larger than the viewport when
-    // overflow is allowed). `offsetWidth` / `offsetHeight` is the
-    // right one for table descendants because CSS table layout pins
-    // it to the rendered cell geometry.
-    const tag = el.tagName.toLowerCase();
-    if (tag === "html" || tag === "body") {
-      const html = el as HTMLElement;
-      const w = Math.max(html.scrollWidth, html.offsetWidth, html.clientWidth);
-      const h = Math.max(html.scrollHeight, html.offsetHeight, html.clientHeight);
-      if (w > 0 && h > 0) {
-        return { x: r.x, y: r.y, width: w, height: h };
-      }
-    }
+    // `<html>` / `<body>` are handled at the top of this function
+    // (their bounding rect is non-zero but viewport-pinned, which we
+    // override with scrollHeight so the IR root covers the full
+    // document). `offsetWidth` / `offsetHeight` is the right escape
+    // hatch for table descendants because CSS table layout pins it
+    // to the rendered cell geometry — bounding rect can still be
+    // 0×0 there.
     const isTablePart = tag === "table" || tag === "thead" || tag === "tbody"
       || tag === "tfoot" || tag === "tr" || tag === "colgroup" || tag === "col"
       || tag === "td" || tag === "th";
@@ -931,8 +1070,52 @@ export function captureSnapshot(): RawSnapshotJson {
       if (w > 0 && h > 0) {
         return { x: r.x, y: r.y, width: w, height: h };
       }
+      // `<tr>` / `<tbody>` etc. that report 0×0 from offset
+      // metrics still have visible cells; reconstruct their box
+      // as the union of their painting descendants. Without this
+      // the visibility filter drops the row, the row's children
+      // are unreachable from normalize, and every nested
+      // `<table>` (Wikipedia's navboxes, infoboxes and sidebars)
+      // disappears from the IR.
+      const union = unionOfDescendantRects(el);
+      if (union !== undefined) {
+        return union;
+      }
     }
     return rectFrom(r);
+  }
+
+  /**
+   * Return the union of `getBoundingClientRect()` over every
+   * descendant that paints non-zero area, or `undefined` when no
+   * descendant qualifies. Used to reconstruct an opaque box for a
+   * structural wrapper whose own rect is degenerate.
+   */
+  function unionOfDescendantRects(el: Element): { x: number; y: number; width: number; height: number } | undefined {
+    const acc = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity, hit: false };
+    function walkDeep(n: Element): void {
+      const children = n.children;
+      for (let i = 0; i < children.length; i += 1) {
+        const c = children[i]!;
+        if (!(c instanceof HTMLElement)) {
+          continue;
+        }
+        const r2 = c.getBoundingClientRect();
+        if (r2.width > 0 && r2.height > 0) {
+          if (r2.x < acc.minX) { acc.minX = r2.x; }
+          if (r2.y < acc.minY) { acc.minY = r2.y; }
+          if (r2.x + r2.width > acc.maxX) { acc.maxX = r2.x + r2.width; }
+          if (r2.y + r2.height > acc.maxY) { acc.maxY = r2.y + r2.height; }
+          acc.hit = true;
+        }
+        walkDeep(c);
+      }
+    }
+    walkDeep(el);
+    if (!acc.hit) {
+      return undefined;
+    }
+    return { x: acc.minX, y: acc.minY, width: acc.maxX - acc.minX, height: acc.maxY - acc.minY };
   }
 
   function pseudoStyleSubset(pseudoStyle: CSSStyleDeclaration): Record<string, string> {
@@ -1102,6 +1285,17 @@ export function captureSnapshot(): RawSnapshotJson {
     const paddedFragments = svgContent !== undefined
       ? undefined
       : padFragments(fragments, shadowChildren.length, lightChildren.length);
+    // Capture per-line rects for text-bearing elements. `Range
+    // .getClientRects()` returns one rect per visual line the browser
+    // laid the element's text into — the canonical source of truth
+    // for "did this paragraph wrap, and where?". The renderer trusts
+    // these to skip its own approximate wrap re-derivation.
+    //
+    // Inlined here because Playwright serialises this whole walker
+    // into the page context — extracting it into a helper outside
+    // `walk` would lose the closure reference and break in-page
+    // execution.
+    const textLineRects = text.length > 0 ? collectTextLineRects(el) : undefined;
     return {
       id: path,
       tag: el.tagName.toLowerCase(),
@@ -1117,9 +1311,38 @@ export function captureSnapshot(): RawSnapshotJson {
       textFragments: paddedFragments && paddedFragmentsHaveContent(paddedFragments)
         ? paddedFragments
         : undefined,
+      textLineRects,
       pseudo: pseudo.length > 0 ? pseudo : undefined,
       children,
     };
+  }
+
+  /**
+   * Read per-line client rects off an element's text content via the
+   * Range API. Returns `undefined` when the API throws (detached /
+   * shadow-host nodes) or no non-zero-area rects come back. The
+   * caller decides whether to surface `undefined` as "no captured
+   * line breakdown" or pass it through verbatim.
+   */
+  function collectTextLineRects(
+    el: Element,
+  ): readonly { x: number; y: number; width: number; height: number }[] | undefined {
+    const collected: { x: number; y: number; width: number; height: number }[] = [];
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const lineList = range.getClientRects();
+      for (let i = 0; i < lineList.length; i += 1) {
+        const r = lineList[i]!;
+        if (r.width > 0 && r.height > 0) {
+          collected.push({ x: r.left, y: r.top, width: r.width, height: r.height });
+        }
+      }
+    } catch (_err) {
+      void _err;
+      return undefined;
+    }
+    return collected.length > 0 ? collected : undefined;
   }
 
   function padFragments(
@@ -1162,7 +1385,12 @@ export function captureSnapshot(): RawSnapshotJson {
     width: window.innerWidth,
     height: window.innerHeight,
   };
-  const background = window.getComputedStyle(document.body).backgroundColor || "rgb(255, 255, 255)";
+  // Frameset documents (HTML 4 `<frameset>` instead of `<body>`) and
+  // about:blank-style edge cases lack a `<body>`. Reading
+  // `getComputedStyle(null)` would throw; fall back to the document
+  // element so the in-page payload still resolves.
+  const backgroundHost = document.body ?? document.documentElement;
+  const background = window.getComputedStyle(backgroundHost).backgroundColor || "rgb(255, 255, 255)";
   return {
     source: window.location.href,
     viewport: viewportRect,

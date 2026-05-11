@@ -17,12 +17,13 @@ const FIXTURE_URL = new URL("./fixture.html", import.meta.url);
 
 const playwrightAvailable = await canLaunchPlaywright();
 
-describe.runIf(playwrightAvailable)("wikipedia-tfa case", () => {
+describe.skipIf(!playwrightAvailable)("wikipedia-tfa case", () => {
   it("captures, normalises, and emits a `.fig` from the standalone snippet", async () => {
     const result = await runHtmlCase({
       fixture: FIXTURE_URL,
       viewport: { width: 1280, height: 800 },
       breakpoint: "desktop",
+      dumpFigTo: new URL("./snapshot.fig", import.meta.url),
     });
 
     expect(result.provenance.sourceUrl).toBe("https://en.wikipedia.org/wiki/Main_Page");

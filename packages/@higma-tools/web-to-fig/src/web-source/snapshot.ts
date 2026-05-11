@@ -167,6 +167,14 @@ export type RawElement = {
    * legacy `text` field instead.
    */
   readonly textFragments?: readonly string[];
+  /**
+   * Per-line client rects captured via `Range.getClientRects()` over
+   * the element's text content. The renderer trusts this to know
+   * exactly where the browser wrapped the text, so it doesn't have
+   * to re-derive line breaks from imperfect glyph-advance metrics.
+   * Absent for non-text elements.
+   */
+  readonly textLineRects?: readonly RawRect[];
   /** Captured `::before` / `::after` pseudo-element strings. */
   readonly pseudo?: readonly RawPseudoContent[];
   readonly children: readonly RawElement[];

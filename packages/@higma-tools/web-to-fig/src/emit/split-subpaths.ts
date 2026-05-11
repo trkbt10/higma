@@ -61,6 +61,41 @@ export function splitSubpaths(d: string): readonly string[] {
 }
 
 /**
+ * Fill-rule-aware splitter. SVG `fill-rule: evenodd` resolves the
+ * fill of every subpath in one path *together* — that is how a
+ * "donut" icon (outer circle + inner circle) renders with the inner
+ * subpath cancelling the outer fill so the hole appears. Splitting
+ * such a path into separate `vectorPath` entries breaks the cross-
+ * subpath winding cancellation: Figma evaluates each entry's
+ * winding independently, so the inner circle becomes a second
+ * filled disk on top of the outer instead of a hole.
+ *
+ * Decision matrix:
+ *   - `evenodd`  → never split. Keep the entire `d` as one entry so
+ *                  Figma's winding evaluator sees every subpath in
+ *                  one stack and the donut hole survives.
+ *   - `nonzero`  → split. Each subpath fills independently under
+ *                  nonzero winding, and splitting prevents Figma
+ *                  from connecting an open subpath's pen position
+ *                  to the next subpath's `M` with a stray segment.
+ *   - undefined  → behave like `nonzero` (the SVG default fill-rule
+ *                  is `nonzero`).
+ *
+ * Returns the list of subpath strings to feed to Figma's
+ * `vectorPaths` array, in source order.
+ */
+export function splitSubpathsRespectingFillRule(
+  d: string,
+  fillRule: "nonzero" | "evenodd" | undefined,
+): readonly string[] {
+  if (fillRule === "evenodd") {
+    const trimmed = d.trim();
+    return trimmed.length === 0 ? [trimmed] : [trimmed];
+  }
+  return splitSubpaths(d);
+}
+
+/**
  * Return every index in `d` where a top-level `M` or `m` command
  * begins. "Top-level" means outside an arc-flag context (which has no
  * such commands anyway) — SVG path-data syntax forbids `M` inside the
