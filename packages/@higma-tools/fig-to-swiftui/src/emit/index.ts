@@ -7,3 +7,8 @@ export { listFrameTargets, pickFrameByName } from "./targets";
 export { emitFromFrames } from "./orchestrate";
 export type { EmitResult } from "./orchestrate";
 export { emitNode, emitRootFrame } from "./walk";
+export type { EmitContext } from "./walk";
+export { complexityScore } from "./complexity";
+export type { ComplexityOptions } from "./complexity";
+export { planRasterization, nodeKey } from "./rasterize";
+export type { RasterizationEntry, PlanRasterizationOptions } from "./rasterize";

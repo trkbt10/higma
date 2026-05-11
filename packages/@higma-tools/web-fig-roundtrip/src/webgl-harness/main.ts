@@ -58,26 +58,46 @@ function restoreUint8Arrays(node: Record<string, unknown>): void {
   }
 }
 
+type RGBA = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
+
 type RenderableWindow = Window & {
-  renderSceneGraph: (json: string) => Promise<string>;
+  renderSceneGraph: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
 };
 
-(window as unknown as RenderableWindow).renderSceneGraph = async (json: string): Promise<string> => {
+const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
+
+(window as unknown as RenderableWindow).renderSceneGraph = async (
+  json: string,
+  pixelRatio: number = 1,
+  backgroundColor: RGBA = DEFAULT_BACKGROUND,
+): Promise<string> => {
   const sceneGraph = JSON.parse(json) as SceneGraph;
   restoreUint8Arrays(sceneGraph as unknown as Record<string, unknown>);
 
-  canvas.width = sceneGraph.width;
-  canvas.height = sceneGraph.height;
+  // CSS size always matches the authored width/height so downstream
+  // image-compare diffs (which expect 1:1 with the source canvas)
+  // stay consistent regardless of pixel ratio. The physical canvas
+  // buffer is scaled by pixelRatio — the renderer paints into the
+  // larger buffer and the resulting PNG carries `width * pixelRatio`
+  // physical pixels, giving callers a real super-sampled bitmap
+  // instead of a stretched 1x image.
+  canvas.width = Math.round(sceneGraph.width * pixelRatio);
+  canvas.height = Math.round(sceneGraph.height * pixelRatio);
   canvas.style.width = `${sceneGraph.width}px`;
   canvas.style.height = `${sceneGraph.height}px`;
 
   // Fresh renderer per frame so a failed effect on one frame doesn't
-  // leave stale shader state behind for the next.
+  // leave stale shader state behind for the next. The default
+  // background colour is opaque white — that matches the legacy
+  // verify-fidelity diff target. Callers that want transparent
+  // backgrounds (e.g. fig-to-image emitting card sprites for
+  // SwiftUI composition) pass `{r:0, g:0, b:0, a:0}` so the
+  // exported PNG carries the authored alpha channel.
   const renderer = createWebGLFigmaRenderer({
     canvas,
-    pixelRatio: 1,
+    pixelRatio,
     antialias: true,
-    backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
+    backgroundColor,
   });
   try {
     await renderer.prepareScene(sceneGraph);

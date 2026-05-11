@@ -39,12 +39,13 @@
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
-    "@higma-primitives/identifier": "workspace:*"
-  },
-  "devDependencies": {
-    "@higma-codecs/png-compare": "workspace:*",
+    "@higma-primitives/identifier": "workspace:*",
     "@higma-tools/web-fig-roundtrip": "workspace:*"
   },
+  "devDependencies": {
+    "@higma-codecs/png-compare": "workspace:*"
+  },
+  "boundaryNote": "web-fig-roundtrip is a runtime dependency only when --rasterize-threshold is in use; otherwise the CLI does not load it.",
   "higma": {
     "boundary": {
       "layer": 7,

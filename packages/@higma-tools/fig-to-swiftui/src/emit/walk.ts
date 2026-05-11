@@ -34,7 +34,9 @@ import { tryComposeBooleanLeaf } from "./boolean-compose";
 import {
   contentModeFor,
   firstVisibleImagePaint,
-  imageExpr,
+  imageBundleExpr,
+  imageInlineExpr,
+  imageSlug,
   resolveImageRef,
 } from "../style/image";
 import { solidPaintToColor as solidPaintToColorImported } from "../style/color";
@@ -62,6 +64,38 @@ export type EmitContext = {
   readonly blobs?: readonly FigBlob[];
   readonly images?: ReadonlyMap<string, FigPackageImage>;
   readonly symbolMap?: ReadonlyMap<string, FigNode>;
+  /**
+   * Lookup `nodeKey → resource-slug` for nodes that the CLI has
+   * already rasterised to a PNG bundle resource. When the walker
+   * encounters such a node it emits a single
+   * `Image("<slug>", bundle: .module).resizable().frame(...)` leaf
+   * instead of recursing into the node's children — sidestepping
+   * SwiftUI's super-linear `body` type-check on path-heavy
+   * subtrees. `nodeKey` is the canonical `${sessionID}:${localID}`
+   * format produced by `rasterize.ts → nodeKey()`.
+   */
+  readonly rasterizedSubtrees?: ReadonlyMap<string, string>;
+  /**
+   * How IMAGE paint bytes are referenced from the emitted SwiftUI:
+   *
+   *   - `"bundle"` (default) — `Image("<slug>", bundle: .module)`.
+   *     The CLI writes the bytes to `<out>/Resources/<slug>.png`
+   *     and `Package.swift` declares `Resources/` as a `.process`
+   *     resource folder. This is the production path — produces
+   *     small Swift sources that compile cleanly into a real app.
+   *
+   *   - `"inline"` — `makeFigToSwiftuiImage(data: Data(base64Encoded:
+   *     "..."))` with the bytes embedded in the source. This is the
+   *     visual-roundtrip spec harness path: it compiles a single
+   *     .swift file with `swift CLI` and has no `Bundle.module`
+   *     available, so the only way to ship the image bytes is in
+   *     the source itself. Verbose but self-contained.
+   *
+   * The walker picks between the two via this option; the file
+   * emitter (`file.ts`) injects the `makeFigToSwiftuiImage`
+   * helper only when the body actually references it.
+   */
+  readonly imageEmbedding?: "bundle" | "inline";
 };
 import {
   backgroundBlurModifier,
@@ -87,6 +121,7 @@ import {
 } from "../style/modifiers";
 import { shapeExprFor } from "../style/shape";
 import {
+  arg,
   call,
   leaf,
   member,
@@ -114,6 +149,14 @@ const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
   "COMPONENT_SET",
   "INSTANCE",
   "SECTION",
+  // SYMBOL nodes are Figma's "main components" that INSTANCE nodes
+  // reference. The walker treats them as frame-like containers when
+  // they appear as a top-level emit target — design-system fig
+  // files keep their reusable parts as canvas-level SYMBOLs (e.g.
+  // Win98 "Button/Text/Regular") and need to render the same way a
+  // FRAME does. Nested INSTANCE → SYMBOL resolution goes through
+  // `resolveInstanceFor`, which returns the merged node + children.
+  "SYMBOL",
 ]);
 
 /**
@@ -712,6 +755,24 @@ function readTextCharacters(node: FigNode): string {
  * iteration could emit `Color.clear` for that path.)
  */
 /**
+ * Pick the right `Image(...)` expression for the requested
+ * `imageEmbedding` mode. `bundle` returns
+ * `Image("<slug>", bundle: .module)`; `inline` returns the
+ * base64-decoder helper invocation. Extracted to a function so the
+ * call site stays a single statement (no inline ternary).
+ */
+function pickImageExpr(
+  mode: "bundle" | "inline",
+  image: FigPackageImage,
+  ref: string,
+): SwiftExpr {
+  if (mode === "inline") {
+    return imageInlineExpr(image);
+  }
+  return imageBundleExpr(imageSlug(ref));
+}
+
+/**
  * Build an `Image(...).resizable().aspectRatio(...).clipShape(...)`
  * leaf when the node carries a usable IMAGE fill. Returns undefined
  * when no image paint is present, when the paint references an
@@ -748,7 +809,12 @@ function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefine
   if (!image) {
     return undefined;
   }
-  const expr = imageExpr(image);
+  // Pick between bundle-resource and inline-base64 emit per
+  // EmitContext (default: bundle). The CLI uses `bundle` so the
+  // emitted source stays small; the visual-roundtrip spec harness
+  // uses `inline` because it compiles a single .swift file with
+  // `swift CLI` and has no `Bundle.module` available.
+  const expr = pickImageExpr(ctx.imageEmbedding ?? "bundle", image, ref);
   const shape = contentModeFor(paint.scaleMode ?? paint.imageScaleMode);
   const mods: Modifier[] = [];
   if (shape.resizing === "tile") {
@@ -1553,8 +1619,55 @@ const GEOMETRY_TYPES: ReadonlySet<string> = new Set([
 // emit a single composite `Path { … }` with the boolean output.
 const BOOLEAN_OPERATION_TYPE = "BOOLEAN_OPERATION";
 
+/**
+ * Build a `Image("<slug>", bundle: .module).resizable().frame(...)`
+ * leaf for a node whose subtree the CLI rasterised to a PNG bundle
+ * resource. The resource lives at `<out>/Resources/<slug>.png` and
+ * is loaded via SwiftUI's bundle-aware Image initialiser; the
+ * Image's intrinsic size is whatever the PNG carries (we framed the
+ * harness render to the node's authored width × height), so the
+ * `.frame(width: w, height: h, alignment: .topLeading)` modifier
+ * keeps the layout coordinates aligned with what the original
+ * SwiftUI subtree would have produced.
+ */
+function emitRasterizedImageLeaf(node: FigNode, slug: string): SwiftView {
+  const w = node.size?.x ?? 0;
+  const h = node.size?.y ?? 0;
+  const expr = call("Image", [
+    arg(str(slug)),
+    namedArg("bundle", member("module")),
+  ]);
+  const mods: Modifier[] = [
+    modifier("resizable", []),
+    modifier("frame", [
+      namedArg("width", num(w)),
+      namedArg("height", num(h)),
+      namedArg("alignment", member("topLeading")),
+    ]),
+  ];
+  return leaf(expr, mods);
+}
+
+/**
+ * Look up the rasterised resource slug for a node, if any. Returns
+ * `undefined` when the node hasn't been rasterised. Encodes the
+ * `(sessionID, localID)` key inline so the lookup falls through
+ * cheaply for the common no-rasterisation case.
+ */
+function lookupRasterizedSlug(node: FigNode, ctx: EmitContext): string | undefined {
+  const map = ctx.rasterizedSubtrees;
+  if (!map || !node.guid) {
+    return undefined;
+  }
+  return map.get(`${node.guid.sessionID}:${node.guid.localID}`);
+}
+
 /** Top-level entry — render any node into a SwiftView. */
 export function emitNode(node: FigNode, ctx: EmitContext = {}): SwiftView {
+  const slug = lookupRasterizedSlug(node, ctx);
+  if (slug !== undefined) {
+    return emitRasterizedImageLeaf(node, slug);
+  }
   const typeName = getNodeType(node);
   if (typeName === TEXT_TYPE) {
     return emitTextNode(node);

@@ -39,6 +39,7 @@ import {
 import { solidPaintToColor } from "../style/color";
 import { firstVisibleGradientPaint, gradientExpr } from "../style/gradient";
 import {
+  arg,
   array,
   call,
   ident,
@@ -47,12 +48,33 @@ import {
   modifier,
   namedArg,
   num,
+  viewExpr,
   type Modifier,
   type SwiftExpr,
   type SwiftView,
 } from "../swift-tree";
 
 type EmitContext = { readonly blobs?: readonly FigBlob[] };
+
+/**
+ * Single-modifier list that frames the node to its authored size.
+ * Used by the empty-path fallback so the placeholder leaf still
+ * occupies the correct slot in the parent's layout — without the
+ * `.frame(...)` an empty `Path` would size to zero and shift the
+ * surrounding ZStack's offsets.
+ */
+function framedNodeMods(node: FigNode): readonly Modifier[] {
+  if (!node.size) {
+    return [];
+  }
+  return [
+    modifier("frame", [
+      namedArg("width", num(node.size.x)),
+      namedArg("height", num(node.size.y)),
+      namedArg("alignment", member("topLeading")),
+    ]),
+  ];
+}
 
 /**
  * Build the SwiftView for a geometry-driven leaf node. Uses the
@@ -82,15 +104,7 @@ export function emitGeometryLeaf(node: FigNode, ctx: EmitContext): SwiftView {
     // where one missing path is preferable to a hard failure.
     return leaf(
       call("Path", [{ value: ident("{ _ in }") }]),
-      node.size
-        ? [
-            modifier("frame", [
-              namedArg("width", num(node.size.x)),
-              namedArg("height", num(node.size.y)),
-              namedArg("alignment", member("topLeading")),
-            ]),
-          ]
-        : [],
+      framedNodeMods(node),
     );
   }
   const pathSource = swiftPathSource(commands);
@@ -98,12 +112,38 @@ export function emitGeometryLeaf(node: FigNode, ctx: EmitContext): SwiftView {
   const mods: Modifier[] = [];
   // `Path` paints in the foreground colour by default (like Rectangle),
   // so the `.fill(...)` modifier carries the SOLID / gradient paint.
+  //
+  // When both fill AND stroke are present, we cannot just chain
+  // `.fill(...).stroke(...)` — `.fill(_:)` returns a `View` (not a
+  // `Shape`), so `.stroke(...)` afterwards is a type error. The
+  // correct shape is `<path>.fill(<paint>).overlay(<path-clone>.stroke(<paint>))`,
+  // which renders the fill behind and the stroke on top of the same
+  // silhouette. We re-emit the path closure inside the overlay so
+  // SwiftUI evaluates two independent `Path` shapes (the closure
+  // body is value-stable, just slightly more verbose).
+  //
+  // Fill rule note: SwiftUI's default `.fill(_:)` uses the
+  // non-zero winding rule, which paints both an outer loop and
+  // an inner counter-loop as one solid blob. Win98 chrome icons
+  // (the maximize / minimize / close glyphs, the menu underline
+  // brackets, etc.) encode "hollow square" shapes as an outer
+  // loop + inner loop in a single fig VECTOR — that requires
+  // even-odd to render hollow. We pick `eoFill: true` whenever
+  // the path contains more than one `move` command (i.e. ≥2
+  // subpaths). Single-subpath paths keep the default winding
+  // rule because non-zero is the SVG `fill-rule: nonzero`
+  // default and matches the figma renderer for ordinary fills.
   const fillExpr = readFillExpr(node);
-  if (fillExpr) {
-    mods.push(modifier("fill", [{ value: fillExpr }]));
-  }
   const strokeMod = readStrokeMod(node);
-  if (strokeMod) {
+  const fillArgs = (paint: SwiftExpr) => buildFillArgs(paint, commands);
+  if (fillExpr && strokeMod) {
+    mods.push(modifier("fill", fillArgs(fillExpr)));
+    const strokeOverlayPath = call("Path", [{ value: ident(pathSource) }]);
+    const strokedView = leaf(strokeOverlayPath, [strokeMod]);
+    mods.push(modifier("overlay", [arg(viewExpr(strokedView))]));
+  } else if (fillExpr) {
+    mods.push(modifier("fill", fillArgs(fillExpr)));
+  } else if (strokeMod) {
     mods.push(strokeMod);
   }
   if (!fillExpr && !strokeMod) {
@@ -221,6 +261,44 @@ function generateContoursFromPrimitives(node: FigNode): readonly PathCommand[] |
     default:
       return undefined;
   }
+}
+
+/**
+ * Build the argument list for the SwiftUI `.fill(...)` modifier
+ * emitted on a `Path`. When the path body contains more than one
+ * `move` command we treat it as a multi-subpath silhouette (outer
+ * loop + inner loop for a hollow square, etc.) and switch the
+ * fill rule to even-odd so SwiftUI carves the inner region out
+ * of the outer one. Single-subpath paths keep the default
+ * non-zero winding rule, matching SVG `fill-rule: nonzero` and
+ * the figma renderer's default.
+ *
+ * Emitted Swift forms:
+ *
+ *   .fill(<paint>)                                       single subpath
+ *   .fill(<paint>, style: FillStyle(eoFill: true))       multi subpath
+ */
+export function buildFillArgs(
+  paint: SwiftExpr,
+  commands: readonly PathCommand[],
+): readonly { readonly name?: string; readonly value: SwiftExpr }[] {
+  const head: { value: SwiftExpr } = { value: paint };
+  if (countSubpaths(commands) <= 1) {
+    return [head];
+  }
+  return [head, namedArg("style", ident("FillStyle(eoFill: true)"))];
+}
+
+/**
+ * Count distinct subpaths in a decoded command list. Every `M`
+ * (`move`) instruction starts a new subpath; the leading `M`
+ * counts as the first one, so a path with two `M` commands has
+ * two subpaths. Paths without any `M` (e.g. an empty geometry
+ * blob) are treated as 0 subpaths and the caller falls back to
+ * the non-zero default.
+ */
+export function countSubpaths(commands: readonly PathCommand[]): number {
+  return commands.reduce((n, cmd) => (cmd.type === "M" ? n + 1 : n), 0);
 }
 
 /**

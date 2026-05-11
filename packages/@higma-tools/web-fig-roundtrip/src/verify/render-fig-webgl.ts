@@ -161,65 +161,284 @@ export async function renderFigViewports(
 }
 
 /**
- * Render every top-level FRAME / COMPONENT / COMPONENT_SET on the
- * .fig's pages and return one PNG per frame, keyed by `frame.name`.
- *
- * Same machinery as `renderFigViewports` but without the
- * `<breakpoint>/<name>` slug filter — that filter is web-to-fig's
- * convention and rejects fig files that weren't authored that way.
- * Use this entry when consuming arbitrary fig files (e.g. the
- * fig-to-swiftui visual round-trip loop).
- *
- * The `frame` field on each result echoes the source name so the
- * caller can correlate by name. Duplicate names round-trip through
- * the result array unchanged — the caller is responsible for
- * disambiguating if their pipeline can't tolerate duplicates.
+ * A single top-level node selected for rasterisation. Surfaces the
+ * (page, frame) coordinates plus the resolved FigDesignNode so
+ * callers can compute fingerprints before paying the harness cost.
  */
-export async function renderFigFramesByName(
-  harness: WebglHarness,
+export type FigFrameTarget = {
+  readonly page: string;
+  readonly frame: string;
+  readonly type: string;
+  readonly node: FigDesignNode;
+  readonly width: number;
+  readonly height: number;
+};
+
+/**
+ * Output of one streaming rasterisation step. `png`/`width`/`height`
+ * carry the rasterised bytes at the requested pixel ratio; the
+ * `target` mirrors what `listFigFrameTargets` returned so the
+ * consumer can correlate without reindexing.
+ */
+export type FigFrameRendered = {
+  readonly target: FigFrameTarget;
+  readonly png: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+};
+
+const DEFAULT_RASTERISABLE_TYPES: ReadonlySet<string> = new Set([
+  "FRAME",
+  "COMPONENT",
+  "COMPONENT_SET",
+]);
+
+function selectableTypes(includeSymbols: boolean): ReadonlySet<string> {
+  return includeSymbols ? new Set([...DEFAULT_RASTERISABLE_TYPES, "SYMBOL"]) : DEFAULT_RASTERISABLE_TYPES;
+}
+
+/**
+ * Enumerate top-level FRAME / COMPONENT / COMPONENT_SET (and
+ * optionally SYMBOL) targets matching the supplied filters. The
+ * walk is read-only and harness-free, so callers can use it to
+ * compute fingerprints, plan skips, or render a progress bar
+ * before opening puppeteer.
+ *
+ * Why this is a separate entry: the previous one-shot
+ * `renderFigFramesByName` API folded discovery + rasterisation
+ * together, which forced the harness to start even when every
+ * target's fingerprint already matched the on-disk PNG. Splitting
+ * discovery out lets callers gate harness startup on whether any
+ * actual rasterisation work remains.
+ */
+export async function listFigFrameTargets(
   figBytes: Uint8Array,
-  options: { readonly frameNames?: readonly string[] } = {},
-): Promise<readonly { readonly frame: string; readonly png: Uint8Array; readonly width: number; readonly height: number }[]> {
+  options: {
+    readonly frameNames?: readonly string[];
+    readonly pageName?: string;
+    readonly includeSymbols?: boolean;
+  } = {},
+): Promise<readonly FigFrameTarget[]> {
   const document = await createFigDesignDocument(figBytes);
   const wantedNames = options.frameNames ? new Set(options.frameNames) : undefined;
-  const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set(["FRAME", "COMPONENT", "COMPONENT_SET"]);
-  const wrappers: { name: string; node: FigDesignNode }[] = [];
+  const rasterisable = selectableTypes(options.includeSymbols === true);
+  const out: FigFrameTarget[] = [];
   for (const page of document.pages) {
+    if (options.pageName !== undefined && page.name !== options.pageName) {
+      continue;
+    }
     for (const child of page.children) {
-      if (!FRAME_LIKE_TYPES.has(child.type)) {
+      if (!rasterisable.has(child.type)) {
         continue;
       }
       const name = child.name ?? "";
       if (wantedNames && !wantedNames.has(name)) {
         continue;
       }
-      wrappers.push({ name, node: child });
+      const sz = child.size;
+      if (!sz) {
+        throw new Error(`listFigFrameTargets: frame "${name}" missing size`);
+      }
+      out.push({
+        page: page.name ?? "",
+        frame: name,
+        type: child.type,
+        node: child,
+        width: Math.round(sz.x),
+        height: Math.round(sz.y),
+      });
     }
   }
+  return out;
+}
+
+/**
+ * Streaming rasterisation: yields one rendered PNG per target in
+ * the order they appear in `targets`. The harness is shared across
+ * yields — callers own its lifecycle (`startWebglHarness` once,
+ * iterate, `harness.stop()` when done), so a multi-frame render
+ * pays the puppeteer / Chromium startup cost only once.
+ *
+ * Yields *after each* `captureWebgl` so an interactive consumer
+ * (CLI progress bar, file writer with fingerprint short-circuit)
+ * can react incrementally instead of waiting for the full batch.
+ *
+ * The font resolver is built lazily on first iteration over all
+ * yielded targets at once — font collection itself is a
+ * full-document walk, so paying for it per-frame would be
+ * quadratic.
+ */
+export async function* streamFigFrames(
+  harness: WebglHarness,
+  figBytes: Uint8Array,
+  targets: readonly FigFrameTarget[],
+  options: {
+    /**
+     * Output pixel ratio. Default 1 (authored size). 2 produces a
+     * physical canvas twice the authored size — the renderer
+     * paints into the larger buffer and the harness returns a
+     * super-sampled PNG.
+     */
+    readonly pixelRatio?: number;
+    /**
+     * Canvas background colour, RGBA in 0..1. Default opaque
+     * white (matches the legacy fidelity harness). Pass
+     * `{r:0, g:0, b:0, a:0}` to preserve transparent regions
+     * (rounded card corners, drop-shadow halos) in the
+     * exported PNG.
+     */
+    readonly backgroundColor?: RGBA;
+  } = {},
+): AsyncGenerator<FigFrameRendered, void, unknown> {
+  if (targets.length === 0) {
+    return;
+  }
+  const document = await createFigDesignDocument(figBytes);
   const fontResolver = await buildFontResolver(
-    wrappers.map((w) => normalizeRootNode(w.node)),
+    targets.map((t) => normalizeRootNode(t.node)),
     document.components,
   );
-  const results: { frame: string; png: Uint8Array; width: number; height: number }[] = [];
-  for (const w of wrappers) {
-    const sz = w.node.size;
-    if (!sz) {
-      throw new Error(`renderFigFramesByName: frame "${w.name}" missing size`);
-    }
-    const width = Math.round(sz.x);
-    const height = Math.round(sz.y);
-    const sceneGraph = buildSceneGraph([normalizeRootNode(w.node)], {
+  const pixelRatio = options.pixelRatio ?? 1;
+  for (const t of targets) {
+    const sceneGraph = buildSceneGraph([normalizeRootNode(t.node)], {
       ...figDocumentResources(document),
-      canvasSize: { width, height },
-      viewport: { x: 0, y: 0, width, height },
+      canvasSize: { width: t.width, height: t.height },
+      viewport: { x: 0, y: 0, width: t.width, height: t.height },
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: fontResolver,
+    });
+    const png = await captureWebgl(harness.page, sceneGraph, pixelRatio, options.backgroundColor);
+    yield {
+      target: t,
+      png,
+      width: Math.round(t.width * pixelRatio),
+      height: Math.round(t.height * pixelRatio),
+    };
+  }
+}
+
+/**
+ * Backwards-compatible one-shot wrapper around `listFigFrameTargets`
+ * + `streamFigFrames`. Kept so existing consumers
+ * (fig-to-swiftui's visual round-trip loop) don't have to migrate
+ * to the streaming surface. New code should call the two
+ * underlying functions directly — that exposes the discovery /
+ * fingerprint / harness-lifecycle split.
+ *
+ * The `frame` field on each result echoes the source name so the
+ * caller can correlate by name. Duplicate names round-trip through
+ * the result array unchanged.
+ */
+export async function renderFigFramesByName(
+  harness: WebglHarness,
+  figBytes: Uint8Array,
+  options: {
+    readonly frameNames?: readonly string[];
+    readonly pageName?: string;
+    readonly includeSymbols?: boolean;
+    readonly pixelRatio?: number;
+  } = {},
+): Promise<readonly { readonly frame: string; readonly png: Uint8Array; readonly width: number; readonly height: number }[]> {
+  const targets = await listFigFrameTargets(figBytes, {
+    frameNames: options.frameNames,
+    pageName: options.pageName,
+    includeSymbols: options.includeSymbols,
+  });
+  const results: { frame: string; png: Uint8Array; width: number; height: number }[] = [];
+  for await (const r of streamFigFrames(harness, figBytes, targets, { pixelRatio: options.pixelRatio })) {
+    results.push({
+      frame: r.target.frame,
+      png: r.png,
+      width: r.width,
+      height: r.height,
+    });
+  }
+  return results;
+}
+
+/**
+ * Render an explicit list of fig nodes (each given as a node-key
+ * tuple `${sessionID}:${localID}` plus authored width/height) and
+ * return a PNG per node.
+ *
+ * Unlike `renderFigFramesByName` this entry doesn't filter by
+ * `FRAME_LIKE_TYPES` — the caller selects which nodes to rasterise
+ * via guid lookup. Used by the fig-to-swiftui complexity-threshold
+ * rasteriser to burn down deeply-nested SwiftUI subtrees into
+ * single bundle-resource Images.
+ *
+ * Nodes whose guid isn't present in the document are silently
+ * dropped — the caller's plan reflected the live document, so a
+ * missing guid means the harness's view of the file diverged
+ * (e.g. the file was edited between scoring and rendering). The
+ * caller decides whether to retry or accept the gap.
+ */
+export async function renderFigNodes(
+  harness: WebglHarness,
+  figBytes: Uint8Array,
+  targets: readonly { readonly key: string; readonly width: number; readonly height: number }[],
+): Promise<readonly { readonly key: string; readonly png: Uint8Array; readonly width: number; readonly height: number }[]> {
+  if (targets.length === 0) {
+    return [];
+  }
+  const document = await createFigDesignDocument(figBytes);
+  // Index every node in the document by its FigNodeId
+  // (`"sessionID:localID"` string brand). The id field is the SoT
+  // identifier on `FigDesignNode` — derived from the raw fig GUID
+  // at document construction via `guidToNodeId(node.guid)`. We
+  // consume the resolved string directly so this lookup is
+  // structurally identical to `document.components`'s key shape,
+  // and we never construct the format ourselves.
+  const byKey = new Map<string, FigDesignNode>();
+  const indexNode = (node: FigDesignNode): void => {
+    if (node.id) {
+      byKey.set(node.id, node);
+    }
+    for (const child of node.children ?? []) {
+      indexNode(child);
+    }
+  };
+  for (const page of document.pages) {
+    for (const child of page.children) {
+      indexNode(child);
+    }
+  }
+  // Also index the resolved SYMBOL definitions — INSTANCE-targeted
+  // rasterisation needs to find SYMBOLs by guid even though they
+  // aren't in `pages.children`.
+  for (const sym of document.components.values()) {
+    indexNode(sym);
+  }
+  const resolved: { readonly key: string; readonly node: FigDesignNode; readonly width: number; readonly height: number }[] = [];
+  for (const t of targets) {
+    const node = byKey.get(t.key);
+    if (!node) {
+      continue;
+    }
+    resolved.push({ key: t.key, node, width: t.width, height: t.height });
+  }
+  if (resolved.length === 0) {
+    return [];
+  }
+  const fontResolver = await buildFontResolver(
+    resolved.map((r) => normalizeRootNode(r.node)),
+    document.components,
+  );
+  const out: { key: string; png: Uint8Array; width: number; height: number }[] = [];
+  for (const t of resolved) {
+    const sceneGraph = buildSceneGraph([normalizeRootNode(t.node)], {
+      ...figDocumentResources(document),
+      canvasSize: { width: t.width, height: t.height },
+      viewport: { x: 0, y: 0, width: t.width, height: t.height },
       showHiddenNodes: false,
       warnings: [],
       textFontResolver: fontResolver,
     });
     const png = await captureWebgl(harness.page, sceneGraph);
-    results.push({ frame: w.name, png, width, height });
+    out.push({ key: t.key, png, width: t.width, height: t.height });
   }
-  return results;
+  return out;
 }
 
 /**
@@ -540,7 +759,14 @@ function uint8ArrayReplacer(_key: string, value: unknown): unknown {
   return value;
 }
 
-async function captureWebgl(page: Page, sceneGraph: unknown): Promise<Uint8Array> {
+type RGBA = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
+
+async function captureWebgl(
+  page: Page,
+  sceneGraph: unknown,
+  pixelRatio: number = 1,
+  backgroundColor?: RGBA,
+): Promise<Uint8Array> {
   const json = JSON.stringify(sceneGraph, uint8ArrayReplacer);
   // Heavy scene-graphs (yahoo / zozo top pages run hundreds of
   // image patterns and thousands of TEXT nodes) need more than the
@@ -554,15 +780,26 @@ async function captureWebgl(page: Page, sceneGraph: unknown): Promise<Uint8Array
   // `renderSceneGraph` now writes its result into a global slot,
   // and the host polls until it lands.
   const slot = `__renderResult_${Math.random().toString(36).slice(2)}`;
-  await page.evaluate((args: { json: string; slot: string }) => {
-    const w = window as unknown as { renderSceneGraph: (json: string) => Promise<string>; [key: string]: unknown };
-    w[args.slot] = "pending";
-    w.renderSceneGraph(args.json).then((dataUrl) => {
-      w[args.slot] = dataUrl;
-    }).catch((err: unknown) => {
-      w[args.slot] = `__error__:${err instanceof Error ? err.message : String(err)}`;
-    });
-  }, { json, slot });
+  await page.evaluate(
+    (args: {
+      json: string;
+      slot: string;
+      pixelRatio: number;
+      backgroundColor?: RGBA;
+    }) => {
+      const w = window as unknown as {
+        renderSceneGraph: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
+        [key: string]: unknown;
+      };
+      w[args.slot] = "pending";
+      w.renderSceneGraph(args.json, args.pixelRatio, args.backgroundColor).then((dataUrl) => {
+        w[args.slot] = dataUrl;
+      }).catch((err: unknown) => {
+        w[args.slot] = `__error__:${err instanceof Error ? err.message : String(err)}`;
+      });
+    },
+    { json, slot, pixelRatio, backgroundColor },
+  );
   // Wait for the slot to flip from `pending` to a data URL or an
   // `__error__:` payload. `waitForFunction`'s polling timeout uses
   // `setDefaultTimeout` (set to 5 minutes upstream) which is

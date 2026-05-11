@@ -12,7 +12,28 @@ describe("parseArgs", () => {
       page: "Design",
       mode: "all",
       frame: undefined,
+      includeSymbols: false,
+      rasterizeThreshold: 200,
     });
+  });
+
+  it("sets includeSymbols when --symbols is given", () => {
+    const opts = parseArgs(["--input", "doc.fig", "--out", "out", "--symbols"]);
+    expect(opts.includeSymbols).toBe(true);
+  });
+
+  it("parses --rasterize-threshold", () => {
+    const opts = parseArgs([
+      "--input", "doc.fig", "--out", "out",
+      "--rasterize-threshold", "100",
+    ]);
+    expect(opts.rasterizeThreshold).toBe(100);
+  });
+
+  it("rejects negative --rasterize-threshold", () => {
+    expect(() =>
+      parseArgs(["--input", "doc.fig", "--out", "out", "--rasterize-threshold", "-5"]),
+    ).toThrow(CliUsageError);
   });
 
   it("uses --page override", () => {

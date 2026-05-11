@@ -125,7 +125,8 @@ describe("emitNode — autolayout HStack", () => {
         // applied BEFORE `.background(...)` so the bg paints behind
         // the clipped foreground without itself being clipped.
         "  .clipShape(RoundedRectangle(cornerRadius: 22))",
-        "  .background(Color(red: 0, green: 0, blue: 1))",
+        "  .background(RoundedRectangle(cornerRadius: 22)",
+        "    .fill(Color(red: 0, green: 0, blue: 1)))",
       ].join("\n"),
     );
   });

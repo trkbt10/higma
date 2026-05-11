@@ -28,6 +28,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ComparisonOutcome } from "@higma-codecs/png-compare";
 import { isSwiftAvailable } from "@higma-tools/fig-to-swiftui/render";
+import { startWebglHarness, type WebglHarness } from "@higma-tools/web-fig-roundtrip/verify";
 import {
   runRenderFigCase,
   type RenderFigCaseFrameResult,
@@ -117,12 +118,16 @@ async function writeFrame(
   return { diffPx: null, diffPct: null };
 }
 
-async function runOneCase(caseName: string): Promise<{ readonly maxDiffPct: number; readonly frameCount: number }> {
+async function runOneCase(
+  caseName: string,
+  harness: WebglHarness | undefined,
+): Promise<{ readonly maxDiffPct: number; readonly frameCount: number }> {
   const figPath = resolveFixturePath(caseName);
   process.stdout.write(`\n=== ${caseName} ===\n`);
   const result = await runRenderFigCase({
     source: figPath,
     threshold: 0.1,
+    harness,
   });
   const outDir = resolve(CASES_ROOT, caseName);
   const accum = { maxDiffPct: 0 };
@@ -144,6 +149,27 @@ type RunRow =
   | { readonly kind: "ok"; readonly name: string; readonly maxDiffPct: number; readonly frameCount: number }
   | { readonly kind: "skipped"; readonly name: string; readonly reason: string };
 
+/** Run a single case and report it as an `ok` or `skipped` row.
+ * In `--all` mode any error becomes `skipped`; in single-case
+ * mode the error rethrows so the caller surfaces it.
+ */
+async function runCaseRow(
+  name: string,
+  harness: WebglHarness | undefined,
+  isAllMode: boolean,
+): Promise<RunRow> {
+  try {
+    const { maxDiffPct, frameCount } = await runOneCase(name, harness);
+    return { kind: "ok", name, maxDiffPct, frameCount };
+  } catch (err) {
+    if (!isAllMode) {
+      throw err;
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    return { kind: "skipped", name, reason };
+  }
+}
+
 async function main(): Promise<void> {
   if (!(await isSwiftAvailable())) {
     process.stderr.write(
@@ -154,6 +180,14 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const caseNames = await pickCases(argv);
   const isAllMode = argv.length === 1 && argv[0] === "--all";
+  // Share ONE WebGL harness (vite + puppeteer) across the whole
+  // batch when there's more than one case. Each fresh
+  // `runRenderFigCase` would otherwise spin up its own harness
+  // and stop it again, which doubles the per-case latency and
+  // burns ~250MB on each spinup — large batches collide with
+  // macOS process / memory limits and the OS starts SIGKILLing
+  // children mid-render.
+  const sharedHarness = caseNames.length > 1 ? await startWebglHarness() : undefined;
 
   // In `--all` mode, surface unsupported-fixture failures (e.g.
   // BOOLEAN_OPERATION nodes that the v0 emitter doesn't yet handle)
@@ -162,17 +196,17 @@ async function main(): Promise<void> {
   // gap." When the user names cases explicitly we still throw so
   // the gap is visible and CI fails appropriately.
   const summary: RunRow[] = [];
-  for (const name of caseNames) {
-    try {
-      const { maxDiffPct, frameCount } = await runOneCase(name);
-      summary.push({ kind: "ok", name, maxDiffPct, frameCount });
-    } catch (err) {
-      if (!isAllMode) {
-        throw err;
+  try {
+    for (const name of caseNames) {
+      const row = await runCaseRow(name, sharedHarness, isAllMode);
+      summary.push(row);
+      if (row.kind === "skipped") {
+        process.stdout.write(`  (skipped: ${row.reason.split("\n", 1)[0]})\n`);
       }
-      const reason = err instanceof Error ? err.message : String(err);
-      summary.push({ kind: "skipped", name, reason });
-      process.stdout.write(`  (skipped: ${reason.split("\n", 1)[0]})\n`);
+    }
+  } finally {
+    if (sharedHarness) {
+      await sharedHarness.stop();
     }
   }
 

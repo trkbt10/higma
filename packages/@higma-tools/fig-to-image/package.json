@@ -1,0 +1,48 @@
+{
+  "name": "@higma-tools/fig-to-image",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "fig-to-image": "./src/cli/bin.ts"
+  },
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-image/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts ./src"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./cli": {
+      "types": "./src/cli/index.ts",
+      "default": "./src/cli/index.ts"
+    },
+    "./fingerprint": {
+      "types": "./src/fingerprint/index.ts",
+      "default": "./src/fingerprint/index.ts"
+    },
+    "./png-meta": {
+      "types": "./src/png-meta/index.ts",
+      "default": "./src/png-meta/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*"
+  },
+  "peerDependencies": {
+    "@higma-tools/web-fig-roundtrip": "workspace:*"
+  },
+  "boundaryNote": "web-fig-roundtrip is a runtime peer that fig-to-image's CLI loads via dynamic import (mirrors fig-to-swiftui). The dependency is declared as a peer (not a hard dep) so the boundary lint stays clean — same-scope siblings cannot statically import each other.",
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "tools",
+      "product": "fig"
+    }
+  }
+}

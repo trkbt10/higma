@@ -225,7 +225,14 @@ function synthesisePrimitiveCommands(node: FigNode): readonly PathCommand[] | un
         width: w,
         height: h,
         pointCount: node.pointCount ?? 5,
-        innerRadius: node.starInnerRadius,
+        // Figma stores the star's inner-radius ratio in
+        // `starInnerRadius` (0..1 fraction of the outer radius);
+        // `generateStarContour` reads it as `innerRadiusRatio`.
+        // The earlier `innerRadius:` key was a typo and got
+        // silently ignored, falling back to the helper's 0.382
+        // default — wrong for any star whose authored ratio
+        // differed from the default.
+        innerRadiusRatio: node.starInnerRadius,
       }).commands;
     case "REGULAR_POLYGON":
       return generatePolygonContour(w, h, node.pointCount ?? 3).commands;

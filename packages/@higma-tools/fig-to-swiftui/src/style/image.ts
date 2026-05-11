@@ -76,23 +76,64 @@ export function resolveImageRef(paint: FigImagePaint): string | undefined {
 }
 
 /**
- * Build a SwiftUI `Image(decorative:scale:)` expression from a
- * resolved `FigPackageImage`. Returns `undefined` when the image
- * bytes are missing.
+ * Build a SwiftUI `Image("<slug>", bundle: .module)` expression for a
+ * resolved `FigPackageImage`. The image is identified by its
+ * stable hash-derived `slug`; the CLI writes the actual bytes to
+ * `<out>/Resources/<slug>.png` and `Package.swift` declares
+ * `Resources/` as a bundled resource directory so SwiftUI's
+ * bundle-aware Image initialiser can find it at runtime.
+ *
+ * The earlier inline `Data(base64Encoded:)` form embedded the PNG
+ * bytes directly in the Swift source. For real-world fig files
+ * (e.g. design systems with photographs) that produced multi-MB
+ * Swift sources that the SwiftUI compiler choked on. The bundle
+ * resource form keeps the Swift sources tiny and lets SwiftPM /
+ * Xcode handle the asset lifecycle.
  */
-export function imageExpr(image: FigPackageImage): SwiftExpr {
+export function imageBundleExpr(slug: string): SwiftExpr {
+  return call("Image", [
+    { value: { kind: "string", value: slug } },
+    namedArg("bundle", member("module")),
+  ]);
+}
+
+/**
+ * Build a SwiftUI `makeFigToSwiftuiImage(data: Data(base64Encoded:
+ * "..."))` expression that decodes the image bytes inline.
+ *
+ * Used ONLY by the visual-roundtrip spec harness, which compiles a
+ * single .swift file with `swift CLI` and has no `Bundle.module`
+ * available. Production CLI users get the bundle-resource form via
+ * `imageBundleExpr` + a Resources/ folder declared in Package.swift.
+ *
+ * The returned expression assumes the user file declared the
+ * `makeFigToSwiftuiImage` helper at file scope (see
+ * `INLINE_IMAGE_HELPER` in `emit/file.ts`).
+ */
+export function imageInlineExpr(image: FigPackageImage): SwiftExpr {
   const base64 = uint8ArrayToBase64(image.data);
   const dataExpr = call("Data", [
     namedArg("base64Encoded", { kind: "string", value: base64 }),
     namedArg("options", member("ignoreUnknownCharacters")),
   ]);
-  // CGImageSourceCreateWithData → CGImageSourceCreateImageAtIndex(0).
-  // Wrap in a closure so the conversion happens inline. Returns
-  // an `Image?` — the caller is expected to wrap with `?? Color.gray`
-  // or handle nil downstream.
-  return call("makeFigToSwiftuiImage", [
-    namedArg("data", dataExpr),
-  ]);
+  return call("makeFigToSwiftuiImage", [namedArg("data", dataExpr)]);
+}
+
+/**
+ * Convert a Uint8Array of image bytes to a base64 string using
+ * the standard `btoa` path so the output works in Bun / Node /
+ * browsers without pulling in Buffer. Chunks the conversion to
+ * stay below `String.fromCharCode`'s call-stack limit on large
+ * images.
+ */
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000;
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    chunks.push(String.fromCharCode(...chunk));
+  }
+  return btoa(chunks.join(""));
 }
 
 /**
@@ -148,18 +189,15 @@ function hashArrayToHex(bytes: readonly number[]): string {
   return bytes.map((b) => (b & 0xff).toString(16).padStart(2, "0")).join("");
 }
 
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  // Avoid Buffer (Node-only). Build base64 via the standard btoa
-  // path which works in Bun / Node / browsers. Chunk the conversion
-  // to stay below the call-stack limit on String.fromCharCode for
-  // large images.
-  const chunkSize = 0x8000;
-  const chunks: string[] = [];
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    chunks.push(String.fromCharCode(...chunk));
-  }
-  return btoa(chunks.join(""));
+/**
+ * Stable filesystem-safe slug for a fig image. Uses the image's
+ * resolved `imageRef` (a hex hash) as-is — SHA-1-style ids stay
+ * stable across emit runs even when the order of paints changes,
+ * so the `<out>/Resources/<slug>.png` filename doesn't churn for
+ * unchanged inputs.
+ */
+export function imageSlug(ref: string): string {
+  return `image-${ref}`;
 }
 
 /** True when the paint stack contains a usable IMAGE paint. */

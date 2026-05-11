@@ -202,13 +202,17 @@ export function frameModifier(
 }
 
 /**
- * Build a `.background(...)` modifier from the first visible fill paint.
+ * Build a `.background(<shape>().fill(<paint>))` modifier from the
+ * first visible fill paint.
  *
- * SOLID fills emit `Color(red:..., green:..., blue:..., opacity:...)`.
- * GRADIENT_LINEAR / GRADIENT_RADIAL fills emit a `LinearGradient(...)` /
- * `RadialGradient(...)` value. Image and angular/diamond gradient
- * paints are not yet in scope — those callers should still get
- * `undefined` so the rest of the chain proceeds without a background.
+ * SOLID fills emit `Color(red:..., green:..., blue:..., opacity:...)`;
+ * gradient fills emit `LinearGradient(...)` / `RadialGradient(...)`.
+ * The fill is wrapped in `shapeExprFor(node).fill(<paint>)` so the
+ * background carries the node's corner radius (or other silhouette
+ * primitive) — matching the foreground silhouette
+ * `clipShape(<shape>())` on a frame container. A bare
+ * `.background(<paint>)` would paint a sharp rectangle that pokes
+ * past the rounded foreground at the corners.
  *
  * Returns undefined when no supported visible paint exists.
  */
@@ -221,7 +225,9 @@ export function backgroundModifier(node: FigNode): Modifier | undefined {
   if (!expr) {
     return undefined;
   }
-  return modifier("background", [{ value: expr }]);
+  const bgShape = shapeExprFor(node);
+  const bgView = leaf(bgShape, [modifier("fill", [{ value: expr }])]);
+  return modifier("background", [arg(viewExpr(bgView))]);
 }
 
 /**

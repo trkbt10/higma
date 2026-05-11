@@ -62,14 +62,38 @@ describe("frameModifier", () => {
 });
 
 describe("backgroundModifier", () => {
-  it("emits .background(Color(...)) for a SOLID fill", () => {
+  it("wraps the SOLID fill in <shape>().fill(...) so the bg follows the silhouette", () => {
+    // The bg uses `shapeExprFor(node)` so its silhouette matches
+    // the foreground `clipShape(<shape>())` on a frame container.
+    // A bare `.background(<color>)` would paint a sharp rectangle
+    // that pokes past the rounded foreground at the corners.
     const node = makeFrame({
       fillPaints: [
         { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } },
       ],
     });
     expect(applied(node, backgroundModifier)).toBe(
-      "V\n  .background(Color(red: 1, green: 0, blue: 0))",
+      [
+        "V",
+        "  .background(Rectangle()",
+        "    .fill(Color(red: 1, green: 0, blue: 0)))",
+      ].join("\n"),
+    );
+  });
+
+  it("uses RoundedRectangle when the node has a corner radius", () => {
+    const node = makeFrame({
+      cornerRadius: 8,
+      fillPaints: [
+        { type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } },
+      ],
+    });
+    expect(applied(node, backgroundModifier)).toBe(
+      [
+        "V",
+        "  .background(RoundedRectangle(cornerRadius: 8)",
+        "    .fill(Color(red: 0, green: 1, blue: 0)))",
+      ].join("\n"),
     );
   });
 

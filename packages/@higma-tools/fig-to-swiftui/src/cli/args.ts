@@ -19,19 +19,31 @@ export type CliOptions = {
   readonly page: string;
   readonly mode: CliMode;
   readonly frame?: string;
+  /** Include SYMBOL nodes alongside FRAME/COMPONENT targets. */
+  readonly includeSymbols: boolean;
+  /**
+   * Complexity threshold above which a node is pre-rasterised to
+   * a PNG bundle resource at emit time, instead of being emitted
+   * as a SwiftUI view subtree. `0` disables rasterisation (the
+   * original v0 behaviour). Used by `runCli` only when the caller
+   * also supplies a `rasterizer` closure.
+   */
+  readonly rasterizeThreshold: number;
 };
 
 const USAGE = [
   "fig-to-swiftui --input <fig-file> --out <dir> [options]",
   "",
   "Options:",
-  "  --input <path>      Source .fig file (required)",
-  "  --out <dir>         Output directory for generated Swift files (required unless --list)",
-  "  --page <name>       Canvas/page name to scan. Default: Design",
-  "  --frame <name>      Emit just this top-level frame",
-  "  --all               Emit every top-level frame (default when no --frame)",
-  "  --list              List the candidate frames under --page and exit",
-  "  -h, --help          Show this banner",
+  "  --input <path>             Source .fig file (required)",
+  "  --out <dir>                Output directory for generated Swift files (required unless --list)",
+  "  --page <name>              Canvas/page name to scan. Default: Design",
+  "  --frame <name>             Emit just this top-level frame",
+  "  --all                      Emit every top-level frame (default when no --frame)",
+  "  --symbols                  Also include SYMBOL nodes (design-system reusable components)",
+  "  --rasterize-threshold <N>  Pre-rasterise nodes whose complexity score exceeds N (0 = off, default 200)",
+  "  --list                     List the candidate frames under --page and exit",
+  "  -h, --help                 Show this banner",
 ].join("\n");
 
 /** Thrown when the CLI receives an argument it cannot interpret. */
@@ -56,6 +68,8 @@ type Accumulator = {
   frame?: string;
   all?: boolean;
   list?: boolean;
+  symbols?: boolean;
+  rasterizeThreshold?: number;
   help?: boolean;
 };
 
@@ -81,6 +95,16 @@ function stepArgs(argv: readonly string[], i: number, acc: Accumulator): Accumul
       return stepArgs(argv, i + 2, { ...acc, frame: expectValue("--frame", argv[i + 1]) });
     case "--all":
       return stepArgs(argv, i + 1, { ...acc, all: true });
+    case "--symbols":
+      return stepArgs(argv, i + 1, { ...acc, symbols: true });
+    case "--rasterize-threshold": {
+      const raw = expectValue("--rasterize-threshold", argv[i + 1]);
+      const value = Number.parseFloat(raw);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new CliUsageError(`--rasterize-threshold expects a non-negative number, got "${raw}"`);
+      }
+      return stepArgs(argv, i + 2, { ...acc, rasterizeThreshold: value });
+    }
     case "--list":
       return stepArgs(argv, i + 1, { ...acc, list: true });
     default:
@@ -117,6 +141,12 @@ export function parseArgs(argv: readonly string[]): CliOptions {
     page: accumulated.page ?? "Design",
     mode,
     frame: accumulated.frame,
+    includeSymbols: accumulated.symbols === true,
+    // Default 200 is calibrated against the Win98 Solitaire fig:
+    // every face card scores ~1500-2500 (path commands × leaves)
+    // and crosses; number cards score ~30-50 and fall through.
+    // Callers that don't want any rasterisation pass `0`.
+    rasterizeThreshold: accumulated.rasterizeThreshold ?? 200,
   };
 }
 

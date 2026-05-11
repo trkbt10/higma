@@ -5,4 +5,4 @@
 export { CliUsageError, parseArgs, USAGE } from "./args";
 export type { CliMode, CliOptions } from "./args";
 export { runCli } from "./run";
-export type { CliConsole } from "./run";
+export type { CliConsole, Rasterizer } from "./run";
