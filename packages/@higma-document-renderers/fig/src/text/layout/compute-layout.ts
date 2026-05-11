@@ -89,6 +89,19 @@ export type ComputeLayoutOptions = {
   readonly ascenderRatio: number;
   /** Override line height (e.g., from font metrics for 100% line height) */
   readonly lineHeight?: number;
+  /**
+   * Precise per-character widths in CSS pixels for the rendered font
+   * + size. When supplied, wrapping uses these for line-break
+   * decisions instead of the `AVERAGE_CHAR_WIDTH_RATIO` estimate.
+   *
+   * The caller computes this from a `measureProvider.measureCharWidths`
+   * call against the same Font the path renderer paints with — that's
+   * the only way the wrap break the layout chooses matches the actual
+   * glyph metrics. Skipping it forces the renderer to wrap at an
+   * approximate column count, which is what produces the
+   * `example-com-fullpage` "Avoid use ↵ in operations." regression.
+   */
+  readonly measureCharWidths?: (text: string) => readonly number[];
 };
 
 /**
@@ -133,8 +146,20 @@ function estimateCharWidth(fontSize: number, letterSpacing: number | undefined):
  * @param charWidth - Estimated width per character
  * @returns Array of source-ranged line strings
  */
-function wrapParagraph(text: string, maxWidth: number, charWidth: number): readonly SourceLine[] {
-  const charWidths = Array.from({ length: text.length }, () => charWidth);
+function wrapParagraph(
+  text: string,
+  maxWidth: number,
+  charWidth: number,
+  measureCharWidths?: (text: string) => readonly number[],
+): readonly SourceLine[] {
+  // Prefer the caller-supplied measurement when present — per-character
+  // advance widths from the actual rendered font produce break points
+  // identical to what the path renderer paints. Falling back to a
+  // uniform `charWidth` is an approximation kept for callsites that
+  // don't have a font measurer wired in.
+  const charWidths = measureCharWidths
+    ? measureCharWidths(text)
+    : Array.from({ length: text.length }, () => charWidth);
   return breakLines({ text, charWidths, maxWidth, mode: "auto" }).map((line) => ({
     text: line.text,
     sourceStart: line.startIndex,
@@ -174,7 +199,10 @@ function paragraphToSourceLine(text: string): SourceLine {
  * wraps text at word boundaries using estimated character widths.
  * Otherwise (WIDTH_AND_HEIGHT), only splits at explicit newlines.
  */
-function splitTextIntoLines(props: ExtractedTextProps): LineWithParagraph[] {
+function splitTextIntoLines(
+  props: ExtractedTextProps,
+  measureCharWidths?: (text: string) => readonly number[],
+): LineWithParagraph[] {
   const paragraphs = props.characters.split("\n");
 
   if (!isFixedWidth(props.textAutoResize) || !props.size) {
@@ -193,7 +221,7 @@ function splitTextIntoLines(props: ExtractedTextProps): LineWithParagraph[] {
 
   const allLines: LineWithParagraph[] = [];
   for (let i = 0; i < paragraphs.length; i++) {
-    const wrapped = wrapParagraph(paragraphs[i], maxWidth, charWidth);
+    const wrapped = wrapParagraph(paragraphs[i], maxWidth, charWidth, measureCharWidths);
     for (const line of wrapped) {
       allLines.push({ ...line, paragraphIndex: i });
     }
@@ -204,11 +232,12 @@ function splitTextIntoLines(props: ExtractedTextProps): LineWithParagraph[] {
 function resolveLinesWithParagraph(
   explicitLines: readonly string[] | undefined,
   props: ExtractedTextProps,
+  measureCharWidths?: (text: string) => readonly number[],
 ): LineWithParagraph[] {
   if (explicitLines) {
     return explicitLines.map((text, i) => ({ ...paragraphToSourceLine(text), paragraphIndex: i }));
   }
-  return splitTextIntoLines(props);
+  return splitTextIntoLines(props, measureCharWidths);
 }
 
 /**
@@ -229,7 +258,11 @@ export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
 
   // Get lines with paragraph origin tracking.
   // If explicit lines are provided (no paragraph info), treat each as its own paragraph.
-  const linesWithParagraph: LineWithParagraph[] = resolveLinesWithParagraph(options.lines, props);
+  const linesWithParagraph: LineWithParagraph[] = resolveLinesWithParagraph(
+    options.lines,
+    props,
+    options.measureCharWidths,
+  );
 
   // Calculate x position from horizontal alignment
   const x = getAlignedX(props.textAlignHorizontal, props.size?.width);

@@ -60,6 +60,8 @@ import { discoverDarwin } from "./discover-darwin";
 import { discoverLinux } from "./discover-linux";
 import { discoverWin32 } from "./discover-win32";
 import { classifyFontFile, scanFontDirectories } from "./discover-dirs";
+import { getVariableAxes, variationForWeight, wrapFontWithVariation } from "./variable-font";
+import { applyGposExtensionFixup } from "./gpos-extension/fixup";
 import type {
   DiscoveredFontFile,
   DiscoveryEnv,
@@ -269,10 +271,18 @@ function readFontFileBytes(fs: DiscoveryFs, fontPath: string): ArrayBuffer {
 }
 
 /**
- * Parse one face out of an on-disk font file.
+ * Parse one face out of an on-disk font file and apply the GPOS
+ * Extension Positioning fixup so kerning works on macOS system fonts.
  *
  * For `.ttc` collections, `faceIndex` selects which face to return
  * (0..N-1). For single-face files `faceIndex` must be 0.
+ *
+ * The fixup mutates `font.tables.gpos.lookups` in place to resolve
+ * LookupType 9 (Extension Positioning) wrappers that opentype.js 1.3.x
+ * leaves unparsed. Without it `font.getKerningValue` returns 0 for every
+ * pair on SFNS / SF Compact, and the path renderer accumulates a
+ * horizontal drift across every paragraph. See `gpos-extension/fixup.ts`
+ * for the full diagnosis.
  */
 function parseFaceAt(
   fs: DiscoveryFs,
@@ -286,12 +296,16 @@ function parseFaceAt(
     if (face === undefined) {
       throw new Error(`parseFaceAt: TTC ${fontPath} has no face at index ${faceIndex}`);
     }
-    return parseFont(face);
+    const font = parseFont(face);
+    applyGposExtensionFixup(font, face);
+    return font;
   }
   if (faceIndex !== 0) {
     throw new Error(`parseFaceAt: non-TTC ${fontPath} has only one face but faceIndex=${faceIndex} was requested`);
   }
-  return parseFont(buffer);
+  const font = parseFont(buffer);
+  applyGposExtensionFixup(font, buffer);
+  return font;
 }
 
 async function getFontInfos(
@@ -573,7 +587,26 @@ export function createNodeFontLoaderWithEnv(
       return undefined;
     }
 
-    const font = toLoadedFontType(parseFaceAt(env.fs, bestMatch.path, bestMatch.faceIndex));
+    const rawFont = toLoadedFontType(parseFaceAt(env.fs, bestMatch.path, bestMatch.faceIndex));
+
+    // Variable fonts (SF Pro / SFNS, Roboto Flex, system Inter
+    // variable, …) ship one file covering the full weight axis.
+    // `glyph.getPath` in opentype.js does NOT consult the font's
+    // variation table, so without wrapping the renderer paints the
+    // file's default instance regardless of the requested CSS
+    // weight. Wrap the Font in a thin view that routes per-glyph
+    // path extraction through `font.variation.getTransform` so the
+    // path commands the renderer extracts match the requested
+    // weight/width.
+    const variableAxes = getVariableAxes(rawFont);
+    // The wrapping returns a Font view that applies `wght` immediately
+    // and leaves `opsz` at the file's default. Per-render
+    // `font-size` reaches the path renderer separately and updates
+    // `opsz` via `setVariationOpticalSize` — the loader doesn't see
+    // the size, so wiring it through here would split the SoT.
+    const font = variableAxes
+      ? wrapFontWithVariation(rawFont, variationForWeight(variableAxes, query.weight), variableAxes)
+      : rawFont;
 
     return {
       font,

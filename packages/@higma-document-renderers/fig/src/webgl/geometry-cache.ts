@@ -148,7 +148,28 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
           fillOpacity: run.fillOpacity,
           contours,
           vertices: tessellateContours(contours, 0.1, true),
-          prepared: prepareFanTriangles(contours, 0.1),
+          // Use the single-shared-anchor fan mode for glyph contours.
+          // The per-contour-anchor mode (where each contour fans from
+          // its own first vertex) produces near-degenerate slivers
+          // whenever a glyph outline walks along a straight edge — the
+          // flattened polyline carries many near-collinear points and
+          // triangles (v0, vi, vi+1) collapse to almost-zero area, which
+          // the GPU may skip rasterising. Skipped triangles don't flip
+          // the stencil for INVERT-mode even-odd fill, leaving horizontal
+          // streaks of stencil=0 inside what should be solid glyphs.
+          // The shared anchor (one corner outside the union bounds) keeps
+          // every fan triangle wide and non-degenerate, so every edge
+          // contributes exactly one stencil flip and the even-odd rule
+          // resolves cleanly.
+          //
+          // The flattening tolerance is also tightened to 0.025 so the
+          // fan triangles approximate curved glyph edges with three to
+          // four times more segments. Coarser flattening leaves visible
+          // straight-line artefacts on bowls / curves (Bold weights make
+          // them most obvious) that the stencil-fill path bakes into
+          // the rasterised glyph as binary jaggies — finer flattening
+          // closes those.
+          prepared: prepareFanTriangles(contours, 0.025, true),
         };
       });
       const value: TextGlyphGeometry = { runs };

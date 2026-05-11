@@ -5,12 +5,35 @@
  * Both SVG and WebGL backends consume these.
  */
 
-import type { AbstractFont } from "@higma-document-models/fig/font";
+import type { AbstractFont, AbstractGlyph } from "@higma-document-models/fig/font";
 import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "./types";
 import type { TextAlignHorizontal } from "../layout/types";
 import { convertQuadraticsToCubic } from "./bezier";
 
 type FontForCharacter = (sourceIndex: number) => AbstractFont;
+
+/**
+ * Pair-adjustment lookup between two adjacent glyphs in the same
+ * font. Mixed-font runs return `0` because kerning is a single-font
+ * concept — there is no defined pair adjustment between two glyphs
+ * that live in different files. Returns 0 for fonts whose driver does
+ * not surface `getKerningValue`, so the renderer simply skips
+ * pair-adjustment for those fonts rather than failing.
+ */
+function pairAdjustment(
+  previousFont: AbstractFont | undefined,
+  currentFont: AbstractFont,
+  previousGlyph: AbstractGlyph | undefined,
+  currentGlyph: AbstractGlyph,
+): number {
+  if (previousFont !== currentFont || previousGlyph === undefined) {
+    return 0;
+  }
+  if (typeof currentFont.getKerningValue !== "function") {
+    return 0;
+  }
+  return currentFont.getKerningValue(previousGlyph, currentGlyph);
+}
 
 /**
  * Calculate width of text using font metrics
@@ -31,15 +54,30 @@ function calculateMixedFontTextWidth(
 ): number {
   const spacing = letterSpacing ?? 0;
   const widthRef = { value: 0 };
+  const opszApplied = new Set<AbstractFont>();
+  let previousFont: AbstractFont | undefined;
+  let previousGlyph: AbstractGlyph | undefined;
   for (let i = 0; i < text.length; i++) {
     const font = fontForCharacter(sourceStart + i);
+    if (!opszApplied.has(font)) {
+      opszApplied.add(font);
+      // Apply optical size before reading glyph metrics so the
+      // advance width matches what the path emitter will draw with.
+      font.setOpticalSize?.(fontSize);
+    }
     const scale = fontSize / font.unitsPerEm;
     const glyph = font.charToGlyph(text[i]);
     const advanceWidth = glyph.advanceWidth ?? 0;
+    // Fold the previous/current pair-adjustment into the cursor so the
+    // emitted line matches the browser's kerned width — measure stays
+    // tied to paint via `extractGlyphPathContours` below.
+    widthRef.value += pairAdjustment(previousFont, font, previousGlyph, glyph) * scale;
     widthRef.value += advanceWidth * scale;
     if (i < text.length - 1) {
       widthRef.value += spacing;
     }
+    previousFont = font;
+    previousGlyph = glyph;
   }
   return widthRef.value;
 }
@@ -98,14 +136,34 @@ export function extractLinePathCommands(
 function extractGlyphPathContours(
   { text, fontSize, x, y, align, letterSpacing, fontForCharacter, sourceStart}: { text: string; fontSize: number; x: number; y: number; align: TextAlignHorizontal; letterSpacing?: number; fontForCharacter: FontForCharacter; sourceStart: number; }
 ): GlyphContour[] {
+  // Tune variable-font `opsz` once per text run before we walk the
+  // characters — `calculateMixedFontTextWidth` below reads glyph
+  // advance widths, which the variation view re-derives from the
+  // current optical-size point. Doing this here keeps the width
+  // measurement and the path emit in sync.
+  const fontSet = new Set<AbstractFont>();
+  for (let i = 0; i < text.length; i++) {
+    const font = fontForCharacter(sourceStart + i);
+    if (!fontSet.has(font)) {
+      fontSet.add(font);
+      font.setOpticalSize?.(fontSize);
+    }
+  }
   const totalWidth = calculateMixedFontTextWidth({ text, fontSize, letterSpacing, fontForCharacter, sourceStart });
   const spacing = letterSpacing ?? 0;
   const cursor = { x: getAlignmentOffset(align, totalWidth, x) };
   const contours: GlyphContour[] = [];
+  let previousFont: AbstractFont | undefined;
+  let previousGlyph: AbstractGlyph | undefined;
   for (let i = 0; i < text.length; i++) {
     const font = fontForCharacter(sourceStart + i);
     const scale = fontSize / font.unitsPerEm;
     const glyph = font.charToGlyph(text[i]);
+    // Advance the cursor by the pair-adjustment before stamping the
+    // glyph so the painted outline starts at the kerned position
+    // (matching what `calculateMixedFontTextWidth` already folded into
+    // the total run width).
+    cursor.x += pairAdjustment(previousFont, font, previousGlyph, glyph) * scale;
     const path = glyph.getPath(cursor.x, y, fontSize);
     const commands = convertQuadraticsToCubic(path.commands);
     if (commands.length > 0) {
@@ -115,6 +173,8 @@ function extractGlyphPathContours(
     if (i < text.length - 1) {
       cursor.x += spacing;
     }
+    previousFont = font;
+    previousGlyph = glyph;
   }
   return contours;
 }

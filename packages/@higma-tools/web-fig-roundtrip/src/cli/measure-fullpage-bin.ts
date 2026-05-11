@@ -29,11 +29,44 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureViewport } from "@higma-tools/web-to-fig/web-source";
 import { normalizeViewport } from "@higma-tools/web-to-fig/normalize";
-import type { FontResolver } from "@higma-tools/web-to-fig/normalize";
+import type { FontResolver, FontStackCandidate } from "@higma-tools/web-to-fig/normalize";
 import { createHostFontResolver } from "@higma-tools/web-to-fig";
 import { emitFig } from "@higma-tools/web-to-fig/emit";
 import { comparePng } from "@higma-codecs/png-compare";
 import { renderFigFramesByName, startWebglHarness } from "../verify/render-fig-webgl";
+
+/**
+ * Wrap a host FontResolver so it also accepts the family names of the
+ * fonts the renderer's `createNodeFontLoaderWithFontsource` indexes
+ * out of `node_modules/@fontsource/*`. The host resolver was built
+ * around the macOS-installed catalogue, which doesn't list bundled
+ * webfonts; without this wrapper the text-fixture cases that pin
+ * `font-family: "Inter"` (so both browser and renderer consume an
+ * identical face) get rejected at normalize time as "unresolved".
+ *
+ * The bundled set is closed and known up front — it mirrors the
+ * @fontsource packages this repo declares in `package.json`. Adding a
+ * new bundled face here is the same one-line change as adding the
+ * dependency.
+ */
+const BUNDLED_FAMILIES: ReadonlySet<string> = new Set([
+  "Inter",
+  "Roboto",
+  "Noto Sans JP",
+]);
+
+function withBundledFamilies(inner: FontResolver): FontResolver {
+  return {
+    resolve(stack: readonly FontStackCandidate[]): string {
+      for (const candidate of stack) {
+        if (candidate.kind === "name" && BUNDLED_FAMILIES.has(candidate.value)) {
+          return candidate.value;
+        }
+      }
+      return inner.resolve(stack);
+    },
+  };
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -128,7 +161,7 @@ async function main(): Promise<void> {
   // every case shares the same installed-font catalogue and the
   // measurement loop doesn't shell out per case. The platform
   // dispatch lives in `createHostFontResolver` — a single SoT.
-  const fontResolver = createHostFontResolver();
+  const fontResolver = withBundledFamilies(createHostFontResolver());
   const harness = await startWebglHarness();
   try {
     const reports: CaseReport[] = [];

@@ -66,6 +66,21 @@ type RenderableWindow = Window & {
 
 const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
 
+/**
+ * Internal supersampling factor for the verify harness.
+ *
+ * The WebGL renderer paints into a 1-bit stencil and resolves with a
+ * cover-quad pass. Without MSAA the default framebuffer hands back hard
+ * binary edges, and headless Chromium often discards `antialias: true`
+ * silently. To produce anti-aliased PNGs deterministically we render
+ * into a canvas `SUPERSAMPLING_FACTOR` times the requested size, then
+ * downscale through the 2D Canvas API's high-quality image-smoothing
+ * filter. The 2D draw integrates 4 subpixels per output pixel (at 2×)
+ * and gives back smooth edges regardless of what the headless GL
+ * implementation actually delivered for MSAA.
+ */
+const SUPERSAMPLING_FACTOR = 2;
+
 (window as unknown as RenderableWindow).renderSceneGraph = async (
   json: string,
   pixelRatio: number = 1,
@@ -74,15 +89,19 @@ const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
   const sceneGraph = JSON.parse(json) as SceneGraph;
   restoreUint8Arrays(sceneGraph as unknown as Record<string, unknown>);
 
+  const outputWidth = Math.round(sceneGraph.width * pixelRatio);
+  const outputHeight = Math.round(sceneGraph.height * pixelRatio);
+  const superWidth = outputWidth * SUPERSAMPLING_FACTOR;
+  const superHeight = outputHeight * SUPERSAMPLING_FACTOR;
+
   // CSS size always matches the authored width/height so downstream
   // image-compare diffs (which expect 1:1 with the source canvas)
   // stay consistent regardless of pixel ratio. The physical canvas
-  // buffer is scaled by pixelRatio — the renderer paints into the
-  // larger buffer and the resulting PNG carries `width * pixelRatio`
-  // physical pixels, giving callers a real super-sampled bitmap
-  // instead of a stretched 1x image.
-  canvas.width = Math.round(sceneGraph.width * pixelRatio);
-  canvas.height = Math.round(sceneGraph.height * pixelRatio);
+  // buffer is scaled by pixelRatio × SUPERSAMPLING_FACTOR — the
+  // renderer paints into the supersampled buffer and the 2D
+  // downscale below resolves it to the logical output size.
+  canvas.width = superWidth;
+  canvas.height = superHeight;
   canvas.style.width = `${sceneGraph.width}px`;
   canvas.style.height = `${sceneGraph.height}px`;
 
@@ -95,7 +114,7 @@ const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
   // exported PNG carries the authored alpha channel.
   const renderer = createWebGLFigmaRenderer({
     canvas,
-    pixelRatio,
+    pixelRatio: pixelRatio * SUPERSAMPLING_FACTOR,
     antialias: true,
     backgroundColor,
   });
@@ -105,7 +124,24 @@ const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
   } finally {
     renderer.dispose();
   }
-  return canvas.toDataURL("image/png");
+
+  // Downscale the supersampled WebGL canvas into a logical-size 2D
+  // canvas. `imageSmoothingQuality = "high"` enables a Lanczos-class
+  // filter in Chromium that integrates the SUPERSAMPLING_FACTOR²
+  // input pixels per output pixel — that's where the anti-aliased
+  // edges come from. The output canvas's PNG export at logical size
+  // is what the caller compares against the captured screenshot.
+  const downscale = document.createElement("canvas");
+  downscale.width = outputWidth;
+  downscale.height = outputHeight;
+  const ctx = downscale.getContext("2d");
+  if (ctx === null) {
+    throw new Error("[harness] failed to acquire 2D context for downscale");
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(canvas, 0, 0, outputWidth, outputHeight);
+  return downscale.toDataURL("image/png");
 };
 
 document.title = "ready";

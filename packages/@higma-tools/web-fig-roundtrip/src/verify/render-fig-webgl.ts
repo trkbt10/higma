@@ -187,10 +187,12 @@ export type FigFrameRendered = {
   readonly height: number;
 };
 
+// The canonical Figma schema has no COMPONENT or COMPONENT_SET
+// NodeType; a "Variant Set" is a FRAME (already covered) and a
+// "Component" is a SYMBOL (opt-in via `includeSymbols`). See
+// `docs/refactor/component-type-cleanup.md`.
 const DEFAULT_RASTERISABLE_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "COMPONENT",
-  "COMPONENT_SET",
 ]);
 
 function selectableTypes(includeSymbols: boolean): ReadonlySet<string> {

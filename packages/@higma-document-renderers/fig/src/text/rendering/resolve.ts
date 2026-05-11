@@ -36,6 +36,58 @@ import type {
 const ELLIPSIS_CHAR = "\u2026";
 
 /**
+ * Build a `measureCharWidths(text)` callback backed by the resolved
+ * font. Used by the line-mode layout to pick wrap break points that
+ * match the actual rendered glyph metrics \u2014 falling back to the
+ * `AVERAGE_CHAR_WIDTH_RATIO` heuristic produces visible breaks that
+ * disagree with the captured screenshot (e.g. `example-com-fullpage`
+ * mid-paragraph break).
+ *
+ * Returns `undefined` when no resolver is registered or when the
+ * resolver returns no font for the paragraph's base font, so the
+ * layout falls back to the per-fontSize estimate.
+ */
+function buildLineMeasurer(
+  props: ExtractedTextProps,
+  ctx: { readonly fontResolver?: TextFontResolver },
+): ((text: string) => readonly number[]) | undefined {
+  if (ctx.fontResolver === undefined) {
+    return undefined;
+  }
+  const family = props.font.family;
+  const weight = props.font.weight;
+  const style = props.font.style;
+  const fontSize = props.fontSize;
+  if (!family || !Number.isFinite(fontSize) || fontSize <= 0) {
+    return undefined;
+  }
+  const font = ctx.fontResolver({ family, weight, style });
+  if (font === undefined) {
+    return undefined;
+  }
+  return (text: string): readonly number[] => {
+    // Variable fonts re-derive glyph metrics from `opsz`; sync the
+    // axis to the rendered font-size before reading advance widths
+    // so wrap decisions and paint metrics agree.
+    font.setOpticalSize?.(fontSize);
+    const scale = fontSize / font.unitsPerEm;
+    const letterSpacing = props.letterSpacing ?? 0;
+    const widths: number[] = [];
+    for (let i = 0; i < text.length; i += 1) {
+      const glyph = font.charToGlyph(text[i]!);
+      const advance = (glyph.advanceWidth ?? 0) * scale;
+      // Letter spacing pads the *trailing* edge of each glyph,
+      // matching CSS `letter-spacing` semantics. The last character
+      // gets no trailing pad \u2014 otherwise the rendered width drifts
+      // by one letter-spacing unit.
+      const padded = i < text.length - 1 ? advance + letterSpacing : advance;
+      widths.push(padded);
+    }
+    return widths;
+  };
+}
+
+/**
  * Compute the in-box translation Figma applies when the resolved glyph
  * run (`derivedTextData.layoutSize`) is smaller than the TEXT node's own
  * box, given the node's alignment.
@@ -505,10 +557,17 @@ export function resolveTextRendering(
   // than the heuristic splitter in compute-layout. Skip when truncation
   // applied because we already rewrote characters.
   const explicitLines = truncation ? undefined : derivedLineStrings(dtd);
+  // Build a per-character width function from the resolved font when
+  // present. Wrap decisions made from `glyph.advanceWidth` match what
+  // the path renderer paints; the fallback `AVERAGE_CHAR_WIDTH_RATIO`
+  // approximation produced `Avoid use ↵ in operations.` mid-paragraph
+  // breaks in `example-com-fullpage`.
+  const measureCharWidths = explicitLines ? undefined : buildLineMeasurer(displayProps, ctx);
   const layout = computeTextLayout({
     props: displayProps,
     lines: explicitLines,
     ascenderRatio,
+    measureCharWidths,
   });
 
   const fontGlyphs = resolveFontGlyphRendering({
