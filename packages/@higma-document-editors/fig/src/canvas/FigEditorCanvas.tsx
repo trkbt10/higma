@@ -1453,8 +1453,12 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
   const showRotateHandle = useMemo(() => {
     if (nodeSelection.selectedIds.length === 0) {return false;}
     if (!activePage) {return false;}
-    // If any selected node is a frame/component/symbol, hide rotate
-    const frameTypes = new Set(["FRAME", "COMPONENT", "COMPONENT_SET", "SYMBOL"]);
+    // If any selected node is a frame-like container, hide rotate.
+    // SYMBOL is the on-disk encoding of the Figma UI concept "Component";
+    // the canonical schema has no COMPONENT or COMPONENT_SET NodeType
+    // (a Variant Set is a FRAME). See
+    // `docs/refactor/component-type-cleanup.md`.
+    const frameTypes = new Set(["FRAME", "SYMBOL"]);
     return !nodeSelection.selectedIds.some((id) => {
       const node = findNodeById(activePage.children, id);
       return node && frameTypes.has(node.type);

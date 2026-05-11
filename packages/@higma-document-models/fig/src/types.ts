@@ -476,8 +476,10 @@ export type FigKiwiSymbolOverride = FigKiwiSymbolOverridePayload & {
 /**
  * Symbol data message as stored in Kiwi binary format.
  *
- * Contains the SYMBOL/COMPONENT reference and override data
- * for INSTANCE nodes.
+ * Contains the SYMBOL reference and override data for INSTANCE nodes.
+ * (Figma's UI "Component" concept is encoded on disk as a SYMBOL — the
+ * canonical `figma-schema.json` declares only `SYMBOL=15` and
+ * `INSTANCE=16`, never `COMPONENT` or `COMPONENT_SET`.)
  */
 export type FigKiwiSymbolData = {
   readonly symbolID?: FigGuid;
@@ -504,8 +506,10 @@ export type FigComponentPropDef = {
 
 /**
  * Variant property assignment as stored in Kiwi binary format.
- * COMPONENT nodes inside a COMPONENT_SET use this to declare which
- * variant value they represent for a given component property definition.
+ * Sibling SYMBOL nodes inside a variant-set FRAME use this to declare
+ * which variant value they represent for a given component property
+ * definition. (The variant-set parent is a FRAME on disk; the
+ * `Prop=Value` sibling-naming pattern is how variants are encoded.)
  */
 export type FigVariantPropSpec = {
   readonly propDefId?: FigGuid;
@@ -721,12 +725,20 @@ export type FigNode = {
   readonly componentPropertyReferences?: readonly string[];
   /** Component property assignments (overridden values on INSTANCE) */
   readonly componentPropAssignments?: readonly FigComponentPropAssignment[];
-  /** Component property definitions (on SYMBOL/COMPONENT nodes, Kiwi format) */
+  /** Component property definitions (on SYMBOL nodes, Kiwi format) */
   readonly componentPropDefs?: readonly FigComponentPropDef[];
   /** Component property references on child nodes (binds field to prop def) */
   readonly componentPropRefs?: readonly FigComponentPropRef[];
-  /** Variant property values on COMPONENT nodes inside a COMPONENT_SET */
+  /** Variant property values on SYMBOL nodes inside a variant-set FRAME */
   readonly variantPropSpecs?: readonly FigVariantPropSpec[];
+  /**
+   * Variant-Set marker on a FRAME. On disk, a "Component Set" /
+   * "Variant Set" is a FRAME bearing `isStateGroup === true` plus
+   * VARIANT-typed `componentPropDefs`. The canonical schema has no
+   * COMPONENT_SET NodeType — see
+   * `docs/refactor/component-type-cleanup.md`.
+   */
+  readonly isStateGroup?: boolean;
 
   // ---- Variable consumption (RESOLVE_VARIANT, color binding, etc.) ----
   /**
@@ -925,8 +937,6 @@ export const FIG_NODE_TYPE = {
   TEXT: "TEXT",
   LINE: "LINE",
   BOOLEAN_OPERATION: "BOOLEAN_OPERATION",
-  COMPONENT: "COMPONENT",
-  COMPONENT_SET: "COMPONENT_SET",
   INSTANCE: "INSTANCE",
   SYMBOL: "SYMBOL",
   STAR: "STAR",

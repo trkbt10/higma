@@ -2,11 +2,13 @@
 
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 
+// SYMBOL is the on-disk encoding of the Figma UI concept "Component"
+// (the canonical schema has no COMPONENT NodeType — see
+// `docs/refactor/component-type-cleanup.md`).
 const CORNER_RADIUS_TYPES = new Set([
   "RECTANGLE",
   "ROUNDED_RECTANGLE",
   "FRAME",
-  "COMPONENT",
   "SYMBOL",
 ]);
 

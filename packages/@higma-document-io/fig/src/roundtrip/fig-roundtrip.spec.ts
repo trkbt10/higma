@@ -92,4 +92,23 @@ describe("loadFigFile → saveFigFile (real Figma export)", () => {
     const afterScaleModes = tallyImageScaleModes(after.nodeChanges as readonly AnyNode[]);
     expect(afterScaleModes).toEqual(beforeScaleModes);
   });
+
+  // The Figma UI concept "Component" is encoded on disk as a SYMBOL,
+  // and "Component Set" / "Variant Set" is a FRAME with variant
+  // metadata. The canonical Kiwi NodeType enum has no COMPONENT or
+  // COMPONENT_SET entry — Figma's import validator rejects unknown
+  // NodeType values. See `docs/refactor/component-type-cleanup.md`.
+  it.skipIf(!hasFixture)("never emits COMPONENT / COMPONENT_SET NodeType through a round trip", async () => {
+    const original = new Uint8Array(fs.readFileSync(FIXTURE_PATH));
+    const loaded = await loadFigFile(original);
+    const resaved = await saveFigFile(loaded);
+
+    const after = await parseFigFile(resaved);
+    const forbiddenTypes = new Set(["COMPONENT", "COMPONENT_SET"]);
+    const offenders = (after.nodeChanges as readonly AnyNode[])
+      .map((n) => readEnumName(n.type))
+      .filter((name) => forbiddenTypes.has(name));
+
+    expect(offenders).toEqual([]);
+  });
 });

@@ -94,7 +94,7 @@ export type SymbolDescendantBundle = {
    * needed". An override entry's first GUID can address a slot in two
    * ways with equal exactness:
    *   - via the descendant's authored `overrideKey` (Figma's stable
-   *     slot id, set on COMPONENT slots)
+   *     slot id, set on SYMBOL slots)
    *   - via the descendant's own GUID (when no `overrideKey` was
    *     authored — Figma still treats matching GUIDs as the same
    *     logical slot because GUIDs are unique by construction)

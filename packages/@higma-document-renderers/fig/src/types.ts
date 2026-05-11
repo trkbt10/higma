@@ -38,7 +38,7 @@ export type FigSvgRenderContext = {
   readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Whether to render hidden nodes (visible: false) */
   readonly showHiddenNodes: boolean;
-  /** Instance resolver for SYMBOL/COMPONENT/INSTANCE resolution */
+  /** Instance resolver for SYMBOL/INSTANCE resolution */
   readonly resolver?: FigResolver;
   /** Font loader for path-based text rendering */
   readonly fontLoader?: FontLoader;
@@ -55,7 +55,7 @@ export type FigSvgRenderContextConfig = {
   readonly images?: ReadonlyMap<string, FigPackageImage>;
   /** Whether to render hidden nodes (visible: false) */
   readonly showHiddenNodes?: boolean;
-  /** Instance resolver for SYMBOL/COMPONENT/INSTANCE resolution */
+  /** Instance resolver for SYMBOL/INSTANCE resolution */
   readonly resolver?: FigResolver;
   /** Font loader for path-based text rendering */
   readonly fontLoader?: FontLoader;

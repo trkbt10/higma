@@ -28,6 +28,7 @@ import { ComponentSetVariantsSection } from "../sections/component/ComponentSetV
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
 import { createPropertyMutationTarget } from "./property-mutation-target";
+import { isVariantSetFrame } from "@higma-document-models/fig/domain";
 
 // =============================================================================
 // Component
@@ -157,7 +158,7 @@ export function PropertyPanel() {
       </OptionalPropertySection>
 
       {/* Auto Layout */}
-      {(primaryNode.type === "FRAME" || primaryNode.type === "COMPONENT" || primaryNode.autoLayout) && (
+      {(primaryNode.type === "FRAME" || primaryNode.type === "SYMBOL" || primaryNode.autoLayout) && (
         <OptionalPropertySection title="Auto Layout" defaultExpanded>
           <PropertyMutationScope disabled={propertyMutationDisabled}>
             <AutoLayoutSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
@@ -188,7 +189,7 @@ export function PropertyPanel() {
         </OptionalPropertySection>
       )}
 
-      {primaryNode.type === "COMPONENT_SET" && (
+      {isVariantSetFrame(primaryNode) && (
         <OptionalPropertySection title="Component Set Variants" defaultExpanded>
           <PropertyMutationScope disabled={propertyMutationDisabled}>
             <ComponentSetVariantsSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />

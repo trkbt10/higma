@@ -19,14 +19,17 @@ describe("Scene-graph builder node type coverage", () => {
    * All node types handled by the old SVG renderer (svg/renderer.ts renderNode).
    * If a new type is added to the old renderer, add it here and ensure
    * the scene-graph builder handles it.
+   *
+   * The canonical Figma schema has no COMPONENT or COMPONENT_SET
+   * NodeType. SYMBOL is the on-disk encoding of "Component"; a
+   * "Variant Set" is a FRAME with variant metadata. See
+   * `docs/refactor/component-type-cleanup.md`.
    */
   const OLD_RENDERER_NODE_TYPES = [
     "DOCUMENT",
     "CANVAS",
     "FRAME",
     "SECTION",
-    "COMPONENT",
-    "COMPONENT_SET",
     "INSTANCE",
     "SYMBOL",
     "GROUP",
@@ -50,8 +53,6 @@ describe("Scene-graph builder node type coverage", () => {
     "CANVAS",
     "FRAME",
     "SECTION",
-    "COMPONENT",
-    "COMPONENT_SET",
     "INSTANCE",
     "SYMBOL",
     "GROUP",

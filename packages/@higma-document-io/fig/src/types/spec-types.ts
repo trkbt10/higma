@@ -118,6 +118,16 @@ export type TextNodeSpec = BaseNodeSpec & {
   readonly fontFamily?: string;
   readonly fontStyle?: string;
   readonly lineHeight?: number;
+  /**
+   * Tracking between glyphs, expressed in CSS pixels. The builder
+   * forwards this verbatim to Figma's `letterSpacing` field with unit
+   * `PIXELS` (Figma also supports `PERCENT`, but the web pipeline
+   * resolves CSS `letter-spacing` to its computed pixel value so the
+   * downstream surface is pixel-only). Defaults to `undefined`, which
+   * the builder reads as "leave the Figma default tracking" — distinct
+   * from `0`, which the builder explicitly serialises as zero pixels.
+   */
+  readonly letterSpacing?: number;
   readonly textAlignHorizontal?: KiwiEnumValue;
   readonly textAlignVertical?: KiwiEnumValue;
 };
@@ -126,8 +136,13 @@ export type TextNodeSpec = BaseNodeSpec & {
 // Component Specs
 // =============================================================================
 
-export type ComponentNodeSpec = BaseNodeSpec & {
-  readonly type: "COMPONENT";
+/**
+ * Spec for creating a SYMBOL node — the on-disk encoding of the Figma
+ * UI concept "Component". The schema has no COMPONENT NodeType; see
+ * `docs/refactor/component-type-cleanup.md`.
+ */
+export type SymbolNodeSpec = BaseNodeSpec & {
+  readonly type: "SYMBOL";
   readonly clipsContent?: boolean;
   readonly autoLayout?: AutoLayoutProps;
 };
@@ -158,5 +173,5 @@ export type NodeSpec =
   | SectionNodeSpec
   | BooleanOperationNodeSpec
   | TextNodeSpec
-  | ComponentNodeSpec
+  | SymbolNodeSpec
   | InstanceNodeSpec;

@@ -84,8 +84,13 @@ describe("resolveClipsContent", () => {
   });
 
   it("defaults based on node type when no explicit values", () => {
+    // Only FRAME clips by default. The canonical schema has no
+    // COMPONENT or COMPONENT_SET NodeType (a "Variant Set" is a FRAME,
+    // already covered); SYMBOL is the on-disk encoding of "Component"
+    // and does not default-clip. See
+    // `docs/refactor/component-type-cleanup.md`.
     expect(resolveClipsContent(undefined, undefined, "FRAME")).toBe(true);
-    expect(resolveClipsContent(undefined, undefined, "COMPONENT")).toBe(true);
+    expect(resolveClipsContent(undefined, undefined, "SYMBOL")).toBe(false);
     expect(resolveClipsContent(undefined, undefined, "GROUP")).toBe(false);
     expect(resolveClipsContent(undefined, undefined, "RECTANGLE")).toBe(false);
   });

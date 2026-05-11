@@ -141,13 +141,17 @@ describe("node handlers", () => {
     const componentized = figEditorReducer(selected, { type: "MAKE_COMPONENT_FROM_SELECTION" });
     const wrapper = componentized.documentHistory.present.pages[0]!.children[0]!.children?.[0];
 
-    expect(wrapper?.type).toBe("COMPONENT");
+    // The Figma UI concept "Component" is encoded on disk as a SYMBOL.
+    // The presentation label "Component" lives on `wrapper.name`.
+    // See `docs/refactor/component-type-cleanup.md`.
+    expect(wrapper?.type).toBe("SYMBOL");
+    expect(wrapper?.name).toBe("Component");
     expect(componentized.documentHistory.present.components.get(wrapper!.id)).toBe(wrapper);
   });
 
   it("registers symbol wrappers created from nested selections", () => {
     const child = makeNode({ id: "0:1", name: "child", type: "RECTANGLE", x: 10, y: 20 });
-    const component = makeNode({ id: "0:2", name: "component", type: "COMPONENT", x: 0, y: 0, children: [child] });
+    const component = makeNode({ id: "0:2", name: "component", type: "SYMBOL", x: 0, y: 0, children: [child] });
     const state = createFigEditorState(makeDocument([component]));
     const selected = figEditorReducer(state, {
       type: "SELECT_NODE",

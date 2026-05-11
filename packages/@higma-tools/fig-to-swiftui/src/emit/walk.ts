@@ -145,17 +145,19 @@ const ELLIPSE_TYPE = "ELLIPSE";
 const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
   "GROUP",
-  "COMPONENT",
-  "COMPONENT_SET",
   "INSTANCE",
   "SECTION",
-  // SYMBOL nodes are Figma's "main components" that INSTANCE nodes
-  // reference. The walker treats them as frame-like containers when
-  // they appear as a top-level emit target — design-system fig
-  // files keep their reusable parts as canvas-level SYMBOLs (e.g.
-  // Win98 "Button/Text/Regular") and need to render the same way a
-  // FRAME does. Nested INSTANCE → SYMBOL resolution goes through
-  // `resolveInstanceFor`, which returns the merged node + children.
+  // SYMBOL is the on-disk encoding of the Figma UI concept "Component"
+  // (the canonical schema has no COMPONENT or COMPONENT_SET NodeType;
+  // see `docs/refactor/component-type-cleanup.md`). The walker treats
+  // SYMBOLs as frame-like containers when they appear as a top-level
+  // emit target — design-system fig files keep their reusable parts as
+  // canvas-level SYMBOLs (e.g. Win98 "Button/Text/Regular") and need
+  // to render the same way a FRAME does. Nested INSTANCE → SYMBOL
+  // resolution goes through `resolveInstanceFor`, which returns the
+  // merged node + children. A "Component Set" / "Variant Set" is a
+  // FRAME carrying variant metadata — already covered by the FRAME
+  // case here.
   "SYMBOL",
 ]);
 
@@ -211,19 +213,21 @@ function pickBackgroundModifier(node: FigNode, useBakedShadow: boolean): Modifie
 
 /**
  * True when the node is a Figma container whose default behaviour
- * is to clip its children to its silhouette. FRAME / COMPONENT /
- * INSTANCE / SECTION / COMPONENT_SET clip by default; GROUP nodes
- * do NOT clip — they're transparent passthrough containers. The
- * Figma model exposes the field as `frameMaskDisabled` (truthy =
- * clipping disabled) and `clipsContent` (the canonical clipping
- * flag, defaulting to true for frames). We accept either.
+ * is to clip its children to its silhouette. FRAME / INSTANCE /
+ * SECTION / SYMBOL clip by default; GROUP nodes do NOT clip —
+ * they're transparent passthrough containers. The canonical schema
+ * has no COMPONENT / COMPONENT_SET NodeType (see
+ * `docs/refactor/component-type-cleanup.md`). The Figma model
+ * exposes the field as `frameMaskDisabled` (truthy = clipping
+ * disabled) and `clipsContent` (the canonical clipping flag,
+ * defaulting to true for frames). We accept either.
  */
 function shouldClipFrame(node: FigNode): boolean {
   const t = node.type.name;
   if (t === "GROUP" || t === "BOOLEAN_OPERATION") {
     return false;
   }
-  if (t !== "FRAME" && t !== "COMPONENT" && t !== "COMPONENT_SET" && t !== "INSTANCE" && t !== "SECTION") {
+  if (t !== "FRAME" && t !== "SYMBOL" && t !== "INSTANCE" && t !== "SECTION") {
     return false;
   }
   const maskDisabled = (node as { frameMaskDisabled?: boolean }).frameMaskDisabled;
@@ -265,7 +269,7 @@ function containerModifiers(
   const shadows = shadowModifiers(node);
   const hasFill = hasVisibleFillPaint(node.fillPaints);
   const useBakedShadow = shadows.length > 0 && hasFill;
-  // Figma frames (FRAME / COMPONENT / INSTANCE / SECTION) clip
+  // Figma frames (FRAME / SYMBOL / INSTANCE / SECTION) clip
   // their content by default unless `frameMaskDisabled === true`.
   // SwiftUI's `ZStack` doesn't clip children automatically; we
   // emit an explicit `.clipShape(<silhouette>)` so any child
@@ -1018,7 +1022,7 @@ function promoteStrokeOnlyShape(
   return out;
 }
 
-/** Render a stack-shaped container (FRAME / GROUP / COMPONENT / INSTANCE). */
+/** Render a stack-shaped container (FRAME / GROUP / SYMBOL / INSTANCE). */
 /**
  * If the child has Figma's `stackChildPrimaryGrow` flag set, replace
  * the child's `.frame(width:height:alignment:)` with a grow-aware

@@ -441,7 +441,7 @@ function makeIconComponent(id: FigNodeId, name: string, fill: FigDesignNode["fil
   return {
     ...makeRectNode({ id, x: 0, y: 0, width: 18, height: 18 }),
     id,
-    type: "COMPONENT",
+    type: "SYMBOL",
     name,
     fills: [fill],
   } as FigDesignNode;
@@ -450,7 +450,7 @@ function makeIconComponent(id: FigNodeId, name: string, fill: FigDesignNode["fil
 function makeComponentSymbol(): FigDesignNode {
   return {
     id: COMPONENT_ID,
-    type: "COMPONENT",
+    type: "SYMBOL",
     name: "Button Component",
     visible: true,
     opacity: 1,
@@ -556,7 +556,7 @@ function makeSectionNode(): FigDesignNode {
 function makeVariantComponentNode(): FigDesignNode {
   return {
     ...makeRectNode({ id: "2:18", x: 960, y: 80, width: 150, height: 70 }),
-    type: "COMPONENT",
+    type: "SYMBOL",
     name: "Variant Component",
     fills: [{ type: "SOLID", color: { r: 0.82, g: 0.74, b: 0.96, a: 1 }, opacity: 1, visible: true }],
     variantPropSpecs: [{ propDefId: COMPONENT_VARIANT_DEF_ID, value: "Default" }],
@@ -566,21 +566,25 @@ function makeVariantComponentNode(): FigDesignNode {
 function makeComponentSetNode(): FigDesignNode {
   const defaultVariant = {
     ...makeRectNode({ id: "30:2", x: 12, y: 18, width: 90, height: 48 }),
-    type: "COMPONENT",
+    type: "SYMBOL",
     name: "Primary",
     fills: [{ type: "SOLID", color: { r: 0.78, g: 0.88, b: 1, a: 1 }, opacity: 1, visible: true }],
     variantPropSpecs: [{ propDefId: COMPONENT_SET_VARIANT_DEF_ID, value: "Default" }],
   } as FigDesignNode;
   const hoverVariant = {
     ...makeRectNode({ id: "30:3", x: 114, y: 18, width: 90, height: 48 }),
-    type: "COMPONENT",
+    type: "SYMBOL",
     name: "Secondary",
     fills: [{ type: "SOLID", color: { r: 0.9, g: 0.82, b: 1, a: 1 }, opacity: 1, visible: true }],
     variantPropSpecs: [{ propDefId: COMPONENT_SET_VARIANT_DEF_ID, value: "Hover" }],
   } as FigDesignNode;
+  // A "Component Set" / "Variant Set" on disk is a FRAME bearing
+  // `isStateGroup` + VARIANT-typed `componentPropertyDefs`; its
+  // children are SYMBOLs. The canonical schema has no COMPONENT_SET
+  // NodeType. See `docs/refactor/component-type-cleanup.md`.
   return {
     id: COMPONENT_SET_ID,
-    type: "COMPONENT_SET",
+    type: "FRAME",
     name: "Button Variant Set",
     visible: true,
     opacity: 1,
@@ -590,6 +594,7 @@ function makeComponentSetNode(): FigDesignNode {
     strokes: [],
     strokeWeight: 0,
     effects: [],
+    isStateGroup: true,
     componentPropertyDefs: [{
       id: COMPONENT_SET_VARIANT_DEF_ID,
       name: "State",

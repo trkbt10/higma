@@ -44,6 +44,7 @@ import type {
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
 import { getNodeType, guidToString } from "../domain/raw-node-tree";
+import { isVariantSetFrame } from "./variant-set-kiwi";
 
 // =============================================================================
 // Kiwi → discriminated union projection
@@ -133,17 +134,18 @@ function isResolveVariant(expr: FigVariableExpression): boolean {
  * Find the variant container that holds `symbolNode` as one of its
  * variants, walking up `parentIndex.guid`.
  *
- * Returns `undefined` for standalone SYMBOLs whose parent is just a
- * canvas/section/ordinary FRAME with no sibling variants. These never
- * benefit from RESOLVE_VARIANT.
+ * Returns `undefined` for standalone SYMBOLs whose parent is not a
+ * Variant Set. These never benefit from RESOLVE_VARIANT.
  *
- * Recognised containers:
- *   - FRAME with sibling SYMBOLs whose names encode `Prop=Value`
- *     pairs — this is what real Figma `.fig` files carry, since the
- *     canonical schema does not declare COMPONENT_SET as a NodeType.
- *   - COMPONENT_SET — kept for synthetic nodes the scene-graph
- *     builder accepts in its specs. Real `.fig` files never produce
- *     this branch.
+ * A Variant Set on disk is a FRAME with:
+ *   - `isStateGroup === true`
+ *   - `componentPropDefs` containing at least one VARIANT-typed entry
+ *
+ * The on-disk schema has no COMPONENT_SET NodeType — see
+ * `docs/refactor/component-type-cleanup.md`. The `Prop=Value` child
+ * naming convention is decorative; Figma reconstructs displayed
+ * labels from `stateGroupPropertyValueOrders` + `variantPropSpecs`,
+ * not from names.
  */
 function findVariantContainer(
   symbolNode: FigNode,
@@ -157,50 +159,43 @@ function findVariantContainer(
   if (!parent) {
     return undefined;
   }
-  const parentType = getNodeType(parent);
-  if (parentType === FIG_NODE_TYPE.COMPONENT_SET) {
-    return parent;
-  }
-  if (parentType === FIG_NODE_TYPE.FRAME && hasVariantSiblings(parent)) {
+  if (isVariantSetFrame(parent)) {
     return parent;
   }
   return undefined;
 }
 
 /**
- * A FRAME is treated as a variant container when ≥2 of its direct
- * SYMBOL children carry a `Prop=Value` style name, indicating the
- * sibling-FRAME variant pattern (e.g. iOS components with
- * `BG Context=Bright, Type=Back` etc.).
+ * Parse a SYMBOL variant child's `variantPropSpecs` into a property
+ * name → value map. The parent FRAME's `componentPropDefs` carries
+ * the propDef id ⇄ name mapping; we look up names from there.
+ *
+ * Returns an empty map when the SYMBOL has no variant specs (i.e.
+ * it is not a Variant Set child).
  */
-function hasVariantSiblings(parent: FigNode): boolean {
-  const symbolChildren = (parent.children ?? []).filter((c): c is FigNode => c != null && getNodeType(c) === FIG_NODE_TYPE.SYMBOL);
-  if (symbolChildren.length < 2) {
-    return false;
-  }
-  const namedAsVariant = symbolChildren.filter((c) => /^[^=]+=[^=]+/.test(c.name ?? ""));
-  return namedAsVariant.length >= 2;
-}
-
-/**
- * Parse a SYMBOL/COMPONENT name like `"BG Context=Bright, Type=Back"`
- * into a property → value map. Returns an empty map if the name
- * doesn't follow the variant convention.
- */
-function parseVariantPropertiesFromName(name: string | undefined): Map<string, string> {
+function parseVariantPropertiesFromSpecs(
+  variant: FigNode,
+  container: FigNode,
+): Map<string, string> {
   const out = new Map<string, string>();
-  if (!name) {
+  const specs = variant.variantPropSpecs ?? [];
+  if (specs.length === 0) {
     return out;
   }
-  for (const part of name.split(",")) {
-    const eq = part.indexOf("=");
-    if (eq < 0) {
+  const propDefs = container.componentPropDefs ?? [];
+  const nameById = new Map<string, string>();
+  for (const def of propDefs) {
+    if (def.id && def.name) {
+      nameById.set(guidToString(def.id), def.name);
+    }
+  }
+  for (const spec of specs) {
+    if (!spec.propDefId || spec.value === undefined) {
       continue;
     }
-    const key = part.slice(0, eq).trim();
-    const value = part.slice(eq + 1).trim();
-    if (key) {
-      out.set(key, value);
+    const propName = nameById.get(guidToString(spec.propDefId));
+    if (propName) {
+      out.set(propName, spec.value);
     }
   }
   return out;
@@ -264,9 +259,10 @@ function resolveVariableLiteral(data: FigKiwiVariableData | undefined): string |
  */
 function scoreVariant(
   variant: FigNode,
+  container: FigNode,
   requestedProps: ReadonlyMap<string, string>,
 ): number {
-  const variantProps = parseVariantPropertiesFromName(variant.name);
+  const variantProps = parseVariantPropertiesFromSpecs(variant, container);
   let score = 0;
   for (const [k, v] of requestedProps) {
     const variantValue = variantProps.get(k);
@@ -349,7 +345,7 @@ export function resolveVariantOverride(
   let best: FigNode | undefined;
   let bestScore = -1;
   for (const v of variants) {
-    const s = scoreVariant(v, requestedProps);
+    const s = scoreVariant(v, container, requestedProps);
     if (s > bestScore) {
       bestScore = s;
       best = v;

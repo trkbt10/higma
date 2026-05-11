@@ -54,8 +54,8 @@ export type FigDocumentResources = {
 /**
  * Extract the renderer-facing resource bundle from a `FigDesignDocument`.
  *
- * `FigDesignDocument.components` is the SoT for "every SYMBOL / COMPONENT in
- * the document keyed by string id" — the same shape the scene-graph builder
+ * `FigDesignDocument.components` is the SoT for "every SYMBOL in the
+ * document keyed by string id" — the same shape the scene-graph builder
  * and React renderer expect for `symbolMap`. We expose the alias here so
  * call sites read like `figDocumentResources(document)` rather than
  * destructuring four fields and renaming `components` to `symbolMap`

@@ -29,7 +29,11 @@ const MIN_CREATION_SIZE = 2;
  * Default dimensions for shapes created by single click (no drag).
  */
 const DEFAULT_SHAPE_SIZE = 100;
-const CONTAINER_TYPES = new Set<FigDesignNode["type"]>(["FRAME", "COMPONENT", "COMPONENT_SET", "SYMBOL"]);
+// SYMBOL is the on-disk encoding of the Figma UI concept "Component";
+// a "Component Set" / "Variant Set" is a FRAME with variant metadata
+// (already covered by "FRAME"). See
+// `docs/refactor/component-type-cleanup.md`.
+const CONTAINER_TYPES = new Set<FigDesignNode["type"]>(["FRAME", "SYMBOL"]);
 
 type BuildNodeSpecFromCreationModeOptions = {
   readonly mode: FigCreationMode;

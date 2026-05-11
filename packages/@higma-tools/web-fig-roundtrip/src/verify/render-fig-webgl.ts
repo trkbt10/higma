@@ -200,8 +200,10 @@ function selectableTypes(includeSymbols: boolean): ReadonlySet<string> {
 }
 
 /**
- * Enumerate top-level FRAME / COMPONENT / COMPONENT_SET (and
- * optionally SYMBOL) targets matching the supplied filters. The
+ * Enumerate top-level FRAME (a "Variant Set" is a FRAME with variant
+ * metadata; the canonical schema has no COMPONENT or COMPONENT_SET
+ * NodeType — see `docs/refactor/component-type-cleanup.md`) and
+ * optionally SYMBOL targets matching the supplied filters. The
  * walk is read-only and harness-free, so callers can use it to
  * compute fingerprints, plan skips, or render a progress bar
  * before opening puppeteer.

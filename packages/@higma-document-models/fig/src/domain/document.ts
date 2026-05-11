@@ -313,14 +313,19 @@ export const overridePathToIds = overridePathToIdsImpl;
 // =============================================================================
 // Component Property Types
 //
-// Figma's component properties allow SYMBOL/COMPONENT authors to define
-// named, typed slots (text, boolean, color, instance swap, etc.) that
-// INSTANCE nodes can override.
+// Figma's component properties allow SYMBOL authors (the on-disk
+// encoding of the Figma UI concept "Component") to define named,
+// typed slots (text, boolean, color, instance swap, etc.) that
+// INSTANCE nodes can override. VARIANT-typed entries on a Variant-Set
+// FRAME describe the variant axes. The canonical schema has no
+// COMPONENT or COMPONENT_SET NodeType — see
+// `docs/refactor/component-type-cleanup.md`.
 //
 // Data flow:
-//   SYMBOL/COMPONENT node  →  componentPropertyDefs  (definitions)
-//   Child nodes of SYMBOL  →  componentPropertyRefs  (bindings to defs)
-//   INSTANCE node          →  componentPropertyAssignments  (overridden values)
+//   SYMBOL node          →  componentPropertyDefs  (definitions)
+//   Variant-Set FRAME    →  componentPropertyDefs  (VARIANT axes)
+//   Child nodes of SYMBOL →  componentPropertyRefs (bindings to defs)
+//   INSTANCE node         →  componentPropertyAssignments (overridden values)
 // =============================================================================
 
 /**
@@ -358,7 +363,7 @@ export type ComponentPropertyValue = {
     readonly characters: string;
   };
   /**
-   * References a COMPONENT/SYMBOL node for INSTANCE_SWAP or VARIANT properties.
+   * References a SYMBOL node for INSTANCE_SWAP or VARIANT properties.
    * Converted from raw FigGuid to FigNodeId at domain construction time
    * via `guidToNodeId()`, ensuring type-safe lookup against `components` map.
    */
@@ -367,9 +372,10 @@ export type ComponentPropertyValue = {
 };
 
 /**
- * A component property definition on a SYMBOL/COMPONENT node.
- *
- * Defines a named, typed slot that INSTANCE nodes can override.
+ * A component property definition on a SYMBOL node (or a Variant-Set
+ * FRAME for VARIANT axes). Defines a named, typed slot that INSTANCE
+ * nodes can override. The canonical schema has no COMPONENT NodeType —
+ * see `docs/refactor/component-type-cleanup.md`.
  */
 export type ComponentPropertyDef = {
   /** Unique identifier for this definition (GUID → FigNodeId for lookup) */
@@ -398,7 +404,7 @@ export type ComponentPropertyNodeField =
   | "SLOT_CONTENT_ID";
 
 /**
- * A component property reference on a child node of a SYMBOL/COMPONENT.
+ * A component property reference on a child node of a SYMBOL.
  *
  * Binds a specific node field to a property definition so the field
  * can be overridden by INSTANCE property assignments.
@@ -422,7 +428,11 @@ export type ComponentPropertyAssignment = {
   readonly value: ComponentPropertyValue;
 };
 
-/** Variant value authored on a COMPONENT inside a COMPONENT_SET. */
+/**
+ * Variant value authored on a SYMBOL child of a Variant-Set FRAME.
+ * The canonical schema has no COMPONENT or COMPONENT_SET NodeType —
+ * see `docs/refactor/component-type-cleanup.md`.
+ */
 export type VariantPropSpec = {
   readonly propDefId: FigNodeId;
   readonly value: string;
@@ -582,7 +592,7 @@ export type FigDesignNode = {
 
   // Component/instance specifics
   /**
-   * Reference to the SYMBOL/COMPONENT this INSTANCE resolves to.
+   * Reference to the SYMBOL this INSTANCE resolves to.
    *
    * Uses FigNodeId (branded "sessionID:localID" string) — the same type as
    * the keys of `FigDesignDocument.components`. This type-level guarantee
@@ -608,14 +618,17 @@ export type FigDesignNode = {
   readonly derivedSymbolData?: readonly SymbolOverride[];
 
   /**
-   * Component property definitions (on SYMBOL/COMPONENT nodes).
-   * Defines the named, typed slots that INSTANCE nodes can override.
+   * Component property definitions (on SYMBOL nodes and Variant-Set
+   * FRAME nodes). Defines the named, typed slots that INSTANCE nodes
+   * can override; VARIANT-typed entries on a FRAME describe variant
+   * axes. See `docs/refactor/component-type-cleanup.md`.
    */
   readonly componentPropertyDefs?: readonly ComponentPropertyDef[];
 
   /**
-   * Component property references (on child nodes within a SYMBOL/COMPONENT).
-   * Binds a node field (e.g., text content, visibility) to a property definition.
+   * Component property references (on child nodes within a SYMBOL).
+   * Binds a node field (e.g., text content, visibility) to a property
+   * definition.
    */
   readonly componentPropertyRefs?: readonly ComponentPropertyRef[];
 
@@ -625,8 +638,20 @@ export type FigDesignNode = {
    */
   readonly componentPropertyAssignments?: readonly ComponentPropertyAssignment[];
 
-  /** Variant values for COMPONENT nodes that participate in a COMPONENT_SET. */
+  /**
+   * Variant values on SYMBOL nodes that are direct children of a
+   * Variant-Set FRAME. Each entry binds the SYMBOL to one value of the
+   * parent FRAME's VARIANT-typed `componentPropertyDefs`.
+   */
   readonly variantPropSpecs?: readonly VariantPropSpec[];
+
+  /**
+   * Variant-Set marker. A FRAME is a "Variant Set" on disk when this
+   * flag is true AND `componentPropertyDefs` contains at least one
+   * VARIANT-typed entry. Carried verbatim from the Kiwi `isStateGroup`
+   * field. See `docs/refactor/component-type-cleanup.md`.
+   */
+  readonly isStateGroup?: boolean;
 
   /** Node export presets as stored by Figma's ExportSettings message. */
   readonly exportSettings?: readonly FigExportSetting[];
@@ -772,7 +797,7 @@ export type FigDesignDocument = {
   readonly pages: readonly FigPage[];
   /** Document-level color profile from the root DOCUMENT node. */
   readonly documentColorProfile?: KiwiEnumValue;
-  /** Components (SYMBOL/COMPONENT nodes) indexed by their node ID */
+  /** Components (SYMBOL nodes) indexed by their node ID */
   readonly components: ReadonlyMap<string, FigDesignNode>;
   /** Images extracted from the .fig ZIP */
   readonly images: ReadonlyMap<string, FigPackageImage>;

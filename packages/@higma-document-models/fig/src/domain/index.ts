@@ -61,3 +61,5 @@ export {
   pathCommandsToSvgPath,
   decodeBlobToSvgPath,
 } from "./blob-path";
+
+export { isVariantSetFrame } from "./variant-set";

@@ -13,7 +13,7 @@ type VariantPropertiesSectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
-/** Edit COMPONENT variant values backed by Kiwi `variantPropSpecs`. */
+/** Edit SYMBOL variant values backed by Kiwi `variantPropSpecs`. */
 export function VariantPropertiesSection({ node, target, dispatch }: VariantPropertiesSectionProps) {
   const specs = node.variantPropSpecs ?? [];
 

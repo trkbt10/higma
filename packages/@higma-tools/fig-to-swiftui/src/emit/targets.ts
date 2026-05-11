@@ -4,24 +4,23 @@
  * The Figma "Layers" panel lists exactly the direct children of the
  * page's CANVAS — there is no `"Layers"` container node. Targeting
  * "the frames directly under Design's Layers" reduces to enumerating
- * `safeChildren(designCanvas)` and filtering for FRAME / COMPONENT /
- * COMPONENT_SET (the three frame-like top-level kinds the Layers
- * panel surfaces).
+ * `safeChildren(designCanvas)` and filtering for FRAME nodes (a
+ * Variant Set on disk is also a FRAME, carrying variant metadata; see
+ * `docs/refactor/component-type-cleanup.md`).
  *
  * SYMBOL nodes (Figma's "main components" that INSTANCE nodes
- * reference) are NOT in the default target set — they're library
- * components, not page-level layouts. Pass `{ includeSymbols: true }`
- * to include them; this is the right shape for design-system fig
- * files where the canvas is a palette of reusable parts. The CLI
- * surfaces this via `--symbols` / `--all-with-symbols`.
+ * reference, i.e. the on-disk encoding of the UI concept "Component")
+ * are NOT in the default target set — they're library components, not
+ * page-level layouts. Pass `{ includeSymbols: true }` to include them;
+ * this is the right shape for design-system fig files where the canvas
+ * is a palette of reusable parts. The CLI surfaces this via
+ * `--symbols` / `--all-with-symbols`.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import { safeChildren } from "@higma-document-models/fig/domain";
 
 const FRAME_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "COMPONENT",
-  "COMPONENT_SET",
 ]);
 
 const SYMBOL_TYPES: ReadonlySet<string> = new Set([
@@ -37,7 +36,7 @@ function isSymbol(node: FigNode): boolean {
 }
 
 export type ListTargetsOptions = {
-  /** Include SYMBOL nodes alongside FRAME/COMPONENT/COMPONENT_SET. */
+  /** Include SYMBOL nodes alongside FRAMEs. */
   readonly includeSymbols?: boolean;
 };
 

@@ -12,9 +12,11 @@
  *     internal canvas grouped by `styleType`. The plan layer matches
  *     palette / typography candidates against these proxies before
  *     emitting `bind` operations.
- *   - `topFrames` — every top-level FRAME / COMPONENT / COMPONENT_SET
- *     across user canvases. The duplicate-cluster detector seeds its
- *     scan from this set.
+ *   - `topFrames` — every top-level FRAME (a "Variant Set" is a FRAME
+ *     with variant metadata; the canonical schema has no COMPONENT or
+ *     COMPONENT_SET NodeType — see
+ *     `docs/refactor/component-type-cleanup.md`) across user canvases.
+ *     The duplicate-cluster detector seeds its scan from this set.
  *
  * Symbol / style / nodeMap derivation lives in
  * `@higma-document-io/fig/context`. Re-implementing any of those here
@@ -60,7 +62,7 @@ export async function loadRefineSource(bytes: Uint8Array): Promise<RefineSource>
   for (const canvas of userCanvases) {
     for (const child of safeChildren(canvas)) {
       const t = getNodeType(child);
-      if (t === "FRAME" || t === "COMPONENT" || t === "COMPONENT_SET") {
+      if (t === "FRAME") {
         topFrames.push(child);
       }
     }

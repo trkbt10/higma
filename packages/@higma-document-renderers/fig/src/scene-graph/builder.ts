@@ -259,7 +259,7 @@ const IDENTITY: AffineMatrix = IDENTITY_MATRIX;
 // =============================================================================
 
 /**
- * Result of resolving an INSTANCE node against its SYMBOL/COMPONENT.
+ * Result of resolving an INSTANCE node against its SYMBOL.
  *
  * `children` is a mutable tree of cloned nodes — every step in the
  * resolution pipeline (overrides, CPA, derived-symbol-data, constraint
@@ -472,8 +472,11 @@ function applySymbolOverridesToChildren(
   // Pass 1: variant switches.
   //
   // When an override swaps a nested INSTANCE to a different variant
-  // (COMPONENT_SET variant), two things must be kept in sync with the
-  // new variant's SYMBOL namespace:
+  // (a Variant Set on disk is a FRAME with `isStateGroup` +
+  // VARIANT-typed `componentPropDefs`; the canonical schema has no
+  // COMPONENT_SET NodeType — see
+  // `docs/refactor/component-type-cleanup.md`), two things must be
+  // kept in sync with the new variant's SYMBOL namespace:
   //
   //   (a) The INSTANCE's own `children` — re-cloned from the variant's
   //       SYMBOL so subsequent overrides descending into it find the
@@ -902,7 +905,7 @@ function applyConstraintResolution(
 }
 
 /**
- * Resolve an INSTANCE node against its SYMBOL/COMPONENT.
+ * Resolve an INSTANCE node against its SYMBOL.
  *
  * Full resolution pipeline (matching old SVG renderer's FigResolver):
  *
@@ -1861,8 +1864,11 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     case "SLIDE":
     case "SLIDE_GRID":
     case "SLIDE_ROW":
-    case "COMPONENT":
-    case "COMPONENT_SET":
+    // SYMBOL is the on-disk encoding of the Figma UI concept
+    // "Component"; the canonical schema has no COMPONENT or
+    // COMPONENT_SET NodeType (a "Variant Set" is a FRAME with variant
+    // metadata, already covered). See
+    // `docs/refactor/component-type-cleanup.md`.
     case "SYMBOL": {
       const resolved = resolveAutoLayoutFrame(node, children);
       const childNodes = buildChildren(resolved.children, ctx);
@@ -1879,7 +1885,7 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     }
 
     case "INSTANCE": {
-      // Resolve INSTANCE against its SYMBOL/COMPONENT:
+      // Resolve INSTANCE against its SYMBOL:
       // - Merge visual properties (fills, cornerRadius, effects, etc.)
       // - Inherit children if instance has none
       //

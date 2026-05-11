@@ -42,8 +42,7 @@ function getNodeIcon(type: FigDesignNode["type"], color: string | undefined): Re
   switch (type) {
     case "FRAME":
       return <FrameIcon {...props} />;
-    case "COMPONENT":
-    case "COMPONENT_SET":
+    case "SYMBOL":
       return <RectIcon {...props} />;
     case "GROUP":
       return <FolderIcon {...props} />;
@@ -138,7 +137,7 @@ type LayerTreeProps = {
   /**
    * Whether this subtree is inside an INSTANCE node.
    * When true, all children are rendered with the instance accent color
-   * to indicate they are inherited from a SYMBOL/COMPONENT.
+   * to indicate they are inherited from a SYMBOL.
    */
   readonly isInstanceContext: boolean;
 };

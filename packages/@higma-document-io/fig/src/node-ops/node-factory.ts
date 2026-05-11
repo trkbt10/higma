@@ -7,6 +7,7 @@
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
 import type { FigDesignNode, TextData } from "@higma-document-models/fig/domain";
+import { NUMBER_UNITS_VALUES } from "@higma-document-models/fig/constants";
 import type { NodeSpec } from "../types/spec-types";
 import { nextNodeId } from "../types/node-id";
 import type { FigBuilderState } from "../types/node-id";
@@ -16,6 +17,20 @@ function textLineHeightSpec(lineHeight: number | undefined): TextData["lineHeigh
     return undefined;
   }
   return { value: lineHeight, units: { name: "PIXELS", value: 0 } };
+}
+
+/**
+ * Map a CSS-pixel tracking value onto the schema's `FigValueWithUnits`
+ * shape with unit PIXELS. Returns undefined when the spec omits
+ * letter-spacing, so `document-to-tree` leaves the Kiwi field absent —
+ * the caller can later compose this with style-runs without a spurious
+ * 0px overlay.
+ */
+function textLetterSpacingSpec(letterSpacing: number | undefined): TextData["letterSpacing"] | undefined {
+  if (letterSpacing === undefined) {
+    return undefined;
+  }
+  return { value: letterSpacing, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
 }
 
 // =============================================================================
@@ -161,7 +176,10 @@ function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesign
         children: [],
       };
 
-    case "COMPONENT":
+    case "SYMBOL":
+      // SYMBOL is the on-disk encoding of the Figma UI concept
+      // "Component". It is a container-like node carrying its definition
+      // children. See `docs/refactor/component-type-cleanup.md`.
       return {
         ...base,
         clipsContent: spec.clipsContent ?? true,
@@ -223,6 +241,7 @@ function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesign
           textAlignHorizontal: spec.textAlignHorizontal,
           textAlignVertical: spec.textAlignVertical,
           lineHeight: textLineHeightSpec(spec.lineHeight),
+          letterSpacing: textLetterSpacingSpec(spec.letterSpacing),
         },
       };
 
@@ -256,7 +275,10 @@ function getDefaultName(type: string): string {
     case "SECTION": return "Section";
     case "BOOLEAN_OPERATION": return "Union";
     case "TEXT": return "Text";
-    case "COMPONENT": return "Component";
+    // The presentation-layer label for a SYMBOL (Figma's UI concept
+    // "Component") is "Component". SYMBOL is the on-disk type;
+    // "Component" is the editor-facing label.
+    case "SYMBOL": return "Component";
     case "INSTANCE": return "Instance";
     default: return type;
   }
@@ -267,7 +289,7 @@ function getDefaultFills(type: string): readonly FigPaint[] {
     case "TEXT":
       return DEFAULT_TEXT_FILL;
     case "FRAME":
-    case "COMPONENT":
+    case "SYMBOL":
       return DEFAULT_FRAME_FILL;
     case "GROUP":
     case "LINE":

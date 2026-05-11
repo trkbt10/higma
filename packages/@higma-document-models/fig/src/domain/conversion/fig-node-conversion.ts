@@ -7,7 +7,10 @@
  * The conversion:
  * 1. Converts each FigNode to a FigDesignNode with branded IDs
  * 2. Extracts typed properties, preserving unknown fields in _raw
- * 3. Collects COMPONENT/SYMBOL nodes into the components map
+ * 3. Collects SYMBOL nodes (the disk encoding of the Figma UI concept
+ *    "Component") into the components map. The on-disk schema has no
+ *    COMPONENT or COMPONENT_SET NodeType — see
+ *    `docs/refactor/component-type-cleanup.md`.
  */
 
 import type {
@@ -68,17 +71,14 @@ function resolveSymbolIdForDomain(node: FigNode): FigNodeId | undefined {
 /**
  * Node types that clip content by default in Figma.
  *
- * COMPONENT / COMPONENT_SET are listed because the scene-graph
- * builder accepts synthetic nodes carrying those type names (see
- * `@higma-document-renderers/fig` specs); the canonical Figma schema
- * does not produce such nodes from real `.fig` files (Figma encodes
- * user-facing components as plain SYMBOLs), but the renderer's
- * runtime contract still recognises the names.
+ * The on-disk schema only has FRAME as a clipping container. The Figma
+ * UI concepts "Component" and "Component Set" are encoded as SYMBOL and
+ * FRAME-with-variant-metadata respectively (see
+ * `docs/refactor/component-type-cleanup.md`); the FRAME variant set is
+ * already covered here, and SYMBOL does not default-clip in Figma.
  */
 const CLIPPING_NODE_TYPES: ReadonlySet<FigNodeType> = new Set([
   FIG_NODE_TYPE.FRAME,
-  FIG_NODE_TYPE.COMPONENT,
-  FIG_NODE_TYPE.COMPONENT_SET,
 ]);
 
 /**
@@ -108,10 +108,14 @@ function isFigVector(value: unknown): value is FigVector {
     "y" in value && typeof value.y === "number";
 }
 
-/** Node types that are components */
+/**
+ * Node types that are components on disk.
+ *
+ * The on-disk encoding of the Figma UI concept "Component" is a single
+ * SYMBOL node (NodeType value 15). The on-disk schema has no COMPONENT
+ * or COMPONENT_SET NodeType — see `docs/refactor/component-type-cleanup.md`.
+ */
 const COMPONENT_TYPES: ReadonlySet<FigNodeType> = new Set([
-  FIG_NODE_TYPE.COMPONENT,
-  FIG_NODE_TYPE.COMPONENT_SET,
   FIG_NODE_TYPE.SYMBOL,
 ]);
 
@@ -267,6 +271,7 @@ const MODELED_FIELDS: ReadonlySet<string> = new Set([
   "textTruncation", "leadingTrim", "fontVariations", "hyperlink", "textTracking",
   "symbolID", "symbolOverrides", "symbolData", "derivedSymbolData",
   "componentPropDefs", "componentPropRefs", "componentPropAssignments", "variantPropSpecs",
+  "isStateGroup",
   "mask",
   "arcData",
   "vectorPaths", "vectorData",
@@ -578,7 +583,9 @@ function resolveEnumName<T extends string>(v: unknown, map: Record<number, T>): 
 }
 
 /**
- * Extract component property definitions from a SYMBOL/COMPONENT node.
+ * Extract component property definitions from a node. These live on
+ * SYMBOLs (component definitions) and on Variant-Set FRAMEs (their
+ * VARIANT-typed propDefs describe the variant axes).
  */
 function extractComponentPropertyDefs(node: FigNode): readonly ComponentPropertyDef[] | undefined {
   const defs = node.componentPropDefs;
@@ -749,9 +756,11 @@ export function collectFigRawFields(node: FigNode): Record<string, unknown> | un
  *     concern from this initial path resolution.
  *   - Single pass per path: no "first-level vs tail" asymmetry, no
  *     deferred secondary resolution.
- *   - COMPONENT_SET variant semantics: when a sibling entry declares
+ *   - Variant-set semantics: when a sibling entry declares
  *     `overriddenSymbolID` for an INSTANCE along the path, subsequent
- *     guids are resolved in the variant's namespace.
+ *     guids are resolved in the variant SYMBOL's namespace. (A "variant
+ *     set" on disk is a FRAME with `isStateGroup` + VARIANT-typed
+ *     `componentPropDefs`; the variant children are SYMBOLs.)
  */
 function resolveOverridePaths(
   ctx: FigResolveContext,
@@ -1291,6 +1300,7 @@ export function convertFigNode(
     componentPropertyRefs: extractComponentPropertyRefs(node),
     componentPropertyAssignments: extractComponentPropertyAssignments(node),
     variantPropSpecs: extractVariantPropSpecs(node),
+    isStateGroup: node.isStateGroup,
     exportSettings: node.exportSettings,
 
     styleIdForFill: node.styleIdForFill,

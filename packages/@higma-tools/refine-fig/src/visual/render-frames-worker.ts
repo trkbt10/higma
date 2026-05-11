@@ -33,8 +33,8 @@ export type RenderFramesViaWorkerOptions = {
 };
 
 /**
- * Discover every renderable top-level FRAME / COMPONENT, ask the
- * worker to render each one to a temp PNG, and return the bytes.
+ * Discover every renderable top-level FRAME, ask the worker to render
+ * each one to a temp PNG, and return the bytes.
  * Frames whose rendering fails (typically a native panic) are
  * reported via `onSkipFrame` and excluded from the result.
  */
@@ -93,7 +93,7 @@ function discoverTopLevelFrames(roots: readonly FigNode[]): readonly DiscoveredF
       }
       for (const frame of safeChildren(canvas)) {
         const t = getNodeType(frame);
-        if (t !== "FRAME" && t !== "COMPONENT") {
+        if (t !== "FRAME") {
           continue;
         }
         out.push({

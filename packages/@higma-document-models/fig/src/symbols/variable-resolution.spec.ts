@@ -49,6 +49,58 @@ function frameNode(g: FigGuid, name: string, children: readonly FigNode[]): FigN
   };
 }
 
+/**
+ * A Variant-Set FRAME on disk. The canonical schema has no
+ * COMPONENT_SET NodeType — a Variant Set is a FRAME with
+ * `isStateGroup` + VARIANT-typed `componentPropDefs`. See
+ * `docs/refactor/component-type-cleanup.md`.
+ *
+ * `propName` becomes the variant property name; each child SYMBOL must
+ * carry a matching `variantPropSpec` for the SoT-aligned resolver to
+ * see it as a Variant Set member.
+ */
+function variantSetFrame(
+  g: FigGuid,
+  name: string,
+  propName: string,
+  propDefId: FigGuid,
+  children: readonly FigNode[],
+): FigNode {
+  return {
+    guid: g,
+    phase: { value: 0, name: "INITIAL" },
+    type: { value: 0, name: FIG_NODE_TYPE.FRAME },
+    name,
+    isStateGroup: true,
+    componentPropDefs: [
+      {
+        id: propDefId,
+        name: propName,
+        type: { value: 4, name: "VARIANT" },
+      },
+    ],
+    children,
+  };
+}
+
+function variantSymbol(
+  g: FigGuid,
+  name: string,
+  parent: FigGuid,
+  propDefId: FigGuid,
+  value: string,
+): FigNode {
+  return {
+    guid: g,
+    phase: { value: 0, name: "INITIAL" },
+    type: { value: 0, name: FIG_NODE_TYPE.SYMBOL },
+    name,
+    parentIndex: { guid: parent, position: "0" },
+    variantPropSpecs: [{ propDefId, value }],
+    children: [],
+  };
+}
+
 function instanceNode(g: FigGuid, symbolID: FigGuid, vcm: FigKiwiVariableDataMap): FigNode {
   return {
     guid: g,
@@ -163,11 +215,15 @@ describe("resolveVariantOverride", () => {
     };
   }
 
-  it("selects the variant whose name matches the requested property literal", () => {
-    // Two siblings under a FRAME: "Type=Default" and "Type=Compact".
-    const defaultSym = symbolNode(guid(1, 100), "Type=Default", guid(1, 1));
-    const compactSym = symbolNode(guid(1, 101), "Type=Compact", guid(1, 1));
-    const container = frameNode(guid(1, 1), "_Variants", [defaultSym, compactSym]);
+  it("selects the variant whose variantPropSpec value matches the requested property literal", () => {
+    // Two variant siblings under a Variant-Set FRAME. Detection is by
+    // SoT metadata (`isStateGroup` + VARIANT `componentPropDefs` +
+    // child `variantPropSpecs`), not by child name. See
+    // `docs/refactor/component-type-cleanup.md`.
+    const propDefId = guid(1, 10);
+    const defaultSym = variantSymbol(guid(1, 100), "Type=Default", guid(1, 1), propDefId, "Default");
+    const compactSym = variantSymbol(guid(1, 101), "Type=Compact", guid(1, 1), propDefId, "Compact");
+    const container = variantSetFrame(guid(1, 1), "_Variants", "Type", propDefId, [defaultSym, compactSym]);
     const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromTextLiteral("Type", "Compact"));
     const symbolMap = buildSymbolMap([container, defaultSym, compactSym]);
 
@@ -176,9 +232,10 @@ describe("resolveVariantOverride", () => {
   });
 
   it("returns the original (default) variant when the literal matches it", () => {
-    const defaultSym = symbolNode(guid(1, 100), "Type=Default", guid(1, 1));
-    const compactSym = symbolNode(guid(1, 101), "Type=Compact", guid(1, 1));
-    const container = frameNode(guid(1, 1), "_Variants", [defaultSym, compactSym]);
+    const propDefId = guid(1, 10);
+    const defaultSym = variantSymbol(guid(1, 100), "Type=Default", guid(1, 1), propDefId, "Default");
+    const compactSym = variantSymbol(guid(1, 101), "Type=Compact", guid(1, 1), propDefId, "Compact");
+    const container = variantSetFrame(guid(1, 1), "_Variants", "Type", propDefId, [defaultSym, compactSym]);
     const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromTextLiteral("Type", "Default"));
     const symbolMap = buildSymbolMap([container, defaultSym, compactSym]);
 
@@ -187,9 +244,10 @@ describe("resolveVariantOverride", () => {
   });
 
   it("bails out with `unresolved-aliases` when the property value is a library alias", () => {
-    const defaultSym = symbolNode(guid(1, 100), "Type=Default", guid(1, 1));
-    const compactSym = symbolNode(guid(1, 101), "Type=Compact", guid(1, 1));
-    const container = frameNode(guid(1, 1), "_Variants", [defaultSym, compactSym]);
+    const propDefId = guid(1, 10);
+    const defaultSym = variantSymbol(guid(1, 100), "Type=Default", guid(1, 1), propDefId, "Default");
+    const compactSym = variantSymbol(guid(1, 101), "Type=Compact", guid(1, 1), propDefId, "Compact");
+    const container = variantSetFrame(guid(1, 1), "_Variants", "Type", propDefId, [defaultSym, compactSym]);
     const aliasVcm: FigKiwiVariableDataMap = {
       entries: [
         {

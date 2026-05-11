@@ -1,6 +1,15 @@
-/** @file COMPONENT_SET variant authoring controls. */
+/**
+ * @file Variant Set authoring controls.
+ *
+ * A "Component Set" / "Variant Set" on disk is a FRAME bearing
+ * `isStateGroup` + VARIANT-typed `componentPropertyDefs`; the canonical
+ * Figma schema has no COMPONENT_SET NodeType. The variant children are
+ * SYMBOLs (the disk encoding of the Figma UI concept "Component"). See
+ * `docs/refactor/component-type-cleanup.md`.
+ */
 
 import type { ComponentPropertyDef, FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
+import { isVariantSetFrame } from "@higma-document-models/fig/domain";
 import { Input } from "@higma-editor-kernel/ui/primitives/Input";
 import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
@@ -13,14 +22,14 @@ type ComponentSetVariantsSectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
-/** Edit variant definitions and child component variant values on a COMPONENT_SET. */
+/** Edit variant definitions and child component variant values on a Variant-Set FRAME. */
 export function ComponentSetVariantsSection({ node, target, dispatch }: ComponentSetVariantsSectionProps) {
-  if (node.type !== "COMPONENT_SET") {
+  if (!isVariantSetFrame(node)) {
     return null;
   }
 
   const variantDefs = (node.componentPropertyDefs ?? []).filter((def) => def.type === "VARIANT");
-  const componentChildren = (node.children ?? []).filter((child) => child.type === "COMPONENT");
+  const componentChildren = (node.children ?? []).filter((child) => child.type === "SYMBOL");
 
   if (variantDefs.length === 0 && componentChildren.length === 0) {
     return <div>No variants defined</div>;

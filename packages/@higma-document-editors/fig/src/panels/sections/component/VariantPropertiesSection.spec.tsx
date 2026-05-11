@@ -9,7 +9,7 @@ import { createPropertyMutationTarget } from "../../properties/property-mutation
 function makeComponent(): FigDesignNode {
   return {
     id: "component" as FigNodeId,
-    type: "COMPONENT",
+    type: "SYMBOL",
     name: "Button / State=Default",
     visible: true,
     opacity: 1,

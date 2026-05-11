@@ -44,7 +44,7 @@ import { pxLength } from "../length/resolve";
 export function figNodeToIR(node: FigDesignNode): NodeIR {
   switch (node.type) {
     case "FRAME":
-    case "COMPONENT":
+    case "SYMBOL":
     case "GROUP":
     case "SECTION":
       return frameToIR(node);
@@ -240,9 +240,24 @@ function textStyleFromTextData(td: NonNullable<FigDesignNode["textData"]>): Text
     lineHeight: lineHeightFromTextData(td),
     letterSpacing: td.letterSpacing?.value ?? 0,
     textAlign: textAlignFromName(td.textAlignHorizontal?.name),
+    textAlignVertical: textAlignVFromName(td.textAlignVertical?.name),
     textTransform: textCaseFromName(td.textCase?.name),
     textDecoration: textDecorationFromName(td.textDecoration?.name),
   };
+}
+
+function textAlignVFromName(name: string | undefined): TextStyleIR["textAlignVertical"] {
+  switch (name) {
+    case "CENTER":
+      return "center";
+    case "BOTTOM":
+      return "bottom";
+    case "TOP":
+    case undefined:
+      return "top";
+    default:
+      throw new Error(`figNodeToIR: unknown textAlignVertical "${name}"`);
+  }
 }
 
 function lineHeightFromTextData(td: NonNullable<FigDesignNode["textData"]>): TextStyleIR["lineHeight"] {

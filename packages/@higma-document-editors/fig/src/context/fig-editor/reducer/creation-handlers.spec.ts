@@ -76,8 +76,12 @@ describe("creation handlers", () => {
   });
 
   it("creates a new node inside the deepest containing symbol with local coordinates", () => {
+    // The canonical schema has no COMPONENT NodeType; the Figma UI
+    // concept "Component" is encoded on disk as a SYMBOL, and the
+    // outer container in this fixture is a plain FRAME. See
+    // `docs/refactor/component-type-cleanup.md`.
     const symbol = makeNode({ id: "0:2", name: "symbol", type: "SYMBOL", x: 80, y: 90, width: 300, height: 200, children: [] });
-    const component = makeNode({ id: "0:1", name: "component", type: "COMPONENT", x: 20, y: 30, width: 360, height: 260, children: [symbol] });
+    const component = makeNode({ id: "0:1", name: "frame", type: "FRAME", x: 20, y: 30, width: 360, height: 260, children: [symbol] });
     const state = createFigEditorState(makeDocument([component]));
     const creating = figEditorReducer(state, { type: "SET_CREATION_MODE", mode: { type: "ellipse" } });
     const next = figEditorReducer(creating, {

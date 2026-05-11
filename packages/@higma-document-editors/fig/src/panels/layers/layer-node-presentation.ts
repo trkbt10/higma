@@ -1,5 +1,15 @@
 /**
  * @file Layer panel node presentation rules.
+ *
+ * The on-disk schema has no COMPONENT / COMPONENT_SET NodeType — a
+ * Figma "Component" is encoded as a SYMBOL and a "Component Set" /
+ * "Variant Set" is a FRAME bearing variant metadata. See
+ * `docs/refactor/component-type-cleanup.md`.
+ *
+ * Variant-Set badge distinction is a UI/presentation concern that
+ * lives in this module's caller — it cannot be inferred from
+ * `node.type` alone. Callers pass `kind: "variant-set"` when the
+ * surrounding tree-walk classifier identifies a Variant Set FRAME.
  */
 
 import type { CSSProperties } from "react";
@@ -15,6 +25,15 @@ export type LayerNodePresentation = {
   readonly rowStyle: CSSProperties | undefined;
   readonly badge: LayerNodeBadge | undefined;
 };
+
+/**
+ * Presentation-layer classification of a node beyond its disk type.
+ *
+ * `"variant-set"` is a FRAME that carries Variant-Set metadata
+ * (`isStateGroup` + VARIANT-typed `componentPropDefs`). The disk type
+ * is still FRAME; only callers that walk the tree can determine this.
+ */
+export type LayerNodeKind = "variant-set" | undefined;
 
 const INSTANCE_COLOR = "#9747FF";
 const FRAME_COLOR = "#248EFF";
@@ -40,16 +59,20 @@ function createBadge(label: string, color: string): LayerNodeBadge {
   return { label, color };
 }
 
-function getStandaloneBadge(nodeType: FigDesignNode["type"]): LayerNodeBadge | undefined {
+function getStandaloneBadge(
+  nodeType: FigDesignNode["type"],
+  kind: LayerNodeKind,
+): LayerNodeBadge | undefined {
+  if (kind === "variant-set") {
+    return createBadge("Set", INSTANCE_COLOR);
+  }
   switch (nodeType) {
     case "FRAME":
       return createBadge("Frame", FRAME_COLOR);
-    case "COMPONENT":
-      return createBadge("Component", INSTANCE_COLOR);
-    case "COMPONENT_SET":
-      return createBadge("Set", INSTANCE_COLOR);
     case "SYMBOL":
-      return createBadge("Symbol", SYMBOL_COLOR);
+      // Presentation-layer label for the SYMBOL disk type follows the
+      // Figma UI: a top-level SYMBOL surfaces as "Component".
+      return createBadge("Component", INSTANCE_COLOR);
     case "INSTANCE":
       return createBadge("Instance", INSTANCE_COLOR);
     default:
@@ -57,13 +80,16 @@ function getStandaloneBadge(nodeType: FigDesignNode["type"]): LayerNodeBadge | u
   }
 }
 
-function getStandaloneRowStyle(nodeType: FigDesignNode["type"]): CSSProperties | undefined {
+function getStandaloneRowStyle(
+  nodeType: FigDesignNode["type"],
+  kind: LayerNodeKind,
+): CSSProperties | undefined {
+  if (kind === "variant-set") {
+    return COMPONENT_ROW_STYLE;
+  }
   switch (nodeType) {
     case "FRAME":
       return FRAME_ROW_STYLE;
-    case "COMPONENT":
-    case "COMPONENT_SET":
-      return COMPONENT_ROW_STYLE;
     case "SYMBOL":
       return SYMBOL_ROW_STYLE;
     case "INSTANCE":
@@ -77,6 +103,7 @@ function getStandaloneRowStyle(nodeType: FigDesignNode["type"]): CSSProperties |
 export function resolveLayerNodePresentation(
   nodeType: FigDesignNode["type"],
   isInstanceContext: boolean,
+  kind: LayerNodeKind = undefined,
 ): LayerNodePresentation {
   if (isInstanceContext) {
     return {
@@ -86,8 +113,8 @@ export function resolveLayerNodePresentation(
     };
   }
   return {
-    iconColor: getStandaloneBadge(nodeType)?.color,
-    rowStyle: getStandaloneRowStyle(nodeType),
-    badge: getStandaloneBadge(nodeType),
+    iconColor: getStandaloneBadge(nodeType, kind)?.color,
+    rowStyle: getStandaloneRowStyle(nodeType, kind),
+    badge: getStandaloneBadge(nodeType, kind),
   };
 }

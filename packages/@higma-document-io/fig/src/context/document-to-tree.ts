@@ -226,6 +226,9 @@ function designNodeToFigNode(
       value: spec.value,
     }));
   }
+  if (node.isStateGroup !== undefined) {
+    base.isStateGroup = node.isStateGroup;
+  }
 
   // Boolean operation
   if (node.booleanOperation !== undefined) { base.booleanOperation = node.booleanOperation; }

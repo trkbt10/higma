@@ -3,7 +3,9 @@
  *
  * A *page* file mirrors one user-selected top-level frame and is the
  * primary surface a developer wires into a router. A *component* file
- * mirrors one SYMBOL or one variant set (parent FRAME / COMPONENT_SET),
+ * mirrors one SYMBOL or one Variant Set (a FRAME with variant
+ * metadata; the canonical schema has no COMPONENT_SET NodeType — see
+ * `docs/refactor/component-type-cleanup.md`),
  * with variants collapsed into a single component switching on a
  * `variant` prop and any other typed component-property defs surfaced
  * as React props.

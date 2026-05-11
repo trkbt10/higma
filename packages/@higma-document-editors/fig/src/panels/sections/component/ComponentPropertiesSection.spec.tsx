@@ -26,7 +26,7 @@ function makeNode(id: string, type: FigDesignNode["type"], name = id): FigDesign
 describe("ComponentPropertiesSection", () => {
   it("renders editable inputs for supported component override types", () => {
     const component = {
-      ...makeNode("component", "COMPONENT", "Button"),
+      ...makeNode("component", "SYMBOL", "Button"),
       componentPropertyDefs: [
         { id: "visible" as FigNodeId, name: "Visible", type: "BOOL" as const, initialValue: { boolValue: true } },
         { id: "label" as FigNodeId, name: "Label", type: "TEXT" as const, initialValue: { textValue: { characters: "OK" } } },
@@ -38,8 +38,8 @@ describe("ComponentPropertiesSection", () => {
         { id: "slot" as FigNodeId, name: "Slot", type: "SLOT" as const, initialValue: { referenceValue: "10:3" as FigNodeId } },
       ],
     } satisfies FigDesignNode;
-    const icon = makeNode("icon-a", "COMPONENT", "Icon A");
-    const variant = makeNode("variant-a", "COMPONENT", "Variant A");
+    const icon = makeNode("icon-a", "SYMBOL", "Icon A");
+    const variant = makeNode("variant-a", "SYMBOL", "Variant A");
     const instance = { ...makeNode("instance", "INSTANCE"), symbolId: component.id };
     const document: FigDesignDocument = {
       pages: [{ id: "page" as never, name: "Page", backgroundColor: DEFAULT_PAGE_BACKGROUND, children: [instance] }],

@@ -4,9 +4,10 @@
  * The Figma "Layers" panel lists exactly the direct children of the
  * page's CANVAS — there is no `"Layers"` container node. Targeting
  * "the frames directly under Design's Layers" reduces to enumerating
- * `safeChildren(designCanvas)` and filtering for FRAME / COMPONENT /
- * COMPONENT_SET (the three frame-like top-level kinds the Layers
- * panel surfaces).
+ * `safeChildren(designCanvas)` and filtering for FRAME nodes (the
+ * canonical Figma schema has no COMPONENT or COMPONENT_SET NodeType;
+ * a "Variant Set" is a FRAME with variant metadata — see
+ * `docs/refactor/component-type-cleanup.md`).
  *
  * Mirrors `fig-to-swiftui/src/emit/targets.ts` — the two emitters
  * agree on what counts as a top-level emit candidate so a single fig
@@ -17,8 +18,6 @@ import { safeChildren } from "@higma-document-models/fig/domain";
 
 const FRAME_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "COMPONENT",
-  "COMPONENT_SET",
 ]);
 
 function isFrameLike(node: FigNode): boolean {

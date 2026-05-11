@@ -2,7 +2,7 @@
  * @file INSTANCE resolution tests for scene-graph builder
  *
  * Verifies that the builder correctly resolves INSTANCE nodes against
- * their SYMBOL/COMPONENT definitions, applying:
+ * their SYMBOL definitions, applying:
  * - Property merge (fills, strokes, effects, blendMode, etc.)
  * - Self-overrides (overrides targeting the instance frame)
  * - Child overrides (per-child fill/stroke/visibility changes)
@@ -121,7 +121,7 @@ describe("INSTANCE resolution — property merge", () => {
   it("inherits fills from SYMBOL when INSTANCE has no visible fills", () => {
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [RED_FILL],
       children: [],
     });
@@ -153,7 +153,7 @@ describe("INSTANCE resolution — property merge", () => {
     // change is declarative, which Step 2 of resolveInstance handles.
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [RED_FILL],
       children: [],
     });
@@ -181,7 +181,7 @@ describe("INSTANCE resolution — property merge", () => {
   it("inherits blendMode from SYMBOL", () => {
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [RED_FILL],
       blendMode: "MULTIPLY",
       children: [],
@@ -212,7 +212,7 @@ describe("INSTANCE resolution — property merge", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [RED_FILL],
       effects: [shadow],
       children: [],
@@ -242,7 +242,7 @@ describe("INSTANCE resolution — property merge", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [childRect],
     });
@@ -271,7 +271,7 @@ describe("INSTANCE resolution — self-overrides", () => {
   it("applies fill override on the instance frame itself", () => {
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [RED_FILL],
       children: [],
     });
@@ -299,7 +299,7 @@ describe("INSTANCE resolution — self-overrides", () => {
   it("applies opacity override on the instance frame itself", () => {
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [],
       opacity: 1,
@@ -324,7 +324,7 @@ describe("INSTANCE resolution — self-overrides", () => {
   it("does not route self opacity override into nested instance children", () => {
     const nestedSymbol = makeNode({
       id: "0:20",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [BLUE_FILL],
       children: [],
     });
@@ -336,7 +336,7 @@ describe("INSTANCE resolution — self-overrides", () => {
     });
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [nestedInstance],
       opacity: 1,
@@ -362,7 +362,7 @@ describe("INSTANCE resolution — self-overrides", () => {
   it("applies editor-authored self override addressed to the instance id without descending into component children", () => {
     const iconSymbol = makeNode({
       id: "21:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [GREEN_FILL],
       children: [],
     });
@@ -374,7 +374,7 @@ describe("INSTANCE resolution — self-overrides", () => {
     });
     const symbol = makeNode({
       id: "20:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [iconInstance],
       opacity: 1,
@@ -412,7 +412,7 @@ describe("INSTANCE resolution — child overrides", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [childRect],
     });
@@ -453,7 +453,7 @@ describe("INSTANCE resolution — child overrides", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [childRect],
     });
@@ -517,7 +517,7 @@ describe("INSTANCE resolution — component property assignments", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [textChild],
       componentPropertyDefs: [
@@ -560,7 +560,7 @@ describe("INSTANCE resolution — component property assignments", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       children: [childRect],
       componentPropertyDefs: [
@@ -609,7 +609,7 @@ describe("INSTANCE resolution — constraint resolution", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       size: { x: 100, y: 50 },
       children: [childRect],
@@ -648,7 +648,7 @@ describe("INSTANCE resolution — constraint resolution", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       size: { x: 100, y: 50 },
       children: [childRect],
@@ -691,7 +691,7 @@ describe("INSTANCE resolution — constraint resolution", () => {
 
     const symbol = makeNode({
       id: "0:1",
-      type: "COMPONENT",
+      type: "SYMBOL",
       fills: [],
       size: { x: 100, y: 50 },
       children: [childRect],

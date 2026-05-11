@@ -74,8 +74,16 @@ export function clampCornerRadius(
 // Clip Content
 // =============================================================================
 
-/** Node types that clip content by default in Figma. */
-const CLIPPING_NODE_TYPES = new Set(["FRAME", "COMPONENT", "COMPONENT_SET"]);
+/**
+ * Node types that clip content by default in Figma.
+ *
+ * The canonical schema has no COMPONENT or COMPONENT_SET NodeType.
+ * A "Component Set" / "Variant Set" is a FRAME bearing variant
+ * metadata (already covered by FRAME). The "Component" UI concept is
+ * encoded on disk as a SYMBOL; SYMBOLs do not default-clip in Figma.
+ * See `docs/refactor/component-type-cleanup.md`.
+ */
+const CLIPPING_NODE_TYPES = new Set(["FRAME"]);
 
 /**
  * Resolve whether a node clips its content.
@@ -83,7 +91,7 @@ const CLIPPING_NODE_TYPES = new Set(["FRAME", "COMPONENT", "COMPONENT_SET"]);
  * Resolution order:
  * 1. Explicit `clipsContent` field (FigDesignNode domain model)
  * 2. `frameMaskDisabled` in raw data (inverted semantics from Kiwi encoding)
- * 3. Default based on node type (FRAME/COMPONENT/COMPONENT_SET clip by default)
+ * 3. Default based on node type (FRAME clips by default)
  *
  * @param clipsContent - Domain field value
  * @param frameMaskDisabled - Raw Kiwi field value

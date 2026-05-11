@@ -90,8 +90,11 @@ function collectComponentsRecursive(
   nodes: readonly FigDesignNode[],
   components: Map<string, FigDesignNode>,
 ): void {
+  // The on-disk encoding of the Figma UI concept "Component" is a single
+  // SYMBOL node. There is no COMPONENT or COMPONENT_SET NodeType in the
+  // canonical schema. See `docs/refactor/component-type-cleanup.md`.
   walkTree(nodes, (node) => {
-    if (node.type === "COMPONENT" || node.type === "COMPONENT_SET" || node.type === "SYMBOL") {
+    if (node.type === "SYMBOL") {
       components.set(node.id, node);
     }
   }, { getChildren: (node) => node.children ?? [] });

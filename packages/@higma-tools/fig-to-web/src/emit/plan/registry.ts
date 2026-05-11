@@ -24,6 +24,7 @@
  */
 import type { FigNode, FigGuid, FigComponentPropDef, FigVariantPropSpec } from "@higma-document-models/fig/types";
 import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import type { ComponentPropDecl, ComponentTarget, EmitRegistry, FrameTarget } from "../types";
 import type { FigSymbolContext } from "@higma-document-io/fig/context";
 import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "@higma-primitives/identifier";
@@ -83,24 +84,14 @@ function getSymbolGuid(node: FigNode): FigGuid | undefined {
 }
 
 /**
- * Determine whether a parent node groups variant children. True when:
- *   - the parent is a literal `COMPONENT_SET`, or
- *   - the parent is a FRAME / COMPONENT carrying `componentPropDefs`
- *     of type VARIANT (older fig schema where variants share a FRAME).
+ * Determine whether a parent node is a Variant Set root on disk.
+ *
+ * Delegates to the SoT helper in `@higma-document-models/fig/symbols`
+ * so every detection site shares one implementation. See
+ * `docs/refactor/component-type-cleanup.md`.
  */
 function isVariantSetRoot(node: FigNode): boolean {
-  if (node.type.name === "COMPONENT_SET") {
-    return true;
-  }
-  if (!node.componentPropDefs || node.componentPropDefs.length === 0) {
-    return false;
-  }
-  for (const def of node.componentPropDefs) {
-    if (def.type?.name === "VARIANT") {
-      return true;
-    }
-  }
-  return false;
+  return isVariantSetFrame(node);
 }
 
 /**
@@ -128,32 +119,32 @@ function resolveInstanceTarget(source: FigSymbolContext, instance: FigNode): Fig
 }
 
 /**
- * Variant value as authored on a SYMBOL / COMPONENT. Falls back to a
- * synthetic id only when the SYMBOL has no variantPropSpec at all —
- * this can happen for plain children of a FRAME we mistakenly classify
- * as a variant set, in which case the generator still produces a
- * valid (if dull) variant entry.
+ * Variant value authored on a SYMBOL child of a Variant Set FRAME.
+ *
+ * `variantPropSpecs` is the disk SoT for which value the SYMBOL
+ * represents; the decorative `Prop=Value` naming on the SYMBOL is not
+ * load-bearing (Figma reconstructs displayed labels from
+ * `componentPropDefs` + `variantPropSpecs`, not from the name) and we
+ * must not infer the value from it — see
+ * `docs/refactor/component-type-cleanup.md`. A Variant Set child
+ * without a `variantPropSpecs` entry is malformed input; fail fast.
  */
 function variantValueOf(node: FigNode): string {
   const specs = node.variantPropSpecs as readonly FigVariantPropSpec[] | undefined;
-  if (specs && specs.length > 0) {
-    const first = specs[0];
-    if (first?.value) {
-      return first.value;
-    }
+  const first = specs?.[0];
+  if (!first?.value) {
+    throw new Error(
+      `Variant Set child SYMBOL ${node.name ?? "?"} (${guidToString(node.guid)}) is missing variantPropSpecs[0].value; ` +
+        `the disk SoT requires every variant SYMBOL to carry its variant value via variantPropSpecs.`,
+    );
   }
-  const name = node.name ?? "";
-  const eq = name.indexOf("=");
-  if (eq !== -1) {
-    return name.slice(eq + 1).trim();
-  }
-  return name || "default";
+  return first.value;
 }
 
 function findVariantChildren(parent: FigNode): readonly FigNode[] {
   const out: FigNode[] = [];
   for (const child of safeChildren(parent)) {
-    if (child.type.name !== "COMPONENT" && child.type.name !== "SYMBOL") {
+    if (child.type.name !== "SYMBOL") {
       continue;
     }
     out.push(child);

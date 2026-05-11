@@ -19,7 +19,7 @@ export type CliOptions = {
   readonly page: string;
   readonly mode: CliMode;
   readonly frame?: string;
-  /** Include SYMBOL nodes alongside FRAME/COMPONENT targets. */
+  /** Include SYMBOL nodes alongside top-level FRAME targets. */
   readonly includeSymbols: boolean;
   /**
    * Complexity threshold above which a node is pre-rasterised to

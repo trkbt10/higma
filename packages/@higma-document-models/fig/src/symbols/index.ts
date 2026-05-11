@@ -95,3 +95,5 @@ export {
   resolveVariantOverride,
   type ResolveVariantResult,
 } from "./variable-resolution";
+
+export { isVariantSetFrame } from "./variant-set-kiwi";

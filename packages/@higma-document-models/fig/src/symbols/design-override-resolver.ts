@@ -1,11 +1,16 @@
 /**
  * @file FigDesignNode-level override path resolver.
  *
- * SSoT for re-resolving override guid paths after a COMPONENT_SET
- * variant switch on a nested INSTANCE. The authored overrides on the
- * nested INSTANCE target the **default variant's** slot guids; once
- * the variant has been swapped (e.g. Brand=Amazon → Brand=Mastodon),
- * those guids need to land in the new variant's namespace.
+ * SSoT for re-resolving override guid paths after a Variant Set
+ * variant switch on a nested INSTANCE. (A "Variant Set" on disk is a
+ * FRAME bearing `isStateGroup` + VARIANT-typed `componentPropDefs`;
+ * the canonical schema has no COMPONENT_SET NodeType. See
+ * `docs/refactor/component-type-cleanup.md`.)
+ *
+ * The authored overrides on the nested INSTANCE target the **default
+ * variant's** slot guids; once the variant has been swapped (e.g.
+ * Brand=Amazon → Brand=Mastodon), those guids need to land in the new
+ * variant's namespace.
  *
  * This is the domain-tree-aware companion to `resolveOverridePaths`
  * in the FigNode conversion layer. Both share the same primitive:

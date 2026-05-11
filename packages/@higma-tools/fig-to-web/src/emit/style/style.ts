@@ -49,8 +49,6 @@ import { computeRuleGeometry } from "./rule";
 
 const ROOT_FRAME_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "COMPONENT",
-  "COMPONENT_SET",
   "SYMBOL",
   "GROUP",
   // INSTANCE wrappers can carry their own auto-layout (`stackMode` /
@@ -95,9 +93,11 @@ const ELLIPSE_TYPE = "ELLIPSE";
  *      with `frameMaskDisabled: true` are the canonical case —
  *      clipping there cuts off the SYMBOL's natural-size content
  *      that should overflow into the layout.
- *   3. Type default — FRAME / COMPONENT / COMPONENT_SET clip
- *      unless the design opted out. GROUP / SECTION / INSTANCE
- *      / shape leaves do not.
+ *   3. Type default — FRAME clips unless the design opted out. The
+ *      on-disk schema has no COMPONENT / COMPONENT_SET NodeType: a
+ *      Variant Set is a FRAME (covered) and a "Component" is a
+ *      SYMBOL (does not default-clip in Figma). GROUP / SECTION /
+ *      INSTANCE / shape leaves do not clip either.
  */
 function shouldClipContent(node: FigNode): boolean {
   const wantsClip = resolveClipFlag(node);
@@ -134,8 +134,6 @@ function resolveClipFlag(node: FigNode): boolean {
 
 const CLIP_BY_DEFAULT_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "COMPONENT",
-  "COMPONENT_SET",
 ]);
 // INSTANCE is deliberately *not* included: Figma scales an
 // INSTANCE's resolved content to fit its bounding box, while we

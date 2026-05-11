@@ -235,7 +235,7 @@ export function findParentId(
  * Filter marquee hits so container ancestors do not get selected together
  * with their descendants.
  *
- * A marquee rect can intersect a FRAME/COMPONENT and one or more children at
+ * A marquee rect can intersect a FRAME/SYMBOL container and one or more children at
  * the same time. For editing, the child hit is the first-class selection; the
  * ancestor container remains selectable by dragging only over its empty area.
  */

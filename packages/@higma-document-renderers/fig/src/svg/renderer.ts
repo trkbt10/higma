@@ -270,7 +270,10 @@ export async function renderFigToSvg(
 
   // Convert all parser nodes (including symbol definitions) into domain
   // objects. `components` is populated as a side-effect by convertFigNode
-  // whenever it encounters a COMPONENT/COMPONENT_SET/SYMBOL.
+  // whenever it encounters a SYMBOL (the on-disk encoding of the Figma
+  // UI concept "Component"; the canonical schema has no COMPONENT or
+  // COMPONENT_SET NodeType — see
+  // `docs/refactor/component-type-cleanup.md`).
   const components = new Map<string, FigDesignNode>();
   const designSymbolMap = convertSymbolMap(rawSymbolMap, components, styleRegistry, blobs);
 

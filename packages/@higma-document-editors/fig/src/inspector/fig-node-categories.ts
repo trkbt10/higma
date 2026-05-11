@@ -24,13 +24,16 @@ const FIG_CATEGORIES = {
 // Node type → category mapping
 // =============================================================================
 
+// SYMBOL is the on-disk encoding of the Figma UI concept "Component"
+// and a "Component Set" / "Variant Set" is a FRAME with variant
+// metadata (already covered by FRAME). The canonical schema has no
+// COMPONENT or COMPONENT_SET NodeType — see
+// `docs/refactor/component-type-cleanup.md`.
 const NODE_TYPE_TO_CATEGORY: Record<string, string> = {
   // Container
   FRAME: "container",
   GROUP: "container",
   SECTION: "container",
-  COMPONENT: "container",
-  COMPONENT_SET: "container",
   SYMBOL: "container",
   // Instance
   INSTANCE: "instance",

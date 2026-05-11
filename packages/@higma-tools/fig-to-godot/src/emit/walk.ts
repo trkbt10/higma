@@ -84,8 +84,7 @@ const ELLIPSE_TYPE = "ELLIPSE";
 const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
   "GROUP",
-  "COMPONENT",
-  "COMPONENT_SET",
+  "SYMBOL",
   "INSTANCE",
   "SECTION",
 ]);
@@ -1222,7 +1221,7 @@ function buildFramePanel(
 // need a SubViewport-based mask, deferred to a future iteration.
 
 /**
- * Render a stack-shaped container (FRAME / GROUP / COMPONENT / INSTANCE).
+ * Render a stack-shaped container (FRAME / GROUP / SYMBOL / INSTANCE).
  *
  * Composition order, outermost first:
  *

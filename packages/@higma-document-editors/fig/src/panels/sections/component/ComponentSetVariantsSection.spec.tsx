@@ -1,4 +1,12 @@
-/** @file COMPONENT_SET variant controls tests. */
+/**
+ * @file Variant-Set FRAME variant controls tests.
+ *
+ * A "Component Set" / "Variant Set" on disk is a FRAME bearing
+ * `isStateGroup` + VARIANT-typed `componentPropertyDefs`; its children
+ * are SYMBOLs (the disk encoding of the Figma UI concept "Component").
+ * The canonical schema has no COMPONENT or COMPONENT_SET NodeType.
+ * See `docs/refactor/component-type-cleanup.md`.
+ */
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -9,7 +17,7 @@ import { createPropertyMutationTarget } from "../../properties/property-mutation
 function makeComponentSet(): FigDesignNode {
   const child = {
     id: "30:2" as FigNodeId,
-    type: "COMPONENT",
+    type: "SYMBOL",
     name: "Primary",
     visible: true,
     opacity: 1,
@@ -23,7 +31,7 @@ function makeComponentSet(): FigDesignNode {
   } as FigDesignNode;
   return {
     id: "30:1" as FigNodeId,
-    type: "COMPONENT_SET",
+    type: "FRAME",
     name: "Button Set",
     visible: true,
     opacity: 1,
@@ -33,6 +41,7 @@ function makeComponentSet(): FigDesignNode {
     strokes: [],
     strokeWeight: 0,
     effects: [],
+    isStateGroup: true,
     componentPropertyDefs: [{
       id: "30:10" as FigNodeId,
       name: "State",

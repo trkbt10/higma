@@ -39,6 +39,6 @@ export type {
   SectionNodeSpec,
   BooleanOperationNodeSpec,
   TextNodeSpec,
-  ComponentNodeSpec,
+  SymbolNodeSpec,
   InstanceNodeSpec,
 } from "./spec-types";

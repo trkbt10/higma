@@ -13,8 +13,11 @@
  *
  * Behaviour:
  *
- *   - Yields one PNG per top-level FRAME / COMPONENT / COMPONENT_SET
- *     (and optional SYMBOL) on the matched page(s).
+ *   - Yields one PNG per top-level FRAME (a "Variant Set" is a FRAME
+ *     with variant metadata; the canonical schema has no COMPONENT or
+ *     COMPONENT_SET NodeType — see
+ *     `docs/refactor/component-type-cleanup.md`) on the matched
+ *     page(s), with optional SYMBOL inclusion via `--symbols`.
  *   - Embeds a fingerprint of the source subtree into the output
  *     PNG's `tEXt` chunk. Re-running the CLI on the same fig
  *     short-circuits any frame whose fingerprint matches the
@@ -37,7 +40,7 @@ export type CliOptions = {
   readonly mode: CliMode;
   /** Frame / symbol names to rasterise (used when mode is "frames"). */
   readonly frames: readonly string[];
-  /** Include SYMBOL nodes alongside FRAME/COMPONENT targets. */
+  /** Include SYMBOL nodes alongside top-level FRAME targets. */
   readonly includeSymbols: boolean;
   /**
    * Output pixel ratio. 1 = authored size. 2 = @2x super-sampled.

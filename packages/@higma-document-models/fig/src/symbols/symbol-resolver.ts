@@ -169,11 +169,13 @@ export type InstanceResolution = {
  *   3. `symbolID` (the static reference).
  *
  * `RESOLVE_VARIANT` only fires when the INSTANCE has no
- * `overriddenSymbolID` AND its `symbolID`'s parent is a variant
- * container (COMPONENT_SET or sibling-FRAME pattern). Most fixtures
- * have all properties resolving to library-only aliases, in which
- * case the evaluator bails and we fall through to step 3 — this is
- * the same behaviour the renderer had before this evaluator landed.
+ * `overriddenSymbolID` AND its `symbolID`'s parent is a Variant Set
+ * (a FRAME with `isStateGroup` + VARIANT-typed `componentPropDefs`).
+ * The canonical schema has no COMPONENT_SET NodeType — see
+ * `docs/refactor/component-type-cleanup.md`. Most fixtures have all
+ * properties resolving to library-only aliases, in which case the
+ * evaluator bails and we fall through to step 3 — this is the same
+ * behaviour the renderer had before this evaluator landed.
  */
 export function resolveInstanceReferences(
   node: FigNode,
@@ -427,9 +429,10 @@ function applyComponentPropAssignments(
         }
       } else if (ref.componentPropNodeField?.name === "OVERRIDDEN_SYMBOL_ID") {
         // Instance swap via component property: the CPA value specifies
-        // which SYMBOL/COMPONENT this nested INSTANCE should resolve to.
-        // Set overriddenSymbolID so that resolveInstance() → getEffectiveSymbolID()
-        // picks up the swapped component during lazy rendering resolution.
+        // which SYMBOL this nested INSTANCE should resolve to. Set
+        // overriddenSymbolID so that resolveInstance() →
+        // getEffectiveSymbolID() picks up the swapped component during
+        // lazy rendering resolution.
         if (assignment) {
           const guidVal = assignment.value.guidValue as FigGuid | undefined;
           if (guidVal) {

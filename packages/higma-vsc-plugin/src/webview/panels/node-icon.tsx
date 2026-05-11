@@ -17,12 +17,18 @@ type FigNodeType = FigDesignNode["type"];
  * without an icon font. Unrecognised types fall through to a neutral
  * dot so a new fig node kind doesn't blank the UI.
  */
+// SYMBOL is the on-disk encoding of the Figma UI concept "Component"
+// (the canonical schema has no COMPONENT or COMPONENT_SET NodeType;
+// a "Component Set" / "Variant Set" is a FRAME with variant
+// metadata). The presentation label for SYMBOL still surfaces as
+// "Component" in the UI — see `nodeTypeLabel`. Detection of variant
+// sets is up to the caller. See
+// `docs/refactor/component-type-cleanup.md`.
 const GLYPHS: Partial<Record<FigNodeType, string>> = {
   FRAME: "▢",
   GROUP: "⊞",
   SECTION: "§",
-  COMPONENT: "◆",
-  COMPONENT_SET: "◇",
+  SYMBOL: "◆",
   INSTANCE: "◆",
   RECTANGLE: "▭",
   ELLIPSE: "○",
@@ -53,7 +59,13 @@ export function nodeTypeLabel(type: FigNodeType): string {
   // Lowercase the enum value for display ("RECTANGLE" → "rectangle"),
   // mirroring Figma's casing in the inspect panel ("Rectangle 1" /
   // "Rectangle"). We only convert the first character to upper-case
-  // so we get "Rectangle" and "Component set" instead of all-caps.
+  // so we get "Rectangle" instead of all-caps.
+  //
+  // The on-disk SYMBOL type surfaces as the user-facing "Component"
+  // label so the VS Code panel matches Figma's UI vocabulary.
+  if (type === "SYMBOL") {
+    return "Component";
+  }
   const lower = type.toLowerCase().replace(/_/g, " ");
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }

@@ -1,5 +1,5 @@
 /**
- * @file Render every renderable top-level FRAME / COMPONENT in a
+ * @file Render every renderable top-level FRAME in a
  * `.fig` byte buffer to SVG + PNG. Used by the verify command to
  * compare two refinement runs frame-by-frame.
  */
@@ -35,7 +35,7 @@ export type RenderFramesOptions = {
   readonly onSkipFrame?: (name: string, error: unknown) => void;
 };
 
-/** Render every renderable top-level FRAME / COMPONENT in a `.fig` byte buffer. */
+/** Render every renderable top-level FRAME in a `.fig` byte buffer. */
 export async function renderFrames(
   bytes: Uint8Array,
   options: RenderFramesOptions = {},
@@ -57,7 +57,7 @@ export async function renderFrames(
       }
       for (const frame of safeChildren(canvas)) {
         const t = getNodeType(frame);
-        if (t !== "FRAME" && t !== "COMPONENT") {
+        if (t !== "FRAME") {
           continue;
         }
         if (!frame.size) {

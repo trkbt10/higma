@@ -60,12 +60,22 @@ function wrapSelectedSiblings({
   pageChildren,
   selectedIds,
   wrapperType,
+  wrapperName,
   operation,
   builderState,
 }: {
   readonly pageChildren: readonly FigDesignNode[];
   readonly selectedIds: readonly FigNodeId[];
-  readonly wrapperType: "GROUP" | "COMPONENT" | "SYMBOL" | "BOOLEAN_OPERATION";
+  readonly wrapperType: "GROUP" | "SYMBOL" | "BOOLEAN_OPERATION";
+  /**
+   * Presentation label written into `wrapper.name`. The disk type is
+   * always one of GROUP / SYMBOL / BOOLEAN_OPERATION (the canonical
+   * schema has no COMPONENT NodeType — see
+   * `docs/refactor/component-type-cleanup.md`), but the editor's UI
+   * lets users author the same SYMBOL via either a "Make Component"
+   * or "Make Symbol" command, so the caller picks the label.
+   */
+  readonly wrapperName?: string;
   readonly operation?: BooleanOperationType;
   readonly builderState: FigBuilderState;
 }): { readonly children: readonly FigDesignNode[]; readonly wrapper: FigDesignNode } | null {
@@ -93,7 +103,7 @@ function wrapSelectedSiblings({
   const wrapper: FigDesignNode = {
     id: wrapperId,
     type: wrapperType,
-    name: getWrapperName(wrapperType, operation),
+    name: wrapperName ?? getWrapperName(wrapperType, operation),
     visible: true,
     opacity: 1,
     transform: { m00: 1, m01: 0, m02: bounds.x, m10: 0, m11: 1, m12: bounds.y },
@@ -312,12 +322,18 @@ export const NODE_HANDLERS: HandlerMap = {
     return wrapSelection(state, "GROUP");
   },
 
+  // The Figma UI concept "Component" is encoded on disk as a SYMBOL
+  // (the canonical schema has no COMPONENT NodeType — see
+  // `docs/refactor/component-type-cleanup.md`). The action name is
+  // kept as `MAKE_COMPONENT_FROM_SELECTION` because that is the UI
+  // intent surfaced to users; the wrapper's disk `type` is SYMBOL.
+  // The `name` carries the user-facing label "Component".
   MAKE_COMPONENT_FROM_SELECTION(state) {
-    return wrapSelection(state, "COMPONENT");
+    return wrapSelection(state, "SYMBOL", "Component");
   },
 
   MAKE_SYMBOL_FROM_SELECTION(state) {
-    return wrapSelection(state, "SYMBOL");
+    return wrapSelection(state, "SYMBOL", "Symbol");
   },
 
   BOOLEAN_OPERATION_SELECTION(state, action) {
@@ -356,7 +372,8 @@ export const NODE_HANDLERS: HandlerMap = {
 
 function wrapSelection(
   state: FigEditorState,
-  wrapperType: "GROUP" | "COMPONENT" | "SYMBOL",
+  wrapperType: "GROUP" | "SYMBOL",
+  wrapperName?: string,
 ): FigEditorState {
   const pageId = state.activePageId;
   if (!pageId || state.nodeSelection.selectedIds.length === 0) {
@@ -372,6 +389,7 @@ function wrapSelection(
     pageChildren: page.children,
     selectedIds: state.nodeSelection.selectedIds,
     wrapperType,
+    wrapperName,
     builderState: createEditorFigBuilderState(doc),
   });
   if (!wrapped) {
@@ -425,14 +443,12 @@ function wrapBooleanOperationSelection(
 }
 
 function getWrapperName(
-  wrapperType: "GROUP" | "COMPONENT" | "SYMBOL" | "BOOLEAN_OPERATION",
+  wrapperType: "GROUP" | "SYMBOL" | "BOOLEAN_OPERATION",
   operation?: BooleanOperationType,
 ): string {
   switch (wrapperType) {
     case "GROUP":
       return "Group";
-    case "COMPONENT":
-      return "Component";
     case "SYMBOL":
       return "Symbol";
     case "BOOLEAN_OPERATION":
@@ -447,7 +463,7 @@ function resolveWrappedComponents({
 }: {
   readonly components: FigEditorState["documentHistory"]["present"]["components"];
   readonly wrapper: FigDesignNode;
-  readonly wrapperType: "GROUP" | "COMPONENT" | "SYMBOL";
+  readonly wrapperType: "GROUP" | "SYMBOL";
 }): FigEditorState["documentHistory"]["present"]["components"] {
   if (wrapperType === "GROUP") {
     return components;

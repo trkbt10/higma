@@ -41,16 +41,14 @@ export type ComponentPropDecl =
   | { readonly kind: "node"; readonly name: string; readonly defId: string };
 
 /**
- * One component file generated for a referenced SYMBOL or for the
- * "variant set" — the parent FRAME / COMPONENT_SET that groups multiple
- * variant SYMBOLs together.
+ * One component file generated for a referenced SYMBOL or for a
+ * "Variant Set" — the parent FRAME bearing `isStateGroup` +
+ * VARIANT-typed `componentPropDefs` that groups multiple variant
+ * SYMBOLs together. The canonical schema has no COMPONENT_SET
+ * NodeType — see `docs/refactor/component-type-cleanup.md`.
  *
- * The Figma fixture under test (Youtube Mobile App UIKit) is authored
- * with the *older* schema where variants are children of a regular FRAME
- * carrying `componentPropDefs`, not a true COMPONENT_SET. The
- * registry treats both as equivalent — `variants.size > 0` means the
- * generator should emit a discriminated component switching on the
- * declared variant prop.
+ * `variants.size > 0` means the generator should emit a discriminated
+ * component switching on the declared variant prop.
  */
 export type ComponentTarget = {
   readonly node: FigNode;
@@ -60,7 +58,7 @@ export type ComponentTarget = {
   /** kebab-case slug for the source canvas (used as a folder layer). */
   readonly canvasSlug: string;
   /**
-   * For a variant set: variant value → SYMBOL/COMPONENT child keyed by
+   * For a variant set: variant value → variant SYMBOL child keyed by
    * `variantPropSpecs[0].value`. Empty when the target is a plain
    * SYMBOL (no variants).
    */

@@ -41,7 +41,7 @@ function makeDocument(symbol: FigDesignNode): FigDesignDocument {
 describe("InstanceOverridesSection", () => {
   it("renders self-override opacity from SymbolOverride data", () => {
     const node = makeInstance();
-    const symbol = { ...node, id: "20:1" as FigNodeId, type: "COMPONENT", symbolId: undefined } as FigDesignNode;
+    const symbol = { ...node, id: "20:1" as FigNodeId, type: "SYMBOL", symbolId: undefined } as FigDesignNode;
 
     const html = renderToStaticMarkup(createElement(InstanceOverridesSection, {
       node,
@@ -73,7 +73,7 @@ describe("InstanceOverridesSection", () => {
     const symbol = {
       ...child,
       id: "20:1" as FigNodeId,
-      type: "COMPONENT",
+      type: "SYMBOL",
       name: "Button",
       children: [child],
     } as FigDesignNode;

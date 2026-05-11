@@ -426,7 +426,12 @@ function effectiveChildren(
 }
 
 function shouldClusterParent(parent: FigNode): boolean {
-  if (parent.type?.name !== "FRAME" && parent.type?.name !== "COMPONENT" && parent.type?.name !== "COMPONENT_SET") {
+  // Cluster only FRAMEs without explicit auto-layout. SYMBOLs encode
+  // component definitions and own their internal layout; the on-disk
+  // schema has no COMPONENT_SET NodeType (it is a FRAME with variant
+  // metadata, already covered by the FRAME check). See
+  // `docs/refactor/component-type-cleanup.md`.
+  if (parent.type?.name !== "FRAME") {
     return false;
   }
   if (hasExplicitAutoLayout(parent)) {

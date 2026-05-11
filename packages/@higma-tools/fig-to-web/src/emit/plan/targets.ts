@@ -5,9 +5,10 @@
  * children of that page's CANVAS — there is no `"Layers"` container
  * node. Targeting "the frames directly under Design's Layers" therefore
  * reduces to: enumerate `safeChildren(designCanvas)` and filter for
- * nodes whose `type` is FRAME (or COMPONENT_SET / COMPONENT, since
- * those also surface in the Layers list and may be selected as page
- * roots).
+ * nodes whose `type` is FRAME or SYMBOL (a SYMBOL is the on-disk
+ * encoding of the Figma UI concept "Component"; a "Component Set" /
+ * "Variant Set" is a FRAME carrying variant metadata — already covered
+ * by the FRAME case). See `docs/refactor/component-type-cleanup.md`.
  *
  * The user can either request all top-level frames or a single frame
  * by name. We deliberately do NOT match by GUID — names are what the
@@ -19,8 +20,7 @@ import { safeChildren } from "@higma-document-models/fig/domain";
 
 const FRAME_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
-  "COMPONENT",
-  "COMPONENT_SET",
+  "SYMBOL",
 ]);
 
 function isFrameLike(node: FigNode): boolean {

@@ -720,11 +720,11 @@ export function buildGuidTranslationMap(
   // An override entry's first GUID can address a SYMBOL slot exactly
   // in two equivalent ways:
   //   - via the descendant's authored `overrideKey` — Figma's stable
-  //     slot id used on COMPONENT slots so overrides survive cloning
+  //     slot id used on SYMBOL slots so overrides survive cloning
   //   - via the descendant's own GUID — when no `overrideKey` was
-  //     authored (Figma sets it only on COMPONENT slots), the
-  //     override addresses the descendant by its own GUID, which is
-  //     unique by construction
+  //     authored (Figma sets it only on SYMBOL slots), the override
+  //     addresses the descendant by its own GUID, which is unique by
+  //     construction
   //
   // Both forms produce an exact pairing — no sibling-pairing or
   // majority-vote heuristic can do better — so we lock the result

@@ -34,7 +34,7 @@ function makeDocument(children: readonly FigDesignNode[]): FigDesignDocument {
 
 describe("documentToTree component properties", () => {
   it("writes domain component property definitions, refs, and assignments back to Kiwi fields", () => {
-    const node = makeNode("1:20", "COMPONENT", {
+    const node = makeNode("1:20", "SYMBOL", {
       componentPropertyDefs: [
         { id: "1:30" as FigNodeId, name: "Visible", type: "BOOL", initialValue: { boolValue: true } },
         { id: "1:31" as FigNodeId, name: "Icon", type: "INSTANCE_SWAP", initialValue: { referenceValue: "1:40" as FigNodeId } },

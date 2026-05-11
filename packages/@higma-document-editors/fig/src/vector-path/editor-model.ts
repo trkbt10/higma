@@ -467,7 +467,11 @@ function resolveEditableCornerRadius(node: FigDesignNode): number | readonly [nu
 }
 
 function isContainerNode(node: FigDesignNode | undefined): boolean {
-  return node?.type === "FRAME" || node?.type === "COMPONENT" || node?.type === "COMPONENT_SET" || node?.type === "SYMBOL";
+  // SYMBOL is the on-disk encoding of the Figma UI concept "Component"
+  // (the canonical schema has no COMPONENT or COMPONENT_SET NodeType;
+  // a "Variant Set" is a FRAME with variant metadata, covered by the
+  // FRAME case). See `docs/refactor/component-type-cleanup.md`.
+  return node?.type === "FRAME" || node?.type === "SYMBOL";
 }
 
 function isExplicitEditableVectorPathNode(node: FigDesignNode): boolean {

@@ -3,7 +3,9 @@
  *
  * INSTANCE nodes reference their SYMBOL via `symbolID`. When a variant is
  * switched, the original `symbolID` is kept but an `overriddenSymbolID`
- * is added pointing to the new variant's COMPONENT.
+ * is added pointing to the new variant's SYMBOL. (The canonical schema
+ * has no COMPONENT NodeType — variants are SYMBOL children of a
+ * Variant-Set FRAME. See `docs/refactor/component-type-cleanup.md`.)
  *
  * Both fields can be stored in two formats:
  *   - Real Figma exports: nested inside `symbolData` message
@@ -102,8 +104,8 @@ export function extractSymbolIDPair(
  *
  * `effectiveID = overriddenSymbolID ?? symbolID`
  *
- * This is the single canonical entry point for determining which SYMBOL
- * or COMPONENT an INSTANCE should resolve to.
+ * This is the single canonical entry point for determining which
+ * SYMBOL an INSTANCE should resolve to.
  */
 export function getEffectiveSymbolID(
   nodeData: SymbolIDSource,
