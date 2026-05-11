@@ -68,10 +68,27 @@ export type TextStyleRole =
   | "button"
   | "label";
 
+export type TypographyAlias = {
+  /** `descriptorKey()` of the absorbed entry. */
+  readonly key: string;
+  readonly descriptor: TypographyDescriptor;
+  readonly usageCount: number;
+  /** Names of TypographyDescriptor fields that differ from the primary. */
+  readonly differingFields: readonly (keyof TypographyDescriptor)[];
+};
+
 export type TypographyCluster = {
   readonly key: string;
   readonly descriptor: TypographyDescriptor;
   readonly usages: readonly TypographyUsage[];
+  /**
+   * Near-duplicate entries (same family / style / weight / size but
+   * differing in lineHeight or letterSpacing) absorbed into this
+   * cluster's surface so the agent sees them grouped. The clusters
+   * themselves stay distinct — the agent decides via
+   * `decisions.typography[key].merge` whether to redirect bind actions.
+   */
+  readonly aliases: readonly TypographyAlias[];
   /** Existing TEXT proxy whose properties match, if any. */
   readonly proxyGuid: string | undefined;
   readonly proxyName: string | undefined;
@@ -223,6 +240,78 @@ function buildProxyIndex(proxies: readonly FigNode[]): ReadonlyMap<string, FigNo
   return out;
 }
 
+type AliasLink = {
+  readonly primary: string;
+  readonly differingFields: readonly (keyof TypographyDescriptor)[];
+};
+
+type ClusterEntry = TypographyCluster & { usages: TypographyUsage[] };
+
+function findPrimaryFor(
+  candidate: ClusterEntry,
+  candidates: readonly ClusterEntry[],
+  upToIdx: number,
+  aliasOf: ReadonlyMap<string, AliasLink>,
+): AliasLink | undefined {
+  return candidates
+    .slice(0, upToIdx)
+    .filter((primary) => !aliasOf.has(primary.key))
+    .reduce<AliasLink | undefined>((found, primary) => {
+      if (found) {
+        return found;
+      }
+      const fields = diffDescriptors(primary.descriptor, candidate.descriptor);
+      if (fields.length === 0) {
+        return undefined;
+      }
+      return { primary: primary.key, differingFields: fields };
+    }, undefined);
+}
+
+function assignAliases(sorted: readonly ClusterEntry[]): ReadonlyMap<string, AliasLink> {
+  return sorted.reduce<Map<string, AliasLink>>((aliasOf, candidate, idx) => {
+    if (idx === 0) {
+      return aliasOf;
+    }
+    const link = findPrimaryFor(candidate, sorted, idx, aliasOf);
+    if (link) {
+      aliasOf.set(candidate.key, link);
+    }
+    return aliasOf;
+  }, new Map<string, AliasLink>());
+}
+
+/**
+ * Two descriptors are near-duplicate iff family + style + weight +
+ * size agree and at least one of lineHeight / letterSpacing differs.
+ * Returns the list of differing fields, empty when not a candidate.
+ */
+function diffDescriptors(
+  a: TypographyDescriptor,
+  b: TypographyDescriptor,
+): readonly (keyof TypographyDescriptor)[] {
+  if (a.fontFamily !== b.fontFamily) {
+    return [];
+  }
+  if (a.fontStyle !== b.fontStyle) {
+    return [];
+  }
+  if (a.fontWeight !== b.fontWeight) {
+    return [];
+  }
+  if (a.fontSize !== b.fontSize) {
+    return [];
+  }
+  const out: (keyof TypographyDescriptor)[] = [];
+  if (a.lineHeightKey !== b.lineHeightKey) {
+    out.push("lineHeightKey");
+  }
+  if (a.letterSpacingKey !== b.letterSpacingKey) {
+    out.push("letterSpacingKey");
+  }
+  return out;
+}
+
 /** Walk frames, cluster typography, and label each cluster with a role + slug. */
 export function analyseTypography(
   frames: readonly FigNode[],
@@ -234,8 +323,32 @@ export function analyseTypography(
   }
   const proxyIndex = buildProxyIndex(textProxies);
   const sorted = [...collected.values()].sort((a, b) => b.usages.length - a.usages.length);
+
+  // Alias assignment: walk in descending usage-count order. The most-
+  // used cluster of a family becomes the primary; later cousins (same
+  // family / style / weight / size, differing line-height or
+  // letter-spacing) attach to it as aliases. Distinct families / sizes
+  // never alias — `diffDescriptors` returns empty there. Alias chains
+  // are at most one level deep: a primary cannot itself be aliased to
+  // another primary.
+  const aliasOf = assignAliases(sorted);
+
   const roleCounts = new Map<TextStyleRole, number>();
   const clusters: TypographyCluster[] = [];
+  const aliasesByPrimary = new Map<string, TypographyAlias[]>();
+  for (const c of sorted) {
+    const link = aliasOf.get(c.key);
+    if (link) {
+      const arr = aliasesByPrimary.get(link.primary) ?? [];
+      arr.push({
+        key: c.key,
+        descriptor: c.descriptor,
+        usageCount: c.usages.length,
+        differingFields: link.differingFields,
+      });
+      aliasesByPrimary.set(link.primary, arr);
+    }
+  }
   for (const c of sorted) {
     const sample = c.usages.find((u) => u.characterCount >= 2)?.characters ?? c.usages[0]?.characters ?? "";
     const role = suggestRole(c.descriptor, sample);
@@ -248,6 +361,7 @@ export function analyseTypography(
       key: c.key,
       descriptor: c.descriptor,
       usages: c.usages,
+      aliases: aliasesByPrimary.get(c.key) ?? [],
       proxyGuid: proxy ? guidToString(proxy.guid) : undefined,
       proxyName: proxy?.name,
       suggestedRole: role,

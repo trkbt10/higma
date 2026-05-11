@@ -23,9 +23,14 @@ export function scaffoldDecisions(inventory: Inventory): Decisions {
   for (const t of inventory.typography) {
     typography[t.key] = { name: "" };
   }
+  const geometryClusters: Record<string, { readonly name: string }> = {};
+  for (const g of inventory.geometryClusters) {
+    geometryClusters[g.clusterId] = { name: "" };
+  }
   return {
     clusters,
     palette,
     typography,
+    geometryClusters,
   };
 }

@@ -11,11 +11,15 @@ export { buildPlan } from "./build";
 export type {
   RefinePlan,
   PlanAction,
+  ActionEnsureInternalCanvas,
   ActionRename,
   ActionCreateFillProxy,
   ActionCreateTextProxy,
   ActionBindFillStyle,
   ActionBindTextStyle,
   ActionPromoteIconCluster,
+  ActionPromoteVectorCluster,
+  ActionGroupAsVariantSet,
+  ActionSetLayout,
   ProxyRef,
 } from "./types";

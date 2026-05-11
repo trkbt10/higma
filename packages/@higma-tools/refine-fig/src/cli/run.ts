@@ -98,7 +98,9 @@ async function commandInventory(args: ParsedArgs): Promise<void> {
   // Keep saveFigFile import alive — needed by future apply work.
   void saveFigFile;
   process.stdout.write(
-    `refine-fig inventory: palette=${inventory.palette.length} typography=${inventory.typography.length} clusters=${inventory.subtreeClusters.length}\n`,
+    `refine-fig inventory: palette=${inventory.palette.length} typography=${inventory.typography.length}`
+    + ` clusters=${inventory.subtreeClusters.length} geometryClusters=${inventory.geometryClusters.length}`
+    + ` layoutHints=${inventory.layoutHints.length}\n`,
   );
 }
 
@@ -124,7 +126,9 @@ async function readInventoryFromDisk(outDir: string): Promise<Inventory> {
     palette: inventory.palette,
     typography: inventory.typography,
     subtreeClusters: inventory.subtreeClusters,
+    geometryClusters: inventory.geometryClusters ?? [],
     unrenderable: inventory.unrenderable,
+    layoutHints: inventory.layoutHints ?? [],
   };
 }
 
@@ -156,7 +160,10 @@ async function commandScaffold(args: ParsedArgs): Promise<void> {
   const decisions = scaffoldDecisions(inventory);
   await writeFile(resolve(outFile), JSON.stringify(decisions, null, 2));
   process.stdout.write(
-    `refine-fig scaffold: clusters=${Object.keys(decisions.clusters).length} palette=${Object.keys(decisions.palette).length} typography=${Object.keys(decisions.typography).length}\n`,
+    `refine-fig scaffold: clusters=${Object.keys(decisions.clusters).length}`
+    + ` palette=${Object.keys(decisions.palette).length}`
+    + ` typography=${Object.keys(decisions.typography).length}`
+    + ` geometryClusters=${Object.keys(decisions.geometryClusters ?? {}).length}\n`,
   );
 }
 
@@ -205,23 +212,33 @@ async function commandApply(args: ParsedArgs): Promise<void> {
   await mkdir(dirname(resolve(outFig)), { recursive: true });
   await writeFile(resolve(outFig), out);
   process.stdout.write(
-    `refine-fig apply: createdFillProxies=${result.fillProxiesCreated}`
+    `refine-fig apply:`
+    + (result.internalCanvasCreated ? ` createdInternalCanvas=1` : ``)
+    + ` createdFillProxies=${result.fillProxiesCreated}`
     + ` createdTextProxies=${result.textProxiesCreated}`
     + ` boundFill=${result.fillBound}`
     + ` boundText=${result.textBound}`
     + ` clustersPromoted=${result.clustersPromoted}`
     + ` instancesRewritten=${result.instancesRewritten}`
+    + ` vectorClustersPromoted=${result.vectorClustersPromoted}`
+    + ` vectorInstancesRewritten=${result.vectorInstancesRewritten}`
+    + ` variantSetsCreated=${result.variantSetsCreated}`
+    + ` layoutsApplied=${result.layoutsApplied}`
     + ` renamed=${result.renamed}`
     + ` skipped=${result.skipped.length}\n`,
   );
 }
 
-function applyContextFromSource(source: Awaited<ReturnType<typeof loadRefineSource>>): { internalCanvasGuid: string; fillTemplateGuid: string | undefined; textTemplateGuid: string | undefined } {
-  if (!source.internalCanvas) {
-    throw new Error("refine-fig apply: source has no Internal Only Canvas; new proxies cannot be inserted");
-  }
+function applyContextFromSource(
+  source: Awaited<ReturnType<typeof loadRefineSource>>,
+): { internalCanvasGuid: string | undefined; fillTemplateGuid: string | undefined; textTemplateGuid: string | undefined } {
+  // No internal canvas? Leave it undefined — the plan's
+  // ensure-internal-canvas action (when present) will create one and
+  // the apply layer threads the new guid into every create-*-proxy.
+  // If the plan needs proxies but failed to emit the ensure action,
+  // apply records that as a skipped action with a clear reason.
   return {
-    internalCanvasGuid: guidToString(source.internalCanvas.guid),
+    internalCanvasGuid: source.internalCanvas ? guidToString(source.internalCanvas.guid) : undefined,
     fillTemplateGuid: source.fillStyleProxies[0] ? guidToString(source.fillStyleProxies[0].guid) : undefined,
     textTemplateGuid: source.textStyleProxies[0] ? guidToString(source.textStyleProxies[0].guid) : undefined,
   };

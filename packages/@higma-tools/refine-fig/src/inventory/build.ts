@@ -24,6 +24,8 @@ import type { RefineSource } from "../refine-source/load";
 import { analysePalette, bindablePaintsFor } from "../analysis/palette";
 import { analyseTypography } from "../analysis/text-styles";
 import { detectDuplicates } from "../analysis/duplicate-clusters";
+import { detectGeometryClusters } from "../analysis/geometry-clusters";
+import { inferLayouts } from "../analysis/layout-inference";
 import { createNodeRenderer } from "../visual";
 import type {
   Inventory,
@@ -32,6 +34,8 @@ import type {
   TypographyEntry,
   SubtreeClusterEntry,
   SubtreeMemberRecord,
+  LayoutHintRecord,
+  GeometryClusterEntry,
 } from "./types";
 
 export type BuildInventoryOptions = {
@@ -48,8 +52,10 @@ export async function buildInventory(
 ): Promise<Inventory> {
   const palette = collectPalette(source);
   const typography = collectTypography(source);
+  const layoutHints = collectLayoutHints(source);
+  const geometryClusters = collectGeometryClusters(source);
   if (options.skipClusters) {
-    return { palette, typography, subtreeClusters: [], unrenderable: [] };
+    return { palette, typography, subtreeClusters: [], geometryClusters, unrenderable: [], layoutHints };
   }
   // `RefineSource` extends `FigSymbolContext`, so we can pass the
   // source itself — no need to pluck out individual fields.
@@ -73,12 +79,45 @@ export async function buildInventory(
     palette,
     typography,
     subtreeClusters,
+    geometryClusters,
     unrenderable: dup.unrenderable.map((u) => ({
       nodeGuid: u.nodeGuid,
       nodeName: u.nodeName,
       reason: u.reason,
     })),
+    layoutHints,
   };
+}
+
+function collectGeometryClusters(source: RefineSource): readonly GeometryClusterEntry[] {
+  const analysis = detectGeometryClusters(source.loaded, source.userCanvases);
+  return analysis.clusters.map((c) => ({
+    clusterId: c.clusterId,
+    width: c.width,
+    height: c.height,
+    members: c.members.map((m) => ({
+      nodeGuid: m.nodeGuid,
+      nodeName: m.nodeName,
+      parentGuid: m.parentGuid,
+    })),
+  }));
+}
+
+function collectLayoutHints(source: RefineSource): readonly LayoutHintRecord[] {
+  // Walk the visible user canvases for FRAMEs whose children form a
+  // uniform single-axis stack. The cluster analyser already excludes
+  // the Internal Only Canvas; auto-layout has the same scope.
+  return inferLayouts(source.userCanvases).map((h) => ({
+    nodeGuid: h.nodeGuid,
+    layoutMode: h.layoutMode,
+    itemSpacing: h.itemSpacing,
+    paddingTop: h.paddingTop,
+    paddingRight: h.paddingRight,
+    paddingBottom: h.paddingBottom,
+    paddingLeft: h.paddingLeft,
+    counterAxisAlign: h.counterAxisAlign,
+    childCount: h.childCount,
+  }));
 }
 
 function collectPalette(source: RefineSource): readonly PaletteEntry[] {
@@ -101,6 +140,12 @@ function collectPalette(source: RefineSource): readonly PaletteEntry[] {
       hex: entry.hex,
       color: entry.color,
       usages,
+      aliases: entry.aliases.map((a) => ({
+        key: a.key,
+        color: a.color,
+        hex: a.hex,
+        usageCount: a.usageCount,
+      })),
       existingProxyGuid: entry.proxyGuid,
       existingProxyName: entry.proxyName,
     };
@@ -124,6 +169,19 @@ function collectTypography(source: RefineSource): readonly TypographyEntry[] {
       nodeName: u.nodeName,
       characters: u.characters,
       characterCount: u.characterCount,
+    })),
+    aliases: c.aliases.map((a) => ({
+      key: a.key,
+      descriptor: {
+        fontFamily: a.descriptor.fontFamily,
+        fontStyle: a.descriptor.fontStyle,
+        fontWeight: a.descriptor.fontWeight,
+        fontSize: a.descriptor.fontSize,
+        lineHeightKey: a.descriptor.lineHeightKey,
+        letterSpacingKey: a.descriptor.letterSpacingKey,
+      },
+      usageCount: a.usageCount,
+      differingFields: a.differingFields.map(String),
     })),
     existingProxyGuid: c.proxyGuid,
     existingProxyName: c.proxyName,
