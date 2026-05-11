@@ -318,6 +318,13 @@ export function cloneSymbolChildren(symbolNode: FigNode, options?: CloneSymbolCh
  * Sources (merged in order):
  * 1. INSTANCE node's own `componentPropAssignments`
  * 2. `componentPropAssignments` found inside `symbolOverrides` entries
+ *
+ * Scope: `componentPropAssignments` only override *non-VARIANT*
+ * propDefs (TEXT, BOOL, COLOR, INSTANCE_SWAP, NUMBER, IMAGE, SLOT).
+ * Variant switching does NOT flow through this collector — it
+ * rewrites `symbolData.symbolID` to a sibling variant SYMBOL's GUID
+ * directly. See `docs/refactor/component-type-cleanup.md`
+ * (INSTANCE referencing a variant).
  */
 export function collectComponentPropAssignments(
   instanceData: FigNode,

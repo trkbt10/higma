@@ -199,8 +199,14 @@ function _createFigFileBuilder() {
   }
 
   /**
-   * Add an Internal Only Canvas (required for Figma compatibility)
-   * This is a hidden canvas that Figma uses internally.
+   * Add an Internal Only Canvas (required for Figma compatibility).
+   *
+   * Real Figma exports hide this canvas with **both** `visible: false`
+   * and `internalOnly: true`. Setting only `visible: false` leaves the
+   * canvas in the Pages list (only `internalOnly: true` is the SoT
+   * flag that hides it from the Pages UI), and setting only
+   * `internalOnly: true` may render its contents during import. See
+   * `docs/refactor/component-type-cleanup.md` (Hidden CANVAS section).
    */
   function addInternalCanvas(parentID: number): number {
     const localID = getNextID();
@@ -290,7 +296,17 @@ function _createFigFileBuilder() {
     node.strokeWeight = data.strokeWeight ?? 1;
     node.strokeAlign = { value: 1, name: "INSIDE" };
     node.strokeJoin = { value: 0, name: "MITER" };
-    node.frameMaskDisabled = false;
+    // `frameMaskDisabled` is the Kiwi-schema inverse of `clipsContent`.
+    // `createNodeChange` above already mapped any caller-provided
+    // `clipsContent` to `frameMaskDisabled`; only apply the Figma
+    // default (clip on) when the caller didn't express a preference.
+    // The previous unconditional write here silently re-clipped every
+    // frame, including ones the caller explicitly asked to keep
+    // un-clipped (CSS `overflow: visible` round-tripping into a fig
+    // FRAME).
+    if (data.clipsContent === undefined) {
+      node.frameMaskDisabled = false;
+    }
     // Add fill geometry (required for rendering)
     node.fillGeometry = [{
       windingRule: { value: 0, name: "NONZERO" },
