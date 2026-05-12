@@ -18,7 +18,13 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { loadFigFile, saveFigFile, createGuidAllocator } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/domain";
+import type {
+  FigFillGeometry,
+  FigNode,
+  FigPaint,
+  FigVectorData,
+  MutableFigNode,
+} from "@higma-document-models/fig/types";
 
 const SOURCE = "<DOWNLOADS>/Simple Design System (Community).fig";
 const OUT = "docs/refactor/disk-sot-verification/artifacts/F-real-subset.fig";
@@ -30,41 +36,60 @@ function guidStr(g: Guid | undefined): string {
   return g ? `${g.sessionID}:${g.localID}` : "<none>";
 }
 
-function stripColorVar(paint: Record<string, unknown>): Record<string, unknown> {
-  const { colorVar: _drop, ...rest } = paint;
-  return rest;
+/**
+ * Real .fig files attach a `colorVar` slot to paints whose colour
+ * resolves from a Figma variable. The slot is non-canonical (not part
+ * of the FigPaint contract) and references variables that live in
+ * other files, so we drop it before re-serialising.
+ */
+function stripColorVar(paint: FigPaint): FigPaint {
+  // Iterate the paint's own entries and drop the foreign-asset slot.
+  // FigPaint is a discriminated union so we can't construct a literal
+  // by spreading — recover the union shape from the input fields.
+  const entries = Object.entries(paint).filter(([k]) => k !== "colorVar");
+  return Object.fromEntries(entries) as FigPaint;
 }
 
+/**
+ * Fields excluded by `stripExternalRefs`. These are authoring-time
+ * metadata that reference state in other files (libraries, edit
+ * history, version stream) — keeping them would dangle once the host
+ * file is rebuilt without those external sources.
+ */
+const EXTERNAL_REF_FIELDS = new Set<string>([
+  "ancestorPathBeforeDeletion",
+  "variableConsumptionMap",
+  "parameterConsumptionMap",
+  "publishedVersion",
+  "version",
+  "userFacingVersion",
+  "editInfo",
+]);
+
 function stripExternalRefs(node: FigNode): FigNode {
-  const rec = node as Record<string, unknown>;
-  const clean: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(rec)) {
-    if (
-      k === "ancestorPathBeforeDeletion" ||
-      k === "variableConsumptionMap" ||
-      k === "parameterConsumptionMap" ||
-      k === "publishedVersion" ||
-      k === "version" ||
-      k === "userFacingVersion" ||
-      k === "editInfo"
-    ) {
+  // FigNode carries `[key: string]: unknown` for fields we don't model
+  // explicitly. We iterate everything, drop the external-ref slots,
+  // and route paint arrays through `stripColorVar`. The result still
+  // carries the required `guid`/`phase`/`type` so the FigNode shape is
+  // preserved.
+  const entries: [string, unknown][] = [];
+  for (const [k, v] of Object.entries(node)) {
+    if (EXTERNAL_REF_FIELDS.has(k)) {
       continue;
     }
-    clean[k] = v;
+    if (k === "fillPaints" || k === "strokePaints" || k === "backgroundPaints") {
+      const arr = v as readonly FigPaint[] | undefined;
+      entries.push([k, arr ? arr.map(stripColorVar) : arr]);
+      continue;
+    }
+    entries.push([k, v]);
   }
-  const fp = clean.fillPaints as Array<Record<string, unknown>> | undefined;
-  if (fp) {
-    clean.fillPaints = fp.map(stripColorVar);
-  }
-  const sp = clean.strokePaints as Array<Record<string, unknown>> | undefined;
-  if (sp) {
-    clean.strokePaints = sp.map(stripColorVar);
-  }
-  const bp = clean.backgroundPaints as Array<Record<string, unknown>> | undefined;
-  if (bp) {
-    clean.backgroundPaints = bp.map(stripColorVar);
-  }
-  return clean as unknown as FigNode;
+  // Object.fromEntries widens the value to `unknown`, but the resulting
+  // record still carries every FigNode field we copied from the input
+  // — including the required `guid`/`phase`/`type`. We assert the
+  // FigNode shape on the way out (the structural guarantees come from
+  // the source node, not the asserted type).
+  return Object.fromEntries(entries) as FigNode;
 }
 
 async function main(): Promise<void> {
@@ -130,7 +155,7 @@ async function main(): Promise<void> {
   const hiddenCanvas: FigNode = {
     ...stripExternalRefs(sourceHiddenCanvas),
     parentIndex: { guid: document.guid, position: "~" }, // sort it last among canvases
-  } as FigNode;
+  };
 
   // Build a brand-new visible canvas with a fresh guid.
   const alloc = createGuidAllocator(loaded);
@@ -142,7 +167,7 @@ async function main(): Promise<void> {
     name: "Workspace",
     parentIndex: { guid: document.guid, position: "!" },
     visible: true,
-  } as unknown as FigNode;
+  };
 
   // ---- Variant set subtree: keep parent pointing at hiddenCanvas (its real home). ----
   const cleanedSubtree: FigNode[] = subtree.map((n, idx) => {
@@ -162,8 +187,8 @@ async function main(): Promise<void> {
   if (!lightSymbol?.guid) {
     throw new Error("Shape=Light not found");
   }
-  const rootSize = (cleanedSubtree[0] as Record<string, unknown>).size as { x: number; y: number } | undefined;
-  const lightSize = (lightSymbol as Record<string, unknown>).size as { x: number; y: number } | undefined;
+  const rootSize = cleanedSubtree[0]?.size;
+  const lightSize = lightSymbol.size;
   const demoSize = lightSize ?? rootSize ?? { x: 24, y: 24 };
   const demoInstanceGuid = alloc.next();
   const demoInstance: FigNode = {
@@ -184,7 +209,7 @@ async function main(): Promise<void> {
       ],
       uniformScaleFactor: 1,
     },
-  } as unknown as FigNode;
+  };
 
   const nodeChanges: FigNode[] = [
     document,
@@ -202,29 +227,22 @@ async function main(): Promise<void> {
   // actually references, build a compact blobs array, and rewrite the
   // indices in-place.
   const usedBlobIndices = new Set<number>();
-  const collectIdx = (geom: Array<Record<string, unknown>> | undefined) => {
+  const collectIdx = (geom: readonly FigFillGeometry[] | undefined): void => {
     if (!geom) {
       return;
     }
     for (const g of geom) {
-      const idx = g.commandsBlob;
-      if (typeof idx === "number") {
-        usedBlobIndices.add(idx);
+      if (typeof g.commandsBlob === "number") {
+        usedBlobIndices.add(g.commandsBlob);
       }
     }
   };
   for (const n of nodeChanges) {
-    const r = n as Record<string, unknown>;
-    collectIdx(r.fillGeometry as Array<Record<string, unknown>> | undefined);
-    collectIdx(r.strokeGeometry as Array<Record<string, unknown>> | undefined);
-    // vectorData.network also references blobs (segments stream)
-    const vd = r.vectorData as Record<string, unknown> | undefined;
-    if (vd) {
-      // vectorData may contain `vectorNetworkBlob` index
-      const vnb = vd.vectorNetworkBlob;
-      if (typeof vnb === "number") {
-        usedBlobIndices.add(vnb);
-      }
+    collectIdx(n.fillGeometry);
+    collectIdx(n.strokeGeometry);
+    // vectorData.vectorNetworkBlob is a separate index into the blob stream.
+    if (n.vectorData && typeof n.vectorData.vectorNetworkBlob === "number") {
+      usedBlobIndices.add(n.vectorData.vectorNetworkBlob);
     }
   }
   const oldToNew = new Map<number, number>();
@@ -238,39 +256,40 @@ async function main(): Promise<void> {
     compactBlobs.push(b);
   }
   // Rewrite commandsBlob / vectorNetworkBlob indices.
-  const remapIdx = (geom: Array<Record<string, unknown>> | undefined) => {
+  const remapIdx = (
+    geom: readonly FigFillGeometry[] | undefined,
+  ): readonly FigFillGeometry[] | undefined => {
     if (!geom) {
       return geom;
     }
     return geom.map((g) => {
-      const oldIdx = g.commandsBlob;
-      if (typeof oldIdx === "number") {
-        const newIdx = oldToNew.get(oldIdx);
-        if (newIdx === undefined) {
-          throw new Error(`unmapped commandsBlob index ${oldIdx}`);
-        }
-        return { ...g, commandsBlob: newIdx };
+      if (typeof g.commandsBlob !== "number") {
+        return g;
       }
-      return g;
+      const newIdx = oldToNew.get(g.commandsBlob);
+      if (newIdx === undefined) {
+        throw new Error(`unmapped commandsBlob index ${g.commandsBlob}`);
+      }
+      return { ...g, commandsBlob: newIdx };
     });
   };
   const remappedNodes: FigNode[] = nodeChanges.map((n) => {
-    const r = n as Record<string, unknown>;
-    const out: Record<string, unknown> = { ...r };
-    if (r.fillGeometry) {
-      out.fillGeometry = remapIdx(r.fillGeometry as Array<Record<string, unknown>>);
+    const out: MutableFigNode = { ...n };
+    if (n.fillGeometry) {
+      out.fillGeometry = remapIdx(n.fillGeometry);
     }
-    if (r.strokeGeometry) {
-      out.strokeGeometry = remapIdx(r.strokeGeometry as Array<Record<string, unknown>>);
+    if (n.strokeGeometry) {
+      out.strokeGeometry = remapIdx(n.strokeGeometry);
     }
-    const vd = r.vectorData as Record<string, unknown> | undefined;
+    const vd = n.vectorData;
     if (vd && typeof vd.vectorNetworkBlob === "number") {
-      const newIdx = oldToNew.get(vd.vectorNetworkBlob as number);
+      const newIdx = oldToNew.get(vd.vectorNetworkBlob);
       if (newIdx !== undefined) {
-        out.vectorData = { ...vd, vectorNetworkBlob: newIdx };
+        const nextVd: FigVectorData = { ...vd, vectorNetworkBlob: newIdx };
+        out.vectorData = nextVd;
       }
     }
-    return out as unknown as FigNode;
+    return out;
   });
 
   console.log(`  used blob indices: ${[...usedBlobIndices].sort((a, b) => a - b).join(", ")}`);

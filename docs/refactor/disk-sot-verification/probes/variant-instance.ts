@@ -18,9 +18,6 @@ type Guid = { readonly sessionID: number; readonly localID: number };
 function guidStr(g: Guid | undefined): string {
   return g ? `${g.sessionID}:${g.localID}` : "<none>";
 }
-function guidEq(a: Guid | undefined, b: Guid | undefined): boolean {
-  return !!a && !!b && a.sessionID === b.sessionID && a.localID === b.localID;
-}
 
 const VARIANT_CHILD_GUIDS = ["48:15675", "48:15681"]; // State=Open / State=Closed
 

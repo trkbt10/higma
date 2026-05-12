@@ -21,7 +21,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { loadFigFile, saveFigFile, createGuidAllocator } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 
 const SOURCE = "packages/@higma-document-renderers/fig/fixtures/components/components.fig";
 const OUT = "docs/refactor/disk-sot-verification/artifacts/C-with-propdefs.fig";
@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     stateGroupPropertyValueOrders: [
       { property: "Variant", values: ["Solid", "Outline"] },
     ],
-  } as unknown as FigNode;
+  };
 
   // Rewrite the existing Button SYMBOL to be the "Solid" variant.
   const rewritten: FigNode[] = loaded.nodeChanges.map((n) => {
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
     name: "Variant=Outline",
     parentIndex: { guid: newFrameGuid, position: variantOutlinePosition },
     variantPropSpecs: [{ propDefId: propDefGuid, value: "Outline" }],
-  } as unknown as FigNode;
+  };
 
   rewritten.push(newFrame, clonedButton, ...clonedChildren);
 

@@ -28,13 +28,6 @@ function guidStr(g: Guid | undefined): string {
   return `${g.sessionID}:${g.localID}`;
 }
 
-function guidEq(a: Guid | undefined, b: Guid | undefined): boolean {
-  if (!a || !b) {
-    return false;
-  }
-  return a.sessionID === b.sessionID && a.localID === b.localID;
-}
-
 async function main(): Promise<void> {
   const bytes = await readFile(PATH);
   const loaded = await loadFigFile(new Uint8Array(bytes));
@@ -149,16 +142,15 @@ async function main(): Promise<void> {
     if (named.length < 2) {
       continue;
     }
-    const parentPropDefs = (parent as Record<string, unknown>).componentPropDefs as unknown[] | undefined;
-    const kidsWithSpecs = symbolKids.filter((k) => {
-      const specs = (k as Record<string, unknown>).variantPropSpecs as unknown[] | undefined;
-      return specs && specs.length > 0;
-    });
+    const parentPropDefs = parent.componentPropDefs;
+    const kidsWithSpecs = symbolKids.filter(
+      (k) => k.variantPropSpecs !== undefined && k.variantPropSpecs.length > 0,
+    );
     variantParents.push({
       parent,
       symbolChildren: symbolKids,
       namedAsVariant: named,
-      parentHasPropDefs: !!(parentPropDefs && parentPropDefs.length > 0),
+      parentHasPropDefs: parentPropDefs !== undefined && parentPropDefs.length > 0,
       childrenWithVariantPropSpecs: kidsWithSpecs.length,
     });
   }
@@ -172,8 +164,7 @@ async function main(): Promise<void> {
       `      symbol-children=${v.symbolChildren.length}  named-as-variant=${v.namedAsVariant.length}  parent.componentPropDefs?=${v.parentHasPropDefs}  childrenWithVariantPropSpecs=${v.childrenWithVariantPropSpecs}`,
     );
     for (const c of v.symbolChildren.slice(0, 3)) {
-      const specs = (c as Record<string, unknown>).variantPropSpecs as unknown[] | undefined;
-      console.log(`        SYMBOL  name=${JSON.stringify(c.name ?? "")}  variantPropSpecs=${specs?.length ?? 0}`);
+      console.log(`        SYMBOL  name=${JSON.stringify(c.name ?? "")}  variantPropSpecs=${c.variantPropSpecs?.length ?? 0}`);
     }
     if (v.symbolChildren.length > 3) {
       console.log(`        ... ${v.symbolChildren.length - 3} more`);
@@ -186,8 +177,7 @@ async function main(): Promise<void> {
     if (n.type?.name !== "FRAME") {
       continue;
     }
-    const defs = (n as Record<string, unknown>).componentPropDefs as unknown[] | undefined;
-    if (defs && defs.length > 0) {
+    if (n.componentPropDefs !== undefined && n.componentPropDefs.length > 0) {
       frameWithPropDefs += 1;
     }
   }
@@ -201,8 +191,7 @@ async function main(): Promise<void> {
     if (n.type?.name !== "SYMBOL") {
       continue;
     }
-    const specs = (n as Record<string, unknown>).variantPropSpecs as unknown[] | undefined;
-    if (!(specs && specs.length > 0)) {
+    if (n.variantPropSpecs === undefined || n.variantPropSpecs.length === 0) {
       continue;
     }
     symbolWithVariantSpecs += 1;
@@ -227,8 +216,7 @@ async function main(): Promise<void> {
       parentMissingDefs += 1;
     }
     for (const c of v.symbolChildren) {
-      const specs = (c as Record<string, unknown>).variantPropSpecs as unknown[] | undefined;
-      if (!(specs && specs.length > 0)) {
+      if (c.variantPropSpecs === undefined || c.variantPropSpecs.length === 0) {
         kidMissingSpecs += 1;
       }
     }
@@ -243,8 +231,7 @@ async function main(): Promise<void> {
     if (n.type?.name !== "FRAME") {
       continue;
     }
-    const defs = (n as Record<string, unknown>).componentPropDefs as unknown[] | undefined;
-    if (!(defs && defs.length > 0)) {
+    if (n.componentPropDefs === undefined || n.componentPropDefs.length === 0) {
       continue;
     }
     const isVariantShaped = variantParentSet.has(guidStr(n.guid));

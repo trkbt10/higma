@@ -12,7 +12,13 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { loadFigFile, saveFigFile, createGuidAllocator } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/domain";
+import type {
+  FigFillGeometry,
+  FigNode,
+  FigPaint,
+  FigVectorData,
+  MutableFigNode,
+} from "@higma-document-models/fig/types";
 
 const HOST_PATH = "packages/@higma-document-renderers/fig/fixtures/components/components.fig";
 const DONOR_PATH = "<DOWNLOADS>/Simple Design System (Community).fig";
@@ -24,35 +30,47 @@ function guidStr(g: Guid | undefined): string {
   return g ? `${g.sessionID}:${g.localID}` : "<none>";
 }
 
-function stripColorVar(paint: Record<string, unknown>): Record<string, unknown> {
-  const { colorVar: _drop, ...rest } = paint;
-  return rest;
+/**
+ * Real .fig files attach a `colorVar` slot to paints whose colour
+ * resolves from a Figma variable. The slot is non-canonical (not part
+ * of the FigPaint contract) and references variables in other files,
+ * so we drop it before re-serialising.
+ */
+function stripColorVar(paint: FigPaint): FigPaint {
+  const entries = Object.entries(paint).filter(([k]) => k !== "colorVar");
+  return Object.fromEntries(entries) as FigPaint;
 }
 
+/**
+ * Fields excluded by `stripExternalRefs`: authoring-time metadata that
+ * references state in other files (libraries, edit history, version
+ * stream). Keeping them would dangle once the host file is rebuilt
+ * without those external sources.
+ */
+const EXTERNAL_REF_FIELDS = new Set<string>([
+  "ancestorPathBeforeDeletion",
+  "variableConsumptionMap",
+  "parameterConsumptionMap",
+  "publishedVersion",
+  "version",
+  "userFacingVersion",
+  "editInfo",
+]);
+
 function stripExternalRefs(node: FigNode): FigNode {
-  const rec = node as Record<string, unknown>;
-  const clean: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(rec)) {
-    if (
-      k === "ancestorPathBeforeDeletion" ||
-      k === "variableConsumptionMap" ||
-      k === "parameterConsumptionMap" ||
-      k === "publishedVersion" ||
-      k === "version" ||
-      k === "userFacingVersion" ||
-      k === "editInfo"
-    ) {
+  const entries: [string, unknown][] = [];
+  for (const [k, v] of Object.entries(node)) {
+    if (EXTERNAL_REF_FIELDS.has(k)) {
       continue;
     }
-    clean[k] = v;
-  }
-  for (const arrKey of ["fillPaints", "strokePaints", "backgroundPaints"]) {
-    const arr = clean[arrKey] as Array<Record<string, unknown>> | undefined;
-    if (arr) {
-      clean[arrKey] = arr.map(stripColorVar);
+    if (k === "fillPaints" || k === "strokePaints" || k === "backgroundPaints") {
+      const arr = v as readonly FigPaint[] | undefined;
+      entries.push([k, arr ? arr.map(stripColorVar) : arr]);
+      continue;
     }
+    entries.push([k, v]);
   }
-  return clean as unknown as FigNode;
+  return Object.fromEntries(entries) as FigNode;
 }
 
 async function main(): Promise<void> {
@@ -110,28 +128,25 @@ async function main(): Promise<void> {
     name: "Internal Only Canvas",
     parentIndex: { guid: document.guid, position: "~" },
     visible: false,
-  } as unknown as FigNode;
+  };
 
   // --- blob remap ---
   const usedDonorIdx = new Set<number>();
-  const collectIdx = (geom: Array<Record<string, unknown>> | undefined) => {
+  const collectIdx = (geom: readonly FigFillGeometry[] | undefined): void => {
     if (!geom) {
       return;
     }
     for (const g of geom) {
-      const idx = g.commandsBlob;
-      if (typeof idx === "number") {
-        usedDonorIdx.add(idx);
+      if (typeof g.commandsBlob === "number") {
+        usedDonorIdx.add(g.commandsBlob);
       }
     }
   };
   for (const n of subtree) {
-    const r = n as Record<string, unknown>;
-    collectIdx(r.fillGeometry as Array<Record<string, unknown>> | undefined);
-    collectIdx(r.strokeGeometry as Array<Record<string, unknown>> | undefined);
-    const vd = r.vectorData as Record<string, unknown> | undefined;
-    if (vd && typeof vd.vectorNetworkBlob === "number") {
-      usedDonorIdx.add(vd.vectorNetworkBlob);
+    collectIdx(n.fillGeometry);
+    collectIdx(n.strokeGeometry);
+    if (n.vectorData && typeof n.vectorData.vectorNetworkBlob === "number") {
+      usedDonorIdx.add(n.vectorData.vectorNetworkBlob);
     }
   }
   const hostBlobs = [...host.blobs];
@@ -144,18 +159,19 @@ async function main(): Promise<void> {
     donorToHostIdx.set(idx, hostBlobs.length);
     hostBlobs.push(b);
   }
-  const remapGeom = (geom: Array<Record<string, unknown>> | undefined) => {
+  const remapGeom = (
+    geom: readonly FigFillGeometry[] | undefined,
+  ): readonly FigFillGeometry[] | undefined => {
     if (!geom) {
       return geom;
     }
     return geom.map((g) => {
-      const old = g.commandsBlob;
-      if (typeof old !== "number") {
+      if (typeof g.commandsBlob !== "number") {
         return g;
       }
-      const next = donorToHostIdx.get(old);
+      const next = donorToHostIdx.get(g.commandsBlob);
       if (next === undefined) {
-        throw new Error(`unmapped commandsBlob ${old}`);
+        throw new Error(`unmapped commandsBlob ${g.commandsBlob}`);
       }
       return { ...g, commandsBlob: next };
     });
@@ -164,25 +180,25 @@ async function main(): Promise<void> {
   // --- rewrite subtree ---
   const cleanedSubtree: FigNode[] = subtree.map((n, idx) => {
     const stripped = stripExternalRefs(n);
-    const r = stripped as Record<string, unknown>;
-    const out: Record<string, unknown> = { ...r };
-    if (r.fillGeometry) {
-      out.fillGeometry = remapGeom(r.fillGeometry as Array<Record<string, unknown>>);
+    const out: MutableFigNode = { ...stripped };
+    if (stripped.fillGeometry) {
+      out.fillGeometry = remapGeom(stripped.fillGeometry);
     }
-    if (r.strokeGeometry) {
-      out.strokeGeometry = remapGeom(r.strokeGeometry as Array<Record<string, unknown>>);
+    if (stripped.strokeGeometry) {
+      out.strokeGeometry = remapGeom(stripped.strokeGeometry);
     }
-    const vd = r.vectorData as Record<string, unknown> | undefined;
+    const vd = stripped.vectorData;
     if (vd && typeof vd.vectorNetworkBlob === "number") {
-      const next = donorToHostIdx.get(vd.vectorNetworkBlob as number);
+      const next = donorToHostIdx.get(vd.vectorNetworkBlob);
       if (next !== undefined) {
-        out.vectorData = { ...vd, vectorNetworkBlob: next };
+        const nextVd: FigVectorData = { ...vd, vectorNetworkBlob: next };
+        out.vectorData = nextVd;
       }
     }
     if (idx === 0) {
       out.parentIndex = { guid: hiddenCanvasGuid, position: "!" };
     }
-    return out as unknown as FigNode;
+    return out;
   });
 
   // --- demo INSTANCE pointing at Shape=Light ---
@@ -192,8 +208,7 @@ async function main(): Promise<void> {
   if (!lightSymbol?.guid) {
     throw new Error("Shape=Light not found");
   }
-  const lightSize = (lightSymbol as Record<string, unknown>).size as { x: number; y: number } | undefined;
-  const demoSize = lightSize ?? { x: 24, y: 24 };
+  const demoSize = lightSymbol.size ?? { x: 24, y: 24 };
   const demoInstance: FigNode = {
     guid: demoInstanceGuid,
     phase: { value: 0, name: "CREATED" },
@@ -212,7 +227,7 @@ async function main(): Promise<void> {
       ],
       uniformScaleFactor: 1,
     },
-  } as unknown as FigNode;
+  };
 
   // host nodeChanges (DOCUMENT, visible CANVAS) + the rest as-is so the existing
   // Button/Card/Icon stay on the canvas (proven safe by G1), plus our additions.

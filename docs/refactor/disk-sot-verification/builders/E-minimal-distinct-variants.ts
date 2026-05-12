@@ -21,7 +21,8 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { loadFigFile, saveFigFile, createGuidAllocator } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/domain";
+import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import type { TextData } from "@higma-document-models/fig/domain";
 
 const SOURCE = "packages/@higma-document-renderers/fig/fixtures/components/components.fig";
 const OUT = "docs/refactor/disk-sot-verification/artifacts/E-minimal-distinct-variants.fig";
@@ -32,10 +33,10 @@ function guidStr(g: Guid | undefined): string {
   return g ? `${g.sessionID}:${g.localID}` : "<none>";
 }
 
-const BLUE = { r: 0.13, g: 0.36, b: 0.96, a: 1 };
-const WHITE = { r: 1, g: 1, b: 1, a: 1 };
+const BLUE: FigColor = { r: 0.13, g: 0.36, b: 0.96, a: 1 };
+const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
 
-function solidFill(color: { r: number; g: number; b: number; a: number }): unknown {
+function solidFill(color: FigColor): FigPaint {
   return {
     type: "SOLID",
     color,
@@ -45,7 +46,7 @@ function solidFill(color: { r: number; g: number; b: number; a: number }): unkno
   };
 }
 
-function solidStroke(color: { r: number; g: number; b: number; a: number }): unknown {
+function solidStroke(color: FigColor): FigPaint {
   return {
     type: "SOLID",
     color,
@@ -55,14 +56,20 @@ function solidStroke(color: { r: number; g: number; b: number; a: number }): unk
   };
 }
 
-function textData(characters: string, color: { r: number; g: number; b: number; a: number }, sizePx = 16): unknown {
+/**
+ * Build the per-TEXT `textData` payload. Text colour is encoded at the
+ * FigNode level via `fillPaints` (see Figma's canonical schema), not on
+ * the `textData` value — so this helper takes only the typography
+ * settings. Callers add `fillPaints: [solidFill(color)]` on the TEXT
+ * node directly.
+ */
+function textData(characters: string, sizePx = 16): TextData {
   return {
     characters,
     fontSize: sizePx,
     fontName: { family: "Inter", style: "Semi Bold", postscript: "Inter-SemiBold" },
     textAlignHorizontal: { value: 1, name: "CENTER" },
     textAlignVertical: { value: 1, name: "CENTER" },
-    fills: [solidFill(color)],
   };
 }
 
@@ -131,7 +138,7 @@ async function main(): Promise<void> {
     stateGroupPropertyValueOrders: [
       { property: "Variant", values: ["Solid", "Outline"] },
     ],
-  } as unknown as FigNode;
+  };
 
   // ---- Variant=Solid: blue filled button ----
   const solidSymbol: FigNode = {
@@ -143,7 +150,7 @@ async function main(): Promise<void> {
     transform: { m00: 1, m01: 0, m02: PAD, m10: 0, m11: 1, m12: PAD },
     size: { x: VARIANT_W, y: VARIANT_H },
     variantPropSpecs: [{ propDefId: propDefGuid, value: "Solid" }],
-  } as unknown as FigNode;
+  };
 
   const solidBg: FigNode = {
     guid: solidBgGuid,
@@ -155,7 +162,7 @@ async function main(): Promise<void> {
     size: { x: VARIANT_W, y: VARIANT_H },
     fillPaints: [solidFill(BLUE)],
     cornerRadius: CORNER,
-  } as unknown as FigNode;
+  };
 
   const solidLabel: FigNode = {
     guid: solidLabelGuid,
@@ -165,8 +172,9 @@ async function main(): Promise<void> {
     parentIndex: { guid: solidSymbolGuid, position: '"' },
     transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     size: { x: VARIANT_W, y: VARIANT_H },
-    textData: textData("Solid", WHITE),
-  } as unknown as FigNode;
+    fillPaints: [solidFill(WHITE)],
+    textData: textData("Solid"),
+  };
 
   // ---- Variant=Outline: blue outlined button, transparent fill ----
   const outlineSymbol: FigNode = {
@@ -178,7 +186,7 @@ async function main(): Promise<void> {
     transform: { m00: 1, m01: 0, m02: PAD, m10: 0, m11: 1, m12: PAD + VARIANT_H + GAP },
     size: { x: VARIANT_W, y: VARIANT_H },
     variantPropSpecs: [{ propDefId: propDefGuid, value: "Outline" }],
-  } as unknown as FigNode;
+  };
 
   const outlineBg: FigNode = {
     guid: outlineBgGuid,
@@ -193,7 +201,7 @@ async function main(): Promise<void> {
     strokeWeight: 2,
     strokeAlign: "INSIDE",
     cornerRadius: CORNER,
-  } as unknown as FigNode;
+  };
 
   const outlineLabel: FigNode = {
     guid: outlineLabelGuid,
@@ -203,8 +211,9 @@ async function main(): Promise<void> {
     parentIndex: { guid: outlineSymbolGuid, position: '"' },
     transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     size: { x: VARIANT_W, y: VARIANT_H },
-    textData: textData("Outline", BLUE),
-  } as unknown as FigNode;
+    fillPaints: [solidFill(BLUE)],
+    textData: textData("Outline"),
+  };
 
   // ---- Demo INSTANCE on canvas, pointing at the Solid variant ----
   const demoInstance: FigNode = {
@@ -225,7 +234,7 @@ async function main(): Promise<void> {
       ],
       uniformScaleFactor: 1,
     },
-  } as unknown as FigNode;
+  };
 
   const nodeChanges: FigNode[] = [
     document,

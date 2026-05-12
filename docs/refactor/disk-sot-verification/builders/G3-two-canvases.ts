@@ -7,7 +7,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { loadFigFile, saveFigFile, createGuidAllocator } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 
 const SOURCE = "packages/@higma-document-renderers/fig/fixtures/components/components.fig";
 const OUT = "docs/refactor/disk-sot-verification/artifacts/G3-two-canvases.fig";
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     name: "Internal Only Canvas",
     parentIndex: { guid: document.guid, position: "~" },
     visible: false,
-  } as unknown as FigNode;
+  };
 
   const data = await saveFigFile(
     {

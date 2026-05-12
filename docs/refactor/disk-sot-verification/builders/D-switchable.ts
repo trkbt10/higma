@@ -19,7 +19,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { loadFigFile, saveFigFile, createGuidAllocator } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 
 const SOURCE = "packages/@higma-document-renderers/fig/fixtures/components/components.fig";
 const OUT = "docs/refactor/disk-sot-verification/artifacts/D-switchable.fig";
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     stateGroupPropertyValueOrders: [
       { property: "Variant", values: ["Solid", "Outline"] },
     ],
-  } as unknown as FigNode;
+  };
 
   // ---- (II) Two variant SYMBOLs sit stacked inside the FRAME ----
   // Original Button (now Variant=Solid) at top.
@@ -168,7 +168,7 @@ async function main(): Promise<void> {
     parentIndex: { guid: newFrameGuid, position: variantOutlinePosition },
     transform: outlineLocalTransform,
     variantPropSpecs: [{ propDefId: propDefGuid, value: "Outline" }],
-  } as unknown as FigNode;
+  };
 
   // ---- (III) one demo INSTANCE on canvas, pointing at Variant=Solid (buttonSymbol.guid) ----
   // The INSTANCE follows the shape observed in Simple Design System.fig:
@@ -193,7 +193,7 @@ async function main(): Promise<void> {
       ],
       uniformScaleFactor: 1,
     },
-  } as unknown as FigNode;
+  };
 
   rewritten.push(newFrame, clonedButton, ...clonedChildren, demoInstance);
 
