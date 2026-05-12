@@ -1,13 +1,12 @@
 /** @file WebGL bridge for backend-neutral effect stacks. */
 
+import type { AffineMatrix, PathContour } from "@higma-primitives/path";
 import type {
-  AffineMatrix,
   BackgroundBlurEffect,
   Color,
   Effect,
   Fill,
-  PathContour,
-} from "../../scene-graph/types";
+} from "@higma-document-models/fig/scene-graph";
 import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
 import type { EffectsRendererInstance } from "./effects-renderer";

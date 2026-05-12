@@ -12,18 +12,23 @@
  * applied via finalizeImagePatternDefs after element size is known.
  */
 
-import type { AffineMatrix } from "../types";
+
 import type { RenderDef } from "../render-tree/types";
-import { getImageDimensions, type ImageDimensions } from "./image-dimensions";
-import { uint8ArrayToBase64 } from "./color";
+import {
+  getImageDimensions,
+  resampleImage,
+  type ImageDimensions,
+  type RgbaRaster,
+} from "@higma-codecs/raster";
 import { decodeRasterImage, pngMetadataFromDecodedRaster } from "./image-raster-decode";
-import { resampleImage, type RgbaRaster } from "./image-resample";
+import { uint8ArrayToBase64 } from "./color";
 import {
   normalizeFigmaRenderExportSettings,
   type FigmaRenderExportSettings,
   type NormalizedFigmaRenderExportSettings,
 } from "./export-settings";
 import { writePng } from "@higma-codecs/png";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 type ElementSize = { readonly width: number; readonly height: number };
 type ImagePatternLayout = {

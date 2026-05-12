@@ -6,6 +6,7 @@
   "sideEffects": false,
   "dependencies": {
     "@higma-codecs/png": "workspace:*",
+    "@higma-codecs/raster": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
@@ -109,8 +110,8 @@
       "default": "./src/webgl/index.ts"
     },
     "./webgl/preparation-status": {
-      "types": "./src/webgl/preparation-status.ts",
-      "default": "./src/webgl/preparation-status.ts"
+      "types": "./src/webgl/scene/preparation-status.ts",
+      "default": "./src/webgl/scene/preparation-status.ts"
     },
     "./webgl/react": {
       "types": "./src/webgl/react/index.ts",

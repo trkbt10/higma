@@ -10,7 +10,7 @@ import { createDemoFigDesignDocument } from "../testing/demo-document";
 import { EMPTY_FIG_STYLE_REGISTRY, toNodeId, type FigBlob, type FigDesignDocument, type FigDesignNode } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg/scene-renderer";
-import type { SceneGraph, SceneNode, RectNode, EllipseNode, PathNode, TextNode, FrameNode, Fill } from "./types";
+import type { SceneGraph, SceneNode, RectNode, EllipseNode, PathNode, TextNode, FrameNode, Fill } from "@higma-document-models/fig/scene-graph";
 
 const docRef = { value: undefined as FigDesignDocument | undefined };
 const sceneGraphsRef = { value: [] as SceneGraph[] };

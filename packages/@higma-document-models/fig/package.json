@@ -30,6 +30,18 @@
       "types": "./src/matrix.ts",
       "default": "./src/matrix.ts"
     },
+    "./boolean-operation": {
+      "types": "./src/boolean-operation.ts",
+      "default": "./src/boolean-operation.ts"
+    },
+    "./scene-graph": {
+      "types": "./src/scene-graph/types.ts",
+      "default": "./src/scene-graph/types.ts"
+    },
+    "./scene-graph/blend-mode": {
+      "types": "./src/scene-graph/blend-mode.ts",
+      "default": "./src/scene-graph/blend-mode.ts"
+    },
     "./symbols": {
       "types": "./src/symbols/index.ts",
       "default": "./src/symbols/index.ts"
@@ -70,6 +82,7 @@
   "dependencies": {
     "@higma-codecs/compression": "workspace:*",
     "@higma-codecs/kiwi": "workspace:*",
+    "@higma-codecs/raster": "workspace:*",
     "@higma-primitives/path": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",

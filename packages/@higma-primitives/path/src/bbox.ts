@@ -114,3 +114,36 @@ export function pathCommandsBoundingBox(commands: readonly PathCommand[]): Bbox 
     h: tracker.maxY - tracker.minY,
   };
 }
+
+/**
+ * Bbox over a list of contours. Empty / no-endpoint input returns
+ * `undefined` so callers can distinguish "geometry was empty" from a
+ * zero-area bbox at the origin — paint resolvers depend on this
+ * distinction to fall back to a node's declared width/height when the
+ * stored geometry is empty.
+ *
+ * Structural typing: callers in renderers and codegen tools each have
+ * their own `PathContour` extension (e.g. `fillOverride`), so this
+ * accepts the minimal shape that bbox computation needs.
+ */
+export function pathContoursBoundingBox(
+  contours: readonly { readonly commands: readonly PathCommand[] }[],
+): Bbox | undefined {
+  let any = false;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const c of contours) {
+    if (c.commands.length === 0) { continue; }
+    const b = pathCommandsBoundingBox(c.commands);
+    if (b.w === 0 && b.h === 0 && b.x === 0 && b.y === 0) { continue; }
+    any = true;
+    if (b.x < minX) { minX = b.x; }
+    if (b.y < minY) { minY = b.y; }
+    if (b.x + b.w > maxX) { maxX = b.x + b.w; }
+    if (b.y + b.h > maxY) { maxY = b.y + b.h; }
+  }
+  if (!any) { return undefined; }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}

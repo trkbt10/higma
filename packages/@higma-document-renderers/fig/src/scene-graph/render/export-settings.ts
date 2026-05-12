@@ -2,9 +2,7 @@
  * @file Figma export rendering settings shared by SVG, React, and WebGL.
  */
 
-export type FigmaExportColorProfile = "SRGB" | "DISPLAY_P3_V4";
-
-export type FigmaImageResamplingMethod = "DETAILED_BICUBIC" | "BASIC_NEAREST";
+import type { FigmaExportColorProfile, FigmaImageResamplingMethod } from "@higma-codecs/raster";
 
 export type FigmaPdfImageQuality = "HIGH" | "MEDIUM" | "LOW";
 

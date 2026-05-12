@@ -1,6 +1,6 @@
 /** @file WebGL texture resource identities. */
 
-import type { FigmaExportColorProfile } from "../../scene-graph/render";
+import type { FigmaExportColorProfile } from "@higma-codecs/raster";
 
 export type TextureResourceId = string & { readonly __brand: "TextureResourceId" };
 

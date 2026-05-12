@@ -11,7 +11,7 @@
  */
 
 import { memo, type ReactElement } from "react";
-import type { TextLineLayout } from "../../scene-graph";
+import type { TextLineLayout } from "@higma-document-models/fig/scene-graph";
 
 type FigTextLinesProps = {
   /** Text line layout data with positions and font info */

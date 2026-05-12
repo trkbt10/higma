@@ -2,8 +2,8 @@
 
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SceneGraph, RectNode, SceneNode } from "../../../src/scene-graph/types";
-import { createNodeId } from "../../../src/scene-graph/types";
+import type { SceneGraph, RectNode, SceneNode } from "@higma-document-models/fig/scene-graph";
+import { createNodeId } from "@higma-document-models/fig/scene-graph";
 import { renderSceneGraphToSvg } from "../../../src/svg/scene-renderer";
 import {
   captureWebGL,

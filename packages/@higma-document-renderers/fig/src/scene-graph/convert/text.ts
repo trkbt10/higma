@@ -6,11 +6,11 @@
 
 import type { FigDesignNode, FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
-import type { TextRun } from "../../text/runs/types";
+import type { TextRun } from "@higma-document-models/fig/scene-graph";
 import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
 import { textAlignHorizontalToAnchor } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";
-import type { PathContour, GlyphContour, Color, TextLineLayout } from "../types";
+import type { PathContour, GlyphContour, Color, TextLineLayout } from "@higma-document-models/fig/scene-graph";
 
 /** Map Figma text decoration value to scene graph text decoration string */
 function mapTextDecoration(decoration: string | undefined): "underline" | "strikethrough" | undefined {

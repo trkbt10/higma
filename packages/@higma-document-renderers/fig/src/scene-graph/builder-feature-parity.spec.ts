@@ -8,7 +8,7 @@
  * to verify the scene-graph builder also supports it.
  */
 
-import type { SceneNodeBase, GroupNode } from "./types";
+import type { SceneNodeBase, GroupNode } from "@higma-document-models/fig/scene-graph";
 
 // =============================================================================
 // 1. Node Type Coverage

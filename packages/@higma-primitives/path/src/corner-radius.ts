@@ -1,6 +1,9 @@
-/** @file RenderTree corner radius resolution helpers. */
+/**
+ * @file Corner-radius normalisation helpers. Shared SoT across SVG,
+ * WebGL, React, and code-emitting tools.
+ */
 
-import type { CornerRadius } from "../types";
+import type { CornerRadius } from "./types";
 
 /** Clamp a corner radius to a rectangle's geometric maximum. */
 export function clampCornerRadius(

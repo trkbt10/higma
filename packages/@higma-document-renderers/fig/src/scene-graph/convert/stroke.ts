@@ -5,24 +5,18 @@
  * Supports gradient strokes and multi-paint stroke layers.
  */
 
-import type {
-  FigPaint,
-  FigStrokeWeight,
-  FigGradientPaint,
-  FigStrokeCap,
-  FigStrokeJoin,
-  FigStrokeAlign,
-} from "@higma-document-models/fig/types";
+import type { FigPaint, FigStrokeWeight, FigGradientPaint, FigStrokeCap, FigStrokeJoin, FigStrokeAlign } from "@higma-document-models/fig/types";
 import { getPaintType, asGradientPaint, asSolidPaint } from "@higma-document-models/fig/color";
 import { resolveStrokeWeight, mapStrokeCap, mapStrokeJoin } from "../../stroke";
-import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, AffineMatrix, Color } from "../types";
+import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, Color } from "@higma-document-models/fig/scene-graph";
 import { figColorToSceneColor } from "./fill";
 import {
   getGradientStops,
   getGradientDirection,
   getRadialGradientCenterAndRadius,
 } from "../../paint";
-import { convertFigmaBlendMode } from "./blend-mode";
+import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 /**
  * Extract the gradient transform matrix from a Figma gradient paint.

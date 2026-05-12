@@ -8,12 +8,22 @@
  * usable by both string concatenation and React JSX.
  */
 
-import type { Fill, GradientStop, AffineMatrix, ImagePaintFilter } from "../types";
+import type { Fill, GradientStop } from "@higma-document-models/fig/scene-graph";
+import type { ImagePaintFilter } from "@higma-codecs/raster";
 import { writePng } from "@higma-codecs/png";
 import { colorToHex, uint8ArrayToBase64 } from "./color";
-import { applyImagePaintFilterToRgb, hasImagePaintFilter, resolveImagePaintFilterUniforms } from "./image-paint-filter";
-import { decodeRasterImage, pngMetadataFromDecodedRaster } from "./image-raster-decode";
-import { convertRgbColorProfile, resolveManagedRasterSourceProfile } from "./color-profile";
+import {
+  applyImagePaintFilterToRgb,
+  hasImagePaintFilter,
+  resolveImagePaintFilterUniforms,
+  convertRgbColorProfile,
+} from "@higma-codecs/raster";
+import {
+  decodeRasterImage,
+  pngMetadataFromDecodedRaster,
+  resolveEncodedRasterSourceProfile,
+  resolveManagedRasterSourceProfile,
+} from "./image-raster-decode";
 import {
   normalizeFigmaRenderExportSettings,
   renderExportSettingsCacheKey,
@@ -22,6 +32,7 @@ import {
   type FigmaRenderExportSettings,
   type NormalizedFigmaRenderExportSettings,
 } from "./export-settings";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
 // Resolved Types
@@ -230,6 +241,22 @@ type ResolvedRasterImageData = {
 };
 
 const filteredImageDataCache = new WeakMap<Uint8Array, Map<string, ResolvedRasterImageData>>();
+const imageDataUriCache = new WeakMap<Uint8Array, Map<string, string>>();
+
+function resolveImageDataUri(data: Uint8Array, mimeType: string): string {
+  const cachedByMime = imageDataUriCache.get(data);
+  const cached = cachedByMime?.get(mimeType);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const dataUri = `data:${mimeType};base64,${uint8ArrayToBase64(data)}`;
+  if (cachedByMime) {
+    cachedByMime.set(mimeType, dataUri);
+  } else {
+    imageDataUriCache.set(data, new Map([[mimeType, dataUri]]));
+  }
+  return dataUri;
+}
 
 function imageFilterCacheKey(
   mimeType: string,
@@ -304,6 +331,13 @@ function resolveImageRasterData(
   if (!hasFilter && colorManage !== true) {
     return { data, mimeType };
   }
+  const targetProfile = colorManage === true ? requireManagedImageColorProfile(exportSettings.imageColorManagement) : undefined;
+  if (!hasFilter && targetProfile) {
+    const encodedSourceProfile = resolveEncodedRasterSourceProfile(data, mimeType);
+    if (encodedSourceProfile === targetProfile) {
+      return { data, mimeType };
+    }
+  }
   const cacheKey = imageFilterCacheKey(mimeType, paintFilter, colorManage, exportSettings);
   const dataCache = filteredImageDataCache.get(data);
   const cached = dataCache?.get(cacheKey);
@@ -311,7 +345,6 @@ function resolveImageRasterData(
     return cached;
   }
   const image = decodeRasterImage(data, mimeType);
-  const targetProfile = colorManage === true ? requireManagedImageColorProfile(exportSettings.imageColorManagement) : undefined;
   const sourceProfile = targetProfile ? resolveManagedRasterSourceProfile(image) : undefined;
   const requiresColorConversion = !!(targetProfile && sourceProfile !== targetProfile);
   const filtered = hasFilter || requiresColorConversion ? new Uint8Array(image.data) : image.data;
@@ -442,8 +475,7 @@ export function resolveFillWithRenderSettings(
     case "image": {
       const id = ids.getNextId("img");
       const imageData = resolveImageRasterData(fill.data, fill.mimeType, fill.paintFilter, fill.imageShouldColorManage, exportSettings);
-      const base64 = uint8ArrayToBase64(imageData.data);
-      const dataUri = `data:${imageData.mimeType};base64,${base64}`;
+      const dataUri = resolveImageDataUri(imageData.data, imageData.mimeType);
       return {
         attrs: buildAttrs(`url(#${id})`, fill.opacity),
         def: {

@@ -17,7 +17,7 @@ import puppeteer, { type Browser, type Page } from "puppeteer";
 import { createFigDesignDocument, figDocumentResources } from "@higma-document-io/fig/context";
 import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";
 import { buildSceneGraph } from "../../../src/scene-graph/builder";
-import type { SceneGraph } from "../../../src/scene-graph/types";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 
 // =============================================================================
 // Types

@@ -45,7 +45,7 @@ import type { FigStyleRegistry, TextStyleOverride } from "@higma-document-models
 import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { figmaFontToQuery, type FontQuery } from "@higma-document-models/fig/font";
 import { getFillColorAndOpacity } from "../layout/fill";
-import type { TextRun } from "./types";
+import type { TextRun } from "@higma-document-models/fig/scene-graph";
 
 export type ResolveTextRunsInput = {
   /** Source string. Only the length is consulted; content does not affect fills. */

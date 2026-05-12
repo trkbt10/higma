@@ -19,10 +19,10 @@ import type {
   ExtractedTextProps,
   TextAlignHorizontal,
   TextAlignVertical,
-  TextAutoResize,
   TextCase,
   TextDecoration,
 } from "./types";
+import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
 import { figmaFontToQuery } from "@higma-document-models/fig/font";
 
 /**

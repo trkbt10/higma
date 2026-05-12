@@ -1,6 +1,6 @@
 /** @file RenderTree cache for WebGL viewport-only rerenders. */
 
-import type { SceneGraph } from "../../scene-graph/types";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { resolveRenderTree, type RenderTree } from "../../scene-graph/render-tree";
 import {
   createWebGLSceneResourceIdentityStore,

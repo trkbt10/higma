@@ -3,7 +3,7 @@
  */
 
 import { useRef, useEffect } from "react";
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { createWebGLFigmaRenderer, type WebGLFigmaRendererInstance } from "@higma-document-renderers/fig/webgl";
 
 type Props = {

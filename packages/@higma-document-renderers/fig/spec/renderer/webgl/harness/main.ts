@@ -6,7 +6,7 @@
  * and returns a PNG data URL of the canvas.
  */
 
-import type { SceneGraph } from "../../../../src/scene-graph/types";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { createWebGLFigmaRenderer } from "../../../../src/webgl/renderer/renderer";
 
 type WindowWithRenderSceneGraph = Window & {

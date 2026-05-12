@@ -10,7 +10,7 @@
  */
 
 import { resolveRenderTree } from "./resolve";
-import type { SceneGraph, EllipseNode, SceneNode, SceneNodeId } from "../types";
+import type { SceneGraph, EllipseNode, SceneNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
 
 function makeSceneGraph(nodes: readonly SceneNode[]): SceneGraph {
   return {

@@ -4,9 +4,11 @@
  * Handles solid, linear gradient, radial gradient, and image fills.
  */
 
-import type { Fill, Color, AffineMatrix, ImagePaintFilter } from "../../scene-graph/types";
-import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "../../scene-graph/render/image-paint-filter";
+import type { Fill, Color } from "@higma-document-models/fig/scene-graph";
+import type { ImagePaintFilter } from "@higma-codecs/raster";
+import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "@higma-codecs/raster";
 import type { ShaderCache } from "../shaders";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
 // Types

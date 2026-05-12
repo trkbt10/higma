@@ -21,7 +21,8 @@
  */
 
 import { memo, useMemo, useRef } from "react";
-import type { SceneGraph, SceneGraphRenderOptions } from "../scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraphRenderOptions } from "../scene-graph";
 import {
   resolveRenderTreeIncremental,
   type RenderTree,

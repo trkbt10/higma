@@ -3,7 +3,7 @@
 import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
-import type { TextNode } from "./types";
+import type { TextNode } from "@higma-document-models/fig/scene-graph";
 import { buildSceneGraph } from "./builder";
 import { resolveRenderTree } from "./render-tree";
 

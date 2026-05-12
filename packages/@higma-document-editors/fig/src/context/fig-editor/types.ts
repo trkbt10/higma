@@ -10,7 +10,7 @@ import type { FigStyleId } from "@higma-document-models/fig/types";
 import type { FigColor, FigFontName, KiwiEnumValue } from "@higma-document-models/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { NodeSpec } from "@higma-document-io/fig/types";
-import type { BooleanOperationType } from "@higma-document-renderers/fig/scene-graph";
+import type { BooleanOperationType } from "@higma-primitives/path";
 import type { UndoRedoHistory } from "@higma-editor-kernel/core/history";
 import type { SelectionState } from "@higma-editor-kernel/core/selection";
 import type { DragState, ResizeHandlePosition } from "@higma-editor-kernel/core/drag-state";

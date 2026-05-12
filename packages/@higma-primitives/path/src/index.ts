@@ -13,9 +13,13 @@ export type {
 } from "./types";
 
 export { parseSvgPathD } from "./parse-svg";
-export { pathCommandsToSvgPath } from "./serialize-svg";
+export {
+  pathCommandsToSvgPath,
+  contourToSvgD,
+  matrixToSvgTransform,
+} from "./serialize-svg";
 export { transformPathCommands } from "./transform";
-export { pathCommandsBoundingBox } from "./bbox";
+export { pathCommandsBoundingBox, pathContoursBoundingBox } from "./bbox";
 export { flattenPathCommands, flattenCubicBezier, flattenQuadBezier } from "./flatten";
 export { arcToCubicBeziers, type CubicBezierSegment, type SvgArcParams } from "./arc";
 export { convertQuadraticsToCubic } from "./bezier";
@@ -30,3 +34,21 @@ export {
   type GenerateStarContourOptions,
   KAPPA,
 } from "./contours";
+
+export { buildRoundedRectPathD, CORNER_KAPPA } from "./svg-rounded-rect";
+export { buildEllipseArcPathD, type ArcData } from "./svg-ellipse-arc";
+export { clampCornerRadius, cornerRadiusScalar } from "./corner-radius";
+export {
+  reconstructStrokeCenterline,
+  type CenterlineContour,
+} from "./stroke-centerline";
+
+export {
+  evaluateBooleanPathResult,
+  evaluateBooleanPaths,
+  isBooleanOperationName,
+  type BooleanOperationType,
+  type BooleanPathInput,
+  type BooleanEvaluationError,
+  type BooleanEvaluationResult,
+} from "./boolean";

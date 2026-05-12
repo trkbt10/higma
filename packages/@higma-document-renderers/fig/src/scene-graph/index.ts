@@ -1,64 +1,4 @@
-/**
- * @file Scene graph module
- *
- * Format-agnostic intermediate representation for Figma rendering.
- */
-
-// Types
-export type {
-  SceneNodeId,
-  Point,
-  AffineMatrix,
-  Color,
-  GradientStop,
-  Fill,
-  SolidFill,
-  LinearGradientFill,
-  RadialGradientFill,
-  AngularGradientFill,
-  DiamondGradientFill,
-  ImageFill,
-  Stroke,
-  StrokeLayer,
-  Effect,
-  DropShadowEffect,
-  InnerShadowEffect,
-  LayerBlurEffect,
-  BackgroundBlurEffect,
-  PathContour,
-  CornerRadius,
-  ArcData,
-  ClipShape,
-  RectClip,
-  PathClip,
-  MaskNode,
-  TextLineLayout,
-  TextLineBounds,
-  SceneNodeBase,
-  GroupNode,
-  FrameNode,
-  RectNode,
-  EllipseNode,
-  PathNode,
-  TextNode,
-  ImageNode,
-  SceneNode,
-  SceneGraph,
-  BlendMode,
-} from "./types";
-
-export { createNodeId } from "./types";
-
-export {
-  createBooleanOperationEnum,
-  evaluateBooleanPathResult,
-  evaluateBooleanPaths,
-  resolveBooleanOperationType,
-  type BooleanEvaluationError,
-  type BooleanEvaluationResult,
-  type BooleanOperationType,
-  type BooleanPathInput,
-} from "./boolean-operation";
+/** @file Scene graph builder / diff / render barrel. */
 
 // Builder
 export {
@@ -86,8 +26,6 @@ export {
 export {
   colorToHex,
   uint8ArrayToBase64,
-  matrixToSvgTransform,
-  contourToSvgD,
   resolveFill,
   resolveTopFill,
   resolveStroke,
@@ -139,12 +77,6 @@ export {
 } from "./render-tree";
 
 // Converters
-//
-// `parseSvgPathD` and the primitive contour generators
-// (`generateRectContour`, …, `generateLineContour`) live in
-// `@higma-primitives/path`. The lint rule `no-cross-package-reexport`
-// forbids republishing primitives via a renderer barrel, so consumers
-// must import them directly from the primitive package.
 export {
   figColorToSceneColor,
   convertPaintToFill,

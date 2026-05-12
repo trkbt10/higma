@@ -2,7 +2,9 @@
 
 import type { FigDesignDocument, FigDesignNode, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
 import { DEFAULT_PAGE_BACKGROUND, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import { buildSceneGraph, createNodeId, evaluateBooleanPathResult, type SceneNode } from "@higma-document-renderers/fig/scene-graph";
+import { buildSceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId, type SceneNode } from "@higma-document-models/fig/scene-graph";
+import { evaluateBooleanPathResult } from "@higma-primitives/path";
 import { createFigEditorState, figEditorReducer } from "./reducer";
 
 function nodeId(id: string): FigNodeId {

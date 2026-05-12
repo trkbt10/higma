@@ -33,8 +33,6 @@
  */
 
 export { colorToHex, uint8ArrayToBase64 } from "./color";
-export { matrixToSvgTransform } from "./transform";
-export { contourToSvgD } from "./path";
 
 export {
   resolveFill,
@@ -64,8 +62,6 @@ export {
 } from "./image-pattern-finalize";
 
 export type {
-  FigmaExportColorProfile,
-  FigmaImageResamplingMethod,
   FigmaImageResamplingSettings,
   FigmaPdfImageQuality,
   FigmaRenderExportSettings,

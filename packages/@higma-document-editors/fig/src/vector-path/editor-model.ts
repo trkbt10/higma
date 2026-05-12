@@ -4,10 +4,8 @@
 import type { FigDesignBlob, FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import type { FigMatrix, FigVectorPath } from "@higma-document-models/fig/types";
 import { findNodeById } from "@higma-document-io/fig/node-ops";
-import {
-  contourToSvgD,
-  decodeGeometryToContours,
-} from "@higma-document-renderers/fig/scene-graph";
+import { decodeGeometryToContours } from "@higma-document-renderers/fig/scene-graph";
+import { contourToSvgD } from "@higma-primitives/path";
 import {
   generateEllipseContour,
   generateLineContour,

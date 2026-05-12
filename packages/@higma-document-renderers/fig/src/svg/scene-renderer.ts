@@ -19,7 +19,7 @@
  * RenderTree to JSX elements.
  */
 
-import type { SceneGraph } from "../scene-graph/types";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "../scene-graph/render";
 import {
   resolveRenderTree,
@@ -513,11 +513,11 @@ function wrapperAttrs(node: { wrapper: ResolvedWrapperAttrs; mask?: { maskAttr: 
 // Corner Radius Helpers
 // =============================================================================
 
-import type { CornerRadius, BlendMode } from "../scene-graph/types";
+import type { BlendMode } from "@higma-document-models/fig/scene-graph";
 import type { ResolvedFillLayer } from "../scene-graph/render-tree";
 import type { ResolvedStrokeLayer } from "../scene-graph/render";
 
-import { buildRoundedRectPathD } from "../scene-graph/render/rounded-rect-path";
+import { buildRoundedRectPathD, type CornerRadius } from "@higma-primitives/path";
 
 /**
  * Render a rectangle shape.
@@ -929,7 +929,7 @@ function assembleShapeNode(
 function hasNonZeroCornerRadius(cr: CornerRadius | undefined): boolean {
   if (cr === undefined) { return false; }
   if (typeof cr === "number") { return cr > 0; }
-  return cr.some((r) => r > 0);
+  return cr.some((r: number) => r > 0);
 }
 
 /**

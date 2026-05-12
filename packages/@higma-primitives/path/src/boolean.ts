@@ -1,59 +1,38 @@
-/** @file Shared boolean path operation contract for fig render/edit paths. */
+/**
+ * @file Boolean path operations (union / subtract / intersect / exclude)
+ * over SVG path-`d` strings. Pure path-algebra: takes path data in,
+ * returns path data out. No document-format knowledge.
+ *
+ * The Figma scene-graph Kiwi-enum bridge that maps these names to
+ * Figma's numeric enum lives in `@higma-document-models/fig/boolean-operation`.
+ * Code-emitting tools (`@higma-tools/fig-to-swiftui`, `fig-to-godot`)
+ * import the evaluator from this package directly.
+ */
 
-import type { KiwiEnumValue } from "@higma-document-models/fig/types";
 import {
   FillRule,
   PathBooleanOperation,
   pathBoolean,
   pathFromPathData,
   pathToPathData,
-} from "../../vendor/path-bool/index.js";
+} from "../vendor/path-bool/index.js";
 
+/** Boolean operation kind shared across consumers. */
 export type BooleanOperationType = "UNION" | "SUBTRACT" | "INTERSECT" | "EXCLUDE";
 
+/** Input contour for boolean evaluation: SVG `d` plus its winding rule. */
 export type BooleanPathInput = {
   readonly d: string;
   readonly windingRule: "nonzero" | "evenodd";
 };
 
-export type BooleanEvaluationResult =
-  | { readonly ok: true; readonly paths: readonly string[] }
-  | { readonly ok: false; readonly error: BooleanEvaluationError };
-
 export type BooleanEvaluationError =
   | { readonly reason: "NO_INPUT_PATHS" }
   | { readonly reason: "PATH_EVALUATION_FAILED"; readonly message: string };
 
-export const BOOLEAN_OPERATION_VALUES: Record<BooleanOperationType, number> = {
-  UNION: 0,
-  SUBTRACT: 1,
-  INTERSECT: 2,
-  EXCLUDE: 3,
-};
-
-const BOOLEAN_OPERATION_BY_VALUE: Record<number, BooleanOperationType> = {
-  0: "UNION",
-  1: "SUBTRACT",
-  2: "INTERSECT",
-  3: "EXCLUDE",
-};
-
-/** Create the Kiwi enum payload used by Figma for live boolean operation nodes. */
-export function createBooleanOperationEnum(operation: BooleanOperationType): KiwiEnumValue {
-  return { value: BOOLEAN_OPERATION_VALUES[operation], name: operation };
-}
-
-/** Resolve the canonical boolean operation from Kiwi enum value/name data. */
-export function resolveBooleanOperationType(operation: KiwiEnumValue | undefined): BooleanOperationType {
-  if (!operation) {
-    return "UNION";
-  }
-  const byValue = BOOLEAN_OPERATION_BY_VALUE[operation.value];
-  if (byValue) {
-    return byValue;
-  }
-  return isBooleanOperationName(operation.name) ? operation.name : "UNION";
-}
+export type BooleanEvaluationResult =
+  | { readonly ok: true; readonly paths: readonly string[] }
+  | { readonly ok: false; readonly error: BooleanEvaluationError };
 
 /** Evaluate boolean operation child paths through the single path-bool adapter. */
 export function evaluateBooleanPathResult(
@@ -128,10 +107,6 @@ function errorToMessage(error: unknown): string {
   return String(error);
 }
 
-function isBooleanOperationName(name: string | undefined): name is BooleanOperationType {
-  return name === "UNION" || name === "SUBTRACT" || name === "INTERSECT" || name === "EXCLUDE";
-}
-
 function toFillRuleEnum(windingRule: "nonzero" | "evenodd"): FillRule {
   return windingRule === "evenodd" ? FillRule.EvenOdd : FillRule.NonZero;
 }
@@ -143,4 +118,9 @@ function toPathBoolOp(operation: BooleanOperationType): PathBooleanOperation {
     case "INTERSECT": return PathBooleanOperation.Intersection;
     case "EXCLUDE": return PathBooleanOperation.Exclusion;
   }
+}
+
+/** Discriminator helper for callers that read free-form name fields (e.g. Kiwi enum payloads). */
+export function isBooleanOperationName(name: string | undefined): name is BooleanOperationType {
+  return name === "UNION" || name === "SUBTRACT" || name === "INTERSECT" || name === "EXCLUDE";
 }

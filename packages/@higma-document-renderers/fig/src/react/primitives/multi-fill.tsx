@@ -12,7 +12,8 @@
 import type { ReactNode } from "react";
 import type { ResolvedFillLayer } from "../../scene-graph/render-tree";
 import type { ResolvedStrokeLayer } from "../../scene-graph/render";
-import type { CornerRadius, BlendMode } from "../../scene-graph/types";
+import type { CornerRadius } from "@higma-primitives/path";
+import type { BlendMode } from "@higma-document-models/fig/scene-graph";
 import { RectShape } from "./rect-shape";
 import type { UniformStrokeDomAttrs } from "./stroke-rendering";
 

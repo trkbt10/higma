@@ -13,7 +13,8 @@ import { getActivePage } from "../node-geometry";
 import type { SelectionState } from "@higma-editor-kernel/core/selection";
 import type { FigEditorState } from "../types";
 import { outlineNode } from "./outline-node";
-import { createBooleanOperationEnum, type BooleanOperationType } from "@higma-document-renderers/fig/scene-graph";
+import type { BooleanOperationType } from "@higma-primitives/path";
+import { createBooleanOperationEnum } from "@higma-document-models/fig/boolean-operation";
 import { createEditorFigBuilderState } from "./builder-state";
 
 function buildNodeSelection(newIds: FigNodeId[]): SelectionState<FigNodeId> {

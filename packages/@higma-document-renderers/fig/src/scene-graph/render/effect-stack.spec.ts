@@ -1,6 +1,6 @@
 /** @file Shared effect stack tests */
 
-import type { Effect } from "../types";
+import type { Effect } from "@higma-document-models/fig/scene-graph";
 import { buildEffectStack, findLayerBlurEffect, renderShapeEffectStack } from "./effect-stack";
 
 const DROP_SHADOW: Effect = {

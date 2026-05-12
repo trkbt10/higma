@@ -4,7 +4,7 @@ import type {
   BackgroundBlurEffect,
   Effect,
   LayerBlurEffect,
-} from "../types";
+} from "@higma-document-models/fig/scene-graph";
 
 export type ShapeEffectStackParams = {
   readonly stack: ResolvedEffectStack;

@@ -2,8 +2,9 @@
  * @file Unit tests for the strokeGeometry → centerline reconstructor.
  */
 
-import { reconstructStrokeCenterline } from "./stroke-geometry-centerline";
-import type { DecodedContour } from "./path";
+import { reconstructStrokeCenterline, type CenterlineContour } from "./stroke-centerline";
+
+type DecodedContour = CenterlineContour;
 
 /**
  * Fixture: a single 1px-wide horizontal stroke from (0,0) to (10,0). The

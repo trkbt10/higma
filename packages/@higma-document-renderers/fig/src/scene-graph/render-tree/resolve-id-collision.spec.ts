@@ -19,7 +19,7 @@
  */
 
 import { resolveRenderTree } from "./resolve";
-import type { SceneGraph, EllipseNode, SceneNodeId, SceneNode } from "../types";
+import type { SceneGraph, EllipseNode, SceneNodeId, SceneNode } from "@higma-document-models/fig/scene-graph";
 import type { RenderTree, RenderNode } from "./types";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };

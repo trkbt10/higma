@@ -11,7 +11,6 @@ export type {
   FillColorResult,
   TextAlignHorizontal,
   TextAlignVertical,
-  TextAutoResize,
   TextDecoration,
   TextBoxSize,
   FigTextData,

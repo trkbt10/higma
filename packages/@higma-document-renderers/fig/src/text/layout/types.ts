@@ -6,6 +6,7 @@
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
 import type { FontQuery } from "@higma-document-models/fig/font";
+import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
 
 /**
  * Text data structure from .fig files
@@ -24,16 +25,6 @@ export type TextAlignHorizontal = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
  * Vertical text alignment
  */
 export type TextAlignVertical = "TOP" | "CENTER" | "BOTTOM";
-
-/**
- * Text auto-resize mode
- *
- * - WIDTH_AND_HEIGHT: Text box expands to fit content (no wrapping)
- * - HEIGHT: Fixed width, height expands (wrapping enabled)
- * - NONE: Fixed width and height (wrapping enabled, may clip)
- * - TRUNCATE: Fixed width and height with truncation
- */
-export type TextAutoResize = "WIDTH_AND_HEIGHT" | "HEIGHT" | "NONE" | "TRUNCATE";
 
 /**
  * Text decoration

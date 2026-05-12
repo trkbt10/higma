@@ -17,10 +17,10 @@ import { decodePathCommands } from "@higma-document-models/fig/domain";
 import type { FigNode, FigMatrix } from "@higma-document-models/fig/types";
 import {
   evaluateBooleanPathResult,
-  resolveBooleanOperationType,
   type BooleanOperationType,
   type BooleanPathInput,
-} from "@higma-document-renderers/fig/scene-graph";
+} from "@higma-primitives/path";
+import { resolveBooleanOperationType } from "@higma-document-models/fig/boolean-operation";
 import {
   parseSvgPathD,
   pathCommandsToSvgPath,

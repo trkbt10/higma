@@ -1,8 +1,19 @@
 /**
  * @file Image paint filter transfer functions shared by SVG and WebGL.
+ *
+ * Pure RGB-channel transforms parameterised by Figma's `ImagePaintFilter`
+ * field set. Outputs:
+ *
+ *  - `ImagePaintFilterUniforms` — the resolved (no-undefined) parameter
+ *    bag consumed by WebGL shaders.
+ *  - SVG `feComponentTransfer` lookup tables (one per RGB channel) plus
+ *    a saturation multiplier consumed by `feColorMatrix`.
+ *
+ * Codec-layer module: contains the math only. The renderer maps the
+ * resolved uniforms onto WebGL shader inputs / SVG filter primitives.
  */
 
-import type { ImagePaintFilter } from "../types";
+import type { ImagePaintFilter, Rgb } from "./types";
 
 export type ImagePaintFilterUniforms = {
   readonly exposure: number;
@@ -12,12 +23,6 @@ export type ImagePaintFilterUniforms = {
   readonly tint: number;
   readonly saturation: number;
   readonly vibrance: number;
-};
-
-export type Rgb = {
-  readonly r: number;
-  readonly g: number;
-  readonly b: number;
 };
 
 export const IDENTITY_IMAGE_PAINT_FILTER_UNIFORMS: ImagePaintFilterUniforms = {

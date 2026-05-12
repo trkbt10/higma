@@ -1,9 +1,31 @@
-/** @file RenderTree SVG path conversion for ellipse arc nodes. */
-
-import type { ArcData } from "../types";
+/**
+ * @file SVG path-`d` builder for parametric elliptical arcs (Figma's
+ * `ArcData` model: start/end angle in radians, optional inner-radius
+ * ratio for donut/pie slices).
+ */
 
 /**
- * Generate SVG path data for an ellipse with Figma ArcData.
+ * Parametric arc descriptor.
+ *
+ * The shape matches Figma's `ArcData` field on ellipse nodes — when
+ * present the ellipse is rendered as a partial arc and/or donut.
+ *
+ * - `startingAngle` / `endingAngle` in radians, 0 = 3 o'clock, clockwise.
+ * - `innerRadius` ∈ [0, 1]: 0 = solid pie slice; > 0 = donut whose hole
+ *   has radius `outerRadius * innerRadius`.
+ */
+export type ArcData = {
+  readonly startingAngle: number;
+  readonly endingAngle: number;
+  readonly innerRadius: number;
+};
+
+/**
+ * Generate SVG path data for an ellipse with parametric arc data.
+ *
+ * Full circle (sweep ≥ 2π) is emitted as two half-arcs joined by a
+ * midpoint vertex so resvg-js round-trips it identically to Figma's
+ * exporter (a single 360° A command sometimes degenerates).
  */
 export function buildEllipseArcPathD(
   cx: number,

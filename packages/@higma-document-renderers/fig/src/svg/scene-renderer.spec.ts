@@ -1,8 +1,8 @@
 /** @file SceneGraph SVG renderer viewport tests. */
 import { renderSceneGraphToSvg } from "./scene-renderer";
-import type { SceneGraph } from "../scene-graph/types";
-import { createNodeId } from "../scene-graph/types";
-import { createPngImage, readPng, writePng } from "@higma-codecs/png";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import { createNodeId } from "@higma-document-models/fig/scene-graph";
+import { createPngImage, readPng, writePng, type PngImage } from "@higma-codecs/png";
 
 function createPngBytes(size: { readonly width: number; readonly height: number }, rgb = 128): Uint8Array {
   const image = createPngImage(size);
@@ -15,7 +15,7 @@ function createPngBytes(size: { readonly width: number; readonly height: number 
   return writePng(image);
 }
 
-function readFirstImageDataUriPng(svg: string): ReturnType<typeof readPng> {
+function readFirstImageDataUriPng(svg: string): PngImage {
   const match = svg.match(/href="data:image\/png;base64,([^"]+)"/);
   if (!match) {
     throw new Error("expected an embedded PNG data URI");

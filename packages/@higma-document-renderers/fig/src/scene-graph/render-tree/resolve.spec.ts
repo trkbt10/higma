@@ -7,23 +7,11 @@
 
 import { resolveRenderTree } from "./resolve";
 import type {
-  RenderRectNode,
-  RenderEllipseNode,
-  RenderPathNode,
-  RenderFrameNode,
-} from "./types";
+  RenderRectNode, RenderEllipseNode, RenderPathNode, RenderFrameNode, } from "./types";
 import type {
-  SceneGraph,
-  GroupNode,
-  RectNode,
-  EllipseNode,
-  PathNode,
-  FrameNode,
-  AffineMatrix,
-  Fill,
-  Stroke,
-} from "../types";
-import { createNodeId } from "../types";
+  SceneGraph, GroupNode, RectNode, EllipseNode, PathNode, FrameNode, Fill, Stroke } from "@higma-document-models/fig/scene-graph";
+import { createNodeId } from "@higma-document-models/fig/scene-graph";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
 // Helpers

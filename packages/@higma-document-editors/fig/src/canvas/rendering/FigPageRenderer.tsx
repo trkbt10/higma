@@ -8,7 +8,7 @@
 
 import type { FigPage } from "@higma-document-models/fig/domain";
 import type { FigDocumentResources } from "@higma-document-io/fig/context";
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";

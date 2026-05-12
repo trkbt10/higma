@@ -22,7 +22,8 @@
 import { flattenPathCommands, type PathCommand } from "@higma-primitives/path";
 import { tessellateContours, tessellateContour } from "../tessellation/tessellation";
 import { tessellateTextNode } from "./text-renderer";
-import type { PathContour, TextNode, AffineMatrix } from "../../scene-graph/types";
+import type { PathContour, TextNode } from "@higma-document-models/fig/scene-graph";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
 // Test Helpers

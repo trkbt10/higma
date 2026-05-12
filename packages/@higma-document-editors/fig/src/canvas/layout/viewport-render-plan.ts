@@ -1,7 +1,7 @@
 /** @file Shared viewport layout planning for fig editor renderer backends. */
 
 import type { ViewportSize, ViewportTransform } from "@higma-editor-kernel/core/viewport";
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 
 const MIN_RENDER_WINDOW_SIZE = 1;
 

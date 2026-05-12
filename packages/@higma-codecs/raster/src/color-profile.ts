@@ -1,10 +1,13 @@
 /**
- * @file sRGB / Display P3 color profile conversion for rasterized image fills.
+ * @file sRGB / Display P3 colour-profile conversion for rasterised
+ * image fills, plus ICC `desc` tag parsing for both v2 (`desc` type)
+ * and v4 (`mluc` type) profiles.
+ *
+ * Pure colour math; no codec or renderer state. Conversion accepts and
+ * returns normalised RGB samples in [0, 1].
  */
 
-import type { PngImage } from "@higma-codecs/png";
-import type { DecodedRasterImage } from "./image-raster-decode";
-import type { FigmaExportColorProfile } from "./export-settings";
+import type { FigmaExportColorProfile, IccProfile, Rgb } from "./types";
 
 type Matrix3 = readonly [
   readonly [number, number, number],
@@ -51,12 +54,6 @@ const SUPPORTED_DISPLAY_P3_ICC_DESCRIPTIONS = new Set([
   "display p3 v4",
 ]);
 
-type Rgb = {
-  readonly r: number;
-  readonly g: number;
-  readonly b: number;
-};
-
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
@@ -97,8 +94,12 @@ function destinationMatrix(profile: FigmaExportColorProfile): Matrix3 {
   return XYZ_D65_TO_DISPLAY_P3;
 }
 
-/** Convert a normalized RGB sample between Figma-supported RGB profiles. */
-export function convertRgbColorProfile(color: Rgb, source: FigmaExportColorProfile, destination: FigmaExportColorProfile): Rgb {
+/** Convert a normalised RGB sample between Figma-supported RGB profiles. */
+export function convertRgbColorProfile(
+  color: Rgb,
+  source: FigmaExportColorProfile,
+  destination: FigmaExportColorProfile,
+): Rgb {
   if (source === destination) {
     return color;
   }
@@ -139,14 +140,8 @@ function validateIccProfile(data: Uint8Array): void {
   }
 }
 
-// `profileDescriptionTag` always has signature `desc` (ICC.1:2010, Annex
-// "Required tags"). Its data type is what differs by ICC version:
-//   - v2 → `textDescriptionType` ("desc" type signature)
-//   - v4 → `multiLocalizedUnicodeType` ("mluc" type signature)
-// `extractDescTag` reads the v2 layout; `extractMlucTag` reads the v4
-// layout. Both expect `offset` to point at the start of the tag data
-// (i.e. at the type signature), and `size` to be the tag's declared
-// byte length.
+// `profileDescriptionTag` always has signature `desc`. Its data type
+// differs by ICC version: `desc` for v2, `mluc` for v4.
 function extractDescTag(data: Uint8Array, offset: number, size: number): string {
   if (size < 12) {
     return "";
@@ -192,16 +187,6 @@ function decodeUtf16Be(data: Uint8Array): string {
 function extractIccDescription(data: Uint8Array): string | undefined {
   validateIccProfile(data);
   const tagCount = readUint32(data, ICC_TAG_COUNT_OFFSET);
-  // The profileDescriptionTag (ICC.1:2010 §9.2.41) always has tag
-  // signature `desc`. Its data type — which lives at the first 4 bytes
-  // of the tag data — is `desc` for v2 profiles and `mluc` for v4
-  // profiles. Branching on the *type signature* (not the tag
-  // signature) is the only correct way to read this field; the prior
-  // implementation, which also searched for a tag whose *signature*
-  // was `mluc`, was reading nonexistent tags and falsely reporting
-  // missing descriptions on every v4 profile. Real-world Figma .figs
-  // (e.g. Figma Community's E-commerce template) embed v4.3 sRGB
-  // profiles whose descriptions are stored in `mluc` tag data.
   for (let index = 0; index < tagCount; index++) {
     const recordOffset = ICC_TAG_COUNT_OFFSET + 4 + index * ICC_TAG_RECORD_LENGTH;
     if (recordOffset + ICC_TAG_RECORD_LENGTH > data.length) {
@@ -231,8 +216,8 @@ function extractIccDescription(data: Uint8Array): string | undefined {
   return undefined;
 }
 
-/** Identify the subset of ICC profiles that this renderer can convert exactly. */
-export function identifySupportedIccProfile(profile: PngImage["iccProfile"]): FigmaExportColorProfile {
+/** Identify the subset of ICC profiles that the renderers can convert exactly. */
+export function identifySupportedIccProfile(profile: IccProfile | undefined): FigmaExportColorProfile {
   if (!profile) {
     throw new Error("ICC profile identification requires profile data");
   }
@@ -248,15 +233,4 @@ export function identifySupportedIccProfile(profile: PngImage["iccProfile"]): Fi
     return "SRGB";
   }
   throw new Error(`Unsupported ICC profile for image color management: ${description}`);
-}
-
-/** Resolve an image's managed source profile using explicit metadata. */
-export function resolveManagedRasterSourceProfile(image: DecodedRasterImage): FigmaExportColorProfile {
-  if (image.iccProfile) {
-    return identifySupportedIccProfile(image.iccProfile);
-  }
-  if (image.srgbIntent !== undefined) {
-    return "SRGB";
-  }
-  return "SRGB";
 }

@@ -9,8 +9,9 @@
  * from Figma's exporter and produce AA-only diff regressions.
  */
 
-import type { CornerRadius } from "../../scene-graph/types";
-import { buildRoundedRectPathD } from "../../scene-graph/render/rounded-rect-path";
+
+import { buildRoundedRectPathD } from "@higma-primitives/path";
+import type { CornerRadius } from "@higma-primitives/path";
 
 type RectShapeProps = {
   readonly width: number;

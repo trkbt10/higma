@@ -11,4 +11,12 @@ export { pack as packPng } from "./pngjs";
 export { parseSync as parsePng } from "./pngjs";
 export type { PngChromaticity, PngIccProfile, PngData, PackerOptions } from "./pngjs";
 export type { ParseResult, ParseOptions } from "./pngjs";
-export { createPngImage, readPng, writePng, type PngImage } from "./png-image";
+export {
+  createPngImage,
+  readPng,
+  readPngMetadata,
+  writePng,
+  type PngImage,
+  type PngImageMetadata,
+  type PngReadOptions,
+} from "./png-image";

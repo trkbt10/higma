@@ -22,13 +22,14 @@
  *   ResolvedFillDef (with userSpaceOnUse pixel coordinates)
  */
 
-import type { AffineMatrix } from "../types";
+
 import type { ResolvedLinearGradient, ResolvedRadialGradient } from "./fill";
 import type { RenderDef } from "../render-tree/types";
 import {
   linearGradientAttrs as svgLinearGradientAttrs,
   radialGradientAttrs as svgRadialGradientAttrs,
 } from "../../paint/svg-gradient-transform";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 /**
  * Extract the raw affine matrix from a ResolvedGradient's

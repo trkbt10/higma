@@ -6,8 +6,8 @@
 
 import type { FigEffect } from "@higma-document-models/fig/types";
 import { getEffectTypeName, isEffectVisible, extractShadowParams } from "../../effects";
-import type { Effect } from "../types";
-import { convertFigmaBlendMode } from "./blend-mode";
+import type { Effect } from "@higma-document-models/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
 
 /**
  * Convert Figma effects array to scene graph Effects.

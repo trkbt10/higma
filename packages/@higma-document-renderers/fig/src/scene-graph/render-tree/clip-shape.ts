@@ -1,8 +1,9 @@
 /** @file RenderTree clip shape resolution. */
 
-import type { CornerRadius } from "../types";
+
 import type { ClipPathShape } from "./types";
-import { buildRoundedRectPathD } from "../render/rounded-rect-path";
+import { buildRoundedRectPathD } from "@higma-primitives/path";
+import type { CornerRadius } from "@higma-primitives/path";
 
 /**
  * Build a ClipPathShape from dimensions and corner radius.

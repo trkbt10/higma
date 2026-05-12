@@ -1,30 +1,24 @@
 /**
- * @file Rounded-rect SVG path-d builder — single source of truth.
+ * @file Rounded-rectangle SVG path-`d` builder — single SoT used by the
+ * SVG / React / scene-graph render-tree pipelines.
  *
- * The same path-d string is consumed by:
- *   - scene-renderer.ts (rect fill/stroke shapes)
- *   - resolve.ts (clipPath shapes)
- *   - react/primitives/rect-shape.tsx (React renderer)
+ * The same path-`d` string is consumed by:
+ *   - the renderer's SVG scene-renderer (rect fill/stroke shapes)
+ *   - render-tree clip-path shape construction
+ *   - the React renderer's rect primitive component
  *
- * All three MUST produce the same path so that fill, stroke, and clip
- * align to the same sub-pixels. Using SVG `<rect rx>` or `A` arc
+ * All consumers MUST produce the same path so that fill, stroke, and
+ * clip align to the same sub-pixels. Using SVG `<rect rx>` or `A` arc
  * commands instead of cubic Bézier corners causes resvg-js to
  * rasterise the rounded corner one sub-pixel off from Figma's
  * exporter, producing a ~0.1% AA-only diff at large corner radii.
+ *
+ * Figma's SVG exporter emits the same Bézier-corner pattern with
+ * KAPPA = 0.5522847498307936 (4·(√2−1)/3), so we use the constant
+ * exported from `./contours/rect`.
  */
 
-/**
- * Standard quarter-circle approximation constant.
- *
- * For a circle of radius r, the cubic Bézier with control points
- * pulled toward the corner by `r * (1 - kappa)` along each axis
- * approximates the quarter-arc with maximum error ≈ 2.7e-4 of the
- * radius — sub-pixel for any practical corner.
- *
- * Figma's SVG exporter uses this exact constant: a 24-radius corner
- * exports as `C 0 34.7452 10.7452 24 24 24` where 34.7452 ≈ 48 - 24K.
- */
-export const CORNER_KAPPA = 0.5522847498307933;
+import { KAPPA } from "./contours";
 
 /**
  * Build a rounded rect SVG path d string using cubic Bézier corners.
@@ -42,10 +36,6 @@ export const CORNER_KAPPA = 0.5522847498307933;
  *   C ... X+r Y              (top-left corner)
  *   Z
  *
- * For (X,Y)=(0,0), r=24, W=390, H=342 this matches Figma's exporter:
- *   `M0 48C0 34.7452 10.7452 24 24 24 H366C379.255 24 390 34.7452 390 48...`
- * (modulo command spacing — semantically identical).
- *
  * Origin defaults to (0, 0). A non-zero origin is used by clip-path
  * resolution when the clip is expanded outward by a stroke margin —
  * the expanded rect spans `(-margin, -margin) → (W+margin, H+margin)`.
@@ -57,10 +47,10 @@ export function buildRoundedRectPathD(
   origin: { x: number; y: number } = { x: 0, y: 0 },
 ): string {
   const [tl, tr, br, bl] = radii;
-  const cTl = tl * (1 - CORNER_KAPPA);
-  const cTr = tr * (1 - CORNER_KAPPA);
-  const cBr = br * (1 - CORNER_KAPPA);
-  const cBl = bl * (1 - CORNER_KAPPA);
+  const cTl = tl * (1 - KAPPA);
+  const cTr = tr * (1 - KAPPA);
+  const cBr = br * (1 - KAPPA);
+  const cBl = bl * (1 - KAPPA);
   const x = origin.x;
   const y = origin.y;
   const parts = [
@@ -77,3 +67,6 @@ export function buildRoundedRectPathD(
   ];
   return parts.filter(Boolean).join(" ");
 }
+
+/** Re-export under the legacy `CORNER_KAPPA` name for renderer callers. */
+export const CORNER_KAPPA = KAPPA;

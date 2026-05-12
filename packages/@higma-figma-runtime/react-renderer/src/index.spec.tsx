@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId, type SceneGraph } from "@higma-document-models/fig/scene-graph";
 import {
   createFigFamilyRenderOptions,
   FigFamilyPageRenderer,

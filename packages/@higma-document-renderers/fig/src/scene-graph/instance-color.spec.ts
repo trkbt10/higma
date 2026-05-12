@@ -4,7 +4,7 @@
 
 import { createDemoFigDesignDocument } from "../testing/demo-document";
 import { buildSceneGraph } from "./builder";
-import type { SceneNode, FrameNode } from "./types";
+import type { SceneNode, FrameNode } from "@higma-document-models/fig/scene-graph";
 
 function findSceneNode(nodes: readonly SceneNode[], predicate: (n: SceneNode) => boolean): SceneNode | undefined {
   for (const node of nodes) {

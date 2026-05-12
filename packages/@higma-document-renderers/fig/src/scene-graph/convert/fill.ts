@@ -8,26 +8,11 @@
 import type { FigPaint, FigColor, FigGradientPaint, FigImagePaint } from "@higma-document-models/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
-  getPaintType,
-  asGradientPaint,
-  asImagePaint,
-  asSolidPaint,
-} from "@higma-document-models/fig/color";
+  getPaintType, asGradientPaint, asImagePaint, asSolidPaint, } from "@higma-document-models/fig/color";
 import {
-  getGradientStops,
-  getGradientDirection,
-  getRadialGradientCenterAndRadius,
-  getAngularGradientParams,
-  getDiamondGradientParams,
-  getImageRef,
-  getImageTransform,
-  getScaleMode,
-  getScalingFactor,
-  getPaintFilter,
-  getImageShouldColorManage,
-} from "../../paint";
-import type { Fill, Color, GradientStop, BlendMode, AffineMatrix } from "../types";
-import { convertFigmaBlendMode } from "./blend-mode";
+  getGradientStops, getGradientDirection, getRadialGradientCenterAndRadius, getAngularGradientParams, getDiamondGradientParams, getImageRef, getImageTransform, getScaleMode, getScalingFactor, getPaintFilter, getImageShouldColorManage, } from "../../paint";
+import type { Fill, Color, GradientStop, BlendMode } from "@higma-document-models/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
 
 /**
  * Convert FigColor to scene graph Color
@@ -35,6 +20,7 @@ import { convertFigmaBlendMode } from "./blend-mode";
 export function figColorToSceneColor(color: FigColor): Color {
   return { r: color.r, g: color.g, b: color.b, a: color.a };
 }
+import type { AffineMatrix } from "@higma-primitives/path";
 
 /**
  * Convert gradient stops to scene graph format

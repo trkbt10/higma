@@ -1,25 +1,4 @@
-/**
- * @file WebGL renderer module — public API barrel.
- *
- * Provides GPU-accelerated rendering of Figma scene graphs. Internal layout:
- *
- * - `renderer/` — main composition (`createWebGLFigmaRenderer`)
- * - `tessellation/` — geometry: path contours, fills, strokes, stencil fans
- * - `text/` — text-node tessellation and visibility
- * - `fill/` — fill draw calls and per-path fill plan
- * - `effects/` — effect application and stencil clipping
- * - `resources/` — caches, textures, framebuffers, identity store
- * - `scene/` — scene state, render-tree cache, culling, surface, viewport,
- *   preparation status, render-tree contract audit
- * - `shaders/` — GLSL program sources and the shader cache
- * - `react/` — React lifecycle hook
- *
- * Sub-folders are not separate entry points: this barrel is the only one,
- * so consumers see a single coherent WebGL surface. The custom
- * `no-cross-package-reexport` rule forbids republishing primitives (e.g.
- * `flattenPathCommands` from `@higma-primitives/path`) through this barrel;
- * consumers must import them directly.
- */
+/** @file WebGL renderer — public API for GPU-accelerated Figma scene graph rendering. */
 
 // Main renderer
 export {

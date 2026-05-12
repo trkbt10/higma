@@ -10,7 +10,7 @@
  */
 
 import { buildSceneGraph, type BuildSceneGraphOptions } from "./builder";
-import type { FrameNode } from "./types";
+import type { FrameNode } from "@higma-document-models/fig/scene-graph";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import { toNodeId, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { FigPaint, FigEffect } from "@higma-document-models/fig/types";

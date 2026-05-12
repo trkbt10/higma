@@ -5,7 +5,7 @@
  * and multi-pass rendering.
  */
 
-import type { BackgroundBlurEffect, BlendMode, DropShadowEffect, InnerShadowEffect, LayerBlurEffect } from "../../scene-graph/types";
+import type { BackgroundBlurEffect, BlendMode, DropShadowEffect, InnerShadowEffect, LayerBlurEffect } from "@higma-document-models/fig/scene-graph";
 import type { Framebuffer } from "../resources/framebuffer";
 import { createFramebuffer, createFramebufferWithStencil, deleteFramebuffer, bindFramebuffer } from "../resources/framebuffer";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";

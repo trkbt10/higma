@@ -5,7 +5,7 @@
  * Duplicating color-to-hex logic elsewhere is a parity violation.
  */
 
-import type { Color } from "../types";
+import type { Color } from "@higma-document-models/fig/scene-graph";
 
 /**
  * Convert a 0–1 float channel to 0–255 integer.

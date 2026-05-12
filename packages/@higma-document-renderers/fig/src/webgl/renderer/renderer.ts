@@ -28,72 +28,29 @@
  * ```
  */
 
-import type {
-  SceneGraph,
-  AffineMatrix,
-  Fill,
-  Color,
-  LayerBlurEffect,
-  Effect,
-  PathContour,
-  ClipShape,
-} from "../../scene-graph/types";
-import {
-  normalizeFigmaRenderExportSettings,
-  requireManagedImageColorProfile,
-  type FigmaRenderExportSettings,
-  type NormalizedFigmaRenderExportSettings,
-} from "../../scene-graph/render";
+import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, ClipShape } from "@higma-document-models/fig/scene-graph";
+import { normalizeFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type NormalizedFigmaRenderExportSettings, } from "../../scene-graph/render";
 
 import {
-  type RenderNode,
-  type RenderGroupNode,
-  type RenderFrameNode,
-  type RenderRectNode,
-  type RenderEllipseNode,
-  type RenderPathNode,
-  type RenderTextNode,
-  type RenderImageNode,
-  type RenderNodeBase,
-  type StrokeRendering,
-  type StrokeShape,
-  type RenderClipPathDef,
-} from "../../scene-graph/render-tree";
+  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type StrokeRendering, type StrokeShape, type RenderClipPathDef, } from "../../scene-graph/render-tree";
 import type { ResolvedFillDef } from "../../scene-graph/render/fill";
 
 import {
-  generateRectVertices,
-  tessellateContours,
-} from "../tessellation/tessellation";
+  generateRectVertices, tessellateContours, } from "../tessellation/tessellation";
 import {
-  drawSolidFill,
-  drawLinearGradientFill,
-  drawRadialGradientFill,
-  drawAngularGradientFill,
-  drawDiamondGradientFill,
-  drawImageFill,
-  type GLContext,
-} from "../fill/fill-renderer";
+  drawSolidFill, drawLinearGradientFill, drawRadialGradientFill, drawAngularGradientFill, drawDiamondGradientFill, drawImageFill, type GLContext, } from "../fill/fill-renderer";
 import { imageTextureResource, type TextureColorManagement } from "../resources/texture-resource";
 import { IDENTITY_MATRIX, multiplyMatrices } from "@higma-document-models/fig/matrix";
 import { rebuildStencilClipStack, type StencilClipEntry } from "../effects/clip-mask";
 import {
-  tessellateRectStroke,
-  tessellateRectAlignedStroke,
-  tessellateEllipseStroke,
-} from "../tessellation/stroke-tessellation";
+  tessellateRectStroke, tessellateRectAlignedStroke, tessellateEllipseStroke, } from "../tessellation/stroke-tessellation";
 import { createEffectsRenderer } from "../effects/effects-renderer";
 import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { createWebGLEffectRendering } from "../effects/effect-rendering";
 import { shouldRenderVisualNode, type ViewportRect } from "../scene/render-culling";
 import { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "../resources/resource-context";
 import {
-  prepareFanTriangles,
-  generateCoverQuad,
-  CLIP_STENCIL_BIT,
-  FILL_STENCIL_MASK,
-} from "../tessellation/stencil-fill";
-import type { CornerRadius } from "../../scene-graph/types";
+  prepareFanTriangles, generateCoverQuad, CLIP_STENCIL_BIT, FILL_STENCIL_MASK, } from "../tessellation/stencil-fill";
 import { flattenPathCommands } from "@higma-primitives/path";
 import { svgPathDToContours } from "../tessellation/path-contours";
 import { syncWebGLCanvasRenderSurface } from "../scene/render-surface";
@@ -108,6 +65,7 @@ function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
   const avg = (cr[0] + cr[1] + cr[2] + cr[3]) / 4;
   return avg || undefined;
 }
+import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
 // =============================================================================
 // Types

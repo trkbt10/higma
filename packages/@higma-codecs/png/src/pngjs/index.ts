@@ -17,4 +17,4 @@ export {
   type PngChromaticity,
   type PngIccProfile,
 } from "./packer";
-export { parseSync, type ParseOptions, type ParseResult } from "./parser-sync";
+export { parseSync, type ParseOptions, type ParseResult, type ParseMetadataResult } from "./parser-sync";

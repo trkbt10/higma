@@ -1,6 +1,6 @@
 /** @file WebGL viewport layer composition for the fig editor. */
 
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigWebGLViewportLoadingOverlay } from "../status/FigWebGLViewportLoadingOverlay";
 import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";

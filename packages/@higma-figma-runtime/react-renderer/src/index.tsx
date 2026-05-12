@@ -20,13 +20,11 @@ import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
   buildSceneGraphWithCache,
   type BuildSceneGraphOptions,
-  type SceneGraph,
   type SceneGraphBuildCache,
 } from "@higma-document-renderers/fig/scene-graph";
-import type {
-  FigmaExportColorProfile,
-  SceneGraphRenderOptions,
-} from "@higma-document-renderers/fig/scene-graph/render";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { FigmaExportColorProfile } from "@higma-codecs/raster";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 

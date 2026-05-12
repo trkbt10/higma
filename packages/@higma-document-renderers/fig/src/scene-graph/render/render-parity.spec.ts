@@ -12,18 +12,7 @@
  * 4. New types added to SceneGraph unions cause compile errors if unhandled
  */
 
-import type {
-  Fill,
-  SolidFill,
-  LinearGradientFill,
-  RadialGradientFill,
-  ImageFill,
-  Effect,
-  Stroke,
-  Color,
-  AffineMatrix,
-  PathContour,
-} from "../types";
+import type { Fill, SolidFill, LinearGradientFill, RadialGradientFill, ImageFill, Effect, Stroke, Color, PathContour } from "@higma-document-models/fig/scene-graph";
 import { readPng } from "@higma-codecs/png";
 import { encode as encodeJpeg } from "jpeg-js";
 import {
@@ -32,10 +21,10 @@ import {
   resolveStroke,
   resolveEffects,
   colorToHex,
-  matrixToSvgTransform,
-  contourToSvgD,
   type IdGenerator,
 } from "./index";
+import { matrixToSvgTransform, contourToSvgD } from "@higma-primitives/path";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
 // Test Helpers
@@ -230,7 +219,7 @@ describe("Fill resolution (shared SoT)", () => {
     expect(() => resolveFill(fill, ids)).toThrow("requires explicit exportSettings.colorProfile");
   });
 
-  it("tags color-managed JPEG image fills without paintFilter as PNG sRGB data", () => {
+  it("preserves no-op color-managed JPEG image fills without paintFilter", () => {
     const fill: ImageFill = {
       type: "image",
       imageRef: "color-managed-jpeg-ref",
@@ -245,11 +234,8 @@ describe("Fill resolution (shared SoT)", () => {
 
     expect(result.def?.type).toBe("image");
     if (result.def?.type === "image") {
-      expect(result.def.dataUri.startsWith(DATA_URI_PREFIX)).toBe(true);
-      const decoded = readPng(pngDataFromImageDefDataUri(result.def.dataUri));
-      expect(decoded.width).toBe(2);
-      expect(decoded.height).toBe(1);
-      expect(decoded.srgbIntent).toBe(0);
+      expect(result.def.dataUri.startsWith("data:image/jpeg;base64,")).toBe(true);
+      expect(Buffer.from(result.def.dataUri.slice("data:image/jpeg;base64,".length), "base64")).toEqual(Buffer.from(fill.data));
     }
   });
 

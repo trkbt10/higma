@@ -22,7 +22,7 @@ import { extractDerivedTextPathData, hasDerivedGlyphs } from "../paths/derived-p
 import { extractTextPathData } from "../paths/opentype-paths";
 import type { PathContour } from "../paths/types";
 import { resolveTextRuns } from "../runs/resolve";
-import type { TextRun } from "../runs/types";
+import type { TextRun } from "@higma-document-models/fig/scene-graph";
 import type {
   TextRendering,
   TextRenderingGlyphs,

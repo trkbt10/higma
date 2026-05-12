@@ -9,21 +9,9 @@
  * stays in sync with the domain model by construction.
  */
 
-import type {
-  FigDesignNode,
-  SymbolOverride,
-  MutableFigDesignNode,
-  FigStyleRegistry,
-  ComponentPropertyAssignment,
-  ComponentPropertyValue,
-} from "@higma-document-models/fig/domain";
+import type { FigDesignNode, SymbolOverride, MutableFigDesignNode, FigStyleRegistry, ComponentPropertyAssignment, ComponentPropertyValue } from "@higma-document-models/fig/domain";
 import {
-  isValidOverridePath,
-  isSelfOverride,
-  overridePathToIds,
-  applyOverrideToNode,
-  overrideFieldKeys,
-} from "@higma-document-models/fig/domain";
+  isValidOverridePath, isSelfOverride, overridePathToIds, applyOverrideToNode, overrideFieldKeys, } from "@higma-document-models/fig/domain";
 import type { FigFillGeometry, FigPaint } from "@higma-document-models/fig/types";
 import { FIG_NODE_TYPE } from "@higma-document-models/fig/types";
 import { guidToString, type FigBlob } from "@higma-document-models/fig/domain";
@@ -32,46 +20,26 @@ import { resolvePaintRef, resolveStyledPaint, reresolveOverridesForVariant } fro
 import { dfsById } from "@higma-primitives/tree";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import {
-  extractBaseProps,
-  extractSizeProps,
-  extractPaintProps,
-  extractGeometryProps,
-  extractEffectsProps,
-} from "./extract";
+  extractBaseProps, extractSizeProps, extractPaintProps, extractGeometryProps, extractEffectsProps, } from "./extract";
 import { resolveAutoLayoutFrame, type PrimaryAxisChild, type PrimaryAxisParent } from "./autolayout-primary";
 import type {
-  SceneGraph,
-  SceneNode,
-  GroupNode,
-  FrameNode,
-  RectNode,
-  EllipseNode,
-  PathNode,
-  TextNode,
-  SceneNodeId,
-  AffineMatrix,
-} from "./types";
-import { createNodeId } from "./types";
+  SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
+import { createNodeId } from "@higma-document-models/fig/scene-graph";
 import { convertPaintsToFills } from "./convert/fill";
 import { convertStrokeToSceneStroke } from "./convert/stroke";
 import { convertEffectsToScene } from "./convert/effects";
 import { decodeGeometryToContours, convertVectorPathsToContours, type DecodedContour } from "./convert/path";
-import { reconstructStrokeCenterline } from "./convert/stroke-geometry-centerline";
+import { reconstructStrokeCenterline } from "@higma-primitives/path";
 import {
-  generateEllipseContour,
-  generateLineContour,
-  generatePolygonContour,
-  generateRectContour,
-  generateStarContour,
-  parseSvgPathD,
-} from "@higma-primitives/path";
+  generateEllipseContour, generateLineContour, generatePolygonContour, generateRectContour, generateStarContour, parseSvgPathD, } from "@higma-primitives/path";
 import { convertTextNode } from "./convert/text";
-import type { Fill, PathContour, BlendMode, ArcData } from "./types";
-import { convertFigmaBlendMode } from "./convert/blend-mode";
+import type { Fill, PathContour, BlendMode, ArcData } from "@higma-document-models/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
 import { resolveChildConstraints } from "@higma-document-models/fig/symbols";
-import type { TextAutoResize } from "../text/layout/types";
+import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
 import type { TextFontResolver } from "../text/rendering";
-import { evaluateBooleanPathResult, resolveBooleanOperationType, type BooleanPathInput } from "./boolean-operation";
+import { evaluateBooleanPathResult, type BooleanPathInput } from "@higma-primitives/path";
+import { resolveBooleanOperationType } from "@higma-document-models/fig/boolean-operation";
 import {
   convertDesignTransform,
   deepCloneDesignNode,
@@ -80,6 +48,7 @@ import {
   hasPaintDeclaration,
   resolveDesignClipsContent,
 } from "./design-node-helpers";
+import type { AffineMatrix } from "@higma-primitives/path";
 
 function convertBlendMode(node: FigDesignNode): BlendMode | undefined {
   return convertFigmaBlendMode(node.blendMode);

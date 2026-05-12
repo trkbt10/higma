@@ -5,24 +5,14 @@
  * (tessellated vertices, fill info, transforms). Supports incremental
  * updates via applyDiff() to avoid full re-tessellation on every frame.
  */
-import type {
-  SceneGraph,
-  SceneNode,
-  SceneNodeId,
-  PathContour,
-  AffineMatrix,
-  Fill,
-  Color,
-  Effect,
-  ClipShape,
-  CornerRadius,
-} from "../../scene-graph/types";
+import type { SceneGraph, SceneNode, SceneNodeId, PathContour, Fill, Color, Effect, ClipShape } from "@higma-document-models/fig/scene-graph";
 import type { SceneGraphDiff, DiffOp } from "../../scene-graph/diff";
 import {
   generateRectVertices,
   generateEllipseVertices,
   tessellateContours,
 } from "../tessellation/tessellation";
+import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
 /** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
 function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {

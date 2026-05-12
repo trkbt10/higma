@@ -10,7 +10,7 @@
  * uses the same renderer the parity tests already trust.
  */
 import { createWebGLFigmaRenderer } from "@higma-document-renderers/fig/webgl";
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
 

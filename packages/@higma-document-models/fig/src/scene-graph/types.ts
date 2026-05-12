@@ -1,17 +1,18 @@
 /**
  * @file Scene Graph type definitions
  *
- * Format-agnostic intermediate representation for Figma rendering.
- * Both SVG and WebGL backends consume this scene graph.
+ * Format-agnostic intermediate representation for Figma rendering and
+ * code-generation. SVG, WebGL, React, and the various exporter tools
+ * all consume this scene graph.
  *
- * ## Parity contract
- *
- * Every visual property that the old SVG renderer (svg/renderer.ts +
- * svg/nodes/) handles MUST have a corresponding field in these types.
- * The builder-feature-parity.spec.ts test enforces this mapping.
+ * Parity contract: every visual property that the SVG renderer handles
+ * MUST have a corresponding field in these types. The
+ * builder-feature-parity test enforces the mapping.
  */
 
-import type { TextAutoResize } from "../text/layout/types";
+import type { AffineMatrix, CornerRadius, PathCommand } from "@higma-primitives/path";
+import type { ImagePaintFilter } from "@higma-codecs/raster";
+import type { FontQuery } from "../font";
 
 // =============================================================================
 // Branded ID Type
@@ -29,15 +30,6 @@ export function createNodeId(id: string): SceneNodeId {
 // =============================================================================
 
 export type Point = { readonly x: number; readonly y: number };
-
-export type AffineMatrix = {
-  readonly m00: number;
-  readonly m01: number;
-  readonly m02: number;
-  readonly m10: number;
-  readonly m11: number;
-  readonly m12: number;
-};
 
 export type Color = {
   readonly r: number;
@@ -168,20 +160,6 @@ export type ImageFill = {
   readonly imageShouldColorManage?: boolean;
 };
 
-export type ImagePaintFilter = {
-  readonly tint?: number;
-  readonly shadows?: number;
-  readonly highlights?: number;
-  readonly detail?: number;
-  readonly exposure?: number;
-  readonly vignette?: number;
-  readonly temperature?: number;
-  readonly vibrance?: number;
-  readonly contrast?: number;
-  readonly brightness?: number;
-  readonly saturation?: number;
-};
-
 export type Fill =
   | SolidFill
   | LinearGradientFill
@@ -275,15 +253,6 @@ export type Effect =
 // Path Types
 // =============================================================================
 
-// `PathCommand` is owned by `@higma-primitives/path` (see the SoT
-// JSDoc there). Both decoders — the Kiwi blob decoder in
-// `@higma-document-models/fig/domain` and this package's
-// `parseSvgPathD` — emit values of that one union. The renderer
-// imports it from the primitive directly so the scene-graph stays
-// aligned with the document-io builder, the swiftui / godot
-// translators, and the editor's vector-path operations.
-import type { PathCommand } from "@higma-primitives/path";
-
 export type PathContour = {
   readonly commands: readonly PathCommand[];
   readonly windingRule: "nonzero" | "evenodd";
@@ -291,13 +260,16 @@ export type PathContour = {
   readonly fillOverride?: Fill;
 };
 
-// `GlyphContour` here combines scene-graph's `PathContour` (which mandates
-// a `windingRule`) with the shared `GlyphCharacterIndex` annotation owned
-// by `text/paths/types`. `TextRun` is owned by `text/runs/types`. Both
-// names must be imported from those origin modules — scene-graph
-// deliberately does not republish them.
-import type { GlyphCharacterIndex } from "../text/paths/types";
-import type { TextRun } from "../text/runs/types";
+/**
+ * Glyph annotation: the source-character index that a glyph outline
+ * corresponds to. `firstCharacter` is `undefined` for contours that
+ * don't map to a single source character (Figma's auto-inserted
+ * ellipsis glyph, opentype fallback line contours). The run grouper
+ * folds those into the base run.
+ */
+export type GlyphCharacterIndex = {
+  readonly firstCharacter: number | undefined;
+};
 
 /**
  * A scene-graph glyph contour: scene-graph's `PathContour` plus the
@@ -305,17 +277,6 @@ import type { TextRun } from "../text/runs/types";
  * scene-graph → render-tree pipeline.
  */
 export type GlyphContour = PathContour & GlyphCharacterIndex;
-
-// =============================================================================
-// Corner Radius
-// =============================================================================
-
-/**
- * Corner radius for rectangular shapes.
- * - number: uniform radius on all corners
- * - [tl, tr, br, bl]: per-corner radii
- */
-export type CornerRadius = number | readonly [number, number, number, number];
 
 // =============================================================================
 // Arc Data (for ellipse partial arcs and donuts)
@@ -361,6 +322,35 @@ export type MaskNode = {
 // =============================================================================
 // Text Types
 // =============================================================================
+
+/** Text auto-resize mode — determines wrapping and overflow behavior. */
+export type TextAutoResize = "WIDTH_AND_HEIGHT" | "HEIGHT" | "NONE" | "TRUNCATE";
+
+/**
+ * Resolved fill applied to a contiguous run of source characters.
+ *
+ * A `TextRun` is a maximal contiguous span of source characters that
+ * share a single resolved fill. Runs partition
+ * `[0, characters.length)` exactly: no gaps, no overlaps, no
+ * zero-length runs (except when the source is the empty string, in
+ * which case the runs array is empty).
+ */
+export type TextRun = {
+  /** Inclusive source-character start index. */
+  readonly start: number;
+  /** Exclusive source-character end index. */
+  readonly end: number;
+  /** Resolved CSS hex colour string (e.g. "#ff0000"). */
+  readonly fillColor: string;
+  /** Resolved alpha in [0, 1]. */
+  readonly fillOpacity: number;
+  /**
+   * Font override for this run. `undefined` means "use the text node's
+   * base font". When set, the renderer must route per-character glyph
+   * lookups through this query rather than the base font.
+   */
+  readonly font?: FontQuery;
+};
 
 export type TextLineBounds = {
   readonly text: string;

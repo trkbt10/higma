@@ -7,7 +7,7 @@
  * or React elements. Each consumer formats them for its own output.
  */
 
-import type { Effect, Color, BlendMode } from "../types";
+import type { Effect, Color, BlendMode } from "@higma-document-models/fig/scene-graph";
 import type { IdGenerator } from "./fill";
 
 // =============================================================================

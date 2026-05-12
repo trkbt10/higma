@@ -1,6 +1,6 @@
 /** @file WebGL geometry cache keyed by RenderTree node identity. */
 
-import type { CornerRadius, PathContour } from "../../scene-graph/types";
+import type { PathContour } from "@higma-document-models/fig/scene-graph";
 import type { RenderPathNode, RenderTextNode } from "../../scene-graph/render-tree";
 import {
   generateEllipseVertices,
@@ -10,6 +10,7 @@ import {
 import { tessellatePathStroke } from "../tessellation/stroke-tessellation";
 import { prepareFanTriangles } from "../tessellation/stencil-fill";
 import { svgPathDToContours } from "../tessellation/path-contours";
+import type { CornerRadius } from "@higma-primitives/path";
 
 type PathGeometry = {
   readonly parsedContours: readonly PathContour[];

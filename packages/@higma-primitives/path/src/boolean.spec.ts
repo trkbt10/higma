@@ -1,18 +1,14 @@
-/** @file Tests for shared boolean path operation SoT. */
+/** @file Tests for boolean path evaluation (path-algebra SoT). */
 
-import { createBooleanOperationEnum, evaluateBooleanPathResult, evaluateBooleanPaths, resolveBooleanOperationType } from "./boolean-operation";
+import {
+  evaluateBooleanPathResult,
+  evaluateBooleanPaths,
+} from "./boolean";
 
 const squareA = "M0 0 L100 0 L100 100 L0 100 Z";
 const squareB = "M50 0 L150 0 L150 100 L50 100 Z";
 
-describe("boolean-operation", () => {
-  it("creates and resolves Figma boolean operation enum values", () => {
-    expect(createBooleanOperationEnum("INTERSECT")).toEqual({ value: 2, name: "INTERSECT" });
-    expect(resolveBooleanOperationType({ value: 3, name: "EXCLUDE" })).toBe("EXCLUDE");
-    expect(resolveBooleanOperationType({ value: 99, name: "SUBTRACT" })).toBe("SUBTRACT");
-    expect(resolveBooleanOperationType(undefined)).toBe("UNION");
-  });
-
+describe("boolean path evaluation", () => {
   it("evaluates all supported operations through one path-bool adapter", () => {
     const inputs = [
       { d: squareA, windingRule: "nonzero" as const },

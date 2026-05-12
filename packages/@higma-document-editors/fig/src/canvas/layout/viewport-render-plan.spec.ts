@@ -1,6 +1,6 @@
 /** @file Tests for shared fig editor viewport layout planning. */
 
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { resolveViewportLayerFrame, resolveViewportRenderWindow } from "./viewport-render-plan";
 
 function makeSceneGraph(): SceneGraph {

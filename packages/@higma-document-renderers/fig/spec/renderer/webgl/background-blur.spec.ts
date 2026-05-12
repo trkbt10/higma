@@ -3,8 +3,8 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readPng } from "@higma-codecs/png";
-import type { SceneGraph, SceneNode, RectNode } from "../../../src/scene-graph/types";
-import { createNodeId } from "../../../src/scene-graph/types";
+import type { SceneGraph, SceneNode, RectNode } from "@higma-document-models/fig/scene-graph";
+import { createNodeId } from "@higma-document-models/fig/scene-graph";
 import {
   captureWebGL,
   startHarness,

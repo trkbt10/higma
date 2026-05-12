@@ -3,8 +3,8 @@
 import type { FigDesignNode, MutableFigDesignNode } from "@higma-document-models/fig/domain";
 import type { FigPaint } from "@higma-document-models/fig/types";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
-import type { AffineMatrix, CornerRadius } from "./types";
 import { resolveClipsContent as resolveGeometryClipsContent } from "../geometry";
+import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
 /** Get the already-normalized domain node type name. */
 export function getDesignNodeTypeName(node: FigDesignNode): string {

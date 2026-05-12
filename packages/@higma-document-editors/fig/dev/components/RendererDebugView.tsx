@@ -25,7 +25,7 @@ import { renderCanvas } from "@higma-document-renderers/fig/svg";
 import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { buildSceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { Button, Select, Tabs, Toggle, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import {
   InspectorCanvasOverlay,

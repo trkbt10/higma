@@ -3,20 +3,11 @@
  *
  * Converts bezier paths into triangle meshes for GPU rendering.
  * Uses earcut for polygon triangulation after flattening curves to polylines.
- *
- * Path flattening / arc → cubic helpers live in
- * `@higma-primitives/path`. This file keeps only the renderer-specific
- * triangulation and vertex-buffer assembly logic.
- *
- * The custom `no-cross-package-reexport` rule forbids republishing
- * `flattenPathCommands` through this module, so consumers import the
- * primitive directly. Inside this module the local-file path
- * flattening usage stays in scope.
  */
 
 import earcut from "earcut";
 import { flattenPathCommands } from "@higma-primitives/path";
-import type { CornerRadius, PathContour } from "../../scene-graph/types";
+import type { CornerRadius, PathContour } from "@higma-primitives/path";
 
 // =============================================================================
 // Earcut Integration

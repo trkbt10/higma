@@ -32,7 +32,7 @@
  */
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { SceneGraph } from "../../scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import {
   createWebGLFigmaRenderer,
   resolveWebGLViewportPixelRatio,

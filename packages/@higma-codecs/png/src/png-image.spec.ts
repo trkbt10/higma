@@ -1,6 +1,6 @@
 /** @file PNG image read/write metadata tests. */
 
-import { createPngImage, readPng, writePng } from "./png-image";
+import { createPngImage, readPng, readPngMetadata, writePng } from "./png-image";
 
 const SRGB_CHROMATICITY = {
   whitePointX: 0.3127,
@@ -57,6 +57,21 @@ describe("png image metadata", () => {
     expect(decoded.iccProfile?.data).toEqual(profile);
     expect(reparsed.iccProfile?.name).toBe("sRGB");
     expect(reparsed.iccProfile?.data).toEqual(profile);
+  });
+
+  it("reads dimensions and color metadata without pixel data", () => {
+    const source = createPngImage({ width: 3, height: 2 });
+    const encoded = writePng({ ...source, srgbIntent: 0 });
+    const metadata = readPngMetadata(encoded);
+
+    expect(metadata).toEqual({
+      width: 3,
+      height: 2,
+      srgbIntent: 0,
+      chromaticity: undefined,
+      gamma: undefined,
+      iccProfile: undefined,
+    });
   });
 
   it("rejects conflicting ICC and sRGB metadata", () => {

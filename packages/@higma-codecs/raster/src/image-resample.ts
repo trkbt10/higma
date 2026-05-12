@@ -1,14 +1,12 @@
 /**
  * @file Raster image resampling for Figma image export parity.
+ *
+ * Implements the two methods Figma's exporter offers (`BASIC_NEAREST`,
+ * `DETAILED_BICUBIC`) for both "stretch" and "cover" fit modes. Pure
+ * pixel math — no codec or renderer dependencies.
  */
 
-import type { FigmaImageResamplingMethod } from "./export-settings";
-
-export type RgbaRaster = {
-  readonly width: number;
-  readonly height: number;
-  readonly data: Uint8Array;
-};
+import type { FigmaImageResamplingMethod, RgbaRaster } from "./types";
 
 export type ResampleImageOptions = {
   readonly source: RgbaRaster;

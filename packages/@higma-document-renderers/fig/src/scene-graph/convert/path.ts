@@ -10,7 +10,7 @@ import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/dom
 import type { FigFillGeometry, FigVectorPath } from "@higma-document-models/fig/types";
 import { parseSvgPathD } from "@higma-primitives/path";
 import { mapWindingRule } from "../../geometry";
-import type { PathContour } from "../types";
+import type { PathContour } from "@higma-document-models/fig/scene-graph";
 
 /**
  * Decoded contour with optional geometry-level styleID.

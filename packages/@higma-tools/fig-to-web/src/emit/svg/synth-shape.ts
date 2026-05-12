@@ -19,8 +19,7 @@ import {
   generatePolygonContour,
   generateStarContour,
 } from "@higma-primitives/path/contours";
-import { contourToSvgD } from "@higma-document-renderers/fig/scene-graph";
-import { buildEllipseArcPathD } from "@higma-document-renderers/fig/scene-graph/render-tree";
+import { contourToSvgD, buildEllipseArcPathD } from "@higma-primitives/path";
 
 const DEFAULT_STAR_POINTS = 5;
 const DEFAULT_STAR_INNER_RATIO = 0.382;

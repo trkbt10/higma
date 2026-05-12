@@ -1,6 +1,6 @@
 /** @file Image raster decode tests. */
 
-import { extractJpegIccProfile } from "./image-raster-decode";
+import { extractJpegIccProfile } from "@higma-codecs/raster";
 
 const SOI = [0xff, 0xd8] as const;
 const EOI = [0xff, 0xd9] as const;

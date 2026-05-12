@@ -6,6 +6,7 @@
  */
 
 import type { PathCommand } from "@higma-primitives/path";
+import type { GlyphCharacterIndex } from "@higma-document-models/fig/scene-graph";
 
 /**
  * A single glyph's outline path data
@@ -24,26 +25,8 @@ export type PathContour = {
 };
 
 /**
- * Shared glyph annotation: the source-character index that a glyph
- * outline corresponds to. SoT for "which character does this contour
- * paint?" — both `text/paths/GlyphContour` (commands are font/types
- * PathCommand) and `scene-graph/GlyphContour` (commands are
- * scene-graph PathCommand) intersect with this annotation rather than
- * each redeclaring the field.
- *
- * `firstCharacter` is `undefined` for contours that don't map to a
- * single source character — Figma's auto-inserted ellipsis glyph for
- * truncated text, opentype.js fallback line contours, and so on. The
- * run grouper folds those into the base run.
- */
-export type GlyphCharacterIndex = {
-  readonly firstCharacter: number | undefined;
-};
-
-/**
  * A text-glyph outline contour, annotated with the source character
- * the glyph corresponds to. See `GlyphCharacterIndex` for the
- * annotation semantics.
+ * the glyph corresponds to.
  */
 export type GlyphContour = PathContour & GlyphCharacterIndex;
 

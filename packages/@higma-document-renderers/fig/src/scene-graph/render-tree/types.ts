@@ -43,26 +43,9 @@
  *    handling it in the resolver produces a compile error (never check).
  */
 
-import type {
-  SceneNodeId,
-  Fill,
-  Stroke,
-  PathContour,
-  Color,
-  TextLineLayout,
-  SceneNode,
-  GroupNode,
-  FrameNode,
-  RectNode,
-  EllipseNode,
-  PathNode,
-  TextNode,
-  ImageNode,
-  BlendMode,
-  CornerRadius,
-} from "../types";
+import type { SceneNodeId, Fill, Stroke, PathContour, Color, TextLineLayout, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, ImageNode, BlendMode } from "@higma-document-models/fig/scene-graph";
 
-import type { TextAutoResize } from "../../text/layout/types";
+import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
 
 import type {
   ResolvedFillAttrs,
@@ -71,6 +54,7 @@ import type {
   ResolvedStrokeLayer,
   ResolvedFilter,
 } from "../render";
+import type { CornerRadius } from "@higma-primitives/path";
 
 // =============================================================================
 // Resolved SVG Attributes (pre-computed for SVG/React backends)

@@ -1,6 +1,6 @@
 /** @file WebGL viewport renderer lifecycle and resource preparation hook. */
 
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import {
   useWebGLViewportPipeline,

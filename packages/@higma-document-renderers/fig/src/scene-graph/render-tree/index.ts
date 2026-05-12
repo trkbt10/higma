@@ -51,5 +51,3 @@ export {
   type RenderTreeResolutionResult,
 } from "./resolve";
 
-// Ellipse arc path
-export { buildEllipseArcPathD } from "./ellipse-arc-path";

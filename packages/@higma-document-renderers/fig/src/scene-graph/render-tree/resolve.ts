@@ -19,13 +19,11 @@ import type {
   ImageNode,
   Fill,
   Stroke,
-} from "../types";
+} from "@higma-document-models/fig/scene-graph";
 
 import {
   colorToHex,
   uint8ArrayToBase64,
-  matrixToSvgTransform,
-  contourToSvgD,
   resolveFillWithRenderSettings,
   resolveTopFillWithRenderSettings,
   resolveStrokeResult,
@@ -38,17 +36,22 @@ import {
   type ResolvedFill,
   type ResolvedFilter,
 } from "../render";
+import {
+  matrixToSvgTransform,
+  contourToSvgD,
+  pathContoursBoundingBox,
+  clampCornerRadius,
+  cornerRadiusScalar,
+  buildEllipseArcPathD,
+} from "@higma-primitives/path";
 import type {
   NormalizedFigmaRenderExportSettings,
   RenderExportSettingsCacheKey,
   SceneGraphRenderOptions,
 } from "../render/export-settings";
-import { computePathContoursBbox } from "../path-bbox";
 import { buildEffectStack, type ResolvedEffectStack } from "../render/effect-stack";
 import { createRenderTreeIdGenerator } from "./id-generator";
-import { clampCornerRadius, cornerRadiusScalar } from "./corner-radius";
 import { buildClipShape } from "./clip-shape";
-import { buildEllipseArcPathD } from "./ellipse-arc-path";
 
 import type {
   RenderTree,
@@ -280,8 +283,10 @@ function resolveImageDataUri(node: ImageNode): string | undefined {
 }
 
 function resolvePathBounds(node: PathNode) {
-  const pathBbox = computePathContoursBbox(node.contours);
-  if (pathBbox) { return pathBbox; }
+  const bbox = pathContoursBoundingBox(node.contours);
+  if (bbox) {
+    return { x: bbox.x, y: bbox.y, width: bbox.w, height: bbox.h };
+  }
   if (node.width && node.height) {
     return { x: 0, y: 0, width: node.width, height: node.height };
   }
