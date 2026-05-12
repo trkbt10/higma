@@ -209,6 +209,7 @@ export function parseBackgroundImage(
       } catch (err) {
         throw new Error(
           `parseBackgroundImage: failed parsing "${tok}" within "${value}": ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
         );
       }
       continue;

@@ -47,7 +47,12 @@ export type PrimaryAxisParent = {
   readonly strokeWeight?: number | { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
   readonly individualStrokeWeights?: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
   readonly proportionsConstrained?: boolean;
-  readonly _raw?: Record<string, unknown>;
+  readonly minSize?: { readonly x: number; readonly y: number };
+  readonly maxSize?: { readonly x: number; readonly y: number };
+  readonly bordersTakeSpace?: boolean;
+  readonly targetAspectRatio?: { readonly x: number; readonly y: number };
+  readonly gridRows?: { readonly entries: readonly unknown[] };
+  readonly gridColumns?: { readonly entries: readonly unknown[] };
   readonly autoLayout?: {
     readonly stackMode?: { readonly name?: string };
     readonly stackPadding?: number | { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
@@ -131,37 +136,16 @@ function resizeBothAxesIfChanged(
   return next;
 }
 
-function readVector(raw: unknown): { readonly x: number; readonly y: number } | undefined {
-  if (!raw || typeof raw !== "object") { return undefined; }
-  const value = raw as { readonly x?: unknown; readonly y?: unknown };
-  if (typeof value.x !== "number" || typeof value.y !== "number") { return undefined; }
-  return { x: value.x, y: value.y };
-}
-
-function readOptionalVector(raw: unknown): { readonly x: number; readonly y: number } | undefined {
-  const direct = readVector(raw);
-  if (direct) {
-    return direct;
-  }
-  if (!raw || typeof raw !== "object") {
-    return undefined;
-  }
-  return readVector((raw as { readonly value?: unknown }).value);
-}
-
 function clampAxis(value: number, axis: "x" | "y", parent: PrimaryAxisParent): number {
-  const minSize = readOptionalVector(parent._raw?.minSize);
-  const maxSize = readOptionalVector(parent._raw?.maxSize);
-  const min = axis === "x" ? minSize?.x : minSize?.y;
-  const max = axis === "x" ? maxSize?.x : maxSize?.y;
+  const min = axis === "x" ? parent.minSize?.x : parent.minSize?.y;
+  const max = axis === "x" ? parent.maxSize?.x : parent.maxSize?.y;
   if (min !== undefined && value < min) { return min; }
   if (max !== undefined && value > max) { return max; }
   return value;
 }
 
 function readStrokeInsets(parent: PrimaryAxisParent): { top: number; right: number; bottom: number; left: number } {
-  const rawBordersTakeSpace = parent._raw?.bordersTakeSpace;
-  if (rawBordersTakeSpace !== true) {
+  if (parent.bordersTakeSpace !== true) {
     return { top: 0, right: 0, bottom: 0, left: 0 };
   }
   if (parent.individualStrokeWeights) {
@@ -236,7 +220,7 @@ function resolveStartOffset(
 
 function applyAspectLock<P extends PrimaryAxisParent>(parent: P): P {
   if (parent.proportionsConstrained !== true) { return parent; }
-  const target = readVector(parent._raw?.targetAspectRatio);
+  const target = parent.targetAspectRatio;
   if (!target) {
     throw new Error(`AutoLayout aspect lock on "${"name" in parent ? String(parent.name) : "node"}" requires targetAspectRatio.`);
   }
@@ -309,17 +293,9 @@ function applyHugSizing<P extends PrimaryAxisParent, C extends PrimaryAxisChild>
 }
 
 function readGridColumns(parent: PrimaryAxisParent, childCount: number): number {
-  const raw = parent._raw ?? {};
-  const candidates = [
-    raw.stackGridColumnCount,
-    raw.gridColumnCount,
-  ];
-  const found = candidates.find((value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0);
-  if (found !== undefined) { return found; }
-  const gridColumns = raw.gridColumns;
-  if (gridColumns && typeof gridColumns === "object" && Array.isArray((gridColumns as { readonly entries?: unknown }).entries)) {
-    const count = (gridColumns as { readonly entries: readonly unknown[] }).entries.length;
-    if (count > 0) { return count; }
+  const gridColumns = parent.gridColumns;
+  if (gridColumns !== undefined && gridColumns.entries.length > 0) {
+    return gridColumns.entries.length;
   }
   const content = parent.autoLayout?.stackPrimaryAlignContent?.name;
   if (content === "CENTER" && childCount > 0) {

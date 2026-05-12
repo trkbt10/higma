@@ -94,6 +94,23 @@ function isPackageSelfImport(sourcePackage, targetPackage) {
   return sourcePackage.name === targetPackage.name;
 }
 
+/**
+ * Roundtrip-bridge packages drive sibling product packages on purpose:
+ * a single package (`@higma-tools/web-fig-roundtrip`) exists specifically to
+ * compose `web-to-fig` + `fig-to-web` + the fig renderer / model / IO so it
+ * can verify visual fidelity end-to-end. Without this role flag those
+ * imports would trip the sibling and peer-product checks even though the
+ * composition is the package's entire reason to exist.
+ *
+ * The exemption is opted into per-package by setting
+ * `higma.boundary.role = "roundtrip-bridge"` in package.json; only the
+ * declared roundtrip-bridge package gets the relaxation, so the rule
+ * remains uniform for every other tools-family package.
+ */
+function isRoundtripBridge(boundary) {
+  return boundary.role === "roundtrip-bridge";
+}
+
 function getPackageScope(packageName) {
   const parts = packageName.split("/");
   return parts[0];
@@ -151,12 +168,24 @@ export default {
 
       const sourceBoundary = sourcePackage.boundary;
       const targetBoundary = targetPackage.boundary;
-      if (isSameScopePeerPackage(sourcePackage, targetPackage)) {
+      // Roundtrip-bridge packages are exempt from the sibling-scope and
+      // peer-product checks because composing both ends of a conversion
+      // pipeline (e.g. web-to-fig + fig-to-web + fig renderer) is the
+      // package's declared purpose. Layer / editor / horizontal checks
+      // below still apply so the bridge cannot reach upward or sideways
+      // into unrelated families.
+      const sourceIsRoundtripBridge = isRoundtripBridge(sourceBoundary);
+      if (!sourceIsRoundtripBridge && isSameScopePeerPackage(sourcePackage, targetPackage)) {
         report(context, node, "scope", sourcePackage, targetPackage);
         return;
       }
 
-      if (sourceBoundary.product && targetBoundary.product && sourceBoundary.product !== targetBoundary.product) {
+      if (
+        !sourceIsRoundtripBridge &&
+        sourceBoundary.product &&
+        targetBoundary.product &&
+        sourceBoundary.product !== targetBoundary.product
+      ) {
         report(context, node, "product", sourcePackage, targetPackage);
         return;
       }

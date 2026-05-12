@@ -1,14 +1,15 @@
 /**
  * @file Top-level emit driver: ViewportIR → .fig bytes.
  *
- * Goes through the low-level fig-file builder so the bundled Figma
- * Kiwi schema is used (the high-level `exportFig` from
- * `@higma-document-io/fig` does not yet support fresh documents —
- * `exportFresh` writes an empty schema that the encoder rejects).
+ * Goes through `buildDocument` + `exportFig` from the canonical
+ * `@higma-document-io/fig` pipeline. There is no separate write path —
+ * fresh document construction and Kiwi schema injection happen inside
+ * `exportFig`.
  *
  * Filesystem-free by design: callers (CLI / test harnesses / browser
  * tools) decide where the bytes go.
  */
+import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { ViewportIR } from "@higma-bridges/web-fig";
 import { buildFigFileBytes } from "./build-fig-file";
 
@@ -19,8 +20,8 @@ export type EmitFigOptions = {
 
 export type EmitFigResult = {
   readonly bytes: Uint8Array;
-  /** IR id → assigned fig localID. */
-  readonly idMap: ReadonlyMap<string, number>;
+  /** IR id → assigned FigNodeId. */
+  readonly idMap: ReadonlyMap<string, FigNodeId>;
 };
 
 /**

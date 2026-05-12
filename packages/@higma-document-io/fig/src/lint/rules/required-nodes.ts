@@ -43,7 +43,7 @@ export const requiredNodesRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "nodeChanges",
       message: "No DOCUMENT node found — every fig file needs exactly one DOCUMENT root",
-      remediation: "Call FigFileBuilder.addDocument() before adding canvases",
+      remediation: "Call `createEmptyFigDesignDocument(name)` (the DOCUMENT root is synthesised by documentToTree at export time) before adding canvases",
     });
   } else if (documents.length > 1) {
     emit({
@@ -65,7 +65,7 @@ export const requiredNodesRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "nodeChanges",
       message: "No user-visible CANVAS found — Figma cannot render an empty document",
-      remediation: "Add at least one CANVAS with FigFileBuilder.addCanvas(documentID, name)",
+      remediation: "Add at least one CANVAS with `addPage({state, doc, name})`",
     });
   }
 
@@ -75,7 +75,7 @@ export const requiredNodesRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "nodeChanges",
       message: "Missing Internal Only Canvas — Figma's importer requires this hidden canvas",
-      remediation: "Call FigFileBuilder.addInternalCanvas(documentID) when generating fixtures",
+      remediation: "Call `addPage({state, doc, name, internalOnly: true})` when generating fixtures",
     });
   }
 };

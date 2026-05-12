@@ -6,7 +6,7 @@
  */
 
 import { memo } from "react";
-import type { RenderNode } from "../../scene-graph/render-tree";
+import type { RenderNode } from "../../scene-graph";
 import { RenderGroupNodeComponent } from "./RenderGroupNodeComponent";
 import { RenderFrameNodeComponent } from "./RenderFrameNodeComponent";
 import { RenderRectNodeComponent } from "./RenderRectNodeComponent";

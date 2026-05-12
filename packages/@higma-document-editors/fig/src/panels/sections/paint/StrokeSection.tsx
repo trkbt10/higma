@@ -32,8 +32,8 @@ const strokeCapOptions: readonly SelectOption<FigStrokeCap>[] = [
   { value: "NONE", label: "None" },
   { value: "ROUND", label: "Round" },
   { value: "SQUARE", label: "Square" },
-  { value: "LINE_ARROW", label: "Line arrow" },
-  { value: "TRIANGLE_ARROW", label: "Triangle arrow" },
+  { value: "ARROW_LINES", label: "Line arrow" },
+  { value: "ARROW_EQUILATERAL", label: "Triangle arrow" },
 ];
 
 const strokeJoinOptions: readonly SelectOption<FigStrokeJoin>[] = [

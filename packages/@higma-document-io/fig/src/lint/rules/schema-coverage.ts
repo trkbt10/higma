@@ -8,8 +8,9 @@
  * shrinkage relative to the canonical bundled schema as an error.
  *
  * The bundled `figma-schema.json` is the SoT — it ships with every
- * release of `@higma-document-io/fig` and is what `FigFileBuilder`
- * writes out. A healthy file contains a superset of the bundled
+ * release of `@higma-figma-schema/profiles` and is what `exportFig`
+ * writes out (via `documentToTree` → `saveFigFile`). A healthy file
+ * contains a superset of the bundled
  * schema's definitions (Figma may add new types over time, but it
  * never removes core ones).
  */
@@ -64,7 +65,7 @@ export const schemaCoverageRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "canvas.fig/schema",
       message: `Schema is missing required definitions Figma always emits: ${summariseMissing(hardMissing)}`,
-      remediation: "Rebuild with FigFileBuilder, which embeds the canonical Figma schema (figma-schema.json)",
+      remediation: "Rebuild with `exportFig`, which embeds the canonical Figma schema (figma-schema.json)",
     });
   }
 
@@ -81,7 +82,7 @@ export const schemaCoverageRule: LintRule = (ctx, emit) => {
       severity,
       path: "canvas.fig/schema",
       message: `Schema covers only ${present.size}/${referenceNames.size} canonical Figma definitions (missing ${coverageMissing.length})`,
-      remediation: "Use FigFileBuilder; it always serialises the bundled figma-schema.json",
+      remediation: "`exportFig` always serialises the bundled figma-schema.json",
     });
   }
 };

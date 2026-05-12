@@ -21,6 +21,7 @@ import { HISTORY_HANDLERS } from "./history-handlers";
 import { CLIPBOARD_HANDLERS } from "./clipboard-handlers";
 import { CREATION_HANDLERS } from "./creation-handlers";
 import { TEXT_EDIT_HANDLERS } from "./text-edit-handlers";
+import { PROMOTE_HANDLERS } from "./promote-handlers";
 import { isFigEditorActionAllowed } from "./action-guard";
 
 /**
@@ -35,6 +36,7 @@ const ALL_HANDLERS: HandlerMap = {
   ...CLIPBOARD_HANDLERS,
   ...CREATION_HANDLERS,
   ...TEXT_EDIT_HANDLERS,
+  ...PROMOTE_HANDLERS,
 };
 
 /**

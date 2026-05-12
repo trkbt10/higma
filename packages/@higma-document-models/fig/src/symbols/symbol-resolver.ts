@@ -33,26 +33,54 @@ export type FigDerivedSymbolData = readonly FigKiwiSymbolOverride[];
  * These are the fields Figma's authoring UI lets you set directly on
  * an INSTANCE without descending into a SYMBOL descendant: the
  * INSTANCE's display name, its outer size, the "Constrain proportions"
- * flag that pairs with size on the resize handles, and the variable /
- * parameter bindings that drive component-property resolution for the
- * SYMBOL it points at. Any override entry whose defined field-set is a
- * subset of this list addresses the INSTANCE itself, not a descendant
- * of its SYMBOL.
+ * flag that pairs with size on the resize handles, the auto-layout
+ * positioning hooks (which describe how the INSTANCE participates in
+ * its *parent* container, not in the SYMBOL's internal layout), and
+ * the variable / parameter bindings that drive component-property
+ * resolution for the SYMBOL it points at. Any override entry whose
+ * defined field-set is a subset of this list addresses the INSTANCE
+ * itself, not a descendant of its SYMBOL.
  *
- * Real-world fixtures (e.g. the Figma Community E-commerce template's
- * `arrow-left` INSTANCEs) emit `{size, proportionsConstrained}`
- * self-overrides whose path-first guid is the INSTANCE's per-instance
- * ghost-allocated guid (a session that is never bound to a node in the
- * file). Those entries must be classified as self-overrides so the
- * domain-conversion `resolveOverridePaths` rerouter sends them to the
- * SYMBOL root instead of throwing on the unreachable guid.
+ * Real-world fixtures emit self-overrides through paths whose first
+ * guid is the INSTANCE's per-instance ghost-allocated guid (a session
+ * that is never bound to a node in the file). Those entries must be
+ * classified as self-overrides so the domain-conversion
+ * `resolveOverridePaths` rerouter sends them to the SYMBOL root
+ * instead of throwing on the unreachable guid. Examples surfaced
+ * during Phase 0a H roundtrip verification:
+ *
+ *   - Figma Community E-commerce template `arrow-left` INSTANCEs:
+ *     `{size, proportionsConstrained}`.
+ *   - The `inherit.fig` fixture's `Bezel` INSTANCEs emit
+ *     `{name, size, stackPositioning}` — `stackPositioning` is a
+ *     parent-container hook (`stackChildPositioning` semantics) and
+ *     does not target any SYMBOL descendant.
  */
 export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = new Set([
   "name",
   "size",
   "proportionsConstrained",
+  "stackPositioning",
+  "stackPrimarySizing",
   "variableConsumptionMap",
   "parameterConsumptionMap",
+  // The next group covers paint-, geometry-, and effect-level
+  // overrides that some authoring tools store with a path-first guid
+  // pointing at the INSTANCE's own ghost-session. They are
+  // semantically "INSTANCE-self" only when the path is single-guid
+  // (caller already enforces `path.length === 1`); when paired with
+  // an unreachable ghost-session guid, treating them as self-overrides
+  // and rerouting to the SYMBOL root preserves Figma's apparent
+  // rendering (the SYMBOL root receives the override, not a
+  // descendant). Real Figma exports of nested-component files
+  // (`inherit.fig` etc.) rely on this classification.
+  "fillPaints",
+  "strokePaints",
+  "strokeWeight",
+  "effects",
+  "blendMode",
+  "opacity",
+  "visible",
 ]);
 
 /**
@@ -127,12 +155,11 @@ export function getInstanceSymbolOverrides(
 // Symbol Resolution
 // =============================================================================
 
-// `resolveSymbolGuidStr` and `SymbolMapResolution` are owned by
-// `./symbol-map-lookup` (the SoT module). External consumers must import
-// them directly from `@higma-document-models/fig/symbols` (which re-exports
-// from `./symbol-map-lookup`); this module imports them only for internal
-// use.
-import { resolveSymbolGuidStr, type SymbolMapResolution } from "./symbol-map-lookup";
+// `resolveSymbolGuidStr` is owned by `./symbol-map-lookup` (the SoT module).
+// External consumers must import it directly from
+// `@higma-document-models/fig/symbols` (which re-exports from
+// `./symbol-map-lookup`); this module imports it only for internal use.
+import { resolveSymbolGuidStr } from "./symbol-map-lookup";
 
 // =============================================================================
 // INSTANCE reference resolution — Single Source of Truth

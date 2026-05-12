@@ -6,8 +6,16 @@
  * The type field discriminates the union.
  */
 
-import type { FigColor, FigPaint, FigEffect, KiwiEnumValue } from "@higma-document-models/fig/types";
-import type { FigNodeId, AutoLayoutProps } from "@higma-document-models/fig/domain";
+import type {
+  FigColor,
+  FigPaint,
+  FigEffect,
+  FigStrokeAlign,
+  FigStrokeCap,
+  FigStrokeJoin,
+  KiwiEnumValue,
+} from "@higma-document-models/fig/types";
+import type { FigNodeId, AutoLayoutProps, LayoutConstraints } from "@higma-document-models/fig/domain";
 
 // =============================================================================
 // Base Spec
@@ -26,9 +34,36 @@ export type BaseNodeSpec = {
   readonly fills?: readonly FigPaint[];
   readonly strokes?: readonly FigPaint[];
   readonly strokeWeight?: number;
+  /**
+   * Stroke geometry attributes. Load-bearing for Figma import — every
+   * shape node with strokes carries `strokeAlign`, `strokeJoin`, and
+   * (for LINE / VECTOR) `strokeCap`. The Fig lint rules reject shape
+   * nodes that omit them, so making these first-class spec fields
+   * keeps fixture builders honest. The factory writes them onto the
+   * resulting `FigDesignNode`; `documentToTree` projects each to the
+   * Kiwi-level enum value on the output node.
+   */
+  readonly strokeCap?: FigStrokeCap;
+  readonly strokeJoin?: FigStrokeJoin;
+  readonly strokeAlign?: FigStrokeAlign;
+  /**
+   * Dash pattern as a sequence of pixel lengths (CSS `stroke-dasharray`
+   * semantics: `[on, off, on, off, …]`). When set, the renderer paints
+   * the stroke as a dashed line; missing/empty array means solid.
+   */
+  readonly strokeDashes?: readonly number[];
   readonly effects?: readonly FigEffect[];
   readonly opacity?: number;
   readonly visible?: boolean;
+  /**
+   * Per-child auto-layout overrides — `stackPositioning=ABSOLUTE` for
+   * out-of-flow children (CSS position:fixed / sticky / absolute),
+   * `stackChildAlignSelf=STRETCH` for children that fill the parent's
+   * counter axis, etc. The factory copies this onto the resulting
+   * `FigDesignNode.layoutConstraints`; `documentToTree` then projects
+   * each field to its Kiwi-level counterpart on the output node.
+   */
+  readonly layoutConstraints?: LayoutConstraints;
 };
 
 // =============================================================================

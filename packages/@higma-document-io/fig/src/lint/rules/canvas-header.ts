@@ -28,7 +28,7 @@ export const canvasHeaderRule: LintRule = (ctx, emit) => {
       severity: "warning",
       path: "canvas.fig/header.version",
       message: `Canvas header version is "${header.version}"; modern Figma exports use "${MODERN_VERSION}"`,
-      remediation: "Rebuild with the current FigFileBuilder, which writes version \"e\"",
+      remediation: "Re-export through `exportFig`, which writes canvas version \"e\"",
     });
   }
 

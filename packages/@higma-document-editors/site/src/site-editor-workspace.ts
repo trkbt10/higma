@@ -11,9 +11,10 @@ import {
 import {
   createFigFamilyDesignDocument,
   createFigFamilyRenderOptions,
+  type FigFamilyDesignDocument,
+  type FigFamilyPage,
+  type FigFamilyRenderOptions,
 } from "@higma-figma-runtime/react-renderer";
-import type { FigDesignDocument, FigPage } from "@higma-document-models/fig/domain";
-import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import {
   createSiteRenderPlan,
   type SiteBreakpointVariant,
@@ -57,9 +58,9 @@ export type SiteEditableUnit = {
 };
 
 export type SiteFigRenderSurface = {
-  readonly document: FigDesignDocument;
-  readonly page: FigPage;
-  readonly renderOptions?: SceneGraphRenderOptions;
+  readonly document: FigFamilyDesignDocument;
+  readonly page: FigFamilyPage;
+  readonly renderOptions?: FigFamilyRenderOptions;
 };
 
 export type SiteFigRenderSurfaceOptions = {
@@ -122,7 +123,7 @@ export function createSiteEditorSession(document: SiteDocument): SiteEditorSessi
   return createEditorSession("site", document, document.insights);
 }
 
-type FigFamilyRenderableNode = FigPage["children"][number];
+type FigFamilyRenderableNode = FigFamilyPage["children"][number];
 
 function variantBelongsToActiveSurface(
   variant: SiteBreakpointVariant,

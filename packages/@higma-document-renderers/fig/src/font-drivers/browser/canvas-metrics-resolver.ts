@@ -25,7 +25,7 @@
 
 import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
 import { fontQueryKey, buildCssFontShorthand } from "@higma-document-models/fig/font";
-import type { TextFontResolver } from "../../text/rendering";
+import type { TextFontResolver } from "../../text";
 
 const UNITS_PER_EM = 1000;
 const MEASURE_FONT_SIZE = 100;

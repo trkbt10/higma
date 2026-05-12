@@ -10,8 +10,9 @@
  *
  * Strategy:
  *
- *   1. Generate a healthy ZIP-wrapped `.fig` via `FigFileBuilder`
- *      (gives us a real schema and message body to mutate).
+ *   1. Generate a healthy ZIP-wrapped `.fig` via the canonical
+ *      `createEmptyFigDesignDocument` + `addNode` + `exportFig`
+ *      pipeline (gives us a real schema and message body to mutate).
  *   2. Open the ZIP, drop `thumbnail.png`, and patch the message
  *      stream so:
  *        - the Internal Only Canvas is missing (`fig.canvas.internal-only`)
@@ -31,8 +32,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFigFile, frameNode, roundedRectNode } from "@higma-document-io/fig/fig-file";
-import type { Color } from "@higma-document-io/fig/fig-file";
+import {
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 import {
   createEmptyZipPackage,
   loadZipPackage,
@@ -53,46 +60,66 @@ import { StreamingFigEncoder } from "@higma-codecs/kiwi/stream";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_FILE = path.join(__dirname, "corrupt-multi.fig");
 
-const FRAME_BG: Color = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
-const RECT_FILL: Color = { r: 0.85, g: 0.45, b: 0.45, a: 1 };
+const FRAME_BG: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
+const RECT_FILL: FigColor = { r: 0.85, g: 0.45, b: 0.45, a: 1 };
 
-const idRef = { value: 100 };
-function id(): number {
-  const current = idRef.value;
-  idRef.value += 1;
-  return current;
+function solidPaint(color: FigColor): FigPaint {
+  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
 }
 
 async function generate(): Promise<void> {
   console.log("Building corrupt fig fixture...");
 
-  // 1. Healthy baseline (full schema, valid structure).
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("Corrupt Multi");
-  const canvasID = figFile.addCanvas(docID, "Page");
-  figFile.addInternalCanvas(docID); // dropped during corruption pass
+  // 1. Healthy baseline (full schema, valid structure). The Internal
+  //    Only Canvas page gets dropped during the corruption pass below
+  //    so fig-lint can surface `fig.canvas.internal-only`.
+  const empty = createEmptyFigDesignDocument("Page");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const docWithInternal = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
+  const frameResult = addNode({
+    state,
+    doc: docWithInternal,
+    pageId,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "frame",
+      x: 60,
+      y: 60,
+      width: 160,
+      height: 80,
+      fills: [solidPaint(FRAME_BG)],
+      clipsContent: true,
+    },
+  });
+  const rectResult = addNode({
+    state,
+    doc: frameResult.doc,
+    pageId,
+    parentId: frameResult.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "rect",
+      x: 20,
+      y: 20,
+      width: 80,
+      height: 40,
+      fills: [solidPaint(RECT_FILL)],
+      cornerRadius: 4,
+    },
+  });
 
-  const frameID = id();
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("frame")
-      .size(160, 80)
-      .position(60, 60)
-      .background(FRAME_BG)
-      .clipsContent(true)
-      .build(),
-  );
-  figFile.addRoundedRectangle(
-    roundedRectNode(id(), frameID)
-      .name("rect")
-      .size(80, 40)
-      .position(20, 20)
-      .fill(RECT_FILL)
-      .cornerRadius(4)
-      .build(),
-  );
-
-  const healthy = await figFile.buildAsync({ fileName: "corrupt-multi" });
+  const healthyExport = await exportFig(rectResult.doc);
+  const healthy = healthyExport.data;
 
   // 2. Open the ZIP and corrupt the message in-place.
   const inputZip = await loadZipPackage(healthy);

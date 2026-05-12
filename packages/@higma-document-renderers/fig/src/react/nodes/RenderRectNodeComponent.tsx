@@ -3,7 +3,7 @@
  */
 
 import { memo } from "react";
-import type { RenderRectNode } from "../../scene-graph/render-tree";
+import type { RenderRectNode } from "../../scene-graph";
 import { ShapeShell } from "../primitives/shape-shell";
 import { RectShape } from "../primitives/rect-shape";
 import { MultiFillRectLayers } from "../primitives/multi-fill";

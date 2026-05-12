@@ -164,7 +164,7 @@ export const symbolInstanceRule: LintRule = (ctx, emit) => {
         severity: "error",
         path: `${describeNode(node, index)}.symbolData.symbolID`,
         message: "INSTANCE has no symbolData.symbolID",
-        remediation: "Use FigFileBuilder.addInstance() with a valid symbol GUID",
+        remediation: "Use `addNode({state, doc, pageId, parentId, spec: {type: 'INSTANCE', symbolId, ...}})` with a valid symbol GUID",
       });
       continue;
     }

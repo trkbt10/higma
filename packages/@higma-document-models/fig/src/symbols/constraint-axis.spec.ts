@@ -1,6 +1,6 @@
 /** @file Tests for constraint axis resolution */
 import { resolveConstraintAxis } from "./constraint-axis";
-import { CONSTRAINT_TYPE_VALUES } from "../constants/layout";
+import { CONSTRAINT_TYPE_VALUES } from "../constants";
 
 describe("resolveConstraintAxis", () => {
   // Parent SYMBOL: 200, INSTANCE resized to: 300 (delta = +100)

@@ -3,7 +3,7 @@
  */
 
 import { memo } from "react";
-import type { RenderImageNode } from "../../scene-graph/render-tree";
+import type { RenderImageNode } from "../../scene-graph";
 import { RenderWrapper } from "../primitives/wrapper";
 
 type Props = {

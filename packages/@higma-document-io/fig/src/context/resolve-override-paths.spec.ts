@@ -81,10 +81,21 @@ function instanceNode(
 }
 
 describe("resolveOverridePaths — SSoT for override path resolution", () => {
-  it("throws when an override path references an unreachable guid", () => {
-    // SSoT invariant: `resolveOverridePaths` rewrites guid paths into
-    // the SYMBOL-descendant namespace. Entries with no reachable
-    // target are invalid input and must be visible immediately.
+  it("drops authoring-residue entries whose path-first guid sits in a session never bound to any file node", () => {
+    // Phase 0a H clarified `resolveOverridePaths` semantics: a path
+    // whose first-guid session never appears anywhere in the loaded
+    // file is treated as a ghost session — Figma authors per-INSTANCE
+    // overrides through such sessions, so the entry must survive
+    // Stage 1 and let `guidReachableInSymbol` decide whether the
+    // resolved path actually lands inside the effective SYMBOL.
+    //
+    // Empty-payload entries (no slot fields besides `guidPath`) are
+    // authoring residue: the rerouter cannot route them anywhere
+    // useful because there is nothing to apply. They are dropped by
+    // the post-resolve `guidReachableInSymbol` filter rather than
+    // thrown, because real Figma exports (`inherit.fig` etc.) carry
+    // similar single-entry ghost references that are legitimate;
+    // throwing would refuse to open the file.
     const logoRaw = vectorNode(100, "Logo");
     const brandSym = symbolNode(10, "Brand", [logoRaw]);
     const symbolMap = new Map<string, FigNode>([
@@ -96,13 +107,19 @@ describe("resolveOverridePaths — SSoT for override path resolution", () => {
       // Reachable: targets the SYMBOL's Logo descendant after
       // translation (guid 10:100 is a descendant of brandSym).
       { guidPath: { guids: [guid(10, 100)] }, styleIdForFill: { guid: guid(1, 958) } },
-      // Phantom: guid 999:999 is nowhere in the symbolMap; drop.
+      // Phantom: session 999 is nowhere in the file; the entry has
+      // no payload to apply anywhere, so it drops out of the
+      // resolved view. The raw shadow field preserves it for
+      // round-trip projection.
       { guidPath: { guids: [guid(999, 999)] } },
     ]);
 
     const components = new Map<string, FigDesignNode>();
-    expect(() => convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []))
-      .toThrow("Override path references unreachable guid 999:999");
+    const node = convertFigNode(instance, components, EMPTY_STYLE_REGISTRY, symbolMap, []);
+
+    expect(node.overrides?.map((entry) => entry.guidPath?.guids?.[0]))
+      .toEqual([{ sessionID: 10, localID: 100 }]);
+    expect(node.rawOverrides?.length).toBe(2);
   });
 
   it("non-INSTANCE nodes carry raw overrides / dsd untouched", () => {

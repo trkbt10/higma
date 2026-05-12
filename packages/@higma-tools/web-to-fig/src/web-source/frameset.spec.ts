@@ -8,7 +8,6 @@
  * call (`captureFrameContent`); the fragile, host-side coordinate-
  * translation logic is what we keep regression-tested here.
  */
-import { describe, expect, it } from "vitest";
 import type { ElementJson, RawSnapshotJson } from "./in-page";
 import type { FrameLike } from "./playwright-shared";
 import {

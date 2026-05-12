@@ -2,7 +2,9 @@
  * @file Generate glyph outline blobs from opentype.js fonts
  *
  * Extracts glyph outlines and encodes them as normalized blobs
- * compatible with FigFileBuilder's derivedTextData format.
+ * compatible with Figma's on-disk `derivedTextData` format
+ * (the `FigDerivedGlyph.commandsBlob` slot consumed by
+ * `documentToTree`).
  *
  * Coordinate system:
  *   Blob space: normalized (0-1 range), y-up from baseline
@@ -12,7 +14,8 @@
  */
 
 import type { Font, Glyph, PathCommand } from "opentype.js";
-import type { FigBlob, DerivedBaselineData } from "@higma-document-io/fig/fig-file";
+import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigDerivedBaseline as DerivedBaselineData } from "@higma-document-models/fig/types";
 
 export type GlyphRecord = {
   commandsBlob: number;
@@ -45,8 +48,12 @@ function encodeGlyphBlob(glyph: Glyph, unitsPerEm: number): FigBlob | null {
   const data: number[] = [0x00]; // leading header byte
   const s = 1 / unitsPerEm;
 
-  const curX = 0;
-  const curY = 0;
+  // `cursor` tracks the current path pen position so that the
+  // quadratic→cubic conversion can lift P0 from prior commands. The
+  // value mutates as we walk the path, so we hold it in a ref object
+  // rather than a plain `let` (the script's eslint rule forbids `let`
+  // outside `for(...)` loops).
+  const cursor = { x: 0, y: 0 };
 
   function writeFloat32(value: number): void {
     const buf = new ArrayBuffer(4);
@@ -61,15 +68,15 @@ function encodeGlyphBlob(glyph: Glyph, unitsPerEm: number): FigBlob | null {
         data.push(0x01); // CMD_MOVE_TO
         writeFloat32(cmd.x * s);
         writeFloat32(cmd.y * s);
-        curX = cmd.x;
-        curY = cmd.y;
+        cursor.x = cmd.x;
+        cursor.y = cmd.y;
         break;
       case "L":
         data.push(0x02); // CMD_LINE_TO
         writeFloat32(cmd.x * s);
         writeFloat32(cmd.y * s);
-        curX = cmd.x;
-        curY = cmd.y;
+        cursor.x = cmd.x;
+        cursor.y = cmd.y;
         break;
       case "C":
         data.push(0x04); // CMD_CUBIC_TO
@@ -79,13 +86,13 @@ function encodeGlyphBlob(glyph: Glyph, unitsPerEm: number): FigBlob | null {
         writeFloat32(cmd.y2 * s);
         writeFloat32(cmd.x * s);
         writeFloat32(cmd.y * s);
-        curX = cmd.x;
-        curY = cmd.y;
+        cursor.x = cmd.x;
+        cursor.y = cmd.y;
         break;
       case "Q": {
         // Convert quadratic to cubic: CP1 = P0 + 2/3*(P1-P0), CP2 = P2 + 2/3*(P1-P2)
-        const p0x = curX;
-        const p0y = curY;
+        const p0x = cursor.x;
+        const p0y = cursor.y;
         const p1x = cmd.x1;
         const p1y = cmd.y1;
         const p2x = cmd.x;
@@ -101,8 +108,8 @@ function encodeGlyphBlob(glyph: Glyph, unitsPerEm: number): FigBlob | null {
         writeFloat32(cp2y * s);
         writeFloat32(p2x * s);
         writeFloat32(p2y * s);
-        curX = p2x;
-        curY = p2y;
+        cursor.x = p2x;
+        cursor.y = p2y;
         break;
       }
       case "Z":

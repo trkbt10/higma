@@ -8,11 +8,25 @@
  */
 import type { AutoLayoutProps } from "@higma-document-models/fig/domain";
 import type { KiwiEnumValue } from "@higma-document-models/fig/types";
+import {
+  STACK_ALIGN_VALUES,
+  STACK_JUSTIFY_VALUES,
+  STACK_MODE_VALUES,
+  type StackAlign,
+  type StackJustify,
+  type StackMode,
+} from "@higma-document-models/fig/constants";
 import type { AutoLayoutIR } from "../ir/types";
 
-/** Build a Kiwi enum value with the conventional name; value left at 0. */
-function kiwiEnum<T extends string>(name: T): KiwiEnumValue<T> {
-  return { name, value: 0 };
+/**
+ * Build a Kiwi enum value from a known enum table. The numeric value
+ * must match the canonical Figma schema; using a stale or zero value
+ * silently corrupts the encoded `.fig` (e.g. `{name:"VERTICAL", value:0}`
+ * writes the StackMode `NONE` slot and loses the autoLayout direction
+ * on round-trip).
+ */
+function kiwiEnum<T extends string>(name: T, value: number): KiwiEnumValue<T> {
+  return { name, value };
 }
 
 /** Project an IR auto-layout into Figma's `AutoLayoutProps`, or undefined when the layout is `none`. */
@@ -20,9 +34,11 @@ export function irAutoLayoutToFig(layout: AutoLayoutIR): AutoLayoutProps | undef
   if (layout.direction === "none") {
     return undefined;
   }
-  const stackMode = kiwiEnum(layout.direction === "row" ? "HORIZONTAL" : "VERTICAL");
+  const stackModeName: StackMode = layout.direction === "row" ? "HORIZONTAL" : "VERTICAL";
+  const primaryName: StackJustify = primaryAlignToFig(layout.primaryAlign);
+  const counterName: StackAlign = counterAlignToFig(layout.counterAlign);
   return {
-    stackMode,
+    stackMode: kiwiEnum(stackModeName, STACK_MODE_VALUES[stackModeName]),
     stackSpacing: layout.gap,
     stackPadding: {
       top: layout.paddingTop,
@@ -30,8 +46,8 @@ export function irAutoLayoutToFig(layout: AutoLayoutIR): AutoLayoutProps | undef
       bottom: layout.paddingBottom,
       left: layout.paddingLeft,
     },
-    stackPrimaryAlignItems: kiwiEnum(primaryAlignToFig(layout.primaryAlign)),
-    stackCounterAlignItems: kiwiEnum(counterAlignToFig(layout.counterAlign)),
+    stackPrimaryAlignItems: kiwiEnum(primaryName, STACK_JUSTIFY_VALUES[primaryName]),
+    stackCounterAlignItems: kiwiEnum(counterName, STACK_ALIGN_VALUES[counterName]),
     stackWrap: layout.wrap,
   };
 }
@@ -58,7 +74,7 @@ export function figAutoLayoutToIR(props: AutoLayoutProps | undefined): AutoLayou
   };
 }
 
-function primaryAlignToFig(align: "start" | "center" | "end" | "space-between"): string {
+function primaryAlignToFig(align: "start" | "center" | "end" | "space-between"): StackJustify {
   switch (align) {
     case "start":
       return "MIN";
@@ -71,7 +87,7 @@ function primaryAlignToFig(align: "start" | "center" | "end" | "space-between"):
   }
 }
 
-function counterAlignToFig(align: "start" | "center" | "end" | "stretch"): string {
+function counterAlignToFig(align: "start" | "center" | "end" | "stretch"): StackAlign {
   switch (align) {
     case "start":
       return "MIN";
@@ -80,7 +96,12 @@ function counterAlignToFig(align: "start" | "center" | "end" | "stretch"): strin
     case "end":
       return "MAX";
     case "stretch":
-      return "STRETCH";
+      // The `StackAlign` Kiwi enum (parent-level
+      // `stackCounterAlignItems`) does not declare STRETCH — that
+      // category is carried per-child via `stackChildAlignSelf=STRETCH`.
+      // Fall back to MIN for the parent encoding; the per-child stretch
+      // is applied at emit time elsewhere.
+      return "MIN";
   }
 }
 

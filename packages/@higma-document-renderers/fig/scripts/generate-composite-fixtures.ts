@@ -15,984 +15,563 @@
  *
  * Usage:
  *   bun packages/@higma-document-renderers/fig/scripts/generate-composite-fixtures.ts
- *
- * After generation:
- *   1. Open the .fig in Figma
- *   2. Export each frame as SVG to fixtures/composite/actual/
- *   3. Run: npx vitest run packages/@higma-document-renderers/fig/spec/composite.spec.ts
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createFigFile,
-  frameNode,
-  ellipseNode,
-  rectNode,
-  roundedRectNode,
-  booleanNode,
-  starNode,
-  polygonNode,
-} from "@higma-document-io/fig/fig-file";
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/composite");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "composite.fig");
 
 // =============================================================================
-// Types
-// =============================================================================
-
-type Color = { r: number; g: number; b: number; a: number };
-
-type IDAllocator = { value: number };
-
-// =============================================================================
-// Color Helpers
+// Colors
 // =============================================================================
 
 const COLORS = {
-  blue: { r: 0.2, g: 0.4, b: 0.9, a: 1 } as Color,
-  red: { r: 0.9, g: 0.2, b: 0.2, a: 1 } as Color,
-  green: { r: 0.2, g: 0.7, b: 0.3, a: 1 } as Color,
-  orange: { r: 0.9, g: 0.5, b: 0.1, a: 1 } as Color,
-  purple: { r: 0.5, g: 0.2, b: 0.8, a: 1 } as Color,
-  teal: { r: 0.1, g: 0.6, b: 0.6, a: 1 } as Color,
-  dark: { r: 0.2, g: 0.2, b: 0.2, a: 1 } as Color,
-  gray: { r: 0.6, g: 0.6, b: 0.6, a: 1 } as Color,
-  white: { r: 1, g: 1, b: 1, a: 1 } as Color,
-  bgGray: { r: 0.95, g: 0.95, b: 0.95, a: 1 } as Color,
+  blue: { r: 0.2, g: 0.4, b: 0.9, a: 1 } satisfies FigColor,
+  red: { r: 0.9, g: 0.2, b: 0.2, a: 1 } satisfies FigColor,
+  green: { r: 0.2, g: 0.7, b: 0.3, a: 1 } satisfies FigColor,
+  orange: { r: 0.9, g: 0.5, b: 0.1, a: 1 } satisfies FigColor,
+  purple: { r: 0.5, g: 0.2, b: 0.8, a: 1 } satisfies FigColor,
+  teal: { r: 0.1, g: 0.6, b: 0.6, a: 1 } satisfies FigColor,
+  dark: { r: 0.2, g: 0.2, b: 0.2, a: 1 } satisfies FigColor,
+  gray: { r: 0.6, g: 0.6, b: 0.6, a: 1 } satisfies FigColor,
+  white: { r: 1, g: 1, b: 1, a: 1 } satisfies FigColor,
+  bgGray: { r: 0.95, g: 0.95, b: 0.95, a: 1 } satisfies FigColor,
+} as const;
+
+function solidPaint(color: FigColor): FigPaint {
+  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+}
+
+// =============================================================================
+// BooleanOperation enum
+//
+// Pinned to Figma's canonical `BooleanOperation` Kiwi enum:
+// UNION = 0, INTERSECT = 1, SUBTRACT = 2, XOR = 3.
+// The XOR alias `EXCLUDE` was a fig-file builder convention — the
+// schema only knows XOR, so we keep the schema names here. The two
+// labels render identically (Figma displays "Exclude" for XOR in its
+// UI).
+// =============================================================================
+
+type BooleanOp = "UNION" | "INTERSECT" | "SUBTRACT" | "XOR";
+
+const BOOLEAN_OPERATION_VALUES: Record<BooleanOp, number> = {
+  UNION: 0,
+  INTERSECT: 1,
+  SUBTRACT: 2,
+  XOR: 3,
 };
 
+function booleanOperationEnum(op: BooleanOp): { value: number; name: BooleanOp } {
+  return { value: BOOLEAN_OPERATION_VALUES[op], name: op };
+}
+
 // =============================================================================
-// Fixture builders — each function creates one test frame
+// Frame / boolean helpers
 // =============================================================================
 
-type FigFile = ReturnType<typeof createFigFile>;
+type Ctx = {
+  readonly state: FigBuilderState;
+  readonly pageId: FigPageId;
+};
 
-/**
- * 1. Basic UNION: rectangle + circle → combined shape
- *
- * Expect: single merged path, not two overlapping shapes
- */
-function addBasicUnion(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-union-basic")
-      .size(200, 150)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+type AddedFrame = { readonly doc: FigDesignDocument; readonly id: FigNodeId };
 
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("union")
-      .union()
-      .size(120, 80)
-      .position(40, 35)
-      .fill(COLORS.blue)
-      .build(),
-  );
-
-  // Left rectangle
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, boolID)
-      .name("rect")
-      .size(80, 60)
-      .position(0, 10)
-      .noFill()
-      .build(),
-  );
-
-  // Right circle overlapping
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("circle")
-      .size(60, 60)
-      .position(50, 0)
-      .noFill()
-      .build(),
-  );
+function addFrame(
+  doc: FigDesignDocument,
+  ctx: Ctx,
+  parentId: FigNodeId | null,
+  opts: {
+    readonly name: string;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly background: FigColor;
+    readonly clipsContent?: boolean;
+  },
+): AddedFrame {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "FRAME",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: [solidPaint(opts.background)],
+      clipsContent: opts.clipsContent ?? true,
+    },
+  });
+  return { doc: r.doc, id: r.nodeId };
 }
 
-/**
- * 2. Basic SUBTRACT: rectangle − circle → shape with hole
- *
- * Expect: single path with cutout region
- */
-function addBasicSubtract(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-subtract-basic")
-      .size(200, 150)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("subtract")
-      .subtract()
-      .size(120, 80)
-      .position(40, 35)
-      .fill(COLORS.red)
-      .build(),
-  );
-
-  // Base rectangle
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, boolID)
-      .name("base-rect")
-      .size(120, 80)
-      .position(0, 0)
-      .noFill()
-      .build(),
-  );
-
-  // Circle to subtract (centered)
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("cut-circle")
-      .size(50, 50)
-      .position(35, 15)
-      .noFill()
-      .build(),
-  );
+function addBoolean(
+  doc: FigDesignDocument,
+  ctx: Ctx,
+  parentId: FigNodeId,
+  opts: {
+    readonly name: string;
+    readonly operation: BooleanOp;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+    readonly fill?: FigPaint;
+    readonly opacity?: number;
+  },
+): AddedFrame {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "BOOLEAN_OPERATION",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      booleanOperation: booleanOperationEnum(opts.operation),
+      fills: opts.fill ? [opts.fill] : undefined,
+      opacity: opts.opacity,
+    },
+  });
+  return { doc: r.doc, id: r.nodeId };
 }
 
-/**
- * 3. Basic INTERSECT: rectangle ∩ circle → only overlapping area
- */
-function addBasicIntersect(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-intersect-basic")
-      .size(200, 150)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+type ChildShape =
+  | { readonly kind: "RECT"; readonly name: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number }
+  | { readonly kind: "ROUNDED"; readonly name: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number; readonly cornerRadius?: number }
+  | { readonly kind: "ELLIPSE"; readonly name: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number }
+  | { readonly kind: "STAR"; readonly name: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number; readonly pointCount?: number; readonly innerRadius?: number }
+  | { readonly kind: "POLYGON"; readonly name: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number; readonly sides?: number };
 
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("intersect")
-      .intersect()
-      .size(120, 80)
-      .position(40, 35)
-      .fill(COLORS.green)
-      .build(),
-  );
-
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, boolID)
-      .name("rect")
-      .size(80, 80)
-      .position(0, 0)
-      .noFill()
-      .build(),
-  );
-
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("circle")
-      .size(80, 80)
-      .position(40, 0)
-      .noFill()
-      .build(),
-  );
-}
-
-/**
- * 4. Basic EXCLUDE: rectangle ⊕ circle → non-overlapping areas only
- */
-function addBasicExclude(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-exclude-basic")
-      .size(200, 150)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("exclude")
-      .exclude()
-      .size(120, 80)
-      .position(40, 35)
-      .fill(COLORS.orange)
-      .build(),
-  );
-
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, boolID)
-      .name("rect")
-      .size(80, 80)
-      .position(0, 0)
-      .noFill()
-      .build(),
-  );
-
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("circle")
-      .size(80, 80)
-      .position(40, 0)
-      .noFill()
-      .build(),
-  );
-}
-
-/**
- * 5. Icon: Settings gear — circle with inner circle subtracted,
- *    representing a simplified gear/cog icon.
- *
- *    Large circle − small center circle = ring (donut)
- */
-function addIconGear(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-icon-gear")
-      .size(120, 120)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  // Outer subtract: star - center circle = gear shape
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("gear")
-      .subtract()
-      .size(80, 80)
-      .position(20, 20)
-      .fill(COLORS.dark)
-      .build(),
-  );
-
-  // Outer star (gear teeth)
-  const starID = nextID.value++;
-  figFile.addStar(
-    starNode(starID, boolID)
-      .name("gear-body")
-      .size(80, 80)
-      .position(0, 0)
-      .points(8)
-      .innerRadius(0.7)
-      .noFill()
-      .build(),
-  );
-
-  // Inner circle (hollow center)
-  const innerID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(innerID, boolID)
-      .name("gear-hole")
-      .size(30, 30)
-      .position(25, 25)
-      .noFill()
-      .build(),
-  );
-}
-
-/**
- * 6. Icon: Eye — two overlapping ellipses intersected, with pupil subtracted.
- *    Uses nested boolean: intersect(2 ellipses) then subtract(circle)
- *
- *    Here we flatten it: 3 operands in one subtract.
- *    outer-ellipse shapes the eye, inner small circle is the pupil hole.
- */
-function addIconEye(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-icon-eye")
-      .size(160, 100)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  // Eye shape: intersect two ellipses to form almond shape
-  const eyeShapeID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(eyeShapeID, frameID)
-      .name("eye-shape")
-      .intersect()
-      .size(120, 60)
-      .position(20, 20)
-      .fill(COLORS.teal)
-      .build(),
-  );
-
-  // Upper ellipse
-  const upperID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(upperID, eyeShapeID)
-      .name("upper-lid")
-      .size(120, 80)
-      .position(0, -10)
-      .noFill()
-      .build(),
-  );
-
-  // Lower ellipse
-  const lowerID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(lowerID, eyeShapeID)
-      .name("lower-lid")
-      .size(120, 80)
-      .position(0, -10)
-      .noFill()
-      .build(),
-  );
-}
-
-/**
- * 7. Icon: Shield — rounded rect with triangle union on top, and inner
- *    shape subtracted for hollow effect.
- *
- *    Simplified: large rounded rect + small rect subtracted from center
- */
-function addIconShield(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-icon-shield")
-      .size(120, 140)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("shield")
-      .subtract()
-      .size(80, 100)
-      .position(20, 20)
-      .fill(COLORS.blue)
-      .build(),
-  );
-
-  // Outer shield body (rounded rect)
-  const outerID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(outerID, boolID)
-      .name("shield-body")
-      .size(80, 100)
-      .position(0, 0)
-      .cornerRadius(10)
-      .noFill()
-      .build(),
-  );
-
-  // Inner cutout (smaller rounded rect)
-  const innerID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(innerID, boolID)
-      .name("shield-cutout")
-      .size(60, 80)
-      .position(10, 10)
-      .cornerRadius(6)
-      .noFill()
-      .build(),
-  );
-}
-
-/**
- * 8. Multi-operand UNION: 4 overlapping circles → flower/clover pattern
- *
- * Tests that multi-child boolean operations are merged correctly.
- */
-function addMultiOperandUnion(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-multi-union")
-      .size(160, 160)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("clover")
-      .union()
-      .size(100, 100)
-      .position(30, 30)
-      .fill(COLORS.green)
-      .build(),
-  );
-
-  // 4 circles in a clover pattern
-  const positions = [
-    { x: 20, y: 0 },  // top
-    { x: 20, y: 40 }, // bottom
-    { x: 0, y: 20 },  // left
-    { x: 40, y: 20 }, // right
-  ];
-  for (let i = 0; i < positions.length; i++) {
-    const circleID = nextID.value++;
-    figFile.addEllipse(
-      ellipseNode(circleID, boolID)
-        .name(`petal-${i}`)
-        .size(60, 60)
-        .position(positions[i].x, positions[i].y)
-        .noFill()
-        .build(),
-    );
+function addChild(
+  doc: FigDesignDocument,
+  ctx: Ctx,
+  parentId: FigNodeId,
+  child: ChildShape,
+): FigDesignDocument {
+  switch (child.kind) {
+    case "RECT":
+      return addNode({
+        state: ctx.state,
+        doc,
+        pageId: ctx.pageId,
+        parentId,
+        spec: { type: "RECTANGLE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
+      }).doc;
+    case "ROUNDED":
+      return addNode({
+        state: ctx.state,
+        doc,
+        pageId: ctx.pageId,
+        parentId,
+        spec: {
+          type: "ROUNDED_RECTANGLE",
+          name: child.name,
+          x: child.x,
+          y: child.y,
+          width: child.w,
+          height: child.h,
+          cornerRadius: child.cornerRadius,
+        },
+      }).doc;
+    case "ELLIPSE":
+      return addNode({
+        state: ctx.state,
+        doc,
+        pageId: ctx.pageId,
+        parentId,
+        spec: { type: "ELLIPSE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
+      }).doc;
+    case "STAR":
+      return addNode({
+        state: ctx.state,
+        doc,
+        pageId: ctx.pageId,
+        parentId,
+        spec: {
+          type: "STAR",
+          name: child.name,
+          x: child.x,
+          y: child.y,
+          width: child.w,
+          height: child.h,
+          pointCount: child.pointCount,
+          starInnerRadius: child.innerRadius,
+        },
+      }).doc;
+    case "POLYGON":
+      return addNode({
+        state: ctx.state,
+        doc,
+        pageId: ctx.pageId,
+        parentId,
+        spec: {
+          type: "REGULAR_POLYGON",
+          name: child.name,
+          x: child.x,
+          y: child.y,
+          width: child.w,
+          height: child.h,
+          pointCount: child.sides,
+        },
+      }).doc;
   }
 }
 
-/**
- * 9. Nested boolean: (rect ∪ circle) − smallCircle
- *
- * BOOLEAN_OPERATION containing another BOOLEAN_OPERATION as child.
- * This tests that nested composite shapes are handled correctly.
- */
-function addNestedBoolean(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-nested")
-      .size(200, 150)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+// =============================================================================
+// Fixture builders
+// =============================================================================
 
-  // Outer: subtract
-  const outerBoolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(outerBoolID, frameID)
-      .name("outer-subtract")
-      .subtract()
-      .size(140, 100)
-      .position(30, 25)
-      .fill(COLORS.purple)
-      .build(),
-  );
+type Args = { readonly doc: FigDesignDocument; readonly ctx: Ctx; readonly x: number; readonly y: number };
+type Result = { readonly doc: FigDesignDocument };
 
-  // Inner: union (first operand of subtract)
-  const innerBoolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(innerBoolID, outerBoolID)
-      .name("inner-union")
-      .union()
-      .size(140, 100)
-      .position(0, 0)
-      .build(),
+function buildWithChildren(
+  args: Args,
+  frameName: string,
+  frameSize: { w: number; h: number; background: FigColor },
+  bool: {
+    name: string;
+    operation: BooleanOp;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    fill?: FigPaint;
+    opacity?: number;
+  },
+  children: readonly ChildShape[],
+): Result {
+  const frame = addFrame(args.doc, args.ctx, null, {
+    name: frameName,
+    x: args.x,
+    y: args.y,
+    width: frameSize.w,
+    height: frameSize.h,
+    background: frameSize.background,
+  });
+  const bo = addBoolean(frame.doc, args.ctx, frame.id, {
+    name: bool.name,
+    operation: bool.operation,
+    x: bool.x,
+    y: bool.y,
+    width: bool.w,
+    height: bool.h,
+    fill: bool.fill,
+    opacity: bool.opacity,
+  });
+  const filled = children.reduce<FigDesignDocument>(
+    (acc, child) => addChild(acc, args.ctx, bo.id, child),
+    bo.doc,
   );
+  return { doc: filled };
+}
 
-  // Rect in inner union
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, innerBoolID)
-      .name("rect")
-      .size(100, 70)
-      .position(0, 15)
-      .noFill()
-      .build(),
-  );
-
-  // Circle in inner union
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, innerBoolID)
-      .name("circle")
-      .size(70, 70)
-      .position(70, 0)
-      .noFill()
-      .build(),
-  );
-
-  // Small circle to subtract (second operand of outer subtract)
-  const cutoutID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(cutoutID, outerBoolID)
-      .name("cutout")
-      .size(40, 40)
-      .position(50, 30)
-      .noFill()
-      .build(),
+function addBasicUnion(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-union-basic",
+    { w: 200, h: 150, background: COLORS.white },
+    { name: "union", operation: "UNION", x: 40, y: 35, w: 120, h: 80, fill: solidPaint(COLORS.blue) },
+    [
+      { kind: "RECT", name: "rect", x: 0, y: 10, w: 80, h: 60 },
+      { kind: "ELLIPSE", name: "circle", x: 50, y: 0, w: 60, h: 60 },
+    ],
   );
 }
 
-/**
- * 10. Non-overlapping subtract: two shapes that don't overlap.
- *
- * When shapes don't overlap, subtract should leave the first shape intact.
- * This is an edge case that verifies the renderer doesn't just render children.
- */
-function addNonOverlapping(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-non-overlapping")
-      .size(200, 100)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("subtract-no-overlap")
-      .subtract()
-      .size(170, 60)
-      .position(15, 20)
-      .fill(COLORS.gray)
-      .build(),
-  );
-
-  // Left rectangle
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, boolID)
-      .name("left-rect")
-      .size(60, 60)
-      .position(0, 0)
-      .noFill()
-      .build(),
-  );
-
-  // Right circle (no overlap with rect)
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("right-circle")
-      .size(60, 60)
-      .position(110, 0)
-      .noFill()
-      .build(),
+function addBasicSubtract(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-subtract-basic",
+    { w: 200, h: 150, background: COLORS.white },
+    { name: "subtract", operation: "SUBTRACT", x: 40, y: 35, w: 120, h: 80, fill: solidPaint(COLORS.red) },
+    [
+      { kind: "RECT", name: "base-rect", x: 0, y: 0, w: 120, h: 80 },
+      { kind: "ELLIPSE", name: "cut-circle", x: 35, y: 15, w: 50, h: 50 },
+    ],
   );
 }
 
-/**
- * 11. Fully contained subtract: small rect inside large rect.
- *
- * Result should be the large rect with a rectangular hole in the center.
- * Classic "picture frame" pattern.
- */
-function addFullyContained(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-fully-contained")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("picture-frame")
-      .subtract()
-      .size(120, 80)
-      .position(20, 20)
-      .fill(COLORS.dark)
-      .build(),
-  );
-
-  // Outer rect
-  const outerID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(outerID, boolID)
-      .name("outer")
-      .size(120, 80)
-      .position(0, 0)
-      .noFill()
-      .build(),
-  );
-
-  // Inner rect (fully contained)
-  const innerID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(innerID, boolID)
-      .name("inner")
-      .size(80, 40)
-      .position(20, 20)
-      .noFill()
-      .build(),
+function addBasicIntersect(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-intersect-basic",
+    { w: 200, h: 150, background: COLORS.white },
+    { name: "intersect", operation: "INTERSECT", x: 40, y: 35, w: 120, h: 80, fill: solidPaint(COLORS.green) },
+    [
+      { kind: "RECT", name: "rect", x: 0, y: 0, w: 80, h: 80 },
+      { kind: "ELLIPSE", name: "circle", x: 40, y: 0, w: 80, h: 80 },
+    ],
   );
 }
 
-/**
- * 12. Icon: Play button — triangle inside circle (intersect to clip triangle)
- *    Or: circle with triangle subtract → pause-like
- *    Here: union of circle and nothing = just the circle for sanity,
- *    but we do subtract of rounded-rect - triangle = play button cutout
- */
-function addIconPlayButton(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-icon-play")
-      .size(120, 120)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("play-btn")
-      .subtract()
-      .size(80, 80)
-      .position(20, 20)
-      .fill(COLORS.red)
-      .build(),
-  );
-
-  // Circle body
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("circle")
-      .size(80, 80)
-      .position(0, 0)
-      .noFill()
-      .build(),
-  );
-
-  // Triangle cutout (play icon)
-  const triID = nextID.value++;
-  figFile.addPolygon(
-    polygonNode(triID, boolID)
-      .name("triangle")
-      .size(30, 34)
-      .position(30, 23)
-      .sides(3)
-      .noFill()
-      .build(),
+function addBasicExclude(args: Args): Result {
+  // EXCLUDE in the fig-file builder UI maps to XOR in the schema.
+  return buildWithChildren(
+    args,
+    "composite-exclude-basic",
+    { w: 200, h: 150, background: COLORS.white },
+    { name: "exclude", operation: "XOR", x: 40, y: 35, w: 120, h: 80, fill: solidPaint(COLORS.orange) },
+    [
+      { kind: "RECT", name: "rect", x: 0, y: 0, w: 80, h: 80 },
+      { kind: "ELLIPSE", name: "circle", x: 40, y: 0, w: 80, h: 80 },
+    ],
   );
 }
 
-/**
- * 13. Multiple separate booleans in one frame.
- *
- * Tests that multiple independent boolean operations coexist correctly.
- */
-function addMultipleBooleans(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-multiple")
-      .size(300, 120)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  // Boolean 1: union (left)
-  const bool1ID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(bool1ID, frameID)
-      .name("union-part")
-      .union()
-      .size(80, 80)
-      .position(10, 20)
-      .fill(COLORS.blue)
-      .build(),
-  );
-
-  const r1 = nextID.value++;
-  figFile.addRectangle(rectNode(r1, bool1ID).name("r1").size(50, 50).position(0, 15).noFill().build());
-  const c1 = nextID.value++;
-  figFile.addEllipse(ellipseNode(c1, bool1ID).name("c1").size(50, 50).position(30, 0).noFill().build());
-
-  // Boolean 2: subtract (center)
-  const bool2ID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(bool2ID, frameID)
-      .name("subtract-part")
-      .subtract()
-      .size(80, 80)
-      .position(110, 20)
-      .fill(COLORS.red)
-      .build(),
-  );
-
-  const r2 = nextID.value++;
-  figFile.addRectangle(rectNode(r2, bool2ID).name("r2").size(60, 60).position(10, 10).noFill().build());
-  const c2 = nextID.value++;
-  figFile.addEllipse(ellipseNode(c2, bool2ID).name("c2").size(40, 40).position(20, 20).noFill().build());
-
-  // Boolean 3: exclude (right)
-  const bool3ID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(bool3ID, frameID)
-      .name("exclude-part")
-      .exclude()
-      .size(80, 80)
-      .position(210, 20)
-      .fill(COLORS.green)
-      .build(),
-  );
-
-  const r3 = nextID.value++;
-  figFile.addRectangle(rectNode(r3, bool3ID).name("r3").size(50, 60).position(0, 10).noFill().build());
-  const c3 = nextID.value++;
-  figFile.addEllipse(ellipseNode(c3, bool3ID).name("c3").size(50, 50).position(30, 15).noFill().build());
-}
-
-/**
- * 14. Boolean with opacity on the boolean node itself.
- *
- * Tests that opacity is applied to the merged result, not per-child.
- */
-function addBooleanWithOpacity(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-opacity")
-      .size(200, 150)
-      .position(frameX, frameY)
-      .background(COLORS.bgGray)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("semi-transparent-union")
-      .union()
-      .size(120, 80)
-      .position(40, 35)
-      .fill(COLORS.dark)
-      .opacity(0.5)
-      .build(),
-  );
-
-  const rectID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(rectID, boolID)
-      .name("rect")
-      .size(80, 60)
-      .position(0, 10)
-      .noFill()
-      .build(),
-  );
-
-  const circleID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(circleID, boolID)
-      .name("circle")
-      .size(60, 60)
-      .position(50, 0)
-      .noFill()
-      .build(),
+function addIconGear(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-icon-gear",
+    { w: 120, h: 120, background: COLORS.white },
+    { name: "gear", operation: "SUBTRACT", x: 20, y: 20, w: 80, h: 80, fill: solidPaint(COLORS.dark) },
+    [
+      { kind: "STAR", name: "gear-body", x: 0, y: 0, w: 80, h: 80, pointCount: 8, innerRadius: 0.7 },
+      { kind: "ELLIPSE", name: "gear-hole", x: 25, y: 25, w: 30, h: 30 },
+    ],
   );
 }
 
-/**
- * 15. Icon: Notification bell — multiple subtracts to create bell shape with clapper
- */
-function addIconBell(
-  figFile: FigFile,
-  canvasID: number,
-  nextID: IDAllocator,
-  frameX: number,
-  frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("composite-icon-bell")
-      .size(120, 140)
-      .position(frameX, frameY)
-      .background(COLORS.white)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
+function addIconEye(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-icon-eye",
+    { w: 160, h: 100, background: COLORS.white },
+    { name: "eye-shape", operation: "INTERSECT", x: 20, y: 20, w: 120, h: 60, fill: solidPaint(COLORS.teal) },
+    [
+      { kind: "ELLIPSE", name: "upper-lid", x: 0, y: -10, w: 120, h: 80 },
+      { kind: "ELLIPSE", name: "lower-lid", x: 0, y: -10, w: 120, h: 80 },
+    ],
   );
+}
 
-  // Bell: union of rounded rect (body) + small circle (clapper at bottom)
-  const boolID = nextID.value++;
-  figFile.addBooleanOperation(
-    booleanNode(boolID, frameID)
-      .name("bell")
-      .union()
-      .size(80, 100)
-      .position(20, 15)
-      .fill(COLORS.orange)
-      .build(),
+function addIconShield(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-icon-shield",
+    { w: 120, h: 140, background: COLORS.white },
+    { name: "shield", operation: "SUBTRACT", x: 20, y: 20, w: 80, h: 100, fill: solidPaint(COLORS.blue) },
+    [
+      { kind: "ROUNDED", name: "shield-body", x: 0, y: 0, w: 80, h: 100, cornerRadius: 10 },
+      { kind: "ROUNDED", name: "shield-cutout", x: 10, y: 10, w: 60, h: 80, cornerRadius: 6 },
+    ],
   );
+}
 
-  // Bell body (rounded rect)
-  const bodyID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(bodyID, boolID)
-      .name("bell-body")
-      .size(60, 70)
-      .position(10, 0)
-      .cornerRadius(20)
-      .noFill()
-      .build(),
+function addMultiOperandUnion(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-multi-union",
+    { w: 160, h: 160, background: COLORS.white },
+    { name: "clover", operation: "UNION", x: 30, y: 30, w: 100, h: 100, fill: solidPaint(COLORS.green) },
+    [
+      { kind: "ELLIPSE", name: "petal-0", x: 20, y: 0, w: 60, h: 60 },
+      { kind: "ELLIPSE", name: "petal-1", x: 20, y: 40, w: 60, h: 60 },
+      { kind: "ELLIPSE", name: "petal-2", x: 0, y: 20, w: 60, h: 60 },
+      { kind: "ELLIPSE", name: "petal-3", x: 40, y: 20, w: 60, h: 60 },
+    ],
   );
+}
 
-  // Bottom rect (brim)
-  const brimID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(brimID, boolID)
-      .name("bell-brim")
-      .size(80, 10)
-      .position(0, 65)
-      .noFill()
-      .build(),
+function addNestedBoolean({ doc, ctx, x, y }: Args): Result {
+  // BOOLEAN inside BOOLEAN — outer subtract, inner union.
+  const frame = addFrame(doc, ctx, null, { name: "composite-nested", x, y, width: 200, height: 150, background: COLORS.white });
+  const outer = addBoolean(frame.doc, ctx, frame.id, {
+    name: "outer-subtract",
+    operation: "SUBTRACT",
+    x: 30,
+    y: 25,
+    width: 140,
+    height: 100,
+    fill: solidPaint(COLORS.purple),
+  });
+  const inner = addBoolean(outer.doc, ctx, outer.id, {
+    name: "inner-union",
+    operation: "UNION",
+    x: 0,
+    y: 0,
+    width: 140,
+    height: 100,
+  });
+  const innerFilled = ([
+    { kind: "RECT" as const, name: "rect", x: 0, y: 15, w: 100, h: 70 },
+    { kind: "ELLIPSE" as const, name: "circle", x: 70, y: 0, w: 70, h: 70 },
+  ]).reduce<FigDesignDocument>(
+    (acc, c) => addChild(acc, ctx, inner.id, c),
+    inner.doc,
   );
+  const cutout = addChild(innerFilled, ctx, outer.id, {
+    kind: "ELLIPSE",
+    name: "cutout",
+    x: 50,
+    y: 30,
+    w: 40,
+    h: 40,
+  });
+  return { doc: cutout };
+}
 
-  // Clapper (small circle)
-  const clapperID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(clapperID, boolID)
-      .name("clapper")
-      .size(20, 20)
-      .position(30, 80)
-      .noFill()
-      .build(),
+function addNonOverlapping(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-non-overlapping",
+    { w: 200, h: 100, background: COLORS.white },
+    { name: "subtract-no-overlap", operation: "SUBTRACT", x: 15, y: 20, w: 170, h: 60, fill: solidPaint(COLORS.gray) },
+    [
+      { kind: "RECT", name: "left-rect", x: 0, y: 0, w: 60, h: 60 },
+      { kind: "ELLIPSE", name: "right-circle", x: 110, y: 0, w: 60, h: 60 },
+    ],
+  );
+}
+
+function addFullyContained(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-fully-contained",
+    { w: 160, h: 120, background: COLORS.white },
+    { name: "picture-frame", operation: "SUBTRACT", x: 20, y: 20, w: 120, h: 80, fill: solidPaint(COLORS.dark) },
+    [
+      { kind: "RECT", name: "outer", x: 0, y: 0, w: 120, h: 80 },
+      { kind: "RECT", name: "inner", x: 20, y: 20, w: 80, h: 40 },
+    ],
+  );
+}
+
+function addIconPlayButton(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-icon-play",
+    { w: 120, h: 120, background: COLORS.white },
+    { name: "play-btn", operation: "SUBTRACT", x: 20, y: 20, w: 80, h: 80, fill: solidPaint(COLORS.red) },
+    [
+      { kind: "ELLIPSE", name: "circle", x: 0, y: 0, w: 80, h: 80 },
+      { kind: "POLYGON", name: "triangle", x: 30, y: 23, w: 30, h: 34, sides: 3 },
+    ],
+  );
+}
+
+function addMultipleBooleans({ doc, ctx, x, y }: Args): Result {
+  const frame = addFrame(doc, ctx, null, { name: "composite-multiple", x, y, width: 300, height: 120, background: COLORS.white });
+
+  type Group = {
+    name: string;
+    op: BooleanOp;
+    bx: number;
+    fill: FigColor;
+    children: readonly ChildShape[];
+  };
+  const groups: readonly Group[] = [
+    {
+      name: "union-part",
+      op: "UNION",
+      bx: 10,
+      fill: COLORS.blue,
+      children: [
+        { kind: "RECT", name: "r1", x: 0, y: 15, w: 50, h: 50 },
+        { kind: "ELLIPSE", name: "c1", x: 30, y: 0, w: 50, h: 50 },
+      ],
+    },
+    {
+      name: "subtract-part",
+      op: "SUBTRACT",
+      bx: 110,
+      fill: COLORS.red,
+      children: [
+        { kind: "RECT", name: "r2", x: 10, y: 10, w: 60, h: 60 },
+        { kind: "ELLIPSE", name: "c2", x: 20, y: 20, w: 40, h: 40 },
+      ],
+    },
+    {
+      name: "exclude-part",
+      op: "XOR",
+      bx: 210,
+      fill: COLORS.green,
+      children: [
+        { kind: "RECT", name: "r3", x: 0, y: 10, w: 50, h: 60 },
+        { kind: "ELLIPSE", name: "c3", x: 30, y: 15, w: 50, h: 50 },
+      ],
+    },
+  ];
+
+  return {
+    doc: groups.reduce<FigDesignDocument>((acc, g) => {
+      const bo = addBoolean(acc, ctx, frame.id, {
+        name: g.name,
+        operation: g.op,
+        x: g.bx,
+        y: 20,
+        width: 80,
+        height: 80,
+        fill: solidPaint(g.fill),
+      });
+      return g.children.reduce<FigDesignDocument>(
+        (innerAcc, c) => addChild(innerAcc, ctx, bo.id, c),
+        bo.doc,
+      );
+    }, frame.doc),
+  };
+}
+
+function addBooleanWithOpacity(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-opacity",
+    { w: 200, h: 150, background: COLORS.bgGray },
+    {
+      name: "semi-transparent-union",
+      operation: "UNION",
+      x: 40,
+      y: 35,
+      w: 120,
+      h: 80,
+      fill: solidPaint(COLORS.dark),
+      opacity: 0.5,
+    },
+    [
+      { kind: "RECT", name: "rect", x: 0, y: 10, w: 80, h: 60 },
+      { kind: "ELLIPSE", name: "circle", x: 50, y: 0, w: 60, h: 60 },
+    ],
+  );
+}
+
+function addIconBell(args: Args): Result {
+  return buildWithChildren(
+    args,
+    "composite-icon-bell",
+    { w: 120, h: 140, background: COLORS.white },
+    { name: "bell", operation: "UNION", x: 20, y: 15, w: 80, h: 100, fill: solidPaint(COLORS.orange) },
+    [
+      { kind: "ROUNDED", name: "bell-body", x: 10, y: 0, w: 60, h: 70, cornerRadius: 20 },
+      { kind: "RECT", name: "bell-brim", x: 0, y: 65, w: 80, h: 10 },
+      { kind: "ELLIPSE", name: "clapper", x: 30, y: 80, w: 20, h: 20 },
+    ],
   );
 }
 
@@ -1000,31 +579,30 @@ function addIconBell(
 // Main
 // =============================================================================
 
-async function generateCompositeFixtures(): Promise<void> {
+async function generate(): Promise<void> {
   console.log("Generating composite (boolean operation) fixtures...\n");
 
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("Composite");
-  const canvasID = figFile.addCanvas(docID, "Composite Canvas");
-  figFile.addInternalCanvas(docID);
+  const empty = createEmptyFigDesignDocument("Composite");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const ctx: Ctx = { state, pageId };
+  const doc0 = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  const nextID: IDAllocator = { value: 10 };
-
-  // Layout: grid of test frames
   const GRID_COLS = 4;
   const COL_WIDTH = 320;
   const ROW_HEIGHT = 180;
   const MARGIN = 50;
 
-  type FrameBuilder = (
-    figFile: FigFile,
-    canvasID: number,
-    nextID: IDAllocator,
-    x: number,
-    y: number,
-  ) => void;
-
-  const builders: { name: string; fn: FrameBuilder }[] = [
+  type Builder = (args: Args) => Result;
+  const builders: { name: string; fn: Builder }[] = [
     { name: "Basic UNION", fn: addBasicUnion },
     { name: "Basic SUBTRACT", fn: addBasicSubtract },
     { name: "Basic INTERSECT", fn: addBasicIntersect },
@@ -1042,30 +620,22 @@ async function generateCompositeFixtures(): Promise<void> {
     { name: "Icon: Bell", fn: addIconBell },
   ];
 
-  for (let i = 0; i < builders.length; i++) {
+  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const x = MARGIN + col * COL_WIDTH;
     const y = MARGIN + row * ROW_HEIGHT;
-    builders[i].fn(figFile, canvasID, nextID, x, y);
+    return b.fn({ doc: acc, ctx, x, y }).doc;
+  }, doc0);
+
+  for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
 
-  // Ensure output directories exist
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  }
-  const actualDir = path.join(OUTPUT_DIR, "actual");
-  if (!fs.existsSync(actualDir)) {
-    fs.mkdirSync(actualDir, { recursive: true });
-  }
-  const snapshotsDir = path.join(OUTPUT_DIR, "snapshots");
-  if (!fs.existsSync(snapshotsDir)) {
-    fs.mkdirSync(snapshotsDir, { recursive: true });
-  }
-
-  // Build and write .fig file
-  const figData = await figFile.buildAsync({ fileName: "composite" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Frames: ${builders.length}\n`);
@@ -1073,13 +643,9 @@ async function generateCompositeFixtures(): Promise<void> {
   for (const b of builders) {
     console.log(`  - ${b.name}`);
   }
-  console.log(`\nNext steps:`);
-  console.log(`1. Open ${OUTPUT_FILE} in Figma`);
-  console.log(`2. Export each frame as SVG to ${actualDir}/`);
-  console.log(`3. Run: npx vitest run packages/@higma-document-renderers/fig/spec/composite.spec.ts`);
 }
 
-generateCompositeFixtures().catch((error) => {
+generate().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

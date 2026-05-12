@@ -2,8 +2,8 @@
  * @file Explicit fig builder state construction for editor mutations.
  */
 
-import { createFigBuilderStateFromDocument } from "@higma-document-io/fig/types";
-import type { FigBuilderState } from "@higma-document-io/fig/types";
+import { createFigBuilderStateFromDocument } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 
 const FIG_EDITOR_NODE_SESSION_ID = 1;

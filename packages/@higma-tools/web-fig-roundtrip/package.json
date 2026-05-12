@@ -39,7 +39,8 @@
     "boundary": {
       "layer": 7,
       "family": "tools",
-      "product": "web-fig-roundtrip"
+      "product": "web-fig-roundtrip",
+      "role": "roundtrip-bridge"
     }
   }
 }

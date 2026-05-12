@@ -9,7 +9,6 @@
  * any deviation here is a regression that would silently corrupt
  * downstream normalisation.
  */
-import { describe, expect, it } from "vitest";
 import type { ElementJson } from "./in-page";
 import type { RawAsset } from "./snapshot";
 import type { ResponseCache } from "./playwright-shared";

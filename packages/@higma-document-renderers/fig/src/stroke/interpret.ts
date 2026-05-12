@@ -39,8 +39,8 @@ export type SvgStrokeCap = "butt" | "round" | "square";
 /**
  * Map Figma stroke cap to SVG linecap value.
  *
- * Arrow caps (LINE_ARROW, TRIANGLE_ARROW) fall back to "butt" — arrow markers
- * require separate SVG marker definitions not handled here.
+ * Arrow caps (ARROW_LINES, ARROW_EQUILATERAL) fall back to "butt" —
+ * arrow markers require separate SVG marker definitions not handled here.
  */
 export function mapStrokeCap(cap: FigStrokeCap | undefined | null): SvgStrokeCap {
   switch (cap) {
@@ -49,8 +49,8 @@ export function mapStrokeCap(cap: FigStrokeCap | undefined | null): SvgStrokeCap
     case "SQUARE":
       return "square";
     case "NONE":
-    case "LINE_ARROW":
-    case "TRIANGLE_ARROW":
+    case "ARROW_LINES":
+    case "ARROW_EQUILATERAL":
     default:
       return "butt";
   }

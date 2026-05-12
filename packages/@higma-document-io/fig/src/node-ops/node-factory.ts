@@ -9,14 +9,27 @@ import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
 import type { FigDesignNode, TextData } from "@higma-document-models/fig/domain";
 import { NUMBER_UNITS_VALUES } from "@higma-document-models/fig/constants";
 import type { NodeSpec } from "../types/spec-types";
-import { nextNodeId } from "../types/node-id";
-import type { FigBuilderState } from "../types/node-id";
+import { nextNodeId } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
 
-function textLineHeightSpec(lineHeight: number | undefined): TextData["lineHeight"] | undefined {
-  if (lineHeight === undefined) {
-    return undefined;
-  }
-  return { value: lineHeight, units: { name: "PIXELS", value: 0 } };
+/**
+ * Project the spec's optional pixel-valued lineHeight onto the
+ * schema's `FigValueWithUnits` shape.
+ *
+ * When the caller omits `lineHeight`, default to `1.25 × fontSize`
+ * (the renderer requires every non-empty TEXT node to carry a
+ * lineHeight; without one, layout falls through to `extract-props`'s
+ * fail-fast guard). 1.25× is the same fallback Figma's text engine
+ * applies when an authored line-height is absent, so the visual
+ * output stays close to what the legacy `fig-file` `.lineHeight()`
+ * default produced.
+ */
+function textLineHeightSpec(
+  lineHeight: number | undefined,
+  fontSize: number,
+): TextData["lineHeight"] {
+  const value = lineHeight ?? fontSize * 1.25;
+  return { value, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
 }
 
 /**
@@ -136,7 +149,12 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigDesig
     fills: spec.fills ?? getDefaultFills(spec.type),
     strokes: spec.strokes ?? [],
     strokeWeight: spec.strokeWeight ?? 0,
+    strokeCap: spec.strokeCap,
+    strokeJoin: spec.strokeJoin,
+    strokeAlign: spec.strokeAlign,
+    strokeDashes: spec.strokeDashes,
     effects: spec.effects ?? [],
+    layoutConstraints: spec.layoutConstraints,
   };
 
   return applyTypeSpecificFields(base, spec);
@@ -227,12 +245,13 @@ function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesign
         vectorPaths: spec.vectorPaths,
       };
 
-    case "TEXT":
+    case "TEXT": {
+      const fontSize = spec.fontSize ?? 14;
       return {
         ...base,
         textData: {
           characters: spec.characters,
-          fontSize: spec.fontSize ?? 14,
+          fontSize,
           fontName: {
             family: spec.fontFamily ?? "Inter",
             style: spec.fontStyle ?? "Regular",
@@ -240,10 +259,11 @@ function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesign
           },
           textAlignHorizontal: spec.textAlignHorizontal,
           textAlignVertical: spec.textAlignVertical,
-          lineHeight: textLineHeightSpec(spec.lineHeight),
+          lineHeight: textLineHeightSpec(spec.lineHeight, fontSize),
           letterSpacing: textLetterSpacingSpec(spec.letterSpacing),
         },
       };
+    }
 
     case "INSTANCE":
       return {

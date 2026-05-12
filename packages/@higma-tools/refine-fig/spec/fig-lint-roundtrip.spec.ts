@@ -119,6 +119,7 @@ async function runApplyAndSave(bytes: Uint8Array, fillDecisions: boolean): Promi
   });
   applyPlan(source.loaded, plan, {
     internalCanvasGuid: guidToString(source.internalCanvas.guid),
+    userCanvasGuid: source.userCanvases[0] ? guidToString(source.userCanvases[0].guid) : undefined,
     fillTemplateGuid: firstProxyGuid(source.fillStyleProxies),
     textTemplateGuid: firstProxyGuid(source.textStyleProxies),
   });

@@ -7,8 +7,8 @@
  * - writePng(image) — encode to PNG buffer (equivalent to PNG.sync.write)
  */
 
-import { pack, type PngChromaticity, type PngIccProfile } from "./pngjs/packer";
-import { parseSync } from "./pngjs/parser-sync";
+import { pack, type PngChromaticity, type PngIccProfile } from "./pngjs";
+import { parseSync } from "./pngjs";
 
 /**
  * Mutable RGBA image container.

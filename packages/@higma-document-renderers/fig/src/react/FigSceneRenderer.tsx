@@ -21,13 +21,12 @@
  */
 
 import { memo, useMemo, useRef } from "react";
-import type { SceneGraph } from "../scene-graph/types";
-import type { SceneGraphRenderOptions } from "../scene-graph/render";
+import type { SceneGraph, SceneGraphRenderOptions } from "../scene-graph";
 import {
   resolveRenderTreeIncremental,
   type RenderTree,
   type RenderTreeResolutionCache,
-} from "../scene-graph/render-tree";
+} from "../scene-graph";
 import { RenderNodeComponent } from "./nodes/RenderNodeComponent";
 
 // =============================================================================

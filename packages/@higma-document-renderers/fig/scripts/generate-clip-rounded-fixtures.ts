@@ -17,279 +17,243 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createFigFile,
-  frameNode,
-  rectNode,
-  ellipseNode,
-  linearGradient,
-} from "@higma-document-io/fig/fig-file";
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type { FigColor, FigGradientStop, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/clip-rounded");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "clip-rounded.fig");
 
-type Color = { r: number; g: number; b: number; a: number };
-type IDAllocator = { value: number };
-type FigFile = ReturnType<typeof createFigFile>;
+const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
+const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
+const BLUE: FigColor = { r: 0.2, g: 0.4, b: 0.9, a: 1 };
+const RED: FigColor = { r: 0.9, g: 0.2, b: 0.2, a: 1 };
+const GREEN: FigColor = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
 
-const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
-const LIGHT_GRAY: Color = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
-const BLUE: Color = { r: 0.2, g: 0.4, b: 0.9, a: 1 };
-const RED: Color = { r: 0.9, g: 0.2, b: 0.2, a: 1 };
-const GREEN: Color = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
-
-/**
- * Rounded frame clipping a rect that overflows all edges.
- */
-function addRoundedClipBasic(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("clip-rounded-basic")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const innerID = nextID.value++;
-  figFile.addFrame(
-    frameNode(innerID, frameID)
-      .name("rounded-frame")
-      .size(120, 80)
-      .position(20, 20)
-      .cornerRadius(20)
-      .clipsContent(true)
-      .background(LIGHT_GRAY)
-      .build(),
-  );
-
-  const childID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(childID, innerID)
-      .name("overflow")
-      .size(160, 120)
-      .position(-20, -20)
-      .fill(BLUE)
-      .build(),
-  );
+function solidPaint(color: FigColor): FigPaint {
+  return {
+    type: "SOLID",
+    color,
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
 }
 
 /**
- * Pill-shaped clip (cornerRadius = height/2).
+ * Build a linear gradient paint. The transform matrix maps gradient
+ * space → normalized object space (0..1, 0..1), mirroring the math
+ * `linearHandlesToTransform` in `fig-file/paint`. We inline it here
+ * to avoid pulling the legacy builder. `angleDeg=0` ⇒ left-to-right,
+ * `90` ⇒ top-to-bottom (CSS convention).
  */
-function addRoundedClipPill(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("clip-rounded-pill")
-      .size(200, 80)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const innerID = nextID.value++;
-  figFile.addFrame(
-    frameNode(innerID, frameID)
-      .name("pill-frame")
-      .size(160, 40)
-      .position(20, 20)
-      .cornerRadius(20)
-      .clipsContent(true)
-      .build(),
-  );
-
-  const childID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(childID, innerID)
-      .name("content")
-      .size(160, 40)
-      .position(0, 0)
-      .fill(RED)
-      .build(),
-  );
+function linearGradientPaint(
+  angleDeg: number,
+  stops: readonly FigGradientStop[],
+): FigPaint {
+  const rad = (angleDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const startX = 0.5 - cos * 0.5;
+  const startY = 0.5 - sin * 0.5;
+  const endX = 0.5 + cos * 0.5;
+  const endY = 0.5 + sin * 0.5;
+  const dx = startX - endX;
+  const dy = startY - endY;
+  return {
+    type: "GRADIENT_LINEAR",
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+    stops,
+    transform: {
+      m00: dx,
+      m01: -dy,
+      m02: endX,
+      m10: dy,
+      m11: dx,
+      m12: endY,
+    },
+  };
 }
 
-/**
- * Nested rounded clips with different radii.
- */
-function addRoundedClipNested(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("clip-rounded-nested")
-      .size(180, 140)
-      .position(frameX, frameY)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+type Ctx = {
+  readonly state: FigBuilderState;
+  readonly pageId: FigPageId;
+};
 
-  // Outer rounded frame
-  const outerID = nextID.value++;
-  figFile.addFrame(
-    frameNode(outerID, frameID)
-      .name("outer-rounded")
-      .size(140, 100)
-      .position(20, 20)
-      .cornerRadius(24)
-      .clipsContent(true)
-      .background(WHITE)
-      .build(),
-  );
-
-  // Inner rounded frame
-  const innerID = nextID.value++;
-  figFile.addFrame(
-    frameNode(innerID, outerID)
-      .name("inner-rounded")
-      .size(100, 60)
-      .position(20, 20)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-
-  const childID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(childID, innerID)
-      .name("content")
-      .size(140, 100)
-      .position(-20, -20)
-      .fill(GREEN)
-      .build(),
-  );
+function addFrame(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  parentId: FigNodeId | null,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  bg: FigColor | null,
+  cornerRadius?: number,
+): { doc: FigDesignDocument; frameId: FigNodeId } {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "FRAME",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: bg ? [solidPaint(bg)] : [],
+      clipsContent: true,
+      cornerRadius,
+    },
+  });
+  return { doc: r.doc, frameId: r.nodeId };
 }
 
-/**
- * Rounded clip with gradient child.
- */
-function addRoundedClipGradient(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("clip-rounded-gradient")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const innerID = nextID.value++;
-  figFile.addFrame(
-    frameNode(innerID, frameID)
-      .name("rounded-frame")
-      .size(120, 80)
-      .position(20, 20)
-      .cornerRadius(16)
-      .clipsContent(true)
-      .build(),
-  );
-
-  const childID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(childID, innerID)
-      .name("gradient-content")
-      .size(160, 120)
-      .position(-20, -20)
-      .fill(linearGradient()
-        .angle(135)
-        .stops([
-          { position: 0, color: { r: 1, g: 0.3, b: 0.3, a: 1 } },
-          { position: 1, color: { r: 0.3, g: 0.3, b: 1, a: 1 } },
-        ])
-        .build())
-      .build(),
-  );
+function addRect(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  parentId: FigNodeId,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fill: FigPaint,
+): FigDesignDocument {
+  return addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "RECTANGLE",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: [fill],
+    },
+  }).doc;
 }
 
-/**
- * Circular clip (cornerRadius = size/2) — avatar pattern.
- */
-function addRoundedClipCircle(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("clip-rounded-circle")
-      .size(120, 120)
-      .position(frameX, frameY)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+function addEllipse(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  parentId: FigNodeId,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fill: FigColor,
+): FigDesignDocument {
+  return addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "ELLIPSE",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: [solidPaint(fill)],
+    },
+  }).doc;
+}
 
-  const innerID = nextID.value++;
-  figFile.addFrame(
-    frameNode(innerID, frameID)
-      .name("circle-frame")
-      .size(80, 80)
-      .position(20, 20)
-      .cornerRadius(40)
-      .clipsContent(true)
-      .build(),
-  );
+type Args = {
+  readonly doc: FigDesignDocument;
+  readonly ctx: Ctx;
+  readonly frameX: number;
+  readonly frameY: number;
+};
 
-  const childID = nextID.value++;
-  figFile.addRectangle(
-    rectNode(childID, innerID)
-      .name("content")
-      .size(80, 80)
-      .position(0, 0)
-      .fill(BLUE)
-      .build(),
-  );
+type Result = { readonly doc: FigDesignDocument };
 
-  // Overlapping element that should be clipped
-  const overlapID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(overlapID, innerID)
-      .name("overlap")
-      .size(40, 40)
-      .position(30, 30)
-      .fill(RED)
-      .build(),
-  );
+function addRoundedClipBasic({ doc, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, doc, null, "clip-rounded-basic", frameX, frameY, 160, 120, WHITE);
+  const inner = addFrame(ctx, f.doc, f.frameId, "rounded-frame", 20, 20, 120, 80, LIGHT_GRAY, 20);
+  const final = addRect(ctx, inner.doc, inner.frameId, "overflow", -20, -20, 160, 120, solidPaint(BLUE));
+  return { doc: final };
+}
+
+function addRoundedClipPill({ doc, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, doc, null, "clip-rounded-pill", frameX, frameY, 200, 80, WHITE);
+  const inner = addFrame(ctx, f.doc, f.frameId, "pill-frame", 20, 20, 160, 40, null, 20);
+  const final = addRect(ctx, inner.doc, inner.frameId, "content", 0, 0, 160, 40, solidPaint(RED));
+  return { doc: final };
+}
+
+function addRoundedClipNested({ doc, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, doc, null, "clip-rounded-nested", frameX, frameY, 180, 140, LIGHT_GRAY);
+  const outer = addFrame(ctx, f.doc, f.frameId, "outer-rounded", 20, 20, 140, 100, WHITE, 24);
+  const inner = addFrame(ctx, outer.doc, outer.frameId, "inner-rounded", 20, 20, 100, 60, null, 12);
+  const final = addRect(ctx, inner.doc, inner.frameId, "content", -20, -20, 140, 100, solidPaint(GREEN));
+  return { doc: final };
+}
+
+function addRoundedClipGradient({ doc, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, doc, null, "clip-rounded-gradient", frameX, frameY, 160, 120, WHITE);
+  const inner = addFrame(ctx, f.doc, f.frameId, "rounded-frame", 20, 20, 120, 80, null, 16);
+  const gradient = linearGradientPaint(135, [
+    { position: 0, color: { r: 1, g: 0.3, b: 0.3, a: 1 } },
+    { position: 1, color: { r: 0.3, g: 0.3, b: 1, a: 1 } },
+  ]);
+  const final = addRect(ctx, inner.doc, inner.frameId, "gradient-content", -20, -20, 160, 120, gradient);
+  return { doc: final };
+}
+
+function addRoundedClipCircle({ doc, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, doc, null, "clip-rounded-circle", frameX, frameY, 120, 120, LIGHT_GRAY);
+  const inner = addFrame(ctx, f.doc, f.frameId, "circle-frame", 20, 20, 80, 80, null, 40);
+  const d1 = addRect(ctx, inner.doc, inner.frameId, "content", 0, 0, 80, 80, solidPaint(BLUE));
+  const d2 = addEllipse(ctx, d1, inner.frameId, "overlap", 30, 30, 40, 40, RED);
+  return { doc: d2 };
 }
 
 async function main(): Promise<void> {
   console.log("Generating clip-rounded fixtures...\n");
 
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("ClipRounded");
-  const canvasID = figFile.addCanvas(docID, "Clip Rounded");
-  figFile.addInternalCanvas(docID);
+  const empty = createEmptyFigDesignDocument("ClipRounded");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const ctx: Ctx = { state, pageId };
+  const doc0 = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  const nextID: IDAllocator = { value: 10 };
   const GRID_COLS = 3;
   const COL_WIDTH = 230;
   const ROW_HEIGHT = 170;
   const MARGIN = 50;
 
-  type Builder = (f: FigFile, c: number, id: IDAllocator, x: number, y: number) => void;
+  type Builder = (args: Args) => Result;
 
   const builders: { name: string; fn: Builder }[] = [
     { name: "Rounded clip basic", fn: addRoundedClipBasic },
@@ -299,22 +263,31 @@ async function main(): Promise<void> {
     { name: "Rounded clip circle", fn: addRoundedClipCircle },
   ];
 
-  for (let i = 0; i < builders.length; i++) {
+  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
-    builders[i].fn(figFile, canvasID, nextID, MARGIN + col * COL_WIDTH, MARGIN + row * ROW_HEIGHT);
-  }
+    return b.fn({
+      doc: acc,
+      ctx,
+      frameX: MARGIN + col * COL_WIDTH,
+      frameY: MARGIN + row * ROW_HEIGHT,
+    }).doc;
+  }, doc0);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
-    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
   }
 
-  const figData = await figFile.buildAsync({ fileName: "clip-rounded" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Frames: ${builders.length}\n`);
-  for (const b of builders) { console.log(`  - ${b.name}`); }
+  for (const b of builders) {
+    console.log(`  - ${b.name}`);
+  }
 }
 
 main().catch((error) => {

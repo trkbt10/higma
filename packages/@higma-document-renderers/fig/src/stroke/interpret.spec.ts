@@ -33,8 +33,8 @@ describe("mapStrokeCap", () => {
     expect(mapStrokeCap("SQUARE")).toBe("square");
   });
 
-  it("maps LINE_ARROW to butt (arrows need markers)", () => {
-    expect(mapStrokeCap("LINE_ARROW")).toBe("butt");
+  it("maps ARROW_LINES to butt (arrows need markers)", () => {
+    expect(mapStrokeCap("ARROW_LINES")).toBe("butt");
   });
 
   it("defaults to butt for unknown", () => {

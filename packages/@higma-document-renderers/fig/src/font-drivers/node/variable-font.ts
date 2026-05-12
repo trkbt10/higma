@@ -180,9 +180,18 @@ const VARIATION_VIEW_MARKER: unique symbol = Symbol("variation-font-view");
  * captured screenshot (small text gets too wide, large text too
  * narrow). The `opsz` axis is clamped to the font's declared range.
  */
+function isVariationFontView(font: AbstractFont): font is AbstractFont & {
+  readonly [VARIATION_VIEW_MARKER]: VariationFontView;
+} {
+  const candidate = font as unknown as { readonly [VARIATION_VIEW_MARKER]?: unknown };
+  const view = candidate[VARIATION_VIEW_MARKER];
+  return typeof view === "object" && view !== null && typeof (view as VariationFontView).setOpticalSize === "function";
+}
+
 export function setVariationOpticalSize(font: AbstractFont, fontSizePx: number): void {
-  const view = font as unknown as { [VARIATION_VIEW_MARKER]?: VariationFontView };
-  view[VARIATION_VIEW_MARKER]?.setOpticalSize(fontSizePx);
+  if (isVariationFontView(font)) {
+    font[VARIATION_VIEW_MARKER].setOpticalSize(fontSizePx);
+  }
 }
 
 /**

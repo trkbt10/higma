@@ -51,8 +51,8 @@ type TextDataFields = Pick<FigNode,
  * Input for extractTextProps.
  *
  * Accepted by both FigDesignNode (scene-graph path) and FigNode (direct SVG path).
- * FigDesignNode provides `textData` (structured) and `_raw` (raw Kiwi fields).
- * FigNode carries all text fields directly and satisfies this via Pick + index sig.
+ * FigDesignNode provides text fields via the structured `textData` object.
+ * FigNode carries them as flat fields and satisfies this via the index signature.
  */
 export type TextNodeInput = {
   readonly transform?: FigMatrix;
@@ -60,8 +60,6 @@ export type TextNodeInput = {
   readonly size?: FigVector;
   /** Structured text data (FigDesignNode.textData or compatible) */
   readonly textData?: TextDataFields;
-  /** Raw parser data for compatibility field access (FigDesignNode._raw) */
-  readonly _raw?: TextDataFields;
   /** Domain fill paints (FigDesignNode.fills) */
   readonly fills?: readonly FigPaint[];
   /** Raw parser fill paints (FigNode.fillPaints) */
@@ -143,9 +141,9 @@ function applyTextCase(characters: string, textCase: TextCase): string {
 /**
  * Extract text properties from a FigDesignNode or FigNode.
  *
- * For FigDesignNode: reads typed `textData` field, falls back to `_raw`.
- * For FigNode: `textData`/`_raw` are undefined, so all fields resolve
- * to direct property access via the index signature.
+ * For FigDesignNode: reads typed `textData` field (which holds the
+ * structured text properties).
+ * For FigNode: reads the same fields directly via the index signature.
  *
  * @param node - FigDesignNode or FigNode (structural match via TextNodeInput)
  * @returns Extracted text properties
@@ -154,10 +152,9 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   const transform = node.transform;
   const opacity = node.opacity ?? 1;
   const td = node.textData;
-  // For FigDesignNode, _raw holds the raw parser fields.
-  // For FigNode, _raw is undefined so `raw?.xxx` falls through to the
-  // node itself (which carries the same fields via FigNode type).
-  const raw = node._raw ?? node as TextDataFields;
+  // For FigNode the flat fields live directly on the node; cast through
+  // TextDataFields to reuse the same readers as the FigDesignNode path.
+  const raw = node as TextDataFields;
 
   const characters = td?.characters ?? raw?.characters ?? "";
   const textCase = getEnumName<TextCase>(

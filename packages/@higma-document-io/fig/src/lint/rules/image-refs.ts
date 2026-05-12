@@ -87,7 +87,7 @@ export const imageRefsRule: LintRule = (ctx, emit) => {
         severity: "error",
         path: `nodeChanges[${item.nodeIndex}].fillPaints[${item.paintIndex}].imageRef`,
         message: `Image ref ${item.ref} is not present in the ZIP's images/ directory`,
-        remediation: "Add the missing image bytes via FigFileBuilder.addImage() or fix the imageRef",
+        remediation: "Add the missing image bytes via addImage(doc, ref, image) or fix the imageRef",
       });
     }
   }

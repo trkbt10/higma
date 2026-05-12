@@ -10,7 +10,7 @@
 
 import type { FigBlob, FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigPaint, FigGuid } from "@higma-document-models/fig/types";
+import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigGuid } from "@higma-document-models/fig/types";
 import { defensiveMark } from "@higma-document-models/fig/diagnostics/defensive";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { extractTextProps } from "../layout/extract-props";
@@ -282,14 +282,21 @@ export function resolveTextDescenderRatio(
   const baseline = dtd?.baselines?.[0];
   if (
     baseline &&
-    typeof baseline.lineDescent === "number" &&
-    baseline.lineDescent > 0 &&
+    typeof baseline.lineAscent === "number" &&
     typeof baseline.lineHeight === "number" &&
-    baseline.lineHeight > 0
+    baseline.lineHeight > 0 &&
+    baseline.lineAscent >= 0
   ) {
-    const lh = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
-    if (lh !== undefined) {
-      return baseline.lineDescent / (baseline.lineHeight / lh);
+    // `FigDerivedBaseline` carries `lineAscent` and `lineHeight` but
+    // not an explicit descender — Kiwi defines descender = lineHeight
+    // − lineAscent because Figma's line box wraps the baseline by
+    // exactly the descender below it.
+    const derivedDescent = baseline.lineHeight - baseline.lineAscent;
+    if (derivedDescent > 0) {
+      const lh = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
+      if (lh !== undefined) {
+        return derivedDescent / (baseline.lineHeight / lh);
+      }
     }
   }
   const font = ctx.fontResolver?.(props.font);

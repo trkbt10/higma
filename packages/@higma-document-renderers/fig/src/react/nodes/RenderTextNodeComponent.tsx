@@ -3,7 +3,7 @@
  */
 
 import { memo, type ReactNode } from "react";
-import type { RenderTextNode } from "../../scene-graph/render-tree";
+import type { RenderTextNode } from "../../scene-graph";
 import { formatRenderDefs } from "../primitives/render-defs";
 import { RenderWrapper } from "../primitives/wrapper";
 import { FigTextLines } from "./FigTextLines";

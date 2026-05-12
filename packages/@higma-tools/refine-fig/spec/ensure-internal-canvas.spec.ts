@@ -135,6 +135,7 @@ describe("refine-fig ensure-internal-canvas", () => {
 
       const result = applyPlan(source.loaded, plan, {
         internalCanvasGuid: undefined,
+        userCanvasGuid: undefined,
         fillTemplateGuid: undefined,
         textTemplateGuid: undefined,
       });

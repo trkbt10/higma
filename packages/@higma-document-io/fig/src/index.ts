@@ -1,21 +1,21 @@
 /**
  * @file @higma-document-io/fig main entry point
  *
- * High-level builder for .fig design files.
- * Provides FigDesignDocument model, CRUD operations, and export pipeline.
+ * High-level builder for .fig design files. Provides `FigDesignDocument`
+ * CRUD operations and the export pipeline. Builder ID utilities
+ * (`FigBuilderState`, `createFigBuilderState`, `nextNodeId`,
+ * `nextPageId`) live in `@higma-document-models/fig/builder` —
+ * consumers must import them directly from there (the cross-package
+ * re-export ban prevents publishing them through a second name).
+ *
+ * Domain types (`FigDesignDocument`, `FigDesignNode`, `FigPage`,
+ * `FigNodeId`, `FigPageId`) live in `@higma-document-models/fig/domain`.
  */
 
-// Builder-specific types
-export type {
-  NodeSpec,
-  BaseNodeSpec,
-  FigBuilderState,
-} from "./types";
-
-export {
-  createFigBuilderState,
-  createFigBuilderStateFromDocument,
-} from "./types";
+// NodeSpec discriminated union — declarative shape consumed by
+// `addNode` / `createNodeFromSpec`. Lives in this package because the
+// factory that materialises it lives here.
+export type { NodeSpec, BaseNodeSpec } from "./types";
 
 // Context
 export {
@@ -54,19 +54,7 @@ export {
 // Export
 export {
   exportFig,
-  exportFigRoundtrip,
   type FigExportOptions,
   type FigExportResult,
 } from "./export";
 
-// Low-level fig file construction
-export {
-  createFigFile,
-  frameNode,
-  textNode,
-  rectNode,
-  roundedRectNode,
-  ellipseNode,
-  symbolNode,
-  instanceNode,
-} from "./fig-file";

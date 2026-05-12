@@ -60,9 +60,12 @@ function restoreUint8Arrays(node: Record<string, unknown>): void {
 
 type RGBA = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
 
-type RenderableWindow = Window & {
-  renderSceneGraph: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
-};
+declare global {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
+  interface Window {
+    renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
+  }
+}
 
 const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
 
@@ -81,13 +84,13 @@ const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
  */
 const SUPERSAMPLING_FACTOR = 2;
 
-(window as unknown as RenderableWindow).renderSceneGraph = async (
+window.renderSceneGraph = async (
   json: string,
   pixelRatio: number = 1,
   backgroundColor: RGBA = DEFAULT_BACKGROUND,
 ): Promise<string> => {
   const sceneGraph = JSON.parse(json) as SceneGraph;
-  restoreUint8Arrays(sceneGraph as unknown as Record<string, unknown>);
+  restoreUint8Arrays(sceneGraph as Record<string, unknown>);
 
   const outputWidth = Math.round(sceneGraph.width * pixelRatio);
   const outputHeight = Math.round(sceneGraph.height * pixelRatio);

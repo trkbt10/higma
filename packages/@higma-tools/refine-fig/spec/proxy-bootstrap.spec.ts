@@ -106,6 +106,7 @@ describe("refine-fig proxy bootstrap", () => {
       });
       const result = applyPlan(source.loaded, plan, {
         internalCanvasGuid: guidToString(source.internalCanvas.guid),
+        userCanvasGuid: source.userCanvases[0] ? guidToString(source.userCanvases[0].guid) : undefined,
         fillTemplateGuid: undefined,
         textTemplateGuid: undefined,
       });

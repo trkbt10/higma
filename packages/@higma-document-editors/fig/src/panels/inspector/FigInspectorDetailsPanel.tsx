@@ -602,20 +602,43 @@ const autoLayoutSection: DetailSectionRenderer = {
   },
 };
 
+// Set of field names that other inspector sections already render in a
+// structured way. Listed here so the "All fields" debug section avoids
+// duplicating them. Anything not in this set falls into the dump.
+const STRUCTURED_DETAIL_KEYS: ReadonlySet<string> = new Set([
+  "id", "type", "name", "visible", "opacity",
+  "transform", "size", "transformOrigin",
+  "fills", "strokes", "strokeWeight", "strokeAlign", "strokeJoin", "strokeCap", "strokeDashes",
+  "individualStrokeWeights",
+  "effects",
+  "cornerRadius", "rectangleCornerRadii", "cornerSmoothing",
+  "clipsContent",
+  "autoLayout", "layoutConstraints",
+  "textData", "derivedTextData",
+  "children",
+  "symbolId", "overrides", "derivedSymbolData",
+  "componentPropertyDefs", "componentPropertyRefs", "componentPropertyAssignments",
+  "variantPropSpecs", "isStateGroup",
+  "exportSettings",
+  "blendMode", "mask",
+  "styleIdForFill", "styleIdForStrokeFill",
+]);
+
 const rawSection: DetailSectionRenderer = {
   id: "raw",
   render: (node) => {
-    const raw = node._raw;
-    if (!raw) {
-      return null;
-    }
-    const entries = Object.entries(raw);
+    const entries = Object.entries(node).filter(
+      ([key, value]) =>
+        value !== undefined &&
+        !STRUCTURED_DETAIL_KEYS.has(key) &&
+        !key.startsWith("_"),
+    );
     if (entries.length === 0) {
       return null;
     }
     return (
       <DetailSection
-        title={`Raw (Kiwi) · ${entries.length} field(s) not modeled in domain`}
+        title={`Additional fields · ${entries.length} extra`}
       >
         {entries.map(([key, value]) => (
           <DetailRawRow key={key} fieldKey={key} value={value} />

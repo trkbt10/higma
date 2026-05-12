@@ -18,6 +18,7 @@ import { resolve } from "node:path";
 import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import { loadFigFile, saveFigFile } from "@higma-document-io/fig/roundtrip";
 import { getNodeType } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 import { loadRefineSource } from "../src/refine-source/load";
 import type { Inventory, SubtreeClusterEntry, SubtreeMemberRecord } from "../src/inventory";
 import type { Decisions } from "../src/decisions";
@@ -68,7 +69,9 @@ describe("buildPlan — group-as-variant-set static checks", () => {
       palette: [],
       typography: [],
       subtreeClusters: [makeCluster(id, [{ guid: "100:1", name: "x" }, { guid: "100:2", name: "y" }])],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: { [id]: { name: "Ace" } }, // no promoteToSymbol
@@ -91,7 +94,9 @@ describe("buildPlan — group-as-variant-set static checks", () => {
       palette: [],
       typography: [],
       subtreeClusters: [],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: {},
@@ -115,7 +120,9 @@ describe("buildPlan — group-as-variant-set static checks", () => {
       palette: [],
       typography: [],
       subtreeClusters: [makeCluster(id, [{ guid: "100:1", name: "x" }, { guid: "100:2", name: "y" }])],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: { [id]: { name: "X", promoteToSymbol: true } },
@@ -157,7 +164,9 @@ describe("applyPlan — group-as-variant-set", () => {
           { guid: synthetic.heartsCopy, name: "Hearts-copy" },
         ]),
       ],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: {
@@ -177,6 +186,7 @@ describe("applyPlan — group-as-variant-set", () => {
     const plan = buildPlan(source, inventory, decisions, { file: "synthetic", bytes: synthetic.bytes.byteLength });
     const result = applyPlan(source.loaded, plan, {
       internalCanvasGuid: undefined,
+      userCanvasGuid: undefined,
       fillTemplateGuid: undefined,
       textTemplateGuid: undefined,
     });
@@ -224,9 +234,16 @@ async function buildSyntheticFig(): Promise<{
   readonly heartsCopy: string;
 }> {
   // Start from the rectangle fixture and append our synthetic nodes.
+  // `LoadedFigFile.nodeChanges` is declared `readonly` post-Phase 3-C
+  // (the public contract guarantees no in-place mutation); this spec
+  // bypasses the type for fixture construction only — the synthetic
+  // tree lives entirely inside the test scope.
   const buf = await readFile(resolve(FIXTURES_ROOT, FIXTURE));
   const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-  const loaded = await loadFigFile(bytes);
+  const loadedReadonly = await loadFigFile(bytes);
+  const loaded = loadedReadonly as unknown as Omit<typeof loadedReadonly, "nodeChanges"> & {
+    nodeChanges: FigNode[];
+  };
   const canvas = loaded.nodeChanges.find((n) => getNodeType(n) === "CANVAS" && n.internalOnly !== true);
   if (!canvas) {
     throw new Error("buildSyntheticFig: no user canvas in rectangle fixture");

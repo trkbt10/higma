@@ -37,7 +37,6 @@ export type LayerNodeKind = "variant-set" | undefined;
 
 const INSTANCE_COLOR = "#9747FF";
 const FRAME_COLOR = "#248EFF";
-const SYMBOL_COLOR = "#10B981";
 
 const INSTANCE_ROW_STYLE: CSSProperties = {
   backgroundColor: "rgba(151, 71, 255, 0.06)",

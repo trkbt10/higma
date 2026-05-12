@@ -22,6 +22,7 @@ export type FigUserOperation =
   | "group-selection"
   | "make-component"
   | "make-symbol"
+  | "promote-structural"
   | "outline-selection"
   | "boolean-operation"
   | "exit-text-edit"
@@ -114,6 +115,7 @@ function resolveAllowedOperations(intent: FigUserIntent): readonly FigUserOperat
       "group-selection",
       "make-component",
       "make-symbol",
+      "promote-structural",
       "outline-selection",
       "boolean-operation",
       "set-document",

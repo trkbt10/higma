@@ -12,7 +12,7 @@
 
 import { figmaFontToQuery, fontQueryKey, type FontQuery } from "../query";
 import type { FigFontName, FigGuid, FigNode } from "../../types";
-import type { FigDesignNode } from "../../domain/document";
+import type { FigDesignNode } from "../../domain";
 
 /**
  * Structural shape that both `FigNode` (raw kiwi) and `FigDesignNode`

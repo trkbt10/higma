@@ -25,9 +25,11 @@ import { getEffectTypeName, extractShadowParams } from "./effects";
 import { mapWindingRule, extractUniformCornerRadius, resolveClipsContent } from "./geometry";
 
 // SceneGraph consumer
-import { convertPaintToFill } from "./scene-graph/convert/fill";
-import { convertEffectsToScene } from "./scene-graph/convert/effects";
-import { convertStrokeToSceneStroke } from "./scene-graph/convert/stroke";
+import {
+  convertPaintToFill,
+  convertEffectsToScene,
+  convertStrokeToSceneStroke,
+} from "./scene-graph/convert";
 
 const NO_IMAGES: ReadonlyMap<string, FigPackageImage> = new Map();
 

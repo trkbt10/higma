@@ -95,5 +95,20 @@ export function isFigEditorActionAllowed(state: FigEditorState, action: FigEdito
     case "END_CREATE_DRAG":
     case "COMMIT_CREATION":
       return allowsFigUserOperation(domain, "commit-create");
+
+    // Phase 1 structural promotion actions — all share the same gate
+    // because they all represent SoT-driven .fig structure edits that
+    // refine-fig (or any equivalent tooling) emits while the user is
+    // in plain selection mode.
+    case "PROMOTE_TO_SYMBOL":
+    case "PROMOTE_TO_INSTANCE":
+    case "CREATE_SYMBOL_WITH_INSTANCES":
+    case "GROUP_AS_VARIANT_SET":
+    case "ENSURE_INTERNAL_CANVAS":
+    case "ADD_FILL_PROXY":
+    case "ADD_TEXT_PROXY":
+    case "BIND_FILL_STYLE":
+    case "BIND_TEXT_STYLE":
+      return allowsFigUserOperation(domain, "promote-structural");
   }
 }

@@ -14,7 +14,7 @@ import { getNodeType, parseGuidString, decodePathCommands, type FigGuid, type Fi
 import type { FigKiwiSymbolOverride } from "@higma-document-models/fig/types";
 import { createFigResolveContext, type FigResolveContext, type SymbolDescendant } from "./resolve-context";
 import { walkTree } from "@higma-primitives/tree";
-import { defensiveMark } from "../diagnostics/defensive";
+import { defensiveMark } from "../diagnostics";
 
 /**
  * Extract the final "characters" for a CPA assignment, if any.

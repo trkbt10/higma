@@ -15,10 +15,10 @@
 import {
   addNode,
   createEmptyFigDesignDocument,
-  createFigBuilderState,
 } from "@higma-document-io/fig";
-import type { FigDesignDocument, FigNodeId } from "@higma-document-models/fig/domain";
-import type { FigBuilderState } from "@higma-document-io/fig/types";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigDesignDocument, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { NodeIR, ViewportIR } from "@higma-bridges/web-fig";
 import { irToSpecGraph } from "./ir-to-spec";
 
@@ -31,7 +31,7 @@ export type BuildDocumentResult = {
 /** Convert a ViewportIR into a FigDesignDocument plus an IR id → FigNodeId map. */
 export function buildDocument(viewport: ViewportIR): BuildDocumentResult {
   const initialDoc = createEmptyFigDesignDocument(viewport.source);
-  const docWithAssets = installAssets(initialDoc, viewport);
+  const docWithAssets = installAssets(initialDoc, viewport.assets);
   const builderState = createFigBuilderState({
     nodeIdCounter: { sessionID: 1, nextLocalID: 1 },
     pageIdCounter: { sessionID: 0, nextLocalID: 2 },
@@ -49,12 +49,20 @@ export function buildDocument(viewport: ViewportIR): BuildDocumentResult {
   return { doc: finalDoc, idMap };
 }
 
-function installAssets(doc: FigDesignDocument, viewport: ViewportIR): FigDesignDocument {
-  if (viewport.assets.size === 0) {
+/**
+ * Install captured assets into the document's images map. Used by the
+ * single-viewport entry as well as the multi-viewport path that
+ * folds every viewport's assets into one shared map.
+ */
+export function installAssets(
+  doc: FigDesignDocument,
+  assets: ViewportIR["assets"],
+): FigDesignDocument {
+  if (assets.size === 0) {
     return doc;
   }
   const images = new Map(doc.images);
-  for (const asset of viewport.assets.values()) {
+  for (const asset of assets.values()) {
     images.set(asset.id, {
       ref: asset.id,
       data: asset.bytes,
@@ -64,16 +72,24 @@ function installAssets(doc: FigDesignDocument, viewport: ViewportIR): FigDesignD
   return { ...doc, images };
 }
 
-type AppendOptions = {
+export type AppendIROptions = {
   readonly doc: FigDesignDocument;
   readonly state: FigBuilderState;
-  readonly pageId: FigDesignDocument["pages"][number]["id"];
+  readonly pageId: FigPageId;
   readonly parentId: FigNodeId | null;
   readonly irNode: NodeIR;
   readonly idMap: Map<string, FigNodeId>;
 };
 
-function appendIR(opts: AppendOptions): FigDesignDocument {
+/**
+ * Append an IR subtree under `parentId` (null = page root). Walks
+ * children depth-first and threads the updated document through each
+ * `addNode` call. Returns the final document; the IR id → FigNodeId
+ * map is populated in place via `opts.idMap`.
+ *
+ * Shared with `buildMultiFigFileBytes`'s per-viewport emit pass.
+ */
+export function appendIR(opts: AppendIROptions): FigDesignDocument {
   const graph = irToSpecGraph(opts.irNode);
   const { doc: afterAdd, nodeId } = addNode({
     state: opts.state,

@@ -20,346 +20,218 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFigFile, frameNode, roundedRectNode, ellipseNode } from "@higma-document-io/fig/fig-file";
+import {
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/clips");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "clips.fig");
 
-// =============================================================================
-// Color Helpers
-// =============================================================================
+const white: FigColor = { r: 1, g: 1, b: 1, a: 1 };
+const lightGray: FigColor = { r: 0.94, g: 0.94, b: 0.94, a: 1 };
 
-type Color = { r: number; g: number; b: number; a: number };
-
-const white: Color = { r: 1, g: 1, b: 1, a: 1 };
-const lightGray: Color = { r: 0.94, g: 0.94, b: 0.94, a: 1 };
-
-function rgb(r: number, g: number, b: number): Color {
+function rgb(r: number, g: number, b: number): FigColor {
   return { r, g, b, a: 1 };
 }
 
-// =============================================================================
-// Generate .fig File
-// =============================================================================
+function solidPaint(color: FigColor): FigPaint {
+  return {
+    type: "SOLID",
+    color,
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+type Ctx = {
+  readonly state: FigBuilderState;
+  readonly pageId: FigPageId;
+};
+
+function addFrame(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  parentId: FigNodeId | null,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  bg: FigColor | null,
+): { doc: FigDesignDocument; frameId: FigNodeId } {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "FRAME",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: bg ? [solidPaint(bg)] : [],
+      clipsContent: true,
+    },
+  });
+  return { doc: r.doc, frameId: r.nodeId };
+}
+
+function addRect(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  parentId: FigNodeId,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fill: FigColor,
+  cornerRadius?: number,
+): FigDesignDocument {
+  return addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: [solidPaint(fill)],
+      cornerRadius,
+    },
+  }).doc;
+}
+
+function addEllipse(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  parentId: FigNodeId,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fill: FigColor,
+): FigDesignDocument {
+  return addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId,
+    spec: {
+      type: "ELLIPSE",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: [solidPaint(fill)],
+    },
+  }).doc;
+}
 
 async function generateClipFixtures(): Promise<void> {
   console.log("Generating clip fixtures...");
 
-  const figFile = createFigFile();
+  const empty = createEmptyFigDesignDocument("Clips");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const ctx: Ctx = { state, pageId };
 
-  const docID = figFile.addDocument("Clips");
-  const canvasID = figFile.addCanvas(docID, "Clips Canvas");
-  figFile.addInternalCanvas(docID);
+  const doc0 = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  const nextIDRef = { value: 10 };
-  const id = () => nextIDRef.value++;
-
-  // Grid layout
   const GRID_COLS = 4;
   const GRID_GAP = 30;
   const MARGIN = 50;
-  const frameIndex = 0;
+  const frameIndexRef = { value: 0 };
 
-  function gridPos() {
-    const col = frameIndex % GRID_COLS;
-    const row = Math.floor(frameIndex / GRID_COLS);
-    const x = MARGIN + col * (220 + GRID_GAP);
-    const y = MARGIN + row * (220 + GRID_GAP);
-    frameIndex++;
-    return { x, y };
+  function gridPos(): { x: number; y: number } {
+    const idx = frameIndexRef.value;
+    const col = idx % GRID_COLS;
+    const row = Math.floor(idx / GRID_COLS);
+    frameIndexRef.value += 1;
+    return {
+      x: MARGIN + col * (220 + GRID_GAP),
+      y: MARGIN + row * (220 + GRID_GAP),
+    };
   }
 
-  // ---- clip-1level: single clip frame with rect + ellipse ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("clip-1level")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), frameID)
-        .name("rect")
-        .size(80, 80)
-        .position(20, 20)
-        .fill(rgb(0.3, 0.5, 0.9))
-        .cornerRadius(8)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), frameID)
-        .name("circle")
-        .size(60, 60)
-        .position(100, 100)
-        .fill(rgb(0.9, 0.3, 0.3))
-        .build(),
-    );
-  }
+  // clip-1level
+  const p1 = gridPos();
+  const f1 = addFrame(ctx, doc0, null, "clip-1level", p1.x, p1.y, 200, 200, white);
+  const d1a = addRect(ctx, f1.doc, f1.frameId, "rect", 20, 20, 80, 80, rgb(0.3, 0.5, 0.9), 8);
+  const d1b = addEllipse(ctx, d1a, f1.frameId, "circle", 100, 100, 60, 60, rgb(0.9, 0.3, 0.3));
 
-  // ---- clip-2level: double-nested clip frames with ellipse ----
-  {
-    const pos = gridPos();
-    const outerID = id();
-    figFile.addFrame(
-      frameNode(outerID, canvasID)
-        .name("clip-2level")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const innerID = id();
-    figFile.addFrame(
-      frameNode(innerID, outerID)
-        .name("inner")
-        .size(160, 160)
-        .position(20, 20)
-        .background(lightGray)
-        .clipsContent(true)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), innerID)
-        .name("circle")
-        .size(80, 80)
-        .position(40, 40)
-        .fill(rgb(1, 0.8, 0))
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), innerID)
-        .name("rect")
-        .size(60, 60)
-        .position(10, 90)
-        .fill(rgb(0.3, 0.7, 0.3))
-        .cornerRadius(6)
-        .build(),
-    );
-  }
+  // clip-2level
+  const p2 = gridPos();
+  const f2 = addFrame(ctx, d1b, null, "clip-2level", p2.x, p2.y, 200, 200, white);
+  const inner2 = addFrame(ctx, f2.doc, f2.frameId, "inner", 20, 20, 160, 160, lightGray);
+  const d2a = addEllipse(ctx, inner2.doc, inner2.frameId, "circle", 40, 40, 80, 80, rgb(1, 0.8, 0));
+  const d2b = addRect(ctx, d2a, inner2.frameId, "rect", 10, 90, 60, 60, rgb(0.3, 0.7, 0.3), 6);
 
-  // ---- clip-3level: triple-nested clip frames ----
-  {
-    const pos = gridPos();
-    const level1ID = id();
-    figFile.addFrame(
-      frameNode(level1ID, canvasID)
-        .name("clip-3level")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const level2ID = id();
-    figFile.addFrame(
-      frameNode(level2ID, level1ID)
-        .name("level-2")
-        .size(180, 180)
-        .position(10, 10)
-        .background(lightGray)
-        .clipsContent(true)
-        .build(),
-    );
-    const level3ID = id();
-    figFile.addFrame(
-      frameNode(level3ID, level2ID).name("level-3").size(160, 160).position(10, 10).clipsContent(true).build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), level3ID)
-        .name("circle")
-        .size(80, 80)
-        .position(40, 40)
-        .fill(rgb(0.4, 0.7, 0.4))
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), level3ID)
-        .name("rect")
-        .size(50, 50)
-        .position(10, 10)
-        .fill(rgb(0.9, 0.3, 0.6))
-        .cornerRadius(8)
-        .build(),
-    );
-  }
+  // clip-3level
+  const p3 = gridPos();
+  const f3 = addFrame(ctx, d2b, null, "clip-3level", p3.x, p3.y, 200, 200, white);
+  const level2 = addFrame(ctx, f3.doc, f3.frameId, "level-2", 10, 10, 180, 180, lightGray);
+  const level3 = addFrame(ctx, level2.doc, level2.frameId, "level-3", 10, 10, 160, 160, null);
+  const d3a = addEllipse(ctx, level3.doc, level3.frameId, "circle", 40, 40, 80, 80, rgb(0.4, 0.7, 0.4));
+  const d3b = addRect(ctx, d3a, level3.frameId, "rect", 10, 10, 50, 50, rgb(0.9, 0.3, 0.6), 8);
 
-  // ---- clip-overflow: shapes exceeding clip bounds ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("clip-overflow")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), frameID)
-        .name("overflow-rect")
-        .size(150, 150)
-        .position(100, 100)
-        .fill(rgb(0.2, 0.6, 0.9))
-        .cornerRadius(12)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), frameID)
-        .name("overflow-circle")
-        .size(120, 120)
-        .position(-30, -30)
-        .fill(rgb(0.9, 0.5, 0.2))
-        .build(),
-    );
-  }
+  // clip-overflow
+  const p4 = gridPos();
+  const f4 = addFrame(ctx, d3b, null, "clip-overflow", p4.x, p4.y, 200, 200, white);
+  const d4a = addRect(ctx, f4.doc, f4.frameId, "overflow-rect", 100, 100, 150, 150, rgb(0.2, 0.6, 0.9), 12);
+  const d4b = addEllipse(ctx, d4a, f4.frameId, "overflow-circle", -30, -30, 120, 120, rgb(0.9, 0.5, 0.2));
 
-  // ---- clip-nested-shapes: rect+ellipse in 2-level nested clip ----
-  {
-    const pos = gridPos();
-    const outerID = id();
-    figFile.addFrame(
-      frameNode(outerID, canvasID)
-        .name("clip-nested-shapes")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const innerID = id();
-    figFile.addFrame(
-      frameNode(innerID, outerID).name("inner").size(160, 160).position(20, 20).clipsContent(true).build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), innerID)
-        .name("rect-large")
-        .size(100, 100)
-        .position(30, 30)
-        .fill(rgb(0.3, 0.3, 0.9))
-        .cornerRadius(10)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), innerID)
-        .name("circle-small")
-        .size(60, 60)
-        .position(10, 10)
-        .fill(rgb(0.9, 0.7, 0))
-        .build(),
-    );
-  }
+  // clip-nested-shapes
+  const p5 = gridPos();
+  const f5 = addFrame(ctx, d4b, null, "clip-nested-shapes", p5.x, p5.y, 200, 200, white);
+  const inner5 = addFrame(ctx, f5.doc, f5.frameId, "inner", 20, 20, 160, 160, null);
+  const d5a = addRect(ctx, inner5.doc, inner5.frameId, "rect-large", 30, 30, 100, 100, rgb(0.3, 0.3, 0.9), 10);
+  const d5b = addEllipse(ctx, d5a, inner5.frameId, "circle-small", 10, 10, 60, 60, rgb(0.9, 0.7, 0));
 
-  // ---- clip-mixed: shapes at different nesting depths ----
-  {
-    const pos = gridPos();
-    const outerID = id();
-    figFile.addFrame(
-      frameNode(outerID, canvasID)
-        .name("clip-mixed")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    // Shape directly in outer clip
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), outerID)
-        .name("outer-rect")
-        .size(60, 60)
-        .position(10, 10)
-        .fill(rgb(0.9, 0.3, 0.3))
-        .cornerRadius(6)
-        .build(),
-    );
-    // Nested clip with shapes
-    const innerID = id();
-    figFile.addFrame(
-      frameNode(innerID, outerID)
-        .name("inner")
-        .size(120, 120)
-        .position(70, 70)
-        .background(lightGray)
-        .clipsContent(true)
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), innerID)
-        .name("inner-rect")
-        .size(80, 80)
-        .position(20, 20)
-        .fill(rgb(0.3, 0.7, 0.3))
-        .cornerRadius(8)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), innerID)
-        .name("inner-ellipse")
-        .size(50, 50)
-        .position(60, 60)
-        .fill(rgb(0.3, 0.5, 0.9))
-        .build(),
-    );
-  }
+  // clip-mixed
+  const p6 = gridPos();
+  const f6 = addFrame(ctx, d5b, null, "clip-mixed", p6.x, p6.y, 200, 200, white);
+  const d6a = addRect(ctx, f6.doc, f6.frameId, "outer-rect", 10, 10, 60, 60, rgb(0.9, 0.3, 0.3), 6);
+  const inner6 = addFrame(ctx, d6a, f6.frameId, "inner", 70, 70, 120, 120, lightGray);
+  const d6b = addRect(ctx, inner6.doc, inner6.frameId, "inner-rect", 20, 20, 80, 80, rgb(0.3, 0.7, 0.3), 8);
+  const d6c = addEllipse(ctx, d6b, inner6.frameId, "inner-ellipse", 60, 60, 50, 50, rgb(0.3, 0.5, 0.9));
 
-  // ---- clip-shapes-overlap: overlapping shapes inside clip ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("clip-shapes-overlap")
-        .size(200, 200)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), frameID)
-        .name("bg-rect")
-        .size(120, 120)
-        .position(40, 40)
-        .fill(rgb(0.2, 0.5, 0.8))
-        .cornerRadius(10)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), frameID)
-        .name("overlap-circle")
-        .size(100, 100)
-        .position(60, 60)
-        .fill(rgb(0.9, 0.3, 0.3))
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), frameID)
-        .name("top-rect")
-        .size(80, 80)
-        .position(20, 20)
-        .fill(rgb(1, 0.8, 0))
-        .cornerRadius(8)
-        .build(),
-    );
-  }
+  // clip-shapes-overlap
+  const p7 = gridPos();
+  const f7 = addFrame(ctx, d6c, null, "clip-shapes-overlap", p7.x, p7.y, 200, 200, white);
+  const d7a = addRect(ctx, f7.doc, f7.frameId, "bg-rect", 40, 40, 120, 120, rgb(0.2, 0.5, 0.8), 10);
+  const d7b = addEllipse(ctx, d7a, f7.frameId, "overlap-circle", 60, 60, 100, 100, rgb(0.9, 0.3, 0.3));
+  const d7c = addRect(ctx, d7b, f7.frameId, "top-rect", 20, 20, 80, 80, rgb(1, 0.8, 0), 8);
 
-  // Ensure output directory
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
@@ -368,11 +240,11 @@ async function generateClipFixtures(): Promise<void> {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  const figData = await figFile.buildAsync({ fileName: "clips" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(d7c);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
-  console.log(`Frames: ${frameIndex}`);
+  console.log(`Frames: ${frameIndexRef.value}`);
   console.log(`\nFrame list:`);
   const names = [
     "clip-1level",

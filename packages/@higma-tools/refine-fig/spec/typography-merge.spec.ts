@@ -66,7 +66,9 @@ describe("refine-fig typography merge — plan layer", () => {
       palette: baseInventory.palette,
       typography: [...baseInventory.typography, alias],
       subtreeClusters: [],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: {},
@@ -108,7 +110,9 @@ describe("refine-fig typography merge — plan layer", () => {
       palette: inventory.palette,
       typography: [...inventory.typography, alias],
       subtreeClusters: [],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: {},
@@ -136,7 +140,9 @@ describe("refine-fig typography merge — plan layer", () => {
       palette: inventory.palette,
       typography: [...inventory.typography, aliasA, aliasB],
       subtreeClusters: [],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: {},
@@ -164,7 +170,9 @@ describe("refine-fig typography merge — plan layer", () => {
       palette: inventory.palette,
       typography: [...inventory.typography, alias],
       subtreeClusters: [],
+      geometryClusters: [],
       unrenderable: [],
+      layoutHints: [],
     };
     const decisions: Decisions = {
       clusters: {},

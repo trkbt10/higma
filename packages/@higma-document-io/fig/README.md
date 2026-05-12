@@ -2,6 +2,13 @@
 
 High-level API for creating and manipulating Figma design documents. Provides `FigDesignDocument` model with CRUD operations for pages and nodes.
 
+All builder operations are **immutable** — each call returns a new
+`FigDesignDocument` so the original is untouched. ID allocation is
+delegated to a caller-owned `FigBuilderState`. After Phase 0b/0c of the
+SoT consolidation refactor, this is the only public construction
+surface; the legacy `createFigFile()` / `frameNode()` / `textNode()`
+fluent builders are gone.
+
 ## API
 
 ### Create Document
@@ -9,15 +16,20 @@ High-level API for creating and manipulating Figma design documents. Provides `F
 ```typescript
 import {
   createEmptyFigDesignDocument,
+  createFigBuilderState,
   createFigDesignDocument,
 } from "@higma-document-io/fig";
 
-// Create new empty document
+// Create a new empty document (one blank page).
 const doc = createEmptyFigDesignDocument("My Design");
+const state = createFigBuilderState({
+  nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+  pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+});
 
-// Load from existing .fig file
+// Or load from an existing .fig file.
 const fileData = await Bun.file("design.fig").arrayBuffer();
-const doc = await createFigDesignDocument(new Uint8Array(fileData));
+const loaded = await createFigDesignDocument(new Uint8Array(fileData));
 ```
 
 ### Page Operations
@@ -31,20 +43,24 @@ import {
   renamePage,
 } from "@higma-document-io/fig";
 
-// Add page
-const pageId = addPage(doc, "Page 1");
+// Add page (returns a new doc + the assigned FigPageId).
+const r = addPage({ state, doc, name: "Page 2" });
+const newDoc = r.doc;
+const pageId = r.pageId;
 
-// Rename page
-renamePage(doc, pageId, "New Name");
+// Internal Only Canvas (load-bearing for Figma import).
+const docWithInternal = addPage({
+  state,
+  doc: newDoc,
+  name: "Internal Only Canvas",
+  internalOnly: true,
+}).doc;
 
-// Duplicate page
-const newPageId = duplicatePage(doc, pageId);
-
-// Reorder page (move to index 0)
-reorderPage(doc, pageId, 0);
-
-// Remove page
-removePage(doc, pageId);
+// Mutation helpers (all return new documents).
+const renamedDoc = renamePage(docWithInternal, pageId, "New Name");
+const duplicated = duplicatePage(renamedDoc, pageId);
+const reordered = reorderPage(duplicated.doc, pageId, 0);
+const removed = removePage(reordered, pageId);
 ```
 
 ### Node Operations
@@ -58,39 +74,71 @@ import {
   moveNodeToPage,
 } from "@higma-document-io/fig";
 
-// Add frame
-const nodeId = addNode(doc, pageId, {
-  type: "FRAME",
-  name: "Container",
-  position: { x: 100, y: 100 },
-  size: { width: 400, height: 300 },
-  fills: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+const pageId = doc.pages[0]!.id;
+
+// Add a top-level FRAME (parentId = null means "page child").
+const r1 = addNode({
+  state,
+  doc,
+  pageId,
+  parentId: null,
+  spec: {
+    type: "FRAME",
+    name: "Container",
+    x: 100,
+    y: 100,
+    width: 400,
+    height: 300,
+    fills: [{
+      type: "SOLID",
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      opacity: 1,
+      visible: true,
+      blendMode: "NORMAL",
+    }],
+  },
 });
 
-// Add rectangle inside frame
-addNode(doc, nodeId, {
-  type: "RECTANGLE",
-  name: "Background",
-  position: { x: 0, y: 0 },
-  size: { width: 400, height: 300 },
-  fills: [{ type: "SOLID", color: { r: 0.9, g: 0.9, b: 0.9, a: 1 } }],
-  cornerRadius: 8,
+// Add a child of that frame.
+const r2 = addNode({
+  state,
+  doc: r1.doc,
+  pageId,
+  parentId: r1.nodeId,
+  spec: {
+    type: "ROUNDED_RECTANGLE",
+    name: "Background",
+    x: 0,
+    y: 0,
+    width: 400,
+    height: 300,
+    cornerRadius: 8,
+    fills: [{
+      type: "SOLID",
+      color: { r: 0.9, g: 0.9, b: 0.9, a: 1 },
+      opacity: 1,
+      visible: true,
+      blendMode: "NORMAL",
+    }],
+  },
 });
 
-// Update node properties
-updateNode(doc, nodeId, {
-  name: "Updated Name",
-  opacity: 0.8,
+// Update node properties (FigDesignNode mutator).
+const updated = updateNode({
+  doc: r2.doc,
+  pageId,
+  nodeId: r2.nodeId,
+  updater: (node) => ({ ...node, opacity: 0.8 }),
 });
 
-// Reorder node (z-index)
-reorderNode(doc, nodeId, 0);
+// Reorder z-index (front / back / forward / backward).
+const reordered = reorderNode({ doc: updated, pageId, nodeId: r2.nodeId, direction: "front" });
 
-// Move node to another page
-moveNodeToPage(doc, nodeId, otherPageId);
+// Move between pages.
+const moved = moveNodeToPage({ doc: reordered, fromPageId: pageId, toPageId: otherPageId, nodeId: r2.nodeId });
 
-// Remove node
-removeNode(doc, nodeId);
+// Remove.
+const final = removeNode(moved, pageId, r2.nodeId);
 ```
 
 ### Export
@@ -98,46 +146,111 @@ removeNode(doc, nodeId);
 ```typescript
 import { exportFig } from "@higma-document-io/fig";
 
-// Export to .fig file
+// Export to .fig binary. The pipeline auto-synthesises load-bearing
+// fields (fillGeometry blobs, meta.json, thumbnail.png, canvas
+// version "e", isSymbolPublishable on SYMBOL, etc.) so consumers only
+// have to provide semantic node specs.
 const result = await exportFig(doc);
 await Bun.write("output.fig", result.data);
 
-// With options
+// With options.
 const result = await exportFig(doc, {
   compressionLevel: 9,
   reencodeSchema: true,
 });
 ```
 
-## Node Spec Types
+### Image Registration
 
 ```typescript
-type NodeSpec = {
-  type: "FRAME" | "RECTANGLE" | "ELLIPSE" | "TEXT" | "VECTOR" | ...;
-  name: string;
-  position: { x: number; y: number };
-  size: { width: number; height: number };
-  fills?: FillSpec[];
-  strokes?: StrokeSpec[];
-  effects?: EffectSpec[];
-  opacity?: number;
-  rotation?: number;
-  cornerRadius?: number | number[];
-  // ... type-specific properties
+import { addImage } from "@higma-document-models/fig/builder";
+
+// SHA-1 of the bytes is the canonical image ref (Figma's convention).
+const sha1 = await computeSha1Hex(pngBytes);
+const docWithImage = addImage(doc, sha1, {
+  ref: sha1,
+  data: pngBytes,
+  mimeType: "image/png",
+});
+
+// Reference from an IMAGE paint.
+const paint: FigPaint = {
+  type: "IMAGE",
+  imageRef: sha1,
+  imageHash: sha1,
+  imageScaleMode: "FILL",
+  scaleMode: "FILL",
+  opacity: 1,
+  visible: true,
+  blendMode: "NORMAL",
 };
 ```
 
-## Roundtrip Support
-
-Documents loaded from existing `.fig` files preserve the original schema for lossless roundtrip editing:
+## Node Spec Types
 
 ```typescript
-// Load existing file
+type BaseNodeSpec = {
+  name?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  fills?: readonly FigPaint[];
+  strokes?: readonly FigPaint[];
+  strokeWeight?: number;
+  effects?: readonly FigEffect[];
+  opacity?: number;
+  visible?: boolean;
+  layoutConstraints?: LayoutConstraints;
+};
+
+type NodeSpec =
+  | (BaseNodeSpec & { type: "FRAME"; clipsContent?: boolean; autoLayout?: AutoLayoutProps; cornerRadius?: number; ... })
+  | (BaseNodeSpec & { type: "RECTANGLE" })
+  | (BaseNodeSpec & { type: "ROUNDED_RECTANGLE"; cornerRadius?: number; rectangleCornerRadii?: ... })
+  | (BaseNodeSpec & { type: "ELLIPSE" })
+  | (BaseNodeSpec & { type: "LINE" })
+  | (BaseNodeSpec & { type: "STAR"; pointCount?: number; starInnerRadius?: number })
+  | (BaseNodeSpec & { type: "REGULAR_POLYGON"; pointCount?: number })
+  | (BaseNodeSpec & { type: "VECTOR"; vectorPaths?: ... })
+  | (BaseNodeSpec & { type: "GROUP" })
+  | (BaseNodeSpec & { type: "SECTION" })
+  | (BaseNodeSpec & { type: "BOOLEAN_OPERATION"; booleanOperation: KiwiEnumValue })
+  | (BaseNodeSpec & { type: "TEXT"; characters: string; fontSize?: number; fontFamily?: string; ... })
+  | (BaseNodeSpec & { type: "SYMBOL"; clipsContent?: boolean; autoLayout?: AutoLayoutProps })
+  | (BaseNodeSpec & { type: "INSTANCE"; symbolId: FigNodeId });
+```
+
+For niche `FigDesignNode` fields not surfaced through `NodeSpec`
+(`minSize`, `maxSize`, `bordersTakeSpace`, `targetAspectRatio`,
+`exportSettings`, `strokeDashes`, `strokeCap`, `arcData`,
+`textData.styleOverrideTable`, etc.), use `updateNode` after `addNode`
+to set them directly on the `FigDesignNode`.
+
+## Roundtrip Support
+
+Documents loaded from existing `.fig` files preserve the original
+schema for lossless roundtrip editing:
+
+```typescript
 const doc = await createFigDesignDocument(fileData);
+const state = createFigBuilderStateFromDocument({
+  document: doc,
+  nodeSessionID: 2,
+  pageSessionID: 0,
+  minimumNodeLocalID: 1,
+  minimumPageLocalID: 1,
+});
 
-// Modify
-updateNode(doc, nodeId, { name: "Modified" });
+// Modify.
+const next = updateNode({
+  doc,
+  pageId: doc.pages[0]!.id,
+  nodeId: someId,
+  updater: (n) => ({ ...n, name: "Modified" }),
+});
 
-// Export preserves original schema
-const result = await exportFig(doc);
+// Export preserves the original schema (roundtrip path).
+const result = await exportFig(next);
 ```

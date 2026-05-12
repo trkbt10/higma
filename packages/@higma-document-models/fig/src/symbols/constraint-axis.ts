@@ -6,7 +6,7 @@
  * both the builder (computeDerivedSymbolData) and the renderer.
  */
 
-import { CONSTRAINT_TYPE_VALUES } from "../constants/layout";
+import { CONSTRAINT_TYPE_VALUES } from "../constants";
 
 /**
  * Resolve a single-axis constraint.

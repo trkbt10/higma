@@ -37,13 +37,12 @@ import type {
   FigKiwiVariableData,
   FigVariableAnyValue,
   FigVariableExpression,
-  FigVariableID,
   FigVariableMapEntry,
   FigKiwiVariableDataMap,
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
-import { getNodeType, guidToString } from "../domain/raw-node-tree";
+import { getNodeType, guidToString } from "../domain";
 import { isVariantSetFrame } from "./variant-set-kiwi";
 
 // =============================================================================

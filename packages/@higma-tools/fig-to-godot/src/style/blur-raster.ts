@@ -1519,25 +1519,3 @@ function byteFromUnit(value: number): number {
   return Math.floor(value * 255 + 0.5);
 }
 
-/**
- * Pick the first visible paint of a kind the blur sampler supports
- * (SOLID, GRADIENT_LINEAR, GRADIENT_RADIAL, GRADIENT_ANGULAR,
- * GRADIENT_DIAMOND). Multi-paint stacks aren't supported yet for
- * blur — caller falls through to the unblurred polygon path.
- */
-function firstVisibleSupportedFill(paints: readonly FigPaint[] | undefined): FigPaint | undefined {
-  if (!paints) return undefined;
-  for (const paint of paints) {
-    if (paint.visible === false) continue;
-    if (
-      paint.type === "SOLID"
-      || paint.type === "GRADIENT_LINEAR"
-      || paint.type === "GRADIENT_RADIAL"
-      || paint.type === "GRADIENT_ANGULAR"
-      || paint.type === "GRADIENT_DIAMOND"
-    ) {
-      return paint;
-    }
-  }
-  return undefined;
-}

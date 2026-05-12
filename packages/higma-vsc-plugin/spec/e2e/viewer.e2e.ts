@@ -155,6 +155,7 @@ test("garbage bytes surface the error UI and forward webview/log", async ({ page
 });
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
   interface Window {
     __higmaE2E?: E2EHandle;
   }

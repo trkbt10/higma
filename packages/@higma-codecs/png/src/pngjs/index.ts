@@ -10,5 +10,11 @@
  * Licensed under the MIT License (see LICENSE.pngjs in the package root)
  */
 
-export { pack, type PackerOptions, type PngData } from "./packer";
+export {
+  pack,
+  type PackerOptions,
+  type PngData,
+  type PngChromaticity,
+  type PngIccProfile,
+} from "./packer";
 export { parseSync, type ParseOptions, type ParseResult } from "./parser-sync";

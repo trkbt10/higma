@@ -6,9 +6,11 @@
  * through deep nesting, frame-level rounding/clipping, property inheritance,
  * and real-world UI component patterns.
  *
- * Canvas 1 — "Components":  UI component patterns (buttons, cards, nav bars)
- * Canvas 2 — "Clipping":    Frame-level rounding and clip behavior
+ * Canvas 1 — "Components":   UI component patterns (buttons, cards, nav bars)
+ * Canvas 2 — "Clipping":     Frame-level rounding and clip behavior
  * Canvas 3 — "Deep Nesting": 5-level nesting and inheritance chains
+ * Canvas 4 — "Constraints":  Constraint resolution
+ * Canvas 5 — "Variants":     Variant/overriddenSymbolID support
  *
  * Usage:
  *   bun packages/@higma-document-renderers/fig/scripts/generate-symbol-resolution-fixtures.ts
@@ -18,15 +20,29 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createFigFile,
-  frameNode,
-  symbolNode,
-  instanceNode,
-  roundedRectNode,
-  ellipseNode,
-  dropShadow,
-} from "@higma-document-io/fig/fig-file";
-import type { Color } from "@higma-document-io/fig/fig-file";
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+  updateNode,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+  LayoutConstraints,
+} from "@higma-document-models/fig/domain";
+import type {
+  FigColor,
+  FigEffect,
+  FigPaint,
+} from "@higma-document-models/fig/types";
+import {
+  CONSTRAINT_TYPE_VALUES,
+  type ConstraintType,
+} from "@higma-document-models/fig/constants";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/symbol-resolution");
@@ -36,1692 +52,963 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, "symbol-resolution.fig");
 // Colors (iOS-inspired palette)
 // =============================================================================
 
-const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
-const BLACK: Color = { r: 0, g: 0, b: 0, a: 1 };
-const IOS_BLUE: Color = { r: 0, g: 0.478, b: 1, a: 1 };
-const IOS_RED: Color = { r: 1, g: 0.231, b: 0.188, a: 1 };
-const IOS_GREEN: Color = { r: 0.204, g: 0.78, b: 0.349, a: 1 };
-const IOS_ORANGE: Color = { r: 1, g: 0.584, b: 0, a: 1 };
-const IOS_PURPLE: Color = { r: 0.686, g: 0.322, b: 0.871, a: 1 };
-const IOS_GRAY_BG: Color = { r: 0.949, g: 0.949, b: 0.969, a: 1 };
-const IOS_GRAY_2: Color = { r: 0.682, g: 0.682, b: 0.698, a: 1 };
-const IOS_GRAY_3: Color = { r: 0.78, g: 0.78, b: 0.8, a: 1 };
-const CARD_SHADOW: Color = { r: 0, g: 0, b: 0, a: 0.15 };
-const DARK_BG: Color = { r: 0.11, g: 0.11, b: 0.118, a: 1 };
+const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
+const BLACK: FigColor = { r: 0, g: 0, b: 0, a: 1 };
+const IOS_BLUE: FigColor = { r: 0, g: 0.478, b: 1, a: 1 };
+const IOS_RED: FigColor = { r: 1, g: 0.231, b: 0.188, a: 1 };
+const IOS_GREEN: FigColor = { r: 0.204, g: 0.78, b: 0.349, a: 1 };
+const IOS_ORANGE: FigColor = { r: 1, g: 0.584, b: 0, a: 1 };
+const IOS_PURPLE: FigColor = { r: 0.686, g: 0.322, b: 0.871, a: 1 };
+const IOS_GRAY_BG: FigColor = { r: 0.949, g: 0.949, b: 0.969, a: 1 };
+const IOS_GRAY_2: FigColor = { r: 0.682, g: 0.682, b: 0.698, a: 1 };
+const IOS_GRAY_3: FigColor = { r: 0.78, g: 0.78, b: 0.8, a: 1 };
+const CARD_SHADOW: FigColor = { r: 0, g: 0, b: 0, a: 0.15 };
+const DARK_BG: FigColor = { r: 0.11, g: 0.11, b: 0.118, a: 1 };
 
 // =============================================================================
-// ID allocator
+// Helpers
 // =============================================================================
 
-// Mutable counter held in a ref object so the script avoids a top-level
-// `let`. Each `id()` call returns the next localID and advances state.
-const nextIDRef = { value: 100 };
-function id(): number {
-  const current = nextIDRef.value;
-  nextIDRef.value = current + 1;
-  return current;
+function solidPaint(color: FigColor, opacity = 1): FigPaint {
+  return { type: "SOLID", color, opacity, visible: true, blendMode: "NORMAL" };
+}
+
+function dropShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): FigEffect {
+  return {
+    type: "DROP_SHADOW",
+    visible: true,
+    color,
+    offset: { x: offsetX, y: offsetY },
+    radius,
+    blendMode: "NORMAL",
+  };
+}
+
+function constraintsFor(h: ConstraintType, v: ConstraintType): LayoutConstraints {
+  return {
+    horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES[h], name: h },
+    verticalConstraint: { value: CONSTRAINT_TYPE_VALUES[v], name: v },
+  };
+}
+
+type Ctx = {
+  readonly state: FigBuilderState;
+};
+
+type AddedNode = { readonly doc: FigDesignDocument; readonly id: FigNodeId };
+
+type SymbolOpts = {
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly background?: FigColor;
+  readonly cornerRadius?: number;
+  readonly clipsContent?: boolean;
+};
+
+function addSymbol(
+  doc: FigDesignDocument,
+  ctx: Ctx,
+  pageId: FigPageId,
+  opts: SymbolOpts,
+): AddedNode {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId,
+    parentId: null,
+    spec: {
+      type: "SYMBOL",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: opts.background ? [solidPaint(opts.background)] : [],
+      clipsContent: opts.clipsContent,
+    },
+  });
+  const docWithRadius = opts.cornerRadius !== undefined
+    ? updateNode({ doc: r.doc, pageId, nodeId: r.id, updater: (n) => ({ ...n, cornerRadius: opts.cornerRadius }) })
+    : r.doc;
+  return { doc: docWithRadius, id: r.id };
+}
+
+type FrameOpts = {
+  readonly parentId: FigNodeId | null;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly background?: FigColor;
+  readonly cornerRadius?: number;
+  readonly clipsContent?: boolean;
+};
+
+function addFrame(
+  doc: FigDesignDocument,
+  ctx: Ctx,
+  pageId: FigPageId,
+  opts: FrameOpts,
+): AddedNode {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId,
+    parentId: opts.parentId,
+    spec: {
+      type: "FRAME",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: opts.background ? [solidPaint(opts.background)] : [],
+      cornerRadius: opts.cornerRadius,
+      clipsContent: opts.clipsContent,
+    },
+  });
+  return { doc: r.doc, id: r.id };
+}
+
+type RoundedOpts = {
+  readonly parentId: FigNodeId;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fill?: FigPaint;
+  readonly fills?: readonly FigPaint[];
+  readonly stroke?: FigColor;
+  readonly strokeWeight?: number;
+  readonly cornerRadius?: number;
+  readonly opacity?: number;
+  readonly effects?: readonly FigEffect[];
+  readonly constraints?: LayoutConstraints;
+};
+
+function addRoundedRect(doc: FigDesignDocument, ctx: Ctx, pageId: FigPageId, opts: RoundedOpts): AddedNode {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId,
+    parentId: opts.parentId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: opts.fills ?? (opts.fill ? [opts.fill] : undefined),
+      strokes: opts.stroke ? [solidPaint(opts.stroke)] : undefined,
+      strokeWeight: opts.strokeWeight,
+      cornerRadius: opts.cornerRadius,
+      opacity: opts.opacity,
+      effects: opts.effects,
+      layoutConstraints: opts.constraints,
+    },
+  });
+  return { doc: r.doc, id: r.id };
+}
+
+type EllipseOpts = {
+  readonly parentId: FigNodeId;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fill?: FigColor;
+  readonly constraints?: LayoutConstraints;
+};
+
+function addEllipse(doc: FigDesignDocument, ctx: Ctx, pageId: FigPageId, opts: EllipseOpts): AddedNode {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId,
+    parentId: opts.parentId,
+    spec: {
+      type: "ELLIPSE",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: opts.fill ? [solidPaint(opts.fill)] : undefined,
+      layoutConstraints: opts.constraints,
+    },
+  });
+  return { doc: r.doc, id: r.id };
+}
+
+type InstanceOpts = {
+  readonly parentId: FigNodeId;
+  readonly name: string;
+  readonly symbolId: FigNodeId;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly background?: FigColor;
+  readonly opacity?: number;
+  readonly overrideSymbolId?: FigNodeId;
+  readonly constraints?: LayoutConstraints;
+};
+
+function addInstance(doc: FigDesignDocument, ctx: Ctx, pageId: FigPageId, opts: InstanceOpts): AddedNode {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId,
+    parentId: opts.parentId,
+    spec: {
+      type: "INSTANCE",
+      name: opts.name,
+      symbolId: opts.symbolId,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: opts.background ? [solidPaint(opts.background)] : undefined,
+      opacity: opts.opacity,
+      layoutConstraints: opts.constraints,
+    },
+  });
+  // Variant override (overriddenSymbolID) is not a NodeSpec field; project
+  // it via updateNode so the round-trip carries the FigDesignNode column.
+  const docWithOverride = opts.overrideSymbolId !== undefined
+    ? updateNode({ doc: r.doc, pageId, nodeId: r.id, updater: (n) => ({ ...n, overriddenSymbolID: opts.overrideSymbolId }) })
+    : r.doc;
+  return { doc: docWithOverride, id: r.id };
 }
 
 // =============================================================================
-// Generate
+// Main builder
 // =============================================================================
 
 async function generate(): Promise<void> {
   console.log("Generating symbol-resolution fixtures (realistic multi-canvas)...\n");
 
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("SymbolResolution");
-  // Internal Only Canvas is required by Figma's importer (see CLAUDE.md).
-  figFile.addInternalCanvas(docID);
+  const empty = createEmptyFigDesignDocument("Components");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const ctx: Ctx = { state };
+  const page1 = empty.pages[0]!.id;
 
-  // =========================================================================
-  // Canvas 1: "Components" — UI component patterns
-  // =========================================================================
-  const canvas1 = figFile.addCanvas(docID, "Components");
+  // Page 2: Clipping
+  const r1 = addPage({ state, doc: empty, name: "Clipping" });
+  const page2 = r1.pageId;
+  // Page 3: Deep Nesting
+  const r2 = addPage({ state, doc: r1.doc, name: "Deep Nesting" });
+  const page3 = r2.pageId;
+  // Page 4: Constraints
+  const r3 = addPage({ state, doc: r2.doc, name: "Constraints" });
+  const page4 = r3.pageId;
+  // Page 5: Variants
+  const r4 = addPage({ state, doc: r3.doc, name: "Variants" });
+  const page5 = r4.pageId;
+  // Internal Only Canvas
+  const r5 = addPage({ state, doc: r4.doc, name: "Internal Only Canvas", internalOnly: true });
 
-  // --- Symbol: IconCircle (24x24 colored circle) ---
-  const iconCircleID = id();
-  figFile.addSymbol(
-    symbolNode(iconCircleID, canvas1).name("IconCircle").size(24, 24).position(0, -600).clipsContent(true).build(),
-  );
-  const iconCircleBg = id();
-  figFile.addEllipse(
-    ellipseNode(iconCircleBg, iconCircleID)
-      .name("icon-bg")
-      .size(24, 24)
-      .position(0, 0)
-      .fill(IOS_BLUE)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
+  // ===========================================================================
+  // Canvas 1: Components
+  // ===========================================================================
+  // Symbols
+  const iconCircle = addSymbol(r5.doc, ctx, page1, {
+    name: "IconCircle", x: 0, y: -600, width: 24, height: 24, clipsContent: true,
+  });
+  const iconCircleBg = addEllipse(iconCircle.doc, ctx, page1, {
+    parentId: iconCircle.id,
+    name: "icon-bg", x: 0, y: 0, width: 24, height: 24,
+    fill: IOS_BLUE,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
 
-  // --- Symbol: Badge (18x18 notification badge, fully rounded) ---
-  const badgeID = id();
-  figFile.addSymbol(
-    symbolNode(badgeID, canvas1)
-      .name("Badge")
-      .size(18, 18)
-      .position(100, -600)
-      .background(IOS_RED)
-      .cornerRadius(9)
-      .clipsContent(true)
-      .build(),
-  );
-  // Center dot scales proportionally with the badge
-  const badgeDot = id();
-  figFile.addEllipse(
-    ellipseNode(badgeDot, badgeID)
-      .name("dot")
-      .size(6, 6)
-      .position(6, 6)
-      .fill(WHITE)
-      .horizontalConstraint("CENTER")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
+  const badge = addSymbol(iconCircleBg.doc, ctx, page1, {
+    name: "Badge", x: 100, y: -600, width: 18, height: 18, background: IOS_RED, cornerRadius: 9, clipsContent: true,
+  });
+  const badgeDot = addEllipse(badge.doc, ctx, page1, {
+    parentId: badge.id,
+    name: "dot", x: 6, y: 6, width: 6, height: 6,
+    fill: WHITE,
+    constraints: constraintsFor("CENTER", "CENTER"),
+  });
 
-  // --- Symbol: IconWithBadge (32x32 frame, IconCircle + Badge at top-right) ---
-  const iconBadgeID = id();
-  figFile.addSymbol(
-    symbolNode(iconBadgeID, canvas1)
-      .name("IconWithBadge")
-      .size(32, 32)
-      .position(200, -600)
-      .clipsContent(false) // badge extends beyond icon bounds
-      .build(),
-  );
-  // Icon fills the IconWithBadge frame; badge stays anchored to the top-right corner.
-  const ibIcon = id();
-  figFile.addInstance(
-    instanceNode(ibIcon, iconBadgeID, iconCircleID)
-      .name("icon")
-      .size(24, 24)
-      .position(4, 8)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-  const ibBadge = id();
-  figFile.addInstance(
-    instanceNode(ibBadge, iconBadgeID, badgeID)
-      .name("badge")
-      .size(18, 18)
-      .position(18, -4)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("MIN")
-      .build(),
-  );
+  const iconBadge = addSymbol(badgeDot.doc, ctx, page1, {
+    name: "IconWithBadge", x: 200, y: -600, width: 32, height: 32, clipsContent: false,
+  });
+  const ibIcon = addInstance(iconBadge.doc, ctx, page1, {
+    parentId: iconBadge.id, name: "icon", symbolId: iconCircle.id,
+    x: 4, y: 8, width: 24, height: 24,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+  const ibBadge = addInstance(ibIcon.doc, ctx, page1, {
+    parentId: iconBadge.id, name: "badge", symbolId: badge.id,
+    x: 18, y: -4, width: 18, height: 18,
+    constraints: constraintsFor("MAX", "MIN"),
+  });
 
-  // --- Symbol: ButtonBase (120x44, rounded rect, blue fill) ---
-  const buttonBaseID = id();
-  figFile.addSymbol(
-    symbolNode(buttonBaseID, canvas1)
-      .name("ButtonBase")
-      .size(120, 44)
-      .position(350, -600)
-      .background(IOS_BLUE)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  // Inner pill expands with the button (10px margin L/R, 8px T/B).
-  const btnLabel = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(btnLabel, buttonBaseID)
-      .name("label-bg")
-      .size(100, 28)
-      .position(10, 8)
-      .fill(WHITE)
-      .opacity(0.15)
-      .cornerRadius(6)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
+  const buttonBase = addSymbol(ibBadge.doc, ctx, page1, {
+    name: "ButtonBase", x: 350, y: -600, width: 120, height: 44, background: IOS_BLUE, cornerRadius: 12, clipsContent: true,
+  });
+  const btnLabel = addRoundedRect(buttonBase.doc, ctx, page1, {
+    parentId: buttonBase.id, name: "label-bg",
+    x: 10, y: 8, width: 100, height: 28,
+    fill: solidPaint(WHITE, 0.15),
+    cornerRadius: 6,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
 
-  // --- Symbol: CardHeader (fills parent width, 48px tall, colored bg) ---
-  const cardHeaderID = id();
-  figFile.addSymbol(
-    symbolNode(cardHeaderID, canvas1)
-      .name("CardHeader")
-      .size(280, 48)
-      .position(550, -600)
-      .background(IOS_BLUE)
-      .clipsContent(true)
-      .build(),
-  );
-  // Bottom stripe spans the full header width and stays pinned to the bottom edge.
-  const headerStripe = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(headerStripe, cardHeaderID)
-      .name("stripe")
-      .size(280, 4)
-      .position(0, 44)
-      .fill(BLACK)
-      .opacity(0.1)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MAX")
-      .build(),
-  );
+  const cardHeader = addSymbol(btnLabel.doc, ctx, page1, {
+    name: "CardHeader", x: 550, y: -600, width: 280, height: 48, background: IOS_BLUE, clipsContent: true,
+  });
+  const headerStripe = addRoundedRect(cardHeader.doc, ctx, page1, {
+    parentId: cardHeader.id, name: "stripe",
+    x: 0, y: 44, width: 280, height: 4,
+    fill: solidPaint(BLACK, 0.1),
+    constraints: constraintsFor("STRETCH", "MAX"),
+  });
 
-  // --- Symbol: CardBody (280x120, white bg, 2 content rects) ---
-  const cardBodyID = id();
-  figFile.addSymbol(
-    symbolNode(cardBodyID, canvas1)
-      .name("CardBody")
-      .size(280, 120)
-      .position(900, -600)
-      .background(WHITE)
-      .clipsContent(true)
-      .build(),
-  );
-  // Two side-by-side content tiles. Left tile keeps its 16px gap from the left edge,
-  // right tile keeps its 16px gap from the right edge — together they share the
-  // remaining width so the body resizes evenly.
-  const bodyRect1 = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(bodyRect1, cardBodyID)
-      .name("content-1")
-      .size(120, 80)
-      .position(16, 16)
-      .fill(IOS_GRAY_BG)
-      .cornerRadius(8)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-  const bodyRect2 = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(bodyRect2, cardBodyID)
-      .name("content-2")
-      .size(120, 80)
-      .position(144, 16)
-      .fill(IOS_GRAY_BG)
-      .cornerRadius(8)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
+  const cardBody = addSymbol(headerStripe.doc, ctx, page1, {
+    name: "CardBody", x: 900, y: -600, width: 280, height: 120, background: WHITE, clipsContent: true,
+  });
+  const bodyRect1 = addRoundedRect(cardBody.doc, ctx, page1, {
+    parentId: cardBody.id, name: "content-1",
+    x: 16, y: 16, width: 120, height: 80,
+    fill: solidPaint(IOS_GRAY_BG),
+    cornerRadius: 8,
+    constraints: constraintsFor("MIN", "STRETCH"),
+  });
+  const bodyRect2 = addRoundedRect(bodyRect1.doc, ctx, page1, {
+    parentId: cardBody.id, name: "content-2",
+    x: 144, y: 16, width: 120, height: 80,
+    fill: solidPaint(IOS_GRAY_BG),
+    cornerRadius: 8,
+    constraints: constraintsFor("MAX", "STRETCH"),
+  });
 
-  // --- Symbol: Card (280x200, rounded frame, header + body, drop shadow, clips) ---
-  const cardID = id();
-  figFile.addSymbol(
-    symbolNode(cardID, canvas1)
-      .name("Card")
-      .size(280, 200)
-      .position(1250, -600)
-      .background(WHITE)
-      .cornerRadius(16)
-      .clipsContent(true)
-      .build(),
-  );
-  // Header pins to the top, body absorbs vertical slack, footer pins to the bottom.
-  // All three span the card's full width.
-  const cardHeaderInst = id();
-  figFile.addInstance(
-    instanceNode(cardHeaderInst, cardID, cardHeaderID)
-      .name("header")
-      .size(280, 48)
-      .position(0, 0)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  const cardBodyInst = id();
-  figFile.addInstance(
-    instanceNode(cardBodyInst, cardID, cardBodyID)
-      .name("body")
-      .size(280, 120)
-      .position(0, 48)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-  // Footer rect — pinned to the bottom edge.
-  const cardFooter = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(cardFooter, cardID)
-      .name("footer")
-      .size(280, 32)
-      .position(0, 168)
-      .fill(IOS_GRAY_BG)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MAX")
-      .build(),
-  );
+  const card = addSymbol(bodyRect2.doc, ctx, page1, {
+    name: "Card", x: 1250, y: -600, width: 280, height: 200, background: WHITE, cornerRadius: 16, clipsContent: true,
+  });
+  const cardHeaderInst = addInstance(card.doc, ctx, page1, {
+    parentId: card.id, name: "header", symbolId: cardHeader.id,
+    x: 0, y: 0, width: 280, height: 48,
+    constraints: constraintsFor("STRETCH", "MIN"),
+  });
+  const cardBodyInst = addInstance(cardHeaderInst.doc, ctx, page1, {
+    parentId: card.id, name: "body", symbolId: cardBody.id,
+    x: 0, y: 48, width: 280, height: 120,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+  const cardFooter = addRoundedRect(cardBodyInst.doc, ctx, page1, {
+    parentId: card.id, name: "footer",
+    x: 0, y: 168, width: 280, height: 32,
+    fill: solidPaint(IOS_GRAY_BG),
+    constraints: constraintsFor("STRETCH", "MAX"),
+  });
 
-  // --- Symbol: NavItem (48x56, icon + label area) ---
-  const navItemID = id();
-  figFile.addSymbol(
-    symbolNode(navItemID, canvas1).name("NavItem").size(48, 56).position(1600, -600).clipsContent(false).build(),
-  );
-  // Icon stays centered horizontally and pinned to the top; label spans the
-  // bottom of the NavItem so it stretches with width changes.
-  const navIcon = id();
-  figFile.addInstance(
-    instanceNode(navIcon, navItemID, iconBadgeID)
-      .name("icon-badge")
-      .size(32, 32)
-      .position(8, 4)
-      .horizontalConstraint("CENTER")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  const navLabel = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(navLabel, navItemID)
-      .name("label-placeholder")
-      .size(40, 10)
-      .position(4, 42)
-      .fill(IOS_GRAY_2)
-      .cornerRadius(2)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MAX")
-      .build(),
-  );
+  const navItem = addSymbol(cardFooter.doc, ctx, page1, {
+    name: "NavItem", x: 1600, y: -600, width: 48, height: 56, clipsContent: false,
+  });
+  const navIcon = addInstance(navItem.doc, ctx, page1, {
+    parentId: navItem.id, name: "icon-badge", symbolId: iconBadge.id,
+    x: 8, y: 4, width: 32, height: 32,
+    constraints: constraintsFor("CENTER", "MIN"),
+  });
+  const navLabel = addRoundedRect(navIcon.doc, ctx, page1, {
+    parentId: navItem.id, name: "label-placeholder",
+    x: 4, y: 42, width: 40, height: 10,
+    fill: solidPaint(IOS_GRAY_2),
+    cornerRadius: 2,
+    constraints: constraintsFor("STRETCH", "MAX"),
+  });
 
-  // --- Symbol: NavBar (320x64, dark bg, 4 NavItem instances) ---
-  const navBarID = id();
-  figFile.addSymbol(
-    symbolNode(navBarID, canvas1)
-      .name("NavBar")
-      .size(320, 64)
-      .position(1800, -600)
-      .background(DARK_BG)
-      .cornerRadius(0)
-      .clipsContent(true)
-      .build(),
-  );
-  // Anchor first/last items to the bar's edges so they keep an equal margin
-  // when the bar resizes; middle items scale proportionally.
-  const navConstraints: Array<{ h: "MIN" | "MAX" | "SCALE"; v: "MIN" | "MAX" | "STRETCH" | "CENTER" }> = [
+  const navBar = addSymbol(navLabel.doc, ctx, page1, {
+    name: "NavBar", x: 1800, y: -600, width: 320, height: 64, background: DARK_BG, cornerRadius: 0, clipsContent: true,
+  });
+  const navConstraints: readonly { h: ConstraintType; v: ConstraintType }[] = [
     { h: "MIN", v: "STRETCH" },
     { h: "SCALE", v: "STRETCH" },
     { h: "SCALE", v: "STRETCH" },
     { h: "MAX", v: "STRETCH" },
   ];
-  for (let i = 0; i < 4; i++) {
-    const navI = id();
-    figFile.addInstance(
-      instanceNode(navI, navBarID, navItemID)
-        .name(`nav-${i}`)
-        .size(48, 56)
-        .position(24 + i * 72, 4)
-        .horizontalConstraint(navConstraints[i].h)
-        .verticalConstraint(navConstraints[i].v)
-        .build(),
-    );
-  }
-  // Top separator — full width, pinned to the top edge.
-  const navSep = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(navSep, navBarID)
-      .name("separator")
-      .size(320, 1)
-      .position(0, 0)
-      .fill(IOS_GRAY_3)
-      .opacity(0.5)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-
-  // --- Canvas 1: Test Frames ---
-
-  const frameXRef = { value: 50 };
-  const frameYRef = { value: 50 };
-
-  // 1. button-inherit: Instance of ButtonBase (inherits blue fill + 12px radius)
-  const f_btn_inherit = id();
-  figFile.addFrame(
-    frameNode(f_btn_inherit, canvas1)
-      .name("button-inherit")
-      .size(140, 64)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_btn_inherit, buttonBaseID).name("ButtonBase").size(120, 44).position(10, 10).build(),
-  );
-
-  frameXRef.value += 170;
-
-  // 2. button-override: Two buttons — original blue vs overridden green
-  const f_btn_override = id();
-  figFile.addFrame(
-    frameNode(f_btn_override, canvas1)
-      .name("button-override")
-      .size(280, 64)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_btn_override, buttonBaseID).name("original").size(120, 44).position(10, 10).build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_btn_override, buttonBaseID)
-      .name("green-override")
-      .size(120, 44)
-      .position(150, 10)
-      .overrideBackground(IOS_GREEN)
-      .build(),
-  );
-
-  frameXRef.value += 310;
-
-  // 3. card-with-header: Card instance — 3-level nesting (Card > CardHeader/CardBody > content)
-  const f_card = id();
-  figFile.addFrame(
-    frameNode(f_card, canvas1)
-      .name("card-with-header")
-      .size(300, 220)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_card, cardID).name("Card").size(280, 200).position(10, 10).build());
-
-  // Row 2
-  frameXRef.value = 50;
-  frameYRef.value += 250;
-
-  // 4. card-resized: Card at smaller size (240x160 instead of 280x200)
-  const f_card_small = id();
-  figFile.addFrame(
-    frameNode(f_card_small, canvas1)
-      .name("card-resized")
-      .size(260, 180)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_card_small, cardID).name("Card-small").size(240, 160).position(10, 10).build(),
-  );
-
-  frameXRef.value += 290;
-
-  // 5. icon-badge-nesting: IconWithBadge — 2-level nesting, badge outside icon
-  const f_icon_badge = id();
-  figFile.addFrame(
-    frameNode(f_icon_badge, canvas1)
-      .name("icon-badge-nesting")
-      .size(52, 52)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(false) // no clip so badge is visible
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_icon_badge, iconBadgeID).name("IconWithBadge").size(32, 32).position(10, 10).build(),
-  );
-
-  frameXRef.value += 80;
-
-  // 6. navbar-full: NavBar instance — 4-level nesting (NavBar > NavItem > IconWithBadge > Icon+Badge)
-  const f_navbar = id();
-  figFile.addFrame(
-    frameNode(f_navbar, canvas1)
-      .name("navbar-full")
-      .size(340, 84)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_navbar, navBarID).name("NavBar").size(320, 64).position(10, 10).build());
-
-  frameXRef.value += 370;
-
-  // 7. navbar-resized: NavBar at wider size (400x64)
-  const f_navbar_wide = id();
-  figFile.addFrame(
-    frameNode(f_navbar_wide, canvas1)
-      .name("navbar-resized")
-      .size(420, 84)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_navbar_wide, navBarID).name("NavBar-wide").size(400, 64).position(10, 10).build(),
-  );
-
-  // Row 3
-  frameXRef.value = 50;
-  frameYRef.value += 120;
-
-  // 8. multi-button-sizes: 3 ButtonBase instances at different sizes
-  const f_multi_btn = id();
-  figFile.addFrame(
-    frameNode(f_multi_btn, canvas1)
-      .name("multi-button-sizes")
-      .size(400, 80)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_multi_btn, buttonBaseID).name("small").size(80, 32).position(10, 24).build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_multi_btn, buttonBaseID).name("medium").size(120, 44).position(100, 18).build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_multi_btn, buttonBaseID).name("large").size(180, 56).position(230, 12).build(),
-  );
-
-  // =========================================================================
-  // Canvas 2: "Clipping" — Frame-level rounding and clip behavior
-  // =========================================================================
-  const canvas2 = figFile.addCanvas(docID, "Clipping");
-
-  // --- Symbol: AvatarFrame (64x64, fully rounded frame, clips content) ---
-  const avatarFrameID = id();
-  figFile.addSymbol(
-    symbolNode(avatarFrameID, canvas2)
-      .name("AvatarFrame")
-      .size(64, 64)
-      .position(0, -600)
-      .background(IOS_GRAY_3)
-      .cornerRadius(32) // fully rounded
-      .clipsContent(true)
-      .build(),
-  );
-  // Large rect extending beyond (simulates an image)
-  const avatarImage = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(avatarImage, avatarFrameID)
-      .name("avatar-image")
-      .size(80, 80)
-      .position(-8, -8)
-      .fill(IOS_PURPLE)
-      .horizontalConstraint("SCALE")
-      .verticalConstraint("SCALE")
-      .build(),
-  );
-  // Smaller accent circle — stays centered as the avatar grows.
-  const avatarAccent = id();
-  figFile.addEllipse(
-    ellipseNode(avatarAccent, avatarFrameID)
-      .name("accent")
-      .size(20, 20)
-      .position(22, 22)
-      .fill(IOS_ORANGE)
-      .horizontalConstraint("CENTER")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-
-  // --- Symbol: RoundedContainer (200x120, 16px radius, clips, gray bg) ---
-  const roundedContainerID = id();
-  figFile.addSymbol(
-    symbolNode(roundedContainerID, canvas2)
-      .name("RoundedContainer")
-      .size(200, 120)
-      .position(200, -600)
-      .background(IOS_GRAY_BG)
-      .cornerRadius(16)
-      .clipsContent(true)
-      .build(),
-  );
-  // Child that extends beyond right and bottom edges — keeps its origin pinned
-  // so the overflow remains visible when the container resizes.
-  const rcOverflow = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(rcOverflow, roundedContainerID)
-      .name("overflow-child")
-      .size(160, 100)
-      .position(60, 40)
-      .fill(IOS_RED)
-      .cornerRadius(8)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  // Child at top-left corner — stays anchored to the corner.
-  const rcCorner = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(rcCorner, roundedContainerID)
-      .name("corner-child")
-      .size(80, 60)
-      .position(12, 12)
-      .fill(IOS_BLUE)
-      .cornerRadius(8)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-
-  // --- Symbol: NestedRoundedOuter (240x160, 20px radius, clips) ---
-  const nestedOuterID = id();
-  figFile.addSymbol(
-    symbolNode(nestedOuterID, canvas2)
-      .name("NestedRoundedOuter")
-      .size(240, 160)
-      .position(500, -600)
-      .background(WHITE)
-      .cornerRadius(20)
-      .clipsContent(true)
-      .build(),
-  );
-  // Contains instance of RoundedContainer — nested rounded clip.
-  // The inner container fills the outer's content area minus 20px padding.
-  const nroInst = id();
-  figFile.addInstance(
-    instanceNode(nroInst, nestedOuterID, roundedContainerID)
-      .name("inner-container")
-      .size(200, 120)
-      .position(20, 20)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  // --- Symbol: ClipChain (280x180, 12px radius, clips) ---
-  // Contains NestedRoundedOuter (which contains RoundedContainer)
-  // 3-level nested clipping chain
-  const clipChainID = id();
-  figFile.addSymbol(
-    symbolNode(clipChainID, canvas2)
-      .name("ClipChain")
-      .size(280, 180)
-      .position(800, -600)
-      .background(DARK_BG)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  const ccInst = id();
-  figFile.addInstance(
-    instanceNode(ccInst, clipChainID, nestedOuterID)
-      .name("nested-outer")
-      .size(240, 160)
-      .position(20, 10)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  // --- Symbol: MixedClipFrame (200x140, 24px radius, clips) ---
-  // Has children at corners to test rounded clipping
-  const mixedClipID = id();
-  figFile.addSymbol(
-    symbolNode(mixedClipID, canvas2)
-      .name("MixedClipFrame")
-      .size(200, 140)
-      .position(1150, -600)
-      .background(WHITE)
-      .cornerRadius(24)
-      .clipsContent(true)
-      .build(),
-  );
-  // Each corner rect stays anchored to its own corner so all four corners
-  // remain visible after the frame resizes.
-  const mcTL = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(mcTL, mixedClipID)
-      .name("top-left")
-      .size(60, 40)
-      .position(0, 0)
-      .fill(IOS_RED)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  const mcTR = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(mcTR, mixedClipID)
-      .name("top-right")
-      .size(60, 40)
-      .position(140, 0)
-      .fill(IOS_GREEN)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  const mcBL = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(mcBL, mixedClipID)
-      .name("bottom-left")
-      .size(60, 40)
-      .position(0, 100)
-      .fill(IOS_BLUE)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("MAX")
-      .build(),
-  );
-  const mcBR = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(mcBR, mixedClipID)
-      .name("bottom-right")
-      .size(60, 40)
-      .position(140, 100)
-      .fill(IOS_ORANGE)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("MAX")
-      .build(),
-  );
-  // Center ellipse stays centered.
-  const mcCenter = id();
-  figFile.addEllipse(
-    ellipseNode(mcCenter, mixedClipID)
-      .name("center")
-      .size(80, 60)
-      .position(60, 40)
-      .fill(IOS_PURPLE)
-      .horizontalConstraint("CENTER")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-
-  // --- Canvas 2: Test Frames ---
-
-  frameXRef.value = 50;
-  frameYRef.value = 50;
-
-  // 9. avatar-clip: AvatarFrame — fully rounded clip on overflowing content
-  const f_avatar = id();
-  figFile.addFrame(
-    frameNode(f_avatar, canvas2)
-      .name("avatar-clip")
-      .size(84, 84)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_avatar, avatarFrameID).name("AvatarFrame").size(64, 64).position(10, 10).build(),
-  );
-
-  frameXRef.value += 120;
-
-  // 10. avatar-small: AvatarFrame at 40x40 (smaller, tighter clip)
-  const f_avatar_sm = id();
-  figFile.addFrame(
-    frameNode(f_avatar_sm, canvas2)
-      .name("avatar-small")
-      .size(60, 60)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_avatar_sm, avatarFrameID).name("AvatarFrame-sm").size(40, 40).position(10, 10).build(),
-  );
-
-  frameXRef.value += 90;
-
-  // 11. rounded-container-clip: RoundedContainer with overflowing children
-  const f_rounded = id();
-  figFile.addFrame(
-    frameNode(f_rounded, canvas2)
-      .name("rounded-container-clip")
-      .size(220, 140)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_rounded, roundedContainerID).name("RoundedContainer").size(200, 120).position(10, 10).build(),
-  );
-
-  frameXRef.value += 250;
-
-  // 12. mixed-clip-corners: MixedClipFrame — corner rects clipped by rounded frame
-  const f_mixed = id();
-  figFile.addFrame(
-    frameNode(f_mixed, canvas2)
-      .name("mixed-clip-corners")
-      .size(220, 160)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_mixed, mixedClipID).name("MixedClipFrame").size(200, 140).position(10, 10).build(),
-  );
-
-  // Row 2
-  frameXRef.value = 50;
-  frameYRef.value += 200;
-
-  // 13. nested-rounded-clip: NestedRoundedOuter — 2-level rounded clip chain
-  const f_nested_round = id();
-  figFile.addFrame(
-    frameNode(f_nested_round, canvas2)
-      .name("nested-rounded-clip")
-      .size(260, 180)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_nested_round, nestedOuterID)
-      .name("NestedRoundedOuter")
-      .size(240, 160)
-      .position(10, 10)
-      .build(),
-  );
-
-  frameXRef.value += 290;
-
-  // 14. clip-chain-3level: ClipChain — 3-level nested clip (dark bg > white > gray > content)
-  const f_clip_chain = id();
-  figFile.addFrame(
-    frameNode(f_clip_chain, canvas2)
-      .name("clip-chain-3level")
-      .size(300, 200)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_clip_chain, clipChainID).name("ClipChain").size(280, 180).position(10, 10).build(),
-  );
-
-  frameXRef.value += 330;
-
-  // 15. clip-chain-resized: ClipChain at smaller size
-  const f_clip_chain_sm = id();
-  figFile.addFrame(
-    frameNode(f_clip_chain_sm, canvas2)
-      .name("clip-chain-resized")
-      .size(240, 160)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_clip_chain_sm, clipChainID).name("ClipChain-sm").size(220, 140).position(10, 10).build(),
-  );
-
-  // Row 3
-  frameXRef.value = 50;
-  frameYRef.value += 230;
-
-  // 16. avatar-row: 3 avatars in a row (with badge on each)
-  const f_avatar_row = id();
-  figFile.addFrame(
-    frameNode(f_avatar_row, canvas2)
-      .name("avatar-row")
-      .size(260, 84)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  for (let i = 0; i < 3; i++) {
-    figFile.addInstance(
-      instanceNode(id(), f_avatar_row, avatarFrameID)
-        .name(`avatar-${i}`)
-        .size(64, 64)
-        .position(10 + i * 84, 10)
-        .build(),
-    );
-  }
-
-  // =========================================================================
-  // Canvas 3: "Deep Nesting" — 5-level nesting and inheritance chains
-  // =========================================================================
-  const canvas3 = figFile.addCanvas(docID, "Deep Nesting");
-
-  // Build a 5-level deep component hierarchy
-  // Level 1: Base element (colored rounded rect with shadow)
-  const level1ID = id();
-  figFile.addSymbol(
-    symbolNode(level1ID, canvas3)
-      .name("L1-BaseElement")
-      .size(80, 48)
-      .position(0, -600)
-      .background(IOS_BLUE)
-      .cornerRadius(8)
-      .clipsContent(true)
-      .build(),
-  );
-  const l1Inner = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(l1Inner, level1ID)
-      .name("highlight")
-      .size(60, 28)
-      .position(10, 10)
-      .fill(WHITE)
-      .opacity(0.3)
-      .cornerRadius(4)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  // Level 2: Pair of L1 side by side
-  const level2ID = id();
-  figFile.addSymbol(
-    symbolNode(level2ID, canvas3)
-      .name("L2-Pair")
-      .size(180, 68)
-      .position(200, -600)
-      .background(IOS_GRAY_BG)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  // Left half stays anchored to the left edge, right half to the right edge —
-  // together they share the L2 frame's width.
-  figFile.addInstance(
-    instanceNode(id(), level2ID, level1ID)
-      .name("left")
-      .size(80, 48)
-      .position(10, 10)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), level2ID, level1ID)
-      .name("right")
-      .size(80, 48)
-      .position(90, 10)
-      .overrideBackground(IOS_GREEN)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  // Level 3: L2 + decoration
-  const level3ID = id();
-  figFile.addSymbol(
-    symbolNode(level3ID, canvas3)
-      .name("L3-Decorated")
-      .size(220, 108)
-      .position(500, -600)
-      .background(WHITE)
-      .cornerRadius(16)
-      .clipsContent(true)
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), level3ID, level2ID)
-      .name("pair")
-      .size(180, 68)
-      .position(20, 10)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  // Decoration bar below the pair — pinned to the bottom edge.
-  const l3Bar = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(l3Bar, level3ID)
-      .name("bar")
-      .size(180, 8)
-      .position(20, 86)
-      .fill(IOS_ORANGE)
-      .cornerRadius(4)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MAX")
-      .build(),
-  );
-
-  // Level 4: L3 + badge indicator
-  const level4ID = id();
-  figFile.addSymbol(
-    symbolNode(level4ID, canvas3)
-      .name("L4-WithBadge")
-      .size(260, 140)
-      .position(800, -600)
-      .background(IOS_GRAY_BG)
-      .cornerRadius(20)
-      .clipsContent(true)
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), level4ID, level3ID)
-      .name("decorated")
-      .size(220, 108)
-      .position(20, 16)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-  // Badge stays anchored to the top-right corner.
-  figFile.addInstance(
-    instanceNode(id(), level4ID, badgeID)
-      .name("badge")
-      .size(18, 18)
-      .position(234, 8)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-
-  // Level 5: L4 + frame wrapper with shadow effect
-  const level5ID = id();
-  figFile.addSymbol(
-    symbolNode(level5ID, canvas3)
-      .name("L5-Complete")
-      .size(300, 180)
-      .position(1150, -600)
-      .background(WHITE)
-      .cornerRadius(24)
-      .clipsContent(true)
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), level5ID, level4ID)
-      .name("with-badge")
-      .size(260, 140)
-      .position(20, 20)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-  // Outer shadow rect — sits behind the inner content with a uniform inset.
-  const l5Shadow = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(l5Shadow, level5ID)
-      .name("shadow-indicator")
-      .size(280, 160)
-      .position(10, 14)
-      .noFill()
-      .stroke(IOS_GRAY_3)
-      .strokeWeight(1)
-      .cornerRadius(22)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  // --- Symbol: CrossCanvas — uses L1 from canvas3 but references work across canvases
-  // (tests that symbol resolution works with symbols defined on different canvases)
-  const crossCanvasID = id();
-  figFile.addSymbol(
-    symbolNode(crossCanvasID, canvas3)
-      .name("CrossCanvas")
-      .size(160, 100)
-      .position(1500, -600)
-      .background(WHITE)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  // Element pinned to the left edge, button pinned to the right edge.
-  figFile.addInstance(
-    instanceNode(id(), crossCanvasID, level1ID)
-      .name("element")
-      .size(80, 48)
-      .position(10, 26)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), crossCanvasID, buttonBaseID)
-      .name("button")
-      .size(60, 32)
-      .position(92, 34)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-
-  // --- Canvas 3: Test Frames ---
-
-  frameXRef.value = 50;
-  frameYRef.value = 50;
-
-  // 17. depth-2: L2-Pair — 2-level nesting
-  const f_d2 = id();
-  figFile.addFrame(
-    frameNode(f_d2, canvas3)
-      .name("depth-2")
-      .size(200, 88)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_d2, level2ID).name("L2-Pair").size(180, 68).position(10, 10).build());
-
-  frameXRef.value += 230;
-
-  // 18. depth-3: L3-Decorated — 3-level nesting
-  const f_d3 = id();
-  figFile.addFrame(
-    frameNode(f_d3, canvas3)
-      .name("depth-3")
-      .size(240, 128)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_d3, level3ID).name("L3-Decorated").size(220, 108).position(10, 10).build());
-
-  frameXRef.value += 270;
-
-  // 19. depth-4: L4-WithBadge — 4-level nesting
-  const f_d4 = id();
-  figFile.addFrame(
-    frameNode(f_d4, canvas3)
-      .name("depth-4")
-      .size(280, 160)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_d4, level4ID).name("L4-WithBadge").size(260, 140).position(10, 10).build());
-
-  // Row 2
-  frameXRef.value = 50;
-  frameYRef.value += 190;
-
-  // 20. depth-5: L5-Complete — full 5-level nesting chain
-  const f_d5 = id();
-  figFile.addFrame(
-    frameNode(f_d5, canvas3)
-      .name("depth-5")
-      .size(320, 200)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_d5, level5ID).name("L5-Complete").size(300, 180).position(10, 10).build());
-
-  frameXRef.value += 350;
-
-  // 21. depth-5-resized: L5-Complete at smaller size
-  const f_d5_sm = id();
-  figFile.addFrame(
-    frameNode(f_d5_sm, canvas3)
-      .name("depth-5-resized")
-      .size(260, 160)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(instanceNode(id(), f_d5_sm, level5ID).name("L5-small").size(240, 140).position(10, 10).build());
-
-  // Row 3
-  frameXRef.value = 50;
-  frameYRef.value += 230;
-
-  // 22. cross-canvas-ref: CrossCanvas — symbol instances from different canvases
-  const f_cross = id();
-  figFile.addFrame(
-    frameNode(f_cross, canvas3)
-      .name("cross-canvas-ref")
-      .size(180, 120)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_cross, crossCanvasID).name("CrossCanvas").size(160, 100).position(10, 10).build(),
-  );
-
-  frameXRef.value += 210;
-
-  // 23. depth-override: L4 with different override at depth
-  const f_d_override = id();
-  figFile.addFrame(
-    frameNode(f_d_override, canvas3)
-      .name("depth-override")
-      .size(280, 160)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_d_override, level4ID)
-      .name("L4-overridden")
-      .size(260, 140)
-      .position(10, 10)
-      .overrideBackground(IOS_PURPLE)
-      .build(),
-  );
-
-  frameXRef.value += 310;
-
-  // 24. multi-depth-mixed: Mix of different nesting depths in one frame
-  const f_multi_depth = id();
-  figFile.addFrame(
-    frameNode(f_multi_depth, canvas3)
-      .name("multi-depth-mixed")
-      .size(380, 200)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  // L1 directly
-  figFile.addInstance(instanceNode(id(), f_multi_depth, level1ID).name("L1").size(80, 48).position(10, 76).build());
-  // L2
-  figFile.addInstance(instanceNode(id(), f_multi_depth, level2ID).name("L2").size(140, 52).position(100, 74).build());
-  // L3
-  figFile.addInstance(instanceNode(id(), f_multi_depth, level3ID).name("L3").size(120, 58).position(250, 71).build());
-  // L4 (spanning bottom)
-  figFile.addInstance(instanceNode(id(), f_multi_depth, level4ID).name("L4").size(360, 60).position(10, 136).build());
-
-  // Row 4
-  frameXRef.value = 50;
-  frameYRef.value += 230;
-
-  // 25. effect-inherit: EffectBox symbol with shadow effect
-  const effectBoxID = id();
-  figFile.addSymbol(
-    symbolNode(effectBoxID, canvas3)
-      .name("EffectBox")
-      .size(120, 80)
-      .position(1800, -600)
-      .background(WHITE)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  const effectChild = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(effectChild, effectBoxID)
-      .name("inner")
-      .size(100, 60)
-      .position(10, 10)
-      .fill(IOS_BLUE)
-      .cornerRadius(8)
-      .effects([dropShadow().offset(0, 4).blur(8).color(CARD_SHADOW).build()])
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  const f_effect = id();
-  figFile.addFrame(
-    frameNode(f_effect, canvas3)
-      .name("effect-inherit")
-      .size(140, 100)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_effect, effectBoxID).name("EffectBox").size(120, 80).position(10, 10).build(),
-  );
-
-  frameXRef.value += 170;
-
-  // 26. opacity-chain: Nested instances with different opacities
-  const f_opacity = id();
-  figFile.addFrame(
-    frameNode(f_opacity, canvas3)
-      .name("opacity-chain")
-      .size(280, 100)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  // Full opacity L2
-  figFile.addInstance(instanceNode(id(), f_opacity, level2ID).name("full").size(120, 56).position(10, 22).build());
-  // Half opacity L2
-  figFile.addInstance(
-    instanceNode(id(), f_opacity, level2ID).name("half").size(120, 56).position(150, 22).opacity(0.5).build(),
-  );
-
-  // =========================================================================
-  // Canvas 4: "Constraints" — Constraint resolution
-  // =========================================================================
-  const canvas4 = figFile.addCanvas(docID, "Constraints");
-
-  // --- Symbol: ConstraintBox (200x120, white bg, contains a child rect) ---
-  const constraintBoxID = id();
-  figFile.addSymbol(
-    symbolNode(constraintBoxID, canvas4)
-      .name("ConstraintBox")
-      .size(200, 120)
-      .position(0, -600)
-      .background(WHITE)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  // Inner rect at pos=(20,20) size=(160,80) — different margins to test constraint behavior
-  const cbInner = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(cbInner, constraintBoxID)
-      .name("inner")
-      .size(160, 80)
-      .position(20, 20)
-      .fill(IOS_BLUE)
-      .cornerRadius(8)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("STRETCH")
-      .build(),
-  );
-
-  // --- Symbol: ConstraintMixed (200x120, multiple children with different constraints) ---
-  const constraintMixedID = id();
-  figFile.addSymbol(
-    symbolNode(constraintMixedID, canvas4)
-      .name("ConstraintMixed")
-      .size(200, 120)
-      .position(300, -600)
-      .background(IOS_GRAY_BG)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  // Top-left anchored child (MIN/MIN)
-  const cmTL = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(cmTL, constraintMixedID)
-      .name("top-left")
-      .size(40, 40)
-      .position(10, 10)
-      .fill(IOS_RED)
-      .cornerRadius(6)
-      .horizontalConstraint("MIN")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  // Top-right anchored child (MAX/MIN)
-  const cmTR = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(cmTR, constraintMixedID)
-      .name("top-right")
-      .size(40, 40)
-      .position(150, 10)
-      .fill(IOS_GREEN)
-      .cornerRadius(6)
-      .horizontalConstraint("MAX")
-      .verticalConstraint("MIN")
-      .build(),
-  );
-  // Center child (CENTER/CENTER)
-  const cmCenter = id();
-  figFile.addEllipse(
-    ellipseNode(cmCenter, constraintMixedID)
-      .name("center")
-      .size(30, 30)
-      .position(85, 45)
-      .fill(IOS_PURPLE)
-      .horizontalConstraint("CENTER")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-  // Bottom stretch bar (STRETCH/MAX)
-  const cmBottom = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(cmBottom, constraintMixedID)
-      .name("bottom-bar")
-      .size(180, 20)
-      .position(10, 90)
-      .fill(IOS_ORANGE)
-      .cornerRadius(4)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("MAX")
-      .build(),
-  );
-
-  // --- Symbol: ConstraintScale (200x120, child with SCALE constraints) ---
-  const constraintScaleID = id();
-  figFile.addSymbol(
-    symbolNode(constraintScaleID, canvas4)
-      .name("ConstraintScale")
-      .size(200, 120)
-      .position(600, -600)
-      .background(WHITE)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  const csChild = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(csChild, constraintScaleID)
-      .name("scaled")
-      .size(100, 60)
-      .position(50, 30)
-      .fill(IOS_BLUE)
-      .cornerRadius(8)
-      .horizontalConstraint("SCALE")
-      .verticalConstraint("SCALE")
-      .build(),
-  );
-
-  // --- Canvas 4: Test Frames ---
-
-  frameXRef.value = 50;
-  frameYRef.value = 50;
-
-  // 27. constraint-stretch-full: STRETCH on both axes (inset:0 behavior)
-  const f_stretch_full = id();
-  figFile.addFrame(
-    frameNode(f_stretch_full, canvas4)
-      .name("constraint-stretch-full")
-      .size(320, 200)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_stretch_full, constraintBoxID)
-      .name("ConstraintBox-stretched")
-      .size(300, 180) // larger than symbol (200x120)
-      .position(10, 10)
-      .build(),
-  );
-
-  frameXRef.value += 350;
-
-  // 28. constraint-no-resize: Same size as symbol (baseline — no constraint adjustment)
-  const f_no_resize = id();
-  figFile.addFrame(
-    frameNode(f_no_resize, canvas4)
-      .name("constraint-no-resize")
-      .size(220, 140)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_no_resize, constraintBoxID)
-      .name("ConstraintBox-same")
-      .size(200, 120) // same as symbol
-      .position(10, 10)
-      .build(),
-  );
-
-  // Row 2
-  frameXRef.value = 50;
-  frameYRef.value += 230;
-
-  // 29. constraint-mixed: Mixed constraints (MIN, MAX, CENTER, STRETCH) at larger size
-  const f_mixed_constraint = id();
-  figFile.addFrame(
-    frameNode(f_mixed_constraint, canvas4)
-      .name("constraint-mixed")
-      .size(340, 200)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_mixed_constraint, constraintMixedID)
-      .name("ConstraintMixed-large")
-      .size(320, 180) // larger: delta H=+120, V=+60
-      .position(10, 10)
-      .build(),
-  );
-
-  frameXRef.value += 370;
-
-  // 30. constraint-mixed-shrink: Same mixed constraints at smaller size
-  const f_mixed_shrink = id();
-  figFile.addFrame(
-    frameNode(f_mixed_shrink, canvas4)
-      .name("constraint-mixed-shrink")
-      .size(180, 100)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_mixed_shrink, constraintMixedID)
-      .name("ConstraintMixed-small")
-      .size(160, 80) // smaller: delta H=-40, V=-40
-      .position(10, 10)
-      .build(),
-  );
-
-  // Row 3
-  frameXRef.value = 50;
-  frameYRef.value += 230;
-
-  // 31. constraint-scale: SCALE constraint on both axes
-  const f_scale = id();
-  figFile.addFrame(
-    frameNode(f_scale, canvas4)
-      .name("constraint-scale")
-      .size(320, 200)
-      .position(frameXRef.value, frameYRef.value)
-      .background(IOS_GRAY_BG)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_scale, constraintScaleID)
-      .name("ConstraintScale-large")
-      .size(300, 180) // 1.5x width, 1.5x height
-      .position(10, 10)
-      .build(),
-  );
-
-  // =========================================================================
-  // Canvas 5: "Variants" — Variant/overriddenSymbolID support
-  // =========================================================================
-  const canvas5 = figFile.addCanvas(docID, "Variants");
-
-  // --- Symbol: ButtonDefault (variant A — blue background) ---
-  const buttonDefaultID = id();
-  figFile.addSymbol(
-    symbolNode(buttonDefaultID, canvas5)
-      .name("ButtonDefault")
-      .size(120, 44)
-      .position(0, -600)
-      .background(IOS_BLUE)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  const bdLabel = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(bdLabel, buttonDefaultID)
-      .name("label")
-      .size(80, 24)
-      .position(20, 10)
-      .fill(WHITE)
-      .opacity(0.2)
-      .cornerRadius(4)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-
-  // --- Symbol: ButtonActive (variant B — green background) ---
-  const buttonActiveID = id();
-  figFile.addSymbol(
-    symbolNode(buttonActiveID, canvas5)
-      .name("ButtonActive")
-      .size(120, 44)
-      .position(200, -600)
-      .background(IOS_GREEN)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  const baLabel = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(baLabel, buttonActiveID)
-      .name("label")
-      .size(80, 24)
-      .position(20, 10)
-      .fill(WHITE)
-      .opacity(0.3)
-      .cornerRadius(4)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-
-  // --- Symbol: ButtonDisabled (variant C — gray background) ---
-  const buttonDisabledID = id();
-  figFile.addSymbol(
-    symbolNode(buttonDisabledID, canvas5)
-      .name("ButtonDisabled")
-      .size(120, 44)
-      .position(400, -600)
-      .background(IOS_GRAY_3)
-      .cornerRadius(12)
-      .clipsContent(true)
-      .build(),
-  );
-  const bdsLabel = id();
-  figFile.addRoundedRectangle(
-    roundedRectNode(bdsLabel, buttonDisabledID)
-      .name("label")
-      .size(80, 24)
-      .position(20, 10)
-      .fill(WHITE)
-      .opacity(0.1)
-      .cornerRadius(4)
-      .horizontalConstraint("STRETCH")
-      .verticalConstraint("CENTER")
-      .build(),
-  );
-
-  // --- Canvas 5: Test Frames ---
-
-  frameXRef.value = 50;
-  frameYRef.value = 50;
-
-  // 32. variant-default: Instance referencing ButtonDefault directly (no override)
-  const f_var_default = id();
-  figFile.addFrame(
-    frameNode(f_var_default, canvas5)
-      .name("variant-default")
-      .size(140, 64)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_var_default, buttonDefaultID).name("ButtonDefault").size(120, 44).position(10, 10).build(),
-  );
-
-  frameXRef.value += 170;
-
-  // 33. variant-override: Instance with overriddenSymbolID pointing to ButtonActive
-  const f_var_override = id();
-  figFile.addFrame(
-    frameNode(f_var_override, canvas5)
-      .name("variant-override")
-      .size(140, 64)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  figFile.addInstance(
-    instanceNode(id(), f_var_override, buttonDefaultID)
-      .name("ButtonActive-via-override")
-      .size(120, 44)
-      .position(10, 10)
-      .overrideSymbol(buttonActiveID)
-      .build(),
-  );
-
-  frameXRef.value += 170;
-
-  // 34. variant-all-states: All 3 variants side by side
-  const f_var_all = id();
-  figFile.addFrame(
-    frameNode(f_var_all, canvas5)
-      .name("variant-all-states")
-      .size(420, 64)
-      .position(frameXRef.value, frameYRef.value)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-  // Default (blue)
-  figFile.addInstance(
-    instanceNode(id(), f_var_all, buttonDefaultID).name("default").size(120, 44).position(10, 10).build(),
-  );
-  // Active (green via override)
-  figFile.addInstance(
-    instanceNode(id(), f_var_all, buttonDefaultID)
-      .name("active")
-      .size(120, 44)
-      .position(150, 10)
-      .overrideSymbol(buttonActiveID)
-      .build(),
-  );
-  // Disabled (gray via override)
-  figFile.addInstance(
-    instanceNode(id(), f_var_all, buttonDefaultID)
-      .name("disabled")
-      .size(120, 44)
-      .position(290, 10)
-      .overrideSymbol(buttonDisabledID)
-      .build(),
-  );
-
-  // =========================================================================
-  // Build and Write
-  // =========================================================================
-
+  const navBarWithItems = navConstraints.reduce<FigDesignDocument>((acc, c, i) => {
+    return addInstance(acc, ctx, page1, {
+      parentId: navBar.id, name: `nav-${i}`, symbolId: navItem.id,
+      x: 24 + i * 72, y: 4, width: 48, height: 56,
+      constraints: constraintsFor(c.h, c.v),
+    }).doc;
+  }, navBar.doc);
+  const navSep = addRoundedRect(navBarWithItems, ctx, page1, {
+    parentId: navBar.id, name: "separator",
+    x: 0, y: 0, width: 320, height: 1,
+    fill: solidPaint(IOS_GRAY_3, 0.5),
+    constraints: constraintsFor("STRETCH", "MIN"),
+  });
+
+  // Canvas 1 test frames
+  type TestFrame = (acc: { doc: FigDesignDocument; x: number; y: number }) => FigDesignDocument;
+  const canvas1Tests: readonly TestFrame[] = [
+    // 1. button-inherit
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "button-inherit", x, y, width: 140, height: 64, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page1, { parentId: f.id, name: "ButtonBase", symbolId: buttonBase.id, x: 10, y: 10, width: 120, height: 44 }).doc;
+    },
+    // 2. button-override
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "button-override", x, y, width: 280, height: 64, background: WHITE, clipsContent: true });
+      const i1 = addInstance(f.doc, ctx, page1, { parentId: f.id, name: "original", symbolId: buttonBase.id, x: 10, y: 10, width: 120, height: 44 });
+      return addInstance(i1.doc, ctx, page1, {
+        parentId: f.id, name: "green-override", symbolId: buttonBase.id,
+        x: 150, y: 10, width: 120, height: 44, background: IOS_GREEN,
+      }).doc;
+    },
+    // 3. card-with-header
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "card-with-header", x, y, width: 300, height: 220, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page1, { parentId: f.id, name: "Card", symbolId: card.id, x: 10, y: 10, width: 280, height: 200 }).doc;
+    },
+    // 4. card-resized
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "card-resized", x, y, width: 260, height: 180, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page1, { parentId: f.id, name: "Card-small", symbolId: card.id, x: 10, y: 10, width: 240, height: 160 }).doc;
+    },
+    // 5. icon-badge-nesting
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "icon-badge-nesting", x, y, width: 52, height: 52, background: WHITE, clipsContent: false });
+      return addInstance(f.doc, ctx, page1, { parentId: f.id, name: "IconWithBadge", symbolId: iconBadge.id, x: 10, y: 10, width: 32, height: 32 }).doc;
+    },
+    // 6. navbar-full
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "navbar-full", x, y, width: 340, height: 84, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page1, { parentId: f.id, name: "NavBar", symbolId: navBar.id, x: 10, y: 10, width: 320, height: 64 }).doc;
+    },
+    // 7. navbar-resized
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "navbar-resized", x, y, width: 420, height: 84, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page1, { parentId: f.id, name: "NavBar-wide", symbolId: navBar.id, x: 10, y: 10, width: 400, height: 64 }).doc;
+    },
+    // 8. multi-button-sizes
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page1, { parentId: null, name: "multi-button-sizes", x, y, width: 400, height: 80, background: WHITE, clipsContent: true });
+      const i1 = addInstance(f.doc, ctx, page1, { parentId: f.id, name: "small", symbolId: buttonBase.id, x: 10, y: 24, width: 80, height: 32 });
+      const i2 = addInstance(i1.doc, ctx, page1, { parentId: f.id, name: "medium", symbolId: buttonBase.id, x: 100, y: 18, width: 120, height: 44 });
+      return addInstance(i2.doc, ctx, page1, { parentId: f.id, name: "large", symbolId: buttonBase.id, x: 230, y: 12, width: 180, height: 56 }).doc;
+    },
+  ];
+
+  // Canvas 1 layout: row 1 has frames 1-3, row 2 has 4-7, row 3 has 8
+  const canvas1Layout: readonly { readonly x: number; readonly y: number }[] = [
+    { x: 50, y: 50 }, { x: 220, y: 50 }, { x: 530, y: 50 },
+    { x: 50, y: 300 }, { x: 340, y: 300 }, { x: 420, y: 300 }, { x: 790, y: 300 },
+    { x: 50, y: 420 },
+  ];
+  const docAfterCanvas1 = canvas1Tests.reduce<FigDesignDocument>((acc, fn, i) => {
+    return fn({ doc: acc, x: canvas1Layout[i].x, y: canvas1Layout[i].y });
+  }, navSep.doc);
+
+  // ===========================================================================
+  // Canvas 2: Clipping
+  // ===========================================================================
+  const avatarFrame = addSymbol(docAfterCanvas1, ctx, page2, {
+    name: "AvatarFrame", x: 0, y: -600, width: 64, height: 64, background: IOS_GRAY_3, cornerRadius: 32, clipsContent: true,
+  });
+  const avatarImage = addRoundedRect(avatarFrame.doc, ctx, page2, {
+    parentId: avatarFrame.id, name: "avatar-image",
+    x: -8, y: -8, width: 80, height: 80,
+    fill: solidPaint(IOS_PURPLE),
+    constraints: constraintsFor("SCALE", "SCALE"),
+  });
+  const avatarAccent = addEllipse(avatarImage.doc, ctx, page2, {
+    parentId: avatarFrame.id, name: "accent",
+    x: 22, y: 22, width: 20, height: 20,
+    fill: IOS_ORANGE,
+    constraints: constraintsFor("CENTER", "CENTER"),
+  });
+
+  const roundedContainer = addSymbol(avatarAccent.doc, ctx, page2, {
+    name: "RoundedContainer", x: 200, y: -600, width: 200, height: 120, background: IOS_GRAY_BG, cornerRadius: 16, clipsContent: true,
+  });
+  const rcOverflow = addRoundedRect(roundedContainer.doc, ctx, page2, {
+    parentId: roundedContainer.id, name: "overflow-child",
+    x: 60, y: 40, width: 160, height: 100,
+    fill: solidPaint(IOS_RED),
+    cornerRadius: 8,
+    constraints: constraintsFor("MIN", "MIN"),
+  });
+  const rcCorner = addRoundedRect(rcOverflow.doc, ctx, page2, {
+    parentId: roundedContainer.id, name: "corner-child",
+    x: 12, y: 12, width: 80, height: 60,
+    fill: solidPaint(IOS_BLUE),
+    cornerRadius: 8,
+    constraints: constraintsFor("MIN", "MIN"),
+  });
+
+  const nestedOuter = addSymbol(rcCorner.doc, ctx, page2, {
+    name: "NestedRoundedOuter", x: 500, y: -600, width: 240, height: 160, background: WHITE, cornerRadius: 20, clipsContent: true,
+  });
+  const nroInst = addInstance(nestedOuter.doc, ctx, page2, {
+    parentId: nestedOuter.id, name: "inner-container", symbolId: roundedContainer.id,
+    x: 20, y: 20, width: 200, height: 120,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+
+  const clipChain = addSymbol(nroInst.doc, ctx, page2, {
+    name: "ClipChain", x: 800, y: -600, width: 280, height: 180, background: DARK_BG, cornerRadius: 12, clipsContent: true,
+  });
+  const ccInst = addInstance(clipChain.doc, ctx, page2, {
+    parentId: clipChain.id, name: "nested-outer", symbolId: nestedOuter.id,
+    x: 20, y: 10, width: 240, height: 160,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+
+  const mixedClip = addSymbol(ccInst.doc, ctx, page2, {
+    name: "MixedClipFrame", x: 1150, y: -600, width: 200, height: 140, background: WHITE, cornerRadius: 24, clipsContent: true,
+  });
+  const mixedCorners: readonly { name: string; x: number; y: number; w: number; h: number; fill: FigColor; h_cons: ConstraintType; v_cons: ConstraintType }[] = [
+    { name: "top-left", x: 0, y: 0, w: 60, h: 40, fill: IOS_RED, h_cons: "MIN", v_cons: "MIN" },
+    { name: "top-right", x: 140, y: 0, w: 60, h: 40, fill: IOS_GREEN, h_cons: "MAX", v_cons: "MIN" },
+    { name: "bottom-left", x: 0, y: 100, w: 60, h: 40, fill: IOS_BLUE, h_cons: "MIN", v_cons: "MAX" },
+    { name: "bottom-right", x: 140, y: 100, w: 60, h: 40, fill: IOS_ORANGE, h_cons: "MAX", v_cons: "MAX" },
+  ];
+  const mixedAfterCorners = mixedCorners.reduce<FigDesignDocument>((acc, c) => {
+    return addRoundedRect(acc, ctx, page2, {
+      parentId: mixedClip.id, name: c.name,
+      x: c.x, y: c.y, width: c.w, height: c.h,
+      fill: solidPaint(c.fill),
+      constraints: constraintsFor(c.h_cons, c.v_cons),
+    }).doc;
+  }, mixedClip.doc);
+  const mcCenter = addEllipse(mixedAfterCorners, ctx, page2, {
+    parentId: mixedClip.id, name: "center",
+    x: 60, y: 40, width: 80, height: 60,
+    fill: IOS_PURPLE,
+    constraints: constraintsFor("CENTER", "CENTER"),
+  });
+
+  // Canvas 2 test frames
+  const canvas2Tests: readonly TestFrame[] = [
+    // 9. avatar-clip
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "avatar-clip", x, y, width: 84, height: 84, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "AvatarFrame", symbolId: avatarFrame.id, x: 10, y: 10, width: 64, height: 64 }).doc;
+    },
+    // 10. avatar-small
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "avatar-small", x, y, width: 60, height: 60, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "AvatarFrame-sm", symbolId: avatarFrame.id, x: 10, y: 10, width: 40, height: 40 }).doc;
+    },
+    // 11. rounded-container-clip
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "rounded-container-clip", x, y, width: 220, height: 140, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "RoundedContainer", symbolId: roundedContainer.id, x: 10, y: 10, width: 200, height: 120 }).doc;
+    },
+    // 12. mixed-clip-corners
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "mixed-clip-corners", x, y, width: 220, height: 160, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "MixedClipFrame", symbolId: mixedClip.id, x: 10, y: 10, width: 200, height: 140 }).doc;
+    },
+    // 13. nested-rounded-clip
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "nested-rounded-clip", x, y, width: 260, height: 180, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "NestedRoundedOuter", symbolId: nestedOuter.id, x: 10, y: 10, width: 240, height: 160 }).doc;
+    },
+    // 14. clip-chain-3level
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "clip-chain-3level", x, y, width: 300, height: 200, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "ClipChain", symbolId: clipChain.id, x: 10, y: 10, width: 280, height: 180 }).doc;
+    },
+    // 15. clip-chain-resized
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "clip-chain-resized", x, y, width: 240, height: 160, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page2, { parentId: f.id, name: "ClipChain-sm", symbolId: clipChain.id, x: 10, y: 10, width: 220, height: 140 }).doc;
+    },
+    // 16. avatar-row
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page2, { parentId: null, name: "avatar-row", x, y, width: 260, height: 84, background: WHITE, clipsContent: true });
+      return [0, 1, 2].reduce<FigDesignDocument>((acc, i) => {
+        return addInstance(acc, ctx, page2, { parentId: f.id, name: `avatar-${i}`, symbolId: avatarFrame.id, x: 10 + i * 84, y: 10, width: 64, height: 64 }).doc;
+      }, f.doc);
+    },
+  ];
+  const canvas2Layout: readonly { readonly x: number; readonly y: number }[] = [
+    { x: 50, y: 50 }, { x: 170, y: 50 }, { x: 260, y: 50 }, { x: 510, y: 50 },
+    { x: 50, y: 250 }, { x: 340, y: 250 }, { x: 670, y: 250 },
+    { x: 50, y: 480 },
+  ];
+  const docAfterCanvas2 = canvas2Tests.reduce<FigDesignDocument>(
+    (acc, fn, i) => fn({ doc: acc, x: canvas2Layout[i].x, y: canvas2Layout[i].y }),
+    mcCenter.doc,
+  );
+
+  // ===========================================================================
+  // Canvas 3: Deep Nesting
+  // ===========================================================================
+  const level1 = addSymbol(docAfterCanvas2, ctx, page3, {
+    name: "L1-BaseElement", x: 0, y: -600, width: 80, height: 48, background: IOS_BLUE, cornerRadius: 8, clipsContent: true,
+  });
+  const l1Inner = addRoundedRect(level1.doc, ctx, page3, {
+    parentId: level1.id, name: "highlight",
+    x: 10, y: 10, width: 60, height: 28,
+    fill: solidPaint(WHITE, 0.3),
+    cornerRadius: 4,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+
+  const level2 = addSymbol(l1Inner.doc, ctx, page3, {
+    name: "L2-Pair", x: 200, y: -600, width: 180, height: 68, background: IOS_GRAY_BG, cornerRadius: 12, clipsContent: true,
+  });
+  const l2Left = addInstance(level2.doc, ctx, page3, {
+    parentId: level2.id, name: "left", symbolId: level1.id,
+    x: 10, y: 10, width: 80, height: 48,
+    constraints: constraintsFor("MIN", "STRETCH"),
+  });
+  const l2Right = addInstance(l2Left.doc, ctx, page3, {
+    parentId: level2.id, name: "right", symbolId: level1.id,
+    x: 90, y: 10, width: 80, height: 48,
+    background: IOS_GREEN,
+    constraints: constraintsFor("MAX", "STRETCH"),
+  });
+
+  const level3 = addSymbol(l2Right.doc, ctx, page3, {
+    name: "L3-Decorated", x: 500, y: -600, width: 220, height: 108, background: WHITE, cornerRadius: 16, clipsContent: true,
+  });
+  const l3Pair = addInstance(level3.doc, ctx, page3, {
+    parentId: level3.id, name: "pair", symbolId: level2.id,
+    x: 20, y: 10, width: 180, height: 68,
+    constraints: constraintsFor("STRETCH", "MIN"),
+  });
+  const l3Bar = addRoundedRect(l3Pair.doc, ctx, page3, {
+    parentId: level3.id, name: "bar",
+    x: 20, y: 86, width: 180, height: 8,
+    fill: solidPaint(IOS_ORANGE),
+    cornerRadius: 4,
+    constraints: constraintsFor("STRETCH", "MAX"),
+  });
+
+  const level4 = addSymbol(l3Bar.doc, ctx, page3, {
+    name: "L4-WithBadge", x: 800, y: -600, width: 260, height: 140, background: IOS_GRAY_BG, cornerRadius: 20, clipsContent: true,
+  });
+  const l4Dec = addInstance(level4.doc, ctx, page3, {
+    parentId: level4.id, name: "decorated", symbolId: level3.id,
+    x: 20, y: 16, width: 220, height: 108,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+  const l4Badge = addInstance(l4Dec.doc, ctx, page3, {
+    parentId: level4.id, name: "badge", symbolId: badge.id,
+    x: 234, y: 8, width: 18, height: 18,
+    constraints: constraintsFor("MAX", "MIN"),
+  });
+
+  const level5 = addSymbol(l4Badge.doc, ctx, page3, {
+    name: "L5-Complete", x: 1150, y: -600, width: 300, height: 180, background: WHITE, cornerRadius: 24, clipsContent: true,
+  });
+  const l5Inner = addInstance(level5.doc, ctx, page3, {
+    parentId: level5.id, name: "with-badge", symbolId: level4.id,
+    x: 20, y: 20, width: 260, height: 140,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+  const l5Shadow = addRoundedRect(l5Inner.doc, ctx, page3, {
+    parentId: level5.id, name: "shadow-indicator",
+    x: 10, y: 14, width: 280, height: 160,
+    stroke: IOS_GRAY_3,
+    strokeWeight: 1,
+    cornerRadius: 22,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+
+  const crossCanvas = addSymbol(l5Shadow.doc, ctx, page3, {
+    name: "CrossCanvas", x: 1500, y: -600, width: 160, height: 100, background: WHITE, cornerRadius: 12, clipsContent: true,
+  });
+  const ccElement = addInstance(crossCanvas.doc, ctx, page3, {
+    parentId: crossCanvas.id, name: "element", symbolId: level1.id,
+    x: 10, y: 26, width: 80, height: 48,
+    constraints: constraintsFor("MIN", "CENTER"),
+  });
+  const ccButton = addInstance(ccElement.doc, ctx, page3, {
+    parentId: crossCanvas.id, name: "button", symbolId: buttonBase.id,
+    x: 92, y: 34, width: 60, height: 32,
+    constraints: constraintsFor("MAX", "CENTER"),
+  });
+
+  // Canvas 3 test frames
+  const canvas3Tests: readonly TestFrame[] = [
+    // 17. depth-2
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "depth-2", x, y, width: 200, height: 88, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, { parentId: f.id, name: "L2-Pair", symbolId: level2.id, x: 10, y: 10, width: 180, height: 68 }).doc;
+    },
+    // 18. depth-3
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "depth-3", x, y, width: 240, height: 128, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, { parentId: f.id, name: "L3-Decorated", symbolId: level3.id, x: 10, y: 10, width: 220, height: 108 }).doc;
+    },
+    // 19. depth-4
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "depth-4", x, y, width: 280, height: 160, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, { parentId: f.id, name: "L4-WithBadge", symbolId: level4.id, x: 10, y: 10, width: 260, height: 140 }).doc;
+    },
+    // 20. depth-5
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "depth-5", x, y, width: 320, height: 200, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, { parentId: f.id, name: "L5-Complete", symbolId: level5.id, x: 10, y: 10, width: 300, height: 180 }).doc;
+    },
+    // 21. depth-5-resized
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "depth-5-resized", x, y, width: 260, height: 160, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, { parentId: f.id, name: "L5-small", symbolId: level5.id, x: 10, y: 10, width: 240, height: 140 }).doc;
+    },
+    // 22. cross-canvas-ref
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "cross-canvas-ref", x, y, width: 180, height: 120, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, { parentId: f.id, name: "CrossCanvas", symbolId: crossCanvas.id, x: 10, y: 10, width: 160, height: 100 }).doc;
+    },
+    // 23. depth-override
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "depth-override", x, y, width: 280, height: 160, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page3, {
+        parentId: f.id, name: "L4-overridden", symbolId: level4.id,
+        x: 10, y: 10, width: 260, height: 140, background: IOS_PURPLE,
+      }).doc;
+    },
+    // 24. multi-depth-mixed
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page3, { parentId: null, name: "multi-depth-mixed", x, y, width: 380, height: 200, background: IOS_GRAY_BG, clipsContent: true });
+      const i1 = addInstance(f.doc, ctx, page3, { parentId: f.id, name: "L1", symbolId: level1.id, x: 10, y: 76, width: 80, height: 48 });
+      const i2 = addInstance(i1.doc, ctx, page3, { parentId: f.id, name: "L2", symbolId: level2.id, x: 100, y: 74, width: 140, height: 52 });
+      const i3 = addInstance(i2.doc, ctx, page3, { parentId: f.id, name: "L3", symbolId: level3.id, x: 250, y: 71, width: 120, height: 58 });
+      return addInstance(i3.doc, ctx, page3, { parentId: f.id, name: "L4", symbolId: level4.id, x: 10, y: 136, width: 360, height: 60 }).doc;
+    },
+  ];
+
+  const canvas3Layout: readonly { readonly x: number; readonly y: number }[] = [
+    { x: 50, y: 50 }, { x: 280, y: 50 }, { x: 550, y: 50 },
+    { x: 50, y: 240 }, { x: 400, y: 240 }, { x: 680, y: 240 },
+    { x: 50, y: 470 }, { x: 360, y: 470 },
+  ];
+  const docAfterCanvas3Tests = canvas3Tests.reduce<FigDesignDocument>(
+    (acc, fn, i) => fn({ doc: acc, x: canvas3Layout[i].x, y: canvas3Layout[i].y }),
+    ccButton.doc,
+  );
+
+  // Effect-inherit and opacity-chain — extra symbols for canvas 3
+  const effectBox = addSymbol(docAfterCanvas3Tests, ctx, page3, {
+    name: "EffectBox", x: 1800, y: -600, width: 120, height: 80, background: WHITE, cornerRadius: 12, clipsContent: true,
+  });
+  const effectChild = addRoundedRect(effectBox.doc, ctx, page3, {
+    parentId: effectBox.id, name: "inner",
+    x: 10, y: 10, width: 100, height: 60,
+    fill: solidPaint(IOS_BLUE),
+    cornerRadius: 8,
+    effects: [dropShadow(0, 4, 8, CARD_SHADOW)],
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+
+  // 25. effect-inherit
+  const fEffect = addFrame(effectChild.doc, ctx, page3, {
+    parentId: null, name: "effect-inherit", x: 700, y: 470, width: 140, height: 100, background: WHITE, clipsContent: true,
+  });
+  const effectInst = addInstance(fEffect.doc, ctx, page3, {
+    parentId: fEffect.id, name: "EffectBox", symbolId: effectBox.id,
+    x: 10, y: 10, width: 120, height: 80,
+  });
+
+  // 26. opacity-chain
+  const fOpacity = addFrame(effectInst.doc, ctx, page3, {
+    parentId: null, name: "opacity-chain", x: 870, y: 470, width: 280, height: 100, background: WHITE, clipsContent: true,
+  });
+  const opacityFull = addInstance(fOpacity.doc, ctx, page3, {
+    parentId: fOpacity.id, name: "full", symbolId: level2.id,
+    x: 10, y: 22, width: 120, height: 56,
+  });
+  const opacityHalf = addInstance(opacityFull.doc, ctx, page3, {
+    parentId: fOpacity.id, name: "half", symbolId: level2.id,
+    x: 150, y: 22, width: 120, height: 56,
+    opacity: 0.5,
+  });
+
+  // ===========================================================================
+  // Canvas 4: Constraints
+  // ===========================================================================
+  const constraintBox = addSymbol(opacityHalf.doc, ctx, page4, {
+    name: "ConstraintBox", x: 0, y: -600, width: 200, height: 120, background: WHITE, cornerRadius: 12, clipsContent: true,
+  });
+  const cbInner = addRoundedRect(constraintBox.doc, ctx, page4, {
+    parentId: constraintBox.id, name: "inner",
+    x: 20, y: 20, width: 160, height: 80,
+    fill: solidPaint(IOS_BLUE),
+    cornerRadius: 8,
+    constraints: constraintsFor("STRETCH", "STRETCH"),
+  });
+
+  const constraintMixed = addSymbol(cbInner.doc, ctx, page4, {
+    name: "ConstraintMixed", x: 300, y: -600, width: 200, height: 120, background: IOS_GRAY_BG, cornerRadius: 12, clipsContent: true,
+  });
+  const cmTL = addRoundedRect(constraintMixed.doc, ctx, page4, {
+    parentId: constraintMixed.id, name: "top-left",
+    x: 10, y: 10, width: 40, height: 40,
+    fill: solidPaint(IOS_RED),
+    cornerRadius: 6,
+    constraints: constraintsFor("MIN", "MIN"),
+  });
+  const cmTR = addRoundedRect(cmTL.doc, ctx, page4, {
+    parentId: constraintMixed.id, name: "top-right",
+    x: 150, y: 10, width: 40, height: 40,
+    fill: solidPaint(IOS_GREEN),
+    cornerRadius: 6,
+    constraints: constraintsFor("MAX", "MIN"),
+  });
+  const cmCenter = addEllipse(cmTR.doc, ctx, page4, {
+    parentId: constraintMixed.id, name: "center",
+    x: 85, y: 45, width: 30, height: 30,
+    fill: IOS_PURPLE,
+    constraints: constraintsFor("CENTER", "CENTER"),
+  });
+  const cmBottom = addRoundedRect(cmCenter.doc, ctx, page4, {
+    parentId: constraintMixed.id, name: "bottom-bar",
+    x: 10, y: 90, width: 180, height: 20,
+    fill: solidPaint(IOS_ORANGE),
+    cornerRadius: 4,
+    constraints: constraintsFor("STRETCH", "MAX"),
+  });
+
+  const constraintScale = addSymbol(cmBottom.doc, ctx, page4, {
+    name: "ConstraintScale", x: 600, y: -600, width: 200, height: 120, background: WHITE, cornerRadius: 12, clipsContent: true,
+  });
+  const csChild = addRoundedRect(constraintScale.doc, ctx, page4, {
+    parentId: constraintScale.id, name: "scaled",
+    x: 50, y: 30, width: 100, height: 60,
+    fill: solidPaint(IOS_BLUE),
+    cornerRadius: 8,
+    constraints: constraintsFor("SCALE", "SCALE"),
+  });
+
+  // Canvas 4 test frames
+  const canvas4Tests: readonly TestFrame[] = [
+    // 27. constraint-stretch-full
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page4, { parentId: null, name: "constraint-stretch-full", x, y, width: 320, height: 200, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page4, { parentId: f.id, name: "ConstraintBox-stretched", symbolId: constraintBox.id, x: 10, y: 10, width: 300, height: 180 }).doc;
+    },
+    // 28. constraint-no-resize
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page4, { parentId: null, name: "constraint-no-resize", x, y, width: 220, height: 140, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page4, { parentId: f.id, name: "ConstraintBox-same", symbolId: constraintBox.id, x: 10, y: 10, width: 200, height: 120 }).doc;
+    },
+    // 29. constraint-mixed
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page4, { parentId: null, name: "constraint-mixed", x, y, width: 340, height: 200, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page4, { parentId: f.id, name: "ConstraintMixed-large", symbolId: constraintMixed.id, x: 10, y: 10, width: 320, height: 180 }).doc;
+    },
+    // 30. constraint-mixed-shrink
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page4, { parentId: null, name: "constraint-mixed-shrink", x, y, width: 180, height: 100, background: WHITE, clipsContent: true });
+      return addInstance(f.doc, ctx, page4, { parentId: f.id, name: "ConstraintMixed-small", symbolId: constraintMixed.id, x: 10, y: 10, width: 160, height: 80 }).doc;
+    },
+    // 31. constraint-scale
+    ({ doc, x, y }) => {
+      const f = addFrame(doc, ctx, page4, { parentId: null, name: "constraint-scale", x, y, width: 320, height: 200, background: IOS_GRAY_BG, clipsContent: true });
+      return addInstance(f.doc, ctx, page4, { parentId: f.id, name: "ConstraintScale-large", symbolId: constraintScale.id, x: 10, y: 10, width: 300, height: 180 }).doc;
+    },
+  ];
+  const canvas4Layout: readonly { readonly x: number; readonly y: number }[] = [
+    { x: 50, y: 50 }, { x: 400, y: 50 },
+    { x: 50, y: 280 }, { x: 420, y: 280 },
+    { x: 50, y: 510 },
+  ];
+  const docAfterCanvas4 = canvas4Tests.reduce<FigDesignDocument>(
+    (acc, fn, i) => fn({ doc: acc, x: canvas4Layout[i].x, y: canvas4Layout[i].y }),
+    csChild.doc,
+  );
+
+  // ===========================================================================
+  // Canvas 5: Variants
+  // ===========================================================================
+  const buttonDefault = addSymbol(docAfterCanvas4, ctx, page5, {
+    name: "ButtonDefault", x: 0, y: -600, width: 120, height: 44, background: IOS_BLUE, cornerRadius: 12, clipsContent: true,
+  });
+  const bdLabel = addRoundedRect(buttonDefault.doc, ctx, page5, {
+    parentId: buttonDefault.id, name: "label",
+    x: 20, y: 10, width: 80, height: 24,
+    fill: solidPaint(WHITE, 0.2),
+    cornerRadius: 4,
+    constraints: constraintsFor("STRETCH", "CENTER"),
+  });
+
+  const buttonActive = addSymbol(bdLabel.doc, ctx, page5, {
+    name: "ButtonActive", x: 200, y: -600, width: 120, height: 44, background: IOS_GREEN, cornerRadius: 12, clipsContent: true,
+  });
+  const baLabel = addRoundedRect(buttonActive.doc, ctx, page5, {
+    parentId: buttonActive.id, name: "label",
+    x: 20, y: 10, width: 80, height: 24,
+    fill: solidPaint(WHITE, 0.3),
+    cornerRadius: 4,
+    constraints: constraintsFor("STRETCH", "CENTER"),
+  });
+
+  const buttonDisabled = addSymbol(baLabel.doc, ctx, page5, {
+    name: "ButtonDisabled", x: 400, y: -600, width: 120, height: 44, background: IOS_GRAY_3, cornerRadius: 12, clipsContent: true,
+  });
+  const bdsLabel = addRoundedRect(buttonDisabled.doc, ctx, page5, {
+    parentId: buttonDisabled.id, name: "label",
+    x: 20, y: 10, width: 80, height: 24,
+    fill: solidPaint(WHITE, 0.1),
+    cornerRadius: 4,
+    constraints: constraintsFor("STRETCH", "CENTER"),
+  });
+
+  // 32. variant-default
+  const fVarDefault = addFrame(bdsLabel.doc, ctx, page5, {
+    parentId: null, name: "variant-default", x: 50, y: 50, width: 140, height: 64, background: WHITE, clipsContent: true,
+  });
+  const varDefaultInst = addInstance(fVarDefault.doc, ctx, page5, {
+    parentId: fVarDefault.id, name: "ButtonDefault", symbolId: buttonDefault.id,
+    x: 10, y: 10, width: 120, height: 44,
+  });
+
+  // 33. variant-override
+  const fVarOverride = addFrame(varDefaultInst.doc, ctx, page5, {
+    parentId: null, name: "variant-override", x: 220, y: 50, width: 140, height: 64, background: WHITE, clipsContent: true,
+  });
+  const varOverrideInst = addInstance(fVarOverride.doc, ctx, page5, {
+    parentId: fVarOverride.id, name: "ButtonActive-via-override", symbolId: buttonDefault.id,
+    x: 10, y: 10, width: 120, height: 44,
+    overrideSymbolId: buttonActive.id,
+  });
+
+  // 34. variant-all-states
+  const fVarAll = addFrame(varOverrideInst.doc, ctx, page5, {
+    parentId: null, name: "variant-all-states", x: 390, y: 50, width: 420, height: 64, background: WHITE, clipsContent: true,
+  });
+  const all1 = addInstance(fVarAll.doc, ctx, page5, {
+    parentId: fVarAll.id, name: "default", symbolId: buttonDefault.id,
+    x: 10, y: 10, width: 120, height: 44,
+  });
+  const all2 = addInstance(all1.doc, ctx, page5, {
+    parentId: fVarAll.id, name: "active", symbolId: buttonDefault.id,
+    x: 150, y: 10, width: 120, height: 44,
+    overrideSymbolId: buttonActive.id,
+  });
+  const finalDoc = addInstance(all2.doc, ctx, page5, {
+    parentId: fVarAll.id, name: "disabled", symbolId: buttonDefault.id,
+    x: 290, y: 10, width: 120, height: 44,
+    overrideSymbolId: buttonDisabled.id,
+  });
+
+  // ===========================================================================
+  // Output
+  // ===========================================================================
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
-
   for (const subdir of ["actual", "snapshots"]) {
     const dir = path.join(OUTPUT_DIR, subdir);
     if (!fs.existsSync(dir)) {
@@ -1729,40 +1016,18 @@ async function generate(): Promise<void> {
     }
   }
 
-  const figData = await figFile.buildAsync({ fileName: "symbol-resolution" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc.doc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
+  console.log(`Size: ${(exported.data.length / 1024).toFixed(1)} KB`);
   console.log(`\n=== Structure ===`);
-  console.log(`5 canvases, ${nextIDRef.value - 100} nodes total\n`);
-
-  console.log(`Canvas 1: "Components" — UI component patterns`);
-  console.log(`  Test frames (8): button-inherit, button-override, card-with-header,`);
-  console.log(`    card-resized, icon-badge-nesting, navbar-full, navbar-resized, multi-button-sizes`);
-
-  console.log(`\nCanvas 2: "Clipping" — Frame-level rounding & clip behavior`);
-  console.log(`  Test frames (8): avatar-clip, avatar-small, rounded-container-clip,`);
-  console.log(`    mixed-clip-corners, nested-rounded-clip, clip-chain-3level, clip-chain-resized, avatar-row`);
-
-  console.log(`\nCanvas 3: "Deep Nesting" — 5-level nesting & inheritance`);
-  console.log(`  Test frames (10): depth-2, depth-3, depth-4, depth-5, depth-5-resized,`);
-  console.log(`    cross-canvas-ref, depth-override, multi-depth-mixed, effect-inherit, opacity-chain`);
-
-  console.log(`\nCanvas 4: "Constraints" — Constraint resolution`);
-  console.log(`  Symbols: ConstraintBox (STRETCH), ConstraintMixed (MIN/MAX/CENTER/STRETCH), ConstraintScale (SCALE)`);
-  console.log(`  Test frames (5):`);
-  console.log(`    27. constraint-stretch-full — STRETCH both axes (inset:0)`);
-  console.log(`    28. constraint-no-resize — same size baseline`);
-  console.log(`    29. constraint-mixed — MIN/MAX/CENTER/STRETCH at larger size`);
-  console.log(`    30. constraint-mixed-shrink — mixed constraints at smaller size`);
-  console.log(`    31. constraint-scale — SCALE on both axes`);
-
-  console.log(`\nCanvas 5: "Variants" — Variant/overriddenSymbolID`);
-  console.log(`  Symbols: ButtonDefault (blue), ButtonActive (green), ButtonDisabled (gray)`);
-  console.log(`  Test frames (3):`);
-  console.log(`    32. variant-default — direct symbolID reference`);
-  console.log(`    33. variant-override — overriddenSymbolID to ButtonActive`);
-  console.log(`    34. variant-all-states — all 3 variants side by side`);
+  console.log(`5 canvases\n`);
+  console.log(`Canvas 1: "Components" — 8 test frames (button-inherit, card variants, navbar variants)`);
+  console.log(`Canvas 2: "Clipping" — 8 test frames (avatar, rounded container, nested clip)`);
+  console.log(`Canvas 3: "Deep Nesting" — 10 test frames (depth-2..5, multi-depth, effect-inherit, opacity-chain)`);
+  console.log(`Canvas 4: "Constraints" — 5 test frames (STRETCH, mixed, SCALE)`);
+  console.log(`Canvas 5: "Variants" — 3 test frames (variant-default, variant-override, variant-all-states)`);
 }
 
 generate().catch((error) => {

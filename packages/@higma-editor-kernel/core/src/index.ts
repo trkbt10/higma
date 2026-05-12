@@ -63,7 +63,7 @@ export { DRAG_THRESHOLD_PX, isDragThresholdExceeded } from "./drag-utils";
 export type { PrimaryMouseEventLike, PrimaryPointerEventLike, TextareaSelectionLike } from "./pointer-utils";
 export { applySelectionRange, getSelectionAnchor, isPrimaryMouseAction, isPrimaryPointerAction } from "./pointer-utils";
 
-// Geometry
+// Geometry — re-exported through the geometry submodule's own index.
 export type {
   Point,
   SimpleBounds,
@@ -72,7 +72,10 @@ export type {
   ResizeHandlePosition,
   ResizeBounds,
   ResizeOptions,
-} from "./geometry/types";
+  MoveDragPreviewInput,
+  ResizeDragPreviewInput,
+  RotateDragPreviewInput,
+} from "./geometry";
 
 export {
   normalizeAngle,
@@ -89,9 +92,6 @@ export {
   getSvgRotationTransformForBounds,
   rotateShapeAroundCenter,
   calculateRotationDelta,
-} from "./geometry/rotate";
-
-export {
   calculateAspectDelta,
   applyMinConstraints,
   resizeFromNW,
@@ -106,28 +106,14 @@ export {
   calculateScaleFactors,
   calculateRelativePosition,
   calculateMultiResizeBounds,
-} from "./geometry/resize";
-
-export {
   getCombinedBoundsWithRotation,
-} from "./geometry/bounds";
-
-export {
   clientToCanvasCoords,
-} from "./geometry/coords";
-
-export type {
-  MoveDragPreviewInput,
-  ResizeDragPreviewInput,
-  RotateDragPreviewInput,
-} from "./geometry/drag-preview";
-export {
   calculateResizedDimensions,
   applyMovePreview,
   applyResizePreview,
   applyRotatePreview,
   applyDragPreview,
-} from "./geometry/drag-preview";
+} from "./geometry";
 
 // Adapter data types (SoT)
 export type {

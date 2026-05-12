@@ -7,8 +7,8 @@
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigPageId } from "@higma-document-models/fig/domain";
 import { DEFAULT_PAGE_BACKGROUND } from "@higma-document-models/fig/domain";
-import { nextNodeId, nextPageId } from "../types/node-id";
-import type { FigBuilderState } from "../types/node-id";
+import { nextNodeId, nextPageId } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
 
 // =============================================================================
 // Add Page
@@ -21,6 +21,12 @@ type AddPageOptions = {
   readonly state: FigBuilderState;
   readonly doc: FigDesignDocument;
   readonly name: string;
+  /**
+   * Mark this page as Figma's "Internal Only Canvas" — hidden from the
+   * Pages UI and used to host style-definition proxy nodes. Real Figma
+   * exports always include exactly one such page.
+   */
+  readonly internalOnly?: boolean;
 };
 
 /**
@@ -29,7 +35,7 @@ type AddPageOptions = {
  * @returns Updated document and the new page's ID
  */
 export function addPage(
-  { state, doc, name }: AddPageOptions,
+  { state, doc, name, internalOnly }: AddPageOptions,
 ): { readonly doc: FigDesignDocument; readonly pageId: FigPageId } {
   assertBuilderState(state, "addPage");
   assertNonEmptyString(name, "addPage name");
@@ -40,6 +46,7 @@ export function addPage(
     name,
     backgroundColor: DEFAULT_PAGE_BACKGROUND,
     children: [],
+    internalOnly,
   };
 
   return {
@@ -188,7 +195,6 @@ function deepCloneNodes(
       ...node,
       id: newId,
       children: node.children ? deepCloneNodes(state, node.children) : undefined,
-      _raw: undefined, // Clone loses raw data (different IDs)
     };
   });
 }

@@ -27,6 +27,7 @@ export type {
   ComponentPropertyRef,
   ComponentPropertyAssignment,
   VariantPropSpec,
+  FigGridTrackPositions,
   FigStyleRegistry,
   FigDesignBlob,
 } from "./document";
@@ -44,7 +45,7 @@ export {
   applyOverrideToNode,
 } from "./document";
 
-export { collectFigRawFields, convertFigNode } from "./conversion";
+export { convertFigNode } from "./conversion";
 
 export {
   buildNodeTree,

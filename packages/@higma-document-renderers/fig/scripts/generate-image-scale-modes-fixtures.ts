@@ -18,14 +18,22 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFigFile, frameNode, roundedRectNode, imagePaint } from "@higma-document-io/fig/fig-file";
-import type { Color } from "@higma-document-io/fig/fig-file";
+import {
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { addImage } from "@higma-document-models/fig/builder";
+import type { FigDesignDocument } from "@higma-document-models/fig/domain";
+import type { FigColor, FigImageScaleMode, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/image-scale-modes");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "image-scale-modes.fig");
 
-const FRAME_BG: Color = { r: 0.96, g: 0.96, b: 0.96, a: 1 };
+const FRAME_BG: FigColor = { r: 0.96, g: 0.96, b: 0.96, a: 1 };
 
 /**
  * Generate a valid 4x4 checkerboard PNG as test image. Same payload
@@ -43,75 +51,128 @@ function createCheckerboardPng(): Uint8Array {
   return bytes;
 }
 
+/**
+ * Compute the SHA-1 hex digest of an image. Matches Figma's image-ref
+ * convention: every paint referencing image bytes addresses them by
+ * SHA-1, and the `.fig` zip stores each entry at `images/<sha1-hex>`.
+ */
+async function computeSha1Hex(data: Uint8Array): Promise<string> {
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  const hashBuffer = await crypto.subtle.digest("SHA-1", buffer);
+  const hashArray = new Uint8Array(hashBuffer);
+  return Array.from(hashArray, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 const SCALE_MODES = ["STRETCH", "FIT", "FILL", "TILE"] as const;
 
-const idRef = { value: 100 };
-function id(): number {
-  const current = idRef.value;
-  idRef.value += 1;
-  return current;
+function imagePaint(imageRef: string, mode: FigImageScaleMode, scalingFactor?: number): FigPaint {
+  return {
+    type: "IMAGE",
+    imageRef,
+    imageHash: imageRef,
+    image: undefined,
+    imageScaleMode: mode,
+    scaleMode: mode,
+    scalingFactor,
+    scale: scalingFactor,
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+function solidPaint(color: FigColor): FigPaint {
+  return {
+    type: "SOLID",
+    color,
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating image-scale-modes fixture...");
 
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("Image Scale Modes");
-  const canvasID = figFile.addCanvas(docID, "Image Scale Modes");
-  figFile.addInternalCanvas(docID);
+  const empty = createEmptyFigDesignDocument("Image Scale Modes");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const docWithInternal = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  const imageRef = await figFile.addImage(createCheckerboardPng(), "image/png");
+  const pngBytes = createCheckerboardPng();
+  const imageRef = await computeSha1Hex(pngBytes);
+  const docWithImage = addImage(docWithInternal, imageRef, {
+    ref: imageRef,
+    data: pngBytes,
+    mimeType: "image/png",
+  });
 
   const FRAME_W = 160;
   const FRAME_H = 120;
   const GAP = 40;
 
-  for (const [index, mode] of SCALE_MODES.entries()) {
+  const finalDoc = SCALE_MODES.reduce<FigDesignDocument>((acc, mode, index) => {
     const x = 100 + index * (FRAME_W + GAP);
     const y = 100;
 
-    const frameID = id();
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name(`scale-${mode.toLowerCase()}`)
-        .size(FRAME_W, FRAME_H)
-        .position(x, y)
-        .background(FRAME_BG)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
+    const frameResult = addNode({
+      state,
+      doc: acc,
+      pageId,
+      parentId: null,
+      spec: {
+        type: "FRAME",
+        name: `scale-${mode.toLowerCase()}`,
+        x,
+        y,
+        width: FRAME_W,
+        height: FRAME_H,
+        fills: [solidPaint(FRAME_BG)],
+        clipsContent: true,
+      },
+    });
 
-    const builder = imagePaint(imageRef).scaleMode(mode);
-    if (mode === "TILE") {
-      // TILE requires an explicit factor — see the builder's
-      // comment on scalingFactor. Half-size tiles are visually
-      // distinct from FIT/FILL/STRETCH.
-      builder.scale(0.5);
-    }
-    const paint = builder.build();
+    // TILE requires an explicit factor — half-size tiles are visually
+    // distinct from FIT/FILL/STRETCH.
+    const paint = imagePaint(imageRef, mode, mode === "TILE" ? 0.5 : undefined);
 
-    const shapeID = id();
-    figFile.addRoundedRectangle(
-      roundedRectNode(shapeID, frameID)
-        .name(`image-${mode.toLowerCase()}`)
-        .size(120, 80)
-        .position(20, 20)
-        .cornerRadius(6)
-        .fill(paint)
-        .build(),
-    );
+    const shapeResult = addNode({
+      state,
+      doc: frameResult.doc,
+      pageId,
+      parentId: frameResult.nodeId,
+      spec: {
+        type: "ROUNDED_RECTANGLE",
+        name: `image-${mode.toLowerCase()}`,
+        x: 20,
+        y: 20,
+        width: 120,
+        height: 80,
+        cornerRadius: 6,
+        fills: [paint],
+      },
+    });
     console.log(`  ${index + 1}/${SCALE_MODES.length} ${mode}`);
-  }
+    return shapeResult.doc;
+  }, docWithImage);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const figData = await figFile.buildAsync({ fileName: "image-scale-modes" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`\nGenerated: ${OUTPUT_FILE}`);
-  console.log(`Size: ${(figData.length / 1024).toFixed(1)} KB`);
+  console.log(`Size: ${(exported.data.length / 1024).toFixed(1)} KB`);
 }
 
 generate().catch((error) => {

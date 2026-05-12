@@ -61,7 +61,8 @@ describe("convertFigNode", () => {
     const converted = convertFigNode(node, new Map());
 
     expect(converted.fills).toEqual([RED_PAINT]);
-    expect(converted._raw?.backgroundPaints).toBeUndefined();
+    // backgroundPaints is preserved as a first-class field separate from fills.
+    expect(converted.backgroundPaints).toEqual([RED_PAINT]);
   });
 
   it("keeps fillPaints fallback for builder-generated frames", () => {
@@ -86,7 +87,6 @@ describe("convertFigNode", () => {
     expect(converted.variantPropSpecs).toEqual([{ propDefId: "1:90", value: "Primary" }]);
     expect(converted.layoutConstraints?.stackChildAlignSelf).toEqual({ value: 3, name: "STRETCH" });
     expect(converted.layoutConstraints?.stackChildPrimaryGrow).toBe(1);
-    expect(converted._raw?.sectionContentsHidden).toBeUndefined();
   });
 });
 

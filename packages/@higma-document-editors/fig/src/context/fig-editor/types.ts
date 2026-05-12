@@ -6,6 +6,8 @@
  */
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
+import type { FigStyleId } from "@higma-document-models/fig/types";
+import type { FigColor, FigFontName, KiwiEnumValue } from "@higma-document-models/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { BooleanOperationType } from "@higma-document-renderers/fig/scene-graph";
@@ -240,7 +242,79 @@ export type FigEditorAction =
 
   // Clipboard
   | { readonly type: "COPY" }
-  | { readonly type: "PASTE" };
+  | { readonly type: "PASTE" }
+
+  // Symbol / Instance / Variant promotion (Phase 1)
+  //
+  // These actions exist to express refine-fig's structural edits as
+  // pure reducer dispatches: every load-bearing field is set on the
+  // FigDesignNode model, and the `document-to-tree` projection (Phase
+  // 0a) is the single source of truth for how that model encodes into
+  // a `.fig` Kiwi node. There is intentionally no "build a FigNode
+  // directly" path — that is what `MAKE_SYMBOL_FROM_SELECTION` style
+  // wrappers also avoid.
+  | {
+      readonly type: "PROMOTE_TO_SYMBOL";
+      readonly nodeId: FigNodeId;
+      readonly name: string;
+    }
+  | {
+      readonly type: "PROMOTE_TO_INSTANCE";
+      readonly nodeId: FigNodeId;
+      readonly symbolId: FigNodeId;
+      /**
+       * Drop the existing child subtree of `nodeId` when flipping to
+       * INSTANCE. Used for cluster members where the parent's geometry
+       * is replaced by the SYMBOL's pre-rendered subtree.
+       */
+      readonly dropChildren?: boolean;
+    }
+  | {
+      readonly type: "CREATE_SYMBOL_WITH_INSTANCES";
+      readonly hostPageId: FigPageId;
+      readonly name: string;
+      readonly exemplarNodeId: FigNodeId;
+      readonly memberNodeIds: readonly FigNodeId[];
+    }
+  | {
+      readonly type: "GROUP_AS_VARIANT_SET";
+      readonly setName: string;
+      readonly propertyName: string;
+      readonly variants: readonly {
+        readonly symbolId: FigNodeId;
+        readonly value: string;
+      }[];
+    }
+  | {
+      readonly type: "ENSURE_INTERNAL_CANVAS";
+      readonly name: string;
+    }
+  | {
+      readonly type: "ADD_FILL_PROXY";
+      readonly internalPageId: FigPageId;
+      readonly name: string;
+      readonly color: FigColor;
+      readonly opacity?: number;
+    }
+  | {
+      readonly type: "ADD_TEXT_PROXY";
+      readonly internalPageId: FigPageId;
+      readonly name: string;
+      readonly fontName: FigFontName;
+      readonly fontSize: number;
+      readonly lineHeight?: { readonly value: number; readonly units: KiwiEnumValue };
+      readonly letterSpacing?: { readonly value: number; readonly units: KiwiEnumValue };
+    }
+  | {
+      readonly type: "BIND_FILL_STYLE";
+      readonly nodeId: FigNodeId;
+      readonly styleId: FigStyleId;
+    }
+  | {
+      readonly type: "BIND_TEXT_STYLE";
+      readonly nodeId: FigNodeId;
+      readonly styleId: FigStyleId;
+    };
 
 // =============================================================================
 // Context Value

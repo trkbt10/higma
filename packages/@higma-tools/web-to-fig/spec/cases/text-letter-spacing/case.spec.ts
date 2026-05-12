@@ -14,8 +14,9 @@
  * Both layers now carry letter-spacing, so this case pins:
  *   - the IR keeps the numeric px value,
  *   - the SpecGraph TEXT spec carries it as a pixel-typed scalar,
- *   - the node-emitters path (used by `buildFigFileBytes`) writes
- *     the same value via `textNode.letterSpacing(value, "PIXELS")`.
+ *   - the canonical `buildDocument` → `addNode` → `exportFig` path
+ *     emits the same value as `TextData.letterSpacing` with unit
+ *     `PIXELS`.
  */
 import { asText, normalizeOne, singleChild } from "../_helpers";
 import { irToSpecGraph } from "../../../src/emit/ir-to-spec";

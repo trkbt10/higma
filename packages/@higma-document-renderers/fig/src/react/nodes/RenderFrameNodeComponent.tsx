@@ -3,7 +3,7 @@
  */
 
 import { memo, type ReactNode } from "react";
-import type { RenderFrameNode } from "../../scene-graph/render-tree";
+import type { RenderFrameNode } from "../../scene-graph";
 import { formatRenderDefs } from "../primitives/render-defs";
 import { RenderWrapper } from "../primitives/wrapper";
 import { RectShape } from "../primitives/rect-shape";

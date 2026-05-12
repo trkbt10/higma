@@ -18,9 +18,6 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runHtmlCase, type RunHtmlCaseOptions, type RunHtmlCaseResult } from "../cases/run-html-case";
 
-export type FullpageCaseOptions = RunHtmlCaseOptions;
-export type FullpageCaseResult = RunHtmlCaseResult;
-
 /**
  * Resolve a `file://` URL or path-like input to an absolute filesystem
  * path and return whether the underlying file exists. Used to gate
@@ -36,6 +33,6 @@ export function fixtureExists(fixture: string | URL): boolean {
   return existsSync(url.toString());
 }
 
-export async function runFullpageCase(options: FullpageCaseOptions): Promise<FullpageCaseResult> {
+export async function runFullpageCase(options: RunHtmlCaseOptions): Promise<RunHtmlCaseResult> {
   return runHtmlCase(options);
 }

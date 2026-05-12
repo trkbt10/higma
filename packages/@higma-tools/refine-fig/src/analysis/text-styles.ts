@@ -216,6 +216,7 @@ function visit(node: FigNode, out: Map<string, TypographyCluster & { usages: Typ
           usages: [usage],
           proxyGuid: undefined,
           proxyName: undefined,
+          aliases: [],
           // Resolved post-collection.
           suggestedRole: "body",
           suggestedSlug: "body",

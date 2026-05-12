@@ -171,6 +171,8 @@ export type GeometryClusterMemberRecord = {
   readonly nodeGuid: string;
   readonly nodeName: string;
   readonly parentGuid: string | undefined;
+  readonly width: number;
+  readonly height: number;
 };
 
 export type GeometryClusterEntry = {

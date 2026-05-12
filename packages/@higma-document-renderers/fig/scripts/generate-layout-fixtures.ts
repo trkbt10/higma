@@ -1,224 +1,118 @@
+#!/usr/bin/env bun
 /**
- * @file Generate layouts.fig with pre-computed AutoLayout positions
+ * @file Generate fixtures/layouts/layouts.fig
  *
- * Positions are pre-computed to match Figma's AutoLayout calculations.
- * This ensures the generated file renders correctly without needing
- * Figma to recalculate positions.
+ * The `layouts.spec.ts` integration test reads layer names from this
+ * file and exercises the SVG renderer against the matching
+ * Figma-exported SVGs under `fixtures/layouts/actual/`. The set of
+ * layer names is therefore a load-bearing contract — adding,
+ * removing, or renaming an entry here without updating the spec /
+ * actual SVGs will silently skip cases.
  *
- * Usage: bun packages/@higma-document-renderers/fig/scripts/generate-layout-fixtures.ts
+ * Positions in each test case are pre-computed to match Figma's
+ * AutoLayout solver output: the renderer does not (yet) re-run the
+ * AutoLayout pass, so each child sits at the absolute coordinate
+ * Figma would have produced. The `stackMode` / `stackSpacing` /
+ * `stackPrimaryAlignItems` / `stackCounterAlignItems` properties are
+ * preserved on the parent frame as metadata so the
+ * "Layout-specific properties" describe block can still observe them.
+ *
+ * Usage:
+ *   bun packages/@higma-document-renderers/fig/scripts/generate-layout-fixtures.ts
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { loadFigFile, saveFigFile } from "@higma-document-io/fig/roundtrip";
-import type { FigNode } from "@higma-document-models/fig/types";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  AutoLayoutProps,
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import {
+  STACK_ALIGN_VALUES,
+  STACK_JUSTIFY_VALUES,
+  STACK_MODE_VALUES,
+  type StackAlign,
+  type StackJustify,
+} from "@higma-document-models/fig/constants";
 
-const TEMPLATE_FILE = path.join(import.meta.dir, "../../../@higma-document-models/fig/samples/sample-file.fig");
-const FIXTURES_DIR = path.join(import.meta.dir, "../fixtures/layouts");
-const OUTPUT_FILE = path.join(FIXTURES_DIR, "layouts.fig");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR = path.join(__dirname, "../fixtures/layouts");
+const OUTPUT_FILE = path.join(OUTPUT_DIR, "layouts.fig");
 
 // =============================================================================
-// Node Creation Helpers
+// Color helpers
 // =============================================================================
 
-const nextLocalID = 100;
-const sessionID = 0;
-
-function getNextID(): number {
-  return nextLocalID++;
-}
-
-function createGUID(localID: number) {
-  return { sessionID, localID };
-}
-
-function createTransform(x: number, y: number) {
-  return { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y };
-}
-
-function createEnumValue(value: number, name: string) {
-  return { value, name };
-}
-
-function createSolidPaint(
-  { r, g, b, a = 1 }: { r: number; g: number; b: number; a?: number; }
-) {
-  return [
-    {
-      type: { value: 0, name: "SOLID" },
-      color: { r, g, b, a },
-      opacity: 1,
-      visible: true,
-      blendMode: { value: 1, name: "NORMAL" },
-    },
-  ];
-}
-
-function hexToRgb(hex: string): [number, number, number] {
+/**
+ * Parse a `#rrggbb` hex string into the normalised `FigColor` shape.
+ * The legacy script encoded each test case's palette as hex literals
+ * because the source data was hand-tuned against the Figma UI; we
+ * preserve those exact values rather than re-encoding to the
+ * autolayout fixture's slightly different palette, so the rendered
+ * snapshots stay byte-identical across the migration.
+ */
+function hexColor(hex: string, alpha: number = 1): FigColor {
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
   const b = parseInt(hex.slice(5, 7), 16) / 255;
-  return [r, g, b];
+  return { r, g, b, a: alpha };
 }
 
-function createSvgExportSettings() {
-  return [
-    {
-      suffix: "",
-      imageType: { value: 2, name: "SVG" },
-      constraint: { type: { value: 0, name: "CONTENT_SCALE" }, value: 1 },
-      contentsOnly: true,
-      useAbsoluteBounds: false,
-      colorProfile: { value: 0, name: "DOCUMENT" },
-      useBicubicSampler: false,
-    },
-  ];
-}
-
-// =============================================================================
-// Figma Schema Enum Values
-// =============================================================================
-
-const StackModeValue = { NONE: 0, HORIZONTAL: 1, VERTICAL: 2, GRID: 3 };
-const StackJustifyValue = { MIN: 0, CENTER: 1, MAX: 2, SPACE_EVENLY: 3, SPACE_BETWEEN: 4 };
-const StackAlignValue = { MIN: 0, CENTER: 1, MAX: 2, BASELINE: 3 };
-
-// =============================================================================
-// Node Builders
-// =============================================================================
-
-type FrameOptions = {
-  localID: number;
-  parentID: number;
-  name: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  background: string;
-  // AutoLayout (optional - only set if needed for metadata, positions are pre-computed)
-  stackMode?: "HORIZONTAL" | "VERTICAL";
-  stackSpacing?: number;
-  stackPrimaryAlignItems?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN";
-  stackCounterAlignItems?: "MIN" | "CENTER" | "MAX";
-  hasExport?: boolean;
-};
-
-function createFrameNode(opts: FrameOptions): FigNode {
-  const [r, g, b] = hexToRgb(opts.background);
-  const node: Record<string, unknown> = {
-    guid: createGUID(opts.localID),
-    phase: createEnumValue(0, "CREATED"),
-    type: createEnumValue(4, "FRAME"),
-    name: opts.name,
-    visible: true,
-    opacity: 1,
-    size: { x: opts.width, y: opts.height },
-    transform: createTransform(opts.x, opts.y),
-    strokeWeight: 0,
-    strokeAlign: createEnumValue(1, "INSIDE"),
-    strokeJoin: createEnumValue(0, "MITER"),
-    frameMaskDisabled: false,
-    fillPaints: createSolidPaint(r, g, b),
-  };
-
-  if (opts.parentID >= 0) {
-    node.parentIndex = {
-      guid: createGUID(opts.parentID),
-      position: String.fromCharCode(33 + (opts.localID % 93)),
-    };
-  }
-
-  // AutoLayout properties (for metadata)
-  if (opts.stackMode) {
-    node.stackMode = createEnumValue(StackModeValue[opts.stackMode], opts.stackMode);
-  }
-  if (opts.stackSpacing !== undefined) {
-    node.stackSpacing = opts.stackSpacing;
-  }
-  if (opts.stackPrimaryAlignItems) {
-    node.stackPrimaryAlignItems = createEnumValue(
-      StackJustifyValue[opts.stackPrimaryAlignItems],
-      opts.stackPrimaryAlignItems,
-    );
-  }
-  if (opts.stackCounterAlignItems) {
-    node.stackCounterAlignItems = createEnumValue(
-      StackAlignValue[opts.stackCounterAlignItems],
-      opts.stackCounterAlignItems,
-    );
-  }
-
-  if (opts.hasExport) {
-    node.exportSettings = createSvgExportSettings();
-  }
-
-  return node as FigNode;
-}
-
-type RectOptions = {
-  localID: number;
-  parentID: number;
-  name: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fill: string;
-  cornerRadius?: number;
-};
-
-function createRectNode(opts: RectOptions): FigNode {
-  const [r, g, b] = hexToRgb(opts.fill);
+function solidPaint(color: FigColor): FigPaint {
   return {
-    guid: createGUID(opts.localID),
-    phase: createEnumValue(0, "CREATED"),
-    type: createEnumValue(12, "ROUNDED_RECTANGLE"),
-    name: opts.name,
-    visible: true,
+    type: "SOLID",
+    color,
     opacity: 1,
-    size: { x: opts.width, y: opts.height },
-    transform: createTransform(opts.x, opts.y),
-    strokeWeight: 0,
-    strokeAlign: createEnumValue(1, "INSIDE"),
-    strokeJoin: createEnumValue(0, "MITER"),
-    fillPaints: createSolidPaint(r, g, b),
-    cornerRadius: opts.cornerRadius ?? 0,
-    parentIndex: {
-      guid: createGUID(opts.parentID),
-      position: String.fromCharCode(33 + (opts.localID % 93)),
-    },
-  } as FigNode;
+    visible: true,
+    blendMode: "NORMAL",
+  };
 }
 
 // =============================================================================
-// Test Case Data (matching autolayout.fig exactly)
+// Test case data
 // =============================================================================
+
+type StackMode = "HORIZONTAL" | "VERTICAL";
+type CounterAlign = Extract<StackAlign, "MIN" | "CENTER" | "MAX">;
 
 type ChildData = {
-  name: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fill: string;
-  cornerRadius?: number;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fill: string;
+  readonly cornerRadius?: number;
 };
 
 type FrameData = {
-  name: string;
-  width: number;
-  height: number;
-  background: string;
-  stackMode?: "HORIZONTAL" | "VERTICAL";
-  stackSpacing?: number;
-  stackPrimaryAlignItems?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN";
-  stackCounterAlignItems?: "MIN" | "CENTER" | "MAX";
-  children: ChildData[];
+  readonly name: string;
+  readonly width: number;
+  readonly height: number;
+  readonly background: string;
+  readonly stackMode?: StackMode;
+  readonly stackSpacing?: number;
+  readonly stackPrimaryAlignItems?: StackJustify;
+  readonly stackCounterAlignItems?: CounterAlign;
+  readonly children: readonly ChildData[];
 };
 
-// Pre-computed layout data matching Figma's calculations
-const TEST_CASES: FrameData[] = [
+// Pre-computed layout data matching Figma's calculations. The names
+// must match the keys in `LAYER_FILE_MAP` in
+// `spec/layouts.spec.ts` — they are the test contract.
+const TEST_CASES: readonly FrameData[] = [
   {
     name: "simple-rects",
     width: 200,
@@ -383,154 +277,199 @@ const TEST_CASES: FrameData[] = [
 ];
 
 // =============================================================================
-// Grid Layout
+// Grid placement
 // =============================================================================
 
+// The original script laid the 12 frames out in a 4-column grid on
+// the canvas. The integration test does not depend on absolute
+// positions (each layer is re-wrapped into a synthetic CANVAS at
+// render time), but the visual exporter (`Figma open → Export SVG`)
+// does — we keep the same arrangement so a human regenerating the
+// `actual/` SVGs from Figma sees the same layout.
 const GRID_COLS = 4;
 const GRID_GAP = 100;
 const GRID_OFFSET_X = 100;
 const GRID_OFFSET_Y = 100;
 
 // =============================================================================
-// Main Generator
+// Builder helpers
 // =============================================================================
 
-async function generateLayoutFixtures() {
+type Ctx = {
+  readonly state: FigBuilderState;
+  readonly pageId: FigPageId;
+};
+
+/**
+ * Wrap an optional `StackJustify` into its Kiwi enum-value pair, or
+ * leave it unset. Extracted from `buildAutoLayout` so the
+ * conditional fits on a single line under the project's
+ * `ternary-length` lint rule.
+ */
+function primaryAlignEnum(
+  primary: StackJustify | undefined,
+): { readonly value: number; readonly name: StackJustify } | undefined {
+  if (!primary) {
+    return undefined;
+  }
+  return { value: STACK_JUSTIFY_VALUES[primary], name: primary };
+}
+
+/**
+ * Counterpart of {@link primaryAlignEnum} for the counter axis.
+ */
+function counterAlignEnum(
+  counter: CounterAlign | undefined,
+): { readonly value: number; readonly name: CounterAlign } | undefined {
+  if (!counter) {
+    return undefined;
+  }
+  return { value: STACK_ALIGN_VALUES[counter], name: counter };
+}
+
+/**
+ * Build the `AutoLayoutProps` object for a frame. AutoLayout is
+ * optional per test case — only frames that actually exercise an
+ * auto-layout mode set this; the others render as plain
+ * absolute-positioned containers.
+ */
+function buildAutoLayout(
+  mode: StackMode,
+  spacing: number | undefined,
+  primary: StackJustify | undefined,
+  counter: CounterAlign | undefined,
+): AutoLayoutProps {
+  return {
+    stackMode: { value: STACK_MODE_VALUES[mode], name: mode },
+    stackSpacing: spacing,
+    stackPrimaryAlignItems: primaryAlignEnum(primary),
+    stackCounterAlignItems: counterAlignEnum(counter),
+  };
+}
+
+/**
+ * Construct the auto-layout props for a test case, returning
+ * `undefined` when the case has no `stackMode` set. Extracted out of
+ * `addTestCase` so the call site uses a plain assignment rather than
+ * a multi-line ternary (forbidden by `custom/ternary-length`).
+ */
+function autoLayoutFor(testCase: FrameData): AutoLayoutProps | undefined {
+  if (!testCase.stackMode) {
+    return undefined;
+  }
+  return buildAutoLayout(
+    testCase.stackMode,
+    testCase.stackSpacing,
+    testCase.stackPrimaryAlignItems,
+    testCase.stackCounterAlignItems,
+  );
+}
+
+function addTestCase(
+  doc: FigDesignDocument,
+  ctx: Ctx,
+  testCase: FrameData,
+  index: number,
+  maxWidth: number,
+  maxHeight: number,
+): FigDesignDocument {
+  const col = index % GRID_COLS;
+  const row = Math.floor(index / GRID_COLS);
+  const x = GRID_OFFSET_X + col * (maxWidth + GRID_GAP);
+  const y = GRID_OFFSET_Y + row * (maxHeight + GRID_GAP);
+
+  const autoLayout = autoLayoutFor(testCase);
+
+  const frame = addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: testCase.name,
+      x,
+      y,
+      width: testCase.width,
+      height: testCase.height,
+      fills: [solidPaint(hexColor(testCase.background))],
+      autoLayout,
+    },
+  });
+
+  return testCase.children.reduce<FigDesignDocument>((acc, child) => {
+    const result = addNode({
+      state: ctx.state,
+      doc: acc,
+      pageId: ctx.pageId,
+      parentId: frame.nodeId as FigNodeId,
+      spec: {
+        type: "ROUNDED_RECTANGLE",
+        name: child.name,
+        x: child.x,
+        y: child.y,
+        width: child.width,
+        height: child.height,
+        fills: [solidPaint(hexColor(child.fill))],
+        cornerRadius: child.cornerRadius ?? 0,
+      },
+    });
+    return result.doc;
+  }, frame.doc);
+}
+
+// =============================================================================
+// Main
+// =============================================================================
+
+async function generate(): Promise<void> {
   console.log("Generating layout fixtures...\n");
 
-  if (!fs.existsSync(TEMPLATE_FILE)) {
-    console.error(`Template not found: ${TEMPLATE_FILE}`);
-    process.exit(1);
-  }
+  const empty = createEmptyFigDesignDocument("Layout Tests");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const ctx: Ctx = { state, pageId };
 
-  console.log(`Loading template: ${TEMPLATE_FILE}`);
-  const templateData = fs.readFileSync(TEMPLATE_FILE);
-  const loaded = await loadFigFile(new Uint8Array(templateData));
-
-  console.log(`Template: ${loaded.nodeChanges.length} nodes, ${loaded.schema.definitions.length} schema definitions\n`);
-
-  // Get document and canvas IDs from template
-  const docIDRef = { value: 0 };
-  const canvasIDRef = { value: 1 };
-
-  for (const node of loaded.nodeChanges) {
-    const typeName = node.type.name;
-    const guid = node.guid;
-
-    if (typeName === "DOCUMENT" && docIDRef.value === 0) {
-      docIDRef.value = guid.localID;
-    }
-    if (typeName === "CANVAS" && canvasIDRef.value === 1 && guid.sessionID === 0) {
-      canvasIDRef.value = guid.localID;
-    }
-  }
-
-  // Clear and rebuild
-  loaded.nodeChanges.length = 0;
-
-  // Add DOCUMENT
-  loaded.nodeChanges.push({
-    guid: createGUID(docIDRef.value),
-    phase: createEnumValue(0, "CREATED"),
-    type: createEnumValue(1, "DOCUMENT"),
-    name: "Layout Tests",
-    visible: true,
-    opacity: 1,
-    transform: createTransform(0, 0),
-    strokeWeight: 0,
-    strokeAlign: createEnumValue(0, "CENTER"),
-    strokeJoin: createEnumValue(1, "BEVEL"),
-  } as FigNode);
-
-  // Add CANVAS
-  loaded.nodeChanges.push({
-    guid: createGUID(canvasIDRef.value),
-    phase: createEnumValue(0, "CREATED"),
-    type: createEnumValue(2, "CANVAS"),
-    name: "AutoLayout Tests",
-    visible: true,
-    opacity: 1,
-    transform: createTransform(0, 0),
-    strokeWeight: 0,
-    strokeAlign: createEnumValue(0, "CENTER"),
-    strokeJoin: createEnumValue(1, "BEVEL"),
-    backgroundOpacity: 1,
-    backgroundColor: { r: 0.95, g: 0.95, b: 0.95, a: 1 },
-    backgroundEnabled: true,
-    parentIndex: {
-      guid: createGUID(docIDRef.value),
-      position: "!",
-    },
-  } as FigNode);
+  // Figma's importer requires an Internal Only Canvas (see
+  // packages/@higma-document-renderers/fig/CLAUDE.md → "Figma
+  // インポートの必須要件"). All other migrated generators add it
+  // first; we do the same so the page ordering matches a real
+  // Figma export.
+  const doc0 = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
   console.log(`Creating ${TEST_CASES.length} test cases...\n`);
 
-  // Calculate max frame dimensions for grid layout
   const maxWidth = Math.max(...TEST_CASES.map((tc) => tc.width));
   const maxHeight = Math.max(...TEST_CASES.map((tc) => tc.height));
 
-  TEST_CASES.forEach((testCase, index) => {
-    const col = index % GRID_COLS;
-    const row = Math.floor(index / GRID_COLS);
-    const x = GRID_OFFSET_X + col * (maxWidth + GRID_GAP);
-    const y = GRID_OFFSET_Y + row * (maxHeight + GRID_GAP);
-
-    const frameID = getNextID();
-
-    // Create frame
-    loaded.nodeChanges.push(
-      createFrameNode({
-        localID: frameID,
-        parentID: canvasIDRef.value,
-        name: testCase.name,
-        x,
-        y,
-        width: testCase.width,
-        height: testCase.height,
-        background: testCase.background,
-        stackMode: testCase.stackMode,
-        stackSpacing: testCase.stackSpacing,
-        stackPrimaryAlignItems: testCase.stackPrimaryAlignItems,
-        stackCounterAlignItems: testCase.stackCounterAlignItems,
-        hasExport: true,
-      }),
+  const finalDoc = TEST_CASES.reduce<FigDesignDocument>((acc, testCase, index) => {
+    console.log(
+      `  [${index + 1}/${TEST_CASES.length}] ${testCase.name} (${testCase.width}x${testCase.height})`,
     );
-
-    // Create children
-    for (const child of testCase.children) {
-      const childID = getNextID();
-      loaded.nodeChanges.push(
-        createRectNode({
-          localID: childID,
-          parentID: frameID,
-          name: child.name,
-          x: child.x,
-          y: child.y,
-          width: child.width,
-          height: child.height,
-          fill: child.fill,
-          cornerRadius: child.cornerRadius,
-        }),
-      );
-    }
-
-    console.log(`  [${index + 1}/${TEST_CASES.length}] ${testCase.name} (${testCase.width}x${testCase.height})`);
-  });
+    return addTestCase(acc, ctx, testCase, index, maxWidth, maxHeight);
+  }, doc0);
 
   console.log("\nSaving...");
-  const figData = await saveFigFile(loaded, {
-    metadata: { fileName: "Layout Tests" },
-  });
-
-  fs.mkdirSync(FIXTURES_DIR, { recursive: true });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  if (!fs.existsSync(OUTPUT_DIR)) {
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  }
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`\nSaved: ${OUTPUT_FILE}`);
-  console.log(`Size: ${(figData.length / 1024).toFixed(1)} KB`);
-  console.log(`\nTest cases: ${TEST_CASES.length}`);
+  console.log(`Size: ${(exported.data.byteLength / 1024).toFixed(1)} KB`);
+  console.log(`Test cases: ${TEST_CASES.length}`);
 }
 
-generateLayoutFixtures().catch((error) => {
+generate().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

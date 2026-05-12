@@ -7,7 +7,7 @@
 
 import type { FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "../types/spec-types";
-import type { FigBuilderState } from "../types/node-id";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import { createNodeFromSpec } from "./node-factory";
 import {
   findNodeById,
@@ -69,7 +69,20 @@ export function addNode(
     children: insertNodeInTree({ nodes: page.children, parentId, node }),
   }));
 
-  return { doc: updatedDoc, nodeId: node.id };
+  // SYMBOL nodes need to be registered in the document's `components`
+  // map so INSTANCE lookups (`doc.components.get(inst.symbolId)`)
+  // resolve. The map is keyed by the SYMBOL's FigNodeId, matching the
+  // `referenceValue` shape on `ComponentPropertyValue` and the
+  // `symbolId` field on `FigDesignNode` (for INSTANCEs). Other node
+  // types leave the map untouched.
+  const updatedComponents = node.type === "SYMBOL"
+    ? new Map(updatedDoc.components).set(node.id, node)
+    : updatedDoc.components;
+
+  return {
+    doc: { ...updatedDoc, components: updatedComponents },
+    nodeId: node.id,
+  };
 }
 
 // =============================================================================

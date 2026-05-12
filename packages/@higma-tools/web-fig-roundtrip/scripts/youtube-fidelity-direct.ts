@@ -13,6 +13,7 @@ import {
   DEFAULT_BREAKPOINTS,
   buildMultiFigFileBytes,
   captureMultiViewport,
+  createHostFontResolver,
   normalizeViewport,
 } from "@higma-tools/web-to-fig";
 import { verifyFigDirect } from "@higma-tools/web-fig-roundtrip/verify";
@@ -35,8 +36,9 @@ async function main(): Promise<void> {
     );
   }
 
+  const fontResolver = createHostFontResolver();
   const viewports = captures.map((cap) =>
-    normalizeViewport(cap.result.snapshot, { breakpoint: cap.breakpoint.name }),
+    normalizeViewport(cap.result.snapshot, { breakpoint: cap.breakpoint.name, fontResolver }),
   );
   const built = await buildMultiFigFileBytes({ source: TARGET_URL, viewports });
   process.stdout.write(`Wrote ${built.bytes.byteLength} bytes (.fig)\n`);

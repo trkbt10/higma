@@ -3,7 +3,7 @@
  */
 
 import { memo } from "react";
-import type { RenderGroupNode } from "../../scene-graph/render-tree";
+import type { RenderGroupNode } from "../../scene-graph";
 import { formatRenderDefs } from "../primitives/render-defs";
 import { RenderWrapper } from "../primitives/wrapper";
 import { RenderNodeComponent } from "./RenderNodeComponent";

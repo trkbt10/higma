@@ -95,8 +95,6 @@ async function commandInventory(args: ParsedArgs): Promise<void> {
   const inventory = await buildInventory(source, { figPath: inputPath, skipClusters });
   await ensureDir(outDir);
   await writeInventory(outDir, basename(inputPath), bytes.byteLength, inventory);
-  // Keep saveFigFile import alive — needed by future apply work.
-  void saveFigFile;
   process.stdout.write(
     `refine-fig inventory: palette=${inventory.palette.length} typography=${inventory.typography.length}`
     + ` clusters=${inventory.subtreeClusters.length} geometryClusters=${inventory.geometryClusters.length}`
@@ -231,14 +229,16 @@ async function commandApply(args: ParsedArgs): Promise<void> {
 
 function applyContextFromSource(
   source: Awaited<ReturnType<typeof loadRefineSource>>,
-): { internalCanvasGuid: string | undefined; fillTemplateGuid: string | undefined; textTemplateGuid: string | undefined } {
+): { internalCanvasGuid: string | undefined; userCanvasGuid: string | undefined; fillTemplateGuid: string | undefined; textTemplateGuid: string | undefined } {
   // No internal canvas? Leave it undefined — the plan's
   // ensure-internal-canvas action (when present) will create one and
   // the apply layer threads the new guid into every create-*-proxy.
   // If the plan needs proxies but failed to emit the ensure action,
   // apply records that as a skipped action with a clear reason.
+  const firstUserCanvas = source.userCanvases[0];
   return {
     internalCanvasGuid: source.internalCanvas ? guidToString(source.internalCanvas.guid) : undefined,
+    userCanvasGuid: firstUserCanvas ? guidToString(firstUserCanvas.guid) : undefined,
     fillTemplateGuid: source.fillStyleProxies[0] ? guidToString(source.fillStyleProxies[0].guid) : undefined,
     textTemplateGuid: source.textStyleProxies[0] ? guidToString(source.textStyleProxies[0].guid) : undefined,
   };

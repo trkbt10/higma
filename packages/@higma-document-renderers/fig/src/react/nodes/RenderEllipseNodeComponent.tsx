@@ -3,7 +3,7 @@
  */
 
 import { memo } from "react";
-import type { RenderEllipseNode } from "../../scene-graph/render-tree";
+import type { RenderEllipseNode } from "../../scene-graph";
 import { ShapeShell } from "../primitives/shape-shell";
 import { MultiFillEllipseLayers } from "../primitives/multi-fill";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";

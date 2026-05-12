@@ -28,6 +28,7 @@ import {
   buildFrameTarget,
   emitFrameFile,
   listFrameTargets,
+  type EmitContext,
 } from "@higma-tools/fig-to-godot/emit";
 import { renderGodotBatch, type GodotBatchEntry } from "@higma-tools/fig-to-godot/render";
 import type { FigNode } from "@higma-document-models/fig/types";
@@ -43,6 +44,7 @@ type FrameJob = {
   readonly height: number;
   readonly emitError?: string;
   readonly sceneText?: string;
+  readonly companions?: ReadonlyMap<string, Uint8Array>;
 };
 
 type FrameReport = {
@@ -78,6 +80,7 @@ async function main(): Promise<void> {
   const renderable = allJobs.filter((j) => j.sceneText !== undefined);
   const entries: GodotBatchEntry[] = renderable.map((j) => ({
     sceneText: j.sceneText!,
+    companions: j.companions,
     width: j.width,
     height: j.height,
   }));
@@ -189,7 +192,11 @@ async function emitCase(
   // symbol-resolution, decoration-combo's instance-* cases) resolve
   // to their authoring SYMBOL. Without it those frames emit empty
   // Controls.
-  const emitCtx = { symbolMap: ctx.symbolMap, blobs: ctx.blobs };
+  const emitCtx: EmitContext = {
+    symbolMap: ctx.symbolMap,
+    blobs: ctx.blobs,
+    images: ctx.images,
+  };
   const jobs: FrameJob[] = [];
   for (const node of frames) {
     const figmaName = node.name ?? "";
@@ -199,7 +206,14 @@ async function emitCase(
     const target = buildFrameTarget(node, { outputDir: "Pages", sceneNamesUsed, slugsUsed });
     try {
       const file = emitFrameFile(target, emitCtx);
-      jobs.push({ caseName, figmaName, width, height, sceneText: file.contents });
+      jobs.push({
+        caseName,
+        figmaName,
+        width,
+        height,
+        sceneText: file.contents,
+        companions: file.assets,
+      });
     } catch (err) {
       jobs.push({
         caseName,

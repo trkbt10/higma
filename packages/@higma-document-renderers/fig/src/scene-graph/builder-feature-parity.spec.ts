@@ -148,8 +148,9 @@ describe("FigNode property audit: old SVG renderer → new builder", () => {
    *   grep -rnoE '(node|paint|effect)\.[a-zA-Z_]+' svg/nodes/ svg/fill.ts svg/stroke.ts svg/effects.ts
    *
    * Status categories:
-   *   "domain"    → Read from FigDesignNode domain field (no _raw needed)
-   *   "raw"       → Read from _raw (geometry blobs, Kiwi binary data)
+   *   "domain"    → Read from FigDesignNode top-level domain field
+   *   "raw"       → Read from FigDesignNode-domain field whose value is
+   *                 binary blob data (geometry decoded against blob array)
    *   "converted" → Processed during convert/ stage (paint → Fill, effect → Effect)
    *   "ignored"   → Not applicable to scene-graph (SVG-only concern)
    */
@@ -231,7 +232,7 @@ describe("FigNode property audit: old SVG renderer → new builder", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("_raw dependencies are limited to geometry blob data", () => {
+  it("raw-blob dependencies are limited to geometry blob data", () => {
     // Properties marked "raw" should ONLY be geometry-related fields
     // that fundamentally require binary blob access.
     const rawProps = Object.entries(PROPERTY_AUDIT)
@@ -247,7 +248,7 @@ describe("FigNode property audit: old SVG renderer → new builder", () => {
     ]);
 
     for (const prop of rawProps) {
-      expect(expectedRawProps.has(prop), `Unexpected _raw dependency: ${prop}`).toBe(true);
+      expect(expectedRawProps.has(prop), `Unexpected raw-blob dependency: ${prop}`).toBe(true);
     }
   });
 });

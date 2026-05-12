@@ -14,7 +14,27 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import opentype from "opentype.js";
-import { createFigFile, frameNode, textNode, roundedRectNode, ellipseNode } from "@higma-document-io/fig/fig-file";
+import {
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+  updateNode,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { addBlob } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type {
+  FigColor,
+  FigDerivedGlyph,
+  FigPaint,
+} from "@higma-document-models/fig/types";
+import { TEXT_ALIGN_H_VALUES } from "@higma-document-models/fig/constants";
 import {
   generateTextGlyphs,
   generateMultilineTextGlyphs,
@@ -27,624 +47,448 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/text-webgl");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "text-webgl.fig");
 
-// Font paths from @fontsource/inter
 const FONT_DIR = path.resolve(process.cwd(), "node_modules/@fontsource/inter/files");
 const INTER_REGULAR = path.join(FONT_DIR, "inter-latin-400-normal.woff");
 const INTER_BOLD = path.join(FONT_DIR, "inter-latin-700-normal.woff");
 
 // =============================================================================
-// Color Helpers
-// =============================================================================
-
-type Color = { r: number; g: number; b: number; a: number };
-
-const white: Color = { r: 1, g: 1, b: 1, a: 1 };
-const black: Color = { r: 0, g: 0, b: 0, a: 1 };
-const lightGray: Color = { r: 0.94, g: 0.94, b: 0.94, a: 1 };
-
-function rgb(r: number, g: number, b: number): Color {
-  return { r, g, b, a: 1 };
-}
-
-// =============================================================================
 // Helpers
 // =============================================================================
 
-type FigFile = ReturnType<typeof createFigFile>;
+const white: FigColor = { r: 1, g: 1, b: 1, a: 1 };
+const black: FigColor = { r: 0, g: 0, b: 0, a: 1 };
+const lightGray: FigColor = { r: 0.94, g: 0.94, b: 0.94, a: 1 };
+
+function rgb(r: number, g: number, b: number): FigColor {
+  return { r, g, b, a: 1 };
+}
+
+function solidPaint(color: FigColor): FigPaint {
+  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+}
+
+type Ctx = {
+  readonly state: FigBuilderState;
+};
+
+type TextOpts = {
+  readonly parentId: FigNodeId;
+  readonly name: string;
+  readonly text: string;
+  readonly font: { readonly family: string; readonly style: string };
+  readonly fontSize: number;
+  readonly color: FigColor;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly alignH?: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
+  readonly glyphs: GlyphGenResult;
+};
 
 /**
- * Add text node with glyph outline blobs to a figFile.
- * Returns the text node's local ID.
+ * Add a TEXT node with glyph outline blobs (derivedTextData).
+ *
+ * The new builder API doesn't surface `derivedTextData` through
+ * NodeSpec, so we drop it onto the FigDesignNode via `updateNode` —
+ * the same pattern used for other non-spec text fields.
+ *
+ * Blob handling: each blob is registered on the document via
+ * `addBlob`; the returned global index is patched into every glyph
+ * record's `commandsBlob` field so the eventual on-disk
+ * `derivedTextData.glyphs[i].commandsBlob` points at the correct
+ * `doc.blobs[]` entry.
  */
 function addTextWithGlyphs(
-  figFile: FigFile,
-  builder: ReturnType<typeof textNode>,
-  glyphResult: GlyphGenResult,
-): number {
-  // Add blobs and remap indices
-  const blobIndices = glyphResult.blobs.map((b) => figFile.addBlob(b));
-  const glyphs = glyphResult.glyphs.map((g) => ({
+  doc: FigDesignDocument,
+  pageId: FigPageId,
+  ctx: Ctx,
+  opts: TextOpts,
+): FigDesignDocument {
+  // Add each glyph blob to the document and capture the remapped index.
+  const blobAddResult = opts.glyphs.blobs.reduce<{ readonly doc: FigDesignDocument; readonly indices: readonly number[] }>(
+    (acc, b) => {
+      const result = addBlob(acc.doc, b);
+      return { doc: result.doc, indices: [...acc.indices, result.blobIndex] };
+    },
+    { doc, indices: [] },
+  );
+  const remappedGlyphs: readonly FigDerivedGlyph[] = opts.glyphs.glyphs.map((g) => ({
     ...g,
-    commandsBlob: blobIndices[g.commandsBlob] ?? g.commandsBlob,
+    commandsBlob: blobAddResult.indices[g.commandsBlob] ?? g.commandsBlob,
   }));
 
-  return figFile.addTextNode(
-    builder
-      .derivedTextData({
-        layoutSize: glyphResult.layoutSize,
-        baselines: glyphResult.baselines,
-        glyphs,
-      })
-      .build(),
-  );
+  const r = addNode({
+    state: ctx.state,
+    doc: blobAddResult.doc,
+    pageId,
+    parentId: opts.parentId,
+    spec: {
+      type: "TEXT",
+      name: opts.name,
+      characters: opts.text,
+      fontFamily: opts.font.family,
+      fontStyle: opts.font.style,
+      fontSize: opts.fontSize,
+      fills: [solidPaint(opts.color)],
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      textAlignHorizontal: opts.alignH
+        ? { value: TEXT_ALIGN_H_VALUES[opts.alignH], name: opts.alignH }
+        : undefined,
+    },
+  });
+  return updateNode({
+    doc: r.doc,
+    pageId,
+    nodeId: r.nodeId,
+    updater: (n) => ({
+      ...n,
+      derivedTextData: {
+        layoutSize: opts.glyphs.layoutSize,
+        baselines: opts.glyphs.baselines,
+        glyphs: remappedGlyphs,
+      },
+    }),
+  });
 }
 
 // =============================================================================
-// Generate .fig File
+// Main
 // =============================================================================
 
-async function generateTextFixtures(): Promise<void> {
+type FrameOpts = {
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly background?: FigColor;
+  readonly clipsContent?: boolean;
+};
+
+function addFrame(
+  doc: FigDesignDocument,
+  pageId: FigPageId,
+  ctx: Ctx,
+  parentId: FigNodeId | null,
+  opts: FrameOpts,
+): { readonly doc: FigDesignDocument; readonly id: FigNodeId } {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId,
+    parentId,
+    spec: {
+      type: "FRAME",
+      name: opts.name,
+      x: opts.x,
+      y: opts.y,
+      width: opts.width,
+      height: opts.height,
+      fills: [solidPaint(opts.background ?? white)],
+      clipsContent: opts.clipsContent ?? true,
+    },
+  });
+  return { doc: r.doc, id: r.id };
+}
+
+async function generate(): Promise<void> {
   console.log("Generating text WebGL fixtures with glyph outlines...");
 
-  // Load fonts
   if (!fs.existsSync(INTER_REGULAR)) {
     throw new Error(`Inter Regular font not found: ${INTER_REGULAR}`);
   }
   if (!fs.existsSync(INTER_BOLD)) {
     throw new Error(`Inter Bold font not found: ${INTER_BOLD}`);
   }
+  // opentype.loadSync was deprecated; parse the buffer directly.
+  // `parse` returns the Font synchronously, matching the legacy
+  // loadSync surface without the deprecation warning.
+  const interRegular = opentype.parse(fs.readFileSync(INTER_REGULAR).buffer as ArrayBuffer);
+  const interBold = opentype.parse(fs.readFileSync(INTER_BOLD).buffer as ArrayBuffer);
+  console.log(`  Inter Regular: unitsPerEm=${interRegular.unitsPerEm}`);
+  console.log(`  Inter Bold: unitsPerEm=${interBold.unitsPerEm}`);
 
-  const interRegular = opentype.loadSync(INTER_REGULAR);
-  const interBold = opentype.loadSync(INTER_BOLD);
+  const empty = createEmptyFigDesignDocument("Text WebGL");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const ctx: Ctx = { state };
+  const pageId = empty.pages[0]!.id;
+  const docInit = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  console.log(
-    `  Inter Regular: unitsPerEm=${interRegular.unitsPerEm}, ascender=${interRegular.ascender}, descender=${interRegular.descender}`,
-  );
-  console.log(
-    `  Inter Bold: unitsPerEm=${interBold.unitsPerEm}, ascender=${interBold.ascender}, descender=${interBold.descender}`,
-  );
-
-  const figFile = createFigFile();
-
-  const docID = figFile.addDocument("Text WebGL");
-  const canvasID = figFile.addCanvas(docID, "Text Canvas");
-  figFile.addInternalCanvas(docID);
-
-  const nextIDRef = { value: 10 };
-  const id = () => nextIDRef.value++;
-
-  // Grid layout
+  // Grid layout — frame index tracked via a ref object so the
+  // surrounding builders stay closure-free and `let`-free.
   const GRID_COLS = 4;
   const GRID_GAP = 30;
   const MARGIN = 50;
-  const frameIndex = 0;
-
-  function gridPos() {
-    const col = frameIndex % GRID_COLS;
-    const row = Math.floor(frameIndex / GRID_COLS);
-    const x = MARGIN + col * (220 + GRID_GAP);
-    const y = MARGIN + row * (220 + GRID_GAP);
-    frameIndex++;
-    return { x, y };
+  const COL_WIDTH = 220 + GRID_GAP;
+  const ROW_HEIGHT = 220 + GRID_GAP;
+  function gridPos(index: number): { x: number; y: number } {
+    const col = index % GRID_COLS;
+    const row = Math.floor(index / GRID_COLS);
+    return { x: MARGIN + col * COL_WIDTH, y: MARGIN + row * ROW_HEIGHT };
   }
 
-  // ---- text-basic: Hello World in Inter Regular 16px ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 16;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-basic")
-        .size(200, 60)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Hello World",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("hello")
-        .text("Hello World")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .size(180, 30)
-        .position(10, 15),
-      glyphs,
-    );
-  }
+  // Each builder produces an updated document. We thread the doc
+  // through `reduce` so no top-level `let` rebinds are needed.
+  type Builder = (acc: FigDesignDocument, pos: { x: number; y: number }) => FigDesignDocument;
 
-  // ---- text-bold ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 16;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-bold")
-        .size(200, 60)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Bold Text",
-      font: interBold,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interBold, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("bold-text")
-        .text("Bold Text")
-        .font("Inter", "Bold")
-        .fontSize(fontSize)
-        .color(black)
-        .size(180, 30)
-        .position(10, 15),
-      glyphs,
-    );
-  }
-
-  // ---- text-small: 10px text ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 10;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-small")
-        .size(200, 40)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Small text at 10px",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("small-text")
-        .text("Small text at 10px")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .size(180, 20)
-        .position(10, 10),
-      glyphs,
-    );
-  }
-
-  // ---- text-large: 48px text ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 48;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-large")
-        .size(200, 80)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Big",
-      font: interBold,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interBold, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("large-text")
-        .text("Big")
-        .font("Inter", "Bold")
-        .fontSize(fontSize)
-        .color(black)
-        .size(180, 60)
-        .position(10, 10),
-      glyphs,
-    );
-  }
-
-  // ---- text-multiline ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 14;
-    const text = "Line one\nLine two\nLine three";
-    const lines = text.split("\n");
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-multiline")
-        .size(200, 100)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateMultilineTextGlyphs({
-      lines,
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      firstBaselineY: computeBaselineY(interRegular, fontSize),
-      lineHeight: computeAutoLineHeight(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("multiline")
-        .text(text)
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .size(180, 80)
-        .position(10, 10),
-      glyphs,
-    );
-  }
-
-  // ---- text-colors: red, green, blue text side by side ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 14;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-colors")
-        .size(200, 60)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-
-    const baselineY = computeBaselineY(interBold, fontSize);
-
-    for (const { text, color, posX } of [
-      { text: "Red", color: rgb(0.9, 0.1, 0.1), posX: 10 },
-      { text: "Green", color: rgb(0.1, 0.7, 0.1), posX: 70 },
-      { text: "Blue", color: rgb(0.1, 0.1, 0.9), posX: 130 },
-    ]) {
-      const glyphs = generateTextGlyphs({
-        text,
-        font: interBold,
-        fontSize,
-        baselineX: 0,
-        baselineY,
-      });
-      addTextWithGlyphs(
-        figFile,
-        textNode(id(), frameID)
-          .name(text.toLowerCase())
-          .text(text)
-          .font("Inter", "Bold")
-          .fontSize(fontSize)
-          .color(color)
-          .size(50, 30)
-          .position(posX, 15),
-        glyphs,
-      );
-    }
-  }
-
-  // ---- text-align-left ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 14;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-align-left")
-        .size(200, 60)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Left aligned",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("left-aligned")
-        .text("Left aligned")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .alignHorizontal("LEFT")
-        .size(180, 30)
-        .position(10, 15),
-      glyphs,
-    );
-  }
-
-  // ---- text-align-center ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 14;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-align-center")
-        .size(200, 60)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Center aligned",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("center-aligned")
-        .text("Center aligned")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .alignHorizontal("CENTER")
-        .size(180, 30)
-        .position(10, 15),
-      glyphs,
-    );
-  }
-
-  // ---- text-align-right ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 14;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-align-right")
-        .size(200, 60)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Right aligned",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), frameID)
-        .name("right-aligned")
-        .text("Right aligned")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .alignHorizontal("RIGHT")
-        .size(180, 30)
-        .position(10, 15),
-      glyphs,
-    );
-  }
-
-  // ---- text-in-clip: text inside 1-level clip ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    const fontSize = 14;
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-in-clip")
-        .size(200, 80)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const clipID = id();
-    figFile.addFrame(
-      frameNode(clipID, frameID)
-        .name("clip")
-        .size(160, 50)
-        .position(20, 15)
-        .background(lightGray)
-        .clipsContent(true)
-        .build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Clipped text content here",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), clipID)
-        .name("clipped-text")
-        .text("Clipped text content here")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .size(200, 30)
-        .position(5, 10),
-      glyphs,
-    );
-  }
-
-  // ---- text-in-nested-clip: text inside 2-level nested clip ----
-  {
-    const pos = gridPos();
-    const outerID = id();
-    const fontSize = 14;
-    figFile.addFrame(
-      frameNode(outerID, canvasID)
-        .name("text-in-nested-clip")
-        .size(200, 100)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    const innerID = id();
-    figFile.addFrame(
-      frameNode(innerID, outerID)
-        .name("inner-clip")
-        .size(160, 70)
-        .position(20, 15)
-        .background(lightGray)
-        .clipsContent(true)
-        .build(),
-    );
-    const deepID = id();
-    figFile.addFrame(
-      frameNode(deepID, innerID).name("deep-clip").size(130, 40).position(15, 15).clipsContent(true).build(),
-    );
-    const glyphs = generateTextGlyphs({
-      text: "Nested clip text",
-      font: interRegular,
-      fontSize,
-      baselineX: 0,
-      baselineY: computeBaselineY(interRegular, fontSize),
-    });
-    addTextWithGlyphs(
-      figFile,
-      textNode(id(), deepID)
-        .name("nested-text")
-        .text("Nested clip text")
-        .font("Inter", "Regular")
-        .fontSize(fontSize)
-        .color(black)
-        .size(120, 30)
-        .position(5, 5),
-      glyphs,
-    );
-  }
-
-  // ---- text-with-shape: text alongside shapes ----
-  {
-    const pos = gridPos();
-    const frameID = id();
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name("text-with-shape")
-        .size(200, 100)
-        .position(pos.x, pos.y)
-        .background(white)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
-    );
-    figFile.addRoundedRectangle(
-      roundedRectNode(id(), frameID)
-        .name("bg-card")
-        .size(180, 80)
-        .position(10, 10)
-        .fill(rgb(0.93, 0.93, 0.98))
-        .cornerRadius(8)
-        .build(),
-    );
-    figFile.addEllipse(
-      ellipseNode(id(), frameID)
-        .name("avatar")
-        .size(40, 40)
-        .position(20, 30)
-        .fill(rgb(0.3, 0.5, 0.9))
-        .build(),
-    );
-
-    // Title text
-    {
+  const builders: readonly Builder[] = [
+    // text-basic
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-basic", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 16;
       const glyphs = generateTextGlyphs({
-        text: "Card Title",
-        font: interBold,
-        fontSize,
-        baselineX: 0,
-        baselineY: computeBaselineY(interBold, fontSize),
-      });
-      addTextWithGlyphs(
-        figFile,
-        textNode(id(), frameID)
-          .name("title")
-          .text("Card Title")
-          .font("Inter", "Bold")
-          .fontSize(fontSize)
-          .color(black)
-          .size(110, 24)
-          .position(75, 25),
-        glyphs,
-      );
-    }
-
-    // Subtitle text
-    {
-      const fontSize = 12;
-      const glyphs = generateTextGlyphs({
-        text: "Description text",
+        text: "Hello World",
         font: interRegular,
         fontSize,
         baselineX: 0,
         baselineY: computeBaselineY(interRegular, fontSize),
       });
-      addTextWithGlyphs(
-        figFile,
-        textNode(id(), frameID)
-          .name("subtitle")
-          .text("Description text")
-          .font("Inter", "Regular")
-          .fontSize(fontSize)
-          .color(rgb(0.4, 0.4, 0.4))
-          .size(110, 20)
-          .position(75, 55),
-        glyphs,
-      );
-    }
-  }
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "hello", text: "Hello World",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        x: 10, y: 15, width: 180, height: 30, glyphs,
+      });
+    },
+    // text-bold
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-bold", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const fontSize = 16;
+      const glyphs = generateTextGlyphs({
+        text: "Bold Text",
+        font: interBold,
+        fontSize,
+        baselineX: 0,
+        baselineY: computeBaselineY(interBold, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "bold-text", text: "Bold Text",
+        font: { family: "Inter", style: "Bold" }, fontSize, color: black,
+        x: 10, y: 15, width: 180, height: 30, glyphs,
+      });
+    },
+    // text-small
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-small", x: pos.x, y: pos.y, width: 200, height: 40 });
+      const fontSize = 10;
+      const glyphs = generateTextGlyphs({
+        text: "Small text at 10px",
+        font: interRegular,
+        fontSize,
+        baselineX: 0,
+        baselineY: computeBaselineY(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "small-text", text: "Small text at 10px",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        x: 10, y: 10, width: 180, height: 20, glyphs,
+      });
+    },
+    // text-large
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-large", x: pos.x, y: pos.y, width: 200, height: 80 });
+      const fontSize = 48;
+      const glyphs = generateTextGlyphs({
+        text: "Big",
+        font: interBold,
+        fontSize,
+        baselineX: 0,
+        baselineY: computeBaselineY(interBold, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "large-text", text: "Big",
+        font: { family: "Inter", style: "Bold" }, fontSize, color: black,
+        x: 10, y: 10, width: 180, height: 60, glyphs,
+      });
+    },
+    // text-multiline
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-multiline", x: pos.x, y: pos.y, width: 200, height: 100 });
+      const fontSize = 14;
+      const text = "Line one\nLine two\nLine three";
+      const lines = text.split("\n");
+      const glyphs = generateMultilineTextGlyphs({
+        lines,
+        font: interRegular,
+        fontSize,
+        baselineX: 0,
+        firstBaselineY: computeBaselineY(interRegular, fontSize),
+        lineHeight: computeAutoLineHeight(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "multiline", text,
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        x: 10, y: 10, width: 180, height: 80, glyphs,
+      });
+    },
+    // text-colors — three colored words side by side
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-colors", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const fontSize = 14;
+      const baselineY = computeBaselineY(interBold, fontSize);
+      const entries: readonly { text: string; color: FigColor; posX: number }[] = [
+        { text: "Red", color: rgb(0.9, 0.1, 0.1), posX: 10 },
+        { text: "Green", color: rgb(0.1, 0.7, 0.1), posX: 70 },
+        { text: "Blue", color: rgb(0.1, 0.1, 0.9), posX: 130 },
+      ];
+      return entries.reduce<FigDesignDocument>((innerAcc, entry) => {
+        const g = generateTextGlyphs({
+          text: entry.text, font: interBold, fontSize, baselineX: 0, baselineY,
+        });
+        return addTextWithGlyphs(innerAcc, pageId, ctx, {
+          parentId: f.id, name: entry.text.toLowerCase(), text: entry.text,
+          font: { family: "Inter", style: "Bold" }, fontSize, color: entry.color,
+          x: entry.posX, y: 15, width: 50, height: 30, glyphs: g,
+        });
+      }, f.doc);
+    },
+    // text-align-left
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-align-left", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const fontSize = 14;
+      const glyphs = generateTextGlyphs({
+        text: "Left aligned", font: interRegular, fontSize,
+        baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "left-aligned", text: "Left aligned",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        alignH: "LEFT",
+        x: 10, y: 15, width: 180, height: 30, glyphs,
+      });
+    },
+    // text-align-center
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-align-center", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const fontSize = 14;
+      const glyphs = generateTextGlyphs({
+        text: "Center aligned", font: interRegular, fontSize,
+        baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "center-aligned", text: "Center aligned",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        alignH: "CENTER",
+        x: 10, y: 15, width: 180, height: 30, glyphs,
+      });
+    },
+    // text-align-right
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-align-right", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const fontSize = 14;
+      const glyphs = generateTextGlyphs({
+        text: "Right aligned", font: interRegular, fontSize,
+        baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(f.doc, pageId, ctx, {
+        parentId: f.id, name: "right-aligned", text: "Right aligned",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        alignH: "RIGHT",
+        x: 10, y: 15, width: 180, height: 30, glyphs,
+      });
+    },
+    // text-in-clip
+    (acc, pos) => {
+      const outer = addFrame(acc, pageId, ctx, null, { name: "text-in-clip", x: pos.x, y: pos.y, width: 200, height: 80 });
+      const clip = addFrame(outer.doc, pageId, ctx, outer.id, {
+        name: "clip", x: 20, y: 15, width: 160, height: 50, background: lightGray, clipsContent: true,
+      });
+      const fontSize = 14;
+      const glyphs = generateTextGlyphs({
+        text: "Clipped text content here", font: interRegular, fontSize,
+        baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(clip.doc, pageId, ctx, {
+        parentId: clip.id, name: "clipped-text", text: "Clipped text content here",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        x: 5, y: 10, width: 200, height: 30, glyphs,
+      });
+    },
+    // text-in-nested-clip
+    (acc, pos) => {
+      const outer = addFrame(acc, pageId, ctx, null, { name: "text-in-nested-clip", x: pos.x, y: pos.y, width: 200, height: 100 });
+      const inner = addFrame(outer.doc, pageId, ctx, outer.id, {
+        name: "inner-clip", x: 20, y: 15, width: 160, height: 70, background: lightGray, clipsContent: true,
+      });
+      const deep = addFrame(inner.doc, pageId, ctx, inner.id, {
+        name: "deep-clip", x: 15, y: 15, width: 130, height: 40, clipsContent: true,
+      });
+      const fontSize = 14;
+      const glyphs = generateTextGlyphs({
+        text: "Nested clip text", font: interRegular, fontSize,
+        baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
+      });
+      return addTextWithGlyphs(deep.doc, pageId, ctx, {
+        parentId: deep.id, name: "nested-text", text: "Nested clip text",
+        font: { family: "Inter", style: "Regular" }, fontSize, color: black,
+        x: 5, y: 5, width: 120, height: 30, glyphs,
+      });
+    },
+    // text-with-shape — card title + subtitle with background rect and avatar circle
+    (acc, pos) => {
+      const f = addFrame(acc, pageId, ctx, null, { name: "text-with-shape", x: pos.x, y: pos.y, width: 200, height: 100 });
+      const bg = addNode({
+        state: ctx.state,
+        doc: f.doc,
+        pageId,
+        parentId: f.id,
+        spec: {
+          type: "ROUNDED_RECTANGLE", name: "bg-card",
+          x: 10, y: 10, width: 180, height: 80,
+          fills: [solidPaint(rgb(0.93, 0.93, 0.98))],
+          cornerRadius: 8,
+        },
+      });
+      const avatar = addNode({
+        state: ctx.state,
+        doc: bg.doc,
+        pageId,
+        parentId: f.id,
+        spec: {
+          type: "ELLIPSE", name: "avatar",
+          x: 20, y: 30, width: 40, height: 40,
+          fills: [solidPaint(rgb(0.3, 0.5, 0.9))],
+        },
+      });
+      const titleFontSize = 16;
+      const titleGlyphs = generateTextGlyphs({
+        text: "Card Title", font: interBold, fontSize: titleFontSize,
+        baselineX: 0, baselineY: computeBaselineY(interBold, titleFontSize),
+      });
+      const docWithTitle = addTextWithGlyphs(avatar.doc, pageId, ctx, {
+        parentId: f.id, name: "title", text: "Card Title",
+        font: { family: "Inter", style: "Bold" }, fontSize: titleFontSize, color: black,
+        x: 75, y: 25, width: 110, height: 24, glyphs: titleGlyphs,
+      });
+      const subFontSize = 12;
+      const subGlyphs = generateTextGlyphs({
+        text: "Description text", font: interRegular, fontSize: subFontSize,
+        baselineX: 0, baselineY: computeBaselineY(interRegular, subFontSize),
+      });
+      return addTextWithGlyphs(docWithTitle, pageId, ctx, {
+        parentId: f.id, name: "subtitle", text: "Description text",
+        font: { family: "Inter", style: "Regular" }, fontSize: subFontSize, color: rgb(0.4, 0.4, 0.4),
+        x: 75, y: 55, width: 110, height: 20, glyphs: subGlyphs,
+      });
+    },
+  ];
 
-  // Ensure output directory
+  const finalDoc = builders.reduce<FigDesignDocument>(
+    (acc, fn, index) => fn(acc, gridPos(index)),
+    docInit,
+  );
+
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
@@ -653,32 +497,23 @@ async function generateTextFixtures(): Promise<void> {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  const figData = await figFile.buildAsync({ fileName: "text-webgl" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
-  console.log(`Frames: ${frameIndex}`);
-  console.log(`\nFrame list:`);
+  console.log(`Frames: ${builders.length}`);
   const names = [
-    "text-basic",
-    "text-bold",
-    "text-small",
-    "text-large",
-    "text-multiline",
-    "text-colors",
-    "text-align-left",
-    "text-align-center",
-    "text-align-right",
-    "text-in-clip",
-    "text-in-nested-clip",
-    "text-with-shape",
+    "text-basic", "text-bold", "text-small", "text-large", "text-multiline",
+    "text-colors", "text-align-left", "text-align-center", "text-align-right",
+    "text-in-clip", "text-in-nested-clip", "text-with-shape",
   ];
+  console.log(`\nFrame list:`);
   for (const name of names) {
     console.log(`  - ${name}`);
   }
 }
 
-generateTextFixtures().catch((error) => {
+generate().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

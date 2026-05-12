@@ -249,6 +249,24 @@ function denormalizeNodeInPlace(node: Record<string, unknown>): void {
   if (symbolData && typeof symbolData === "object") {
     denormalizeOverrideList((symbolData as Record<string, unknown>).symbolOverrides);
   }
+  // Per-character text style overrides (styleRuns in the domain
+  // surface) carry their own `fillPaints` array embedded in
+  // `textData.styleOverrideTable[]`. Those paints also enter the
+  // encoder as plain Kiwi `Paint` messages, so their `type` and
+  // `blendMode` need the same string → enum coercion the top-level
+  // node paint lists receive — otherwise the encoder fails with
+  // "Expected object for type PaintType, got string".
+  const textData = node.textData;
+  if (textData && typeof textData === "object") {
+    const overrideTable = (textData as Record<string, unknown>).styleOverrideTable;
+    if (Array.isArray(overrideTable)) {
+      for (const entry of overrideTable) {
+        if (entry && typeof entry === "object") {
+          denormalizePaintList((entry as Record<string, unknown>).fillPaints);
+        }
+      }
+    }
+  }
 }
 
 /** Clone a fig-family node change and convert string enums back to Kiwi enum values for encoding. */

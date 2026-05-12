@@ -104,6 +104,7 @@ export {
   type ResolvedFilter,
   type ResolvedFilterPrimitive,
   type IdGenerator,
+  type SceneGraphRenderOptions,
 } from "./render";
 
 // RenderTree — intermediate representation for SVG/React/WebGL backends

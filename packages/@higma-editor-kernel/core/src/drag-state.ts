@@ -6,10 +6,10 @@
  * Format-specific packages can specialize via type aliases.
  */
 
-import type { ResizeHandlePosition, SimpleBounds } from "./geometry/types";
+import type { ResizeHandlePosition, SimpleBounds } from "./geometry";
 
 // Re-export from geometry types
-export type { ResizeHandlePosition } from "./geometry/types";
+export type { ResizeHandlePosition } from "./geometry";
 
 // =============================================================================
 // Base States

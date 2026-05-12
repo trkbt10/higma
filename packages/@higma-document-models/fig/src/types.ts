@@ -1239,14 +1239,16 @@ export type BlendMode =
   | "LUMINOSITY";
 
 /**
- * Stroke cap type
+ * Stroke cap type — names match the Kiwi schema (`StrokeCap` enum).
+ * See `@higma-document-models/fig/constants/strokes` (`StrokeCap`) for
+ * the SoT export; this alias mirrors it.
  */
 export type FigStrokeCap =
   | "NONE"
   | "ROUND"
   | "SQUARE"
-  | "LINE_ARROW"
-  | "TRIANGLE_ARROW";
+  | "ARROW_LINES"
+  | "ARROW_EQUILATERAL";
 
 /**
  * Stroke join type

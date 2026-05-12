@@ -41,6 +41,7 @@ import { defensiveMark } from "@higma-document-models/fig/diagnostics";
 import type {
   FigDesignNode, AutoLayoutProps, LayoutConstraints, TextData, TextStyleOverride, SymbolOverride,
   ComponentPropertyDef, ComponentPropertyRef, ComponentPropertyAssignment, ComponentPropertyType, ComponentPropertyNodeField, ComponentPropertyValue,
+  FigGridTrackPositions,
   FigStyleRegistry,
 } from "../document";
 import type { BlendMode } from "@higma-document-models/fig/types";
@@ -106,6 +107,25 @@ function isFigVector(value: unknown): value is FigVector {
   return typeof value === "object" && value !== null &&
     "x" in value && typeof value.x === "number" &&
     "y" in value && typeof value.y === "number";
+}
+
+function isFigGuid(value: unknown): value is FigGuid {
+  return typeof value === "object" && value !== null &&
+    "sessionID" in value && typeof value.sessionID === "number" &&
+    "localID" in value && typeof value.localID === "number";
+}
+
+function isFigGridTrackPositions(value: unknown): value is FigGridTrackPositions {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const entries = (value as { readonly entries?: unknown }).entries;
+  if (!Array.isArray(entries)) {
+    return false;
+  }
+  return entries.every((entry) =>
+    typeof entry === "object" && entry !== null && isFigGuid((entry as { readonly id?: unknown }).id),
+  );
 }
 
 /**
@@ -237,48 +257,6 @@ function extractIndividualStrokeWeights(node: FigNode): FigDesignNode["individua
 
   return { top, right, bottom, left };
 }
-
-/**
- * Fields that are explicitly modeled in FigDesignNode and should be
- * excluded from the _raw preservation bag.
- */
-const MODELED_FIELDS: ReadonlySet<string> = new Set([
-  "guid", "parentIndex", "children", "type", "phase",
-  "name", "visible", "opacity",
-  "transform", "size", "transformOrigin",
-  "fillPaints", "backgroundPaints", "strokePaints", "strokeWeight", "strokeAlign", "strokeJoin", "strokeCap", "strokeDashes",
-  "borderTopWeight", "borderRightWeight", "borderBottomWeight", "borderLeftWeight", "borderStrokeWeightsIndependent",
-  "styleIdForFill", "styleIdForStrokeFill",
-  "exportSettings",
-  "cornerRadius", "rectangleCornerRadii", "cornerSmoothing",
-  "rectangleTopLeftCornerRadius", "rectangleTopRightCornerRadius",
-  "rectangleBottomLeftCornerRadius", "rectangleBottomRightCornerRadius",
-  "dashPattern",
-  "blendMode",
-  "effects",
-  "derivedTextData",
-  "clipsContent", "frameMaskDisabled",
-  "sectionContentsHidden",
-  "stackMode", "stackSpacing", "stackPadding",
-  "stackPrimaryAlignItems", "stackCounterAlignItems", "stackPrimaryAlignContent",
-  "stackWrap", "stackCounterSpacing", "stackReverseZIndex",
-  "stackPositioning", "stackPrimarySizing", "stackCounterSizing",
-  "stackChildAlignSelf", "stackChildPrimaryGrow",
-  "horizontalConstraint", "verticalConstraint",
-  "characters", "fontSize", "fontName",
-  "textAlignHorizontal", "textAlignVertical", "textAutoResize",
-  "textDecoration", "textCase", "lineHeight", "letterSpacing",
-  "textTruncation", "leadingTrim", "fontVariations", "hyperlink", "textTracking",
-  "symbolID", "symbolOverrides", "symbolData", "derivedSymbolData",
-  "componentPropDefs", "componentPropRefs", "componentPropAssignments", "variantPropSpecs",
-  "isStateGroup",
-  "mask",
-  "arcData",
-  "vectorPaths", "vectorData",
-  "booleanOperation",
-  "pointCount", "starInnerRadius", "starInnerScale",
-  "fillGeometry", "strokeGeometry",
-]);
 
 // =============================================================================
 // Blend Mode Extraction
@@ -724,21 +702,6 @@ function extractVariantPropSpecs(node: FigNode): FigDesignNode["variantPropSpecs
 // =============================================================================
 
 /**
- * Collect raw fields not modeled in FigDesignNode for roundtrip preservation.
- */
-export function collectFigRawFields(node: FigNode): Record<string, unknown> | undefined {
-  const raw: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(node)) {
-    if (!MODELED_FIELDS.has(key) && value !== undefined) {
-      raw[key] = value;
-    }
-  }
-
-  return Object.keys(raw).length > 0 ? raw : undefined;
-}
-
-/**
  * Resolve override guid paths carried by a node into the SYMBOL
  * descendant namespace the scene-graph builder will look them up in.
  *
@@ -770,6 +733,8 @@ function resolveOverridePaths(
 ): {
   overrides: readonly SymbolOverride[] | undefined;
   derivedSymbolData: readonly SymbolOverride[] | undefined;
+  rawOverrides: readonly SymbolOverride[] | undefined;
+  rawDerivedSymbolData: readonly SymbolOverride[] | undefined;
 } {
   const rawOverrides = getInstanceSymbolOverrides(node);
   const rawDerivedSymbolData = node.derivedSymbolData;
@@ -779,40 +744,60 @@ function resolveOverridePaths(
   // returns undefined for non-INSTANCE nodes so the output is always
   // shaped to what the domain node expects.
   if (!symbolMap) {
-    return { overrides: rawOverrides, derivedSymbolData: rawDerivedSymbolData };
+    return { overrides: rawOverrides, derivedSymbolData: rawDerivedSymbolData, rawOverrides, rawDerivedSymbolData };
   }
   const effectiveGuid = getEffectiveSymbolID(node);
   if (!effectiveGuid) {
-    return { overrides: rawOverrides, derivedSymbolData: rawDerivedSymbolData };
+    return { overrides: rawOverrides, derivedSymbolData: rawDerivedSymbolData, rawOverrides, rawDerivedSymbolData };
   }
   const effectiveSymbol = resolveSymbolGuidStr(effectiveGuid, symbolMap);
   if (!effectiveSymbol) {
-    return { overrides: rawOverrides, derivedSymbolData: rawDerivedSymbolData };
+    return { overrides: rawOverrides, derivedSymbolData: rawDerivedSymbolData, rawOverrides, rawDerivedSymbolData };
   }
 
-  // Compute ghost sessions across both `rawOverrides` and
-  // `rawDerivedSymbolData` so a session that uses 1 entry in each
-  // (overrides+dsd combined ≥ 2) still passes Stage 1. The
-  // session-counts-per-resolve approach mis-classified single-entry
-  // overrides like Action 3-1's `[126:58332]` (overrides) +
-  // `[126:59453]` (dsd) as phantoms because each `resolve` call only
-  // saw a count of 1. Sharing the count across both arrays restores
-  // the SF-Symbol glyph override that addresses 15:871 (the `Symbol`
-  // text inside Action button SYMBOLs).
+  // Compute ghost sessions: a session ID that is *referenced* by any
+  // override entry on this INSTANCE but does not appear on any node
+  // in the loaded file. Such sessions are Figma's per-INSTANCE ghost
+  // allocations — never bound to a real node but used as the
+  // path-first guid for per-INSTANCE override addressing.
+  //
+  // Earlier revisions of this code restricted the classification to
+  // sessions appearing in ≥2 entries within a single INSTANCE so a
+  // stray single-entry phantom (rewritten TEXT residue, stale style
+  // IDs) could not pose as a ghost session and mis-route into a
+  // sibling descendant. That heuristic dropped legitimate
+  // single-entry per-INSTANCE overrides whenever an authored ghost
+  // session was distributed across many INSTANCEs (each contributing
+  // just one entry). The `symbolMap`-based check is more accurate: if
+  // the session id is *not* present anywhere in the file's node
+  // graph, the entry cannot be addressing a real node by that path
+  // even in principle — so treating it as a ghost (single-entry or
+  // multi-entry) and letting the self-override rerouter handle it is
+  // safe. Single-entry phantoms that happen to share a session with
+  // some unrelated node are still drained by Stage 2
+  // (`guidReachableInSymbol`) when the resolved path doesn't land in
+  // the SYMBOL subtree.
   const sharedGhostSessions = new Set<number>();
   {
     const combined = [
       ...(rawOverrides ?? []),
       ...(rawDerivedSymbolData ?? []),
     ];
-    const sessionCounts = new Map<number, number>();
+    const referencedSessions = new Set<number>();
     for (const e of combined) {
       const g = e.guidPath?.guids?.[0];
       if (!g) {continue;}
-      sessionCounts.set(g.sessionID, (sessionCounts.get(g.sessionID) ?? 0) + 1);
+      referencedSessions.add(g.sessionID);
     }
-    for (const [sessionID, count] of sessionCounts) {
-      if (count >= 2) {sharedGhostSessions.add(sessionID);}
+    const sessionsInFile = new Set<number>();
+    for (const fileGuidString of symbolMap.keys()) {
+      const sep = fileGuidString.indexOf(":");
+      if (sep <= 0) {continue;}
+      const s = Number.parseInt(fileGuidString.slice(0, sep), 10);
+      if (Number.isFinite(s)) {sessionsInFile.add(s);}
+    }
+    for (const s of referencedSessions) {
+      if (!sessionsInFile.has(s)) {sharedGhostSessions.add(s);}
     }
   }
   const resolve = (
@@ -902,27 +887,33 @@ function resolveOverridePaths(
     // a sibling descendant by majority-vote.
     const rerouted = filtered.map((e) => {
       if (!isInstanceSelfOverride(e)) {return e;}
-      // If the entry's path-first guid resolves to a real descendant in
-      // the SYMBOL — either by GUID match or by `overrideKey` match —
-      // it is NOT a self-override; it's a per-descendant size/name pin
-      // that happens to use only INSTANCE-self field names. Examples:
-      // Action SYMBOL's Title FRAME has overrideKey 5591:26670 and gets
-      // a single-field `{size: 299×52}` DSD entry. Re-routing that to
-      // the SYMBOL root corrupts the Action's primary-axis layout
-      // (Title.size becomes 370 instead of 299, and the inner
-      // _Separator stretches to 370 too, breaking iOS list separators
-      // for Action 5/4-1/2-1/3-1).
       const firstGuid = e.guidPath?.guids?.[0];
       if (firstGuid) {
+        // If the entry's path-first guid resolves to a real descendant in
+        // the SYMBOL — either by GUID match or by `overrideKey` match —
+        // it is NOT a self-override; it's a per-descendant size/name pin
+        // that happens to use only INSTANCE-self field names. Examples:
+        // Action SYMBOL's Title FRAME has overrideKey 5591:26670 and gets
+        // a single-field `{size: 299×52}` DSD entry. Re-routing that to
+        // the SYMBOL root corrupts the Action's primary-axis layout
+        // (Title.size becomes 370 instead of 299, and the inner
+        // _Separator stretches to 370 too, breaking iOS list separators
+        // for Action 5/4-1/2-1/3-1).
         const s = ctx.guidString(firstGuid);
-        // Exact slot match in the SYMBOL — by descendant's own GUID
-        // or by Figma's stable SYMBOL-side `overrideKey`. Both forms
-        // live in `bundle.exactSlotMap`, the SoT for "is this address
-        // an exact slot reference?". When matched, the entry targets
-        // a real descendant (not the SYMBOL root) and must NOT be
-        // rerouted as a self-override.
         const bundle = ctx.symbolDescendants(effectiveSymbol.node);
         if (bundle.exactSlotMap.has(s)) { return e; }
+        // If the guid exists somewhere in the file (`guidExistsInFile`
+        // returning true via `symbolMap`), it is addressing a real
+        // node, even if that node is not a descendant of the effective
+        // SYMBOL. Rerouting such entries to the SYMBOL root would
+        // corrupt the translation primitive's "this entry already
+        // targets a known node" branch (see the
+        // "accepts identity translations" spec). The post-resolve
+        // `guidReachableInSymbol` filter is the SoT for dropping
+        // out-of-symbol references; the rerouter must not pre-empt it.
+        if (guidExistsInFile(ctx, firstGuid, symbolMap)) {
+          return e;
+        }
       }
       const newPath = { guids: [effectiveGuid] };
       return { ...e, guidPath: newPath };
@@ -939,6 +930,11 @@ function resolveOverridePaths(
   return {
     overrides: rawOverrides ? resolve(rawOverrides) : undefined,
     derivedSymbolData: rawDerivedSymbolData ? resolve(rawDerivedSymbolData) : undefined,
+    // Preserve the original raw entries so `documentToTree` can emit
+    // them on the projected Kiwi node. The resolved versions above are
+    // SoT for renderers; the raw versions are SoT for round-trip.
+    rawOverrides,
+    rawDerivedSymbolData,
   };
 }
 
@@ -1248,8 +1244,12 @@ export function convertFigNode(
     return undefined;
   })();
 
-  const { overrides: resolvedOverrides, derivedSymbolData: resolvedDerivedSymbolData } =
-    resolveOverridePaths(ctx, node, symbolMap, blobs);
+  const {
+    overrides: resolvedOverrides,
+    derivedSymbolData: resolvedDerivedSymbolData,
+    rawOverrides: rawOverridesPreserved,
+    rawDerivedSymbolData: rawDerivedSymbolDataPreserved,
+  } = resolveOverridePaths(ctx, node, symbolMap, blobs);
 
   const fills = resolveNodeFills(node, styleRegistry);
   const strokes = resolveNodeStrokes(node, styleRegistry);
@@ -1295,6 +1295,8 @@ export function convertFigNode(
     symbolId: resolveSymbolIdForDomain(node),
     overrides: resolvedOverrides,
     derivedSymbolData: resolvedDerivedSymbolData,
+    rawOverrides: rawOverridesPreserved,
+    rawDerivedSymbolData: rawDerivedSymbolDataPreserved,
 
     componentPropertyDefs: extractComponentPropertyDefs(node),
     componentPropertyRefs: extractComponentPropertyRefs(node),
@@ -1322,7 +1324,49 @@ export function convertFigNode(
 
     overrideKey: node.overrideKey,
 
-    _raw: collectFigRawFields(node),
+    // ---- SYMBOL load-bearing ----
+    isSymbolPublishable: typeof node.isSymbolPublishable === "boolean" ? node.isSymbolPublishable : undefined,
+    sharedSymbolVersion: typeof node.sharedSymbolVersion === "string" ? node.sharedSymbolVersion : undefined,
+    key: typeof node.key === "string" ? node.key : undefined,
+
+    // ---- Style-definition node markers ----
+    styleType: node.styleType,
+    styleIdForText: node.styleIdForText,
+    styleIdForEffect: node.styleIdForEffect,
+    styleIdForGrid: node.styleIdForGrid,
+
+    // ---- FRAME background separate ----
+    backgroundPaints: node.backgroundPaints,
+
+    // ---- FRAME load-bearing (formerly _raw) ----
+    minSize: isFigVector(node.minSize) ? node.minSize : undefined,
+    maxSize: isFigVector(node.maxSize) ? node.maxSize : undefined,
+    bordersTakeSpace: typeof node.bordersTakeSpace === "boolean" ? node.bordersTakeSpace : undefined,
+    targetAspectRatio: isFigVector(node.targetAspectRatio) ? node.targetAspectRatio : undefined,
+    proportionsConstrained: typeof node.proportionsConstrained === "boolean" ? node.proportionsConstrained : undefined,
+    gridRows: isFigGridTrackPositions(node.gridRows) ? node.gridRows : undefined,
+    gridColumns: isFigGridTrackPositions(node.gridColumns) ? node.gridColumns : undefined,
+    gridRowGap: typeof node.gridRowGap === "number" ? node.gridRowGap : undefined,
+    gridColumnGap: typeof node.gridColumnGap === "number" ? node.gridColumnGap : undefined,
+
+    // ---- INSTANCE additional ----
+    overriddenSymbolID: node.overriddenSymbolID ? guidToNodeId(node.overriddenSymbolID) : undefined,
+    componentPropertyReferences: node.componentPropertyReferences,
+
+    // ---- Variable consumption ----
+    variableConsumptionMap: node.variableConsumptionMap,
+    parameterConsumptionMap: node.parameterConsumptionMap,
+    variableModeBySetMap: node.variableModeBySetMap,
+
+    // ---- Text extended ----
+    textTracking: typeof node.textTracking === "number" ? node.textTracking : undefined,
+    textTruncation: node.textTruncation,
+    leadingTrim: node.leadingTrim,
+    fontVariations: node.fontVariations,
+    hyperlink: node.hyperlink,
+
+    // ---- Vector / Star ----
+    handleMirroring: node.handleMirroring,
   };
 
   // Collect components

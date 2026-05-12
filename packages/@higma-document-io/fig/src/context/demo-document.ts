@@ -2,8 +2,10 @@
  * @file Demo .fig document builder
  *
  * Builds a rich demo FigDesignDocument that showcases the fig renderer's
- * capabilities. Uses the fig file builder to generate a proper .fig binary,
- * then parses it back into a FigDesignDocument.
+ * capabilities. Constructs the document directly via the canonical
+ * `@higma-document-io/fig` builder helpers (`createEmptyFigDesignDocument`
+ * + `addNode` + `addPage` + `updateNode`); no fig-file binary round-trip
+ * is involved.
  *
  * Demonstrates:
  * - Multiple artboards (pages)
@@ -16,446 +18,828 @@
  */
 
 import {
-  createFigFile,
-  frameNode,
-  roundedRectNode,
-  ellipseNode,
-  starNode,
-  polygonNode,
-  lineNode,
-  textNode,
-  symbolNode,
-  instanceNode,
-  dropShadow,
-  innerShadow,
-  layerBlur,
-  effects,
-  linearGradient,
-  radialGradient,
-} from "@higma-document-io/fig/fig-file";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
-import { createFigDesignDocument } from "./fig-context";
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  updateNode,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type { NodeSpec } from "@higma-document-io/fig/types";
+import type {
+  FigDesignDocument,
+  FigDesignNode,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type {
+  FigColor,
+  FigEffect,
+  FigGradientStop,
+  FigGradientTransform,
+  FigPaint,
+} from "@higma-document-models/fig/types";
+import {
+  NUMBER_UNITS_VALUES,
+  STACK_ALIGN_VALUES,
+  STACK_JUSTIFY_VALUES,
+  STACK_MODE_VALUES,
+  TEXT_ALIGN_H_VALUES,
+  TEXT_ALIGN_V_VALUES,
+  TEXT_AUTO_RESIZE_VALUES,
+} from "@higma-document-models/fig/constants";
 
 // =============================================================================
 // Color Palette
 // =============================================================================
 
-const BLUE = { r: 0.24, g: 0.47, b: 0.85, a: 1 };
-const RED = { r: 0.90, g: 0.25, b: 0.25, a: 1 };
-const GREEN = { r: 0.22, g: 0.72, b: 0.45, a: 1 };
-const ORANGE = { r: 0.95, g: 0.55, b: 0.15, a: 1 };
-const PURPLE = { r: 0.55, g: 0.30, b: 0.85, a: 1 };
-const DARK = { r: 0.15, g: 0.15, b: 0.20, a: 1 };
-const GRAY = { r: 0.55, g: 0.55, b: 0.60, a: 1 };
-const LIGHT_GRAY = { r: 0.92, g: 0.92, b: 0.93, a: 1 };
-const WHITE = { r: 1, g: 1, b: 1, a: 1 };
+const BLUE: FigColor = { r: 0.24, g: 0.47, b: 0.85, a: 1 };
+const RED: FigColor = { r: 0.90, g: 0.25, b: 0.25, a: 1 };
+const GREEN: FigColor = { r: 0.22, g: 0.72, b: 0.45, a: 1 };
+const ORANGE: FigColor = { r: 0.95, g: 0.55, b: 0.15, a: 1 };
+const PURPLE: FigColor = { r: 0.55, g: 0.30, b: 0.85, a: 1 };
+const DARK: FigColor = { r: 0.15, g: 0.15, b: 0.20, a: 1 };
+const GRAY: FigColor = { r: 0.55, g: 0.55, b: 0.60, a: 1 };
+const LIGHT_GRAY: FigColor = { r: 0.92, g: 0.92, b: 0.93, a: 1 };
+const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
 
 // =============================================================================
-// ID Counter
+// Paint Helpers
 // =============================================================================
 
-function createIDCounter(start = 10): { next(): number } {
-  const ref = { value: start };
-  return { next: () => ref.value++ };
+function solidPaint(color: FigColor): FigPaint {
+  return {
+    type: "SOLID",
+    color,
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+/**
+ * Compute the Kiwi `transform` matrix that maps gradient space → the
+ * shape's normalized [0,1]×[0,1] space, for a linear gradient travelling
+ * from (startX, startY) to (endX, endY). Matches the math used by the
+ * legacy `fig-file` builder so visual output stays equivalent to what
+ * the old `linearGradient().angle(...)` chain produced.
+ */
+function linearHandlesToTransform(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+): FigGradientTransform {
+  const dx = start.x - end.x;
+  const dy = start.y - end.y;
+  return {
+    m00: dx,
+    m01: -dy,
+    m02: end.x,
+    m10: dy,
+    m11: dx,
+    m12: end.y,
+  };
+}
+
+/**
+ * Translate a CSS-style angle (0° = right, 90° = down, ...) into the
+ * shape-normalized [start, end] handle pair the gradient encoder needs.
+ * Mirrors the math the legacy `linearGradient().angle()` chain used.
+ */
+function angleHandles(degrees: number): { start: { x: number; y: number }; end: { x: number; y: number } } {
+  const rad = (degrees * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    start: { x: 0.5 - cos * 0.5, y: 0.5 - sin * 0.5 },
+    end: { x: 0.5 + cos * 0.5, y: 0.5 + sin * 0.5 },
+  };
+}
+
+function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): FigPaint {
+  const { start, end } = angleHandles(angleDeg);
+  return {
+    type: "GRADIENT_LINEAR",
+    stops,
+    transform: linearHandlesToTransform(start, end),
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+function radialGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
+  return {
+    type: "GRADIENT_RADIAL",
+    stops,
+    // Default radial gradient: centered at (0.5, 0.5) with radius 0.5 along
+    // both axes. Matches the old builder's `radialGradient()` defaults.
+    transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
+    opacity: 1,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+// =============================================================================
+// Effect Helpers
+// =============================================================================
+
+type ShadowOpts = {
+  readonly offset: { readonly x: number; readonly y: number };
+  readonly radius: number;
+  readonly color: FigColor;
+  readonly spread?: number;
+};
+
+function dropShadowEffect(opts: ShadowOpts): FigEffect {
+  return {
+    type: "DROP_SHADOW",
+    visible: true,
+    color: opts.color,
+    offset: opts.offset,
+    radius: opts.radius,
+    spread: opts.spread,
+    blendMode: "NORMAL",
+  };
+}
+
+function innerShadowEffect(opts: ShadowOpts): FigEffect {
+  return {
+    type: "INNER_SHADOW",
+    visible: true,
+    color: opts.color,
+    offset: opts.offset,
+    radius: opts.radius,
+    spread: opts.spread,
+    blendMode: "NORMAL",
+  };
+}
+
+function layerBlurEffect(radius: number): FigEffect {
+  return {
+    type: "LAYER_BLUR",
+    visible: true,
+    radius,
+  };
+}
+
+// =============================================================================
+// Build Context
+// =============================================================================
+
+type BuildContext = {
+  readonly state: FigBuilderState;
+  readonly doc: FigDesignDocument;
+  readonly pageId: FigPageId;
+};
+
+type AddOptions = {
+  readonly ctx: BuildContext;
+  readonly parentId: FigNodeId | null;
+  readonly spec: NodeSpec;
+};
+
+type AddResult = {
+  readonly doc: FigDesignDocument;
+  readonly nodeId: FigNodeId;
+};
+
+function add({ ctx, parentId, spec }: AddOptions): AddResult {
+  return addNode({ state: ctx.state, doc: ctx.doc, pageId: ctx.pageId, parentId, spec });
+}
+
+function withDoc(ctx: BuildContext, doc: FigDesignDocument): BuildContext {
+  return { ...ctx, doc };
+}
+
+// Set fields on a node that the NodeSpec surface doesn't expose
+// (textAutoResize on the text data, PERCENT-unit line heights, etc.).
+function patchNode(
+  ctx: BuildContext,
+  nodeId: FigNodeId,
+  updater: (node: FigDesignNode) => FigDesignNode,
+): FigDesignDocument {
+  return updateNode({ doc: ctx.doc, pageId: ctx.pageId, nodeId, updater });
+}
+
+// =============================================================================
+// Text Helpers
+// =============================================================================
+
+type TextAutoResizeName = "NONE" | "WIDTH_AND_HEIGHT" | "HEIGHT";
+
+function textAutoResizeEnum(name: TextAutoResizeName): { value: number; name: TextAutoResizeName } {
+  return { value: TEXT_AUTO_RESIZE_VALUES[name], name };
+}
+
+type TextAlignHName = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
+
+function textAlignHEnum(name: TextAlignHName): { value: number; name: TextAlignHName } {
+  return { value: TEXT_ALIGN_H_VALUES[name], name };
+}
+
+type TextAlignVName = "TOP" | "CENTER" | "BOTTOM";
+
+function textAlignVEnum(name: TextAlignVName): { value: number; name: TextAlignVName } {
+  return { value: TEXT_ALIGN_V_VALUES[name], name };
+}
+
+type NumberUnitsName = "RAW" | "PIXELS" | "PERCENT";
+
+function numberUnitsEnum(name: NumberUnitsName): { value: number; name: NumberUnitsName } {
+  return { value: NUMBER_UNITS_VALUES[name], name };
+}
+
+type TextSpec = {
+  readonly name?: string;
+  readonly text: string;
+  readonly font?: { family: string; style: string };
+  readonly fontSize: number;
+  readonly color: FigColor;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly alignH?: TextAlignHName;
+  readonly alignV?: TextAlignVName;
+  readonly autoResize?: TextAutoResizeName;
+  /**
+   * Line height: `{ value, units }` where units is one of the
+   * `NumberUnits` names. Omit to fall back to Figma's default leading.
+   */
+  readonly lineHeight?: { value: number; units: NumberUnitsName };
+};
+
+function addText(ctx: BuildContext, parentId: FigNodeId, spec: TextSpec): {
+  readonly doc: FigDesignDocument;
+  readonly nodeId: FigNodeId;
+} {
+  const family = spec.font?.family ?? "Inter";
+  const style = spec.font?.style ?? "Regular";
+  const result = add({
+    ctx,
+    parentId,
+    spec: {
+      type: "TEXT",
+      name: spec.name ?? spec.text,
+      x: spec.x,
+      y: spec.y,
+      width: spec.width,
+      height: spec.height,
+      characters: spec.text,
+      fontFamily: family,
+      fontStyle: style,
+      fontSize: spec.fontSize,
+      fills: [solidPaint(spec.color)],
+      textAlignHorizontal: spec.alignH ? textAlignHEnum(spec.alignH) : undefined,
+      textAlignVertical: spec.alignV ? textAlignVEnum(spec.alignV) : undefined,
+      // NodeSpec.lineHeight is a plain pixel number; the factory wraps it
+      // with PIXELS units. For PERCENT (or absent) we patch the node below.
+      lineHeight: spec.lineHeight?.units === "PIXELS" ? spec.lineHeight.value : undefined,
+    },
+  });
+
+  // textAutoResize and PERCENT-unit line height are not surfaced through
+  // NodeSpec; project them onto textData via a follow-up updateNode call.
+  const needsAutoResize = spec.autoResize !== undefined;
+  const needsPercentLineHeight = spec.lineHeight?.units === "PERCENT" || spec.lineHeight?.units === "RAW";
+  if (!needsAutoResize && !needsPercentLineHeight) {
+    return { doc: result.doc, nodeId: result.nodeId };
+  }
+  const patchedDoc = updateNode({
+    doc: result.doc,
+    pageId: ctx.pageId,
+    nodeId: result.nodeId,
+    updater: (node) => {
+      const td = node.textData;
+      if (!td) {
+        return node;
+      }
+      const nextLineHeight = needsPercentLineHeight && spec.lineHeight
+        ? { value: spec.lineHeight.value, units: numberUnitsEnum(spec.lineHeight.units) }
+        : td.lineHeight;
+      const nextAutoResize = needsAutoResize && spec.autoResize
+        ? textAutoResizeEnum(spec.autoResize)
+        : td.textAutoResize;
+      return {
+        ...node,
+        textData: {
+          ...td,
+          textAutoResize: nextAutoResize,
+          lineHeight: nextLineHeight,
+        },
+      };
+    },
+  });
+  return { doc: patchedDoc, nodeId: result.nodeId };
+}
+
+// =============================================================================
+// Auto-layout Helpers
+// =============================================================================
+
+type AutoLayoutInput = {
+  readonly mode: "HORIZONTAL" | "VERTICAL";
+  readonly gap?: number;
+  readonly padding?: number | { top: number; right: number; bottom: number; left: number };
+  readonly primaryAlign?: "MIN" | "CENTER" | "MAX" | "SPACE_EVENLY" | "SPACE_BETWEEN";
+  readonly counterAlign?: "MIN" | "CENTER" | "MAX" | "BASELINE";
+};
+
+function buildAutoLayout(input: AutoLayoutInput): NonNullable<Extract<NodeSpec, { type: "FRAME" | "SYMBOL" }>["autoLayout"]> {
+  const padding = typeof input.padding === "number"
+    ? { top: input.padding, right: input.padding, bottom: input.padding, left: input.padding }
+    : input.padding;
+  return {
+    stackMode: { value: STACK_MODE_VALUES[input.mode], name: input.mode },
+    stackSpacing: input.gap,
+    stackPadding: padding,
+    stackPrimaryAlignItems: input.primaryAlign
+      ? { value: STACK_JUSTIFY_VALUES[input.primaryAlign], name: input.primaryAlign }
+      : undefined,
+    stackCounterAlignItems: input.counterAlign
+      ? { value: STACK_ALIGN_VALUES[input.counterAlign], name: input.counterAlign }
+      : undefined,
+  };
 }
 
 // =============================================================================
 // Page 1: Shapes & Fills
 // =============================================================================
 
-function buildShapesPage(
-  figFile: ReturnType<typeof createFigFile>,
-  docID: number,
-  id: ReturnType<typeof createIDCounter>,
-) {
-  const canvasID = figFile.addCanvas(docID, "Shapes & Fills");
-
+function buildShapesPage(ctx: BuildContext): FigDesignDocument {
   // --- Artboard: Basic Shapes ---
-  const shapesFrameID = id.next();
-  figFile.addFrame(
-    frameNode(shapesFrameID, canvasID)
-      .name("Basic Shapes")
-      .size(480, 320)
-      .position(0, 0)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  const shapesFrame = add({
+    ctx,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "Basic Shapes",
+      x: 0,
+      y: 0,
+      width: 480,
+      height: 320,
+      fills: [solidPaint(WHITE)],
+      clipsContent: true,
+    },
+  });
+  const c1 = withDoc(ctx, shapesFrame.doc);
 
   // Title
-  figFile.addTextNode(
-    textNode(id.next(), shapesFrameID)
-      .name("title")
-      .text("Basic Shapes")
-      .font("Inter", "Bold")
-      .fontSize(20)
-      .color(DARK)
-      .size(200, 28)
-      .position(24, 20)
-      .build(),
-  );
+  const title = addText(c1, shapesFrame.nodeId, {
+    name: "title",
+    text: "Basic Shapes",
+    font: { family: "Inter", style: "Bold" },
+    fontSize: 20,
+    color: DARK,
+    x: 24,
+    y: 20,
+    width: 200,
+    height: 28,
+  });
+  const c2 = withDoc(c1, title.doc);
 
-  // Rectangle
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), shapesFrameID)
-      .name("Rectangle")
-      .size(80, 80)
-      .position(24, 68)
-      .fill(BLUE)
-      .cornerRadius(8)
-      .build(),
-  );
+  // Rectangle (rounded)
+  const rect = add({
+    ctx: c2,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Rectangle",
+      x: 24,
+      y: 68,
+      width: 80,
+      height: 80,
+      fills: [solidPaint(BLUE)],
+      cornerRadius: 8,
+    },
+  });
+  const c3 = withDoc(c2, rect.doc);
 
   // Ellipse
-  figFile.addEllipse(
-    ellipseNode(id.next(), shapesFrameID)
-      .name("Ellipse")
-      .size(80, 80)
-      .position(128, 68)
-      .fill(RED)
-      .build(),
-  );
+  const ellipse = add({
+    ctx: c3,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "ELLIPSE",
+      name: "Ellipse",
+      x: 128,
+      y: 68,
+      width: 80,
+      height: 80,
+      fills: [solidPaint(RED)],
+    },
+  });
+  const c4 = withDoc(c3, ellipse.doc);
 
   // Star
-  figFile.addStar(
-    starNode(id.next(), shapesFrameID)
-      .name("Star")
-      .size(80, 80)
-      .position(232, 68)
-      .fill(ORANGE)
-      .build(),
-  );
+  const star = add({
+    ctx: c4,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "STAR",
+      name: "Star",
+      x: 232,
+      y: 68,
+      width: 80,
+      height: 80,
+      fills: [solidPaint(ORANGE)],
+    },
+  });
+  const c5 = withDoc(c4, star.doc);
 
-  // Polygon (hexagon)
-  figFile.addPolygon(
-    polygonNode(id.next(), shapesFrameID)
-      .name("Hexagon")
-      .size(80, 80)
-      .position(336, 68)
-      .fill(GREEN)
-      .build(),
-  );
+  // Polygon (hexagon — 6 sides)
+  const polygon = add({
+    ctx: c5,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "REGULAR_POLYGON",
+      name: "Hexagon",
+      x: 336,
+      y: 68,
+      width: 80,
+      height: 80,
+      fills: [solidPaint(GREEN)],
+      pointCount: 6,
+    },
+  });
+  const c6 = withDoc(c5, polygon.doc);
 
   // Stroked shapes row
-  figFile.addTextNode(
-    textNode(id.next(), shapesFrameID)
-      .name("subtitle-strokes")
-      .text("Strokes")
-      .font("Inter", "Medium")
-      .fontSize(14)
-      .color(GRAY)
-      .size(100, 20)
-      .position(24, 170)
-      .build(),
-  );
+  const strokesSubtitle = addText(c6, shapesFrame.nodeId, {
+    name: "subtitle-strokes",
+    text: "Strokes",
+    font: { family: "Inter", style: "Medium" },
+    fontSize: 14,
+    color: GRAY,
+    x: 24,
+    y: 170,
+    width: 100,
+    height: 20,
+  });
+  const c7 = withDoc(c6, strokesSubtitle.doc);
 
-  // Dashed rectangle
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), shapesFrameID)
-      .name("Dashed Rect")
-      .size(80, 80)
-      .position(24, 200)
-      .noFill()
-      .stroke(BLUE)
-      .strokeWeight(2)
-      .dashPattern([8, 4])
-      .cornerRadius(4)
-      .build(),
-  );
+  // Dashed rectangle — no fill, dashed stroke. NodeSpec doesn't carry
+  // strokeDashes so we patch it on after addNode.
+  const dashedRect = add({
+    ctx: c7,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Dashed Rect",
+      x: 24,
+      y: 200,
+      width: 80,
+      height: 80,
+      fills: [],
+      strokes: [solidPaint(BLUE)],
+      strokeWeight: 2,
+      cornerRadius: 4,
+    },
+  });
+  const dashedRectPatched = patchNode(withDoc(c7, dashedRect.doc), dashedRect.nodeId, (node) => ({
+    ...node,
+    strokeDashes: [8, 4],
+  }));
+  const c8 = withDoc(c7, dashedRectPatched);
 
-  // Stroke circle
-  figFile.addEllipse(
-    ellipseNode(id.next(), shapesFrameID)
-      .name("Stroke Circle")
-      .size(80, 80)
-      .position(128, 200)
-      .noFill()
-      .stroke(RED)
-      .strokeWeight(3)
-      .build(),
-  );
+  // Stroke circle — outline only
+  const strokeCircle = add({
+    ctx: c8,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "ELLIPSE",
+      name: "Stroke Circle",
+      x: 128,
+      y: 200,
+      width: 80,
+      height: 80,
+      fills: [],
+      strokes: [solidPaint(RED)],
+      strokeWeight: 3,
+    },
+  });
+  const c9 = withDoc(c8, strokeCircle.doc);
 
-  // Line
-  figFile.addLine(
-    lineNode(id.next(), shapesFrameID)
-      .name("Line")
-      .size(80, 0)
-      .position(232, 240)
-      .stroke(DARK)
-      .strokeWeight(2)
-      .strokeCap("ROUND")
-      .build(),
-  );
+  // Line — round cap (NodeSpec lacks strokeCap so patch it on).
+  const line = add({
+    ctx: c9,
+    parentId: shapesFrame.nodeId,
+    spec: {
+      type: "LINE",
+      name: "Line",
+      x: 232,
+      y: 240,
+      width: 80,
+      height: 0,
+      strokes: [solidPaint(DARK)],
+      strokeWeight: 2,
+    },
+  });
+  const lineWithCap = patchNode(withDoc(c9, line.doc), line.nodeId, (node) => ({
+    ...node,
+    strokeCap: "ROUND",
+  }));
+  const c10 = withDoc(c9, lineWithCap);
 
   // --- Artboard: Gradient Fills ---
-  const gradientFrameID = id.next();
-  figFile.addFrame(
-    frameNode(gradientFrameID, canvasID)
-      .name("Gradients")
-      .size(480, 200)
-      .position(520, 0)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  const gradFrame = add({
+    ctx: c10,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "Gradients",
+      x: 520,
+      y: 0,
+      width: 480,
+      height: 200,
+      fills: [solidPaint(WHITE)],
+      clipsContent: true,
+    },
+  });
+  const c11 = withDoc(c10, gradFrame.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), gradientFrameID)
-      .name("title")
-      .text("Gradient Fills")
-      .font("Inter", "Bold")
-      .fontSize(20)
-      .color(DARK)
-      .size(200, 28)
-      .position(24, 20)
-      .build(),
-  );
+  const gradTitle = addText(c11, gradFrame.nodeId, {
+    name: "title",
+    text: "Gradient Fills",
+    font: { family: "Inter", style: "Bold" },
+    fontSize: 20,
+    color: DARK,
+    x: 24,
+    y: 20,
+    width: 200,
+    height: 28,
+  });
+  const c12 = withDoc(c11, gradTitle.doc);
 
   // Linear gradient rect
-  const linearGrad = linearGradient()
-    .angle(135)
-    .stops([
-      { color: BLUE, position: 0 },
-      { color: PURPLE, position: 1 },
-    ])
-    .build();
-
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), gradientFrameID)
-      .name("Linear Gradient")
-      .size(120, 80)
-      .position(24, 68)
-      .fill(linearGrad)
-      .cornerRadius(12)
-      .build(),
-  );
+  const linearGrad = linearGradientPaint(135, [
+    { color: BLUE, position: 0 },
+    { color: PURPLE, position: 1 },
+  ]);
+  const linearRect = add({
+    ctx: c12,
+    parentId: gradFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Linear Gradient",
+      x: 24,
+      y: 68,
+      width: 120,
+      height: 80,
+      fills: [linearGrad],
+      cornerRadius: 12,
+    },
+  });
+  const c13 = withDoc(c12, linearRect.doc);
 
   // Radial gradient ellipse
-  const radialGrad = radialGradient()
-    .stops([
-      { color: ORANGE, position: 0 },
-      { color: RED, position: 1 },
-    ])
-    .build();
+  const radialGrad = radialGradientPaint([
+    { color: ORANGE, position: 0 },
+    { color: RED, position: 1 },
+  ]);
+  const radialEllipse = add({
+    ctx: c13,
+    parentId: gradFrame.nodeId,
+    spec: {
+      type: "ELLIPSE",
+      name: "Radial Gradient",
+      x: 168,
+      y: 58,
+      width: 100,
+      height: 100,
+      fills: [radialGrad],
+    },
+  });
+  const c14 = withDoc(c13, radialEllipse.doc);
 
-  figFile.addEllipse(
-    ellipseNode(id.next(), gradientFrameID)
-      .name("Radial Gradient")
-      .size(100, 100)
-      .position(168, 58)
-      .fill(radialGrad)
-      .build(),
-  );
+  // Multi-stop linear gradient
+  const multiGrad = linearGradientPaint(90, [
+    { color: RED, position: 0 },
+    { color: ORANGE, position: 0.33 },
+    { color: GREEN, position: 0.66 },
+    { color: BLUE, position: 1 },
+  ]);
+  const multiRect = add({
+    ctx: c14,
+    parentId: gradFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Multi-stop",
+      x: 296,
+      y: 68,
+      width: 140,
+      height: 80,
+      fills: [multiGrad],
+      cornerRadius: 12,
+    },
+  });
 
-  // Multi-stop gradient
-  const multiGrad = linearGradient()
-    .angle(90)
-    .stops([
-      { color: RED, position: 0 },
-      { color: ORANGE, position: 0.33 },
-      { color: GREEN, position: 0.66 },
-      { color: BLUE, position: 1 },
-    ])
-    .build();
-
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), gradientFrameID)
-      .name("Multi-stop")
-      .size(140, 80)
-      .position(296, 68)
-      .fill(multiGrad)
-      .cornerRadius(12)
-      .build(),
-  );
+  return multiRect.doc;
 }
 
 // =============================================================================
 // Page 2: Typography
 // =============================================================================
 
-function buildTypographyPage(
-  figFile: ReturnType<typeof createFigFile>,
-  docID: number,
-  id: ReturnType<typeof createIDCounter>,
-) {
-  const canvasID = figFile.addCanvas(docID, "Typography");
-
+function buildTypographyPage(ctx: BuildContext): FigDesignDocument {
   // --- Artboard: Text Alignment ---
-  const alignFrameID = id.next();
-  figFile.addFrame(
-    frameNode(alignFrameID, canvasID)
-      .name("Text Alignment")
-      .size(480, 320)
-      .position(0, 0)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  const alignFrame = add({
+    ctx,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "Text Alignment",
+      x: 0,
+      y: 0,
+      width: 480,
+      height: 320,
+      fills: [solidPaint(WHITE)],
+      clipsContent: true,
+    },
+  });
+  const c1 = withDoc(ctx, alignFrame.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("title")
-      .text("Text Alignment")
-      .font("Inter", "Bold")
-      .fontSize(20)
-      .color(DARK)
-      .size(200, 28)
-      .position(24, 20)
-      .build(),
-  );
+  const title = addText(c1, alignFrame.nodeId, {
+    name: "title",
+    text: "Text Alignment",
+    font: { family: "Inter", style: "Bold" },
+    fontSize: 20,
+    color: DARK,
+    x: 24,
+    y: 20,
+    width: 200,
+    height: 28,
+  });
+  const c2 = withDoc(c1, title.doc);
 
-  // Left aligned
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("left-align")
-      .text("Left aligned text\nwith two lines")
-      .font("Inter", "Regular")
-      .fontSize(14)
-      .color(DARK)
-      .size(180, 44)
-      .position(24, 68)
-      .alignHorizontal("LEFT")
-      .alignVertical("TOP")
-      .autoResize("NONE")
-      .build(),
-  );
+  // Three horizontal-alignment samples
+  const leftAlign = addText(c2, alignFrame.nodeId, {
+    name: "left-align",
+    text: "Left aligned text\nwith two lines",
+    fontSize: 14,
+    color: DARK,
+    x: 24,
+    y: 68,
+    width: 180,
+    height: 44,
+    alignH: "LEFT",
+    alignV: "TOP",
+    autoResize: "NONE",
+  });
+  const c3 = withDoc(c2, leftAlign.doc);
 
-  // Center aligned
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("center-align")
-      .text("Center aligned text\nwith two lines")
-      .font("Inter", "Regular")
-      .fontSize(14)
-      .color(DARK)
-      .size(180, 44)
-      .position(24, 128)
-      .alignHorizontal("CENTER")
-      .alignVertical("TOP")
-      .autoResize("NONE")
-      .build(),
-  );
+  const centerAlign = addText(c3, alignFrame.nodeId, {
+    name: "center-align",
+    text: "Center aligned text\nwith two lines",
+    fontSize: 14,
+    color: DARK,
+    x: 24,
+    y: 128,
+    width: 180,
+    height: 44,
+    alignH: "CENTER",
+    alignV: "TOP",
+    autoResize: "NONE",
+  });
+  const c4 = withDoc(c3, centerAlign.doc);
 
-  // Right aligned
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("right-align")
-      .text("Right aligned text\nwith two lines")
-      .font("Inter", "Regular")
-      .fontSize(14)
-      .color(DARK)
-      .size(180, 44)
-      .position(24, 188)
-      .alignHorizontal("RIGHT")
-      .alignVertical("TOP")
-      .autoResize("NONE")
-      .build(),
-  );
+  const rightAlign = addText(c4, alignFrame.nodeId, {
+    name: "right-align",
+    text: "Right aligned text\nwith two lines",
+    fontSize: 14,
+    color: DARK,
+    x: 24,
+    y: 188,
+    width: 180,
+    height: 44,
+    alignH: "RIGHT",
+    alignV: "TOP",
+    autoResize: "NONE",
+  });
+  const c5 = withDoc(c4, rightAlign.doc);
 
-  // Vertical top
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), alignFrameID)
-      .name("vtop-bg")
-      .size(180, 80)
-      .position(260, 20)
-      .fill(LIGHT_GRAY)
-      .cornerRadius(8)
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("vtop-text")
-      .text("Vertical top\nalignment")
-      .font("Inter", "Regular")
-      .fontSize(14)
-      .color(DARK)
-      .size(180, 80)
-      .position(260, 20)
-      .alignHorizontal("CENTER")
-      .alignVertical("TOP")
-      .autoResize("NONE")
-      .build(),
-  );
+  // Vertical alignment row — light-gray bg + text overlay for each
+  const vtopBg = add({
+    ctx: c5,
+    parentId: alignFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "vtop-bg",
+      x: 260,
+      y: 20,
+      width: 180,
+      height: 80,
+      fills: [solidPaint(LIGHT_GRAY)],
+      cornerRadius: 8,
+    },
+  });
+  const c6 = withDoc(c5, vtopBg.doc);
+  const vtopText = addText(c6, alignFrame.nodeId, {
+    name: "vtop-text",
+    text: "Vertical top\nalignment",
+    fontSize: 14,
+    color: DARK,
+    x: 260,
+    y: 20,
+    width: 180,
+    height: 80,
+    alignH: "CENTER",
+    alignV: "TOP",
+    autoResize: "NONE",
+  });
+  const c7 = withDoc(c6, vtopText.doc);
 
-  // Vertical center
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), alignFrameID)
-      .name("vcenter-bg")
-      .size(180, 80)
-      .position(260, 116)
-      .fill(LIGHT_GRAY)
-      .cornerRadius(8)
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("vcenter-text")
-      .text("Vertical center\nalignment")
-      .font("Inter", "Regular")
-      .fontSize(14)
-      .color(DARK)
-      .size(180, 80)
-      .position(260, 116)
-      .alignHorizontal("CENTER")
-      .alignVertical("CENTER")
-      .autoResize("NONE")
-      .build(),
-  );
+  const vcenterBg = add({
+    ctx: c7,
+    parentId: alignFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "vcenter-bg",
+      x: 260,
+      y: 116,
+      width: 180,
+      height: 80,
+      fills: [solidPaint(LIGHT_GRAY)],
+      cornerRadius: 8,
+    },
+  });
+  const c8 = withDoc(c7, vcenterBg.doc);
+  const vcenterText = addText(c8, alignFrame.nodeId, {
+    name: "vcenter-text",
+    text: "Vertical center\nalignment",
+    fontSize: 14,
+    color: DARK,
+    x: 260,
+    y: 116,
+    width: 180,
+    height: 80,
+    alignH: "CENTER",
+    alignV: "CENTER",
+    autoResize: "NONE",
+  });
+  const c9 = withDoc(c8, vcenterText.doc);
 
-  // Vertical bottom
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), alignFrameID)
-      .name("vbottom-bg")
-      .size(180, 80)
-      .position(260, 212)
-      .fill(LIGHT_GRAY)
-      .cornerRadius(8)
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), alignFrameID)
-      .name("vbottom-text")
-      .text("Vertical bottom\nalignment")
-      .font("Inter", "Regular")
-      .fontSize(14)
-      .color(DARK)
-      .size(180, 80)
-      .position(260, 212)
-      .alignHorizontal("CENTER")
-      .alignVertical("BOTTOM")
-      .autoResize("NONE")
-      .build(),
-  );
+  const vbottomBg = add({
+    ctx: c9,
+    parentId: alignFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "vbottom-bg",
+      x: 260,
+      y: 212,
+      width: 180,
+      height: 80,
+      fills: [solidPaint(LIGHT_GRAY)],
+      cornerRadius: 8,
+    },
+  });
+  const c10 = withDoc(c9, vbottomBg.doc);
+  const vbottomText = addText(c10, alignFrame.nodeId, {
+    name: "vbottom-text",
+    text: "Vertical bottom\nalignment",
+    fontSize: 14,
+    color: DARK,
+    x: 260,
+    y: 212,
+    width: 180,
+    height: 80,
+    alignH: "CENTER",
+    alignV: "BOTTOM",
+    autoResize: "NONE",
+  });
+  const c11 = withDoc(c10, vbottomText.doc);
 
   // --- Artboard: Font Styles ---
-  const fontFrameID = id.next();
-  figFile.addFrame(
-    frameNode(fontFrameID, canvasID)
-      .name("Font Styles")
-      .size(480, 360)
-      .position(520, 0)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  const fontFrame = add({
+    ctx: c11,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "Font Styles",
+      x: 520,
+      y: 0,
+      width: 480,
+      height: 360,
+      fills: [solidPaint(WHITE)],
+      clipsContent: true,
+    },
+  });
+  const c12 = withDoc(c11, fontFrame.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), fontFrameID)
-      .name("title")
-      .text("Font Styles & Sizes")
-      .font("Inter", "Bold")
-      .fontSize(20)
-      .color(DARK)
-      .size(240, 28)
-      .position(24, 20)
-      .build(),
-  );
+  const fontTitle = addText(c12, fontFrame.nodeId, {
+    name: "title",
+    text: "Font Styles & Sizes",
+    font: { family: "Inter", style: "Bold" },
+    fontSize: 20,
+    color: DARK,
+    x: 24,
+    y: 20,
+    width: 240,
+    height: 28,
+  });
+  const c13 = withDoc(c12, fontTitle.doc);
 
-  // Size hierarchy
   const sizes = [
     { label: "Heading 1", size: 32, weight: "Bold" as const },
     { label: "Heading 2", size: 24, weight: "SemiBold" as const },
@@ -467,403 +851,513 @@ function buildTypographyPage(
   const rowTop = (index: number): number =>
     64 + sizes.slice(0, index).reduce((sum, entry) => sum + entry.size + 20, 0);
 
-  for (const [index, entry] of sizes.entries()) {
-    figFile.addTextNode(
-      textNode(id.next(), fontFrameID)
-        .name(entry.label)
-        .text(entry.label)
-        .font("Inter", entry.weight)
-        .fontSize(entry.size)
-        .color(DARK)
-        .size(440, entry.size + 12)
-        .position(24, rowTop(index))
-        .build(),
-    );
-  }
+  const c14 = sizes.reduce<BuildContext>((acc, entry, index) => {
+    const result = addText(acc, fontFrame.nodeId, {
+      name: entry.label,
+      text: entry.label,
+      font: { family: "Inter", style: entry.weight },
+      fontSize: entry.size,
+      color: DARK,
+      x: 24,
+      y: rowTop(index),
+      width: 440,
+      height: entry.size + 12,
+    });
+    return withDoc(acc, result.doc);
+  }, c13);
 
   const paragraphY = rowTop(sizes.length) + 8;
 
-  // Multi-line paragraph
-  figFile.addTextNode(
-    textNode(id.next(), fontFrameID)
-      .name("paragraph")
-      .text(
-        "This is a longer paragraph of text that demonstrates how multi-line " +
-        "text wrapping works in Figma files. The text box has a fixed width " +
-        "and the content flows naturally within the bounds.",
-      )
-      .font("Inter", "Regular")
-      .fontSize(13)
-      .color(GRAY)
-      .size(440, 60)
-      .position(24, paragraphY)
-      .alignHorizontal("LEFT")
-      .autoResize("HEIGHT")
-      .lineHeight(150, "PERCENT")
-      .build(),
-  );
+  // Multi-line paragraph: 150% PERCENT line height + HEIGHT autoresize.
+  const paragraph = addText(c14, fontFrame.nodeId, {
+    name: "paragraph",
+    text:
+      "This is a longer paragraph of text that demonstrates how multi-line " +
+      "text wrapping works in Figma files. The text box has a fixed width " +
+      "and the content flows naturally within the bounds.",
+    fontSize: 13,
+    color: GRAY,
+    x: 24,
+    y: paragraphY,
+    width: 440,
+    height: 60,
+    alignH: "LEFT",
+    autoResize: "HEIGHT",
+    lineHeight: { value: 150, units: "PERCENT" },
+  });
+
+  return paragraph.doc;
 }
 
 // =============================================================================
 // Page 3: Components & Effects
 // =============================================================================
 
-function buildComponentsPage(
-  figFile: ReturnType<typeof createFigFile>,
-  docID: number,
-  id: ReturnType<typeof createIDCounter>,
-) {
-  const canvasID = figFile.addCanvas(docID, "Components & Effects");
+function buildComponentsPage(ctx: BuildContext): FigDesignDocument {
+  // ---- Symbol: Button Component ----
+  // The SYMBOL frame's fill IS the visible button background. INSTANCE
+  // overrides target the INSTANCE's own `fills`, so authoring the
+  // background on the SYMBOL keeps the override path direct.
+  const buttonSymbol = add({
+    ctx,
+    parentId: null,
+    spec: {
+      type: "SYMBOL",
+      name: "Button",
+      x: 0,
+      y: -120,
+      width: 140,
+      height: 44,
+      fills: [solidPaint(BLUE)],
+      autoLayout: buildAutoLayout({
+        mode: "HORIZONTAL",
+        gap: 8,
+        padding: { top: 10, right: 20, bottom: 10, left: 20 },
+        primaryAlign: "CENTER",
+        counterAlign: "CENTER",
+      }),
+    },
+  });
+  // Patch the SYMBOL frame with cornerRadius (SymbolNodeSpec doesn't
+  // expose it directly).
+  const buttonSymbolDoc = patchNode(
+    withDoc(ctx, buttonSymbol.doc),
+    buttonSymbol.nodeId,
+    (node) => ({ ...node, cornerRadius: 8 }),
+  );
+  const c1 = withDoc(ctx, buttonSymbolDoc);
 
-  // =========================================================================
-  // Symbol: Button Component
-  // =========================================================================
-  const btnSymbolID = id.next();
-  figFile.addSymbol(
-    symbolNode(btnSymbolID, canvasID)
-      .name("Button")
-      .size(140, 44)
-      .position(0, -120)
-      .background(BLUE)
-      .cornerRadius(8)
-      .autoLayout("HORIZONTAL")
-      .gap(8)
-      .padding({ top: 10, right: 20, bottom: 10, left: 20 })
-      .primaryAlign("CENTER")
-      .counterAlign("CENTER")
-      .exportAsSVG()
-      .build(),
-  );
+  const btnLabel = addText(c1, buttonSymbol.nodeId, {
+    name: "label",
+    text: "Button",
+    font: { family: "Inter", style: "SemiBold" },
+    fontSize: 14,
+    color: WHITE,
+    x: 42,
+    y: 12,
+    width: 56,
+    height: 20,
+    alignH: "CENTER",
+  });
+  const c2 = withDoc(c1, btnLabel.doc);
 
-  // No separate bg rectangle — the SYMBOL frame itself provides the
-  // background via .background(BLUE). This way overrideBackground()
-  // on INSTANCE nodes directly changes the visible background color.
+  // ---- Symbol: Card Component ----
+  const cardSymbol = add({
+    ctx: c2,
+    parentId: null,
+    spec: {
+      type: "SYMBOL",
+      name: "Card",
+      x: 200,
+      y: -200,
+      width: 240,
+      height: 160,
+      fills: [solidPaint(WHITE)],
+      clipsContent: true,
+      autoLayout: buildAutoLayout({
+        mode: "VERTICAL",
+        gap: 8,
+        padding: 16,
+      }),
+    },
+  });
+  const cardSymbolDoc = patchNode(
+    withDoc(c2, cardSymbol.doc),
+    cardSymbol.nodeId,
+    (node) => ({ ...node, cornerRadius: 12 }),
+  );
+  const c3 = withDoc(c2, cardSymbolDoc);
 
-  figFile.addTextNode(
-    textNode(id.next(), btnSymbolID)
-      .name("label")
-      .text("Button")
-      .font("Inter", "SemiBold")
-      .fontSize(14)
-      .color(WHITE)
-      .size(56, 20)
-      .position(42, 12)
-      .alignHorizontal("CENTER")
-      .build(),
-  );
+  const cardHeading = addText(c3, cardSymbol.nodeId, {
+    name: "heading",
+    text: "Card Title",
+    font: { family: "Inter", style: "SemiBold" },
+    fontSize: 16,
+    color: DARK,
+    x: 16,
+    y: 16,
+    width: 208,
+    height: 22,
+  });
+  const c4 = withDoc(c3, cardHeading.doc);
 
-  // =========================================================================
-  // Symbol: Card Component
-  // =========================================================================
-  const cardSymbolID = id.next();
-  figFile.addSymbol(
-    symbolNode(cardSymbolID, canvasID)
-      .name("Card")
-      .size(240, 160)
-      .position(200, -200)
-      .background(WHITE)
-      .cornerRadius(12)
-      .autoLayout("VERTICAL")
-      .gap(8)
-      .padding(16)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  const cardBody = addText(c4, cardSymbol.nodeId, {
+    name: "body",
+    text: "Card body text that describes the content. Can span multiple lines.",
+    fontSize: 13,
+    color: GRAY,
+    x: 16,
+    y: 46,
+    width: 208,
+    height: 40,
+    autoResize: "HEIGHT",
+    lineHeight: { value: 140, units: "PERCENT" },
+  });
+  const c5 = withDoc(c4, cardBody.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), cardSymbolID)
-      .name("heading")
-      .text("Card Title")
-      .font("Inter", "SemiBold")
-      .fontSize(16)
-      .color(DARK)
-      .size(208, 22)
-      .position(16, 16)
-      .build(),
-  );
+  const accentBar = add({
+    ctx: c5,
+    parentId: cardSymbol.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "accent-bar",
+      x: 16,
+      y: 140,
+      width: 208,
+      height: 4,
+      fills: [solidPaint(BLUE)],
+      cornerRadius: 2,
+    },
+  });
+  const c6 = withDoc(c5, accentBar.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), cardSymbolID)
-      .name("body")
-      .text("Card body text that describes the content. Can span multiple lines.")
-      .font("Inter", "Regular")
-      .fontSize(13)
-      .color(GRAY)
-      .size(208, 40)
-      .position(16, 46)
-      .autoResize("HEIGHT")
-      .lineHeight(140, "PERCENT")
-      .build(),
-  );
+  // ---- Artboard: Component Instances ----
+  const compFrame = add({
+    ctx: c6,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "Component Instances",
+      x: 0,
+      y: 0,
+      width: 560,
+      height: 360,
+      fills: [solidPaint(LIGHT_GRAY)],
+      clipsContent: true,
+    },
+  });
+  const c7 = withDoc(c6, compFrame.doc);
 
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), cardSymbolID)
-      .name("accent-bar")
-      .size(208, 4)
-      .position(16, 140)
-      .fill(BLUE)
-      .cornerRadius(2)
-      .build(),
-  );
+  const compTitle = addText(c7, compFrame.nodeId, {
+    name: "title",
+    text: "Component Instances",
+    font: { family: "Inter", style: "Bold" },
+    fontSize: 20,
+    color: DARK,
+    x: 24,
+    y: 20,
+    width: 280,
+    height: 28,
+  });
+  const c8 = withDoc(c7, compTitle.doc);
 
-  // =========================================================================
-  // Artboard: Component Instances
-  // =========================================================================
-  const compFrameID = id.next();
-  figFile.addFrame(
-    frameNode(compFrameID, canvasID)
-      .name("Component Instances")
-      .size(560, 360)
-      .position(0, 0)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  const btnLabelText = addText(c8, compFrame.nodeId, {
+    name: "btn-label",
+    text: "Button variants",
+    font: { family: "Inter", style: "Medium" },
+    fontSize: 12,
+    color: GRAY,
+    x: 24,
+    y: 64,
+    width: 120,
+    height: 16,
+  });
+  const c9 = withDoc(c8, btnLabelText.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), compFrameID)
-      .name("title")
-      .text("Component Instances")
-      .font("Inter", "Bold")
-      .fontSize(20)
-      .color(DARK)
-      .size(280, 28)
-      .position(24, 20)
-      .build(),
-  );
+  // Default button — INSTANCE with no fill override; renders with the
+  // SYMBOL's blue background.
+  const btnDefault = add({
+    ctx: c9,
+    parentId: compFrame.nodeId,
+    spec: {
+      type: "INSTANCE",
+      symbolId: buttonSymbol.nodeId,
+      name: "Default",
+      x: 24,
+      y: 88,
+      width: 140,
+      height: 44,
+    },
+  });
+  const c10 = withDoc(c9, btnDefault.doc);
 
-  // Button instances row
-  figFile.addTextNode(
-    textNode(id.next(), compFrameID)
-      .name("btn-label")
-      .text("Button variants")
-      .font("Inter", "Medium")
-      .fontSize(12)
-      .color(GRAY)
-      .size(120, 16)
-      .position(24, 64)
-      .build(),
-  );
+  // Danger button — overrides the SYMBOL's background to RED. The
+  // spec test (instance-resolve.spec.ts) reads `danger.fills[0]` and
+  // expects it to be the red solid paint, so set fills on the
+  // INSTANCE itself.
+  const btnDanger = add({
+    ctx: c10,
+    parentId: compFrame.nodeId,
+    spec: {
+      type: "INSTANCE",
+      symbolId: buttonSymbol.nodeId,
+      name: "Danger",
+      x: 184,
+      y: 88,
+      width: 140,
+      height: 44,
+      fills: [solidPaint(RED)],
+    },
+  });
+  const c11 = withDoc(c10, btnDanger.doc);
 
-  // Default button
-  figFile.addInstance(
-    instanceNode(id.next(), compFrameID, btnSymbolID)
-      .name("Default")
-      .size(140, 44)
-      .position(24, 88)
-      .build(),
-  );
+  // Success button — green override
+  const btnSuccess = add({
+    ctx: c11,
+    parentId: compFrame.nodeId,
+    spec: {
+      type: "INSTANCE",
+      symbolId: buttonSymbol.nodeId,
+      name: "Success",
+      x: 344,
+      y: 88,
+      width: 140,
+      height: 44,
+      fills: [solidPaint(GREEN)],
+    },
+  });
+  const c12 = withDoc(c11, btnSuccess.doc);
 
-  // Red button (override)
-  figFile.addInstance(
-    instanceNode(id.next(), compFrameID, btnSymbolID)
-      .name("Danger")
-      .size(140, 44)
-      .position(184, 88)
-      .overrideBackground(RED)
-      .build(),
-  );
+  const cardLabelText = addText(c12, compFrame.nodeId, {
+    name: "card-label",
+    text: "Card instances",
+    font: { family: "Inter", style: "Medium" },
+    fontSize: 12,
+    color: GRAY,
+    x: 24,
+    y: 152,
+    width: 120,
+    height: 16,
+  });
+  const c13 = withDoc(c12, cardLabelText.doc);
 
-  // Green button (override)
-  figFile.addInstance(
-    instanceNode(id.next(), compFrameID, btnSymbolID)
-      .name("Success")
-      .size(140, 44)
-      .position(344, 88)
-      .overrideBackground(GREEN)
-      .build(),
-  );
+  const card1 = add({
+    ctx: c13,
+    parentId: compFrame.nodeId,
+    spec: {
+      type: "INSTANCE",
+      symbolId: cardSymbol.nodeId,
+      name: "Card 1",
+      x: 24,
+      y: 176,
+      width: 240,
+      height: 160,
+    },
+  });
+  const c14 = withDoc(c13, card1.doc);
 
-  // Card instances
-  figFile.addTextNode(
-    textNode(id.next(), compFrameID)
-      .name("card-label")
-      .text("Card instances")
-      .font("Inter", "Medium")
-      .fontSize(12)
-      .color(GRAY)
-      .size(120, 16)
-      .position(24, 152)
-      .build(),
-  );
+  const card2 = add({
+    ctx: c14,
+    parentId: compFrame.nodeId,
+    spec: {
+      type: "INSTANCE",
+      symbolId: cardSymbol.nodeId,
+      name: "Card 2",
+      x: 288,
+      y: 176,
+      width: 240,
+      height: 160,
+      fills: [solidPaint({ r: 0.95, g: 0.97, b: 1.0, a: 1 })],
+    },
+  });
+  const c15 = withDoc(c14, card2.doc);
 
-  figFile.addInstance(
-    instanceNode(id.next(), compFrameID, cardSymbolID)
-      .name("Card 1")
-      .size(240, 160)
-      .position(24, 176)
-      .build(),
-  );
+  // ---- Artboard: Effects ----
+  const effectFrame = add({
+    ctx: c15,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name: "Effects",
+      x: 600,
+      y: 0,
+      width: 560,
+      height: 300,
+      fills: [solidPaint(WHITE)],
+      clipsContent: true,
+    },
+  });
+  const c16 = withDoc(c15, effectFrame.doc);
 
-  figFile.addInstance(
-    instanceNode(id.next(), compFrameID, cardSymbolID)
-      .name("Card 2")
-      .size(240, 160)
-      .position(288, 176)
-      .overrideBackground({ r: 0.95, g: 0.97, b: 1.0, a: 1 }) // light blue tint
-      .build(),
-  );
+  const effectsTitle = addText(c16, effectFrame.nodeId, {
+    name: "title",
+    text: "Effects",
+    font: { family: "Inter", style: "Bold" },
+    fontSize: 20,
+    color: DARK,
+    x: 24,
+    y: 20,
+    width: 200,
+    height: 28,
+  });
+  const c17 = withDoc(c16, effectsTitle.doc);
 
-  // =========================================================================
-  // Artboard: Effects
-  // =========================================================================
-  const effectFrameID = id.next();
-  figFile.addFrame(
-    frameNode(effectFrameID, canvasID)
-      .name("Effects")
-      .size(560, 300)
-      .position(600, 0)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+  // Drop shadow card
+  const dropShadowCard = add({
+    ctx: c17,
+    parentId: effectFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Drop Shadow",
+      x: 24,
+      y: 72,
+      width: 120,
+      height: 80,
+      fills: [solidPaint(WHITE)],
+      cornerRadius: 12,
+      effects: [
+        dropShadowEffect({
+          offset: { x: 0, y: 4 },
+          radius: 12,
+          color: { r: 0, g: 0, b: 0, a: 0.15 },
+        }),
+      ],
+    },
+  });
+  const c18 = withDoc(c17, dropShadowCard.doc);
+  const dropShadowLabel = addText(c18, effectFrame.nodeId, {
+    name: "shadow-label",
+    text: "Drop Shadow",
+    fontSize: 11,
+    color: GRAY,
+    x: 24,
+    y: 160,
+    width: 120,
+    height: 16,
+    alignH: "CENTER",
+  });
+  const c19 = withDoc(c18, dropShadowLabel.doc);
 
-  figFile.addTextNode(
-    textNode(id.next(), effectFrameID)
-      .name("title")
-      .text("Effects")
-      .font("Inter", "Bold")
-      .fontSize(20)
-      .color(DARK)
-      .size(200, 28)
-      .position(24, 20)
-      .build(),
-  );
+  // Inner shadow card
+  const innerShadowCard = add({
+    ctx: c19,
+    parentId: effectFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Inner Shadow",
+      x: 168,
+      y: 72,
+      width: 120,
+      height: 80,
+      fills: [solidPaint(LIGHT_GRAY)],
+      cornerRadius: 12,
+      effects: [
+        innerShadowEffect({
+          offset: { x: 0, y: 4 },
+          radius: 8,
+          color: { r: 0, g: 0, b: 0, a: 0.2 },
+        }),
+      ],
+    },
+  });
+  const c20 = withDoc(c19, innerShadowCard.doc);
+  const innerShadowLabel = addText(c20, effectFrame.nodeId, {
+    name: "inner-label",
+    text: "Inner Shadow",
+    fontSize: 11,
+    color: GRAY,
+    x: 168,
+    y: 160,
+    width: 120,
+    height: 16,
+    alignH: "CENTER",
+  });
+  const c21 = withDoc(c20, innerShadowLabel.doc);
 
-  // Drop shadow
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), effectFrameID)
-      .name("Drop Shadow")
-      .size(120, 80)
-      .position(24, 72)
-      .fill(WHITE)
-      .cornerRadius(12)
-      .effects(effects(dropShadow().offset(0, 4).blur(12).color({ r: 0, g: 0, b: 0, a: 0.15 })))
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), effectFrameID)
-      .name("shadow-label")
-      .text("Drop Shadow")
-      .font("Inter", "Regular")
-      .fontSize(11)
-      .color(GRAY)
-      .size(120, 16)
-      .position(24, 160)
-      .alignHorizontal("CENTER")
-      .build(),
-  );
+  // Layer blur card
+  const layerBlurCard = add({
+    ctx: c21,
+    parentId: effectFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Layer Blur",
+      x: 312,
+      y: 72,
+      width: 120,
+      height: 80,
+      fills: [solidPaint(BLUE)],
+      cornerRadius: 12,
+      effects: [layerBlurEffect(4)],
+    },
+  });
+  const c22 = withDoc(c21, layerBlurCard.doc);
+  const layerBlurLabel = addText(c22, effectFrame.nodeId, {
+    name: "blur-label",
+    text: "Layer Blur",
+    fontSize: 11,
+    color: GRAY,
+    x: 312,
+    y: 160,
+    width: 120,
+    height: 16,
+    alignH: "CENTER",
+  });
+  const c23 = withDoc(c22, layerBlurLabel.doc);
 
-  // Inner shadow
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), effectFrameID)
-      .name("Inner Shadow")
-      .size(120, 80)
-      .position(168, 72)
-      .fill(LIGHT_GRAY)
-      .cornerRadius(12)
-      .effects(effects(innerShadow().offset(0, 4).blur(8).color({ r: 0, g: 0, b: 0, a: 0.2 })))
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), effectFrameID)
-      .name("inner-label")
-      .text("Inner Shadow")
-      .font("Inter", "Regular")
-      .fontSize(11)
-      .color(GRAY)
-      .size(120, 16)
-      .position(168, 160)
-      .alignHorizontal("CENTER")
-      .build(),
-  );
+  // Multi-shadow stack
+  const multiShadowCard = add({
+    ctx: c23,
+    parentId: effectFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Multi Shadow",
+      x: 24,
+      y: 200,
+      width: 120,
+      height: 80,
+      fills: [solidPaint(WHITE)],
+      cornerRadius: 12,
+      effects: [
+        dropShadowEffect({ offset: { x: 0, y: 1 }, radius: 3, color: { r: 0, g: 0, b: 0, a: 0.08 } }),
+        dropShadowEffect({ offset: { x: 0, y: 4 }, radius: 8, color: { r: 0, g: 0, b: 0, a: 0.08 } }),
+        dropShadowEffect({ offset: { x: 0, y: 12 }, radius: 24, color: { r: 0, g: 0, b: 0, a: 0.12 } }),
+      ],
+    },
+  });
+  const c24 = withDoc(c23, multiShadowCard.doc);
+  const multiShadowLabel = addText(c24, effectFrame.nodeId, {
+    name: "multi-label",
+    text: "Multi Shadow",
+    fontSize: 11,
+    color: GRAY,
+    x: 24,
+    y: 288,
+    width: 120,
+    height: 16,
+    alignH: "CENTER",
+  });
+  const c25 = withDoc(c24, multiShadowLabel.doc);
 
-  // Layer blur
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), effectFrameID)
-      .name("Layer Blur")
-      .size(120, 80)
-      .position(312, 72)
-      .fill(BLUE)
-      .cornerRadius(12)
-      .effects(effects(layerBlur().radius(4)))
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), effectFrameID)
-      .name("blur-label")
-      .text("Layer Blur")
-      .font("Inter", "Regular")
-      .fontSize(11)
-      .color(GRAY)
-      .size(120, 16)
-      .position(312, 160)
-      .alignHorizontal("CENTER")
-      .build(),
-  );
+  // Colored shadow on gradient-filled card
+  const colorShadowGrad = linearGradientPaint(135, [
+    { color: PURPLE, position: 0 },
+    { color: BLUE, position: 1 },
+  ]);
+  const coloredShadowCard = add({
+    ctx: c25,
+    parentId: effectFrame.nodeId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "Colored Shadow",
+      x: 168,
+      y: 200,
+      width: 120,
+      height: 80,
+      fills: [colorShadowGrad],
+      cornerRadius: 12,
+      effects: [
+        dropShadowEffect({
+          offset: { x: 0, y: 8 },
+          radius: 20,
+          color: { ...PURPLE, a: 0.4 },
+        }),
+      ],
+    },
+  });
+  const c26 = withDoc(c25, coloredShadowCard.doc);
+  const coloredShadowLabel = addText(c26, effectFrame.nodeId, {
+    name: "color-shadow-label",
+    text: "Colored Shadow",
+    fontSize: 11,
+    color: GRAY,
+    x: 168,
+    y: 288,
+    width: 120,
+    height: 16,
+    alignH: "CENTER",
+  });
 
-  // Multiple shadows stacked
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), effectFrameID)
-      .name("Multi Shadow")
-      .size(120, 80)
-      .position(24, 200)
-      .fill(WHITE)
-      .cornerRadius(12)
-      .effects(effects(
-        dropShadow().offset(0, 1).blur(3).color({ r: 0, g: 0, b: 0, a: 0.08 }),
-        dropShadow().offset(0, 4).blur(8).color({ r: 0, g: 0, b: 0, a: 0.08 }),
-        dropShadow().offset(0, 12).blur(24).color({ r: 0, g: 0, b: 0, a: 0.12 }),
-      ))
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), effectFrameID)
-      .name("multi-label")
-      .text("Multi Shadow")
-      .font("Inter", "Regular")
-      .fontSize(11)
-      .color(GRAY)
-      .size(120, 16)
-      .position(24, 288)
-      .alignHorizontal("CENTER")
-      .build(),
-  );
-
-  // Colored shadow
-  const colorShadowGrad = linearGradient()
-    .angle(135)
-    .stops([
-      { color: PURPLE, position: 0 },
-      { color: BLUE, position: 1 },
-    ])
-    .build();
-
-  figFile.addRoundedRectangle(
-    roundedRectNode(id.next(), effectFrameID)
-      .name("Colored Shadow")
-      .size(120, 80)
-      .position(168, 200)
-      .fill(colorShadowGrad)
-      .cornerRadius(12)
-      .effects(effects(dropShadow().offset(0, 8).blur(20).color({ ...PURPLE, a: 0.4 })))
-      .build(),
-  );
-  figFile.addTextNode(
-    textNode(id.next(), effectFrameID)
-      .name("color-shadow-label")
-      .text("Colored Shadow")
-      .font("Inter", "Regular")
-      .fontSize(11)
-      .color(GRAY)
-      .size(120, 16)
-      .position(168, 288)
-      .alignHorizontal("CENTER")
-      .build(),
-  );
+  return coloredShadowLabel.doc;
 }
 
 // =============================================================================
@@ -873,26 +1367,50 @@ function buildComponentsPage(
 /**
  * Create a demo FigDesignDocument with rich content.
  *
- * Builds a .fig binary using the fig file builder, then parses it back
- * into a FigDesignDocument. This ensures all geometry, blob data, and
- * structural metadata are properly generated.
+ * Builds the document directly via the canonical builder helpers —
+ * no fig-file binary round-trip. The function still returns a
+ * `Promise<FigDesignDocument>` so callers (specs and consumers) can
+ * keep awaiting it without churn.
  *
  * Pages:
  * 1. Shapes & Fills — basic shapes, strokes, gradients
  * 2. Typography — alignment, sizes, multi-line, paragraph
  * 3. Components & Effects — symbol/instance, shadows, blur
+ * 4. Internal Only Canvas — Figma importer requirement
  */
+// eslint-disable-next-line @typescript-eslint/require-await
 export async function createDemoFigDesignDocument(): Promise<FigDesignDocument> {
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("Fig Demo");
-  const id = createIDCounter();
+  const initialDoc = createEmptyFigDesignDocument("Shapes & Fills");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 10 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const shapesPageId = initialDoc.pages[0]!.id;
 
-  buildShapesPage(figFile, docID, id);
-  buildTypographyPage(figFile, docID, id);
-  buildComponentsPage(figFile, docID, id);
+  const docAfterShapes = buildShapesPage({ state, doc: initialDoc, pageId: shapesPageId });
 
-  figFile.addInternalCanvas(docID);
+  const typographyPageResult = addPage({ state, doc: docAfterShapes, name: "Typography" });
+  const docAfterTypography = buildTypographyPage({
+    state,
+    doc: typographyPageResult.doc,
+    pageId: typographyPageResult.pageId,
+  });
 
-  const buffer = await figFile.buildAsync({ fileName: "fig-demo" });
-  return createFigDesignDocument(new Uint8Array(buffer));
+  const componentsPageResult = addPage({ state, doc: docAfterTypography, name: "Components & Effects" });
+  const docAfterComponents = buildComponentsPage({
+    state,
+    doc: componentsPageResult.doc,
+    pageId: componentsPageResult.pageId,
+  });
+
+  // Figma's importer expects an Internal Only Canvas page even when it
+  // hosts no proxy nodes.
+  const finalDoc = addPage({
+    state,
+    doc: docAfterComponents,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
+
+  return finalDoc;
 }

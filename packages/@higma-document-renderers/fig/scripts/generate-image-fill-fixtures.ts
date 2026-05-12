@@ -17,33 +17,64 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createFigFile,
-  frameNode,
-  roundedRectNode,
-  ellipseNode,
-  solidPaint,
-  imagePaint,
-  dropShadow,
-  effects,
-} from "@higma-document-io/fig/fig-file";
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { addImage } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigNodeId,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type { FigColor, FigEffect, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/image-fill");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "image-fill.fig");
 
-type Color = { r: number; g: number; b: number; a: number };
-type IDAllocator = { value: number };
-type FigFile = ReturnType<typeof createFigFile>;
+const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
+const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 
-const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
-const LIGHT_GRAY: Color = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
+function solidPaint(color: FigColor, opacity = 1): FigPaint {
+  return {
+    type: "SOLID",
+    color,
+    opacity,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
 
-/**
- * Generate a valid 4x4 checkerboard PNG as test image.
- * Red and blue alternating pixels — visually distinctive.
- */
+function imagePaint(imageRef: string, opacity = 1): FigPaint {
+  return {
+    type: "IMAGE",
+    imageRef,
+    imageHash: imageRef,
+    imageScaleMode: "FILL",
+    scaleMode: "FILL",
+    opacity,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+function dropShadow(ox: number, oy: number, radius: number, color: FigColor): FigEffect {
+  return {
+    type: "DROP_SHADOW",
+    visible: true,
+    color,
+    offset: { x: ox, y: oy },
+    radius,
+    blendMode: "NORMAL",
+  };
+}
+
+/** Valid 4x4 RGB PNG — red/blue checkerboard. */
 function createCheckerboardPng(): Uint8Array {
-  // Valid 4x4 RGB PNG (verified with `file` and ImageMagick)
   const base64 =
     "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAF0lEQVR4nGP4bwQE" +
     "/yEkA5wFJBlwygAAQTIWMSbY+UYAAAAASUVORK5CYII=";
@@ -55,146 +86,159 @@ function createCheckerboardPng(): Uint8Array {
   return bytes;
 }
 
-function addImageFillBasic(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number, imageRef: string,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-basic")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const shapeID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(shapeID, frameID)
-      .name("image-rect")
-      .size(120, 80)
-      .position(20, 20)
-      .cornerRadius(8)
-      .fill(imagePaint(imageRef).build())
-      .build(),
-  );
+async function computeSha1Hex(data: Uint8Array): Promise<string> {
+  const buffer = new ArrayBuffer(data.byteLength);
+  new Uint8Array(buffer).set(data);
+  const hashBuffer = await crypto.subtle.digest("SHA-1", buffer);
+  const hashArray = new Uint8Array(hashBuffer);
+  return Array.from(hashArray, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function addImageFillWithShadow(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number, imageRef: string,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-shadow")
-      .size(180, 140)
-      .position(frameX, frameY)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
+type Ctx = {
+  readonly state: FigBuilderState;
+  readonly pageId: FigPageId;
+  readonly imageRef: string;
+};
 
-  const shapeID = nextID.value++;
-  figFile.addRoundedRectangle(
-    roundedRectNode(shapeID, frameID)
-      .name("image-shadowed")
-      .size(120, 80)
-      .position(30, 30)
-      .cornerRadius(12)
-      .fill(imagePaint(imageRef).build())
-      .effects(effects(
-        dropShadow().offset(0, 4).blur(8).color({ r: 0, g: 0, b: 0, a: 0.25 }),
-      ))
-      .build(),
-  );
-}
-
-function addImageFillCircle(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number, imageRef: string,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-circle")
-      .size(120, 120)
-      .position(frameX, frameY)
-      .background(WHITE)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const shapeID = nextID.value++;
-  figFile.addEllipse(
-    ellipseNode(shapeID, frameID)
-      .name("image-avatar")
-      .size(80, 80)
-      .position(20, 20)
-      .fill(imagePaint(imageRef).build())
-      .build(),
-  );
-}
-
-function addImageFillMulti(
-  figFile: FigFile, canvasID: number, nextID: IDAllocator,
-  frameX: number, frameY: number, imageRef: string,
-): void {
-  const frameID = nextID.value++;
-  figFile.addFrame(
-    frameNode(frameID, canvasID)
-      .name("image-fill-multi")
-      .size(160, 120)
-      .position(frameX, frameY)
-      .background(LIGHT_GRAY)
-      .clipsContent(true)
-      .exportAsSVG()
-      .build(),
-  );
-
-  const shapeID = nextID.value++;
-  const shapeData = roundedRectNode(shapeID, frameID)
-    .name("solid-plus-image")
-    .size(120, 80)
-    .position(20, 20)
-    .cornerRadius(8)
-    .fill({ r: 0.5, g: 0.5, b: 0.5, a: 1 })
-    .build();
-
-  figFile.addRoundedRectangle({
-    ...shapeData,
-    fillPaints: [
-      solidPaint({ r: 0.2, g: 0.3, b: 0.8, a: 1 }).build(),
-      imagePaint(imageRef).opacity(0.6).build(),
-    ],
+function addFrame(
+  ctx: Ctx,
+  doc: FigDesignDocument,
+  name: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  bg: FigColor,
+): { doc: FigDesignDocument; frameId: FigNodeId } {
+  const r = addNode({
+    state: ctx.state,
+    doc,
+    pageId: ctx.pageId,
+    parentId: null,
+    spec: {
+      type: "FRAME",
+      name,
+      x,
+      y,
+      width: w,
+      height: h,
+      fills: [solidPaint(bg)],
+      clipsContent: true,
+    },
   });
+  return { doc: r.doc, frameId: r.nodeId };
+}
+
+type Args = {
+  readonly doc: FigDesignDocument;
+  readonly ctx: Ctx;
+  readonly frameX: number;
+  readonly frameY: number;
+};
+
+function addImageFillBasic({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
+  const f = addFrame(ctx, doc, "image-fill-basic", frameX, frameY, 160, 120, WHITE);
+  return addNode({
+    state: ctx.state,
+    doc: f.doc,
+    pageId: ctx.pageId,
+    parentId: f.frameId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "image-rect",
+      x: 20, y: 20, width: 120, height: 80,
+      cornerRadius: 8,
+      fills: [imagePaint(ctx.imageRef)],
+    },
+  }).doc;
+}
+
+function addImageFillWithShadow({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
+  const f = addFrame(ctx, doc, "image-fill-shadow", frameX, frameY, 180, 140, LIGHT_GRAY);
+  return addNode({
+    state: ctx.state,
+    doc: f.doc,
+    pageId: ctx.pageId,
+    parentId: f.frameId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "image-shadowed",
+      x: 30, y: 30, width: 120, height: 80,
+      cornerRadius: 12,
+      fills: [imagePaint(ctx.imageRef)],
+      effects: [dropShadow(0, 4, 8, { r: 0, g: 0, b: 0, a: 0.25 })],
+    },
+  }).doc;
+}
+
+function addImageFillCircle({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
+  const f = addFrame(ctx, doc, "image-fill-circle", frameX, frameY, 120, 120, WHITE);
+  return addNode({
+    state: ctx.state,
+    doc: f.doc,
+    pageId: ctx.pageId,
+    parentId: f.frameId,
+    spec: {
+      type: "ELLIPSE",
+      name: "image-avatar",
+      x: 20, y: 20, width: 80, height: 80,
+      fills: [imagePaint(ctx.imageRef)],
+    },
+  }).doc;
+}
+
+function addImageFillMulti({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
+  const f = addFrame(ctx, doc, "image-fill-multi", frameX, frameY, 160, 120, LIGHT_GRAY);
+  return addNode({
+    state: ctx.state,
+    doc: f.doc,
+    pageId: ctx.pageId,
+    parentId: f.frameId,
+    spec: {
+      type: "ROUNDED_RECTANGLE",
+      name: "solid-plus-image",
+      x: 20, y: 20, width: 120, height: 80,
+      cornerRadius: 8,
+      fills: [
+        solidPaint({ r: 0.2, g: 0.3, b: 0.8, a: 1 }),
+        imagePaint(ctx.imageRef, 0.6),
+      ],
+    },
+  }).doc;
 }
 
 async function generateImageFillFixtures(): Promise<void> {
   console.log("Generating image fill fixtures...\n");
 
-  const figFile = createFigFile();
-  const docID = figFile.addDocument("ImageFill");
-  const canvasID = figFile.addCanvas(docID, "Image Fill");
-  figFile.addInternalCanvas(docID);
+  const empty = createEmptyFigDesignDocument("ImageFill");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const docWithInternal = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  // Add test image — addImage computes the SHA1 hash automatically
-  const imageData = createCheckerboardPng();
-  const imageRef = figFile.addImage(imageData, "image/png");
+  const pngBytes = createCheckerboardPng();
+  const imageRef = await computeSha1Hex(pngBytes);
+  const docWithImage = addImage(docWithInternal, imageRef, {
+    ref: imageRef,
+    data: pngBytes,
+    mimeType: "image/png",
+  });
 
-  const nextID: IDAllocator = { value: 10 };
+  const ctx: Ctx = { state, pageId, imageRef };
 
   const GRID_COLS = 4;
   const COL_WIDTH = 220;
   const ROW_HEIGHT = 180;
   const MARGIN = 50;
 
-  type Builder = (f: FigFile, c: number, id: IDAllocator, x: number, y: number, ref: string) => void;
+  type Builder = (args: Args) => FigDesignDocument;
 
   const builders: { name: string; fn: Builder }[] = [
     { name: "Image fill basic", fn: addImageFillBasic },
@@ -203,13 +247,13 @@ async function generateImageFillFixtures(): Promise<void> {
     { name: "Image fill multi-layer", fn: addImageFillMulti },
   ];
 
-  for (let i = 0; i < builders.length; i++) {
+  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const x = MARGIN + col * COL_WIDTH;
     const y = MARGIN + row * ROW_HEIGHT;
-    builders[i].fn(figFile, canvasID, nextID, x, y, imageRef);
-  }
+    return b.fn({ doc: acc, ctx, frameX: x, frameY: y });
+  }, docWithImage);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
     if (!fs.existsSync(dir)) {
@@ -217,8 +261,8 @@ async function generateImageFillFixtures(): Promise<void> {
     }
   }
 
-  const figData = await figFile.buildAsync({ fileName: "image-fill" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Frames: ${builders.length}\n`);

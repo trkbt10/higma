@@ -1,23 +1,43 @@
 /**
- * @file Apply a `RefinePlan` to a `LoadedFigFile`.
+ * @file Apply a `RefinePlan` via the editor reducer.
  *
- * Walks the plan in order. The only state shared across actions is
- * the token table — proxy creation actions register the new GUID
- * for their `token`, and bind actions resolve `{ kind: "token" }`
- * proxy refs against it.
+ * Phase 2 of the SoT consolidation: this module used to mutate
+ * `LoadedFigFile.nodeChanges` in place through `addNodeChange` /
+ * `patchNodeChange` / hand-written Kiwi node construction. That route
+ * bypassed `FigDesignDocument` (the high-level model that
+ * `document-to-tree.ts` projects into Kiwi as a single SoT) and
+ * therefore produced .fig files that drifted from real Figma exports —
+ * SYMBOLs without `isSymbolPublishable`, FRAMEs with broken
+ * `frameMaskDisabled`, INSTANCEs without `derivedSymbolData`.
  *
- * Apply does no policy. It refuses unknown action kinds and reports
- * skipped actions with a structured reason. Safety invariants
- * (paint stack eligibility, leaf-icon-only) are the plan layer's
- * responsibility — re-checking here would duplicate the SoT.
+ * The new pipeline:
+ *
+ *   1. `createFigDesignDocumentFromLoaded(loaded)` lifts the raw file
+ *      into the domain model.
+ *   2. Each `PlanAction` is mapped to one or more `figEditorReducer`
+ *      actions (Phase 1) and dispatched. The reducer's pure handlers
+ *      mutate `FigDesignDocument` only — they never touch Kiwi nodes.
+ *   3. `documentToTree(doc)` re-projects the mutated document back
+ *      into a `nodeChanges` array, which we splice into `loaded` so
+ *      the caller's existing `saveFigFile(loaded)` flow continues to
+ *      work without changes.
+ *
+ * The plan still speaks in raw GUID strings because that's how the
+ * planner emits actions. We convert GUIDs to branded `FigNodeId`s at
+ * the boundary; we never accept FigNodeIds at the plan surface.
  */
-import type { FigNode } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-models/fig/domain";
-import { getNodeType } from "@higma-document-models/fig/domain";
-import { addNodeChange, createGuidAllocator, patchNodeChange } from "@higma-document-io/fig/roundtrip";
-import { bootstrapFillProxy, bootstrapTextProxy, synthesiseFillProxy, synthesiseTextProxy } from "../proxies";
-import { promoteIconCluster } from "../componentize";
-import { promoteVectorCluster } from "../componentize/promote-vector-cluster";
+import type { LoadedFigFile, FigNodeId, FigPageId, FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
+import { toNodeId } from "@higma-document-models/fig/domain";
+import type { FigStyleId } from "@higma-document-models/fig/types";
+import { documentToTree, treeToDocument } from "@higma-document-io/fig/context";
+import { createFigSymbolContextFromLoaded } from "@higma-document-io/fig/context";
+import { createFigEditorState, figEditorReducer } from "@higma-document-editors/fig";
+import type { FigEditorState } from "@higma-document-editors/fig";
+import { dfsById } from "@higma-primitives/tree";
+import {
+  isPromotableCluster,
+  subtreeFingerprint,
+} from "../componentize/promote-icon-cluster";
 import type {
   PlanAction,
   ActionEnsureInternalCanvas,
@@ -35,7 +55,6 @@ import type {
 } from "../plan";
 
 export type ApplyResult = {
-  /** Whether the plan inserted a brand-new Internal Only Canvas. */
   readonly internalCanvasCreated: boolean;
   readonly fillProxiesCreated: number;
   readonly textProxiesCreated: number;
@@ -53,114 +72,137 @@ export type ApplyResult = {
 
 export type ApplyContext = {
   /**
-   * GUID of an existing Internal Only Canvas. When undefined, the plan
-   * must contain an `ensure-internal-canvas` action — the apply layer
-   * will create the canvas and store its GUID internally before any
-   * `create-*-proxy` action references it.
+   * GUID of an existing Internal Only Canvas in the loaded file (the
+   * page itself — `internalOnly: true`). Used as the host page for
+   * `create-*-proxy` actions. When undefined, the plan must contain
+   * an `ensure-internal-canvas` action.
    */
   readonly internalCanvasGuid: string | undefined;
-  /** GUID of any existing FILL-style proxy in the file, used as a template. */
+  /**
+   * GUID of the user-visible CANVAS that hosts promoted vector
+   * SYMBOLs. Figma rejects SYMBOLs parented under the Internal Only
+   * Canvas (their INSTANCEs render blank), so they live alongside
+   * existing user content. Required when the plan contains any
+   * `promote-vector-cluster` action.
+   */
+  readonly userCanvasGuid: string | undefined;
+  /**
+   * Reserved for backwards compatibility with the previous apply
+   * implementation that cloned existing FILL/TEXT proxies. Phase 1's
+   * `ADD_FILL_PROXY` / `ADD_TEXT_PROXY` actions bootstrap proxies from
+   * scratch with their own geometry blob, so the template GUIDs are
+   * unused. Kept on the type so existing CLI / spec callers compile.
+   */
   readonly fillTemplateGuid: string | undefined;
-  /** GUID of any existing TEXT-style proxy in the file, used as a template. */
   readonly textTemplateGuid: string | undefined;
 };
 
-/**
- * Mutable per-pass state. Tokens, skipped actions, counts, and the
- * resolved internal canvas guid are all populated by individual
- * handlers. A single `applyPlan` call keeps one allocator, one token
- * table, and one canvas guid so the ensure-internal-canvas action's
- * effect threads through every subsequent create-*-proxy.
- */
+// =============================================================================
+// Mutable per-pass state — bridges plan-local concepts (tokens, cluster
+// IDs) onto the document-side identifiers each reducer action expects.
+// =============================================================================
+
 type ApplyState = {
-  readonly allocator: ReturnType<typeof createGuidAllocator>;
-  readonly tokens: Map<string, string>;
-  /** SYMBOL guid produced by each successful `promote-icon-cluster`. */
-  readonly promotedSymbolByClusterId: Map<string, string>;
-  readonly skipped: { action: PlanAction; reason: string }[];
-  internalCanvasGuid: string | undefined;
+  /** `state.documentHistory.present` is the live `FigDesignDocument`. */
+  editor: FigEditorState;
+  /** Plan-local proxy token → resolved FigNodeId. */
+  readonly tokens: Map<string, FigNodeId>;
+  /** `promote-icon-cluster.clusterId` → SYMBOL FigNodeId (== exemplar). */
+  readonly promotedSymbolByClusterId: Map<string, FigNodeId>;
+  /** FigPageId of the Internal Only Canvas, resolved once. */
+  internalCanvasPageId: FigPageId | undefined;
   internalCanvasCreated: boolean;
-  counts: {
-    fillProxiesCreated: number;
-    textProxiesCreated: number;
-    fillBound: number;
-    textBound: number;
-    clustersPromoted: number;
-    instancesRewritten: number;
-    vectorClustersPromoted: number;
-    vectorInstancesRewritten: number;
-    variantSetsCreated: number;
-    layoutsApplied: number;
-    renamed: number;
-  };
+  readonly skipped: { action: PlanAction; reason: string }[];
+  counts: ApplyCounts;
 };
 
-/** Apply every action in plan order, mutating `loaded.nodeChanges`. */
+type ApplyCounts = {
+  fillProxiesCreated: number;
+  textProxiesCreated: number;
+  fillBound: number;
+  textBound: number;
+  clustersPromoted: number;
+  instancesRewritten: number;
+  vectorClustersPromoted: number;
+  vectorInstancesRewritten: number;
+  variantSetsCreated: number;
+  layoutsApplied: number;
+  renamed: number;
+};
+
+function newCounts(): ApplyCounts {
+  return {
+    fillProxiesCreated: 0,
+    textProxiesCreated: 0,
+    fillBound: 0,
+    textBound: 0,
+    clustersPromoted: 0,
+    instancesRewritten: 0,
+    vectorClustersPromoted: 0,
+    vectorInstancesRewritten: 0,
+    variantSetsCreated: 0,
+    layoutsApplied: 0,
+    renamed: 0,
+  };
+}
+
+// =============================================================================
+// Public entry — same signature the CLI and specs already call.
+// =============================================================================
+
+/**
+ * Apply every action in plan order. Splices the resulting
+ * `nodeChanges` / `blobs` back into the caller's `loaded` so the
+ * existing `saveFigFile(loaded)` continues to produce a valid .fig.
+ */
 export function applyPlan(loaded: LoadedFigFile, plan: RefinePlan, ctx: ApplyContext): ApplyResult {
+  // refine-fig's plan layer hosts style proxies on the Internal Only
+  // Canvas, so we must keep that page in the editing document.
+  // `treeToDocument(..., canvasVisibility: "all")` is the only entry
+  // that includes the internal canvas; the round-trip fidelity of
+  // that path is Phase 0a's responsibility (see phase-0a.md item H).
+  const symbolCtx = createFigSymbolContextFromLoaded(loaded);
+  const doc = treeToDocument(symbolCtx.tree, {
+    blobs: loaded.blobs,
+    images: loaded.images,
+    metadata: loaded.metadata,
+    canvasVisibility: "all",
+  }, { styleRegistry: symbolCtx.styleRegistry });
+  const editor = createFigEditorState(doc);
   const state: ApplyState = {
-    allocator: createGuidAllocator(loaded),
-    tokens: new Map<string, string>(),
-    promotedSymbolByClusterId: new Map<string, string>(),
-    skipped: [],
-    internalCanvasGuid: ctx.internalCanvasGuid,
+    editor,
+    tokens: new Map<string, FigNodeId>(),
+    promotedSymbolByClusterId: new Map<string, FigNodeId>(),
+    internalCanvasPageId: resolveInitialInternalCanvasPageId(doc, ctx),
     internalCanvasCreated: false,
-    counts: {
-      fillProxiesCreated: 0,
-      textProxiesCreated: 0,
-      fillBound: 0,
-      textBound: 0,
-      clustersPromoted: 0,
-      instancesRewritten: 0,
-      vectorClustersPromoted: 0,
-      vectorInstancesRewritten: 0,
-      variantSetsCreated: 0,
-      layoutsApplied: 0,
-      renamed: 0,
-    },
+    skipped: [],
+    counts: newCounts(),
   };
 
   for (const action of plan.actions) {
-    if (action.kind === "ensure-internal-canvas") {
-      applyEnsureCanvas(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "create-fill-proxy") {
-      applyCreateFill(action, loaded, ctx, state);
-      continue;
-    }
-    if (action.kind === "create-text-proxy") {
-      applyCreateText(action, loaded, ctx, state);
-      continue;
-    }
-    if (action.kind === "bind-fill-style") {
-      applyBindFill(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "bind-text-style") {
-      applyBindText(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "promote-icon-cluster") {
-      applyPromote(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "promote-vector-cluster") {
-      applyPromoteVectorCluster(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "group-as-variant-set") {
-      applyGroupAsVariantSet(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "set-layout") {
-      applySetLayout(action, loaded, state);
-      continue;
-    }
-    if (action.kind === "rename") {
-      applyRename(action, loaded, state);
-      continue;
-    }
+    dispatchPlanAction(loaded, action, state);
   }
+
+  // Reproject the final document into nodeChanges and write it back
+  // onto the caller's `loaded`. This is the single point where the
+  // domain model meets Kiwi — every load-bearing field is materialised
+  // by `document-to-tree.designNodeToFigNode`.
+  const finalDoc = state.editor.documentHistory.present;
+  const projected = documentToTree(finalDoc);
+  // `LoadedFigFile` is declared fully readonly post-Phase 3-C. Splice
+  // the freshly-projected node tree + blobs in via an `unknown` widening
+  // — the legacy refine-fig pipeline still expects to thread the same
+  // `loaded` handle through downstream consumers. This is the one
+  // exception left in the codebase; a follow-up will convert
+  // `applyPlanInPlace` to return a new `LoadedFigFile` instead of
+  // mutating the input.
+  const mutableLoaded = loaded as unknown as {
+    nodeChanges: typeof projected.nodeChanges;
+    blobs: typeof projected.blobs;
+  };
+  mutableLoaded.nodeChanges = projected.nodeChanges;
+  mutableLoaded.blobs = projected.blobs;
+
   return {
     internalCanvasCreated: state.internalCanvasCreated,
     ...state.counts,
@@ -168,36 +210,361 @@ export function applyPlan(loaded: LoadedFigFile, plan: RefinePlan, ctx: ApplyCon
   };
 }
 
-/**
- * Group every promoted SYMBOL named by the action under one new
- * FRAME with `isStateGroup = true` and a single VARIANT-typed
- * `componentPropDefs[]` entry. Each grouped SYMBOL is renamed to
- * `<propertyName>=<value>` and re-parented onto the new FRAME.
- *
- * Apply-time checks:
- *
- *   - Every cited cluster must have a promotedSymbolByClusterId entry
- *     (i.e. its earlier `promote-icon-cluster` action succeeded).
- *   - All SYMBOLs must share a common parent canvas — we inherit the
- *     new FRAME's parent from the first SYMBOL. The plan layer is
- *     expected to keep cross-canvas grouping out; mixing canvases at
- *     apply time produces a still-valid FRAME but possibly surprising
- *     placement, so we record a skip with a clear reason rather than
- *     silently re-parenting cross-canvas.
- */
-function applyGroupAsVariantSet(
-  action: ActionGroupAsVariantSet,
+// =============================================================================
+// Internal Only Canvas resolution
+// =============================================================================
+
+function resolveInitialInternalCanvasPageId(
+  doc: FigDesignDocument,
+  ctx: ApplyContext,
+): FigPageId | undefined {
+  const page = doc.pages.find((p) => p.internalOnly === true);
+  if (page) {
+    return page.id;
+  }
+  // The plan layer historically supplied the guid in `ctx`. Convert it
+  // to a FigPageId when we can; otherwise wait for an
+  // `ensure-internal-canvas` action.
+  if (ctx.internalCanvasGuid !== undefined) {
+    return doc.pages.find((p) => p.id === ctx.internalCanvasGuid)?.id;
+  }
+  return undefined;
+}
+
+// =============================================================================
+// Plan action dispatch
+// =============================================================================
+
+function dispatchPlanAction(loaded: LoadedFigFile, action: PlanAction, state: ApplyState): void {
+  switch (action.kind) {
+    case "ensure-internal-canvas":
+      return applyEnsureInternalCanvas(action, state);
+    case "create-fill-proxy":
+      return applyCreateFillProxy(action, state);
+    case "create-text-proxy":
+      return applyCreateTextProxy(action, state);
+    case "bind-fill-style":
+      return applyBindFillStyle(action, state);
+    case "bind-text-style":
+      return applyBindTextStyle(action, state);
+    case "promote-icon-cluster":
+      return applyPromoteIconCluster(loaded, action, state);
+    case "promote-vector-cluster":
+      return applyPromoteVectorCluster(loaded, action, state);
+    case "group-as-variant-set":
+      return applyGroupAsVariantSet(action, state);
+    case "set-layout":
+      return applySetLayout(action, state);
+    case "rename":
+      return applyRename(action, state);
+  }
+}
+
+// =============================================================================
+// Internal canvas
+// =============================================================================
+
+function applyEnsureInternalCanvas(action: ActionEnsureInternalCanvas, state: ApplyState): void {
+  if (state.internalCanvasPageId !== undefined) {
+    state.skipped.push({ action, reason: "internal canvas already exists" });
+    return;
+  }
+  const before = countInternalPages(state.editor.documentHistory.present);
+  state.editor = figEditorReducer(state.editor, {
+    type: "ENSURE_INTERNAL_CANVAS",
+    name: action.name,
+  });
+  const after = state.editor.documentHistory.present;
+  const internal = after.pages.find((p) => p.internalOnly === true);
+  if (!internal) {
+    state.skipped.push({ action, reason: "ENSURE_INTERNAL_CANVAS reducer did not create a page" });
+    return;
+  }
+  state.internalCanvasPageId = internal.id;
+  state.internalCanvasCreated = countInternalPages(after) > before;
+}
+
+function countInternalPages(doc: FigDesignDocument): number {
+  return doc.pages.filter((p) => p.internalOnly === true).length;
+}
+
+// =============================================================================
+// FILL / TEXT proxies
+// =============================================================================
+
+function applyCreateFillProxy(action: ActionCreateFillProxy, state: ApplyState): void {
+  const pageId = state.internalCanvasPageId;
+  if (!pageId) {
+    state.skipped.push({
+      action,
+      reason: "no internal canvas; plan must emit ensure-internal-canvas first",
+    });
+    return;
+  }
+  const beforeIds = collectChildIds(state.editor.documentHistory.present, pageId);
+  state.editor = figEditorReducer(state.editor, {
+    type: "ADD_FILL_PROXY",
+    internalPageId: pageId,
+    name: action.name,
+    color: { r: action.color.r, g: action.color.g, b: action.color.b, a: action.color.a },
+  });
+  const after = state.editor.documentHistory.present;
+  const newId = pickNewChildId(after, pageId, beforeIds);
+  if (!newId) {
+    state.skipped.push({ action, reason: "ADD_FILL_PROXY did not produce a new node" });
+    return;
+  }
+  state.tokens.set(action.token, newId);
+  state.counts.fillProxiesCreated = state.counts.fillProxiesCreated + 1;
+}
+
+function applyCreateTextProxy(action: ActionCreateTextProxy, state: ApplyState): void {
+  const pageId = state.internalCanvasPageId;
+  if (!pageId) {
+    state.skipped.push({
+      action,
+      reason: "no internal canvas; plan must emit ensure-internal-canvas first",
+    });
+    return;
+  }
+  const beforeIds = collectChildIds(state.editor.documentHistory.present, pageId);
+  state.editor = figEditorReducer(state.editor, {
+    type: "ADD_TEXT_PROXY",
+    internalPageId: pageId,
+    name: action.name,
+    fontName: { family: action.fontFamily, style: action.fontStyle, postscript: "" },
+    fontSize: action.fontSize,
+  });
+  const after = state.editor.documentHistory.present;
+  const newId = pickNewChildId(after, pageId, beforeIds);
+  if (!newId) {
+    state.skipped.push({ action, reason: "ADD_TEXT_PROXY did not produce a new node" });
+    return;
+  }
+  state.tokens.set(action.token, newId);
+  state.counts.textProxiesCreated = state.counts.textProxiesCreated + 1;
+}
+
+function collectChildIds(doc: FigDesignDocument, pageId: FigPageId): Set<FigNodeId> {
+  const page = doc.pages.find((p) => p.id === pageId);
+  if (!page) {
+    return new Set();
+  }
+  return new Set(page.children.map((c) => c.id));
+}
+
+function pickNewChildId(
+  doc: FigDesignDocument,
+  pageId: FigPageId,
+  before: ReadonlySet<FigNodeId>,
+): FigNodeId | undefined {
+  const page = doc.pages.find((p) => p.id === pageId);
+  if (!page) {
+    return undefined;
+  }
+  for (const child of page.children) {
+    if (!before.has(child.id)) {
+      return child.id;
+    }
+  }
+  return undefined;
+}
+
+// =============================================================================
+// Style bind
+// =============================================================================
+
+function applyBindFillStyle(action: ActionBindFillStyle, state: ApplyState): void {
+  const styleId = resolveStyleIdForFill(action.proxy, state.tokens);
+  if (!styleId) {
+    state.skipped.push({ action, reason: "proxy token did not resolve" });
+    return;
+  }
+  const nodeId = toNodeId(action.nodeGuid);
+  if (!nodeExists(state.editor.documentHistory.present, nodeId)) {
+    state.skipped.push({ action, reason: "node not in document" });
+    return;
+  }
+  state.editor = figEditorReducer(state.editor, {
+    type: "BIND_FILL_STYLE",
+    nodeId,
+    styleId,
+  });
+  state.counts.fillBound = state.counts.fillBound + 1;
+}
+
+function applyBindTextStyle(action: ActionBindTextStyle, state: ApplyState): void {
+  const styleId = resolveStyleIdForFill(action.proxy, state.tokens);
+  if (!styleId) {
+    state.skipped.push({ action, reason: "proxy token did not resolve" });
+    return;
+  }
+  const nodeId = toNodeId(action.nodeGuid);
+  if (!nodeExists(state.editor.documentHistory.present, nodeId)) {
+    state.skipped.push({ action, reason: "node not in document" });
+    return;
+  }
+  state.editor = figEditorReducer(state.editor, {
+    type: "BIND_TEXT_STYLE",
+    nodeId,
+    styleId,
+  });
+  state.counts.textBound = state.counts.textBound + 1;
+}
+
+function resolveStyleIdForFill(
+  ref: ProxyRef,
+  tokens: ReadonlyMap<string, FigNodeId>,
+): FigStyleId | undefined {
+  const proxyId = ref.kind === "existing" ? toNodeId(ref.guid) : tokens.get(ref.token);
+  if (!proxyId) {
+    return undefined;
+  }
+  return styleIdFromNodeId(proxyId);
+}
+
+function styleIdFromNodeId(id: FigNodeId): FigStyleId {
+  const [sessionStr, localStr] = String(id).split(":");
+  const sessionID = Number.parseInt(sessionStr ?? "0", 10);
+  const localID = Number.parseInt(localStr ?? "0", 10);
+  return { guid: { sessionID, localID } };
+}
+
+// =============================================================================
+// Promote icon / vector cluster
+// =============================================================================
+
+function applyPromoteIconCluster(
   loaded: LoadedFigFile,
+  action: ActionPromoteIconCluster,
   state: ApplyState,
 ): void {
+  if (!action.memberGuids.includes(action.exemplarGuid)) {
+    state.skipped.push({ action, reason: "exemplarGuid must be one of memberGuids" });
+    return;
+  }
+  // Promotable / fingerprint gating uses the original `loaded` raw
+  // snapshot because the analysis primitives in promote-icon-cluster
+  // are written against the Kiwi tree. The document-level mutation
+  // below is what actually flips types — the loaded inspection is
+  // read-only.
+  if (!isPromotableCluster(loaded, action.exemplarGuid)) {
+    state.skipped.push({
+      action,
+      reason: "exemplar carries a non-promotable descendant (e.g. GRADIENT paint or unsupported node type)",
+    });
+    return;
+  }
+  const exemplarFingerprint = subtreeFingerprint(loaded, action.exemplarGuid);
+  const eligibleOthers = action.memberGuids
+    .filter((g) => g !== action.exemplarGuid)
+    .filter((g) => subtreeFingerprint(loaded, g) === exemplarFingerprint);
+
+  const exemplarId = toNodeId(action.exemplarGuid);
+  if (!nodeExists(state.editor.documentHistory.present, exemplarId)) {
+    state.skipped.push({ action, reason: "exemplar not in document" });
+    return;
+  }
+
+  // 1. Flip the exemplar into a SYMBOL.
+  state.editor = figEditorReducer(state.editor, {
+    type: "PROMOTE_TO_SYMBOL",
+    nodeId: exemplarId,
+    name: action.clusterName,
+  });
+
+  // 2. Flip every fingerprint-equal member into an INSTANCE pointing
+  //    at the new SYMBOL. `dropChildren: true` matches the previous
+  //    implementation's "removed descendants" behaviour — the INSTANCE
+  //    inherits its visual from the SYMBOL.
+  const instances: FigNodeId[] = [];
+  for (const memberGuid of eligibleOthers) {
+    const memberId = toNodeId(memberGuid);
+    if (!nodeExists(state.editor.documentHistory.present, memberId)) {
+      continue;
+    }
+    state.editor = figEditorReducer(state.editor, {
+      type: "PROMOTE_TO_INSTANCE",
+      nodeId: memberId,
+      symbolId: exemplarId,
+      dropChildren: true,
+    });
+    instances.push(memberId);
+  }
+
+  state.promotedSymbolByClusterId.set(action.clusterId, exemplarId);
+  state.counts.clustersPromoted = state.counts.clustersPromoted + 1;
+  state.counts.instancesRewritten = state.counts.instancesRewritten + instances.length;
+}
+
+function applyPromoteVectorCluster(
+  _loaded: LoadedFigFile,
+  action: ActionPromoteVectorCluster,
+  state: ApplyState,
+): void {
+  if (!state.internalCanvasPageId) {
+    state.skipped.push({
+      action,
+      reason: "no internal canvas; promote-vector-cluster needs the Internal Only Canvas, plan must emit ensure-internal-canvas first",
+    });
+    return;
+  }
+  if (!action.memberGuids.includes(action.exemplarGuid)) {
+    state.skipped.push({ action, reason: "exemplarGuid must be one of memberGuids" });
+    return;
+  }
+  const exemplarId = toNodeId(action.exemplarGuid);
+  const memberIds = action.memberGuids.map((g) => toNodeId(g));
+  const docBefore = state.editor.documentHistory.present;
+  if (!nodeExists(docBefore, exemplarId)) {
+    state.skipped.push({ action, reason: "exemplar not in document" });
+    return;
+  }
+  state.editor = figEditorReducer(state.editor, {
+    type: "CREATE_SYMBOL_WITH_INSTANCES",
+    hostPageId: state.internalCanvasPageId,
+    name: action.clusterName,
+    exemplarNodeId: exemplarId,
+    memberNodeIds: memberIds,
+  });
+  // CREATE_SYMBOL_WITH_INSTANCES adds a fresh SYMBOL whose ID was
+  // allocated by the reducer. Record the cluster → SYMBOL mapping so
+  // a later group-as-variant-set action can pick it up; locate the
+  // new SYMBOL by name on the internal canvas (it lands as the last
+  // child added).
+  const docAfter = state.editor.documentHistory.present;
+  const internalPage = docAfter.pages.find((p) => p.id === state.internalCanvasPageId);
+  if (internalPage) {
+    const newSymbol = [...internalPage.children]
+      .reverse()
+      .find((c) => c.name === action.clusterName && c.type === "SYMBOL");
+    if (newSymbol) {
+      state.promotedSymbolByClusterId.set(action.clusterId, newSymbol.id);
+    }
+  }
+  state.counts.vectorClustersPromoted = state.counts.vectorClustersPromoted + 1;
+  state.counts.vectorInstancesRewritten = state.counts.vectorInstancesRewritten + memberIds.length;
+}
+
+// =============================================================================
+// Variant set / layout / rename
+// =============================================================================
+
+function applyGroupAsVariantSet(action: ActionGroupAsVariantSet, state: ApplyState): void {
   if (action.variants.length === 0) {
     state.skipped.push({ action, reason: "variant set has zero variants" });
     return;
   }
-  const symbolGuids = action.variants.map((v) => state.promotedSymbolByClusterId.get(v.clusterId));
-  const missing = action.variants
-    .map((v, i) => (symbolGuids[i] ? undefined : v.clusterId))
-    .filter((id): id is string => Boolean(id));
+  const variantsResolved: { readonly symbolId: FigNodeId; readonly value: string }[] = [];
+  const missing: string[] = [];
+  for (const variant of action.variants) {
+    const symbolId = state.promotedSymbolByClusterId.get(variant.clusterId);
+    if (!symbolId) {
+      missing.push(variant.clusterId);
+      continue;
+    }
+    variantsResolved.push({ symbolId, value: variant.propertyValue });
+  }
   if (missing.length > 0) {
     state.skipped.push({
       action,
@@ -205,93 +572,57 @@ function applyGroupAsVariantSet(
     });
     return;
   }
-  // Resolve parent canvas from the first SYMBOL.
-  const firstSymbol = loaded.nodeChanges.find((n) => guidStr(n) === symbolGuids[0]);
-  if (!firstSymbol) {
-    state.skipped.push({ action, reason: "first SYMBOL not in nodeChanges" });
-    return;
-  }
-  const sharedParent = firstSymbol.parentIndex?.guid;
-  if (!sharedParent) {
-    state.skipped.push({ action, reason: "first SYMBOL has no parent" });
-    return;
-  }
-  // Refuse to mix canvases at apply time — the plan layer should not
-  // produce this case in practice; fail-fast.
-  for (const sg of symbolGuids) {
-    const node = loaded.nodeChanges.find((n) => guidStr(n) === sg);
-    const p = node?.parentIndex?.guid;
-    if (!p || `${p.sessionID}:${p.localID}` !== `${sharedParent.sessionID}:${sharedParent.localID}`) {
-      state.skipped.push({
-        action,
-        reason: `cluster SYMBOLs do not share a common parent canvas`,
-      });
-      return;
-    }
-  }
-
-  // Build the propDef + FRAME.
-  const propDefId = state.allocator.next();
-  const frameGuid = state.allocator.next();
-  const setFrame: FigNode = {
-    guid: frameGuid,
-    phase: { value: 0, name: "CREATED" },
-    parentIndex: { guid: sharedParent, position: nextChildSortPosition(loaded, sharedParent) },
-    type: { value: 4, name: "FRAME" },
-    name: action.setName,
-    isStateGroup: true,
-    componentPropDefs: [
-      {
-        id: propDefId,
-        // ComponentPropType.VARIANT = 4 in the canonical Kiwi schema
-        // (figma-schema.json). Other values: BOOL=0, TEXT=1, COLOR=2,
-        // INSTANCE_SWAP=3, NUMBER=5, IMAGE=6, SLOT=7. Using the wrong
-        // value would round-trip back as TEXT and isVariantSetFrame
-        // would reject the result.
-        name: action.propertyName,
-        type: { value: 4, name: "VARIANT" },
-      },
-    ],
-  };
-  addNodeChange(loaded, setFrame);
-
-  // Move every SYMBOL into the new FRAME and rewrite its name.
-  for (const [idx, variant] of action.variants.entries()) {
-    const symbolGuid = symbolGuids[idx];
-    if (!symbolGuid) {
-      continue;
-    }
-    const symbolNode = loaded.nodeChanges.find((n) => guidStr(n) === symbolGuid);
-    if (!symbolNode) {
-      continue;
-    }
-    const variantName = `${action.propertyName}=${variant.propertyValue}`;
-    const ok = patchNodeChange(loaded, symbolGuid, {
-      name: variantName,
-      parentIndex: { guid: frameGuid, position: `variant-${idx}` },
-      variantPropSpecs: [{ propDefId, value: variant.propertyValue }],
+  // The reducer enforces the "same parent page" rule; capture its
+  // skip path through the document snapshot. If grouping fails, the
+  // document is unchanged and we report a skip.
+  const docBefore = state.editor.documentHistory.present;
+  state.editor = figEditorReducer(state.editor, {
+    type: "GROUP_AS_VARIANT_SET",
+    setName: action.setName,
+    propertyName: action.propertyName,
+    variants: variantsResolved,
+  });
+  const docAfter = state.editor.documentHistory.present;
+  if (docAfter === docBefore) {
+    state.skipped.push({
+      action,
+      reason: "GROUP_AS_VARIANT_SET refused (variant SYMBOLs not on the same page or missing)",
     });
-    if (!ok) {
-      state.skipped.push({
-        action,
-        reason: `patch failed for symbol ${symbolGuid}`,
-      });
-      return;
-    }
+    return;
   }
   state.counts.variantSetsCreated = state.counts.variantSetsCreated + 1;
 }
 
-/**
- * Apply an auto-layout inference. Patches the FRAME with `stackMode`,
- * `stackSpacing`, and per-side padding so Figma treats it as an
- * auto-layout container. Values come straight from the action; the
- * apply layer does not re-infer.
- *
- * StackMode enum (figma-schema.json → StackMode): HORIZONTAL=1,
- * VERTICAL=2. Other padding fields are doubles; the plan rounded them
- * before emitting.
- */
+function applySetLayout(action: ActionSetLayout, state: ApplyState): void {
+  const nodeId = toNodeId(action.nodeGuid);
+  if (!nodeExists(state.editor.documentHistory.present, nodeId)) {
+    state.skipped.push({ action, reason: "node not in document" });
+    return;
+  }
+  const stackModeValue = action.layoutMode === "HORIZONTAL" ? 1 : 2;
+  const counterAxisValue = counterAxisEnumValue(action.counterAxisAlign);
+  state.editor = figEditorReducer(state.editor, {
+    type: "UPDATE_NODE",
+    nodeId,
+    source: "test",
+    updater: (node) => ({
+      ...node,
+      autoLayout: {
+        stackMode: { value: stackModeValue, name: action.layoutMode },
+        stackSpacing: action.itemSpacing,
+        stackPadding: {
+          top: action.paddingTop,
+          right: action.paddingRight,
+          bottom: action.paddingBottom,
+          left: action.paddingLeft,
+        },
+        stackCounterAlignItems: { value: counterAxisValue, name: action.counterAxisAlign },
+      },
+    }),
+  });
+  state.counts.layoutsApplied = state.counts.layoutsApplied + 1;
+}
+
 function counterAxisEnumValue(align: "MIN" | "CENTER" | "MAX"): number {
   if (align === "MIN") {
     return 0;
@@ -302,353 +633,41 @@ function counterAxisEnumValue(align: "MIN" | "CENTER" | "MAX"): number {
   return 2;
 }
 
-function applySetLayout(
-  action: ActionSetLayout,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
-  const stackModeValue = action.layoutMode === "HORIZONTAL" ? 1 : 2;
-  // StackCounterAlign enum (figma-schema.json): MIN=0, CENTER=1, MAX=2.
-  const counterValue = counterAxisEnumValue(action.counterAxisAlign);
-  const ok = patchNodeChange(loaded, action.nodeGuid, {
-    stackMode: { value: stackModeValue, name: action.layoutMode },
-    stackSpacing: action.itemSpacing,
-    stackHorizontalPadding: action.paddingLeft,
-    stackPaddingRight: action.paddingRight,
-    stackVerticalPadding: action.paddingTop,
-    stackPaddingBottom: action.paddingBottom,
-    stackCounterAlignItems: { value: counterValue, name: action.counterAxisAlign },
-  });
-  if (!ok) {
-    state.skipped.push({ action, reason: "node not in nodeChanges" });
-    return;
-  }
-  state.counts.layoutsApplied = state.counts.layoutsApplied + 1;
-}
-
-function guidStr(node: FigNode): string {
-  const g = node.guid;
-  if (!g) {
-    return "";
-  }
-  return `${g.sessionID}:${g.localID}`;
-}
-
-function nextChildSortPosition(
-  loaded: LoadedFigFile,
-  parentGuid: { sessionID: number; localID: number },
-): string {
-  const parentKey = `${parentGuid.sessionID}:${parentGuid.localID}`;
-  const positions = loaded.nodeChanges
-    .filter((n) => {
-      const p = n.parentIndex?.guid;
-      if (!p) {
-        return false;
-      }
-      return `${p.sessionID}:${p.localID}` === parentKey;
-    })
-    .map((n) => n.parentIndex?.position ?? "");
-  if (positions.length === 0) {
-    return "z";
-  }
-  const max = positions.reduce((best, p) => (p > best ? p : best), positions[0] ?? "");
-  return `${max}z`;
-}
-
-/**
- * Insert a fresh DOCUMENT-rooted CANVAS marked `internalOnly: true`.
- * The new GUID overwrites `state.internalCanvasGuid` for any
- * subsequent `create-*-proxy` action. Idempotent guard: if an
- * internal canvas already exists in state we skip — at most one ensure
- * action per plan and the builder enforces that.
- */
-function applyEnsureCanvas(
-  action: ActionEnsureInternalCanvas,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
-  if (state.internalCanvasGuid !== undefined) {
-    state.skipped.push({ action, reason: "internal canvas already exists" });
-    return;
-  }
-  const documentGuid = findDocumentGuid(loaded);
-  if (!documentGuid) {
-    state.skipped.push({ action, reason: "loaded file has no DOCUMENT node" });
-    return;
-  }
-  const newGuid = state.allocator.next();
-  const canvas: FigNode = {
-    guid: newGuid,
-    phase: { value: 0, name: "CREATED" },
-    parentIndex: { guid: documentGuid, position: nextDocumentChildSortPosition(loaded, documentGuid) },
-    type: { value: 2, name: "CANVAS" },
-    name: action.name,
-    internalOnly: true,
-    visible: true,
-  };
-  addNodeChange(loaded, canvas);
-  state.internalCanvasGuid = `${newGuid.sessionID}:${newGuid.localID}`;
-  state.internalCanvasCreated = true;
-}
-
-function findDocumentGuid(loaded: LoadedFigFile): { sessionID: number; localID: number } | undefined {
-  const doc = loaded.nodeChanges.find((n) => getNodeType(n) === "DOCUMENT");
-  return doc?.guid;
-}
-
-/**
- * Pick a sortPosition past every direct child of the document. Same
- * idea as the per-canvas allocator in `bootstrap-fill.ts` — Figma's
- * lex-string positions only need monotonic uniqueness here.
- */
-function nextDocumentChildSortPosition(
-  loaded: LoadedFigFile,
-  documentGuid: { sessionID: number; localID: number },
-): string {
-  const docKey = `${documentGuid.sessionID}:${documentGuid.localID}`;
-  const positions = loaded.nodeChanges
-    .filter((n) => {
-      const p = n.parentIndex?.guid;
-      if (!p) {
-        return false;
-      }
-      return `${p.sessionID}:${p.localID}` === docKey;
-    })
-    .map((n) => n.parentIndex?.position ?? "");
-  if (positions.length === 0) {
-    return "z";
-  }
-  const max = positions.reduce((best, p) => (p > best ? p : best), positions[0] ?? "");
-  return `${max}z`;
-}
-
-function applyCreateFill(
-  action: ActionCreateFillProxy,
-  loaded: LoadedFigFile,
-  ctx: ApplyContext,
-  state: ApplyState,
-): void {
-  const internalCanvasGuid = state.internalCanvasGuid;
-  if (!internalCanvasGuid) {
-    state.skipped.push({ action, reason: "no internal canvas; plan must emit ensure-internal-canvas first" });
-    return;
-  }
-  const created = createFillProxyNode(action, loaded, ctx, state, internalCanvasGuid);
-  state.tokens.set(action.token, created.guid);
-  state.counts.fillProxiesCreated = state.counts.fillProxiesCreated + 1;
-}
-
-/**
- * Pick the right FILL proxy strategy: clone an existing template when
- * one exists, otherwise bootstrap from scratch. Bootstrap appends a
- * fresh commands blob and assembles the proxy by hand, so the create
- * action lands either way.
- */
-function createFillProxyNode(
-  action: ActionCreateFillProxy,
-  loaded: LoadedFigFile,
-  ctx: ApplyContext,
-  state: ApplyState,
-  internalCanvasGuid: string,
-): { readonly guid: string } {
-  if (ctx.fillTemplateGuid) {
-    return synthesiseFillProxy({
-      loaded,
-      internalCanvasGuid,
-      templateProxyGuid: ctx.fillTemplateGuid,
-      allocator: state.allocator,
-      name: action.name,
-      color: action.color,
-    });
-  }
-  return bootstrapFillProxy({
-    loaded,
-    internalCanvasGuid,
-    allocator: state.allocator,
-    name: action.name,
-    color: action.color,
-  });
-}
-
-function applyCreateText(
-  action: ActionCreateTextProxy,
-  loaded: LoadedFigFile,
-  ctx: ApplyContext,
-  state: ApplyState,
-): void {
-  const internalCanvasGuid = state.internalCanvasGuid;
-  if (!internalCanvasGuid) {
-    state.skipped.push({ action, reason: "no internal canvas; plan must emit ensure-internal-canvas first" });
-    return;
-  }
-  const created = createTextProxyNode(action, loaded, ctx, state, internalCanvasGuid);
-  state.tokens.set(action.token, created.guid);
-  state.counts.textProxiesCreated = state.counts.textProxiesCreated + 1;
-}
-
-/**
- * Pick the right TEXT proxy strategy: clone an existing template when
- * one exists, otherwise bootstrap from scratch. The bootstrap path
- * emits a proxy whose `derivedTextData` is left for Figma to rebuild
- * on next open — same fail-fast assumption the synthesise path
- * already relies on.
- */
-function createTextProxyNode(
-  action: ActionCreateTextProxy,
-  loaded: LoadedFigFile,
-  ctx: ApplyContext,
-  state: ApplyState,
-  internalCanvasGuid: string,
-): { readonly guid: string } {
-  const fontName = { family: action.fontFamily, style: action.fontStyle, postscript: "" };
-  if (ctx.textTemplateGuid) {
-    return synthesiseTextProxy({
-      loaded,
-      internalCanvasGuid,
-      templateProxyGuid: ctx.textTemplateGuid,
-      allocator: state.allocator,
-      name: action.name,
-      descriptor: { fontName, fontSize: action.fontSize },
-    });
-  }
-  return bootstrapTextProxy({
-    loaded,
-    internalCanvasGuid,
-    allocator: state.allocator,
-    name: action.name,
-    fontName,
-    fontSize: action.fontSize,
-  });
-}
-
-function resolveProxy(ref: ProxyRef, tokens: ReadonlyMap<string, string>): string | undefined {
-  if (ref.kind === "existing") {
-    return ref.guid;
-  }
-  return tokens.get(ref.token);
-}
-
-function parseGuidString(s: string): { sessionID: number; localID: number } {
-  const [a, b] = s.split(":");
-  if (a === undefined || b === undefined) {
-    throw new Error(`applyPlan: bad guid string "${s}"`);
-  }
-  const sessionID = Number.parseInt(a, 10);
-  const localID = Number.parseInt(b, 10);
-  if (!Number.isFinite(sessionID) || !Number.isFinite(localID)) {
-    throw new Error(`applyPlan: non-numeric guid "${s}"`);
-  }
-  return { sessionID, localID };
-}
-
-function applyBindFill(
-  action: ActionBindFillStyle,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
-  const proxyGuid = resolveProxy(action.proxy, state.tokens);
-  if (!proxyGuid) {
-    state.skipped.push({ action, reason: "proxy token did not resolve" });
-    return;
-  }
-  const ok = patchNodeChange(loaded, action.nodeGuid, {
-    styleIdForFill: { guid: parseGuidString(proxyGuid) },
-  });
-  if (!ok) {
-    state.skipped.push({ action, reason: "node not in nodeChanges" });
-    return;
-  }
-  state.counts.fillBound = state.counts.fillBound + 1;
-}
-
-function applyBindText(
-  action: ActionBindTextStyle,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
-  const proxyGuid = resolveProxy(action.proxy, state.tokens);
-  if (!proxyGuid) {
-    state.skipped.push({ action, reason: "proxy token did not resolve" });
-    return;
-  }
-  const ok = patchNodeChange(loaded, action.nodeGuid, {
-    textStyleId: parseGuidString(proxyGuid),
-  });
-  if (!ok) {
-    state.skipped.push({ action, reason: "node not in nodeChanges" });
-    return;
-  }
-  state.counts.textBound = state.counts.textBound + 1;
-}
-
-function applyPromote(
-  action: ActionPromoteIconCluster,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
-  try {
-    const result = promoteIconCluster({
-      loaded,
-      clusterName: action.clusterName,
-      memberGuids: action.memberGuids,
-      exemplarGuid: action.exemplarGuid,
-    });
-    state.counts.clustersPromoted = state.counts.clustersPromoted + 1;
-    state.counts.instancesRewritten = state.counts.instancesRewritten + result.instanceGuids.length;
-    // Record the promoted SYMBOL's guid so a later
-    // group-as-variant-set action can find it. promoteIconCluster
-    // returns symbolGuid === exemplarGuid; we use the action's
-    // clusterId as the key.
-    state.promotedSymbolByClusterId.set(action.clusterId, result.symbolGuid);
-  } catch (err) {
-    state.skipped.push({ action, reason: err instanceof Error ? err.message : String(err) });
-  }
-}
-
-function applyPromoteVectorCluster(
-  action: ActionPromoteVectorCluster,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
-  const internalCanvasGuid = state.internalCanvasGuid;
-  if (!internalCanvasGuid) {
-    state.skipped.push({
-      action,
-      reason: "no internal canvas; plan must emit ensure-internal-canvas first",
-    });
-    return;
-  }
-  try {
-    const result = promoteVectorCluster({
-      loaded,
-      clusterName: action.clusterName,
-      memberGuids: action.memberGuids,
-      exemplarGuid: action.exemplarGuid,
-      internalCanvasGuid,
-      allocator: state.allocator,
-    });
-    state.counts.vectorClustersPromoted = state.counts.vectorClustersPromoted + 1;
-    state.counts.vectorInstancesRewritten = state.counts.vectorInstancesRewritten + result.instanceGuids.length;
-  } catch (err) {
-    state.skipped.push({ action, reason: err instanceof Error ? err.message : String(err) });
-  }
-}
-
-function applyRename(
-  action: ActionRename,
-  loaded: LoadedFigFile,
-  state: ApplyState,
-): void {
+function applyRename(action: ActionRename, state: ApplyState): void {
   const trimmed = action.newName.trim();
   if (!trimmed) {
     state.skipped.push({ action, reason: "empty newName" });
     return;
   }
-  const ok = patchNodeChange(loaded, action.nodeGuid, { name: trimmed });
-  if (!ok) {
-    state.skipped.push({ action, reason: "node not in nodeChanges" });
+  const nodeId = toNodeId(action.nodeGuid);
+  if (!nodeExists(state.editor.documentHistory.present, nodeId)) {
+    state.skipped.push({ action, reason: "node not in document" });
     return;
   }
+  state.editor = figEditorReducer(state.editor, {
+    type: "RENAME_NODE",
+    nodeId,
+    name: trimmed,
+    source: "test",
+  });
   state.counts.renamed = state.counts.renamed + 1;
+}
+
+// =============================================================================
+// Document helpers
+// =============================================================================
+
+function nodeExists(doc: FigDesignDocument, id: FigNodeId): boolean {
+  for (const page of doc.pages) {
+    if (
+      dfsById<FigDesignNode>(page.children, id, {
+        getId: (n) => n.id,
+        getChildren: (n) => n.children ?? [],
+      })
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 

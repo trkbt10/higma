@@ -9,7 +9,6 @@
  * subsequently when multi-layer backgrounds were silently dropping
  * additional `url()` layers.
  */
-import { describe, expect, it } from "vitest";
 import { parseBackgroundImage } from "./parse-css";
 
 const URL_VALUE = `url("https://example.com/logo.png")`;

@@ -1859,16 +1859,15 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
       return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
     }
 
+    // SYMBOL is the on-disk encoding of the Figma UI concept "Component";
+    // the canonical schema has no COMPONENT or COMPONENT_SET NodeType
+    // (a "Variant Set" is a FRAME with variant metadata, already covered).
+    // See `docs/refactor/component-type-cleanup.md`.
     case "FRAME":
     case "SECTION":
     case "SLIDE":
     case "SLIDE_GRID":
     case "SLIDE_ROW":
-    // SYMBOL is the on-disk encoding of the Figma UI concept
-    // "Component"; the canonical schema has no COMPONENT or
-    // COMPONENT_SET NodeType (a "Variant Set" is a FRAME with variant
-    // metadata, already covered). See
-    // `docs/refactor/component-type-cleanup.md`.
     case "SYMBOL": {
       const resolved = resolveAutoLayoutFrame(node, children);
       const childNodes = buildChildren(resolved.children, ctx);

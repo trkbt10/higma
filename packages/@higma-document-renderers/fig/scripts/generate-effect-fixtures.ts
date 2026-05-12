@@ -17,24 +17,68 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  createFigFile,
-  frameNode,
-  roundedRectNode,
-  ellipseNode,
-  dropShadow,
-  innerShadow,
-  layerBlur,
-  effects,
-  type EffectData,
-} from "@higma-document-io/fig/fig-file";
+  addNode,
+  addPage,
+  createEmptyFigDesignDocument,
+  exportFig,
+} from "@higma-document-io/fig";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import type {
+  FigDesignDocument,
+  FigPageId,
+} from "@higma-document-models/fig/domain";
+import type { FigColor, FigEffect, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/effects");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "effects.fig");
 
-// =============================================================================
-// Effect Frame Data
-// =============================================================================
+function solidPaint(color: FigColor, opacity = 1): FigPaint {
+  return {
+    type: "SOLID",
+    color,
+    opacity,
+    visible: true,
+    blendMode: "NORMAL",
+  };
+}
+
+function dropShadow(
+  ox: number, oy: number, radius: number,
+  r = 0, g = 0, b = 0, a = 0.25,
+): FigEffect {
+  return {
+    type: "DROP_SHADOW",
+    visible: true,
+    color: { r, g, b, a },
+    offset: { x: ox, y: oy },
+    radius,
+    blendMode: "NORMAL",
+  };
+}
+
+function innerShadow(
+  ox: number, oy: number, radius: number,
+  r = 0, g = 0, b = 0, a = 0.25,
+): FigEffect {
+  return {
+    type: "INNER_SHADOW",
+    visible: true,
+    color: { r, g, b, a },
+    offset: { x: ox, y: oy },
+    radius,
+    blendMode: "NORMAL",
+  };
+}
+
+function layerBlur(radius: number): FigEffect {
+  return {
+    type: "LAYER_BLUR",
+    visible: true,
+    radius,
+  };
+}
 
 type EffectChild = {
   shape: "rect" | "ellipse";
@@ -46,7 +90,7 @@ type EffectChild = {
   cornerRadius?: number;
   fill: { r: number; g: number; b: number };
   opacity?: number;
-  effects?: readonly EffectData[];
+  effects?: readonly FigEffect[];
 };
 
 type EffectFrameData = {
@@ -57,9 +101,7 @@ type EffectFrameData = {
   children: EffectChild[];
 };
 
-// Pre-computed effect test cases
 const EFFECT_FRAMES: EffectFrameData[] = [
-  // Drop shadow cases
   {
     name: "shadow-drop-basic",
     width: 120,
@@ -69,13 +111,10 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "rect",
         name: "box",
-        x: 20,
-        y: 20,
-        width: 80,
-        height: 80,
+        x: 20, y: 20, width: 80, height: 80,
         cornerRadius: 8,
         fill: { r: 0.3, g: 0.5, b: 0.9 },
-        effects: effects(dropShadow().offset(0, 4).blur(8).color(0, 0, 0, 0.25)),
+        effects: [dropShadow(0, 4, 8, 0, 0, 0, 0.25)],
       },
     ],
   },
@@ -88,13 +127,10 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "rect",
         name: "box",
-        x: 20,
-        y: 20,
-        width: 80,
-        height: 80,
+        x: 20, y: 20, width: 80, height: 80,
         cornerRadius: 8,
         fill: { r: 0.9, g: 0.5, b: 0.3 },
-        effects: effects(dropShadow().offset(10, 10).blur(4).color(0, 0, 0, 0.3)),
+        effects: [dropShadow(10, 10, 4, 0, 0, 0, 0.3)],
       },
     ],
   },
@@ -107,13 +143,10 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "rect",
         name: "box",
-        x: 20,
-        y: 20,
-        width: 80,
-        height: 80,
+        x: 20, y: 20, width: 80, height: 80,
         cornerRadius: 8,
         fill: { r: 1, g: 1, b: 1 },
-        effects: effects(dropShadow().offset(0, 4).blur(12).color(0.5, 0, 0.8, 0.4)),
+        effects: [dropShadow(0, 4, 12, 0.5, 0, 0.8, 0.4)],
       },
     ],
   },
@@ -126,21 +159,16 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "rect",
         name: "box",
-        x: 30,
-        y: 30,
-        width: 80,
-        height: 80,
+        x: 30, y: 30, width: 80, height: 80,
         cornerRadius: 8,
         fill: { r: 0.2, g: 0.7, b: 0.4 },
-        effects: effects(
-          dropShadow().offset(0, 2).blur(4).color(0, 0, 0, 0.1),
-          dropShadow().offset(0, 8).blur(16).color(0, 0, 0, 0.15),
-        ),
+        effects: [
+          dropShadow(0, 2, 4, 0, 0, 0, 0.1),
+          dropShadow(0, 8, 16, 0, 0, 0, 0.15),
+        ],
       },
     ],
   },
-
-  // Inner shadow
   {
     name: "shadow-inner",
     width: 120,
@@ -150,18 +178,13 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "rect",
         name: "box",
-        x: 20,
-        y: 20,
-        width: 80,
-        height: 80,
+        x: 20, y: 20, width: 80, height: 80,
         cornerRadius: 8,
         fill: { r: 0.9, g: 0.9, b: 0.9 },
-        effects: effects(innerShadow().offset(0, 2).blur(4).color(0, 0, 0, 0.15)),
+        effects: [innerShadow(0, 2, 4, 0, 0, 0, 0.15)],
       },
     ],
   },
-
-  // Layer blur
   {
     name: "blur-layer",
     width: 120,
@@ -171,17 +194,12 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "ellipse",
         name: "circle",
-        x: 20,
-        y: 20,
-        width: 80,
-        height: 80,
+        x: 20, y: 20, width: 80, height: 80,
         fill: { r: 0.9, g: 0.3, b: 0.3 },
-        effects: effects(layerBlur().radius(4)),
+        effects: [layerBlur(4)],
       },
     ],
   },
-
-  // Opacity
   {
     name: "opacity-50",
     width: 160,
@@ -190,19 +208,13 @@ const EFFECT_FRAMES: EffectFrameData[] = [
     children: [
       { shape: "rect", name: "full", x: 15, y: 25, width: 50, height: 50, fill: { r: 0.2, g: 0.5, b: 0.9 } },
       {
-        shape: "rect",
-        name: "half",
-        x: 95,
-        y: 25,
-        width: 50,
-        height: 50,
+        shape: "rect", name: "half",
+        x: 95, y: 25, width: 50, height: 50,
         fill: { r: 0.2, g: 0.5, b: 0.9 },
         opacity: 0.5,
       },
     ],
   },
-
-  // Combined effects
   {
     name: "effects-combined",
     width: 140,
@@ -212,22 +224,17 @@ const EFFECT_FRAMES: EffectFrameData[] = [
       {
         shape: "rect",
         name: "card",
-        x: 20,
-        y: 20,
-        width: 100,
-        height: 100,
+        x: 20, y: 20, width: 100, height: 100,
         cornerRadius: 12,
         fill: { r: 1, g: 1, b: 1 },
-        effects: effects(
-          dropShadow().offset(0, 4).blur(6).color(0, 0, 0, 0.1),
-          dropShadow().offset(0, 12).blur(24).color(0, 0, 0, 0.1),
-          innerShadow().offset(0, 1).blur(0).color(1, 1, 1, 0.5),
-        ),
+        effects: [
+          dropShadow(0, 4, 6, 0, 0, 0, 0.1),
+          dropShadow(0, 12, 24, 0, 0, 0, 0.1),
+          innerShadow(0, 1, 0, 1, 1, 1, 0.5),
+        ],
       },
     ],
   },
-
-  // Shadows on different shapes
   {
     name: "shadow-shapes",
     width: 280,
@@ -235,45 +242,29 @@ const EFFECT_FRAMES: EffectFrameData[] = [
     background: "#ffffff",
     children: [
       {
-        shape: "rect",
-        name: "rect",
-        x: 20,
-        y: 20,
-        width: 60,
-        height: 60,
+        shape: "rect", name: "rect",
+        x: 20, y: 20, width: 60, height: 60,
         fill: { r: 0.9, g: 0.3, b: 0.3 },
-        effects: effects(dropShadow().offset(0, 4).blur(8)),
+        effects: [dropShadow(0, 4, 8)],
       },
       {
-        shape: "rect",
-        name: "rounded",
-        x: 110,
-        y: 20,
-        width: 60,
-        height: 60,
+        shape: "rect", name: "rounded",
+        x: 110, y: 20, width: 60, height: 60,
         cornerRadius: 12,
         fill: { r: 0.3, g: 0.7, b: 0.3 },
-        effects: effects(dropShadow().offset(0, 4).blur(8)),
+        effects: [dropShadow(0, 4, 8)],
       },
       {
-        shape: "ellipse",
-        name: "circle",
-        x: 200,
-        y: 20,
-        width: 60,
-        height: 60,
+        shape: "ellipse", name: "circle",
+        x: 200, y: 20, width: 60, height: 60,
         fill: { r: 0.3, g: 0.5, b: 0.9 },
-        effects: effects(dropShadow().offset(0, 4).blur(8)),
+        effects: [dropShadow(0, 4, 8)],
       },
     ],
   },
 ];
 
-// =============================================================================
-// Color Helpers
-// =============================================================================
-
-function hexToColor(hex: string): { r: number; g: number; b: number; a: number } {
+function hexToColor(hex: string): FigColor {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (!result) {
     return { r: 0.9, g: 0.9, b: 0.9, a: 1 };
@@ -286,113 +277,115 @@ function hexToColor(hex: string): { r: number; g: number; b: number; a: number }
   };
 }
 
-// =============================================================================
-// Generate .fig File
-// =============================================================================
+function addChild(
+  state: FigBuilderState,
+  doc: FigDesignDocument,
+  pageId: FigPageId,
+  parentId: ReturnType<typeof addNode>["nodeId"],
+  child: EffectChild,
+): FigDesignDocument {
+  const fill = solidPaint({ ...child.fill, a: 1 });
+  if (child.shape === "rect") {
+    return addNode({
+      state,
+      doc,
+      pageId,
+      parentId,
+      spec: {
+        type: "ROUNDED_RECTANGLE",
+        name: child.name,
+        x: child.x,
+        y: child.y,
+        width: child.width,
+        height: child.height,
+        fills: [fill],
+        cornerRadius: child.cornerRadius,
+        opacity: child.opacity,
+        effects: child.effects,
+      },
+    }).doc;
+  }
+  return addNode({
+    state,
+    doc,
+    pageId,
+    parentId,
+    spec: {
+      type: "ELLIPSE",
+      name: child.name,
+      x: child.x,
+      y: child.y,
+      width: child.width,
+      height: child.height,
+      fills: [fill],
+      opacity: child.opacity,
+      effects: child.effects,
+    },
+  }).doc;
+}
 
 async function generateEffectFixtures(): Promise<void> {
   console.log("Generating effect fixtures...");
 
-  const figFile = createFigFile();
+  const empty = createEmptyFigDesignDocument("Document");
+  const state = createFigBuilderState({
+    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
+    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+  });
+  const pageId = empty.pages[0]!.id;
+  const doc0 = addPage({
+    state,
+    doc: empty,
+    name: "Internal Only Canvas",
+    internalOnly: true,
+  }).doc;
 
-  // Create document and canvas
-  const docID = figFile.addDocument("Document");
-  const canvasID = figFile.addCanvas(docID, "Page 1");
-  figFile.addInternalCanvas(docID); // Required for Figma compatibility
-
-  // Grid layout
   const GRID_COLS = 4;
   const GRID_GAP = 30;
   const MARGIN = 50;
 
-  const nextIDRef = { value: 10 };
-
-  // Add each effect frame
-  EFFECT_FRAMES.forEach((frameData, index) => {
+  const finalDoc = EFFECT_FRAMES.reduce<FigDesignDocument>((acc, frameData, index) => {
     const col = index % GRID_COLS;
     const row = Math.floor(index / GRID_COLS);
-
     const maxFrameWidth = 280;
     const maxFrameHeight = 150;
     const frameX = MARGIN + col * (maxFrameWidth + GRID_GAP);
     const frameY = MARGIN + row * (maxFrameHeight + GRID_GAP);
-
-    const frameID = nextIDRef.value++;
     const bgColor = hexToColor(frameData.background);
 
-    figFile.addFrame(
-      frameNode(frameID, canvasID)
-        .name(frameData.name)
-        .size(frameData.width, frameData.height)
-        .position(frameX, frameY)
-        .background(bgColor)
-        .clipsContent(true)
-        .exportAsSVG()
-        .build(),
+    const frameResult = addNode({
+      state,
+      doc: acc,
+      pageId,
+      parentId: null,
+      spec: {
+        type: "FRAME",
+        name: frameData.name,
+        x: frameX,
+        y: frameY,
+        width: frameData.width,
+        height: frameData.height,
+        fills: [solidPaint(bgColor)],
+        clipsContent: true,
+      },
+    });
+
+    return frameData.children.reduce<FigDesignDocument>(
+      (innerAcc, child) => addChild(state, innerAcc, pageId, frameResult.nodeId, child),
+      frameResult.doc,
     );
+  }, doc0);
 
-    // Add children
-    for (const child of frameData.children) {
-      const childID = nextIDRef.value++;
-
-      switch (child.shape) {
-        case "rect": {
-          const builder = roundedRectNode(childID, frameID)
-            .name(child.name)
-            .size(child.width, child.height)
-            .position(child.x, child.y)
-            .fill({ ...child.fill, a: 1 });
-
-          if (child.cornerRadius) {
-            builder.cornerRadius(child.cornerRadius);
-          }
-          if (child.opacity !== undefined) {
-            builder.opacity(child.opacity);
-          }
-          if (child.effects) {
-            builder.effects(child.effects);
-          }
-
-          figFile.addRoundedRectangle(builder.build());
-          break;
-        }
-        case "ellipse": {
-          const builder = ellipseNode(childID, frameID)
-            .name(child.name)
-            .size(child.width, child.height)
-            .position(child.x, child.y)
-            .fill({ ...child.fill, a: 1 });
-
-          if (child.opacity !== undefined) {
-            builder.opacity(child.opacity);
-          }
-          if (child.effects) {
-            builder.effects(child.effects);
-          }
-
-          figFile.addEllipse(builder.build());
-          break;
-        }
-        default:
-          break;
-      }
-    }
-  });
-
-  // Ensure output directory exists
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
-
-  // Create actual/ directory
   const actualDir = path.join(OUTPUT_DIR, "actual");
   if (!fs.existsSync(actualDir)) {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  // Build and write
-  const figData = await figFile.buildAsync({ fileName: "effects" });
-  fs.writeFileSync(OUTPUT_FILE, figData);
+  const exported = await exportFig(finalDoc);
+  fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Frames: ${EFFECT_FRAMES.length}`);
@@ -409,7 +402,6 @@ async function generateEffectFixtures(): Promise<void> {
   console.log(`3. Run: npx vitest run packages/@higma-document-renderers/fig/spec/effects.spec.ts`);
 }
 
-// Run
 generateEffectFixtures().catch((error) => {
   console.error(error);
   process.exitCode = 1;

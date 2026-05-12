@@ -1,28 +1,20 @@
 /**
- * @file Types barrel export
+ * @file Types barrel — io-specific NodeSpec discriminated union.
  *
- * Domain types (FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId,
- * and domain utilities like guidToNodeId, parseId, etc.) are in @higma-document-models/fig/domain.
- * Import them from there directly.
+ * Domain types (FigDesignDocument, FigDesignNode, FigPage, FigNodeId,
+ * FigPageId, plus utilities like guidToNodeId / parseId) live in
+ * `@higma-document-models/fig/domain`. Builder ID utilities
+ * (FigBuilderState, createFigBuilderState, nextNodeId, nextPageId)
+ * live in `@higma-document-models/fig/builder`. Consumers must import
+ * those names directly from their owning packages — this barrel
+ * deliberately does not re-publish them under shorter aliases (the
+ * cross-package re-export ban guards this contract).
  *
- * This file exports only builder-specific types: ID generation utilities and node specs.
+ * The only thing this module owns is the `NodeSpec` discriminated
+ * union — the declarative shape consumed by `addNode` /
+ * `createNodeFromSpec`. NodeSpec is io-specific because the factory
+ * that materialises it (`createNodeFromSpec`) lives in this package.
  */
-
-export {
-  createIdCounter,
-  createFigBuilderState,
-  createFigBuilderStateFromDocument,
-  nextNodeId,
-  nextPageId,
-} from "./node-id";
-
-export type {
-  CreateFigBuilderStateFromDocumentOptions,
-  CreateFigBuilderStateOptions,
-  CreateIdCounterOptions,
-  FigBuilderState,
-  IdCounter,
-} from "./node-id";
 
 export type {
   NodeSpec,

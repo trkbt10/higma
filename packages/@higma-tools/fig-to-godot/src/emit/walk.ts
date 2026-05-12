@@ -386,6 +386,28 @@ function resolveImageSubResource(
 }
 
 /**
+ * Dispatch to the per-kind rasterizer. Extracted so the conditional
+ * expression remains single-line for the caller.
+ */
+function rasterizeGradientByKind(
+  paint: FigGradientPaint,
+  w: number,
+  h: number,
+  kind: "angular" | "diamond" | "linear" | "radial",
+): { readonly width: number; readonly height: number; readonly rgba: Uint8Array } {
+  if (kind === "angular") {
+    return rasterizeAngularGradient(paint, w, h);
+  }
+  if (kind === "diamond") {
+    return rasterizeDiamondGradient(paint, w, h);
+  }
+  if (kind === "linear") {
+    return rasterizeLinearGradient(paint, w, h);
+  }
+  return rasterizeRadialGradient(paint, w, h);
+}
+
+/**
  * Pre-rasterize a `GRADIENT_ANGULAR` or `GRADIENT_DIAMOND` paint to
  * an inline `ImageTexture` sub-resource at the node's authored size,
  * and return the texture id + dimensions.
@@ -414,13 +436,7 @@ function resolveRasterizedGradient(
   if (cached) {
     return { id: cached, imageWidth: w, imageHeight: h };
   }
-  const raster = kind === "angular"
-    ? rasterizeAngularGradient(paint, w, h)
-    : kind === "diamond"
-      ? rasterizeDiamondGradient(paint, w, h)
-      : kind === "linear"
-        ? rasterizeLinearGradient(paint, w, h)
-        : rasterizeRadialGradient(paint, w, h);
+  const raster = rasterizeGradientByKind(paint, w, h, kind);
   const decoded = { width: raster.width, height: raster.height, rgba: raster.rgba };
   const ids = allocateImageIds(ctx);
   ctx.subResources.push(buildImageSubResource(ids.imageId, decoded));
@@ -2460,6 +2476,21 @@ function computeStrokePadding(node_: FigNode): number {
  * cases continue through `emitContainer` (where Godot's StyleBoxFlat
  * shadow handles the bg, mismatched-AA but functional).
  */
+/**
+ * Read the canonical `stackMode` name from a node. Some on-disk nodes
+ * carry the enum as an object with a `name` field, others as the raw
+ * string — this normalises both to a string.
+ */
+function readStackModeName(stackMode: unknown): string | undefined {
+  if (stackMode && typeof stackMode === "object") {
+    return (stackMode as { readonly name?: string }).name;
+  }
+  if (typeof stackMode === "string") {
+    return stackMode;
+  }
+  return undefined;
+}
+
 function tryEmitFrameWithShadow(node_: FigNode, ctx: WalkContext): GodotNode | undefined {
   if (node_.type?.name !== "FRAME") {
     return undefined;
@@ -2476,9 +2507,7 @@ function tryEmitFrameWithShadow(node_: FigNode, ctx: WalkContext): GodotNode | u
   // is allowed — the wrap Control carries `clip_contents = true` so
   // children get rect-clipped to the frame bounds, matching Godot's
   // existing semantics for FRAME clipping (rect, not rounded).
-  const stackName = node_.stackMode && typeof node_.stackMode === "object"
-    ? (node_.stackMode as { readonly name?: string }).name
-    : (node_.stackMode as string | undefined);
+  const stackName = readStackModeName(node_.stackMode);
   if (stackName === "HORIZONTAL" || stackName === "VERTICAL") {
     return undefined;
   }
@@ -2831,31 +2860,6 @@ function tryEmitAntialiasedFillShape(node_: FigNode, ctx: WalkContext): GodotNod
     ],
   });
   return withOptionalModulate(wrap, node_, ctx);
-}
-
-/**
- * True when the node has any visible stroke (paint + non-zero
- * weight). Used by `tryEmitBlurredShape` to skip pre-rasterization
- * for shapes that need stroke rendering preserved.
- */
-function hasStroke(node_: FigNode): boolean {
-  const paints = node_.strokePaints;
-  if (!paints) return false;
-  let visible = false;
-  for (const paint of paints) {
-    if (paint.visible === false) continue;
-    if (paint.type === "SOLID") {
-      visible = true;
-      break;
-    }
-  }
-  if (!visible) return false;
-  const weight = node_.strokeWeight;
-  if (typeof weight === "number") return weight > 0;
-  if (weight && typeof weight === "object") {
-    return (weight.top ?? 0) > 0 || (weight.right ?? 0) > 0 || (weight.bottom ?? 0) > 0 || (weight.left ?? 0) > 0;
-  }
-  return false;
 }
 
 /** Top-level entry: render any FigNode into a GodotNode (mutating ctx). */

@@ -35,7 +35,7 @@ export const zipPackageRule: LintRule = (ctx, emit) => {
       severity: "warning",
       path: "input",
       message: "Input is not a ZIP-wrapped package — Figma cannot import raw canvas.fig",
-      remediation: "Build with FigFileBuilder.buildAsync() to produce a ZIP-wrapped .fig",
+      remediation: "Build with exportFig(doc) to produce a ZIP-wrapped .fig",
     });
     return;
   }
@@ -46,7 +46,7 @@ export const zipPackageRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "zip/canvas.fig",
       message: "Required entry canvas.fig is missing from the ZIP",
-      remediation: "Re-export from Figma or rebuild via FigFileBuilder.buildAsync()",
+      remediation: "Re-export from Figma or rebuild via exportFig(doc)",
     });
   }
 
@@ -56,7 +56,7 @@ export const zipPackageRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "zip/meta.json",
       message: "Required entry meta.json is missing from the ZIP",
-      remediation: "FigFileBuilder.buildAsync() always writes meta.json — regenerate the file",
+      remediation: "exportFig(doc) always writes meta.json — regenerate the file",
     });
   }
 
@@ -67,7 +67,7 @@ export const zipPackageRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "zip/thumbnail.png",
       message: "Required entry thumbnail.png is missing from the ZIP — Figma will refuse the import",
-      remediation: "Rebuild with FigFileBuilder.buildAsync(); it always emits a placeholder thumbnail",
+      remediation: "Rebuild with exportFig(doc); it always emits a placeholder thumbnail",
     });
     return;
   }
@@ -77,7 +77,7 @@ export const zipPackageRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "zip/thumbnail.png",
       message: "thumbnail.png does not start with the PNG magic — file is corrupted",
-      remediation: "Rewrite thumbnail.png with a valid PNG (FigFileBuilder uses a 1x1 placeholder)",
+      remediation: "Rewrite thumbnail.png with a valid PNG (`exportFig` writes a 1x1 placeholder)",
     });
   }
 };

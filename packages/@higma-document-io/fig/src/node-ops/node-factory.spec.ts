@@ -2,7 +2,7 @@
  * @file Tests for explicit state node construction.
  */
 
-import { createFigBuilderState } from "../types";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import { createNodeFromSpec } from "./node-factory";
 
 describe("createNodeFromSpec", () => {

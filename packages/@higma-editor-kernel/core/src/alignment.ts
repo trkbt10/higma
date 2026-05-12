@@ -5,7 +5,7 @@
  * Format-agnostic — works with any objects that have bounds (x, y, width, height).
  */
 
-import type { SimpleBounds } from "./geometry/types";
+import type { SimpleBounds } from "./geometry";
 
 // =============================================================================
 // Types

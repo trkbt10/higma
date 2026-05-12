@@ -166,25 +166,10 @@ async function main(): Promise<void> {
   try {
     const reports: CaseReport[] = [];
     for (const caseName of cases) {
-      // Wrap each case in a try/catch so a single failure doesn't
-      // tear down the whole measurement run. This is a measurement
-      // tool, not the production pipeline — the per-case error is
-      // recorded into the report and surfaced at the end so a
-      // developer can prioritise fixes.
-      try {
-        // eslint-disable-next-line no-await-in-loop -- harness is single-page, must serialise
-        const report = await measureOne(harness, caseName, args.threshold, fontResolver);
-        reports.push(report);
-        printOne(report);
-      } catch (err: unknown) {
-        const report: CaseReport = {
-          case: caseName,
-          status: "error",
-          message: err instanceof Error ? err.message : String(err),
-        };
-        reports.push(report);
-        printOne(report);
-      }
+      // eslint-disable-next-line no-await-in-loop -- harness is single-page, must serialise
+      const report = await tryMeasureOne(harness, caseName, args.threshold, fontResolver);
+      reports.push(report);
+      printOne(report);
     }
     const summary = {
       threshold: args.threshold,
@@ -195,6 +180,27 @@ async function main(): Promise<void> {
     process.stdout.write(`\nWrote summary to ${summaryPath}\n`);
   } finally {
     await harness.stop();
+  }
+}
+
+// Wrap each case in a try/catch so a single failure doesn't tear down
+// the whole measurement run. This is a measurement tool, not the
+// production pipeline — the per-case error is recorded into the report
+// and surfaced at the end so a developer can prioritise fixes.
+async function tryMeasureOne(
+  harness: Awaited<ReturnType<typeof startWebglHarness>>,
+  caseName: string,
+  threshold: number,
+  fontResolver: FontResolver,
+): Promise<CaseReport> {
+  try {
+    return await measureOne(harness, caseName, threshold, fontResolver);
+  } catch (err: unknown) {
+    return {
+      case: caseName,
+      status: "error",
+      message: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

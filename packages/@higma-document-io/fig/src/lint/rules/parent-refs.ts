@@ -44,7 +44,7 @@ export const parentRefsRule: LintRule = (ctx, emit) => {
         severity: "error",
         path: `nodeChanges[${index}].parentIndex`,
         message: `${typeName ?? "node"} is missing parentIndex`,
-        remediation: "Use FigFileBuilder.add* methods which always emit parentIndex",
+        remediation: "Use `addNode` / `addPage` which always emit parentIndex",
       });
       continue;
     }

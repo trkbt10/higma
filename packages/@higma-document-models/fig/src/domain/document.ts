@@ -14,8 +14,9 @@
 
 import type {
   FigNodeType, FigMatrix, FigVector, FigColor, FigPaint, FigEffect, FigStrokeWeight, FigStrokeCap, FigStrokeJoin, FigStrokeAlign, FigFontName, KiwiEnumValue,
-  FigDerivedBaseline, FigDerivedGlyph, FigDerivedDecoration, FigDerivedTextData,
+  FigDerivedTextData,
   FigVectorPath, FigVectorData, FigStyleId, FigFillGeometry, FigGuid, FigExportSetting,
+  FigKiwiVariableDataMap, FigKiwiVariableModeBySetMap,
   BlendMode,
 } from "../types";
 import type { LoadedFigFile } from "./roundtrip-state";
@@ -438,6 +439,24 @@ export type VariantPropSpec = {
   readonly value: string;
 };
 
+/**
+ * Grid layout track positions (rows or columns) on a GRID-autolayout
+ * FRAME. Kiwi schema: `GUIDGridTrackSizeMap` — a single message that
+ * wraps an `entries` array of `{ id, trackSize }` pairs. The renderer
+ * only needs the entry count today; downstream consumers may inspect
+ * `trackSize` for sizing semantics.
+ *
+ * Note: `trackSize` is intentionally typed `unknown` until the
+ * `GridTrackSize` message is modelled end-to-end — it is preserved
+ * verbatim through round-trip.
+ */
+export type FigGridTrackPositions = {
+  readonly entries: readonly {
+    readonly id: FigGuid;
+    readonly trackSize?: unknown;
+  }[];
+};
+
 // =============================================================================
 // Design Node
 // =============================================================================
@@ -618,6 +637,28 @@ export type FigDesignNode = {
   readonly derivedSymbolData?: readonly SymbolOverride[];
 
   /**
+   * Untouched, *resolve-pre* copies of `symbolOverrides` and
+   * `derivedSymbolData` as they appeared on the loaded Kiwi node.
+   *
+   * The domain-level `overrides` / `derivedSymbolData` fields above are
+   * resolve-post: their `guidPath`s have been rerouted by
+   * `resolveOverridePaths` (e.g. INSTANCE self-overrides redirected to
+   * the SYMBOL root, ghost-session entries normalised). Renderers
+   * consume those resolved forms.
+   *
+   * Round-tripping through `documentToTree` requires the original raw
+   * entries so the projected `.fig` still encodes the per-session
+   * ghost-guid trace that Figma's importer (and our own re-parser)
+   * relies on to identify the override targets. Without the raw copy,
+   * a second pass through `convertFigNode` rejects the now-rerouted
+   * path with "unreachable guid". These fields exist purely to
+   * preserve that round-trip fidelity; renderers should keep reading
+   * the resolved versions.
+   */
+  readonly rawOverrides?: readonly SymbolOverride[];
+  readonly rawDerivedSymbolData?: readonly SymbolOverride[];
+
+  /**
    * Component property definitions (on SYMBOL nodes and Variant-Set
    * FRAME nodes). Defines the named, typed slots that INSTANCE nodes
    * can override; VARIANT-typed entries on a FRAME describe variant
@@ -677,13 +718,97 @@ export type FigDesignNode = {
    */
   readonly overrideKey?: FigGuid;
 
+  // ---- SYMBOL load-bearing ----
   /**
-   * Raw Kiwi node data preserved for roundtrip fidelity.
-   * Contains fields not explicitly modeled in this type.
-   * Excluded: guid, parentIndex, children, type, name, visible, opacity,
-   * transform, size, fillPaints, strokePaints (these are modeled above).
+   * Load-bearing for Figma to recognise this SYMBOL as a publishable Local
+   * Component. Empirically required: real Figma exports of user-authored
+   * SYMBOLs carry `isSymbolPublishable: true`. New SYMBOL nodes that lack
+   * this flag fail to appear in the Assets panel and break Variant Set
+   * containment in some import paths.
    */
-  readonly _raw?: Record<string, unknown>;
+  readonly isSymbolPublishable?: boolean;
+
+  /**
+   * Version string for team-library-published SYMBOLs. Present only on
+   * SYMBOLs that originated from a shared library; preserved verbatim.
+   */
+  readonly sharedSymbolVersion?: string;
+
+  /**
+   * Team-library asset key. Used by `assetRef` resolution on
+   * `styleIdForFill` / `styleIdForStrokeFill` consumers to bind back to
+   * a local style-definition node imported from another file.
+   */
+  readonly key?: string;
+
+  // ---- Style-definition node markers ----
+  /**
+   * Style classification for nodes that *are* style definitions (rather
+   * than consumers). FILL / STROKE / EFFECT / TEXT / GRID style-definition
+   * proxy nodes (typically placed on the Internal Only Canvas) carry this.
+   */
+  readonly styleType?: KiwiEnumValue;
+
+  /** Style reference for text properties (Kiwi field 334). */
+  readonly styleIdForText?: FigStyleId;
+  /** Style reference for effects (Kiwi field 335). */
+  readonly styleIdForEffect?: FigStyleId;
+  /** Style reference for layout grids (Kiwi field 336). */
+  readonly styleIdForGrid?: FigStyleId;
+
+  // ---- FRAME background ----
+  /** FRAME `backgroundPaints` (separate from `fills`). */
+  readonly backgroundPaints?: readonly FigPaint[];
+
+  // ---- FRAME load-bearing (formerly only via _raw) ----
+  /** Auto-layout `minSize` enforced when children FILL / HUG. */
+  readonly minSize?: FigVector;
+  /** Auto-layout `maxSize` enforced when children FILL / HUG. */
+  readonly maxSize?: FigVector;
+  /** Whether per-side border weights contribute to layout size. */
+  readonly bordersTakeSpace?: boolean;
+  /** Aspect-ratio lock target for FRAME / shape nodes. */
+  readonly targetAspectRatio?: FigVector;
+  /** Whether width/height proportions are constrained. */
+  readonly proportionsConstrained?: boolean;
+  /** Grid layout rows for FRAME / SECTION with grid layout. */
+  readonly gridRows?: FigGridTrackPositions;
+  /** Grid layout columns. */
+  readonly gridColumns?: FigGridTrackPositions;
+  /** Grid row gap. */
+  readonly gridRowGap?: number;
+  /** Grid column gap. */
+  readonly gridColumnGap?: number;
+
+  // ---- INSTANCE additional ----
+  /** Overridden SYMBOL ID for variant swap. */
+  readonly overriddenSymbolID?: FigNodeId;
+  /** Component property reference strings on INSTANCE. */
+  readonly componentPropertyReferences?: readonly string[];
+
+  // ---- Variable consumption ----
+  /** Per-field variable bindings. */
+  readonly variableConsumptionMap?: FigKiwiVariableDataMap;
+  /** Component-property variable bindings (parameter form). */
+  readonly parameterConsumptionMap?: FigKiwiVariableDataMap;
+  /** Active mode per variable-set referenced by this node. */
+  readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+
+  // ---- Text extended ----
+  /** Engine-level letter-spacing tracking value (Kiwi `textTracking`). */
+  readonly textTracking?: number;
+  /** Text truncation mode (ENDING = ellipsis at end). */
+  readonly textTruncation?: KiwiEnumValue;
+  /** Leading trim mode (CAP_HEIGHT trim). */
+  readonly leadingTrim?: KiwiEnumValue;
+  /** Variable font axis values. */
+  readonly fontVariations?: readonly { readonly axisTag: number; readonly axisValue: number }[];
+  /** Hyperlink data. */
+  readonly hyperlink?: { readonly url?: string };
+
+  // ---- Vector ----
+  /** Handle mirroring mode for vector point handles. */
+  readonly handleMirroring?: KiwiEnumValue;
 };
 
 // =============================================================================
@@ -698,9 +823,15 @@ export type FigPage = {
   readonly name: string;
   readonly backgroundColor: FigColor;
   readonly children: readonly FigDesignNode[];
-
-  /** Raw CANVAS node data for roundtrip */
-  readonly _raw?: Record<string, unknown>;
+  /** CANVAS `backgroundOpacity` (real Figma exports carry this). */
+  readonly backgroundOpacity?: number;
+  /** CANVAS `backgroundEnabled` (real Figma exports carry this). */
+  readonly backgroundEnabled?: boolean;
+  /**
+   * Internal Only Canvas marker. When true this page hosts style-definition
+   * proxy nodes and is hidden from the Pages UI in Figma.
+   */
+  readonly internalOnly?: boolean;
 };
 
 // =============================================================================

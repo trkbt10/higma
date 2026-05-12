@@ -42,36 +42,48 @@ export async function renderPreview(options: RenderPreviewOptions): Promise<read
       if (route === undefined) {
         throw new Error(`renderPreview: no fig-to-web standalone route found for breakpoint "${cap.breakpoint.name}"`);
       }
-      const context = await browser.newContext({
-        viewport: { width: cap.breakpoint.width, height: cap.breakpoint.height },
-        deviceScaleFactor: cap.breakpoint.devicePixelRatio ?? options.devicePixelRatio ?? 1,
-      });
-      const page = await context.newPage();
-      try {
-        await page.goto(route.url, { waitUntil: "networkidle", timeout: 30000 });
-        // Wait for React to mount and any fonts to settle. The React
-        // boot is synchronous after `main.js` executes, so we just
-        // make sure the document's fonts are ready before sampling.
-        await page.evaluate(() => document.fonts.ready);
-        if ((options.waitForFontsMs ?? 0) > 0) {
-          await new Promise((r) => setTimeout(r, options.waitForFontsMs));
-        }
-        const buf = await page.screenshot({ type: "png", fullPage: false });
-        out.push({
-          breakpoint: cap.breakpoint.name,
-          url: route.url,
-          width: cap.breakpoint.width,
-          height: cap.breakpoint.height,
-          png: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
-        });
-      } finally {
-        await context.close();
-      }
+      const frame = await renderOneBreakpoint(browser, route, cap, options);
+      out.push(frame);
     }
   } finally {
     await browser.close();
   }
   return out;
+}
+
+type PlaywrightBrowser = Awaited<ReturnType<PlaywrightLike["chromium"]["launch"]>>;
+
+async function renderOneBreakpoint(
+  browser: PlaywrightBrowser,
+  route: StandaloneRoute,
+  cap: CapturedBreakpoint,
+  options: RenderPreviewOptions,
+): Promise<RenderedPreviewFrame> {
+  const context = await browser.newContext({
+    viewport: { width: cap.breakpoint.width, height: cap.breakpoint.height },
+    deviceScaleFactor: cap.breakpoint.devicePixelRatio ?? options.devicePixelRatio ?? 1,
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(route.url, { waitUntil: "networkidle", timeout: 30000 });
+    // Wait for React to mount and any fonts to settle. The React
+    // boot is synchronous after `main.js` executes, so we just
+    // make sure the document's fonts are ready before sampling.
+    await page.evaluate(() => document.fonts.ready);
+    if ((options.waitForFontsMs ?? 0) > 0) {
+      await new Promise((r) => setTimeout(r, options.waitForFontsMs));
+    }
+    const buf = await page.screenshot({ type: "png", fullPage: false });
+    return {
+      breakpoint: cap.breakpoint.name,
+      url: route.url,
+      width: cap.breakpoint.width,
+      height: cap.breakpoint.height,
+      png: new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength),
+    };
+  } finally {
+    await context.close();
+  }
 }
 
 type StandaloneRoute = {

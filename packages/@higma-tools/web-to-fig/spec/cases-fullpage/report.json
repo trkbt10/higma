@@ -2,12 +2,9 @@
   "threshold": 0.1,
   "cases": [
     {
-      "case": "example-com-fullpage",
-      "status": "ok",
-      "diffPercent": 0.32529296875,
-      "diffPixels": 3331,
-      "width": 1280,
-      "height": 800
+      "case": "text-fixture-mixed-latin-cjk",
+      "status": "error",
+      "message": "evaluate: ReferenceError: WRAP_DATA_ATTR is not defined\n    at wrapTextBearingElementsForFontProbe (eval at evaluate (:302:30), <anonymous>:63:27)\n    at UtilityScript.evaluate (<anonymous>:304:16)\n    at UtilityScript.<anonymous> (<anonymous>:1:44)"
     }
   ]
 }

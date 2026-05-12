@@ -1,29 +1,36 @@
 /**
- * @file Tests for the relaxed cluster promotion gate and fingerprint.
+ * @file Tests for the cluster promotion gate and the fingerprint
+ * primitive.
  *
- * The v1 gate refused any cluster whose subtree carried a TEXT, IMAGE
- * paint, or nested INSTANCE — promote was reserved for leaf-icon
- * clusters because override-path machinery was missing. The current
- * gate accepts those types iff the subtree fingerprint folds in the
- * fields that make the descendant identity-bearing (text content,
- * image refs, nested symbolID, opacity, paints). Two strict-identical
- * members render to the same pixels under a plain SYMBOL/INSTANCE
- * flip, so the fingerprint is the SoT for "is this safe to promote".
+ * Phase 2 of the SoT consolidation removed the in-place
+ * `promoteIconCluster` mutator from refine-fig — the equivalent
+ * rewrite is now expressed as `PROMOTE_TO_SYMBOL` +
+ * `PROMOTE_TO_INSTANCE` reducer dispatches inside `apply-plan.ts`.
  *
- * The tests exercise:
+ * What remains here are the *read-only* helpers the planner / apply
+ * layer consult to decide whether a cluster qualifies and which
+ * members share visual identity with the exemplar:
+ *
+ *   - `isPromotableCluster` — the structural gate (FRAME/GROUP root,
+ *     no GRADIENT paints, only promotable descendant types).
+ *   - `subtreeFingerprint` — a stable string that compares equal iff
+ *     two subtrees would render to the same pixels once their
+ *     wrapping INSTANCE's transform is applied.
+ *
+ * The tests verify:
  *
  *   - the gate accepts TEXT, RECTANGLE, IMAGE-fill descendants;
  *   - the gate refuses GRADIENT paints (no override-path path for
  *     positional handle data);
  *   - fingerprint differs when text content / image ref / nested
- *     symbolID / SOLID color / opacity diverge;
- *   - promoteIconCluster rewrites the fingerprint-equal members and
- *     leaves divergent members alone.
+ *     symbolID / SOLID color / opacity diverge — the apply-plan layer
+ *     uses this to filter out divergent cluster members before
+ *     dispatching `PROMOTE_TO_INSTANCE`.
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
-import { isPromotableCluster, promoteIconCluster } from "./promote-icon-cluster";
+import { isPromotableCluster, subtreeFingerprint } from "./promote-icon-cluster";
 
 function makeFig(nodes: readonly FigNode[]): LoadedFigFile {
   return {
@@ -86,12 +93,9 @@ function parseParentIndex(guid: string): { guid: { sessionID: number; localID: n
 }
 
 function typeNumeric(name: string): number {
-  // Values mirror the FigKiwi schema enums where they matter — only
-  // the `name` is consulted by the production code, but we keep the
-  // numeric value plausible for completeness.
   switch (name) {
     case "FRAME":
-      return 5;
+      return 4;
     case "RECTANGLE":
       return 1;
     case "TEXT":
@@ -160,87 +164,48 @@ describe("isPromotableCluster", () => {
   });
 });
 
-describe("promoteIconCluster fingerprint discrimination", () => {
-  it("only rewrites members whose TEXT content matches the exemplar", () => {
-    // Two clusters: exemplar 'Save' button + 'Save' clone, plus a
-    // 'Cancel' clone with everything else identical. Only the
-    // matching one should be rewritten to an INSTANCE.
+describe("subtreeFingerprint fingerprint discrimination", () => {
+  // The apply-plan layer uses `subtreeFingerprint` to decide which
+  // cluster members to flip to INSTANCEs. Two members are flipped
+  // together iff they share a fingerprint with the exemplar.
+
+  it("matches members with identical TEXT content", () => {
     const exemplar = frameNode("1:100", "0:1");
     const exemplarText = textNode("1:101", "1:100", "Save");
-    const matchExemplar = frameNode("2:100", "0:1");
+    const match = frameNode("2:100", "0:1");
     const matchText = textNode("2:101", "2:100", "Save");
-    const divergent = frameNode("3:100", "0:1");
-    const divergentText = textNode("3:101", "3:100", "Cancel");
-    const loaded = makeFig([exemplar, exemplarText, matchExemplar, matchText, divergent, divergentText]);
-
-    const result = promoteIconCluster({
-      loaded,
-      clusterName: "save-button",
-      memberGuids: ["1:100", "2:100", "3:100"],
-      exemplarGuid: "1:100",
-    });
-
-    expect(result.symbolGuid).toBe("1:100");
-    expect(result.instanceGuids).toEqual(["2:100"]);
-
-    // Exemplar became a SYMBOL.
-    const promoted = loaded.nodeChanges.find((n) => n.guid?.sessionID === 1 && n.guid.localID === 100);
-    expect(promoted?.type?.name).toBe("SYMBOL");
-    expect(promoted?.name).toBe("save-button");
-
-    // Match member became an INSTANCE; its descendant TEXT was
-    // dropped from nodeChanges.
-    const matched = loaded.nodeChanges.find((n) => n.guid?.sessionID === 2 && n.guid.localID === 100);
-    expect(matched?.type?.name).toBe("INSTANCE");
-    const matchedText = loaded.nodeChanges.find((n) => n.guid?.sessionID === 2 && n.guid.localID === 101);
-    expect(matchedText).toBeUndefined();
-
-    // Divergent member stayed as a FRAME with its TEXT child intact.
-    const divergentNode = loaded.nodeChanges.find((n) => n.guid?.sessionID === 3 && n.guid.localID === 100);
-    expect(divergentNode?.type?.name).toBe("FRAME");
-    const divergentTextNode = loaded.nodeChanges.find((n) => n.guid?.sessionID === 3 && n.guid.localID === 101);
-    expect(divergentTextNode?.type?.name).toBe("TEXT");
+    const loaded = makeFig([exemplar, exemplarText, match, matchText]);
+    expect(subtreeFingerprint(loaded, "1:100")).toBe(subtreeFingerprint(loaded, "2:100"));
   });
 
-  it("only rewrites members whose IMAGE fill `imageRef` matches", () => {
+  it("differs between members whose TEXT content diverges", () => {
     const exemplar = frameNode("1:200", "0:1");
-    const exemplarRect = rectNode("1:201", "1:200", {
-      fillPaints: [{ type: "IMAGE", imageRef: "ref-A", opacity: 1, visible: true, blendMode: "NORMAL" }],
-    });
-    const matchExemplar = frameNode("2:200", "0:1");
-    const matchRect = rectNode("2:201", "2:200", {
-      fillPaints: [{ type: "IMAGE", imageRef: "ref-A", opacity: 1, visible: true, blendMode: "NORMAL" }],
-    });
+    const exemplarText = textNode("1:201", "1:200", "Save");
     const divergent = frameNode("3:200", "0:1");
-    const divergentRect = rectNode("3:201", "3:200", {
+    const divergentText = textNode("3:201", "3:200", "Cancel");
+    const loaded = makeFig([exemplar, exemplarText, divergent, divergentText]);
+    expect(subtreeFingerprint(loaded, "1:200")).not.toBe(subtreeFingerprint(loaded, "3:200"));
+  });
+
+  it("differs between members whose IMAGE `imageRef` diverges", () => {
+    const exemplar = frameNode("1:300", "0:1");
+    const exemplarRect = rectNode("1:301", "1:300", {
+      fillPaints: [{ type: "IMAGE", imageRef: "ref-A", opacity: 1, visible: true, blendMode: "NORMAL" }],
+    });
+    const divergent = frameNode("3:300", "0:1");
+    const divergentRect = rectNode("3:301", "3:300", {
       fillPaints: [{ type: "IMAGE", imageRef: "ref-B", opacity: 1, visible: true, blendMode: "NORMAL" }],
     });
-    const loaded = makeFig([exemplar, exemplarRect, matchExemplar, matchRect, divergent, divergentRect]);
-
-    const result = promoteIconCluster({
-      loaded,
-      clusterName: "thumbnail",
-      memberGuids: ["1:200", "2:200", "3:200"],
-      exemplarGuid: "1:200",
-    });
-    expect(result.instanceGuids).toEqual(["2:200"]);
+    const loaded = makeFig([exemplar, exemplarRect, divergent, divergentRect]);
+    expect(subtreeFingerprint(loaded, "1:300")).not.toBe(subtreeFingerprint(loaded, "3:300"));
   });
 
-  it("only rewrites members whose nested INSTANCE points at the same SYMBOL", () => {
-    const exemplar = frameNode("1:300", "0:1");
-    const exemplarInst = instanceNode("1:301", "1:300", "9:1");
-    const matchExemplar = frameNode("2:300", "0:1");
-    const matchInst = instanceNode("2:301", "2:300", "9:1");
-    const divergent = frameNode("3:300", "0:1");
-    const divergentInst = instanceNode("3:301", "3:300", "9:2");
-    const loaded = makeFig([exemplar, exemplarInst, matchExemplar, matchInst, divergent, divergentInst]);
-
-    const result = promoteIconCluster({
-      loaded,
-      clusterName: "row",
-      memberGuids: ["1:300", "2:300", "3:300"],
-      exemplarGuid: "1:300",
-    });
-    expect(result.instanceGuids).toEqual(["2:300"]);
+  it("differs between members whose nested INSTANCE references diverge", () => {
+    const exemplar = frameNode("1:400", "0:1");
+    const exemplarInst = instanceNode("1:401", "1:400", "9:1");
+    const divergent = frameNode("3:400", "0:1");
+    const divergentInst = instanceNode("3:401", "3:400", "9:2");
+    const loaded = makeFig([exemplar, exemplarInst, divergent, divergentInst]);
+    expect(subtreeFingerprint(loaded, "1:400")).not.toBe(subtreeFingerprint(loaded, "3:400"));
   });
 });

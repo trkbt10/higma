@@ -33,10 +33,6 @@
       "types": "./src/workbench/index.ts",
       "default": "./src/workbench/index.ts"
     },
-    "./proxies": {
-      "types": "./src/proxies/index.ts",
-      "default": "./src/proxies/index.ts"
-    },
     "./componentize": {
       "types": "./src/componentize/index.ts",
       "default": "./src/componentize/index.ts"
@@ -64,10 +60,12 @@
   },
   "dependencies": {
     "@higma-codecs/png-compare": "workspace:*",
+    "@higma-document-editors/fig": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
-    "@higma-primitives/identifier": "workspace:*"
+    "@higma-primitives/identifier": "workspace:*",
+    "@higma-primitives/tree": "workspace:*"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

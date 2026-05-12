@@ -21,7 +21,6 @@ import type {
   NodeTreeResult,
 } from "@higma-document-models/fig/domain";
 import {
-  collectFigRawFields,
   convertFigNode,
   DEFAULT_PAGE_BACKGROUND,
   EMPTY_FIG_STYLE_REGISTRY,
@@ -82,7 +81,9 @@ function convertCanvasToPage(
     name: canvas.name ?? "Page",
     backgroundColor: canvas.backgroundColor ?? DEFAULT_PAGE_BACKGROUND,
     children: convertedChildren,
-    _raw: collectFigRawFields(canvas),
+    backgroundOpacity: typeof canvas.backgroundOpacity === "number" ? canvas.backgroundOpacity : undefined,
+    backgroundEnabled: typeof canvas.backgroundEnabled === "boolean" ? canvas.backgroundEnabled : undefined,
+    internalOnly: typeof canvas.internalOnly === "boolean" ? canvas.internalOnly : undefined,
   };
 }
 

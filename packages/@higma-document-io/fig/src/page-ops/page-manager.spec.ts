@@ -4,7 +4,7 @@
 
 import { toPageId } from "@higma-document-models/fig/domain";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
-import { createFigBuilderState } from "../types";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import { addPage, duplicatePage } from "./page-manager";
 
 function createDocument(): FigDesignDocument {

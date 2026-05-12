@@ -1,27 +1,42 @@
 /**
  * @file Convert FigDesignDocument back to flat nodeChanges for serialization
  *
- * Reverse of tree-to-document.ts. Walks the high-level document model and
- * produces the flat nodeChanges array + blobs needed by saveFigFile().
+ * Single SoT for the high-level `FigDesignDocument → FigNode[]` projection.
+ * Every load-bearing Kiwi field that Figma needs to render and persist a
+ * node correctly is materialised here (via `applyNodeTypeDefaults`), so
+ * downstream consumers — `exportFig`, the editor save flow, refine-fig —
+ * never re-implement node construction.
  *
- * For roundtrip documents (_loaded present), we apply modifications to the
- * original nodeChanges rather than rebuilding from scratch. This preserves
- * fields and ordering that the high-level model doesn't explicitly track.
+ * `FigDesignNode` itself carries every first-class load-bearing field
+ * (`isSymbolPublishable`, `derivedSymbolData`, `frameMaskDisabled`, ...);
+ * there is no `_raw` fall-through. Projection is therefore a pure walk
+ * of the document tree.
  */
 
-import type { FigNode, FigGuid, FigParentIndex, KiwiEnumValue, FigComponentPropValue } from "@higma-document-models/fig/types";
-import type { LoadedFigFile } from "@higma-document-models/fig/domain";
-import type { ComponentPropertyValue, FigDesignDocument, FigDesignNode, FigPage } from "@higma-document-models/fig/domain";
-import { guidToString, parseId, type FigBlob } from "@higma-document-models/fig/domain";
+import type { FigNode, FigGuid, FigParentIndex, FigComponentPropValue } from "@higma-document-models/fig/types";
+import type {
+  ComponentPropertyValue,
+  FigDesignDocument,
+  FigDesignNode,
+  FigPage,
+  FigDesignBlob,
+} from "@higma-document-models/fig/domain";
+import { parseId, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
+import { NODE_TYPE_VALUES, type NodeType } from "@higma-document-models/fig/constants";
+import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
+import {
+  applyNodeTypeDefaults,
+  encodeEllipseBlob,
+  encodeRectangleBlob,
+  encodeRoundedRectangleBlob,
+  encodeSvgPathBlob,
+} from "@higma-document-models/fig/node-factory";
 
 // =============================================================================
 // Types
 // =============================================================================
 
-/**
- * Result of converting a document to serializable data.
- */
 export type DocumentToTreeResult = {
   readonly nodeChanges: FigNode[];
   readonly blobs: readonly FigBlob[];
@@ -79,16 +94,7 @@ function componentPropertyValueToFig(value: ComponentPropertyValue): FigComponen
 // Position String
 // =============================================================================
 
-/**
- * Generate a Figma-compatible position string for child ordering.
- *
- * Figma uses lexicographic strings (like fractional indexing) to order
- * children. We use a simple scheme based on the child's index position.
- */
 function positionString(index: number): string {
-  // Figma uses a compact encoding; for simplicity, we use padded hex.
-  // Real .fig files use a more complex fractional indexing scheme,
-  // but for roundtrip we preserve original positions via _raw.
   return String.fromCharCode(0x20 + index);
 }
 
@@ -97,57 +103,139 @@ function positionString(index: number): string {
 // =============================================================================
 
 /**
- * Convert a FigDesignNode to a flat FigNode (without children).
+ * Accumulator for fillGeometry blobs synthesised during projection.
+ *
+ * `doc.blobs` carries explicit blobs the author registered. Shape nodes
+ * built via the scratch builder (`addNode` with type FRAME / RECTANGLE /
+ * ROUNDED_RECTANGLE / ELLIPSE) seldom carry an explicit `fillGeometry`
+ * because the on-disk requirement (every visible shape needs a path-
+ * commands blob to render) is a property of the projection target, not
+ * the domain. We synthesise the blob here and append it to the
+ * accumulator; downstream `buildNodeChanges` concatenates the
+ * accumulator with `doc.blobs` so the final wire payload carries both.
  */
+type BlobAccumulator = {
+  readonly synthesised: { bytes: number[] }[];
+  readonly explicitCount: number;
+};
+
+function nextBlobIndex(acc: BlobAccumulator): number {
+  return acc.explicitCount + acc.synthesised.length;
+}
+
 function designNodeToFigNode(
   node: FigDesignNode,
   parentId: FigNodeId | FigPageId,
   childIndex: number,
+  blobAcc: BlobAccumulator,
 ): FigNode {
   const guid = nodeIdToGuid(node.id);
+  const typeValue = NODE_TYPE_VALUES[node.type as NodeType];
+  if (typeValue === undefined) {
+    throw new Error(`Unknown FigNodeType for projection: ${node.type}`);
+  }
 
-  // Start with _raw fields if present (roundtrip preservation)
-  const base: Record<string, unknown> = node._raw ? { ...node._raw } : {};
+  const base: Record<string, unknown> = {
+    guid,
+    parentIndex: createParentIndex(parentId, positionString(childIndex)),
+    type: { value: typeValue, name: node.type },
+    phase: { value: 0, name: "CREATED" },
+    name: node.name,
+    visible: node.visible,
+    opacity: node.opacity,
+    transform: node.transform,
+    size: node.size,
+  };
 
-  // Overlay typed fields
-  base.guid = guid;
-  base.parentIndex = createParentIndex(parentId, positionString(childIndex));
-  base.type = { value: 0, name: node.type } as KiwiEnumValue;
-  base.phase = { value: 1, name: "CREATED" } as KiwiEnumValue;
-  base.name = node.name;
-  base.visible = node.visible;
-  base.opacity = node.opacity;
-  base.transform = node.transform;
-  base.size = node.size;
   if (node.transformOrigin !== undefined) { base.transformOrigin = node.transformOrigin; }
-  base.fillPaints = node.fills;
-  base.strokePaints = node.strokes;
+  if (node.fills.length > 0) { base.fillPaints = node.fills; }
+  if (node.backgroundPaints !== undefined) { base.backgroundPaints = node.backgroundPaints; }
+  if (node.strokes.length > 0) { base.strokePaints = node.strokes; }
   base.strokeWeight = node.strokeWeight;
   if (node.exportSettings !== undefined) { base.exportSettings = node.exportSettings; }
 
   if (node.strokeAlign !== undefined) { base.strokeAlign = node.strokeAlign; }
   if (node.strokeJoin !== undefined) { base.strokeJoin = node.strokeJoin; }
   if (node.strokeCap !== undefined) { base.strokeCap = node.strokeCap; }
+  if (node.strokeDashes !== undefined) { base.strokeDashes = node.strokeDashes; }
   if (node.cornerRadius !== undefined) { base.cornerRadius = node.cornerRadius; }
   if (node.rectangleCornerRadii !== undefined) { base.rectangleCornerRadii = node.rectangleCornerRadii; }
+  if (node.cornerSmoothing !== undefined) { base.cornerSmoothing = node.cornerSmoothing; }
+  if (node.individualStrokeWeights !== undefined) {
+    base.borderStrokeWeightsIndependent = true;
+    base.borderTopWeight = node.individualStrokeWeights.top;
+    base.borderRightWeight = node.individualStrokeWeights.right;
+    base.borderBottomWeight = node.individualStrokeWeights.bottom;
+    base.borderLeftWeight = node.individualStrokeWeights.left;
+  }
   if (node.effects.length > 0) { base.effects = node.effects; }
-  if (node.clipsContent !== undefined) { base.clipsContent = node.clipsContent; }
+  if (node.clipsContent !== undefined) {
+    base.clipsContent = node.clipsContent;
+    base.frameMaskDisabled = !node.clipsContent;
+  }
   if (node.sectionContentsHidden !== undefined) { base.sectionContentsHidden = node.sectionContentsHidden; }
+  if (node.mask !== undefined) { base.mask = node.mask; }
+  if (node.arcData !== undefined) { base.arcData = node.arcData; }
+  if (node.vectorPaths !== undefined) { base.vectorPaths = node.vectorPaths; }
+  if (node.vectorData !== undefined) { base.vectorData = node.vectorData; }
+  if (node.fillGeometry !== undefined) { base.fillGeometry = node.fillGeometry; }
+  if (node.strokeGeometry !== undefined) { base.strokeGeometry = node.strokeGeometry; }
+  if (node.booleanOperation !== undefined) { base.booleanOperation = node.booleanOperation; }
+  if (node.pointCount !== undefined) { base.pointCount = node.pointCount; }
+  if (node.starInnerRadius !== undefined) { base.starInnerRadius = node.starInnerRadius; }
+  if (node.starInnerScale !== undefined) { base.starInnerScale = node.starInnerScale; }
+  if (node.handleMirroring !== undefined) { base.handleMirroring = node.handleMirroring; }
+  if (node.styleIdForFill !== undefined) { base.styleIdForFill = node.styleIdForFill; }
+  if (node.styleIdForStrokeFill !== undefined) { base.styleIdForStrokeFill = node.styleIdForStrokeFill; }
+  if (node.styleIdForText !== undefined) { base.styleIdForText = node.styleIdForText; }
+  if (node.styleIdForEffect !== undefined) { base.styleIdForEffect = node.styleIdForEffect; }
+  if (node.styleIdForGrid !== undefined) { base.styleIdForGrid = node.styleIdForGrid; }
+  if (node.styleType !== undefined) { base.styleType = node.styleType; }
+  if (node.key !== undefined) { base.key = node.key; }
+  if (node.overrideKey !== undefined) { base.overrideKey = node.overrideKey; }
+  if (node.blendMode !== undefined) { base.blendMode = node.blendMode; }
+
+  // FRAME load-bearing
+  if (node.minSize !== undefined) { base.minSize = node.minSize; }
+  if (node.maxSize !== undefined) { base.maxSize = node.maxSize; }
+  if (node.bordersTakeSpace !== undefined) { base.bordersTakeSpace = node.bordersTakeSpace; }
+  if (node.targetAspectRatio !== undefined) { base.targetAspectRatio = node.targetAspectRatio; }
+  if (node.proportionsConstrained !== undefined) { base.proportionsConstrained = node.proportionsConstrained; }
+  if (node.gridRows !== undefined) { base.gridRows = node.gridRows; }
+  if (node.gridColumns !== undefined) { base.gridColumns = node.gridColumns; }
+  if (node.gridRowGap !== undefined) { base.gridRowGap = node.gridRowGap; }
+  if (node.gridColumnGap !== undefined) { base.gridColumnGap = node.gridColumnGap; }
 
   // AutoLayout
   if (node.autoLayout) {
     base.stackMode = node.autoLayout.stackMode;
     if (node.autoLayout.stackSpacing !== undefined) { base.stackSpacing = node.autoLayout.stackSpacing; }
-    if (node.autoLayout.stackPadding !== undefined) { base.stackPadding = node.autoLayout.stackPadding; }
+    if (node.autoLayout.stackPadding !== undefined) {
+      // Kiwi stores auto-layout padding as four separate float fields,
+      // not as a single object. The domain model groups them into a
+      // `{top, right, bottom, left}` struct for ergonomics; expanding
+      // back to the Kiwi shape is part of the projection contract.
+      const pad = node.autoLayout.stackPadding;
+      base.stackHorizontalPadding = pad.left;
+      base.stackPaddingRight = pad.right;
+      base.stackVerticalPadding = pad.top;
+      base.stackPaddingBottom = pad.bottom;
+    }
     if (node.autoLayout.stackPrimaryAlignItems !== undefined) { base.stackPrimaryAlignItems = node.autoLayout.stackPrimaryAlignItems; }
     if (node.autoLayout.stackCounterAlignItems !== undefined) { base.stackCounterAlignItems = node.autoLayout.stackCounterAlignItems; }
     if (node.autoLayout.stackPrimaryAlignContent !== undefined) { base.stackPrimaryAlignContent = node.autoLayout.stackPrimaryAlignContent; }
-    if (node.autoLayout.stackWrap !== undefined) { base.stackWrap = node.autoLayout.stackWrap; }
+    if (node.autoLayout.stackWrap !== undefined) {
+      // Kiwi models `stackWrap` as the `StackWrap` enum
+      // (NO_WRAP=0, WRAP=1); writing the raw boolean throws at the
+      // value codec. The domain model carries the ergonomic boolean,
+      // so translate at the projection boundary.
+      base.stackWrap = node.autoLayout.stackWrap
+        ? { value: 1, name: "WRAP" }
+        : { value: 0, name: "NO_WRAP" };
+    }
     if (node.autoLayout.stackCounterSpacing !== undefined) { base.stackCounterSpacing = node.autoLayout.stackCounterSpacing; }
     if (node.autoLayout.stackReverseZIndex !== undefined) { base.stackReverseZIndex = node.autoLayout.stackReverseZIndex; }
   }
-
-  // Layout constraints
   if (node.layoutConstraints) {
     if (node.layoutConstraints.stackPositioning !== undefined) { base.stackPositioning = node.layoutConstraints.stackPositioning; }
     if (node.layoutConstraints.stackPrimarySizing !== undefined) { base.stackPrimarySizing = node.layoutConstraints.stackPrimarySizing; }
@@ -171,8 +259,6 @@ function designNodeToFigNode(
     if (node.textData.lineHeight !== undefined) { base.lineHeight = node.textData.lineHeight; }
     if (node.textData.letterSpacing !== undefined) { base.letterSpacing = node.textData.letterSpacing; }
 
-    // Write characterStyleIDs and styleOverrideTable into the Kiwi textData message.
-    // These are nested inside textData (not flat NodeChange fields).
     const textDataMsg: Record<string, unknown> = {
       characters: node.textData.characters,
       characterStyleIDs: node.textData.characterStyleIDs ?? new Array(node.textData.characters.length).fill(0),
@@ -180,22 +266,60 @@ function designNodeToFigNode(
     if (node.textData.styleOverrideTable && node.textData.styleOverrideTable.length > 0) {
       textDataMsg.styleOverrideTable = node.textData.styleOverrideTable.map((entry) => {
         const nc: Record<string, unknown> = { styleID: entry.styleID };
-        if (entry.fontSize !== undefined) {nc.fontSize = entry.fontSize;}
-        if (entry.fontName !== undefined) {nc.fontName = entry.fontName;}
-        if (entry.fillPaints !== undefined) {nc.fillPaints = entry.fillPaints;}
-        if (entry.textDecoration !== undefined) {nc.textDecoration = entry.textDecoration;}
-        if (entry.textCase !== undefined) {nc.textCase = entry.textCase;}
-        if (entry.lineHeight !== undefined) {nc.lineHeight = entry.lineHeight;}
-        if (entry.letterSpacing !== undefined) {nc.letterSpacing = entry.letterSpacing;}
+        if (entry.fontSize !== undefined) { nc.fontSize = entry.fontSize; }
+        if (entry.fontName !== undefined) { nc.fontName = entry.fontName; }
+        if (entry.fillPaints !== undefined) { nc.fillPaints = entry.fillPaints; }
+        if (entry.textDecoration !== undefined) { nc.textDecoration = entry.textDecoration; }
+        if (entry.textCase !== undefined) { nc.textCase = entry.textCase; }
+        if (entry.lineHeight !== undefined) { nc.lineHeight = entry.lineHeight; }
+        if (entry.letterSpacing !== undefined) { nc.letterSpacing = entry.letterSpacing; }
         return nc;
       });
     }
     base.textData = textDataMsg;
   }
+  if (node.derivedTextData !== undefined) { base.derivedTextData = node.derivedTextData; }
+  if (node.textTracking !== undefined) { base.textTracking = node.textTracking; }
+  if (node.textTruncation !== undefined) { base.textTruncation = node.textTruncation; }
+  if (node.leadingTrim !== undefined) { base.leadingTrim = node.leadingTrim; }
+  if (node.fontVariations !== undefined) { base.fontVariations = node.fontVariations; }
+  if (node.hyperlink !== undefined) { base.hyperlink = node.hyperlink; }
 
-  // Component/instance
-  if (node.symbolId !== undefined) { base.symbolID = node.symbolId; }
-  if (node.overrides !== undefined) { base.symbolOverrides = node.overrides; }
+  // Symbol / Instance.
+  //
+  // `rawOverrides` / `rawDerivedSymbolData` are the resolve-pre copies
+  // produced by `convertFigNode` at load time; when present, they are
+  // the SoT for round-trip projection (they carry Figma's per-session
+  // ghost-guid trace verbatim). The resolve-post `overrides` /
+  // `derivedSymbolData` are used by renderers but have rerouted paths
+  // that the re-parser would otherwise refuse.
+  if (node.symbolId !== undefined) {
+    const projectedOverrides = node.rawOverrides ?? node.overrides ?? [];
+    base.symbolData = {
+      symbolID: nodeIdToGuid(node.symbolId),
+      symbolOverrides: projectedOverrides,
+      uniformScaleFactor: 1,
+    };
+    base.symbolID = nodeIdToGuid(node.symbolId);
+    if (projectedOverrides.length > 0) {
+      base.symbolOverrides = projectedOverrides;
+    }
+  }
+  if (node.overriddenSymbolID !== undefined) {
+    base.overriddenSymbolID = nodeIdToGuid(node.overriddenSymbolID as FigNodeId);
+  }
+  // Prefer the resolve-pre raw entries so the projected Kiwi node
+  // matches the on-disk representation Figma's importer expects.
+  const projectedDerived = node.rawDerivedSymbolData ?? node.derivedSymbolData;
+  if (projectedDerived !== undefined && projectedDerived.length > 0) {
+    base.derivedSymbolData = projectedDerived;
+  }
+  if (node.componentPropertyReferences !== undefined) {
+    base.componentPropertyReferences = node.componentPropertyReferences;
+  }
+  if (node.isSymbolPublishable !== undefined) { base.isSymbolPublishable = node.isSymbolPublishable; }
+  if (node.sharedSymbolVersion !== undefined) { base.sharedSymbolVersion = node.sharedSymbolVersion; }
+
   if (node.componentPropertyDefs !== undefined) {
     base.componentPropDefs = node.componentPropertyDefs.map((def) => ({
       id: nodeIdToGuid(def.id),
@@ -230,18 +354,97 @@ function designNodeToFigNode(
     base.isStateGroup = node.isStateGroup;
   }
 
-  // Boolean operation
-  if (node.booleanOperation !== undefined) { base.booleanOperation = node.booleanOperation; }
+  // Variable consumption
+  if (node.parameterConsumptionMap !== undefined) { base.parameterConsumptionMap = node.parameterConsumptionMap; }
+  if (node.variableConsumptionMap !== undefined) { base.variableConsumptionMap = node.variableConsumptionMap; }
+  if (node.variableModeBySetMap !== undefined) { base.variableModeBySetMap = node.variableModeBySetMap; }
 
-  // Star/polygon
-  if (node.pointCount !== undefined) { base.pointCount = node.pointCount; }
-  if (node.starInnerRadius !== undefined) { base.starInnerRadius = node.starInnerRadius; }
+  // Auto-synthesise `fillGeometry` for shape kinds that need a path-
+  // commands blob to render. Authors of FigDesignDocuments construct
+  // semantic specs (`{type: "FRAME", width, height, fills}`) and don't
+  // know about the on-disk requirement that visible shapes carry a
+  // blob index — that's a property of the wire format. If the
+  // caller already supplied an explicit `fillGeometry`, leave it
+  // alone. Otherwise generate the appropriate blob and register it
+  // in the accumulator.
+  if (base.fillGeometry === undefined && node.fillGeometry === undefined) {
+    if (node.type === "VECTOR" && node.vectorPaths !== undefined && node.vectorPaths.length > 0) {
+      // VECTOR carries one fillGeometry entry per vectorPaths entry,
+      // each encoded as the Figma path-command blob format. The
+      // legacy fig-file builder did the same encoding inline; we
+      // route through the canonical helper now.
+      const entries = node.vectorPaths
+        .map((p) => p.data)
+        .filter((d): d is string => typeof d === "string" && d.length > 0)
+        .map((d) => {
+          const blob = encodeSvgPathBlob(d);
+          const blobIndex = nextBlobIndex(blobAcc);
+          blobAcc.synthesised.push({ bytes: [...blob.bytes] });
+          // Pick the winding rule from the first vectorPath that
+          // declared one; default to NONZERO when none did.
+          const winding = node.vectorPaths!.find((p) => p.windingRule !== undefined)?.windingRule;
+          const isEvenOdd = winding === "EVENODD" || winding === "ODD" ||
+            (typeof winding === "object" && winding !== null && (winding.name === "EVENODD" || winding.name === "ODD"));
+          return {
+            windingRule: isEvenOdd
+              ? { value: 1, name: "ODD" }
+              : { value: 0, name: "NONZERO" },
+            commandsBlob: blobIndex,
+            styleID: 0,
+          };
+        });
+      if (entries.length > 0) {
+        base.fillGeometry = entries;
+      }
+    } else {
+      const synthesisedBlob = synthesiseFillGeometryBlob(node);
+      if (synthesisedBlob !== undefined) {
+        const blobIndex = nextBlobIndex(blobAcc);
+        blobAcc.synthesised.push({ bytes: synthesisedBlob });
+        base.fillGeometry = [
+          { windingRule: { value: 0, name: "NONZERO" }, commandsBlob: blobIndex, styleID: 0 },
+        ];
+      }
+    }
+  }
+
+  // Apply load-bearing defaults last so caller-supplied values win.
+  applyNodeTypeDefaults(base, node.type);
 
   return base as FigNode;
 }
 
+/**
+ * Generate the path-commands blob for a shape node by computing its
+ * geometry from the node's `size` and `cornerRadius` (when applicable).
+ * Returns `undefined` for node kinds whose geometry is author-supplied
+ * (VECTOR, LINE) or that don't render filled (DOCUMENT, CANVAS, GROUP,
+ * BOOLEAN_OPERATION, INSTANCE — these get their geometry from
+ * elsewhere).
+ */
+function synthesiseFillGeometryBlob(node: FigDesignNode): number[] | undefined {
+  const width = node.size.x;
+  const height = node.size.y;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return undefined;
+  }
+  switch (node.type) {
+    case "FRAME":
+    case "SYMBOL":
+    case "RECTANGLE":
+    case "SECTION":
+      return encodeRectangleBlob(width, height);
+    case "ROUNDED_RECTANGLE":
+      return encodeRoundedRectangleBlob(width, height, node.cornerRadius ?? 0);
+    case "ELLIPSE":
+      return encodeEllipseBlob(width, height);
+    default:
+      return undefined;
+  }
+}
+
 // =============================================================================
-// Flatten Tree
+// Page (CANVAS) Flatten
 // =============================================================================
 
 type FlattenPageOptions = {
@@ -249,229 +452,86 @@ type FlattenPageOptions = {
   readonly documentId: FigNodeId;
   readonly pageIndex: number;
   readonly result: FigNode[];
+  readonly blobAcc: BlobAccumulator;
 };
 
-/**
- * Flatten a page's node tree into a nodeChanges array.
- */
-function flattenPage(
-  { page, documentId, pageIndex, result }: FlattenPageOptions,
-): void {
-  // Create CANVAS node
+function flattenPage({ page, documentId, pageIndex, result, blobAcc }: FlattenPageOptions): void {
   const canvasGuid = nodeIdToGuid(page.id);
-  const canvasBase: Record<string, unknown> = page._raw ? { ...page._raw } : {};
-  canvasBase.guid = canvasGuid;
-  canvasBase.parentIndex = createParentIndex(documentId, positionString(pageIndex));
-  canvasBase.type = { value: 0, name: "CANVAS" } as KiwiEnumValue;
-  canvasBase.phase = { value: 1, name: "CREATED" } as KiwiEnumValue;
-  canvasBase.name = page.name;
-  canvasBase.visible = true;
-  canvasBase.backgroundColor = page.backgroundColor;
+  const canvasBase: Record<string, unknown> = {
+    guid: canvasGuid,
+    parentIndex: createParentIndex(documentId, positionString(pageIndex)),
+    type: { value: NODE_TYPE_VALUES.CANVAS, name: "CANVAS" },
+    phase: { value: 0, name: "CREATED" },
+    name: page.name,
+    visible: page.internalOnly ? false : true,
+    opacity: 1,
+    transform: IDENTITY_MATRIX,
+    backgroundColor: page.backgroundColor,
+  };
+  if (page.backgroundOpacity !== undefined) { canvasBase.backgroundOpacity = page.backgroundOpacity; }
+  if (page.backgroundEnabled !== undefined) { canvasBase.backgroundEnabled = page.backgroundEnabled; }
+  if (page.internalOnly !== undefined) { canvasBase.internalOnly = page.internalOnly; }
+  applyNodeTypeDefaults(canvasBase, "CANVAS");
   result.push(canvasBase as FigNode);
-
-  // Flatten children
-  flattenNodes(page.children, page.id, result);
+  flattenNodes(page.children, page.id, result, blobAcc);
 }
 
-/**
- * Recursively flatten design nodes into the nodeChanges array.
- */
 function flattenNodes(
   nodes: readonly FigDesignNode[],
   parentId: FigNodeId | FigPageId,
   result: FigNode[],
+  blobAcc: BlobAccumulator,
 ): void {
   for (let i = 0; i < nodes.length; i++) {
     const node = nodes[i];
-    result.push(designNodeToFigNode(node, parentId, i));
-
+    result.push(designNodeToFigNode(node, parentId, i, blobAcc));
     if (node.children && node.children.length > 0) {
-      flattenNodes(node.children, node.id, result);
+      flattenNodes(node.children, node.id, result, blobAcc);
     }
   }
 }
 
 // =============================================================================
-// Roundtrip Strategy
+// Build NodeChanges
 // =============================================================================
 
-/**
- * Apply document modifications to the original loaded nodeChanges.
- *
- * This strategy preserves the original node ordering and fields
- * that were not modified through the high-level API.
- */
-function applyModificationsToLoaded(
-  doc: FigDesignDocument,
-  loaded: LoadedFigFile,
-): DocumentToTreeResult {
-  // Build a map of current document nodes by GUID string
-  const currentNodes = new Map<string, FigDesignNode>();
-  const currentPages = new Map<string, FigPage>();
-
-  for (const page of doc.pages) {
-    currentPages.set(page.id, page);
-    collectAllNodes(page.children, currentNodes);
-  }
-
-  // Update existing nodes in-place
-  const updatedNodeChanges: FigNode[] = [];
-
-  for (const originalNode of loaded.nodeChanges) {
-    const guid = originalNode.guid;
-    if (!guid) {
-      updatedNodeChanges.push(originalNode);
-      continue;
-    }
-
-    const guidStr = guidToString(guid);
-    const currentNode = currentNodes.get(guidStr);
-
-    if (currentNode) {
-      // Node still exists: merge changes
-      const merged = mergeNodeChanges(originalNode, currentNode);
-      updatedNodeChanges.push(merged);
-    } else {
-      // Check if it's a CANVAS node (page)
-      const currentPage = currentPages.get(guidStr);
-      if (currentPage) {
-        // Page still exists: merge canvas changes
-        const merged = mergeCanvasChanges(originalNode, currentPage);
-        updatedNodeChanges.push(merged);
-      }
-      // If neither: node was deleted, skip it
-    }
-  }
-
-  // Add new nodes (those not in original)
-  const originalGuids = new Set(
-    loaded.nodeChanges
-      .filter((n) => n.guid)
-      .map((n) => guidToString(n.guid)),
-  );
-
-  for (const page of doc.pages) {
-    if (!originalGuids.has(page.id)) {
-      // New page: need to add its canvas + children
-      // Find document GUID from first root
-      const docGuid = loaded.nodeChanges.find((n) => n.type?.name === "DOCUMENT")?.guid;
-      if (docGuid) {
-        const docId = guidToString(docGuid) as FigNodeId;
-        flattenPage({ page, documentId: docId, pageIndex: doc.pages.indexOf(page), result: updatedNodeChanges });
-      }
-    }
-    addNewNodes({ nodes: page.children, parentId: page.id, originalGuids, result: updatedNodeChanges });
-  }
-
-  return {
-    nodeChanges: updatedNodeChanges,
-    blobs: loaded.blobs,
-  };
+function designBlobsToFigBlobs(blobs: readonly FigDesignBlob[]): readonly FigBlob[] {
+  return blobs.map((b) => ({ bytes: b.bytes }));
 }
 
-/**
- * Collect all nodes in a tree into a flat map.
- */
-function collectAllNodes(
-  nodes: readonly FigDesignNode[],
-  map: Map<string, FigDesignNode>,
-): void {
-  for (const node of nodes) {
-    map.set(node.id, node);
-    if (node.children) {
-      collectAllNodes(node.children, map);
-    }
-  }
-}
-
-/**
- * Merge modifications from a FigDesignNode into an original FigNode.
- */
-function mergeNodeChanges(original: FigNode, current: FigDesignNode): FigNode {
-  const merged: Record<string, unknown> = { ...original };
-
-  merged.name = current.name;
-  merged.visible = current.visible;
-  merged.opacity = current.opacity;
-  merged.transform = current.transform;
-  merged.size = current.size;
-  merged.fillPaints = current.fills;
-  merged.strokePaints = current.strokes;
-  merged.strokeWeight = current.strokeWeight;
-
-  if (current.effects.length > 0) {
-    merged.effects = current.effects;
-  }
-
-  return merged as FigNode;
-}
-
-/**
- * Merge modifications from a FigPage into an original CANVAS FigNode.
- */
-function mergeCanvasChanges(original: FigNode, currentPage: FigPage): FigNode {
-  const merged: Record<string, unknown> = { ...original };
-  merged.name = currentPage.name;
-  merged.backgroundColor = currentPage.backgroundColor;
-  return merged as FigNode;
-}
-
-type AddNewNodesOptions = {
-  readonly nodes: readonly FigDesignNode[];
-  readonly parentId: FigNodeId | FigPageId;
-  readonly originalGuids: ReadonlySet<string>;
-  readonly result: FigNode[];
-};
-
-/**
- * Add new nodes (not present in original) to the nodeChanges array.
- */
-function addNewNodes(
-  { nodes, parentId, originalGuids, result }: AddNewNodesOptions,
-): void {
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i];
-    if (!originalGuids.has(node.id)) {
-      result.push(designNodeToFigNode(node, parentId, i));
-    }
-    if (node.children) {
-      addNewNodes({ nodes: node.children, parentId: node.id, originalGuids, result });
-    }
-  }
-}
-
-// =============================================================================
-// Fresh Build Strategy
-// =============================================================================
-
-/**
- * Build nodeChanges from scratch for a document without _loaded data.
- */
-function buildFreshNodeChanges(doc: FigDesignDocument): DocumentToTreeResult {
+function buildNodeChanges(doc: FigDesignDocument): DocumentToTreeResult {
   const result: FigNode[] = [];
+  const blobAcc: BlobAccumulator = {
+    synthesised: [],
+    explicitCount: doc.blobs.length,
+  };
 
-  // Create DOCUMENT node
   const documentId = "0:0" as FigNodeId;
   const documentNode: Record<string, unknown> = {
     guid: { sessionID: 0, localID: 0 },
-    type: { value: 0, name: "DOCUMENT" },
-    phase: { value: 1, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.DOCUMENT, name: "DOCUMENT" },
+    phase: { value: 0, name: "CREATED" },
     name: "Document",
     visible: true,
+    opacity: 1,
+    transform: IDENTITY_MATRIX,
   };
   if (doc.documentColorProfile) {
     documentNode.documentColorProfile = doc.documentColorProfile;
   }
+  applyNodeTypeDefaults(documentNode, "DOCUMENT");
   result.push(documentNode as FigNode);
 
-  // Add pages
   for (let i = 0; i < doc.pages.length; i++) {
-    flattenPage({ page: doc.pages[i], documentId, pageIndex: i, result });
+    flattenPage({ page: doc.pages[i], documentId, pageIndex: i, result, blobAcc });
   }
 
   return {
     nodeChanges: result,
-    blobs: [],
+    blobs: [
+      ...designBlobsToFigBlobs(doc.blobs),
+      ...blobAcc.synthesised.map((b) => ({ bytes: b.bytes })),
+    ],
   };
 }
 
@@ -482,13 +542,10 @@ function buildFreshNodeChanges(doc: FigDesignDocument): DocumentToTreeResult {
 /**
  * Convert a FigDesignDocument to flat nodeChanges for serialization.
  *
- * For roundtrip documents (those loaded from existing .fig files),
- * applies modifications to the original data to preserve compatibility.
- * For fresh documents, builds nodeChanges from scratch.
+ * The projection is purely a function of the document tree — no roundtrip
+ * merge with the original `LoadedFigFile.nodeChanges` is required, because
+ * `FigDesignNode` already carries every load-bearing Kiwi field.
  */
 export function documentToTree(doc: FigDesignDocument): DocumentToTreeResult {
-  if (doc._loaded) {
-    return applyModificationsToLoaded(doc, doc._loaded);
-  }
-  return buildFreshNodeChanges(doc);
+  return buildNodeChanges(doc);
 }

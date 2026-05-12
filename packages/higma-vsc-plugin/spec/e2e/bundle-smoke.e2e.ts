@@ -157,7 +157,7 @@ test("bundled dist/webview.js executes under VS Code CSP and posts webview/ready
       `diagnostics (${diagnostics.length}):`,
       ...diagnostics.map((d) => `  [${d.kind}] ${d.text.slice(0, 240)}`),
     ].join("\n");
-    throw new Error(detail);
+    throw new Error(detail, { cause: timeoutError });
   }
 
   const smoke = await captureSmokeState(page);
@@ -166,6 +166,9 @@ test("bundled dist/webview.js executes under VS Code CSP and posts webview/ready
 });
 
 declare global {
+  // `interface` is required for declaration-merging against the lib.dom `Window`;
+  // a `type` alias cannot augment an existing interface.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
   interface Window {
     __bundleSmoke?: BundleSmoke;
   }

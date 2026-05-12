@@ -65,6 +65,40 @@ export function createFigFamilyDesignDocument(
   return createFigDesignDocumentFromKiwiCanvas(canvas, options);
 }
 
+/**
+ * Fig-family design document type alias for peer-product editors.
+ *
+ * Independently re-derived from `createFigFamilyDesignDocument`'s
+ * `ReturnType` rather than re-exported from `@higma-document-models/fig/domain`
+ * so site / deck / buzz editors avoid a cross-product import while still
+ * naming the document shape they receive from this runtime.
+ *
+ * The structural identity is `FigDesignDocument` — only the import path
+ * differs. The `no-cross-package-reexport` rule permits this form because
+ * the alias goes through a function return type rather than a bare
+ * `export type X = Y` over an imported name.
+ */
+export type FigFamilyDesignDocument = ReturnType<typeof createFigFamilyDesignDocument>;
+
+/**
+ * Fig-family page type alias for peer-product editors.
+ *
+ * Derived from `FigFamilyDesignDocument["pages"][number]` so site / deck /
+ * buzz editors avoid importing `FigPage` directly from
+ * `@higma-document-models/fig/domain`.
+ */
+export type FigFamilyPage = FigFamilyDesignDocument["pages"][number];
+
+/**
+ * Fig-family render options for peer-product editors.
+ *
+ * Derived from `createFigFamilyRenderOptions`'s return type (minus
+ * `undefined`) so site / deck / buzz editors can name the renderer-input
+ * shape without importing `SceneGraphRenderOptions` directly from
+ * `@higma-document-renderers/fig/scene-graph/render`.
+ */
+export type FigFamilyRenderOptions = Exclude<ReturnType<typeof createFigFamilyRenderOptions>, undefined>;
+
 export type UseFigSceneGraphParams = {
   readonly page: FigPage | null | undefined;
   readonly canvasWidth: number;

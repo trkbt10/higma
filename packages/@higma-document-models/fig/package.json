@@ -42,6 +42,14 @@
       "types": "./src/domain/conversion/index.ts",
       "default": "./src/domain/conversion/index.ts"
     },
+    "./node-factory": {
+      "types": "./src/node-factory/index.ts",
+      "default": "./src/node-factory/index.ts"
+    },
+    "./builder": {
+      "types": "./src/builder/index.ts",
+      "default": "./src/builder/index.ts"
+    },
     "./diagnostics": {
       "types": "./src/diagnostics/index.ts",
       "default": "./src/diagnostics/index.ts"

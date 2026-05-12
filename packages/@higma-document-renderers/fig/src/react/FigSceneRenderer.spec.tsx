@@ -14,7 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { createDemoFigDesignDocument } from "../testing/demo-document";
 import type { FigDesignDocument, FigDesignNode } from "@higma-document-models/fig/domain";
-import { buildSceneGraph } from "../scene-graph/builder";
+import { buildSceneGraph } from "../scene-graph";
 import { FigSceneRenderer } from "./FigSceneRenderer";
 
 function findDesignByName(nodes: readonly FigDesignNode[], name: string): FigDesignNode | undefined {

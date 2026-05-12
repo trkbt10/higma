@@ -53,7 +53,7 @@
  *        - Remove every descendant of the member from
  *          `loaded.nodeChanges`.
  */
-import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
+import type { FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
 
@@ -71,20 +71,6 @@ const PROMOTABLE_DESCENDANT_TYPES = new Set([
   "TEXT",
   "INSTANCE",
 ]);
-
-export type PromoteIconClusterArgs = {
-  readonly loaded: LoadedFigFile;
-  readonly clusterName: string;
-  readonly memberGuids: readonly string[];
-  /** Exemplar GUID — kept as the SYMBOL. Must be one of memberGuids. */
-  readonly exemplarGuid: string;
-};
-
-export type PromoteResult = {
-  readonly symbolGuid: string;
-  readonly instanceGuids: readonly string[];
-  readonly removedDescendants: number;
-};
 
 /**
  * Decide whether a cluster's exemplar is promotable to a SYMBOL.
@@ -130,110 +116,14 @@ export function isLeafIconCluster(loaded: LoadedFigFile, exemplarGuid: string): 
   return isPromotableCluster(loaded, exemplarGuid);
 }
 
-/** Promote an exemplar to a SYMBOL and rewrite the other cluster members into INSTANCEs. */
-export function promoteIconCluster(args: PromoteIconClusterArgs): PromoteResult {
-  const { loaded, clusterName, memberGuids, exemplarGuid } = args;
-  if (!memberGuids.includes(exemplarGuid)) {
-    throw new Error("promoteIconCluster: exemplarGuid must be one of memberGuids");
-  }
-  if (!isPromotableCluster(loaded, exemplarGuid)) {
-    throw new Error("promoteIconCluster: exemplar carries a non-promotable descendant (e.g. GRADIENT paint or unsupported node type)");
-  }
-
-  // 2. Filter members so only those whose subtree is *strictly identical*
-  //    to the exemplar (same descendant fingerprint) are converted into
-  //    INSTANCEs. Visual-hash clusters tolerate small differences which
-  //    is great for surfacing candidates, but promoting non-identical
-  //    subtrees would change pixels — refuse those by design.
-  const exemplarFingerprint = subtreeFingerprint(loaded, exemplarGuid);
-  const eligibleOthers = memberGuids
-    .filter((g) => g !== exemplarGuid)
-    .filter((g) => subtreeFingerprint(loaded, g) === exemplarFingerprint);
-
-  // 1. Promote exemplar to SYMBOL.
-  promoteExemplarInPlace(loaded, exemplarGuid, clusterName);
-
-  // 3. Rewrite every fingerprint-equal member into an INSTANCE.
-  const exemplarFigGuid = parseGuidString(exemplarGuid);
-  const tally = eligibleOthers.reduce<{ instances: string[]; removed: number }>(
-    (acc, memberGuid) => {
-      const removed = rewriteMemberToInstance(loaded, memberGuid, exemplarFigGuid);
-      if (removed === undefined) {
-        return acc;
-      }
-      return {
-        instances: [...acc.instances, memberGuid],
-        removed: acc.removed + removed,
-      };
-    },
-    { instances: [], removed: 0 },
-  );
-  return {
-    symbolGuid: exemplarGuid,
-    instanceGuids: tally.instances,
-    removedDescendants: tally.removed,
-  };
-}
-
-function promoteExemplarInPlace(loaded: LoadedFigFile, exemplarGuid: string, name: string): void {
-  const idx = loaded.nodeChanges.findIndex((n) => n.guid && guidToString(n.guid) === exemplarGuid);
-  if (idx < 0) {
-    throw new Error(`promoteIconCluster: exemplar ${exemplarGuid} not found`);
-  }
-  const node = loaded.nodeChanges[idx];
-  if (!node) {
-    throw new Error(`promoteIconCluster: exemplar ${exemplarGuid} not found`);
-  }
-  loaded.nodeChanges[idx] = {
-    ...node,
-    type: { value: 15, name: "SYMBOL" },
-    name,
-  };
-}
-
-function rewriteMemberToInstance(
-  loaded: LoadedFigFile,
-  memberGuid: string,
-  exemplarFigGuid: FigGuid,
-): number | undefined {
-  const idx = loaded.nodeChanges.findIndex((n) => n.guid && guidToString(n.guid) === memberGuid);
-  if (idx < 0) {
-    return undefined;
-  }
-  const member = loaded.nodeChanges[idx];
-  if (!member) {
-    return undefined;
-  }
-  // Snapshot positional fields the INSTANCE needs to keep visually.
-  // We start from a shallow copy of the member (preserving `phase`,
-  // `version` and any other Kiwi book-keeping fields) and then
-  // overwrite the specific fields the role flip requires.
-  const replacement: FigNode = {
-    ...member,
-    type: { value: 16, name: "INSTANCE" },
-    fillPaints: [],
-    symbolData: {
-      symbolID: exemplarFigGuid,
-      symbolOverrides: [],
-      uniformScaleFactor: 1,
-    },
-  };
-  loaded.nodeChanges[idx] = replacement;
-
-  // Remove every descendant — they used to belong to the cloned
-  // subtree but now the INSTANCE renders the SYMBOL's children.
-  const descendantGuids = new Set(collectDescendantGuids(loaded, memberGuid));
-  if (descendantGuids.size === 0) {
-    return 0;
-  }
-  const filtered = loaded.nodeChanges.filter((n) => !n.guid || !descendantGuids.has(guidToString(n.guid)));
-  const removed = loaded.nodeChanges.length - filtered.length;
-  loaded.nodeChanges.length = 0;
-  for (const n of filtered) {
-    loaded.nodeChanges.push(n);
-  }
-  return removed;
-}
+// Phase 2 of the SoT consolidation removed the `promoteIconCluster`
+// mutator from refine-fig's apply pipeline; the equivalent rewrite is
+// now expressed as `PROMOTE_TO_SYMBOL` + N × `PROMOTE_TO_INSTANCE`
+// reducer dispatches inside `apply-plan.ts`. The gating and
+// fingerprint helpers (`isPromotableCluster`, `subtreeFingerprint`)
+// are still used by the planner / apply layer to decide whether a
+// cluster qualifies and which members share visual identity with the
+// exemplar.
 
 /**
  * Stable fingerprint of a subtree's *visually-significant* shape.
@@ -261,7 +151,7 @@ function rewriteMemberToInstance(
  * Position / transform / parent-relative offset are *not* included;
  * those are wrapper concerns the INSTANCE legitimately preserves.
  */
-function subtreeFingerprint(loaded: LoadedFigFile, rootGuid: string): string {
+export function subtreeFingerprint(loaded: LoadedFigFile, rootGuid: string): string {
   const root = findByGuid(loaded, rootGuid);
   if (!root) {
     return "missing";
@@ -373,13 +263,6 @@ function walk(parentGuid: string, byParent: ReadonlyMap<string, readonly FigNode
   }
 }
 
-function collectDescendantGuids(loaded: LoadedFigFile, rootGuid: string): readonly string[] {
-  return collectSubtree(loaded, rootGuid)
-    .map((n) => n.guid)
-    .filter((g): g is FigGuid => Boolean(g))
-    .map((g) => guidToString(g));
-}
-
 function findByGuid(loaded: LoadedFigFile, guidString: string): FigNode | undefined {
   return loaded.nodeChanges.find((n) => n.guid && guidToString(n.guid) === guidString);
 }
@@ -392,15 +275,3 @@ function hasGradientFill(node: FigNode): boolean {
   return fp.some((p) => p.type.startsWith("GRADIENT_"));
 }
 
-function parseGuidString(s: string): FigGuid {
-  const [a, b] = s.split(":");
-  if (a === undefined || b === undefined) {
-    throw new Error(`promoteIconCluster: bad guid string "${s}"`);
-  }
-  const sessionID = Number.parseInt(a, 10);
-  const localID = Number.parseInt(b, 10);
-  if (!Number.isFinite(sessionID) || !Number.isFinite(localID)) {
-    throw new Error(`promoteIconCluster: non-numeric guid "${s}"`);
-  }
-  return { sessionID, localID };
-}

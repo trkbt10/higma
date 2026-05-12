@@ -34,6 +34,7 @@ type E2EHandle = {
 };
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
   interface Window {
     __higmaE2E?: E2EHandle;
     acquireVsCodeApi?: () => {

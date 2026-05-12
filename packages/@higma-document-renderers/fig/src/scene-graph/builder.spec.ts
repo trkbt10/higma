@@ -204,7 +204,7 @@ describe("Scene graph builder - demo document", () => {
       expect(domainTextNodes.length).toBeGreaterThan(0);
       // Check if textData.characters has content
       for (const dn of domainTextNodes) {
-        const chars = dn.textData?.characters ?? (dn._raw?.characters as string | undefined) ?? "";
+        const chars = dn.textData?.characters ?? "";
         expect(chars.length).toBeGreaterThan(0);
       }
     });

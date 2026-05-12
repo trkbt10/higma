@@ -17,6 +17,7 @@ import { captureSnapshot, type ElementJson, type RawSnapshotJson } from "./in-pa
 import { waitForReady } from "./wait-for-ready";
 import {
   type BrowserLike as SharedBrowserLike,
+  type CDPSessionLike,
   type FrameLike,
   type PageLike,
   type ResponseCache,
@@ -465,12 +466,12 @@ async function rasterizeImageBytesAsPng(
       }
       async function rasterise(item: { base64: string; mime: string }): Promise<string | null> {
         const bytes = base64ToBytes(item.base64);
-        // `Blob` accepts BufferSource members; pass the typed
-        // array directly through a `BlobPart`-compatible cast.
-        // The Uint8Array's underlying ArrayBuffer is narrowed to
-        // SharedArrayBuffer | ArrayBuffer in TS lib.dom 5.x — but
-        // every browser's Blob ctor accepts both at runtime.
-        const blob = new Blob([bytes as unknown as BlobPart], { type: item.mime });
+        // page.evaluate body runs in the browser; the `Blob` ctor
+        // accepts the Uint8Array at runtime. TS lib.dom 5.x narrows
+        // `bytes.buffer` to `SharedArrayBuffer | ArrayBuffer`, which
+        // the Blob ctor's `BlobPart` union rejects. `Uint8Array#slice`
+        // always returns a copy backed by a plain ArrayBuffer.
+        const blob = new Blob([bytes.slice().buffer], { type: item.mime });
         const objectUrl = URL.createObjectURL(blob);
         try {
           const image = await new Promise<HTMLImageElement | null>((resolve) => {
@@ -973,27 +974,39 @@ async function resolvePerCharacterFontRuns(
     const familyByEntryIndex = new Map<number, string>();
     for (let i = 0; i < lookup.nodeIds.length; i += 1) {
       const nodeId = lookup.nodeIds[i]!;
-      try {
-        const fonts = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
-        const top = fonts.fonts[0];
-        if (top !== undefined) {
-          familyByEntryIndex.set(i, top.familyName);
-        }
-      } catch (_err) {
-        void _err;
-        // Per-grapheme failure (e.g. node detached mid-loop). Skip;
-        // emit will treat that codepoint as element-level family.
-        continue;
+      // eslint-disable-next-line no-await-in-loop -- per-grapheme CDP call must serialise
+      const family = await getPlatformFontFamilyOrUndefined(cdp, nodeId);
+      if (family !== undefined) {
+        familyByEntryIndex.set(i, family);
       }
     }
     await page.evaluate(unwrapTextBearingElementsForFontProbe);
     return collapseRunsByElement(wrapped.entries, familyByEntryIndex);
   } finally {
-    try {
-      await cdp.detach();
-    } catch (_err) {
-      void _err;
-    }
+    await detachCdpSilently(cdp);
+  }
+}
+
+async function getPlatformFontFamilyOrUndefined(
+  cdp: CDPSessionLike,
+  nodeId: number,
+): Promise<string | undefined> {
+  try {
+    const fonts = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+    return fonts.fonts[0]?.familyName;
+  } catch (_err) {
+    void _err;
+    // Per-grapheme failure (e.g. node detached mid-loop). Skip;
+    // emit will treat that codepoint as element-level family.
+    return undefined;
+  }
+}
+
+async function detachCdpSilently(cdp: CDPSessionLike): Promise<void> {
+  try {
+    await cdp.detach();
+  } catch (_err) {
+    void _err;
   }
 }
 

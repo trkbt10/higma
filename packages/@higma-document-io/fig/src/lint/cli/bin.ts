@@ -7,7 +7,8 @@
  * this file is safe to edit only for shebang/IO semantics.
  */
 
-import { FIG_LINT_USAGE, FigLintUsageError, parseFigLintArgs, runFigLintCli } from ".";
+import { FIG_LINT_USAGE, FigLintUsageError, parseFigLintArgs } from "./args";
+import { runFigLintCli } from "./run";
 
 async function main(): Promise<void> {
   const options = parseFigLintArgs(process.argv.slice(2));

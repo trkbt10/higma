@@ -99,6 +99,8 @@ function collectGeometryClusters(source: RefineSource): readonly GeometryCluster
       nodeGuid: m.nodeGuid,
       nodeName: m.nodeName,
       parentGuid: m.parentGuid,
+      width: m.width,
+      height: m.height,
     })),
   }));
 }

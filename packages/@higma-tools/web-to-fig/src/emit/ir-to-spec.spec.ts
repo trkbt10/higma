@@ -250,7 +250,10 @@ describe("irToSpecGraph — frame", () => {
     expect(layout.stackSpacing).toBe(8);
     expect(layout.stackPadding).toEqual({ top: 1, right: 2, bottom: 3, left: 4 });
     expect(layout.stackPrimaryAlignItems?.name).toBe("CENTER");
-    expect(layout.stackCounterAlignItems?.name).toBe("STRETCH");
+    // The `StackAlign` Kiwi enum has no STRETCH variant — that category
+    // is carried per-child as `stackChildAlignSelf=STRETCH`. The parent's
+    // counterAlign falls back to MIN so the encoded `.fig` stays valid.
+    expect(layout.stackCounterAlignItems?.name).toBe("MIN");
   });
 
   it("recurses into children, returning a SpecGraph per child", () => {

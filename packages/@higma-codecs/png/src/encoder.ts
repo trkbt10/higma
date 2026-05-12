@@ -5,7 +5,7 @@
  * Environment-independent: works in both Node.js and browser.
  */
 
-import { pack } from "./pngjs/packer";
+import { pack } from "./pngjs";
 import { toDataUrl } from "@higma-primitives/buffer";
 
 // =============================================================================

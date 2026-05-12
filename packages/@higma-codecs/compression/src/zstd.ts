@@ -24,11 +24,30 @@ type ZstdCodecModule = {
 
 let zstdCodecModulePromise: Promise<ZstdCodecModule> | null = null;
 
+function isZstdCodecModule(value: unknown): value is ZstdCodecModule {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as { ZstdCodec?: unknown };
+  if (typeof candidate.ZstdCodec !== "object" || candidate.ZstdCodec === null) {
+    return false;
+  }
+  return typeof (candidate.ZstdCodec as { run?: unknown }).run === "function";
+}
+
+async function loadZstdCodecOnce(): Promise<ZstdCodecModule> {
+  // Inline ignore is required because TypeScript's resolver pre-evaluates
+  // the literal specifier; we want the module loaded only on demand.
+  const mod = await import("zstd-codec");
+  if (!isZstdCodecModule(mod)) {
+    throw new Error("loadZstdCodec: 'zstd-codec' module shape unexpected");
+  }
+  return mod;
+}
+
 function loadZstdCodec(): Promise<ZstdCodecModule> {
   if (!zstdCodecModulePromise) {
-    // Inline ignore is required because TypeScript's resolver pre-evaluates
-    // the literal specifier; we want the module loaded only on demand.
-    zstdCodecModulePromise = import("zstd-codec") as unknown as Promise<ZstdCodecModule>;
+    zstdCodecModulePromise = loadZstdCodecOnce();
   }
   return zstdCodecModulePromise;
 }

@@ -3,7 +3,7 @@
  */
 
 import { memo } from "react";
-import type { RenderPathNode } from "../../scene-graph/render-tree";
+import type { RenderPathNode } from "../../scene-graph";
 import { ShapeShell } from "../primitives/shape-shell";
 import { MultiFillPathLayers } from "../primitives/multi-fill";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";

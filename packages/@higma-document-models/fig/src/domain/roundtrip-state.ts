@@ -20,10 +20,10 @@ export type LoadedFigFile = {
   readonly schema: KiwiSchema;
   readonly compressedSchema: Uint8Array;
   readonly version: string;
-  readonly nodeChanges: FigNode[];
+  readonly nodeChanges: readonly FigNode[];
   readonly blobs: readonly FigBlob[];
   readonly images: ReadonlyMap<string, FigPackageImage>;
   readonly metadata: FigPackageMetadata | null;
   readonly thumbnail: Uint8Array | null;
-  readonly messageHeader: Record<string, unknown>;
+  readonly messageHeader: Readonly<Record<string, unknown>>;
 };

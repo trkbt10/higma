@@ -32,7 +32,7 @@ import type {
 } from "./snapshot";
 import type { ElementJson, RawSnapshotJson } from "./in-page";
 import { captureSnapshot } from "./in-page";
-import type { FrameLike, PageLike, ResponseCache } from "./playwright-shared";
+import type { FrameLike } from "./playwright-shared";
 
 /** One `<frame>` element discovered on the host page. */
 export type FramesetEntry = {
@@ -399,5 +399,3 @@ export function matchFrame(
   return undefined;
 }
 
-/** Re-export for the capture module so it can keep its imports terse. */
-export type { ResponseCache };

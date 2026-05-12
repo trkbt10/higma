@@ -30,6 +30,7 @@ for (const caseName of readdirSync(SWIFTUI_CASES)) {
     }
     const srcRef = resolve(srcFrameDir, "reference.png");
     if (!existsSync(srcRef)) {
+      skipped += 1;
       continue;
     }
     const dstFrameDir = resolve(GODOT_CASES, caseName, frameName);
