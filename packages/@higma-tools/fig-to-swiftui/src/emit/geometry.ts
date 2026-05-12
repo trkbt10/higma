@@ -27,15 +27,15 @@
  */
 import type {
   FigBlob,
-  PathCommand,
 } from "@higma-document-models/fig/domain";
 import { decodePathCommands } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { countSubpaths, type PathCommand } from "@higma-primitives/path";
 import {
   generateLineContour,
   generatePolygonContour,
   generateStarContour,
-} from "@higma-document-renderers/fig/scene-graph/convert";
+} from "@higma-primitives/path/contours";
 import { solidPaintToColor } from "../style/color";
 import { firstVisibleGradientPaint, gradientExpr } from "../style/gradient";
 import {
@@ -246,7 +246,11 @@ function generateContoursFromPrimitives(node: FigNode): readonly PathCommand[] |
         width: w,
         height: h,
         pointCount: node.pointCount ?? 5,
-        innerRadius: node.starInnerRadius,
+        // Mirror the renderer's builder preference order so SwiftUI
+        // emit matches WebGL render: `starInnerScale` is the newer
+        // Figma field; legacy fixtures still carry `starInnerRadius`;
+        // `0.382` is Figma's own default for a 5-point star.
+        innerRadiusRatio: node.starInnerScale ?? node.starInnerRadius ?? 0.382,
       });
       return contour.commands;
     }
@@ -289,17 +293,11 @@ export function buildFillArgs(
   return [head, namedArg("style", ident("FillStyle(eoFill: true)"))];
 }
 
-/**
- * Count distinct subpaths in a decoded command list. Every `M`
- * (`move`) instruction starts a new subpath; the leading `M`
- * counts as the first one, so a path with two `M` commands has
- * two subpaths. Paths without any `M` (e.g. an empty geometry
- * blob) are treated as 0 subpaths and the caller falls back to
- * the non-zero default.
- */
-export function countSubpaths(commands: readonly PathCommand[]): number {
-  return commands.reduce((n, cmd) => (cmd.type === "M" ? n + 1 : n), 0);
-}
+// `countSubpaths` lives in `@higma-primitives/path`; the import above
+// brings it into scope for this module's own use. External consumers
+// (including the spec file) import it directly from the primitive
+// package — re-exporting it here would violate
+// `no-cross-package-reexport`.
 
 /**
  * Render the Path-builder closure body for a sequence of decoded

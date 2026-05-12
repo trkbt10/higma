@@ -20,7 +20,7 @@
  * vertices). Connected polylines share endpoints across segments.
  */
 
-import type { PathCommand } from "../types";
+import type { PathCommand } from "@higma-primitives/path";
 import type { DecodedContour } from "./path";
 
 const EPS = 1e-3;

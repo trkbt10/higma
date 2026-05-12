@@ -25,7 +25,6 @@ export type {
   InnerShadowEffect,
   LayerBlurEffect,
   BackgroundBlurEffect,
-  PathCommand,
   PathContour,
   CornerRadius,
   ArcData,
@@ -140,18 +139,18 @@ export {
 } from "./render-tree";
 
 // Converters
+//
+// `parseSvgPathD` and the primitive contour generators
+// (`generateRectContour`, …, `generateLineContour`) live in
+// `@higma-primitives/path`. The lint rule `no-cross-package-reexport`
+// forbids republishing primitives via a renderer barrel, so consumers
+// must import them directly from the primitive package.
 export {
   figColorToSceneColor,
   convertPaintToFill,
   convertPaintsToFills,
   convertStrokeToSceneStroke,
   convertEffectsToScene,
-  generateEllipseContour,
-  generateLineContour,
-  generatePolygonContour,
-  generateRectContour,
-  generateStarContour,
-  parseSvgPathD,
   decodeGeometryToContours,
   convertVectorPathsToContours,
   convertTextNode,

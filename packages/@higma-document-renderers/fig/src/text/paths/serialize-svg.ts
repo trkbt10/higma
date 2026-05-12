@@ -1,12 +1,12 @@
 /**
  * @file SVG path data serialization
  *
- * Re-exports pathCommandsToSvgPath from @higma-document-models/fig/domain for SVG rendering,
- * and provides text-specific helpers (decoration rects, text path results).
+ * Re-exports `pathCommandsToSvgPath` from `@higma-primitives/path`
+ * and provides text-specific helpers (decoration rects, text path
+ * results).
  */
 
-import { pathCommandsToSvgPath } from "@higma-document-models/fig/domain";
-import type { PathCommand } from "@higma-document-models/fig/font";
+import { pathCommandsToSvgPath, type PathCommand } from "@higma-primitives/path";
 import type { DecorationRect } from "./types";
 
 /**
@@ -23,9 +23,7 @@ export function pathCommandsToSvgD(
   commands: readonly PathCommand[],
   precision: number = 5
 ): string {
-  // font/types.ts PathCommand has optional fields; cast is safe because
-  // callers always provide the fields matching the command type.
-  return pathCommandsToSvgPath(commands as Parameters<typeof pathCommandsToSvgPath>[0], {
+  return pathCommandsToSvgPath(commands, {
     precision,
     separator: "",
   });

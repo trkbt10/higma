@@ -11,7 +11,8 @@
  * equalled the move-to point, yielding a visibly different glyph outline.
  */
 
-import { decodePathCommands, type FigBlob, type PathCommand } from "./blob-path";
+import { decodePathCommands, type FigBlob } from "./blob-path";
+import type { PathCommand } from "@higma-primitives/path";
 
 function buildBlob(bytes: number[]): FigBlob {
   return { bytes };

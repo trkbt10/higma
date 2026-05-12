@@ -70,6 +70,7 @@
   "dependencies": {
     "@higma-codecs/compression": "workspace:*",
     "@higma-codecs/kiwi": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
     "@higma-figma-schema/profiles": "workspace:*"

@@ -13,8 +13,10 @@ export type {
   TextPathResult,
 } from "./types";
 
-// Bezier conversion
-export { convertQuadraticsToCubic } from "./bezier";
+// Bezier conversion `convertQuadraticsToCubic` lives in
+// `@higma-primitives/path`. Consumers import it directly from the
+// primitive package; the `no-cross-package-reexport` rule forbids
+// republishing it through this barrel.
 
 // OpenType.js path extraction
 export {

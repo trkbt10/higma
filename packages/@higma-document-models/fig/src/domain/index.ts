@@ -33,7 +33,10 @@ export type {
 } from "./document";
 export type { LoadedFigFile } from "./roundtrip-state";
 export type { FigGuid, NodeTreeResult } from "./raw-node-tree";
-export type { FigBlob, PathCommand, SvgPathOptions } from "./blob-path";
+export type { FigBlob } from "./blob-path";
+// `PathCommand` and `SvgPathOptions` live in `@higma-primitives/path`.
+// Consumers must import them directly from that package — the
+// `no-cross-package-reexport` rule forbids republishing them here.
 
 export {
   DEFAULT_PAGE_BACKGROUND,
@@ -59,8 +62,8 @@ export {
 
 export {
   decodePathCommands,
-  pathCommandsToSvgPath,
   decodeBlobToSvgPath,
 } from "./blob-path";
+// `pathCommandsToSvgPath` lives in `@higma-primitives/path`.
 
 export { isVariantSetFrame } from "./variant-set";

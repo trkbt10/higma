@@ -94,8 +94,8 @@ import {
   FILL_STENCIL_MASK,
 } from "./stencil-fill";
 import type { CornerRadius } from "../scene-graph/types";
+import { flattenPathCommands } from "@higma-primitives/path";
 import { svgPathDToContours } from "./path-contours";
-import { flattenPathCommands } from "./tessellation";
 import { syncWebGLCanvasRenderSurface } from "./render-surface";
 import { createWebGLPathFillPlan, type WebGLPathFillRule } from "./render-path-fill-plan";
 import { hasVisibleLineText } from "./text-visibility";

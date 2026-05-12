@@ -6,6 +6,7 @@
  * implementations satisfy these interfaces.
  */
 
+import type { PathCommand } from "@higma-primitives/path";
 import type { FontQuery } from "./query";
 import type { FontStyle } from "./style";
 
@@ -13,16 +14,11 @@ import type { FontStyle } from "./style";
 // Abstract Font Types (opentype.js compatible)
 // =============================================================================
 
-/** Path command for SVG path data. */
-export type PathCommand = {
-  readonly type: "M" | "L" | "Q" | "C" | "Z";
-  readonly x?: number;
-  readonly y?: number;
-  readonly x1?: number;
-  readonly y1?: number;
-  readonly x2?: number;
-  readonly y2?: number;
-};
+// `PathCommand` lives in `@higma-primitives/path` — the SoT. Local
+// consumers of the font types reach for it through this module's own
+// imports; external consumers must import it from the primitive
+// package directly. The `no-cross-package-reexport` lint rule
+// forbids republishing the primitive type through this barrel.
 
 /** Path object returned by `font.getPath()`. */
 export type FontPath = {

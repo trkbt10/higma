@@ -39,6 +39,7 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-primitives/identifier": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "pngjs": "^7.0.0"
   },
   "devDependencies": {

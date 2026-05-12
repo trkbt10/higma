@@ -45,9 +45,9 @@ export type {
   FontSpec,
 } from "./measure";
 
-export {
-  convertQuadraticsToCubic,
-} from "./paths";
+// `convertQuadraticsToCubic` lives in `@higma-primitives/path`;
+// consumers import it directly. Republishing it via this barrel is
+// forbidden by `no-cross-package-reexport`.
 
 export type {
   PathContour,

@@ -19,11 +19,14 @@
  */
 
 // Types
+//
+// `PathCommand` lives in `@higma-primitives/path` (the SoT); consumers
+// import it directly from that package. Re-publishing it via this
+// barrel is forbidden by the `no-cross-package-reexport` lint rule.
 export type {
   AbstractFont,
   AbstractGlyph,
   FontPath,
-  PathCommand,
   LoadedFont,
   FigmaFontRef,
   ResolvedFont,

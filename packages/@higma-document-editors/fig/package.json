@@ -9,12 +9,16 @@
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-editor-kernel/core": "workspace:*",
     "@higma-editor-surfaces/controls": "workspace:*",
     "@higma-editor-kernel/ui": "workspace:*",
     "@higma-figma-runtime/react-renderer": "workspace:*",
     "react-editor-ui": "^0.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.2.0"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

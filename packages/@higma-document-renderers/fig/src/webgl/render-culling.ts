@@ -4,7 +4,7 @@
 import type { AffineMatrix, PathContour } from "../scene-graph/types";
 import type { RenderNode } from "../scene-graph/render-tree";
 import { svgPathDToContours } from "./path-contours";
-import { flattenPathCommands } from "./tessellation";
+import { flattenPathCommands } from "@higma-primitives/path";
 
 export type Bounds = {
   readonly minX: number;

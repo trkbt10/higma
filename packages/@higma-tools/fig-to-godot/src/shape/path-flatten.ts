@@ -24,7 +24,7 @@
  * the same coordinate space as the input commands (object-local).
  * Callers translate as needed.
  */
-import type { PathCommand } from "@higma-document-models/fig/domain";
+import { arcToCubicBeziers, type PathCommand } from "@higma-primitives/path";
 
 /** A single closed polyline (one M ... [L|C|Q|...]* sequence).
  *
@@ -151,6 +151,40 @@ export function flattenPathCommands(
         );
         for (const p of points) {
           pushPoint(p, contour);
+        }
+        cursor.x = cmd.x;
+        cursor.y = cmd.y;
+        break;
+      }
+      case "A": {
+        if (!has_start.value) {
+          break;
+        }
+        const contour = ensureContour();
+        // Decompose the arc into a sequence of cubic Bézier
+        // segments via the primitive's W3C arc converter, then
+        // flatten each cubic with the same adaptive subdivider.
+        // godot's previous impl silently dropped `A` commands;
+        // routing through the primitive picks them up correctly.
+        const cubics = arcToCubicBeziers({
+          x0: cursor.x, y0: cursor.y,
+          rxIn: cmd.rx, ryIn: cmd.ry,
+          rotationDeg: cmd.rotation,
+          largeArc: cmd.largeArc, sweep: cmd.sweep,
+          x: cmd.x, y: cmd.y,
+        });
+        for (const seg of cubics) {
+          const points = subdivideCubic(
+            { x: seg.x0, y: seg.y0 },
+            { x: seg.x1, y: seg.y1 },
+            { x: seg.x2, y: seg.y2 },
+            { x: seg.x3, y: seg.y3 },
+            flatness,
+            MAX_DEPTH,
+          );
+          for (const p of points) {
+            pushPoint(p, contour);
+          }
         }
         cursor.x = cmd.x;
         cursor.y = cmd.y;

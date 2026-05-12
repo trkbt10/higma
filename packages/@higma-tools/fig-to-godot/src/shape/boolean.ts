@@ -26,21 +26,26 @@
 import {
   decodePathCommands,
   type FigBlob,
-  type PathCommand,
 } from "@higma-document-models/fig/domain";
 import type { FigNode, FigMatrix } from "@higma-document-models/fig/types";
 import {
   evaluateBooleanPathResult,
-  parseSvgPathD,
   resolveBooleanOperationType,
   type BooleanPathInput,
 } from "@higma-document-renderers/fig/scene-graph";
+import {
+  parseSvgPathD,
+  pathCommandsToSvgPath,
+  transformPathCommands,
+  type AffineMatrix,
+  type PathCommand,
+} from "@higma-primitives/path";
 import {
   generateEllipseContour,
   generatePolygonContour,
   generateRectContour,
   generateStarContour,
-} from "@higma-document-renderers/fig/scene-graph/convert";
+} from "@higma-primitives/path/contours";
 import { flattenPathCommands, type Contour } from "./path-flatten";
 import { triangulateContoursWithHoles } from "./hole-triangulate";
 
@@ -85,7 +90,7 @@ export function composeBooleanContours(
   // region.
   const contours: Contour[] = [];
   for (const d of result.paths) {
-    const cmds = castSceneGraphCommands(parseSvgPathD(d));
+    const cmds = parseSvgPathD(d);
     if (cmds.length === 0) {
       continue;
     }
@@ -191,8 +196,8 @@ function collectChildPathInputs(
         continue;
       }
       for (const d of innerResult.paths) {
-        const cmds = castSceneGraphCommands(parseSvgPathD(d));
-        const transformed = applyTransformToCommands(cmds, child.transform);
+        const cmds = parseSvgPathD(d);
+        const transformed = transformPathCommands(cmds, toAffineMatrix(child.transform));
         const transformedD = pathCommandsToSvgD(transformed);
         if (transformedD.length > 0) {
           out.push({ d: transformedD, windingRule: "nonzero" });
@@ -204,7 +209,7 @@ function collectChildPathInputs(
     if (commands.length === 0) {
       continue;
     }
-    const transformed = applyTransformToCommands(commands, child.transform);
+    const transformed = transformPathCommands(commands, toAffineMatrix(child.transform));
     const d = pathCommandsToSvgD(transformed);
     if (d.length === 0) {
       continue;
@@ -256,73 +261,25 @@ function synthesisePrimitiveCommands(node_: FigNode): readonly PathCommand[] | u
       // CornerRadius is `number | [tl, tr, br, bl]` in the renderers
       // package — pass the uniform radius directly as a scalar.
       const contour = generateRectContour(w, h, r);
-      return castSceneGraphCommands(contour.commands);
+      return contour.commands;
     }
     case "ELLIPSE":
-      return castSceneGraphCommands(generateEllipseContour(w, h).commands);
+      return generateEllipseContour(w, h).commands;
     case "STAR":
-      return castSceneGraphCommands(
-        generateStarContour({
-          width: w,
-          height: h,
-          pointCount: node_.pointCount ?? 5,
-          innerRadiusRatio: node_.starInnerScale ?? node_.starInnerRadius,
-        }).commands,
-      );
+      return generateStarContour({
+        width: w,
+        height: h,
+        pointCount: node_.pointCount ?? 5,
+        // Mirror the renderer's builder preference order:
+        // `starInnerScale` (newer) ≻ `starInnerRadius` (legacy) ≻
+        // Figma's 0.382 default for a 5-point star.
+        innerRadiusRatio: node_.starInnerScale ?? node_.starInnerRadius ?? 0.382,
+      }).commands;
     case "REGULAR_POLYGON":
-      return castSceneGraphCommands(generatePolygonContour(w, h, node_.pointCount ?? 3).commands);
+      return generatePolygonContour(w, h, node_.pointCount ?? 3).commands;
     default:
       return undefined;
   }
-}
-
-/**
- * The renderer's `PathCommand` is a superset of the document model's:
- * it adds an `A` (arc) variant. The contour generators we call here
- * never produce `A` (only M / L / C / Q / Z), so the cast is safe.
- * Filter explicitly so any future generator change surfaces as data
- * loss rather than a runtime crash in the path-bool engine.
- */
-function castSceneGraphCommands(
-  commands: ReadonlyArray<{ readonly type: string; readonly x?: number; readonly y?: number; readonly x1?: number; readonly y1?: number; readonly x2?: number; readonly y2?: number }>,
-): readonly PathCommand[] {
-  const out: PathCommand[] = [];
-  for (const cmd of commands) {
-    if (cmd.type === "M" || cmd.type === "L") {
-      if (typeof cmd.x === "number" && typeof cmd.y === "number") {
-        out.push({ type: cmd.type, x: cmd.x, y: cmd.y });
-      }
-      continue;
-    }
-    if (cmd.type === "C") {
-      if (
-        typeof cmd.x1 === "number" &&
-        typeof cmd.y1 === "number" &&
-        typeof cmd.x2 === "number" &&
-        typeof cmd.y2 === "number" &&
-        typeof cmd.x === "number" &&
-        typeof cmd.y === "number"
-      ) {
-        out.push({ type: "C", x1: cmd.x1, y1: cmd.y1, x2: cmd.x2, y2: cmd.y2, x: cmd.x, y: cmd.y });
-      }
-      continue;
-    }
-    if (cmd.type === "Q") {
-      if (
-        typeof cmd.x1 === "number" &&
-        typeof cmd.y1 === "number" &&
-        typeof cmd.x === "number" &&
-        typeof cmd.y === "number"
-      ) {
-        out.push({ type: "Q", x1: cmd.x1, y1: cmd.y1, x: cmd.x, y: cmd.y });
-      }
-      continue;
-    }
-    if (cmd.type === "Z") {
-      out.push({ type: "Z" });
-    }
-  }
-  return out;
 }
 
 function pickUniformCornerRadius(node_: FigNode): number | undefined {
@@ -333,97 +290,31 @@ function pickUniformCornerRadius(node_: FigNode): number | undefined {
 }
 
 /**
- * Apply the child's transform matrix to each PathCommand so the
- * resulting d-string is in the parent BOOLEAN_OPERATION node's local
- * coord space. Cubic / quadratic control points get the same affine.
+ * Adapt a `FigMatrix` (every field optional) to the primitive's
+ * `AffineMatrix` (every field required). The primitive lives at
+ * layer 0 and must not depend on the fig domain, so this thin
+ * adapter sits at the boundary.
  */
-function applyTransformToCommands(
-  commands: readonly PathCommand[],
-  transform: FigMatrix | undefined,
-): readonly PathCommand[] {
+function toAffineMatrix(transform: FigMatrix | undefined): AffineMatrix | undefined {
   if (!transform) {
-    return commands;
+    return undefined;
   }
-  const m00 = transform.m00 ?? 1;
-  const m01 = transform.m01 ?? 0;
-  const m02 = transform.m02 ?? 0;
-  const m10 = transform.m10 ?? 0;
-  const m11 = transform.m11 ?? 1;
-  const m12 = transform.m12 ?? 0;
-  const isIdentity =
-    m00 === 1 && m01 === 0 && m02 === 0 && m10 === 0 && m11 === 1 && m12 === 0;
-  if (isIdentity) {
-    return commands;
-  }
-  const apply = (x: number, y: number): { readonly x: number; readonly y: number } => ({
-    x: m00 * x + m01 * y + m02,
-    y: m10 * x + m11 * y + m12,
-  });
-  return commands.map((cmd) => {
-    switch (cmd.type) {
-      case "M":
-      case "L": {
-        const p = apply(cmd.x, cmd.y);
-        return { type: cmd.type, x: p.x, y: p.y };
-      }
-      case "C": {
-        const p1 = apply(cmd.x1, cmd.y1);
-        const p2 = apply(cmd.x2, cmd.y2);
-        const p = apply(cmd.x, cmd.y);
-        return {
-          type: "C",
-          x1: p1.x,
-          y1: p1.y,
-          x2: p2.x,
-          y2: p2.y,
-          x: p.x,
-          y: p.y,
-        };
-      }
-      case "Q": {
-        const p1 = apply(cmd.x1, cmd.y1);
-        const p = apply(cmd.x, cmd.y);
-        return { type: "Q", x1: p1.x, y1: p1.y, x: p.x, y: p.y };
-      }
-      case "Z":
-        return cmd;
-    }
-  });
+  return {
+    m00: transform.m00 ?? 1,
+    m01: transform.m01 ?? 0,
+    m02: transform.m02 ?? 0,
+    m10: transform.m10 ?? 0,
+    m11: transform.m11 ?? 1,
+    m12: transform.m12 ?? 0,
+  };
 }
 
 /**
- * Serialise a PathCommand list as an SVG path `d` attribute. Used as
- * input to the path-bool engine which speaks SVG d-strings.
+ * Serialise a PathCommand list as an SVG path `d` attribute for the
+ * path-bool engine. Uses 6-decimal precision with a single space
+ * separator — the format the boolean engine expects from this
+ * pipeline.
  */
 function pathCommandsToSvgD(commands: readonly PathCommand[]): string {
-  const parts: string[] = [];
-  for (const cmd of commands) {
-    switch (cmd.type) {
-      case "M":
-        parts.push(`M ${num6(cmd.x)} ${num6(cmd.y)}`);
-        break;
-      case "L":
-        parts.push(`L ${num6(cmd.x)} ${num6(cmd.y)}`);
-        break;
-      case "C":
-        parts.push(
-          `C ${num6(cmd.x1)} ${num6(cmd.y1)} ${num6(cmd.x2)} ${num6(cmd.y2)} ${num6(cmd.x)} ${num6(cmd.y)}`,
-        );
-        break;
-      case "Q":
-        parts.push(`Q ${num6(cmd.x1)} ${num6(cmd.y1)} ${num6(cmd.x)} ${num6(cmd.y)}`);
-        break;
-      case "Z":
-        parts.push("Z");
-        break;
-    }
-  }
-  return parts.join(" ");
-}
-
-function num6(value: number): string {
-  if (Number.isInteger(value)) {
-    return value.toString();
-  }
-  return parseFloat(value.toFixed(6)).toString();
+  return pathCommandsToSvgPath(commands, { precision: 6, separator: " " });
 }

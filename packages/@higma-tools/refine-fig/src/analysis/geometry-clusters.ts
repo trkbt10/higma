@@ -61,8 +61,8 @@ import {
   getNodeType,
   guidToString,
   safeChildren,
-  type PathCommand,
 } from "@higma-document-models/fig/domain";
+import { pathCommandsBoundingBox, type PathCommand } from "@higma-primitives/path";
 import { createHash } from "node:crypto";
 
 export type GeometryClusterMember = {
@@ -104,47 +104,43 @@ function quantizeF32(x: number): number {
 
 type Bbox = { readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number };
 
+/**
+ * Bbox helper for cluster fingerprinting. Delegates to the primitive
+ * `pathCommandsBoundingBox` (the SoT) and re-shapes the result into
+ * the `{minX, maxX, minY, maxY}` form the normalisation pipeline uses
+ * directly. Returns `undefined` for empty / degenerate inputs so
+ * `normaliseCommands` can reject them.
+ *
+ * The primitive's bbox covers every endpoint and every Bézier control
+ * point — same definition the previous in-file impl tracked — so the
+ * cluster fingerprints stay byte-identical across the migration.
+ *
+ * The previous impl threw on Arc; the primitive flattens Arc instead.
+ * Audit: the only input channel to clustering is `decodePathCommands`,
+ * which never emits "A" (the Kiwi blob alphabet has no Arc opcode),
+ * so the Arc handling difference is unreachable in production.
+ */
 function collectCoordsBbox(commands: readonly PathCommand[]): Bbox | undefined {
   if (commands.length === 0) {
     return undefined;
   }
-  // We track only on-curve and explicit control points — they are the
-  // values stored in the commands. Implicit bezier extrema are not
-  // expanded: clustering is based on the stored representation, not
-  // the swept-rendering bbox.
-  const tracker = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, touched: false };
-  for (const cmd of commands) {
-    if (cmd.type === "Z") {
-      continue;
-    }
-    const pts: { x: number; y: number }[] = [];
-    pts.push({ x: cmd.x, y: cmd.y });
-    if (cmd.type === "C") {
-      pts.push({ x: cmd.x1, y: cmd.y1 });
-      pts.push({ x: cmd.x2, y: cmd.y2 });
-    } else if (cmd.type === "Q") {
-      pts.push({ x: cmd.x1, y: cmd.y1 });
-    }
-    for (const p of pts) {
-      tracker.touched = true;
-      if (p.x < tracker.minX) {
-        tracker.minX = p.x;
-      }
-      if (p.x > tracker.maxX) {
-        tracker.maxX = p.x;
-      }
-      if (p.y < tracker.minY) {
-        tracker.minY = p.y;
-      }
-      if (p.y > tracker.maxY) {
-        tracker.maxY = p.y;
-      }
+  const bbox = pathCommandsBoundingBox(commands);
+  if (bbox.w === 0 && bbox.h === 0) {
+    // The primitive returns the zero bbox when no extent-bearing
+    // command was seen. Mirror the old impl's "no extent" sentinel
+    // so degenerate inputs (a lone `Z`, an empty subpath) still get
+    // rejected by `normaliseCommands`.
+    const hasExtentSignal = commands.some((c) => c.type !== "Z");
+    if (!hasExtentSignal) {
+      return undefined;
     }
   }
-  if (!tracker.touched) {
-    return undefined;
-  }
-  return { minX: tracker.minX, maxX: tracker.maxX, minY: tracker.minY, maxY: tracker.maxY };
+  return {
+    minX: bbox.x,
+    maxX: bbox.x + bbox.w,
+    minY: bbox.y,
+    maxY: bbox.y + bbox.h,
+  };
 }
 
 type Reflection = "id" | "fx" | "fy" | "r180";
@@ -183,7 +179,21 @@ function normaliseCommand(cmd: PathCommand, bbox: Bbox, reflection: Reflection):
   if (cmd.type === "Q") {
     return `Q ${at(cmd.x1, cmd.y1)} ${at(cmd.x, cmd.y)}`;
   }
-  return `C ${at(cmd.x1, cmd.y1)} ${at(cmd.x2, cmd.y2)} ${at(cmd.x, cmd.y)}`;
+  if (cmd.type === "C") {
+    return `C ${at(cmd.x1, cmd.y1)} ${at(cmd.x2, cmd.y2)} ${at(cmd.x, cmd.y)}`;
+  }
+  // Arc. The blob decoder (the only callers route through it) never
+  // emits "A"; the union sits at the domain layer because every
+  // PathCommand consumer reads both the blob and SVG-d channels.
+  // Reaching this branch in the geometry-cluster pipeline means we
+  // were given SVG-parsed commands, which would defeat the affine-
+  // normalised hash (radii and rotation describe an ellipse in the
+  // pre-normalisation space and cannot be reflected/rescaled the
+  // same way endpoints can). Fail loudly rather than fingerprint
+  // an arc to a misleading hash.
+  throw new Error(
+    "refine-fig.geometry-clusters: unexpected SVG Arc command in VECTOR clustering input — blob-decoded geometry never contains Arc",
+  );
 }
 
 function canonicaliseOne(commands: readonly PathCommand[], bbox: Bbox, reflection: Reflection): string {

@@ -644,6 +644,13 @@ export type FigNode = {
   readonly styleIdForGrid?: FigStyleId;
   /** Stroke dash pattern */
   readonly strokeDashes?: readonly number[];
+  /**
+   * Whether per-side border weights consume layout space. `true` means
+   * strokes contribute to auto-layout sizing; `false` (default for
+   * legacy files) means strokes paint without affecting flow. Kiwi
+   * field 294.
+   */
+  readonly bordersTakeSpace?: boolean;
   /** Per-side stroke weights (Figma "Independent stroke weights" feature) */
   readonly borderTopWeight?: number;
   readonly borderRightWeight?: number;

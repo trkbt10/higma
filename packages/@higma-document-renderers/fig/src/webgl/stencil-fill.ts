@@ -18,8 +18,8 @@
  * - Bits 0-6 (0x7F): Fill counter (nonzero) or toggle bit (even-odd)
  */
 
+import { flattenPathCommands } from "@higma-primitives/path";
 import type { PathContour } from "../scene-graph/types";
-import { flattenPathCommands } from "./tessellation";
 
 /** Stencil bit for frame clipping (bit 7) */
 export const CLIP_STENCIL_BIT = 0x80;

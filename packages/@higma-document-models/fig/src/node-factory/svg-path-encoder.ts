@@ -15,8 +15,10 @@
  *   - 0x04 : CubicTo — payload (cp1x, cp1y, cp2x, cp2y, x, y) as 24 bytes
  *
  * SVG commands handled: M m L l H h V v C c S s Q q T t Z z A a (arcs
- * flattened to cubics via the W3C SVG implementation note algorithm).
+ * flattened to cubics via the primitive `arcToCubicBeziers` helper).
  */
+
+import { arcToCubicBeziers } from "@higma-primitives/path";
 
 const CMD_LINE_TO = 0x02;
 const CMD_CUBIC_TO = 0x04;
@@ -296,20 +298,29 @@ export function encodeSvgPathBlob(d: string): SvgPathBlobResult {
           const sweep = args[j + 4] !== 0;
           const x = isRelative ? cursor.x + args[j + 5]! : args[j + 5]!;
           const y = isRelative ? cursor.y + args[j + 6]! : args[j + 6]!;
-          const beziers = arcToCubics(cursor.x, cursor.y, rx, ry, xRot, largeArc, sweep, x, y);
+          // Delegate to the primitive arc → cubic converter. It splits
+          // at π/16 (vs the legacy π/2 used here) — smoother
+          // approximation matching the renderer's tessellation budget.
+          const beziers = arcToCubicBeziers({
+            x0: cursor.x, y0: cursor.y,
+            rxIn: rx, ryIn: ry,
+            rotationDeg: xRot,
+            largeArc, sweep,
+            x, y,
+          });
           for (const c of beziers) {
             ensureStarted();
             bytes.push(CMD_CUBIC_TO);
-            pushFloat32(bytes, c.cp1x);
-            pushFloat32(bytes, c.cp1y);
-            pushFloat32(bytes, c.cp2x);
-            pushFloat32(bytes, c.cp2y);
-            pushFloat32(bytes, c.x);
-            pushFloat32(bytes, c.y);
-            cursor.prevControlX = c.cp2x;
-            cursor.prevControlY = c.cp2y;
-            cursor.x = c.x;
-            cursor.y = c.y;
+            pushFloat32(bytes, c.x1);
+            pushFloat32(bytes, c.y1);
+            pushFloat32(bytes, c.x2);
+            pushFloat32(bytes, c.y2);
+            pushFloat32(bytes, c.x3);
+            pushFloat32(bytes, c.y3);
+            cursor.prevControlX = c.x2;
+            cursor.prevControlY = c.y2;
+            cursor.x = c.x3;
+            cursor.y = c.y3;
           }
         }
         cursor.prevCmd = "A";
@@ -373,87 +384,3 @@ function parseNumbers(input: string): readonly number[] {
   return out;
 }
 
-type CubicSegment = {
-  readonly cp1x: number; readonly cp1y: number;
-  readonly cp2x: number; readonly cp2y: number;
-  readonly x: number; readonly y: number;
-};
-
-function arcToCubics(
-  x1: number, y1: number,
-  rxIn: number, ryIn: number,
-  xRotDeg: number,
-  largeArc: boolean, sweep: boolean,
-  x2: number, y2: number,
-): readonly CubicSegment[] {
-  if (rxIn === 0 || ryIn === 0) {
-    return [{ cp1x: x1, cp1y: y1, cp2x: x2, cp2y: y2, x: x2, y: y2 }];
-  }
-  let rx = Math.abs(rxIn);
-  let ry = Math.abs(ryIn);
-  const phi = (xRotDeg * Math.PI) / 180;
-  const cosPhi = Math.cos(phi);
-  const sinPhi = Math.sin(phi);
-  const dx = (x1 - x2) / 2;
-  const dy = (y1 - y2) / 2;
-  const x1p = cosPhi * dx + sinPhi * dy;
-  const y1p = -sinPhi * dx + cosPhi * dy;
-  const lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
-  if (lambda > 1) {
-    const sqrtL = Math.sqrt(lambda);
-    rx *= sqrtL;
-    ry *= sqrtL;
-  }
-  const sign = largeArc === sweep ? -1 : 1;
-  const num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
-  const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
-  const factor = sign * Math.sqrt(Math.max(0, num / den));
-  const cxp = factor * (rx * y1p) / ry;
-  const cyp = factor * -(ry * x1p) / rx;
-  const cx = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2;
-  const cy = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2;
-  const startAngle = angleBetween(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry);
-  let deltaAngle = angleBetween(
-    (x1p - cxp) / rx, (y1p - cyp) / ry,
-    (-x1p - cxp) / rx, (-y1p - cyp) / ry,
-  );
-  if (!sweep && deltaAngle > 0) {
-    deltaAngle -= 2 * Math.PI;
-  } else if (sweep && deltaAngle < 0) {
-    deltaAngle += 2 * Math.PI;
-  }
-  const segments = Math.max(1, Math.ceil(Math.abs(deltaAngle) / (Math.PI / 2)));
-  const segmentAngle = deltaAngle / segments;
-  const out: CubicSegment[] = [];
-  for (let i = 0; i < segments; i += 1) {
-    const a0 = startAngle + segmentAngle * i;
-    const a1 = startAngle + segmentAngle * (i + 1);
-    const t = (4 / 3) * Math.tan((a1 - a0) / 4);
-    const cosA0 = Math.cos(a0); const sinA0 = Math.sin(a0);
-    const cosA1 = Math.cos(a1); const sinA1 = Math.sin(a1);
-    const cp1xp = rx * (cosA0 - t * sinA0);
-    const cp1yp = ry * (sinA0 + t * cosA0);
-    const cp2xp = rx * (cosA1 + t * sinA1);
-    const cp2yp = ry * (sinA1 - t * cosA1);
-    const xp = rx * cosA1;
-    const yp = ry * sinA1;
-    const cp1x = cosPhi * cp1xp - sinPhi * cp1yp + cx;
-    const cp1y = sinPhi * cp1xp + cosPhi * cp1yp + cy;
-    const cp2x = cosPhi * cp2xp - sinPhi * cp2yp + cx;
-    const cp2y = sinPhi * cp2xp + cosPhi * cp2yp + cy;
-    const x = cosPhi * xp - sinPhi * yp + cx;
-    const y = sinPhi * xp + cosPhi * yp + cy;
-    out.push({ cp1x, cp1y, cp2x, cp2y, x, y });
-  }
-  return out;
-}
-
-function angleBetween(ux: number, uy: number, vx: number, vy: number): number {
-  const dot = ux * vx + uy * vy;
-  const len = Math.sqrt(ux * ux + uy * uy) * Math.sqrt(vx * vx + vy * vy);
-  let theta = Math.acos(Math.min(1, Math.max(-1, dot / len)));
-  if (ux * vy - uy * vx < 0) {
-    theta = -theta;
-  }
-  return theta;
-}

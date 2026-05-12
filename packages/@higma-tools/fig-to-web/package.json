@@ -37,6 +37,7 @@
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
     "@higma-primitives/identifier": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "@higma-primitives/tree": "workspace:*"
   },
   "devDependencies": {

@@ -6,9 +6,9 @@
  */
 
 import type { AbstractFont, AbstractGlyph } from "@higma-document-models/fig/font";
+import { convertQuadraticsToCubic } from "@higma-primitives/path";
 import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "./types";
 import type { TextAlignHorizontal } from "../layout/types";
-import { convertQuadraticsToCubic } from "./bezier";
 
 type FontForCharacter = (sourceIndex: number) => AbstractFont;
 

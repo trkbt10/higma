@@ -65,6 +65,7 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-primitives/identifier": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "@higma-primitives/tree": "workspace:*"
   },
   "devDependencies": {

@@ -9,6 +9,7 @@
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-models/fig": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "earcut": "^3.0.2",
     "jpeg-js": "^0.4.4",

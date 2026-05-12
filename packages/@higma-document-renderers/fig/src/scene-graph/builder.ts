@@ -55,9 +55,16 @@ import { createNodeId } from "./types";
 import { convertPaintsToFills } from "./convert/fill";
 import { convertStrokeToSceneStroke } from "./convert/stroke";
 import { convertEffectsToScene } from "./convert/effects";
-import { decodeGeometryToContours, convertVectorPathsToContours, parseSvgPathD, type DecodedContour } from "./convert/path";
+import { decodeGeometryToContours, convertVectorPathsToContours, type DecodedContour } from "./convert/path";
 import { reconstructStrokeCenterline } from "./convert/stroke-geometry-centerline";
-import { generateEllipseContour, generateLineContour, generatePolygonContour, generateRectContour, generateStarContour } from "./convert/shape-geometry";
+import {
+  generateEllipseContour,
+  generateLineContour,
+  generatePolygonContour,
+  generateRectContour,
+  generateStarContour,
+  parseSvgPathD,
+} from "@higma-primitives/path";
 import { convertTextNode } from "./convert/text";
 import type { Fill, PathContour, BlendMode, ArcData } from "./types";
 import { convertFigmaBlendMode } from "./convert/blend-mode";

@@ -15,11 +15,11 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import {
-  contourToSvgD,
   generateLineContour,
   generatePolygonContour,
   generateStarContour,
-} from "@higma-document-renderers/fig/scene-graph";
+} from "@higma-primitives/path/contours";
+import { contourToSvgD } from "@higma-document-renderers/fig/scene-graph";
 import { buildEllipseArcPathD } from "@higma-document-renderers/fig/scene-graph/render-tree";
 
 const DEFAULT_STAR_POINTS = 5;

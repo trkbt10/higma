@@ -9,9 +9,9 @@
  * emitter must switch to even-odd whenever the path body
  * contains more than one `move` command.
  */
-import type { PathCommand } from "@higma-document-models/fig/domain";
+import { countSubpaths, type PathCommand } from "@higma-primitives/path";
 import { ident, type SwiftExpr } from "../swift-tree";
-import { buildFillArgs, countSubpaths } from "./geometry";
+import { buildFillArgs } from "./geometry";
 
 /**
  * Stringify a `SwiftExpr` for assertions. The full `serialize`

@@ -275,36 +275,14 @@ export type Effect =
 // Path Types
 // =============================================================================
 
-export type PathCommand =
-  | { readonly type: "M"; readonly x: number; readonly y: number }
-  | { readonly type: "L"; readonly x: number; readonly y: number }
-  | {
-      readonly type: "C";
-      readonly x1: number;
-      readonly y1: number;
-      readonly x2: number;
-      readonly y2: number;
-      readonly x: number;
-      readonly y: number;
-    }
-  | {
-      readonly type: "Q";
-      readonly x1: number;
-      readonly y1: number;
-      readonly x: number;
-      readonly y: number;
-    }
-  | {
-      readonly type: "A";
-      readonly rx: number;
-      readonly ry: number;
-      readonly rotation: number;
-      readonly largeArc: boolean;
-      readonly sweep: boolean;
-      readonly x: number;
-      readonly y: number;
-    }
-  | { readonly type: "Z" };
+// `PathCommand` is owned by `@higma-primitives/path` (see the SoT
+// JSDoc there). Both decoders — the Kiwi blob decoder in
+// `@higma-document-models/fig/domain` and this package's
+// `parseSvgPathD` — emit values of that one union. The renderer
+// imports it from the primitive directly so the scene-graph stays
+// aligned with the document-io builder, the swiftui / godot
+// translators, and the editor's vector-path operations.
+import type { PathCommand } from "@higma-primitives/path";
 
 export type PathContour = {
   readonly commands: readonly PathCommand[];

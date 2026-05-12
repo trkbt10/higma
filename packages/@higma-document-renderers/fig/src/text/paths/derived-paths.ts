@@ -5,8 +5,19 @@
  * These paths achieve exact visual match (0% diff) with Figma's export.
  */
 
-import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
-import type { PathCommand } from "@higma-document-models/fig/font";
+import {
+  decodePathCommands,
+  type FigBlob,
+} from "@higma-document-models/fig/domain";
+import type { PathCommand } from "@higma-primitives/path";
+
+// Aliased re-import for the parameter type that originally
+// distinguished blob-decoded paths (domain PathCommand) from
+// already-transformed paths (font PathCommand). With the SoT
+// consolidation in `@higma-primitives/path` both shapes are now the
+// same canonical union; the alias is preserved so the function
+// signature stays readable.
+type DomainPathCommand = PathCommand;
 import type { GlyphContour, DecorationRect, TextPathResult } from "./types";
 import type {
   FigDerivedGlyph,
@@ -31,7 +42,7 @@ import type {
  * glyph's pre-layout coordinate and the centered rendering Figma exports.
  */
 export function transformGlyphCommands(
-  commands: readonly PathCommand[],
+  commands: readonly DomainPathCommand[],
   position: { x: number; y: number },
   fontSize: number,
   alignmentOffset: { x: number; y: number } = { x: 0, y: 0 },
@@ -43,27 +54,38 @@ export function transformGlyphCommands(
   return commands.map((cmd): PathCommand => {
     switch (cmd.type) {
       case "M":
-        return { type: "M", x: tx(cmd.x!), y: ty(cmd.y!) };
+        return { type: "M", x: tx(cmd.x), y: ty(cmd.y) };
       case "L":
-        return { type: "L", x: tx(cmd.x!), y: ty(cmd.y!) };
+        return { type: "L", x: tx(cmd.x), y: ty(cmd.y) };
       case "C":
         return {
           type: "C",
-          x1: tx(cmd.x1!),
-          y1: ty(cmd.y1!),
-          x2: tx(cmd.x2!),
-          y2: ty(cmd.y2!),
-          x: tx(cmd.x!),
-          y: ty(cmd.y!),
+          x1: tx(cmd.x1),
+          y1: ty(cmd.y1),
+          x2: tx(cmd.x2),
+          y2: ty(cmd.y2),
+          x: tx(cmd.x),
+          y: ty(cmd.y),
         };
       case "Q":
         return {
           type: "Q",
-          x1: tx(cmd.x1!),
-          y1: ty(cmd.y1!),
-          x: tx(cmd.x!),
-          y: ty(cmd.y!),
+          x1: tx(cmd.x1),
+          y1: ty(cmd.y1),
+          x: tx(cmd.x),
+          y: ty(cmd.y),
         };
+      case "A":
+        // The Kiwi-blob alphabet has no Arc opcode, so a derived-glyph
+        // commandsBlob can never decode to an "A". The arm exists only
+        // to satisfy the exhaustiveness check now that the canonical
+        // `PathCommand` union spans both decoders. Reaching it means a
+        // caller fed us SVG-parsed commands — outside this function's
+        // contract — and we fail loudly rather than silently lose the
+        // arc geometry (font/types.PathCommand has no Arc variant).
+        throw new Error(
+          "transformGlyphCommands: glyph blob unexpectedly contains an SVG Arc command — derived-glyph blobs only emit M/L/C/Q/Z",
+        );
       case "Z":
         return { type: "Z" };
     }

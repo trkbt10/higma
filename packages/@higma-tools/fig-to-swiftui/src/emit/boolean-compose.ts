@@ -12,23 +12,28 @@
  */
 import type {
   FigBlob,
-  PathCommand,
 } from "@higma-document-models/fig/domain";
 import { decodePathCommands } from "@higma-document-models/fig/domain";
 import type { FigNode, FigMatrix } from "@higma-document-models/fig/types";
 import {
   evaluateBooleanPathResult,
   resolveBooleanOperationType,
-  parseSvgPathD,
   type BooleanOperationType,
   type BooleanPathInput,
 } from "@higma-document-renderers/fig/scene-graph";
+import {
+  parseSvgPathD,
+  pathCommandsToSvgPath,
+  transformPathCommands,
+  type AffineMatrix,
+  type PathCommand,
+} from "@higma-primitives/path";
 import {
   generateEllipseContour,
   generatePolygonContour,
   generateRectContour,
   generateStarContour,
-} from "@higma-document-renderers/fig/scene-graph/convert";
+} from "@higma-primitives/path/contours";
 import { firstVisibleGradientPaint, gradientExpr } from "../style/gradient";
 import { solidPaintToColor } from "../style/color";
 import {
@@ -146,7 +151,7 @@ function collectChildPathInputs(
       }
       for (const d of innerResult.paths) {
         const cmds = parseSvgPathD(d);
-        const transformed = applyTransformToCommands(cmds, child.transform);
+        const transformed = transformPathCommands(cmds, toAffineMatrix(child.transform));
         const transformedD = pathCommandsToSvgD(transformed);
         if (transformedD.length > 0) {
           out.push({ d: transformedD, windingRule: "nonzero" });
@@ -158,7 +163,7 @@ function collectChildPathInputs(
     if (commands.length === 0) {
       continue;
     }
-    const transformedCommands = applyTransformToCommands(commands, child.transform);
+    const transformedCommands = transformPathCommands(commands, toAffineMatrix(child.transform));
     const d = pathCommandsToSvgD(transformedCommands);
     if (d.length === 0) {
       continue;
@@ -214,8 +219,10 @@ function synthesisePrimitiveCommands(node: FigNode): readonly PathCommand[] | un
   switch (node.type.name) {
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE": {
+      // generateRectContour accepts `CornerRadius = number | [tl, tr, br, bl]`;
+      // for a uniform radius we pass the scalar directly.
       const r = pickUniformCornerRadius(node);
-      const contour = generateRectContour(w, h, r ? { topLeft: r, topRight: r, bottomRight: r, bottomLeft: r } : undefined);
+      const contour = generateRectContour(w, h, r);
       return contour.commands;
     }
     case "ELLIPSE":
@@ -225,14 +232,10 @@ function synthesisePrimitiveCommands(node: FigNode): readonly PathCommand[] | un
         width: w,
         height: h,
         pointCount: node.pointCount ?? 5,
-        // Figma stores the star's inner-radius ratio in
-        // `starInnerRadius` (0..1 fraction of the outer radius);
-        // `generateStarContour` reads it as `innerRadiusRatio`.
-        // The earlier `innerRadius:` key was a typo and got
-        // silently ignored, falling back to the helper's 0.382
-        // default — wrong for any star whose authored ratio
-        // differed from the default.
-        innerRadiusRatio: node.starInnerRadius,
+        // Mirror the renderer's builder preference order:
+        // `starInnerScale` (newer Figma field) ≻ `starInnerRadius`
+        // (legacy) ≻ `0.382` (Figma's 5-point-star default).
+        innerRadiusRatio: node.starInnerScale ?? node.starInnerRadius ?? 0.382,
       }).commands;
     case "REGULAR_POLYGON":
       return generatePolygonContour(w, h, node.pointCount ?? 3).commands;
@@ -249,102 +252,38 @@ function pickUniformCornerRadius(node: FigNode): number | undefined {
 }
 
 /**
- * Apply the child's transform matrix to each PathCommand so the
- * resulting d-string is in the parent BOOLEAN_OPERATION node's
- * local coord space. Without this, every child's path would land
- * at the parent origin and the boolean result would collapse.
+ * Adapt a Figma `FigMatrix` (where every field is optional) to the
+ * primitive `AffineMatrix` (where every field is required). The
+ * primitive lives in a layer-0 package and intentionally does not
+ * depend on the fig domain, so this thin adapter sits at the
+ * boundary.
  */
-function applyTransformToCommands(
-  commands: readonly PathCommand[],
-  transform: FigMatrix | undefined,
-): readonly PathCommand[] {
+function toAffineMatrix(transform: FigMatrix | undefined): AffineMatrix | undefined {
   if (!transform) {
-    return commands;
+    return undefined;
   }
-  const m00 = transform.m00 ?? 1;
-  const m01 = transform.m01 ?? 0;
-  const m02 = transform.m02 ?? 0;
-  const m10 = transform.m10 ?? 0;
-  const m11 = transform.m11 ?? 1;
-  const m12 = transform.m12 ?? 0;
-  const isIdentity =
-    m00 === 1 && m01 === 0 && m02 === 0 && m10 === 0 && m11 === 1 && m12 === 0;
-  if (isIdentity) {
-    return commands;
-  }
-  const apply = (x: number, y: number): { readonly x: number; readonly y: number } => ({
-    x: m00 * x + m01 * y + m02,
-    y: m10 * x + m11 * y + m12,
-  });
-  return commands.map((cmd) => {
-    switch (cmd.type) {
-      case "M":
-      case "L": {
-        const p = apply(cmd.x, cmd.y);
-        return { type: cmd.type, x: p.x, y: p.y };
-      }
-      case "C": {
-        const p1 = apply(cmd.x1, cmd.y1);
-        const p2 = apply(cmd.x2, cmd.y2);
-        const p = apply(cmd.x, cmd.y);
-        return {
-          type: "C",
-          x1: p1.x,
-          y1: p1.y,
-          x2: p2.x,
-          y2: p2.y,
-          x: p.x,
-          y: p.y,
-        };
-      }
-      case "Q": {
-        const p1 = apply(cmd.x1, cmd.y1);
-        const p = apply(cmd.x, cmd.y);
-        return { type: "Q", x1: p1.x, y1: p1.y, x: p.x, y: p.y };
-      }
-      case "A": {
-        const p = apply(cmd.x, cmd.y);
-        return { ...cmd, x: p.x, y: p.y };
-      }
-      case "Z":
-        return cmd;
-    }
-  });
+  return {
+    m00: transform.m00 ?? 1,
+    m01: transform.m01 ?? 0,
+    m02: transform.m02 ?? 0,
+    m10: transform.m10 ?? 0,
+    m11: transform.m11 ?? 1,
+    m12: transform.m12 ?? 0,
+  };
 }
 
 /**
  * Serialise a PathCommand list as an SVG path `d` attribute. Used
  * as input to the path-bool engine which speaks SVG d-strings.
+ *
+ * Uses 6-decimal precision with a single space separator — same
+ * format the boolean engine receives from the rest of the SwiftUI
+ * emitter pipeline. The primitive's `pathCommandsToSvgPath` does
+ * the round-trip-friendly formatting; this wrapper just pins the
+ * precision and separator policy.
  */
 function pathCommandsToSvgD(commands: readonly PathCommand[]): string {
-  const parts: string[] = [];
-  for (const cmd of commands) {
-    switch (cmd.type) {
-      case "M":
-        parts.push(`M ${num6(cmd.x)} ${num6(cmd.y)}`);
-        break;
-      case "L":
-        parts.push(`L ${num6(cmd.x)} ${num6(cmd.y)}`);
-        break;
-      case "C":
-        parts.push(
-          `C ${num6(cmd.x1)} ${num6(cmd.y1)} ${num6(cmd.x2)} ${num6(cmd.y2)} ${num6(cmd.x)} ${num6(cmd.y)}`,
-        );
-        break;
-      case "Q":
-        parts.push(`Q ${num6(cmd.x1)} ${num6(cmd.y1)} ${num6(cmd.x)} ${num6(cmd.y)}`);
-        break;
-      case "A":
-        parts.push(
-          `A ${num6(cmd.rx)} ${num6(cmd.ry)} ${num6(cmd.rotation)} ${cmd.largeArc ? 1 : 0} ${cmd.sweep ? 1 : 0} ${num6(cmd.x)} ${num6(cmd.y)}`,
-        );
-        break;
-      case "Z":
-        parts.push("Z");
-        break;
-    }
-  }
-  return parts.join(" ");
+  return pathCommandsToSvgPath(commands, { precision: 6, separator: " " });
 }
 
 /** Render the Path-builder closure body for a sequence of commands. */

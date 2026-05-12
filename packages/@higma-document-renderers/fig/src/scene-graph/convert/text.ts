@@ -24,41 +24,21 @@ function mapTextDecoration(decoration: string | undefined): "underline" | "strik
 }
 
 /**
- * Normalize path contours from the shared text SoT to the scene-graph
- * `PathContour` shape (which requires windingRule).
+ * Normalize text-path contours into the scene-graph `PathContour`
+ * shape — same commands, just stamped with the required winding rule.
  *
- * The SoT returns backend-agnostic contours whose commands already have
- * all coordinate fields populated (the SoT itself builds them). This
- * function just stamps in the winding rule and narrows the command union.
+ * The text-paths layer and the scene-graph share the same canonical
+ * `PathCommand` union (`@higma-primitives/path`) since the SoT
+ * consolidation, so this function is now a trivial windingRule
+ * stamp. The "bridge" wrapper survives because the scene-graph
+ * `PathContour` type also carries an optional fill rule and
+ * downstream code keys off the named function call site.
  */
-function normalizeContours(contours: readonly {
-  readonly commands: readonly {
-    readonly type: "M" | "L" | "C" | "Q" | "Z";
-    readonly x?: number; readonly y?: number;
-    readonly x1?: number; readonly y1?: number;
-    readonly x2?: number; readonly y2?: number;
-  }[];
-}[]): PathContour[] {
+function normalizeContours(
+  contours: readonly { readonly commands: readonly PathContour["commands"][number][] }[],
+): PathContour[] {
   return contours.map((c) => ({
-    commands: c.commands.map((cmd) => {
-      switch (cmd.type) {
-        case "M": return { type: "M" as const, x: cmd.x ?? 0, y: cmd.y ?? 0 };
-        case "L": return { type: "L" as const, x: cmd.x ?? 0, y: cmd.y ?? 0 };
-        case "C": return {
-          type: "C" as const,
-          x1: cmd.x1 ?? 0, y1: cmd.y1 ?? 0,
-          x2: cmd.x2 ?? 0, y2: cmd.y2 ?? 0,
-          x: cmd.x ?? 0, y: cmd.y ?? 0,
-        };
-        case "Q": return {
-          type: "Q" as const,
-          x1: cmd.x1 ?? 0, y1: cmd.y1 ?? 0,
-          x: cmd.x ?? 0, y: cmd.y ?? 0,
-        };
-        case "Z":
-        default: return { type: "Z" as const };
-      }
-    }),
+    commands: c.commands,
     windingRule: "nonzero" as const,
   }));
 }

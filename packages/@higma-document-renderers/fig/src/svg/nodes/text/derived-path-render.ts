@@ -12,7 +12,8 @@ import type {
   FigDerivedGlyph,
   FigDerivedDecoration,
 } from "@higma-document-models/fig/types";
-import { decodePathCommands, type FigBlob, type PathCommand } from "@higma-document-models/fig/domain";
+import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
+import type { PathCommand } from "@higma-primitives/path";
 import type { FigSvgRenderContext } from "../../../types";
 import { path, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";
@@ -73,6 +74,16 @@ function transformPathCommands(
       case "Q":
         parts.push(`Q${transformX(cmd.x1)} ${transformY(cmd.y1)} ${transformX(cmd.x)} ${transformY(cmd.y)}`);
         break;
+      case "A":
+        // Derived-glyph blobs come from the Kiwi byte stream which
+        // has no Arc opcode — the decoder only ever emits M/L/C/Q/Z.
+        // The arm exists for exhaustiveness against the canonical
+        // PathCommand union; reaching it would mean a caller routed
+        // SVG-parsed commands through here, which would silently lose
+        // the rx/ry/rotation/flag data when emitted as a glyph d.
+        throw new Error(
+          "derived-path-render: glyph commands unexpectedly contain an SVG Arc — derived-glyph blobs only emit M/L/C/Q/Z",
+        );
       case "Z":
         parts.push("Z");
         break;

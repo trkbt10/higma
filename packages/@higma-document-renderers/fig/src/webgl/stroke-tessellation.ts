@@ -5,8 +5,9 @@
  * into thick polylines.
  */
 
+import { flattenPathCommands } from "@higma-primitives/path";
 import type { PathContour } from "../scene-graph/types";
-import { flattenPathCommands, triangulate } from "./tessellation";
+import { triangulate } from "./tessellation";
 
 // =============================================================================
 // Polyline Thickening

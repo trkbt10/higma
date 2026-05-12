@@ -40,6 +40,7 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-primitives/identifier": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
     "@higma-tools/web-fig-roundtrip": "workspace:*"
   },
   "devDependencies": {

@@ -132,13 +132,10 @@ export function resolvePadding(node: FigNode): Padding {
  *     designs; new files default to `true`).
  */
 function insideStrokeWidth(node: FigNode): number {
-  const bordersTakeSpace = (node as { bordersTakeSpace?: boolean }).bordersTakeSpace;
-  if (bordersTakeSpace === false) {
+  if (node.bordersTakeSpace === false) {
     return 0;
   }
-  const align = node.strokeAlign;
-  const alignName = typeof align === "string" ? align : align?.name;
-  if (alignName !== "INSIDE") {
+  if (node.strokeAlign !== "INSIDE") {
     return 0;
   }
   if (!hasVisibleStroke(node)) {

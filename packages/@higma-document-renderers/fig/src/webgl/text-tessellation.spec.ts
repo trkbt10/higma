@@ -19,9 +19,10 @@
  */
 
 // describe, it, expect provided by test runner globals
-import { tessellateContours, tessellateContour, flattenPathCommands } from "./tessellation";
+import { flattenPathCommands, type PathCommand } from "@higma-primitives/path";
+import { tessellateContours, tessellateContour } from "./tessellation";
 import { tessellateTextNode } from "./text-renderer";
-import type { PathContour, PathCommand, TextNode, AffineMatrix } from "../scene-graph/types";
+import type { PathContour, TextNode, AffineMatrix } from "../scene-graph/types";
 
 // =============================================================================
 // Test Helpers

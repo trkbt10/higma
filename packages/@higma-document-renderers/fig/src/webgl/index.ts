@@ -19,8 +19,11 @@ export {
 } from "./resource-identity";
 
 // Tessellation
+//
+// `flattenPathCommands` lives in `@higma-primitives/path`; consumers
+// import it directly. The custom `no-cross-package-reexport` rule
+// forbids republishing primitives through this barrel.
 export {
-  flattenPathCommands,
   triangulate,
   tessellateContour,
   tessellateContours,

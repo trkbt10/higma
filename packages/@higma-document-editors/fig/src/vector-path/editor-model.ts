@@ -7,12 +7,14 @@ import { findNodeById } from "@higma-document-io/fig/node-ops";
 import {
   contourToSvgD,
   decodeGeometryToContours,
+} from "@higma-document-renderers/fig/scene-graph";
+import {
   generateEllipseContour,
   generateLineContour,
   generatePolygonContour,
   generateRectContour,
   generateStarContour,
-} from "@higma-document-renderers/fig/scene-graph";
+} from "@higma-primitives/path/contours";
 import { computeAbsoluteTransform, findDeepestBoundsAtPoint } from "../canvas/interaction/bounds";
 import {
   applyEditableVectorPathOperation,

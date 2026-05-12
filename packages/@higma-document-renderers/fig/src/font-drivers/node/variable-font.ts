@@ -26,6 +26,7 @@
  * yet carry those CSS properties through to the IR.
  */
 import type { AbstractFont, AbstractGlyph, FontPath } from "@higma-document-models/fig/font";
+import type { PathCommand } from "@higma-primitives/path";
 
 /**
  * Subset of the opentype.js Font shape we need to wrap. Avoiding a
@@ -434,35 +435,44 @@ function scaleAndTranslatePath(
   y: number,
   scale: number,
 ): FontPath {
-  const commands = source.commands.map((command) => {
+  const commands: PathCommand[] = source.commands.map((command): PathCommand => {
     switch (command.type) {
       case "M":
       case "L":
         return {
           type: command.type,
-          x: x + (command.x ?? 0) * scale,
-          y: y + (command.y ?? 0) * -scale,
+          x: x + command.x * scale,
+          y: y + command.y * -scale,
         };
       case "Q":
         return {
-          type: command.type,
-          x: x + (command.x ?? 0) * scale,
-          y: y + (command.y ?? 0) * -scale,
-          x1: x + (command.x1 ?? 0) * scale,
-          y1: y + (command.y1 ?? 0) * -scale,
+          type: "Q",
+          x: x + command.x * scale,
+          y: y + command.y * -scale,
+          x1: x + command.x1 * scale,
+          y1: y + command.y1 * -scale,
         };
       case "C":
         return {
-          type: command.type,
-          x: x + (command.x ?? 0) * scale,
-          y: y + (command.y ?? 0) * -scale,
-          x1: x + (command.x1 ?? 0) * scale,
-          y1: y + (command.y1 ?? 0) * -scale,
-          x2: x + (command.x2 ?? 0) * scale,
-          y2: y + (command.y2 ?? 0) * -scale,
+          type: "C",
+          x: x + command.x * scale,
+          y: y + command.y * -scale,
+          x1: x + command.x1 * scale,
+          y1: y + command.y1 * -scale,
+          x2: x + command.x2 * scale,
+          y2: y + command.y2 * -scale,
         };
+      case "A":
+        // opentype.js never emits Arc commands — TrueType / OTF outlines
+        // are M/L/Q/C/Z only — but the canonical `PathCommand` union
+        // includes Arc to cover the SVG-`d` decoder channel. Fail
+        // loudly if an Arc somehow reaches the font driver; silently
+        // ignoring it would lose glyph geometry.
+        throw new Error(
+          "scaleAndTranslatePath: unexpected SVG Arc command in opentype FontPath — font drivers only emit M/L/C/Q/Z",
+        );
       case "Z":
-        return { type: "Z" as const };
+        return { type: "Z" };
     }
   });
   return {

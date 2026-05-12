@@ -3,7 +3,18 @@
  *
  * Figma stores path commands and other data as binary blobs.
  * This module decodes these blobs into usable formats.
+ *
+ * The domain-free path primitives — `PathCommand`, `SvgPathOptions`,
+ * `pathCommandsToSvgPath` — live in `@higma-primitives/path`. Consumers
+ * import them directly from the primitive; this module only owns the
+ * Kiwi-specific byte decoders (`decodePathCommands`,
+ * `decodeBlobToSvgPath`) and the `FigBlob` carrier type.
  */
+
+import {
+  pathCommandsToSvgPath,
+  type PathCommand,
+} from "@higma-primitives/path";
 
 // =============================================================================
 // Path Command Constants
@@ -59,19 +70,15 @@ export type FigBlob = {
   readonly bytes: readonly number[];
 };
 
-/**
- * Decoded path command
- *
- * Property names follow SVG path data specification:
- * - C command: x1 y1 x2 y2 x y (two control points + endpoint)
- * - Q command: x1 y1 x y (one control point + endpoint)
- */
-export type PathCommand =
-  | { readonly type: "M"; readonly x: number; readonly y: number }
-  | { readonly type: "L"; readonly x: number; readonly y: number }
-  | { readonly type: "C"; readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number; readonly x: number; readonly y: number }
-  | { readonly type: "Q"; readonly x1: number; readonly y1: number; readonly x: number; readonly y: number }
-  | { readonly type: "Z" };
+// `PathCommand` is owned by `@higma-primitives/path` (see the SoT
+// JSDoc there); the canonical M / L / C / Q / A / Z union is
+// re-exported above. Both decoders — the Kiwi blob decoder below
+// and the renderer's `parseSvgPathD` — emit values of that union.
+// The Kiwi alphabet has no Arc opcode, so the blob decoder never
+// emits `A`; Arc is reached exclusively through the SVG-`d`
+// channel. Even so, the variant lives in the shared primitive
+// because downstream consumers routinely consume the merged
+// output of both decoders.
 
 // =============================================================================
 // Path Commands Decoder
@@ -115,7 +122,18 @@ function getCurrentPoint(prevCmd: PathCommand | undefined): { x: number; y: numb
       "blob-decoder: glyph quadratic Bézier appears at the start of a blob — expected a preceding M command",
     );
   }
-  if (prevCmd.type === "M" || prevCmd.type === "L" || prevCmd.type === "C" || prevCmd.type === "Q") {
+  if (
+    prevCmd.type === "M" ||
+    prevCmd.type === "L" ||
+    prevCmd.type === "C" ||
+    prevCmd.type === "Q" ||
+    prevCmd.type === "A"
+  ) {
+    // "A" is part of the canonical PathCommand union but is unreachable
+    // here: the Kiwi blob byte alphabet has no Arc opcode, so the
+    // decoder loop never pushes an "A". We accept the endpoint when
+    // reading prevCmd defensively so the exhaustiveness check survives
+    // the wider domain type.
     return { x: prevCmd.x, y: prevCmd.y };
   }
   throw new Error(
@@ -233,60 +251,6 @@ export function decodePathCommands(blob: FigBlob): readonly PathCommand[] {
   }
 
   return commands;
-}
-
-/**
- * Options for SVG path serialization
- */
-export type SvgPathOptions = {
-  /** Decimal precision (default: 2) */
-  readonly precision?: number;
-  /**
-   * Separator between command letter and coordinates.
-   * - " " (default): "M 0.00 0.00 L 10.00 0.00"
-   * - "" (compact): "M0 0L10 0"
-   */
-  readonly separator?: string;
-};
-
-/**
- * Convert path commands to SVG path string
- */
-export function pathCommandsToSvgPath(
-  commands: readonly PathCommand[],
-  options: SvgPathOptions | number = {},
-): string {
-  // backwards compatibility: accept bare precision number
-  const opts: SvgPathOptions = typeof options === "number" ? { precision: options } : options;
-  const precision = opts.precision ?? 2;
-  const sep = opts.separator ?? " ";
-
-  const factor = Math.pow(10, precision);
-  const r = (n: number) => Math.round(n * factor) / factor;
-
-  const parts: string[] = [];
-
-  for (const cmd of commands) {
-    switch (cmd.type) {
-      case "M":
-        parts.push(`M${sep}${r(cmd.x)}${sep}${r(cmd.y)}`);
-        break;
-      case "L":
-        parts.push(`L${sep}${r(cmd.x)}${sep}${r(cmd.y)}`);
-        break;
-      case "C":
-        parts.push(`C${sep}${r(cmd.x1)}${sep}${r(cmd.y1)}${sep}${r(cmd.x2)}${sep}${r(cmd.y2)}${sep}${r(cmd.x)}${sep}${r(cmd.y)}`);
-        break;
-      case "Q":
-        parts.push(`Q${sep}${r(cmd.x1)}${sep}${r(cmd.y1)}${sep}${r(cmd.x)}${sep}${r(cmd.y)}`);
-        break;
-      case "Z":
-        parts.push("Z");
-        break;
-    }
-  }
-
-  return sep ? parts.join(" ") : parts.join("");
 }
 
 /**
