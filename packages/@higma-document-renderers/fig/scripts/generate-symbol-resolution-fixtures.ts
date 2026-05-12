@@ -108,6 +108,26 @@ type SymbolOpts = {
   readonly clipsContent?: boolean;
 };
 
+function applyOptionalCornerRadius(
+  doc: FigDesignDocument,
+  pageId: FigPageId,
+  nodeId: FigNodeId,
+  cornerRadius: number | undefined,
+): FigDesignDocument {
+  if (cornerRadius === undefined) return doc;
+  return updateNode({ doc, pageId, nodeId, updater: (n) => ({ ...n, cornerRadius }) });
+}
+
+function applyOptionalOverrideSymbolId(
+  doc: FigDesignDocument,
+  pageId: FigPageId,
+  nodeId: FigNodeId,
+  overrideSymbolId: FigNodeId | undefined,
+): FigDesignDocument {
+  if (overrideSymbolId === undefined) return doc;
+  return updateNode({ doc, pageId, nodeId, updater: (n) => ({ ...n, overriddenSymbolID: overrideSymbolId }) });
+}
+
 function addSymbol(
   doc: FigDesignDocument,
   ctx: Ctx,
@@ -130,9 +150,7 @@ function addSymbol(
       clipsContent: opts.clipsContent,
     },
   });
-  const docWithRadius = opts.cornerRadius !== undefined
-    ? updateNode({ doc: r.doc, pageId, nodeId: r.id, updater: (n) => ({ ...n, cornerRadius: opts.cornerRadius }) })
-    : r.doc;
+  const docWithRadius = applyOptionalCornerRadius(r.doc, pageId, r.id, opts.cornerRadius);
   return { doc: docWithRadius, id: r.id };
 }
 
@@ -282,9 +300,7 @@ function addInstance(doc: FigDesignDocument, ctx: Ctx, pageId: FigPageId, opts: 
   });
   // Variant override (overriddenSymbolID) is not a NodeSpec field; project
   // it via updateNode so the round-trip carries the FigDesignNode column.
-  const docWithOverride = opts.overrideSymbolId !== undefined
-    ? updateNode({ doc: r.doc, pageId, nodeId: r.id, updater: (n) => ({ ...n, overriddenSymbolID: opts.overrideSymbolId }) })
-    : r.doc;
+  const docWithOverride = applyOptionalOverrideSymbolId(r.doc, pageId, r.id, opts.overrideSymbolId);
   return { doc: docWithOverride, id: r.id };
 }
 

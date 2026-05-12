@@ -112,6 +112,22 @@ type AddTextOpts = {
   readonly styleRuns?: readonly StyleRunSpec[];
 };
 
+function pickTextDecoration<T>(
+  name: TextDecoration | undefined,
+  fallback: T,
+): T | { value: number; name: TextDecoration } {
+  if (!name) return fallback;
+  return { value: TEXT_DECORATION_VALUES[name], name };
+}
+
+function pickTextAutoResize<T>(
+  name: TextAutoResize | undefined,
+  fallback: T,
+): T | { value: number; name: TextAutoResize } {
+  if (!name) return fallback;
+  return { value: TEXT_AUTO_RESIZE_VALUES[name], name };
+}
+
 function addStyledText(
   state: FigBuilderState,
   doc: FigDesignDocument,
@@ -169,12 +185,8 @@ function addStyledText(
         textData: {
           ...td,
           textCase: opts.textCase ? { value: TEXT_CASE_VALUES[opts.textCase], name: opts.textCase } : td.textCase,
-          textDecoration: opts.decoration
-            ? { value: TEXT_DECORATION_VALUES[opts.decoration], name: opts.decoration }
-            : td.textDecoration,
-          textAutoResize: opts.autoResize
-            ? { value: TEXT_AUTO_RESIZE_VALUES[opts.autoResize], name: opts.autoResize }
-            : td.textAutoResize,
+          textDecoration: pickTextDecoration(opts.decoration, td.textDecoration),
+          textAutoResize: pickTextAutoResize(opts.autoResize, td.textAutoResize),
           characterStyleIDs,
           styleOverrideTable,
         },

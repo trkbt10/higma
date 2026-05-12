@@ -19,6 +19,7 @@ import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import { loadFigFile, saveFigFile } from "@higma-document-io/fig/roundtrip";
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
+import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { loadRefineSource } from "../src/refine-source/load";
 import type { Inventory, SubtreeClusterEntry, SubtreeMemberRecord } from "../src/inventory";
 import type { Decisions } from "../src/decisions";
@@ -194,7 +195,7 @@ describe("applyPlan — group-as-variant-set", () => {
     const groupSkips = result.skipped.filter((s) => s.action.kind === "group-as-variant-set");
     expect(groupSkips, `variant-set action must not be skipped: ${JSON.stringify(groupSkips)}`).toEqual([]);
 
-    const out = await saveFigFile(source.loaded);
+    const out = await saveFigFile(result.loaded);
     const reloaded = await loadFigFile(out);
     const frames = reloaded.nodeChanges.filter((n) => getNodeType(n) === "FRAME" && n.name === "Card");
     expect(frames.length, "expected exactly one Card variant-set FRAME").toBe(1);
@@ -234,16 +235,13 @@ async function buildSyntheticFig(): Promise<{
   readonly heartsCopy: string;
 }> {
   // Start from the rectangle fixture and append our synthetic nodes.
-  // `LoadedFigFile.nodeChanges` is declared `readonly` post-Phase 3-C
-  // (the public contract guarantees no in-place mutation); this spec
-  // bypasses the type for fixture construction only — the synthetic
-  // tree lives entirely inside the test scope.
+  // `LoadedFigFile.nodeChanges` is declared `readonly` (Phase 3-C);
+  // we build a fresh `nodeChanges` array (existing + synthetic) and
+  // construct a new `LoadedFigFile` via object spread, never mutating
+  // the input handle.
   const buf = await readFile(resolve(FIXTURES_ROOT, FIXTURE));
   const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-  const loadedReadonly = await loadFigFile(bytes);
-  const loaded = loadedReadonly as unknown as Omit<typeof loadedReadonly, "nodeChanges"> & {
-    nodeChanges: FigNode[];
-  };
+  const loaded = await loadFigFile(bytes);
   const canvas = loaded.nodeChanges.find((n) => getNodeType(n) === "CANVAS" && n.internalOnly !== true);
   if (!canvas) {
     throw new Error("buildSyntheticFig: no user canvas in rectangle fixture");
@@ -258,57 +256,64 @@ async function buildSyntheticFig(): Promise<{
     return { sessionID: 999, localID: counter.localID };
   };
 
-  function pair(name: string): { exemplar: string; copy: string } {
+  function pair(name: string): { exemplar: string; copy: string; nodes: readonly FigNode[] } {
     const exemplar = nextGuid();
     const exemplarChild = nextGuid();
     const copy = nextGuid();
     const copyChild = nextGuid();
-    loaded.nodeChanges.push({
-      guid: exemplar,
-      phase: { value: 0, name: "CREATED" },
-      parentIndex: { guid: canvasGuid, position: `synthetic-${name}-a` },
-      type: { value: 4, name: "FRAME" },
-      name: `${name}`,
-      size: { x: 100, y: 100 },
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    });
-    loaded.nodeChanges.push({
-      guid: exemplarChild,
-      phase: { value: 0, name: "CREATED" },
-      parentIndex: { guid: exemplar, position: "child-z" },
-      type: { value: 6, name: "VECTOR" },
-      name: `${name}-glyph`,
-      size: { x: 80, y: 80 },
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
-    });
-    loaded.nodeChanges.push({
-      guid: copy,
-      phase: { value: 0, name: "CREATED" },
-      parentIndex: { guid: canvasGuid, position: `synthetic-${name}-b` },
-      type: { value: 4, name: "FRAME" },
-      name: `${name}-copy`,
-      size: { x: 100, y: 100 },
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    });
-    loaded.nodeChanges.push({
-      guid: copyChild,
-      phase: { value: 0, name: "CREATED" },
-      parentIndex: { guid: copy, position: "child-z" },
-      type: { value: 6, name: "VECTOR" },
-      name: `${name}-glyph`,
-      size: { x: 80, y: 80 },
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
-    });
+    const nodes: FigNode[] = [
+      {
+        guid: exemplar,
+        phase: { value: 0, name: "CREATED" },
+        parentIndex: { guid: canvasGuid, position: `synthetic-${name}-a` },
+        type: { value: 4, name: "FRAME" },
+        name: `${name}`,
+        size: { x: 100, y: 100 },
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      },
+      {
+        guid: exemplarChild,
+        phase: { value: 0, name: "CREATED" },
+        parentIndex: { guid: exemplar, position: "child-z" },
+        type: { value: 6, name: "VECTOR" },
+        name: `${name}-glyph`,
+        size: { x: 80, y: 80 },
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      },
+      {
+        guid: copy,
+        phase: { value: 0, name: "CREATED" },
+        parentIndex: { guid: canvasGuid, position: `synthetic-${name}-b` },
+        type: { value: 4, name: "FRAME" },
+        name: `${name}-copy`,
+        size: { x: 100, y: 100 },
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      },
+      {
+        guid: copyChild,
+        phase: { value: 0, name: "CREATED" },
+        parentIndex: { guid: copy, position: "child-z" },
+        type: { value: 6, name: "VECTOR" },
+        name: `${name}-glyph`,
+        size: { x: 80, y: 80 },
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      },
+    ];
     return {
       exemplar: `${exemplar.sessionID}:${exemplar.localID}`,
       copy: `${copy.sessionID}:${copy.localID}`,
+      nodes,
     };
   }
   const spades = pair("spades");
   const hearts = pair("hearts");
-  const out = await saveFigFile(loaded);
+  const syntheticLoaded: LoadedFigFile = {
+    ...loaded,
+    nodeChanges: [...loaded.nodeChanges, ...spades.nodes, ...hearts.nodes],
+  };
+  const out = await saveFigFile(syntheticLoaded);
   return {
     bytes: out,
     spadesExemplar: spades.exemplar,

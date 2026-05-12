@@ -148,13 +148,16 @@ function isInlineDisplay(display: string | undefined): boolean {
   return INLINE_DISPLAYS.has(display);
 }
 
+function directTextLength(el: RawElement): number {
+  if (el.textFragments) return el.textFragments.reduce((acc, slot) => acc + slot.length, 0);
+  return (el.text ?? "").length;
+}
+
 function collectTextLength(el: RawElement): number {
   // Prefer textFragments so the count reflects what the ordered
   // walker will emit; fall back to the legacy `text` length when
   // the snapshot didn't supply fragments.
-  const direct = el.textFragments
-    ? el.textFragments.reduce((acc, slot) => acc + slot.length, 0)
-    : (el.text ?? "").length;
+  const direct = directTextLength(el);
   const pseudo = (el.pseudo ?? []).reduce((acc, p) => acc + p.text.length, 0);
   // Only count visible descendants — invisible children (e.g.
   // `<option>` inside a `<select>`, `display: none` siblings) do
@@ -511,15 +514,36 @@ function pushDirectText(
       // characters silently disappear.
       writer.push(slot.slice(cursor, localStart), ownStyle);
     }
-    const fragmentStyle: BaseStyle = run.fontFamily === ownStyle.fontFamily
-      ? ownStyle
-      : { ...ownStyle, fontFamily: run.fontFamily };
+    const fragmentStyle: BaseStyle = withRunFontFamily(ownStyle, run.fontFamily);
     writer.push(slot.slice(localStart, localEnd), fragmentStyle);
     cursor = localEnd;
   }
   if (cursor < slot.length) {
     writer.push(slot.slice(cursor), ownStyle);
   }
+}
+
+/**
+ * Apply a per-run font-family swap when it differs from the host's
+ * own font. Identical fonts return the existing style object so the
+ * writer can dedupe adjacent runs.
+ */
+function withRunFontFamily(ownStyle: BaseStyle, runFontFamily: BaseStyle["fontFamily"]): BaseStyle {
+  if (runFontFamily === ownStyle.fontFamily) return ownStyle;
+  return { ...ownStyle, fontFamily: runFontFamily };
+}
+
+/**
+ * Resolve a `text-decoration-line` CSS string to the IR decoration
+ * value, falling back to the host's decoration when the property is
+ * absent on the pseudo element.
+ */
+function pickTextDecoration(
+  raw: string | undefined,
+  fallback: BaseStyle["textDecoration"],
+): BaseStyle["textDecoration"] {
+  if (raw) return extractDecoration(raw);
+  return fallback;
 }
 
 function pushPseudo(
@@ -540,9 +564,7 @@ function pushPseudo(
       fontFamily: resolveOrInherit(cs["font-family"], resolver, hostStyle.fontFamily),
       fontWeight: cs["font-weight"] ? parseFontWeight(cs["font-weight"]) : hostStyle.fontWeight,
       fontStyle: extractFontStyle(cs["font-style"]) ?? hostStyle.fontStyle,
-      textDecoration: cs["text-decoration-line"]
-        ? extractDecoration(cs["text-decoration-line"])
-        : hostStyle.textDecoration,
+      textDecoration: pickTextDecoration(cs["text-decoration-line"], hostStyle.textDecoration),
     };
     writer.push(entry.text, style);
   }

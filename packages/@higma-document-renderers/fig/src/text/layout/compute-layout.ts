@@ -158,6 +158,15 @@ function estimateCharWidth(fontSize: number, letterSpacing: number | undefined):
  * @param charWidth - Estimated width per character
  * @returns Array of source-ranged line strings
  */
+function resolveCharWidths(
+  text: string,
+  charWidth: number,
+  measureCharWidths?: (text: string) => readonly number[],
+): readonly number[] {
+  if (measureCharWidths) { return measureCharWidths(text); }
+  return Array.from({ length: text.length }, () => charWidth);
+}
+
 function wrapParagraph(
   text: string,
   maxWidth: number,
@@ -169,9 +178,7 @@ function wrapParagraph(
   // identical to what the path renderer paints. Falling back to a
   // uniform `charWidth` is an approximation kept for callsites that
   // don't have a font measurer wired in.
-  const charWidths = measureCharWidths
-    ? measureCharWidths(text)
-    : Array.from({ length: text.length }, () => charWidth);
+  const charWidths = resolveCharWidths(text, charWidth, measureCharWidths);
   return breakLines({ text, charWidths, maxWidth, mode: "auto" }).map((line) => ({
     text: line.text,
     sourceStart: line.startIndex,

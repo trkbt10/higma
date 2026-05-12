@@ -64,6 +64,19 @@ export type AlignYOptions = {
 };
 
 /**
+ * Resolve a descender ratio to a usable non-negative finite number. The
+ * CSS half-leading rule treats missing or pathological values as zero —
+ * the loader can omit it entirely (legacy callers), or surface an
+ * undefined/NaN/negative value when the font lacks proper OS/2 metrics.
+ */
+function resolveDescenderRatio(descenderRatio: number | undefined): number {
+  if (descenderRatio === undefined) { return 0; }
+  if (!Number.isFinite(descenderRatio)) { return 0; }
+  if (descenderRatio < 0) { return 0; }
+  return descenderRatio;
+}
+
+/**
  * Calculate starting y position based on vertical alignment
  *
  * The y value represents the baseline position of text.
@@ -106,9 +119,7 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
   // Verified against `capturedLineBaselineYs` (browser-truth) for
   // SFNS body 16px, SFNS headline 24px, Inter 16px / 14px, Noto Sans
   // JP 16px — every case matches to within 1 px (AA tolerance).
-  const descenderRatioResolved = descenderRatio !== undefined && Number.isFinite(descenderRatio) && descenderRatio >= 0
-    ? descenderRatio
-    : 0;
+  const descenderRatioResolved = resolveDescenderRatio(descenderRatio);
   const ascentPx = Math.round(fontSize * ascenderRatio);
   const descentPx = Math.round(fontSize * descenderRatioResolved);
   const contentAreaPx = ascentPx + descentPx;

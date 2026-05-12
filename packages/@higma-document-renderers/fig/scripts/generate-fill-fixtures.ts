@@ -16,7 +16,6 @@ import {
   addNode,
   createEmptyFigDesignDocument,
   exportFig,
-  updateNode,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
@@ -326,6 +325,11 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   };
 }
 
+function buildStrokeList(strokeData: FillChild["strokeData"]): FigPaint[] {
+  if (!strokeData) return [];
+  return [solidPaint({ ...strokeData.color, a: 1 })];
+}
+
 function addFillChild(
   state: FigBuilderState,
   doc: FigDesignDocument,
@@ -334,9 +338,7 @@ function addFillChild(
   child: FillChild,
 ): FigDesignDocument {
   const fills: FigPaint[] = child.fill ? [child.fill] : [];
-  const strokes: FigPaint[] = child.strokeData
-    ? [solidPaint({ ...child.strokeData.color, a: 1 })]
-    : [];
+  const strokes: FigPaint[] = buildStrokeList(child.strokeData);
 
   const type = child.shape === "rect" ? "ROUNDED_RECTANGLE" : "ELLIPSE";
   const r = addNode({
@@ -349,24 +351,13 @@ function addFillChild(
       fills,
       strokes,
       strokeWeight: child.strokeData?.weight,
+      strokeCap: child.strokeData?.cap,
+      strokeJoin: child.strokeData?.join,
+      strokeAlign: child.strokeData?.align,
+      strokeDashes: child.strokeData?.dash,
       cornerRadius: child.shape === "rect" ? child.cornerRadius : undefined,
     },
   });
-
-  if (child.strokeData?.cap || child.strokeData?.join || child.strokeData?.align || child.strokeData?.dash) {
-    return updateNode({
-      doc: r.doc,
-      pageId,
-      nodeId: r.nodeId,
-      updater: (n) => ({
-        ...n,
-        ...(child.strokeData?.cap ? { strokeCap: child.strokeData.cap } : {}),
-        ...(child.strokeData?.join ? { strokeJoin: child.strokeData.join } : {}),
-        ...(child.strokeData?.align ? { strokeAlign: child.strokeData.align } : {}),
-        ...(child.strokeData?.dash ? { strokeDashes: child.strokeData.dash } : {}),
-      }),
-    });
-  }
   return r.doc;
 }
 

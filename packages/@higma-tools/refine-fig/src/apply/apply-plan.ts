@@ -54,7 +54,7 @@ import type {
   RefinePlan,
 } from "../plan";
 
-export type ApplyResult = {
+export type ApplySummary = {
   readonly internalCanvasCreated: boolean;
   readonly fillProxiesCreated: number;
   readonly textProxiesCreated: number;
@@ -68,6 +68,18 @@ export type ApplyResult = {
   readonly layoutsApplied: number;
   readonly renamed: number;
   readonly skipped: readonly { readonly action: PlanAction; readonly reason: string }[];
+};
+
+/**
+ * Output of `applyPlan`. `loaded` is the freshly-projected
+ * `LoadedFigFile` after every action has run — callers should pass
+ * this to `saveFigFile` rather than the input handle. The input
+ * `LoadedFigFile` is never mutated; `LoadedFigFile.nodeChanges /
+ * blobs` are declared `readonly` post Phase 3-C and that contract is
+ * enforced end-to-end.
+ */
+export type ApplyResult = ApplySummary & {
+  readonly loaded: LoadedFigFile;
 };
 
 export type ApplyContext = {
@@ -151,9 +163,11 @@ function newCounts(): ApplyCounts {
 // =============================================================================
 
 /**
- * Apply every action in plan order. Splices the resulting
- * `nodeChanges` / `blobs` back into the caller's `loaded` so the
- * existing `saveFigFile(loaded)` continues to produce a valid .fig.
+ * Apply every action in plan order. Returns a *new* `LoadedFigFile`
+ * carrying the projected `nodeChanges` / `blobs` plus the input's
+ * other immutable fields (metadata, schema, images, messageHeader);
+ * the input handle is left untouched. Callers should pass
+ * `result.loaded` to `saveFigFile` to write the refined .fig.
  */
 export function applyPlan(loaded: LoadedFigFile, plan: RefinePlan, ctx: ApplyContext): ApplyResult {
   // refine-fig's plan layer hosts style proxies on the Internal Only
@@ -183,27 +197,19 @@ export function applyPlan(loaded: LoadedFigFile, plan: RefinePlan, ctx: ApplyCon
     dispatchPlanAction(loaded, action, state);
   }
 
-  // Reproject the final document into nodeChanges and write it back
-  // onto the caller's `loaded`. This is the single point where the
-  // domain model meets Kiwi — every load-bearing field is materialised
-  // by `document-to-tree.designNodeToFigNode`.
+  // Reproject the final document into nodeChanges. This is the single
+  // point where the domain model meets Kiwi — every load-bearing
+  // field is materialised by `document-to-tree.designNodeToFigNode`.
   const finalDoc = state.editor.documentHistory.present;
   const projected = documentToTree(finalDoc);
-  // `LoadedFigFile` is declared fully readonly post-Phase 3-C. Splice
-  // the freshly-projected node tree + blobs in via an `unknown` widening
-  // — the legacy refine-fig pipeline still expects to thread the same
-  // `loaded` handle through downstream consumers. This is the one
-  // exception left in the codebase; a follow-up will convert
-  // `applyPlanInPlace` to return a new `LoadedFigFile` instead of
-  // mutating the input.
-  const mutableLoaded = loaded as unknown as {
-    nodeChanges: typeof projected.nodeChanges;
-    blobs: typeof projected.blobs;
+  const nextLoaded: LoadedFigFile = {
+    ...loaded,
+    nodeChanges: projected.nodeChanges,
+    blobs: projected.blobs,
   };
-  mutableLoaded.nodeChanges = projected.nodeChanges;
-  mutableLoaded.blobs = projected.blobs;
 
   return {
+    loaded: nextLoaded,
     internalCanvasCreated: state.internalCanvasCreated,
     ...state.counts,
     skipped: state.skipped,

@@ -132,7 +132,7 @@ describe("refine-fig proxy bootstrap", () => {
       expect(bootstrapSkips, `bootstrap path must not skip any create/bind action; got ${JSON.stringify(bootstrapSkips)}`)
         .toEqual([]);
 
-      const out = await saveFigFile(source.loaded);
+      const out = await saveFigFile(result.loaded);
       const after = await runFigHealthCheck(out);
       expectNoNewFindings(after, baseline, `${FIXTURE} [bootstrap]`);
     },

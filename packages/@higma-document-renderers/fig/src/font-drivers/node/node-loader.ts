@@ -523,6 +523,21 @@ export type CreateNodeFontLoaderOptions = {
 };
 
 /**
+ * If the loaded font is a variable font, return a thin view that
+ * applies the requested `wght` axis immediately so per-glyph path
+ * extraction matches the requested CSS weight. Non-variable fonts pass
+ * through unchanged.
+ */
+function applyVariationWrapping(
+  rawFont: LoadedFont["font"],
+  variableAxes: ReturnType<typeof getVariableAxes>,
+  weight: number,
+): LoadedFont["font"] {
+  if (!variableAxes) return rawFont;
+  return wrapFontWithVariation(rawFont, variationForWeight(variableAxes, weight), variableAxes);
+}
+
+/**
  * Public helper exposed for unit tests — internal callers should use
  * `createNodeFontLoader`. Tests inject a fake `NodeFontLoaderEnv` so
  * per-platform discovery can be exercised without touching the host
@@ -604,9 +619,7 @@ export function createNodeFontLoaderWithEnv(
     // `font-size` reaches the path renderer separately and updates
     // `opsz` via `setVariationOpticalSize` — the loader doesn't see
     // the size, so wiring it through here would split the SoT.
-    const font = variableAxes
-      ? wrapFontWithVariation(rawFont, variationForWeight(variableAxes, query.weight), variableAxes)
-      : rawFont;
+    const font = applyVariationWrapping(rawFont, variableAxes, query.weight);
 
     return {
       font,

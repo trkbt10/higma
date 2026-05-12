@@ -297,6 +297,27 @@ type AutoLayoutInput = {
   readonly reverseZIndex?: boolean;
 };
 
+function buildPrimaryAlignItems(
+  name: AutoLayoutInput["primaryAlign"],
+): { value: number; name: NonNullable<AutoLayoutInput["primaryAlign"]> } | undefined {
+  if (!name) return undefined;
+  return { value: STACK_JUSTIFY_VALUES[name], name };
+}
+
+function buildCounterAlignItems(
+  name: AutoLayoutInput["counterAlign"],
+): { value: number; name: NonNullable<AutoLayoutInput["counterAlign"]> } | undefined {
+  if (!name) return undefined;
+  return { value: STACK_ALIGN_VALUES[name], name };
+}
+
+function buildPrimaryAlignContent(
+  name: AutoLayoutInput["contentAlign"],
+): { value: number; name: NonNullable<AutoLayoutInput["contentAlign"]> } | undefined {
+  if (!name) return undefined;
+  return { value: STACK_ALIGN_VALUES[name], name };
+}
+
 function buildAutoLayout(input: AutoLayoutInput): AutoLayoutProps {
   const padding = typeof input.padding === "number" ? uniformPadding(input.padding) : input.padding;
   return {
@@ -304,15 +325,9 @@ function buildAutoLayout(input: AutoLayoutInput): AutoLayoutProps {
     stackSpacing: input.gap,
     stackCounterSpacing: input.counterGap,
     stackPadding: padding,
-    stackPrimaryAlignItems: input.primaryAlign
-      ? { value: STACK_JUSTIFY_VALUES[input.primaryAlign], name: input.primaryAlign }
-      : undefined,
-    stackCounterAlignItems: input.counterAlign
-      ? { value: STACK_ALIGN_VALUES[input.counterAlign], name: input.counterAlign }
-      : undefined,
-    stackPrimaryAlignContent: input.contentAlign
-      ? { value: STACK_ALIGN_VALUES[input.contentAlign], name: input.contentAlign }
-      : undefined,
+    stackPrimaryAlignItems: buildPrimaryAlignItems(input.primaryAlign),
+    stackCounterAlignItems: buildCounterAlignItems(input.counterAlign),
+    stackPrimaryAlignContent: buildPrimaryAlignContent(input.contentAlign),
     stackWrap: input.wrap,
     stackReverseZIndex: input.reverseZIndex,
   };
@@ -363,6 +378,13 @@ function addFrame(
   return { doc: r.doc, frameId: r.nodeId };
 }
 
+function buildPositioningPatch(positioning: RectSpec["positioning"]): Partial<LayoutConstraints> {
+  if (positioning === undefined) return {};
+  return {
+    stackPositioning: { value: STACK_POSITIONING_VALUES[positioning], name: positioning },
+  };
+}
+
 function addRect(
   doc: FigDesignDocument,
   ctx: Ctx,
@@ -370,17 +392,11 @@ function addRect(
   spec: RectSpec,
 ): FigDesignDocument {
   const layoutConstraints: LayoutConstraints = {};
+  const positioningPatch = buildPositioningPatch(spec.positioning);
   const constraints: LayoutConstraints = {
     ...layoutConstraints,
     ...(spec.primaryGrow !== undefined ? { stackChildPrimaryGrow: spec.primaryGrow } : {}),
-    ...(spec.positioning !== undefined
-      ? {
-          stackPositioning: {
-            value: STACK_POSITIONING_VALUES[spec.positioning],
-            name: spec.positioning,
-          },
-        }
-      : {}),
+    ...positioningPatch,
   };
   const r = addNode({
     state: ctx.state,
@@ -402,6 +418,17 @@ function addRect(
   return r.doc;
 }
 
+function autoLayoutFromExistingCase(item: ExistingCase): AutoLayoutInput | undefined {
+  if (!item.autoLayout) return undefined;
+  return {
+    mode: item.autoLayout,
+    gap: item.gap,
+    padding: item.padding,
+    primaryAlign: item.primaryAlign,
+    counterAlign: item.counterAlign,
+  };
+}
+
 function addExistingCase(doc: FigDesignDocument, ctx: Ctx, item: ExistingCase): FigDesignDocument {
   const frame = addFrame(doc, ctx, null, {
     name: item.name,
@@ -410,15 +437,7 @@ function addExistingCase(doc: FigDesignDocument, ctx: Ctx, item: ExistingCase): 
     width: item.width,
     height: item.height,
     background: BG,
-    autoLayout: item.autoLayout
-      ? {
-          mode: item.autoLayout,
-          gap: item.gap,
-          padding: item.padding,
-          primaryAlign: item.primaryAlign,
-          counterAlign: item.counterAlign,
-        }
-      : undefined,
+    autoLayout: autoLayoutFromExistingCase(item),
   });
   return item.children.reduce<FigDesignDocument>(
     (acc, child) => addRect(acc, ctx, frame.frameId, child),

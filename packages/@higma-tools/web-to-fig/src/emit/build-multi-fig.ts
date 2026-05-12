@@ -153,6 +153,55 @@ type EmitOneWrapperOptions = {
   readonly idMap: Map<string, ReadonlyMap<string, FigNodeId>>;
 };
 
+/**
+ * Fall back to white when the captured viewport background is fully
+ * transparent. Browsers paint the body's "no explicit color" as
+ * `rgba(0,0,0,0)`, but emitting a SOLID α=0 fill makes naive
+ * renderers paint solid black instead of letting the canvas show.
+ */
+function resolveViewportBackground(
+  background: { r: number; g: number; b: number; a: number },
+): { r: number; g: number; b: number; a: number } {
+  if (background.a > 0) return background;
+  return { r: 1, g: 1, b: 1, a: 1 };
+}
+
+/**
+ * Force `sizing.mode = "absolute"` on a FRAME-kind IR node so the
+ * wrapper (which has no auto-layout) doesn't try to flow-stack the body
+ * at the parent origin. Non-FRAME kinds pass through unchanged.
+ */
+function forceAbsoluteSizingOnFrame(node: NodeIR): NodeIR {
+  if (node.kind !== "frame") return node;
+  return { ...node, sizing: { mode: "absolute" as const } };
+}
+
+/**
+ * Re-anchor a FRAME-kind IR node at (0,0) and switch its sizing to
+ * fixed-flow when emitting it as a SYMBOL body. Non-FRAME kinds pass
+ * through unchanged.
+ */
+function reanchorSymbolBody(node: NodeIR): NodeIR {
+  if (node.kind !== "frame") return node;
+  return {
+    ...node,
+    box: { ...node.box, x: 0, y: 0 },
+    sizing: { mode: "flow", primary: "fixed", counter: "fixed" },
+  };
+}
+
+/**
+ * Build the `layoutConstraints.stackPositioning = ABSOLUTE` patch for
+ * INSTANCE nodes whose IR sizing is absolute. Non-absolute modes return
+ * `undefined` to leave the field unset on the spec.
+ */
+function buildAbsoluteLayoutConstraints(
+  sizingMode: NodeIR["sizing"]["mode"],
+): { stackPositioning: { value: number; name: "ABSOLUTE" } } | undefined {
+  if (sizingMode !== "absolute") return undefined;
+  return { stackPositioning: { value: 1, name: "ABSOLUTE" } };
+}
+
 function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
   readonly doc: FigDesignDocument;
   readonly cursorX: number;
@@ -166,9 +215,7 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
   // paint with α=0 confuses renderers that ignore alpha and paints a
   // solid black rectangle. White is the correct default the browser
   // would paint for a transparent body.
-  const bg = viewport.background.a > 0
-    ? viewport.background
-    : { r: 1, g: 1, b: 1, a: 1 };
+  const bg = resolveViewportBackground(viewport.background);
   const wrapperSpec: FrameNodeSpec = {
     type: "FRAME",
     name: `${viewport.breakpoint} / ${Math.round(viewport.box.width)}×${Math.round(viewport.box.height)}`,
@@ -196,9 +243,7 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
   // `stackPositioning=ABSOLUTE` on the body so the wrapper (no auto-
   // layout) doesn't try to flow-stack children at the parent origin.
   const rootBodyNode: NodeIR = viewport.root.children.find((c) => c.visible) ?? viewport.root;
-  const bodyForEmit: NodeIR = rootBodyNode.kind === "frame"
-    ? { ...rootBodyNode, sizing: { mode: "absolute" as const } }
-    : rootBodyNode;
+  const bodyForEmit: NodeIR = forceAbsoluteSizingOnFrame(rootBodyNode);
   const perViewport = new Map<string, FigNodeId>();
   const docAfterBody = appendIRWithSharedSymbols({
     doc: wrapperResult.doc,
@@ -406,9 +451,7 @@ function emitSymbolForNode(opts: WalkSymbolOptions): {
   // an empty shared map so a SYMBOL containing another SYMBOL'd
   // descendant doesn't recursively emit an INSTANCE inside its own
   // definition (that would form a cycle).
-  const innerNode: NodeIR = node.kind === "frame"
-    ? { ...node, box: { ...node.box, x: 0, y: 0 }, sizing: { mode: "flow", primary: "fixed", counter: "fixed" } }
-    : node;
+  const innerNode: NodeIR = reanchorSymbolBody(node);
   const docAfterBody = appendIRWithSharedSymbols({
     doc: symbolResult.doc,
     state,
@@ -464,9 +507,7 @@ function appendIRWithSharedSymbols(opts: AppendIRWithSymbolsOptions): FigDesignD
       width: opts.irNode.box.width,
       height: opts.irNode.box.height,
       visible: opts.irNode.visible,
-      layoutConstraints: opts.irNode.sizing.mode === "absolute"
-        ? { stackPositioning: { value: 1, name: "ABSOLUTE" } }
-        : undefined,
+      layoutConstraints: buildAbsoluteLayoutConstraints(opts.irNode.sizing.mode),
     };
     const result = addNode({
       state: opts.state,

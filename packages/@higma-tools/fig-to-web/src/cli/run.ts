@@ -34,7 +34,7 @@ async function readBuffer(path: string): Promise<Uint8Array> {
 }
 
 function selectFrames(source: FigSymbolContext, options: CliOptions): readonly FigNode[] {
-  const canvas = findCanvas(source, options.page);
+  const canvas = findCanvas(source.tree.roots, options.page);
   if (!canvas) {
     throw new Error(`No user-visible page named "${options.page}" found in fig file`);
   }

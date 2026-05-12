@@ -493,9 +493,7 @@ async function buildFontResolver(
 
   const loader = createCachingFontLoader(createNodeFontLoaderWithFontsource());
 
-  const cjkFace = documentHasCjk(roots, symbolMap)
-    ? await loadCjkFace(loader)
-    : undefined;
+  const cjkFace = documentHasCjk(roots, symbolMap) ? await loadCjkFace(loader) : undefined;
   if (cjkFace !== undefined) {
     return () => cjkFace.font;
   }
@@ -765,6 +763,22 @@ function uint8ArrayReplacer(_key: string, value: unknown): unknown {
 
 type RGBA = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
 
+/**
+ * Browser-side surface installed by the WebGL harness bundle
+ * (`webgl-harness/main.ts`). `renderSceneGraph` is the entry point;
+ * `__webglRenderSlots` is the result inbox the host polls — keyed by
+ * an opaque token the host chose per call. Using a typed Map (vs.
+ * dynamic property names on `window`) lets the page.evaluate body
+ * stay strictly typed end-to-end.
+ */
+declare global {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
+  interface Window {
+    renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
+    __webglRenderSlots?: Map<string, string>;
+  }
+}
+
 async function captureWebgl(
   page: Page,
   sceneGraph: unknown,
@@ -791,15 +805,17 @@ async function captureWebgl(
       pixelRatio: number;
       backgroundColor?: RGBA;
     }) => {
-      const w = window as unknown as {
-        renderSceneGraph: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
-        [key: string]: unknown;
-      };
-      w[args.slot] = "pending";
-      w.renderSceneGraph(args.json, args.pixelRatio, args.backgroundColor).then((dataUrl) => {
-        w[args.slot] = dataUrl;
+      const renderSceneGraph = window.renderSceneGraph;
+      if (!renderSceneGraph) {
+        throw new Error("captureWebgl: window.renderSceneGraph is not installed; harness bundle did not boot");
+      }
+      const slots = window.__webglRenderSlots ?? new Map<string, string>();
+      window.__webglRenderSlots = slots;
+      slots.set(args.slot, "pending");
+      renderSceneGraph(args.json, args.pixelRatio, args.backgroundColor).then((dataUrl) => {
+        slots.set(args.slot, dataUrl);
       }).catch((err: unknown) => {
-        w[args.slot] = `__error__:${err instanceof Error ? err.message : String(err)}`;
+        slots.set(args.slot, `__error__:${err instanceof Error ? err.message : String(err)}`);
       });
     },
     { json, slot, pixelRatio, backgroundColor },
@@ -810,14 +826,18 @@ async function captureWebgl(
   // independent of `Runtime.callFunctionOn`'s built-in budget.
   await page.waitForFunction(
     (slotName: string) => {
-      const v = (window as unknown as Record<string, unknown>)[slotName];
+      const v = window.__webglRenderSlots?.get(slotName);
       return typeof v === "string" && v !== "pending";
     },
     { timeout: 300_000, polling: 250 },
     slot,
   );
   const dataUrl = await page.evaluate((slotName: string) => {
-    return (window as unknown as Record<string, unknown>)[slotName] as string;
+    const v = window.__webglRenderSlots?.get(slotName);
+    if (typeof v !== "string") {
+      throw new Error(`captureWebgl: slot "${slotName}" did not flip to a string payload`);
+    }
+    return v;
   }, slot);
   if (dataUrl.startsWith("__error__:")) {
     throw new Error(`captureWebgl: ${dataUrl.slice("__error__:".length)}`);

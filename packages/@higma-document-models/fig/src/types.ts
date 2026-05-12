@@ -740,6 +740,27 @@ export type FigNode = {
    */
   readonly isStateGroup?: boolean;
 
+  /**
+   * Per-property ordering metadata on a Variant Set FRAME — the
+   * canonical sort order Figma displays in its variants picker. Kiwi
+   * field 238 (`stateGroupPropertyValueOrders`). Separate from the
+   * `componentPropDefs[].preferredValues` map: order is authored on
+   * the parent FRAME, value semantics on the per-prop def.
+   */
+  readonly stateGroupPropertyValueOrders?: readonly {
+    readonly property: string;
+    readonly values: readonly string[];
+  }[];
+
+  /**
+   * Generic publish-to-library flag (Kiwi field 174). Distinct from
+   * `isSymbolPublishable` (field 123); both can sit on the same
+   * NodeChange. Used on a Variant Set parent FRAME to mark it as
+   * published — read by Figma's library indexer alongside the
+   * per-SYMBOL `isSymbolPublishable`.
+   */
+  readonly isPublishable?: boolean;
+
   // ---- Variable consumption (RESOLVE_VARIANT, color binding, etc.) ----
   /**
    * Per-field variable bindings on this INSTANCE. The expression form

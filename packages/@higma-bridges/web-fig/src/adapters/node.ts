@@ -112,14 +112,19 @@ function textToIR(node: FigDesignNode): TextNodeIR {
   };
 }
 
+function isEvenOddWinding(winding: unknown): boolean {
+  if (typeof winding === "string") return winding === "EVENODD";
+  if (winding && typeof winding === "object" && "name" in winding) {
+    return (winding as { name?: string }).name === "EVENODD";
+  }
+  return false;
+}
+
 function vectorToIR(node: FigDesignNode): VectorNodeIR {
   const paths: VectorPathIR[] = (node.vectorPaths ?? [])
     .filter((vp) => vp.data !== undefined && vp.data.length > 0)
     .map((vp) => {
-      const winding = vp.windingRule;
-      const isEvenOdd = typeof winding === "string"
-        ? winding === "EVENODD"
-        : winding?.name === "EVENODD";
+      const isEvenOdd = isEvenOddWinding(vp.windingRule);
       return {
         d: vp.data!,
         fillRule: isEvenOdd ? "evenodd" : "nonzero",

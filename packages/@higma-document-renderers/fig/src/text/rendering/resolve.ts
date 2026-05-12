@@ -407,11 +407,15 @@ function readPerCharStyleData(node: TruncatableTextNode): {
  * Accepts both FigNode (`.guid`) and FigDesignNode (`.id`) shapes so the
  * locator works at any layer of the conversion pipeline.
  */
+function pickGuidString(shaped: { guid?: FigGuid; id?: string }): string {
+  if (shaped.guid) { return guidToString(shaped.guid); }
+  if (typeof shaped.id === "string" && shaped.id.length > 0) { return shaped.id; }
+  return "<no-guid>";
+}
+
 function formatTextNodeLocator(node: TruncatableTextNode): string {
   const shaped = node as { guid?: FigGuid; id?: string; name?: string };
-  const guidStr = shaped.guid
-    ? guidToString(shaped.guid)
-    : (typeof shaped.id === "string" && shaped.id.length > 0 ? shaped.id : "<no-guid>");
+  const guidStr = pickGuidString(shaped);
   const name = shaped.name ?? "?";
   return `text node ${guidStr} (${name})`;
 }

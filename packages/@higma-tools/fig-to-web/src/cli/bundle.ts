@@ -54,11 +54,20 @@ type BunBuildLog = {
  * in the joined output. Surfacing the position makes a "Bundle failed"
  * panel actually point the developer at the offending file.
  */
+function formatPosition(position: BunBuildLog["position"]): string {
+  if (!position?.file) { return ""; }
+  if (position.line === undefined) { return ` ${position.file}`; }
+  if (position.column === undefined) { return ` ${position.file}:${position.line}`; }
+  return ` ${position.file}:${position.line}:${position.column}`;
+}
+
+function formatBuildLogs(logs: readonly BunBuildLog[]): string {
+  if (logs.length > 0) { return logs.map(formatBuildLog).join("\n"); }
+  return "Bun.build returned success: false but emitted no diagnostics.";
+}
+
 function formatBuildLog(log: BunBuildLog): string {
-  const position = log.position;
-  const where = position?.file
-    ? ` ${position.file}${position.line !== undefined ? `:${position.line}${position.column !== undefined ? `:${position.column}` : ""}` : ""}`
-    : "";
+  const where = formatPosition(log.position);
   const level = log.level ? `[${log.level}]` : "";
   const body = log.message ?? JSON.stringify(log);
   return `${level}${where} ${body}`.trim();
@@ -103,9 +112,7 @@ export async function bundlePreview(outDir: string): Promise<void> {
     },
   });
   if (!result.success) {
-    const messages = result.logs.length > 0
-      ? result.logs.map(formatBuildLog).join("\n")
-      : "Bun.build returned success: false but emitted no diagnostics.";
+    const messages = formatBuildLogs(result.logs);
     throw new Error(`fig-to-web: preview bundle failed:\n${messages}`);
   }
 }

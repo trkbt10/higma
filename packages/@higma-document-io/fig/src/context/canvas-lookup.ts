@@ -23,11 +23,19 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
-import type { FigSymbolContext } from "./symbol-context";
 
-/** Locate the user-visible CANVAS with the given name (typically "Design"). */
-export function findCanvas(source: FigSymbolContext, canvasName: string): FigNode | undefined {
-  for (const root of source.tree.roots) {
+/**
+ * Locate the user-visible CANVAS with the given name (typically
+ * "Design") within a parsed tree's roots.
+ *
+ * Takes the raw root array — `FigSymbolContext.tree.roots` — rather
+ * than the full context, because nothing else in the context is
+ * consulted. Narrowing the parameter is what lets specs build a
+ * minimal real `FigNode[]` and exercise the helper without bypassing
+ * the type system.
+ */
+export function findCanvas(roots: readonly FigNode[], canvasName: string): FigNode | undefined {
+  for (const root of roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
@@ -41,8 +49,8 @@ export function findCanvas(source: FigSymbolContext, canvasName: string): FigNod
 }
 
 /** Locate the (single) Internal-Only Canvas — Figma's holder for shared style proxies. */
-export function findInternalCanvas(source: FigSymbolContext): FigNode | undefined {
-  for (const root of source.tree.roots) {
+export function findInternalCanvas(roots: readonly FigNode[]): FigNode | undefined {
+  for (const root of roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }

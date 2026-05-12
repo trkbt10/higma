@@ -42,6 +42,19 @@ function updatePage(
   return { ...doc, pages };
 }
 
+/**
+ * Register a newly added node in the document's `components` map if it
+ * is a SYMBOL. INSTANCE lookups (`doc.components.get(inst.symbolId)`)
+ * resolve through this map. Non-SYMBOL nodes return the existing map.
+ */
+function registerSymbolIfNeeded(
+  components: ReadonlyMap<string, FigDesignNode>,
+  node: FigDesignNode,
+): ReadonlyMap<string, FigDesignNode> {
+  if (node.type !== "SYMBOL") return components;
+  return new Map(components).set(node.id, node);
+}
+
 // =============================================================================
 // Add Node
 // =============================================================================
@@ -75,9 +88,7 @@ export function addNode(
   // `referenceValue` shape on `ComponentPropertyValue` and the
   // `symbolId` field on `FigDesignNode` (for INSTANCEs). Other node
   // types leave the map untouched.
-  const updatedComponents = node.type === "SYMBOL"
-    ? new Map(updatedDoc.components).set(node.id, node)
-    : updatedDoc.components;
+  const updatedComponents = registerSymbolIfNeeded(updatedDoc.components, node);
 
   return {
     doc: { ...updatedDoc, components: updatedComponents },

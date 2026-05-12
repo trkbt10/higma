@@ -117,13 +117,13 @@ async function runApplyAndSave(bytes: Uint8Array, fillDecisions: boolean): Promi
     file: "<test>",
     bytes: bytes.byteLength,
   });
-  applyPlan(source.loaded, plan, {
+  const result = applyPlan(source.loaded, plan, {
     internalCanvasGuid: guidToString(source.internalCanvas.guid),
     userCanvasGuid: source.userCanvases[0] ? guidToString(source.userCanvases[0].guid) : undefined,
     fillTemplateGuid: firstProxyGuid(source.fillStyleProxies),
     textTemplateGuid: firstProxyGuid(source.textStyleProxies),
   });
-  return saveFigFile(source.loaded);
+  return saveFigFile(result.loaded);
 }
 
 function firstProxyGuid(proxies: Awaited<ReturnType<typeof loadRefineSource>>["fillStyleProxies"]): string | undefined {

@@ -250,6 +250,26 @@ function numberUnitsEnum(name: NumberUnitsName): { value: number; name: NumberUn
   return { value: NUMBER_UNITS_VALUES[name], name };
 }
 
+function pickNextLineHeight<T>(
+  needsPercent: boolean,
+  spec: { value: number; units: NumberUnitsName } | undefined,
+  fallback: T,
+): T | { value: number; units: { value: number; name: NumberUnitsName } } {
+  if (needsPercent && spec) {
+    return { value: spec.value, units: numberUnitsEnum(spec.units) };
+  }
+  return fallback;
+}
+
+function pickNextAutoResize<T>(
+  needsAutoResize: boolean,
+  spec: TextAutoResizeName | undefined,
+  fallback: T,
+): T | { value: number; name: TextAutoResizeName } {
+  if (needsAutoResize && spec) return textAutoResizeEnum(spec);
+  return fallback;
+}
+
 type TextSpec = {
   readonly name?: string;
   readonly text: string;
@@ -315,12 +335,8 @@ function addText(ctx: BuildContext, parentId: FigNodeId, spec: TextSpec): {
       if (!td) {
         return node;
       }
-      const nextLineHeight = needsPercentLineHeight && spec.lineHeight
-        ? { value: spec.lineHeight.value, units: numberUnitsEnum(spec.lineHeight.units) }
-        : td.lineHeight;
-      const nextAutoResize = needsAutoResize && spec.autoResize
-        ? textAutoResizeEnum(spec.autoResize)
-        : td.textAutoResize;
+      const nextLineHeight = pickNextLineHeight(needsPercentLineHeight, spec.lineHeight, td.lineHeight);
+      const nextAutoResize = pickNextAutoResize(needsAutoResize, spec.autoResize, td.textAutoResize);
       return {
         ...node,
         textData: {
@@ -346,20 +362,36 @@ type AutoLayoutInput = {
   readonly counterAlign?: "MIN" | "CENTER" | "MAX" | "BASELINE";
 };
 
+function expandPadding(
+  padding: AutoLayoutInput["padding"],
+): { top: number; right: number; bottom: number; left: number } | undefined {
+  if (typeof padding === "number") {
+    return { top: padding, right: padding, bottom: padding, left: padding };
+  }
+  return padding;
+}
+
+function buildPrimaryAlignItems(
+  name: AutoLayoutInput["primaryAlign"],
+): { value: number; name: NonNullable<AutoLayoutInput["primaryAlign"]> } | undefined {
+  if (!name) return undefined;
+  return { value: STACK_JUSTIFY_VALUES[name], name };
+}
+
+function buildCounterAlignItems(
+  name: AutoLayoutInput["counterAlign"],
+): { value: number; name: NonNullable<AutoLayoutInput["counterAlign"]> } | undefined {
+  if (!name) return undefined;
+  return { value: STACK_ALIGN_VALUES[name], name };
+}
+
 function buildAutoLayout(input: AutoLayoutInput): NonNullable<Extract<NodeSpec, { type: "FRAME" | "SYMBOL" }>["autoLayout"]> {
-  const padding = typeof input.padding === "number"
-    ? { top: input.padding, right: input.padding, bottom: input.padding, left: input.padding }
-    : input.padding;
   return {
     stackMode: { value: STACK_MODE_VALUES[input.mode], name: input.mode },
     stackSpacing: input.gap,
-    stackPadding: padding,
-    stackPrimaryAlignItems: input.primaryAlign
-      ? { value: STACK_JUSTIFY_VALUES[input.primaryAlign], name: input.primaryAlign }
-      : undefined,
-    stackCounterAlignItems: input.counterAlign
-      ? { value: STACK_ALIGN_VALUES[input.counterAlign], name: input.counterAlign }
-      : undefined,
+    stackPadding: expandPadding(input.padding),
+    stackPrimaryAlignItems: buildPrimaryAlignItems(input.primaryAlign),
+    stackCounterAlignItems: buildCounterAlignItems(input.counterAlign),
   };
 }
 

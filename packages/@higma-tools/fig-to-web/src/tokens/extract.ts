@@ -19,7 +19,7 @@ import { buildRadiusTokens, buildSpacingTokens, lookupRadiusId, lookupSpacingId 
 import { buildShadowTokens, lookupShadowId } from "./effect";
 
 function styleFillProxies(source: FigSymbolContext): readonly FigNode[] {
-  const internal = findInternalCanvas(source);
+  const internal = findInternalCanvas(source.tree.roots);
   if (!internal) {
     return [];
   }

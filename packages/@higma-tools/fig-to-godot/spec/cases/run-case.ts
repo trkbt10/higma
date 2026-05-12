@@ -100,7 +100,7 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
   const figPath = resolveFixturePath(options.caseName);
   const bytes = new Uint8Array(await readFile(figPath));
   const ctx = await createFigSymbolContext(bytes);
-  const canvas = findCanvas(ctx, options.canvasName);
+  const canvas = findCanvas(ctx.tree.roots, options.canvasName);
   if (!canvas) {
     throw new Error(
       `runRoundtripCase: fixture "${options.caseName}" missing canvas "${options.canvasName}"`,

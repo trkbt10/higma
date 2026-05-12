@@ -26,7 +26,6 @@ import {
   addPage,
   createEmptyFigDesignDocument,
   exportFig,
-  updateNode,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
@@ -127,17 +126,13 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 3,
+      strokeAlign: "INSIDE",
+      strokeDashes: [8, 4],
       cornerRadius: 8,
     },
   });
-  const r1WithDashes = updateNode({
-    doc: r1.doc,
-    pageId,
-    nodeId: r1.nodeId,
-    updater: (n) => ({ ...n, strokeAlign: "INSIDE", strokeDashes: [8, 4] }),
-  });
 
-  const f2 = addStyledFrame(r1WithDashes, state, pageId, "dash-asymmetric", 340, 100, 200, 100);
+  const f2 = addStyledFrame(r1.doc, state, pageId, "dash-asymmetric", 340, 100, 200, 100);
   const r2 = addNode({
     state,
     doc: f2.doc,
@@ -153,17 +148,13 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 3,
+      strokeAlign: "INSIDE",
+      strokeDashes: [12, 6, 2, 6],
       cornerRadius: 8,
     },
   });
-  const r2WithDashes = updateNode({
-    doc: r2.doc,
-    pageId,
-    nodeId: r2.nodeId,
-    updater: (n) => ({ ...n, strokeAlign: "INSIDE", strokeDashes: [12, 6, 2, 6] }),
-  });
 
-  const f3 = addStyledFrame(r2WithDashes, state, pageId, "dash-tight", 580, 100, 200, 100);
+  const f3 = addStyledFrame(r2.doc, state, pageId, "dash-tight", 580, 100, 200, 100);
   const r3 = addNode({
     state,
     doc: f3.doc,
@@ -179,14 +170,10 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 2,
+      strokeAlign: "INSIDE",
+      strokeDashes: [2, 2],
       cornerRadius: 8,
     },
-  });
-  const r3WithDashes = updateNode({
-    doc: r3.doc,
-    pageId,
-    nodeId: r3.nodeId,
-    updater: (n) => ({ ...n, strokeAlign: "INSIDE", strokeDashes: [2, 2] }),
   });
 
   // Arrow caps — line nodes with each StrokeCap arrow variant.
@@ -215,15 +202,11 @@ async function generate(): Promise<void> {
         height: 0,
         strokes: [solidPaint(LINE_COLOR)],
         strokeWeight: 4,
+        strokeCap: c.cap,
       },
     });
-    return updateNode({
-      doc: line.doc,
-      pageId,
-      nodeId: line.nodeId,
-      updater: (n) => ({ ...n, strokeCap: c.cap }),
-    });
-  }, r3WithDashes);
+    return line.doc;
+  }, r3.doc);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });

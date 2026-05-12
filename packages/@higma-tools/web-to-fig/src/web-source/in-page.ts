@@ -1298,9 +1298,7 @@ export function captureSnapshot(): RawSnapshotJson {
     // element's `text` field. The normaliser then treats the
     // control as a self-contained paragraph host.
     const formText = formControlText(el);
-    const text = formText !== undefined && directTextValue.length === 0
-      ? formText
-      : directTextValue;
+    const text = pickTextForElement(formText, directTextValue);
     const pseudo = readPseudo(el);
     // Inline SVG content is captured as a vector node; do not
     // recurse into its `<path>` / `<g>` descendants — they would
@@ -1312,21 +1310,15 @@ export function captureSnapshot(): RawSnapshotJson {
     // box. Combine light-DOM children with the shadow root's
     // children so the snapshot captures both layers.
     const lightChildren = Array.from(el.children);
-    const shadowChildren = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot
-      ? Array.from((el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot!.children)
-      : [];
+    const shadowChildren = readShadowChildren(el);
     const allChildren = [...shadowChildren, ...lightChildren];
-    const children: ElementJson[] = svgContent !== undefined
-      ? []
-      : allChildren.map((child, index) => walk(child, `${path}/${index}`));
+    const children: ElementJson[] = walkChildrenUnlessSvg(svgContent, allChildren, path);
     // `interleavedTextSlots` is keyed off `el.children` only — the
     // shadow-DOM pseudo-children we prepended don't contribute text
     // nodes the slot map can address. Pad the leading shadow-child
     // count with empty fragments so `fragments[i]` continues to line
     // up with `children[i]` after the prepend.
-    const paddedFragments = svgContent !== undefined
-      ? undefined
-      : padFragments(fragments, shadowChildren.length, lightChildren.length);
+    const paddedFragments = buildPaddedFragments(svgContent, fragments, shadowChildren.length, lightChildren.length);
     // Capture per-line rects for text-bearing elements. `Range
     // .getClientRects()` returns one rect per visual line the browser
     // laid the element's text into — the canonical source of truth
@@ -1351,9 +1343,7 @@ export function captureSnapshot(): RawSnapshotJson {
       maskImageId,
       svgContent,
       text: text.length > 0 ? text : undefined,
-      textFragments: paddedFragments && paddedFragmentsHaveContent(paddedFragments)
-        ? paddedFragments
-        : undefined,
+      textFragments: emitPaddedFragmentsIfNonEmpty(paddedFragments),
       textLineRects,
       textLineBaselineYs,
       pseudo: pseudo.length > 0 ? pseudo : undefined,
@@ -1461,6 +1451,56 @@ export function captureSnapshot(): RawSnapshotJson {
       void _err;
       return undefined;
     }
+  }
+
+  /**
+   * Form controls have no child text node carrying the painted string,
+   * so we lift `value` / `placeholder` up into the element's `text`
+   * field. Direct text content always wins when present.
+   */
+  function pickTextForElement(formText: string | undefined, directTextValue: string): string {
+    if (formText !== undefined && directTextValue.length === 0) return formText;
+    return directTextValue;
+  }
+
+  /**
+   * Light/shadow walker for `el.shadowRoot`. Returns `[]` when the
+   * element has no shadow root so callers can spread without branching.
+   */
+  function readShadowChildren(el: Element): Element[] {
+    const host = el as Element & { shadowRoot?: ShadowRoot | null };
+    if (!host.shadowRoot) return [];
+    return Array.from(host.shadowRoot.children);
+  }
+
+  /**
+   * Inline SVG content is captured as a vector node — don't recurse
+   * into its `<path>` / `<g>` descendants.
+   */
+  function walkChildrenUnlessSvg(
+    svgContent: unknown,
+    allChildren: readonly Element[],
+    path: string,
+  ): ElementJson[] {
+    if (svgContent !== undefined) return [];
+    return allChildren.map((child, index) => walk(child, `${path}/${index}`));
+  }
+
+  function buildPaddedFragments(
+    svgContent: unknown,
+    fragments: readonly string[],
+    shadowCount: number,
+    lightCount: number,
+  ): readonly string[] | undefined {
+    if (svgContent !== undefined) return undefined;
+    return padFragments(fragments, shadowCount, lightCount);
+  }
+
+  function emitPaddedFragmentsIfNonEmpty(
+    paddedFragments: readonly string[] | undefined,
+  ): readonly string[] | undefined {
+    if (paddedFragments && paddedFragmentsHaveContent(paddedFragments)) return paddedFragments;
+    return undefined;
   }
 
   function padFragments(

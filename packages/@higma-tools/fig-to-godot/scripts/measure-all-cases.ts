@@ -227,6 +227,11 @@ async function emitCase(
   return { canvasName: canvas.name, jobs };
 }
 
+function formatCaseHeader(caseName: string, canvas: string | undefined, frameCount: number): string {
+  if (canvas === undefined) return `# ${caseName} — (no fig file)`;
+  return `# ${caseName} (canvas="${canvas}", ${frameCount} frames)`;
+}
+
 function printReport(
   caseNames: readonly string[],
   caseCanvases: ReadonlyMap<string, string | undefined>,
@@ -242,10 +247,7 @@ function printReport(
   for (const caseName of caseNames) {
     const canvas = caseCanvases.get(caseName);
     const frames = reportsByCase.get(caseName) ?? [];
-    const headerLine =
-      canvas === undefined
-        ? `# ${caseName} — (no fig file)`
-        : `# ${caseName} (canvas="${canvas}", ${frames.length} frames)`;
+    const headerLine = formatCaseHeader(caseName, canvas, frames.length);
     process.stdout.write(`${headerLine}\n`);
     for (const f of frames) {
       totals[f.status] = (totals[f.status] ?? 0) + 1;

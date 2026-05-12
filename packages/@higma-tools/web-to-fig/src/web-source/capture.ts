@@ -135,9 +135,7 @@ export async function captureViewportInBrowser(
     const probe = await page.evaluate(probeFrameset);
     if (probe.isFrameset) {
       const snapshot = await captureFramesetInBrowser(page, probe, responseCache);
-      const screenshot = options.captureScreenshot
-        ? await screenshotPage(page, options.fullPageScreenshot ?? false)
-        : undefined;
+      const screenshot = await maybeScreenshotPage(page, options);
       return { snapshot, screenshotBytes: screenshot };
     }
     const json = await page.evaluate(captureSnapshot);
@@ -172,9 +170,7 @@ export async function captureViewportInBrowser(
     // independent full-tree rewrites in sequence.
     const decoratedRoot = decorateAll(jsonWithFontRuns, idToUrl, responseCache, assets);
     const snapshot = jsonToSnapshot({ ...json, root: decoratedRoot }, assets);
-    const screenshot = options.captureScreenshot
-      ? await screenshotPage(page, options.fullPageScreenshot ?? false)
-      : undefined;
+    const screenshot = await maybeScreenshotPage(page, options);
     return { snapshot, screenshotBytes: screenshot };
   } finally {
     await context.close();
@@ -245,8 +241,28 @@ async function captureFramesetInBrowser(
   return assembleFramesetSnapshot(probe, decoratedFrames, assets);
 }
 
+type ScreenshotablePage = {
+  screenshot(opts: {
+    readonly fullPage: boolean;
+    readonly type: "png";
+    readonly clip?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  }): Promise<Buffer>;
+};
+
+/**
+ * Run `screenshotPage` only when the caller asked for a screenshot.
+ * Returns `undefined` when capture is disabled.
+ */
+async function maybeScreenshotPage(
+  page: ScreenshotablePage,
+  options: { readonly captureScreenshot?: boolean; readonly fullPageScreenshot?: boolean },
+): Promise<Uint8Array | undefined> {
+  if (!options.captureScreenshot) return undefined;
+  return screenshotPage(page, options.fullPageScreenshot ?? false);
+}
+
 async function screenshotPage(
-  page: { screenshot(opts: { readonly fullPage: boolean; readonly type: "png"; readonly clip?: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } }): Promise<Buffer> },
+  page: ScreenshotablePage,
   fullPage: boolean,
 ): Promise<Uint8Array> {
   // The visual-fidelity verifier runs in two flavours:
@@ -574,10 +590,13 @@ function decodeDataUrl(url: string): { mime: RawAsset["mime"]; bytes: Uint8Array
     );
   }
   const mime: RawAsset["mime"] = mimeRaw;
-  const bytes = isBase64
-    ? Uint8Array.from(Buffer.from(payload, "base64"))
-    : Uint8Array.from(Buffer.from(decodeURIComponent(payload), "binary"));
+  const bytes = decodeDataUrlPayload(payload, isBase64);
   return { mime, bytes };
+}
+
+function decodeDataUrlPayload(payload: string, isBase64: boolean): Uint8Array {
+  if (isBase64) return Uint8Array.from(Buffer.from(payload, "base64"));
+  return Uint8Array.from(Buffer.from(decodeURIComponent(payload), "binary"));
 }
 
 /**
@@ -613,9 +632,7 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     imageNaturalWidth: json.imageNaturalWidth,
     imageNaturalHeight: json.imageNaturalHeight,
     maskImageId: json.maskImageId,
-    maskSvgContent: json.maskSvgContent
-      ? maskSvgContentJsonToRaw(json.maskSvgContent)
-      : undefined,
+    maskSvgContent: convertOptionalMaskSvgContent(json.maskSvgContent),
     maskNaturalWidth: json.maskNaturalWidth,
     maskNaturalHeight: json.maskNaturalHeight,
     svgContent: json.svgContent,
@@ -627,6 +644,13 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
   };
+}
+
+function convertOptionalMaskSvgContent(
+  json: ElementJson["maskSvgContent"],
+): RawElement["maskSvgContent"] | undefined {
+  if (!json) return undefined;
+  return maskSvgContentJsonToRaw(json);
 }
 
 function maskSvgContentJsonToRaw(json: NonNullable<ElementJson["maskSvgContent"]>): NonNullable<RawElement["maskSvgContent"]> {
@@ -676,15 +700,9 @@ export function decorateAll(
   // allocates, even when every child returned identically.
   const newChildren = mapPreserve(el.children, (c) => decorateAll(c, idToUrl, responseCache, assets));
   // Compute the three annotations independently.
-  const mask = el.maskImageId !== undefined
-    ? resolveMaskSvgContent(el.maskImageId, idToUrl, responseCache)
-    : undefined;
-  const imageDim = el.imageId !== undefined
-    ? sniffNaturalSize(el.imageId, idToUrl, responseCache, assets)
-    : undefined;
-  const maskDim = el.maskImageId !== undefined
-    ? sniffNaturalSize(el.maskImageId, idToUrl, responseCache, assets)
-    : undefined;
+  const mask = resolveMaskSvgContentIfPresent(el.maskImageId, idToUrl, responseCache);
+  const imageDim = sniffNaturalSizeIfPresent(el.imageId, idToUrl, responseCache, assets);
+  const maskDim = sniffNaturalSizeIfPresent(el.maskImageId, idToUrl, responseCache, assets);
   // Skip the spread when nothing changed — avoids a per-node
   // allocation for the (very common) case of a non-image leaf.
   const childrenChanged = newChildren !== el.children;
@@ -732,6 +750,30 @@ function mapPreserve<T>(input: readonly T[], fn: (item: T) => T): readonly T[] {
  * the bytes don't parse as SVG — callers leave the element unchanged
  * in that case.
  */
+function resolveMaskSvgContentIfPresent(
+  maskImageId: string | undefined,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+): NonNullable<ElementJson["maskSvgContent"]> | undefined {
+  if (maskImageId === undefined) return undefined;
+  return resolveMaskSvgContent(maskImageId, idToUrl, responseCache);
+}
+
+function sniffNaturalSizeIfPresent(
+  imageId: string | undefined,
+  idToUrl: ReadonlyMap<string, string>,
+  responseCache: ResponseCache,
+  assets: ReadonlyMap<string, RawAsset>,
+): { width: number; height: number } | undefined {
+  if (imageId === undefined) return undefined;
+  return sniffNaturalSize(imageId, idToUrl, responseCache, assets);
+}
+
+function readMaskBytes(url: string, responseCache: ResponseCache): Uint8Array | undefined {
+  if (url.startsWith("data:")) return decodeMaskDataUrl(url);
+  return responseCache.bodyForUrl(url);
+}
+
 function resolveMaskSvgContent(
   maskImageId: string,
   idToUrl: ReadonlyMap<string, string>,
@@ -741,9 +783,7 @@ function resolveMaskSvgContent(
   if (url === undefined) {
     return undefined;
   }
-  const bytes = url.startsWith("data:")
-    ? decodeMaskDataUrl(url)
-    : responseCache.bodyForUrl(url);
+  const bytes = readMaskBytes(url, responseCache);
   if (bytes === undefined) {
     return undefined;
   }

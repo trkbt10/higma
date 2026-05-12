@@ -129,6 +129,30 @@ function resolveFixtureUrl(scenario: Scenario): string | null {
   }
 }
 
+/**
+ * Resolve a captured fixture URL to an absolute URI; fall back to a
+ * `synthetic://` placeholder when the scenario doesn't ship one.
+ */
+function resolveFixtureUri(fixtureUrl: string | undefined, fixtureName: string): string {
+  if (fixtureUrl) { return new URL(fixtureUrl, window.location.origin).toString(); }
+  return `synthetic://${fixtureName}`;
+}
+
+/**
+ * Load the fixture bytes for the current scenario. With a real URL we
+ * `fetch` it and base64-encode the bytes; otherwise we fall back to a
+ * synthetic 64-byte garbage payload so the bootstrap exercises the
+ * "no fixture" branch without a network round-trip.
+ */
+async function fetchFixtureBytesBase64(fixtureUrl: string | undefined): Promise<string> {
+  if (!fixtureUrl) { return buildGarbageBytesBase64(); }
+  const res = await fetch(fixtureUrl);
+  if (!res.ok) {
+    throw new Error(`failed to fetch fixture: ${res.status}`);
+  }
+  return arrayBufferToBase64(await res.arrayBuffer());
+}
+
 function buildGarbageBytesBase64(): string {
   const bytes = new Uint8Array(64);
   for (let i = 0; i < bytes.length; i += 1) {
@@ -140,9 +164,7 @@ function buildGarbageBytesBase64(): string {
 const scenario = pickScenario();
 const fixtureName = resolveFixtureName(scenario);
 const fixtureUrl = resolveFixtureUrl(scenario);
-const fixtureUri = fixtureUrl
-  ? new URL(fixtureUrl, window.location.origin).toString()
-  : `synthetic://${fixtureName}`;
+const fixtureUri = resolveFixtureUri(fixtureUrl, fixtureName);
 
 const handle: E2EHandle = {
   state: "init",
@@ -160,14 +182,7 @@ window.__higmaE2E = handle;
 installVsCodeApiStub(handle);
 
 async function bootstrap(): Promise<void> {
-  const bytesPromise: Promise<string> = fixtureUrl
-    ? fetch(fixtureUrl).then(async (res) => {
-        if (!res.ok) {
-          throw new Error(`failed to fetch fixture: ${res.status}`);
-        }
-        return arrayBufferToBase64(await res.arrayBuffer());
-      })
-    : Promise.resolve(buildGarbageBytesBase64());
+  const bytesPromise: Promise<string> = fetchFixtureBytesBase64(fixtureUrl);
 
   await import("../../src/webview/index");
 

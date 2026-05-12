@@ -41,15 +41,18 @@ const FULLY_OPAQUE_TOLERANCE = 1e-6;
  * already at the byte centre. Empirically verified end-to-end for
  * 0.5, 0.6, 0.898, 0.9, 0.95, 1.0.
  */
+function pickChannelCompensator(compensate: boolean): (channel: number) => number {
+  if (compensate) return compensateForGodotByteRounding;
+  return compensateForOpacityComposite;
+}
+
 export function colorExpr(
   color: FigColor,
   paintOpacity: number = 1,
   compensate: boolean = true,
 ): GodotValue {
   const alpha = color.a * paintOpacity;
-  const compensateChannel = compensate
-    ? compensateForGodotByteRounding
-    : compensateForOpacityComposite;
+  const compensateChannel = pickChannelCompensator(compensate);
   const aFinal = alpha < 1 - FULLY_OPAQUE_TOLERANCE ? compensateChannel(alpha) : 1;
   return colorVal(
     compensateChannel(color.r),

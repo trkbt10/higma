@@ -123,6 +123,16 @@ function nextBlobIndex(acc: BlobAccumulator): number {
   return acc.explicitCount + acc.synthesised.length;
 }
 
+function encodeStackWrap(wrap: boolean): { value: number; name: "WRAP" | "NO_WRAP" } {
+  if (wrap) return { value: 1, name: "WRAP" };
+  return { value: 0, name: "NO_WRAP" };
+}
+
+function encodeWindingRule(isEvenOdd: boolean): { value: number; name: "ODD" | "NONZERO" } {
+  if (isEvenOdd) return { value: 1, name: "ODD" };
+  return { value: 0, name: "NONZERO" };
+}
+
 function designNodeToFigNode(
   node: FigDesignNode,
   parentId: FigNodeId | FigPageId,
@@ -229,9 +239,7 @@ function designNodeToFigNode(
       // (NO_WRAP=0, WRAP=1); writing the raw boolean throws at the
       // value codec. The domain model carries the ergonomic boolean,
       // so translate at the projection boundary.
-      base.stackWrap = node.autoLayout.stackWrap
-        ? { value: 1, name: "WRAP" }
-        : { value: 0, name: "NO_WRAP" };
+      base.stackWrap = encodeStackWrap(node.autoLayout.stackWrap);
     }
     if (node.autoLayout.stackCounterSpacing !== undefined) { base.stackCounterSpacing = node.autoLayout.stackCounterSpacing; }
     if (node.autoLayout.stackReverseZIndex !== undefined) { base.stackReverseZIndex = node.autoLayout.stackReverseZIndex; }
@@ -386,9 +394,7 @@ function designNodeToFigNode(
           const isEvenOdd = winding === "EVENODD" || winding === "ODD" ||
             (typeof winding === "object" && winding !== null && (winding.name === "EVENODD" || winding.name === "ODD"));
           return {
-            windingRule: isEvenOdd
-              ? { value: 1, name: "ODD" }
-              : { value: 0, name: "NONZERO" },
+            windingRule: encodeWindingRule(isEvenOdd),
             commandsBlob: blobIndex,
             styleID: 0,
           };

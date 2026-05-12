@@ -99,6 +99,15 @@ type TextOpts = {
  * `derivedTextData.glyphs[i].commandsBlob` points at the correct
  * `doc.blobs[]` entry.
  */
+type TextAlignHName = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
+
+function buildTextAlignHorizontal(
+  alignH: TextAlignHName | undefined,
+): { value: number; name: TextAlignHName } | undefined {
+  if (!alignH) return undefined;
+  return { value: TEXT_ALIGN_H_VALUES[alignH], name: alignH };
+}
+
 function addTextWithGlyphs(
   doc: FigDesignDocument,
   pageId: FigPageId,
@@ -135,9 +144,7 @@ function addTextWithGlyphs(
       y: opts.y,
       width: opts.width,
       height: opts.height,
-      textAlignHorizontal: opts.alignH
-        ? { value: TEXT_ALIGN_H_VALUES[opts.alignH], name: opts.alignH }
-        : undefined,
+      textAlignHorizontal: buildTextAlignHorizontal(opts.alignH),
     },
   });
   return updateNode({

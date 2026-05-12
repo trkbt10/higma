@@ -427,19 +427,10 @@ function promoteLeafTextToFrame(el: RawElement, parent: RawElement | undefined, 
   // implicit intent on single-line leaf-text hosts so a centred chrome
   // label always renders centred regardless of CSS strategy.
   const verticalCentringNeeded = leafTextWantsVerticalCentre(el, innerTextElement);
-  const innerTextWithVCentre: RawElement = verticalCentringNeeded
-    ? {
-        ...innerTextElement,
-        computedStyle: {
-          ...innerTextElement.computedStyle,
-          // Force the leaf normaliser into the flex-centring branch so
-          // the IR carries `textAlignVertical: center` even when the
-          // captured chrome is `display: block`.
-          display: "flex",
-          "align-items": "center",
-        },
-      }
-    : innerTextElement;
+  const innerTextWithVCentre: RawElement = applyImpliedVerticalCentring(
+    innerTextElement,
+    verticalCentringNeeded,
+  );
   const inner = normalizeText(innerTextWithVCentre, el, ctx);
   // Asymmetric `border-*` on the chrome (e.g. a `<button>` with only a
   // `border-bottom`) needs the same per-edge synth as a regular FRAME
@@ -507,6 +498,27 @@ function contentRectFromPadding(el: RawElement): { x: number; y: number; width: 
  * rich `<button>` with wrapped content) keep `top` anchoring, matching
  * CSS's flow direction.
  */
+/**
+ * Force the leaf text normaliser into the flex-centring branch by
+ * overlaying `display: flex; align-items: center` onto the inner text
+ * element. Used when the chrome's vertical centring intent is implicit
+ * (line stride matches chrome height) rather than declared via flex.
+ */
+function applyImpliedVerticalCentring(
+  innerTextElement: RawElement,
+  verticalCentringNeeded: boolean,
+): RawElement {
+  if (!verticalCentringNeeded) return innerTextElement;
+  return {
+    ...innerTextElement,
+    computedStyle: {
+      ...innerTextElement.computedStyle,
+      display: "flex",
+      "align-items": "center",
+    },
+  };
+}
+
 function leafTextWantsVerticalCentre(host: RawElement, inner: RawElement): boolean {
   const display = host.computedStyle.display ?? "";
   if (display === "flex" || display === "inline-flex" || display === "grid" || display === "inline-grid") {
@@ -622,9 +634,7 @@ function computeMaskBox(el: RawElement, hostBox: BoxIR): BoxIR {
   // generally use the default (intrinsic) so we honour that first
   // and only branch to explicit when present.
   const sizeValue = (cs["mask-size"] ?? cs["-webkit-mask-size"] ?? "auto").trim().toLowerCase();
-  const sized = sizeValue === "auto" || sizeValue === "" || sizeValue === "auto auto"
-    ? { width: naturalW, height: naturalH }
-    : resolveMaskExplicitSize(sizeValue, naturalW, naturalH);
+  const sized = resolveMaskSize(sizeValue, naturalW, naturalH);
   if (sized === undefined) {
     return hostBox;
   }
@@ -636,6 +646,23 @@ function computeMaskBox(el: RawElement, hostBox: BoxIR): BoxIR {
     width: sized.width,
     height: sized.height,
   };
+}
+
+/**
+ * Resolve a CSS `mask-size` value to a concrete {width, height}. The
+ * intrinsic / unspecified forms (`auto`, `""`, `auto auto`) fall back
+ * to the natural image dimensions; explicit lengths / percents delegate
+ * to `resolveMaskExplicitSize`.
+ */
+function resolveMaskSize(
+  sizeValue: string,
+  naturalW: number,
+  naturalH: number,
+): { width: number; height: number } | undefined {
+  if (sizeValue === "auto" || sizeValue === "" || sizeValue === "auto auto") {
+    return { width: naturalW, height: naturalH };
+  }
+  return resolveMaskExplicitSize(sizeValue, naturalW, naturalH);
 }
 
 function resolveMaskExplicitSize(
@@ -762,9 +789,7 @@ function normalizeParagraph(el: RawElement, parent: RawElement | undefined, ctx:
   // painting underlines onto plain text.
   const baseTextStyle = normalizeTextStyle(el, ctx.fontResolver);
   const promotedDecoration = promoteUniformDecoration(content.runs, baseTextStyle.textDecoration);
-  const textStyle = promotedDecoration === baseTextStyle.textDecoration
-    ? baseTextStyle
-    : { ...baseTextStyle, textDecoration: promotedDecoration };
+  const textStyle = applyPromotedDecoration(baseTextStyle, promotedDecoration);
   return {
     kind: "text",
     id: el.id,
@@ -837,6 +862,19 @@ function capturedLineBaselineYsRelativeTo(
   const parentContent = parent?.contentRect;
   const offsetY = parentContent ? parentContent.y : 0;
   return baselines.map((y) => y - offsetY);
+}
+
+/**
+ * Apply a promoted run-level decoration onto the paragraph's
+ * base text style. Returns the unmodified style when no promotion
+ * happened (avoids creating an identical clone).
+ */
+function applyPromotedDecoration(
+  baseTextStyle: TextStyleIR,
+  promotedDecoration: TextStyleIR["textDecoration"],
+): TextStyleIR {
+  if (promotedDecoration === baseTextStyle.textDecoration) return baseTextStyle;
+  return { ...baseTextStyle, textDecoration: promotedDecoration };
 }
 
 function promoteUniformDecoration(

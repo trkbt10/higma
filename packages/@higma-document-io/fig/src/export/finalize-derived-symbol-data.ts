@@ -25,6 +25,11 @@ import type {
 } from "@higma-document-models/fig/domain";
 import { computeDerivedSymbolData } from "@higma-document-models/fig/node-factory";
 
+function isDerivedUnchanged<T>(current: T | undefined, desired: T | undefined): boolean {
+  if (desired === undefined) return current === undefined;
+  return current === desired;
+}
+
 function finalizeChildren(
   children: readonly FigDesignNode[] | undefined,
   components: ReadonlyMap<string, FigDesignNode>,
@@ -61,9 +66,7 @@ function finalizeNode(
 
   const derived = computeDerivedSymbolData(symbol, node.size, components);
   const desiredDerived = derived.length === 0 ? undefined : derived;
-  const derivedUnchanged = desiredDerived === undefined
-    ? node.derivedSymbolData === undefined
-    : node.derivedSymbolData === desiredDerived;
+  const derivedUnchanged = isDerivedUnchanged(node.derivedSymbolData, desiredDerived);
 
   if (!childResult.changed && derivedUnchanged) {
     return node;

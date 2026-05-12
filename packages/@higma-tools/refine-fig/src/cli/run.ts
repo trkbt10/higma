@@ -206,7 +206,7 @@ async function commandApply(args: ParsedArgs): Promise<void> {
   const source = await loadRefineSource(bytes);
   const ctx = applyContextFromSource(source);
   const result = applyPlan(source.loaded, plan, ctx);
-  const out = await saveFigFile(source.loaded);
+  const out = await saveFigFile(result.loaded);
   await mkdir(dirname(resolve(outFig)), { recursive: true });
   await writeFile(resolve(outFig), out);
   process.stdout.write(

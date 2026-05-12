@@ -113,6 +113,38 @@ export type RasterizeOptions = {
   readonly strokePadding?: number;
 };
 
+function pickSilhouetteForEffect(
+  layerBlur: ShapeEffect | undefined,
+  node: FigNode,
+  w0: number,
+  h0: number,
+  silhouetteInset: number,
+): Uint8Array | undefined {
+  if (layerBlur !== undefined) return rasterizeShapeSilhouetteBinaryPolygon(node, w0, h0);
+  return rasterizeShapeSilhouette(node, w0, h0, silhouetteInset);
+}
+
+function blurShadowFloat(
+  useMultiPass: boolean,
+  buf: Float32Array,
+  w: number,
+  h: number,
+  radius: number,
+): Float32Array {
+  if (useMultiPass) return gaussianBlur2DFloatMultiPass(buf, w, h, radius);
+  return gaussianBlur2DFloat(buf, w, h, radius);
+}
+
+function applyLayerBlurIfRequested(
+  blurEffect: ShapeEffect | undefined,
+  buf: Float32Array,
+  w: number,
+  h: number,
+): Float32Array {
+  if (blurEffect) return gaussianBlur2DFloatMultiPass(buf, w, h, blurEffect.radius);
+  return buf;
+}
+
 export function rasterizeShapeWithEffects(
   node: FigNode,
   effects: readonly ShapeEffect[],
@@ -179,9 +211,13 @@ export function rasterizeShapeWithEffects(
   // big enough to surface the rim mismatch and the AA silhouette
   // matches WebGL's stencil-masked AA composite better.
   const blurEffectForSilhouette = effects.find((e) => e.kind === "layer-blur");
-  const silhouette = blurEffectForSilhouette !== undefined
-    ? rasterizeShapeSilhouetteBinaryPolygon(node, w0, h0)
-    : rasterizeShapeSilhouette(node, w0, h0, silhouetteInset);
+  const silhouette = pickSilhouetteForEffect(
+    blurEffectForSilhouette,
+    node,
+    w0,
+    h0,
+    silhouetteInset,
+  );
   if (!silhouette) {
     return undefined;
   }
@@ -331,9 +367,7 @@ export function rasterizeShapeWithEffects(
       );
       const sMax = Math.max(shadow.color.r, shadow.color.g, shadow.color.b);
       const useMultiPass = sMax > 0.1 && sChroma > 0.1;
-      const shadowBlurred = useMultiPass
-        ? gaussianBlur2DFloatMultiPass(shadowBuf, w, h, shadow.radius)
-        : gaussianBlur2DFloat(shadowBuf, w, h, shadow.radius);
+      const shadowBlurred = blurShadowFloat(useMultiPass, shadowBuf, w, h, shadow.radius);
       for (let i = 0; i < accum.length; i += 4) {
         const sA = shadowBlurred[i + 3]!;
         const dA = accum[i + 3]!;
@@ -407,9 +441,7 @@ export function rasterizeShapeWithEffects(
   // behaviour leaks the shape's premultiplied alpha across the kernel
   // tail differently. Multi-pass with the 33-tap fixed kernel mirrors
   // `effects-renderer.applyGaussianBlur` byte-for-byte.
-  const shapeOutput = blurEffect
-    ? gaussianBlur2DFloatMultiPass(shapeBuf, w, h, blurEffect.radius)
-    : shapeBuf;
+  const shapeOutput = applyLayerBlurIfRequested(blurEffect, shapeBuf, w, h);
   for (let i = 0; i < accum.length; i += 4) {
     const sA = shapeOutput[i + 3]!;
     if (sA === 0) continue;

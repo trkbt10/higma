@@ -38,6 +38,13 @@ const PNG_1x1_BYTES = new Uint8Array([
   0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82, // IEND
 ]);
 
+function buildTestFills(
+  fillImageId: string | undefined,
+): ReadonlyArray<{ kind: "image"; imageId: string; scaleMode: "cover" }> {
+  if (fillImageId === undefined) { return []; }
+  return [{ kind: "image", imageId: fillImageId, scaleMode: "cover" }];
+}
+
 function makeViewport(opts: { readonly assets: ReadonlyMap<string, AssetIR>; readonly fillImageId?: string }): ViewportIR {
   return {
     source: "https://test.example/",
@@ -53,9 +60,7 @@ function makeViewport(opts: { readonly assets: ReadonlyMap<string, AssetIR>; rea
       box: { x: 0, y: 0, width: 100, height: 100 },
       visible: true,
       style: {
-        fills: opts.fillImageId !== undefined
-          ? [{ kind: "image", imageId: opts.fillImageId, scaleMode: "cover" }]
-          : [],
+        fills: buildTestFills(opts.fillImageId),
         strokes: [],
         effects: [],
         opacity: 1,

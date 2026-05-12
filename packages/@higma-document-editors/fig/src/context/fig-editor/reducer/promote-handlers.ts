@@ -87,11 +87,7 @@ function insertNodeUnderPage(
 ): FigDesignDocument {
   return {
     ...doc,
-    pages: doc.pages.map((page) =>
-      page.id === pageId
-        ? { ...page, children: [...page.children, node] }
-        : page,
-    ),
+    pages: doc.pages.map((page) => (page.id === pageId ? { ...page, children: [...page.children, node] } : page)),
   };
 }
 

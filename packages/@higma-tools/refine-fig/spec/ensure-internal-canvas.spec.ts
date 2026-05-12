@@ -148,7 +148,7 @@ describe("refine-fig ensure-internal-canvas", () => {
       // Bootstrap path must still fire for every named palette entry.
       expect(result.fillProxiesCreated, "expected at least one bootstrapped FILL proxy").toBeGreaterThan(0);
 
-      const out = await saveFigFile(source.loaded);
+      const out = await saveFigFile(result.loaded);
       const outLoaded = await loadFigFile(out);
       const postInternal = outLoaded.nodeChanges.filter(
         (n) => getNodeType(n) === "CANVAS" && n.internalOnly === true,

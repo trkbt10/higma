@@ -35,6 +35,32 @@ export type SvgPathBlobResult = {
   readonly bytes: readonly number[];
 };
 
+/**
+ * Reflected control point for a smooth cubic ("S" / "s") command.
+ *
+ * When the previous command was C/S, SVG reflects the previous cubic's
+ * second control point through the current point to act as the implicit
+ * first control point. Otherwise the implicit control point coincides
+ * with the current point.
+ */
+function reflectedCubicControlPoint(cursor: Cursor): { x: number; y: number } {
+  if (cursor.prevCmd === "C" || cursor.prevCmd === "S") {
+    return { x: cursor.x * 2 - cursor.prevControlX, y: cursor.y * 2 - cursor.prevControlY };
+  }
+  return { x: cursor.x, y: cursor.y };
+}
+
+/**
+ * Reflected control point for a smooth quadratic ("T" / "t") command.
+ * Same idea as `reflectedCubicControlPoint` but for Q/T continuity.
+ */
+function reflectedQuadraticControlPoint(cursor: Cursor): { x: number; y: number } {
+  if (cursor.prevCmd === "Q" || cursor.prevCmd === "T") {
+    return { x: cursor.x * 2 - cursor.prevControlX, y: cursor.y * 2 - cursor.prevControlY };
+  }
+  return { x: cursor.x, y: cursor.y };
+}
+
 export function encodeSvgPathBlob(d: string): SvgPathBlobResult {
   const tokens = tokenizePathD(d);
   const bytes: number[] = [];
@@ -178,12 +204,9 @@ export function encodeSvgPathBlob(d: string): SvgPathBlobResult {
       case "s": {
         const isRelative = cmd === "s";
         for (let j = 0; j + 3 < args.length; j += 4) {
-          const cp1x = (cursor.prevCmd === "C" || cursor.prevCmd === "S")
-            ? cursor.x * 2 - cursor.prevControlX
-            : cursor.x;
-          const cp1y = (cursor.prevCmd === "C" || cursor.prevCmd === "S")
-            ? cursor.y * 2 - cursor.prevControlY
-            : cursor.y;
+          const reflected = reflectedCubicControlPoint(cursor);
+          const cp1x = reflected.x;
+          const cp1y = reflected.y;
           const cp2x = isRelative ? cursor.x + args[j]! : args[j]!;
           const cp2y = isRelative ? cursor.y + args[j + 1]! : args[j + 1]!;
           const x = isRelative ? cursor.x + args[j + 2]! : args[j + 2]!;
@@ -237,12 +260,9 @@ export function encodeSvgPathBlob(d: string): SvgPathBlobResult {
       case "t": {
         const isRelative = cmd === "t";
         for (let j = 0; j + 1 < args.length; j += 2) {
-          const qx = (cursor.prevCmd === "Q" || cursor.prevCmd === "T")
-            ? cursor.x * 2 - cursor.prevControlX
-            : cursor.x;
-          const qy = (cursor.prevCmd === "Q" || cursor.prevCmd === "T")
-            ? cursor.y * 2 - cursor.prevControlY
-            : cursor.y;
+          const reflected = reflectedQuadraticControlPoint(cursor);
+          const qx = reflected.x;
+          const qy = reflected.y;
           const x = isRelative ? cursor.x + args[j]! : args[j]!;
           const y = isRelative ? cursor.y + args[j + 1]! : args[j + 1]!;
           const cp1x = cursor.x + (qx - cursor.x) * (2 / 3);

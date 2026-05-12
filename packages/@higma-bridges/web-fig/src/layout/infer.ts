@@ -123,13 +123,15 @@ function inferInset(input: InferInput): InferenceResult {
     paddingBottom: clampNonNeg(bottom),
     paddingLeft: horizontalSymmetric ? 0 : clampNonNeg(left),
     primaryAlign: "start",
-    counterAlign: horizontalStretch
-      ? "stretch"
-      : horizontalSymmetric
-        ? "center"
-        : "start",
+    counterAlign: pickCounterAlign(horizontalStretch, horizontalSymmetric),
     orderedIndices: [0],
   };
+}
+
+function pickCounterAlign(stretch: boolean, symmetric: boolean): "stretch" | "center" | "start" {
+  if (stretch) return "stretch";
+  if (symmetric) return "center";
+  return "start";
 }
 
 type Axis = "row" | "column";

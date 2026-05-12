@@ -579,9 +579,12 @@ export function buildPolygon2DNodes(
         if (bounds) {
           const gradPaint = paint as FigGradientPaint;
           const sizeForResolve = { x: bounds.width, y: bounds.height };
-          const resolved = paint.type === "GRADIENT_LINEAR"
-            ? rasterizedGradientProvider.resolveLinear?.(gradPaint, sizeForResolve)
-            : rasterizedGradientProvider.resolveRadial?.(gradPaint, sizeForResolve);
+          const resolved = resolveLinearOrRadialGradient(
+            paint.type,
+            gradPaint,
+            sizeForResolve,
+            rasterizedGradientProvider,
+          );
           if (resolved) {
             const polys = buildRasterizedGradientPolygon(
               node_,
@@ -636,9 +639,12 @@ export function buildPolygon2DNodes(
         continue;
       }
       const gradPaint = paint as FigGradientPaint;
-      const resolved = paint.type === "GRADIENT_ANGULAR"
-        ? rasterizedGradientProvider.resolveAngular(gradPaint, node_.size)
-        : rasterizedGradientProvider.resolveDiamond(gradPaint, node_.size);
+      const resolved = resolveAngularOrDiamondGradient(
+        paint.type,
+        gradPaint,
+        node_.size,
+        rasterizedGradientProvider,
+      );
       if (!resolved) {
         continue;
       }
@@ -1178,6 +1184,54 @@ export type DecodedShapeFill = {
   readonly polygons: readonly GodotNode[];
   readonly subResources: readonly GodotSubResource[];
 };
+
+type ResolvedRasterizedGradient = {
+  readonly id: string;
+  readonly imageWidth: number;
+  readonly imageHeight: number;
+};
+
+type LinearRadialProvider = {
+  readonly resolveLinear?: (
+    paint: FigGradientPaint,
+    size: { readonly x: number; readonly y: number },
+  ) => ResolvedRasterizedGradient | undefined;
+  readonly resolveRadial?: (
+    paint: FigGradientPaint,
+    size: { readonly x: number; readonly y: number },
+  ) => ResolvedRasterizedGradient | undefined;
+};
+
+function resolveLinearOrRadialGradient(
+  paintType: "GRADIENT_LINEAR" | "GRADIENT_RADIAL" | string,
+  paint: FigGradientPaint,
+  size: { readonly x: number; readonly y: number },
+  provider: LinearRadialProvider,
+): ResolvedRasterizedGradient | undefined {
+  if (paintType === "GRADIENT_LINEAR") return provider.resolveLinear?.(paint, size);
+  return provider.resolveRadial?.(paint, size);
+}
+
+type AngularDiamondProvider = {
+  readonly resolveAngular: (
+    paint: FigGradientPaint,
+    size: { readonly x: number; readonly y: number },
+  ) => ResolvedRasterizedGradient | undefined;
+  readonly resolveDiamond: (
+    paint: FigGradientPaint,
+    size: { readonly x: number; readonly y: number },
+  ) => ResolvedRasterizedGradient | undefined;
+};
+
+function resolveAngularOrDiamondGradient(
+  paintType: "GRADIENT_ANGULAR" | "GRADIENT_DIAMOND" | string,
+  paint: FigGradientPaint,
+  size: { readonly x: number; readonly y: number },
+  provider: AngularDiamondProvider,
+): ResolvedRasterizedGradient | undefined {
+  if (paintType === "GRADIENT_ANGULAR") return provider.resolveAngular(paint, size);
+  return provider.resolveDiamond(paint, size);
+}
 
 /**
  * One-shot helper that bundles `decodeNodeContours` +

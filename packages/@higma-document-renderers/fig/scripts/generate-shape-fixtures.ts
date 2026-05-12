@@ -302,21 +302,11 @@ function addShapeChild(
           width: child.width, height: 0,
           strokes,
           strokeWeight: child.strokeWeight,
+          strokeCap: child.strokeCap,
+          strokeDashes: child.dashPattern,
           rotation: child.rotation !== undefined ? (child.rotation * Math.PI) / 180 : undefined,
         },
       });
-      if (child.dashPattern || child.strokeCap) {
-        return updateNode({
-          doc: r.doc,
-          pageId,
-          nodeId: r.nodeId,
-          updater: (n) => ({
-            ...n,
-            ...(child.dashPattern ? { strokeDashes: child.dashPattern } : {}),
-            ...(child.strokeCap ? { strokeCap: child.strokeCap } : {}),
-          }),
-        });
-      }
       return r.doc;
     }
     case "star": {
