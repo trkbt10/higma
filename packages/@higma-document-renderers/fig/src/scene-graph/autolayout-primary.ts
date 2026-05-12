@@ -218,14 +218,43 @@ function resolveStartOffset(
   }
 }
 
+/**
+ * Cross-check the parent's `proportionsConstrained` / `targetAspectRatio`
+ * pair against its `size`. Returns the parent unchanged in every
+ * successful path — this is a verification gate, not a layout transform.
+ *
+ * Figma's schema declares `proportionsConstrained` (bool) and
+ * `targetAspectRatio` (vector) as independent optional fields. The
+ * authoring contract is:
+ *
+ *   - `proportionsConstrained=true` alone → "lock to the current
+ *     size's ratio". There is no separate target; `size.x:size.y` *is*
+ *     the locked ratio, so validating it against itself is a tautology.
+ *     Real Figma exports (e.g. icon INSTANCEs from the E-commerce and
+ *     Windows 98 community templates) ship this shape verbatim.
+ *
+ *   - `proportionsConstrained=true` plus an explicit
+ *     `targetAspectRatio` → "lock to this explicit ratio". When both
+ *     fields are present we verify they agree with `size`; a divergence
+ *     means our pipeline (parser / SYMBOL resize / override translation)
+ *     produced a node whose stored ratio doesn't match its stored size,
+ *     which IS a real inconsistency.
+ *
+ * Missing `targetAspectRatio` therefore must NOT throw. The previous
+ * gate required it unconditionally, which crashed the editor on any
+ * file containing an aspect-locked INSTANCE without an authored target.
+ */
 function applyAspectLock<P extends PrimaryAxisParent>(parent: P): P {
   if (parent.proportionsConstrained !== true) { return parent; }
   const target = parent.targetAspectRatio;
-  if (!target) {
-    throw new Error(`AutoLayout aspect lock on "${"name" in parent ? String(parent.name) : "node"}" requires targetAspectRatio.`);
-  }
+  if (!target) { return parent; }
   if (!parent.size) {
     throw new Error("AutoLayout aspect lock requires parent size.");
+  }
+  if (parent.size.y === 0 || target.y === 0) {
+    throw new Error(
+      `AutoLayout aspect lock degenerate: size ${parent.size.x}x${parent.size.y}, target ${target.x}:${target.y}.`,
+    );
   }
   const expected = target.x / target.y;
   const actual = parent.size.x / parent.size.y;

@@ -719,3 +719,124 @@ describe("INSTANCE resolution — constraint resolution", () => {
     expect(child.transform.m12).toBe(50);
   });
 });
+
+// =============================================================================
+// Aspect-Lock Regression — community .fig icon INSTANCE pattern
+// =============================================================================
+
+/**
+ * Real Figma community files (e.g. the E-commerce template's `arrow-left`
+ * INSTANCEs and the icon set in the Windows 98 Design System) author
+ * `{size, proportionsConstrained: true}` self-overrides on INSTANCE
+ * nodes — WITHOUT an explicit `targetAspectRatio`. Per the Figma kiwi
+ * schema (`proportionsConstrained: bool` at value 151 and
+ * `targetAspectRatio: vec` at value 423) those two fields are
+ * independent: `proportionsConstrained=true` alone means "lock to the
+ * current size's ratio" with no separate target to validate.
+ *
+ * The renderer's aspect-lock gate previously threw whenever
+ * `proportionsConstrained=true` arrived without `targetAspectRatio`,
+ * which crashed `buildSceneGraph` on every community file containing
+ * icon instances. These tests pin the contract so the gate can never
+ * regress to that shape again.
+ */
+describe("INSTANCE resolution — aspect-lock contract (no targetAspectRatio)", () => {
+  it("builds an INSTANCE with proportionsConstrained=true and no targetAspectRatio without throwing", () => {
+    const symbol = makeNode({
+      id: "0:1",
+      type: "SYMBOL",
+      fills: [RED_FILL],
+      size: { x: 24, y: 24 },
+      children: [],
+    });
+
+    // Icon INSTANCE: resized to 16x16 with proportionsConstrained=true and
+    // NO targetAspectRatio. This is the exact shape produced by the
+    // community templates' arrow-left / mingcute:dribbble-line icons.
+    const instance = makeNode({
+      id: "0:2",
+      type: "INSTANCE",
+      name: "icon-instance",
+      symbolId: nid("0:1"),
+      size: { x: 16, y: 16 },
+      proportionsConstrained: true,
+      // targetAspectRatio intentionally omitted — this is the regression.
+    });
+
+    const symbolMap = new Map([[nid("0:1"), symbol]]);
+    expect(() => buildWithSymbols([instance], symbolMap)).not.toThrow();
+
+    const sg = buildWithSymbols([instance], symbolMap);
+    const frame = sg.root.children[0] as FrameNode;
+    expect(frame.type).toBe("frame");
+  });
+
+  it("builds an auto-layout INSTANCE with proportionsConstrained=true without throwing", () => {
+    // Same regression, but the INSTANCE is an auto-layout container.
+    // This exercises the resolveAutoLayoutFrame → applyHugSizing →
+    // applyAspectLock chain rather than the plain-frame branch.
+    const symbol = makeNode({
+      id: "0:1",
+      type: "SYMBOL",
+      fills: [RED_FILL],
+      size: { x: 24, y: 24 },
+      children: [],
+      autoLayout: {
+        stackMode: { value: 1, name: "HORIZONTAL" },
+        stackSpacing: 0,
+        stackPadding: { top: 0, right: 0, bottom: 0, left: 0 },
+      },
+    });
+
+    const instance = makeNode({
+      id: "0:2",
+      type: "INSTANCE",
+      name: "icon-instance-autolayout",
+      symbolId: nid("0:1"),
+      size: { x: 16, y: 16 },
+      proportionsConstrained: true,
+      autoLayout: {
+        stackMode: { value: 1, name: "HORIZONTAL" },
+        stackSpacing: 0,
+        stackPadding: { top: 0, right: 0, bottom: 0, left: 0 },
+      },
+    });
+
+    const symbolMap = new Map([[nid("0:1"), symbol]]);
+    expect(() => buildWithSymbols([instance], symbolMap)).not.toThrow();
+  });
+
+  it("builds a plain FRAME with proportionsConstrained=true and no targetAspectRatio without throwing", () => {
+    // Non-INSTANCE path: a FRAME (e.g. an aspect-locked card container)
+    // that authored proportionsConstrained=true without a target. Goes
+    // through buildNode's FRAME branch → resolveAutoLayoutFrame(node, …).
+    const frame = makeNode({
+      id: "0:3",
+      type: "FRAME",
+      name: "aspect-locked-frame",
+      size: { x: 32, y: 32 },
+      proportionsConstrained: true,
+      children: [],
+    });
+
+    expect(() => buildWithSymbols([frame], new Map())).not.toThrow();
+  });
+
+  it("still throws when proportionsConstrained=true with an explicit target that does NOT match size", () => {
+    // The mismatch validation must stay in place — that case represents
+    // genuine pipeline drift (the file's stored size disagrees with the
+    // stored target ratio) and is the verification gate's reason for
+    // existing.
+    const frame = makeNode({
+      id: "0:4",
+      type: "FRAME",
+      name: "aspect-mismatch-frame",
+      size: { x: 100, y: 50 },
+      proportionsConstrained: true,
+      targetAspectRatio: { x: 16, y: 9 },
+      children: [],
+    });
+
+    expect(() => buildWithSymbols([frame], new Map())).toThrow(/AutoLayout aspect lock mismatch/);
+  });
+});
