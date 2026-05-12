@@ -16,7 +16,7 @@
 
 import earcut from "earcut";
 import { flattenPathCommands } from "@higma-primitives/path";
-import type { CornerRadius, PathContour } from "../scene-graph/types";
+import type { CornerRadius, PathContour } from "../../scene-graph/types";
 
 // =============================================================================
 // Earcut Integration

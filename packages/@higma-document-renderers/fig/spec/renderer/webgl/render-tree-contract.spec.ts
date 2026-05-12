@@ -2,7 +2,7 @@
 
 import path from "node:path";
 import { resolveRenderTree, type RenderTree } from "../../../src/scene-graph/render-tree";
-import { auditWebGLRenderTreeContract } from "../../../src/webgl/render-tree-contract";
+import { auditWebGLRenderTreeContract } from "../../../src/webgl/scene/render-tree-contract";
 import { buildFrameSceneGraph, loadFigFixture } from "./test-utils";
 
 const FIXTURE_ROOT = path.resolve(__dirname, "../../../fixtures");

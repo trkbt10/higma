@@ -42,7 +42,7 @@ import {
 import {
   getWebGLViewportPreparationStatus,
   type WebGLViewportPreparationStatus,
-} from "../preparation-status";
+} from "../scene/preparation-status";
 
 export type WebGLViewportPipelineParams = {
   readonly sceneGraph: SceneGraph | null;

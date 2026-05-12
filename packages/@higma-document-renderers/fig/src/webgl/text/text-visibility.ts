@@ -1,6 +1,6 @@
 /** @file Visibility checks for WebGL text rendering inputs. */
 
-import type { RenderTextLines } from "../scene-graph/render-tree";
+import type { RenderTextLines } from "../../scene-graph/render-tree";
 
 /**
  * Return true when line-mode text contains visible characters that require

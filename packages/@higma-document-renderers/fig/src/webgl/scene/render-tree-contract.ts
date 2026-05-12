@@ -4,8 +4,8 @@ import type {
   RenderNode,
   RenderTree,
   StrokeRendering,
-} from "../scene-graph/render-tree";
-import { createWebGLPathFillPlan } from "./render-path-fill-plan";
+} from "../../scene-graph/render-tree";
+import { createWebGLPathFillPlan } from "../fill/render-path-fill-plan";
 
 export type WebGLRenderTreeContractIssue = {
   readonly nodeId: string;

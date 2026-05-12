@@ -1,7 +1,24 @@
 /**
- * @file WebGL renderer module
+ * @file WebGL renderer module — public API barrel.
  *
- * Provides GPU-accelerated rendering of Figma scene graphs.
+ * Provides GPU-accelerated rendering of Figma scene graphs. Internal layout:
+ *
+ * - `renderer/` — main composition (`createWebGLFigmaRenderer`)
+ * - `tessellation/` — geometry: path contours, fills, strokes, stencil fans
+ * - `text/` — text-node tessellation and visibility
+ * - `fill/` — fill draw calls and per-path fill plan
+ * - `effects/` — effect application and stencil clipping
+ * - `resources/` — caches, textures, framebuffers, identity store
+ * - `scene/` — scene state, render-tree cache, culling, surface, viewport,
+ *   preparation status, render-tree contract audit
+ * - `shaders/` — GLSL program sources and the shader cache
+ * - `react/` — React lifecycle hook
+ *
+ * Sub-folders are not separate entry points: this barrel is the only one,
+ * so consumers see a single coherent WebGL surface. The custom
+ * `no-cross-package-reexport` rule forbids republishing primitives (e.g.
+ * `flattenPathCommands` from `@higma-primitives/path`) through this barrel;
+ * consumers must import them directly.
  */
 
 // Main renderer
@@ -10,29 +27,56 @@ export {
   type WebGLFigmaRendererInstance,
   type WebGLRendererOptions,
   type WebGLFigmaRendererMetrics,
-} from "./renderer";
-export { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "./resource-context";
+} from "./renderer/renderer";
+
+// Resource context & identity
+export {
+  createWebGLFigmaResourceContext,
+  type WebGLFigmaResourceContext,
+} from "./resources/resource-context";
 export {
   createWebGLSceneResourceIdentityStore,
   type WebGLSceneResourceIdentityStore,
   type WebGLSceneResourceKey,
-} from "./resource-identity";
+} from "./resources/resource-identity";
+export {
+  createTextureCache,
+  type TextureCache,
+  type TextureEntry,
+} from "./resources/texture-cache";
+export {
+  imageTextureResource,
+  type TextureResource,
+  type TextureResourceId,
+  type ImageTextureResource,
+} from "./resources/texture-resource";
+export {
+  createFramebuffer,
+  deleteFramebuffer,
+  bindFramebuffer,
+  type Framebuffer,
+} from "./resources/framebuffer";
 
 // Tessellation
-//
-// `flattenPathCommands` lives in `@higma-primitives/path`; consumers
-// import it directly. The custom `no-cross-package-reexport` rule
-// forbids republishing primitives through this barrel.
 export {
   triangulate,
   tessellateContour,
   tessellateContours,
   generateRectVertices,
   generateEllipseVertices,
-} from "./tessellation";
+} from "./tessellation/tessellation";
+export {
+  tessellateRectStroke,
+  tessellateEllipseStroke,
+  tessellatePathStroke,
+} from "./tessellation/stroke-tessellation";
 
 // Shaders
-export { createShaderCache, type ShaderCache, type ShaderProgramName } from "./shaders";
+export {
+  createShaderCache,
+  type ShaderCache,
+  type ShaderProgramName,
+} from "./shaders";
 
 // Fill rendering
 export {
@@ -41,46 +85,27 @@ export {
   drawRadialGradientFill,
   drawImageFill,
   type GLContext,
-} from "./fill-renderer";
+} from "./fill/fill-renderer";
 
 // Text rendering
-export {
-  tessellateTextNode,
-  type TessellatedText,
-} from "./text-renderer";
+export { tessellateTextNode, type TessellatedText } from "./text/text-renderer";
 
-// Texture cache
-export { createTextureCache, type TextureCache, type TextureEntry } from "./texture-cache";
+// Effects & stencil clipping
 export {
-  imageTextureResource,
-  type TextureResource,
-  type TextureResourceId,
-  type ImageTextureResource,
-} from "./texture-resource";
+  createEffectsRenderer,
+  type EffectsRendererInstance,
+} from "./effects/effects-renderer";
+export { beginStencilClip, endStencilClip } from "./effects/clip-mask";
+
+// Scene state
+export {
+  createSceneState,
+  type SceneStateInstance,
+  type NodeGPUState,
+} from "./scene/scene-state";
 
 // Viewport backing-store policy
-export { resolveWebGLViewportPixelRatio, type WebGLViewportPixelRatioInput } from "./viewport-pixel-ratio";
-
-// Framebuffer
 export {
-  createFramebuffer,
-  deleteFramebuffer,
-  bindFramebuffer,
-  type Framebuffer,
-} from "./framebuffer";
-
-// Effects
-export { createEffectsRenderer, type EffectsRendererInstance } from "./effects-renderer";
-
-// Clipping & masking
-export { beginStencilClip, endStencilClip } from "./clip-mask";
-
-// Stroke tessellation
-export {
-  tessellateRectStroke,
-  tessellateEllipseStroke,
-  tessellatePathStroke,
-} from "./stroke-tessellation";
-
-// Scene state (incremental updates)
-export { createSceneState, type SceneStateInstance, type NodeGPUState } from "./scene-state";
+  resolveWebGLViewportPixelRatio,
+  type WebGLViewportPixelRatioInput,
+} from "./scene/viewport-pixel-ratio";

@@ -1,12 +1,12 @@
 /** @file RenderTree cache for WebGL viewport-only rerenders. */
 
-import type { SceneGraph } from "../scene-graph/types";
-import { resolveRenderTree, type RenderTree } from "../scene-graph/render-tree";
+import type { SceneGraph } from "../../scene-graph/types";
+import { resolveRenderTree, type RenderTree } from "../../scene-graph/render-tree";
 import {
   createWebGLSceneResourceIdentityStore,
   type WebGLSceneResourceIdentityStore,
   type WebGLSceneResourceKey,
-} from "./resource-identity";
+} from "../resources/resource-identity";
 
 type RenderTreeCacheEntry = {
   readonly resourceKey: WebGLSceneResourceKey;

@@ -1,7 +1,7 @@
 /** @file WebGL RenderTree cache tests. */
 
-import type { RenderTree } from "../scene-graph/render-tree";
-import type { GroupNode, SceneGraph, SceneNodeId } from "../scene-graph/types";
+import type { RenderTree } from "../../scene-graph/render-tree";
+import type { GroupNode, SceneGraph, SceneNodeId } from "../../scene-graph/types";
 import { createWebGLRenderTreeCache } from "./render-tree-cache";
 
 function makeRoot(): GroupNode {

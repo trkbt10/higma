@@ -1,6 +1,6 @@
 /** @file WebGL scene resource identity for viewport-only rerenders. */
 
-import type { SceneGraph } from "../scene-graph/types";
+import type { SceneGraph } from "../../scene-graph/types";
 
 export type WebGLSceneResourceKey = {
   readonly root: SceneGraph["root"];

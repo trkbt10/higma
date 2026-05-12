@@ -1,9 +1,9 @@
 /** @file WebGL path fill plan derived from RenderTree path contours. */
 
-import type { Fill, PathContour, Color } from "../scene-graph/types";
-import type { RenderPathContour, ResolvedFillResult } from "../scene-graph/render-tree";
-import type { ResolvedFillDef } from "../scene-graph/render/fill";
-import { svgPathDToContours } from "./path-contours";
+import type { Fill, PathContour, Color } from "../../scene-graph/types";
+import type { RenderPathContour, ResolvedFillResult } from "../../scene-graph/render-tree";
+import type { ResolvedFillDef } from "../../scene-graph/render/fill";
+import { svgPathDToContours } from "../tessellation/path-contours";
 
 export type WebGLPathFillRule = "evenodd" | "nonzero";
 

@@ -7,7 +7,7 @@
  */
 
 import type { SceneGraph } from "../../../../src/scene-graph/types";
-import { createWebGLFigmaRenderer } from "../../../../src/webgl/renderer";
+import { createWebGLFigmaRenderer } from "../../../../src/webgl/renderer/renderer";
 
 type WindowWithRenderSceneGraph = Window & {
   renderSceneGraph: (json: string) => Promise<string>;

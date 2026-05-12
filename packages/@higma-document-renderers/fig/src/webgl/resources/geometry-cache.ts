@@ -1,15 +1,15 @@
 /** @file WebGL geometry cache keyed by RenderTree node identity. */
 
-import type { CornerRadius, PathContour } from "../scene-graph/types";
-import type { RenderPathNode, RenderTextNode } from "../scene-graph/render-tree";
+import type { CornerRadius, PathContour } from "../../scene-graph/types";
+import type { RenderPathNode, RenderTextNode } from "../../scene-graph/render-tree";
 import {
   generateEllipseVertices,
   generateRectVertices,
   tessellateContours,
-} from "./tessellation";
-import { tessellatePathStroke } from "./stroke-tessellation";
-import { prepareFanTriangles } from "./stencil-fill";
-import { svgPathDToContours } from "./path-contours";
+} from "../tessellation/tessellation";
+import { tessellatePathStroke } from "../tessellation/stroke-tessellation";
+import { prepareFanTriangles } from "../tessellation/stencil-fill";
+import { svgPathDToContours } from "../tessellation/path-contours";
 
 type PathGeometry = {
   readonly parsedContours: readonly PathContour[];

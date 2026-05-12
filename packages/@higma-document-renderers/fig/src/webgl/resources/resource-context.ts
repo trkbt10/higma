@@ -1,8 +1,8 @@
 /** @file Central WebGL resource context for fig rendering. */
 
-import { createShaderCache, type ShaderCache } from "./shaders";
+import { createShaderCache, type ShaderCache } from "../shaders";
 import { createTextureCache, type TextureCache } from "./texture-cache";
-import { createWebGLRenderTreeCache, type WebGLRenderTreeCache } from "./render-tree-cache";
+import { createWebGLRenderTreeCache, type WebGLRenderTreeCache } from "../scene/render-tree-cache";
 import { createWebGLSceneResourceIdentityStore, type WebGLSceneResourceIdentityStore } from "./resource-identity";
 
 export type WebGLFigmaResourceContext = {

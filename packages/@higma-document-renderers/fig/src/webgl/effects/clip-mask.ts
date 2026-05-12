@@ -5,9 +5,9 @@
  * Bits 0-6 (0x7F) are reserved for stencil-based path fill (see stencil-fill.ts).
  */
 
-import type { ClipShape } from "../scene-graph/types";
-import { generateRectVertices, tessellateContours } from "./tessellation";
-import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "./stencil-fill";
+import type { ClipShape } from "../../scene-graph/types";
+import { generateRectVertices, tessellateContours } from "../tessellation/tessellation";
+import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
 
 type StencilClipGL = Pick<
   WebGLRenderingContext,

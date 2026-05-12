@@ -1,7 +1,7 @@
 /** @file Tests for WebGL path fill planning from RenderTree contours. */
 
-import type { Fill } from "../scene-graph/types";
-import type { RenderPathContour } from "../scene-graph/render-tree";
+import type { Fill } from "../../scene-graph/types";
+import type { RenderPathContour } from "../../scene-graph/render-tree";
 import { createWebGLPathFillPlan, resolvedFillOverrideToWebGLFills } from "./render-path-fill-plan";
 
 const whiteFill: Fill = {

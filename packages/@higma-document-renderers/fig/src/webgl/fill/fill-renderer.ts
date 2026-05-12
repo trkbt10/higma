@@ -4,9 +4,9 @@
  * Handles solid, linear gradient, radial gradient, and image fills.
  */
 
-import type { Fill, Color, AffineMatrix, ImagePaintFilter } from "../scene-graph/types";
-import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "../scene-graph/render/image-paint-filter";
-import type { ShaderCache } from "./shaders";
+import type { Fill, Color, AffineMatrix, ImagePaintFilter } from "../../scene-graph/types";
+import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "../../scene-graph/render/image-paint-filter";
+import type { ShaderCache } from "../shaders";
 
 // =============================================================================
 // Types

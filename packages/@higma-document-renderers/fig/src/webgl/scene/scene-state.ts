@@ -16,13 +16,13 @@ import type {
   Effect,
   ClipShape,
   CornerRadius,
-} from "../scene-graph/types";
-import type { SceneGraphDiff, DiffOp } from "../scene-graph/diff";
+} from "../../scene-graph/types";
+import type { SceneGraphDiff, DiffOp } from "../../scene-graph/diff";
 import {
   generateRectVertices,
   generateEllipseVertices,
   tessellateContours,
-} from "./tessellation";
+} from "../tessellation/tessellation";
 
 /** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
 function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {

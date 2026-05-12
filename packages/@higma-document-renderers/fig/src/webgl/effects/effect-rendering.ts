@@ -7,12 +7,12 @@ import type {
   Effect,
   Fill,
   PathContour,
-} from "../scene-graph/types";
-import { buildEffectStack, renderShapeEffectStack } from "../scene-graph/render/effect-stack";
-import { drawSolidFill, type GLContext } from "./fill-renderer";
+} from "../../scene-graph/types";
+import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
+import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
 import type { EffectsRendererInstance } from "./effects-renderer";
-import { tessellateContours } from "./tessellation";
-import type { Bounds } from "./stencil-fill";
+import { tessellateContours } from "../tessellation/tessellation";
+import type { Bounds } from "../tessellation/stencil-fill";
 
 type DrawStencilFillParams = {
   readonly fanVertices: Float32Array;

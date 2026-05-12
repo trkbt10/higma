@@ -1,7 +1,7 @@
 /** @file WebGL stencil clip tests. */
 
 import { rebuildStencilClipStack } from "./clip-mask";
-import { CLIP_STENCIL_BIT } from "./stencil-fill";
+import { CLIP_STENCIL_BIT } from "../tessellation/stencil-fill";
 
 type MockStencilClipGL = Parameters<typeof rebuildStencilClipStack>[0]["gl"];
 

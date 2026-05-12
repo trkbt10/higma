@@ -1,7 +1,7 @@
 /** @file WebGL scene resource identity tests. */
 
-import type { SceneGraph } from "../scene-graph/types";
-import type { GroupNode, SceneNodeId } from "../scene-graph/types";
+import type { SceneGraph } from "../../scene-graph/types";
+import type { GroupNode, SceneNodeId } from "../../scene-graph/types";
 import { createWebGLSceneResourceIdentityStore } from "./resource-identity";
 
 function makeRoot(id: string): GroupNode {

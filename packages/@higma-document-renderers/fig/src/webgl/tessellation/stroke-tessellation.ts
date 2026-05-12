@@ -6,7 +6,7 @@
  */
 
 import { flattenPathCommands } from "@higma-primitives/path";
-import type { PathContour } from "../scene-graph/types";
+import type { PathContour } from "../../scene-graph/types";
 import { triangulate } from "./tessellation";
 
 // =============================================================================

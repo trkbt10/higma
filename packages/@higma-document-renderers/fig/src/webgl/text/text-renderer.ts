@@ -7,8 +7,8 @@
  * 2. OpenType.js font outlines - high quality
  */
 
-import type { TextNode, Color, PathContour } from "../scene-graph/types";
-import { tessellateContours } from "./tessellation";
+import type { TextNode, Color, PathContour } from "../../scene-graph/types";
+import { tessellateContours } from "../tessellation/tessellation";
 
 /** Tessellate decoration contours or return empty array if none */
 function tessellateDecorationsOrEmpty(
