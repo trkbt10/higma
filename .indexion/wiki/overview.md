@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="../../brand/higma.svg" alt="higma logo" width="180" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../../brand/higma-dark.svg" />
+    <img src="../../brand/higma.svg" alt="higma logo" width="180" />
+  </picture>
 </p>
 
 <h1 align="center">higma</h1>
