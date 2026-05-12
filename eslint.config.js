@@ -13,7 +13,7 @@ import customPlugin from "./eslint/plugins/custom/index.js";
 import rulesJSDoc from "./eslint/rules/rules-jsdoc.js";
 import rulesRestrictedSyntax from "./eslint/rules/rules-restricted-syntax.js";
 import rulesCurly from "./eslint/rules/rules-curly.js";
-import rulesNoTestImports from "./eslint/rules/rules-no-test-imports.js";
+import rulesNoRestrictedImports from "./eslint/rules/rules-no-restricted-imports.js";
 import rulesNoMocks from "./eslint/rules/rules-no-mocks.js";
 
 export default tseslint.config(
@@ -28,6 +28,11 @@ export default tseslint.config(
       "*.config.ts",
       "packages/*/vitest.config.ts",
       "packages/*/vite.config.ts",
+      // Hidden TS files (`.foo.ts`) and `.tmp.ts` files are local
+      // ad-hoc debug / scratch — excluded from formal lint by convention
+      // (the `.tmp` suffix is the project-wide marker for "throwaway").
+      "**/.*.ts",
+      "**/*.tmp.ts",
     ],
   },
 
@@ -71,7 +76,7 @@ export default tseslint.config(
       ...rulesJSDoc,
       ...rulesRestrictedSyntax,
       ...rulesCurly,
-      ...rulesNoTestImports,
+      ...rulesNoRestrictedImports,
       ...rulesNoMocks,
     },
   },
@@ -130,9 +135,24 @@ export default tseslint.config(
   // ──────────────────────────────────────────────────────────────────────
 
   // Re-export hygiene and package boundary enforcement across all packages.
+  //
+  // Test infrastructure (`*.spec.ts`, the `spec/` tree, and dev-time
+  // `scripts/`) is excluded from the boundary rules — those files are
+  // not shipped artefacts and may legitimately compose sibling tools
+  // for verification (fig-to-swiftui's visual round-trip drives the
+  // WebGL renderer from web-fig-roundtrip exactly to detect drift).
   {
     files: ["packages/**/*.ts", "packages/**/*.tsx"],
-    ignores: ["**/*.spec.ts", "**/*.spec.tsx", "**/*.test.ts", "**/*.test.tsx"],
+    ignores: [
+      "**/*.spec.ts",
+      "**/*.spec.tsx",
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/spec/**/*.ts",
+      "**/spec/**/*.tsx",
+      "**/scripts/**/*.ts",
+      "**/scripts/**/*.tsx",
+    ],
     rules: {
       "custom/no-cross-package-reexport": "error",
       "custom/no-cross-boundary-export": "error",

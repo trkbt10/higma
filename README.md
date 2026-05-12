@@ -160,6 +160,26 @@ bun run typecheck
 bun run test
 ```
 
+### CLIs and scripts
+
+Long file paths are easy to mistype, so the project-level `package.json`
+exposes named scripts for every CLI / one-shot tool. Always run them
+through `bun run <name>` rather than passing a `packages/...` path
+directly to `bun run`.
+
+```bash
+# Generate fig renderer snapshots (forwards to
+# @higma-document-renderers/fig's snapshot:generate, which runs
+# packages/@higma-document-renderers/fig/scripts/generate-snapshots.ts)
+bun run snapshot:fig <fixture-name>
+
+# Emit React JSX + tokens.css from a .fig and serve a preview
+bun run fig-to-web --input path/to/design.fig --page Pages --all --out out --serve
+
+# Refine-fig CLI (inventory / plan / apply / verify / diff)
+bun run refine-fig <subcommand> ...
+```
+
 
 ## .fig File Format
 
