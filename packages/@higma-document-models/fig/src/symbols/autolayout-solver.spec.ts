@@ -1,5 +1,5 @@
 /**
- * @file Unit tests for autolayout-primary.
+ * @file Unit tests for autolayout-solver.
  *
  * Covers the aspect-lock verification gate inside `resolveAutoLayoutFrame`
  * (regression for real Figma community files: icon INSTANCEs author
@@ -14,7 +14,7 @@ import {
   resolveAutoLayoutFrame,
   type PrimaryAxisChild,
   type PrimaryAxisParent,
-} from "./autolayout-primary";
+} from "./autolayout-solver";
 
 type Vec = { x: number; y: number };
 

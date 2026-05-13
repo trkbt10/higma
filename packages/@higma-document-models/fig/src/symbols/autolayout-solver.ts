@@ -1,12 +1,14 @@
 /**
- * @file Figma autolayout primary-axis position recalculation.
+ * @file Figma autolayout solver — primary axis, counter axis, wrap, grid.
  *
- * Counter-axis stretch (one child's cross-axis dimension expanding to
- * fill the parent) lives in `builder.ts:applyCounterAxisStretch`. This
- * module is the SoT for the *primary-axis* layout — distributing
- * children along the stack direction with the parent's
- * `stackPrimaryAlignItems` (MIN / CENTER / MAX / SPACE_BETWEEN /
- * SPACE_EVENLY) and respecting per-side stackPadding.
+ * Single entry point: `resolveAutoLayoutFrame(parent, children)`. It
+ * dispatches on `parent.autoLayout.stackMode`:
+ *
+ *   - GRID                       → `applyGridLayout`
+ *   - HORIZONTAL / VERTICAL + stackWrap=WRAP → `applyWrapLayout`
+ *   - HORIZONTAL / VERTICAL              → `applyAutoLayoutPrimaryAxis`
+ *                                          then `applyCounterAxisPosition`
+ *   - NONE / unset               → noop (with aspect-lock verification)
  *
  * Why we need it:
  *
@@ -27,19 +29,23 @@
  *   which by coincidence sometimes matches Figma's actual layout but
  *   generally drifts.
  *
- * Scope:
+ * Scope of the primary-axis core (`applyAutoLayoutPrimaryAxis`):
  *
- *   - layoutMode VERTICAL or HORIZONTAL (NONE → noop)
  *   - stackPrimaryAlignItems: MIN, CENTER, MAX, SPACE_BETWEEN,
  *     SPACE_EVENLY, SPACE_AROUND (the values the schema allows for
  *     `StackJustify`)
  *   - stackChildPrimaryGrow: per-child grow factor (FILL behaviour)
+ *   - per-side stackPadding
  *
- * Out of scope:
+ * Always honoured:
  *
- *   - stackWrap (multi-line autolayout) — not seen in edge-cases.fig
- *   - absolutely-positioned (stackPositioning=ABSOLUTE) children — they
- *     keep their authored transform
+ *   - absolutely-positioned (stackPositioning=ABSOLUTE) children keep
+ *     their authored transform
+ *   - rotated children are placed by their AABB top-left, not their
+ *     local origin (so 90° / 180° / 270° rotations don't drift)
+ *
+ * Counter-axis stretch (one child's cross-axis dimension expanding to
+ * fill the parent) lives upstream in `builder.ts:applyCounterAxisStretch`.
  */
 
 export type PrimaryAxisParent = {

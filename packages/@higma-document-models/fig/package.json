@@ -50,9 +50,9 @@
       "types": "./src/symbols/index.ts",
       "default": "./src/symbols/index.ts"
     },
-    "./symbols/autolayout-primary": {
-      "types": "./src/symbols/autolayout-primary.ts",
-      "default": "./src/symbols/autolayout-primary.ts"
+    "./symbols/autolayout-solver": {
+      "types": "./src/symbols/autolayout-solver.ts",
+      "default": "./src/symbols/autolayout-solver.ts"
     },
     "./symbols/design-node-helpers": {
       "types": "./src/symbols/design-node-helpers.ts",

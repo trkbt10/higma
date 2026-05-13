@@ -17,7 +17,7 @@ import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import {
   extractBaseProps, extractSizeProps, extractPaintProps, extractGeometryProps, extractEffectsProps, } from "@higma-document-models/fig/symbols/extract";
-import { resolveAutoLayoutFrame, type PrimaryAxisChild, type PrimaryAxisParent } from "@higma-document-models/fig/symbols/autolayout-primary";
+import { resolveAutoLayoutFrame, type PrimaryAxisChild, type PrimaryAxisParent } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type {
   SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
 import { createNodeId } from "@higma-document-models/fig/scene-graph";
