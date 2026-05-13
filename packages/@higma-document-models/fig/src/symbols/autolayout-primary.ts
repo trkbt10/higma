@@ -653,6 +653,64 @@ function applyCounterAxisPosition<C extends PrimaryAxisChild>(
   return result;
 }
 
+/**
+ * AABB-aware metrics needed to lay out a child along the parent's
+ * primary axis. Mirrors the per-child precomputation that
+ * `applyAutoLayoutPrimaryAxis` does inline — pulled out so the
+ * wrap layout can share the same rotation-aware sizing.
+ */
+type WrapChildMetrics = {
+  readonly primarySize: number;
+  readonly counterSize: number;
+  readonly aabbPrimaryOriginOffset: number;
+  readonly aabbCounterOriginOffset: number;
+};
+
+function wrapChildMetrics<C extends PrimaryAxisChild>(child: C, horizontal: boolean): WrapChildMetrics {
+  const size = child.size!;
+  const aabb = childAabb(child);
+  if (!aabb) {
+    return {
+      primarySize: horizontal ? size.x : size.y,
+      counterSize: horizontal ? size.y : size.x,
+      aabbPrimaryOriginOffset: 0,
+      aabbCounterOriginOffset: 0,
+    };
+  }
+  const primarySize = horizontal ? aabb.max.x - aabb.min.x : aabb.max.y - aabb.min.y;
+  const counterSize = horizontal ? aabb.max.y - aabb.min.y : aabb.max.x - aabb.min.x;
+  const t = child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+  const primaryOrigin = horizontal ? t.m02 : t.m12;
+  const counterOrigin = horizontal ? t.m12 : t.m02;
+  const primaryAabbMin = horizontal ? aabb.min.x : aabb.min.y;
+  const counterAabbMin = horizontal ? aabb.min.y : aabb.min.x;
+  return {
+    primarySize,
+    counterSize,
+    aabbPrimaryOriginOffset: primaryOrigin - primaryAabbMin,
+    aabbCounterOriginOffset: counterOrigin - counterAabbMin,
+  };
+}
+
+/**
+ * Per-child counter-axis alignment offset within a wrap line. Mirrors
+ * `resolveStartOffset` semantics (MIN/CENTER/MAX) but scoped to a
+ * single child fitting inside the line's measured counter span — Figma
+ * applies `stackCounterAlignItems` to each child within its line so
+ * shorter siblings centre / pin to the bottom of taller ones.
+ */
+function resolveCounterAlignOffset(
+  align: string | undefined,
+  lineCounter: number,
+  childCounter: number,
+): number {
+  const free = lineCounter - childCounter;
+  if (free <= 0) { return 0; }
+  if (align === "CENTER") { return free / 2; }
+  if (align === "MAX") { return free; }
+  return 0;
+}
+
 function applyWrapLayout<C extends PrimaryAxisChild>(
   parent: PrimaryAxisParent,
   children: readonly C[],
@@ -670,57 +728,158 @@ function applyWrapLayout<C extends PrimaryAxisChild>(
   if (primarySpan <= 0 || counterSpan <= 0) { return children; }
   const spacing = autoLayout.stackSpacing ?? 0;
   const counterSpacing = autoLayout.stackCounterSpacing ?? 0;
+  const align = autoLayout.stackPrimaryAlignItems?.name;
+  // For SPACE_BETWEEN / SPACE_EVENLY / SPACE_AROUND Figma distributes
+  // the free space at layout time, so the *literal* `stackSpacing`
+  // must not influence the wrap decision — only the raw item widths
+  // do. With literal spacing the e-commerce stat-row would split
+  // across multiple lines even though the SPACE_EVENLY distribution
+  // happily fits everything on one line (the .fig file's authored
+  // children x positions confirm Figma agrees).
+  const isJustifySpace = align === "SPACE_BETWEEN" || align === "SPACE_EVENLY" || align === "SPACE_AROUND";
+  const wrapSpacing = isJustifySpace ? 0 : spacing;
   const flow = children
-    .map((child, idx) => ({ child, idx }))
+    .map((child, idx) => ({ child, idx, metrics: wrapChildMetrics(child, horizontal) }))
     .filter((entry) => isFlowChild(entry.child));
   if (flow.length === 0) { return children; }
 
-  type Line = { readonly entries: typeof flow; readonly primary: number; readonly counter: number };
+  type FlowEntry = typeof flow[number];
+  type Line = { readonly entries: readonly FlowEntry[]; readonly primary: number; readonly counter: number };
   const lines: Line[] = [];
-  let current: typeof flow = [];
-  let currentPrimary = 0;
-  let currentCounter = 0;
+  const currentRef = { value: [] as FlowEntry[] };
+  const currentPrimaryRef = { value: 0 };
+  const currentCounterRef = { value: 0 };
   for (const entry of flow) {
-    const nextPrimary = horizontal ? entry.child.size!.x : entry.child.size!.y;
-    const nextCounter = horizontal ? entry.child.size!.y : entry.child.size!.x;
-    const nextTotal = current.length === 0 ? nextPrimary : currentPrimary + spacing + nextPrimary;
-    if (current.length > 0 && nextTotal > primarySpan) {
-      lines.push({ entries: current, primary: currentPrimary, counter: currentCounter });
-      current = [entry];
-      currentPrimary = nextPrimary;
-      currentCounter = nextCounter;
+    const nextPrimary = entry.metrics.primarySize;
+    const nextCounter = entry.metrics.counterSize;
+    const nextTotal = currentRef.value.length === 0 ? nextPrimary : currentPrimaryRef.value + wrapSpacing + nextPrimary;
+    if (currentRef.value.length > 0 && nextTotal > primarySpan) {
+      lines.push({ entries: currentRef.value, primary: currentPrimaryRef.value, counter: currentCounterRef.value });
+      currentRef.value = [entry];
+      currentPrimaryRef.value = nextPrimary;
+      currentCounterRef.value = nextCounter;
       continue;
     }
-    current = [...current, entry];
-    currentPrimary = nextTotal;
-    currentCounter = Math.max(currentCounter, nextCounter);
+    currentRef.value = [...currentRef.value, entry];
+    currentPrimaryRef.value = nextTotal;
+    currentCounterRef.value = Math.max(currentCounterRef.value, nextCounter);
   }
-  if (current.length > 0) {
-    lines.push({ entries: current, primary: currentPrimary, counter: currentCounter });
+  if (currentRef.value.length > 0) {
+    lines.push({ entries: currentRef.value, primary: currentPrimaryRef.value, counter: currentCounterRef.value });
   }
 
   const blockCounter = lines.reduce((sum, line) => sum + line.counter, 0) + counterSpacing * Math.max(0, lines.length - 1);
+  // `stackPrimaryAlignContent` controls how the lines-as-a-block sits
+  // in the counter span. `stackCounterAlignItems` is reused as the
+  // per-child counter alignment within each line — Figma's
+  // `LayoutMode.WRAP` reuses the property for both axes when only one
+  // is set.
   const contentAlign = autoLayout.stackPrimaryAlignContent?.name ?? autoLayout.stackCounterAlignItems?.name;
-  let counterCursor = resolveStartOffset(contentAlign, counterSpan, blockCounter, cStart);
+  const itemCounterAlign = autoLayout.stackCounterAlignItems?.name;
+  const counterCursorRef = { value: resolveStartOffset(contentAlign, counterSpan, blockCounter, cStart) };
   const result: C[] = children.slice();
   for (const line of lines) {
-    let primaryCursor = resolveStartOffset(autoLayout.stackPrimaryAlignItems?.name, primarySpan, line.primary, pStart);
+    const lineLayout = resolveLinePrimaryLayout(line.entries, primarySpan, spacing, align, pStart);
+    const primaryCursorRef = { value: lineLayout.startOffset };
     for (const entry of line.entries) {
       const oldT = entry.child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
-      const size = entry.child.size!;
+      const placedPrimary = primaryCursorRef.value + entry.metrics.aabbPrimaryOriginOffset;
+      const counterAlignOffset = resolveCounterAlignOffset(itemCounterAlign, line.counter, entry.metrics.counterSize);
+      const placedCounter = counterCursorRef.value + counterAlignOffset + entry.metrics.aabbCounterOriginOffset;
       result[entry.idx] = {
         ...entry.child,
         transform: {
           ...oldT,
-          m02: horizontal ? primaryCursor : counterCursor,
-          m12: horizontal ? counterCursor : primaryCursor,
+          m02: horizontal ? placedPrimary : placedCounter,
+          m12: horizontal ? placedCounter : placedPrimary,
         },
       } as C;
-      primaryCursor += (horizontal ? size.x : size.y) + spacing;
+      primaryCursorRef.value += entry.metrics.primarySize + lineLayout.gap;
     }
-    counterCursor += line.counter + counterSpacing;
+    counterCursorRef.value += line.counter + counterSpacing;
   }
   return result;
+}
+
+/**
+ * Compute the starting offset and inter-item gap for a single wrap
+ * line, including the SPACE_BETWEEN / SPACE_EVENLY / SPACE_AROUND
+ * distributions that `resolveStartOffset` alone can't express.
+ */
+function resolveLinePrimaryLayout(
+  entries: readonly { readonly metrics: WrapChildMetrics }[],
+  primarySpan: number,
+  spacing: number,
+  align: string | undefined,
+  insetStart: number,
+): { readonly startOffset: number; readonly gap: number } {
+  const flowSizeSum = entries.reduce((sum, entry) => sum + entry.metrics.primarySize, 0);
+  switch (align) {
+    case "SPACE_BETWEEN":
+    case "SPACE_EVENLY": {
+      if (entries.length > 1) {
+        const free = primarySpan - flowSizeSum;
+        return { startOffset: insetStart, gap: free / (entries.length - 1) };
+      }
+      return { startOffset: insetStart, gap: spacing };
+    }
+    case "SPACE_AROUND": {
+      const free = primarySpan - flowSizeSum;
+      const gap = free / entries.length;
+      return { startOffset: insetStart + gap / 2, gap };
+    }
+    case "CENTER":
+    case "MAX": {
+      const usedSpacing = spacing * (entries.length - 1);
+      const blockSize = flowSizeSum + usedSpacing;
+      const free = primarySpan - blockSize;
+      const start = align === "CENTER" ? insetStart + free / 2 : insetStart + free;
+      return { startOffset: start, gap: spacing };
+    }
+    case "MIN":
+    case undefined:
+    default:
+      return { startOffset: insetStart, gap: spacing };
+  }
+}
+
+/**
+ * Pick which of the child's *local* axes projects onto the parent's
+ * counter axis. For an axis-aligned (unrotated) child the local axis
+ * is the parent axis — local Y for horizontal parents, local X for
+ * vertical. For a child rotated by a multiple of 90° the mapping
+ * swaps: a 90°/270° rotation puts the child's local X along the
+ * parent's Y direction (a vertical separator authored as a 74-wide
+ * 0-tall line rotated 90° is what real Figma exports look like for
+ * stat-row dividers, so stretching `size.y` would inflate the line's
+ * thickness instead of its length).
+ *
+ * For non-orthogonal rotations there's no clean axis swap — the
+ * child's AABB is wider on both axes than either local dimension, and
+ * Figma's authoring contract effectively doesn't expose `STRETCH`
+ * align-self on those. Return `null` so the caller leaves `size`
+ * untouched rather than stretching the wrong axis.
+ */
+function localAxisForParentCounterAxis<C extends PrimaryAxisChild>(
+  child: C,
+  horizontal: boolean,
+): "x" | "y" | null {
+  const t = child.transform;
+  if (!t) { return counterAxis(horizontal); }
+  const axisAligned = t.m01 === 0 && t.m10 === 0;
+  if (axisAligned) { return counterAxis(horizontal); }
+  // 90°/270° rotation: m00 ≈ 0 and m11 ≈ 0, with m01/m10 carrying the
+  // ±1 entries. After such a rotation the local X axis lies along the
+  // parent's Y direction (and vice versa). Use a tolerance so the
+  // tiny float residues real .fig files carry (m00 = 4.37e-8 from a
+  // 90° rotation about Math.PI/2) still match.
+  const tol = 1e-4;
+  const orthogonalSwap = Math.abs(t.m00) <= tol && Math.abs(t.m11) <= tol
+    && Math.abs(Math.abs(t.m01) - 1) <= tol && Math.abs(Math.abs(t.m10) - 1) <= tol;
+  if (orthogonalSwap) {
+    return horizontal ? "x" : "y";
+  }
+  return null;
 }
 
 function stretchCounterAxis<C extends PrimaryAxisChild>(
@@ -731,13 +890,21 @@ function stretchCounterAxis<C extends PrimaryAxisChild>(
   if (!parent.size) { return children; }
   const insets = contentInsets(parent);
   const span = horizontal ? parent.size.y - insets.top - insets.bottom : parent.size.x - insets.left - insets.right;
-  const axis = counterAxis(horizontal);
   if (span <= 0) { return children; }
   return children.map((child) => {
     if (child.layoutConstraints?.stackChildAlignSelf?.name !== "STRETCH" || !child.size) {
       return child;
     }
-    return { ...child, size: resizeAxis(child.size, axis, span) } as C;
+    const localAxis = localAxisForParentCounterAxis(child, horizontal);
+    if (localAxis === null) {
+      // Arbitrary rotation: stretching either local axis would
+      // misshape the child. Real-world authored stretchable children
+      // are axis-aligned or 90°-rotated; non-orthogonal rotations
+      // would need a separate transform rewrite that nothing in our
+      // call chain currently expresses.
+      return child;
+    }
+    return { ...child, size: resizeAxis(child.size, localAxis, span) } as C;
   });
 }
 
