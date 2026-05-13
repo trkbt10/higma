@@ -924,6 +924,25 @@ export type FigDesignBlob = {
   readonly bytes: readonly number[];
 };
 
+/**
+ * "Set as thumbnail" target.
+ *
+ * Mirrors the canonical `NodeChange.thumbnailInfo` Kiwi field that Figma's
+ * editor writes when a user picks "Set as thumbnail" on a frame. The
+ * `nodeID` points to the frame whose render is the document cover; the
+ * (optional) `thumbnailVersion` is Figma's opaque cache key for the
+ * rendered PNG. We preserve both verbatim so a roundtrip without a
+ * regenerated thumbnail re-emits identical metadata.
+ *
+ * The field lives on the DOCUMENT-level NodeChange in Figma's wire
+ * format. We surface it on `FigDesignDocument` to keep consumers from
+ * having to dig into raw `_loaded.nodeChanges`.
+ */
+export type FigThumbnailTarget = {
+  readonly nodeID: FigGuid;
+  readonly thumbnailVersion?: string;
+};
+
 export type FigDesignDocument = {
   readonly pages: readonly FigPage[];
   /** Document-level color profile from the root DOCUMENT node. */
@@ -939,6 +958,13 @@ export type FigDesignDocument = {
   readonly blobs: readonly FigDesignBlob[];
   /** File metadata (name, export date, etc.) */
   readonly metadata: FigPackageMetadata | null;
+  /**
+   * Frame designated as the document thumbnail via Figma's
+   * "Set as thumbnail" action. When set, the exporter will (if given
+   * a `renderThumbnail` callback) rasterise this frame into the
+   * `thumbnail.png` ZIP entry instead of the placeholder.
+   */
+  readonly thumbnailTarget?: FigThumbnailTarget;
 
   /**
    * Style registry mapping style GUIDs to resolved paint arrays.

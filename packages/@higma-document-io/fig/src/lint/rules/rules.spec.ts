@@ -23,6 +23,8 @@ import { shapeFieldsRule } from "./shape-fields";
 import { symbolInstanceRule } from "./symbol-instance";
 import { visibleBlobsRule } from "./visible-blobs";
 import { zipPackageRule } from "./zip-package";
+import { PNG_SIGNATURE } from "@higma-codecs/png";
+import { FIG_THUMBNAIL_ZIP_ENTRY } from "@higma-figma-containers/package";
 import { FIGMA_KIWI_SCHEMA, type FigSchema } from "@higma-figma-schema/profiles/schema";
 import type { LintContext, LintFinding, LintRule, LintRuleId } from "../types";
 import type { FigNode } from "@higma-document-models/fig/types";
@@ -96,7 +98,7 @@ describe("zipPackageRule", () => {
       zipEntries: new Map([
         ["canvas.fig", new Uint8Array([1])],
         ["meta.json", new TextEncoder().encode("{}")],
-        ["thumbnail.png", garbage],
+        [FIG_THUMBNAIL_ZIP_ENTRY, garbage],
       ]),
     }));
     const thumbFinding = findings.find((f) => f.ruleId === "fig.zip.thumbnail");
@@ -113,13 +115,16 @@ describe("zipPackageRule", () => {
   });
 
   it("passes silently for a complete zip package", () => {
-    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    // The lint rule only validates that `thumbnail.png` starts with the
+    // PNG magic — so seed the entry with exactly that prefix from the
+    // codec SoT, not a hand-coded copy.
+    const png = new Uint8Array(PNG_SIGNATURE);
     const findings = runRule(zipPackageRule, emptyContext({
       canvasData: new Uint8Array([1]),
       zipEntries: new Map([
         ["canvas.fig", new Uint8Array([1])],
         ["meta.json", new TextEncoder().encode("{}")],
-        ["thumbnail.png", png],
+        [FIG_THUMBNAIL_ZIP_ENTRY, png],
       ]),
     }));
     expect(findings).toEqual([]);

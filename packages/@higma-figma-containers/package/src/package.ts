@@ -5,6 +5,7 @@
 import { createEmptyZipPackage, loadZipPackage } from "@higma-primitives/zip";
 import { getFigPackageImageMimeType, type FigPackageImage } from "./image";
 import { parseFigPackageMetadata, type FigPackageMetadata } from "./metadata";
+import { FIG_THUMBNAIL_ZIP_ENTRY } from "./thumbnail";
 
 const ZIP_MAGIC = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
 
@@ -66,7 +67,7 @@ export async function extractFigPackageContents(data: Uint8Array): Promise<FigPa
   }
 
   const metaContent = zipPackage.readText("meta.json");
-  const thumbnailContent = zipPackage.readBinary("thumbnail.png");
+  const thumbnailContent = zipPackage.readBinary(FIG_THUMBNAIL_ZIP_ENTRY);
   return {
     canvasData,
     metadata: metaContent ? parseFigPackageMetadata(metaContent) : null,

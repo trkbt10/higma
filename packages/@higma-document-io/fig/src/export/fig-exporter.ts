@@ -8,15 +8,25 @@
  * For fresh documents, builds from scratch using the builder API.
  */
 
+import { encodeRgbaToPng } from "@higma-codecs/png";
 import { saveFigFile } from "@higma-document-io/fig/roundtrip";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 import { createNodeChangesMessageHeader } from "@higma-document-models/fig/domain";
 import { documentToTree } from "../context/document-to-tree";
 import { finalizeDerivedSymbolData } from "./finalize-derived-symbol-data";
+import {
+  patchMetadataForThumbnail,
+  prepareExportThumbnail,
+  type FigPreparedThumbnail,
+  type FigThumbnailRenderer,
+} from "./thumbnail-pipeline";
 import { FIGMA_KIWI_SCHEMA } from "@higma-figma-schema/profiles/schema";
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
-import type { FigPackageMetadata } from "@higma-figma-containers/package";
+import {
+  FIG_THUMBNAIL_MAX_DIMENSION,
+  type FigPackageMetadata,
+} from "@higma-figma-containers/package";
 
 // =============================================================================
 // Types
@@ -30,6 +40,23 @@ export type FigExportOptions = {
   readonly compressionLevel?: number;
   /** Re-encode the Kiwi schema instead of preserving original bytes (default: false) */
   readonly reencodeSchema?: boolean;
+  /**
+   * Rasterises the document's "Set as thumbnail" target into PNG bytes.
+   *
+   * Required when `doc.thumbnailTarget` is set; ignored otherwise. The
+   * exporter never invents a default rasteriser — AGENTS.md "No Magic"
+   * forbids importing a Node-only renderer here, since the io package
+   * must build for browser too. Callers wire their own (e.g. the editor
+   * uses an OffscreenCanvas/WebGL pipeline; CLI tools wrap resvg-js).
+   */
+  readonly renderThumbnail?: FigThumbnailRenderer;
+  /**
+   * Override the maximum PNG width/height handed to `renderThumbnail`.
+   * Defaults to `FIG_THUMBNAIL_MAX_DIMENSION` from
+   * `@higma-figma-containers/package` (400 — sampled from every
+   * community `.fig` in the wild).
+   */
+  readonly thumbnailMaxDimension?: number;
 };
 
 /**
@@ -64,10 +91,45 @@ export async function exportFig(
   // than per-action so that later resize/move/duplicate actions cannot
   // leave the document with stale derived data.
   const finalisedDoc = finalizeDerivedSymbolData(doc);
+  // Run the thumbnail pipeline once — both export strategies consume
+  // the same `FigPreparedThumbnail`. `prepareExportThumbnail` returns
+  // `undefined` when `doc.thumbnailTarget` is unset; in that case both
+  // strategies fall back to the placeholder/loaded thumbnail.
+  const preparedThumbnail = await prepareExportThumbnail(
+    finalisedDoc,
+    options?.renderThumbnail,
+    options?.thumbnailMaxDimension ?? FIG_THUMBNAIL_MAX_DIMENSION,
+  );
   if (finalisedDoc._loaded) {
-    return exportRoundtrip(finalisedDoc, finalisedDoc._loaded, options);
+    return exportRoundtrip(finalisedDoc, finalisedDoc._loaded, options, preparedThumbnail);
   }
-  return exportFresh(finalisedDoc, options);
+  return exportFresh(finalisedDoc, options, preparedThumbnail);
+}
+
+/**
+ * Wrap `patchMetadataForThumbnail` with a null-passthrough so callers
+ * can hand a possibly-undefined `preparedThumbnail` without sprinkling
+ * conditional ternaries through the export flow.
+ *
+ * Overloaded so TypeScript knows the result is non-null whenever the
+ * input was non-null.
+ */
+function patchMetadataIfRendered(
+  base: FigPackageMetadata,
+  rendered: FigPreparedThumbnail | undefined,
+): FigPackageMetadata;
+function patchMetadataIfRendered(
+  base: FigPackageMetadata | null,
+  rendered: FigPreparedThumbnail | undefined,
+): FigPackageMetadata | null;
+function patchMetadataIfRendered(
+  base: FigPackageMetadata | null,
+  rendered: FigPreparedThumbnail | undefined,
+): FigPackageMetadata | null {
+  if (!rendered) {
+    return base;
+  }
+  return patchMetadataForThumbnail(base, rendered);
 }
 
 // =============================================================================
@@ -80,20 +142,32 @@ export async function exportFig(
 async function exportRoundtrip(
   doc: FigDesignDocument,
   loaded: LoadedFigFile,
-  options?: FigExportOptions,
+  options: FigExportOptions | undefined,
+  preparedThumbnail: FigPreparedThumbnail | undefined,
 ): Promise<FigExportResult> {
   // Convert document modifications back to nodeChanges
   const treeResult = documentToTree(doc);
 
-  // Create a modified copy of the loaded file
+  // When we re-rasterise the thumbnail, propagate the new bytes onto
+  // the LoadedFigFile so a subsequent reload sees consistent state
+  // (and so any caller that bypasses the explicit `thumbnail` save
+  // option still gets the fresh PNG).
+  const thumbnailBytes = preparedThumbnail?.png ?? loaded.thumbnail;
+  const refreshedMetadata = patchMetadataIfRendered(loaded.metadata, preparedThumbnail);
   const modifiedLoaded: LoadedFigFile = {
     ...loaded,
     nodeChanges: treeResult.nodeChanges,
+    thumbnail: thumbnailBytes ?? null,
+    metadata: refreshedMetadata,
   };
 
-  // Save using original schema for compatibility
+  // Save using original schema for compatibility. We forward
+  // `thumbnail` + `metadata` explicitly when we regenerated them —
+  // `saveFigFile` writes those bytes verbatim into the ZIP.
   const data = await saveFigFile(modifiedLoaded, {
     reencodeSchema: options?.reencodeSchema,
+    ...(preparedThumbnail ? { thumbnail: preparedThumbnail.png } : {}),
+    ...(modifiedLoaded.metadata ? { metadata: modifiedLoaded.metadata } : {}),
   });
 
   return { data, size: data.length };
@@ -106,19 +180,26 @@ async function exportRoundtrip(
 /**
  * Default `meta.json` payload for fresh exports. Figma's importer
  * (and our own fig-lint `fig.zip.meta` rule) require a `meta.json`
- * entry to be present in the ZIP. The values below were empirically
- * derived from real Figma exports — `client_meta.background_color`,
- * `thumbnail_size`, and `render_coordinates` are the load-bearing
- * fields the importer reads at file open.
+ * entry to be present in the ZIP.
+ *
+ * `thumbnail_size` and `render_coordinates` are intentionally derived
+ * from `FIG_THUMBNAIL_MAX_DIMENSION` — Figma's importer reads them at
+ * file open, and grounding both in the SoT keeps a single number on
+ * the source-of-truth side instead of two divergent literals.
  */
 function defaultFreshMetadata(doc: FigDesignDocument): FigPackageMetadata {
+  // 4:3 aspect ratio is the placeholder shape Figma's own fresh
+  // exports happen to use; matched here so an unedited round trip
+  // produces the same proportions as a real export.
+  const thumbW = FIG_THUMBNAIL_MAX_DIMENSION;
+  const thumbH = Math.round((FIG_THUMBNAIL_MAX_DIMENSION * 3) / 4);
   return {
     raw: {},
     rawKeys: [],
     clientMeta: {
       backgroundColor: { r: 0.96, g: 0.96, b: 0.96, a: 1 },
-      thumbnailSize: { width: 400, height: 300 },
-      renderCoordinates: { x: 0, y: 0, width: 800, height: 600 },
+      thumbnailSize: { width: thumbW, height: thumbH },
+      renderCoordinates: { x: 0, y: 0, width: thumbW * 2, height: thumbH * 2 },
     },
     fileName: doc.pages[0]?.name ?? "Generated",
     developerRelatedLinks: [],
@@ -127,31 +208,17 @@ function defaultFreshMetadata(doc: FigDesignDocument): FigPackageMetadata {
 }
 
 /**
- * Minimal 1×1 grayscale PNG used as a placeholder thumbnail.
+ * Minimal 1×1 transparent PNG used as a placeholder thumbnail.
  *
  * Figma's importer requires `thumbnail.png` to be present in the ZIP;
  * fig-lint's `fig.zip.thumbnail` rule flags its absence as an error.
- * The bytes below are the same payload the legacy `fig-file` builder
- * emitted (see `fig-file/thumbnail.ts`).
+ * Built through the codec SoT (`@higma-codecs/png`) rather than a
+ * hand-baked byte literal so a codec schema bump (CRC layout, etc.)
+ * propagates automatically.
  */
 function defaultFreshThumbnail(): Uint8Array {
-  return new Uint8Array([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01,
-    0x00, 0x00, 0x00, 0x01,
-    0x08, 0x02,
-    0x00, 0x00, 0x00,
-    0x90, 0x77, 0x53, 0xde,
-    0x00, 0x00, 0x00, 0x0c,
-    0x49, 0x44, 0x41, 0x54,
-    0x08, 0xd7, 0x63, 0x78, 0xf6, 0xf6, 0x06, 0x00, 0x02, 0x3b, 0x01, 0x1e,
-    0xd6, 0xcc, 0x05, 0x0e,
-    0x00, 0x00, 0x00, 0x00,
-    0x49, 0x45, 0x4e, 0x44,
-    0xae, 0x42, 0x60, 0x82,
-  ]);
+  const rgba = new Uint8ClampedArray([0x00, 0x00, 0x00, 0x00]);
+  return encodeRgbaToPng(rgba, 1, 1);
 }
 
 /**
@@ -162,7 +229,8 @@ function defaultFreshThumbnail(): Uint8Array {
  */
 async function exportFresh(
   doc: FigDesignDocument,
-  _options?: FigExportOptions,
+  _options: FigExportOptions | undefined,
+  preparedThumbnail: FigPreparedThumbnail | undefined,
 ): Promise<FigExportResult> {
   // Build nodeChanges from scratch
   const treeResult = documentToTree(doc);
@@ -171,7 +239,13 @@ async function exportFresh(
   // doesn't carry one. Without this `saveFigFamilyFile` skips the
   // entry and the produced ZIP fails Figma import + our own
   // `fig.zip.meta` lint rule.
-  const metadata = doc.metadata ?? defaultFreshMetadata(doc);
+  const baseMetadata = doc.metadata ?? defaultFreshMetadata(doc);
+  // When the user picked a frame as the cover, patch `client_meta`'s
+  // `thumbnail_size` + `render_coordinates` so meta.json matches the
+  // bytes we're about to write. Otherwise leave whatever was already
+  // there alone (the fresh-export defaults are deliberately mock-ish
+  // and not load-bearing for Figma's importer).
+  const metadata = patchMetadataIfRendered(baseMetadata, preparedThumbnail);
 
   // Create a LoadedFigFile for saving using the canonical Figma Kiwi
   // schema bundled with `@higma-figma-schema/profiles`. The schema is
@@ -179,7 +253,7 @@ async function exportFresh(
   // `definitions` array (the previous `minimal` stub) made the encoder
   // fail at the first `findDefinitionByName("Message")` lookup, so
   // scratch documents could not actually be exported.
-  const thumbnail = defaultFreshThumbnail();
+  const thumbnail = preparedThumbnail?.png ?? defaultFreshThumbnail();
   // Real Figma exports stamp the canvas header version as "e".
   // The default "0" trips fig-lint's `fig.canvas.version` warning.
   const minimalLoaded: LoadedFigFile = {

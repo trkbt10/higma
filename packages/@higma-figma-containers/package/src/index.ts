@@ -21,3 +21,11 @@ export {
   getMimeTypeFromPath,
   type FigPackageImage,
 } from "./image";
+
+export {
+  FIG_THUMBNAIL_MAX_DIMENSION,
+  FIG_THUMBNAIL_ZIP_ENTRY,
+  fitFigThumbnailSize,
+  type FigThumbnailPixelSize,
+  type FigThumbnailSourceSize,
+} from "./thumbnail";

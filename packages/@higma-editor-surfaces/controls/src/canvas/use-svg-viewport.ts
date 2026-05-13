@@ -2,9 +2,30 @@
  * @file SVG viewport hook
  *
  * Manages viewport transform state for pan/zoom interactions.
+ *
+ * SoT contract: the returned `view` (containing `viewport` and
+ * `viewportSize`) is the single source of truth for the displayed canvas
+ * viewbox. Storing both fields inside one `useState` means that any
+ * change that affects both — e.g. a resize that requires a fit-mode
+ * refit, where the new size and the new viewport must be coherent —
+ * commits in a single render. Consumers reading both fields therefore
+ * never observe a one-render "tearing" window where size is new but
+ * viewport still reflects the previous layout, so they don't need
+ * `useTransition` or other deferred-render workarounds to mask the gap.
+ *
+ * - `zoomMode === "fit"` is an intent flag that requests re-fitting on
+ *   resize. The resize callback re-fits atomically with the size update;
+ *   external zoomMode changes flow through a separate sync effect.
+ * - Any user-initiated pan or wheel-zoom mutates state directly. If
+ *   fit mode is active, those interactions also exit fit mode (via
+ *   `onZoomModeChange`) so the next resize no longer overrides the
+ *   user's manual placement.
+ * - External numeric zoomMode changes apply zoom-toward-centre (a no-op
+ *   when the state's scale already matches the requested zoomMode,
+ *   which keeps wheel-zoom echoes from double-transforming).
  */
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { ViewportTransform, ViewportSize, SlideSize } from "@higma-editor-kernel/core/viewport";
 import {
   INITIAL_VIEWPORT,
@@ -52,12 +73,29 @@ export type UseSvgViewportOptions = {
   readonly clampFn?: ViewportClampFn;
 };
 
+/**
+ * The canvas viewbox: pan/zoom transform and the underlying viewport
+ * dimensions. Held as a single React state to guarantee atomic updates
+ * across fields (see file header).
+ */
+export type CanvasViewState = {
+  readonly viewport: ViewportTransform;
+  readonly viewportSize: ViewportSize;
+};
+
+const INITIAL_CANVAS_VIEW: CanvasViewState = {
+  viewport: INITIAL_VIEWPORT,
+  viewportSize: { width: 0, height: 0 },
+};
+
 export type UseSvgViewportResult = {
   /** Ref to attach to the SVG element */
   readonly svgRef: RefObject<SVGSVGElement | null>;
-  /** Current viewport transform */
+  /** Canvas viewbox state — single object, atomic per commit. */
+  readonly view: CanvasViewState;
+  /** Convenience accessor for `view.viewport`. */
   readonly viewport: ViewportTransform;
-  /** Current viewport size */
+  /** Convenience accessor for `view.viewportSize`. */
   readonly viewportSize: ViewportSize;
   /** Handler for wheel events (zoom) */
   readonly handleWheel: (e: WheelEvent) => void;
@@ -121,18 +159,18 @@ function createPlacedViewport({
   return getCenteredViewport({ viewportSize, slideSize, scale, rulerThickness });
 }
 
-function createInitialViewportForZoomMode({
+function resolveViewportForZoomMode({
+  zoomMode,
   viewportSize,
   slideSize,
   rulerThickness,
-  zoomMode,
   placement,
   margin,
 }: {
+  readonly zoomMode: ZoomMode;
   readonly viewportSize: ViewportSize;
   readonly slideSize: SlideSize;
   readonly rulerThickness: number;
-  readonly zoomMode: ZoomMode;
   readonly placement: InitialViewportPlacement;
   readonly margin: number;
 }): ViewportTransform {
@@ -164,11 +202,34 @@ export function useSvgViewport({
   clampFn: clampFnProp,
 }: UseSvgViewportOptions): UseSvgViewportResult {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [viewport, setViewport] = useState<ViewportTransform>(INITIAL_VIEWPORT);
-  const [viewportSize, setViewportSize] = useState<ViewportSize>({ width: 0, height: 0 });
+  const [view, setView] = useState<CanvasViewState>(INITIAL_CANVAS_VIEW);
+  const { viewport, viewportSize } = view;
   const [isPanning, setIsPanning] = useState(false);
   const lastPointerRef = useRef({ x: 0, y: 0 });
-  const hasInitializedRef = useRef(false);
+  // Tracks the last zoomMode the hook has aligned the viewport state to.
+  // Distinguishes an *external* zoomMode change (caller used the dropdown
+  // or fit-to-view button — we must update viewport) from an *echo* of our
+  // own onZoomModeChange call (we already updated viewport, so re-running
+  // would double-transform).
+  const syncedZoomModeRef = useRef<ZoomMode | null>(null);
+  // Latest props mirror, so the resize callback (created once) can read
+  // the current zoomMode / slideSize / rulerThickness / placement /
+  // margin without being re-bound and without forcing the observer to
+  // tear down on every render.
+  const layoutPropsRef = useRef({
+    zoomMode,
+    slideSize,
+    rulerThickness,
+    initialViewportPlacement,
+    initialViewportMargin,
+  });
+  layoutPropsRef.current = {
+    zoomMode,
+    slideSize,
+    rulerThickness,
+    initialViewportPlacement,
+    initialViewportMargin,
+  };
 
   // Resolve clamp function: default = standard slide clamping
   const defaultClampFn = useCallback(
@@ -177,36 +238,17 @@ export function useSvgViewport({
   );
   const applyClamp = clampFnProp ?? defaultClampFn;
 
-  // Calculate fitted viewport for fit mode
-  const fittedViewport = useMemo(() => {
-    if (viewportSize.width === 0 || viewportSize.height === 0) {
-      return INITIAL_VIEWPORT;
-    }
-    const fitted = createFittedViewport(viewportSize, slideSize, rulerThickness);
-    return createPlacedViewport({
-      viewportSize,
-      slideSize,
-      scale: fitted.scale,
-      rulerThickness,
-      placement: initialViewportPlacement,
-      margin: initialViewportMargin,
-    });
-  }, [viewportSize, slideSize, rulerThickness, initialViewportPlacement, initialViewportMargin]);
-
-  // Determine effective viewport based on zoom mode
-  const effectiveViewport = useMemo(() => {
-    if (isFitMode(zoomMode)) {
-      return fittedViewport;
-    }
-    return { ...viewport, scale: zoomMode };
-  }, [viewport, zoomMode, fittedViewport]);
-
-  // Report display zoom changes
+  // Report display zoom changes — derived purely from state.
   useLayoutEffect(() => {
-    onDisplayZoomChange?.(effectiveViewport.scale);
-  }, [effectiveViewport.scale, onDisplayZoomChange]);
+    onDisplayZoomChange?.(viewport.scale);
+  }, [viewport.scale, onDisplayZoomChange]);
 
-  // Update viewport size on resize
+  // Observe SVG size. Updates the view state atomically: when the size
+  // changes, also re-derive the viewport if needed (initial placement on
+  // first-non-zero size, re-fit on resize while in fit mode). Bundling
+  // these into a single `setView` call eliminates the cross-render
+  // tearing where size would be new but viewport still old for one
+  // commit.
   useLayoutEffect(() => {
     const svg = svgRef.current;
     if (!svg) {
@@ -215,11 +257,35 @@ export function useSvgViewport({
 
     const updateSize = () => {
       const rect = svg.getBoundingClientRect();
-      setViewportSize((prev) => {
-        if (prev.width === rect.width && prev.height === rect.height) {
+      setView((prev) => {
+        if (
+          prev.viewportSize.width === rect.width
+          && prev.viewportSize.height === rect.height
+        ) {
           return prev;
         }
-        return { width: rect.width, height: rect.height };
+        const nextSize: ViewportSize = { width: rect.width, height: rect.height };
+        if (nextSize.width <= 0 || nextSize.height <= 0) {
+          return { ...prev, viewportSize: nextSize };
+        }
+        const isFirstSize =
+          prev.viewportSize.width === 0 || prev.viewportSize.height === 0;
+        const layout = layoutPropsRef.current;
+        if (!isFirstSize && !isFitMode(layout.zoomMode)) {
+          // Fixed zoom + later resize: preserve user's pan/zoom state.
+          return { ...prev, viewportSize: nextSize };
+        }
+        // First placement OR fit-mode re-fit: derive viewport from new size.
+        syncedZoomModeRef.current = layout.zoomMode;
+        const nextViewport = resolveViewportForZoomMode({
+          zoomMode: layout.zoomMode,
+          viewportSize: nextSize,
+          slideSize: layout.slideSize,
+          rulerThickness: layout.rulerThickness,
+          placement: layout.initialViewportPlacement ?? "center",
+          margin: layout.initialViewportMargin ?? 40,
+        });
+        return { viewport: nextViewport, viewportSize: nextSize };
       });
     };
 
@@ -230,26 +296,85 @@ export function useSvgViewport({
     return () => observer.disconnect();
   }, []);
 
-  // Initialize viewport translation when viewport size is first available
+  // Synchronise viewport state to *external* zoomMode prop changes.
+  // (Resize is handled in the observer callback above; this effect only
+  // handles "the consumer changed zoomMode".)
+  //
+  // The setView updater compares against `prev` and returns it unchanged
+  // when nothing must move, because callers commonly re-create option
+  // objects every render — without the guard the effect would loop on
+  // every parent re-render.
   useLayoutEffect(() => {
-    if (hasInitializedRef.current) {
-      return;
-    }
-    if (viewportSize.width === 0 || viewportSize.height === 0) {
-      return;
-    }
+    setView((prev) => {
+      if (prev.viewportSize.width === 0 || prev.viewportSize.height === 0) {
+        // Initial placement happens in the resize observer once size arrives.
+        return prev;
+      }
+      const previousSynced = syncedZoomModeRef.current;
+      if (previousSynced === zoomMode) {
+        return prev;
+      }
+      syncedZoomModeRef.current = zoomMode;
+      if (isFitMode(zoomMode)) {
+        const nextViewport = resolveViewportForZoomMode({
+          zoomMode,
+          viewportSize: prev.viewportSize,
+          slideSize,
+          rulerThickness,
+          placement: initialViewportPlacement,
+          margin: initialViewportMargin,
+        });
+        if (
+          nextViewport.scale === prev.viewport.scale
+          && nextViewport.translateX === prev.viewport.translateX
+          && nextViewport.translateY === prev.viewport.translateY
+        ) {
+          return prev;
+        }
+        return { ...prev, viewport: nextViewport };
+      }
+      // External change to a fixed scale: zoom toward the visible centre.
+      // When the change is an echo of our own wheel-zoom call, the state's
+      // scale already matches zoomMode, so zoomTowardCursor returns the
+      // input unchanged — no double-transform.
+      if (prev.viewport.scale === zoomMode) {
+        return prev;
+      }
+      const availableWidth = prev.viewportSize.width - rulerThickness;
+      const availableHeight = prev.viewportSize.height - rulerThickness;
+      const centerX = availableWidth / 2;
+      const centerY = availableHeight / 2;
+      const nextViewport = zoomTowardCursor({
+        viewport: prev.viewport,
+        cursorX: centerX,
+        cursorY: centerY,
+        newScale: zoomMode,
+      });
+      return { ...prev, viewport: nextViewport };
+    });
+  }, [
+    zoomMode,
+    slideSize,
+    rulerThickness,
+    initialViewportPlacement,
+    initialViewportMargin,
+  ]);
 
-    setViewport(createInitialViewportForZoomMode({
-      viewportSize,
-      slideSize,
-      rulerThickness,
-      zoomMode,
-      placement: initialViewportPlacement,
-      margin: initialViewportMargin,
-    }));
-
-    hasInitializedRef.current = true;
-  }, [viewportSize, slideSize, rulerThickness, zoomMode, initialViewportPlacement, initialViewportMargin]);
+  // When the user actively pans, ensure we leave fit mode so the next resize
+  // does not snap the canvas back to the fitted placement.
+  const exitFitModeIfNeeded = useCallback(
+    (currentScale: number) => {
+      if (!isFitMode(zoomMode)) {
+        return;
+      }
+      // Pre-record alignment so the responding effect run treats this as
+      // an echo (no-op) rather than as an external mode-change that would
+      // zoom-to-centre on top of our pan.
+      syncedZoomModeRef.current = currentScale;
+      onZoomModeChange?.(currentScale);
+    },
+    [zoomMode, onZoomModeChange],
+  );
 
   // Wheel handler for zoom and scroll-based panning
   const handleWheel = useCallback(
@@ -274,18 +399,26 @@ export function useSvgViewport({
           rulerThickness,
         });
 
-        const currentScale = effectiveViewport.scale;
         const direction = e.deltaY < 0 ? "in" : "out";
-        const newScale = getNextZoomValue(currentScale, direction);
+        // viewport.scale is the *displayed* scale by SoT (no divergence
+        // from an effectiveViewport derivation). Closure reads the latest
+        // committed state.
+        const newScale = getNextZoomValue(viewport.scale, direction);
 
-        // Switch to fixed zoom mode
+        // Pre-record alignment so the consumer's echo of onZoomModeChange
+        // doesn't trigger zoom-toward-centre on top of zoom-toward-cursor.
+        syncedZoomModeRef.current = newScale;
         onZoomModeChange?.(newScale);
 
-        // Update viewport with zoom-toward-cursor
-        setViewport((prev) => {
-          const currentVp = { ...prev, scale: currentScale };
-          return zoomTowardCursor({ viewport: currentVp, cursorX: cursorPos.x, cursorY: cursorPos.y, newScale });
-        });
+        setView((prev) => ({
+          ...prev,
+          viewport: zoomTowardCursor({
+            viewport: prev.viewport,
+            cursorX: cursorPos.x,
+            cursorY: cursorPos.y,
+            newScale,
+          }),
+        }));
       } else {
         // Pan mode: scroll for vertical, Shift+scroll for horizontal
         e.preventDefault();
@@ -294,13 +427,14 @@ export function useSvgViewport({
         const dx = e.shiftKey ? -e.deltaY : -e.deltaX;
         const dy = e.shiftKey ? -e.deltaX : -e.deltaY;
 
-        setViewport((prev) => {
-          const panned = panViewport(prev, dx, dy);
-          return applyClamp(panned);
-        });
+        setView((prev) => ({
+          ...prev,
+          viewport: applyClamp(panViewport(prev.viewport, dx, dy)),
+        }));
+        exitFitModeIfNeeded(viewport.scale);
       }
     },
-    [effectiveViewport.scale, onZoomModeChange, rulerThickness, applyClamp],
+    [viewport.scale, onZoomModeChange, rulerThickness, applyClamp, exitFitModeIfNeeded],
   );
 
   // Pan handlers
@@ -324,27 +458,38 @@ export function useSvgViewport({
       const dy = e.clientY - lastPointerRef.current.y;
       lastPointerRef.current = { x: e.clientX, y: e.clientY };
 
-      setViewport((prev) => {
-        const panned = panViewport(prev, dx, dy);
-        return applyClamp(panned);
-      });
+      setView((prev) => ({
+        ...prev,
+        viewport: applyClamp(panViewport(prev.viewport, dx, dy)),
+      }));
+      exitFitModeIfNeeded(viewport.scale);
     },
-    [isPanning, applyClamp],
+    [isPanning, applyClamp, exitFitModeIfNeeded, viewport.scale],
   );
 
   const handlePanEnd = useCallback(() => {
     setIsPanning(false);
   }, []);
 
-  // Center viewport
+  // Center viewport — preserve current scale, recompute translation.
   const centerViewport = useCallback(() => {
-    const fitted = createFittedViewport(viewportSize, slideSize, rulerThickness);
-    setViewport((prev) => ({
-      translateX: fitted.translateX,
-      translateY: fitted.translateY,
-      scale: prev.scale,
-    }));
-  }, [viewportSize, slideSize, rulerThickness]);
+    setView((prev) => {
+      const centered = getCenteredViewport({
+        viewportSize: prev.viewportSize,
+        slideSize,
+        scale: prev.viewport.scale,
+        rulerThickness,
+      });
+      return {
+        ...prev,
+        viewport: {
+          translateX: centered.translateX,
+          translateY: centered.translateY,
+          scale: prev.viewport.scale,
+        },
+      };
+    });
+  }, [slideSize, rulerThickness]);
 
   // Fit to view - switches to fit mode
   const fitToView = useCallback(() => {
@@ -361,7 +506,8 @@ export function useSvgViewport({
 
   return {
     svgRef,
-    viewport: effectiveViewport,
+    view,
+    viewport,
     viewportSize,
     handleWheel,
     handlePanStart,

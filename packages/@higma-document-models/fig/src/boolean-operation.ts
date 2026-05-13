@@ -11,18 +11,31 @@ import { isBooleanOperationName } from "@higma-primitives/path";
 
 import type { KiwiEnumValue } from "./types";
 
-/** Canonical numeric values Figma uses for the `BooleanOperation` Kiwi enum. */
+/**
+ * Canonical numeric values Figma uses for the `BooleanOperation` Kiwi
+ * enum. These come from the fig binary itself — Figma's encoder pairs
+ * `{value: 1, name: "INTERSECT"}` and `{value: 2, name: "SUBTRACT"}`
+ * (the same pairing the `generate-composite-fixtures.ts` and
+ * `generate-decoration-combo-fixtures.ts` test fixtures emit).
+ *
+ * An earlier revision swapped SUBTRACT and INTERSECT (assigned 1 to
+ * SUBTRACT and 2 to INTERSECT). That inversion made every renderer
+ * that calls `resolveBooleanOperationType` interpret real-Figma
+ * SUBTRACT nodes as INTERSECT and vice-versa — visible on the
+ * `composite-subtract-basic` (31.6%) and `composite-intersect-basic`
+ * (21.0%) pixel-diff regressions.
+ */
 export const BOOLEAN_OPERATION_VALUES: Record<BooleanOperationType, number> = {
   UNION: 0,
-  SUBTRACT: 1,
-  INTERSECT: 2,
+  INTERSECT: 1,
+  SUBTRACT: 2,
   EXCLUDE: 3,
 };
 
 const BOOLEAN_OPERATION_BY_VALUE: Record<number, BooleanOperationType> = {
   0: "UNION",
-  1: "SUBTRACT",
-  2: "INTERSECT",
+  1: "INTERSECT",
+  2: "SUBTRACT",
   3: "EXCLUDE",
 };
 

@@ -15,3 +15,12 @@
 // =============================================================================
 
 export type { FigSvgRenderContext, FigSvgRenderContextConfig, FigSvgRenderResult } from "./types";
+
+// =============================================================================
+// Thumbnail rendering (Node-side wiring for `exportFig`'s renderThumbnail DI)
+// =============================================================================
+
+export {
+  createNodeThumbnailRenderer,
+  type CreateNodeThumbnailRendererOptions,
+} from "./thumbnail/node-thumbnail-renderer";

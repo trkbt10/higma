@@ -17,9 +17,11 @@ import type {
   FigDesignNode,
   FigPage,
   FigStyleRegistry,
+  FigThumbnailTarget,
   LoadedFigFile,
   NodeTreeResult,
 } from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
 import {
   convertFigNode,
   DEFAULT_PAGE_BACKGROUND,
@@ -110,6 +112,49 @@ function readDocumentColorProfile(tree: NodeTreeResult): FigNode["documentColorP
   return undefined;
 }
 
+/**
+ * Lift the `thumbnailInfo` field from the DOCUMENT root, if Figma's
+ * "Set as thumbnail" was applied. The Kiwi schema places this field on
+ * `NodeChange` (i.e. it could in principle appear on any node), but the
+ * editor only writes it on the document root — we therefore read it
+ * exclusively from there to keep the surface narrow.
+ */
+function readThumbnailTarget(tree: NodeTreeResult): FigThumbnailTarget | undefined {
+  for (const root of tree.roots) {
+    if (getNodeType(root) !== "DOCUMENT") {
+      continue;
+    }
+    const raw = root["thumbnailInfo"];
+    if (raw === undefined || raw === null) {
+      return undefined;
+    }
+    if (typeof raw !== "object") {
+      throw new Error(
+        `tree-to-document: DOCUMENT.thumbnailInfo must decode to an object; got ${typeof raw}`,
+      );
+    }
+    const info = raw as { readonly nodeID?: unknown; readonly thumbnailVersion?: unknown };
+    const rawNodeID = info.nodeID;
+    if (rawNodeID === undefined || rawNodeID === null || typeof rawNodeID !== "object") {
+      throw new Error(
+        `tree-to-document: DOCUMENT.thumbnailInfo.nodeID must be a GUID {sessionID,localID}; got ${JSON.stringify(rawNodeID)}`,
+      );
+    }
+    const candidate = rawNodeID as { readonly sessionID?: unknown; readonly localID?: unknown };
+    if (typeof candidate.sessionID !== "number" || typeof candidate.localID !== "number") {
+      throw new Error(
+        `tree-to-document: DOCUMENT.thumbnailInfo.nodeID must be a GUID {sessionID,localID}; got ${JSON.stringify(rawNodeID)}`,
+      );
+    }
+    const target: FigThumbnailTarget = {
+      nodeID: { sessionID: candidate.sessionID, localID: candidate.localID } as FigGuid,
+      ...(typeof info.thumbnailVersion === "string" ? { thumbnailVersion: info.thumbnailVersion } : {}),
+    };
+    return target;
+  }
+  return undefined;
+}
+
 export type TreeToDocumentOptions = {
   /**
    * Pre-built style registry. When provided, `treeToDocument` skips
@@ -158,6 +203,7 @@ export function treeToDocument(
     }
   }
 
+  const thumbnailTarget = readThumbnailTarget(tree);
   const document: FigDesignDocument = {
     pages,
     documentColorProfile: readDocumentColorProfile(tree),
@@ -166,6 +212,7 @@ export function treeToDocument(
     blobs: source.blobs,
     metadata: source.metadata,
     styleRegistry,
+    ...(thumbnailTarget ? { thumbnailTarget } : {}),
   };
   if (!loaded) {
     return document;

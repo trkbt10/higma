@@ -662,6 +662,15 @@ function buildNodeChanges(doc: FigDesignDocument): DocumentToTreeResult {
   if (doc.documentColorProfile) {
     documentNode.documentColorProfile = doc.documentColorProfile;
   }
+  // Re-emit Figma's "Set as thumbnail" pointer (`NodeChange.thumbnailInfo`)
+  // so an edit-then-export round trip preserves the user's selection.
+  if (doc.thumbnailTarget) {
+    const info: Record<string, unknown> = { nodeID: doc.thumbnailTarget.nodeID };
+    if (doc.thumbnailTarget.thumbnailVersion !== undefined) {
+      info.thumbnailVersion = doc.thumbnailTarget.thumbnailVersion;
+    }
+    documentNode.thumbnailInfo = info;
+  }
   applyNodeTypeDefaults(documentNode, "DOCUMENT");
   result.push(documentNode as FigNode);
 

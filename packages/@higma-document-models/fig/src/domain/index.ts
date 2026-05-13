@@ -30,6 +30,7 @@ export type {
   FigGridTrackPositions,
   FigStyleRegistry,
   FigDesignBlob,
+  FigThumbnailTarget,
 } from "./document";
 export type {
   LoadedFigFile,

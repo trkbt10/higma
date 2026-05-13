@@ -26,6 +26,7 @@ import {
   type FigCanvasHeader,
 } from "@higma-figma-containers/canvas";
 import {
+  FIG_THUMBNAIL_ZIP_ENTRY,
   isZipPackage,
   parseFigPackageMetadata,
   getFigPackageImageMimeType,
@@ -249,7 +250,7 @@ export async function buildLintContext(bytes: Uint8Array): Promise<LintContextBu
   const decoded = decodeChain(canvasData, errors);
   const images = isZip ? extractImages(zipEntries) : new Map<string, FigPackageImage>();
   const metadata = isZip ? extractMetadata(zipEntries, errors) : null;
-  const hasThumbnail = zipEntries.has("thumbnail.png");
+  const hasThumbnail = zipEntries.has(FIG_THUMBNAIL_ZIP_ENTRY);
 
   const context: LintContext = {
     bytes,

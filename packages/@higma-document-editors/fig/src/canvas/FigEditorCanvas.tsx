@@ -174,8 +174,13 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
 
   const canvasRef = useRef<EditorCanvasHandle>(null);
   const [zoomMode, setZoomMode] = useState<ZoomMode>("fit");
-  const [viewportScale, setViewportScale] = useState(1);
+  // SoT: viewport scale and the full render context are derived from the
+  // same EditorCanvas onViewportChange payload. Keeping the scale as a
+  // separate piece of state used to mean two `useState` values could drift
+  // if either was set without the other; the single render-context state
+  // makes that impossible.
   const [viewportRenderContext, setViewportRenderContext] = useState<EditorCanvasViewportContentContext | null>(null);
+  const viewportScale = viewportRenderContext?.viewport.scale ?? 1;
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const vectorPathDragRef = useRef<VectorPathDragState | null>(null);
   const vectorPathDraftSessionRef = useRef<VectorPathDraftSession | null>(null);
@@ -1491,8 +1496,7 @@ export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, w
     );
   }, [activePage, sceneGraph, renderer, renderOptions, renderWindow, resources, viewportScale, webglInitializationDelayMs, textFontResolver]);
 
-  const handleViewportChange = useCallback((viewport: EditorCanvasViewportContentContext["viewport"], context: EditorCanvasViewportContentContext) => {
-    setViewportScale(viewport.scale);
+  const handleViewportChange = useCallback((_viewport: EditorCanvasViewportContentContext["viewport"], context: EditorCanvasViewportContentContext) => {
     setViewportRenderContext((previous) => {
       if (
         previous

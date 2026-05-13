@@ -12,21 +12,9 @@
  * for diagnosing intermediate test fixtures, but never shippable.
  */
 
+import { isPng } from "@higma-codecs/png";
+import { FIG_THUMBNAIL_ZIP_ENTRY } from "@higma-figma-containers/package";
 import type { LintRule } from "../types";
-
-const PNG_MAGIC = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-function startsWithPngMagic(bytes: Uint8Array): boolean {
-  if (bytes.length < PNG_MAGIC.length) {
-    return false;
-  }
-  for (let i = 0; i < PNG_MAGIC.length; i++) {
-    if (bytes[i] !== PNG_MAGIC[i]) {
-      return false;
-    }
-  }
-  return true;
-}
 
 export const zipPackageRule: LintRule = (ctx, emit) => {
   if (!ctx.isZip) {
@@ -60,23 +48,23 @@ export const zipPackageRule: LintRule = (ctx, emit) => {
     });
   }
 
-  const thumb = ctx.zipEntries.get("thumbnail.png");
+  const thumb = ctx.zipEntries.get(FIG_THUMBNAIL_ZIP_ENTRY);
   if (!thumb) {
     emit({
       ruleId: "fig.zip.thumbnail",
       severity: "error",
-      path: "zip/thumbnail.png",
-      message: "Required entry thumbnail.png is missing from the ZIP — Figma will refuse the import",
+      path: `zip/${FIG_THUMBNAIL_ZIP_ENTRY}`,
+      message: `Required entry ${FIG_THUMBNAIL_ZIP_ENTRY} is missing from the ZIP — Figma will refuse the import`,
       remediation: "Rebuild with exportFig(doc); it always emits a placeholder thumbnail",
     });
     return;
   }
-  if (!startsWithPngMagic(thumb)) {
+  if (!isPng(thumb)) {
     emit({
       ruleId: "fig.zip.thumbnail",
       severity: "error",
-      path: "zip/thumbnail.png",
-      message: "thumbnail.png does not start with the PNG magic — file is corrupted",
+      path: `zip/${FIG_THUMBNAIL_ZIP_ENTRY}`,
+      message: `${FIG_THUMBNAIL_ZIP_ENTRY} does not start with the PNG magic — file is corrupted`,
       remediation: "Rewrite thumbnail.png with a valid PNG (`exportFig` writes a 1x1 placeholder)",
     });
   }

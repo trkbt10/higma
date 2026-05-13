@@ -9,6 +9,9 @@
   },
   "dependencies": {
     "@higma-codecs/compression": "workspace:*",
+    "@higma-codecs/kiwi": "workspace:*",
+    "@higma-codecs/png": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
     "@higma-figma-containers/canvas": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
     "@higma-figma-runtime/kiwi-canvas": "workspace:*",
@@ -16,8 +19,6 @@
     "@higma-figma-schema/profiles": "workspace:*",
     "@higma-primitives/tree": "workspace:*",
     "@higma-primitives/zip": "workspace:*",
-    "@higma-document-models/fig": "workspace:*",
-    "@higma-codecs/kiwi": "workspace:*",
     "pako": "^2.1.0"
   },
   "scripts": {

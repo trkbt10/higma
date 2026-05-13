@@ -109,6 +109,33 @@ function isFigVector(value: unknown): value is FigVector {
     "y" in value && typeof value.y === "number";
 }
 
+/**
+ * Extract a `FigVector` from either spelling the Kiwi schema produces
+ * for `OptionalVector { value: Vector }` fields:
+ *
+ *   - bare `{x, y}` — pre-`6ea3dc6` fixtures that emitted the
+ *     unwrapped vector directly
+ *   - wrapped `{value: {x, y}}` — the canonical Kiwi shape that
+ *     Figma writes today (e.g. `minSize`, `maxSize`,
+ *     `targetAspectRatio`)
+ *
+ * Returns `undefined` when neither shape matches, including the
+ * empty `{}` Figma writes for "ratio not set" on
+ * `targetAspectRatio`.
+ */
+function extractOptionalVector(value: unknown): FigVector | undefined {
+  if (isFigVector(value)) {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && "value" in value) {
+    const inner = (value as { readonly value: unknown }).value;
+    if (isFigVector(inner)) {
+      return inner;
+    }
+  }
+  return undefined;
+}
+
 function isFigGuid(value: unknown): value is FigGuid {
   return typeof value === "object" && value !== null &&
     "sessionID" in value && typeof value.sessionID === "number" &&
@@ -1339,10 +1366,10 @@ export function convertFigNode(
     backgroundPaints: node.backgroundPaints,
 
     // ---- FRAME load-bearing (formerly _raw) ----
-    minSize: isFigVector(node.minSize) ? node.minSize : undefined,
-    maxSize: isFigVector(node.maxSize) ? node.maxSize : undefined,
+    minSize: extractOptionalVector(node.minSize),
+    maxSize: extractOptionalVector(node.maxSize),
     bordersTakeSpace: typeof node.bordersTakeSpace === "boolean" ? node.bordersTakeSpace : undefined,
-    targetAspectRatio: isFigVector(node.targetAspectRatio) ? node.targetAspectRatio : undefined,
+    targetAspectRatio: extractOptionalVector(node.targetAspectRatio),
     proportionsConstrained: typeof node.proportionsConstrained === "boolean" ? node.proportionsConstrained : undefined,
     gridRows: isFigGridTrackPositions(node.gridRows) ? node.gridRows : undefined,
     gridColumns: isFigGridTrackPositions(node.gridColumns) ? node.gridColumns : undefined,

@@ -294,4 +294,63 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
     // extent, not the local 20-px width.
     expect(out[1].transform!.m02).toBeCloseTo(60);
   });
+
+  // Regression: 270° CW rotation is the fourth cardinal case the
+  // AABB fix has to honour. For a 20×60 child rotated 270° CW
+  // (= 90° CCW spun the other way; matrix {m00:0, m01:-1, m10:1,
+  // m11:0}), the AABB along the horizontal parent axis is `h` wide
+  // and along the vertical axis is `w` tall. Without an explicit
+  // 270° case, a future "simplify rotation handling" refactor could
+  // silently regress this branch — the unit test makes that
+  // impossible.
+  it("places 270°-rotated children by their AABB on the primary axis", () => {
+    const p = parent({ x: 200, y: 80 }, { mode: "HORIZONTAL", padding: 0, spacing: 0, primaryAlign: "MIN" });
+    // 270° CW (= -90°): m00=0, m01=-1, m10=1, m11=0; choose origin
+    // so the corners (0,0), (-w,0)+origin, (0,h)+origin, (-w,h)+origin
+    // land with AABB top-left = (0,0). Corners of a 20×60 local rect
+    // under this rotation: (0,0)→(0,0), (20,0)→(0,20), (0,60)→(-60,0),
+    // (20,60)→(-60,20). Shift by (60, 0) to anchor AABB top-left at
+    // origin: m02 = 60, m12 = 0.
+    const rotated: PrimaryAxisChild = {
+      size: { x: 20, y: 60 },
+      transform: { m00: 0, m01: -1, m02: 60, m10: 1, m11: 0, m12: 0 },
+    };
+    const trailing: PrimaryAxisChild = {
+      size: { x: 40, y: 40 },
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    };
+    const out = applyAutoLayoutPrimaryAxis(p, [rotated, trailing]);
+    // First child: AABB top-left at primary-axis cursor 0 ⇒ origin
+    // offset 60 on x (the same shift we authored) keeps m02=60.
+    expect(out[0].transform!.m02).toBeCloseTo(60);
+    // Trailing child starts at primaryCursor = 60 — proves the
+    // solver advanced by the AABB width (60), not the local width
+    // (20).
+    expect(out[1].transform!.m02).toBeCloseTo(60);
+  });
+
+  // Regression: the counter-axis placement (`applyCounterAxisPosition`)
+  // has the same AABB-aware origin reconstruction as the primary
+  // axis. A 180°-rotated 36×36 child whose CENTER alignment requires
+  // it to sit at counter-axis offset (54 − 36) / 2 = 9 must produce
+  // `m12 = 9 + h = 45`, otherwise the rotated AABB lands at y = -27
+  // and the icon disappears above the parent.
+  it("places rotated children on the counter axis using the AABB", () => {
+    const p = parent({ x: 100, y: 54 }, {
+      mode: "HORIZONTAL",
+      padding: 0,
+      spacing: 0,
+      primaryAlign: "MIN",
+      counterAlign: "CENTER",
+    });
+    const rotated: PrimaryAxisChild = {
+      size: { x: 36, y: 36 },
+      transform: { m00: -1, m01: 0, m02: 36, m10: 0, m11: -1, m12: 36 },
+    };
+    const out = resolveAutoLayoutFrame(p, [rotated]);
+    // counterSpan = 54, childSpan = 36, CENTER → counter-axis offset 9.
+    // AABB origin offset along y = m12 - aabbMin.y = 36 - 0 = 36.
+    // Final m12 = 9 + 36 = 45.
+    expect(out.children[0].transform!.m12).toBeCloseTo(45);
+  });
 });

@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createEmptyZipPackage, loadZipPackage } from "@higma-primitives/zip";
+import { FIG_THUMBNAIL_ZIP_ENTRY } from "@higma-figma-containers/package";
 import { runFigHealthCheck } from "./health-check";
 import { formatFigHealthReport } from "./format";
 import type { LintRuleId } from "./types";
@@ -39,7 +40,7 @@ async function buildThumbnailLessFigBytes(): Promise<Uint8Array> {
   const zip = await loadZipPackage(original);
   const rebuilt = createEmptyZipPackage();
   for (const name of zip.listFiles()) {
-    if (name === "thumbnail.png") {
+    if (name === FIG_THUMBNAIL_ZIP_ENTRY) {
       continue;
     }
     const data = zip.readBinary(name);

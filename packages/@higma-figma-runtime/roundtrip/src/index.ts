@@ -12,6 +12,7 @@ import {
   buildFigPackageMetadataJson,
   createFigPackage,
   extractFigPackageContents,
+  FIG_THUMBNAIL_ZIP_ENTRY,
   isZipPackage,
   type FigPackageImage,
   type FigPackageMetadata,
@@ -203,7 +204,7 @@ export async function saveFigFamilyFile<NodeChange, BlobValue>(
 
   const thumbnailData = options.thumbnail ?? loaded.thumbnail;
   if (thumbnailData) {
-    zip.writeBinary("thumbnail.png", thumbnailData);
+    zip.writeBinary(FIG_THUMBNAIL_ZIP_ENTRY, thumbnailData);
   }
 
   writeImages(zip, loaded.images, options.images);
