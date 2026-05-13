@@ -9,6 +9,7 @@ import type { BackgroundBlurEffect, BlendMode, DropShadowEffect, InnerShadowEffe
 import type { Framebuffer } from "../resources/framebuffer";
 import { createFramebuffer, createFramebufferWithStencil, deleteFramebuffer, bindFramebuffer } from "../resources/framebuffer";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
+import { applyEffectOffsetScale, type EffectBackingScale } from "./effect-scale";
 
 /**
  * Gaussian blur shader (separable 2-pass)
@@ -277,13 +278,18 @@ export const blitFragmentShader = `
 
 /** Effects renderer instance */
 export type EffectsRendererInstance = {
-  renderDropShadow(params: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; pixelRatio: number; renderSilhouette: () => void }): void;
-  renderInnerShadow(params: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; pixelRatio: number; renderSilhouette: () => void }): void;
-  renderBackgroundBlur(params: { canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; pixelRatio: number; requireClipStencil: boolean; renderMask: () => void }): void;
+  renderDropShadow(params: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }): void;
+  renderInnerShadow(params: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }): void;
+  renderBackgroundBlur(params: { canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; requireClipStencil: boolean; renderMask: () => void }): void;
   beginLayerCapture(canvasWidth: number, canvasHeight: number): Framebuffer;
-  endLayerCaptureAndBlur(params: { canvasWidth: number; canvasHeight: number; effect: LayerBlurEffect; pixelRatio: number }): void;
+  endLayerCaptureAndBlur(params: { canvasWidth: number; canvasHeight: number; effect: LayerBlurEffect; worldToBacking: EffectBackingScale }): void;
   /** Blit the captured layer FBO to screen with the given opacity (no blur). */
   blitLayerWithOpacity(params: { canvasWidth: number; canvasHeight: number; opacity: number }): void;
+  /**
+   * Apply a Gaussian blur to a framebuffer. `radius` is in **backing-buffer
+   * pixels** — callers must have already multiplied by the world→backing
+   * length scale (see `EffectBackingScale.lengthScale`).
+   */
   applyGaussianBlur(source: Framebuffer, radius: number): Framebuffer;
   dispose(): void;
 };
@@ -555,7 +561,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
   return {
     renderDropShadow(
-      { canvasWidth, canvasHeight, effect, pixelRatio, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; pixelRatio: number; renderSilhouette: () => void }
+      { canvasWidth, canvasHeight, effect, worldToBacking, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureShapeFBO(canvasWidth, canvasHeight);
@@ -566,16 +572,23 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.clear(gl.COLOR_BUFFER_BIT);
       renderSilhouette();
 
-      const spreadSource = effect.spread ? applyAlphaMorphology(shapeFBO.value!, effect.spread * pixelRatio) : shapeFBO.value!;
+      const spreadSource = effect.spread ? applyAlphaMorphology(shapeFBO.value!, effect.spread * worldToBacking.lengthScale) : shapeFBO.value!;
       const resultFBORef = { value: undefined as Framebuffer | undefined };
       if (effect.radius > 0) {
-        resultFBORef.value = applyGaussianBlur(spreadSource, effect.radius * pixelRatio);
+        resultFBORef.value = applyGaussianBlur(spreadSource, effect.radius * worldToBacking.lengthScale);
       } else {
         resultFBORef.value = spreadSource;
       }
 
       bindFramebuffer(gl, null);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
+
+      // World-space offset → backing-pixel offset. The texCoord sampling
+      // convention in the composite/blend shaders below: world +x is
+      // +texCoord.x, world +y is +texCoord.y (the silhouette was rendered
+      // with Y-flip into the FBO, so texture-up == world-y=0). To sample
+      // the silhouette at the shadow's source position, x is negated.
+      const offsetBacking = applyEffectOffsetScale(worldToBacking, effect.offset.x, effect.offset.y);
 
       const blendModeCode = blendModeToShaderCode(effect.blendMode);
       if (blendModeCode !== 0) {
@@ -601,8 +614,8 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         );
         gl.uniform2f(
           gl.getUniformLocation(programForBlend, "u_offset"),
-          -effect.offset.x * pixelRatio,
-          effect.offset.y * pixelRatio
+          -offsetBacking.x,
+          offsetBacking.y
         );
         gl.uniform2f(
           gl.getUniformLocation(programForBlend, "u_texelSize"),
@@ -637,8 +650,8 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       gl.uniform2f(
         gl.getUniformLocation(program, "u_offset"),
-        -effect.offset.x * pixelRatio,
-        effect.offset.y * pixelRatio
+        -offsetBacking.x,
+        offsetBacking.y
       );
 
       gl.uniform2f(
@@ -658,7 +671,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     renderInnerShadow(
-      { canvasWidth, canvasHeight, effect, pixelRatio, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; pixelRatio: number; renderSilhouette: () => void }
+      { canvasWidth, canvasHeight, effect, worldToBacking, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureShapeFBO(canvasWidth, canvasHeight);
@@ -670,10 +683,10 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.clear(gl.COLOR_BUFFER_BIT);
       renderSilhouette();
 
-      const spreadSource = effect.spread ? applyAlphaMorphology(shapeFBO.value!, effect.spread * pixelRatio) : shapeFBO.value!;
+      const spreadSource = effect.spread ? applyAlphaMorphology(shapeFBO.value!, effect.spread * worldToBacking.lengthScale) : shapeFBO.value!;
       const blurredFBORef = { value: undefined as Framebuffer | undefined };
       if (effect.radius > 0) {
-        blurredFBORef.value = applyGaussianBlur(spreadSource, effect.radius * pixelRatio);
+        blurredFBORef.value = applyGaussianBlur(spreadSource, effect.radius * worldToBacking.lengthScale);
       } else {
         blurredFBORef.value = spreadSource;
       }
@@ -682,6 +695,9 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.viewport(0, 0, canvasWidth, canvasHeight);
 
       const program = requireProgram(innerShadowProgram.value, "inner shadow");
+
+      // Same world→backing-pixel offset conversion as drop shadow above.
+      const offsetBacking = applyEffectOffsetScale(worldToBacking, effect.offset.x, effect.offset.y);
 
       const blendModeCode = blendModeToShaderCode(effect.blendMode);
       if (blendModeCode !== 0) {
@@ -703,8 +719,8 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         gl.uniform4f(gl.getUniformLocation(program, "u_color"), 1, 1, 1, 1);
         gl.uniform2f(
           gl.getUniformLocation(program, "u_offset"),
-          -effect.offset.x * pixelRatio,
-          effect.offset.y * pixelRatio
+          -offsetBacking.x,
+          offsetBacking.y
         );
         gl.uniform2f(
           gl.getUniformLocation(program, "u_texelSize"),
@@ -756,8 +772,8 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       gl.uniform2f(
         gl.getUniformLocation(program, "u_offset"),
-        -effect.offset.x * pixelRatio,
-        effect.offset.y * pixelRatio
+        -offsetBacking.x,
+        offsetBacking.y
       );
 
       gl.uniform2f(
@@ -777,15 +793,15 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     renderBackgroundBlur(
-      { canvasWidth, canvasHeight, effect, pixelRatio, requireClipStencil, renderMask }: {
-        canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; pixelRatio: number; requireClipStencil: boolean; renderMask: () => void;
+      { canvasWidth, canvasHeight, effect, worldToBacking, requireClipStencil, renderMask }: {
+        canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; requireClipStencil: boolean; renderMask: () => void;
       }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
       const backdrop = copyDefaultFramebufferToLayer(canvasWidth, canvasHeight);
-      const blurred = applyGaussianBlur(backdrop, effect.radius * pixelRatio);
+      const blurred = applyGaussianBlur(backdrop, effect.radius * worldToBacking.lengthScale);
 
       bindFramebuffer(gl, null);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
@@ -851,12 +867,12 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     endLayerCaptureAndBlur(
-      { canvasWidth, canvasHeight, effect, pixelRatio }: { canvasWidth: number; canvasHeight: number; effect: LayerBlurEffect; pixelRatio: number }
+      { canvasWidth, canvasHeight, effect, worldToBacking }: { canvasWidth: number; canvasHeight: number; effect: LayerBlurEffect; worldToBacking: EffectBackingScale }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      const blurred = applyGaussianBlur(layerFBO.value!, effect.radius * pixelRatio);
+      const blurred = applyGaussianBlur(layerFBO.value!, effect.radius * worldToBacking.lengthScale);
 
       bindFramebuffer(gl, null);
       gl.viewport(0, 0, canvasWidth, canvasHeight);

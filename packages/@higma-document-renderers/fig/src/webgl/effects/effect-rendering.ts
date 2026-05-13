@@ -12,6 +12,7 @@ import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/rend
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
 import type { EffectsRendererInstance } from "./effects-renderer";
 import type { Bounds } from "../tessellation/stencil-fill";
+import { resolveEffectBackingScale } from "./effect-scale";
 
 type DrawStencilFillParams = {
   readonly fanVertices: Float32Array;
@@ -91,7 +92,7 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
       canvasWidth: params.canvasWidth(),
       canvasHeight: params.canvasHeight(),
       effect,
-      pixelRatio: params.pixelRatio(),
+      worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
       requireClipStencil: params.isClipStencilRequired(),
       renderMask: () => {
         drawSolidFill({
@@ -133,7 +134,7 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         canvasWidth: params.canvasWidth(),
         canvasHeight: params.canvasHeight(),
         effect,
-        pixelRatio: params.pixelRatio(),
+        worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
         renderSilhouette: () => {
           drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
         },
@@ -156,7 +157,7 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         canvasWidth: params.canvasWidth(),
         canvasHeight: params.canvasHeight(),
         effect,
-        pixelRatio: params.pixelRatio(),
+        worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
         renderSilhouette: () => {
           drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
         },
@@ -202,7 +203,7 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         canvasWidth: params.canvasWidth(),
         canvasHeight: params.canvasHeight(),
         effect,
-        pixelRatio: params.pixelRatio(),
+        worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
         renderSilhouette: () => {
           drawSolidFill({ ctx: params.getGlContext(), vertices: silhouetteVertices, color: WHITE, transform, opacity: 1 });
         },

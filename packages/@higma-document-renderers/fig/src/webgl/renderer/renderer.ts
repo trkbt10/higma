@@ -48,6 +48,7 @@ import {
 import { createEffectsRenderer } from "../effects/effects-renderer";
 import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { createWebGLEffectRendering } from "../effects/effect-rendering";
+import { resolveEffectBackingScale } from "../effects/effect-scale";
 import { shouldRenderVisualNode, type ViewportRect } from "../scene/render-culling";
 import { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "../resources/resource-context";
 import {
@@ -1150,7 +1151,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     restoreOuterClipStencil(hadOuterClip);
 
-    effectsRenderer.endLayerCaptureAndBlur({ canvasWidth: canvasW, canvasHeight: canvasH, effect, pixelRatio: pixelRatioRef.value });
+    effectsRenderer.endLayerCaptureAndBlur({
+      canvasWidth: canvasW,
+      canvasHeight: canvasH,
+      effect,
+      worldToBacking: resolveEffectBackingScale(worldTransform, pixelRatioRef.value),
+    });
     glState.invalidate();
     markClipStencilDirty();
   }
