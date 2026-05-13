@@ -25,6 +25,17 @@ const FRAME_MAP: Record<string, string> = {
   "image-fill-shadow": "image-fill-shadow.svg",
   "image-fill-circle": "image-fill-circle.svg",
   "image-fill-multi": "image-fill-multi.svg",
+  // STRETCH + identity transform — sanity branch of the convert layer's
+  // STRETCH→CROP normaliser (must NOT promote to CROP).
+  "image-fill-stretch": "image-fill-stretch.svg",
+  // STRETCH + non-identity transform — Figma's wire-format spelling of the
+  // editor's "Crop" mode. The convert layer normalises this to scaleMode
+  // "CROP" so SVG/WebGL honour the transform instead of plain-stretching.
+  "image-fill-crop": "image-fill-crop.svg",
+  // CROP whose transform pushes the image's corners outside the element;
+  // the underlying solid paint must show through the transparent regions
+  // (`clipTransparent: true` arm of the renderer's CROP branch).
+  "image-fill-crop-offset": "image-fill-crop-offset.svg",
 };
 
 type LayerInfo = { name: string; node: FigNode; size: { width: number; height: number } };

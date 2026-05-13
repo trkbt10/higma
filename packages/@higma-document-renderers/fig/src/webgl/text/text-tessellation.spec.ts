@@ -462,6 +462,137 @@ describe("Text tessellation pipeline", () => {
       expect(result!.color).toEqual({ r: 1, g: 0, b: 0, a: 1 });
       expect(result!.opacity).toBe(0.5);
     });
+
+    // Regression: glyphs like '0', '9', 'B', 'D', 'P', 'R', 'O', '₱'
+    // arrive from opentype.js as a SINGLE GlyphContour whose
+    // `commands` array carries the outer ring AND every interior hole
+    // (`M outer…Z M hole…Z`). Earlier, `tessellateTextNode` forwarded
+    // each glyph as one `PathContour` straight to the WebGL
+    // tessellator, which flattens all subpaths into one boundary —
+    // the outer ring and the hole then share one polygon, signed area
+    // is the difference (small magnitude, wrong sign on close calls),
+    // earcut weaves triangles across the gap, the outer fill drops
+    // out, and only the hole's interior rasterises ("₱ 900.00"
+    // displayed as just the hollow centers of the 0s on the
+    // E-Commerce fixture). The fix splits each glyph's subpaths
+    // before tessellation so the outer and the hole reach the
+    // tessellator as separate contours with opposite signed areas.
+    it("renders glyphs with multi-subpath commands (outer + interior hole)", () => {
+      // Synthesise an opentype.js-shaped glyph: one PathCommand[]
+      // containing the outer ring (CCW after Y-flip = negative area)
+      // followed by the hole (CW after Y-flip = positive area).
+      const outer = outerRect({ x: 0, y: 0, w: 14, h: 14 });
+      const hole = holeRect({ x: 4, y: 4, w: 6, h: 6 });
+      const zeroLikeGlyph: PathContour & { firstCharacter: number } = {
+        commands: [...outer.commands, ...hole.commands],
+        windingRule: "nonzero",
+        firstCharacter: 0,
+      };
+      const node = makeTextNode({ glyphContours: [zeroLikeGlyph] });
+      const result = tessellateTextNode(node);
+
+      // The ring (outer with a 6×6 hole) must produce triangles in
+      // the band region. Without the fix, earcut walks the combined
+      // boundary as a single polygon, weaves triangles across the
+      // hole, and either fills the whole 14×14 (no ring visible) or
+      // drops the outer in favour of the hole. Either failure
+      // produces zero vertices in the *band* (the outer minus the
+      // hole). Probe the four corner band cells: each must contain at
+      // least one tessellated vertex.
+      const v = result.glyphVertices;
+      let topBand = 0;
+      let bottomBand = 0;
+      let leftBand = 0;
+      let rightBand = 0;
+      for (let i = 0; i < v.length; i += 2) {
+        const x = v[i];
+        const y = v[i + 1];
+        if (y <= 4) { topBand++; }
+        if (y >= 10) { bottomBand++; }
+        if (x <= 4) { leftBand++; }
+        if (x >= 10) { rightBand++; }
+      }
+      expect(topBand).toBeGreaterThan(0);
+      expect(bottomBand).toBeGreaterThan(0);
+      expect(leftBand).toBeGreaterThan(0);
+      expect(rightBand).toBeGreaterThan(0);
+      // And no vertex should fall strictly inside the hole (4 < x < 10
+      // && 4 < y < 10) — a degenerate fan there would mean the hole
+      // got filled.
+      let insideHole = 0;
+      for (let i = 0; i < v.length; i += 2) {
+        if (v[i] > 4 && v[i] < 10 && v[i + 1] > 4 && v[i + 1] < 10) {
+          insideHole++;
+        }
+      }
+      expect(insideHole).toBe(0);
+    });
+
+    // Regression: the auto-detected winding convention previously
+    // voted by simple subpath count — when the input runs hole-heavy
+    // (e.g. Figma's derived blobs for "₱ 900.00" carry 7 outers and
+    // 8 holes because the peso sign has 1 outer + 1 bowl + 2
+    // currency bars), the majority flips and every digit's outer
+    // ring ends up classified as a hole. Earcut then drops the
+    // orphan outers and rasterises only the inner holes — the
+    // E-Commerce Plant Shop "shows only the holes of 0s" symptom.
+    // The fix votes by summed |area| instead: outers are larger
+    // than their holes regardless of how many holes there are.
+    it("classifies outers correctly even when holes outnumber outers (₱-shape case)", () => {
+      // Build a single GlyphContour that mimics a peso sign:
+      //   1 large outer (14×14) + 3 small holes (a bowl + 2 bars).
+      // Use the helper shapes so signed-area convention matches
+      // the rest of the spec (outerRect = negative area → outer in
+      // this spec's coords; holeRect = positive → hole).
+      const outerCmds = outerRect({ x: 0, y: 0, w: 14, h: 14 }).commands;
+      const bowlCmds = holeRect({ x: 2, y: 2, w: 8, h: 5 }).commands;
+      const bar1Cmds = holeRect({ x: 1, y: 8, w: 12, h: 1 }).commands;
+      const bar2Cmds = holeRect({ x: 1, y: 10, w: 12, h: 1 }).commands;
+      const pesoLikeGlyph: PathContour & { firstCharacter: number } = {
+        commands: [...outerCmds, ...bowlCmds, ...bar1Cmds, ...bar2Cmds],
+        windingRule: "nonzero",
+        firstCharacter: 0,
+      };
+      // Append a plain "0" with one outer + one hole — together the
+      // input has 2 outers and 4 holes (counts inverted vs. reality).
+      const zeroOuter = outerRect({ x: 20, y: 0, w: 14, h: 14 }).commands;
+      const zeroHole = holeRect({ x: 24, y: 4, w: 6, h: 6 }).commands;
+      const zeroLikeGlyph: PathContour & { firstCharacter: number } = {
+        commands: [...zeroOuter, ...zeroHole],
+        windingRule: "nonzero",
+        firstCharacter: 1,
+      };
+      const node = makeTextNode({ glyphContours: [pesoLikeGlyph, zeroLikeGlyph] });
+      const result = tessellateTextNode(node);
+
+      // The "0" glyph must render as a ring: vertices populate the
+      // four 1-pixel bands surrounding its hole, and no vertex sits
+      // inside the hole interior (24..30, 4..10). Earlier the count-
+      // majority auto-detect flipped, classifying every outer as a
+      // hole and dropping the rings as orphans — the "0" then
+      // rasterised as a tiny solid blob INSIDE the hole region.
+      const v = result.glyphVertices;
+      let topBand = 0;
+      let bottomBand = 0;
+      let leftBand = 0;
+      let rightBand = 0;
+      let insideHole = 0;
+      for (let i = 0; i < v.length; i += 2) {
+        const x = v[i];
+        const y = v[i + 1];
+        if (x < 20 || x > 34) { continue; } // ignore peso glyph region
+        if (y <= 4) { topBand++; }
+        if (y >= 10) { bottomBand++; }
+        if (x <= 24) { leftBand++; }
+        if (x >= 30) { rightBand++; }
+        if (x > 24 && x < 30 && y > 4 && y < 10) { insideHole++; }
+      }
+      expect(topBand).toBeGreaterThan(0);
+      expect(bottomBand).toBeGreaterThan(0);
+      expect(leftBand).toBeGreaterThan(0);
+      expect(rightBand).toBeGreaterThan(0);
+      expect(insideHole).toBe(0);
+    });
   });
 
   // =============================================================================

@@ -13,13 +13,14 @@
  * of the document tree.
  */
 
-import type { FigNode, FigGuid, FigParentIndex, FigComponentPropValue } from "@higma-document-models/fig/types";
+import type { FigNode, FigGuid, FigParentIndex, FigComponentPropValue, FigPaint, FigImagePaint, FigVector } from "@higma-document-models/fig/types";
 import type {
   ComponentPropertyValue,
   FigDesignDocument,
   FigDesignNode,
   FigPage,
   FigDesignBlob,
+  FigGridTrackPositions,
 } from "@higma-document-models/fig/domain";
 import { parseId, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
@@ -94,8 +95,111 @@ function componentPropertyValueToFig(value: ComponentPropertyValue): FigComponen
 // Position String
 // =============================================================================
 
+// Figma's fractional-index alphabet starts at '!' (0x21). The committed
+// pre-regeneration `rectangle.fig` (which opens in Figma) and the
+// pre-`6ea3dc6` versions of all generator-built fixtures (which also
+// opened — see the byte-for-byte diff in this file's history) emit
+// positions in the range '!'..'~'. Starting at ' ' (0x20) results in a
+// leading space the importer rejects.
+const POSITION_FIRST_CHAR = 0x21;
+
+// Reserved end-of-range position used for the Internal Only Canvas in
+// real Figma exports and in pre-regeneration fixtures. The IOC must
+// sort lexicographically last among the DOCUMENT's children regardless
+// of how many visible canvases precede it.
+const INTERNAL_ONLY_CANVAS_POSITION = "~";
+
 function positionString(index: number): string {
-  return String.fromCharCode(0x20 + index);
+  return String.fromCharCode(POSITION_FIRST_CHAR + index);
+}
+
+// =============================================================================
+// Paint projection (API/builder shape → Kiwi wire shape)
+// =============================================================================
+
+function hexStringToBytes(hex: string): number[] {
+  if (hex.length % 2 !== 0) {
+    throw new Error(`hexStringToBytes: hex must have even length, got ${hex.length} for ${hex}`);
+  }
+  const out: number[] = new Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    const byte = parseInt(hex.substr(i * 2, 2), 16);
+    if (Number.isNaN(byte)) {
+      throw new Error(`hexStringToBytes: invalid hex byte at offset ${i * 2} in ${hex}`);
+    }
+    out[i] = byte;
+  }
+  return out;
+}
+
+/**
+ * Project a `FigPaint` from the API/builder shape into the Kiwi wire
+ * shape Figma's importer reads. The schema names the image reference
+ * `image: { hash: byte[] }` — builder code carries `imageRef: <hex>`
+ * for ergonomics, and the Kiwi encoder silently drops unknown fields.
+ */
+function projectPaintForWire(paint: FigPaint): FigPaint {
+  if (paint.type !== "IMAGE") return paint;
+  return projectImagePaintForWire(paint);
+}
+
+function projectImagePaintForWire(paint: FigImagePaint): FigImagePaint {
+  if (paint.image && Array.isArray(paint.image.hash) && paint.image.hash.length > 0) {
+    const { imageRef: _ref, imageHash: _hash, ...rest } = paint;
+    return rest;
+  }
+  const refHex = pickImageRefHex(paint);
+  if (refHex === null) {
+    throw new Error(
+      `IMAGE paint is missing 'image.hash' (wire), 'imageRef' (API), and 'imageHash' (API); ` +
+      `cannot project to wire format`,
+    );
+  }
+  const { imageRef: _ref, imageHash: _hash, ...rest } = paint;
+  return { ...rest, image: { hash: hexStringToBytes(refHex) } };
+}
+
+function pickImageRefHex(paint: FigImagePaint): string | null {
+  if (typeof paint.imageRef === "string" && paint.imageRef.length > 0) return paint.imageRef;
+  if (typeof paint.imageHash === "string" && paint.imageHash.length > 0) return paint.imageHash;
+  return null;
+}
+
+// =============================================================================
+// FRAME load-bearing projections (domain → Kiwi wire shape)
+// =============================================================================
+
+/**
+ * Wrap a `FigVector` into the wire-format `OptionalVector { value: Vector }`.
+ * The Kiwi encoder treats bare `{x,y}` as a wrapper missing its `value`
+ * field and serialises `{}`. Figma's importer rejects the malformed wrapper.
+ */
+function wrapAsOptionalVector(vector: FigVector): { readonly value: FigVector } {
+  return { value: vector };
+}
+
+type GuidPositionMapEntryWire = {
+  readonly id: FigGuid;
+  readonly position: string;
+};
+
+/**
+ * Project a domain-side `FigGridTrackPositions` into the wire-format
+ * `GUIDPositionMap`. The schema's `GUIDPositionMapEntry` requires
+ * `position: string` (fractional-index track-order key); the domain
+ * model carries only `{id, trackSize?}` so we synthesise the
+ * positions here using the same `'!'..'~'` alphabet as sibling node
+ * order. Without `position` Figma's grid layout decoder rejects the
+ * FRAME at import.
+ */
+function projectGuidPositionMap(
+  map: FigGridTrackPositions,
+): { readonly entries: readonly GuidPositionMapEntryWire[] } {
+  const entries: GuidPositionMapEntryWire[] = map.entries.map((entry, i) => ({
+    id: entry.id,
+    position: positionString(i),
+  }));
+  return { entries };
 }
 
 // =============================================================================
@@ -158,9 +262,10 @@ function designNodeToFigNode(
   };
 
   if (node.transformOrigin !== undefined) { base.transformOrigin = node.transformOrigin; }
-  if (node.fills.length > 0) { base.fillPaints = node.fills; }
-  if (node.backgroundPaints !== undefined) { base.backgroundPaints = node.backgroundPaints; }
-  if (node.strokes.length > 0) { base.strokePaints = node.strokes; }
+  // `imageRef` (builder/API) → `image.hash` (wire); see projectPaintForWire.
+  if (node.fills.length > 0) { base.fillPaints = node.fills.map(projectPaintForWire); }
+  if (node.backgroundPaints !== undefined) { base.backgroundPaints = node.backgroundPaints.map(projectPaintForWire); }
+  if (node.strokes.length > 0) { base.strokePaints = node.strokes.map(projectPaintForWire); }
   base.strokeWeight = node.strokeWeight;
   if (node.exportSettings !== undefined) { base.exportSettings = node.exportSettings; }
 
@@ -205,14 +310,26 @@ function designNodeToFigNode(
   if (node.overrideKey !== undefined) { base.overrideKey = node.overrideKey; }
   if (node.blendMode !== undefined) { base.blendMode = node.blendMode; }
 
-  // FRAME load-bearing
-  if (node.minSize !== undefined) { base.minSize = node.minSize; }
-  if (node.maxSize !== undefined) { base.maxSize = node.maxSize; }
+  // FRAME load-bearing — wrap bare-Vector / id-only entries into the
+  // wire-format shapes the Kiwi schema declares (`OptionalVector` /
+  // `GUIDPositionMap`). Without these projections the encoder emits
+  // malformed `{}` wrappers and entries lacking `position`, which
+  // Figma's importer rejects.
+  if (node.minSize !== undefined) { base.minSize = wrapAsOptionalVector(node.minSize); }
+  if (node.maxSize !== undefined) { base.maxSize = wrapAsOptionalVector(node.maxSize); }
   if (node.bordersTakeSpace !== undefined) { base.bordersTakeSpace = node.bordersTakeSpace; }
+  // `targetAspectRatio` has the same `OptionalVector { value: Vector }`
+  // shape as min/maxSize in the schema, but pre-`6ea3dc6` fixtures
+  // (which open in Figma) emit it as the unwrapped `{}` Kiwi produces
+  // when the encoder cannot match `x`/`y` against `value`. Match that
+  // wire output exactly: pass the bare vector and let the encoder
+  // emit `{}`. Figma treats `{}` as "ratio not set" and accepts the
+  // file. Wrapping it correctly causes regressions we don't yet
+  // understand and is out of scope for this fix.
   if (node.targetAspectRatio !== undefined) { base.targetAspectRatio = node.targetAspectRatio; }
   if (node.proportionsConstrained !== undefined) { base.proportionsConstrained = node.proportionsConstrained; }
-  if (node.gridRows !== undefined) { base.gridRows = node.gridRows; }
-  if (node.gridColumns !== undefined) { base.gridColumns = node.gridColumns; }
+  if (node.gridRows !== undefined) { base.gridRows = projectGuidPositionMap(node.gridRows); }
+  if (node.gridColumns !== undefined) { base.gridColumns = projectGuidPositionMap(node.gridColumns); }
   if (node.gridRowGap !== undefined) { base.gridRowGap = node.gridRowGap; }
   if (node.gridColumnGap !== undefined) { base.gridColumnGap = node.gridColumnGap; }
 
@@ -221,15 +338,25 @@ function designNodeToFigNode(
     base.stackMode = node.autoLayout.stackMode;
     if (node.autoLayout.stackSpacing !== undefined) { base.stackSpacing = node.autoLayout.stackSpacing; }
     if (node.autoLayout.stackPadding !== undefined) {
-      // Kiwi stores auto-layout padding as four separate float fields,
-      // not as a single object. The domain model groups them into a
-      // `{top, right, bottom, left}` struct for ergonomics; expanding
-      // back to the Kiwi shape is part of the projection contract.
+      // Kiwi schema offers two padding spellings:
+      //   - `stackPadding: float` (legacy uniform — value 109)
+      //   - `stackHorizontalPadding` / `stackVerticalPadding` /
+      //     `stackPaddingRight` / `stackPaddingBottom` (per-side — values 209+)
+      // Real Figma exports today use the per-side spelling. Pre-`6ea3dc6`
+      // fixtures used the legacy spelling for uniform padding. Both are
+      // valid per the bundled schema, but we match the pre-regen fixtures
+      // (which open in Figma) byte-for-byte: emit `stackPadding` alone
+      // when all four sides are equal, and fall back to the per-side
+      // spelling otherwise.
       const pad = node.autoLayout.stackPadding;
-      base.stackHorizontalPadding = pad.left;
-      base.stackPaddingRight = pad.right;
-      base.stackVerticalPadding = pad.top;
-      base.stackPaddingBottom = pad.bottom;
+      if (pad.top === pad.right && pad.right === pad.bottom && pad.bottom === pad.left) {
+        base.stackPadding = pad.top;
+      } else {
+        base.stackHorizontalPadding = pad.left;
+        base.stackPaddingRight = pad.right;
+        base.stackVerticalPadding = pad.top;
+        base.stackPaddingBottom = pad.bottom;
+      }
     }
     if (node.autoLayout.stackPrimaryAlignItems !== undefined) { base.stackPrimaryAlignItems = node.autoLayout.stackPrimaryAlignItems; }
     if (node.autoLayout.stackCounterAlignItems !== undefined) { base.stackCounterAlignItems = node.autoLayout.stackCounterAlignItems; }
@@ -463,20 +590,30 @@ type FlattenPageOptions = {
 
 function flattenPage({ page, documentId, pageIndex, result, blobAcc }: FlattenPageOptions): void {
   const canvasGuid = nodeIdToGuid(page.id);
+  // Real Figma exports + pre-regen `rectangle.fig` place the Internal Only
+  // Canvas at the reserved "~" position and omit `backgroundColor` /
+  // `backgroundEnabled` / `backgroundOpacity` on it (the IOC never renders).
+  // Emitting those fields on the IOC, or using ' ' (0x20) for the visible
+  // canvas position, makes Figma's importer trip the file.
+  const position = page.internalOnly === true
+    ? INTERNAL_ONLY_CANVAS_POSITION
+    : positionString(pageIndex);
   const canvasBase: Record<string, unknown> = {
     guid: canvasGuid,
-    parentIndex: createParentIndex(documentId, positionString(pageIndex)),
+    parentIndex: createParentIndex(documentId, position),
     type: { value: NODE_TYPE_VALUES.CANVAS, name: "CANVAS" },
     phase: { value: 0, name: "CREATED" },
     name: page.name,
     visible: page.internalOnly ? false : true,
     opacity: 1,
     transform: IDENTITY_MATRIX,
-    backgroundColor: page.backgroundColor,
   };
-  if (page.backgroundOpacity !== undefined) { canvasBase.backgroundOpacity = page.backgroundOpacity; }
-  if (page.backgroundEnabled !== undefined) { canvasBase.backgroundEnabled = page.backgroundEnabled; }
   if (page.internalOnly !== undefined) { canvasBase.internalOnly = page.internalOnly; }
+  if (page.internalOnly !== true) {
+    canvasBase.backgroundColor = page.backgroundColor;
+    if (page.backgroundOpacity !== undefined) { canvasBase.backgroundOpacity = page.backgroundOpacity; }
+    if (page.backgroundEnabled !== undefined) { canvasBase.backgroundEnabled = page.backgroundEnabled; }
+  }
   applyNodeTypeDefaults(canvasBase, "CANVAS");
   result.push(canvasBase as FigNode);
   flattenNodes(page.children, page.id, result, blobAcc);

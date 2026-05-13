@@ -94,18 +94,35 @@ export function tessellateContour(
 
 type FlatContour = { coords: number[]; area: number };
 
-/** Determine whether outer contours have negative signed area */
+/**
+ * Determine whether outer contours have negative signed area.
+ *
+ * Outer rings of a glyph are by construction *larger* than their
+ * interior holes — the bowl of an `0`, the counter of a `9`, the
+ * white space inside an `e`. We exploit that by voting on the
+ * convention via summed |area|, not subpath count: the sign whose
+ * absolute areas dominate is the outer convention. Simple counts
+ * mis-flip whenever a single glyph contributes more hole subpaths
+ * than outers — e.g. the Philippine peso `₱` is encoded as
+ * 1 outer + 1 bowl + 2 currency bars (3 holes), and "₱ 900.00" has
+ * 7 outers vs. 8 holes by count but 7 large outers vs. 8 small
+ * holes by area. The earlier count-only check classified every
+ * digit's outer ring as a hole, dropped the rings as orphan holes
+ * (no containing outer remained), and rasterised only the inner
+ * holes — the "₱ 900.00 displays as only the holes of 0s"
+ * regression on the E-Commerce fixture.
+ */
 function resolveOuterIsNegative(autoDetectWinding: boolean, flatContours: FlatContour[]): boolean {
   if (!autoDetectWinding) {
     return true; // default: TrueType convention
   }
-  const negativeCountRef = { value: 0 };
-  const positiveCountRef = { value: 0 };
+  const negativeAbsSumRef = { value: 0 };
+  const positiveAbsSumRef = { value: 0 };
   for (const fc of flatContours) {
-    if (fc.area < 0) {negativeCountRef.value++;}
-    else if (fc.area > 0) {positiveCountRef.value++;}
+    if (fc.area < 0) {negativeAbsSumRef.value += -fc.area;}
+    else if (fc.area > 0) {positiveAbsSumRef.value += fc.area;}
   }
-  return negativeCountRef.value >= positiveCountRef.value;
+  return negativeAbsSumRef.value >= positiveAbsSumRef.value;
 }
 
 /**

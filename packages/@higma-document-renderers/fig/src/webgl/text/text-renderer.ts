@@ -9,6 +9,7 @@
 
 import type { TextNode, Color, PathContour } from "@higma-document-models/fig/scene-graph";
 import { tessellateContours } from "../tessellation/tessellation";
+import { splitPathCommandsIntoContours } from "../tessellation/path-contours";
 
 /** Tessellate decoration contours or return empty array if none */
 function tessellateDecorationsOrEmpty(
@@ -50,8 +51,35 @@ export function tessellateTextNode(
     throw new Error(`WebGL text tessellation requires glyph contours for text node ${node.id}`);
   }
 
+  // Split each glyph's commands into per-subpath contours before
+  // tessellation. opentype.js (and Figma's derived glyph blobs) emit a
+  // single PathCommand[] per glyph that bundles every subpath — for
+  // glyphs like `0`, `9`, `B`, `D`, `P`, `R`, `₱`, the outer ring and
+  // every interior hole share one commands array. The tessellator
+  // classifies each `PathContour` as outer-or-hole by its signed area
+  // and groups holes inside their containing outer, so the input must
+  // be one contour per subpath. Without this split a "0" arrives as a
+  // single boundary whose flattened coordinates jump between the
+  // outer ring and the inner hole; earcut then weaves triangles
+  // across the gap, the outer fill drops out, and only the hole's
+  // interior rasterises — the "₱ 900.00 shows only the holes of 0"
+  // regression on real fig fixtures. The split preserves
+  // `firstCharacter` so the per-run grouping in
+  // `resolveRenderTextGlyphRuns` still works (the WebGL renderer
+  // currently consumes only the combined vertex buffer here, but
+  // future per-run paint support relies on the annotation).
+  const splitGlyphContours: PathContour[] = [];
+  for (const glyph of node.glyphContours) {
+    const subContours = splitPathCommandsIntoContours(glyph.commands, glyph.windingRule);
+    for (const sub of subContours) {
+      splitGlyphContours.push({
+        commands: sub.commands,
+        windingRule: glyph.windingRule,
+      });
+    }
+  }
   // Figma glyph blobs use PostScript/CFF winding convention (invertWinding=true)
-  const glyphVertices = tessellateContours(node.glyphContours, tolerance, true);
+  const glyphVertices = tessellateContours(splitGlyphContours, tolerance, true);
   const decorationVertices = tessellateDecorationsOrEmpty(node.decorationContours, tolerance);
 
   return {

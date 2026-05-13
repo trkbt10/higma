@@ -122,4 +122,43 @@ describe("buildGuidTranslationMap", () => {
     expect(map.get("7:109")).toBe("7:109");
     expect(map.get("7:113")).toBe("7:113");
   });
+
+  // Regression: Phase 1's majority-vote offset can land outlier
+  // overrides onto real-but-wrong descendants (sizes mismatch wildly,
+  // hint differs, no identity match). The Phase 1 size validator is
+  // the SoT for "drop this bad mapping" — the previous defensive
+  // mark threw on the operational removal, conflating "phase step
+  // ran" with "unhandled inconsistency" and blocking file loads
+  // whose only sin was the heuristic mis-routing some sparse-session
+  // overrides.
+  it("evicts size-mismatched Phase 1 mappings without throwing when session consensus is below threshold", () => {
+    const symbolRoot = createNode({
+      type: nodeType("SYMBOL"),
+      guid: guid(1, 50),
+      size: { x: 200, y: 200 },
+      children: [
+        createNode({ type: nodeType("RECTANGLE"), guid: guid(1, 101), size: { x: 50, y: 30 } }),
+        createNode({ type: nodeType("RECTANGLE"), guid: guid(1, 102), size: { x: 50, y: 30 } }),
+        createNode({ type: nodeType("RECTANGLE"), guid: guid(1, 999), size: { x: 5, y: 5 } }),
+      ],
+    });
+
+    // 3 entries in session 2 → triggers Phase 1's majority-vote.
+    // Best offset = 100 (201→101, 202→102 both align). 2:888 has no
+    // descendant at localID 788, so it never enters `result`, which
+    // leaves the session with 2 mappings — below the consensus
+    // threshold of 3. The DSD sizes (500×500) are 10× the descendants'
+    // (50×30), so the size validator must evict 2:201 and 2:202.
+    const overrides: readonly FigKiwiSymbolOverride[] = [
+      sizedShapeOverride(guid(2, 201), { x: 500, y: 500 }),
+      sizedShapeOverride(guid(2, 202), { x: 500, y: 500 }),
+      sizedShapeOverride(guid(2, 888), { x: 500, y: 500 }),
+    ];
+
+    // Pre-fix: this call threw DefensiveBranchError. Post-fix: returns
+    // a map with the bad mappings dropped.
+    const map = buildGuidTranslationMap(symbolRoot, overrides, undefined);
+    expect(map.get("2:201")).toBeUndefined();
+    expect(map.get("2:202")).toBeUndefined();
+  });
 });

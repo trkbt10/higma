@@ -31,7 +31,17 @@ export type {
   FigStyleRegistry,
   FigDesignBlob,
 } from "./document";
-export type { LoadedFigFile } from "./roundtrip-state";
+export type {
+  LoadedFigFile,
+  FigMessageHeader,
+  FigMessageType,
+  FigMessageTypeName,
+  CreateNodeChangesMessageHeaderOptions,
+} from "./roundtrip-state";
+export {
+  createNodeChangesMessageHeader,
+  assertNodeChangesMessageHeader,
+} from "./roundtrip-state";
 export type { FigGuid, NodeTreeResult } from "./raw-node-tree";
 export type { FigBlob } from "./blob-path";
 // `PathCommand` and `SvgPathOptions` live in `@higma-primitives/path`.

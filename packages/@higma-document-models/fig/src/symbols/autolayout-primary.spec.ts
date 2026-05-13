@@ -173,16 +173,23 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
     expect(out[2].transform!.m02).toBeCloseTo(160);
   });
 
-  it("SPACE_EVENLY: (n+1) equal gaps", () => {
+  // Regression: Figma serialises what the UI calls "Space between"
+  // as StackJustify=3 (Kiwi name "SPACE_EVENLY"). The sibling
+  // bridge / fig-to-web CSS layer collapses both names to CSS
+  // `space-between`; this spec pins the scene-graph solver to the
+  // same semantics so headers like the YouTube Mobile UIKit
+  // Subscription title bar render with their authored 2 px L/R
+  // margins instead of the (n+1)-equal-gap drift.
+  it("SPACE_EVENLY: behaves as SPACE_BETWEEN (Figma's UI 'Space between')", () => {
     const p = parent({ x: 200, y: 50 }, { mode: "HORIZONTAL", padding: 0, primaryAlign: "SPACE_EVENLY" });
     const a = child({ x: 40, y: 20 });
     const b = child({ x: 40, y: 20 });
     const c = child({ x: 40, y: 20 });
     const out = applyAutoLayoutPrimaryAxis(p, [a, b, c]);
-    // free = 80; gap = 80/4 = 20
-    expect(out[0].transform!.m02).toBeCloseTo(20);
-    expect(out[1].transform!.m02).toBeCloseTo(20 + 40 + 20);
-    expect(out[2].transform!.m02).toBeCloseTo(20 + 40 + 20 + 40 + 20);
+    // free = 200 - 120 = 80; gap = 80/2 = 40; first at 0
+    expect(out[0].transform!.m02).toBeCloseTo(0);
+    expect(out[1].transform!.m02).toBeCloseTo(40 + 40);
+    expect(out[2].transform!.m02).toBeCloseTo(160);
   });
 
   it("CENTER: block centred within content span", () => {
@@ -226,5 +233,65 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
     expect(out[0].transform!.m02).toBeCloseTo(0);
     expect(out[1]).toBe(hidden);
     expect(out[2].transform!.m02).toBeCloseTo(50);
+  });
+
+  // Regression: a 180°-rotated child stores `m02 / m12 = (w, h)`
+  // because the rotation pins the local origin at the AABB's
+  // bottom-right corner. Writing the cursor straight into `m12`
+  // (the pre-fix behaviour) put the AABB's top-left at
+  // `cursor − h` and dragged the child up off the parent — the
+  // YouTube Mobile UIKit Short-screen down-button regression.
+  // The solver now reconstructs `m12 = cursor + originOffset` so
+  // the AABB top-left lands exactly at the requested cursor.
+  it("places 180°-rotated children by their AABB, not their local origin", () => {
+    const p = parent({ x: 36, y: 54 }, { mode: "VERTICAL", padding: 0, spacing: 0, primaryAlign: "MIN" });
+    // 180° rotation: local axes flipped, origin at AABB bottom-right
+    // i.e. (m02, m12) = (w, h).
+    const rotated: PrimaryAxisChild = {
+      size: { x: 36, y: 36 },
+      transform: { m00: -1, m01: 0, m02: 36, m10: 0, m11: -1, m12: 36 },
+    };
+    const text: PrimaryAxisChild = {
+      size: { x: 36, y: 14 },
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    };
+    const out = applyAutoLayoutPrimaryAxis(p, [rotated, text]);
+    // First child (rotated): AABB top at y=0 ⇒ origin at y=0+36=36.
+    expect(out[0].transform!.m02).toBeCloseTo(36);
+    expect(out[0].transform!.m12).toBeCloseTo(36);
+    // Second child (unrotated): AABB top at y=36 ⇒ origin at y=36+0=36.
+    expect(out[1].transform!.m02).toBeCloseTo(0);
+    expect(out[1].transform!.m12).toBeCloseTo(36);
+  });
+
+  it("places 90°-rotated children using AABB extent on the primary axis", () => {
+    // A 90° CCW rotation maps local (w, 0) → (0, w) and local
+    // (0, h) → (-h, 0), so the AABB along the horizontal axis is `h`
+    // wide and along the vertical axis is `w` tall. A 20×60 child
+    // rotated 90° CCW and dropped into a horizontal stack should
+    // occupy 60 px of primary span, not 20.
+    const p = parent({ x: 200, y: 80 }, { mode: "HORIZONTAL", padding: 0, spacing: 0, primaryAlign: "MIN" });
+    const rotated: PrimaryAxisChild = {
+      size: { x: 20, y: 60 },
+      // 90° CCW: m00=0, m01=1, m10=-1, m11=0; origin offset chosen so
+      // that AABB top-left lands at (0, 0). Without an offset:
+      // corners would be (0,0), (0,-20), (60,0), (60,-20) ⇒ AABB
+      // top-left at (0, -20). Shift origin by (0, 20) to anchor the
+      // AABB top-left at (0, 0).
+      transform: { m00: 0, m01: 1, m02: 0, m10: -1, m11: 0, m12: 20 },
+    };
+    const trailing: PrimaryAxisChild = {
+      size: { x: 40, y: 40 },
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    };
+    const out = applyAutoLayoutPrimaryAxis(p, [rotated, trailing]);
+    // First child: AABB top-left lands at (0, _). Origin offset along
+    // the horizontal axis was 0 (origin sits at the AABB's left
+    // already), so m02 stays at 0.
+    expect(out[0].transform!.m02).toBeCloseTo(0);
+    // Second child must start at primaryCursor = 60 (the rotated
+    // child's AABB width), confirming we account for the rotated
+    // extent, not the local 20-px width.
+    expect(out[1].transform!.m02).toBeCloseTo(60);
   });
 });

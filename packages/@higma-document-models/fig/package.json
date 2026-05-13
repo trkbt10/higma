@@ -39,8 +39,8 @@
       "default": "./src/geometry-interpret.ts"
     },
     "./scene-graph": {
-      "types": "./src/scene-graph/types.ts",
-      "default": "./src/scene-graph/types.ts"
+      "types": "./src/scene-graph/index.ts",
+      "default": "./src/scene-graph/index.ts"
     },
     "./scene-graph/blend-mode": {
       "types": "./src/scene-graph/blend-mode.ts",

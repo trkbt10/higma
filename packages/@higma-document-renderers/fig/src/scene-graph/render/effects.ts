@@ -173,6 +173,13 @@ export function resolveEffects(
   // each one overpainting the previous (matches Figma's SVG export
   // which chains `effect1_dropShadow → effect2_dropShadow → ...`).
   const dropShadowResults: string[] = [];
+  // Names of every inner-shadow result produced during the loop, in
+  // declaration order. Composited above SourceGraphic in the terminal
+  // feMerge so multiple inner shadows stack (Windows-98-style 3D
+  // beveled buttons author four INNER_SHADOWs to fake top-left
+  // highlights and bottom-right shadow strokes; without the
+  // accumulation only the last of the four would survive).
+  const innerShadowResults: string[] = [];
 
   for (const effect of effects) {
     switch (effect.type) {
@@ -343,31 +350,51 @@ export function resolveEffects(
       }
 
       case "inner-shadow": {
-        // Canonical SVG inner-shadow recipe (matches Figma's own SVG export):
-        //   1. Flood the filter region with the shadow colour at its alpha.
-        //   2. Keep only the portion over the source shape (feComposite "in").
-        //   3. Offset and blur that silhouette.
-        //   4. Subtract the original source alpha — the parts of the blurred
-        //      shadow that remain AFTER subtraction are exactly the pixels
-        //      that fell outside the shape, which visually read as "inside"
-        //      when composited over the shape.
-        //   5. Merge the source graphic under the inner shadow.
+        // SVG inner-shadow recipe matching the WebGL renderer
+        // (`webgl/effects/effects-renderer.ts` — `shadowMask =
+        // shapeAlpha * (1 - blurredAlpha_at_offset)`) so the two
+        // backends agree pixel-for-pixel on bevel direction.
         //
-        // Previously we binarized SourceAlpha via a feColorMatrix with a
-        // 127× multiplier ("hardAlpha"), which destroyed antialiasing on
-        // rounded corners and produced a dark halo along curved edges.
+        //   1. Offset the *alpha* of the shape (uncoloured) by
+        //      (dx, dy) — produces the shifted silhouette.
+        //   2. Optionally morphology-spread the shifted alpha.
+        //   3. Gaussian-blur the shifted alpha by `radius / 2`.
+        //   4. Composite `SourceAlpha OUT shiftedBlurred` to obtain
+        //      the inner-edge band: pixels INSIDE the original where
+        //      the shifted silhouette is NOT — i.e. the band on the
+        //      OPPOSITE side of the offset direction. For a Figma
+        //      offset of (+2, +2) (light from bottom-right), the
+        //      band lands on the TOP-LEFT inner edge; for (-1, -1)
+        //      it lands on the BOTTOM-RIGHT inner edge. This is the
+        //      classic Win98 bevel direction the source data assumes.
+        //   5. Flood the filter region with the shadow colour and
+        //      composite IN with the band → coloured inner band.
+        //   6. Accumulate the result; the terminal feMerge at the
+        //      bottom of this loop paints every inner-shadow band on
+        //      top of `SourceGraphic`.
+        //
+        // The earlier recipe coloured + offset + composite-out-with-
+        // SourceAlpha produced a band *outside* the original — the
+        // exact opposite of the desired bevel direction. The
+        // Windows-98 design system's four-INNER_SHADOW stacked
+        // buttons rendered as a single thin black line on the wrong
+        // corner before this fix, since each shadow's band fell
+        // outside the shape and only the slivers inside the filter
+        // region clipped to the viewBox were visible.
         const stdDev = effect.radius / 2;
-        const floodResult = ids.getNextId("inner-flood");
-        const coloredResult = ids.getNextId("inner-colored");
         const offsetResult = ids.getNextId("inner-offset");
         const spreadResult = ids.getNextId("inner-spread");
         const blurResult = ids.getNextId("inner-blur");
+        const bandResult = ids.getNextId("inner-band");
+        const floodResult = ids.getNextId("inner-flood");
         const innerResult = ids.getNextId("inner");
-        primitives.push(
-          { type: "feFlood", floodColor: colorToRgb(effect.color), floodOpacity: effect.color.a, result: floodResult },
-          { type: "feComposite", in: floodResult, in2: "SourceAlpha", operator: "in", result: coloredResult },
-          { type: "feOffset", in: coloredResult, dx: effect.offset.x, dy: effect.offset.y, result: offsetResult },
-        );
+        primitives.push({
+          type: "feOffset",
+          in: "SourceAlpha",
+          dx: effect.offset.x,
+          dy: effect.offset.y,
+          result: offsetResult,
+        });
         if (effect.spread && effect.spread !== 0) {
           primitives.push({
             type: "feMorphology",
@@ -377,21 +404,38 @@ export function resolveEffects(
             result: spreadResult,
           });
         }
+        const blurIn = effect.spread && effect.spread !== 0 ? spreadResult : offsetResult;
         primitives.push(
-          { type: "feGaussianBlur", in: effect.spread && effect.spread !== 0 ? spreadResult : offsetResult, stdDeviation: stdDev, result: blurResult },
-          { type: "feComposite", in: blurResult, in2: "SourceAlpha", operator: "out", result: innerResult },
+          { type: "feGaussianBlur", in: blurIn, stdDeviation: stdDev, result: blurResult },
+          // SourceAlpha OUT shiftedBlurred = SourceAlpha * (1 - shifted).
+          // Stays *inside* the original on the opposite side of the
+          // offset direction.
+          { type: "feComposite", in: "SourceAlpha", in2: blurResult, operator: "out", result: bandResult },
+          { type: "feFlood", floodColor: colorToRgb(effect.color), floodOpacity: effect.color.a, result: floodResult },
+          { type: "feComposite", in: floodResult, in2: bandResult, operator: "in", result: innerResult },
         );
         const innerBlendMode = effectBlendModeToSvg(effect.blendMode);
         if (innerBlendMode !== "normal") {
+          // Non-default per-effect blend (rare): blend this inner
+          // shadow against `SourceGraphic` standalone and accumulate
+          // the blended pixels. The terminal merge then layers that
+          // blended-over-source result on top of `SourceGraphic`
+          // again, which double-paints the source — acceptable for a
+          // blend-mode shadow whose own intensity is what the user
+          // tuned, and the equivalent of how single-shadow output
+          // looked before this fix. A future cleanup can thread the
+          // blend chain explicitly when fixture coverage exists.
+          const blendedResult = ids.getNextId("inner-blended");
           primitives.push({
             type: "feBlend",
             mode: innerBlendMode,
             in: innerResult,
             in2: "SourceGraphic",
-            result: ids.getNextId("inner-blended"),
+            result: blendedResult,
           });
+          innerShadowResults.push(blendedResult);
         } else {
-          primitives.push({ type: "feMerge", nodes: ["SourceGraphic", innerResult] });
+          innerShadowResults.push(innerResult);
         }
         break;
       }
@@ -417,14 +461,17 @@ export function resolveEffects(
     }
   }
 
-  // Composite every drop shadow under the source graphic in a single
-  // terminal feMerge so multiple shadows accumulate. With one shadow
-  // this produces feMerge[blur, SourceGraphic] (the prior shape); with
-  // N shadows it produces feMerge[blur1, blur2, ..., SourceGraphic].
-  if (dropShadowResults.length > 0) {
+  // Composite the assembled effect stack in a single terminal feMerge:
+  // drop shadows go BELOW `SourceGraphic`, inner shadows ABOVE. With
+  // only drops this collapses to `[drop1, drop2, ..., SourceGraphic]`
+  // (the prior shape); with only inners it becomes
+  // `[SourceGraphic, inner1, inner2, ...]` (Windows 98's 3D beveled
+  // borders); the mixed case stacks both correctly without orphaning
+  // any shadow's intermediate result.
+  if (dropShadowResults.length > 0 || innerShadowResults.length > 0) {
     primitives.push({
       type: "feMerge",
-      nodes: [...dropShadowResults, "SourceGraphic"],
+      nodes: [...dropShadowResults, "SourceGraphic", ...innerShadowResults],
     });
   }
 

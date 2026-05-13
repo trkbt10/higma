@@ -956,13 +956,19 @@ export function buildGuidTranslationMap(
       }
     }
 
-    if (toRemove.length > 0) {
-      defensiveMark("guid-translation:phase-1-validation:size-mismatch-evict", {
-        evicted: toRemove.length,
-      });
-      for (const key of toRemove) {
-        result.delete(key);
-      }
+    // Eviction is the SoT decision for "this Phase 1 majority-vote
+    // mapping is structurally wrong" (e.g. an outlier override whose
+    // DSD size doesn't match any reasonable descendant after offset
+    // application). The earlier `defensiveMark` here threw on the
+    // operational removal, conflating "phase step ran" with
+    // "unhandled inconsistency". Identity matches are now guarded
+    // upstream in Phase Zero (`lockedKeys`), and the consensus check
+    // above spares legitimate INSTANCE-level resizes, so anything
+    // reaching this point is a genuine bad mapping the pipeline owns
+    // dropping. The Phase 1 type-validation block immediately below
+    // (SHAPE→TEXT) evicts silently for the same reason.
+    for (const key of toRemove) {
+      result.delete(key);
     }
   }
 

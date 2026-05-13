@@ -99,6 +99,56 @@ function readPadding(sp: number | { readonly top: number; readonly right: number
   return { top: 0, right: 0, bottom: 0, left: 0 };
 }
 
+/**
+ * Compute a child's axis-aligned bounding box (AABB) in its parent's
+ * coordinate space, taking the child's full affine transform into
+ * account. For rotated children the local origin is no longer the
+ * AABB top-left, so the auto-layout solver must reason about the AABB
+ * (which is what the user perceives as the child's "position and
+ * size on screen") rather than the raw `transform.m02 / m12 / size`
+ * values. The non-rotated case collapses to `(m02, m12)` /
+ * `(m02 + size.x, m12 + size.y)` exactly.
+ */
+function childAabb(child: PrimaryAxisChild): {
+  readonly min: { readonly x: number; readonly y: number };
+  readonly max: { readonly x: number; readonly y: number };
+} | undefined {
+  if (!child.size) { return undefined; }
+  const t = child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+  const { x: w, y: h } = child.size;
+  // Iterate over the 4 corners of the local rect [0,0]-[w,h], project
+  // each into parent space, and take min/max along both axes.
+  const corners: ReadonlyArray<readonly [number, number]> = [
+    [0, 0], [w, 0], [0, h], [w, h],
+  ];
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const [cx, cy] of corners) {
+    const px = t.m00 * cx + t.m01 * cy + t.m02;
+    const py = t.m10 * cx + t.m11 * cy + t.m12;
+    if (px < minX) { minX = px; }
+    if (py < minY) { minY = py; }
+    if (px > maxX) { maxX = px; }
+    if (py > maxY) { maxY = py; }
+  }
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+}
+
+/**
+ * Project the child's axis-aligned bounding-box size along the
+ * requested parent axis. For unrotated children this is just
+ * `size.x / size.y`; for a 90°/270°-rotated child the dimensions
+ * swap, which auto-layout must consume when summing sibling primary
+ * lengths and choosing the counter-axis stretch.
+ */
+function childAabbAxisSize(child: PrimaryAxisChild, axis: "x" | "y"): number | undefined {
+  const aabb = childAabb(child);
+  if (!aabb) { return undefined; }
+  return axis === "x" ? aabb.max.x - aabb.min.x : aabb.max.y - aabb.min.y;
+}
+
 function resizePrimaryAxisIfChanged(
   size: { readonly x: number; readonly y: number } | undefined,
   newSizeAxis: number,
@@ -360,7 +410,12 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
   if (contentSpan <= 0) return children;
 
   // Filter to layout-participating children (visible + non-absolute).
-  type Idx = { idx: number; child: C; primarySize: number };
+  // The primary-axis size we sum here is the AABB projection, not the
+  // local size: a 90°-rotated 36×54 child contributes 54 along its
+  // parent's HORIZONTAL axis, and a 180°-rotated child still
+  // contributes 36 (the AABB unchanged) but its `m02 / m12` are no
+  // longer the AABB top-left — placement later compensates.
+  type Idx = { idx: number; child: C; primarySize: number; aabbOriginOffset: number };
   const flow: Idx[] = [];
   for (let i = 0; i < children.length; i++) {
     const c = children[i];
@@ -368,7 +423,20 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
     const pos = c.layoutConstraints?.stackPositioning?.name;
     if (pos === "ABSOLUTE") continue;
     if (!c.size) continue;
-    flow.push({ idx: i, child: c, primarySize: horizontal ? c.size.x : c.size.y });
+    const primaryAxisLetter = horizontal ? "x" : "y";
+    const aabb = childAabb(c);
+    const primarySize = aabb
+      ? (horizontal ? aabb.max.x - aabb.min.x : aabb.max.y - aabb.min.y)
+      : (horizontal ? c.size.x : c.size.y);
+    // `aabbOriginOffset` = (current local origin) − (current AABB
+    // min) along the primary axis. For unrotated children this is 0
+    // (origin == AABB top-left); for rotated children it captures
+    // how far the local origin sits inside / past the AABB so the
+    // post-layout `m02 / m12` can be reconstructed by adding this
+    // offset to the cursor.
+    const originPos = horizontal ? (c.transform?.m02 ?? 0) : (c.transform?.m12 ?? 0);
+    const aabbMin = aabb ? (horizontal ? aabb.min.x : aabb.min.y) : originPos;
+    flow.push({ idx: i, child: c, primarySize, aabbOriginOffset: originPos - aabbMin });
   }
   if (flow.length === 0) return children;
 
@@ -410,21 +478,25 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
       startOffset = padPrimaryStart + (contentSpan - blockSize);
       break;
     }
-    case "SPACE_BETWEEN": {
-      // First flush to the start, last flush to the end. Spacing is
-      // distributed across the (n-1) gaps. Single child collapses to MIN.
+    case "SPACE_BETWEEN":
+    case "SPACE_EVENLY": {
+      // Figma's `SPACE_EVENLY` enum value (StackJustify=3) is paired
+      // with what the UI labels "Space between": children flush to
+      // both inner edges with the leftover distributed in the (n-1)
+      // gaps between them. The previous CSS-style implementation
+      // (equal gaps including edges) shifted every leading child
+      // inward, which surfaced in real fig fixtures as headers
+      // appearing to grow wider L/R margins and instance logos
+      // drifting right of their authored origin. The bridge
+      // (`web-fig/src/adapters/auto-layout.ts`) and the fig-to-web
+      // CSS emitter (`fig-to-web/.../style.ts`) already collapse
+      // both names to `space-between`; this branch keeps the scene
+      // graph aligned with them. Single child collapses to MIN.
       if (flow.length > 1) {
         const free = contentSpan - flowSizeSum;
         gap = free / (flow.length - 1);
       }
       startOffset = padPrimaryStart;
-      break;
-    }
-    case "SPACE_EVENLY": {
-      // Equal gap before, between and after — (n+1) equal gaps.
-      const free = contentSpan - flowSizeSum;
-      gap = free / (flow.length + 1);
-      startOffset = padPrimaryStart + gap;
       break;
     }
     case "SPACE_AROUND": {
@@ -445,15 +517,38 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
   }
 
   // Walk flow children, assign primary positions, build new array.
+  // `cursor` is the AABB top-left along the primary axis. The
+  // child's stored `m02 / m12` is the rotated local origin in parent
+  // space — for unrotated children that equals the AABB top-left, but
+  // for a 180°-rotated 36×36 frame whose authored origin sits at the
+  // AABB bottom-right (`m02 = m12 = 36`), naively writing `cursor`
+  // into `m12` would shift the visible bounding box up by 36 px (the
+  // Short-screen "down button" regression). `aabbOriginOffset` is the
+  // delta between origin and AABB min, so the post-layout origin = `cursor + aabbOriginOffset`.
+  // For primary-axis resize (`resizePrimaryAxisIfChanged`) we keep the
+  // semantics that the local primary dimension is rewritten only when
+  // the layout actually changes it (e.g. FILL grow); we still need
+  // the primary AABB size for the cursor advance, separate from the
+  // resized local size.
   const result: C[] = children.slice();
   let cursor = startOffset;
   for (const f of flow) {
     const original = f.child;
     const oldT = original.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
-    const newM02 = horizontal ? cursor : oldT.m02;
-    const newM12 = horizontal ? oldT.m12 : cursor;
-    const newSizeAxis = f.primarySize;
-    const newSize = resizePrimaryAxisIfChanged(original.size, newSizeAxis, horizontal);
+    const placedOrigin = cursor + f.aabbOriginOffset;
+    const newM02 = horizontal ? placedOrigin : oldT.m02;
+    const newM12 = horizontal ? oldT.m12 : placedOrigin;
+    // Only rewrite the local size when the child is unrotated — for a
+    // rotated child the local primary axis is no longer aligned with
+    // the parent's, so resizing the local primary dimension would
+    // change the rotated AABB unpredictably and silently corrupt the
+    // child. The FILL-grow branch above does not assign rotated
+    // children any extra space, so this guard never strands grow
+    // distribution.
+    const childIsAxisAligned = oldT.m01 === 0 && oldT.m10 === 0 && oldT.m00 === 1 && oldT.m11 === 1;
+    const newSize = childIsAxisAligned
+      ? resizePrimaryAxisIfChanged(original.size, f.primarySize, horizontal)
+      : original.size;
     const updated = {
       ...original,
       transform: { ...oldT, m02: newM02, m12: newM12 },
@@ -529,14 +624,29 @@ function applyCounterAxisPosition<C extends PrimaryAxisChild>(
   for (const entry of flow) {
     if (!entry.child.size) { continue; }
     const oldT = entry.child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
-    const childSpan = horizontal ? entry.child.size.y : entry.child.size.x;
+    // AABB-aware: a rotated child contributes its rotated extent
+    // along the counter axis, and its stored origin (`m02 / m12`) is
+    // offset from the AABB top-left by `originPos − aabbMin` — exactly
+    // the same shape of fix the primary axis carries above. Without
+    // this, a 180°-rotated icon inside a counter-axis-CENTER container
+    // ends up half-out of the parent (the Short-screen "down button"
+    // case where the AABB drifted up by the icon's height).
+    const counterAxisLetter: "x" | "y" = horizontal ? "y" : "x";
+    const aabb = childAabb(entry.child);
+    const childSpan = aabb
+      ? (horizontal ? aabb.max.y - aabb.min.y : aabb.max.x - aabb.min.x)
+      : (horizontal ? entry.child.size.y : entry.child.size.x);
+    const originPos = horizontal ? oldT.m12 : oldT.m02;
+    const aabbMin = aabb ? aabb.min[counterAxisLetter] : originPos;
+    const aabbOriginOffset = originPos - aabbMin;
     const offset = resolveStartOffset(align, contentSpan, childSpan, counterStart);
+    const placedOrigin = offset + aabbOriginOffset;
     result[entry.idx] = {
       ...entry.child,
       transform: {
         ...oldT,
-        m02: horizontal ? oldT.m02 : offset,
-        m12: horizontal ? offset : oldT.m12,
+        m02: horizontal ? oldT.m02 : placedOrigin,
+        m12: horizontal ? placedOrigin : oldT.m12,
       },
     } as C;
   }

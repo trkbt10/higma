@@ -451,11 +451,66 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    // Canonical Figma-style inner-shadow recipe emits 6 primitives:
-    //   feFlood, feComposite(in), feOffset, feGaussianBlur, feComposite(out), feMerge.
+    // Inner-shadow recipe (matching the WebGL renderer's
+    // `shapeAlpha * (1 - blurredAlpha_at_offset)`) emits 6
+    // primitives:
+    //   feOffset (SourceAlpha by dx,dy)
+    //   feGaussianBlur
+    //   feComposite OUT (SourceAlpha minus shifted-blurred) → band
+    //   feFlood (shadow colour)
+    //   feComposite IN (flood × band) → coloured inner band
+    //   feMerge (terminal: SourceGraphic + inner band on top)
     expect(result!.primitives).toHaveLength(6);
+    expect(result!.primitives[0].type).toBe("feOffset");
+    expect(result!.primitives[1].type).toBe("feGaussianBlur");
+    expect(result!.primitives[2].type).toBe("feComposite");
+    expect(result!.primitives[3].type).toBe("feFlood");
+    expect(result!.primitives[4].type).toBe("feComposite");
     // And the final primitive must be feMerge so SourceGraphic shows through.
     expect(result!.primitives[5].type).toBe("feMerge");
+    // Cross-check the band composite operator+inputs — this is the
+    // step that earlier landed the shadow *outside* the original.
+    const band = result!.primitives[2];
+    if (band.type === "feComposite") {
+      expect(band.operator).toBe("out");
+      expect(band.in).toBe("SourceAlpha");
+    }
+  });
+
+  // Regression: Windows 98-style 3D beveled buttons stack four
+  // INNER_SHADOWs (top-left highlight + secondary highlight, plus
+  // bottom-right shadow + secondary shadow). Earlier every inner
+  // shadow emitted its own `feMerge[SourceGraphic, inner]`, leaving
+  // only the LAST shadow in the filter output (SVG filter chains
+  // surface the most recent primitive's `result`, so earlier merges
+  // became orphans). Now every inner-shadow result accumulates and
+  // the trailing terminal `feMerge` lists them above `SourceGraphic`.
+  it("stacks multiple inner shadows in a single terminal feMerge", () => {
+    const effects: Effect[] = [
+      { type: "inner-shadow", offset: { x: 2, y: 2 }, radius: 0, color: { r: 0.85, g: 0.85, b: 0.85, a: 1 } },
+      { type: "inner-shadow", offset: { x: -2, y: -2 }, radius: 0, color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } },
+      { type: "inner-shadow", offset: { x: 1, y: 1 }, radius: 0, color: { r: 1, g: 1, b: 1, a: 1 } },
+      { type: "inner-shadow", offset: { x: -1, y: -1 }, radius: 0, color: { r: 0, g: 0, b: 0, a: 1 } },
+    ];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+
+    expect(result).toBeDefined();
+    // 4 shadows × 5 primitives each + 1 terminal feMerge = 21.
+    expect(result!.primitives).toHaveLength(4 * 5 + 1);
+    const last = result!.primitives[result!.primitives.length - 1];
+    expect(last.type).toBe("feMerge");
+    if (last.type !== "feMerge") { return; }
+    // First node is SourceGraphic, then the 4 inner-shadow results in
+    // declaration order.
+    expect(last.nodes).toHaveLength(5);
+    expect(last.nodes[0]).toBe("SourceGraphic");
+    // Every other node must be a unique inner-* result ID.
+    const ids4 = last.nodes.slice(1);
+    expect(new Set(ids4).size).toBe(4);
+    for (const id of ids4) {
+      expect(id).toMatch(/^inner-/);
+    }
   });
 
   it("resolves layer blur", () => {

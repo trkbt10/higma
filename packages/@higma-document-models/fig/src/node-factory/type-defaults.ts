@@ -39,11 +39,16 @@ export function applyNodeTypeDefaults(base: Record<string, unknown>, type: FigNo
       return;
     case "CANVAS":
       base.transform ??= IDENTITY_MATRIX;
-      base.backgroundOpacity ??= 1;
-      base.backgroundEnabled ??= true;
       base.strokeWeight ??= 0;
       base.strokeAlign ??= STROKE_CENTER;
       base.strokeJoin ??= STROKE_BEVEL;
+      // Internal Only Canvas never renders, and real Figma exports +
+      // pre-regen `rectangle.fig` omit `backgroundOpacity` /
+      // `backgroundEnabled` on it. Emitting them trips the importer.
+      if (base.internalOnly !== true) {
+        base.backgroundOpacity ??= 1;
+        base.backgroundEnabled ??= true;
+      }
       return;
     case "FRAME":
       base.strokeWeight ??= 1;
@@ -81,8 +86,15 @@ export function applyNodeTypeDefaults(base: Record<string, unknown>, type: FigNo
     case "REGULAR_POLYGON":
     case "LINE":
     case "VECTOR":
-      base.strokeWeight ??= 1;
-      base.strokeAlign ??= STROKE_INSIDE;
+      // Defaults match the pre-`6ea3dc6` projection: shapes built from
+      // scratch carry no visible stroke (`strokeWeight=0`) and
+      // `strokeAlign=CENTER`. The earlier `INSIDE` default was empirically
+      // derived from real Figma exports — which only contain shapes WITH
+      // non-zero strokes (designers always add one). For stroke-less
+      // shapes the on-disk SoT is `CENTER`; emitting `INSIDE` against
+      // `strokeWeight=0` makes Figma's importer reject the file.
+      base.strokeWeight ??= 0;
+      base.strokeAlign ??= STROKE_CENTER;
       base.strokeJoin ??= STROKE_MITER;
       return;
     case "GROUP":
