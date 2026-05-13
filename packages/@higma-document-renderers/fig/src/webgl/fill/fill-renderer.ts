@@ -309,6 +309,12 @@ export type ImageFillOptions = {
   readonly scaleMode?: string;
   /** TILE scale multiplier */
   readonly scalingFactor?: number;
+  /**
+   * User-positioned crop transform. Required when `scaleMode === "CROP"`:
+   * maps element-uv space (0..1) into image-uv space (0..1) so the shader
+   * samples the slice of the image the user dragged into view.
+   */
+  readonly imageTransform?: AffineMatrix;
   readonly paintFilter?: ImagePaintFilter;
 };
 
@@ -370,6 +376,7 @@ export function drawImageFill(
     imageH: options?.imageHeight ?? elementSize.height,
     scaleMode: options?.scaleMode ?? "STRETCH",
     scalingFactor: options?.scalingFactor,
+    imageTransform: options?.imageTransform,
   });
 
   gl.uniform2f(
@@ -416,17 +423,46 @@ type ImageUVParams = {
   imageH: number;
   scaleMode: string;
   scalingFactor?: number;
+  imageTransform?: AffineMatrix;
 };
 
 /** Compute UV scale and offset for image fills */
 export function computeImageUV(
-  { elementW, elementH, imageW, imageH, scaleMode, scalingFactor }: ImageUVParams
+  { elementW, elementH, imageW, imageH, scaleMode, scalingFactor, imageTransform }: ImageUVParams
 ): {
   texScale: { x: number; y: number };
   texOffset: { x: number; y: number };
   repeat: boolean;
   clipTransparent: boolean;
 } {
+  if (scaleMode === "CROP") {
+    if (imageTransform === undefined) {
+      throw new Error("CROP imageScaleMode requires an explicit imageTransform");
+    }
+    // Figma's user-positioned crop: imageTransform maps element-uv (0..1)
+    // into image-uv (0..1) — image_uv = M · element_uv. The shader formula
+    // is `uv = v_texCoord * u_texScale + u_texOffset` with v_texCoord in
+    // element-pixel space (0..elementW, 0..elementH), so:
+    //   u = (m00 / elementW) * vx + (m01 / elementH) * vy + m02
+    //   v = (m10 / elementW) * vx + (m11 / elementH) * vy + m12
+    // The current shader stores texScale/texOffset per-component (no
+    // off-diagonal cross-coupling), so rotated/skewed crops are rejected
+    // here rather than rendered incorrectly. Sampling outside the image
+    // bounds is treated as transparent so the underlying fill (e.g. the
+    // solid layer beneath this image paint) shows through, matching the
+    // Figma editor's behaviour for cropped images that do not fully cover
+    // the element.
+    if (imageTransform.m01 !== 0 || imageTransform.m10 !== 0) {
+      throw new Error("CROP imageScaleMode with a rotated/skewed imageTransform is not yet supported by the WebGL renderer");
+    }
+    return {
+      texScale: { x: imageTransform.m00 / elementW, y: imageTransform.m11 / elementH },
+      texOffset: { x: imageTransform.m02, y: imageTransform.m12 },
+      repeat: false,
+      clipTransparent: true,
+    };
+  }
+
   if (scaleMode === "FILL" && imageW > 0 && imageH > 0) {
     const imageAR = imageW / imageH;
     const elementAR = elementW / elementH;

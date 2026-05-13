@@ -1,9 +1,9 @@
-/** @file FigDesignNode helpers for SceneGraph construction. */
+/** @file FigDesignNode helpers used during scene-graph construction. */
 
-import type { FigDesignNode, MutableFigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigPaint } from "@higma-document-models/fig/types";
-import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
-import { resolveClipsContent as resolveGeometryClipsContent } from "../geometry";
+import type { FigDesignNode, MutableFigDesignNode } from "../domain";
+import type { FigPaint } from "../types";
+import { IDENTITY_MATRIX } from "../matrix";
+import { resolveClipsContent as resolveGeometryClipsContent } from "../geometry-interpret";
 import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
 /** Get the already-normalized domain node type name. */

@@ -4,8 +4,9 @@
  * Verifies that the SVG string renderer and the SceneGraph builder
  * produce equivalent interpretations of the same Figma paint/stroke/effect data.
  *
- * Both paths consume shared SoT modules (paint/, stroke/, effects/, geometry/),
- * so these tests confirm the wiring is correct and outputs agree.
+ * Both paths consume shared SoT modules (paint/, stroke/, effects/, and
+ * `@higma-document-models/fig/geometry-interpret`), so these tests
+ * confirm the wiring is correct and outputs agree.
  *
  * Test data uses the SSoT domain shape (FigPaintType strings, FigStroke*
  * strings) as emitted by the parser after kiwi→domain normalisation.
@@ -22,7 +23,11 @@ import type {
 import { getGradientDirection, getGradientStops, getRadialGradientCenterAndRadius } from "./paint";
 import { resolveStrokeWeight, mapStrokeCap, mapStrokeJoin } from "./stroke";
 import { getEffectTypeName, extractShadowParams } from "./effects";
-import { mapWindingRule, extractUniformCornerRadius, resolveClipsContent } from "./geometry";
+import {
+  mapWindingRule,
+  extractUniformCornerRadius,
+  resolveClipsContent,
+} from "@higma-document-models/fig/geometry-interpret";
 
 // SceneGraph consumer
 import {

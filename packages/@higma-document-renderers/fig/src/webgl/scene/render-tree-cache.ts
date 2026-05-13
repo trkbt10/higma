@@ -2,6 +2,10 @@
 
 import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { resolveRenderTree, type RenderTree } from "../../scene-graph/render-tree";
+import type {
+  FigmaRenderExportSettings,
+  SceneGraphRenderOptions,
+} from "../../scene-graph/render";
 import {
   createWebGLSceneResourceIdentityStore,
   type WebGLSceneResourceIdentityStore,
@@ -11,6 +15,7 @@ import {
 type RenderTreeCacheEntry = {
   readonly resourceKey: WebGLSceneResourceKey;
   readonly tree: RenderTree;
+  readonly exportSettings: FigmaRenderExportSettings | undefined;
 };
 
 function requireSceneViewport(scene: SceneGraph): NonNullable<SceneGraph["viewport"]> {
@@ -20,10 +25,10 @@ function requireSceneViewport(scene: SceneGraph): NonNullable<SceneGraph["viewpo
   return scene.viewport;
 }
 
-export type RenderTreeResolver = (scene: SceneGraph) => RenderTree;
+export type RenderTreeResolver = (scene: SceneGraph, options?: SceneGraphRenderOptions) => RenderTree;
 
 export type WebGLRenderTreeCache = {
-  readonly get: (scene: SceneGraph) => RenderTree;
+  readonly get: (scene: SceneGraph, options?: SceneGraphRenderOptions) => RenderTree;
   readonly clear: () => void;
 };
 
@@ -35,16 +40,20 @@ export function createWebGLRenderTreeCache(
   const current = { value: null as RenderTreeCacheEntry | null };
 
   return {
-    get(scene: SceneGraph): RenderTree {
+    get(scene: SceneGraph, options?: SceneGraphRenderOptions): RenderTree {
       const viewport = requireSceneViewport(scene);
       const cached = current.value;
       const resourceKey = sceneResources.get(scene);
-      if (cached && sceneResources.isEqual(cached.resourceKey, resourceKey)) {
+      if (
+        cached
+        && sceneResources.isEqual(cached.resourceKey, resourceKey)
+        && cached.exportSettings === options?.exportSettings
+      ) {
         return { ...cached.tree, width: scene.width, height: scene.height, viewport };
       }
 
-      const tree = resolve(scene);
-      current.value = { resourceKey, tree };
+      const tree = resolve(scene, options);
+      current.value = { resourceKey, tree, exportSettings: options?.exportSettings };
       return tree;
     },
 

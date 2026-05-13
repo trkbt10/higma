@@ -356,6 +356,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
               imageHeight: entry.height,
               scaleMode: fill.scaleMode,
               scalingFactor: fill.scalingFactor,
+              imageTransform: fill.imageTransform,
               paintFilter: fill.paintFilter,
             },
           });
@@ -1502,7 +1503,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       const start = performance.now();
       width.value = scene.width;
       height.value = scene.height;
-      const renderTree = renderTreeCache.get(scene);
+      const renderTree = renderTreeCache.get(scene, { exportSettings: options.exportSettings });
       const viewportTransform = viewportToSurfaceTransform(renderTree);
       await Promise.all(renderTree.children.map((child) => walkForImages(child, viewportTransform)));
       metrics.prepareCount += 1;
@@ -1545,7 +1546,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       clipStencilValid.value = false;
       clipStack.length = 0;
 
-      const renderTree = renderTreeCache.get(scene);
+      const renderTree = renderTreeCache.get(scene, { exportSettings: options.exportSettings });
       const viewportTransform = viewportToSurfaceTransform(renderTree);
       for (const child of renderTree.children) {
         renderRenderNode(child, viewportTransform, 1);

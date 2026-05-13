@@ -83,6 +83,10 @@ function extractGradientTransform(gradientPaint: FigGradientPaint): AffineMatrix
   return m;
 }
 
+function isIdentityAffine(m: AffineMatrix): boolean {
+  return m.m00 === 1 && m.m01 === 0 && m.m02 === 0 && m.m10 === 0 && m.m11 === 1 && m.m12 === 0;
+}
+
 /** Extract image transform matrix from any supported image paint field. */
 function extractImageTransform(imagePaint: FigImagePaint): AffineMatrix | undefined {
   const t = getImageTransform(imagePaint);
@@ -97,6 +101,37 @@ function extractImageTransform(imagePaint: FigImagePaint): AffineMatrix | undefi
     m11: t.m11 ?? 1,
     m12: t.m12 ?? 0,
   };
+}
+
+/**
+ * Reconcile the wire-format `imageScaleMode` with the canonical UI-level
+ * semantic the renderers consume.
+ *
+ * Figma's binary `ImageScaleMode` enum only declares STRETCH / FIT /
+ * FILL / TILE — there is no `CROP` value. When the user picks "Crop"
+ * in the editor, Figma keeps the underlying `imageScaleMode` (most
+ * commonly STRETCH) and writes the user-positioned image placement
+ * into `paint.transform`. So a non-identity image transform on a
+ * STRETCH paint is the wire-format spelling of "Crop"; the renderer
+ * must honour the transform instead of treating the paint as a plain
+ * stretch (which would ignore the transform and incorrectly render
+ * the whole image distorted into the element bounds).
+ *
+ * Done at convert time so SVG, WebGL, and any future renderer share
+ * the same canonical scaleMode and do not each have to rediscover the
+ * STRETCH-vs-CROP distinction from the raw transform.
+ */
+function resolveImageScaleMode(
+  wireScaleMode: ReturnType<typeof getScaleMode>,
+  imageTransform: AffineMatrix | undefined,
+): ReturnType<typeof getScaleMode> {
+  if (wireScaleMode !== "STRETCH") {
+    return wireScaleMode;
+  }
+  if (imageTransform === undefined || isIdentityAffine(imageTransform)) {
+    return wireScaleMode;
+  }
+  return "CROP";
 }
 
 /**
@@ -211,16 +246,19 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
       const figImage = images.get(imageRef);
       if (!figImage) { return null; }
 
+      const imageTransform = extractImageTransform(imagePaint);
+      const scaleMode = resolveImageScaleMode(getScaleMode(imagePaint), imageTransform);
+
       return {
         type: "image",
         imageRef,
         data: figImage.data,
         mimeType: figImage.mimeType,
-        scaleMode: getScaleMode(imagePaint),
+        scaleMode,
         opacity,
         blendMode,
         scalingFactor: getScalingFactor(imagePaint),
-        imageTransform: extractImageTransform(imagePaint),
+        imageTransform,
         paintFilter: getPaintFilter(imagePaint),
         imageShouldColorManage: getImageShouldColorManage(imagePaint),
       };

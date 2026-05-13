@@ -34,6 +34,10 @@
       "types": "./src/boolean-operation.ts",
       "default": "./src/boolean-operation.ts"
     },
+    "./geometry-interpret": {
+      "types": "./src/geometry-interpret.ts",
+      "default": "./src/geometry-interpret.ts"
+    },
     "./scene-graph": {
       "types": "./src/scene-graph/types.ts",
       "default": "./src/scene-graph/types.ts"
@@ -45,6 +49,22 @@
     "./symbols": {
       "types": "./src/symbols/index.ts",
       "default": "./src/symbols/index.ts"
+    },
+    "./symbols/autolayout-primary": {
+      "types": "./src/symbols/autolayout-primary.ts",
+      "default": "./src/symbols/autolayout-primary.ts"
+    },
+    "./symbols/design-node-helpers": {
+      "types": "./src/symbols/design-node-helpers.ts",
+      "default": "./src/symbols/design-node-helpers.ts"
+    },
+    "./symbols/extract": {
+      "types": "./src/symbols/extract.ts",
+      "default": "./src/symbols/extract.ts"
+    },
+    "./symbols/design-instance-resolver": {
+      "types": "./src/symbols/design-instance-resolver.ts",
+      "default": "./src/symbols/design-instance-resolver.ts"
     },
     "./domain": {
       "types": "./src/domain/index.ts",

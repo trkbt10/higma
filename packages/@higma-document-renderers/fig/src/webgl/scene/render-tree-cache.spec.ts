@@ -2,6 +2,7 @@
 
 import type { RenderTree } from "../../scene-graph/render-tree";
 import type { GroupNode, SceneGraph, SceneNodeId } from "@higma-document-models/fig/scene-graph";
+import type { FigmaRenderExportSettings, SceneGraphRenderOptions } from "../../scene-graph/render";
 import { createWebGLRenderTreeCache } from "./render-tree-cache";
 
 function makeRoot(): GroupNode {
@@ -52,6 +53,38 @@ describe("createWebGLRenderTreeCache", () => {
 
     cache.get(makeScene(makeRoot(), 0));
     cache.get(makeScene(makeRoot(), 0));
+
+    expect(calls.value).toBe(2);
+  });
+
+  it("forwards exportSettings to the resolver and reuses the cache while they are stable", () => {
+    const root = makeRoot();
+    const received: Array<FigmaRenderExportSettings | undefined> = [];
+    const tree: RenderTree = { width: 500, height: 400, viewport: { x: 0, y: 0, width: 500, height: 400 }, children: [] };
+    const cache = createWebGLRenderTreeCache((scene, options) => {
+      received.push(options?.exportSettings);
+      return { ...tree, viewport: scene.viewport ?? tree.viewport };
+    });
+    const stableSettings: FigmaRenderExportSettings = { colorProfile: "SRGB" };
+    const optionsA: SceneGraphRenderOptions = { exportSettings: stableSettings };
+
+    cache.get(makeScene(root, 0), optionsA);
+    cache.get(makeScene(root, 120), optionsA);
+
+    expect(received).toEqual([stableSettings]);
+  });
+
+  it("re-resolves when exportSettings change for the same scene", () => {
+    const root = makeRoot();
+    const calls = { value: 0 };
+    const tree: RenderTree = { width: 500, height: 400, viewport: { x: 0, y: 0, width: 500, height: 400 }, children: [] };
+    const cache = createWebGLRenderTreeCache((scene) => {
+      calls.value += 1;
+      return { ...tree, viewport: scene.viewport ?? tree.viewport };
+    });
+
+    cache.get(makeScene(root, 0), { exportSettings: { colorProfile: "SRGB" } });
+    cache.get(makeScene(root, 0), { exportSettings: { colorProfile: "SRGB" } });
 
     expect(calls.value).toBe(2);
   });

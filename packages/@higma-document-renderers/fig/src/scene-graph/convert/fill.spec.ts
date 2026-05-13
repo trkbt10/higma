@@ -158,6 +158,45 @@ describe("convertPaintToFill", () => {
       });
     });
 
+    it("normalises STRETCH + non-identity transform to CROP (wire-format spelling of Figma's Crop mode)", () => {
+      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+      // Figma's binary ImageScaleMode enum has no CROP value: when the user
+      // picks "Crop" in the editor, the wire-level scaleMode stays STRETCH
+      // and the user's crop rectangle is written into paint.transform. The
+      // convert layer must reconcile this so the renderers see scaleMode
+      // "CROP" and honour the transform instead of plain-stretching.
+      const paint: FigImagePaint = {
+        type: "IMAGE",
+        imageRef: "img-ref",
+        scaleMode: "STRETCH",
+        imageTransform: { m00: 2.143, m01: 0, m02: -1.063, m10: 0, m11: 0.658, m12: 0.046 },
+      };
+
+      const fill = convertPaintToFill(paint, images);
+
+      expect(fill).toMatchObject({
+        type: "image",
+        scaleMode: "CROP",
+        imageTransform: { m00: 2.143, m01: 0, m02: -1.063, m10: 0, m11: 0.658, m12: 0.046 },
+      });
+    });
+
+    it("leaves STRETCH with an identity transform untouched", () => {
+      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+      const paint: FigImagePaint = {
+        type: "IMAGE",
+        imageRef: "img-ref",
+        scaleMode: "STRETCH",
+        imageTransform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      };
+
+      const fill = convertPaintToFill(paint, images);
+
+      expect(fill).toMatchObject({ type: "image", scaleMode: "STRETCH" });
+    });
+
     it("converts decoded Kiwi enum image paints", () => {
       const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
       const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);

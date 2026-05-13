@@ -1,15 +1,9 @@
-/**
- * @file Convert Figma geometry data to scene graph PathContours
- *
- * Winding rule mapping delegates to geometry/interpret.ts (the SoT).
- * The SVG path-`d` parser lives in `@higma-primitives/path`;
- * consumers import it directly from that package.
- */
+/** @file Convert Figma geometry data to scene graph PathContours. */
 
 import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigFillGeometry, FigVectorPath } from "@higma-document-models/fig/types";
 import { parseSvgPathD } from "@higma-primitives/path";
-import { mapWindingRule } from "../../geometry";
+import { mapWindingRule } from "@higma-document-models/fig/geometry-interpret";
 import type { PathContour } from "@higma-document-models/fig/scene-graph";
 
 /**

@@ -1,13 +1,10 @@
 /**
- * @file Property extractors for scene-graph builder
+ * @file FigDesignNode property extractors used by scene-graph
+ * construction.
  *
- * These extract functions accept FigDesignNode (domain object) directly.
- * This ensures the scene-graph path enforces domain object usage.
- *
- * The svg/nodes/extract-props.ts file serves the Direct SVG path
- * which still operates on FigNode — these two modules are intentionally
- * separate to maintain the boundary between domain-driven (scene-graph)
- * and parser-driven (direct SVG) rendering paths.
+ * Each helper groups a small set of related domain fields into a typed
+ * record so callers can pass them around as a unit without re-reading
+ * raw node properties at every call site.
  */
 
 import type {
@@ -20,8 +17,8 @@ import type {
   FigStrokeAlign,
   FigFillGeometry,
   FigEffect,
-} from "@higma-document-models/fig/types";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+} from "../types";
+import type { FigDesignNode } from "../domain";
 
 // ---- Base properties ----
 
