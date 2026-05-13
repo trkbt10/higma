@@ -7,6 +7,7 @@ import type {
   Effect,
   Fill,
 } from "@higma-document-models/fig/scene-graph";
+import { createTranslationMatrix, multiplyMatrices } from "@higma-document-models/fig/matrix";
 import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
 import type { EffectsRendererInstance } from "./effects-renderer";
@@ -119,14 +120,11 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
       if (effect.type !== "drop-shadow") { continue; }
 
       if (effect.radius <= 0) {
-        const offsetTransform: AffineMatrix = {
-          m00: transform.m00,
-          m01: transform.m01,
-          m02: transform.m02 + effect.offset.x,
-          m10: transform.m10,
-          m11: transform.m11,
-          m12: transform.m12 + effect.offset.y,
-        };
+        // `effect.offset` is in node-local (world) space; compose through
+        // `multiplyMatrices` so the viewport scale baked into `transform`
+        // applies — adding offset to m02/m12 directly would leave the
+        // shadow at unscaled distance at viewport scale != 1.
+        const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(effect.offset.x, effect.offset.y));
         drawSolidFill({ ctx: params.getGlContext(), vertices, color: effect.color, transform: offsetTransform, opacity: opacity * effect.color.a });
         continue;
       }
@@ -183,14 +181,9 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
     for (const effect of effects) {
       if (effect.type !== "drop-shadow") { continue; }
 
-      const offsetTransform: AffineMatrix = {
-        m00: transform.m00,
-        m01: transform.m01,
-        m02: transform.m02 + effect.offset.x,
-        m10: transform.m10,
-        m11: transform.m11,
-        m12: transform.m12 + effect.offset.y,
-      };
+      // Same world-space offset composition as the non-stencil drop
+      // shadow above — see comment there.
+      const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(effect.offset.x, effect.offset.y));
 
       if (effect.radius <= 0) {
         params.drawStencilFill({

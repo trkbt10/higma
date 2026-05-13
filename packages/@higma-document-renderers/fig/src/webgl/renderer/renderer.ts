@@ -40,7 +40,7 @@ import {
 import {
   drawSolidFill, drawLinearGradientFill, drawRadialGradientFill, drawAngularGradientFill, drawDiamondGradientFill, drawImageFill, type GLContext, } from "../fill/fill-renderer";
 import { imageTextureResource, type TextureColorManagement } from "../resources/texture-resource";
-import { IDENTITY_MATRIX, multiplyMatrices } from "@higma-document-models/fig/matrix";
+import { IDENTITY_MATRIX, multiplyMatrices, createTranslationMatrix } from "@higma-document-models/fig/matrix";
 import { rebuildStencilClipStack, type StencilClipEntry } from "../effects/clip-mask";
 import { createGLStateCache } from "../state/gl-state-cache";
 import {
@@ -883,39 +883,34 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         const leftX = sign === 1 ? 0 : sign === -1 ? -left : -left / 2;
         const rightX = sign === 1 ? w - right : sign === -1 ? w : w - right / 2;
 
+        // Per-side band offsets are in node-local coordinates. `transform`
+        // already carries the world composition (incl. viewport scale on
+        // m00/m11), so adding the offset to m02/m12 directly would treat
+        // it as a post-transform screen offset — at viewport scale != 1
+        // the band would land at the wrong distance from the rect.
+        // Compose the local translation through `multiplyMatrices` so it
+        // is scaled/rotated with the rest of the world transform.
         // Top border
         if (top > 0) {
-          const offsetTransform: AffineMatrix = {
-            m00: transform.m00, m01: transform.m01, m02: transform.m02,
-            m10: transform.m10, m11: transform.m11, m12: transform.m12 + topY,
-          };
+          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(0, topY));
           const verts = generateRectVertices(w, top);
           drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
         }
         // Bottom border
         if (bottom > 0) {
-          const offsetTransform: AffineMatrix = {
-            m00: transform.m00, m01: transform.m01, m02: transform.m02,
-            m10: transform.m10, m11: transform.m11, m12: transform.m12 + bottomY,
-          };
+          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(0, bottomY));
           const verts = generateRectVertices(w, bottom);
           drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
         }
         // Left border
         if (left > 0) {
-          const offsetTransform: AffineMatrix = {
-            m00: transform.m00, m01: transform.m01, m02: transform.m02 + leftX,
-            m10: transform.m10, m11: transform.m11, m12: transform.m12,
-          };
+          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(leftX, 0));
           const verts = generateRectVertices(left, h);
           drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
         }
         // Right border
         if (right > 0) {
-          const offsetTransform: AffineMatrix = {
-            m00: transform.m00, m01: transform.m01, m02: transform.m02 + rightX,
-            m10: transform.m10, m11: transform.m11, m12: transform.m12,
-          };
+          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(rightX, 0));
           const verts = generateRectVertices(right, h);
           drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
         }
@@ -1190,14 +1185,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
 
     if (clipDef?.shape.kind === "rect") {
-      const clipTransform: AffineMatrix = {
-        m00: transform.m00,
-        m01: transform.m01,
-        m02: transform.m02 + clipDef.shape.x,
-        m10: transform.m10,
-        m11: transform.m11,
-        m12: transform.m12 + clipDef.shape.y,
-      };
+      // `clipDef.shape.x/y` is in node-local space; `transform` is the
+      // composed world transform (incl. viewport scale on m00/m11). The
+      // local translation must compose through `multiplyMatrices`, not
+      // be added to m02/m12 directly — otherwise the clip rect lands at
+      // the wrong distance from the frame origin at viewport scale != 1.
+      const clipTransform = multiplyMatrices(transform, createTranslationMatrix(clipDef.shape.x, clipDef.shape.y));
       return {
         clip: {
           type: "rect",
