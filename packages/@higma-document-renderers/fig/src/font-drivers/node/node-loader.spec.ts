@@ -105,6 +105,141 @@ describe("createNodeFontLoaderWithEnv — fail-fast resolution", () => {
   });
 });
 
+describe("createNodeFontLoaderWithEnv — physical alias resolution", () => {
+  it("resolves 'SF Pro' through the macOS 'System Font' name-table entry", async () => {
+    // On macOS the OS-distributed `/System/Library/Fonts/SFNS.ttf`
+    // records its `name` table family as "System Font" — Figma
+    // documents authoring "SF Pro" against the same physical file
+    // must reach it via the physical-alias SoT, not fall through to
+    // "missing font".
+    const fs = createFakeFs();
+    plantFont(fs, "/System/Library/Fonts/SFNS.ttf", {
+      familyName: "System Font",
+      styleName: "Regular",
+    });
+    const env = makeEnv({
+      platform: "darwin",
+      fs,
+      homeDir: "/Users/test",
+    });
+
+    const loader = createNodeFontLoaderWithEnv(env);
+    const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
+
+    expect(result).toBeDefined();
+    // The loaded face's `query.family` reflects the on-disk name
+    // ("System Font") — the loader does not relabel the physical
+    // file. Downstream callers carry the requested family forward in
+    // their cache key (`fontQueryKey`) so the SF Pro → System Font
+    // alias does not collapse two distinct intended lookups.
+    expect(result?.query.family).toBe("System Font");
+  });
+
+  it("resolves 'SF Pro Display' and 'SF Pro Text' through the same alias chain", async () => {
+    const fs = createFakeFs();
+    plantFont(fs, "/System/Library/Fonts/SFNS.ttf", {
+      familyName: "System Font",
+      styleName: "Regular",
+    });
+    const env = makeEnv({ platform: "darwin", fs, homeDir: "/Users/test" });
+
+    const loader = createNodeFontLoaderWithEnv(env);
+    expect(
+      await loader.loadFont({ family: "SF Pro Display", weight: 400, style: "normal" }),
+    ).toBeDefined();
+    expect(
+      await loader.loadFont({ family: "SF Pro Text", weight: 400, style: "normal" }),
+    ).toBeDefined();
+  });
+
+  it("does not extend the alias chain to unmapped families", async () => {
+    // Fail-fast policy regression: an unrelated family must still
+    // surface as undefined when not directly installed, even when a
+    // System Font entry exists in the catalogue. The alias chain only
+    // covers the documented same-physical-file aliases.
+    const fs = createFakeFs();
+    plantFont(fs, "/System/Library/Fonts/SFNS.ttf", {
+      familyName: "System Font",
+      styleName: "Regular",
+    });
+    const env = makeEnv({ platform: "darwin", fs, homeDir: "/Users/test" });
+
+    const loader = createNodeFontLoaderWithEnv(env);
+    const result = await loader.loadFont({ family: "Cursed Type", weight: 400, style: "normal" });
+
+    expect(result).toBeUndefined();
+  });
+
+  // ---- Cross-platform fail-fast ----------------------------------------
+  // The "SF Pro" ↔ "System Font" mapping is a macOS-specific fact:
+  // SFNS.ttf only exists on Apple's OS. On Linux and Windows the
+  // alias chain MUST walk and miss — never silently substitute
+  // Segoe UI, Helvetica, or any other family that happens to be in
+  // the host catalogue. Without these guards a `.fig` authored on
+  // macOS that names "SF Pro" would render with a completely
+  // unrelated typeface when previewed on a CI Linux runner.
+
+  it("[linux] 'SF Pro' returns undefined when the catalogue has no SFNS / System Font", async () => {
+    const fs = createFakeFs();
+    plantFont(fs, "/usr/share/fonts/Inter-Regular.ttf", {
+      familyName: "Inter",
+      styleName: "Regular",
+    });
+    const env = makeEnv({
+      platform: "linux",
+      fs,
+      exec: createFakeExec({
+        "fc-list": async () => "/usr/share/fonts/Inter-Regular.ttf\t0\n",
+      }),
+    });
+
+    const loader = createNodeFontLoaderWithEnv(env);
+    const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
+
+    // The alias chain ["SF Pro", "System Font"] walks both — neither
+    // is indexed — and the loader returns undefined. Inter is in the
+    // catalogue but is NOT a documented same-physical alias of SF
+    // Pro, so it stays unreachable from this request.
+    expect(result).toBeUndefined();
+  });
+
+  it("[win32] 'SF Pro' does NOT silently substitute Segoe UI", async () => {
+    // Critical regression: Segoe UI is Windows's system font and is
+    // structurally similar enough that someone might be tempted to
+    // alias SF Pro → Segoe UI via a "system fonts are equivalent"
+    // shortcut. They are NOT the same physical file; AGENTS.md's
+    // fail-fast policy demands the request fail rather than swap
+    // typefaces silently.
+    const fs = createFakeFs();
+    plantFont(fs, "C:/Windows/Fonts/segoeui.ttf", {
+      familyName: "Segoe UI",
+      styleName: "Regular",
+    });
+    const env = makeEnv({
+      platform: "win32",
+      fs,
+      windowsDir: "C:/Windows",
+      exec: createFakeExec({
+        // Stub the registry query so the win32 driver sees Segoe UI
+        // through the normal "win32-registry" path (the directory
+        // fallback would yield identical results here).
+        "reg.exe": async () =>
+          "    Segoe UI (TrueType)    REG_SZ    segoeui.ttf\n",
+      }),
+    });
+
+    const loader = createNodeFontLoaderWithEnv(env);
+    const sfProResult = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
+    const segoeResult = await loader.loadFont({ family: "Segoe UI", weight: 400, style: "normal" });
+
+    expect(sfProResult).toBeUndefined();
+    // Sanity-check: the Segoe UI entry IS reachable when asked for
+    // by its own name, proving the catalogue is populated correctly
+    // and the SF Pro miss is about the alias map, not the index.
+    expect(segoeResult).toBeDefined();
+  });
+});
+
 describe("createNodeFontLoaderWithEnv — variant scoring", () => {
   it("prefers the matching weight when style is identical", async () => {
     const fs = createFakeFs();

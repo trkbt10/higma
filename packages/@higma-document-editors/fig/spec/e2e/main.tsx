@@ -29,11 +29,13 @@ import type { FigDerivedTextData, FigMatrix, KiwiEnumValue } from "@higma-docume
 import {
   createCachingFontLoader,
   type AbstractFont,
+  type CachingFontLoader,
   type FontLoader,
   type FontQuery,
   type FontPath,
   type LoadedFont,
 } from "@higma-document-models/fig/font";
+import { createBrowserFontLoader } from "@higma-document-renderers/fig/font-drivers/browser";
 
 injectCSSVariables();
 
@@ -103,6 +105,16 @@ const TEST_FONT_LOADER = createCachingFontLoader({
     return true;
   },
 } satisfies FontLoader);
+
+type FontMode = "default" | "browser-real";
+
+function resolveFontModeFromLocation(location: Location): FontMode {
+  const mode = new URLSearchParams(location.search).get("fontMode");
+  if (mode === "browser-real") {
+    return mode;
+  }
+  return "default";
+}
 
 // =============================================================================
 // Node construction
@@ -645,6 +657,52 @@ const testDocument: FigDesignDocument = {
   metadata: null,
 };
 
+/**
+ * Minimal document used by the `fontMode=browser-real` e2e
+ * (`spec/e2e/sf-pro-font-aliasing/…`). The Chromium-shaped Local Font
+ * Access mock the test installs synthesises tiny fonts with only `A`,
+ * space, and `.notdef` glyphs. To avoid spurious "WebGL text renderer
+ * requires glyph contours" failures on Hello-World-shaped strings
+ * (whose chars aren't in the synthetic font), this document keeps a
+ * single TEXT node whose characters all sit inside the synthesised
+ * coverage — the goal of the test is to exercise the SF Pro alias
+ * chain, not the full canvas surface.
+ */
+const sfProAliasTestDocument: FigDesignDocument = {
+  pages: [{
+    id: "0:1" as FigPageId,
+    name: "SF Pro alias test page",
+    backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
+    children: [
+      makeTextNode({
+        id: "2:50",
+        x: 50,
+        y: 420,
+        width: 240,
+        height: 30,
+        // Synthesised font covers only `A`, so the WebGL renderer can
+        // produce a non-empty glyph-contour set and reach
+        // `data-webgl-ready` without hitting the "lines mode requires
+        // contours" hard error. Real designs would have richer fonts;
+        // this test isolates the alias resolution path.
+        text: "AAA A",
+        lineHeight: 20,
+        fontFamily: "SF Pro",
+        fontStyle: "Regular",
+      }),
+    ],
+  }],
+  components: new Map(),
+  images: new Map(),
+  blobs: [],
+  styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+  metadata: null,
+};
+
+function selectInitialDocument(mode: FontMode): FigDesignDocument {
+  return mode === "browser-real" ? sfProAliasTestDocument : testDocument;
+}
+
 function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
@@ -702,12 +760,26 @@ const toolbarStyle: CSSProperties = {
   background: "#ffffff",
 };
 
+function selectFontLoader(mode: FontMode): CachingFontLoader {
+  if (mode === "browser-real") {
+    // Wire the actual production browser loader so the
+    // physical-alias chain inside `createBrowserFontLoader` is the
+    // code under test. Tests preload a `window.queryLocalFonts` mock
+    // via Playwright's addInitScript before the page boots.
+    return createCachingFontLoader(createBrowserFontLoader());
+  }
+  return TEST_FONT_LOADER;
+}
+
 function App() {
   const renderer = resolveRendererFromLocation(window.location);
   const panelMode = resolvePanelModeFromLocation(window.location);
   const webglInitializationDelayMs = resolveWebGLInitializationDelayMsFromLocation(window.location);
+  const fontMode = resolveFontModeFromLocation(window.location);
+  const fontLoader = selectFontLoader(fontMode);
+  const initialDocument = selectInitialDocument(fontMode);
   return (
-    <FigEditorProvider initialDocument={testDocument}>
+    <FigEditorProvider initialDocument={initialDocument}>
       <div style={containerStyle}>
         <div style={toolbarStyle}>
           <FigEditorToolbar />
@@ -719,7 +791,7 @@ function App() {
               <LayerPanel />
             </aside>
           )}
-          <FigEditorCanvas renderer={renderer} fontLoader={TEST_FONT_LOADER} webglInitializationDelayMs={webglInitializationDelayMs} />
+          <FigEditorCanvas renderer={renderer} fontLoader={fontLoader} webglInitializationDelayMs={webglInitializationDelayMs} />
           {(panelMode === "property" || panelMode === "all") && (
             <aside aria-label="Properties" style={propertyPanelStyle}>
               <PropertyPanel />

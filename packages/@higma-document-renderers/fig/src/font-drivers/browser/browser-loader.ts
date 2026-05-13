@@ -13,7 +13,12 @@
 import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";
-import { figmaFontToQuery } from "@higma-document-models/fig/font";
+import {
+  detectBrowserFontPlatform,
+  figmaFontToQuery,
+  getPhysicalFamilyAliases,
+  type FontPlatform,
+} from "@higma-document-models/fig/font";
 import type { AbstractFont, LoadedFont } from "@higma-document-models/fig/font";
 
 /**
@@ -90,6 +95,29 @@ function weightDistance(requested: number, actual: number): number {
 }
 
 /**
+ * Walk the physical-alias chain returned by
+ * `getPhysicalFamilyAliases` and return the first non-empty bucket
+ * present in `index`. The order of the chain encodes the
+ * preferred-resolution policy (canonical name first, then the
+ * alternate OS / name-table spellings of the same physical file);
+ * we stop on the first hit so a request for "SF Pro" prefers an
+ * "SF Pro" entry over its "System Font" alias when both happen to
+ * be indexed (e.g. user-installed copy alongside SFNS.ttf).
+ */
+function findVariantsThroughAliases(
+  index: Map<string, FontData[]>,
+  aliasChain: readonly string[],
+): FontData[] | undefined {
+  for (const alias of aliasChain) {
+    const variants = index.get(alias.toLowerCase());
+    if (variants && variants.length > 0) {
+      return variants;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Check if Local Font Access API is available.
  */
 export function isBrowserFontLoaderSupported(): boolean {
@@ -112,15 +140,50 @@ export type BrowserFontLoaderInstance = FontLoader & {
   hasPermission(): boolean;
   /** List available font families */
   listFontFamilies(): Promise<readonly string[]>;
+  /**
+   * Platform the alias chain is bound to. Captured at loader
+   * construction so a single loader instance never silently
+   * switches resolution policy if `navigator.userAgent` is mutated
+   * later. Exposed for diagnostics / spec assertions.
+   */
+  readonly platform: FontPlatform;
+};
+
+export type CreateBrowserFontLoaderOptions = {
+  /**
+   * Override the platform the alias chain resolves against. Default:
+   * `detectBrowserFontPlatform()` via `navigator.userAgent`.
+   *
+   * Test harnesses that want to drive each platform's resolution
+   * path deterministically should set this rather than mutating
+   * `navigator.userAgent` — the explicit handoff makes the
+   * environment under test obvious to anyone reading the test.
+   *
+   * Production callers should leave this unset; the default detection
+   * matches the host the browser is actually running on.
+   */
+  readonly platform?: FontPlatform;
 };
 
 /**
- * Create a browser font loader using Local Font Access API
+ * Create a browser font loader using Local Font Access API.
  *
  * Requires user permission to access local fonts. The browser will
- * prompt the user when queryLocalFonts() is first called.
+ * prompt the user when `queryLocalFonts()` is first called.
+ *
+ * The loader binds the **environment-specific** physical-alias
+ * chain at construction time. The browser's queryLocalFonts catalogue
+ * is host-OS-specific (macOS reports SFNS.ttf under "System Font",
+ * Linux/Windows do not), and the alias chain must match. See
+ * `@higma-document-models/fig/font/physical-aliases.ts` for the
+ * per-platform contents and `detectBrowserFontPlatform` /
+ * `CreateBrowserFontLoaderOptions.platform` for how the loader
+ * decides which platform's table to use.
  */
-export function createBrowserFontLoader(): BrowserFontLoaderInstance {
+export function createBrowserFontLoader(
+  options?: CreateBrowserFontLoaderOptions,
+): BrowserFontLoaderInstance {
+  const platform: FontPlatform = options?.platform ?? detectBrowserFontPlatform();
   const fontIndexRef = { value: null as Map<string, FontData[]> | null };
   const indexPromiseRef = { value: null as Promise<void> | null };
   const permissionGrantedRef = { value: false };
@@ -162,8 +225,16 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
 
   async function loadFont(query: FontQuery): Promise<LoadedFont | undefined> {
     const index = await ensureIndex();
-    const familyLower = query.family.toLowerCase();
-    const variants = index.get(familyLower);
+    // Resolve the requested family through the platform-keyed
+    // physical-aliases SoT before giving up. macOS reports SFNS.ttf
+    // to `queryLocalFonts` under its `name` table family
+    // ("System Font"); a Figma document that authors the same font
+    // as "SF Pro" would otherwise miss the entry on every modern
+    // Mac. On linux / win32 the SoT carries no SF Pro alias and the
+    // chain collapses to `[query.family]` — the request fails fast
+    // on hosts that legitimately do not ship SFNS.ttf.
+    const aliasChain = getPhysicalFamilyAliases(query.family, platform);
+    const variants = findVariantsThroughAliases(index, aliasChain);
 
     if (!variants || variants.length === 0) {
       return undefined;
@@ -204,8 +275,17 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
 
   async function isFontAvailable(family: string): Promise<boolean> {
     const index = await ensureIndex();
-    if (index.has(family.toLowerCase())) {
-      return true;
+    // Check the requested name and any platform-specific physical
+    // alias before falling through to `document.fonts.check` — the
+    // alias chain reaches the same OS-installed file the browser
+    // indexes under a different family label (e.g. on darwin
+    // "SF Pro" → "System Font" via SFNS.ttf). The alias chain is
+    // platform-keyed so a stale macOS alias does not bleed into
+    // Linux/Windows availability checks.
+    for (const alias of getPhysicalFamilyAliases(family, platform)) {
+      if (index.has(alias.toLowerCase())) {
+        return true;
+      }
     }
 
     if (typeof document !== "undefined" && document.fonts) {
@@ -227,5 +307,6 @@ export function createBrowserFontLoader(): BrowserFontLoaderInstance {
     hasPermission(): boolean {
       return permissionGrantedRef.value;
     },
+    platform,
   };
 }

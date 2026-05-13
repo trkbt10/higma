@@ -72,6 +72,16 @@ export {
   quoteCssFamily,
 } from "./mappings";
 
+// Physical family aliases — per-environment loader-level
+// same-file resolution
+export {
+  type FontPlatform,
+  fontPlatformFromNodePlatform,
+  detectBrowserFontPlatform,
+  physicalFamilyAliasesFor,
+  getPhysicalFamilyAliases,
+} from "./physical-aliases";
+
 // Font resolver (Figma fontRef → CSS font stack)
 export { createFontResolver, createBrowserAvailabilityChecker, type FontResolverInstance } from "./resolver";
 

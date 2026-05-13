@@ -53,7 +53,11 @@ import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";
 import { figmaFontToQuery } from "@higma-document-models/fig/font";
-import { GENERIC_FONT_STACKS } from "@higma-document-models/fig/font";
+import {
+  GENERIC_FONT_STACKS,
+  getPhysicalFamilyAliases,
+  fontPlatformFromNodePlatform,
+} from "@higma-document-models/fig/font";
 import type { LoadedFont } from "@higma-document-models/fig/font";
 import { extractTtcFaces, isTtc } from "./ttc";
 import { discoverDarwin } from "./discover-darwin";
@@ -433,10 +437,18 @@ async function safelyReadFontInfos(
 }
 
 /**
- * Look up an indexed family.
+ * Look up an indexed family on a specific OS platform.
  *
  * Resolution rules:
- *   1. Direct case-insensitive match on the requested family.
+ *   1. Walk the per-platform physical-alias chain
+ *      (`getPhysicalFamilyAliases(family, platform)`). Each alias
+ *      is an alternate name for the *same physical file* recorded
+ *      by the OS catalogue on that platform (e.g. on darwin,
+ *      "SF Pro" ↔ "System Font" because SFNS.ttf records
+ *      "System Font" in its `name` table while Figma writes
+ *      "SF Pro" into `fontName.family`). On linux/win32 the chain
+ *      currently collapses to `[family]`, so the rule reduces to
+ *      direct case-insensitive match.
  *   2. If the request is itself a CSS generic keyword
  *      (`sans-serif`, `serif`, `monospace`, `system-ui`, `cursive`,
  *      `fantasy`), walk the keyword's published stack and return the
@@ -451,10 +463,19 @@ async function safelyReadFontInfos(
 function resolveVariants(
   index: Map<string, FontFileInfo[]>,
   family: string,
+  platform: NodeJS.Platform,
 ): FontFileInfo[] | undefined {
-  const direct = index.get(family.toLowerCase());
-  if (direct && direct.length > 0) {
-    return direct;
+  // Per-environment alias walk: the SoT only knows aliases that
+  // describe same-physical-file name-table identities on `platform`.
+  // On a host whose environment doesn't carry those identities the
+  // chain collapses to `[family]` and the lookup behaves exactly
+  // like the pre-alias direct-match path.
+  const aliasChain = getPhysicalFamilyAliases(family, fontPlatformFromNodePlatform(platform));
+  for (const alias of aliasChain) {
+    const found = index.get(alias.toLowerCase());
+    if (found && found.length > 0) {
+      return found;
+    }
   }
   const stack = GENERIC_FONT_STACKS.get(family.toLowerCase());
   if (!stack) {
@@ -590,7 +611,7 @@ export function createNodeFontLoaderWithEnv(
 
   async function loadFont(query: FontQuery): Promise<LoadedFont | undefined> {
     const index = await ensureIndex();
-    const variants = resolveVariants(index, query.family);
+    const variants = resolveVariants(index, query.family, env.platform);
 
     if (!variants || variants.length === 0) {
       return undefined;
@@ -633,7 +654,7 @@ export function createNodeFontLoaderWithEnv(
 
     async isFontAvailable(family: string): Promise<boolean> {
       const index = await ensureIndex();
-      return resolveVariants(index, family) !== undefined;
+      return resolveVariants(index, family, env.platform) !== undefined;
     },
 
     async listFontFamilies(): Promise<readonly string[]> {
