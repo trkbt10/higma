@@ -76,6 +76,14 @@
         "@types/pngjs": "^6.0.5",
       },
     },
+    "packages/@higma-codecs/raster": {
+      "name": "@higma-codecs/raster",
+      "version": "0.12.2",
+      "dependencies": {
+        "@higma-codecs/png": "workspace:*",
+        "jpeg-js": "^0.4.4",
+      },
+    },
     "packages/@higma-document-editors/buzz": {
       "name": "@higma-document-editors/buzz",
       "version": "0.12.2",
@@ -108,6 +116,7 @@
         "@higma-editor-surfaces/controls": "workspace:*",
         "@higma-figma-containers/package": "workspace:*",
         "@higma-figma-runtime/react-renderer": "workspace:*",
+        "@higma-primitives/path": "workspace:*",
         "@higma-primitives/tree": "workspace:*",
         "react-editor-ui": "^0.4.0",
       },
@@ -226,6 +235,7 @@
       "dependencies": {
         "@higma-codecs/compression": "workspace:*",
         "@higma-codecs/kiwi": "workspace:*",
+        "@higma-codecs/raster": "workspace:*",
         "@higma-figma-containers/package": "workspace:*",
         "@higma-figma-schema/profiles": "workspace:*",
         "@higma-primitives/path": "workspace:*",
@@ -263,6 +273,7 @@
       "version": "0.12.2",
       "dependencies": {
         "@higma-codecs/png": "workspace:*",
+        "@higma-codecs/raster": "workspace:*",
         "@higma-document-io/fig": "workspace:*",
         "@higma-document-models/fig": "workspace:*",
         "@higma-figma-containers/package": "workspace:*",
@@ -391,6 +402,7 @@
       "name": "@higma-figma-runtime/react-renderer",
       "version": "0.12.2",
       "dependencies": {
+        "@higma-codecs/raster": "workspace:*",
         "@higma-document-io/fig": "workspace:*",
         "@higma-document-models/fig": "workspace:*",
         "@higma-document-renderers/fig": "workspace:*",
@@ -505,6 +517,7 @@
         "@higma-document-renderers/fig": "workspace:*",
         "@higma-figma-containers/package": "workspace:*",
         "@higma-primitives/identifier": "workspace:*",
+        "@higma-primitives/path": "workspace:*",
         "@higma-primitives/tree": "workspace:*",
       },
       "devDependencies": {
@@ -752,6 +765,8 @@
     "@higma-codecs/png": ["@higma-codecs/png@workspace:packages/@higma-codecs/png"],
 
     "@higma-codecs/png-compare": ["@higma-codecs/png-compare@workspace:packages/@higma-codecs/png-compare"],
+
+    "@higma-codecs/raster": ["@higma-codecs/raster@workspace:packages/@higma-codecs/raster"],
 
     "@higma-document-editors/buzz": ["@higma-document-editors/buzz@workspace:packages/@higma-document-editors/buzz"],
 
