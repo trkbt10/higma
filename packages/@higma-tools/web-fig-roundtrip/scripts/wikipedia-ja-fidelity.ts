@@ -24,7 +24,7 @@ const TARGET_URL = `https://ja.wikipedia.org/wiki/${encodeURIComponent(ARTICLE)}
 // filesystem-safe string; stripping CJK would collapse distinct
 // articles into a single `_` dir.
 const SLUG = encodeURIComponent(ARTICLE);
-const OUT_ROOT = `<REPO>/.tmp-output/wikipedia-ja-fidelity/${SLUG}`;
+const OUT_ROOT = `.tmp-output/wikipedia-ja-fidelity/${SLUG}`;
 
 async function main(): Promise<void> {
   process.stdout.write(`Capturing ${TARGET_URL} at mobile / tablet / desktop ...\n`);

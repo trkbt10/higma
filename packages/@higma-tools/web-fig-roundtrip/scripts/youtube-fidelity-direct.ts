@@ -19,7 +19,7 @@ import {
 import { verifyFigDirect } from "@higma-tools/web-fig-roundtrip/verify";
 
 const TARGET_URL = "https://www.youtube.com/";
-const OUT_ROOT = "<REPO>/.tmp-output/youtube-fidelity-direct";
+const OUT_ROOT = ".tmp-output/youtube-fidelity-direct";
 
 async function main(): Promise<void> {
   process.stdout.write(`Capturing ${TARGET_URL} at mobile / tablet / desktop ...\n`);

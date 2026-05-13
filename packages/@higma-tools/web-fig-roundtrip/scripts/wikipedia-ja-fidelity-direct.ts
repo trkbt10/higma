@@ -32,7 +32,7 @@ const TARGET_URL = `https://ja.wikipedia.org/wiki/${encodeURIComponent(ARTICLE)}
 // keeps the article identity round-trippable. Stripping CJK to `_`
 // would collapse different articles into the same output dir.
 const SLUG = encodeURIComponent(ARTICLE);
-const OUT_ROOT = `<REPO>/.tmp-output/wikipedia-ja-fidelity-direct/${SLUG}`;
+const OUT_ROOT = `.tmp-output/wikipedia-ja-fidelity-direct/${SLUG}`;
 
 async function main(): Promise<void> {
   process.stdout.write(`Capturing ${TARGET_URL} at mobile / tablet / desktop ...\n`);

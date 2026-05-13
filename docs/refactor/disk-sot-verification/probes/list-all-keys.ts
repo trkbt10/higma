@@ -7,7 +7,10 @@
 import { readFile } from "node:fs/promises";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 
-const PATH = "<DOWNLOADS>/Simple Design System (Community).fig";
+const PATH = process.env.SDS_FIG_PATH;
+if (!PATH) {
+  throw new Error("SDS_FIG_PATH must point to `Simple Design System (Community).fig`");
+}
 const TARGET_GUIDS = ["0:2", "9762:1405", "9762:1406", "9762:1407", "9762:1408", "9762:1409", "9762:1410", "9762:1411"];
 
 type Guid = { readonly sessionID: number; readonly localID: number };

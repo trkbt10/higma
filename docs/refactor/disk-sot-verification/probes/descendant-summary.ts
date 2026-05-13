@@ -8,7 +8,10 @@
 import { readFile } from "node:fs/promises";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 
-const PATH = process.argv[2] ?? "<DOWNLOADS>/Simple Design System (Community).fig";
+const PATH = process.argv[2] ?? process.env.SDS_FIG_PATH;
+if (!PATH) {
+  throw new Error("Pass path to `Simple Design System (Community).fig` as argv[2] or SDS_FIG_PATH");
+}
 const ROOT = process.argv[3] ?? "48:15674";
 
 type Guid = { readonly sessionID: number; readonly localID: number };

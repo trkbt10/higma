@@ -17,7 +17,10 @@
 import { readFile } from "node:fs/promises";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 
-const PATH = "<DOWNLOADS>/Simple Design System (Community).fig";
+const PATH = process.env.SDS_FIG_PATH;
+if (!PATH) {
+  throw new Error("SDS_FIG_PATH must point to `Simple Design System (Community).fig`");
+}
 
 type Guid = { readonly sessionID: number; readonly localID: number };
 

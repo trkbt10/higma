@@ -7,7 +7,10 @@ import { readFile } from "node:fs/promises";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import { inspect } from "node:util";
 
-const PATH = "<DOWNLOADS>/Simple Design System (Community).fig";
+const PATH = process.env.SDS_FIG_PATH;
+if (!PATH) {
+  throw new Error("SDS_FIG_PATH must point to `Simple Design System (Community).fig`");
+}
 const TARGET = process.argv[2] ?? "9762:426"; // "Button" variant set referenced by INSTANCE 4:10169
 
 type Guid = { readonly sessionID: number; readonly localID: number };

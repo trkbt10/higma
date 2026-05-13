@@ -20,7 +20,10 @@ import type {
 } from "@higma-document-models/fig/types";
 
 const HOST_PATH = "packages/@higma-document-renderers/fig/fixtures/components/components.fig";
-const DONOR_PATH = "<DOWNLOADS>/Simple Design System (Community).fig";
+const DONOR_PATH = process.env.SDS_FIG_PATH;
+if (!DONOR_PATH) {
+  throw new Error("SDS_FIG_PATH must point to `Simple Design System (Community).fig`");
+}
 const OUT = "docs/refactor/disk-sot-verification/artifacts/G4-radio-icon-injected.fig";
 const RADIO_ICON_GUID = "9762:1405";
 

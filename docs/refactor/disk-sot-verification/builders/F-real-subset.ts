@@ -26,7 +26,10 @@ import type {
   MutableFigNode,
 } from "@higma-document-models/fig/types";
 
-const SOURCE = "<DOWNLOADS>/Simple Design System (Community).fig";
+const SOURCE = process.env.SDS_FIG_PATH;
+if (!SOURCE) {
+  throw new Error("SDS_FIG_PATH must point to `Simple Design System (Community).fig`");
+}
 const OUT = "docs/refactor/disk-sot-verification/artifacts/F-real-subset.fig";
 const ROOT_GUID = "9762:1405"; // Radio Icon
 
