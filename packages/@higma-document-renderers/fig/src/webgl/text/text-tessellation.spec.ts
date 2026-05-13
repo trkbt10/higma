@@ -730,6 +730,71 @@ describe("Text tessellation pipeline", () => {
       // Remaining 2 outers are simple
       expect(vertices.length).toBeGreaterThan(0);
     });
+
+    // Regression: a glyph whose individual hole count exceeds its
+    // outer count (e.g. the Philippine peso `₱` = 1 outer + 1 bowl
+    // + 2 currency bars) can push the total subpath count
+    // hole-heavy even when the geometry is unambiguous. The earlier
+    // count-based detection then flipped the convention and
+    // dropped every digit's outer as an orphan hole. The
+    // area-weighted detection must classify the LARGE-area subpath
+    // as outer regardless of how many small holes share its glyph.
+    it("classifies via |area| not count when one glyph contributes more holes than outers", () => {
+      // 1 large positive outer + 3 small negative holes — the count
+      // says "3 holes vs 1 outer, so flip and call the outer a
+      // hole" (wrong), the area says "the positive sum dominates,
+      // so positive = outer" (correct).
+      const contours: PathContour[] = [
+        // Big outer ring in the "PostScript" convention (positive
+        // signed area).
+        holeRect({ x: 0, y: 0, w: 20, h: 20 }),
+        // Three tiny holes nested inside, all in TrueType convention
+        // (negative). Together they're 3 contours but cover < 5% of
+        // the outer's area.
+        outerRect({ x: 4, y: 4, w: 3, h: 3 }),
+        outerRect({ x: 9, y: 8, w: 3, h: 1 }),
+        outerRect({ x: 9, y: 11, w: 3, h: 1 }),
+      ];
+
+      const vertices = tessellateContours(contours, 0.25, true);
+      // The outer ring must be tessellated. Earlier (count-based)
+      // the outer was classified as hole and dropped → 0 vertices.
+      expect(vertices.length).toBeGreaterThan(0);
+
+      // Probe four corner cells of the outer ring — all must have
+      // tessellated coverage. If the outer was orphan-dropped, none
+      // of these would receive vertices.
+      let cornerTopLeft = 0;
+      let cornerTopRight = 0;
+      let cornerBottomLeft = 0;
+      let cornerBottomRight = 0;
+      for (let i = 0; i < vertices.length; i += 2) {
+        const x = vertices[i];
+        const y = vertices[i + 1];
+        if (x <= 4 && y <= 4) { cornerTopLeft++; }
+        if (x >= 16 && y <= 4) { cornerTopRight++; }
+        if (x <= 4 && y >= 16) { cornerBottomLeft++; }
+        if (x >= 16 && y >= 16) { cornerBottomRight++; }
+      }
+      expect(cornerTopLeft).toBeGreaterThan(0);
+      expect(cornerTopRight).toBeGreaterThan(0);
+      expect(cornerBottomLeft).toBeGreaterThan(0);
+      expect(cornerBottomRight).toBeGreaterThan(0);
+    });
+
+    // Edge case: a glyph set with no holes at all. The
+    // area-weighted detection must still classify outers correctly
+    // even when one of the sign sums is 0.
+    it("handles all-outer input (no holes anywhere)", () => {
+      const contours: PathContour[] = [
+        outerRect({ x: 0, y: 0, w: 10, h: 10 }),
+        outerRect({ x: 15, y: 0, w: 10, h: 10 }),
+        outerRect({ x: 30, y: 0, w: 10, h: 10 }),
+      ];
+      // negative sum > 0, positive sum = 0 → outerIsNegative = true.
+      const vertices = tessellateContours(contours, 0.25, true);
+      expect(vertices.length).toBe(36); // 3 rects × 12 coords
+    });
   });
 
   // =============================================================================

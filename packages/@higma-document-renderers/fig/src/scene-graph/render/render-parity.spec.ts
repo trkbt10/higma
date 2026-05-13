@@ -513,6 +513,107 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
+  // Regression guard for the spread branch of the inner-shadow
+  // recipe. A non-zero `spread` morphologically dilates/erodes the
+  // shifted SourceAlpha BEFORE the blur — without it, "Dilate the
+  // shadow by 3 px" silently no-ops and renders the unspread
+  // baseline. The recipe must thread feMorphology between feOffset
+  // and feGaussianBlur, consuming the offset alpha and feeding the
+  // blur.
+  it("inner-shadow with positive spread inserts an feMorphology dilate", () => {
+    const effects: Effect[] = [{
+      type: "inner-shadow",
+      offset: { x: 0, y: 2 },
+      radius: 4,
+      spread: 3,
+      color: BLACK_50,
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+
+    expect(result).toBeDefined();
+    // Pipeline with spread:
+    //   feOffset → feMorphology(dilate) → feGaussianBlur →
+    //   feComposite OUT → feFlood → feComposite IN → feMerge
+    expect(result!.primitives).toHaveLength(7);
+    expect(result!.primitives[0].type).toBe("feOffset");
+    expect(result!.primitives[1].type).toBe("feMorphology");
+    expect(result!.primitives[2].type).toBe("feGaussianBlur");
+    const morphology = result!.primitives[1];
+    if (morphology.type === "feMorphology") {
+      expect(morphology.operator).toBe("dilate");
+      expect(morphology.radius).toBe(3);
+    }
+  });
+
+  // Regression guard for negative spread (erode). The same pipeline
+  // shape must hold with `operator="erode"`. Erode crops the shifted
+  // silhouette inward so the shadow band shrinks — a behavioural
+  // mirror of dilate that must not be silently dropped.
+  it("inner-shadow with negative spread inserts an feMorphology erode", () => {
+    const effects: Effect[] = [{
+      type: "inner-shadow",
+      offset: { x: 0, y: 2 },
+      radius: 4,
+      spread: -2,
+      color: BLACK_50,
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+    const morphology = result!.primitives[1];
+    expect(morphology.type).toBe("feMorphology");
+    if (morphology.type === "feMorphology") {
+      expect(morphology.operator).toBe("erode");
+      expect(morphology.radius).toBe(2);
+    }
+  });
+
+  // Regression guard for the blur radius. `radius / 2` must thread
+  // into feGaussianBlur's stdDeviation — Figma's spec halves the
+  // radius for the SVG primitive. A future "simplify" refactor that
+  // passes `radius` raw would double the blur size visually and
+  // mis-render every soft shadow.
+  it("inner-shadow with non-zero blur radius sets stdDeviation = radius / 2", () => {
+    const effects: Effect[] = [{
+      type: "inner-shadow",
+      offset: { x: 0, y: 0 },
+      radius: 8,
+      color: BLACK_50,
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+    const blur = result!.primitives[1];
+    expect(blur.type).toBe("feGaussianBlur");
+    if (blur.type === "feGaussianBlur") {
+      expect(blur.stdDeviation).toBeCloseTo(4);
+    }
+  });
+
+  // Regression guard for the per-effect blend mode branch. When a
+  // shadow's `blendMode` is non-default (e.g. SOFT_LIGHT), the
+  // recipe emits an extra feBlend that mixes the coloured band
+  // against SourceGraphic. Without it the shadow renders at its raw
+  // alpha and ignores the authored blend.
+  it("inner-shadow with non-default blend mode emits a final feBlend", () => {
+    const effects: Effect[] = [{
+      type: "inner-shadow",
+      offset: { x: 0, y: 2 },
+      radius: 0,
+      color: BLACK_50,
+      blendMode: "soft-light",
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+    // The non-default blend appends feBlend before the terminal merge.
+    expect(result!.primitives).toHaveLength(7);
+    const blend = result!.primitives[5];
+    expect(blend.type).toBe("feBlend");
+    if (blend.type === "feBlend") {
+      expect(blend.mode).toBe("soft-light");
+      expect(blend.in2).toBe("SourceGraphic");
+    }
+  });
+
   it("resolves layer blur", () => {
     const effects: Effect[] = [{
       type: "layer-blur",
