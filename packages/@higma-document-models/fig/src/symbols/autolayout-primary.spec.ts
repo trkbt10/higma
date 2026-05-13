@@ -22,8 +22,11 @@ type ParentOpts = {
   mode?: "VERTICAL" | "HORIZONTAL" | "NONE" | "GRID";
   padding?: number | { top: number; right: number; bottom: number; left: number };
   spacing?: number;
+  counterSpacing?: number;
   primaryAlign?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN" | "SPACE_EVENLY" | "SPACE_AROUND";
   counterAlign?: "MIN" | "CENTER" | "MAX";
+  primaryAlignContent?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN" | "SPACE_EVENLY" | "SPACE_AROUND";
+  wrap?: boolean;
   proportionsConstrained?: boolean;
   targetAspectRatio?: Vec;
   name?: string;
@@ -37,8 +40,11 @@ function buildAutoLayout(opts: ParentOpts): PrimaryAxisParent["autoLayout"] {
     stackMode: { name: opts.mode },
     stackPadding: opts.padding,
     stackSpacing: opts.spacing,
+    stackCounterSpacing: opts.counterSpacing,
     stackPrimaryAlignItems: opts.primaryAlign ? { name: opts.primaryAlign } : undefined,
     stackCounterAlignItems: opts.counterAlign ? { name: opts.counterAlign } : undefined,
+    stackPrimaryAlignContent: opts.primaryAlignContent ? { name: opts.primaryAlignContent } : undefined,
+    stackWrap: opts.wrap ? { name: "WRAP" } : undefined,
   };
 }
 
@@ -196,7 +202,7 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
     const p = parent({ x: 200, y: 50 }, { mode: "HORIZONTAL", padding: 0, spacing: 0, primaryAlign: "CENTER" });
     const a = child({ x: 40, y: 20 });
     const b = child({ x: 40, y: 20 });
-    const out = applyAutoLayoutPrimaryAxis(p, [a, b]);
+    const out = resolveAutoLayoutFrame(p, [a, b]).children;
     // block = 80; free = 120; start = 60
     expect(out[0].transform!.m02).toBeCloseTo(60);
     expect(out[1].transform!.m02).toBeCloseTo(100);
@@ -352,5 +358,176 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
     // AABB origin offset along y = m12 - aabbMin.y = 36 - 0 = 36.
     // Final m12 = 9 + 36 = 45.
     expect(out.children[0].transform!.m12).toBeCloseTo(45);
+  });
+});
+
+// 90°-rotated zero-thickness LINE used by real Figma exports for
+// vertical separators inside stat rows. Authored by Figma as a
+// horizontal line (`size.y = 0`) rotated 90° CCW so the visible
+// segment runs vertically. The AABB after rotation is 0-wide and
+// `size.x` tall, which is what the wrap solver must consume.
+function rotatedLineCCW(localWidth: number): PrimaryAxisChild {
+  // Real .fig files carry the matrix Figma writes for a 90° CCW
+  // rotation about Math.PI/2: m00 ≈ 4.37e-8 (rounding residue),
+  // m01 = -1, m10 = 1, m11 ≈ 4.37e-8. The solver matches with a
+  // tolerance; we mirror the real values here so the test catches a
+  // future "tighten tolerance to exact zero" regression.
+  return {
+    size: { x: localWidth, y: 0 },
+    transform: { m00: 4.371139183945161e-8, m01: -1, m02: 0, m10: 1, m11: 4.371139183945161e-8, m12: 0 },
+  };
+}
+
+describe("resolveAutoLayoutFrame — WRAP layout (Frame 57 regressions)", () => {
+  // Regression: e-commerce template "Frame 57" (.fig ID 35:763) is
+  // HORIZONTAL + WRAP + SPACE_EVENLY + counterAlign=CENTER with a
+  // 90°-rotated zero-thickness LINE separator between two 48-tall
+  // frames inside a 278×52 parent. Pre-fix, three bugs compounded:
+  //   1. The wrap decision counted the literal `stackSpacing=32`,
+  //      pushing total >278 and forcing items onto separate lines.
+  //   2. The rotated LINE was sized by `size.x = 52`, so even with
+  //      the literal-spacing fix the items still didn't fit.
+  //   3. Per-child counter alignment within the line was missing —
+  //      48-tall frames sat at m12=0 inside a 52-tall line instead
+  //      of being CENTER-aligned at m12=2.
+  // The fix lives in `applyWrapLayout` + `wrapChildMetrics` +
+  // `resolveCounterAlignOffset`; this test pins all three behaviours
+  // so a future "simplify wrap layout" refactor can't quietly break
+  // any one of them.
+  it("places SPACE_EVENLY + CENTER children on one line with a rotated zero-thickness separator (Frame 57 35:763)", () => {
+    const p = parent({ x: 278, y: 52 }, {
+      mode: "HORIZONTAL",
+      padding: 0,
+      spacing: 32,
+      counterSpacing: 32,
+      primaryAlign: "SPACE_EVENLY",
+      counterAlign: "CENTER",
+      wrap: true,
+    });
+    const frameA = child({ x: 106, y: 48 });
+    // m02=133.5 is the authored origin of the separator inside the
+    // parent. The wrap solver must rewrite this to fit the
+    // SPACE_EVENLY distribution while preserving the AABB top-left.
+    const separator: PrimaryAxisChild = {
+      ...rotatedLineCCW(52),
+      transform: { ...rotatedLineCCW(52).transform!, m02: 133.5 },
+    };
+    const frameB = child({ x: 117, y: 48 });
+    const out = resolveAutoLayoutFrame(p, [frameA, separator, frameB]).children;
+    // Primary positions: SPACE_EVENLY with effective widths
+    // [106, 0, 117] and span 278 → gap = (278-223)/2 = 27.5.
+    expect(out[0].transform!.m02).toBeCloseTo(0);
+    expect(out[1].transform!.m02).toBeCloseTo(133.5, 3);
+    expect(out[2].transform!.m02).toBeCloseTo(161);
+    // Counter positions: line counter = max(48, 52, 48) = 52,
+    // parent counter span 52 → content fills the span (block start = 0).
+    // Per-child CENTER inside the line: 48-tall frames sit at
+    // (52-48)/2 = 2; rotated LINE counter size is 52 → offset 0.
+    expect(out[0].transform!.m12).toBeCloseTo(2);
+    expect(out[1].transform!.m12).toBeCloseTo(0);
+    expect(out[2].transform!.m12).toBeCloseTo(2);
+  });
+
+  // Regression: with SPACE_BETWEEN / SPACE_EVENLY / SPACE_AROUND the
+  // free space is distributed at layout time, so the *literal*
+  // `stackSpacing` must not influence the wrap decision. Without
+  // this carve-out the Frame 57 stat-row split across lines even
+  // though SPACE_EVENLY happily packed everything on one line.
+  it("ignores literal stackSpacing when deciding whether to wrap a SPACE_EVENLY line", () => {
+    // Two 100-wide items in a 220-wide parent with spacing=40.
+    // Literal sum 100+40+100 = 240 > 220 → would wrap if spacing
+    // counted; AABB-only sum 200 ≤ 220 → must stay on one line.
+    const p = parent({ x: 220, y: 50 }, {
+      mode: "HORIZONTAL",
+      padding: 0,
+      spacing: 40,
+      primaryAlign: "SPACE_EVENLY",
+      wrap: true,
+    });
+    const a = child({ x: 100, y: 40 });
+    const b = child({ x: 100, y: 40 });
+    const out = resolveAutoLayoutFrame(p, [a, b]).children;
+    // Both children share the same line ⇒ m12 stays at 0
+    // (single 40-tall line, no per-child counter alignment is set).
+    expect(out[0].transform!.m12).toBeCloseTo(0);
+    expect(out[1].transform!.m12).toBeCloseTo(0);
+    // SPACE_EVENLY on a 2-item line: free=20, gap=20 ⇒ second item
+    // at 120. If we had wrapped, the second item would be at 0
+    // (start of the second line).
+    expect(out[0].transform!.m02).toBeCloseTo(0);
+    expect(out[1].transform!.m02).toBeCloseTo(120);
+  });
+
+  // Regression: when `stackSpacing` is the dominant cue (MIN / CENTER
+  // align, no space-* distribution) the wrap decision MUST count it
+  // — otherwise a vertical menu with spacing=8 would refuse to wrap
+  // any row that fit edge-to-edge without spacing. This test pins
+  // that the carve-out is scoped to space-* alignments only.
+  it("still counts literal stackSpacing for MIN alignment when deciding to wrap", () => {
+    // Two 100-wide items in a 220-wide parent with spacing=40.
+    // MIN alignment → literal sum 240 > 220 → must wrap.
+    const p = parent({ x: 220, y: 200 }, {
+      mode: "HORIZONTAL",
+      padding: 0,
+      spacing: 40,
+      counterSpacing: 8,
+      primaryAlign: "MIN",
+      wrap: true,
+    });
+    const a = child({ x: 100, y: 40 });
+    const b = child({ x: 100, y: 40 });
+    const out = resolveAutoLayoutFrame(p, [a, b]).children;
+    // Both items wrap to start of their respective lines.
+    expect(out[0].transform!.m02).toBeCloseTo(0);
+    expect(out[1].transform!.m02).toBeCloseTo(0);
+    // Second item drops to line 2: y = 40 (line 1 height) + 8 (counterSpacing).
+    expect(out[0].transform!.m12).toBeCloseTo(0);
+    expect(out[1].transform!.m12).toBeCloseTo(48);
+  });
+
+  // Regression: per-child counter alignment must respect the line's
+  // *measured* counter size, not the parent counter span. A short
+  // item inside a line that contains a tall sibling must centre
+  // against the tall sibling, not against the parent.
+  it("centres a short child against the tallest sibling in the same wrap line", () => {
+    const p = parent({ x: 200, y: 100 }, {
+      mode: "HORIZONTAL",
+      padding: 0,
+      spacing: 0,
+      counterAlign: "CENTER",
+      wrap: true,
+    });
+    const tall = child({ x: 60, y: 60 });
+    const shortChild = child({ x: 60, y: 20 });
+    const out = resolveAutoLayoutFrame(p, [tall, shortChild]).children;
+    // Line counter = max(60, 20) = 60. Parent counter span = 100,
+    // content block = 60, contentAlign defaults to counterAlign=CENTER
+    // ⇒ block starts at (100-60)/2 = 20.
+    // Tall child: line offset 0 within 60 ⇒ m12 = 20 + 0 = 20.
+    expect(out[0].transform!.m12).toBeCloseTo(20);
+    // Short child: per-child CENTER offset = (60-20)/2 = 20 within
+    // the line ⇒ m12 = 20 + 20 = 40.
+    expect(out[1].transform!.m12).toBeCloseTo(40);
+  });
+
+  // Regression: counter MAX (bottom-align within line) — the opposite
+  // end of the same per-child alignment code path.
+  it("bottom-aligns shorter children in a wrap line when counterAlign=MAX", () => {
+    const p = parent({ x: 200, y: 100 }, {
+      mode: "HORIZONTAL",
+      padding: 0,
+      spacing: 0,
+      counterAlign: "MAX",
+      wrap: true,
+    });
+    const tall = child({ x: 60, y: 60 });
+    const shortChild = child({ x: 60, y: 20 });
+    const out = resolveAutoLayoutFrame(p, [tall, shortChild]).children;
+    // Line counter = 60, block starts at (100-60) = 40 (MAX).
+    // Tall child: line offset 0 ⇒ m12 = 40.
+    // Short child: per-child MAX offset = 60-20 = 40 within line
+    //              ⇒ m12 = 40 + 40 = 80 (its bottom edge at 100).
+    expect(out[0].transform!.m12).toBeCloseTo(40);
+    expect(out[1].transform!.m12).toBeCloseTo(80);
   });
 });
