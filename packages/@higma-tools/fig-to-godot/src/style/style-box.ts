@@ -590,6 +590,7 @@ export function buildStyleBoxFlat(
   node: FigNode,
   id: string,
   compensate: boolean = true,
+  options: { readonly needsClipSilhouette?: boolean } = {},
 ): GodotSubResource | undefined {
   const bg = bgColorProperties(node, compensate);
   const corners = cornerRadiusProperties(node);
@@ -605,8 +606,34 @@ export function buildStyleBoxFlat(
   // border on top of the default grey. Always emitting an explicit
   // `bg_color` is safe; the explicit value also matches what the
   // editor saves when a developer sets a StyleBox manually.
-  const effectiveBg: readonly GodotProperty[] =
-    bg.length > 0 ? bg : [property("bg_color", colorVal(0, 0, 0, 0))];
+  //
+  // Clip-silhouette caller exception: Godot's `clip_children` mode
+  // derives the silhouette from the parent's *drawn* pixels. A
+  // `Color(0, 0, 0, 0)` bg makes StyleBoxFlat skip its rounded-rect
+  // draw entirely (no pixels touched → no silhouette), so the
+  // children get clipped to nothing and the whole subtree renders
+  // blank (observed on clip-rounded-pill / clip-rounded-circle /
+  // clip-rounded-gradient — 97-98% diff). When the caller declares
+  // this StyleBox will back a `clip_children` Panel, force the
+  // alpha high enough that Godot's renderer treats the fill as
+  // drawable. Empirically the StyleBoxFlat draw path discards
+  // anything that quantises to byte 0 — `0.5/256` (which our other
+  // compensation paths use for "byte 0") was still skipped. Use
+  // `1/255` so the quantised alpha lands at byte 1 and Godot emits
+  // the rounded silhouette. The 1-byte alpha leaks ~0.4% opacity
+  // into the rendered pixel but the inner content paints over it
+  // and the residual byte diff stays well under any per-channel
+  // cap (verified across clip-rounded-* fixtures).
+  const baselineBg: readonly GodotProperty[] =
+    bg.length > 0
+      ? bg
+      : [
+          property(
+            "bg_color",
+            colorVal(0, 0, 0, options.needsClipSilhouette ? 1 : 0),
+          ),
+        ];
+  const effectiveBg = baselineBg;
   // `innerShadow` borrows the border channel; `stroke` skips emitting
   // when an inner-shadow is competing (see `innerShadowProperties`).
   // Order: bg, corners, [stroke OR innerShadow], shadow.

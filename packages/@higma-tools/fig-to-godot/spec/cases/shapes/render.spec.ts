@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "shapes",
-  canvasName: "Shapes Canvas",
+  canvasName: "Shapes",
   frameNames: [
     "ellipse-basic",
     "ellipse-circle",

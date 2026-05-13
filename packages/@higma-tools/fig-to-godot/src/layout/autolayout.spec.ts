@@ -15,6 +15,8 @@ import {
   boxContainerAlignment,
   counterAlignmentForBoxContainer,
   counterSizeFlagsForChild,
+  flowPositionsForGrid,
+  flowPositionsForOverlapStack,
   pickContainerKind,
   planLayout,
   primaryDistribution,
@@ -124,6 +126,87 @@ describe("planLayout", () => {
     const plan = planLayout(frame({}));
     expect(plan.container).toBe("Control");
     expect(plan.primary).toBe("min");
+  });
+});
+
+describe("NaN-safe spacing reads (fig kiwi sentinel for unset)", () => {
+  // The fig binary encoding stores "unset" autolayout slots as NaN
+  // rather than omitting the field. Without a finiteness check the
+  // typeof === "number" guard treats NaN as a valid spacing and
+  // propagates it into Godot offset_* writes, which then trip
+  // printFloat's non-finite guard.
+  function childOfSize(x: number, y: number): FigNode {
+    return frame({ size: { x, y } });
+  }
+
+  it("flowPositionsForGrid: NaN stackCounterSpacing inherits stackSpacing", () => {
+    // The model types `stackWrap` as `boolean`, but the kiwi parser
+    // emits the enum-struct form at runtime — both shapes resolve to
+    // the same primary-axis wrap behaviour. Pass `true` here so the
+    // partial conforms to the model type while still exercising the
+    // wrap branch.
+    const parent = frame({
+      stackMode: enumName("HORIZONTAL"),
+      stackWrap: true,
+      stackSpacing: 8,
+      stackCounterSpacing: NaN,
+      size: { x: 130, y: 160 },
+    });
+    const children = [
+      childOfSize(60, 20),
+      childOfSize(60, 20),
+      childOfSize(60, 20),
+      childOfSize(60, 20),
+      childOfSize(60, 20),
+    ];
+    const positions = flowPositionsForGrid(parent, children);
+    expect(positions).toHaveLength(5);
+    for (const p of positions) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
+    // 2 children fit in 130px-wide row (60+8+60=128). Row gap inherits
+    // the 8px column gap.
+    expect(positions[0]).toEqual({ x: 0, y: 0 });
+    expect(positions[2]).toEqual({ x: 0, y: 28 });
+    expect(positions[4]).toEqual({ x: 0, y: 56 });
+  });
+
+  it("flowPositionsForOverlapStack: NaN stackSpacing collapses to 0 gap", () => {
+    const parent = frame({
+      stackMode: enumName("HORIZONTAL"),
+      stackSpacing: NaN,
+    });
+    const positions = flowPositionsForOverlapStack(parent, [
+      childOfSize(10, 10),
+      childOfSize(10, 10),
+    ]);
+    for (const p of positions) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
+    expect(positions[1]).toEqual({ x: 10, y: 0 });
+  });
+
+  it("resolvePadding: NaN per-side padding collapses to 0, not NaN", () => {
+    const node = frame({
+      stackHorizontalPadding: NaN,
+      stackVerticalPadding: 6,
+    });
+    const padding = resolvePadding(node);
+    expect(Number.isFinite(padding.left)).toBe(true);
+    expect(Number.isFinite(padding.top)).toBe(true);
+    expect(padding).toEqual({ top: 6, right: 0, bottom: 6, left: 0 });
+  });
+
+  it("planLayout: NaN stackSpacing yields undefined plan.spacing", () => {
+    const plan = planLayout(
+      frame({
+        stackMode: enumName("HORIZONTAL"),
+        stackSpacing: NaN,
+      }),
+    );
+    expect(plan.spacing).toBeUndefined();
   });
 });
 

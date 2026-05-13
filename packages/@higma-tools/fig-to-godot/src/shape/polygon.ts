@@ -259,7 +259,17 @@ function synthesizeArcContour(node_: FigNode): readonly Contour[] {
     return [];
   }
   const TWO_PI = Math.PI * 2;
-  const sweep = arc.endingAngle - arc.startingAngle;
+  // Figma's serialised `arcData` omits `startingAngle` / `endingAngle`
+  // when the shape is an unsliced ring (innerRadius > 0 with a full
+  // sweep) — the absence is the on-disk encoding of 0 / 2π. The naive
+  // `arc.endingAngle - arc.startingAngle` reads `undefined - undefined`
+  // = NaN, which silently propagates through `samples` and
+  // `Array.from({ length: NaN })` and produces an empty Polygon2D
+  // (the on-disk symptom was `ellipse-donut` rendering as transparent
+  // because the polygon vertex array came out empty).
+  const startingAngle = Number.isFinite(arc.startingAngle) ? arc.startingAngle : 0;
+  const endingAngle = Number.isFinite(arc.endingAngle) ? arc.endingAngle : TWO_PI;
+  const sweep = endingAngle - startingAngle;
   const cx = size.x / 2;
   const cy = size.y / 2;
   const rx = size.x / 2;
@@ -281,7 +291,7 @@ function synthesizeArcContour(node_: FigNode): readonly Contour[] {
       points.push({ x: cx, y: cy });
     }
     for (const i of Array.from({ length: samples + 1 }, (_, k) => k)) {
-      const theta = arc.startingAngle + (sweep * i) / samples;
+      const theta = startingAngle + (sweep * i) / samples;
       points.push(sample(theta, 1));
     }
     return [{ points }];
@@ -298,7 +308,7 @@ function synthesizeArcContour(node_: FigNode): readonly Contour[] {
     const outer: { x: number; y: number }[] = [];
     const innerRing: { x: number; y: number }[] = [];
     for (const i of Array.from({ length: samples }, (_, k) => k)) {
-      const theta = arc.startingAngle + (TWO_PI * i) / samples;
+      const theta = startingAngle + (TWO_PI * i) / samples;
       outer.push(sample(theta, 1));
       innerRing.push(sample(theta, inner));
     }
@@ -331,11 +341,11 @@ function synthesizeArcContour(node_: FigNode): readonly Contour[] {
   // close. One single contour.
   const points: { x: number; y: number }[] = [];
   for (const i of Array.from({ length: samples + 1 }, (_, k) => k)) {
-    const theta = arc.startingAngle + (sweep * i) / samples;
+    const theta = startingAngle + (sweep * i) / samples;
     points.push(sample(theta, 1));
   }
   for (const i of Array.from({ length: samples + 1 }, (_, k) => k)) {
-    const theta = arc.endingAngle - (sweep * i) / samples;
+    const theta = endingAngle - (sweep * i) / samples;
     points.push(sample(theta, inner));
   }
   return [{ points }];

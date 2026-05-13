@@ -205,6 +205,118 @@ describe("emitNode — FRAME with padding", () => {
   });
 });
 
+describe("emitNode — Figma mask fold", () => {
+  // Figma mask convention: when a parent FRAME has `frameMaskDisabled:
+  // true` and one of its children carries `mask: true`, that masked
+  // child clips its subsequent siblings to its silhouette. The walker
+  // folds rectangle / rounded-rectangle masks into a synthetic clip-
+  // rounded frame so the existing `frameNeedsRoundedClip` emit path
+  // handles them. Other mask shapes (ellipse / vector) fall through
+  // to current behaviour pending a pre-raster pipeline.
+  it("folds a rounded-rect mask + sibling into a clip_children Panel", () => {
+    const maskGroup = frame({
+      name: "mask-group",
+      size: { x: 160, y: 100 },
+      frameMaskDisabled: true,
+      children: [
+        rect({
+          name: "mask-shape",
+          type: enumName("ROUNDED_RECTANGLE"),
+          size: { x: 160, y: 100 },
+          cornerRadius: 20,
+          mask: true,
+          fillPaints: [
+            { type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+          ],
+        }),
+        rect({
+          name: "masked-content",
+          size: { x: 200, y: 140 },
+          fillPaints: [
+            { type: "SOLID", color: { r: 0.9, g: 0.2, b: 0.2, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+          ],
+        }),
+      ],
+    });
+    const out = emitToScene(maskGroup);
+    expect(out).toContain("clip_children = 1");
+    expect(out).toContain("corner_radius_top_left = 20");
+    // The masked sibling renders inside the clip Panel; the mask
+    // shape itself is consumed by the fold and does NOT emit as a
+    // separate Panel. Node names are toPascalCase-d by the walker.
+    expect(out).toContain("MaskedContent");
+    expect(out).not.toContain("MaskShape");
+  });
+
+  it("leaves ellipse masks untouched (fold restricted to rectangular silhouettes)", () => {
+    const maskGroup = frame({
+      name: "ellipse-mask-group",
+      size: { x: 120, y: 120 },
+      frameMaskDisabled: true,
+      children: [
+        rect({
+          name: "ellipse-mask",
+          type: enumName("ELLIPSE"),
+          size: { x: 120, y: 120 },
+          mask: true,
+          fillPaints: [
+            { type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+          ],
+        }),
+        rect({
+          name: "masked-rect",
+          size: { x: 120, y: 120 },
+          fillPaints: [
+            { type: "SOLID", color: { r: 0.2, g: 0.6, b: 0.9, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+          ],
+        }),
+      ],
+    });
+    const out = emitToScene(maskGroup);
+    // Ellipse fold is not implemented yet — the mask shape still
+    // emits as a regular sibling, no clip_children gets injected via
+    // the fold.
+    expect(out).not.toContain("clip_children = 1");
+    expect(out).toContain("EllipseMask");
+  });
+
+  it("does not fold when the mask does not cover the full container rect", () => {
+    // mask shape smaller than the container — the synthetic frame
+    // can't represent the sub-rect mask region without changing the
+    // parent's positioning, so the fold opts out and lets legacy
+    // emit handle it.
+    const maskGroup = frame({
+      name: "sub-rect-mask-group",
+      size: { x: 160, y: 100 },
+      frameMaskDisabled: true,
+      children: [
+        rect({
+          name: "sub-mask",
+          type: enumName("ROUNDED_RECTANGLE"),
+          size: { x: 80, y: 60 },
+          cornerRadius: 10,
+          mask: true,
+          fillPaints: [
+            { type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+          ],
+        }),
+        rect({
+          name: "content",
+          size: { x: 160, y: 100 },
+          fillPaints: [
+            { type: "SOLID", color: { r: 0.2, g: 0.6, b: 0.9, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+          ],
+        }),
+      ],
+    });
+    const out = emitToScene(maskGroup);
+    // Fold opted out → sub-mask still emits as a separate node.
+    expect(out).toContain("SubMask");
+    expect(out).toContain("Content");
+    expect(out).not.toContain("clip_children = 1");
+  });
+});
+
 describe("emitNode — placeholder + unsupported", () => {
   it("emits a Control placeholder for VECTOR / STAR / LINE / SYMBOL kinds", () => {
     // Soft-skip kinds that v0 cannot render faithfully — keeps the

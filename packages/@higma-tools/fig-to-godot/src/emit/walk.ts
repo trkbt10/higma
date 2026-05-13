@@ -1214,7 +1214,17 @@ function buildFramePanel(
 ): { readonly panel: GodotNode; readonly subResource: GodotSubResource } | undefined {
   const styleBoxId = nextStyleBoxId(ctx);
   const compensate = !inOpacityComposite(node_, ctx);
-  const styleBox = buildStyleBoxFlat(node_, styleBoxId, compensate);
+  // When the rounded-clip path will adopt this Panel as its
+  // clip_children carrier, the StyleBox needs a minimum alpha so
+  // Godot still paints the rounded silhouette. The decision mirrors
+  // `frameNeedsRoundedClip` exactly — same node, same predicate —
+  // so when the caller later turns this Panel into a clip-children
+  // host, the silhouette is already viable.
+  const needsClipSilhouette =
+    !ctx.insideClipFrame && frameNeedsRoundedClip(node_);
+  const styleBox = buildStyleBoxFlat(node_, styleBoxId, compensate, {
+    needsClipSilhouette,
+  });
   if (!styleBox) {
     // Roll back the id increment so subsequent shapes get the next
     // sequential id — the unused id would leave a gap in `.tscn`.
@@ -1263,7 +1273,20 @@ function emitContainer(rawNode: FigNode, ctx: WalkContext): GodotNode {
   // emits as an empty Control because the literal INSTANCE node has
   // no fillPaints of its own — the visual lives on the SYMBOL it
   // points at on a separate canvas. Mirrors the swiftui peer.
-  const { node: node_, children: resolvedChildren } = resolveInstanceFor(rawNode, ctx);
+  const resolved = resolveInstanceFor(rawNode, ctx);
+  // Figma mask semantics: a child with `mask: true` clips every
+  // subsequent sibling within its parent. When the parent is itself
+  // a mask group (`frameMaskDisabled: true`) and the mask is a
+  // rectangle-shaped silhouette with an opaque solid fill, fold the
+  // [mask, …masked-siblings] sequence into a synthetic rounded-clip
+  // frame so the existing `frameNeedsRoundedClip` path handles the
+  // emit. The opaque mask fill guarantees the clip Panel rasterises
+  // and `clip_children` derives a real mask in gl_compatibility (the
+  // transparent-bg case that breaks `clip-rounded-*` does not apply
+  // here because mask shapes are authored as solid silhouettes).
+  const folded = tryFoldMaskGroupChildren(resolved.node, resolved.children);
+  const node_ = folded?.node ?? resolved.node;
+  const resolvedChildren = folded?.children ?? resolved.children;
   const plan = planLayout(node_);
   // Sub-resource ids must be unique across the whole emitted scene.
   // Seed the child context's counters from the parent so deeper
@@ -1468,7 +1491,7 @@ function emitContainer(rawNode: FigNode, ctx: WalkContext): GodotNode {
     if (!ctx.insideClipFrame && frameNeedsRoundedClip(node_)) {
       const clipPanelProps: GodotProperty[] = [
         ...background.panel.properties.filter((p) => p.name !== "show_behind_parent"),
-        property("clip_children", intVal(1 /* CLIP_CHILDREN_AND_DRAW */)),
+        property("clip_children", intVal(1 /* CLIP_CHILDREN_ONLY */)),
       ];
       const clipPanel = node(background.panel.name, background.panel.type, {
         properties: clipPanelProps,
@@ -1511,6 +1534,133 @@ function emitContainer(rawNode: FigNode, ctx: WalkContext): GodotNode {
     );
   }
   return withOptionalModulate(inner, node_, ctx);
+}
+
+/**
+ * Detect the Figma mask-group pattern and fold it into a synthetic
+ * clip-rounded frame that the existing `frameNeedsRoundedClip` path
+ * can emit.
+ *
+ * Figma model:
+ *
+ *   - A FRAME marked `frameMaskDisabled: true` acts as a mask group.
+ *     Its own `fillPaints` and stroke are suppressed; only the masked
+ *     content draws.
+ *   - The first direct child marked `mask: true` defines the clip
+ *     silhouette. Every sibling following it in z-order is clipped to
+ *     that silhouette.
+ *
+ * Scope of the fold:
+ *
+ *   - Only rectangular masks (RECTANGLE / ROUNDED_RECTANGLE) — Godot's
+ *     `StyleBoxFlat`-based clip Panel can replicate exactly those.
+ *   - Only when the mask covers the full mask-group rect (size match +
+ *     zero-offset transform). Sub-rect masks would need a clip Panel
+ *     smaller than the group, which the synthetic node cannot express
+ *     without changing the parent's child positioning.
+ *   - Only when the mask has an opaque SOLID fill. The clip Panel
+ *     needs a non-transparent raster for `clip_children` to derive
+ *     the mask in `gl_compatibility`; gradient / transparent masks
+ *     fall through to current behaviour pending a pre-raster path.
+ *
+ * Other mask shapes (ELLIPSE, STAR, VECTOR) and the sub-rect / non-
+ * opaque cases fall through to the legacy emit (mask shape rendered
+ * as a regular sibling, masked content unclipped). That keeps current
+ * passing tests like `mask-basic` intact while fixing the
+ * rounded-rect case (`mask-rounded`).
+ */
+function tryFoldMaskGroupChildren(
+  node_: FigNode,
+  children: readonly FigNode[],
+): { readonly node: FigNode; readonly children: readonly FigNode[] } | undefined {
+  if (node_.frameMaskDisabled !== true) {
+    return undefined;
+  }
+  const maskIdx = children.findIndex((c) => c.mask === true);
+  if (maskIdx < 0) {
+    return undefined;
+  }
+  const mask = children[maskIdx]!;
+  const maskType = mask.type?.name;
+  if (maskType !== "RECTANGLE" && maskType !== "ROUNDED_RECTANGLE") {
+    return undefined;
+  }
+  if (!maskCoversFullContainer(node_, mask)) {
+    return undefined;
+  }
+  if (!maskHasOpaqueSolidFill(mask)) {
+    return undefined;
+  }
+  const masked = children.slice(maskIdx + 1);
+  if (masked.length === 0) {
+    return undefined;
+  }
+  // Spread to keep the container's position / size / transform; pull
+  // silhouette + fill from the mask shape. `frameMaskDisabled` is
+  // cleared so the synthetic frame emits its own background panel,
+  // and `clipsContent` is asserted so `frameNeedsRoundedClip` accepts
+  // it.
+  const folded: FigNode = {
+    ...node_,
+    fillPaints: mask.fillPaints,
+    strokePaints: undefined,
+    cornerRadius: mask.cornerRadius,
+    rectangleTopLeftCornerRadius: mask.rectangleTopLeftCornerRadius,
+    rectangleTopRightCornerRadius: mask.rectangleTopRightCornerRadius,
+    rectangleBottomRightCornerRadius: mask.rectangleBottomRightCornerRadius,
+    rectangleBottomLeftCornerRadius: mask.rectangleBottomLeftCornerRadius,
+    clipsContent: true,
+    frameMaskDisabled: false,
+    mask: undefined,
+  };
+  return { node: folded, children: masked };
+}
+
+function maskCoversFullContainer(container: FigNode, mask: FigNode): boolean {
+  const cs = container.size;
+  const ms = mask.size;
+  if (!cs || !ms) {
+    return false;
+  }
+  if (Math.abs(cs.x - ms.x) > 0.01 || Math.abs(cs.y - ms.y) > 0.01) {
+    return false;
+  }
+  const t = mask.transform;
+  if (!t) {
+    return true;
+  }
+  // Identity translation only — a non-zero offset would shift the mask
+  // silhouette away from the container's origin, which the synthetic
+  // node (sized + positioned as the container) can't represent.
+  return Math.abs(t.m02 ?? 0) < 0.01 && Math.abs(t.m12 ?? 0) < 0.01;
+}
+
+function maskHasOpaqueSolidFill(mask: FigNode): boolean {
+  const paints = mask.fillPaints;
+  if (!paints || paints.length === 0) {
+    return false;
+  }
+  for (const paint of paints) {
+    if (paint.visible === false) {
+      continue;
+    }
+    if (paint.type !== "SOLID") {
+      return false;
+    }
+    const opacity = paint.opacity ?? 1;
+    if (opacity < 0.999) {
+      return false;
+    }
+    const color = (paint as FigSolidPaint).color;
+    if (!color) {
+      return false;
+    }
+    if ((color.a ?? 1) < 0.999) {
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 /**

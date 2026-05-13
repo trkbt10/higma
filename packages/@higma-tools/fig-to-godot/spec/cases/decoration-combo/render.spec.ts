@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "decoration-combo",
-  canvasName: "Decoration Combos",
+  canvasName: "DecorationCombo",
   frameNames: [
     "solid-stroke-radius-shadow",
     "bool-gradient-union",

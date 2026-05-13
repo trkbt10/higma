@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "effects",
-  canvasName: "Page 1",
+  canvasName: "Document",
   frameNames: [
     "shadow-drop-basic",
     "shadow-drop-offset",

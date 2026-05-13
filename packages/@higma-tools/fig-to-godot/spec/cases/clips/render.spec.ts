@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "clips",
-  canvasName: "Clips Canvas",
+  canvasName: "Clips",
   frameNames: [
     "clip-1level",
     "clip-2level",

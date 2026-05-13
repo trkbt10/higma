@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "frame-properties",
-  canvasName: "Frames Canvas",
+  canvasName: "Frame Properties",
   frameNames: [
     "frame-bg-fill",
     "frame-corner-clip",

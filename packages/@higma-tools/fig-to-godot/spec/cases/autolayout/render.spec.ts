@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "autolayout",
-  canvasName: "AutoLayout Fixtures",
+  canvasName: "AutoLayout",
   frameNames: [
     "simple-rects",
     "auto-h-min",

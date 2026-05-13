@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "fills",
-  canvasName: "Fills Canvas",
+  canvasName: "Fills",
   frameNames: [
     "stroke-dash",
     "solid-colors",

@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "vector-winding",
-  canvasName: "Vector Winding",
+  canvasName: "VectorWinding",
   frameNames: [
     "winding-evenodd-donut",
     "winding-evenodd-ring",

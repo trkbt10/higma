@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "image-fill",
-  canvasName: "Image Fill",
+  canvasName: "ImageFill",
   frameNames: [
     "image-fill-basic",
     "image-fill-shadow",

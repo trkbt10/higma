@@ -8,7 +8,7 @@ import { runRoundtripCase } from "../run-case";
 
 await runRoundtripCase({
   caseName: "composite",
-  canvasName: "Composite Canvas",
+  canvasName: "Composite",
   frameNames: [
     "composite-union-basic",
     "composite-subtract-basic",

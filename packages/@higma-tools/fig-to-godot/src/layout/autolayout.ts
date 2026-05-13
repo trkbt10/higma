@@ -35,6 +35,25 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 
+/**
+ * Read an optional Figma numeric property as a finite number.
+ *
+ * Figma's `.fig` encoding stores "unset" autolayout fields like
+ * `stackCounterSpacing` / `stackPadding` as `NaN` rather than omitting
+ * the slot — the underlying kiwi schema reserves a float32 field for
+ * every optional value. A plain `typeof === "number"` guard treats
+ * `NaN` as a valid number and propagates it into Godot
+ * `offset_top` / `offset_bottom` writes, where it then hits
+ * `serialize.ts`'s `printFloat` and throws.
+ *
+ * Returning `undefined` for `NaN` lets the caller apply the documented
+ * Figma fallback (e.g. row gap inherits column gap; missing padding
+ * resolves to 0) instead of silently corrupting the layout math.
+ */
+function readFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 /** Godot Control container kind that the emitter targets. */
 export type GodotContainerKind = "HBoxContainer" | "VBoxContainer" | "Control";
 
@@ -96,7 +115,8 @@ const ZERO_PADDING: Padding = { top: 0, right: 0, bottom: 0, left: 0 };
 export function pickContainerKind(node: FigNode): GodotContainerKind {
   const mode = node.stackMode?.name;
   if (mode === "HORIZONTAL" || mode === "VERTICAL") {
-    if (typeof node.stackSpacing === "number" && node.stackSpacing < 0) {
+    const stackSpacing = readFiniteNumber(node.stackSpacing);
+    if (stackSpacing !== undefined && stackSpacing < 0) {
       return "Control";
     }
     // `stackWrap = WRAP` turns a HORIZONTAL stack into a row-major
@@ -133,7 +153,7 @@ export function flowPositionsForOverlapStack(
   children: readonly FigNode[],
 ): readonly { readonly x: number; readonly y: number }[] {
   const mode = node.stackMode?.name;
-  const spacing = typeof node.stackSpacing === "number" ? node.stackSpacing : 0;
+  const spacing = readFiniteNumber(node.stackSpacing) ?? 0;
   const padding = resolvePadding(node);
   const isHorizontal = mode === "HORIZONTAL";
   const positions: { x: number; y: number }[] = [];
@@ -178,10 +198,15 @@ function computeOverlapPositions(
  * into padding there would shift them twice.
  */
 export function resolvePadding(node: FigNode): Padding {
-  const horizontal = node.stackHorizontalPadding ?? node.stackPadding;
-  const vertical = node.stackVerticalPadding ?? node.stackPadding;
-  const right = node.stackPaddingRight ?? horizontal;
-  const bottom = node.stackPaddingBottom ?? vertical;
+  // Figma stores unset padding slots as NaN (kiwi float32). Route every
+  // read through `readFiniteNumber` so a NaN never lands in the
+  // resolved padding — otherwise it would propagate to Godot
+  // `offset_*` writes and trip `printFloat`'s non-finite guard.
+  const uniform = readFiniteNumber(node.stackPadding);
+  const horizontal = readFiniteNumber(node.stackHorizontalPadding) ?? uniform;
+  const vertical = readFiniteNumber(node.stackVerticalPadding) ?? uniform;
+  const right = readFiniteNumber(node.stackPaddingRight) ?? horizontal;
+  const bottom = readFiniteNumber(node.stackPaddingBottom) ?? vertical;
   const strokeInset = isAutolayoutFrame(node) ? insideStrokeWidth(node) : 0;
   if (
     horizontal === undefined &&
@@ -249,9 +274,8 @@ export function flowPositionsForGrid(
   //   - `stackCounterSpacing` is the *row* gap (between rows).
   // When the file omits `stackCounterSpacing` we fall back to
   // `stackSpacing` for symmetry with simple HBox/VBox layouts.
-  const colGap = typeof node.stackSpacing === "number" ? node.stackSpacing : 0;
-  const rowGap =
-    typeof node.stackCounterSpacing === "number" ? node.stackCounterSpacing : colGap;
+  const colGap = readFiniteNumber(node.stackSpacing) ?? 0;
+  const rowGap = readFiniteNumber(node.stackCounterSpacing) ?? colGap;
   const padding = resolvePadding(node);
   const containerWidth = node.size?.x ?? 0;
   const containerHeight = node.size?.y ?? 0;
@@ -459,7 +483,7 @@ export function primaryDistribution(node: FigNode): PrimaryDistribution {
 export function planLayout(node: FigNode): LayoutPlan {
   const container = pickContainerKind(node);
   const padding = resolvePadding(node);
-  const spacing = typeof node.stackSpacing === "number" ? node.stackSpacing : undefined;
+  const spacing = readFiniteNumber(node.stackSpacing);
   if (container === "HBoxContainer" || container === "VBoxContainer") {
     return {
       container,
