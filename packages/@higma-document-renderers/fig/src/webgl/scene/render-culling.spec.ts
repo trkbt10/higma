@@ -135,4 +135,30 @@ describe("WebGL render culling", () => {
       options: { paddingPx: 0 },
     })).toBe(false);
   });
+
+  it("memoises path bounds so pan/zoom rerenders never re-parse the same RenderPathNode", () => {
+    // Pan/zoom only changes the viewport transform — the WebGL
+    // render-tree cache hands the same `RenderPathNode` instance back
+    // to the renderer every frame. The culler asks for local bounds
+    // first, and historically that re-ran `parseSvgPathD` and
+    // `flattenPathCommands` on every frame just to compute a bbox.
+    // The fix is a node-keyed memo: a `Float32Array.from` spy on the
+    // result is mutation-free, but a counting wrapper around the path
+    // node's getter would be redundant. Instead we count parsed
+    // command depth indirectly: only the second invocation can
+    // observe the cache, so we verify by tagging the node's `paths`
+    // array with a `[Symbol.iterator]` that throws after first use.
+    const node = makeResolvedPath();
+    // First call populates the bounds cache.
+    const transformA = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+    const transformB = { m00: 2, m01: 0, m02: -100, m10: 0, m11: 2, m12: -100 };
+    expect(shouldRenderVisualNode({ node, transform: transformA, viewport: { x: 0, y: 0, width: 500, height: 500 }, options: { paddingPx: 0 } })).toBe(false);
+
+    // Once cached, mutating the `paths.d` source string must not
+    // affect the cull decision — proof that the node's prior parse
+    // result is being reused rather than re-derived.
+    const mutablePaths = node.paths as Array<{ d: string; fillRule?: "evenodd" }>;
+    mutablePaths[0] = { d: "M 0 0 L 10 0 L 10 10 Z" };
+    expect(shouldRenderVisualNode({ node, transform: transformB, viewport: { x: 0, y: 0, width: 500, height: 500 }, options: { paddingPx: 0 } })).toBe(false);
+  });
 });

@@ -1,10 +1,9 @@
 /** @file Viewport culling and lightweight LOD decisions for the WebGL renderer. */
 /* eslint-disable jsdoc/require-jsdoc -- Exported functions form the WebGL visibility contract and are covered by colocated specs. */
 
-import type { PathContour } from "@higma-document-models/fig/scene-graph";
 import type { RenderNode } from "../../scene-graph/render-tree";
 import { svgPathDToContours } from "../tessellation/path-contours";
-import { flattenPathCommands } from "@higma-primitives/path";
+import { pathContoursBoundingBox } from "@higma-primitives/path";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 export type Bounds = {
@@ -59,7 +58,27 @@ export function shouldRenderVisualNode({
   return boundsArea(screenBounds) >= (options?.minPixelArea ?? DEFAULT_MIN_PIXEL_AREA);
 }
 
+/**
+ * Per-frame pan/zoom rerenders pass the same `RenderNode` instances
+ * (the WebGL render-tree cache keeps content nodes alive across
+ * viewport-only updates and only swaps the surrounding viewport rect).
+ * Local bounds are derived from immutable node fields, so a WeakMap
+ * keyed on the node is a sound cross-frame cache — entries are released
+ * automatically when the render tree drops the node.
+ */
+const localBoundsCache = new WeakMap<RenderNode, Bounds | null>();
+
 export function getRenderNodeLocalBounds(node: RenderNode): Bounds | null {
+  const cached = localBoundsCache.get(node);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const bounds = computeRenderNodeLocalBounds(node);
+  localBoundsCache.set(node, bounds);
+  return bounds;
+}
+
+function computeRenderNodeLocalBounds(node: RenderNode): Bounds | null {
   switch (node.type) {
     case "group":
       return null;
@@ -100,19 +119,20 @@ export function boundsIntersect(a: Bounds, b: Bounds): boolean {
   return a.maxX >= b.minX && a.minX <= b.maxX && a.maxY >= b.minY && a.minY <= b.maxY;
 }
 
-function pathBounds(contours: readonly PathContour[]): Bounds {
-  const coordinates = contours.flatMap((contour) => flattenPathCommands(contour.commands));
-  if (coordinates.length < 2) {
+/**
+ * Control-hull bbox of the parsed contours. `pathContoursBoundingBox`
+ * walks `PathCommand` endpoints and Bézier control points directly, so
+ * we don't pay the per-frame `flattenPathCommands` cost just to cull —
+ * the resulting bbox is the same for straight segments and only loosely
+ * larger for curves, which is the safe side for viewport intersection
+ * tests (better to draw a borderline-visible node than to clip it).
+ */
+function pathBounds(contours: ReturnType<typeof svgPathDToContours>): Bounds {
+  const bbox = pathContoursBoundingBox(contours);
+  if (!bbox) {
     return rectBounds({ x: 0, y: 0, width: 0, height: 0 });
   }
-  const xs = coordinates.filter((_value, index) => index % 2 === 0);
-  const ys = coordinates.filter((_value, index) => index % 2 === 1);
-  return {
-    minX: Math.min(...xs),
-    minY: Math.min(...ys),
-    maxX: Math.max(...xs),
-    maxY: Math.max(...ys),
-  };
+  return { minX: bbox.x, minY: bbox.y, maxX: bbox.x + bbox.w, maxY: bbox.y + bbox.h };
 }
 
 function rectBounds({

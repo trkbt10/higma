@@ -19,7 +19,7 @@ export function createWebGLFigmaResourceContext(gl: WebGLRenderingContext): WebG
   const shaders = createShaderCache(gl);
   const textures = createTextureCache(gl);
   const sceneResources = createWebGLSceneResourceIdentityStore();
-  const renderTrees = createWebGLRenderTreeCache(undefined, sceneResources);
+  const renderTrees = createWebGLRenderTreeCache(sceneResources);
 
   return {
     shaders,

@@ -1,6 +1,6 @@
 /** @file WebGL bridge for backend-neutral effect stacks. */
 
-import type { AffineMatrix, PathContour } from "@higma-primitives/path";
+import type { AffineMatrix } from "@higma-primitives/path";
 import type {
   BackgroundBlurEffect,
   Color,
@@ -10,7 +10,6 @@ import type {
 import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
 import type { EffectsRendererInstance } from "./effects-renderer";
-import { tessellateContours } from "../tessellation/tessellation";
 import type { Bounds } from "../tessellation/stencil-fill";
 
 type DrawStencilFillParams = {
@@ -65,7 +64,12 @@ export type WebGLEffectRendering = {
     readonly fanVertices: Float32Array;
     readonly coverQuad: Float32Array;
     readonly bounds: Bounds;
-    readonly contours: readonly PathContour[];
+    /**
+     * TrueType-winding earcut silhouette of the path. Pre-tessellated
+     * by the caller (the geometry cache) so the drop-shadow pipeline
+     * never re-flattens curves per shadow effect, per frame.
+     */
+    readonly silhouetteVertices: Float32Array;
     readonly transform: AffineMatrix;
     readonly opacity: number;
   }) => void;
@@ -98,6 +102,9 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         });
       },
     });
+    // Effects renderer mutated stencil/blend state through raw GL.
+    // Drop our cached values so the next set-via-cache actually writes.
+    params.getGlContext().glState.invalidate();
   }
 
   function renderDropShadows(
@@ -133,6 +140,7 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
           drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
         },
       });
+      params.getGlContext().glState.invalidate();
     }
   }
 
@@ -155,16 +163,17 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
           drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
         },
       });
+      params.getGlContext().glState.invalidate();
     }
   }
 
   function renderDropShadowsStencil(
-    { effects, fanVertices, coverQuad, bounds, contours, transform, opacity }: {
+    { effects, fanVertices, coverQuad, bounds, silhouetteVertices, transform, opacity }: {
       readonly effects: readonly Effect[];
       readonly fanVertices: Float32Array;
       readonly coverQuad: Float32Array;
       readonly bounds: Bounds;
-      readonly contours: readonly PathContour[];
+      readonly silhouetteVertices: Float32Array;
       readonly transform: AffineMatrix;
       readonly opacity: number;
     },
@@ -195,18 +204,17 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         continue;
       }
 
-      const earcutVertices = tessellateContours(contours, 0.25, false);
-      if (earcutVertices.length > 0) {
-        params.effectsRenderer.renderDropShadow({
-          canvasWidth: params.canvasWidth(),
-          canvasHeight: params.canvasHeight(),
-          effect,
-          pixelRatio: params.pixelRatio(),
-          renderSilhouette: () => {
-            drawSolidFill({ ctx: params.getGlContext(), vertices: earcutVertices, color: WHITE, transform, opacity: 1 });
-          },
-        });
-      }
+      if (silhouetteVertices.length === 0) { continue; }
+      params.effectsRenderer.renderDropShadow({
+        canvasWidth: params.canvasWidth(),
+        canvasHeight: params.canvasHeight(),
+        effect,
+        pixelRatio: params.pixelRatio(),
+        renderSilhouette: () => {
+          drawSolidFill({ ctx: params.getGlContext(), vertices: silhouetteVertices, color: WHITE, transform, opacity: 1 });
+        },
+      });
+      params.getGlContext().glState.invalidate();
     }
   }
 

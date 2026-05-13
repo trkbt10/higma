@@ -42,6 +42,7 @@ import {
 import { imageTextureResource, type TextureColorManagement } from "../resources/texture-resource";
 import { IDENTITY_MATRIX, multiplyMatrices } from "@higma-document-models/fig/matrix";
 import { rebuildStencilClipStack, type StencilClipEntry } from "../effects/clip-mask";
+import { createGLStateCache } from "../state/gl-state-cache";
 import {
   tessellateRectStroke, tessellateRectAlignedStroke, tessellateEllipseStroke, } from "../tessellation/stroke-tessellation";
 import { createEffectsRenderer } from "../effects/effects-renderer";
@@ -50,11 +51,11 @@ import { createWebGLEffectRendering } from "../effects/effect-rendering";
 import { shouldRenderVisualNode, type ViewportRect } from "../scene/render-culling";
 import { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "../resources/resource-context";
 import {
-  prepareFanTriangles, generateCoverQuad, CLIP_STENCIL_BIT, FILL_STENCIL_MASK, } from "../tessellation/stencil-fill";
-import { flattenPathCommands } from "@higma-primitives/path";
+  prepareFanTriangles, CLIP_STENCIL_BIT, FILL_STENCIL_MASK, } from "../tessellation/stencil-fill";
+import { pathContoursBoundingBox } from "@higma-primitives/path";
 import { svgPathDToContours } from "../tessellation/path-contours";
 import { syncWebGLCanvasRenderSurface } from "../scene/render-surface";
-import { createWebGLPathFillPlan, type WebGLPathFillRule } from "../fill/render-path-fill-plan";
+import type { WebGLPathFillRule } from "../fill/render-path-fill-plan";
 import { hasVisibleLineText } from "../text/text-visibility";
 import { createWebGLGeometryCache } from "../resources/geometry-cache";
 
@@ -180,10 +181,75 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     throw new Error("Failed to create buffer");
   }
   const positionBuffer = buffer;
+  /**
+   * Tracks the last `Float32Array` uploaded to `positionBuffer`.
+   * `bindPositionBufferVertices` consults this to skip
+   * `gl.bufferData` when the same cached array is being rebound —
+   * the typical case during clip-stencil rebuilds and back-to-back
+   * draws that share a `geometryCache` entry. Effects rendering
+   * uses its own VBOs, so this tracker stays valid for the renderer's
+   * lifetime.
+   */
+  const positionBufferUpload: { value: Float32Array | null } = { value: null };
+  /**
+   * State cache for stencil / colorMask / enable / clearStencil
+   * setters. Scrolling a scene with many clipped FRAMEs runs
+   * `rebuildStencilClipStack` dozens of times per frame, each rebuild
+   * fires ~10 state setters, and most are redundant against the
+   * previous rebuild's tail. The cache short-circuits the GL call
+   * when the value is unchanged. `gl.enable(BLEND)` below seeds the
+   * cache with the matching value so the cache starts consistent
+   * with reality.
+   */
+  const glState = createGLStateCache(gl);
   const geometryCache = createWebGLGeometryCache();
+  /**
+   * Parsed contours for `clip-path` defs the render-tree resolver
+   * stores on FRAME nodes. The shape objects are themselves cached on
+   * the node (which is reused across viewport-only renders), so a
+   * WeakMap keyed on the shape avoids re-running `parseSvgPathD` on
+   * every pan/zoom frame for clipped frames.
+   */
+  const clipPathContoursCache = new WeakMap<object, ReturnType<typeof svgPathDToContours>>();
+  function getCachedClipPathContours(shape: { readonly d: string }): ReturnType<typeof svgPathDToContours> {
+    const cached = clipPathContoursCache.get(shape);
+    if (cached) {
+      return cached;
+    }
+    const contours = svgPathDToContours({ d: shape.d });
+    clipPathContoursCache.set(shape, contours);
+    return contours;
+  }
+  /**
+   * Tessellated vertices for path-shaped clip-paths, keyed by the
+   * parsed-contours array. `rebuildStencilClipStack` re-runs every
+   * time a descendant frame pushes or pops its own clip — without
+   * this cache, each rebuild would re-flatten Béziers and re-earcut
+   * the ancestor clip. The contours array is itself cached by
+   * `getCachedClipPathContours`, so the WeakMap key stays stable
+   * across pan/zoom rerenders.
+   */
+  const clipPathVerticesCache = new WeakMap<readonly PathContour[], Float32Array>();
+  function getCachedClipPathVertices(contours: readonly PathContour[]): Float32Array {
+    const cached = clipPathVerticesCache.get(contours);
+    if (cached) {
+      return cached;
+    }
+    const vertices = tessellateContours(contours, 0.25, true);
+    clipPathVerticesCache.set(contours, vertices);
+    return vertices;
+  }
+  function resolveClipVertices(clip: ClipShape): Float32Array {
+    if (clip.type === "rect") {
+      return geometryCache.getRectVertices(clip.width, clip.height, clip.cornerRadius);
+    }
+    return getCachedClipPathVertices(clip.contours);
+  }
+  const BLACK: Color = { r: 0, g: 0, b: 0, a: 1 };
 
-  // Enable blending for transparency
-  gl.enable(gl.BLEND);
+  // Enable blending for transparency (route through the state cache
+  // so subsequent `setEnabled(BLEND, true)` calls short-circuit).
+  glState.setEnabled(gl.BLEND, true);
   gl.blendFuncSeparate(
     gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
     gl.ONE, gl.ONE_MINUS_SRC_ALPHA
@@ -193,7 +259,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     return {
       gl,
       shaders,
+      glState,
       positionBuffer,
+      positionBufferUpload,
       width: width.value,
       height: height.value,
       pixelRatio: pixelRatioRef.value,
@@ -237,10 +305,36 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     });
   }
 
-  function rebuildClipStencil(): void {
-    rebuildStencilClipStack({ gl, clips: clipStack });
+  /**
+   * Defer stencil rebuilds until a draw actually needs the current
+   * clip state. Sibling clipped frames push and immediately pop their
+   * own clips during traversal — without deferral, each push/pop pair
+   * fires two `rebuildStencilClipStack` calls even though the net
+   * stencil state at the sibling boundary is identical to where it
+   * started. The hot scroll path is dominated by exactly this pattern
+   * (Figma auto-layout frames all clip), so collapsing back-to-back
+   * pop+push into a single rebuild at the next draw cuts the GL
+   * traffic roughly in half.
+   *
+   * Push / pop mutate `clipStack` and flip `clipStencilDirty`. Every
+   * drawing entry point (`renderRectFromTree`, `renderEllipseFromTree`,
+   * `renderPathFromTree`, `renderTextFromTree`, `renderImageFromTree`,
+   * frame-background draws inside `renderFrameFromTree`) calls
+   * `flushClipStencilIfDirty` before painting so the GPU stencil
+   * matches what the renderer believes the clip stack to be.
+   */
+  const clipStencilDirty = { value: true };
+  function markClipStencilDirty(): void {
+    clipStencilDirty.value = true;
+  }
+  function flushClipStencilIfDirty(): void {
+    if (!clipStencilDirty.value) {
+      return;
+    }
+    rebuildStencilClipStack({ ops: { gl, glState }, clips: clipStack });
     clipActive.value = clipStack.length > 0;
     clipStencilValid.value = clipStack.length > 0;
+    clipStencilDirty.value = false;
   }
 
   function colorManagementForImagePaint(fill: Fill & { readonly type: "image" }): TextureColorManagement {
@@ -404,52 +498,52 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const white: Color = { r: 1, g: 1, b: 1, a: 1 };
     const resolvedFillRule = fillRule ?? "evenodd";
 
-    gl.enable(gl.STENCIL_TEST);
-    gl.colorMask(false, false, false, false);
-    gl.stencilMask(FILL_STENCIL_MASK);
+    glState.setEnabled(gl.STENCIL_TEST, true);
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
 
     if (!useClipAwareMode) {
-      gl.stencilFunc(gl.ALWAYS, 0, 0xff);
+      glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
     }
 
     if (resolvedFillRule === "nonzero") {
-      gl.stencilOpSeparate(gl.FRONT, gl.KEEP, gl.KEEP, gl.INCR_WRAP);
-      gl.stencilOpSeparate(gl.BACK, gl.KEEP, gl.KEEP, gl.DECR_WRAP);
+      glState.setStencilOpSeparate(gl.FRONT, gl.KEEP, gl.KEEP, gl.INCR_WRAP);
+      glState.setStencilOpSeparate(gl.BACK, gl.KEEP, gl.KEEP, gl.DECR_WRAP);
     } else {
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+      glState.setStencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
     }
 
     drawSolidFill({ ctx: getGlContext(), vertices: fanVertices, color: white, transform, opacity: 1 });
 
-    gl.colorMask(true, true, true, true);
-    gl.stencilMask(0xff);
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
 
     if (useClipAwareMode) {
-      gl.stencilFunc(gl.LESS, CLIP_STENCIL_BIT, 0xff);
+      glState.setStencilFunc(gl.LESS, CLIP_STENCIL_BIT, 0xff);
     } else {
-      gl.stencilFunc(gl.NOTEQUAL, 0, FILL_STENCIL_MASK);
+      glState.setStencilFunc(gl.NOTEQUAL, 0, FILL_STENCIL_MASK);
     }
 
     for (const fill of fills) {
       drawFill({ vertices: coverQuad, fill, transform, opacity, elementSize });
     }
 
-    gl.colorMask(false, false, false, false);
-    gl.stencilMask(FILL_STENCIL_MASK);
-    gl.stencilFunc(gl.ALWAYS, 0, 0xff);
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
 
     drawSolidFill({ ctx: getGlContext(), vertices: coverQuad, color: white, transform, opacity: 1 });
 
-    gl.colorMask(true, true, true, true);
-    gl.stencilMask(0xff);
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0xff);
 
     if (useClipAwareMode) {
-      gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+      glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+      glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
     } else {
-      gl.disable(gl.STENCIL_TEST);
+      glState.setEnabled(gl.STENCIL_TEST, false);
     }
   }
 
@@ -557,12 +651,17 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function pathContoursElementSize(contours: readonly PathContour[]): { readonly width: number; readonly height: number } {
-    const coordinates = contours.flatMap((contour) => flattenPathCommands(contour.commands));
-    if (coordinates.length < 2) {
+    // Control-hull bbox is sufficient here: the result is only used to
+    // size gradient stops on stroke paint layers, where the gradient
+    // can extend a few pixels past a curve's tight extrema without any
+    // visible difference. The flatten-based variant this replaces ran
+    // every stroke render and burned per-frame CPU on Bézier
+    // subdivision purely to compute width / height.
+    const bbox = pathContoursBoundingBox(contours);
+    if (!bbox) {
       return { width: 1, height: 1 };
     }
-    const bounds = computeCoordinateBounds(coordinates);
-    return { width: Math.max(1, bounds.maxX - bounds.minX), height: Math.max(1, bounds.maxY - bounds.minY) };
+    return { width: Math.max(1, bbox.w), height: Math.max(1, bbox.h) };
   }
 
   function strokeShapeElementSize(shape: StrokeShape): { readonly width: number; readonly height: number } {
@@ -680,35 +779,35 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
         const white: Color = { r: 1, g: 1, b: 1, a: 1 };
 
-        // Save current stencil state
-        const wasStencilEnabled = gl.isEnabled(gl.STENCIL_TEST);
+        // Save current stencil state (cached, so no sync round-trip).
+        const wasStencilEnabled = glState.isStencilTestEnabled();
 
         // Step 1: Write fill shape to stencil (use FILL_STENCIL_MASK bits)
-        gl.enable(gl.STENCIL_TEST);
-        gl.colorMask(false, false, false, false);
-        gl.stencilMask(FILL_STENCIL_MASK);
-        gl.stencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        glState.setEnabled(gl.STENCIL_TEST, true);
+        glState.setColorMask(false, false, false, false);
+        glState.setStencilMask(FILL_STENCIL_MASK);
+        glState.setStencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
         drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
 
         // Step 2: Draw doubled stroke, stencil-tested
         // Must respect both fill mask (FILL_STENCIL_MASK) and clip stencil (CLIP_STENCIL_BIT)
-        gl.colorMask(true, true, true, true);
-        gl.stencilMask(0x00);
+        glState.setColorMask(true, true, true, true);
+        glState.setStencilMask(0x00);
         if (isInside) {
           // INSIDE: draw where fill stencil is set (inside shape)
           // If clip is active, also require CLIP_STENCIL_BIT
           const ref = clipActive.value ? (CLIP_STENCIL_BIT | FILL_STENCIL_MASK) : FILL_STENCIL_MASK;
           const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
-          gl.stencilFunc(gl.EQUAL, ref, mask);
+          glState.setStencilFunc(gl.EQUAL, ref, mask);
         } else {
           // OUTSIDE: draw where fill stencil is NOT set (outside shape)
           // If clip is active, require CLIP_STENCIL_BIT but NOT FILL_STENCIL_MASK
           const ref = clipActive.value ? CLIP_STENCIL_BIT : 0;
           const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
-          gl.stencilFunc(gl.EQUAL, ref, mask);
+          glState.setStencilFunc(gl.EQUAL, ref, mask);
         }
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
         drawStrokePaintLayer({
           vertices: strokeVerts,
           layer: sr.layer,
@@ -719,21 +818,21 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         });
 
         // Step 3: Clear stencil bits
-        gl.colorMask(false, false, false, false);
-        gl.stencilMask(FILL_STENCIL_MASK);
-        gl.stencilFunc(gl.ALWAYS, 0, 0xff);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+        glState.setColorMask(false, false, false, false);
+        glState.setStencilMask(FILL_STENCIL_MASK);
+        glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
         drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
 
         // Restore stencil state
-        gl.colorMask(true, true, true, true);
-        gl.stencilMask(0xff);
+        glState.setColorMask(true, true, true, true);
+        glState.setStencilMask(0xff);
         if (!wasStencilEnabled) {
-          gl.disable(gl.STENCIL_TEST);
+          glState.setEnabled(gl.STENCIL_TEST, false);
         } else {
           // Restore clip stencil if active
-          gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
-          gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+          glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+          glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
         }
         break;
       }
@@ -929,17 +1028,17 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function restoreOuterClipStencil(wasClipActive: boolean): void {
-    gl.colorMask(true, true, true, true);
-    gl.stencilMask(0xff);
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
 
     if (wasClipActive) {
-      gl.enable(gl.STENCIL_TEST);
-      gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+      glState.setEnabled(gl.STENCIL_TEST, true);
+      glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
       return;
     }
 
-    gl.disable(gl.STENCIL_TEST);
+    glState.setEnabled(gl.STENCIL_TEST, false);
   }
 
   /**
@@ -953,28 +1052,47 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const canvasW = width.value * pixelRatioRef.value;
     const canvasH = height.value * pixelRatioRef.value;
 
+    // Effects rendering binds its own FBO programs and changes
+    // stencil/blend state directly. Invalidate the state cache after
+    // each call so subsequent setters know they can't trust the
+    // previous cached values.
     effectsRenderer.beginLayerCapture(canvasW, canvasH);
+    glState.invalidate();
 
-    const wasClipActive = clipActive.value;
+    // Children render into the FBO with no outer clip applied.
+    // `beginLayerCapture` already cleared the FBO stencil and
+    // disabled STENCIL_TEST, so we swap `clipStack` for an empty
+    // one and mark the deferred-rebuild dirty so the first draw
+    // inside the FBO re-derives state for an empty clip stack.
+    const savedClipStack = clipStack.splice(0);
+    // `clipActive.value` only updates on flush; if previous siblings
+    // pushed and popped without an intervening draw, it lags reality.
+    // Derive the outer-clip-active state from the real stack length.
+    const hadOuterClip = savedClipStack.length > 0;
     clipActive.value = false;
+    markClipStencilDirty();
 
     // Render children at full parent opacity (no node opacity yet)
     renderRenderNodeDirect(node, worldTransform, parentOpacity);
 
-    clipActive.value = wasClipActive;
+    clipStack.push(...savedClipStack);
+    clipActive.value = hadOuterClip;
+    markClipStencilDirty();
 
-    gl.enable(gl.BLEND);
+    glState.setEnabled(gl.BLEND, true);
     gl.blendFuncSeparate(
       gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
       gl.ONE, gl.ONE_MINUS_SRC_ALPHA
     );
 
-    restoreOuterClipStencil(wasClipActive);
+    restoreOuterClipStencil(hadOuterClip);
 
     effectsRenderer.blitLayerWithOpacity({
       canvasWidth: canvasW, canvasHeight: canvasH,
       opacity: nodeOpacity,
     });
+    glState.invalidate();
+    markClipStencilDirty();
   }
 
   function renderRenderNodeDirect(
@@ -1016,23 +1134,30 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const canvasH = height.value * pixelRatioRef.value;
 
     effectsRenderer.beginLayerCapture(canvasW, canvasH);
+    glState.invalidate();
 
-    const wasClipActive = clipActive.value;
+    const savedClipStack = clipStack.splice(0);
+    const hadOuterClip = savedClipStack.length > 0;
     clipActive.value = false;
+    markClipStencilDirty();
 
     renderRenderNodeDirect(node, worldTransform, worldOpacity);
 
-    clipActive.value = wasClipActive;
+    clipStack.push(...savedClipStack);
+    clipActive.value = hadOuterClip;
+    markClipStencilDirty();
 
-    gl.enable(gl.BLEND);
+    glState.setEnabled(gl.BLEND, true);
     gl.blendFuncSeparate(
       gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
       gl.ONE, gl.ONE_MINUS_SRC_ALPHA
     );
 
-    restoreOuterClipStencil(wasClipActive);
+    restoreOuterClipStencil(hadOuterClip);
 
     effectsRenderer.endLayerCaptureAndBlur({ canvasWidth: canvasW, canvasHeight: canvasH, effect, pixelRatio: pixelRatioRef.value });
+    glState.invalidate();
+    markClipStencilDirty();
   }
 
   // =========================================================================
@@ -1054,8 +1179,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     },
   ): { clip: ClipShape; transform: AffineMatrix } {
     if (clipDef?.shape.kind === "path") {
+      // `clipDef.shape` belongs to the cached `node.defs` entry, so its
+      // identity stays stable across viewport-only renders. Caching the
+      // parsed contours on the shape object keeps pan/zoom from
+      // re-running `parseSvgPathD` on the clip data every frame.
       return {
-        clip: { type: "path", contours: svgPathDToContours({ d: clipDef.shape.d }) },
+        clip: { type: "path", contours: getCachedClipPathContours(clipDef.shape) },
         transform,
       };
     }
@@ -1092,6 +1221,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderFrameFromTree(node: RenderFrameNode, transform: AffineMatrix, opacity: number): void {
+    // Frame backgrounds paint with the *outer* clip state — the frame's
+    // own `childClipId` is pushed only after this draw and applies to
+    // descendants. Flushing here covers the pending dirty flag from
+    // the previous sibling's pop / the very first traversal step.
+    flushClipStencilIfDirty();
+
     // Use RenderTree fields for dimensions and corner radius
     const elementSize = { width: node.width, height: node.height };
     const uniformCR = uniformRadiusForGL(node.cornerRadius);
@@ -1152,14 +1287,26 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
           d.type === "clip-path" && d.id === node.childClipId
       );
       const clipData = getFrameClipData({ clipDef, node, transform });
+      // Resolve clip vertices once per push instead of on every
+      // `rebuildStencilClipStack` rebuild. Inner frames typically
+      // sit inside one or more clipped ancestors, so the parent
+      // clip's geometry would otherwise be re-tessellated every time
+      // a descendant pushes/pops its own clip.
+      const clipVertices = resolveClipVertices(clipData.clip);
+      const clipTransform = clipData.transform;
       const entry: StencilClipEntry = {
-        clip: clipData.clip,
-        drawVertices: (verts) => {
-          drawSolidFill({ ctx: getGlContext(), vertices: verts, color: { r: 0, g: 0, b: 0, a: 1 }, transform: clipData.transform, opacity: 1 });
+        drawClipShape: () => {
+          drawSolidFill({
+            ctx: getGlContext(),
+            vertices: clipVertices,
+            color: BLACK,
+            transform: clipTransform,
+            opacity: 1,
+          });
         },
       };
       clipStack.push(entry);
-      rebuildClipStencil();
+      markClipStencilDirty();
     }
 
     for (const child of node.children) {
@@ -1168,11 +1315,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     if (node.childClipId) {
       clipStack.pop();
-      rebuildClipStencil();
+      markClipStencilDirty();
     }
   }
 
   function renderRectFromTree(node: RenderRectNode, transform: AffineMatrix, opacity: number): void {
+    flushClipStencilIfDirty();
     // Use RenderTree fields for dimensions
     const elementSize = { width: node.width, height: node.height };
     const uniformCR = uniformRadiusForGL(node.cornerRadius);
@@ -1218,6 +1366,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderEllipseFromTree(node: RenderEllipseNode, transform: AffineMatrix, opacity: number): void {
+    flushClipStencilIfDirty();
     const elementSize = { width: node.rx * 2, height: node.ry * 2 };
     const vertices = geometryCache.getEllipseVertices({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry });
     const effects = getSourceEffects(node);
@@ -1283,6 +1432,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       }
       return;
     }
+    // Stroke paint layers and the masked-stroke fill mask both need the
+    // node's element-size and (for masked) the closed-contour fill
+    // tessellation. Both are stable across viewport-only renders, so we
+    // pull them from the per-node geometry cache rather than rebuilding
+    // them from the contour stream on every frame.
+    const pathGeometry = geometryCache.getPathGeometry(node);
     if (sr.mode === "layers") {
       for (const layer of sr.layers) {
         const strokeWidth = layer.attrs.strokeWidth ?? 1;
@@ -1300,7 +1455,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
             attrs: layer.attrs,
             transform,
             opacity,
-            elementSize: pathContoursElementSize(contours),
+            elementSize: pathGeometry.elementSize,
           });
         }
       }
@@ -1315,54 +1470,54 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         strokeWidth,
         dashPattern: parseStrokeDasharray(sr.attrs.strokeDasharray),
       });
-      const fillVerts = tessellateContours(contours, 0.25, true);
+      const fillVerts = pathGeometry.backgroundMaskVertices;
       if (strokeVerts.length > 0 && fillVerts.length > 0) {
         const white: Color = { r: 1, g: 1, b: 1, a: 1 };
-        const wasStencilEnabled = gl.isEnabled(gl.STENCIL_TEST);
+        const wasStencilEnabled = glState.isStencilTestEnabled();
         const isInside = sr.attrs.strokeAlign === "INSIDE";
 
-        gl.enable(gl.STENCIL_TEST);
-        gl.colorMask(false, false, false, false);
-        gl.stencilMask(FILL_STENCIL_MASK);
-        gl.stencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+        glState.setEnabled(gl.STENCIL_TEST, true);
+        glState.setColorMask(false, false, false, false);
+        glState.setStencilMask(FILL_STENCIL_MASK);
+        glState.setStencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
         drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
 
-        gl.colorMask(true, true, true, true);
-        gl.stencilMask(0x00);
+        glState.setColorMask(true, true, true, true);
+        glState.setStencilMask(0x00);
         if (isInside) {
           const ref = clipActive.value ? (CLIP_STENCIL_BIT | FILL_STENCIL_MASK) : FILL_STENCIL_MASK;
           const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
-          gl.stencilFunc(gl.EQUAL, ref, mask);
+          glState.setStencilFunc(gl.EQUAL, ref, mask);
         } else {
           const ref = clipActive.value ? CLIP_STENCIL_BIT : 0;
           const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
-          gl.stencilFunc(gl.EQUAL, ref, mask);
+          glState.setStencilFunc(gl.EQUAL, ref, mask);
         }
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
         drawStrokePaintLayer({
           vertices: strokeVerts,
           layer: sr.layer,
           attrs: sr.attrs,
           transform,
           opacity,
-          elementSize: pathContoursElementSize(contours),
+          elementSize: pathGeometry.elementSize,
         });
 
-        gl.colorMask(false, false, false, false);
-        gl.stencilMask(FILL_STENCIL_MASK);
-        gl.stencilFunc(gl.ALWAYS, 0, 0xff);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+        glState.setColorMask(false, false, false, false);
+        glState.setStencilMask(FILL_STENCIL_MASK);
+        glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
         drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
 
-        gl.colorMask(true, true, true, true);
-        gl.stencilMask(0xff);
+        glState.setColorMask(true, true, true, true);
+        glState.setStencilMask(0xff);
         if (!wasStencilEnabled) {
-          gl.disable(gl.STENCIL_TEST);
+          glState.setEnabled(gl.STENCIL_TEST, false);
           return;
         }
-        gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
-        gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+        glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
       }
     }
   }
@@ -1373,11 +1528,13 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // shapes generated by the resolver (ellipse arcs, donut rings, etc.)
     // that have no sourceContours.
     if (node.paths.length === 0) { return; }
+    flushClipStencilIfDirty();
     const effects = getSourceEffects(node);
     const effectStack = buildEffectStack(effects);
 
     const hasVisibleContent = node.sourceFills.length > 0 || !!node.strokeRendering;
-    const { parsedContours, prepared, pathVertices, backgroundMaskVertices } = geometryCache.getPathGeometry(node);
+    const pathGeometry = geometryCache.getPathGeometry(node);
+    const { parsedContours, prepared, coverQuad, pathVertices, backgroundMaskVertices, dropShadowSilhouetteVertices } = pathGeometry;
 
     renderShapeEffectStack({
       stack: effectStack,
@@ -1388,10 +1545,16 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         }
       },
       renderDropShadows: (sourceEffects) => {
-        if (prepared) {
-          const { fanVertices, bounds } = prepared;
-          const coverQuad = generateCoverQuad(bounds);
-          effectRendering.renderDropShadowsStencil({ effects: sourceEffects, fanVertices, coverQuad, bounds, contours: parsedContours, transform, opacity });
+        if (prepared && coverQuad) {
+          effectRendering.renderDropShadowsStencil({
+            effects: sourceEffects,
+            fanVertices: prepared.fanVertices,
+            coverQuad,
+            bounds: prepared.bounds,
+            silhouetteVertices: dropShadowSilhouetteVertices,
+            transform,
+            opacity,
+          });
           return;
         }
         if (pathVertices.length > 0) {
@@ -1400,23 +1563,21 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       },
       renderContent: () => {
         if (node.sourceFills.length === 0) { return; }
-        for (const instruction of createWebGLPathFillPlan(node)) {
-          if (instruction.fills.length === 0) { continue; }
-          const singlePathPrepared = prepareFanTriangles(instruction.contours, 0.25, instruction.fillRule === "nonzero");
-          if (singlePathPrepared) {
-            const { bounds } = singlePathPrepared;
-            const coverQuad = generateCoverQuad(bounds);
-            const elementSize = { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY };
-            drawStencilFill({
-              prepared: singlePathPrepared,
-              coverQuad,
-              transform,
-              opacity,
-              elementSize,
-              fills: instruction.fills,
-              fillRule: instruction.fillRule,
-            });
-          }
+        // The per-instruction fan triangles, cover quad, and element
+        // size are stable across viewport-only renders, so we cache
+        // them on the node and reuse them every pan/zoom frame instead
+        // of re-flattening every contour Bézier here.
+        const fillPlan = geometryCache.getPathFillPlanGeometry(node);
+        for (const instruction of fillPlan.instructions) {
+          drawStencilFill({
+            prepared: instruction.prepared,
+            coverQuad: instruction.coverQuad,
+            transform,
+            opacity,
+            elementSize: instruction.elementSize,
+            fills: instruction.fills,
+            fillRule: instruction.fillRule,
+          });
         }
       },
       renderInnerShadows: (sourceEffects) => {
@@ -1431,6 +1592,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderTextFromTree(node: RenderTextNode, transform: AffineMatrix, opacity: number): void {
+    flushClipStencilIfDirty();
     const fillOpacity = node.sourceFillOpacity;
 
     // Use RenderTree content as the single source of truth.
@@ -1481,6 +1643,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   function renderImageFromTree(node: RenderImageNode, transform: AffineMatrix, opacity: number): void {
     const entry = textureCache.getIfCached(imageTextureResource(node.sourceImageRef, colorManagementForImageNode(node)));
     if (!entry) { return; }
+    flushClipStencilIfDirty();
 
     const vertices = geometryCache.getRectVertices(node.width, node.height);
     const elementSize = { width: node.width, height: node.height };
@@ -1545,6 +1708,12 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       clipActive.value = false;
       clipStencilValid.value = false;
       clipStack.length = 0;
+      // Frame-start `gl.clear` wiped the stencil — but we also drop
+      // the GL state cache because external subsystems may have run
+      // between frames (text editing, debug overlays). Subsequent
+      // setters in this frame will write fresh values.
+      glState.invalidate();
+      clipStencilDirty.value = true;
 
       const renderTree = renderTreeCache.get(scene, { exportSettings: options.exportSettings });
       const viewportTransform = viewportToSurfaceTransform(renderTree);
@@ -1572,40 +1741,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       effectsRenderer.dispose();
       geometryCache.dispose();
       gl.deleteBuffer(positionBuffer);
+      positionBufferUpload.value = null;
     },
   };
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
-
-function computeCoordinateBounds(coordinates: ArrayLike<number>): {
-  readonly minX: number;
-  readonly minY: number;
-  readonly maxX: number;
-  readonly maxY: number;
-} {
-  return Array.from(coordinates).reduce(
-    (acc, value, index) => {
-      if (index % 2 === 0) {
-        return {
-          ...acc,
-          minX: Math.min(acc.minX, value),
-          maxX: Math.max(acc.maxX, value),
-        };
-      }
-      return {
-        ...acc,
-        minY: Math.min(acc.minY, value),
-        maxY: Math.max(acc.maxY, value),
-      };
-    },
-    {
-      minX: Number.POSITIVE_INFINITY,
-      minY: Number.POSITIVE_INFINITY,
-      maxX: Number.NEGATIVE_INFINITY,
-      maxY: Number.NEGATIVE_INFINITY,
-    },
-  );
-}

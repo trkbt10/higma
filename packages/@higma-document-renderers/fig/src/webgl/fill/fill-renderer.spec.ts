@@ -2,7 +2,9 @@
  * @file Tests for WebGL fill UV calculations
  */
 
-import { computeImageUV } from "./fill-renderer";
+import { bindPositionBufferVertices, computeImageUV, type GLContext } from "./fill-renderer";
+import type { ShaderCache } from "../shaders";
+import type { GLStateCache } from "../state/gl-state-cache";
 
 describe("computeImageUV", () => {
   it("marks FIT letterbox regions as transparent", () => {
@@ -83,5 +85,70 @@ describe("computeImageUV", () => {
       scaleMode: "CROP",
       imageTransform: { m00: 0, m01: 1, m02: 0, m10: -1, m11: 0, m12: 1 },
     })).toThrow("CROP imageScaleMode with a rotated/skewed imageTransform");
+  });
+});
+
+describe("bindPositionBufferVertices", () => {
+  type BindBufferCalls = {
+    readonly bindBuffer: number;
+    readonly bufferData: number;
+  };
+
+  type GLBufferFake = Pick<WebGLRenderingContext, "ARRAY_BUFFER" | "DYNAMIC_DRAW" | "bindBuffer" | "bufferData">;
+
+  function makeCtx(): { readonly ctx: GLContext; readonly calls: BindBufferCalls } {
+    const calls = { bindBuffer: 0, bufferData: 0 };
+    const fakeBuffer: WebGLBuffer = {} as WebGLBuffer;
+    const fakeShaders: ShaderCache = {} as ShaderCache;
+    const gl: GLBufferFake = {
+      ARRAY_BUFFER: 34962,
+      DYNAMIC_DRAW: 35048,
+      bindBuffer: () => { calls.bindBuffer += 1; },
+      bufferData: () => { calls.bufferData += 1; },
+    };
+    const fakeGlState: GLStateCache = {} as GLStateCache;
+    const ctx: GLContext = {
+      // The helper only touches `gl.ARRAY_BUFFER`, `gl.DYNAMIC_DRAW`,
+      // `gl.bindBuffer`, and `gl.bufferData`, so the structural subset
+      // we built above is the full contract — widening to
+      // `WebGLRenderingContext` keeps `GLContext`'s public shape intact
+      // for the spec's call site.
+      gl: gl as WebGLRenderingContext,
+      shaders: fakeShaders,
+      glState: fakeGlState,
+      positionBuffer: fakeBuffer,
+      positionBufferUpload: { value: null },
+      width: 100,
+      height: 100,
+      pixelRatio: 1,
+    };
+    return { ctx, calls };
+  }
+
+  it("uploads when the vertex array is bound for the first time, and skips bufferData on a repeated upload of the same array", () => {
+    const { ctx, calls } = makeCtx();
+    const verts = new Float32Array([0, 0, 1, 0, 1, 1]);
+
+    bindPositionBufferVertices(ctx, verts);
+    bindPositionBufferVertices(ctx, verts);
+
+    // Both calls bind the buffer (cheap, and effects rendering may
+    // have changed the bound buffer between draws), but the second
+    // call must skip the GPU upload — clip stencil rebuilds reuse
+    // the same cached `Float32Array` many times per frame.
+    expect(calls.bindBuffer).toBe(2);
+    expect(calls.bufferData).toBe(1);
+  });
+
+  it("re-uploads when the vertex array reference changes", () => {
+    const { ctx, calls } = makeCtx();
+    const a = new Float32Array([0, 0, 1, 0, 1, 1]);
+    const b = new Float32Array([0, 0, 2, 0, 2, 2]);
+
+    bindPositionBufferVertices(ctx, a);
+    bindPositionBufferVertices(ctx, b);
+    bindPositionBufferVertices(ctx, b);
+
+    expect(calls.bufferData).toBe(2);
   });
 });

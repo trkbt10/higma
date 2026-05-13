@@ -3,52 +3,46 @@
  *
  * Uses stencil bit 7 (0x80) for frame clipping.
  * Bits 0-6 (0x7F) are reserved for stencil-based path fill (see stencil-fill.ts).
+ *
+ * Clip vertex resolution is the caller's responsibility — pan/zoom
+ * rerenders push and pop the same clip many times per frame, and only
+ * the renderer (with its node-keyed geometry cache) knows how to reuse
+ * the tessellation across rebuilds. `StencilClipEntry.drawClipShape`
+ * therefore captures the pre-resolved vertices in a closure so this
+ * module never re-tessellates on rebuild.
+ *
+ * State changes go through `GLStateCache` so consecutive rebuilds skip
+ * the GL setter when the value is already current — `stencilOp(KEEP,
+ * KEEP, KEEP)`, `stencilFunc(EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT)`,
+ * and the `colorMask(true,...)` reset all repeat unchanged between
+ * back-to-back push/pop pairs during scroll.
  */
 
-import type { ClipShape } from "@higma-document-models/fig/scene-graph";
-import { generateRectVertices, tessellateContours } from "../tessellation/tessellation";
+import type { GLStateCache, GLStateSink } from "../state/gl-state-cache";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
 
-type StencilClipGL = Pick<
-  WebGLRenderingContext,
-  | "STENCIL_TEST"
-  | "STENCIL_BUFFER_BIT"
-  | "ALWAYS"
-  | "EQUAL"
-  | "KEEP"
-  | "INVERT"
-  | "INCR"
-  | "REPLACE"
-  | "ZERO"
-  | "enable"
-  | "disable"
-  | "clear"
-  | "clearStencil"
-  | "stencilMask"
-  | "stencilFunc"
-  | "stencilOp"
-  | "colorMask"
->;
-
 export type StencilClipEntry = {
-  readonly clip: ClipShape;
-  readonly drawVertices: (vertices: Float32Array) => void;
+  /**
+   * Draw the clip shape's tessellated geometry to whatever GL state
+   * `rebuildStencilClipStack` has just configured. Implementations
+   * should capture pre-resolved vertices in the closure so repeated
+   * clip rebuilds do not re-tessellate.
+   */
+  readonly drawClipShape: () => void;
 };
 
-function resolveClipVertices(clip: ClipShape): Float32Array {
-  if (clip.type === "rect") {
-    return generateRectVertices(clip.width, clip.height, clip.cornerRadius);
-  }
-  return tessellateContours(clip.contours, 0.25, true);
-}
+export type StencilClipOps = {
+  readonly gl: GLStateSink;
+  readonly glState: GLStateCache;
+};
 
-function finishStencilClip(gl: StencilClipGL): void {
-  gl.colorMask(true, true, true, true);
-  gl.stencilMask(0xff);
+function finishStencilClip(ops: StencilClipOps): void {
+  ops.glState.setColorMask(true, true, true, true);
+  ops.glState.setStencilMask(0xff);
 
   // Set stencil test to only pass where bit 7 is set
-  gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
-  gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+  ops.glState.setStencilFunc(ops.gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+  ops.glState.setStencilOp(ops.gl.KEEP, ops.gl.KEEP, ops.gl.KEEP);
 }
 
 /**
@@ -59,81 +53,73 @@ function finishStencilClip(gl: StencilClipGL): void {
  */
 export function beginStencilClip(
   {
-    gl,
-    clip,
-    _positionBuffer,
-    drawVertices,
+    ops,
+    drawClipShape,
   }: {
-    gl: StencilClipGL;
-    clip: ClipShape;
-    _positionBuffer: unknown;
-    drawVertices: (vertices: Float32Array) => void;
+    ops: StencilClipOps;
+    drawClipShape: () => void;
   }
 ): void {
-  gl.enable(gl.STENCIL_TEST);
-  gl.colorMask(false, false, false, false);
+  const { gl, glState } = ops;
+  glState.setEnabled(gl.STENCIL_TEST, true);
+  glState.setColorMask(false, false, false, false);
 
-  gl.stencilMask(CLIP_STENCIL_BIT);
-  gl.clearStencil(0);
-  gl.clear(gl.STENCIL_BUFFER_BIT);
+  glState.setStencilMask(CLIP_STENCIL_BIT);
+  glState.clearStencilBuffer(0);
 
-  // Draw clip shape into stencil bit 7
-  gl.stencilMask(CLIP_STENCIL_BIT);
-  gl.stencilFunc(gl.ALWAYS, CLIP_STENCIL_BIT, 0xff);
-  gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-  drawVertices(resolveClipVertices(clip));
+  // Draw clip shape into stencil bit 7 — stencilMask already restricted
+  // to CLIP_STENCIL_BIT above, so no second redundant set here.
+  glState.setStencilFunc(gl.ALWAYS, CLIP_STENCIL_BIT, 0xff);
+  glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+  drawClipShape();
 
-  finishStencilClip(gl);
+  finishStencilClip(ops);
 }
 
 /** Rebuild the active stencil clip from the full clip stack. */
 export function rebuildStencilClipStack({
-  gl,
+  ops,
   clips,
 }: {
-  readonly gl: StencilClipGL;
+  readonly ops: StencilClipOps;
   readonly clips: readonly StencilClipEntry[];
 }): void {
   if (clips.length === 0) {
-    endStencilClip(gl);
+    endStencilClip(ops);
     return;
   }
 
   if (clips.length === 1) {
-    const entry = clips[0];
-    beginStencilClip({ gl, clip: entry.clip, _positionBuffer: undefined, drawVertices: entry.drawVertices });
+    beginStencilClip({ ops, drawClipShape: clips[0].drawClipShape });
     return;
   }
 
-  gl.enable(gl.STENCIL_TEST);
-  gl.colorMask(false, false, false, false);
-  gl.stencilMask(0xff);
-  gl.clearStencil(0);
-  gl.clear(gl.STENCIL_BUFFER_BIT);
+  const { gl, glState } = ops;
+  glState.setEnabled(gl.STENCIL_TEST, true);
+  glState.setColorMask(false, false, false, false);
+  glState.setStencilMask(0xff);
+  glState.clearStencilBuffer(0);
 
   for (const entry of clips) {
-    gl.stencilMask(FILL_STENCIL_MASK);
-    gl.stencilFunc(gl.ALWAYS, 0, 0xff);
-    gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
-    entry.drawVertices(resolveClipVertices(entry.clip));
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+    entry.drawClipShape();
   }
 
   const lastClip = clips[clips.length - 1];
-  gl.stencilMask(CLIP_STENCIL_BIT);
-  gl.stencilFunc(gl.EQUAL, clips.length, FILL_STENCIL_MASK);
-  gl.stencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
-  lastClip.drawVertices(resolveClipVertices(lastClip.clip));
+  glState.setStencilMask(CLIP_STENCIL_BIT);
+  glState.setStencilFunc(gl.EQUAL, clips.length, FILL_STENCIL_MASK);
+  glState.setStencilOp(gl.KEEP, gl.KEEP, gl.INVERT);
+  lastClip.drawClipShape();
 
-  gl.stencilMask(FILL_STENCIL_MASK);
-  gl.clearStencil(0);
-  gl.clear(gl.STENCIL_BUFFER_BIT);
+  glState.setStencilMask(FILL_STENCIL_MASK);
+  glState.clearStencilBuffer(0);
 
-  finishStencilClip(gl);
+  finishStencilClip(ops);
 }
 
-/**
- * End a stencil clip region
- */
-export function endStencilClip(gl: StencilClipGL): void {
-  gl.disable(gl.STENCIL_TEST);
+/** End a stencil clip region */
+export function endStencilClip(ops: StencilClipOps): void {
+  ops.glState.setEnabled(ops.gl.STENCIL_TEST, false);
 }

@@ -1,6 +1,6 @@
 /** @file WebGL geometry cache keyed by RenderTree node identity. */
 
-import type { PathContour } from "@higma-document-models/fig/scene-graph";
+import type { Fill, PathContour } from "@higma-document-models/fig/scene-graph";
 import type { RenderPathNode, RenderTextNode } from "../../scene-graph/render-tree";
 import {
   generateEllipseVertices,
@@ -8,15 +8,61 @@ import {
   tessellateContours,
 } from "../tessellation/tessellation";
 import { tessellatePathStroke } from "../tessellation/stroke-tessellation";
-import { prepareFanTriangles } from "../tessellation/stencil-fill";
+import { generateCoverQuad, prepareFanTriangles, type Bounds as StencilBounds } from "../tessellation/stencil-fill";
 import { svgPathDToContours } from "../tessellation/path-contours";
-import type { CornerRadius } from "@higma-primitives/path";
+import {
+  createWebGLPathFillPlan,
+  type WebGLPathFillInstruction,
+  type WebGLPathFillRule,
+} from "../fill/render-path-fill-plan";
+import { pathContoursBoundingBox, type CornerRadius } from "@higma-primitives/path";
 
 type PathGeometry = {
   readonly parsedContours: readonly PathContour[];
   readonly prepared: ReturnType<typeof prepareFanTriangles>;
+  /**
+   * Cover quad sized to `prepared.bounds`, paired with `prepared` so
+   * the drop-shadow stencil pipeline never has to recompute the quad
+   * per frame. Null when `prepared` is null (degenerate contours).
+   */
+  readonly coverQuad: Float32Array | null;
   readonly pathVertices: Float32Array;
   readonly backgroundMaskVertices: Float32Array;
+  /**
+   * TrueType-winding earcut silhouette used by drop-shadow stencils.
+   * `tessellateContours(..., autoDetectWinding=false)` is intentionally
+   * different from `backgroundMaskVertices` (which auto-detects),
+   * so we precompute both alongside the parsed contours instead of
+   * re-flattening every drop-shadow draw.
+   */
+  readonly dropShadowSilhouetteVertices: Float32Array;
+  /**
+   * Loose control-hull element size of the parsed contours, kept here
+   * so per-frame stroke-paint draws don't need to re-flatten the path
+   * just to size a gradient. Computed once when the node is first seen
+   * and reused for every subsequent render of the same node instance.
+   */
+  readonly elementSize: { readonly width: number; readonly height: number };
+};
+
+/**
+ * One prepared fill draw for a `RenderPathNode`. Mirrors the structure
+ * the renderer needs at draw time (stencil fan vertices + cover quad +
+ * element size for gradient-relative paints), all cached so pan/zoom
+ * rerenders never re-flatten the contour Béziers.
+ */
+export type PathFillInstructionGeometry = {
+  readonly fillRule: WebGLPathFillRule;
+  readonly fills: readonly Fill[];
+  readonly contours: readonly PathContour[];
+  readonly prepared: NonNullable<ReturnType<typeof prepareFanTriangles>>;
+  readonly coverQuad: Float32Array;
+  readonly bounds: StencilBounds;
+  readonly elementSize: { readonly width: number; readonly height: number };
+};
+
+type PathFillPlanGeometry = {
+  readonly instructions: readonly PathFillInstructionGeometry[];
 };
 
 /**
@@ -44,6 +90,7 @@ export type WebGLGeometryCache = {
   readonly getRectVertices: (width: number, height: number, cornerRadius?: CornerRadius) => Float32Array;
   readonly getEllipseVertices: (params: { readonly cx: number; readonly cy: number; readonly rx: number; readonly ry: number }) => Float32Array;
   readonly getPathGeometry: (node: RenderPathNode) => PathGeometry;
+  readonly getPathFillPlanGeometry: (node: RenderPathNode) => PathFillPlanGeometry;
   readonly getTextGlyphGeometry: (node: RenderTextNode) => TextGlyphGeometry;
   readonly getPathStrokeVertices: (params: {
     readonly node: RenderPathNode;
@@ -85,11 +132,50 @@ function pathStrokeCacheKey(
   return `${strokeWidth}\u001e${dashPattern?.join(",") ?? ""}`;
 }
 
+function contoursElementSize(
+  contours: readonly PathContour[],
+): { readonly width: number; readonly height: number } {
+  const bbox = pathContoursBoundingBox(contours);
+  if (!bbox) {
+    return { width: 1, height: 1 };
+  }
+  return { width: Math.max(1, bbox.w), height: Math.max(1, bbox.h) };
+}
+
+function buildPathFillInstructionGeometry(
+  instruction: WebGLPathFillInstruction,
+): PathFillInstructionGeometry | null {
+  // `prepareFanTriangles` returns null when the contour set has fewer
+  // than three usable points — those are degenerate fills that we drop
+  // at the draw site, so the cache likewise drops them here.
+  const prepared = prepareFanTriangles(
+    instruction.contours,
+    0.25,
+    instruction.fillRule === "nonzero",
+  );
+  if (!prepared) {
+    return null;
+  }
+  return {
+    fillRule: instruction.fillRule,
+    fills: instruction.fills,
+    contours: instruction.contours,
+    prepared,
+    coverQuad: generateCoverQuad(prepared.bounds),
+    bounds: prepared.bounds,
+    elementSize: {
+      width: prepared.bounds.maxX - prepared.bounds.minX,
+      height: prepared.bounds.maxY - prepared.bounds.minY,
+    },
+  };
+}
+
 /** Create the WebGL geometry cache for viewport rerenders. */
 export function createWebGLGeometryCache(): WebGLGeometryCache {
   const rectVertices = new Map<string, Float32Array>();
   const ellipseVertices = new Map<string, Float32Array>();
   const pathGeometry = new WeakMap<RenderPathNode, PathGeometry>();
+  const pathFillPlanGeometry = new WeakMap<RenderPathNode, PathFillPlanGeometry>();
   const pathStrokeVertices = new WeakMap<RenderPathNode, Map<string, Float32Array>>();
   const textGlyphGeometry = new WeakMap<RenderTextNode, TextGlyphGeometry>();
 
@@ -120,13 +206,46 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
         windingRule: rp.fillRule ?? "nonzero",
       }));
       const usesEvenOddFill = parsedContours.some((contour) => contour.windingRule === "evenodd");
-      const value = {
+      const prepared = prepareFanTriangles(parsedContours, 0.25, !usesEvenOddFill);
+      const value: PathGeometry = {
         parsedContours,
-        prepared: prepareFanTriangles(parsedContours, 0.25, !usesEvenOddFill),
+        prepared,
+        coverQuad: prepared ? generateCoverQuad(prepared.bounds) : null,
         pathVertices: new Float32Array(0),
         backgroundMaskVertices: tessellateContours(parsedContours, 0.25, true),
+        dropShadowSilhouetteVertices: tessellateContours(parsedContours, 0.25, false),
+        elementSize: contoursElementSize(parsedContours),
       };
       pathGeometry.set(node, value);
+      return value;
+    },
+
+    getPathFillPlanGeometry(node) {
+      const cached = pathFillPlanGeometry.get(node);
+      if (cached) {
+        return cached;
+      }
+      // Build via the SoT plan builder so per-contour fill overrides /
+      // fill-rule resolution stay consistent with the SVG renderer.
+      // The plan would re-parse `paths[i].d` on every render if called
+      // from the hot loop; doing it once per node here is the whole
+      // point of the cache.
+      const plan = createWebGLPathFillPlan({
+        paths: node.paths,
+        sourceFills: node.sourceFills,
+      });
+      const instructions: PathFillInstructionGeometry[] = [];
+      for (const instruction of plan) {
+        if (instruction.fills.length === 0) {
+          continue;
+        }
+        const built = buildPathFillInstructionGeometry(instruction);
+        if (built) {
+          instructions.push(built);
+        }
+      }
+      const value: PathFillPlanGeometry = { instructions };
+      pathFillPlanGeometry.set(node, value);
       return value;
     },
 

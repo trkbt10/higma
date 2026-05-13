@@ -8,6 +8,7 @@ import type { Fill, Color } from "@higma-document-models/fig/scene-graph";
 import type { ImagePaintFilter } from "@higma-codecs/raster";
 import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "@higma-codecs/raster";
 import type { ShaderCache } from "../shaders";
+import type { GLStateCache } from "../state/gl-state-cache";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
@@ -17,11 +18,42 @@ import type { AffineMatrix } from "@higma-primitives/path";
 export type GLContext = {
   readonly gl: WebGLRenderingContext;
   readonly shaders: ShaderCache;
+  /**
+   * Cached GL state setters (stencil, color mask, capability toggles,
+   * stencil-clear value). Renderer code calls these instead of the
+   * raw `gl.X` setters so redundant state changes — the typical case
+   * during clip stencil rebuilds — short-circuit at the JS boundary.
+   */
+  readonly glState: GLStateCache;
   readonly positionBuffer: WebGLBuffer;
+  /**
+   * Shared mutable ref tracking which `Float32Array` was last uploaded
+   * to `positionBuffer`. Used by `bindPositionBufferVertices` to skip
+   * redundant `gl.bufferData` calls when the same cached vertex array
+   * is re-bound (typical during clip-stencil rebuilds and back-to-back
+   * draws of cached geometry). Effects rendering uses its own buffers,
+   * so this tracker stays valid across the renderer's lifetime.
+   */
+  readonly positionBufferUpload: { value: Float32Array | null };
   readonly width: number;
   readonly height: number;
   readonly pixelRatio: number;
 };
+
+/**
+ * Bind `positionBuffer` and upload `vertices` only when the upload
+ * differs from the last one. Caller is still responsible for
+ * `enableVertexAttribArray` + `vertexAttribPointer`.
+ */
+export function bindPositionBufferVertices(ctx: GLContext, vertices: Float32Array): void {
+  const { gl, positionBuffer, positionBufferUpload } = ctx;
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  if (positionBufferUpload.value === vertices) {
+    return;
+  }
+  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+  positionBufferUpload.value = vertices;
+}
 
 // =============================================================================
 // Matrix Utilities
@@ -59,35 +91,19 @@ export function drawSolidFill(
 ): void {
   if (vertices.length === 0 || opacity <= 0) {return;}
 
-  const { gl, shaders, positionBuffer, width, height, pixelRatio } = ctx;
+  const { gl, shaders, width, height, pixelRatio } = ctx;
   const programName = "flat";
-  const program = shaders.get(programName);
-  gl.useProgram(program);
+  shaders.useProgram(programName);
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+  bindPositionBufferVertices(ctx, vertices);
 
   const posLoc = shaders.getAttribLocation(programName, "a_position");
   gl.enableVertexAttribArray(posLoc);
   gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
-  gl.uniformMatrix3fv(
-    shaders.getUniformLocation(programName, "u_transform"),
-    false,
-    matrixToGLUniform(transform, pixelRatio)
-  );
-  gl.uniform2f(
-    shaders.getUniformLocation(programName, "u_resolution"),
-    width * pixelRatio,
-    height * pixelRatio
-  );
-  gl.uniform4f(
-    shaders.getUniformLocation(programName, "u_color"),
-    color.r,
-    color.g,
-    color.b,
-    color.a * opacity
-  );
+  shaders.setUniformMatrix3fv(programName, "u_transform", matrixToGLUniform(transform, pixelRatio));
+  shaders.setUniform2f(programName, "u_resolution", width * pixelRatio, height * pixelRatio);
+  shaders.setUniform4f(programName, "u_color", color.r, color.g, color.b, color.a * opacity);
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
@@ -117,18 +133,17 @@ export function drawLinearGradientFill(
 ): void {
   if (vertices.length === 0 || opacity <= 0) {return;}
 
-  const { gl, shaders, positionBuffer, width, height, pixelRatio } = ctx;
+  const { gl, shaders } = ctx;
   const programName = "linearGradient";
-  const program = shaders.get(programName);
-  gl.useProgram(program);
+  shaders.useProgram(programName);
 
-  bindGradientGeometry({ gl, shaders, programName, positionBuffer, vertices, transform, width, height, pixelRatio });
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_gradientStart"), fill.start.x, fill.start.y);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_gradientEnd"), fill.end.x, fill.end.y);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementSize"), elementSize.width, elementSize.height);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementOrigin"), elementSize.x ?? 0, elementSize.y ?? 0);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_opacity"), opacity * fill.opacity);
-  bindGradientStops({ gl, shaders, programName, stops: fill.stops });
+  bindGradientGeometry({ ctx, programName, vertices, transform });
+  shaders.setUniform2f(programName, "u_gradientStart", fill.start.x, fill.start.y);
+  shaders.setUniform2f(programName, "u_gradientEnd", fill.end.x, fill.end.y);
+  shaders.setUniform2f(programName, "u_elementSize", elementSize.width, elementSize.height);
+  shaders.setUniform2f(programName, "u_elementOrigin", elementSize.x ?? 0, elementSize.y ?? 0);
+  shaders.setUniform1f(programName, "u_opacity", opacity * fill.opacity);
+  bindGradientStops({ shaders, programName, stops: fill.stops });
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
@@ -176,18 +191,17 @@ export function drawRadialGradientFill(
 ): void {
   if (vertices.length === 0 || opacity <= 0) {return;}
 
-  const { gl, shaders, positionBuffer, width, height, pixelRatio } = ctx;
+  const { gl, shaders } = ctx;
   const programName = "radialGradient";
-  const program = shaders.get(programName);
-  gl.useProgram(program);
+  shaders.useProgram(programName);
 
-  bindGradientGeometry({ gl, shaders, programName, positionBuffer, vertices, transform, width, height, pixelRatio });
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_center"), fill.center.x, fill.center.y);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_radius"), fill.radius);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementSize"), elementSize.width, elementSize.height);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementOrigin"), elementSize.x ?? 0, elementSize.y ?? 0);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_opacity"), opacity * fill.opacity);
-  bindGradientStops({ gl, shaders, programName, stops: fill.stops });
+  bindGradientGeometry({ ctx, programName, vertices, transform });
+  shaders.setUniform2f(programName, "u_center", fill.center.x, fill.center.y);
+  shaders.setUniform1f(programName, "u_radius", fill.radius);
+  shaders.setUniform2f(programName, "u_elementSize", elementSize.width, elementSize.height);
+  shaders.setUniform2f(programName, "u_elementOrigin", elementSize.x ?? 0, elementSize.y ?? 0);
+  shaders.setUniform1f(programName, "u_opacity", opacity * fill.opacity);
+  bindGradientStops({ shaders, programName, stops: fill.stops });
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
@@ -198,18 +212,17 @@ export function drawAngularGradientFill(
 ): void {
   if (vertices.length === 0 || opacity <= 0) {return;}
 
-  const { gl, shaders, positionBuffer, width, height, pixelRatio } = ctx;
+  const { gl, shaders } = ctx;
   const programName = "angularGradient";
-  const program = shaders.get(programName);
-  gl.useProgram(program);
+  shaders.useProgram(programName);
 
-  bindGradientGeometry({ gl, shaders, programName, positionBuffer, vertices, transform, width, height, pixelRatio });
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_center"), fill.center.x, fill.center.y);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_rotation"), fill.rotation * (Math.PI / 180));
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementSize"), elementSize.width, elementSize.height);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementOrigin"), elementSize.x ?? 0, elementSize.y ?? 0);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_opacity"), opacity * fill.opacity);
-  bindGradientStops({ gl, shaders, programName, stops: fill.stops });
+  bindGradientGeometry({ ctx, programName, vertices, transform });
+  shaders.setUniform2f(programName, "u_center", fill.center.x, fill.center.y);
+  shaders.setUniform1f(programName, "u_rotation", fill.rotation * (Math.PI / 180));
+  shaders.setUniform2f(programName, "u_elementSize", elementSize.width, elementSize.height);
+  shaders.setUniform2f(programName, "u_elementOrigin", elementSize.x ?? 0, elementSize.y ?? 0);
+  shaders.setUniform1f(programName, "u_opacity", opacity * fill.opacity);
+  bindGradientStops({ shaders, programName, stops: fill.stops });
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
@@ -220,79 +233,58 @@ export function drawDiamondGradientFill(
 ): void {
   if (vertices.length === 0 || opacity <= 0) {return;}
 
-  const { gl, shaders, positionBuffer, width, height, pixelRatio } = ctx;
+  const { gl, shaders } = ctx;
   const programName = "diamondGradient";
-  const program = shaders.get(programName);
-  gl.useProgram(program);
+  shaders.useProgram(programName);
 
-  bindGradientGeometry({ gl, shaders, programName, positionBuffer, vertices, transform, width, height, pixelRatio });
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_center"), fill.center.x, fill.center.y);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementSize"), elementSize.width, elementSize.height);
-  gl.uniform2f(shaders.getUniformLocation(programName, "u_elementOrigin"), elementSize.x ?? 0, elementSize.y ?? 0);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_opacity"), opacity * fill.opacity);
-  bindGradientStops({ gl, shaders, programName, stops: fill.stops });
+  bindGradientGeometry({ ctx, programName, vertices, transform });
+  shaders.setUniform2f(programName, "u_center", fill.center.x, fill.center.y);
+  shaders.setUniform2f(programName, "u_elementSize", elementSize.width, elementSize.height);
+  shaders.setUniform2f(programName, "u_elementOrigin", elementSize.x ?? 0, elementSize.y ?? 0);
+  shaders.setUniform1f(programName, "u_opacity", opacity * fill.opacity);
+  bindGradientStops({ shaders, programName, stops: fill.stops });
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
 
 function bindGradientGeometry({
-  gl,
-  shaders,
+  ctx,
   programName,
-  positionBuffer,
   vertices,
   transform,
-  width,
-  height,
-  pixelRatio,
 }: {
-  readonly gl: WebGLRenderingContext;
-  readonly shaders: ShaderCache;
+  readonly ctx: GLContext;
   readonly programName: "linearGradient" | "radialGradient" | "angularGradient" | "diamondGradient";
-  readonly positionBuffer: WebGLBuffer;
   readonly vertices: Float32Array;
   readonly transform: AffineMatrix;
-  readonly width: number;
-  readonly height: number;
-  readonly pixelRatio: number;
 }): void {
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+  const { gl, shaders, width, height, pixelRatio } = ctx;
+  bindPositionBufferVertices(ctx, vertices);
 
   const posLoc = shaders.getAttribLocation(programName, "a_position");
   gl.enableVertexAttribArray(posLoc);
   gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
-  gl.uniformMatrix3fv(
-    shaders.getUniformLocation(programName, "u_transform"),
-    false,
-    matrixToGLUniform(transform, pixelRatio)
-  );
-  gl.uniform2f(
-    shaders.getUniformLocation(programName, "u_resolution"),
-    width * pixelRatio,
-    height * pixelRatio
-  );
+  shaders.setUniformMatrix3fv(programName, "u_transform", matrixToGLUniform(transform, pixelRatio));
+  shaders.setUniform2f(programName, "u_resolution", width * pixelRatio, height * pixelRatio);
 }
 
 function bindGradientStops({
-  gl,
   shaders,
   programName,
   stops,
 }: {
-  readonly gl: WebGLRenderingContext;
   readonly shaders: ShaderCache;
   readonly programName: "linearGradient" | "radialGradient" | "angularGradient" | "diamondGradient";
   readonly stops: Extract<Fill, { type: "linear-gradient" | "radial-gradient" | "angular-gradient" | "diamond-gradient" }>["stops"];
 }): void {
   const stopCount = Math.min(stops.length, 8);
-  gl.uniform1i(shaders.getUniformLocation(programName, "u_stopCount"), stopCount);
+  shaders.setUniform1i(programName, "u_stopCount", stopCount);
 
   for (let i = 0; i < stopCount; i++) {
     const s = stops[i];
-    gl.uniform4f(shaders.getUniformLocation(programName, `u_stops[${i}]`), s.position, s.color.r, s.color.g, s.color.b);
-    gl.uniform4f(shaders.getUniformLocation(programName, `u_stopAlphas[${i}]`), s.color.a, 0, 0, 0);
+    shaders.setUniform4f(programName, `u_stops[${i}]`, s.position, s.color.r, s.color.g, s.color.b);
+    shaders.setUniform4f(programName, `u_stopAlphas[${i}]`, s.color.a, 0, 0, 0);
   }
 }
 
@@ -340,33 +332,23 @@ export function drawImageFill(
 ): void {
   if (vertices.length === 0 || opacity <= 0) {return;}
 
-  const { gl, shaders, positionBuffer, width, height, pixelRatio } = ctx;
+  const { gl, shaders, width, height, pixelRatio } = ctx;
   const programName = "textured";
-  const program = shaders.get(programName);
-  gl.useProgram(program);
+  shaders.useProgram(programName);
 
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+  bindPositionBufferVertices(ctx, vertices);
 
   const posLoc = shaders.getAttribLocation(programName, "a_position");
   gl.enableVertexAttribArray(posLoc);
   gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
-  gl.uniformMatrix3fv(
-    shaders.getUniformLocation(programName, "u_transform"),
-    false,
-    matrixToGLUniform(transform, pixelRatio)
-  );
-  gl.uniform2f(
-    shaders.getUniformLocation(programName, "u_resolution"),
-    width * pixelRatio,
-    height * pixelRatio
-  );
+  shaders.setUniformMatrix3fv(programName, "u_transform", matrixToGLUniform(transform, pixelRatio));
+  shaders.setUniform2f(programName, "u_resolution", width * pixelRatio, height * pixelRatio);
 
   // Bind texture
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.uniform1i(shaders.getUniformLocation(programName, "u_texture"), 0);
+  shaders.setUniform1i(programName, "u_texture", 0);
 
   // Compute UV scale/offset based on scaleMode
   const { texScale, texOffset, repeat, clipTransparent } = computeImageUV({
@@ -379,28 +361,20 @@ export function drawImageFill(
     imageTransform: options?.imageTransform,
   });
 
-  gl.uniform2f(
-    shaders.getUniformLocation(programName, "u_texScale"),
-    texScale.x,
-    texScale.y
-  );
-  gl.uniform2f(
-    shaders.getUniformLocation(programName, "u_texOffset"),
-    texOffset.x,
-    texOffset.y
-  );
-  gl.uniform1i(shaders.getUniformLocation(programName, "u_repeat"), repeat ? 1 : 0);
-  gl.uniform1i(shaders.getUniformLocation(programName, "u_clipTransparent"), clipTransparent ? 1 : 0);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_opacity"), opacity);
+  shaders.setUniform2f(programName, "u_texScale", texScale.x, texScale.y);
+  shaders.setUniform2f(programName, "u_texOffset", texOffset.x, texOffset.y);
+  shaders.setUniform1i(programName, "u_repeat", repeat ? 1 : 0);
+  shaders.setUniform1i(programName, "u_clipTransparent", clipTransparent ? 1 : 0);
+  shaders.setUniform1f(programName, "u_opacity", opacity);
   const filterUniforms = resolveImagePaintFilterUniforms(options?.paintFilter);
-  gl.uniform1i(shaders.getUniformLocation(programName, "u_hasPaintFilter"), hasImagePaintFilter(options?.paintFilter) ? 1 : 0);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_exposure"), filterUniforms.exposure);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_contrast"), filterUniforms.contrast);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_brightness"), filterUniforms.brightness);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_temperature"), filterUniforms.temperature);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_tint"), filterUniforms.tint);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_saturation"), filterUniforms.saturation);
-  gl.uniform1f(shaders.getUniformLocation(programName, "u_vibrance"), filterUniforms.vibrance);
+  shaders.setUniform1i(programName, "u_hasPaintFilter", hasImagePaintFilter(options?.paintFilter) ? 1 : 0);
+  shaders.setUniform1f(programName, "u_exposure", filterUniforms.exposure);
+  shaders.setUniform1f(programName, "u_contrast", filterUniforms.contrast);
+  shaders.setUniform1f(programName, "u_brightness", filterUniforms.brightness);
+  shaders.setUniform1f(programName, "u_temperature", filterUniforms.temperature);
+  shaders.setUniform1f(programName, "u_tint", filterUniforms.tint);
+  shaders.setUniform1f(programName, "u_saturation", filterUniforms.saturation);
+  shaders.setUniform1f(programName, "u_vibrance", filterUniforms.vibrance);
 
   gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 }
