@@ -176,3 +176,5 @@ dist
 .pnp.*
 
 AGENTS.md
+tmp/
+*.tmp.*

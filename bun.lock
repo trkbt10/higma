@@ -183,6 +183,7 @@
       "dependencies": {
         "@higma-codecs/compression": "workspace:*",
         "@higma-codecs/kiwi": "workspace:*",
+        "@higma-codecs/png": "workspace:*",
         "@higma-document-models/fig": "workspace:*",
         "@higma-figma-containers/canvas": "workspace:*",
         "@higma-figma-containers/package": "workspace:*",
