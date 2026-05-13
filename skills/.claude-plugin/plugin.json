@@ -1,0 +1,6 @@
+{
+  "name": "higma-skills",
+  "version": "0.1.0",
+  "description": "Procedure-based skills for working in the higma monorepo — preflight orientation, authoring conventions, and project-wide policy enforcement.",
+  "skills": "./skills/"
+}
