@@ -44,6 +44,7 @@ export type LintRuleId =
   | "fig.schema.required-types"
   | "fig.message.decode"
   | "fig.message.required-roots"
+  | "fig.message.type"
   | "fig.canvas.internal-only"
   | "fig.shape.stroke-fields"
   | "fig.shape.fill-geometry"

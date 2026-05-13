@@ -9,6 +9,7 @@
 
 import { canvasHeaderRule } from "./canvas-header";
 import { imageRefsRule } from "./image-refs";
+import { messageTypeRule } from "./message-type";
 import { parentRefsRule } from "./parent-refs";
 import { requiredNodesRule } from "./required-nodes";
 import { schemaCoverageRule } from "./schema-coverage";
@@ -22,6 +23,7 @@ export const FIG_LINT_RULES: readonly LintRule[] = [
   zipPackageRule,
   canvasHeaderRule,
   schemaCoverageRule,
+  messageTypeRule,
   requiredNodesRule,
   shapeFieldsRule,
   visibleBlobsRule,

@@ -11,23 +11,12 @@
 import { saveFigFile } from "@higma-document-io/fig/roundtrip";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { FigDesignDocument } from "@higma-document-models/fig/domain";
+import { createNodeChangesMessageHeader } from "@higma-document-models/fig/domain";
 import { documentToTree } from "../context/document-to-tree";
 import { finalizeDerivedSymbolData } from "./finalize-derived-symbol-data";
-import { FIGMA_KIWI_SCHEMA, requireFigEnumTable } from "@higma-figma-schema/profiles/schema";
+import { FIGMA_KIWI_SCHEMA } from "@higma-figma-schema/profiles/schema";
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import type { FigPackageMetadata } from "@higma-figma-containers/package";
-
-// `Message.type` is a `MessageType` enum value. A `.fig` carrying document
-// content must use `NODE_CHANGES` — any other value tells Figma's importer
-// the payload is a session-sync message (JOIN_START / SIGNAL / etc.) and
-// it refuses to open the file with "Internal error during import". Resolve
-// the canonical (value, name) pair from the bundled schema at module load
-// so a schema bump that drops the name fails fast.
-const MESSAGE_TYPE = requireFigEnumTable("MessageType", ["NODE_CHANGES"]);
-const NODE_CHANGES_MESSAGE_TYPE = {
-  value: MESSAGE_TYPE.NODE_CHANGES,
-  name: "NODE_CHANGES" as const,
-};
 
 // =============================================================================
 // Types
@@ -202,20 +191,11 @@ async function exportFresh(
     images: doc.images,
     metadata,
     thumbnail,
-    // Schema `MessageType` enum: value 0 is JOIN_START (a session-sync
-    // message), value 1 is NODE_CHANGES (the actual document-content
-    // message a saved `.fig` must carry). The previous default named
-    // value 0 as "FULL_DOCUMENT" (no such name in the schema) and Figma
-    // rejected fresh-built files because the importer treats them as
-    // session join messages, not document opens. `boolean.fig` and other
-    // fixtures that pass through `exportRoundtrip` inherit `NODE_CHANGES`
-    // from the loaded source file and open fine; `exportFresh` is the
-    // only path that synthesises this header from scratch.
-    messageHeader: {
-      type: { value: 1, name: "NODE_CHANGES" },
-      sessionID: 1,
-      ackID: 0,
-    },
+    // The `messageHeader` SoT lives in `@higma-document-models/fig/domain`.
+    // `createNodeChangesMessageHeader` resolves the schema-canonical
+    // (value, name) pair for `NODE_CHANGES` at module load and is the only
+    // sanctioned path for synthesising a fresh-export header.
+    messageHeader: createNodeChangesMessageHeader(),
   };
 
   const data = await saveFigFile(minimalLoaded, {
