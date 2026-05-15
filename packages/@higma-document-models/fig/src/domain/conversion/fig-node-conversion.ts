@@ -907,7 +907,20 @@ function resolveOverridePaths(
       if (isInstanceSelfOverride(e)) {
         return true;
       }
-      throw new Error(`Override path references unreachable guid ${ctx.guidString(g)}`);
+      // Authoring residue: real-world Figma files (e.g. multi-author
+      // community templates) accumulate INSTANCE override entries whose
+      // first-guid points at a node that no longer exists in the file
+      // (deleted between authoring sessions, library detach without
+      // override cleanup, etc.). Figma's own renderer simply ignores
+      // those entries, so dropping them here matches end-user
+      // expectations. Surfacing as `console.warn` keeps the dangling
+      // reference visible for debugging without aborting the whole
+      // conversion the way `throw` did.
+      console.warn(
+        `[higma] dropping override entry with unreachable guid ${ctx.guidString(g)} ` +
+        `(effective symbol ${effGuidStr}); entry will not be applied.`,
+      );
+      return false;
     });
     // Re-route self-override entries' paths to the SYMBOL root before
     // running the translation primitive so they don't get pulled into
