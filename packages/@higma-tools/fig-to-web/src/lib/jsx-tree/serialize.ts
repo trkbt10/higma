@@ -146,8 +146,30 @@ function serializeProp(prop: JsxProp): string {
     case "spread":
       return `{...${prop.code}}`;
     case "style":
-      return `style={{${serializeStyleEntries(prop.entries)}}}`;
+      return serializeStyleProp(prop.entries);
   }
+}
+
+/**
+ * Serialise a `style={{ … }}` prop. CSS custom properties (`--name`)
+ * are valid CSS that React forwards to the DOM unchanged, but
+ * `React.CSSProperties` from `@types/react` does not include `--*`
+ * keys in its known-property union — emitting an unannotated style
+ * literal that carries one makes `tsc --noEmit` reject the file with
+ * `TS2353: Object literal may only specify known properties`.
+ *
+ * Cast to `React.CSSProperties` only when at least one custom
+ * property key is present so styles that contain only canonical
+ * properties keep their cleaner shape (and existing snapshot tests
+ * stay stable).
+ */
+function serializeStyleProp(entries: readonly JsxStyleEntry[]): string {
+  const objectLiteral = `{${serializeStyleEntries(entries)}}`;
+  const needsCast = entries.some((entry) => entry.key.startsWith("--"));
+  if (needsCast) {
+    return `style={${objectLiteral} as React.CSSProperties}`;
+  }
+  return `style={${objectLiteral}}`;
 }
 
 function serializeStyleEntries(entries: readonly JsxStyleEntry[]): string {

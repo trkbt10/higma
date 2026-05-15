@@ -72,7 +72,7 @@ describe("jsx-tree serialize", () => {
     );
   });
 
-  it("renders style props with quoted string values and quoted non-identifier keys", () => {
+  it("renders style props with quoted string values and quoted non-identifier keys, casting to React.CSSProperties when a CSS custom property is present", () => {
     const node = el("div", {
       props: [
         styleProp({
@@ -84,7 +84,23 @@ describe("jsx-tree serialize", () => {
     });
     const out = serialize(node);
     expect(out).toBe(
-      `<div style={{color: "var(--c1)", "--token-x": "rgb(0, 0, 0)", fontFamily: "\\"Inter\\""}} />`,
+      `<div style={{color: "var(--c1)", "--token-x": "rgb(0, 0, 0)", fontFamily: "\\"Inter\\""} as React.CSSProperties} />`,
+    );
+  });
+
+  it("omits the React.CSSProperties cast when the style object has no CSS custom property keys", () => {
+    const node = el("div", {
+      props: [
+        styleProp({
+          color: `var(--c1)`,
+          fontFamily: `"Inter"`,
+          padding: `8px`,
+        }),
+      ],
+    });
+    const out = serialize(node);
+    expect(out).toBe(
+      `<div style={{color: "var(--c1)", fontFamily: "\\"Inter\\"", padding: "8px"}} />`,
     );
   });
 
