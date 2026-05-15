@@ -88,6 +88,28 @@ function readCharacters(node: FigNode): string {
 }
 
 /**
+ * Align `rawCIds` with `length` to satisfy the per-character invariant
+ * the rest of `resolveTextRuns` relies on:
+ *
+ *   - Figma's Kiwi encoding omits trailing zeros in characterStyleIDs
+ *     (the base-style suffix), so a stored length shorter than
+ *     characters is expected for trailing-base text — pad with 0 to
+ *     honour the renderer's post-normalise contract.
+ *   - A stored length longer than characters is authoring residue
+ *     (e.g. style ids beyond an erased tail) — truncate so downstream
+ *     run offsets stay in-bounds.
+ *
+ * Both behaviours mirror what the SVG renderer produces from the same
+ * input, keeping the two emit paths in lockstep.
+ */
+export function normaliseCharacterStyleIDs(rawCIds: readonly number[], length: number): readonly number[] {
+  if (rawCIds.length === length) {
+    return rawCIds;
+  }
+  return Array.from({ length }, (_, i) => rawCIds[i] ?? 0);
+}
+
+/**
  * Resolve a TEXT node into one or more runs.
  *
  * Always returns at least one run. The fast path collapses to a
@@ -106,19 +128,15 @@ export function resolveTextRuns(node: FigNode, index: TokenIndex): readonly Text
   }
 
   const td = readRawTextData(node);
-  const cIds = td.characterStyleIDs;
+  const rawCIds = td.characterStyleIDs;
   const sot = td.styleOverrideTable;
 
   // Fast path: no per-character metadata.
-  if (!cIds || cIds.length === 0 || cIds.every((id) => id === 0)) {
+  if (!rawCIds || rawCIds.length === 0 || rawCIds.every((id) => id === 0)) {
     return [{ start: 0, end: length }];
   }
 
-  // Length mismatch is a schema violation; surface it instead of
-  // truncating silently. Mirrors the renderer's resolveTextRuns.
-  if (cIds.length !== length) {
-    throw new Error(`text-runs: characterStyleIDs length ${cIds.length} ≠ characters length ${length}`);
-  }
+  const cIds = normaliseCharacterStyleIDs(rawCIds, length);
 
   const overrideById = new Map<number, RawOverrideEntry>();
   for (const entry of sot ?? []) {
