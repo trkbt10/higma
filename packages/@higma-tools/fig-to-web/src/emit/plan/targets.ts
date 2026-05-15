@@ -1,14 +1,31 @@
 /**
  * @file Locate the target frames the user wants to emit.
  *
- * The Figma "Layers" panel for a given page lists exactly the direct
- * children of that page's CANVAS — there is no `"Layers"` container
- * node. Targeting "the frames directly under Design's Layers" therefore
- * reduces to: enumerate `safeChildren(designCanvas)` and filter for
- * nodes whose `type` is FRAME or SYMBOL (a SYMBOL is the on-disk
- * encoding of the Figma UI concept "Component"; a "Component Set" /
- * "Variant Set" is a FRAME carrying variant metadata — already covered
- * by the FRAME case). See `docs/refactor/component-type-cleanup.md`.
+ * The Figma "Layers" panel for a given page lists the direct children
+ * of that page's CANVAS — there is no `"Layers"` container node.
+ * Targeting "the frames under Design's Layers" therefore reduces to:
+ * walk `safeChildren(designCanvas)` and collect every node whose
+ * `type` is FRAME or SYMBOL (a SYMBOL is the on-disk encoding of the
+ * Figma UI concept "Component"; a "Component Set" / "Variant Set" is
+ * a FRAME carrying variant metadata — already covered by the FRAME
+ * case). See `docs/refactor/component-type-cleanup.md`.
+ *
+ * SECTION nodes are *visual* groupings the designer uses to organise
+ * the Layers panel; they are not themselves emit targets and do not
+ * appear under "All Frames" in Figma's own export dialog, but their
+ * FRAME / SYMBOL children very much do. Descending through SECTIONs
+ * recovers those children — without this, real-world community .figs
+ * (e.g. the App Store iOS/iPadOS/visionOS template's "App Store
+ * symbols" SECTION holding Search toolbar, Event Details Card, Apps,
+ * Event Card, App page metadata, … 16 SYMBOLs in total) lose every
+ * symbol the designer chose to group, and the silent omission shows
+ * up downstream as `Override path references unreachable guid`
+ * fail-firsts on the INSTANCEs that consume those symbols.
+ *
+ * The walker stops at the first FRAME / SYMBOL it meets — FRAMEs /
+ * SYMBOLs are themselves emit boundaries (the emitter walks their
+ * descendants as JSX children), not containers we re-enter for more
+ * top-level targets.
  *
  * The user can either request all top-level frames or a single frame
  * by name. We deliberately do NOT match by GUID — names are what the
@@ -23,13 +40,43 @@ const FRAME_TYPES: ReadonlySet<string> = new Set([
   "SYMBOL",
 ]);
 
+const CONTAINER_TYPES: ReadonlySet<string> = new Set([
+  "SECTION",
+]);
+
 function isFrameLike(node: FigNode): boolean {
   return FRAME_TYPES.has(node.type.name);
 }
 
-/** All frame-like direct children of the chosen canvas, in Figma's stored order. */
+function isContainer(node: FigNode): boolean {
+  return CONTAINER_TYPES.has(node.type.name);
+}
+
+/**
+ * Walk `nodes` collecting frame-like emit targets. Recurses through
+ * SECTION containers (which are not themselves emit targets) so that
+ * frames / symbols grouped under a SECTION in the Figma Layers panel
+ * still surface as top-level targets.
+ */
+function collectFrameLike(nodes: readonly FigNode[]): readonly FigNode[] {
+  return nodes.flatMap((node) => {
+    if (isFrameLike(node)) {
+      return [node];
+    }
+    if (isContainer(node)) {
+      return collectFrameLike(safeChildren(node));
+    }
+    return [];
+  });
+}
+
+/**
+ * Every frame-like emit target under the chosen canvas, in Figma's
+ * stored order. SECTION containers are flattened — their children
+ * appear inline where the SECTION sits.
+ */
 export function listFrameTargets(canvas: FigNode): readonly FigNode[] {
-  return safeChildren(canvas).filter(isFrameLike);
+  return collectFrameLike(safeChildren(canvas));
 }
 
 /**
