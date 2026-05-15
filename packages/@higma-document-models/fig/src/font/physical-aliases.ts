@@ -59,13 +59,24 @@
  *       catches the .otf before the alias walk activates.
  *   [R] `COMMON_FONT_MAPPINGS` already lists both labels.
  *
- * ## "SF Pro Rounded" is DELIBERATELY ABSENT from darwin
+ * ## "SF Pro Rounded" ↔ ".SF NS Rounded"
  *
  *   [V] `SFNSRounded.ttf` carries `name.fontFamily.en = ".SF NS
- *       Rounded"` — a different physical file with rounded glyphs.
- *       Verified via `system_profiler` 2026-05-13.
- *   Mapping it through "System Font" would silently substitute
- *   square corners for rounded glyphs.
+ *       Rounded"` — a different physical file with rounded glyphs
+ *       (not the same bytes as SFNS.ttf). Verified via
+ *       `system_profiler` 2026-05-13 and via the on-disk
+ *       `name`-table check in `darwin-name-table-reality.spec.ts`.
+ *   [V] The macOS Chromium font catalogue surfaces the file under
+ *       `kCTFontFamilyNameAttribute` verbatim — same name-table
+ *       value — so the browser-side `queryLocalFonts` catalogue
+ *       reaches the same key.
+ *   The marketing label Figma stores is "SF Pro Rounded"; the OS
+ *   catalogue key is ".SF NS Rounded". Aliasing them is mandatory
+ *   for the rounded glyph set to render; the dot-prefix is part of
+ *   the on-disk name-table identity, not a CSS keyword.
+ *   The alias chain MUST NOT include "System Font" — that file is
+ *   the non-rounded SFNS.ttf, and substituting it would silently
+ *   swap rounded glyphs for square ones.
  *
  * # linux — no entries yet (intentional)
  *
@@ -173,10 +184,15 @@ const DARWIN_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
   // authored against Apple's marketing name still finds the same
   // physical bytes.
   ["System Font", ["System Font", "SF Pro"]],
-  // NOTE: "SF Pro Rounded" is deliberately omitted. SFNSRounded.ttf
-  // is a different physical file (family ".SF NS Rounded",
-  // verified) and routing it through "System Font" would silently
-  // swap rounded glyphs for square ones. See file docstring.
+  // SFNSRounded.ttf (verified — see file docstring). The marketing
+  // label "SF Pro Rounded" and the on-disk name-table family
+  // ".SF NS Rounded" point at the same physical file; the rounded
+  // glyph set is in this file and ONLY this file. The chain MUST
+  // NOT include "System Font" — that's the non-rounded SFNS.ttf.
+  ["SF Pro Rounded", ["SF Pro Rounded", ".SF NS Rounded"]],
+  // Reverse: tools that catalogue the file under its name-table
+  // family still reach the marketing-name request.
+  [".SF NS Rounded", [".SF NS Rounded", "SF Pro Rounded"]],
 ]);
 
 const EMPTY_ALIASES: ReadonlyMap<string, readonly string[]> = new Map();

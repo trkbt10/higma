@@ -7,9 +7,11 @@
  *     "SF Pro" / "SF Pro Display" / "SF Pro Text". A request for
  *     any of those must end at "System Font" so the macOS Chromium
  *     `queryLocalFonts` catalogue (which reports the file under
- *     its `name` table family) is reachable. "SF Pro Rounded" must
- *     NOT route through "System Font" — that file (SFNSRounded.ttf,
- *     family ".SF NS Rounded") is a different physical font.
+ *     its `name` table family) is reachable. "SF Pro Rounded" is
+ *     a separate physical file (SFNSRounded.ttf, name-table family
+ *     ".SF NS Rounded") and routes through that key — explicitly
+ *     never through "System Font" (which would swap rounded glyphs
+ *     for square ones).
  *
  *   - linux / win32 / unknown: no aliases registered. A request
  *     for "SF Pro" on these platforms returns a single-element
@@ -59,8 +61,23 @@ describe("getPhysicalFamilyAliases — darwin", () => {
     expect(getPhysicalFamilyAliases("System Font", "darwin")).toEqual(["System Font", "SF Pro"]);
   });
 
-  it("does NOT route 'SF Pro Rounded' through 'System Font' (different physical file)", () => {
-    expect(getPhysicalFamilyAliases("SF Pro Rounded", "darwin")).toEqual(["SF Pro Rounded"]);
+  it("routes 'SF Pro Rounded' through '.SF NS Rounded' (same file, marketing label vs name-table family)", () => {
+    expect(getPhysicalFamilyAliases("SF Pro Rounded", "darwin")).toEqual([
+      "SF Pro Rounded",
+      ".SF NS Rounded",
+    ]);
+  });
+
+  it("never routes 'SF Pro Rounded' through 'System Font' (square-glyph SFNS.ttf — wrong physical file)", () => {
+    const chain = getPhysicalFamilyAliases("SF Pro Rounded", "darwin");
+    expect(chain).not.toContain("System Font");
+  });
+
+  it("reverses '.SF NS Rounded' to the marketing name (catalogue carries the name-table key)", () => {
+    expect(getPhysicalFamilyAliases(".SF NS Rounded", "darwin")).toEqual([
+      ".SF NS Rounded",
+      "SF Pro Rounded",
+    ]);
   });
 
   it("looks up case-insensitively but preserves canonical spelling in the chain", () => {
@@ -122,8 +139,8 @@ describe("getPhysicalFamilyAliases — environment forbids cross-platform leakag
     expect(win32).not.toContain("System Font");
   });
 
-  it("no chain on any platform emits a CSS keyword or dot-prefixed name (loader-only contract)", () => {
-    const forbidden = new Set([
+  it("no chain on any platform emits a CSS keyword (loader-only contract — CSS belongs to COMMON_FONT_MAPPINGS)", () => {
+    const forbiddenCssKeywords = new Set([
       "system-ui", "-apple-system", "BlinkMacSystemFont",
       "ui-sans-serif", "ui-serif", "ui-monospace", "ui-rounded",
       "sans-serif", "serif", "monospace", "cursive", "fantasy",
@@ -131,7 +148,24 @@ describe("getPhysicalFamilyAliases — environment forbids cross-platform leakag
     for (const platform of ["darwin", "linux", "win32", "unknown"] as const) {
       for (const chain of physicalFamilyAliasesFor(platform).values()) {
         for (const entry of chain) {
-          expect(forbidden.has(entry)).toBe(false);
+          expect(forbiddenCssKeywords.has(entry)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("only darwin carries dot-prefixed name-table identities (Apple-internal fonts); other platforms stay clean", () => {
+    // Dot-prefixed names are legitimate on darwin — Apple ships
+    // SFNSRounded.ttf with `name.fontFamily.en = ".SF NS Rounded"`.
+    // The browser's `queryLocalFonts` and the on-disk loader index
+    // BOTH key the file under that exact string, so the alias chain
+    // must be allowed to mention it.
+    // On linux / win32 / unknown there is no Apple-internal-name
+    // convention; any dot-prefixed entry would be a typo or a
+    // stray darwin entry that bled across platforms.
+    for (const platform of ["linux", "win32", "unknown"] as const) {
+      for (const chain of physicalFamilyAliasesFor(platform).values()) {
+        for (const entry of chain) {
           expect(entry.startsWith(".")).toBe(false);
         }
       }

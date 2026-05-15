@@ -81,32 +81,44 @@ describeOnDarwin("physical-aliases SoT — macOS name-table reality", () => {
     expect(chain[chain.length - 1]).toBe(family);
   });
 
-  it("SFNSRounded.ttf records '.SF NS Rounded' and is NOT mapped through 'System Font' on darwin", () => {
+  it("SFNSRounded.ttf records '.SF NS Rounded' and is mapped to the marketing label 'SF Pro Rounded'", () => {
     const family = readFamilyName(SFNS_ROUNDED_PATH);
     if (family === undefined) {
       return;
     }
 
-    // Rounded is its own physical file — the SoT must NOT silently
-    // substitute SFNS.ttf for it. Verify both that the on-disk
-    // name confirms the file's separate identity AND that the SoT
-    // refuses to alias "SF Pro Rounded" through "System Font".
+    // Rounded is its own physical file. The SoT MUST NOT route it
+    // through "System Font" (that would silently substitute square
+    // glyphs) but MUST connect the marketing label Figma stores
+    // ("SF Pro Rounded") to the name-table family the on-disk
+    // catalogue carries (".SF NS Rounded") — otherwise the
+    // Node-side loader, which keys on the name table, can never
+    // resolve a "SF Pro Rounded" request.
     expect(family).toBe(".SF NS Rounded");
 
     const roundedChain = getPhysicalFamilyAliases("SF Pro Rounded", "darwin");
     expect(roundedChain).not.toContain("System Font");
+    expect(roundedChain).toContain(".SF NS Rounded");
   });
 
-  it("the darwin alias table does not register any dot-prefixed name as a SF Pro alias", () => {
-    // Dot-prefixed families on macOS mark fonts as private/system —
-    // Chromium's `queryLocalFonts` filters them out of the
-    // enumeration. Registering one as a SF Pro alias would put the
-    // chain into a state where the loader never reaches the alias
-    // on the browser. The SoT only carries aliases that are
-    // catalogue-visible on the browser side.
+  it("the darwin alias table only registers a dot-prefixed name when it matches a verified on-disk name-table family", () => {
+    // Dot-prefixed family names mark fonts as private on macOS —
+    // Chromium's `queryLocalFonts` filters them out of the public
+    // browser enumeration. Because of that, dot-prefixed entries
+    // in the darwin alias chain MUST correspond to a real file
+    // whose `name.fontFamily.en` is exactly that string; otherwise
+    // the chain points at a key no catalogue (Node or browser)
+    // carries. SFNSRounded.ttf is the verified case — every other
+    // dot-prefixed entry would be a typo.
+    const knownDotPrefixedNameTableFamilies = new Set<string>([
+      ".SF NS Rounded",
+    ]);
     for (const chain of physicalFamilyAliasesFor("darwin").values()) {
       for (const entry of chain) {
-        expect(entry.startsWith(".")).toBe(false);
+        if (!entry.startsWith(".")) {
+          continue;
+        }
+        expect(knownDotPrefixedNameTableFamilies.has(entry)).toBe(true);
       }
     }
   });
