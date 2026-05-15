@@ -70,6 +70,19 @@ export async function emitFigmaSvgForFrame(
   // instead of re-listing `symbolMap` / `styleRegistry` / `blobs` /
   // `images` by hand. Re-deriving any of them inline would diverge
   // from the post-style-resolution maps other consumers see.
+  //
+  // The authoritative SVG render is a *comparison-only* artefact for
+  // the dual-pane preview shell. When the source .fig authors a
+  // platform-licensed family that the host environment cannot supply
+  // (e.g. "SF Pro Rounded" on a non-darwin runner with no installed
+  // Apple fonts), the renderer's font preload throws. That failure
+  // should not block TSX emission for the same frame — the React
+  // output is a separate artefact that only embeds the font *name*
+  // and lets the consumer page load it however it wants. Catch the
+  // render failure here, log it, and return `undefined` so the
+  // orchestrator (which already treats a missing figma pair as
+  // "no comparison surface for this frame") simply skips the SVG
+  // side for that frame.
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
@@ -84,7 +97,17 @@ export async function emitFigmaSvgForFrame(
     // contract (`requireManagedImageColorProfile` throws if the caller
     // has not made the choice).
     exportSettings: { colorProfile: "SRGB" },
+  }).catch((err: unknown): undefined => {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[higma] figma SVG render for frame "${target.node.name ?? target.componentName}" failed: ${reason}. ` +
+      `TSX emission continues; the dual-pane preview will have no Figma source pane for this frame.`,
+    );
+    return undefined;
   });
+  if (!result) {
+    return undefined;
+  }
   const svgString = String(result.svg);
   const slug = svgSlugFor(target);
   const svgPath = `figma/${slug}.svg`;
