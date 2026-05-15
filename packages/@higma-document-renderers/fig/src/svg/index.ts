@@ -39,3 +39,15 @@ export {
   renderSceneGraphToSvg,
   formatRenderTreeToSvg,
 } from "./scene-renderer";
+
+export {
+  type EffectExpansion,
+  computeNodeEffectExpansion,
+  computeRootEffectExpansion,
+} from "./effect-bounds";
+
+export {
+  type FigExportBox,
+  type ComputeFigExportBoundsOptions,
+  computeFigExportBounds,
+} from "./export-bounds";

@@ -44,7 +44,7 @@ function makeTextNode(overrides: Partial<TextNode> = {}): TextNode {
     height: 20,
     textAutoResize: "WIDTH_AND_HEIGHT",
     runs: [{ start: 0, end: 0, fillColor: "#000000", fillOpacity: 1 }],
-    fill: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+    fills: [{ color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
     ...overrides,
   };
 }
@@ -455,7 +455,7 @@ describe("Text tessellation pipeline", () => {
     it("preserves fill color and opacity", () => {
       const node = makeTextNode({
         glyphContours: [{ ...outerRect({ x: 0, y: 0, w: 10, h: 10 }), firstCharacter: 0 }],
-        fill: { color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 0.5 },
+        fills: [{ color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 0.5 }],
       });
       const result = tessellateTextNode(node);
 

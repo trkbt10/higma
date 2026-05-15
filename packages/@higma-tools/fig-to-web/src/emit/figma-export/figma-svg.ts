@@ -18,7 +18,7 @@
  *     unscaled and avoids browser-specific differences in how SVG
  *     documents handle `<head>`-less rendering.
  */
-import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
+import { computeFigExportBounds, renderFigToSvg } from "@higma-document-renderers/fig/svg";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { figRawResources } from "@higma-document-io/fig/context";
@@ -83,9 +83,18 @@ export async function emitFigmaSvgForFrame(
   // orchestrator (which already treats a missing figma pair as
   // "no comparison surface for this frame") simply skips the SVG
   // side for that frame.
+  // Match Figma's SVG exporter viewBox: union the root's intrinsic
+  // size with its effect halo (DROP_SHADOW / LAYER_BLUR), with
+  // `frameMaskDisabled=true` child overflow, then ceil the final
+  // width/height to integers. Passing raw `node.size` skips the halo,
+  // which makes shadows clip at the frame edge and integer-rounding
+  // mismatches (a 26.26×24.03 SF icon would emit a fractional viewBox
+  // where Figma emits 27×25). See `computeFigExportBounds` SoT.
+  const exportBox = computeFigExportBounds(node);
   const result = await renderFigToSvg([node], {
-    width: node.size.x,
-    height: node.size.y,
+    width: exportBox.width,
+    height: exportBox.height,
+    viewport: { x: exportBox.x, y: exportBox.y, width: exportBox.width, height: exportBox.height },
     ...figRawResources(source),
     normalizeRootTransform: true,
     fontLoader,

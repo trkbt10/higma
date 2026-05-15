@@ -491,7 +491,30 @@ export type TextNode = SceneNodeBase & {
    * the line-mode renderer that does not yet split per run uses this
    * as its single fill.
    */
-  readonly fill: { readonly color: Color; readonly opacity: number };
+  /**
+   * Stacked fill paints, in source paint-order. Each entry is one full
+   * paint pass over every glyph; painter's-algorithm composition over
+   * the list produces the final colour, matching Figma's own
+   * multi-fill semantic (e.g. a TEXT with `[{black, opacity=0.15},
+   * {black, opacity=1}]` paints a faint pass first and a fully opaque
+   * pass on top, landing as solid black after rasterisation).
+   *
+   * The single-fill case is just a one-element array. An empty array
+   * means the node has no visible SOLID fill — decorations and the
+   * line-mode renderer have nothing to paint with and should skip.
+   *
+   * SoT-rationale: Figma's raw `FigNode.fillPaints` is a `Paint[]`
+   * (Kiwi schema, also exposed by Figma's plugin / REST APIs and
+   * documented as a stack — see help.figma.com "Apply fill colors to a
+   * shape"). The scene-graph SoT mirrors that shape; a single
+   * `fill: Fill` (or a `fill + extraFills` split) collapses the array
+   * and historically lost stacked paints below the first.
+   *
+   * Renderers that want the "first / decoration base" fill read
+   * `fills[0]` (when present); they MUST NOT assume there is exactly
+   * one.
+   */
+  readonly fills: readonly { readonly color: Color; readonly opacity: number }[];
   /** Text line layout for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;
 };

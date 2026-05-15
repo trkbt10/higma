@@ -18,7 +18,7 @@ import type { FigSvgRenderContext } from "../../../types";
 import { path, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";
 import { extractTextProps } from "../../../text/layout/extract-props";
-import { getFillColorAndOpacity } from "../../../text/layout/fill";
+import { getAllVisibleSolidFills } from "../../../text/layout/fill";
 
 /**
  * Render context with blobs for path decoding
@@ -174,7 +174,6 @@ export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRen
   }
 
   const transformStr = buildTransformAttr(props.transform);
-  const { color: fillColor, opacity: fillOpacity } = getFillColorAndOpacity(props.fillPaints);
 
   // Render all glyphs as a single combined path
   // The baseline is computed as round(position.y) for pixel-perfect alignment
@@ -197,27 +196,43 @@ export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRen
     return EMPTY_SVG;
   }
 
-  // Combine all glyph paths and decoration paths into a single path element
+  // Combine all glyph paths and decoration paths.
   const combinedPath = glyphPaths.join("") + decorationPath;
 
-  const pathElement = path({
-    d: combinedPath,
-    fill: fillColor,
-    "fill-opacity": fillOpacity < 1 ? fillOpacity : undefined,
-  });
+  // Emit one `<path>` element per visible solid fill, in paint-order, so
+  // SVG's painter's-algorithm stacking reproduces Figma's multi-fill
+  // composite. A node with `[{black, opacity=0.15}, {black, opacity=1}]`
+  // therefore emits two paths — first the faint pass, then the opaque
+  // pass on top — yielding solid black after rasterisation. A node with
+  // a single fill collapses to one path; a node with no visible solid
+  // fill falls back to a single black/opaque path so the glyph still
+  // shows (matches `getFillColorAndOpacity`'s historical default).
+  const fills = getAllVisibleSolidFills(props.fillPaints);
+  const pathElements: SvgString[] = (() => {
+    if (fills.length === 0) {
+      return [path({ d: combinedPath, fill: "#000000" })];
+    }
+    return fills.map((f) => path({
+      d: combinedPath,
+      fill: f.color,
+      "fill-opacity": f.opacity < 1 ? f.opacity : undefined,
+    }));
+  })();
 
-  // Wrap in group if transform or opacity needed
-  if (transformStr || props.opacity < 1) {
+  // Wrap in group if transform, opacity, OR multiple paint layers need
+  // a shared container.
+  const needsWrap = transformStr !== "" || props.opacity < 1 || pathElements.length > 1;
+  if (needsWrap) {
     return g(
       {
         transform: transformStr || undefined,
         opacity: props.opacity < 1 ? props.opacity : undefined,
       },
-      pathElement,
+      ...pathElements,
     );
   }
 
-  return pathElement;
+  return pathElements[0];
 }
 
 /**

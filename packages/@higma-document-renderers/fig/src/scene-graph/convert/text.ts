@@ -8,7 +8,7 @@ import type { FigDesignNode, FigBlob, FigStyleRegistry } from "@higma-document-m
 import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
 import type { TextRun } from "@higma-document-models/fig/scene-graph";
 import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
-import { textAlignHorizontalToAnchor } from "../../text/layout";
+import { textAlignHorizontalToAnchor, getAllVisibleSolidFills } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";
 import type { PathContour, GlyphContour, Color, TextLineLayout } from "@higma-document-models/fig/scene-graph";
 
@@ -79,8 +79,13 @@ export type TextConversionResult = {
    * run when no character-level style overrides are present.
    */
   readonly runs: readonly TextRun[];
-  /** Base text fill (used for decorations and as the fallback for line mode). */
-  readonly fill: { readonly color: Color; readonly opacity: number };
+  /**
+   * Stacked fill paints in source order — mirrors the raw FigNode's
+   * `fillPaints` array (the SoT). See `TextNode.fills` for the full
+   * stacking rationale. An empty array means the node has no visible
+   * SOLID fill.
+   */
+  readonly fills: readonly { readonly color: Color; readonly opacity: number }[];
   /** Text line layout data for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;
 };
@@ -139,8 +144,10 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
   const fontVariationSettings = buildFontVariationSettings(node.textData?.fontVariations);
 
   if (rendering.kind === "empty") {
-    // Scene-graph downstream expects a fill + textLineLayout even for empty
+    // Scene-graph downstream expects a textLineLayout even for empty
     // text. Build a minimal, empty line layout so the renderer emits nothing.
+    // `fills: []` means "no visible SOLID fill" — line/glyph renderers
+    // and decoration painters all skip on empty.
     const empty: TextLineLayout = {
       lines: [],
       fontFamily: "sans-serif",
@@ -152,16 +159,25 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
       textAnchor: "start",
     };
     return {
-      fill: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 0 },
+      fills: [],
       runs: [],
       textLineLayout: empty,
     };
   }
 
   const props = rendering.props;
-  const color = parseHexColor(rendering.fillColor);
-
   const textLineLayout: TextLineLayout = buildTextLineLayout(rendering, props, fontVariationSettings);
+
+  // Stacked fillPaints: each visible SOLID paint contributes one full
+  // paint pass over the glyphs in source order. The SoT shape is the
+  // raw `FigNode.fillPaints` array; we surface every visible SOLID
+  // entry here so downstream renderers can mirror Figma's painter's-
+  // algorithm composite by emitting one paint pass per entry.
+  const fills: readonly { readonly color: Color; readonly opacity: number }[] =
+    getAllVisibleSolidFills(props.fillPaints).map((f) => ({
+      color: parseHexColor(f.color),
+      opacity: f.opacity,
+    }));
 
   if (rendering.kind === "glyphs") {
     const glyphContours = normalizeGlyphContours(rendering.glyphContours);
@@ -170,14 +186,14 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
       glyphContours,
       decorationContours: decorationContours.length > 0 ? decorationContours : undefined,
       runs: rendering.runs,
-      fill: { color, opacity: rendering.fillOpacity },
+      fills,
       textLineLayout,
     };
   }
 
   return {
     runs: rendering.runs,
-    fill: { color, opacity: rendering.fillOpacity },
+    fills,
     textLineLayout,
   };
 }

@@ -466,6 +466,33 @@ export type FigKiwiSymbolOverridePayload = {
   // Authoring-only metadata fields the parser preserves verbatim.
   readonly stackPositioning?: KiwiEnumValue;
   readonly stackPrimarySizing?: KiwiEnumValue;
+  // Auto-layout padding overrides. Real Figma exports place these on
+  // INSTANCE override entries whose single-guid path addresses the
+  // INSTANCE itself (via an unreachable ghost-session guid). Without
+  // declaring them on this payload type the parser still passes them
+  // through (the Kiwi schema accepts them), but the self-override
+  // detector cannot classify them and they get dropped with
+  // "[higma] dropping override entry with unreachable guid …".
+  // Surfaced by the App Store Community template "Search" INSTANCEs
+  // (effective SYMBOL `2:2878 State=Placeholder`) which carry
+  // `{name, size, stackPaddingRight}` self-overrides.
+  readonly stackPadding?: number;
+  readonly stackVerticalPadding?: number;
+  readonly stackHorizontalPadding?: number;
+  readonly stackPaddingRight?: number;
+  readonly stackPaddingBottom?: number;
+  readonly stackSpacing?: number;
+  readonly stackPrimaryAlignItems?: KiwiEnumValue;
+  readonly stackCounterAlignItems?: KiwiEnumValue;
+  readonly stackPrimaryAlignContent?: KiwiEnumValue;
+  readonly stackCounterAlignContent?: KiwiEnumValue;
+  readonly stackCounterSpacing?: number;
+  readonly stackCounterSizing?: KiwiEnumValue;
+  readonly stackWrap?: boolean;
+  readonly stackReverseZIndex?: boolean;
+  readonly stackChildAlignSelf?: KiwiEnumValue;
+  readonly stackChildPrimaryGrow?: number;
+  readonly stackMode?: KiwiEnumValue;
   readonly overrideLevel?: number;
 };
 

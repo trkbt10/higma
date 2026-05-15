@@ -322,10 +322,32 @@ function applySymbolOverridesToChildren(
  * Component properties allow INSTANCE nodes to override specific
  * fields on child nodes (text content, visibility, instance swap).
  */
+/**
+ * Per-call CPA propagation context. The CPA cascade walks the SYMBOL
+ * body — including descendants behind INSTANCE expansions — so it needs
+ * (a) the `assignments` map (the SoT for "which defId resolves to which
+ * value") and (b) the document-wide `symbolMap` (the SoT for "what does
+ * an INSTANCE expand into"). Bundling them into one resolve context
+ * keeps the function signature aligned with the unit of work, instead
+ * of threading the same pair through every recursive call.
+ *
+ * `outerSymbol` is the SYMBOL the outermost INSTANCE was resolved
+ * against. It is currently unused by the walk itself but preserved on
+ * the context so future hooks (e.g. validating that an INSTANCE's CPA
+ * targets one of its declared `componentPropertyDefs`) can consult it
+ * without a separate plumbing pass.
+ */
+type CpaResolveContext = {
+  readonly assignments: ReadonlyMap<string, ComponentPropertyValue>;
+  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly outerSymbol: FigDesignNode;
+};
+
 function applyComponentPropertyAssignments(
   children: readonly MutableFigDesignNode[],
   assignments: readonly ComponentPropertyAssignment[],
   symbol: FigDesignNode,
+  ctx: InstanceResolveDesignContext,
 ): void {
   if (assignments.length === 0) { return; }
 
@@ -334,18 +356,42 @@ function applyComponentPropertyAssignments(
     assignmentMap.set(assign.defId, assign.value);
   }
 
-  applyPropsRecursive(children, assignmentMap, symbol);
+  applyPropsRecursive(children, {
+    assignments: assignmentMap,
+    symbolMap: ctx.symbolMap,
+    outerSymbol: symbol,
+  });
 }
 
 function applyPropsRecursive(
   nodes: readonly MutableFigDesignNode[],
-  assignmentMap: ReadonlyMap<string, ComponentPropertyValue>,
-  _symbol: FigDesignNode,
+  ctx: CpaResolveContext,
 ): void {
   for (const node of nodes) {
+    // Expand INSTANCE descendants on demand so the CPA cascade can
+    // reach any node carrying `componentPropertyRefs`, including
+    // descendants of a nested INSTANCE whose SYMBOL body hadn't yet
+    // been materialised. Without this, an outer INSTANCE's
+    // `componentPropertyAssignments` whose target lives behind two or
+    // more INSTANCE hops — e.g. the App Store template's Screenshot
+    // INSTANCE → iPhone INSTANCE → Screen INSTANCE chain where the
+    // outer Screenshot CPA assigns OVERRIDDEN_SYMBOL_ID to the Screen
+    // INSTANCE — silently fails to fire because `applyPropsRecursive`
+    // would not see Screen INSTANCE during its tree walk. The
+    // SoT-aligned semantic: CPA propagation traverses the SYMBOL body
+    // every INSTANCE expands into, matching how Figma resolves
+    // descendant property pins.
+    if (node.type === FIG_NODE_TYPE.INSTANCE
+        && (!node.children || node.children.length === 0)
+        && node.symbolId) {
+      const nestedSym = ctx.symbolMap.get(node.symbolId);
+      if (nestedSym) {
+        node.children = (nestedSym.children ?? []).map(deepCloneDesignNode);
+      }
+    }
     if (node.componentPropertyRefs) {
       for (const ref of node.componentPropertyRefs) {
-        const assignedValue = assignmentMap.get(ref.defId);
+        const assignedValue = ctx.assignments.get(ref.defId);
         if (assignedValue === undefined) { continue; }
 
         switch (ref.nodeField) {
@@ -376,8 +422,25 @@ function applyPropsRecursive(
           }
           case "OVERRIDDEN_SYMBOL_ID": {
             const refVal = assignedValue.referenceValue;
-            if (refVal !== undefined) {
+            if (refVal !== undefined && refVal !== node.symbolId) {
+              // CPA-driven variant swap. If the descendant INSTANCE has
+              // already had its children materialised from the OLD
+              // symbol (which is the case whenever an earlier
+              // path-walk landed inside it — e.g. the outer INSTANCE's
+              // multi-guid override descended through this slot before
+              // Step 4 ran), those cloned children belong to the wrong
+              // SYMBOL after the swap and must be discarded. Clearing
+              // `children` lets the next `expandInstanceChildrenIfEmpty`
+              // walk re-clone from the NEW symbol so downstream steps
+              // (Step 5 derived-data application, scene-graph builder)
+              // see the post-swap tree. Without this, the App Store
+              // template's Screenshot INSTANCE cascade leaves the
+              // resized iPhone screen showing the default Mockup
+              // rectangle instead of the digit TEXT 8:9263 / 8:9269 /
+              // 8:9275 that lives inside the swapped-in `1:1711` /
+              // `1:1724` / `1:1725` variants.
               node.symbolId = refVal;
+              (node as MutableFigDesignNode).children = undefined;
             }
             break;
           }
@@ -386,7 +449,7 @@ function applyPropsRecursive(
     }
 
     if (node.children) {
-      applyPropsRecursive(mutableChildren(node), assignmentMap, _symbol);
+      applyPropsRecursive(mutableChildren(node), ctx);
     }
   }
 }
@@ -422,17 +485,28 @@ function applyDerivedSymbolData(
   derivedData: readonly SymbolOverride[],
   ctx: InstanceResolveDesignContext,
   outer: boolean = true,
-): void {
+): readonly SymbolOverride[] {
+  // Entries the caller should retry once `resolveNestedInstances` has
+  // exposed swapped-in descendants. Only outer-cascade entries are
+  // captured — inner cascades' SYMBOL-time DSD is a snapshot of the
+  // intermediate INSTANCE's resized layout and doesn't need to outlive
+  // nested resolution.
+  const deferred: SymbolOverride[] = [];
   for (const entry of derivedData) {
     if (!isValidOverridePath(entry)) { continue; }
     const target: PinnedDesignNode | undefined = findNodeByOverridePath(children, entry, ctx.symbolMap);
-    if (!target) { continue; }
+    if (!target) {
+      if (outer) {
+        deferred.push(entry);
+      }
+      continue;
+    }
     target.__pinnedDsdFields ??= new Set<string>();
     const pinned = target.__pinnedDsdFields;
     // Strip fields the closer ancestor has already pinned (size,
-    // transform, derivedTextData) when this is the inner cascade.
-    // Honouring the seal in both directions would let an inner cascade
-    // undo an authoritative outer pin.
+    // transform) when this is the inner cascade. Honouring the seal in
+    // both directions would let an inner cascade undo an authoritative
+    // outer pin.
     if (!outer) {
       const sizeConflict = entry.size !== undefined && pinned.has("size");
       const transformConflict = entry.transform !== undefined && pinned.has("transform");
@@ -451,6 +525,7 @@ function applyDerivedSymbolData(
     // on freshly-cloned descendants.
     forwardOverrideToDescendantInstance(entry, children, ctx.symbolMap, "derivedSymbolData");
   }
+  return deferred;
 }
 
 /**
@@ -704,16 +779,26 @@ export function resolveDesignInstance(
 
   // ── Step 4: Component property assignments ──
   if (node.componentPropertyAssignments && node.componentPropertyAssignments.length > 0) {
-    applyComponentPropertyAssignments(children, node.componentPropertyAssignments, symbol);
+    applyComponentPropertyAssignments(children, node.componentPropertyAssignments, symbol, ctx);
   }
 
   // ── Step 5: Derived symbol data ──
   // `outer = !nested` — the top-level resolve owns its INSTANCE's
   // resize and is the SoT for descendant pinned fields. A nested
   // re-resolve skips fields the outer cascade already pinned.
-  if (node.derivedSymbolData && node.derivedSymbolData.length > 0) {
-    applyDerivedSymbolData(children, node.derivedSymbolData, ctx, !nested);
-  }
+  //
+  // Some outer-cascade entries target descendants that only become
+  // reachable AFTER nested INSTANCEs resolve — typically because a
+  // descendant INSTANCE is variant-swapped by a nested CPA and the
+  // target glyph lives in the new symbol's body. Those entries are
+  // captured here and re-applied after Step 7, when the descendant
+  // tree is fully materialised.
+  const deferredOuterDsd: readonly SymbolOverride[] = (() => {
+    if (node.derivedSymbolData && node.derivedSymbolData.length > 0) {
+      return applyDerivedSymbolData(children, node.derivedSymbolData, ctx, !nested);
+    }
+    return [];
+  })();
 
   // ── Step 6: Constraint resolution for resized instances ──
   // Mirrors `resolveInstanceLayout`: the INSTANCE size is honoured
@@ -756,6 +841,18 @@ export function resolveDesignInstance(
 
   // ── Step 7: Recursively resolve nested INSTANCE children ──
   const resolvedChildren = resolveNestedInstances(children, ctx);
+
+  // ── Step 5b: Re-apply outer-cascade DSD entries whose target only
+  // became reachable AFTER nested resolution (e.g. a descendant
+  // INSTANCE was variant-swapped by a nested CPA, exposing a new
+  // SYMBOL body that holds the entry's target). Outer wins by going
+  // last; the recursion has already pinned inner SYMBOL-time values,
+  // which the outer apply then overwrites cleanly because
+  // `applyDerivedSymbolData` skips the strip-on-pin step when called
+  // with `outer=true`.
+  if (deferredOuterDsd.length > 0) {
+    applyDerivedSymbolData(resolvedChildren, deferredOuterDsd, ctx, true);
+  }
 
   return { effectiveNode, children: resolvedChildren };
 }

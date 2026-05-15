@@ -61,7 +61,7 @@ function makeTextNode(glyphContours: readonly (PathContour & { firstCharacter: n
     height: 20,
     textAutoResize: "WIDTH_AND_HEIGHT",
     runs: [{ start: 0, end: 0, fillColor: "#000000", fillOpacity: 1 }],
-    fill: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+    fills: [{ color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
     glyphContours,
   };
 }

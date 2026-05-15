@@ -40,3 +40,36 @@ export function getFillColorAndOpacity(paints: readonly FigPaint[] | undefined):
     opacity: firstPaint.opacity ?? 1,
   };
 }
+
+/**
+ * Get every visible solid fill from a paint list, in paint-order.
+ *
+ * Figma allows a text node to carry multiple stacked fills. Its own SVG
+ * exporter emits the glyph path once per fill so the painter's-algorithm
+ * composite of the stack produces the final colour: e.g. a `[{black,
+ * opacity=0.15}, {black, opacity=1.0}]` stack lands as one faint black
+ * pass followed by one fully-opaque black pass, yielding solid black
+ * text in the final raster.
+ *
+ * `getFillColorAndOpacity` (single-fill) is preserved for callers that
+ * still want a flat colour answer; this helper is for renderers that
+ * must mirror the stack semantically.
+ *
+ * Returns an empty array when no visible solid fill exists; callers
+ * decide whether to fall back to `DEFAULT_FILL` or emit nothing.
+ */
+export function getAllVisibleSolidFills(
+  paints: readonly FigPaint[] | undefined,
+): readonly FillColorResult[] {
+  if (!paints || paints.length === 0) {
+    return [];
+  }
+  const out: FillColorResult[] = [];
+  for (const paint of paints) {
+    if (paint.visible === false) { continue; }
+    const solid = asSolidPaint(paint);
+    if (!solid) { continue; }
+    out.push({ color: figColorToHex(solid.color), opacity: paint.opacity ?? 1 });
+  }
+  return out;
+}

@@ -92,7 +92,7 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(embedded.data[0]).toBeLessThan(224);
   });
 
-  it("omits the redundant child clip wrapper for viewport-sized root frames", () => {
+  it("omits the redundant per-frame child clip wrapper for viewport-sized root frames", () => {
     const sceneGraph: SceneGraph = {
       width: 100,
       height: 100,
@@ -133,6 +133,15 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).not.toContain("<g clip-path=");
+    // The root viewport clip-path (`root-viewport-clip`) is always emitted
+    // to match Figma's export structure and to keep resvg robust against
+    // masked content translated outside the viewport. What this test
+    // guards is that the per-FRAME redundant child clip — the one created
+    // by `resolveFrameChildClipId` for a viewport-sized FRAME — is NOT
+    // additionally emitted. Without that guard a viewport-aligned slide
+    // FRAME would carry both the outer root clip AND its own square-rect
+    // child clip, doubling the wrapper depth for no visual change.
+    expect(svg).toContain('clip-path="url(#root-viewport-clip)"');
+    expect(svg).not.toContain('clip-path="url(#clip-');
   });
 });

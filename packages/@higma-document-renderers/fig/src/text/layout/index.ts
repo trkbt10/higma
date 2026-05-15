@@ -32,7 +32,7 @@ export {
 } from "./text-anchor";
 
 // Fill handling
-export { getFillColorAndOpacity } from "./fill";
+export { getFillColorAndOpacity, getAllVisibleSolidFills } from "./fill";
 
 // Layout computation
 export {

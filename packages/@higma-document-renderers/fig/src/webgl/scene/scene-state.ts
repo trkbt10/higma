@@ -159,13 +159,17 @@ export function createSceneState(): SceneStateInstance {
           base.vertices = tessellateContours(node.contours);
         }
         break;
-      case "text":
-        base.textFillColor = node.fill.color;
-        base.textFillOpacity = node.fill.opacity;
+      case "text": {
+        // Primary (paints[0]) fill — WebGL doesn't model multi-fill
+        // stacking yet; consult `node.fills` directly when adding that.
+        const primary = node.fills[0];
+        base.textFillColor = primary?.color ?? { r: 0, g: 0, b: 0, a: 1 };
+        base.textFillOpacity = primary?.opacity ?? 0;
         if (node.glyphContours && node.glyphContours.length > 0) {
           base.vertices = tessellateContours(node.glyphContours);
         }
         break;
+      }
       case "image":
         base.width = node.width;
         base.height = node.height;
@@ -294,9 +298,13 @@ export function createSceneState(): SceneStateInstance {
       }
       case "text": {
         const c = op.changes;
-        if (c.fill !== undefined) {
-          state.textFillColor = c.fill.color;
-          state.textFillOpacity = c.fill.opacity;
+        if (c.fills !== undefined) {
+          // Primary fill (paints[0]) — WebGL does not model stacked
+          // multi-fill rendering yet; consult `c.fills[1..]` when
+          // adding that.
+          const primary = c.fills[0];
+          state.textFillColor = primary?.color ?? { r: 0, g: 0, b: 0, a: 1 };
+          state.textFillOpacity = primary?.opacity ?? 0;
         }
         if (c.glyphContours !== undefined) {
           state.vertices = tessellateContoursOrNull(c.glyphContours);

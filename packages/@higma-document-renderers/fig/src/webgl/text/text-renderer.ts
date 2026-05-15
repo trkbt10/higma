@@ -82,10 +82,17 @@ export function tessellateTextNode(
   const glyphVertices = tessellateContours(splitGlyphContours, tolerance, true);
   const decorationVertices = tessellateDecorationsOrEmpty(node.decorationContours, tolerance);
 
+  // Read the primary (paints[0]) fill from the stacked `fills` array.
+  // Multi-fill stacking is a separate concern the WebGL renderer does
+  // not yet model — for parity with the SVG renderer's stacked passes,
+  // we would need to tessellate one tinted mesh per `fills[i]`. Today
+  // the WebGL path renders only the first stacked pass.
+  // An empty fills array (e.g. empty TEXT) → transparent / no draw.
+  const primary = node.fills[0];
   return {
     glyphVertices,
     decorationVertices,
-    color: node.fill.color,
-    opacity: node.fill.opacity,
+    color: primary?.color ?? { r: 0, g: 0, b: 0, a: 1 },
+    opacity: primary?.opacity ?? 0,
   };
 }

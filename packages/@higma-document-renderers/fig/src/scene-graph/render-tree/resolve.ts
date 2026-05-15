@@ -271,7 +271,53 @@ function buildGlyphContentRuns(node: TextNode): readonly RenderTextGlyphRun[] {
       d: list.join(""),
     });
   }
+
+  // Stacked fill paints: `fills[0]` is already represented by the
+  // per-character source runs above (they carry the base fill into
+  // each glyph-bucketed run). `fills[1..]` add additional full-text
+  // paint passes in source order — Figma's painter's-algorithm
+  // composite. The path data for each extra pass is the union of every
+  // glyph contour and every decoration — i.e. the same "all visible
+  // marks" silhouette each pass operates on. Without this, a node
+  // carrying `fillPaints=[{black, opacity=0.15}, {black, opacity=1}]`
+  // would only emit the 15% pass and render as faint text. See
+  // `TextNode.fills` for the SoT anchor (mirrors Figma's
+  // `fillPaints: Paint[]`).
+  if (node.fills.length > 1) {
+    const everyD: string[] = [];
+    for (const contour of node.glyphContours ?? []) {
+      everyD.push(contourToSvgD(contour));
+    }
+    for (const c of node.decorationContours ?? []) {
+      everyD.push(contourToSvgD(c));
+    }
+    const combined = everyD.join("");
+    if (combined.length > 0) {
+      for (let i = 1; i < node.fills.length; i++) {
+        const f = node.fills[i];
+        out.push({
+          fillColor: colorToCssHex(f.color),
+          fillOpacity: f.opacity,
+          d: combined,
+        });
+      }
+    }
+  }
+
   return out;
+}
+
+/**
+ * Convert a scene-graph `Color` (RGBA 0..1) into a 6-digit CSS hex.
+ * Alpha is intentionally dropped — the run carries opacity separately
+ * via `fillOpacity`, so combining alpha into the hex would double-apply.
+ */
+function colorToCssHex(color: { readonly r: number; readonly g: number; readonly b: number }): string {
+  const toByte = (v: number) => {
+    const clamped = Math.round(Math.max(0, Math.min(1, v)) * 255);
+    return clamped.toString(16).padStart(2, "0");
+  };
+  return `#${toByte(color.r)}${toByte(color.g)}${toByte(color.b)}`;
 }
 
 function resolveImageDataUri(node: ImageNode): string | undefined {
@@ -931,8 +977,15 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Norma
 function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: NormalizedFigmaRenderExportSettings): RenderTextNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
-  const fillColor = colorToHex(node.fill.color);
-  const fillOpacity = node.fill.opacity < 1 ? node.fill.opacity : undefined;
+  // The "primary" fill for the line-mode renderer and for decoration
+  // strokes is the first stacked SOLID paint. `fills[]` is the SoT
+  // shape (matches Figma's `fillPaints: Paint[]`); we extract slot 0
+  // here for the consumers that historically used the single-fill API.
+  // An empty `fills` array means the node has no visible SOLID paint —
+  // line-mode produces no fill color and decorations skip.
+  const primary = node.fills[0];
+  const fillColor = primary ? colorToHex(primary.color) : "#000000";
+  const fillOpacity = primary && primary.opacity < 1 ? primary.opacity : undefined;
 
   const textClipId = resolveTextClipId(node, ids, defs);
   const content = resolveTextContent(node);
@@ -956,8 +1009,8 @@ function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: Norma
     content,
     sourceGlyphContours: node.glyphContours,
     sourceDecorationContours: node.decorationContours,
-    sourceFillColor: node.fill.color,
-    sourceFillOpacity: node.fill.opacity,
+    sourceFillColor: primary?.color ?? { r: 0, g: 0, b: 0, a: 1 },
+    sourceFillOpacity: primary?.opacity ?? 0,
     sourceTextLineLayout: node.textLineLayout,
     sourceTextAutoResize: node.textAutoResize,
     mask,
@@ -1130,6 +1183,16 @@ function shouldOmitViewportRootFrameChildClip(
   node: RenderFrameNode,
   viewport: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
 ): boolean {
+  // SAFETY: a rounded-corner frame whose bounds match the viewport
+  // CANNOT delegate its clipping to the viewport rect — the viewport
+  // is always rectangular, so omitting the child clip drops the
+  // rounded corner shape. (Event Card and any other top-level rounded
+  // container exhibits this: top corners render square because the
+  // viewport rect lets the gradient bleed into the corner-curve area.)
+  // Honour Figma's semantics here: rounded clip MUST be applied.
+  if (cornerRadiusScalar(node.cornerRadius) > 0) {
+    return false;
+  }
   return node.childClipId !== undefined
     && viewport.x === 0
     && viewport.y === 0

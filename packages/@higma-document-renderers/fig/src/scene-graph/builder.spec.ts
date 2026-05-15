@@ -127,7 +127,12 @@ describe("Scene graph builder - demo document", () => {
 
       function collectFills(nodes: readonly SceneNode[]) {
         for (const node of nodes) {
-          if ("fills" in node) {
+          // TextNode's `fills` is a stacked `{ color, opacity }[]`
+          // (the resolved per-paint passes, not raw `Fill` objects).
+          // Only nodes whose `fills` field is `readonly Fill[]` (frame /
+          // rect / ellipse / path / image) contribute to the gradient
+          // collection here.
+          if ("fills" in node && node.type !== "text") {
             allFills.push(...node.fills);
           }
           if ("children" in node && node.children) {

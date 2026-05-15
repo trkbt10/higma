@@ -53,7 +53,7 @@ describe("WebGL RenderTree contract", () => {
           width: 20,
           height: 20,
           textAutoResize: "WIDTH_AND_HEIGHT",
-          fill: { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+          fills: [{ color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
           textLineLayout: {
             lines: [{ text: "A", x: 0, y: 10 }],
             fontFamily: "sans-serif",

@@ -38,6 +38,7 @@ import type { FigmaRenderExportSettings } from "../scene-graph/render";
 import { convertFigNode, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { buildFigStyleRegistry } from "@higma-document-models/fig/symbols";
 import { buildSceneGraph } from "../scene-graph/builder";
+import { pruneSceneGraphToViewport } from "../scene-graph/viewport-prune";
 import { resolveRenderTree } from "../scene-graph/render-tree";
 import { formatRenderTreeToSvg } from "./scene-renderer";
 
@@ -312,7 +313,16 @@ export async function renderFigToSvg(
     textFontResolver,
   });
 
-  const renderTree = resolveRenderTree(sceneGraph, { exportSettings: options.exportSettings });
+  // Drop subtrees whose world-space bbox lies entirely outside the
+  // viewport. The visible output is unchanged (the root viewport clip
+  // already hides those subtrees), but the pruned SVG is one to two
+  // orders of magnitude smaller for documents with off-viewport
+  // content, and downstream rasterisers (notably resvg) no longer
+  // panic on masked subtrees translated past the viewport. See
+  // `viewport-prune.ts` for the SoT docstring.
+  const prunedSceneGraph = pruneSceneGraphToViewport(sceneGraph);
+
+  const renderTree = resolveRenderTree(prunedSceneGraph, { exportSettings: options.exportSettings });
   const svgOutput: SvgString = formatRenderTreeToSvg(renderTree, {
     backgroundColor: options.backgroundColor,
   });

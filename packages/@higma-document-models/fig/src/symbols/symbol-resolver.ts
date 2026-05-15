@@ -56,7 +56,82 @@ export type FigDerivedSymbolData = readonly FigKiwiSymbolOverride[];
  *     parent-container hook (`stackChildPositioning` semantics) and
  *     does not target any SYMBOL descendant.
  */
+/**
+ * Fields the merged-node applier (`applySelfOverridesToMergedNode`)
+ * actually projects from a single-guid override onto the INSTANCE
+ * frame. SoT for both the detector below and the applier — keeping
+ * one shared set guarantees that anything the applier can write is
+ * also classified as an INSTANCE-self field upstream, so the raw
+ * filter does not silently drop an override the applier would have
+ * accepted (e.g. App Store template Tab 7's
+ * `{name, fillPaints, styleIdForFill, stackPrimarySizing}` self-
+ * override, where the missing `styleIdForFill` previously made the
+ * detector emit "dropping override entry with unreachable guid" 24×
+ * per render despite the applier supporting that exact field).
+ */
+const SELF_OVERRIDE_PAYLOAD_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = new Set<keyof FigKiwiSymbolOverride>([
+  // Paint / geometry / effect — applier writes these onto the merged
+  // INSTANCE frame when a single-guid override targets the SYMBOL
+  // root. Members are restricted to keys actually declared on
+  // `FigKiwiSymbolOverridePayload`; the prior `SELF_OVERRIDE_PROPERTIES`
+  // set contained dead entries (`backgroundColor`, `cornerSmoothing`,
+  // etc.) that never appear on a real override entry.
+  "fillPaints",
+  "strokePaints",
+  "strokeWeight",
+  "strokeJoin",
+  "strokeCap",
+  "effects",
+  "opacity",
+  "visible",
+  "cornerRadius",
+  "rectangleCornerRadii",
+  "blendMode",
+  "clipsContent",
+  "frameMaskDisabled",
+  "mask",
+  // Style-id slots — the `{guid: 0xFFFFFFFF:0xFFFFFFFF}` sentinel
+  // detaches a style binding; concrete style ids re-bind. The
+  // applier writes the field onto the merged node; style-id-for-fill /
+  // style-id-for-stroke trigger a `resolveStyleIdOnMutableNode`
+  // pass to expand style bindings into concrete paint arrays.
+  "styleIdForFill",
+  "styleIdForStrokeFill",
+  "styleIdForText",
+  "styleIdForEffect",
+  "styleIdForGrid",
+  // Auto-layout padding / spacing / alignment overrides. Figma
+  // stores these on INSTANCE override entries whose single-guid
+  // path is an unreachable ghost guid (App Store template "Search"
+  // INSTANCEs in `2:2878 State=Placeholder` carry `stackPaddingRight`;
+  // "Tab Bar" INSTANCE in `121:5431` carries `stackPositioning`).
+  // Listing them here lets the applier project the value onto the
+  // merged INSTANCE frame instead of dropping the entry.
+  "stackPadding",
+  "stackVerticalPadding",
+  "stackHorizontalPadding",
+  "stackPaddingRight",
+  "stackPaddingBottom",
+  "stackSpacing",
+  "stackPrimaryAlignItems",
+  "stackCounterAlignItems",
+  "stackPrimaryAlignContent",
+  "stackCounterAlignContent",
+  "stackCounterSpacing",
+  "stackCounterSizing",
+  "stackWrap",
+  "stackReverseZIndex",
+  "stackChildAlignSelf",
+  "stackChildPrimaryGrow",
+  "stackMode",
+]);
+
 export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = new Set([
+  // INSTANCE-only routing / layout fields — these never address a
+  // SYMBOL descendant. The applier handles `name`/`size`/etc. through
+  // dedicated merge paths (not via `SELF_OVERRIDE_PAYLOAD_FIELDS`)
+  // because they project to INSTANCE-level node properties rather
+  // than slot-level paint or geometry.
   "name",
   "size",
   "proportionsConstrained",
@@ -64,23 +139,15 @@ export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverr
   "stackPrimarySizing",
   "variableConsumptionMap",
   "parameterConsumptionMap",
-  // The next group covers paint-, geometry-, and effect-level
-  // overrides that some authoring tools store with a path-first guid
-  // pointing at the INSTANCE's own ghost-session. They are
-  // semantically "INSTANCE-self" only when the path is single-guid
-  // (caller already enforces `path.length === 1`); when paired with
-  // an unreachable ghost-session guid, treating them as self-overrides
-  // and rerouting to the SYMBOL root preserves Figma's apparent
+  // Paint / geometry / effect fields shared with the applier (see
+  // `SELF_OVERRIDE_PAYLOAD_FIELDS`). When paired with an unreachable
+  // ghost-session guid, treating them as self-overrides and
+  // rerouting to the SYMBOL root preserves Figma's apparent
   // rendering (the SYMBOL root receives the override, not a
   // descendant). Real Figma exports of nested-component files
-  // (`inherit.fig` etc.) rely on this classification.
-  "fillPaints",
-  "strokePaints",
-  "strokeWeight",
-  "effects",
-  "blendMode",
-  "opacity",
-  "visible",
+  // (`inherit.fig` etc., App Store Community template tab variants)
+  // rely on this classification.
+  ...SELF_OVERRIDE_PAYLOAD_FIELDS,
 ]);
 
 /**
@@ -935,19 +1002,12 @@ export function mergeSymbolProperties(instanceNode: FigNode, symbolNode: FigNode
 }
 
 /**
- * Properties that can be overridden on the INSTANCE frame itself via
- * self-referencing symbolOverrides (guidPath targeting the SYMBOL's own GUID).
- */
-const SELF_OVERRIDE_PROPERTIES = new Set([
-  "fillPaints", "strokePaints", "strokeWeight", "strokeJoin", "strokeCap",
-  "effects", "opacity", "visible", "cornerRadius", "rectangleCornerRadii",
-  "blendMode", "clipsContent", "frameMaskDisabled", "mask", "cornerSmoothing",
-  "backgroundColor", "backgroundEnabled", "backgroundOpacity",
-  "styleIdForFill", "styleIdForStrokeFill",
-]);
-
-/**
  * Apply self-referencing symbolOverrides to the merged INSTANCE node.
+ *
+ * The set of fields projected here is `SELF_OVERRIDE_PAYLOAD_FIELDS`
+ * (declared next to the detector's `INSTANCE_SELF_OVERRIDE_FIELDS`) —
+ * keeping one shared SoT ensures the detector classifies exactly
+ * the entries this applier will accept.
  */
 export function applySelfOverridesToMergedNode(
   mergedNode: MutableFigNode,
@@ -960,10 +1020,12 @@ export function applySelfOverridesToMergedNode(
     const guids = ov.guidPath?.guids;
     if (!guids || guids.length !== 1) { continue; }
     if (guidToString(guids[0]) !== symbolGuidStr) { continue; }
-    for (const [key, value] of Object.entries(ov)) {
+    for (const key of Object.keys(ov) as (keyof FigKiwiSymbolOverride)[]) {
       if (key === "guidPath") { continue; }
-      if (!SELF_OVERRIDE_PROPERTIES.has(key)) { continue; }
-      mergedNode[key] = value;
+      if (!SELF_OVERRIDE_PAYLOAD_FIELDS.has(key)) { continue; }
+      const value = ov[key];
+      if (value === undefined) { continue; }
+      (mergedNode as Record<string, unknown>)[key] = value;
       if (key === "styleIdForFill" || key === "styleIdForStrokeFill") {
         hasStyleIdOverride = true;
       }

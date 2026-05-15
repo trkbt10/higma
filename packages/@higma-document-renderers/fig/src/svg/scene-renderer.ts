@@ -400,27 +400,46 @@ function formatDef(def: RenderDef): SvgString {
       return clipPath({ id: def.id }, formatClipPathShape(def.shape));
     }
     case "mask": {
-      const maskContent = formatNode(def.maskContent);
+      // The mask's RenderNode tree carries its own resolved fills (e.g. a
+      // BOOLEAN_OPERATION node's #000 fill) — emitting those verbatim makes
+      // the entire mask render BLACK in luminance mode, which collapses to
+      // "everything is hidden". The mask shape's geometry is what defines
+      // the alpha; the colour is irrelevant. `formatNodeAsMaskShape` walks
+      // the tree and emits each geometric shape with an explicit white fill
+      // so the luminance mask actually exposes the masked content.
+      //
+      // `maskUnits="userSpaceOnUse"` matches Figma's own SVG export
+      // (`mask*_xxxx` decls always carry this) AND is required for
+      // correctness here: the mask CONTENT comes from a SceneNode whose
+      // path coordinates live in user space (the same coord system the
+      // masked content sits in). With the default `objectBoundingBox`
+      // SVG would re-interpret those coords as fractions of the using
+      // element's bounding box — turning a 165×360 iPhone-screen mask
+      // path into a region 165× and 360× the size of the using rect,
+      // and crashing resvg on the resulting degenerate geometry
+      // (`geom.rs:27 unwrap None`).
+      const maskContent = formatNodeAsMaskShape(def.maskContent);
       return mask(
-        { id: def.id, style: "mask-type:luminance" },
-        g({ fill: "white" }, maskContent),
+        { id: def.id, style: "mask-type:luminance", maskUnits: "userSpaceOnUse" },
+        maskContent,
       );
     }
     case "stroke-mask": {
       // Stroke-align mask for INSIDE/OUTSIDE stroke clipping.
       // INSIDE: white filled shape → only stroke inside the shape is visible.
       // OUTSIDE: inverted mask — large white rect with black shape cutout → only stroke outside is visible.
+      // Same `maskUnits="userSpaceOnUse"` rationale as the plain mask above.
       const shape = formatClipPathShape(def.shape);
       if (def.strokeAlign === "OUTSIDE") {
         // Invert: large white background with black shape hole
         return mask(
-          { id: def.id, style: "mask-type:luminance" },
+          { id: def.id, style: "mask-type:luminance", maskUnits: "userSpaceOnUse" },
           rect({ x: -100, y: -100, width: 10000, height: 10000, fill: "white" }),
           g({ fill: "black" }, shape),
         );
       }
       return mask(
-        { id: def.id, style: "mask-type:luminance" },
+        { id: def.id, style: "mask-type:luminance", maskUnits: "userSpaceOnUse" },
         g({ fill: "white" }, shape),
       );
     }
@@ -1313,6 +1332,128 @@ function formatNode(node: RenderNode): SvgString {
   }
 }
 
+/**
+ * Format a RenderNode as the alpha source of an SVG luminance mask.
+ *
+ * The geometry of the node tree is the only thing that matters for the
+ * mask shape — colours, gradients, strokes, blur, blend modes are all
+ * irrelevant because the luminance mask only consumes per-pixel
+ * luminance. Emitting the node through the normal `formatNode` pipeline
+ * paints every shape with its resolved fill (often the source node's
+ * #000 colour), which renders the mask black and hides everything.
+ *
+ * This helper walks the tree and emits each geometric primitive with an
+ * explicit `fill="white"` (so the rendered luminance is 1.0 inside the
+ * shape, 0.0 outside — exactly the alpha pattern the mask shape
+ * encodes). Transforms and the node's own wrapper are preserved so
+ * nested masks/groups land in the correct coordinate system.
+ *
+ * The pattern matches Figma's SVG export: every `<mask>` body the
+ * exporter emits is a single `<path fill="white">` (or `<rect
+ * fill="white">`) regardless of what colour the source node carries.
+ */
+function formatNodeAsMaskShape(node: RenderNode): SvgString {
+  const wrapper = node.wrapper;
+  const wrapperAttrs: Record<string, string | number | undefined> = {
+    transform: wrapper.transform,
+  };
+  const body = formatNodeAsMaskShapeBody(node);
+  // Wrap in <g transform=...> when the node carries a transform so child
+  // coordinates stay local to the node's own frame, matching the way the
+  // node would render in its non-mask path.
+  if (wrapper.transform === undefined) {
+    return body;
+  }
+  return g(wrapperAttrs, body);
+}
+
+function formatNodeAsMaskShapeBody(node: RenderNode): SvgString {
+  switch (node.type) {
+    case "path": {
+      const parts = node.paths.map((p) =>
+        path({ d: p.d, "fill-rule": p.fillRule, fill: "white" }),
+      );
+      if (parts.length === 1) {
+        return parts[0];
+      }
+      return g({}, ...parts);
+    }
+    case "rect": {
+      if (node.cornerRadius !== undefined) {
+        return path({
+          d: buildRoundedRectPathD(node.width, node.height, coerceCornerRadius(node.cornerRadius)),
+          fill: "white",
+        });
+      }
+      return rect({ x: 0, y: 0, width: node.width, height: node.height, fill: "white" });
+    }
+    case "ellipse": {
+      if (node.rx === node.ry) {
+        return circle({ cx: node.cx, cy: node.cy, r: node.rx, fill: "white" });
+      }
+      return ellipse({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry, fill: "white" });
+    }
+    case "group": {
+      const children = node.children.map(formatNodeAsMaskShape);
+      if (children.length === 1) {
+        return children[0];
+      }
+      return g({}, ...children);
+    }
+    case "frame": {
+      // Frame as a mask: emit its rounded-rect background as the shape.
+      // Children of a frame-as-mask are unusual and would each need to
+      // be treated as additive mask geometry — fall through to a group.
+      const bgEl = path({
+        d: buildRoundedRectPathD(
+          node.width,
+          node.height,
+          coerceCornerRadius(node.cornerRadius),
+        ),
+        fill: "white",
+      });
+      if (node.children.length === 0) {
+        return bgEl;
+      }
+      const childEls = node.children.map(formatNodeAsMaskShape);
+      return g({}, bgEl, ...childEls);
+    }
+    case "text": {
+      // Text used as a mask emits its glyph contours with white fill —
+      // colour-carrying runs collapse to the same alpha because each run
+      // is fully opaque inside the glyph contour.
+      if (node.content.mode === "glyphs") {
+        const parts = node.content.runs.map((run) => path({ d: run.d, fill: "white" }));
+        if (parts.length === 1) { return parts[0]; }
+        return g({}, ...parts);
+      }
+      // Line-mode text is not meaningfully usable as a mask shape (the
+      // glyph contours aren't resolved). Emit empty so the mask falls
+      // through to its background (black → invisible).
+      return EMPTY_SVG;
+    }
+    case "image": {
+      // Image-as-mask uses the image's intrinsic alpha; Figma users
+      // would set this up via maskType=ALPHA on the bitmap. Emit the
+      // image so resvg can apply the alpha channel through luminance.
+      return image({
+        href: node.dataUri,
+        x: 0,
+        y: 0,
+        width: node.width,
+        height: node.height,
+        preserveAspectRatio: node.preserveAspectRatio,
+      });
+    }
+  }
+}
+
+function coerceCornerRadius(cr: CornerRadius | undefined): readonly [number, number, number, number] {
+  if (cr === undefined) { return [0, 0, 0, 0]; }
+  if (typeof cr === "number") { return [cr, cr, cr, cr]; }
+  return cr;
+}
+
 // =============================================================================
 // RenderTree → SVG string
 // =============================================================================
@@ -1353,7 +1494,46 @@ export function formatRenderTreeToSvg(
       }),
     );
   }
-  body.push(...children);
+
+  // Root viewport clip-path — Figma's own SVG exporter always wraps the
+  // canvas-rooted `<g>` in a clip whose shape is the viewport rect. We
+  // mirror that for two reasons:
+  //
+  //   1. Correctness anchor — content that lives outside the viewport
+  //      (auto-layout overflow, off-canvas INSTANCEs, etc.) should not
+  //      bleed onto neighbouring exports when the user composes our
+  //      output into a larger document.
+  //
+  //   2. Resvg robustness — empirically, masked subtrees translated
+  //      fully outside the SVG viewport crash resvg with
+  //      `geom.rs:27 unwrap None`. The root clip prunes them at parse
+  //      time so the renderer never tries to compute a bounding box on
+  //      content with no visible footprint.
+  //
+  // The clipPath def is emitted alongside the content; SVG's lookup
+  // scope makes a sibling `<defs>` and a `<g clip-path>` reference each
+  // other regardless of order, but emitting the def first matches
+  // Figma's output layout and keeps the diff harness happier.
+  const viewportClipId = "root-viewport-clip";
+  body.unshift(
+    defs(
+      clipPath(
+        { id: viewportClipId },
+        rect({
+          x: renderTree.viewport.x,
+          y: renderTree.viewport.y,
+          width: renderTree.viewport.width,
+          height: renderTree.viewport.height,
+        }),
+      ),
+    ),
+  );
+  // Wrap content children (everything after the optional background and
+  // the defs we just unshifted) inside the clip group.
+  const bgCount = options?.backgroundColor ? 1 : 0;
+  const defsCount = 1;
+  const leading = body.slice(0, bgCount + defsCount);
+  const wrappedChildren = g({ "clip-path": `url(#${viewportClipId})` }, ...children);
 
   return svg(
     {
@@ -1361,7 +1541,8 @@ export function formatRenderTreeToSvg(
       height: renderTree.height,
       viewBox: `${renderTree.viewport.x} ${renderTree.viewport.y} ${renderTree.viewport.width} ${renderTree.viewport.height}`,
     },
-    ...body,
+    ...leading,
+    wrappedChildren,
   );
 }
 

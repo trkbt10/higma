@@ -549,7 +549,7 @@ function buildTextNode(node: FigDesignNode, ctx: BuildContext): TextNode {
     glyphContours: textData.glyphContours,
     decorationContours: textData.decorationContours,
     runs: textData.runs,
-    fill: textData.fill,
+    fills: textData.fills,
     textLineLayout: textData.textLineLayout,
   };
 }
