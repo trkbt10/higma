@@ -388,17 +388,23 @@ function canvasSlugFor(source: FigSymbolContext, node: FigNode): string {
 export function buildRegistry(source: FigSymbolContext, frames: readonly FigNode[]): EmitRegistry {
   const frameRegistry = new Map<string, FrameTarget>();
   const componentRegistry = new Map<string, ComponentTarget>();
-  const componentNameUsed = new Set<string>();
-  const componentSlugUsed = new Set<string>();
-  const frameNameUsed = new Set<string>();
+  // The React identifier pool is shared between the page-side and
+  // component-side registries: a page named "Apps" and a component named
+  // "Apps" end up imported into the *same* generated page file, so
+  // letting both claim `Apps` produces a JS-level duplicate identifier.
+  // Slug pools stay per-registry — page slugs live under `pages/` and
+  // component slugs under `components/`, so identical slugs across the
+  // two never collide on disk.
+  const nameUsed = new Set<string>();
   const frameSlugUsed = new Set<string>();
+  const componentSlugUsed = new Set<string>();
 
   for (const node of frames) {
     const canvasSlug = canvasSlugFor(source, node);
     const baseSlug = toCssSlug(node.name ?? "frame");
     const slugKey = `${canvasSlug}/${baseSlug}`;
     const slug = uniqueId(slugKey, frameSlugUsed).slice(canvasSlug.length + 1);
-    const name = uniqueIdent(toPascalCase(node.name ?? "Frame"), frameNameUsed);
+    const name = uniqueIdent(toPascalCase(node.name ?? "Frame"), nameUsed);
     frameRegistry.set(guidToString(node.guid), {
       node,
       componentName: name,
@@ -412,7 +418,7 @@ export function buildRegistry(source: FigSymbolContext, frames: readonly FigNode
     const instances: FigNode[] = [];
     collectInstancesIn(frame, instances);
     for (const instance of instances) {
-      registerInstanceTarget(source, instance, componentRegistry, componentNameUsed, componentSlugUsed);
+      registerInstanceTarget(source, instance, componentRegistry, nameUsed, componentSlugUsed);
     }
   }
 
@@ -423,7 +429,7 @@ function registerInstanceTarget(
   source: FigSymbolContext,
   instance: FigNode,
   componentRegistry: Map<string, ComponentTarget>,
-  componentNameUsed: Set<string>,
+  nameUsed: Set<string>,
   componentSlugUsed: Set<string>,
 ): void {
   const target = resolveInstanceTarget(source, instance);
@@ -439,7 +445,7 @@ function registerInstanceTarget(
   const slugKey = `${canvasSlug}/${baseSlug}`;
   const slug = uniqueId(slugKey, componentSlugUsed).slice(canvasSlug.length + 1);
   const baseName = toPascalCase(target.name ?? "Component");
-  const name = uniqueIdent(baseName, componentNameUsed);
+  const name = uniqueIdent(baseName, nameUsed);
   const variants = buildVariantMap(target);
   const baseProps = buildPropDecls(target.componentPropDefs, variants);
   const props = augmentWithImplicitTextProps(baseProps, target, variants);
