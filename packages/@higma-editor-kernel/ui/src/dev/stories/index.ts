@@ -13,6 +13,7 @@ import { ToggleStories } from "./Toggle.stories";
 import { SliderStories } from "./Slider.stories";
 import { TabsStories } from "./Tabs.stories";
 import { IconButtonStories } from "./IconButton.stories";
+import { SuffixSelectStories } from "./SuffixSelect.stories";
 
 // Player
 import { PlayerStories } from "./Player.stories";
@@ -20,9 +21,16 @@ import { PlayerStories } from "./Player.stories";
 // Viewer
 import { NavigationControlsStories } from "./NavigationControls.stories";
 
+// Operation primitives
+import { AlignmentControlsStories } from "./operations/AlignmentControls.stories";
+import { ConstraintAnchorGridStories } from "./operations/ConstraintAnchorGrid.stories";
+import { TransformActionsStories } from "./operations/TransformActions.stories";
+
 // Property sections
 import { OpacitySectionStories } from "./property-sections/OpacitySection.stories";
-import { TransformSectionStories } from "./property-sections/TransformSection.stories";
+import { PositionSectionStories } from "./property-sections/PositionSection.stories";
+import { SizeSectionStories } from "./property-sections/SizeSection.stories";
+import { RotationSectionStories } from "./property-sections/RotationSection.stories";
 import { CornerRadiusSectionStories } from "./property-sections/CornerRadiusSection.stories";
 import { SectionBehaviorSectionStories } from "./property-sections/SectionBehavior.stories";
 import { OutlineSectionStories } from "./property-sections/Outline.stories";
@@ -50,6 +58,7 @@ export const catalog: readonly Category[] = [
       IconButtonStories,
       InputStories,
       SliderStories,
+      SuffixSelectStories,
       TabsStories,
       ToggleStories,
     ],
@@ -63,9 +72,19 @@ export const catalog: readonly Category[] = [
     components: [NavigationControlsStories],
   },
   {
+    name: "Operations",
+    components: [
+      AlignmentControlsStories,
+      ConstraintAnchorGridStories,
+      TransformActionsStories,
+    ],
+  },
+  {
     name: "Property Sections",
     components: [
-      TransformSectionStories,
+      PositionSectionStories,
+      SizeSectionStories,
+      RotationSectionStories,
       OpacitySectionStories,
       CornerRadiusSectionStories,
       FillSectionStories,

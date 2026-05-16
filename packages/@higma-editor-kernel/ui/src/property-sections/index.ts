@@ -13,10 +13,19 @@
 // Appearance
 export { OpacitySectionView, type OpacitySectionViewProps } from "./appearance/OpacitySectionView";
 export {
-  TransformSectionView,
-  type TransformSectionField,
-  type TransformSectionViewProps,
-} from "./appearance/TransformSectionView";
+  PositionSectionView,
+  type PositionSectionField,
+  type PositionSectionViewProps,
+} from "./appearance/PositionSectionView";
+export {
+  SizeSectionView,
+  type SizeSectionField,
+  type SizeSectionViewProps,
+} from "./appearance/SizeSectionView";
+export {
+  RotationSectionView,
+  type RotationSectionViewProps,
+} from "./appearance/RotationSectionView";
 export {
   CornerRadiusSectionView,
   type CornerRadiusIndex,

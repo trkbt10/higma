@@ -2,18 +2,32 @@
  * @file Layer panel
  *
  * Shows the layer tree for the active page.
- * Uses react-editor-ui's LayerItem component (SoT for layer item rendering).
+ * Uses react-editor-ui's LayerItem component (SoT for layer item rendering)
+ * for inline rename, visibility/lock toggles, drag-to-reorder, and
+ * row context menus. This module only adapts those affordances to fig
+ * reducer actions; it owns no row-presentation logic of its own.
  *
  * INSTANCE nodes and their children (inherited from SYMBOL) are highlighted
  * with Figma's purple accent color to visually distinguish inherited elements.
  */
 
-import { createContext, useCallback, useContext, useState, type ReactNode, type CSSProperties, type PointerEvent as ReactPointerEvent, type KeyboardEvent } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import { useFigEditor } from "../../context/FigEditorContext";
 import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
 import { isSelected } from "@higma-editor-kernel/core/selection";
 import { OptionalPropertySection } from "@higma-editor-surfaces/controls/ui";
 import { LayerItem } from "react-editor-ui/LayerItem";
+import type { LayerContextMenuItem, DropPosition } from "react-editor-ui/LayerItem";
 import {
   FrameIcon,
   RectIcon,
@@ -66,7 +80,7 @@ function getNodeIcon(type: FigDesignNode["type"], color: string | undefined): Re
 }
 
 // =============================================================================
-// Layer badges / row styling
+// Layer badge
 // =============================================================================
 
 const layerBadgeBaseStyle: CSSProperties = {
@@ -93,25 +107,10 @@ function LayerBadge({ label, color }: LayerNodeBadge) {
   );
 }
 
-const renameInputStyle: CSSProperties = {
-  width: "100%",
-  height: 20,
-  border: `1px solid ${colorTokens.selection.primary}`,
-  borderRadius: 3,
-  fontSize: fontTokens.size.md,
-  padding: "0 4px",
-  outline: "none",
-};
-
 // =============================================================================
 // Expansion state context
 // =============================================================================
 
-/**
- * Expansion state is managed at the LayerPanel level and provided via context
- * to all recursive LayerTree instances. This prevents expansion state from
- * being lost when a parent LayerTree re-renders and remounts its children.
- */
 type ExpansionState = {
   readonly expandedIds: ReadonlySet<string>;
   readonly toggle: (id: string) => void;
@@ -127,6 +126,84 @@ function useExpansion(): ExpansionState {
 }
 
 // =============================================================================
+// Drag state context
+// =============================================================================
+
+type LayerDragState =
+  | { readonly active: false }
+  | {
+      readonly active: true;
+      readonly draggingId: FigNodeId;
+      readonly overId: FigNodeId | undefined;
+      readonly overPosition: DropPosition;
+    };
+
+type DragController = {
+  readonly state: LayerDragState;
+  readonly startDrag: (event: ReactDragEvent<HTMLDivElement>, nodeId: FigNodeId) => void;
+  readonly trackOver: (event: ReactDragEvent<HTMLDivElement>, nodeId: FigNodeId) => void;
+  readonly clearOver: () => void;
+  readonly drop: (event: ReactDragEvent<HTMLDivElement>, targetId: FigNodeId) => void;
+  readonly endDrag: () => void;
+};
+
+const IDLE_DRAG: LayerDragState = { active: false };
+
+const DragContext = createContext<DragController>({
+  state: IDLE_DRAG,
+  startDrag: () => {},
+  trackOver: () => {},
+  clearOver: () => {},
+  drop: () => {},
+  endDrag: () => {},
+});
+
+function useLayerDrag(): DragController {
+  return useContext(DragContext);
+}
+
+// =============================================================================
+// Context menu actions
+// =============================================================================
+
+const LAYER_MENU_ACTIONS = {
+  rename: "rename",
+  duplicate: "duplicate",
+  delete: "delete",
+  bringForward: "bring-forward",
+  sendBackward: "send-backward",
+  bringToFront: "bring-to-front",
+  sendToBack: "send-to-back",
+} as const;
+
+type LayerMenuActionId = (typeof LAYER_MENU_ACTIONS)[keyof typeof LAYER_MENU_ACTIONS];
+
+function isLayerMenuActionId(value: string): value is LayerMenuActionId {
+  return Object.values<string>(LAYER_MENU_ACTIONS).includes(value);
+}
+
+function buildLayerMenuItems({
+  canRename,
+  canMutate,
+  canReorder,
+}: {
+  readonly canRename: boolean;
+  readonly canMutate: boolean;
+  readonly canReorder: boolean;
+}): readonly LayerContextMenuItem[] {
+  return [
+    { id: LAYER_MENU_ACTIONS.rename, label: "Rename", shortcut: "F2", disabled: !canRename },
+    { id: LAYER_MENU_ACTIONS.duplicate, label: "Duplicate", disabled: !canMutate },
+    { id: LAYER_MENU_ACTIONS.delete, label: "Delete", danger: true, disabled: !canMutate },
+    { id: "sep-1", label: "", divider: true },
+    { id: LAYER_MENU_ACTIONS.bringForward, label: "Bring forward", disabled: !canReorder },
+    { id: LAYER_MENU_ACTIONS.sendBackward, label: "Send backward", disabled: !canReorder },
+    { id: LAYER_MENU_ACTIONS.bringToFront, label: "Bring to front", disabled: !canReorder },
+    { id: LAYER_MENU_ACTIONS.sendToBack, label: "Send to back", disabled: !canReorder },
+  ];
+}
+
+// =============================================================================
 // Recursive layer tree
 // =============================================================================
 
@@ -134,21 +211,29 @@ type LayerTreeProps = {
   readonly nodes: readonly FigDesignNode[];
   readonly depth: number;
   readonly operationDomain: FigUserOperationDomain;
-  /**
-   * Whether this subtree is inside an INSTANCE node.
-   * When true, all children are rendered with the instance accent color
-   * to indicate they are inherited from a SYMBOL.
-   */
   readonly isInstanceContext: boolean;
 };
+
+function computeDropPositionFromEvent(
+  event: ReactDragEvent<HTMLDivElement>,
+): DropPosition {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const offset = event.clientY - rect.top;
+  if (offset < rect.height / 2) {
+    return "before";
+  }
+  return "after";
+}
 
 function LayerTree({ nodes, depth, operationDomain, isInstanceContext }: LayerTreeProps) {
   const { nodeSelection, dispatch } = useFigEditor();
   const { expandedIds, toggle } = useExpansion();
-  const [editingId, setEditingId] = useState<FigNodeId | null>(null);
-  const [editingName, setEditingName] = useState("");
+  const dragController = useLayerDrag();
   const canSelectNode = allowsFigUserOperation(operationDomain, "select-node");
   const canRenameNode = allowsFigUserOperation(operationDomain, "update-property");
+  const canDelete = allowsFigUserOperation(operationDomain, "delete-selection");
+  const canDuplicate = allowsFigUserOperation(operationDomain, "duplicate-selection");
+  const canReorder = allowsFigUserOperation(operationDomain, "reorder-node");
 
   const handlePointerDown = useCallback(
     (nodeId: FigNodeId) => (e: ReactPointerEvent) => {
@@ -165,88 +250,147 @@ function LayerTree({ nodes, depth, operationDomain, isInstanceContext }: LayerTr
     [canSelectNode, dispatch],
   );
 
-  const beginRename = useCallback((node: FigDesignNode) => {
-    if (!canRenameNode) {
-      return;
-    }
-    setEditingId(node.id);
-    setEditingName(node.name);
-  }, [canRenameNode]);
+  const handleRename = useCallback(
+    (nodeId: FigNodeId) => (next: string) => {
+      if (!canRenameNode) {
+        return;
+      }
+      dispatch({ type: "RENAME_NODE", nodeId, name: next, source: "layer-panel" });
+    },
+    [canRenameNode, dispatch],
+  );
 
-  const commitRename = useCallback((nodeId: FigNodeId) => {
-    if (!canRenameNode) {
-      setEditingId(null);
-      return;
-    }
-    const name = editingName.trim();
-    if (name.length > 0) {
-      dispatch({ type: "RENAME_NODE", nodeId, name, source: "layer-panel" });
-    }
-    setEditingId(null);
-  }, [canRenameNode, dispatch, editingName]);
+  const handleVisibilityChange = useCallback(
+    (nodeId: FigNodeId) => (nextVisible: boolean) => {
+      dispatch({
+        type: "UPDATE_NODE",
+        nodeId,
+        updater: (node) => ({ ...node, visible: nextVisible }),
+        source: "layer-panel",
+      });
+    },
+    [dispatch],
+  );
 
-  const handleRenameKeyDown = useCallback((nodeId: FigNodeId) => (e: KeyboardEvent<HTMLInputElement>) => {
-    switch (e.key) {
-      case "Enter":
-        commitRename(nodeId);
-        break;
-      case "Escape":
-        setEditingId(null);
-        break;
-    }
-  }, [commitRename]);
+  const handleLockChange = useCallback(
+    (nodeId: FigNodeId) => (nextLocked: boolean) => {
+      dispatch({
+        type: "UPDATE_NODE",
+        nodeId,
+        updater: (node) => ({ ...node, locked: nextLocked }),
+        source: "layer-panel",
+      });
+    },
+    [dispatch],
+  );
+
+  const handleContextMenu = useCallback(
+    (nodeId: FigNodeId) => (itemId: string) => {
+      if (!isLayerMenuActionId(itemId)) {
+        return;
+      }
+      switch (itemId) {
+        case LAYER_MENU_ACTIONS.rename:
+          // Rename via the menu is initiated by a synthetic double-tap on
+          // the row; LayerItem owns the editing state internally and we
+          // cannot programmatically open it. Selecting the row first lets
+          // the user follow up with F2/double-click consistently with
+          // the rest of the editor.
+          dispatch({ type: "SELECT_NODE", nodeId, addToSelection: false });
+          return;
+        case LAYER_MENU_ACTIONS.duplicate:
+          dispatch({ type: "DUPLICATE_NODES", nodeIds: [nodeId] });
+          return;
+        case LAYER_MENU_ACTIONS.delete:
+          dispatch({ type: "DELETE_NODES", nodeIds: [nodeId] });
+          return;
+        case LAYER_MENU_ACTIONS.bringForward:
+          dispatch({ type: "REORDER_NODE", nodeId, direction: "forward" });
+          return;
+        case LAYER_MENU_ACTIONS.sendBackward:
+          dispatch({ type: "REORDER_NODE", nodeId, direction: "backward" });
+          return;
+        case LAYER_MENU_ACTIONS.bringToFront:
+          dispatch({ type: "REORDER_NODE", nodeId, direction: "front" });
+          return;
+        case LAYER_MENU_ACTIONS.sendToBack:
+          dispatch({ type: "REORDER_NODE", nodeId, direction: "back" });
+      }
+    },
+    [dispatch],
+  );
+
+  const menuItems = useMemo(
+    () =>
+      buildLayerMenuItems({
+        canRename: canRenameNode,
+        canMutate: canDelete && canDuplicate,
+        canReorder,
+      }),
+    [canDelete, canDuplicate, canRenameNode, canReorder],
+  );
+
+  const reversedNodes = useMemo(() => [...nodes].reverse(), [nodes]);
 
   return (
     <>
-      {[...nodes].reverse().map((node) => {
+      {reversedNodes.map((node) => {
         const selected = isSelected(nodeSelection, node.id);
         const hasChildren = node.children != null && node.children.length > 0;
         const expanded = expandedIds.has(node.id);
         const isInstance = node.type === "INSTANCE";
         const childIsInstanceContext = isInstanceContext || isInstance;
-        const isEditing = editingId === node.id;
         const presentation = resolveLayerNodePresentation(node.type, isInstanceContext);
         const badge = presentation.badge ? <LayerBadge {...presentation.badge} /> : undefined;
 
-        if (isEditing) {
-          return (
-            <div key={node.id} style={presentation.rowStyle}>
-              <div style={{ paddingLeft: 8 + depth * 16, paddingRight: 6, paddingTop: 2, paddingBottom: 2 }}>
-                <input
-                  autoFocus
-                  value={editingName}
-                  aria-label={`Rename ${node.name}`}
-                  style={renameInputStyle}
-                  onChange={(e) => setEditingName(e.currentTarget.value)}
-                  onBlur={() => commitRename(node.id)}
-                  onKeyDown={handleRenameKeyDown(node.id)}
-                />
-              </div>
-            </div>
-          );
-        }
+        const dragState = dragController.state;
+        const isDragging = dragState.active && dragState.draggingId === node.id;
+        const isDropTarget =
+          dragState.active && dragState.overId === node.id && dragState.draggingId !== node.id;
+        const dropPosition: DropPosition = isDropTarget ? dragState.overPosition : null;
 
         return (
-          <div key={node.id} style={presentation.rowStyle}>
-            <div onDoubleClick={() => beginRename(node)}>
-              <LayerItem
-                id={node.id}
-                label={node.name}
-                icon={getNodeIcon(node.type, presentation.iconColor)}
-                depth={depth}
-                selected={selected}
-                dimmed={!node.visible}
-                hasChildren={hasChildren}
-                expanded={expanded}
-                onToggle={hasChildren ? () => toggle(node.id) : undefined}
-                onPointerDown={canSelectNode ? handlePointerDown(node.id) : undefined}
-                showVisibilityToggle={false}
-                showLockToggle={false}
-                badge={badge}
-              />
-            </div>
+          <div
+            key={node.id}
+            style={{ ...presentation.rowStyle, opacity: isDragging ? 0.4 : undefined }}
+          >
+            <LayerItem
+              id={node.id}
+              label={node.name}
+              icon={getNodeIcon(node.type, presentation.iconColor)}
+              depth={depth}
+              selected={selected}
+              dimmed={!node.visible}
+              visible={node.visible}
+              locked={node.locked ?? false}
+              hasChildren={hasChildren}
+              expanded={expanded}
+              onToggle={hasChildren ? () => toggle(node.id) : undefined}
+              onPointerDown={canSelectNode ? handlePointerDown(node.id) : undefined}
+              renamable={canRenameNode}
+              onRename={handleRename(node.id)}
+              onVisibilityChange={handleVisibilityChange(node.id)}
+              onLockChange={handleLockChange(node.id)}
+              showVisibilityToggle
+              showLockToggle
+              draggable={canReorder}
+              onDragStart={(event) => dragController.startDrag(event, node.id)}
+              onDragOver={(event) => dragController.trackOver(event, node.id)}
+              onDragLeave={() => dragController.clearOver()}
+              onDrop={(event) => dragController.drop(event, node.id)}
+              onDragEnd={() => dragController.endDrag()}
+              dropPosition={dropPosition}
+              contextMenuItems={[...menuItems]}
+              onContextMenu={handleContextMenu(node.id)}
+              badge={badge}
+            />
             {hasChildren && expanded && (
-              <LayerTree nodes={node.children!} depth={depth + 1} operationDomain={operationDomain} isInstanceContext={childIsInstanceContext} />
+              <LayerTree
+                nodes={node.children!}
+                depth={depth + 1}
+                operationDomain={operationDomain}
+                isInstanceContext={childIsInstanceContext}
+              />
             )}
           </div>
         );
@@ -268,7 +412,14 @@ function buildLayerContent({
 }): ReactNode {
   if (children.length === 0) {
     return (
-      <div style={{ padding: `${spacingTokens.xl} ${spacingTokens.lg}`, textAlign: "center", color: colorTokens.text.tertiary, fontSize: fontTokens.size.lg }}>
+      <div
+        style={{
+          padding: `${spacingTokens.xl} ${spacingTokens.lg}`,
+          textAlign: "center",
+          color: colorTokens.text.tertiary,
+          fontSize: fontTokens.size.lg,
+        }}
+      >
         Empty page
       </div>
     );
@@ -286,16 +437,19 @@ function buildLayerContent({
 // Component
 // =============================================================================
 
+const DRAG_MIME_TYPE = "application/x-fig-layer-id";
+
 /**
  * Layer tree panel for the fig editor.
  *
- * Expansion state is managed here via ExpansionContext so that
+ * Expansion and drag state are managed here via React contexts so that
  * recursive LayerTree components share a single stable state store.
  */
 export function LayerPanel() {
-  const { activePage } = useFigEditor();
+  const { activePage, dispatch } = useFigEditor();
   const operationDomain = useFigOperationDomain();
   const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [dragState, setDragState] = useState<LayerDragState>(IDLE_DRAG);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -309,10 +463,80 @@ export function LayerPanel() {
     });
   }, []);
 
+  const startDrag = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>, nodeId: FigNodeId) => {
+      event.dataTransfer.setData(DRAG_MIME_TYPE, nodeId);
+      event.dataTransfer.effectAllowed = "move";
+      setDragState({ active: true, draggingId: nodeId, overId: undefined, overPosition: null });
+    },
+    [],
+  );
+
+  const trackOver = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>, nodeId: FigNodeId) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const overPosition = computeDropPositionFromEvent(event);
+      setDragState((prev) => {
+        if (!prev.active || prev.draggingId === nodeId) {
+          return prev;
+        }
+        if (prev.overId === nodeId && prev.overPosition === overPosition) {
+          return prev;
+        }
+        return { active: true, draggingId: prev.draggingId, overId: nodeId, overPosition };
+      });
+    },
+    [],
+  );
+
+  const clearOver = useCallback(() => {
+    setDragState((prev) => {
+      if (!prev.active || prev.overId === undefined) {
+        return prev;
+      }
+      return { active: true, draggingId: prev.draggingId, overId: undefined, overPosition: null };
+    });
+  }, []);
+
+  const drop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>, targetId: FigNodeId) => {
+      event.preventDefault();
+      const sourceId = (event.dataTransfer.getData(DRAG_MIME_TYPE) as FigNodeId) || undefined;
+      const position = computeDropPositionFromEvent(event);
+      if (sourceId && sourceId !== targetId) {
+        dispatch({
+          type: "MOVE_NODE_RELATIVE",
+          nodeId: sourceId,
+          targetId,
+          position: position === "after" ? "after" : "before",
+        });
+      }
+      setDragState(IDLE_DRAG);
+    },
+    [dispatch],
+  );
+
+  const endDrag = useCallback(() => {
+    setDragState(IDLE_DRAG);
+  }, []);
+
+  const dragController = useMemo<DragController>(
+    () => ({ state: dragState, startDrag, trackOver, clearOver, drop, endDrag }),
+    [clearOver, drop, endDrag, dragState, startDrag, trackOver],
+  );
+
   if (!activePage) {
     return (
       <OptionalPropertySection title="Layers" badge={0} defaultExpanded>
-        <div style={{ padding: `${spacingTokens.xl} ${spacingTokens.lg}`, textAlign: "center", color: colorTokens.text.tertiary, fontSize: fontTokens.size.lg }}>
+        <div
+          style={{
+            padding: `${spacingTokens.xl} ${spacingTokens.lg}`,
+            textAlign: "center",
+            color: colorTokens.text.tertiary,
+            fontSize: fontTokens.size.lg,
+          }}
+        >
           No page selected
         </div>
       </OptionalPropertySection>
@@ -328,7 +552,7 @@ export function LayerPanel() {
 
   return (
     <OptionalPropertySection title="Layers" badge={activePage.children.length} defaultExpanded>
-      {layerContent}
+      <DragContext.Provider value={dragController}>{layerContent}</DragContext.Provider>
     </OptionalPropertySection>
   );
 }

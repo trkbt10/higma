@@ -133,6 +133,8 @@ export {
 
 // Primitives
 export {
+  AddItemButton,
+  type AddItemButtonProps,
   Button,
   type ButtonProps,
   type ButtonSize,
@@ -143,10 +145,15 @@ export {
   type IconButtonSize,
   Input,
   type InputProps,
+  InlineRenameInput,
+  type InlineRenameInputProps,
+  type InlineRenameInputHandle,
   Popover,
   type PopoverProps,
   Select,
   type SelectProps,
+  SuffixSelect,
+  type SuffixSelectProps,
   SearchableSelect,
   type SearchableSelectProps,
   type SearchableSelectOption,
@@ -312,3 +319,6 @@ export type {
 
 // Property sections (presentational views)
 export * from "./property-sections";
+
+// Operation primitives (single-purpose action widgets)
+export * from "./operations";

@@ -2,12 +2,19 @@
  * @file UI primitives exports
  */
 
+export { AddItemButton, type AddItemButtonProps } from "./AddItemButton";
 export { Button, type ButtonProps, type ButtonSize } from "./Button";
 export { Checkbox, type CheckboxProps } from "./Checkbox";
 export { IconButton, type IconButtonProps, type IconButtonSize } from "./IconButton";
 export { Input, type InputProps } from "./Input";
+export {
+  InlineRenameInput,
+  type InlineRenameInputProps,
+  type InlineRenameInputHandle,
+} from "./InlineRenameInput";
 export { Popover, type PopoverProps } from "./Popover";
 export { Select, type SelectProps } from "./Select";
+export { SuffixSelect, type SuffixSelectProps } from "./SuffixSelect";
 export {
   SearchableSelect,
   type SearchableSelectProps,

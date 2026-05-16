@@ -4,7 +4,7 @@
 
 import { pushHistory } from "@higma-editor-kernel/core/history";
 import { createSingleSelection, createMultiSelection, createEmptySelection } from "@higma-editor-kernel/core/selection";
-import { addNode, removeNode, updateNode, reorderNode, findNodeById, findParentNode, insertNodeInTree, updateNodeInTree } from "@higma-document-io/fig/node-ops";
+import { addNode, removeNode, updateNode, reorderNode, moveNodeRelative, findNodeById, findParentNode, insertNodeInTree, updateNodeInTree } from "@higma-document-io/fig/node-ops";
 import type { FigNodeId, FigDesignNode } from "@higma-document-models/fig/domain";
 import { nextNodeId } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
@@ -299,6 +299,28 @@ export const NODE_HANDLERS: HandlerMap = {
     const doc = state.documentHistory.present;
     const updated = reorderNode({ doc, pageId, nodeId: action.nodeId, direction: action.direction });
 
+    return {
+      ...state,
+      documentHistory: pushHistory(state.documentHistory, updated),
+    };
+  },
+
+  MOVE_NODE_RELATIVE(state, action) {
+    const pageId = state.activePageId;
+    if (!pageId) {
+      return state;
+    }
+    const doc = state.documentHistory.present;
+    const updated = moveNodeRelative({
+      doc,
+      pageId,
+      nodeId: action.nodeId,
+      targetId: action.targetId,
+      position: action.position,
+    });
+    if (updated === doc) {
+      return state;
+    }
     return {
       ...state,
       documentHistory: pushHistory(state.documentHistory, updated),

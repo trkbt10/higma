@@ -93,7 +93,7 @@ export function FigEditorToolbar() {
         <ToolbarButton
           key={tool.mode.type}
           icon={tool.icon}
-          label={`${tool.label} (${tool.shortcut})`}
+          label={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
           active={creationMode.type === tool.mode.type}
           onClick={() => handleToolClick(tool.mode)}
           disabled={!allowsFigUserOperation(operationDomain, "set-tool")}

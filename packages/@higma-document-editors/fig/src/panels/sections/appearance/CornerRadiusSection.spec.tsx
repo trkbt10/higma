@@ -32,9 +32,10 @@ describe("CornerRadiusSection", () => {
       dispatch: () => undefined,
     }));
 
-    expect(html).toContain("Radius");
+    expect(html).toContain('aria-label="Corner radius"');
     expect(html).toContain('value="0"');
-    expect(html).toContain('aria-label="Use individual corner radii"');
+    expect(html).toContain('aria-label="Corner radius mode"');
+    expect(html).toContain("Per-corner");
   });
 
   it("renders individual corner controls when rectangleCornerRadii is present", () => {

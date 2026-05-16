@@ -30,6 +30,7 @@ export function isFigEditorActionAllowed(state: FigEditorState, action: FigEdito
     case "RENAME_NODE":
       return allowsFigNodeMutationSource(domain, action.source);
     case "REORDER_NODE":
+    case "MOVE_NODE_RELATIVE":
       return allowsFigUserOperation(domain, "reorder-node");
     case "SET_CREATION_MODE":
       return allowsFigUserOperation(domain, "set-tool");

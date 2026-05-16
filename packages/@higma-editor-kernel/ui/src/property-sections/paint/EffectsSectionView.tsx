@@ -4,8 +4,9 @@ import { type CSSProperties } from "react";
 import { Input, Select, Toggle } from "../../primitives";
 import type { SelectOption } from "../../types";
 import { colorTokens, fontTokens } from "../../design-tokens";
-import { AddIcon, CloseIcon } from "../../icons";
-import { addButtonStyle, removeButtonStyle } from "./paint-section-styles";
+import { CloseIcon } from "../../icons";
+import { AddItemButton } from "../../primitives";
+import { removeButtonStyle } from "./paint-section-styles";
 
 export type EffectTypeId = "DROP_SHADOW" | "INNER_SHADOW" | "FOREGROUND_BLUR" | "BACKGROUND_BLUR";
 
@@ -74,12 +75,28 @@ export const BLEND_MODE_OPTIONS: readonly SelectOption<BlendModeId>[] = [
   { value: "LUMINOSITY", label: "Luminosity" },
 ];
 
+/**
+ * Effect card layout.
+ *
+ * Each effect is presented as a card so that two adjacent shadows are
+ * visually distinct (the previous layout let the cards bleed into each
+ * other and forced operators to reverse-engineer which control belonged
+ * to which effect). A 1px bottom border keeps the section compact while
+ * still drawing the boundary.
+ */
 const effectItemStyle: CSSProperties = {
   fontSize: fontTokens.size.sm,
   display: "flex",
   flexDirection: "column",
   gap: 4,
-  padding: "4px 0",
+  paddingBottom: 8,
+  borderBottom: `1px solid ${colorTokens.border.subtle}`,
+};
+
+const effectItemLastStyle: CSSProperties = {
+  ...effectItemStyle,
+  paddingBottom: 0,
+  borderBottom: "none",
 };
 
 const effectHeaderStyle: CSSProperties = {
@@ -88,10 +105,54 @@ const effectHeaderStyle: CSSProperties = {
   gap: 6,
 };
 
+/**
+ * Two-column control grid for shadow detail rows.
+ *
+ * Each cell is ~115 px at default panel widths — enough for prefix +
+ * 3-digit number + unit suffix. The previous 3-column grid collapsed
+ * cells to ~75 px and clipped digits; the previous full-width color
+ * picker (~28 px tall solid black bar) dominated the card and pushed
+ * everything else out of the operator's line of sight, so the colour
+ * lives in a compact swatch+hex pair sized like the gradient-stop
+ * swatches in FillSection.
+ */
 const effectControlsStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-  gap: 4,
+  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gap: 6,
+  alignItems: "center",
+};
+
+const fullWidthCellStyle: CSSProperties = {
+  gridColumn: "1 / -1",
+};
+
+const colorCellStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  minWidth: 0,
+};
+
+const colorSwatchStyle: CSSProperties = {
+  width: 24,
+  height: 24,
+  flexShrink: 0,
+  border: `1px solid ${colorTokens.border.strong}`,
+  borderRadius: 4,
+  padding: 0,
+  cursor: "pointer",
+};
+
+const colorHexLabelStyle: CSSProperties = {
+  fontFamily: "monospace",
+  fontSize: fontTokens.size.sm,
+  color: colorTokens.text.secondary,
+  letterSpacing: "0.02em",
+  minWidth: 0,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
 };
 
 const emptyStyle: CSSProperties = {
@@ -110,6 +171,115 @@ function effectLabel(type: EffectTypeId): string {
     case "BACKGROUND_BLUR":
       return "Background Blur";
   }
+}
+
+type EffectDetailRenderArgs = {
+  readonly effect: EffectView;
+  readonly index: number;
+  readonly label: string;
+  readonly onChange: (index: number, effect: EffectView) => void;
+};
+
+function renderShadowDetails({ effect, index, label, onChange }: EffectDetailRenderArgs) {
+  const i = index;
+  return (
+    <div style={effectControlsStyle}>
+      <div style={colorCellStyle}>
+        <input
+          type="color"
+          value={effect.hex}
+          aria-label={`${label} color`}
+          onChange={(e) => onChange(i, { ...effect, hex: e.target.value })}
+          style={colorSwatchStyle}
+        />
+        <span style={colorHexLabelStyle}>{effect.hex.toUpperCase()}</span>
+      </div>
+      <Input
+        type="number"
+        ariaLabel={`${label} opacity`}
+        value={Math.round(effect.opacity * 100)}
+        min={0}
+        max={100}
+        onChange={(v) => onChange(i, { ...effect, opacity: (v as number) / 100 })}
+        prefix="O"
+        suffix="%"
+        dragToChange
+      />
+      <Input
+        type="number"
+        ariaLabel={`${label} offset x`}
+        value={effect.offsetX}
+        onChange={(v) => onChange(i, { ...effect, offsetX: v as number })}
+        prefix="X"
+        suffix="px"
+        dragToChange
+      />
+      <Input
+        type="number"
+        ariaLabel={`${label} offset y`}
+        value={effect.offsetY}
+        onChange={(v) => onChange(i, { ...effect, offsetY: v as number })}
+        prefix="Y"
+        suffix="px"
+        dragToChange
+      />
+      <Input
+        type="number"
+        ariaLabel={`${label} radius`}
+        value={effect.radius}
+        onChange={(v) => onChange(i, { ...effect, radius: v as number })}
+        prefix="R"
+        suffix="px"
+        dragToChange
+      />
+      <Input
+        type="number"
+        ariaLabel={`${label} spread`}
+        value={effect.spread}
+        onChange={(v) => onChange(i, { ...effect, spread: v as number })}
+        prefix="S"
+        suffix="px"
+        dragToChange
+      />
+      <div style={fullWidthCellStyle}>
+        <Select<BlendModeId>
+          value={effect.blendMode}
+          onChange={(blendMode) => onChange(i, { ...effect, blendMode })}
+          options={BLEND_MODE_OPTIONS}
+          ariaLabel={`${label} blend mode`}
+        />
+      </div>
+      <div style={fullWidthCellStyle}>
+        <Toggle
+          checked={effect.showShadowBehindNode}
+          onChange={(checked) => onChange(i, { ...effect, showShadowBehindNode: checked })}
+          label="Show behind node"
+          ariaLabel={`${label} show behind node`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function renderBlurDetails({ effect, index, label, onChange }: EffectDetailRenderArgs) {
+  return (
+    <Input
+      type="number"
+      ariaLabel={`${label} radius`}
+      value={effect.radius}
+      onChange={(v) => onChange(index, { ...effect, radius: v as number })}
+      prefix="Radius"
+      suffix="px"
+      dragToChange
+    />
+  );
+}
+
+function renderEffectDetails(args: EffectDetailRenderArgs, isShadow: boolean) {
+  if (isShadow) {
+    return renderShadowDetails(args);
+  }
+  return renderBlurDetails(args);
 }
 
 /** Renders the effect list (drop/inner shadow, layer/background blur) with shadow detail controls. */
@@ -139,75 +309,11 @@ export function EffectsSectionView({ effects, onAdd, onRemove, onChange }: Effec
                 <CloseIcon size={12} />
               </button>
             </div>
-            <div style={effectControlsStyle}>
-              <Input
-                type="number"
-                ariaLabel={`${label} radius`}
-                value={effect.radius}
-                onChange={(v) => onChange(i, { ...effect, radius: v as number })}
-                suffix="r"
-              />
-              {isShadow && (
-                <>
-                  <Select<BlendModeId>
-                    value={effect.blendMode}
-                    onChange={(blendMode) => onChange(i, { ...effect, blendMode })}
-                    options={BLEND_MODE_OPTIONS}
-                    ariaLabel={`${label} blend mode`}
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${label} offset x`}
-                    value={effect.offsetX}
-                    onChange={(v) => onChange(i, { ...effect, offsetX: v as number })}
-                    suffix="x"
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${label} offset y`}
-                    value={effect.offsetY}
-                    onChange={(v) => onChange(i, { ...effect, offsetY: v as number })}
-                    suffix="y"
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${label} spread`}
-                    value={effect.spread}
-                    onChange={(v) => onChange(i, { ...effect, spread: v as number })}
-                    suffix="s"
-                  />
-                  <input
-                    type="color"
-                    value={effect.hex}
-                    aria-label={`${label} color`}
-                    onChange={(e) => onChange(i, { ...effect, hex: e.target.value })}
-                    style={{ width: "100%", height: 28, padding: 0, border: `1px solid ${colorTokens.border.strong}`, borderRadius: 4 }}
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${label} opacity`}
-                    value={Math.round(effect.opacity * 100)}
-                    min={0}
-                    max={100}
-                    onChange={(v) => onChange(i, { ...effect, opacity: (v as number) / 100 })}
-                    suffix="%"
-                  />
-                  <Toggle
-                    checked={effect.showShadowBehindNode}
-                    onChange={(checked) => onChange(i, { ...effect, showShadowBehindNode: checked })}
-                    label="Behind"
-                    ariaLabel={`${label} show behind node`}
-                  />
-                </>
-              )}
-            </div>
+            {renderEffectDetails({ effect, index: i, label, onChange }, isShadow)}
           </div>
         );
       })}
-      <button type="button" onClick={onAdd} style={addButtonStyle}>
-        <AddIcon size={12} />
-        Add effect
-      </button>
+      <AddItemButton label="Add effect" onClick={onAdd} />
     </div>
   );
 }

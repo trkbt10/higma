@@ -1,15 +1,12 @@
 /** @file Stroke section view (presentational only). */
 
 import { type Ref, type ChangeEvent } from "react";
-import { AddIcon } from "../../icons";
-import { Input, Select } from "../../primitives";
+import { AddItemButton, Input, Select } from "../../primitives";
 import { FieldGroup, FieldRow } from "../../layout";
 import type { SelectOption } from "../../types";
-import { colorTokens, fontTokens } from "../../design-tokens";
 import { PaintItemEditorView, type PaintItemImageOption } from "./PaintItemEditorView";
 import {
   sectionContainerStyle,
-  addButtonStyle,
   IMAGE_ACCEPT_TYPES,
 } from "./paint-section-styles";
 import type { PaintItemView } from "./paint-view-model";
@@ -91,30 +88,23 @@ export function StrokeSectionView({
       {hasContent && (
         <>
           <FieldRow>
-            <FieldGroup label="Weight" inline labelWidth={50}>
-              <Input
-                type="number"
-                ariaLabel="Stroke weight"
-                value={strokeWeight}
-                min={0}
-                step={0.5}
-                onChange={(v) => onStrokeWeightChange(v as number)}
-                width={60}
-              />
-            </FieldGroup>
-            <span style={{ fontSize: fontTokens.size.xs, color: colorTokens.text.tertiary }}>
-              {align}
-            </span>
-          </FieldRow>
-          <FieldRow>
-            <FieldGroup label="Align" inline labelWidth={42}>
-              <Select
-                value={align}
-                onChange={onAlignChange}
-                options={STROKE_ALIGN_OPTIONS}
-                ariaLabel="Stroke align"
-              />
-            </FieldGroup>
+            <Input
+              type="number"
+              ariaLabel="Stroke weight"
+              value={strokeWeight}
+              min={0}
+              step={0.5}
+              prefix="W"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onStrokeWeightChange(v as number)}
+            />
+            <Select
+              value={align}
+              onChange={onAlignChange}
+              options={STROKE_ALIGN_OPTIONS}
+              ariaLabel="Stroke align"
+            />
           </FieldRow>
           <FieldRow>
             <FieldGroup label="Cap" inline labelWidth={32}>
@@ -135,23 +125,23 @@ export function StrokeSectionView({
             </FieldGroup>
           </FieldRow>
           <FieldRow>
-            <FieldGroup label="Dash" inline labelWidth={38}>
-              <Input
-                type="text"
-                ariaLabel="Stroke dash pattern"
-                value={dashes.join(" ")}
-                onChange={(v) => {
-                  const parsed = String(v)
-                    .split(/[\s,]+/)
-                    .filter((part) => part.length > 0)
-                    .map((part) => Number(part));
-                  if (parsed.some((part) => !Number.isFinite(part) || part < 0)) {
-                    return;
-                  }
-                  onDashesChange(parsed);
-                }}
-              />
-            </FieldGroup>
+            <Input
+              type="text"
+              ariaLabel="Stroke dash pattern"
+              value={dashes.join(" ")}
+              placeholder="0 0 0"
+              prefix="Dash"
+              onChange={(v) => {
+                const parsed = String(v)
+                  .split(/[\s,]+/)
+                  .filter((part) => part.length > 0)
+                  .map((part) => Number(part));
+                if (parsed.some((part) => !Number.isFinite(part) || part < 0)) {
+                  return;
+                }
+                onDashesChange(parsed);
+              }}
+            />
           </FieldRow>
         </>
       )}
@@ -167,10 +157,7 @@ export function StrokeSectionView({
         />
       ))}
 
-      <button type="button" style={addButtonStyle} onClick={onAddPaint}>
-        <AddIcon size={12} />
-        Add stroke
-      </button>
+      <AddItemButton label="Add stroke" onClick={onAddPaint} />
     </div>
   );
 }

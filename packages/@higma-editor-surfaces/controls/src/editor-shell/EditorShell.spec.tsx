@@ -56,6 +56,48 @@ describe("EditorShell", () => {
     expect(screen.getByText("Bottom Bar")).toBeDefined();
   });
 
+  it("propagates the scrollable flag onto the panel wrapper's overflow-y", () => {
+    const { container } = render(
+      <EditorShell
+        panels={[
+          {
+            id: "left",
+            position: "left",
+            content: <div data-testid="left-content">Left</div>,
+            scrollable: false,
+          },
+          {
+            id: "right",
+            position: "right",
+            content: <div data-testid="right-content">Right</div>,
+            scrollable: true,
+          },
+        ]}
+      >
+        <div>Content</div>
+      </EditorShell>,
+    );
+
+    // Walk up from the rendered children to the wrapper div the EditorShell
+    // injects around each panel's content. The wrapper carries the border
+    // style — that's the same node that owns the overflow rule.
+    const leftWrapper = screen.getByTestId("left-content").parentElement;
+    const rightWrapper = screen.getByTestId("right-content").parentElement;
+
+    if (!leftWrapper || !rightWrapper) {
+      throw new Error("expected wrappers around panel content");
+    }
+
+    expect(leftWrapper.style.overflowY).toBe("hidden");
+    expect(rightWrapper.style.overflowY).toBe("auto");
+    // Horizontal overflow stays hidden in both so the surrounding grid cell
+    // never grows horizontally just because a property field overflows.
+    expect(leftWrapper.style.overflowX).toBe("hidden");
+    expect(rightWrapper.style.overflowX).toBe("hidden");
+    // Silence unused-binding warning.
+    expect(container).toBeDefined();
+  });
+
   it("does not render drawer toggle buttons in desktop mode", () => {
     render(
       <EditorShell

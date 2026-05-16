@@ -2,13 +2,15 @@
  * @file Layout constraints view (presentational only)
  *
  * Renders controls for stack positioning, primary/counter sizing, horizontal
- * and vertical constraints, align-self and grow. All enums are kernel-defined
- * string ids; callers translate to their domain (e.g. fig Kiwi enums).
+ * and vertical constraints, align-self and grow. The "Grow" numeric input is
+ * Number-with-Suffix; the enum-only fields (positioning, sizing, alignment)
+ * keep their Select dropdowns because they carry no associated number.
  */
 
 import { Input, Select } from "../../primitives";
 import { FieldGroup, FieldRow } from "../../layout";
 import type { SelectOption } from "../../types";
+import { ConstraintAnchorGrid } from "../../operations";
 
 export type StackPositioningId = "AUTO" | "ABSOLUTE";
 export type StackSizingId = "FIXED" | "RESIZE_TO_FIT" | "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE";
@@ -93,18 +95,37 @@ export function LayoutConstraintsSectionView({
         <FieldGroup label="Align self" inline labelWidth={70}>
           <Select value={alignSelf} onChange={onAlignSelfChange} options={ALIGN_SELF_OPTIONS} ariaLabel="Layout align self" />
         </FieldGroup>
-        <FieldGroup label="Grow" inline labelWidth={44}>
-          <Input type="number" ariaLabel="Layout grow" value={grow} onChange={(v) => onGrowChange(v as number)} />
-        </FieldGroup>
+        <Input
+          type="number"
+          ariaLabel="Layout grow"
+          value={grow}
+          prefix="G"
+          dragToChange
+          onChange={(v) => onGrowChange(v as number)}
+        />
       </FieldRow>
       {positioning === "ABSOLUTE" && (
         <FieldRow>
-          <FieldGroup label="Horizontal" inline labelWidth={70}>
-            <Select value={horizontalConstraint} onChange={onHorizontalConstraintChange} options={CONSTRAINT_OPTIONS} ariaLabel="Layout horizontal constraint" />
-          </FieldGroup>
-          <FieldGroup label="Vertical" inline labelWidth={70}>
-            <Select value={verticalConstraint} onChange={onVerticalConstraintChange} options={CONSTRAINT_OPTIONS} ariaLabel="Layout vertical constraint" />
-          </FieldGroup>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+            <FieldGroup label="Horizontal" inline labelWidth={70}>
+              <Select value={horizontalConstraint} onChange={onHorizontalConstraintChange} options={CONSTRAINT_OPTIONS} ariaLabel="Layout horizontal constraint" />
+            </FieldGroup>
+            <FieldGroup label="Vertical" inline labelWidth={70}>
+              <Select value={verticalConstraint} onChange={onVerticalConstraintChange} options={CONSTRAINT_OPTIONS} ariaLabel="Layout vertical constraint" />
+            </FieldGroup>
+          </div>
+          <ConstraintAnchorGrid
+            horizontal={horizontalConstraint}
+            vertical={verticalConstraint}
+            onChange={({ horizontal, vertical }) => {
+              if (horizontal !== horizontalConstraint) {
+                onHorizontalConstraintChange(horizontal);
+              }
+              if (vertical !== verticalConstraint) {
+                onVerticalConstraintChange(vertical);
+              }
+            }}
+          />
         </FieldRow>
       )}
     </div>

@@ -143,6 +143,12 @@ export type FigEditorAction =
       readonly nodeId: FigNodeId;
       readonly direction: "front" | "back" | "forward" | "backward";
     }
+  | {
+      readonly type: "MOVE_NODE_RELATIVE";
+      readonly nodeId: FigNodeId;
+      readonly targetId: FigNodeId;
+      readonly position: "before" | "after";
+    }
   | { readonly type: "RENAME_NODE"; readonly nodeId: FigNodeId; readonly name: string; readonly source: FigNodeMutationSource }
   | { readonly type: "GROUP_SELECTION" }
   | { readonly type: "MAKE_COMPONENT_FROM_SELECTION" }

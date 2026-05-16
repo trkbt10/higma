@@ -2,8 +2,10 @@
  * @file Auto layout view (presentational only)
  *
  * Renders controls for stack mode, gap, padding, alignment, wrap and Z-order.
- * Uses string enums (StackModeId / StackAlignId) defined in this file. Callers
- * map between their domain enums (e.g. fig Kiwi KiwiEnumValue) and these ids.
+ * Numeric inputs use prefix-label + unit-suffix layout: the role letter
+ * (G, CG, T, R, B, L) is the leading prefix (and Figma-style drag scrubber);
+ * the trailing `px` suffix is the unit. Enum selectors keep Select dropdowns
+ * because they have no numeric value to attach a unit to.
  */
 
 import { Input, Select, Toggle } from "../../primitives";
@@ -86,25 +88,64 @@ export function AutoLayoutSectionView({
       {mode !== "NONE" && (
         <>
           <FieldRow>
-            <FieldGroup label="Gap" inline labelWidth={40}>
-              <Input type="number" ariaLabel="Auto layout gap" value={gap} onChange={(v) => onGapChange(v as number)} />
-            </FieldGroup>
+            <Input
+              type="number"
+              ariaLabel="Auto layout gap"
+              value={gap}
+              prefix="G"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onGapChange(v as number)}
+            />
+            <Input
+              type="number"
+              ariaLabel="Auto layout counter gap"
+              value={counterGap}
+              prefix="CG"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onCounterGapChange(v as number)}
+            />
           </FieldRow>
           <FieldRow>
-            <FieldGroup label="Top" inline labelWidth={28}>
-              <Input type="number" ariaLabel="Auto layout padding top" value={padding.top} onChange={(v) => onPaddingChange("top", v as number)} />
-            </FieldGroup>
-            <FieldGroup label="Right" inline labelWidth={36}>
-              <Input type="number" ariaLabel="Auto layout padding right" value={padding.right} onChange={(v) => onPaddingChange("right", v as number)} />
-            </FieldGroup>
+            <Input
+              type="number"
+              ariaLabel="Auto layout padding top"
+              value={padding.top}
+              prefix="T"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onPaddingChange("top", v as number)}
+            />
+            <Input
+              type="number"
+              ariaLabel="Auto layout padding right"
+              value={padding.right}
+              prefix="R"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onPaddingChange("right", v as number)}
+            />
           </FieldRow>
           <FieldRow>
-            <FieldGroup label="Bottom" inline labelWidth={44}>
-              <Input type="number" ariaLabel="Auto layout padding bottom" value={padding.bottom} onChange={(v) => onPaddingChange("bottom", v as number)} />
-            </FieldGroup>
-            <FieldGroup label="Left" inline labelWidth={28}>
-              <Input type="number" ariaLabel="Auto layout padding left" value={padding.left} onChange={(v) => onPaddingChange("left", v as number)} />
-            </FieldGroup>
+            <Input
+              type="number"
+              ariaLabel="Auto layout padding bottom"
+              value={padding.bottom}
+              prefix="B"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onPaddingChange("bottom", v as number)}
+            />
+            <Input
+              type="number"
+              ariaLabel="Auto layout padding left"
+              value={padding.left}
+              prefix="L"
+              suffix="px"
+              dragToChange
+              onChange={(v) => onPaddingChange("left", v as number)}
+            />
           </FieldRow>
           <FieldGroup label="Primary align">
             <Select value={primaryAlign} onChange={onPrimaryAlignChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout primary align" />
@@ -115,11 +156,6 @@ export function AutoLayoutSectionView({
           <FieldGroup label="Align content">
             <Select value={alignContent} onChange={onAlignContentChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout align content" />
           </FieldGroup>
-          <FieldRow>
-            <FieldGroup label="Counter gap" inline labelWidth={78}>
-              <Input type="number" ariaLabel="Auto layout counter gap" value={counterGap} onChange={(v) => onCounterGapChange(v as number)} />
-            </FieldGroup>
-          </FieldRow>
           <FieldRow>
             <Toggle checked={wrap} onChange={onWrapChange} label="Wrap" />
             <Toggle checked={reverseZ} onChange={onReverseZChange} label="Reverse Z" />

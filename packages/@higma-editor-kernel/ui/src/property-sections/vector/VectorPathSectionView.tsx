@@ -1,9 +1,9 @@
 /** @file Vector path editing view (presentational only). */
 
 import { type CSSProperties } from "react";
-import { Input, Select } from "../../primitives";
+import { AddItemButton, Input, Select } from "../../primitives";
 import type { SelectOption } from "../../types";
-import { AddIcon, CloseIcon } from "../../icons";
+import { CloseIcon } from "../../icons";
 import { colorTokens, fontTokens } from "../../design-tokens";
 
 export type WindingRuleId = "NONZERO" | "EVENODD";
@@ -169,7 +169,9 @@ export function VectorPathSectionView({
                         type="number"
                         ariaLabel={`Path ${index + 1} command ${commandIndex + 1} ${label}`}
                         value={command.values[valueIndex] ?? 0}
-                        suffix={label}
+                        prefix={label}
+                        suffix="px"
+                        dragToChange
                         onChange={(value) => onCommandValueChange(index, commandIndex, valueIndex, value as number)}
                       />
                     ))}
@@ -188,10 +190,7 @@ export function VectorPathSectionView({
           )}
         </div>
       ))}
-      <button type="button" style={buttonStyle} onClick={onAddPath}>
-        <AddIcon size={12} />
-        Add path
-      </button>
+      <AddItemButton label="Add path" onClick={onAddPath} />
     </div>
   );
 }

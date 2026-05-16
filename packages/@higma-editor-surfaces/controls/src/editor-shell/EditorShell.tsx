@@ -33,21 +33,41 @@ import { EditorShellContextProvider, type EditorShellContextValue } from "./Edit
 
 // ---------------------------------------------------------------------------
 // Internal border styles applied around panel content
+//
+// When the consumer marks a panel as `scrollable`, the wrapper itself becomes
+// the scroll container so that the panel content can extend below the grid
+// cell. Previously the wrapper used `overflow: hidden` + `height: 100%`,
+// which always sized to the grid cell and silently clipped any taller
+// content — the GridLayer's `overflow: auto` could never engage because the
+// child wrapper was already exactly as tall as the grid cell. The result was
+// a property panel whose lower sections were impossible to reach. Non-
+// scrollable panels still get `overflow: hidden` because they own their own
+// scroll regions (e.g. the left panel's StackedEditorPanel).
 // ---------------------------------------------------------------------------
 
-const leftPanelWrapperStyle: CSSProperties = {
-  background: `var(--bg-primary, ${colorTokens.background.primary})`,
-  height: "100%",
-  borderRight: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
-  overflow: "hidden",
-};
+function panelWrapperOverflow(scrollable: boolean | undefined): CSSProperties["overflowY"] {
+  return scrollable ? "auto" : "hidden";
+}
 
-const rightPanelWrapperStyle: CSSProperties = {
-  background: `var(--bg-primary, ${colorTokens.background.primary})`,
-  height: "100%",
-  borderLeft: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
-  overflow: "hidden",
-};
+function leftPanelWrapperStyle(scrollable: boolean | undefined): CSSProperties {
+  return {
+    background: `var(--bg-primary, ${colorTokens.background.primary})`,
+    height: "100%",
+    borderRight: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
+    overflowX: "hidden",
+    overflowY: panelWrapperOverflow(scrollable),
+  };
+}
+
+function rightPanelWrapperStyle(scrollable: boolean | undefined): CSSProperties {
+  return {
+    background: `var(--bg-primary, ${colorTokens.background.primary})`,
+    height: "100%",
+    borderLeft: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
+    overflowX: "hidden",
+    overflowY: panelWrapperOverflow(scrollable),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Toolbar integration styles
@@ -221,19 +241,29 @@ export function EditorShell({
     [responsiveMode, panels, leftDrawerOpen, rightDrawerOpen],
   );
 
-  // Wrap panel content with border styles
+  // Wrap panel content with border styles. The wrapper's vertical overflow
+  // follows the panel's `scrollable` flag so a long property panel can scroll
+  // even though the surrounding grid cell is height-capped.
   const leftComponent = useMemo(() => {
     if (!leftPanel) {
       return null;
     }
-    return <div style={{ ...leftPanelWrapperStyle, ...leftPanel.style }}>{leftPanel.content}</div>;
+    return (
+      <div style={{ ...leftPanelWrapperStyle(leftPanel.scrollable), ...leftPanel.style }}>
+        {leftPanel.content}
+      </div>
+    );
   }, [leftPanel]);
 
   const rightComponent = useMemo(() => {
     if (!rightPanel) {
       return null;
     }
-    return <div style={{ ...rightPanelWrapperStyle, ...rightPanel.style }}>{rightPanel.content}</div>;
+    return (
+      <div style={{ ...rightPanelWrapperStyle(rightPanel.scrollable), ...rightPanel.style }}>
+        {rightPanel.content}
+      </div>
+    );
   }, [rightPanel]);
 
   // Build layers

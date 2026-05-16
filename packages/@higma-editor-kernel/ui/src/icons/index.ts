@@ -33,6 +33,8 @@ import {
   EyeOff,
   File,
   FileBox,
+  FlipHorizontal2,
+  FlipVertical2,
   Folder,
   GalleryVertical,
   GitBranch,
@@ -70,6 +72,7 @@ import {
   Replace,
   ReplaceAll,
   RotateCcw,
+  RotateCw,
   Scissors,
   Settings,
   Shapes,
@@ -193,6 +196,9 @@ export const StopIcon = createIcon(Square);
 export const SkipForwardIcon = createIcon(SkipForward);
 export const SkipBackIcon = createIcon(SkipBack);
 export const RotateCcwIcon = createIcon(RotateCcw);
+export const RotateCwIcon = createIcon(RotateCw);
+export const FlipHorizontalIcon = createIcon(FlipHorizontal2);
+export const FlipVerticalIcon = createIcon(FlipVertical2);
 export const LoaderIcon = createIcon(Loader);
 export const DownloadIcon = createIcon(Download);
 export const UploadIcon = createIcon(Upload);

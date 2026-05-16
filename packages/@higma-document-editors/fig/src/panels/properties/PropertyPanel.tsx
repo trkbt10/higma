@@ -5,11 +5,17 @@
  * Uses OptionalPropertySection for each property group.
  */
 
-import { type ReactNode, type CSSProperties } from "react";
+import { useCallback, type ReactNode, type CSSProperties } from "react";
 import { useFigEditor } from "../../context/FigEditorContext";
 import { OptionalPropertySection } from "@higma-editor-surfaces/controls/ui";
+import { InlineRenameInput } from "@higma-editor-kernel/ui";
 import { colorTokens, fontTokens, spacingTokens } from "@higma-editor-kernel/ui/design-tokens";
-import { TransformSection } from "../sections/appearance/TransformSection";
+import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import type { FigEditorAction } from "../../context/fig-editor/types";
+import { PositionSection } from "../sections/appearance/PositionSection";
+import { SizeSection } from "../sections/appearance/SizeSection";
+import { RotationSection } from "../sections/appearance/RotationSection";
+import { AlignmentSection } from "../sections/layout/AlignmentSection";
 import { OpacitySection } from "../sections/appearance/OpacitySection";
 import { FillSection } from "../sections/paint/FillSection";
 import { StrokeSection } from "../sections/paint/StrokeSection";
@@ -59,6 +65,83 @@ function PropertyMutationScope({
   );
 }
 
+const nodeIdentityHeaderStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: spacingTokens["2xs"],
+  padding: `${spacingTokens.md} ${spacingTokens.lg}`,
+  borderBottom: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
+};
+
+const nodeIdentityNameStyle: CSSProperties = {
+  fontSize: fontTokens.size.lg,
+  fontWeight: fontTokens.weight.semibold,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
+  lineHeight: 1.2,
+};
+
+const nodeIdentityMetaStyle: CSSProperties = {
+  display: "flex",
+  gap: spacingTokens.sm,
+  fontSize: fontTokens.size.xs,
+  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+};
+
+const nodeIdentityHiddenBadgeStyle: CSSProperties = {
+  fontStyle: "italic",
+};
+
+function buildNodeIdentitySubtitle(selectionCount: number, nodeType: FigDesignNode["type"]): string {
+  if (selectionCount > 1) {
+    return `${selectionCount} selected · ${nodeType}`;
+  }
+  return nodeType;
+}
+
+type NodeIdentityHeaderProps = {
+  readonly primaryNode: FigDesignNode;
+  readonly selectionCount: number;
+  readonly canRename: boolean;
+  readonly dispatch: (action: FigEditorAction) => void;
+};
+
+function NodeIdentityHeader({
+  primaryNode,
+  selectionCount,
+  canRename,
+  dispatch,
+}: NodeIdentityHeaderProps) {
+  const handleCommit = useCallback(
+    (next: string) => {
+      dispatch({ type: "RENAME_NODE", nodeId: primaryNode.id, name: next, source: "property-panel" });
+    },
+    [dispatch, primaryNode.id],
+  );
+
+  const subtitle = buildNodeIdentitySubtitle(selectionCount, primaryNode.type);
+
+  return (
+    <header style={nodeIdentityHeaderStyle}>
+      <InlineRenameInput
+        value={primaryNode.name}
+        onCommit={handleCommit}
+        disabled={!canRename}
+        ariaLabel={`Rename ${primaryNode.name}`}
+        displayStyle={nodeIdentityNameStyle}
+      />
+      <div style={nodeIdentityMetaStyle}>
+        <span>{subtitle}</span>
+        {primaryNode.visible === false && (
+          <span style={nodeIdentityHiddenBadgeStyle}>Hidden</span>
+        )}
+        {primaryNode.locked === true && (
+          <span style={nodeIdentityHiddenBadgeStyle}>Locked</span>
+        )}
+      </div>
+    </header>
+  );
+}
+
 /**
  * Property panel for the fig editor.
  *
@@ -78,30 +161,42 @@ export function PropertyPanel() {
     );
   }
 
-  const hasMultipleSelected = selectedNodes.length > 1;
   const propertyTarget = createPropertyMutationTarget({ primaryNode, selectedNodes });
 
   return (
     <div>
-      {/* Node identity header */}
-      <OptionalPropertySection
-        title={primaryNode.name}
-        badge={hasMultipleSelected ? `${selectedNodes.length} selected` : primaryNode.type}
-        defaultExpanded={false}
-      >
-        <div style={{ fontSize: fontTokens.size.sm, color: colorTokens.text.tertiary }}>
-          <div>Type: {primaryNode.type}</div>
-          <div>ID: {primaryNode.id}</div>
-          {primaryNode.visible === false && (
-            <div style={{ color: colorTokens.text.tertiary, fontStyle: "italic" }}>Hidden</div>
-          )}
-        </div>
+      <NodeIdentityHeader
+        primaryNode={primaryNode}
+        selectionCount={selectedNodes.length}
+        canRename={!propertyMutationDisabled}
+        dispatch={dispatch}
+      />
+
+      {/* Alignment (within parent) */}
+      <OptionalPropertySection title="Alignment" defaultExpanded={false}>
+        <PropertyMutationScope disabled={propertyMutationDisabled}>
+          <AlignmentSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
+        </PropertyMutationScope>
       </OptionalPropertySection>
 
-      {/* Transform */}
-      <OptionalPropertySection title="Transform" defaultExpanded>
+      {/* Position (X, Y) — always shown */}
+      <OptionalPropertySection title="Position" defaultExpanded>
         <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <TransformSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
+          <PositionSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
+        </PropertyMutationScope>
+      </OptionalPropertySection>
+
+      {/* Size — always rendered. SizeSection itself toggles Fixed/Hug/Fill sizing-mode suffix when the node is or sits inside an AutoLayout container. */}
+      <OptionalPropertySection title="Size" defaultExpanded>
+        <PropertyMutationScope disabled={propertyMutationDisabled}>
+          <SizeSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
+        </PropertyMutationScope>
+      </OptionalPropertySection>
+
+      {/* Rotation + flip/rotate actions */}
+      <OptionalPropertySection title="Rotation" defaultExpanded={false}>
+        <PropertyMutationScope disabled={propertyMutationDisabled}>
+          <RotationSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
         </PropertyMutationScope>
       </OptionalPropertySection>
 

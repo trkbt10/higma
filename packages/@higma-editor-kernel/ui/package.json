@@ -62,6 +62,10 @@
       "types": "./src/primitives/Select.tsx",
       "default": "./src/primitives/Select.tsx"
     },
+    "./primitives/SuffixSelect": {
+      "types": "./src/primitives/SuffixSelect.tsx",
+      "default": "./src/primitives/SuffixSelect.tsx"
+    },
     "./primitives/SearchableSelect": {
       "types": "./src/primitives/SearchableSelect.tsx",
       "default": "./src/primitives/SearchableSelect.tsx"
@@ -197,6 +201,10 @@
     "./property-sections": {
       "types": "./src/property-sections/index.ts",
       "default": "./src/property-sections/index.ts"
+    },
+    "./operations": {
+      "types": "./src/operations/index.ts",
+      "default": "./src/operations/index.ts"
     }
   },
   "higma": {

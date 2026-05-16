@@ -2,11 +2,18 @@
  * @file Corner radius section view (presentational only)
  *
  * Renders either a uniform radius input or four individual corner inputs
- * (TL/TR/BR/BL). The "mode" decision and toggle handlers belong to the caller.
+ * (TL/TR/BR/BL). The corner labels live in the prefix slot (drag scrubber);
+ * the trailing `px` suffix carries the unit.
+ *
+ * Mode switching is exposed as a SuffixSelect placed in the uniform input's
+ * suffix slot (replacing the unit when mode-switch UI is the priority).
+ * Individual mode renders a separate "Uniform" button because there is no
+ * single primary input to attach the mode switch to.
  */
 
-import { Input } from "../../primitives";
-import { FieldGroup, FieldRow } from "../../layout";
+import { Input, SuffixSelect } from "../../primitives";
+import { FieldRow } from "../../layout";
+import type { SelectOption } from "../../types";
 
 /** Tuple ordered as TL, TR, BR, BL — matches Figma corner radius storage. */
 export type CornerRadiusTuple = readonly [number, number, number, number];
@@ -22,8 +29,15 @@ const modeButtonStyle = {
   fontSize: 11,
 } as const;
 
+type CornerModeId = "uniform" | "individual";
+
+const CORNER_MODE_OPTIONS: readonly SelectOption<CornerModeId>[] = [
+  { value: "uniform", label: "px" },
+  { value: "individual", label: "Per-corner" },
+];
+
 export type CornerRadiusSectionViewProps = {
-  readonly mode: "uniform" | "individual";
+  readonly mode: CornerModeId;
   readonly uniformRadius: number;
   readonly individualRadii: CornerRadiusTuple;
   readonly onUniformChange: (value: number) => void;
@@ -32,7 +46,7 @@ export type CornerRadiusSectionViewProps = {
   readonly onSwitchToUniform: () => void;
 };
 
-/** Renders uniform or per-corner radius inputs and a mode toggle. */
+/** Renders uniform or per-corner radius inputs with prefix-label + unit-suffix layout. */
 export function CornerRadiusSectionView({
   mode,
   uniformRadius,
@@ -46,48 +60,52 @@ export function CornerRadiusSectionView({
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <FieldRow>
-          <FieldGroup label="TL" inline labelWidth={20}>
-            <Input
-              type="number"
-              value={individualRadii[0]}
-              min={0}
-              step={1}
-              width={56}
-              onChange={(v) => onIndividualChange(0, v as number)}
-            />
-          </FieldGroup>
-          <FieldGroup label="TR" inline labelWidth={20}>
-            <Input
-              type="number"
-              value={individualRadii[1]}
-              min={0}
-              step={1}
-              width={56}
-              onChange={(v) => onIndividualChange(1, v as number)}
-            />
-          </FieldGroup>
+          <Input
+            type="number"
+            ariaLabel="Top-left corner radius"
+            value={individualRadii[0]}
+            min={0}
+            step={1}
+            prefix="TL"
+            suffix="px"
+            dragToChange
+            onChange={(v) => onIndividualChange(0, v as number)}
+          />
+          <Input
+            type="number"
+            ariaLabel="Top-right corner radius"
+            value={individualRadii[1]}
+            min={0}
+            step={1}
+            prefix="TR"
+            suffix="px"
+            dragToChange
+            onChange={(v) => onIndividualChange(1, v as number)}
+          />
         </FieldRow>
         <FieldRow>
-          <FieldGroup label="BL" inline labelWidth={20}>
-            <Input
-              type="number"
-              value={individualRadii[3]}
-              min={0}
-              step={1}
-              width={56}
-              onChange={(v) => onIndividualChange(3, v as number)}
-            />
-          </FieldGroup>
-          <FieldGroup label="BR" inline labelWidth={20}>
-            <Input
-              type="number"
-              value={individualRadii[2]}
-              min={0}
-              step={1}
-              width={56}
-              onChange={(v) => onIndividualChange(2, v as number)}
-            />
-          </FieldGroup>
+          <Input
+            type="number"
+            ariaLabel="Bottom-left corner radius"
+            value={individualRadii[3]}
+            min={0}
+            step={1}
+            prefix="BL"
+            suffix="px"
+            dragToChange
+            onChange={(v) => onIndividualChange(3, v as number)}
+          />
+          <Input
+            type="number"
+            ariaLabel="Bottom-right corner radius"
+            value={individualRadii[2]}
+            min={0}
+            step={1}
+            prefix="BR"
+            suffix="px"
+            dragToChange
+            onChange={(v) => onIndividualChange(2, v as number)}
+          />
         </FieldRow>
         <FieldRow>
           <button
@@ -105,26 +123,27 @@ export function CornerRadiusSectionView({
   }
 
   return (
-    <FieldRow>
-      <FieldGroup label="Radius" inline labelWidth={50}>
-        <Input
-          type="number"
-          value={uniformRadius}
-          min={0}
-          step={1}
-          onChange={(v) => onUniformChange(v as number)}
-          width={80}
+    <Input
+      type="number"
+      ariaLabel="Corner radius"
+      value={uniformRadius}
+      min={0}
+      step={1}
+      prefix="R"
+      dragToChange
+      onChange={(v) => onUniformChange(v as number)}
+      suffix={
+        <SuffixSelect
+          value="uniform"
+          options={CORNER_MODE_OPTIONS}
+          onChange={(value) => {
+            if (value === "individual") {
+              onSwitchToIndividual();
+            }
+          }}
+          ariaLabel="Corner radius mode"
         />
-      </FieldGroup>
-      <button
-        type="button"
-        aria-label="Use individual corner radii"
-        title="Use individual corner radii"
-        style={modeButtonStyle}
-        onClick={onSwitchToIndividual}
-      >
-        Corners
-      </button>
-    </FieldRow>
+      }
+    />
   );
 }

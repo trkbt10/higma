@@ -62,7 +62,7 @@ describe("AutoLayoutSection", () => {
     expect(html).toContain("Primary align");
     expect(html).toContain("Counter align");
     expect(html).toContain("Align content");
-    expect(html).toContain("Counter gap");
+    expect(html).toContain('aria-label="Auto layout counter gap"');
     expect(html).toContain('value="8"');
     expect(html).toContain("Wrap");
     expect(html).toContain("Reverse Z");

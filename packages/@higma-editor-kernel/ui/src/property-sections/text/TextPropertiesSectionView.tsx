@@ -92,23 +92,24 @@ export function TextPropertiesSectionView({
 
       {lineHeightMultiplier !== undefined && (
         <FieldRow>
-          <FieldGroup label="Line" inline labelWidth={40}>
-            <Input
-              type="number"
-              value={lineHeightMultiplier}
-              min={0.5}
-              max={10}
-              step={0.1}
-              onChange={(v) => {
-                const num = typeof v === "number" ? v : parseFloat(String(v));
-                if (!isNaN(num) && num > 0) {
-                  onLineHeightMultiplierChange(num);
-                }
-              }}
-              width={60}
-              suffix="x"
-            />
-          </FieldGroup>
+          <Input
+            type="number"
+            value={lineHeightMultiplier}
+            min={0.5}
+            max={10}
+            step={0.1}
+            prefix="Line"
+            suffix="x"
+            dragToChange
+            dragStep={0.1}
+            ariaLabel="Line height multiplier"
+            onChange={(v) => {
+              const num = typeof v === "number" ? v : parseFloat(String(v));
+              if (!isNaN(num) && num > 0) {
+                onLineHeightMultiplierChange(num);
+              }
+            }}
+          />
         </FieldRow>
       )}
 

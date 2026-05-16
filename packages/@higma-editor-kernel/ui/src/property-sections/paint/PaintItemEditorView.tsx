@@ -87,7 +87,7 @@ export function PaintItemEditorView({
           max={100}
           step={1}
           onChange={(v) => onOpacityChange(index, (v as number) / 100)}
-          width={52}
+          width={64}
           suffix="%"
         />
         <button
@@ -149,17 +149,23 @@ export function PaintItemEditorView({
               value={paint.image.scale}
               min={0}
               step={0.05}
+              prefix="S"
+              suffix="x"
+              dragToChange
+              dragStep={0.05}
               onChange={(v) => onImageScaleChange(index, v as number)}
-              width={64}
+              width={80}
             />
             <Input
               type="number"
               ariaLabel={`${labelPrefix} image rotation ${ordinal}`}
               value={Math.round(paint.image.rotationDeg)}
               step={1}
-              onChange={(v) => onImageRotationChange(index, v as number)}
-              width={64}
+              prefix="R"
               suffix="°"
+              dragToChange
+              onChange={(v) => onImageRotationChange(index, v as number)}
+              width={80}
             />
           </div>
         </>

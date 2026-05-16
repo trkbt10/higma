@@ -10,7 +10,8 @@ import type { CSSProperties } from "react";
 import { Input, Select } from "../../primitives";
 import type { SelectOption } from "../../types";
 import { colorTokens, fontTokens } from "../../design-tokens";
-import { AddIcon, CloseIcon } from "../../icons";
+import { CloseIcon } from "../../icons";
+import { AddItemButton } from "../../primitives";
 
 export type ExportFormatId = "PNG" | "JPG" | "SVG" | "PDF";
 
@@ -41,21 +42,6 @@ const rowStyle: CSSProperties = {
   alignItems: "center",
   gap: 6,
   padding: "4px 0",
-};
-
-const addButtonStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 4,
-  background: "none",
-  border: `1px dashed ${colorTokens.border.primary}`,
-  borderRadius: 4,
-  cursor: "pointer",
-  padding: "4px 8px",
-  color: colorTokens.text.secondary,
-  fontSize: fontTokens.size.sm,
-  width: "100%",
-  justifyContent: "center",
 };
 
 const removeButtonStyle: CSSProperties = {
@@ -101,9 +87,12 @@ export function ExportSettingsSectionView({
             value={preset.scale}
             min={0.01}
             step={0.25}
-            onChange={(value) => onScaleChange(index, value as number)}
-            width={64}
+            prefix="S"
             suffix="x"
+            dragToChange
+            dragStep={0.25}
+            onChange={(value) => onScaleChange(index, value as number)}
+            width={88}
           />
           <button
             type="button"
@@ -115,10 +104,7 @@ export function ExportSettingsSectionView({
           </button>
         </div>
       ))}
-      <button type="button" style={addButtonStyle} onClick={onAddPreset}>
-        <AddIcon size={12} />
-        Add export preset
-      </button>
+      <AddItemButton label="Add export preset" onClick={onAddPreset} />
     </div>
   );
 }

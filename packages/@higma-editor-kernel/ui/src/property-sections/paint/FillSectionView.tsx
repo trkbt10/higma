@@ -1,11 +1,10 @@
 /** @file Fill section view (presentational only). */
 
 import { type Ref, type ChangeEvent } from "react";
-import { AddIcon } from "../../icons";
+import { AddItemButton } from "../../primitives";
 import { PaintItemEditorView, type PaintItemEditorViewProps, type PaintItemImageOption } from "./PaintItemEditorView";
 import {
   sectionContainerStyle,
-  addButtonStyle,
   IMAGE_ACCEPT_TYPES,
 } from "./paint-section-styles";
 import type { PaintItemView } from "./paint-view-model";
@@ -53,10 +52,7 @@ export function FillSectionView({
           {...handlers}
         />
       ))}
-      <button type="button" style={addButtonStyle} onClick={onAddPaint}>
-        <AddIcon size={12} />
-        Add fill
-      </button>
+      <AddItemButton label="Add fill" onClick={onAddPaint} />
     </div>
   );
 }

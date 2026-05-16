@@ -4,7 +4,17 @@
 
 import { useState } from "react";
 import { Input } from "../../primitives/Input";
+import { SuffixSelect } from "../../primitives";
+import type { SelectOption } from "../../types";
 import type { ComponentEntry, Story } from "../types";
+
+type SizingMode = "FIXED" | "HUG" | "FILL";
+
+const SIZING_OPTIONS: readonly SelectOption<SizingMode>[] = [
+  { value: "FIXED", label: "Fixed" },
+  { value: "HUG", label: "Hug" },
+  { value: "FILL", label: "Fill" },
+];
 
 // =============================================================================
 // Interactive Story
@@ -108,6 +118,85 @@ const numberInputStory: Story = {
 };
 
 // =============================================================================
+// Number with SuffixSelect (interactive suffix tag)
+// =============================================================================
+
+function NumberWithSuffixSelectDemo() {
+  const [width, setWidth] = useState(200);
+  const [widthMode, setWidthMode] = useState<SizingMode>("FIXED");
+  const [height, setHeight] = useState(120);
+  const [heightMode, setHeightMode] = useState<SizingMode>("HUG");
+
+  return (
+    <div style={{ display: "flex", gap: 8, maxWidth: 320 }}>
+      <Input
+        value={width}
+        onChange={(v) => setWidth(Number(v))}
+        type="number"
+        ariaLabel="Width"
+        suffix={
+          <SuffixSelect
+            value={widthMode}
+            options={SIZING_OPTIONS}
+            onChange={setWidthMode}
+            ariaLabel="Width sizing mode"
+          />
+        }
+      />
+      <Input
+        value={height}
+        onChange={(v) => setHeight(Number(v))}
+        type="number"
+        ariaLabel="Height"
+        suffix={
+          <SuffixSelect
+            value={heightMode}
+            options={SIZING_OPTIONS}
+            onChange={setHeightMode}
+            ariaLabel="Height sizing mode"
+          />
+        }
+      />
+    </div>
+  );
+}
+
+const numberWithSuffixSelectStory: Story = {
+  name: "Number with SuffixSelect",
+  render: () => <NumberWithSuffixSelectDemo />,
+};
+
+// =============================================================================
+// Prefix + Suffix + Drag-to-change
+// =============================================================================
+
+function PrefixSuffixDragDemo() {
+  const [x, setX] = useState(120);
+  const [y, setY] = useState(80);
+  const [w, setW] = useState(200);
+  const [r, setR] = useState(45);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 320 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Input value={x} onChange={(v) => setX(Number(v))} type="number" ariaLabel="X" prefix="X" suffix="px" dragToChange />
+        <Input value={y} onChange={(v) => setY(Number(v))} type="number" ariaLabel="Y" prefix="Y" suffix="px" dragToChange />
+      </div>
+      <Input value={w} onChange={(v) => setW(Number(v))} type="number" ariaLabel="Width" prefix="W" suffix="px" dragToChange />
+      <Input value={r} onChange={(v) => setR(Number(v))} type="number" ariaLabel="Rotation" prefix="R" suffix="°" dragToChange />
+      <span style={{ fontSize: 11, color: "#999" }}>
+        Drag any prefix label (X / Y / W / R) horizontally to scrub the value. Hold Shift for ×10 step.
+      </span>
+    </div>
+  );
+}
+
+const prefixSuffixDragStory: Story = {
+  name: "Prefix + Suffix + Drag",
+  render: () => <PrefixSuffixDragDemo />,
+};
+
+// =============================================================================
 // Width Variants
 // =============================================================================
 
@@ -168,5 +257,13 @@ const statesStory: Story = {
 export const InputStories: ComponentEntry = {
   name: "Input",
   description: "Text and number input with optional suffix.",
-  stories: [interactiveStory, textInputStory, numberInputStory, widthVariantsStory, statesStory],
+  stories: [
+    interactiveStory,
+    textInputStory,
+    numberInputStory,
+    numberWithSuffixSelectStory,
+    prefixSuffixDragStory,
+    widthVariantsStory,
+    statesStory,
+  ],
 };

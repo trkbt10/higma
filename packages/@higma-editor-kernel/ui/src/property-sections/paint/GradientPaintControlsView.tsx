@@ -2,11 +2,11 @@
 
 import type { CSSProperties } from "react";
 import { Input } from "../../primitives";
-import { AddIcon, CloseIcon } from "../../icons";
+import { CloseIcon } from "../../icons";
+import { AddItemButton } from "../../primitives";
+import { colorTokens, fontTokens } from "../../design-tokens";
 import {
-  paintInlineStyle,
   swatchStyle,
-  addButtonStyle,
   removeButtonStyle,
 } from "./paint-section-styles";
 import type { GradientStopView, GradientHandleView } from "./paint-view-model";
@@ -22,13 +22,52 @@ type GradientPaintControlsViewProps = {
   readonly onHandleChange: (handleIndex: number, handle: GradientHandleView) => void;
 };
 
+/**
+ * Stop row uses two equal-width number cells (Position / Opacity) so that
+ * the digits remain legible at typical inspector widths (~240 px panel →
+ * ~95 px per cell after swatch / remove / gaps). The cells are role-labelled
+ * by the prefix inside the input chrome ("P" / "O"); see the Figma fill
+ * inspector for the same pattern.
+ */
 const stopRowStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "28px minmax(0, 1fr) 58px 58px 22px",
+  gridTemplateColumns: "28px minmax(0, 1fr) minmax(0, 1fr) 22px",
   alignItems: "center",
-  gap: 4,
+  gap: 6,
   width: "100%",
 };
+
+/**
+ * Handle controls used to live in a single flex row (six inputs wide), which
+ * caused inputs to flex-shrink below the width needed for a 3-digit number
+ * plus prefix/suffix chrome. The new layout dedicates one row per handle
+ * with a written label so the two coordinates of each handle have room to
+ * breathe — operationally you adjust handle N by name, not by guessing
+ * which "X %" in a row of six belongs to which point.
+ */
+const handleRowStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(48px, max-content) minmax(0, 1fr) minmax(0, 1fr)",
+  alignItems: "center",
+  gap: 6,
+  width: "100%",
+};
+
+const handleLabelStyle: CSSProperties = {
+  fontSize: fontTokens.size.sm,
+  color: colorTokens.text.secondary,
+  fontWeight: fontTokens.weight.medium,
+  whiteSpace: "nowrap",
+};
+
+const HANDLE_LABELS = ["Start", "End", "Width", "Focal"] as const;
+
+function handleLabel(index: number, total: number): string {
+  if (index < HANDLE_LABELS.length) {
+    return HANDLE_LABELS[index]!;
+  }
+  return `Handle ${index + 1} / ${total}`;
+}
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -70,7 +109,9 @@ export function GradientPaintControlsView({
             min={0}
             max={100}
             step={1}
+            prefix="P"
             suffix="%"
+            dragToChange
             onChange={(value) => onStopChange(stopIndex, {
               ...stop,
               position: clamp01((value as number) / 100),
@@ -83,7 +124,9 @@ export function GradientPaintControlsView({
             min={0}
             max={100}
             step={1}
+            prefix="O"
             suffix="%"
+            dragToChange
             onChange={(value) => onStopChange(stopIndex, {
               ...stop,
               alpha: clamp01((value as number) / 100),
@@ -101,49 +144,48 @@ export function GradientPaintControlsView({
           </button>
         </div>
       ))}
-      <button
-        type="button"
-        aria-label={`${controlLabel} add stop ${ordinal}`}
-        style={addButtonStyle}
+      <AddItemButton
+        label="Add stop"
+        ariaLabel={`${controlLabel} add stop ${ordinal}`}
         onClick={onAddStop}
-      >
-        <AddIcon size={12} />
-        Add stop
-      </button>
-      <div style={paintInlineStyle}>
-        {handles.map((handle, handleIndex) => (
-          <span key={handleIndex} style={{ display: "contents" }}>
-            <Input
-              type="number"
-              ariaLabel={`${controlLabel} handle ${handleIndex + 1} x ${ordinal}`}
-              value={roundPercent(handle.x)}
-              min={-200}
-              max={200}
-              step={1}
-              suffix="x"
-              width={64}
-              onChange={(value) => onHandleChange(handleIndex, {
-                ...handle,
-                x: (value as number) / 100,
-              })}
-            />
-            <Input
-              type="number"
-              ariaLabel={`${controlLabel} handle ${handleIndex + 1} y ${ordinal}`}
-              value={roundPercent(handle.y)}
-              min={-200}
-              max={200}
-              step={1}
-              suffix="y"
-              width={64}
-              onChange={(value) => onHandleChange(handleIndex, {
-                ...handle,
-                y: (value as number) / 100,
-              })}
-            />
+      />
+      {handles.map((handle, handleIndex) => (
+        <div key={handleIndex} style={handleRowStyle}>
+          <span style={handleLabelStyle}>
+            {handleLabel(handleIndex, handles.length)}
           </span>
-        ))}
-      </div>
+          <Input
+            type="number"
+            ariaLabel={`${controlLabel} handle ${handleIndex + 1} x ${ordinal}`}
+            value={roundPercent(handle.x)}
+            min={-200}
+            max={200}
+            step={1}
+            prefix="X"
+            suffix="%"
+            dragToChange
+            onChange={(value) => onHandleChange(handleIndex, {
+              ...handle,
+              x: (value as number) / 100,
+            })}
+          />
+          <Input
+            type="number"
+            ariaLabel={`${controlLabel} handle ${handleIndex + 1} y ${ordinal}`}
+            value={roundPercent(handle.y)}
+            min={-200}
+            max={200}
+            step={1}
+            prefix="Y"
+            suffix="%"
+            dragToChange
+            onChange={(value) => onHandleChange(handleIndex, {
+              ...handle,
+              y: (value as number) / 100,
+            })}
+          />
+        </div>
+      ))}
     </div>
   );
 }
