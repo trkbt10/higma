@@ -33,6 +33,10 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./asset-plan": {
+      "types": "./src/asset-plan/index.ts",
+      "default": "./src/asset-plan/index.ts"
+    },
     "./svg": {
       "types": "./src/svg/index.ts",
       "default": "./src/svg/index.ts"
