@@ -7,7 +7,7 @@
  * 2. OpenType.js font outlines - high quality
  */
 
-import type { TextNode, Color, PathContour } from "@higma-document-models/fig/scene-graph";
+import type { TextNode, Color, PathContour, BlendMode } from "@higma-document-models/fig/scene-graph";
 import { tessellateContours } from "../tessellation/tessellation";
 import { splitPathCommandsIntoContours } from "../tessellation/path-contours";
 
@@ -23,21 +23,57 @@ function tessellateDecorationsOrEmpty(
 }
 
 /**
- * Result of text tessellation
+ * One painter's-algorithm pass over the glyph mesh. The SVG renderer
+ * emits one `<path>` per stacked text fill; the WebGL caller mirrors
+ * that by issuing one tinted draw per entry, in source order
+ * (`fills[0]` painted first, `fills[n-1]` painted last).
+ */
+export type TessellatedTextFill = {
+  readonly color: Color;
+  readonly opacity: number;
+  /**
+   * Per-pass blend mode (scene-graph CSS-token form). `undefined`
+   * denotes the implicit NORMAL pass — the GL backend skips any
+   * blend-equation switch in that case. Mirrors the SVG emitter's
+   * `style="mix-blend-mode:…"` so stacked fills with non-NORMAL
+   * blends (App Store template Event metadata: `[{black @0.15
+   * NORMAL}, {black @1 OVERLAY}]`) composite identically to Figma.
+   */
+  readonly blendMode?: BlendMode;
+};
+
+/**
+ * Result of text tessellation.
+ *
+ * The glyph and decoration meshes are tessellated ONCE — every
+ * stacked fill paints the same triangles. The `fills` array carries
+ * each pass's tint and opacity so the WebGL backend can submit one
+ * draw per entry without re-tessellating.
  */
 export type TessellatedText = {
-  /** Triangle vertices for glyph outlines */
+  /** Triangle vertices for glyph outlines (shared across every fill). */
   readonly glyphVertices: Float32Array;
-  /** Triangle vertices for decorations (underlines, etc.) */
+  /** Triangle vertices for decorations (shared across every fill). */
   readonly decorationVertices: Float32Array;
-  /** Fill color */
-  readonly color: Color;
-  /** Fill opacity */
-  readonly opacity: number;
+  /**
+   * Stacked fills in source order — paint the same mesh once per
+   * entry, applying that entry's `color`/`opacity`. Mirrors the SVG
+   * emitter, which writes one `<path fill="..." fill-opacity="...">`
+   * per stacked paint so the painter's-algorithm composite matches
+   * Figma's compositor (e.g. App Store template's Event metadata
+   * Dark variant carries `[{black, opacity=0.15}, {black, opacity=1}]`
+   * and the second pass darkens the first into solid black).
+   *
+   * Empty when the TEXT node carries no visible fills — callers
+   * should skip drawing entirely.
+   */
+  readonly fills: readonly TessellatedTextFill[];
 };
 
 /**
  * Tessellate a text node's glyph outlines into triangle vertices
+ * and surface every stacked fill so the WebGL backend can replicate
+ * the SVG renderer's painter's-algorithm composite verbatim.
  *
  * @param node - Scene graph text node
  * @param tolerance - Bezier flattening tolerance
@@ -63,11 +99,7 @@ export function tessellateTextNode(
   // outer ring and the inner hole; earcut then weaves triangles
   // across the gap, the outer fill drops out, and only the hole's
   // interior rasterises — the "₱ 900.00 shows only the holes of 0"
-  // regression on real fig fixtures. The split preserves
-  // `firstCharacter` so the per-run grouping in
-  // `resolveRenderTextGlyphRuns` still works (the WebGL renderer
-  // currently consumes only the combined vertex buffer here, but
-  // future per-run paint support relies on the annotation).
+  // regression on real fig fixtures.
   const splitGlyphContours: PathContour[] = [];
   for (const glyph of node.glyphContours) {
     const subContours = splitPathCommandsIntoContours(glyph.commands, glyph.windingRule);
@@ -82,17 +114,14 @@ export function tessellateTextNode(
   const glyphVertices = tessellateContours(splitGlyphContours, tolerance, true);
   const decorationVertices = tessellateDecorationsOrEmpty(node.decorationContours, tolerance);
 
-  // Read the primary (paints[0]) fill from the stacked `fills` array.
-  // Multi-fill stacking is a separate concern the WebGL renderer does
-  // not yet model — for parity with the SVG renderer's stacked passes,
-  // we would need to tessellate one tinted mesh per `fills[i]`. Today
-  // the WebGL path renders only the first stacked pass.
-  // An empty fills array (e.g. empty TEXT) → transparent / no draw.
-  const primary = node.fills[0];
+  const fills: TessellatedTextFill[] = node.fills.map((f) => ({
+    color: f.color,
+    opacity: f.opacity,
+    ...(f.blendMode === undefined ? {} : { blendMode: f.blendMode }),
+  }));
   return {
     glyphVertices,
     decorationVertices,
-    color: primary?.color ?? { r: 0, g: 0, b: 0, a: 1 },
-    opacity: primary?.opacity ?? 0,
+    fills,
   };
 }

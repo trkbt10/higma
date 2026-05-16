@@ -304,6 +304,14 @@ export type RectClip = {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  /**
+   * iOS-style continuous-curvature corner smoothing in `[0, 1]`.
+   * `0` (or undefined) yields the standard quarter-circle corner;
+   * higher values widen each corner along the adjacent edges and
+   * shape the curve as Figma's "smooth corners" toggle does. Only
+   * meaningful when `cornerRadius > 0`.
+   */
+  readonly cornerSmoothing?: number;
 };
 
 export type PathClip = {
@@ -402,6 +410,8 @@ export type FrameNode = SceneNodeBase & {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  /** See `RectClip.cornerSmoothing`. */
+  readonly cornerSmoothing?: number;
   readonly fills: readonly Fill[];
   readonly stroke?: Stroke;
   /**
@@ -424,6 +434,8 @@ export type RectNode = SceneNodeBase & {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  /** See `RectClip.cornerSmoothing`. */
+  readonly cornerSmoothing?: number;
   readonly fills: readonly Fill[];
   readonly stroke?: Stroke;
   /** Per-side stroke weights (same as FrameNode) */
@@ -450,6 +462,21 @@ export type PathNode = SceneNodeBase & {
   /** Bounding box size from the Figma node (for gradient coordinate computation) */
   readonly width?: number;
   readonly height?: number;
+  /**
+   * Source `cornerRadius` carried alongside the baked contour data so the
+   * stroke emitter can recognise a smoothed-corner rectangle authored as
+   * a VECTOR (e.g. iPhone bezel "Aluminum" / "Corner Shading" SYMBOLs —
+   * type VECTOR, size 432×904, cornerRadius 76, cornerSmoothing 0.6,
+   * strokeAlign INSIDE, strokeWeight 6). Figma's SVG exporter treats
+   * these as rectangles for stroke emission, producing a single smoothed
+   * inset path stroked at the actual strokeWidth instead of the masked-
+   * doubled-stroke fallback used for arbitrary contours. The fillGeometry
+   * blob carries the same smoothed outline verbatim, so this metadata is
+   * purely a stroke-emission hint — fill is still rendered from `contours`.
+   */
+  readonly cornerRadius?: CornerRadius;
+  /** Continuous-curvature smoothing factor (0..1); see `cornerRadius`. */
+  readonly cornerSmoothing?: number;
 };
 
 export type TextNode = SceneNodeBase & {
@@ -514,7 +541,22 @@ export type TextNode = SceneNodeBase & {
    * `fills[0]` (when present); they MUST NOT assume there is exactly
    * one.
    */
-  readonly fills: readonly { readonly color: Color; readonly opacity: number }[];
+  /**
+   * Each stacked entry carries the source `Paint.blendMode` (resolved
+   * to the scene-graph CSS-token form via `convertFigmaBlendMode`).
+   * `undefined` denotes the implicit NORMAL pass; the renderer
+   * projects non-undefined values onto the per-pass output via
+   * `style="mix-blend-mode:…"`. Without this field stacked fills like
+   * Event metadata's `[{black @0.15 NORMAL}, {black @1 OVERLAY}]`
+   * collapse to solid black (the second pass paints opaque over the
+   * faint first pass) instead of the intended mid-grey overlay
+   * composite Figma's renderer produces.
+   */
+  readonly fills: readonly {
+    readonly color: Color;
+    readonly opacity: number;
+    readonly blendMode?: BlendMode;
+  }[];
   /** Text line layout for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;
 };

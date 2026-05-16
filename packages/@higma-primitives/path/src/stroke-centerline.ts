@@ -212,6 +212,115 @@ function chainSegments(segments: readonly Segment[]): Point[][] {
 }
 
 /**
+ * Cubic-Bezier control offset for a circular quadrant: `4·(√2−1)/3`.
+ * Reproducing a circle quadrant with one cubic Bezier produces this
+ * canonical control-point distance from each endpoint along the
+ * tangent direction; the resulting curve agrees with the true circle
+ * to within ~6e-4 of the radius.
+ */
+const CIRCLE_QUADRANT_KAPPA = 0.5522847498307933;
+
+/**
+ * Try to recognise the entire contour set as a thin circular annulus —
+ * Figma's baked-stroke representation of a stroked circle/ellipse where
+ * the outline traces the outer rim, then the inner rim, joined by
+ * tiny radial bridges. The pre-expanded form uses cubic Beziers (so
+ * `commandsToSubpaths` rejects it), and the rectangular `tryDetectSegment`
+ * pattern doesn't apply. Detected via the geometric invariant: every
+ * anchor endpoint lies at one of three radial distances from a shared
+ * center — the inner edge (R − w/2), the centerline (R), or the outer
+ * edge (R + w/2). When that pattern holds, emit a single closed cubic-
+ * Bezier centerline circle that the renderer then strokes natively,
+ * matching Figma's SVG-exporter byte pattern for icon-template guide
+ * circles (App Store template's app-icon mask rings, etc.).
+ */
+function tryDetectCircularAnnulus(
+  contours: readonly CenterlineInputContour[],
+  strokeWeight: number,
+): CenterlineContour[] | undefined {
+  if (contours.length === 0) { return undefined; }
+
+  // Collect every anchor endpoint across all commands. Bezier control
+  // points (C.x1/y1, C.x2/y2 and Q.x1/y1) are off-curve and must be
+  // skipped — only the curve endpoints lie on the geometric path.
+  const points: Point[] = [];
+  for (const c of contours) {
+    for (const cmd of c.commands) {
+      if (cmd.type === "M" || cmd.type === "L") {
+        points.push({ x: cmd.x, y: cmd.y });
+      } else if (cmd.type === "C") {
+        points.push({ x: cmd.x, y: cmd.y });
+      } else if (cmd.type === "Q") {
+        points.push({ x: cmd.x, y: cmd.y });
+      } else if (cmd.type === "A") {
+        points.push({ x: cmd.x, y: cmd.y });
+      }
+      // "Z" carries no coordinate.
+    }
+  }
+  // Need at least 8 points: 4 outer-arc endpoints + 4 inner-arc
+  // endpoints for a fully-baked 4-quadrant annulus.
+  if (points.length < 8) { return undefined; }
+
+  // Estimate the shared center as the centroid of all endpoints. The
+  // anchor points sit symmetrically on the inner+outer arcs and on
+  // the radial bridges between them, so their centroid coincides with
+  // the circle's geometric center to within numerical noise.
+  let cx = 0;
+  let cy = 0;
+  for (const p of points) { cx += p.x; cy += p.y; }
+  cx /= points.length;
+  cy /= points.length;
+
+  // Distance from the estimated center to each anchor point.
+  const distances = points.map((p) => Math.hypot(p.x - cx, p.y - cy));
+
+  let minR = Infinity;
+  let maxR = -Infinity;
+  for (const d of distances) {
+    if (d < minR) { minR = d; }
+    if (d > maxR) { maxR = d; }
+  }
+
+  // The outer/inner gap must match the supplied stroke width, with a
+  // small absolute floor for very-thin (≪1px) strokes whose baked
+  // geometry rounds noticeably under f32 precision.
+  const observedWidth = maxR - minR;
+  const widthEps = Math.max(0.05, strokeWeight * 0.3);
+  if (Math.abs(observedWidth - strokeWeight) > widthEps) { return undefined; }
+
+  // Every anchor must lie close to one of three rings: the inner edge,
+  // the centerline midR, or the outer edge. Anything else (an off-
+  // center anchor, a stray vertex from a different shape) disqualifies
+  // the whole contour set so we fall back to the safe fill-the-outline
+  // path.
+  const midR = (minR + maxR) / 2;
+  const distEps = Math.max(0.05, strokeWeight * 0.5);
+  for (const d of distances) {
+    if (Math.abs(d - minR) < distEps) { continue; }
+    if (Math.abs(d - midR) < distEps) { continue; }
+    if (Math.abs(d - maxR) < distEps) { continue; }
+    return undefined;
+  }
+
+  // A degenerate "circle" of radius zero would emit a single point.
+  // Refuse — caller will fall back to filling.
+  if (midR <= 0) { return undefined; }
+
+  const k = CIRCLE_QUADRANT_KAPPA * midR;
+  const commands: PathCommand[] = [
+    { type: "M", x: cx + midR, y: cy },
+    { type: "C", x1: cx + midR, y1: cy + k, x2: cx + k,    y2: cy + midR, x: cx,        y: cy + midR },
+    { type: "C", x1: cx - k,    y1: cy + midR, x2: cx - midR, y2: cy + k, x: cx - midR, y: cy },
+    { type: "C", x1: cx - midR, y1: cy - k, x2: cx - k,    y2: cy - midR, x: cx,        y: cy - midR },
+    { type: "C", x1: cx + k,    y1: cy - midR, x2: cx + midR, y2: cy - k, x: cx + midR, y: cy },
+    { type: "Z" },
+  ];
+
+  return [{ commands, windingRule: "nonzero" }];
+}
+
+/**
  * Try reconstructing a centerline from a pre-expanded strokeGeometry
  * outline. Returns the centerline contours when every body contour
  * matches the thin stroke pattern; otherwise returns undefined so the
@@ -222,6 +331,16 @@ export function reconstructStrokeCenterline(
   strokeWeight: number,
 ): CenterlineContour[] | undefined {
   if (contours.length === 0 || strokeWeight <= 0) { return undefined; }
+
+  // Circular-annulus detection runs first because its geometric
+  // invariant (three concentric radii, gap == strokeWeight) cannot be
+  // produced by the rectangular thin-stroke pattern, and it consumes
+  // the Bezier-curve baked output that `commandsToSubpaths` refuses
+  // to flatten. If the annulus probe rejects, fall through to the
+  // rect/line pattern below — both paths are mutually exclusive on
+  // real Figma input.
+  const annulus = tryDetectCircularAnnulus(contours, strokeWeight);
+  if (annulus) { return annulus; }
 
   const segments: Segment[] = [];
   for (const c of contours) {

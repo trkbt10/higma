@@ -35,7 +35,11 @@ export {
   KAPPA,
 } from "./contours";
 
-export { buildRoundedRectPathD, CORNER_KAPPA } from "./svg-rounded-rect";
+export {
+  buildRoundedRectPathD,
+  buildSmoothedRoundedRectPathD,
+  CORNER_KAPPA,
+} from "./svg-rounded-rect";
 export { buildEllipseArcPathD, type ArcData } from "./svg-ellipse-arc";
 export { clampCornerRadius, cornerRadiusScalar } from "./corner-radius";
 export {

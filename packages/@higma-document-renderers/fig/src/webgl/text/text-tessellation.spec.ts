@@ -433,8 +433,7 @@ describe("Text tessellation pipeline", () => {
       expect(result).not.toBeNull();
       expect(result!.glyphVertices.length).toBe(36); // 3 rects × 12
       expect(result!.decorationVertices.length).toBe(0);
-      expect(result!.color).toEqual({ r: 0, g: 0, b: 0, a: 1 });
-      expect(result!.opacity).toBe(1);
+      expect(result!.fills).toEqual([{ color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }]);
     });
 
     it("includes decoration vertices when present", () => {
@@ -459,8 +458,38 @@ describe("Text tessellation pipeline", () => {
       });
       const result = tessellateTextNode(node);
 
-      expect(result!.color).toEqual({ r: 1, g: 0, b: 0, a: 1 });
-      expect(result!.opacity).toBe(0.5);
+      expect(result!.fills).toEqual([{ color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 0.5 }]);
+    });
+
+    it("preserves every stacked fill in source order (painter's-algorithm composite)", () => {
+      // Mirrors the App Store template's Dark-variant Event metadata
+      // text — Figma stores `[{black @0.15}, {black @1}]` so the
+      // painter's-algorithm composite reaches solid black after the
+      // first faint pass. Dropping any entry past `[0]` reproduces
+      // the original "Description / SPECIAL EVENT invisible" defect.
+      const node = makeTextNode({
+        glyphContours: [{ ...outerRect({ x: 0, y: 0, w: 10, h: 10 }), firstCharacter: 0 }],
+        fills: [
+          { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 0.15 },
+          { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+        ],
+      });
+      const result = tessellateTextNode(node);
+
+      expect(result!.fills).toEqual([
+        { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 0.15 },
+        { color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 },
+      ]);
+    });
+
+    it("returns an empty `fills` array when the TEXT node has no visible paints", () => {
+      const node = makeTextNode({
+        glyphContours: [{ ...outerRect({ x: 0, y: 0, w: 10, h: 10 }), firstCharacter: 0 }],
+        fills: [],
+      });
+      const result = tessellateTextNode(node);
+
+      expect(result!.fills).toEqual([]);
     });
 
     // Regression: glyphs like '0', '9', 'B', 'D', 'P', 'R', 'O', '₱'

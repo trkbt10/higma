@@ -68,9 +68,19 @@ export function pathCommandsToSvgPath(
 }
 
 /**
- * Compact, unrounded `PathContour` → SVG `d`. Suitable when full float
- * precision must be preserved (renderer paths used in round-trip /
- * pixel-diff workflows).
+ * Compact `PathContour` → SVG `d`. Optional `precision` rounds every
+ * emitted coordinate to that many decimal places before stringifying;
+ * leaving it undefined keeps full JS-float fidelity (the historical
+ * behaviour, preserved so editor/round-trip callers that compare exact
+ * path strings continue to work).
+ *
+ * Renderer pipelines that hand the output to a rasteriser (resvg/Skia)
+ * should pass `precision: 3`. Figma's SVG exporter quantises path data
+ * to ~3-decimal precision; matching that precision lets resvg's
+ * antialiasing land on the same coverage approximation as Figma's
+ * export (sub-millipixel FP drift in our text/vector pipeline otherwise
+ * shifts resvg's coverage estimate by enough to change rendered pixels
+ * around stem edges that fall mid-column).
  *
  * Structural typing on the input so it accepts any package's
  * `PathContour` variant (renderer's has a `fillOverride` sidecar,
@@ -78,20 +88,27 @@ export function pathCommandsToSvgPath(
  */
 export function contourToSvgD(
   contour: { readonly commands: readonly PathCommand[] },
+  precision?: number,
 ): string {
+  const r = precision === undefined
+    ? (n: number) => n
+    : (() => {
+        const factor = Math.pow(10, precision);
+        return (n: number) => Math.round(n * factor) / factor;
+      })();
   return contour.commands
     .map((cmd) => {
       switch (cmd.type) {
         case "M":
-          return `M${cmd.x} ${cmd.y}`;
+          return `M${r(cmd.x)} ${r(cmd.y)}`;
         case "L":
-          return `L${cmd.x} ${cmd.y}`;
+          return `L${r(cmd.x)} ${r(cmd.y)}`;
         case "C":
-          return `C${cmd.x1} ${cmd.y1} ${cmd.x2} ${cmd.y2} ${cmd.x} ${cmd.y}`;
+          return `C${r(cmd.x1)} ${r(cmd.y1)} ${r(cmd.x2)} ${r(cmd.y2)} ${r(cmd.x)} ${r(cmd.y)}`;
         case "Q":
-          return `Q${cmd.x1} ${cmd.y1} ${cmd.x} ${cmd.y}`;
+          return `Q${r(cmd.x1)} ${r(cmd.y1)} ${r(cmd.x)} ${r(cmd.y)}`;
         case "A":
-          return `A${cmd.rx} ${cmd.ry} ${cmd.rotation} ${cmd.largeArc ? 1 : 0} ${cmd.sweep ? 1 : 0} ${cmd.x} ${cmd.y}`;
+          return `A${r(cmd.rx)} ${r(cmd.ry)} ${r(cmd.rotation)} ${cmd.largeArc ? 1 : 0} ${cmd.sweep ? 1 : 0} ${r(cmd.x)} ${r(cmd.y)}`;
         case "Z":
           return "Z";
       }

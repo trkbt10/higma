@@ -321,6 +321,13 @@ export type RenderFrameNode = RenderNodeBase<FrameNode> & {
   /** Clamped corner radius */
   readonly cornerRadius?: CornerRadius;
   /**
+   * iOS-style continuous-curvature smoothing `[0, 1]`, forwarded from
+   * the source node. When present and non-zero, the background rect,
+   * children clip and stroke shape emit as a smoothed-corner path
+   * (see `buildSmoothedRoundedRectPathD`) rather than `<rect rx>`.
+   */
+  readonly cornerSmoothing?: number;
+  /**
    * Source fills for backend-specific draw data (e.g. WebGL GPU fills).
    * Parity with RenderRectNode/RenderEllipseNode — backends should never
    * discriminate `node.source.type` to reach these.
@@ -338,7 +345,7 @@ export type RenderFrameNode = RenderNodeBase<FrameNode> & {
  * without needing to know the parent node type.
  */
 export type StrokeShape =
-  | { readonly kind: "rect"; readonly width: number; readonly height: number; readonly cornerRadius?: CornerRadius }
+  | { readonly kind: "rect"; readonly width: number; readonly height: number; readonly cornerRadius?: CornerRadius; readonly cornerSmoothing?: number }
   | { readonly kind: "ellipse"; readonly cx: number; readonly cy: number; readonly rx: number; readonly ry: number }
   | { readonly kind: "path"; readonly paths: readonly { readonly d: string; readonly fillRule?: "evenodd" }[] };
 
@@ -401,6 +408,8 @@ export type RenderRectNode = RenderNodeBase<RectNode> & {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  /** See `RenderFrameNode.cornerSmoothing`. */
+  readonly cornerSmoothing?: number;
   readonly fill: ResolvedFillResult;
   /** All fill layers for multi-paint rendering (length >= 2 means stacked fills) */
   readonly fillLayers?: readonly ResolvedFillLayer[];
@@ -504,6 +513,16 @@ export type RenderTextNode = RenderNodeBase<TextNode> & {
 export type RenderTextGlyphRun = {
   readonly fillColor: string;
   readonly fillOpacity: number;
+  /**
+   * Per-pass blend mode (resolved CSS-token form). `undefined` means
+   * implicit NORMAL — the formatter omits `style="mix-blend-mode:…"`
+   * in that case. Carries the source `Fill.blendMode` so stacked
+   * fills like `[{black @0.15 NORMAL}, {black @1 OVERLAY}]` render
+   * with the same painter's-algorithm composite Figma uses (instead
+   * of collapsing to solid black when the second pass paints opaque
+   * over the faint first pass).
+   */
+  readonly blendMode?: BlendMode;
   /** Combined SVG path `d` for this run's glyph (and any decoration) contours. */
   readonly d: string;
 };

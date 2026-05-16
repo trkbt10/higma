@@ -5,7 +5,7 @@
  * (tessellated vertices, fill info, transforms). Supports incremental
  * updates via applyDiff() to avoid full re-tessellation on every frame.
  */
-import type { SceneGraph, SceneNode, SceneNodeId, PathContour, Fill, Color, Effect, ClipShape } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph, SceneNode, SceneNodeId, PathContour, Fill, Color, Effect, ClipShape, BlendMode } from "@higma-document-models/fig/scene-graph";
 import type { SceneGraphDiff, DiffOp } from "../../scene-graph/diff";
 import {
   generateRectVertices,
@@ -35,6 +35,25 @@ function tessellateContoursOrNull(
 // =============================================================================
 // Node GPU State
 // =============================================================================
+/**
+ * One painter's-algorithm pass on a text node's glyph mesh.
+ *
+ * The SVG renderer writes one `<path>` per stacked text fill; WebGL
+ * consumers mirror that by submitting one tinted draw per entry, in
+ * source order (`textFills[0]` first, `textFills[n-1]` last).
+ */
+export type TextFillPass = {
+  readonly color: Color;
+  readonly opacity: number;
+  /**
+   * Per-pass blend mode (scene-graph CSS-token form). `undefined`
+   * is implicit NORMAL — the GL backend skips any blend-equation
+   * switch in that case. Required for parity with the SVG emitter's
+   * `style="mix-blend-mode:…"`.
+   */
+  readonly blendMode?: BlendMode;
+};
+
 export type NodeGPUState = {
   readonly id: SceneNodeId;
   readonly type: SceneNode["type"];
@@ -42,9 +61,14 @@ export type NodeGPUState = {
   vertices: Float32Array | null;
   /** Top-most fill for shader selection */
   fill: Fill | null;
-  /** Text fill color (text nodes only) */
-  textFillColor: Color | null;
-  textFillOpacity: number;
+  /**
+   * Stacked text fills in source order — text nodes only. Paint the
+   * `vertices` mesh once per entry to match the SVG emitter's
+   * painter's-algorithm composite (`fills[i]` → one `<path fill="..."
+   * fill-opacity="...">` in source order). Empty when the TEXT node
+   * carries no visible fills.
+   */
+  textFills: readonly TextFillPass[];
   /** Node transform in local coordinates */
   transform: AffineMatrix;
   opacity: number;
@@ -105,8 +129,7 @@ export function createSceneState(): SceneStateInstance {
       type: node.type,
       vertices: null,
       fill: null,
-      textFillColor: null,
-      textFillOpacity: 1,
+      textFills: [],
       transform: node.transform,
       opacity: node.opacity,
       visible: node.visible,
@@ -160,11 +183,16 @@ export function createSceneState(): SceneStateInstance {
         }
         break;
       case "text": {
-        // Primary (paints[0]) fill — WebGL doesn't model multi-fill
-        // stacking yet; consult `node.fills` directly when adding that.
-        const primary = node.fills[0];
-        base.textFillColor = primary?.color ?? { r: 0, g: 0, b: 0, a: 1 };
-        base.textFillOpacity = primary?.opacity ?? 0;
+        // Mirror the SVG emitter's painter's-algorithm composite:
+        // one tinted draw per stacked text fill in source order. The
+        // glyph mesh is shared across every pass — only the colour /
+        // opacity differs — so consumers iterate `textFills` and
+        // re-issue draws against the single `vertices` buffer.
+        base.textFills = node.fills.map((f) => ({
+          color: f.color,
+          opacity: f.opacity,
+          ...(f.blendMode === undefined ? {} : { blendMode: f.blendMode }),
+        }));
         if (node.glyphContours && node.glyphContours.length > 0) {
           base.vertices = tessellateContours(node.glyphContours);
         }
@@ -299,12 +327,17 @@ export function createSceneState(): SceneStateInstance {
       case "text": {
         const c = op.changes;
         if (c.fills !== undefined) {
-          // Primary fill (paints[0]) — WebGL does not model stacked
-          // multi-fill rendering yet; consult `c.fills[1..]` when
-          // adding that.
-          const primary = c.fills[0];
-          state.textFillColor = primary?.color ?? { r: 0, g: 0, b: 0, a: 1 };
-          state.textFillOpacity = primary?.opacity ?? 0;
+          // Project every stacked text fill — the consumer paints the
+          // shared glyph mesh once per entry to mirror the SVG
+          // emitter's painter's-algorithm composite. Skipping any
+          // entry past `[0]` would silently drop the second-pass tint
+          // every Dark-variant text in the App Store template
+          // depends on.
+          state.textFills = c.fills.map((f) => ({
+            color: f.color,
+            opacity: f.opacity,
+            ...(f.blendMode === undefined ? {} : { blendMode: f.blendMode }),
+          }));
         }
         if (c.glyphContours !== undefined) {
           state.vertices = tessellateContoursOrNull(c.glyphContours);

@@ -325,12 +325,45 @@ export async function renderFigToSvg(
   const renderTree = resolveRenderTree(prunedSceneGraph, { exportSettings: options.exportSettings });
   const svgOutput: SvgString = formatRenderTreeToSvg(renderTree, {
     backgroundColor: options.backgroundColor,
+    figmaEmptyFrameIndicator: shouldEmitFigmaEmptyFrameIndicator(nodes),
   });
 
   return {
     svg: svgOutput,
     warnings,
   };
+}
+
+/**
+ * Mirror Figma's SVG-exporter behaviour for "empty" frames: when the
+ * single root of an export is a FRAME with no visible paint at all,
+ * Figma prepends a 1-px purple dashed rectangle as a visual cue that
+ * the frame interior has no surface. The indicator is keyed off the
+ * raw `FigNode`'s type-name and paint arrays — the data the .fig file
+ * itself carries — so this is a renderer-wide rule, not specialised
+ * to any single template.
+ *
+ * Both fillPaints and strokePaints participate: a frame with a
+ * visible stroke (e.g. a user-drawn dashed-purple outline frame)
+ * already has its own visible border, so Figma does not stack the
+ * synthetic indicator on top — that would double-draw the same
+ * dashed-purple chrome.
+ *
+ * SYMBOL/COMPONENT roots never receive the indicator (Figma's
+ * exporter treats them as their own self-contained artifact, not as
+ * a layout frame). Multi-root exports also skip it — Figma's
+ * exporter only emits the indicator when there is a single
+ * exporter root to outline.
+ */
+function shouldEmitFigmaEmptyFrameIndicator(nodes: readonly FigNode[]): boolean {
+  if (nodes.length !== 1) { return false; }
+  const root = nodes[0];
+  if (root.type?.name !== "FRAME") { return false; }
+  const fills = root.fillPaints ?? [];
+  const strokes = root.strokePaints ?? [];
+  const noVisibleFill = fills.every((f) => f.visible === false);
+  const noVisibleStroke = strokes.every((s) => s.visible === false);
+  return noVisibleFill && noVisibleStroke;
 }
 
 // =============================================================================

@@ -53,6 +53,22 @@ import { buildEffectStack, type ResolvedEffectStack } from "../render/effect-sta
 import { createRenderTreeIdGenerator } from "./id-generator";
 import { buildClipShape } from "./clip-shape";
 
+/**
+ * Decimal precision for path `d` coordinates emitted into the
+ * RenderTree. Figma's SVG exporter quantises path data to ~3-4
+ * decimals, and the rasteriser's coverage estimate around mid-column
+ * stem edges is sensitive to sub-millipixel FP drift in our pipeline:
+ * emitting unrounded JS floats lets values like `39.624611` survive
+ * into resvg where Figma would have emitted `39.6246` or `39.625`,
+ * shifting the column coverage estimate enough to flip a stem pixel.
+ * Rounding to 4 decimals snaps those values back onto Figma's typical
+ * quantisation grid so the AA matches for the vast majority of glyphs
+ * (small-font glyphs whose stems land on integer-eighths grid still
+ * leave a ~0.0004px residual because Figma emits 3 decimals for those
+ * exact-fraction values; that residual is tracked separately).
+ */
+const RENDER_PATH_PRECISION = 4;
+
 import type {
   RenderTree,
   RenderNode,
@@ -128,7 +144,7 @@ function resolveFrameStrokeRendering(
     };
   }
   if (node.stroke) {
-    const strokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius };
+    const strokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius, cornerSmoothing: node.cornerSmoothing };
     return resolveStrokeRendering(node.stroke, ids, defs, strokeShape, maskShape);
   }
   return undefined;
@@ -154,6 +170,151 @@ function resolveFrameBackground(
   };
 }
 
+type LocalBox = {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+};
+
+type AffineMatrix2x3 = {
+  readonly m00: number; readonly m01: number; readonly m02: number;
+  readonly m10: number; readonly m11: number; readonly m12: number;
+};
+
+const IDENTITY_AFFINE: AffineMatrix2x3 = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+
+function composeAffine(parent: AffineMatrix2x3, child: AffineMatrix2x3): AffineMatrix2x3 {
+  return {
+    m00: parent.m00 * child.m00 + parent.m01 * child.m10,
+    m01: parent.m00 * child.m01 + parent.m01 * child.m11,
+    m02: parent.m00 * child.m02 + parent.m01 * child.m12 + parent.m02,
+    m10: parent.m10 * child.m00 + parent.m11 * child.m10,
+    m11: parent.m10 * child.m01 + parent.m11 * child.m11,
+    m12: parent.m10 * child.m02 + parent.m11 * child.m12 + parent.m12,
+  };
+}
+
+function transformLocalBox(box: LocalBox, m: AffineMatrix2x3): LocalBox {
+  const xs = [
+    m.m00 * box.x + m.m01 * box.y + m.m02,
+    m.m00 * (box.x + box.w) + m.m01 * box.y + m.m02,
+    m.m00 * box.x + m.m01 * (box.y + box.h) + m.m02,
+    m.m00 * (box.x + box.w) + m.m01 * (box.y + box.h) + m.m02,
+  ];
+  const ys = [
+    m.m10 * box.x + m.m11 * box.y + m.m12,
+    m.m10 * (box.x + box.w) + m.m11 * box.y + m.m12,
+    m.m10 * box.x + m.m11 * (box.y + box.h) + m.m12,
+    m.m10 * (box.x + box.w) + m.m11 * (box.y + box.h) + m.m12,
+  ];
+  const xMin = Math.min(...xs);
+  const xMax = Math.max(...xs);
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
+}
+
+function unionLocalBox(a: LocalBox, b: LocalBox): LocalBox {
+  const xMin = Math.min(a.x, b.x);
+  const yMin = Math.min(a.y, b.y);
+  const xMax = Math.max(a.x + a.w, b.x + b.w);
+  const yMax = Math.max(a.y + a.h, b.y + b.h);
+  return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
+}
+
+function intrinsicLocalBox(node: SceneNode): LocalBox | undefined {
+  switch (node.type) {
+    case "frame":
+    case "rect":
+    case "image":
+    case "text":
+      return { x: 0, y: 0, w: node.width, h: node.height };
+    case "ellipse":
+      return { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
+    case "path":
+    case "group":
+      return undefined;
+  }
+}
+
+/**
+ * Union bbox of a subtree in the supplied parent's local coordinate
+ * frame. Returns `undefined` when the subtree has no measurable
+ * footprint (e.g. an empty group, or only path/group nodes whose
+ * geometry we can't introspect without re-parsing contours).
+ *
+ * Intentionally ignores effect halos and stroke weights — those can
+ * extend past the intrinsic bbox, but Figma's own exporter omits
+ * frame clip-paths whenever the child *geometry* fits, accepting the
+ * (rare) effect overflow. Matching that semantic keeps our output
+ * structurally aligned with Figma's exporter so blends inside don't
+ * isolate against a transparent backdrop (see
+ * `resolveFrameChildClipId`).
+ */
+function subtreeLocalBoxRecursive(
+  node: SceneNode,
+  parentTransform: AffineMatrix2x3,
+): LocalBox | undefined {
+  if (node.visible === false) { return undefined; }
+  const world = composeAffine(parentTransform, node.transform);
+  let bbox: LocalBox | undefined;
+  const own = intrinsicLocalBox(node);
+  if (own) { bbox = transformLocalBox(own, world); }
+  if (node.type === "frame" || node.type === "group") {
+    for (const child of node.children) {
+      const childBox = subtreeLocalBoxRecursive(child, world);
+      if (!childBox) { continue; }
+      bbox = bbox ? unionLocalBox(bbox, childBox) : childBox;
+    }
+  }
+  return bbox;
+}
+
+/**
+ * `true` when every child of this FRAME fits strictly inside the
+ * FRAME's local bounds, so a `<clipPath>` wrapper is a structural
+ * no-op visually. Figma's own SVG exporter behaves this way: Event
+ * metadata (385×206 FRAME with cornerRadius=5 and content well
+ * inside) ships without a clip-path while Event Card (320 SYMBOL
+ * with overflowing iPhone-screenshot content) ships with one.
+ *
+ * Omitting the redundant clip-path also avoids resvg's
+ * `<g clip-path="url(#...)">` isolation quirk that breaks
+ * `mix-blend-mode:overlay` paths inside the wrapper — see the
+ * Event metadata Description / "Special event" Light-variant
+ * regression where stacked `[{black @0.15 NORMAL}, {black @1
+ * OVERLAY}]` text rendered solid black instead of the intended
+ * mid-grey overlay composite.
+ *
+ * Tolerance: 0.5 px on each side absorbs sub-pixel positioning
+ * jitter that creeps in through affine compositions of transform
+ * matrices already trimmed to single-precision floats during the
+ * scene-graph build. Lower tolerance leaves a stable Event-metadata
+ * misclassification at e.g. y=205.9999.
+ */
+function frameChildrenFitWithinBounds(node: FrameNode): boolean {
+  if (node.children.length === 0) { return true; }
+  let union: LocalBox | undefined;
+  for (const child of node.children) {
+    const childBox = subtreeLocalBoxRecursive(child, IDENTITY_AFFINE);
+    if (!childBox) {
+      // Unknown geometry (path / empty group) — fall back to "needs
+      // clip" so we don't omit clipping for content we can't measure.
+      return false;
+    }
+    union = union ? unionLocalBox(union, childBox) : childBox;
+  }
+  if (!union) { return true; }
+  const tol = 0.5;
+  return (
+    union.x >= -tol &&
+    union.y >= -tol &&
+    union.x + union.w <= node.width + tol &&
+    union.y + union.h <= node.height + tol
+  );
+}
+
 function resolveFrameChildClipId(
   node: FrameNode,
   children: readonly RenderNode[],
@@ -174,11 +335,22 @@ function resolveFrameChildClipId(
   if (node.width <= 0 || node.height <= 0) {
     return undefined;
   }
+  // Omit the clipPath when every child's intrinsic geometry fits
+  // inside the FRAME's bounds. Matches Figma's exporter behaviour
+  // (e.g. Event metadata FRAME ships with no clip-path) and avoids
+  // resvg's isolation quirk on `<g clip-path>` with rounded clip
+  // shapes, which collapses inner `mix-blend-mode:overlay` paints
+  // (App Store template's Event metadata `[{black @0.15 NORMAL},
+  // {black @1 OVERLAY}]` text otherwise rasterises near-black instead
+  // of the intended mid-grey).
+  if (frameChildrenFitWithinBounds(node)) {
+    return undefined;
+  }
   const childClipId = ids.getNextId("clip");
   defs.push({
     type: "clip-path",
     id: childClipId,
-    shape: buildClipShape(node.width, node.height, clampedRadius),
+    shape: buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing),
   });
   return childClipId;
 }
@@ -248,19 +420,23 @@ function buildGlyphContentRuns(node: TextNode): readonly RenderTextGlyphRun[] {
     const idx = ci === undefined ? -1 : runIndexForChar(ci);
     const key = idx >= 0 ? idx : 0;
     const list = byRun.get(key) ?? [];
-    list.push(contourToSvgD(contour));
+    list.push(contourToSvgD(contour, RENDER_PATH_PRECISION));
     byRun.set(key, list);
   }
   // Decorations always go with the base run (key 0).
   if (node.decorationContours && node.decorationContours.length > 0) {
     const list = byRun.get(0) ?? [];
     for (const c of node.decorationContours) {
-      list.push(contourToSvgD(c));
+      list.push(contourToSvgD(c, RENDER_PATH_PRECISION));
     }
     byRun.set(0, list);
   }
   // Emit runs in source order; skip runs that received no contours so
-  // the result list is a tight set of paint operations.
+  // the result list is a tight set of paint operations. The base run
+  // carries `fills[0]`'s blend mode (if any) — character-level fill
+  // runs inherit the base node's first-paint blend semantic because
+  // Figma stores per-character fill overrides as colour/opacity only.
+  const baseBlendMode = node.fills[0]?.blendMode;
   const out: RenderTextGlyphRun[] = [];
   for (let r = 0; r < sourceRuns.length; r++) {
     const list = byRun.get(r);
@@ -268,6 +444,7 @@ function buildGlyphContentRuns(node: TextNode): readonly RenderTextGlyphRun[] {
     out.push({
       fillColor: sourceRuns[r].fillColor,
       fillOpacity: sourceRuns[r].fillOpacity,
+      ...(baseBlendMode === undefined ? {} : { blendMode: baseBlendMode }),
       d: list.join(""),
     });
   }
@@ -278,18 +455,19 @@ function buildGlyphContentRuns(node: TextNode): readonly RenderTextGlyphRun[] {
   // paint passes in source order — Figma's painter's-algorithm
   // composite. The path data for each extra pass is the union of every
   // glyph contour and every decoration — i.e. the same "all visible
-  // marks" silhouette each pass operates on. Without this, a node
-  // carrying `fillPaints=[{black, opacity=0.15}, {black, opacity=1}]`
-  // would only emit the 15% pass and render as faint text. See
-  // `TextNode.fills` for the SoT anchor (mirrors Figma's
-  // `fillPaints: Paint[]`).
+  // marks" silhouette each pass operates on. Each pass carries its
+  // own `blendMode` because real-world stacks routinely mix NORMAL
+  // and non-NORMAL passes (`[{black @0.15 NORMAL}, {black @1
+  // OVERLAY}]` — the Event metadata Description / "Special event"
+  // text in the App Store template). See `TextNode.fills` for the
+  // SoT anchor (mirrors Figma's `fillPaints: Paint[]`).
   if (node.fills.length > 1) {
     const everyD: string[] = [];
     for (const contour of node.glyphContours ?? []) {
-      everyD.push(contourToSvgD(contour));
+      everyD.push(contourToSvgD(contour, RENDER_PATH_PRECISION));
     }
     for (const c of node.decorationContours ?? []) {
-      everyD.push(contourToSvgD(c));
+      everyD.push(contourToSvgD(c, RENDER_PATH_PRECISION));
     }
     const combined = everyD.join("");
     if (combined.length > 0) {
@@ -298,6 +476,7 @@ function buildGlyphContentRuns(node: TextNode): readonly RenderTextGlyphRun[] {
         out.push({
           fillColor: colorToCssHex(f.color),
           fillOpacity: f.opacity,
+          ...(f.blendMode === undefined ? {} : { blendMode: f.blendMode }),
           d: combined,
         });
       }
@@ -743,7 +922,7 @@ function resolveFrameNode(
 
   // Background fill and stroke — resolved independently.
   const hasFills = node.fills.length > 0;
-  const maskShape = buildClipShape(node.width, node.height, clampedRadius);
+  const maskShape = buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing);
 
   const strokeRendering = resolveFrameStrokeRendering(node, clampedRadius, ids, defs, maskShape);
   const background = resolveFrameBackground(node, hasFills, strokeRendering, ids, defs, exportSettings);
@@ -776,6 +955,7 @@ function resolveFrameNode(
     width: node.width,
     height: node.height,
     cornerRadius: clampedRadius,
+    cornerSmoothing: node.cornerSmoothing,
     backgroundBlur,
     mask,
     // Surface source fills/stroke at the RenderNode level so WebGL / other
@@ -792,8 +972,8 @@ function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: Norma
   const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
   const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
-  const maskClipShape = buildClipShape(node.width, node.height, clampedRadius);
-  const rectStrokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius };
+  const maskClipShape = buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing);
+  const rectStrokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius, cornerSmoothing: node.cornerSmoothing };
   const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, rectStrokeShape, maskClipShape);
 
   finalizeDefs(defs, { width: node.width, height: node.height }, exportSettings);
@@ -815,6 +995,7 @@ function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: Norma
     width: node.width,
     height: node.height,
     cornerRadius: clampedRadius,
+    cornerSmoothing: node.cornerSmoothing,
     fill: fillResult,
     fillLayers,
     strokeRendering,
@@ -912,7 +1093,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Norma
 
   const paths: RenderPathContour[] = node.contours.map((contour) => {
     const base: RenderPathContour = {
-      d: contourToSvgD(contour),
+      d: contourToSvgD(contour, RENDER_PATH_PRECISION),
       fillRule: contour.windingRule !== "nonzero" ? contour.windingRule as "evenodd" : undefined,
     };
     if (contour.fillOverride) {
@@ -922,7 +1103,23 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Norma
     return base;
   });
 
-  const pathStrokeShape: StrokeShape = { kind: "path", paths };
+  // When the source VECTOR carries parametric rectangle metadata
+  // (`width`, `height`, `cornerRadius`, optional `cornerSmoothing`),
+  // route the stroke through a `kind: "rect"` shape so INSIDE/OUTSIDE-
+  // aligned smoothed strokes flow through the inset-rect emission
+  // (with Figma's hybrid `r_for_p = R − half/(1+s)` / `r_for_arc = R −
+  // half` formula in `buildSmoothedRoundedRectPathD`). The fill still
+  // rasterises from the baked `contours`, so non-rect VECTORs (icons,
+  // glyphs, decorations) and VECTORs without `cornerRadius` keep the
+  // path codepath. Calibration: iPhone bezel `Aluminum` / `Corner
+  // Shading` VECTORs (size 432×904, cornerRadius 76, cornerSmoothing
+  // 0.6, strokeAlign INSIDE, strokeWeight 6) on App page screenshots
+  // / AppStore Search Cell.
+  const pathStrokeShape: StrokeShape = (
+    node.cornerRadius !== undefined && typeof node.width === "number" && typeof node.height === "number"
+  )
+    ? { kind: "rect", width: node.width, height: node.height, cornerRadius: node.cornerRadius, cornerSmoothing: node.cornerSmoothing }
+    : { kind: "path", paths };
   // INSIDE/OUTSIDE stroke needs a shape-matching mask; for paths the mask
   // uses the same contour data drawn as a clip-path (so the doubled
   // stroke width is clipped to the correct side of the path).

@@ -177,6 +177,18 @@ type BuildContext = {
   readonly textFontResolver: TextFontResolver | undefined;
   readonly previousCache?: SceneGraphBuildCache;
   readonly nextNodesBySource: WeakMap<FigDesignNode, SceneNode>;
+  /**
+   * Identity set of top-level FigDesignNodes passed to
+   * `buildSceneGraph`. Used by `resolveCornerSmoothing` to honour
+   * Figma's SVG-exporter rule: `cornerSmoothing` propagates into the
+   * emitted path data ONLY for the export root. Nested FRAME / RECT
+   * children with non-zero `cornerSmoothing` are emitted as
+   * `<rect rx>` (quarter-circle) — same as Figma — because the
+   * smoothing has no effect on their on-canvas presentation when
+   * the visible cornerless rect is bounded by some other clip /
+   * stack interaction.
+   */
+  readonly exportRoots: WeakSet<FigDesignNode>;
   nodeCounter: number;
 };
 
@@ -235,6 +247,7 @@ function buildFrameNode(node: FigDesignNode, ctx: BuildContext, children: readon
   const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
   const { effects } = extractEffectsProps(node);
   const cornerRadius = extractDesignCornerRadius(node);
+  const cornerSmoothing = resolveCornerSmoothing(node, ctx);
   const clipsContent = resolveDesignClipsContent(node);
 
   return {
@@ -249,12 +262,13 @@ function buildFrameNode(node: FigDesignNode, ctx: BuildContext, children: readon
     width: size.x,
     height: size.y,
     cornerRadius,
+    cornerSmoothing,
     fills: convertPaintsToFills(fillPaints, ctx.images),
     stroke: convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign }),
     individualStrokeWeights: node.individualStrokeWeights,
     clipsContent,
     children,
-    clip: clipsContent ? { type: "rect", width: size.x, height: size.y, cornerRadius } : undefined,
+    clip: clipsContent ? { type: "rect", width: size.x, height: size.y, cornerRadius, cornerSmoothing } : undefined,
   };
 }
 
@@ -264,6 +278,7 @@ function buildRectNode(node: FigDesignNode, ctx: BuildContext): RectNode {
   const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
   const { effects } = extractEffectsProps(node);
   const cornerRadius = extractDesignCornerRadius(node);
+  const cornerSmoothing = resolveCornerSmoothing(node, ctx);
 
   return {
     type: "rect",
@@ -277,10 +292,55 @@ function buildRectNode(node: FigDesignNode, ctx: BuildContext): RectNode {
     width: size.x,
     height: size.y,
     cornerRadius,
+    cornerSmoothing,
     fills: convertPaintsToFills(fillPaints, ctx.images),
     stroke: convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign }),
     individualStrokeWeights: node.individualStrokeWeights,
   };
+}
+
+/**
+ * Pick up Figma's `cornerSmoothing` on the source node. Figma's SVG
+ * exporter applies smoothing only to the export-root geometry; nested
+ * FRAME/RECTANGLE children with non-zero `cornerSmoothing` still emit
+ * as sharp `<rect rx>` so the SVG bytes match Figma's output exactly.
+ * Without the export-root gate, applying smoothing universally
+ * over-darkens the AA at every inner-frame corner (calibration: Feature
+ * cell regressed 0.00% -> 0.01%).
+ *
+ * Additionally, the SVG exporter falls back to a sharp `<rect rx>` even
+ * on the export-root when the node carries a visible effect
+ * (DROP_SHADOW / INNER_SHADOW / LAYER_BLUR / BACKGROUND_BLUR). Figma
+ * wraps the content in `<g filter="url(...)">` and emits the fill plus
+ * its `<clipPath>` companion as a sharp `<rect>` regardless of the
+ * source cornerSmoothing — the pre-computed `fillGeometry` blob still
+ * carries the smoothed path, so this is a SVG-exporter quirk rather
+ * than missing source geometry. Calibration: Event Card (cs=0.6,
+ * DROP_SHADOW) emits `<rect x="12" y="8" width="362" height="296"
+ * rx="20"/>` while Event Details Card (same cs=0.6, no effects) emits
+ * the smoothed `M0 38.4C0 24.9587...` path.
+ *
+ * Returns `undefined` for the common case so the field stays absent
+ * from the scene-graph and callers can short-circuit on the
+ * quarter-circle path.
+ */
+function resolveCornerSmoothing(node: FigDesignNode, ctx: BuildContext): number | undefined {
+  if (!ctx.exportRoots.has(node)) { return undefined; }
+  const s = node.cornerSmoothing;
+  if (typeof s !== "number" || s <= 0) { return undefined; }
+  if (hasVisibleEffect(node)) { return undefined; }
+  return s;
+}
+
+function hasVisibleEffect(node: FigDesignNode): boolean {
+  const effects = node.effects;
+  if (!Array.isArray(effects)) { return false; }
+  for (const e of effects) {
+    if (!e) { continue; }
+    if (e.visible === false) { continue; }
+    return true;
+  }
+  return false;
 }
 
 function buildEllipseNode(node: FigDesignNode, ctx: BuildContext): EllipseNode {
@@ -481,6 +541,14 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
   const stroke = resolveVectorStroke(treatAsFill, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign);
 
   const { size } = extractSizeProps(node);
+  // Carry source rect-shape parameters through to PathNode so the
+  // stroke resolver can route INSIDE/OUTSIDE-aligned smoothed strokes
+  // through `kind: "rect"` strokeShape. See PathNode docs in
+  // @higma-document-models/fig/scene-graph/types and the resolve.ts
+  // strokeShape branch.
+  const cornerRadius = extractDesignCornerRadius(node);
+  const cornerSmoothingRaw = node.cornerSmoothing;
+  const cornerSmoothing = typeof cornerSmoothingRaw === "number" && cornerSmoothingRaw > 0 ? cornerSmoothingRaw : undefined;
   return {
     type: "path",
     id: getNodeId(node, ctx),
@@ -495,6 +563,8 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
     stroke,
     width: size.x > 0 ? size.x : undefined,
     height: size.y > 0 ? size.y : undefined,
+    cornerRadius,
+    cornerSmoothing,
   };
 }
 
@@ -1036,7 +1106,34 @@ function buildChildren(children: readonly FigDesignNode[], ctx: BuildContext): S
         maskState.maskedChildren = [];
       }
 
-      // Build the mask node and start a new mask group
+      // Build the mask node and start a new mask group. The mask
+      // node's own painted appearance does not flow into `result`
+      // here: in the App Store template, both Aluminum nodes inside
+      // a Phone (one `mask=true`, one `mask=undefined`) share the
+      // same source transform but Figma's INSTANCE-resolver emits
+      // them at slightly different world positions when applying
+      // their differing layout constraints (SCALE vs CENTER).
+      // Without that constraint difference our two Aluminum strokes
+      // would coincide pixel-for-pixel and the AA stack would over-
+      // darken the perimeter compared to Figma's exporter — strictly
+      // worse than dropping the mask node's paint. Until the
+      // constraint solver places the two correctly, leaving the
+      // mask source as a pure clip avoids the over-darken regression.
+      //
+      // The naive approach of always emitting the mask node as
+      // visible content fails because most mask=true nodes carry an
+      // alpha-only `#D9D9D9` rect that paints solid grey over their
+      // siblings (verified by experiment 2026-05-16: Search Toolbar
+      // 0/0 → 200/11271 h60/h30, Event Details Card 0/0 → 17639/17772).
+      //
+      // Refined heuristic: emit the mask node as visible content
+      // ONLY when it has a non-empty stroke definition on the
+      // source FigNode. Alpha-source masks (rounded rects, plain
+      // shapes used purely to define a clip region) typically have
+      // fills but no strokes; the iPhone bezel Aluminum mask=true
+      // has both, and theirs's SVG emits its stroke as a separate
+      // visible path at a 0.101 px sub-pixel offset from the
+      // non-mask sibling stroke.
       const maskNode = buildNode(child, ctx);
       if (maskNode) {
         maskState.activeMaskId = maskNode.id;
@@ -1111,6 +1208,8 @@ export function buildSceneGraphWithCache(
   previousCache: SceneGraphBuildCache | undefined,
 ): BuildSceneGraphResult {
   const nextNodesBySource = new WeakMap<FigDesignNode, SceneNode>();
+  const exportRoots = new WeakSet<FigDesignNode>();
+  for (const root of nodes) { exportRoots.add(root); }
   const ctx: BuildContext = {
     blobs: options.blobs,
     images: options.images,
@@ -1121,6 +1220,7 @@ export function buildSceneGraphWithCache(
     textFontResolver: options.textFontResolver,
     previousCache,
     nextNodesBySource,
+    exportRoots,
     nodeCounter: 0,
   };
 

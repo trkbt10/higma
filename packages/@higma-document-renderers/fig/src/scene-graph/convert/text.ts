@@ -10,7 +10,7 @@ import type { TextRun } from "@higma-document-models/fig/scene-graph";
 import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
 import { textAlignHorizontalToAnchor, getAllVisibleSolidFills } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";
-import type { PathContour, GlyphContour, Color, TextLineLayout } from "@higma-document-models/fig/scene-graph";
+import type { PathContour, GlyphContour, Color, TextLineLayout, BlendMode } from "@higma-document-models/fig/scene-graph";
 
 /** Map Figma text decoration value to scene graph text decoration string */
 function mapTextDecoration(decoration: string | undefined): "underline" | "strikethrough" | undefined {
@@ -85,7 +85,11 @@ export type TextConversionResult = {
    * stacking rationale. An empty array means the node has no visible
    * SOLID fill.
    */
-  readonly fills: readonly { readonly color: Color; readonly opacity: number }[];
+  readonly fills: readonly {
+    readonly color: Color;
+    readonly opacity: number;
+    readonly blendMode?: BlendMode;
+  }[];
   /** Text line layout data for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;
 };
@@ -173,11 +177,15 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
   // raw `FigNode.fillPaints` array; we surface every visible SOLID
   // entry here so downstream renderers can mirror Figma's painter's-
   // algorithm composite by emitting one paint pass per entry.
-  const fills: readonly { readonly color: Color; readonly opacity: number }[] =
-    getAllVisibleSolidFills(props.fillPaints).map((f) => ({
-      color: parseHexColor(f.color),
-      opacity: f.opacity,
-    }));
+  const fills: readonly {
+    readonly color: Color;
+    readonly opacity: number;
+    readonly blendMode?: BlendMode;
+  }[] = getAllVisibleSolidFills(props.fillPaints).map((f) => ({
+    color: parseHexColor(f.color),
+    opacity: f.opacity,
+    ...(f.blendMode === undefined ? {} : { blendMode: f.blendMode }),
+  }));
 
   if (rendering.kind === "glyphs") {
     const glyphContours = normalizeGlyphContours(rendering.glyphContours);

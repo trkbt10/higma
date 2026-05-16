@@ -6,7 +6,7 @@
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
 import type { FontQuery } from "@higma-document-models/fig/font";
-import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
+import type { TextAutoResize, BlendMode } from "@higma-document-models/fig/scene-graph";
 
 /**
  * Text data structure from .fig files
@@ -75,9 +75,19 @@ export type ExtractedTextProps = {
 };
 
 /**
- * Fill color and opacity result
+ * Fill color and opacity result.
+ *
+ * `blendMode` is set when the source `Fill.blendMode` is anything
+ * other than the implicit `NORMAL`. The renderer projects it onto the
+ * per-pass `<path style="mix-blend-mode:…">` so the painter's-
+ * algorithm composite matches Figma's compositor — required for
+ * stacked text fills with OVERLAY / MULTIPLY / SOFT_LIGHT etc. (e.g.
+ * the App Store template's `[{black @0.15 NORMAL}, {black @1
+ * OVERLAY}]` Description / "Special event" text, which would
+ * otherwise paint solid black instead of the intended medium grey).
  */
 export type FillColorResult = {
   readonly color: string;
   readonly opacity: number;
+  readonly blendMode?: BlendMode;
 };

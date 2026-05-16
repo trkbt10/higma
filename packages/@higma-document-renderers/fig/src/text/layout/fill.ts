@@ -4,6 +4,7 @@
 
 import type { FigPaint } from "@higma-document-models/fig/types";
 import { figColorToHex, asSolidPaint } from "@higma-document-models/fig/color";
+import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph";
 import type { FillColorResult } from "./types";
 
 /**
@@ -69,7 +70,17 @@ export function getAllVisibleSolidFills(
     if (paint.visible === false) { continue; }
     const solid = asSolidPaint(paint);
     if (!solid) { continue; }
-    out.push({ color: figColorToHex(solid.color), opacity: paint.opacity ?? 1 });
+    // Per-paint `blendMode` is required to match Figma's stacked-text
+    // composite. The Figma raw enum maps to the lowercase CSS-friendly
+    // token via `convertFigmaBlendMode`; `NORMAL` / `PASS_THROUGH` map
+    // to `undefined`, so the renderer's emit path can branch on
+    // "explicit non-normal blend" without re-mapping at the call site.
+    const blendMode = convertFigmaBlendMode(paint.blendMode);
+    out.push({
+      color: figColorToHex(solid.color),
+      opacity: paint.opacity ?? 1,
+      ...(blendMode === undefined ? {} : { blendMode }),
+    });
   }
   return out;
 }
