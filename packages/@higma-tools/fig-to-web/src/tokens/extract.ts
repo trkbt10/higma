@@ -65,7 +65,6 @@ export function buildTokensFromFrames(
   };
 
   const index: TokenIndex = {
-    colorIdForPaint: (paint: FigPaint) => lookupColorId(colorTable, paint),
     colorIdForPaints: (paints) => resolvePaints(paints, (paint) => lookupColorId(colorTable, paint)),
     spacingIdFor: (value: number) => lookupSpacingId(spacingTable, value),
     radiusIdFor: (value: number) => lookupRadiusId(radiusTable, value),

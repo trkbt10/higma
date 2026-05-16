@@ -656,6 +656,19 @@ export function nodeToStyle(
   applyOwnLayoutMode(node, inputs.index, inferred, style);
   applyBlendMode(node, style);
   applyEffectFilters(node, style);
+  // `box-sizing: border-box` was previously enforced via a `.fig-page`
+  // scoped CSS reset in `tokens.css`. That class was removed because
+  // (a) the fixed `fig-page` identifier risked colliding with consumer
+  // markup and (b) the "page" concept doesn't apply when the same
+  // generated subtree is consumed as a re-usable component inside a
+  // larger React tree. The reset is now emitted per-node so every
+  // generated element keeps its Figma-authored width / padding
+  // semantics without relying on an external CSS scope. `box-sizing`
+  // is non-inherited, so each descendant needs the property in its
+  // own style record — applying it on the root alone would not reach
+  // descendants. The property is harmless on the `<span>` (TEXT) and
+  // `<svg>` (vector) elements the emitter produces alongside `<div>`.
+  style.boxSizing = "border-box";
   return style;
 }
 
@@ -731,10 +744,9 @@ function applyLayout(
       } else {
         style.height = "100%";
       }
-      // CSS `box-sizing: border-box` keeps the SYMBOL's authored
-      // padding inside the wrapper's content area instead of
-      // expanding the rendered box past the wrapper bounds.
-      style.boxSizing = "border-box";
+      // `box-sizing: border-box` is applied uniformly to every node
+      // by `nodeToStyle` itself, so this branch no longer sets it
+      // here.
       return;
     }
     if (node.size) {

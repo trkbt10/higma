@@ -1,0 +1,34 @@
+{
+  "name": "@higma-tools/fig-to-svelte",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "fig-to-svelte": "./src/cli/bin.ts"
+  },
+  "scripts": {
+    "lint": "cd ../../.. && eslint packages/@higma-tools/fig-to-svelte/src",
+    "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-tools/fig-to-svelte/src'"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@higma-document-io/fig": "workspace:*",
+    "@higma-document-models/fig": "workspace:*",
+    "@higma-document-renderers/fig": "workspace:*"
+  },
+  "scaffoldNote": "The emit pipeline is not yet implemented; this package stands up the directory layout, package.json, and CLI stub so the eventual implementation can drop in next to fig-to-web / fig-to-vue. See task #8 in the project task list.",
+  "higma": {
+    "boundary": {
+      "layer": 7,
+      "family": "tools",
+      "product": "fig"
+    }
+  }
+}

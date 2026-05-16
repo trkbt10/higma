@@ -86,6 +86,29 @@ export async function verifyFidelity(
         port: 0,
         bundle: true,
         debugAttrs: false,
+        // The roundtrip verifier asserts visual fidelity, not export
+        // shape — stay on the historical `function-default` form so
+        // the generated preview shell / standalone pages keep their
+        // default-import wiring intact.
+        exportStyle: "function-default",
+        // Inline styles are what the visual-fidelity harness has been
+        // measuring against; switching to css-modules here would force
+        // the bundler to inline a stylesheet via JS, which is a
+        // separate verification surface.
+        cssMode: "inline",
+        // `cssImport` only affects external-css mode, but the field
+        // is part of the CliOptions shape.
+        cssImport: "direct",
+        // Visual fidelity targets the historical single-component
+        // emit; the exploded form is for downstream consumers who
+        // want per-variant tree-shake-friendly imports.
+        variantStrategy: "discriminated",
+        // Asset externalisation also routes the rendered icon
+        // through an `<img>` instead of inline SVG, which is a
+        // different surface than the visual-fidelity harness was
+        // calibrated against. Keep icons inline here.
+        assetStrategy: "inline",
+        assetComplexityThreshold: 200,
       },
       {
         info: () => undefined,

@@ -20,9 +20,15 @@ import { figColorToCss } from "./color";
  * id. The full `TokenIndex` shape lives in `tokens/`; this module
  * declares only the slice it actually consults so the css-format
  * layer can stay independent of the token graph wiring.
+ *
+ * The canonical method is `colorIdForPaints`: callers wrap a single
+ * paint in `[paint]` when they only have one in hand. Routing the
+ * single-paint case through the array API keeps token eligibility
+ * rules from drifting across emitters (the SoT policy that retired
+ * the legacy `colorIdForPaint(paint)` single-paint method).
  */
 export type PaintTokenResolver = {
-  readonly colorIdForPaint: (paint: FigPaint) => string | undefined;
+  readonly colorIdForPaints: (paints: readonly FigPaint[] | undefined) => string | undefined;
 };
 
 export type SolidPaintCssOptions = {
@@ -50,7 +56,7 @@ export function solidPaintToCss(
   resolver: PaintTokenResolver,
   options: SolidPaintCssOptions = {},
 ): string {
-  const tokenId = resolver.colorIdForPaint(paint);
+  const tokenId = resolver.colorIdForPaints([paint]);
   if (tokenId) {
     return `var(--${tokenId})`;
   }

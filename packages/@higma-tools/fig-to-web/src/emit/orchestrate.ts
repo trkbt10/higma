@@ -33,6 +33,10 @@ import { renderFontLinkNodes } from "./font-links";
 import { doctype, el, raw, text } from "../lib/html-tree/builder";
 import { serialize } from "../lib/html-tree/serialize";
 import type { HtmlNode } from "../lib/html-tree/types";
+import { createExternalCssRegistry, type ExternalCssRegistry } from "./style/strategy/external-css";
+import { createIconRegistry, type IconRegistry } from "./assets/icons";
+
+const EXTERNAL_STYLESHEET_PATH = "styles.css";
 
 export type EmitResult = {
   readonly files: readonly EmitFile[];
@@ -385,11 +389,182 @@ function emitAppTsx(entries: readonly AppEntryDescriptor[]): EmitFile {
   return { path: "App.tsx", contents: code };
 }
 
+/**
+ * How CSS is delivered to the consumer.
+ *
+ * - `"inline"`: every emitted element carries `style={{ ... }}` directly
+ *   (the only mode implemented today). The token sheet (`tokens.css`)
+ *   still carries design-token CSS custom properties because `var(--…)`
+ *   references are present in the inline style values.
+ * - `"css-modules"`: each generated component emits a sibling
+ *   `*.module.css` file. The TSX side reads class names via
+ *   `import classes from "./X.module.css"` and uses `aria-*` /
+ *   `data-state-*` attribute selectors for variant state. Not yet
+ *   implemented — throws at the boundary so partial behaviour can't
+ *   masquerade as success.
+ * - `"external-css"`: one global stylesheet with BEM-style class
+ *   names; TSX may opt-in to `import "./styles.css"` (`cssImport:
+ *   "direct"`) or rely on the consumer to wire it up (`"external"`).
+ *   Not yet implemented.
+ * - `"tailwind"`: utility class names in `className`. Requires
+ *   token → Tailwind config mapping. Not yet implemented.
+ */
+export type CssMode = "inline" | "css-modules" | "external-css" | "tailwind";
+
+/**
+ * How a TSX file references the global stylesheet emitted by
+ * `cssMode: "external-css"`. Has no effect for other CSS modes.
+ *
+ * - `"direct"` (default): each TSX file emits `import "./styles.css";`
+ *   as a side-effect import so a bundler / dev server loads the
+ *   stylesheet automatically.
+ * - `"external"`: TSX files emit no stylesheet import. The consumer
+ *   wires `styles.css` into their own application shell (e.g. a
+ *   global `<link rel="stylesheet">` in the host page).
+ */
+export type CssImportStrategy = "direct" | "external";
+
+/**
+ * React component export shape.
+ *
+ * - `"function-default"`: emits both `export function ComponentName(
+ *   ...)` (named) AND `export default ComponentName;` so consumers
+ *   can import either way. This is what every prior revision produced.
+ * - `"const-named"`: emits only `export const ComponentName = (...):
+ *   React.ReactElement => { ... };`. No default export. Preferred for
+ *   tree-shake-friendly libraries and matches the user's explicit
+ *   request for the `export const ComponentName` form.
+ */
+export type ExportStyle = "function-default" | "const-named";
+
+/**
+ * Asset-output strategy for vector-shaped subtrees.
+ *
+ * - `"inline"` (default): vector subtrees stay as inline `<svg>` in
+ *   the generated JSX, regardless of complexity. Preserves the
+ *   historical emit shape.
+ * - `"externalize-complex"`: vector subtrees whose complexity score
+ *   crosses `assetComplexityThreshold` are externalised to
+ *   `assets/icons/<slug>.svg` and referenced via `<img src="…" />`.
+ *   Smaller subtrees stay inline. Uses the shared scorer from
+ *   `@higma-document-renderers/fig/asset-plan` so the decision
+ *   matches fig-to-swiftui's rasterisation gate.
+ */
+export type AssetStrategy = "inline" | "externalize-complex";
+
+/**
+ * How a Figma Variant Set lands in the generated React output.
+ *
+ * - `"discriminated"` (default): one component per Variant Set,
+ *   discriminating on a `variant` prop via a `switch` statement.
+ *   Compact and matches the historical emit shape.
+ * - `"exploded"`: emit one standalone component per variant
+ *   (`ButtonOn.tsx`, `ButtonOff.tsx`, …) plus a thin barrel
+ *   (`Button.tsx`) that re-exports each variant and provides a
+ *   `Button` switcher for callers that want runtime selection.
+ *   Matches the user's request to treat each variant as its own
+ *   first-class React component for direct import and tree-shaking.
+ */
+export type VariantStrategy = "discriminated" | "exploded";
+
 /** Options controlling emission output. */
 export type EmitFromFramesOptions = {
   /** Emit `data-fig-name` / `data-fig-type` attrs on every node. Default: false. */
   readonly debugAttrs?: boolean;
+  /**
+   * CSS delivery strategy. Default: `"inline"`. Tailwind is part of
+   * the API contract but not yet implemented; passing it raises at
+   * the boundary rather than silently degrading.
+   */
+  readonly cssMode?: CssMode;
+  /**
+   * Stylesheet-import strategy when `cssMode === "external-css"`.
+   * Default: `"direct"`. Ignored for other CSS modes.
+   */
+  readonly cssImport?: CssImportStrategy;
+  /**
+   * React export shape. Default: `"function-default"` (preserves the
+   * previous emit so existing consumers and the generated preview
+   * shell keep working).
+   */
+  readonly exportStyle?: ExportStyle;
+  /**
+   * Variant Set emit strategy. Default: `"discriminated"` (single
+   * component switching on `variant` prop). `"exploded"` emits one
+   * standalone component per variant alongside a thin barrel that
+   * re-exports them.
+   */
+  readonly variantStrategy?: VariantStrategy;
+  /**
+   * Asset-output strategy for vector subtrees. Default: `"inline"`.
+   * Pair with `assetComplexityThreshold` to tune the
+   * inline-vs-externalise cutover for `"externalize-complex"`.
+   */
+  readonly assetStrategy?: AssetStrategy;
+  /**
+   * Complexity threshold above which a vector subtree externalises
+   * to `assets/icons/<slug>.svg`. Only consulted when
+   * `assetStrategy === "externalize-complex"`. Default: 200, matching
+   * the empirical value fig-to-swiftui uses for its rasterisation
+   * decision so the two emitters cross over at the same node.
+   */
+  readonly assetComplexityThreshold?: number;
 };
+
+/**
+ * Pre-validated options with defaults resolved. Internal modules
+ * (`render/files.ts`) take this shape so they don't repeat the
+ * defaulting / validation work.
+ */
+export type ResolvedEmitOptions = {
+  readonly debugAttrs: boolean;
+  readonly cssMode: CssMode;
+  readonly cssImport: CssImportStrategy;
+  readonly exportStyle: ExportStyle;
+  readonly variantStrategy: VariantStrategy;
+  readonly assetStrategy: AssetStrategy;
+  readonly assetComplexityThreshold: number;
+};
+
+function resolveOptions(options: EmitFromFramesOptions): ResolvedEmitOptions {
+  const cssMode = options.cssMode ?? "inline";
+  // All four declared modes are now implemented. The guard remains
+  // structurally so a future addition to the `CssMode` union has to
+  // touch this file before the orchestrator silently accepts it.
+  if (
+    cssMode !== "inline"
+    && cssMode !== "css-modules"
+    && cssMode !== "external-css"
+    && cssMode !== "tailwind"
+  ) {
+    throw new Error(`fig-to-web: cssMode "${cssMode}" is not a recognised strategy.`);
+  }
+  const cssImport = options.cssImport ?? "direct";
+  const exportStyle = options.exportStyle ?? "function-default";
+  const variantStrategy = options.variantStrategy ?? "discriminated";
+  if (variantStrategy !== "discriminated" && variantStrategy !== "exploded") {
+    throw new Error(`fig-to-web: variantStrategy "${variantStrategy}" is not a recognised value.`);
+  }
+  const assetStrategy = options.assetStrategy ?? "inline";
+  if (assetStrategy !== "inline" && assetStrategy !== "externalize-complex") {
+    throw new Error(`fig-to-web: assetStrategy "${assetStrategy}" is not a recognised value.`);
+  }
+  const assetComplexityThreshold = options.assetComplexityThreshold ?? 200;
+  if (!Number.isFinite(assetComplexityThreshold) || assetComplexityThreshold < 0) {
+    throw new Error(
+      `fig-to-web: assetComplexityThreshold must be a non-negative finite number, got ${assetComplexityThreshold}`,
+    );
+  }
+  return {
+    debugAttrs: options.debugAttrs ?? false,
+    cssMode,
+    cssImport,
+    exportStyle,
+    variantStrategy,
+    assetStrategy,
+    assetComplexityThreshold,
+  };
+}
 
 /**
  * Drive the full emission for a fixed set of target frames.
@@ -406,21 +581,59 @@ export async function emitFromFrames(
   frames: readonly FigNode[],
   options: EmitFromFramesOptions = {},
 ): Promise<EmitResult> {
+  const resolved = resolveOptions(options);
   const tokens = emitTokensFile(source, frames);
   const registry = buildRegistry(source, frames);
   const imageRegistry = createImageRegistry(source.loaded.images);
+  // The external-css strategy needs one registry shared across every
+  // component/page emit because all generated TSX files reference a
+  // single `styles.css` at the output root. The registry stays
+  // unused (and `undefined`) for other CSS modes so per-file
+  // collectors continue to own their own scope.
+  const externalCssRegistry: ExternalCssRegistry | undefined =
+    resolved.cssMode === "external-css" ? createExternalCssRegistry() : undefined;
+  // Icon registry lives at the orchestrator level so externalised
+  // SVGs from any component / page share one `assets/icons/` directory
+  // and dedupe on guid. Skip creating it for `inline` mode so the
+  // EmitContext branch that consults it short-circuits cleanly.
+  const iconRegistry: IconRegistry | undefined =
+    resolved.assetStrategy === "externalize-complex" ? createIconRegistry() : undefined;
   const opts = {
-    debugAttrs: options.debugAttrs ?? false,
+    debugAttrs: resolved.debugAttrs,
+    exportStyle: resolved.exportStyle,
+    cssMode: resolved.cssMode,
+    cssImport: resolved.cssImport,
+    variantStrategy: resolved.variantStrategy,
+    assetStrategy: resolved.assetStrategy,
+    assetComplexityThreshold: resolved.assetComplexityThreshold,
     imageResolver: imageRegistry.resolve,
+    externalCssRegistry,
+    externalStylesheetPath: EXTERNAL_STYLESHEET_PATH,
+    iconRegistry,
   };
 
   const files: EmitFile[] = [tokens.file];
 
   for (const target of registry.frames.values()) {
-    files.push(emitPageFile(source, registry, tokens.registryInputs.index, target, opts));
+    for (const file of emitPageFile(source, registry, tokens.registryInputs.index, target, opts)) {
+      files.push(file);
+    }
   }
   for (const target of registry.components.values()) {
-    files.push(emitComponentFile(source, registry, tokens.registryInputs.index, target, opts));
+    for (const file of emitComponentFile(source, registry, tokens.registryInputs.index, target, opts)) {
+      files.push(file);
+    }
+  }
+
+  // Render the single sidecar stylesheet for external-css mode. The
+  // file lives at the output root so every TSX `import "./..styles.css"`
+  // resolves against the same target (`relativeStylesheetSpecifier`
+  // produces the correct number of `../` jumps per page depth).
+  if (externalCssRegistry) {
+    const stylesheet = externalCssRegistry.renderStylesheet(EXTERNAL_STYLESHEET_PATH);
+    if (stylesheet) {
+      files.push(stylesheet);
+    }
   }
 
   const fontPlan = buildSourceFontPlan(source, frames);
@@ -453,7 +666,18 @@ export async function emitFromFrames(
     }
   }
 
-  return { files, registry, assets: imageRegistry.collected() };
+  // Icon assets (externalised vector subtrees) join the image assets
+  // in `EmitResult.assets`. The icon registry stores text content but
+  // the asset surface speaks Uint8Array, so encode each SVG to UTF-8
+  // bytes here — the CLI writer treats both image and icon assets
+  // through the same `writeFile(path, bytes)` code path.
+  const iconAssets = (iconRegistry?.collected() ?? []).map((asset) => ({
+    path: asset.path,
+    bytes: new TextEncoder().encode(asset.contents),
+  }));
+  const assets = [...imageRegistry.collected(), ...iconAssets];
+
+  return { files, registry, assets };
 }
 
 /**

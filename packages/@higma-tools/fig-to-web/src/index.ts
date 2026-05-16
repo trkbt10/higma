@@ -31,11 +31,17 @@ export { buildTokensFromFrames, tokensToCss } from "./tokens";
 export type { TokenBuildResult } from "./tokens";
 
 export type {
+  AssetStrategy,
   ComponentTarget,
+  CssImportStrategy,
+  CssMode,
   EmitFile,
+  EmitFromFramesOptions,
   EmitRegistry,
   EmitResult,
+  ExportStyle,
   FrameTarget,
+  VariantStrategy,
 } from "./emit";
 export {
   buildRegistry,

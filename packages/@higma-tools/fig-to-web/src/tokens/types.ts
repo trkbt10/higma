@@ -82,9 +82,17 @@ export type TokenSet = {
  * the emitter does not have to re-derive ids.
  */
 export type TokenIndex = {
-  /** Map a SOLID paint to its color token id, or undefined when no token covers it. */
-  readonly colorIdForPaint: (paint: FigPaint) => string | undefined;
-  /** Map raw paint(s) to a single token id when the paint set is fully resolvable. */
+  /**
+   * Map a paint stack to a single token id when the stack is fully
+   * resolvable (one visible SOLID paint with a known token). The
+   * caller passes either the full `fillPaints` / `strokePaints` array
+   * or a synthetic `[paint]` when only one paint is in hand — both
+   * forms route through the same canonical decision so token
+   * eligibility rules can't drift across call sites. (Used to be
+   * split into `colorIdForPaint(paint)` + `colorIdForPaints(paints)`;
+   * the single-paint form was retired in favour of this unified
+   * shape per the SoT policy.)
+   */
   readonly colorIdForPaints: (paints: readonly FigPaint[] | undefined) => string | undefined;
   /** Map a px spacing value to its spacing token id. */
   readonly spacingIdFor: (value: number) => string | undefined;

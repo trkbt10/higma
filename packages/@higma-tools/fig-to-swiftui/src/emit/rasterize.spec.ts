@@ -13,7 +13,7 @@
  *   4. Resource slugs are unique even when two nodes share a name.
  */
 import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
-import { complexityScore } from "./complexity";
+import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
 import { planRasterization } from "./rasterize";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {

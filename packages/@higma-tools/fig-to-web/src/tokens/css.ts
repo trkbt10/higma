@@ -125,38 +125,19 @@ function emitShadowBlock(shadows: ReadonlyMap<string, ShadowToken>): string {
 }
 
 /**
- * Reset block prepended to every generated stylesheet.
+ * Emit the full design-token CSS file.
  *
- * Without `box-sizing: border-box` the default content-box model
- * makes `width: 360px; padding: 12px;` render as 384px wide — the
- * padding is added on top of the declared width. Every generated
- * frame uses Figma's frame size as its own width plus a non-zero
- * `padding`, so the content-box default visibly inflates every
- * container by the padding amount and shifts every sibling.
- *
- * The reset is scoped to `.fig-page` and its descendants (every
- * generated page-root `<div>` carries that class). A bare global
- * `*` selector would leak into surrounding application chrome — a
- * navigation bar or modal that wraps the generated output — and
- * silently change layout there.
+ * The earlier revision prepended a `.fig-page`-scoped
+ * `box-sizing: border-box` reset so generated `<div>` widths
+ * (Figma frame width + padding) rendered with the padding inside
+ * the authored width. The class is gone now: it risked collision
+ * with consumer markup and forced a `page` concept onto every
+ * generated component, which doesn't apply when the same emit is
+ * consumed as a re-usable component inside a larger React tree.
+ * The reset moved to per-element `style.boxSizing = "border-box"`
+ * in the emit pipeline, so the token file no longer carries a
+ * structural CSS rule — only design-token CSS custom properties.
  */
-/**
- * Class name applied to every generated page-root `<div>`. Keep this
- * in sync with the CSS reset selector below — both must reference
- * the same identifier for the scoped `box-sizing: border-box`
- * contract to apply.
- */
-export const FIG_PAGE_CLASS = "fig-page";
-const BOX_SIZING_RESET = [
-  `.${FIG_PAGE_CLASS},`,
-  `.${FIG_PAGE_CLASS} *,`,
-  `.${FIG_PAGE_CLASS} *::before,`,
-  `.${FIG_PAGE_CLASS} *::after {`,
-  "  box-sizing: border-box;",
-  "}",
-].join("\n");
-
-/** Emit the full design-token CSS file. */
 export function tokensToCss(tokens: TokenSet): string {
   const blocks = [
     emitColorBlock(tokens.colors),
@@ -166,8 +147,7 @@ export function tokensToCss(tokens: TokenSet): string {
     emitShadowBlock(tokens.shadows),
   ].filter((block) => block.length > 0);
 
-  const root = renderRoot(blocks);
-  return `${BOX_SIZING_RESET}\n\n${root}`;
+  return renderRoot(blocks);
 }
 
 function renderRoot(blocks: readonly string[]): string {

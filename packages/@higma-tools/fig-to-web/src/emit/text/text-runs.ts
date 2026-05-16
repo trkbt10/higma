@@ -222,7 +222,12 @@ function resolveOverrideColor(override: RawOverrideEntry, index: TokenIndex): st
       // would need `background-clip: text` machinery; skip to base.
       continue;
     }
-    const tokenId = index.colorIdForPaint(paint);
+    // Single-paint lookup goes through the array API. Wrapping the
+    // run-override paint in `[paint]` keeps every callsite on the same
+    // canonical method per the SoT contract; the resolver returns the
+    // token only when the (one-element) stack is itself resolvable,
+    // which matches what we want for a per-run colour override.
+    const tokenId = index.colorIdForPaints([paint]);
     if (tokenId) {
       return `var(--${tokenId})`;
     }

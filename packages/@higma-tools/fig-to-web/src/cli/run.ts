@@ -77,7 +77,15 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
   }
 
   output.info(`Emitting ${frames.length} frame${frames.length === 1 ? "" : "s"} → ${options.out}`);
-  const result = await emitFromFrames(source, frames, { debugAttrs: options.debugAttrs });
+  const result = await emitFromFrames(source, frames, {
+    debugAttrs: options.debugAttrs,
+    exportStyle: options.exportStyle,
+    cssMode: options.cssMode,
+    cssImport: options.cssImport,
+    variantStrategy: options.variantStrategy,
+    assetStrategy: options.assetStrategy,
+    assetComplexityThreshold: options.assetComplexityThreshold,
+  });
 
   for (const file of result.files) {
     const fullPath = resolve(options.out, file.path);

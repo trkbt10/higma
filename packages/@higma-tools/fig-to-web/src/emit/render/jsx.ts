@@ -50,6 +50,10 @@ import { resolvePaintRef } from "@higma-document-models/fig/symbols";
 import type { FigPaint, FigStyleId } from "@higma-document-models/fig/types";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
 import { el, expr, exprProp, flagProp, strProp, styleProp, text } from "../../lib/jsx-tree/builder";
+import type { IconRegistry } from "../assets/icons";
+import type { AssetStrategy } from "../orchestrate";
+import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
+import { serializeSvgDocument } from "../style/strategy/svg-serialize";
 
 const TEXT_NODE_TYPE = "TEXT";
 const INSTANCE_NODE_TYPE = "INSTANCE";
@@ -62,6 +66,26 @@ export type EmitContext = {
   readonly registry: EmitRegistry;
   readonly index: TokenIndex;
   readonly imageResolver: ImageResolver;
+  /**
+   * Icon externalisation registry. Non-undefined iff
+   * `assetStrategy === "externalize-complex"`. When present, the
+   * vector-emit path consults `complexityScore` and registers the
+   * SVG payload via this registry when the score crosses
+   * `assetComplexityThreshold`.
+   */
+  readonly iconRegistry: IconRegistry | undefined;
+  /**
+   * Asset-output strategy. The JSX emitter inspects this in tandem
+   * with `iconRegistry` so a present-but-unused registry doesn't
+   * silently externalise icons in `"inline"` mode.
+   */
+  readonly assetStrategy: AssetStrategy;
+  /**
+   * Complexity threshold for vector externalisation. Same scorer as
+   * `@higma-document-renderers/fig/asset-plan` consults; the JSX
+   * emitter compares each candidate subtree against this value.
+   */
+  readonly assetComplexityThreshold: number;
   /**
    * Descendant-guid → prop binding map for the component currently
    * being emitted. Empty when emitting a page (pages don't define
@@ -309,7 +333,6 @@ function addBias(
 function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
   const { rootMode, parentLayout } = options;
   const dataAttrs = dataAttributes(node, context.debugAttrs);
-  const rootClass = rootClassProp(rootMode);
 
   // Vector-only container collapse: a plain container whose entire
   // subtree is composed of vector shapes becomes one merged SVG. The
@@ -322,12 +345,19 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
     const svgStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options));
     const transform = transformForNode(node, rootMode, parentLayout);
     const wrapperProps: JsxProp[] = [...dataAttrs];
-    if (rootClass) {
-      wrapperProps.push(rootClass);
-    }
     wrapperProps.push(styleAsProp(svgStyle, transform));
     const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index }, wrapperProps);
     if (merged) {
+      // Icon externalisation: when the subtree's complexity score
+      // crosses the configured threshold AND the consumer asked for
+      // `externalize-complex`, write the SVG to `assets/icons/<slug>.svg`
+      // and replace the inline `<svg>` JSX with an `<img>` reference.
+      // Inline mode (or sub-threshold complexity) keeps the previous
+      // behaviour of emitting the SVG inline.
+      const externalized = maybeExternalizeIcon(merged, node, context, svgStyle, transform);
+      if (externalized) {
+        return externalized;
+      }
       return merged;
     }
   }
@@ -349,9 +379,6 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
 
   const orderedChildren = childrenForEmit(node, baseChildren, inferred);
   const props: JsxProp[] = [...dataAttrs];
-  if (rootClass) {
-    props.push(rootClass);
-  }
   props.push(styleAsProp(style, transform));
   if (orderedChildren.length === 0) {
     return emitLeafJsx(node, context, style, props);
@@ -368,16 +395,92 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
 }
 
 /**
- * The `className="fig-page"` attribute that scopes the
- * `box-sizing: border-box` reset (see tokens/css.ts) to the generated
- * subtree. Emitted only on page / component roots; descendants
- * inherit the scope through the ancestor selector.
+ * Decide whether to externalise the merged-vector SVG subtree as a
+ * standalone `.svg` asset. Returns the replacement `<img>` JsxNode
+ * when externalisation applies, or `undefined` to keep the inline
+ * `<svg>`.
+ *
+ * The decision walks two gates:
+ *
+ *   1. The consumer must have asked for `externalize-complex` AND
+ *      the context must carry an `iconRegistry` (the orchestrator
+ *      only instantiates one for that mode). If either is missing,
+ *      the subtree stays inline.
+ *
+ *   2. `complexityScore(node, { blobs })` must cross
+ *      `assetComplexityThreshold`. Subtrees below the threshold
+ *      stay inline so simple icons (a few path commands) don't
+ *      generate a separate file — the bundler overhead outweighs the
+ *      JS size win for small icons.
+ *
+ * When both gates pass the helper:
+ *   - serialises the SVG JsxNode subtree to standalone XML via
+ *     `serializeSvgDocument`,
+ *   - registers it with `iconRegistry.register(node, svgText)`,
+ *   - emits a `<img>` element carrying the same wrapper style
+ *     (position / size / transform) as the SVG it replaces so the
+ *     surrounding layout is unaffected by the swap.
  */
-function rootClassProp(rootMode: RootMode | undefined): JsxProp | undefined {
-  if (rootMode === undefined) {
+function maybeExternalizeIcon(
+  merged: JsxNode,
+  node: FigNode,
+  context: EmitContext,
+  svgStyle: Record<string, string>,
+  transform: string | undefined,
+): JsxNode | undefined {
+  if (context.assetStrategy !== "externalize-complex" || !context.iconRegistry) {
     return undefined;
   }
-  return strProp("className", "fig-page");
+  if (merged.kind !== "element" || merged.tag !== "svg") {
+    // `emitMergedVectorSvg` is the single SoT producer for merged
+    // vector containers; its contract is "returns an `<svg>` element
+    // or `undefined`". A non-`<svg>` element here means that
+    // contract was violated upstream — silently keeping the content
+    // inline would hide the breakage. Throw per the fail-fast
+    // policy so the caller has to address the producer.
+    throw new Error(
+      `icons: emitMergedVectorSvg returned a non-<svg> root for node ${guidToString(node.guid)} — refusing to externalise.`,
+    );
+  }
+  const score = complexityScore(node, { blobs: context.source.blobs });
+  if (score < context.assetComplexityThreshold) {
+    return undefined;
+  }
+  // Externalisation derives the slug AND the `<img alt>` from the
+  // Figma layer name. A blank name is a contract violation upstream
+  // — the registry throws on it, but we narrow the variable here so
+  // the alt-text prop carries the same validated string without an
+  // implicit `?? ""` fallback (fail-fast policy).
+  const name = requireNodeName(node, "icons: cannot externalise vector");
+  const svgText = serializeSvgDocument(merged);
+  const relativePath = context.iconRegistry.register(node, svgText);
+  const imgProps: JsxProp[] = [
+    strProp("src", relativePath),
+    strProp("alt", name),
+    styleAsProp(svgStyle, transform),
+  ];
+  return el("img", { props: imgProps });
+}
+
+/**
+ * Return the node's authored layer name as a non-empty string. The
+ * registry path and the `<img alt>` attribute both depend on this
+ * value, and the data contract is that every Figma node carrying
+ * vector content was authored with a layer name (Figma auto-
+ * generates "Vector" / "Frame 24" if the designer leaves it blank).
+ * Empty or whitespace-only means something upstream stripped data
+ * the contract requires — throw so the caller has to fix the source
+ * rather than silently substitute a guid-derived stand-in.
+ */
+function requireNodeName(node: FigNode, contextMessage: string): string {
+  const name = node.name;
+  if (!name || name.trim().length === 0) {
+    throw new Error(
+      `${contextMessage}: node ${guidToString(node.guid)} has no usable layer name. ` +
+      `The authored Figma name is required; inspect the source .fig file.`,
+    );
+  }
+  return name;
 }
 
 /**
@@ -949,7 +1052,10 @@ function collectPaintsOverride(
   if (!original || !replacement) {
     return;
   }
-  const originalToken = context.index.colorIdForPaint(original);
+  // Single-paint lookup routes through the array API so token
+  // eligibility rules can't drift across call sites (SoT contract on
+  // `TokenIndex.colorIdForPaints`).
+  const originalToken = context.index.colorIdForPaints([original]);
   if (!originalToken) {
     return;
   }

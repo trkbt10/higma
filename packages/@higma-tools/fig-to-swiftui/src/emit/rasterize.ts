@@ -29,7 +29,7 @@
 import type { FigNode } from "@higma-document-models/fig/types";
 import { safeChildren, type FigBlob } from "@higma-document-models/fig/domain";
 import { toCssSlug, uniqueId } from "@higma-primitives/identifier";
-import { complexityScore } from "./complexity";
+import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
 
 /** Stable identifier for a fig node — `${sessionID}:${localID}`. */
 export function nodeKey(node: FigNode): string {
