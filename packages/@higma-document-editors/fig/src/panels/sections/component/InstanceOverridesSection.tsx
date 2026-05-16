@@ -1,4 +1,4 @@
-/** @file INSTANCE self-override controls. */
+/** @file INSTANCE self-override controls adapter. */
 
 import {
   parseId,
@@ -8,8 +8,10 @@ import {
   type SymbolOverride,
   guidToString,
 } from "@higma-document-models/fig/domain";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
+import {
+  InstanceOverridesSectionView,
+  type InstanceOverrideRowView,
+} from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 
@@ -20,6 +22,8 @@ type InstanceOverridesSectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
+const SELF_KEY = "__self__";
+
 /** Edit self-overrides that the renderer already resolves through SymbolOverride SoT. */
 export function InstanceOverridesSection({ node, target, document, dispatch }: InstanceOverridesSectionProps) {
   if (node.type !== "INSTANCE" || !node.symbolId) {
@@ -27,60 +31,44 @@ export function InstanceOverridesSection({ node, target, document, dispatch }: I
   }
 
   const override = findSelfOverride(node);
-  const opacity = Math.round((override?.opacity ?? node.opacity) * 100);
+  const opacityPercent = Math.round((override?.opacity ?? node.opacity) * 100);
   const childTargets = collectOverrideTargets(node, document);
 
+  const childRows: readonly InstanceOverrideRowView[] = childTargets.map((childTarget) => {
+    const childOverride = findOverrideByPath(node.overrides ?? [], childTarget.path);
+    const childOpacityPercent = Math.round((childOverride?.opacity ?? childTarget.node.opacity) * 100);
+    return {
+      key: childTarget.path.join("/"),
+      label: childTarget.label,
+      opacityPercent: childOpacityPercent,
+    };
+  });
+
+  const targetByKey = new Map(childTargets.map((target) => [target.path.join("/"), target] as const));
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <FieldRow>
-        <FieldGroup label="Opacity override" inline labelWidth={104}>
-          <Input
-            type="text"
-            ariaLabel="Instance override opacity"
-            value={opacity}
-            suffix="%"
-            width={80}
-            onChange={(value) => {
-              const parsed = parsePercentInput(value);
-              if (parsed === undefined) {
-                return;
-              }
-              dispatch(createPropertyPrimaryUpdateAction({
-                target,
-                updater: (current) => updateSelfOverrideOpacity(current, parsed / 100),
-              }));
-            }}
-          />
-        </FieldGroup>
-      </FieldRow>
-      {childTargets.map((childTarget) => {
-        const childOverride = findOverrideByPath(node.overrides ?? [], childTarget.path);
-        const childOpacity = Math.round((childOverride?.opacity ?? childTarget.node.opacity) * 100);
-        return (
-          <FieldRow key={childTarget.path.join("/")}>
-            <FieldGroup label={childTarget.label} inline labelWidth={160}>
-              <Input
-                type="text"
-                ariaLabel={`Override ${childTarget.node.name} opacity`}
-                value={childOpacity}
-                suffix="%"
-                width={80}
-                onChange={(value) => {
-                  const parsed = parsePercentInput(value);
-                  if (parsed === undefined) {
-                    return;
-                  }
-                  dispatch(createPropertyPrimaryUpdateAction({
-                    target,
-                    updater: (current) => updatePathOverrideOpacity(current, childTarget.path, parsed / 100),
-                  }));
-                }}
-              />
-            </FieldGroup>
-          </FieldRow>
-        );
-      })}
-    </div>
+    <InstanceOverridesSectionView
+      selfRow={{ key: SELF_KEY, label: "Opacity override", opacityPercent }}
+      childRows={childRows}
+      onOpacityChange={(key, percent) => {
+        const opacity = percent / 100;
+        if (key === SELF_KEY) {
+          dispatch(createPropertyPrimaryUpdateAction({
+            target,
+            updater: (current) => updateSelfOverrideOpacity(current, opacity),
+          }));
+          return;
+        }
+        const childTarget = targetByKey.get(key);
+        if (!childTarget) {
+          return;
+        }
+        dispatch(createPropertyPrimaryUpdateAction({
+          target,
+          updater: (current) => updatePathOverrideOpacity(current, childTarget.path, opacity),
+        }));
+      }}
+    />
   );
 }
 
@@ -118,18 +106,6 @@ function collectTargetsFromChildren({
     const nestedTargets = collectNestedOverrideTargets({ child, document, prefix: path, labelPrefix: label });
     return [{ path, node: child, label }, ...nestedTargets];
   });
-}
-
-function parsePercentInput(value: string | number): number | undefined {
-  const raw = String(value).trim();
-  if (raw.length === 0) {
-    return undefined;
-  }
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    return undefined;
-  }
-  return parsed;
 }
 
 function findSelfOverride(node: FigDesignNode): SymbolOverride | undefined {

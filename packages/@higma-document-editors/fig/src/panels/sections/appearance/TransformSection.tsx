@@ -1,21 +1,16 @@
 /**
- * @file Transform property section
+ * @file Transform property section adapter
  *
- * Edits position (x, y), size (width, height), and rotation of the selected node.
- * Uses Input from ui-components and FieldGroup/FieldRow from ui-components/layout.
+ * Translates between the kernel TransformSectionView (X/Y/W/H/rotation/origin
+ * numbers) and FigDesignNode's matrix-based transform.
  */
 
 import { useCallback } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import { TransformSectionView, type TransformSectionField } from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { extractRotationDeg, computePreRotationTopLeft, buildRotatedTransform } from "../../../context/fig-editor/rotation";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
 import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-
-// =============================================================================
-// Types
-// =============================================================================
 
 type TransformSectionProps = {
   readonly node: FigDesignNode;
@@ -23,13 +18,7 @@ type TransformSectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
-// =============================================================================
-// Component
-// =============================================================================
-
-/**
- * Transform property editor section.
- */
+/** Transform property editor section. */
 export function TransformSection({ node, target, dispatch }: TransformSectionProps) {
   const { x: preRotX, y: preRotY } = computePreRotationTopLeft(node.transform, node.size.x, node.size.y);
   const x = Math.round(preRotX * 100) / 100;
@@ -41,14 +30,13 @@ export function TransformSection({ node, target, dispatch }: TransformSectionPro
   const originY = Math.round((node.transformOrigin?.y ?? node.size.y / 2) * 100) / 100;
 
   const updateTransform = useCallback(
-    (field: "x" | "y" | "w" | "h" | "rotation" | "originX" | "originY", value: number) => {
+    (field: TransformSectionField, value: number) => {
       dispatch(createPropertyPrimaryUpdateAction({
         target,
         updater: (n) => {
           switch (field) {
             case "x":
             case "y": {
-              // User edits pre-rotation top-left. Derive m02/m12 via rotation SoT.
               const currentAngle = extractRotationDeg(n.transform);
               const { x: curX, y: curY } = computePreRotationTopLeft(n.transform, n.size.x, n.size.y);
               const newX = field === "x" ? value : curX;
@@ -93,72 +81,15 @@ export function TransformSection({ node, target, dispatch }: TransformSectionPro
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <FieldRow>
-        <FieldGroup label="X" inline labelWidth={16}>
-          <Input
-            type="number"
-            ariaLabel="X"
-            value={x}
-            onChange={(v) => updateTransform("x", v as number)}
-          />
-        </FieldGroup>
-        <FieldGroup label="Y" inline labelWidth={16}>
-          <Input
-            type="number"
-            ariaLabel="Y"
-            value={y}
-            onChange={(v) => updateTransform("y", v as number)}
-          />
-        </FieldGroup>
-      </FieldRow>
-      <FieldRow>
-        <FieldGroup label="W" inline labelWidth={16}>
-          <Input
-            type="number"
-            ariaLabel="Width"
-            value={w}
-            onChange={(v) => updateTransform("w", v as number)}
-          />
-        </FieldGroup>
-        <FieldGroup label="H" inline labelWidth={16}>
-          <Input
-            type="number"
-            ariaLabel="Height"
-            value={h}
-            onChange={(v) => updateTransform("h", v as number)}
-          />
-        </FieldGroup>
-      </FieldRow>
-      <FieldRow>
-        <FieldGroup label="R" inline labelWidth={16}>
-          <Input
-            type="number"
-            ariaLabel="Rotation"
-            value={rotation}
-            onChange={(v) => updateTransform("rotation", v as number)}
-            suffix="°"
-          />
-        </FieldGroup>
-      </FieldRow>
-      <FieldRow>
-        <FieldGroup label="OX" inline labelWidth={24}>
-          <Input
-            type="number"
-            ariaLabel="Origin X"
-            value={originX}
-            onChange={(v) => updateTransform("originX", v as number)}
-          />
-        </FieldGroup>
-        <FieldGroup label="OY" inline labelWidth={24}>
-          <Input
-            type="number"
-            ariaLabel="Origin Y"
-            value={originY}
-            onChange={(v) => updateTransform("originY", v as number)}
-          />
-        </FieldGroup>
-      </FieldRow>
-    </div>
+    <TransformSectionView
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      rotation={rotation}
+      originX={originX}
+      originY={originY}
+      onChange={updateTransform}
+    />
   );
 }

@@ -1,46 +1,25 @@
 /**
- * @file Stroke property section
+ * @file Stroke property section adapter
  *
- * Edits stroke paints and weight of a selected node.
- * Supports: stroke color editing, weight, opacity, add/remove strokes.
+ * Converts FigPaint strokes plus stroke-weight/align/cap/join/dash into the
+ * kernel stroke view model.
  */
 
 import { useCallback } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigStrokeAlign, FigStrokeCap, FigStrokeJoin } from "@higma-document-models/fig/types";
+import {
+  StrokeSectionView,
+  type StrokeAlignId,
+  type StrokeCapId,
+  type StrokeJoinId,
+} from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { Select } from "@higma-editor-kernel/ui/primitives/Select";
-import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
-import type { SelectOption } from "@higma-editor-kernel/ui/types";
-import { colorTokens, fontTokens } from "@higma-editor-kernel/ui/design-tokens";
-import { AddIcon } from "@higma-editor-kernel/ui/icons";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 import { usePaintEditor } from "./usePaintEditor";
-import { PaintItemEditor } from "./PaintItemEditor";
 import { applyAppearanceOperation, AppearanceOp } from "./appearance-domain";
-import { sectionContainerStyle, addButtonStyle, IMAGE_ACCEPT_TYPES } from "./paint-section-styles";
-
-const strokeAlignOptions: readonly SelectOption<FigStrokeAlign>[] = [
-  { value: "CENTER", label: "Center" },
-  { value: "INSIDE", label: "Inside" },
-  { value: "OUTSIDE", label: "Outside" },
-];
-
-const strokeCapOptions: readonly SelectOption<FigStrokeCap>[] = [
-  { value: "NONE", label: "None" },
-  { value: "ROUND", label: "Round" },
-  { value: "SQUARE", label: "Square" },
-  { value: "ARROW_LINES", label: "Line arrow" },
-  { value: "ARROW_EQUILATERAL", label: "Triangle arrow" },
-];
-
-const strokeJoinOptions: readonly SelectOption<FigStrokeJoin>[] = [
-  { value: "MITER", label: "Miter" },
-  { value: "BEVEL", label: "Bevel" },
-  { value: "ROUND", label: "Round" },
-];
+import { figPaintToView } from "./paint-view-adapter";
 
 type StrokeSectionProps = {
   readonly node: FigDesignNode;
@@ -49,11 +28,13 @@ type StrokeSectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
+const STROKE_ALIGN_FALLBACK: StrokeAlignId = "CENTER";
+const STROKE_CAP_FALLBACK: StrokeCapId = "NONE";
+const STROKE_JOIN_FALLBACK: StrokeJoinId = "MITER";
+
 /** Panel section for editing stroke properties of a Figma node. */
 export function StrokeSection({ node, target, images, dispatch }: StrokeSectionProps) {
   const strokeWeight = typeof node.strokeWeight === "number" ? node.strokeWeight : 0;
-  const strokes = node.strokes;
-  const alignLabel = node.strokeAlign ?? "";
   const editor = usePaintEditor({ node, target, images, dispatch, kind: "stroke" });
 
   const updateStrokeWeight = useCallback(
@@ -97,120 +78,35 @@ export function StrokeSection({ node, target, images, dispatch }: StrokeSectionP
   );
 
   const updateStrokeDashes = useCallback(
-    (value: string) => {
-      const dashPattern = value
-        .split(/[\s,]+/)
-        .filter((part) => part.length > 0)
-        .map((part) => Number(part));
-      if (dashPattern.some((part) => !Number.isFinite(part) || part < 0)) {
-        return;
-      }
+    (dashes: readonly number[]) => {
       dispatch(createPropertyTargetUpdateAction({
         target,
         updater: (n) => applyAppearanceOperation(n, AppearanceOp.strokeDashes(
-          dashPattern.length > 0 ? dashPattern : undefined,
+          dashes.length > 0 ? dashes : undefined,
         )),
       }));
     },
     [dispatch, target],
   );
 
-  const hasContent = strokes.length > 0 || strokeWeight > 0;
-
   return (
-    <div style={sectionContainerStyle}>
-      <input
-        ref={editor.fileInputRef}
-        type="file"
-        accept={IMAGE_ACCEPT_TYPES}
-        onChange={editor.handleImageFileChange}
-        style={{ display: "none" }}
-      />
-      {hasContent && (
-        <>
-          <FieldRow>
-            <FieldGroup label="Weight" inline labelWidth={50}>
-              <Input
-                type="number"
-                ariaLabel="Stroke weight"
-                value={strokeWeight}
-                min={0}
-                step={0.5}
-                onChange={(v) => updateStrokeWeight(v as number)}
-                width={60}
-              />
-            </FieldGroup>
-            {alignLabel && (
-              <span style={{ fontSize: fontTokens.size.xs, color: colorTokens.text.tertiary }}>
-                {alignLabel}
-              </span>
-            )}
-          </FieldRow>
-          <FieldRow>
-            <FieldGroup label="Align" inline labelWidth={42}>
-              <Select
-                value={node.strokeAlign ?? "CENTER"}
-                onChange={updateStrokeAlign}
-                options={strokeAlignOptions}
-                ariaLabel="Stroke align"
-              />
-            </FieldGroup>
-          </FieldRow>
-          <FieldRow>
-            <FieldGroup label="Cap" inline labelWidth={32}>
-              <Select
-                value={node.strokeCap ?? "NONE"}
-                onChange={updateStrokeCap}
-                options={strokeCapOptions}
-                ariaLabel="Stroke cap"
-              />
-            </FieldGroup>
-            <FieldGroup label="Join" inline labelWidth={36}>
-              <Select
-                value={node.strokeJoin ?? "MITER"}
-                onChange={updateStrokeJoin}
-                options={strokeJoinOptions}
-                ariaLabel="Stroke join"
-              />
-            </FieldGroup>
-          </FieldRow>
-          <FieldRow>
-            <FieldGroup label="Dash" inline labelWidth={38}>
-              <Input
-                type="text"
-                ariaLabel="Stroke dash pattern"
-                value={(node.strokeDashes ?? []).join(" ")}
-                onChange={(v) => updateStrokeDashes(String(v))}
-              />
-            </FieldGroup>
-          </FieldRow>
-        </>
-      )}
-
-      {strokes.map((stroke, i) => (
-        <PaintItemEditor
-          key={i}
-          paint={stroke}
-          index={i}
-          labelPrefix="Stroke"
-          imageOptions={editor.imageOptions}
-          onUpdatePaint={editor.updatePaint}
-          onUpdateType={editor.updateType}
-          onUpdateOpacity={editor.updateOpacity}
-          onUpdateColor={editor.updateColor}
-          onUpdateImageRef={editor.updateImageRef}
-          onUpdateImageScaleMode={editor.updateImageScaleMode}
-          onUpdateImageScale={editor.updateImageScale}
-          onUpdateImageRotation={editor.updateImageRotation}
-          onStartImageUpload={editor.startImageUpload}
-          onRemove={editor.removePaint}
-        />
-      ))}
-
-      <button type="button" style={addButtonStyle} onClick={editor.addPaint}>
-        <AddIcon size={12} />
-        Add stroke
-      </button>
-    </div>
+    <StrokeSectionView
+      strokes={node.strokes.map(figPaintToView)}
+      strokeWeight={strokeWeight}
+      align={(node.strokeAlign as StrokeAlignId | undefined) ?? STROKE_ALIGN_FALLBACK}
+      cap={(node.strokeCap as StrokeCapId | undefined) ?? STROKE_CAP_FALLBACK}
+      join={(node.strokeJoin as StrokeJoinId | undefined) ?? STROKE_JOIN_FALLBACK}
+      dashes={node.strokeDashes ?? []}
+      imageOptions={editor.imageOptions}
+      fileInputRef={editor.fileInputRef}
+      onImageFileChange={editor.handleImageFileChange}
+      onStrokeWeightChange={updateStrokeWeight}
+      onAlignChange={(value) => updateStrokeAlign(value as FigStrokeAlign)}
+      onCapChange={(value) => updateStrokeCap(value as FigStrokeCap)}
+      onJoinChange={(value) => updateStrokeJoin(value as FigStrokeJoin)}
+      onDashesChange={updateStrokeDashes}
+      onAddPaint={editor.addPaint}
+      handlers={editor.handlers}
+    />
   );
 }

@@ -1,11 +1,11 @@
 /**
- * @file Component Properties section
+ * @file Component Properties section adapter
  *
- * Displays resolved component property definitions and their current values
- * for INSTANCE nodes. Shows the SYMBOL's property definitions alongside
- * the INSTANCE's overridden values (or the default if not overridden).
+ * Resolves component property definitions and current values from FigDesignNode +
+ * FigDesignDocument, then renders the kernel ComponentPropertiesSectionView.
  */
 
+import { useCallback } from "react";
 import type {
   FigDesignNode,
   FigDesignDocument,
@@ -14,40 +14,32 @@ import type {
   ComponentPropertyAssignment,
   ComponentPropertyValue,
 } from "@higma-document-models/fig/domain";
-import { useCallback } from "react";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { Select } from "@higma-editor-kernel/ui/primitives/Select";
+import {
+  ComponentPropertiesSectionView,
+  type ComponentPropertyTypeId,
+  type ComponentPropertyValueView,
+  type ResolvedComponentPropertyView,
+} from "@higma-editor-kernel/ui/property-sections";
 import type { SelectOption } from "@higma-editor-kernel/ui/types";
-import { colorTokens, fontTokens, spacingTokens } from "@higma-editor-kernel/ui/design-tokens";
+import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 
 // =============================================================================
-// Resolution Logic
+// Resolution logic (kept here so callers can reuse it for inspector views).
 // =============================================================================
 
 /**
  * A single resolved property with its definition and current effective value.
  */
 export type ResolvedComponentProperty = {
-  /** The property definition from the SYMBOL */
   readonly def: ComponentPropertyDef;
-  /** Current effective value (from INSTANCE assignment, or SYMBOL default) */
   readonly value: ComponentPropertyValue | undefined;
-  /** Whether this property is overridden by the INSTANCE */
   readonly isOverridden: boolean;
 };
 
 /**
- * Resolve component properties for an INSTANCE node.
- *
- * Looks up the referenced SYMBOL's property definitions, then merges
- * with the INSTANCE's property assignments to determine the current
- * effective value for each property.
- *
- * @param instanceNode - The INSTANCE FigDesignNode
- * @param document - The document (for components map lookup)
- * @returns Array of resolved properties, or empty if not an INSTANCE or SYMBOL not found
+ * Resolve component properties for an INSTANCE node by looking up the referenced
+ * SYMBOL's property definitions and merging in any instance assignments.
  */
 export function resolveComponentProperties(
   instanceNode: FigDesignNode,
@@ -62,7 +54,6 @@ export function resolveComponentProperties(
     return [];
   }
 
-  // Build assignment lookup by defId
   const assignmentMap = new Map<string, ComponentPropertyAssignment>();
   if (instanceNode.componentPropertyAssignments) {
     for (const assign of instanceNode.componentPropertyAssignments) {
@@ -80,59 +71,6 @@ export function resolveComponentProperties(
   });
 }
 
-// =============================================================================
-// Styles
-// =============================================================================
-
-const styles = {
-  row: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    padding: `${spacingTokens.xs} 0`,
-    borderBottom: `1px solid ${colorTokens.border.subtle}`,
-    gap: spacingTokens.sm,
-  } as const,
-  name: {
-    fontSize: fontTokens.size.sm,
-    color: colorTokens.text.secondary,
-    flexShrink: 0,
-  } as const,
-  value: {
-    fontSize: fontTokens.size.sm,
-    color: colorTokens.text.primary,
-    textAlign: "right" as const,
-    wordBreak: "break-word" as const,
-    minWidth: 0,
-  } as const,
-  overridden: {
-    fontWeight: fontTokens.weight.semibold,
-  } as const,
-  badge: {
-    fontSize: fontTokens.size.xs,
-    color: colorTokens.text.tertiary,
-    backgroundColor: colorTokens.background.tertiary,
-    borderRadius: "3px",
-    padding: `0 ${spacingTokens.xs}`,
-    marginLeft: spacingTokens.xs,
-  } as const,
-  empty: {
-    fontSize: fontTokens.size.sm,
-    color: colorTokens.text.tertiary,
-    fontStyle: "italic" as const,
-    padding: `${spacingTokens.sm} 0`,
-  } as const,
-  symbolName: {
-    fontSize: fontTokens.size.xs,
-    color: colorTokens.text.tertiary,
-    marginBottom: spacingTokens.sm,
-  } as const,
-} as const;
-
-// =============================================================================
-// Component
-// =============================================================================
-
 type Props = {
   readonly node: FigDesignNode;
   readonly target: PropertyMutationTarget;
@@ -140,165 +78,44 @@ type Props = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
-/** Panel section for viewing and editing component instance properties. */
-export function ComponentPropertiesSection({ node, target, document, dispatch }: Props) {
-  const properties = resolveComponentProperties(node, document);
-  const updateAssignment = useCallback(
-    (defId: FigNodeId, value: ComponentPropertyValue) => {
-      dispatch(createPropertyPrimaryUpdateAction({
-        target,
-        updater: (current) => {
-          const assignments = current.componentPropertyAssignments ?? [];
-          const exists = assignments.some((assignment) => assignment.defId === defId);
-          const next = updateComponentPropertyAssignments({ assignments, defId, value, exists });
-          return { ...current, componentPropertyAssignments: next };
-        },
-      }));
-    },
-    [dispatch, target],
-  );
-
-  if (properties.length === 0) {
-    const symbol = node.symbolId ? document.components.get(node.symbolId) : undefined;
-    return (
-      <div>
-        {symbol && (
-          <div style={styles.symbolName}>
-            Component: {symbol.name}
-          </div>
-        )}
-        <div style={styles.empty}>No component properties defined</div>
-      </div>
-    );
-  }
-
-  const symbol = node.symbolId ? document.components.get(node.symbolId) : undefined;
-
-  return (
-    <div>
-      {symbol && (
-        <div style={styles.symbolName}>
-          Component: {symbol.name}
-        </div>
-      )}
-      {properties.map((prop) => (
-        <div key={prop.def.id} style={styles.row}>
-          <span style={styles.name}>
-            {prop.def.name}
-            <span style={styles.badge}>{prop.def.type}</span>
-          </span>
-          <ComponentPropertyValueEditor
-            prop={prop}
-            document={document}
-            onChange={(value) => updateAssignment(prop.def.id, value)}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ComponentPropertyValueEditor(
-  { prop, document, onChange }: {
-    readonly prop: ResolvedComponentProperty;
-    readonly document: FigDesignDocument;
-    readonly onChange: (value: ComponentPropertyValue) => void;
-  },
-) {
-  const value = prop.value;
-  const badge = renderOverrideBadge(prop.isOverridden);
-
-  switch (prop.def.type) {
+function toValueView(def: ComponentPropertyDef, value: ComponentPropertyValue | undefined): ComponentPropertyValueView {
+  switch (def.type) {
     case "BOOL":
-      return (
-        <span style={styles.value}>
-          <input
-            type="checkbox"
-            aria-label={componentPropertyControlLabel(prop)}
-            checked={value?.boolValue ?? false}
-            onChange={(e) => onChange({ boolValue: e.currentTarget.checked })}
-          />
-          {badge}
-        </span>
-      );
+      return { kind: "bool", value: value?.boolValue ?? false };
     case "TEXT":
-      return (
-        <span style={{ ...styles.value, ...(prop.isOverridden ? styles.overridden : {}) }}>
-          <Input
-            type="text"
-            ariaLabel={componentPropertyControlLabel(prop)}
-            value={value?.textValue?.characters ?? ""}
-            onChange={(v) => onChange({ textValue: { characters: String(v) } })}
-          />
-          {badge}
-        </span>
-      );
+      return { kind: "text", value: value?.textValue?.characters ?? "" };
     case "NUMBER":
-      return (
-        <span style={{ ...styles.value, ...(prop.isOverridden ? styles.overridden : {}) }}>
-          <Input
-            type="number"
-            ariaLabel={componentPropertyControlLabel(prop)}
-            value={value?.numberValue ?? 0}
-            onChange={(v) => onChange({ numberValue: v as number })}
-          />
-          {badge}
-        </span>
-      );
+      return { kind: "number", value: value?.numberValue ?? 0 };
     case "INSTANCE_SWAP":
-      return (
-        <span style={{ ...styles.value, ...(prop.isOverridden ? styles.overridden : {}) }}>
-          <Select
-            value={value?.referenceValue ?? ""}
-            onChange={(v) => onChange(createInstanceSwapValue(v))}
-            options={buildInstanceSwapOptions(document)}
-            ariaLabel={componentPropertyControlLabel(prop)}
-          />
-          {badge}
-        </span>
-      );
     case "VARIANT":
-      return (
-        <span style={{ ...styles.value, ...(prop.isOverridden ? styles.overridden : {}) }}>
-          <Select
-            value={value?.referenceValue ?? ""}
-            onChange={(v) => onChange(createReferenceSelectValue(v))}
-            options={buildReferenceOptions(document)}
-            ariaLabel={componentPropertyControlLabel(prop)}
-          />
-          {badge}
-        </span>
-      );
     case "COLOR":
     case "IMAGE":
     case "SLOT":
-      return (
-        <span style={{ ...styles.value, ...(prop.isOverridden ? styles.overridden : {}) }}>
-          <Input
-            type="text"
-            ariaLabel={componentPropertyControlLabel(prop)}
-            value={value?.referenceValue ?? ""}
-            onChange={(v) => onChange(createReferenceValue(String(v)))}
-          />
-          {badge}
-        </span>
-      );
+      return { kind: "reference", value: value?.referenceValue ?? "" };
   }
 }
 
-function renderOverrideBadge(isOverridden: boolean) {
-  if (!isOverridden) {
-    return null;
-  }
-  return (
-    <span style={{ ...styles.badge, backgroundColor: colorTokens.accent.secondary }}>
-      override
-    </span>
-  );
+function toResolvedView(resolved: ResolvedComponentProperty): ResolvedComponentPropertyView {
+  return {
+    id: resolved.def.id,
+    name: resolved.def.name,
+    type: resolved.def.type as ComponentPropertyTypeId,
+    value: toValueView(resolved.def, resolved.value),
+    isOverridden: resolved.isOverridden,
+  };
 }
 
-function componentPropertyControlLabel(prop: ResolvedComponentProperty): string {
-  return `Component property ${prop.def.name}`;
+function toComponentPropertyValue(viewValue: ComponentPropertyValueView): ComponentPropertyValue {
+  switch (viewValue.kind) {
+    case "bool":
+      return { boolValue: viewValue.value };
+    case "text":
+      return { textValue: { characters: viewValue.value } };
+    case "number":
+      return { numberValue: viewValue.value };
+    case "reference":
+      return viewValue.value === "" ? {} : { referenceValue: viewValue.value as FigNodeId };
+  }
 }
 
 function updateComponentPropertyAssignments(
@@ -325,7 +142,7 @@ function updateComponentPropertyAssignments(
   });
 }
 
-function buildInstanceSwapOptions(document: FigDesignDocument): readonly SelectOption<FigNodeId | "">[] {
+function buildComponentOptions(document: FigDesignDocument): readonly SelectOption<FigNodeId | "">[] {
   return [
     { value: "", label: "None" },
     ...[...document.components.values()].map((component) => ({
@@ -335,33 +152,34 @@ function buildInstanceSwapOptions(document: FigDesignDocument): readonly SelectO
   ];
 }
 
-function buildReferenceOptions(document: FigDesignDocument): readonly SelectOption<FigNodeId | "">[] {
-  return [
-    { value: "", label: "None" },
-    ...[...document.components.values()].map((component) => ({
-      value: component.id,
-      label: component.name,
-    })),
-  ];
-}
+/** Panel section for viewing and editing component instance properties. */
+export function ComponentPropertiesSection({ node, target, document, dispatch }: Props) {
+  const properties = resolveComponentProperties(node, document);
+  const updateAssignment = useCallback(
+    (defId: FigNodeId, value: ComponentPropertyValue) => {
+      dispatch(createPropertyPrimaryUpdateAction({
+        target,
+        updater: (current) => {
+          const assignments = current.componentPropertyAssignments ?? [];
+          const exists = assignments.some((assignment) => assignment.defId === defId);
+          const next = updateComponentPropertyAssignments({ assignments, defId, value, exists });
+          return { ...current, componentPropertyAssignments: next };
+        },
+      }));
+    },
+    [dispatch, target],
+  );
 
-function createInstanceSwapValue(value: FigNodeId | ""): ComponentPropertyValue {
-  if (value === "") {
-    return {};
-  }
-  return { referenceValue: value };
-}
+  const symbol = node.symbolId ? document.components.get(node.symbolId) : undefined;
+  const referenceOptions = buildComponentOptions(document);
 
-function createReferenceSelectValue(value: FigNodeId | ""): ComponentPropertyValue {
-  if (value === "") {
-    return {};
-  }
-  return { referenceValue: value };
-}
-
-function createReferenceValue(value: string): ComponentPropertyValue {
-  if (value === "") {
-    return {};
-  }
-  return { referenceValue: value as FigNodeId };
+  return (
+    <ComponentPropertiesSectionView
+      componentName={symbol?.name}
+      properties={properties.map(toResolvedView)}
+      referenceOptions={referenceOptions}
+      instanceSwapOptions={referenceOptions}
+      onValueChange={(propertyId, value) => updateAssignment(propertyId as FigNodeId, toComponentPropertyValue(value))}
+    />
+  );
 }

@@ -1,33 +1,26 @@
 /**
- * @file Text properties section
+ * @file Text properties section adapter
  *
- * Edits text-specific properties of a TEXT node using shared editor controls:
- * - TextFormattingEditor: font family, size, bold, italic, underline, strikethrough, letter spacing
- * - TextJustifySection (react-editor-ui): horizontal alignment — same component as PPTX
- * - Vertical alignment (fig-specific, not in shared controls)
- * - Auto resize mode (fig-specific)
- *
- * Uses the same adapter pattern as pptx-editor:
- * FigDesignNode.textData ↔ generic TextFormatting ↔ shared editor
+ * Wires the kernel TextPropertiesSectionView to FigDesignNode.textData. The
+ * formatting block and horizontal-justify block come from upper-layer shared
+ * editors and are passed in as slots, because they depend on FigDesignNode's
+ * text shape and surface-level controls that the kernel cannot import.
  */
 
-import { useCallback, type CSSProperties } from "react";
+import { useCallback } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import type { TextData } from "@higma-document-models/fig/domain";
 import type { KiwiEnumValue } from "@higma-document-models/fig/types";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { TextFormattingEditor } from "@higma-editor-surfaces/controls/text";
 import type { TextFormatting, TextFormattingFeatures } from "@higma-editor-surfaces/controls/text";
 import { TextJustifySection } from "react-editor-ui/sections/TextJustifySection";
 import type { TextJustifyData } from "@higma-editor-kernel/core/adapter-types";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
-import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
 import {
-  AlignTopIcon,
-  AlignMiddleIcon,
-  AlignBottomIcon,
-} from "@higma-editor-kernel/ui/icons";
+  TextPropertiesSectionView,
+  type AutoResizeId,
+  type VerticalAlignId,
+} from "@higma-editor-kernel/ui/property-sections";
+import type { FigEditorAction } from "../../../context/fig-editor/types";
 import {
   figTextToFormatting,
   applyFormattingUpdate,
@@ -36,10 +29,6 @@ import {
   type FigTextAutoResize,
 } from "./fig-text-adapter";
 import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-
-// =============================================================================
-// Feature flags — fig supports a subset of text formatting
-// =============================================================================
 
 const FIG_TEXT_FEATURES: TextFormattingFeatures = {
   showFontFamily: true,
@@ -57,10 +46,6 @@ const FIG_TEXT_FEATURES: TextFormattingFeatures = {
   showSpacing: true,
 };
 
-// =============================================================================
-// H-align mapping (Figma enum names ↔ TextJustify values)
-// =============================================================================
-
 type TextJustify = "left" | "center" | "right" | "justify";
 
 const H_ALIGN_TO_JUSTIFY: Record<string, TextJustify> = {
@@ -77,9 +62,11 @@ const JUSTIFY_TO_H_ALIGN: Record<string, { name: string; value: number }> = {
   justify: { name: "JUSTIFIED", value: 3 },
 };
 
-// =============================================================================
-// KiwiEnumValue helpers
-// =============================================================================
+const VERTICAL_ALIGN_VALUES: Record<VerticalAlignId, number> = {
+  TOP: 0,
+  CENTER: 1,
+  BOTTOM: 2,
+};
 
 function kiwiName(value: unknown): string {
   if (!value) {return "";}
@@ -101,55 +88,11 @@ function mergeTextDataLineHeight(existing: KiwiLineHeight | undefined, newValue:
   return existing ? { ...existing, value: newValue } : { value: newValue, units: PIXELS_UNITS };
 }
 
-// =============================================================================
-// Styles
-// =============================================================================
-
-const textareaStyle: CSSProperties = {
-  width: "100%",
-  minHeight: "3lh",
-  resize: "vertical",
-  fontFamily: "inherit",
-  fontSize: "var(--font-size-md, 13px)",
-  border: `1px solid ${colorTokens.border.strong}`,
-  borderRadius: 4,
-  padding: 6,
-  boxSizing: "border-box",
-};
-
-const alignButtonGroupStyle: CSSProperties = {
-  display: "flex",
-  gap: 2,
-};
-
-const alignButtonStyle = (active: boolean): CSSProperties => ({
-  background: active ? colorTokens.accent.primary : "transparent",
-  color: active ? "#fff" : colorTokens.text.secondary,
-  border: `1px solid ${active ? colorTokens.accent.primary : colorTokens.border.primary}`,
-  borderRadius: 4,
-  padding: "3px 5px",
-  cursor: "pointer",
-  lineHeight: 0,
-});
-
-// =============================================================================
-// Props
-// =============================================================================
-
 type TextPropertiesSectionProps = {
   readonly node: FigDesignNode;
   readonly target: PropertyMutationTarget;
   readonly dispatch: (action: FigEditorAction) => void;
 };
-
-// =============================================================================
-// Component
-// =============================================================================
-
-
-
-
-
 
 /** Panel section for editing text formatting and layout properties of a Figma text node. */
 export function TextPropertiesSection({ node, target, dispatch }: TextPropertiesSectionProps) {
@@ -171,7 +114,6 @@ export function TextPropertiesSection({ node, target, dispatch }: TextProperties
     [dispatch, target],
   );
 
-  // --- Shared editor: text run formatting ---
   const textFormatting = figTextToFormatting(textData);
   const handleFormattingChange = useCallback(
     (update: Partial<TextFormatting>) => {
@@ -180,7 +122,6 @@ export function TextPropertiesSection({ node, target, dispatch }: TextProperties
     [updateTextData],
   );
 
-  // --- Horizontal alignment via TextJustifySection (same component as PPTX) ---
   const hAlign = kiwiName(textData.textAlignHorizontal);
   const justifyData: TextJustifyData = { align: H_ALIGN_TO_JUSTIFY[hAlign] ?? "left" };
   const handleJustifyChange = useCallback(
@@ -196,123 +137,47 @@ export function TextPropertiesSection({ node, target, dispatch }: TextProperties
     [updateTextData],
   );
 
-  // --- Line spacing ---
   const lineHeight = textData.lineHeight;
-  const handleLineSpacingChange = useCallback(
-    (v: string | number) => {
-      const num = typeof v === "number" ? v : parseFloat(String(v));
-      if (!isNaN(num) && num > 0) {
-        const lineHeightValue = num * textData.fontSize;
-        updateTextData((td) => ({
-          ...td,
-          lineHeight: mergeTextDataLineHeight(td.lineHeight, lineHeightValue),
-        }));
-      }
-    },
-    [updateTextData, textData.fontSize],
-  );
+  const lineHeightMultiplier = lineHeight
+    ? Math.round((lineHeight.value / textData.fontSize) * 100) / 100
+    : undefined;
 
-  // --- Vertical alignment (fig-specific) ---
-  const vAlign = kiwiName(textData.textAlignVertical);
-  const setVAlign = useCallback(
-    (name: string, value: number) => {
-      updateTextData((td) => ({
-        ...td,
-        textAlignVertical: makeKiwiEnum(name, value),
-      }));
-    },
-    [updateTextData],
-  );
-
-  // --- Auto resize (fig-specific) ---
-  const autoResize = getAutoResize(textData);
-  const setAutoResize = useCallback(
-    (mode: FigTextAutoResize) => {
-      updateTextData((td) => ({
-        ...td,
-        textAutoResize: makeAutoResizeEnum(mode),
-      }));
-    },
-    [updateTextData],
-  );
+  const verticalAlign = (kiwiName(textData.textAlignVertical) || "TOP") as VerticalAlignId;
+  const autoResize = getAutoResize(textData) as AutoResizeId;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Text content */}
-      <textarea
-        value={textData.characters}
-        onChange={(e) => {
-          updateTextData((td) => ({ ...td, characters: e.target.value }));
-        }}
-        style={textareaStyle}
-        rows={3}
-      />
-
-      {/* Run formatting: font, size, bold, italic, underline, strikethrough, spacing */}
-      <TextFormattingEditor
-        value={textFormatting}
-        onChange={handleFormattingChange}
-        features={FIG_TEXT_FEATURES}
-      />
-
-      {/* Horizontal alignment (react-editor-ui — same component as PPTX) */}
-      <TextJustifySection
-        data={justifyData}
-        onChange={handleJustifyChange}
-        size="sm"
-      />
-
-      {/* Line spacing */}
-      {lineHeight && (
-        <FieldRow>
-          <FieldGroup label="Line" inline labelWidth={40}>
-            <Input
-              type="number"
-              value={Math.round((lineHeight.value / textData.fontSize) * 100) / 100}
-              min={0.5}
-              max={10}
-              step={0.1}
-              onChange={handleLineSpacingChange}
-              width={60}
-              suffix="x"
-            />
-          </FieldGroup>
-        </FieldRow>
-      )}
-
-      {/* Vertical alignment (fig-specific) */}
-      <FieldRow>
-        <FieldGroup label="V Align" inline labelWidth={48}>
-          <div style={alignButtonGroupStyle}>
-            <button type="button" style={alignButtonStyle(vAlign === "TOP")} onClick={() => setVAlign("TOP", 0)} title="Top">
-              <AlignTopIcon size={14} />
-            </button>
-            <button type="button" style={alignButtonStyle(vAlign === "CENTER")} onClick={() => setVAlign("CENTER", 1)} title="Center">
-              <AlignMiddleIcon size={14} />
-            </button>
-            <button type="button" style={alignButtonStyle(vAlign === "BOTTOM")} onClick={() => setVAlign("BOTTOM", 2)} title="Bottom">
-              <AlignBottomIcon size={14} />
-            </button>
-          </div>
-        </FieldGroup>
-      </FieldRow>
-
-      {/* Auto Resize (fig-specific) */}
-      <FieldRow>
-        <FieldGroup label="Resize" inline labelWidth={48}>
-          <div style={alignButtonGroupStyle}>
-            <button type="button" style={alignButtonStyle(autoResize === "WIDTH_AND_HEIGHT")} onClick={() => setAutoResize("WIDTH_AND_HEIGHT")} title="Auto width & height">
-              W+H
-            </button>
-            <button type="button" style={alignButtonStyle(autoResize === "HEIGHT")} onClick={() => setAutoResize("HEIGHT")} title="Fixed width, auto height">
-              H
-            </button>
-            <button type="button" style={alignButtonStyle(autoResize === "NONE")} onClick={() => setAutoResize("NONE")} title="Fixed size (clips overflow)">
-              Fix
-            </button>
-          </div>
-        </FieldGroup>
-      </FieldRow>
-    </div>
+    <TextPropertiesSectionView
+      characters={textData.characters}
+      onCharactersChange={(value) => updateTextData((td) => ({ ...td, characters: value }))}
+      formattingSlot={
+        <TextFormattingEditor
+          value={textFormatting}
+          onChange={handleFormattingChange}
+          features={FIG_TEXT_FEATURES}
+        />
+      }
+      justifySlot={
+        <TextJustifySection
+          data={justifyData}
+          onChange={handleJustifyChange}
+          size="sm"
+        />
+      }
+      lineHeightMultiplier={lineHeightMultiplier}
+      onLineHeightMultiplierChange={(multiplier) => updateTextData((td) => ({
+        ...td,
+        lineHeight: mergeTextDataLineHeight(td.lineHeight, multiplier * td.fontSize),
+      }))}
+      verticalAlign={verticalAlign}
+      onVerticalAlignChange={(value) => updateTextData((td) => ({
+        ...td,
+        textAlignVertical: makeKiwiEnum(value, VERTICAL_ALIGN_VALUES[value]),
+      }))}
+      autoResize={autoResize}
+      onAutoResizeChange={(value) => updateTextData((td) => ({
+        ...td,
+        textAutoResize: makeAutoResizeEnum(value as FigTextAutoResize),
+      }))}
+    />
   );
 }

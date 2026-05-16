@@ -1,26 +1,24 @@
-/** @file Effects property section. */
+/** @file Effects property section adapter. */
 
-import { useCallback, type CSSProperties } from "react";
+import { useCallback } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { BlendMode, FigEffectType } from "@higma-document-models/fig/types";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { Select } from "@higma-editor-kernel/ui/primitives/Select";
-import type { SelectOption } from "@higma-editor-kernel/ui/types";
-import { colorTokens, fontTokens } from "@higma-editor-kernel/ui/design-tokens";
-import { AddIcon, CloseIcon } from "@higma-editor-kernel/ui/icons";
-import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-import { Toggle } from "@higma-editor-kernel/ui/primitives/Toggle";
+import type { BlendMode, FigEffect, FigEffectType } from "@higma-document-models/fig/types";
 import { figColorToHex } from "@higma-document-models/fig/color";
 import {
-  formatEffectLabel,
-  getEffectTypeName,
-  EffectOp,
+  EffectsSectionView,
+  type BlendModeId,
+  type EffectTypeId,
+  type EffectView,
+} from "@higma-editor-kernel/ui/property-sections";
+import type { FigEditorAction } from "../../../context/fig-editor/types";
+import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
+import {
   EffectListOp,
+  EffectOp,
+  getEffectTypeName,
   type EffectOperation,
 } from "./effect-domain";
 import { applyAppearanceOperation, AppearanceOp } from "./appearance-domain";
-import { addButtonStyle, removeButtonStyle } from "./paint-section-styles";
 
 type EffectsSectionProps = {
   readonly node: FigDesignNode;
@@ -28,56 +26,30 @@ type EffectsSectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
-const effectTypeOptions: readonly SelectOption<FigEffectType>[] = [
-  { value: "DROP_SHADOW", label: "Drop shadow" },
-  { value: "INNER_SHADOW", label: "Inner shadow" },
-  { value: "FOREGROUND_BLUR", label: "Layer blur" },
-  { value: "BACKGROUND_BLUR", label: "Background blur" },
-];
+function toEffectTypeId(type: FigEffectType): EffectTypeId {
+  if (type === "LAYER_BLUR") {
+    return "FOREGROUND_BLUR";
+  }
+  return type as EffectTypeId;
+}
 
-const blendModeOptions: readonly SelectOption<BlendMode>[] = [
-  { value: "NORMAL", label: "Normal" },
-  { value: "MULTIPLY", label: "Multiply" },
-  { value: "SCREEN", label: "Screen" },
-  { value: "OVERLAY", label: "Overlay" },
-  { value: "DARKEN", label: "Darken" },
-  { value: "LIGHTEN", label: "Lighten" },
-  { value: "COLOR_DODGE", label: "Color dodge" },
-  { value: "COLOR_BURN", label: "Color burn" },
-  { value: "HARD_LIGHT", label: "Hard light" },
-  { value: "SOFT_LIGHT", label: "Soft light" },
-  { value: "DIFFERENCE", label: "Difference" },
-  { value: "EXCLUSION", label: "Exclusion" },
-  { value: "HUE", label: "Hue" },
-  { value: "SATURATION", label: "Saturation" },
-  { value: "COLOR", label: "Color" },
-  { value: "LUMINOSITY", label: "Luminosity" },
-];
-
-const effectItemStyle: CSSProperties = {
-  fontSize: fontTokens.size.sm,
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-  padding: "4px 0",
-};
-
-const effectHeaderStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-};
-
-const effectControlsStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-  gap: 4,
-};
-
-const emptyStyle: CSSProperties = {
-  fontSize: fontTokens.size.md,
-  color: colorTokens.text.tertiary,
-};
+function toEffectView(effect: FigEffect): EffectView {
+  const type = toEffectTypeId(getEffectTypeName(effect));
+  const color = effect.color ?? { r: 0, g: 0, b: 0, a: 0.25 };
+  const blendModeName: string = effect.blendMode ?? "NORMAL";
+  return {
+    type,
+    visible: effect.visible !== false,
+    radius: effect.radius ?? 0,
+    offsetX: effect.offset?.x ?? 0,
+    offsetY: effect.offset?.y ?? 0,
+    spread: effect.spread ?? 0,
+    blendMode: blendModeName as BlendModeId,
+    hex: figColorToHex(color),
+    opacity: color.a,
+    showShadowBehindNode: effect.showShadowBehindNode !== false,
+  };
+}
 
 /** Panel section for viewing and editing visual effects on a Figma node. */
 export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) {
@@ -107,101 +79,60 @@ export function EffectsSection({ node, target, dispatch }: EffectsSectionProps) 
     }));
   }, [dispatch, target]);
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {effects.length === 0 && <div style={emptyStyle}>No effects</div>}
-      {effects.map((effect, i) => {
-        const typeName = getEffectTypeName(effect);
-        const color = effect.color ?? { r: 0, g: 0, b: 0, a: 0.25 };
-        const isShadow = typeName === "DROP_SHADOW" || typeName === "INNER_SHADOW";
+  const handleChange = useCallback((index: number, next: EffectView) => {
+    const current = effects[index];
+    if (!current) {
+      return;
+    }
+    const previous = toEffectView(current);
+    if (previous.type !== next.type) {
+      applyEffectOperationAt(index, EffectOp.setType(next.type as FigEffectType));
+      return;
+    }
+    if (previous.visible !== next.visible) {
+      applyEffectOperationAt(index, EffectOp.setVisible(next.visible));
+      return;
+    }
+    if (previous.radius !== next.radius) {
+      applyEffectOperationAt(index, EffectOp.setRadius(next.radius));
+      return;
+    }
+    if (previous.offsetX !== next.offsetX) {
+      applyEffectOperationAt(index, EffectOp.setOffsetX(next.offsetX));
+      return;
+    }
+    if (previous.offsetY !== next.offsetY) {
+      applyEffectOperationAt(index, EffectOp.setOffsetY(next.offsetY));
+      return;
+    }
+    if (previous.spread !== next.spread) {
+      applyEffectOperationAt(index, EffectOp.setSpread(next.spread));
+      return;
+    }
+    if (previous.blendMode !== next.blendMode) {
+      applyEffectOperationAt(index, EffectOp.setBlendMode(next.blendMode as BlendMode));
+      return;
+    }
+    if (previous.hex !== next.hex) {
+      applyEffectOperationAt(index, EffectOp.setColor(next.hex));
+      return;
+    }
+    if (previous.opacity !== next.opacity) {
+      applyEffectOperationAt(index, EffectOp.setOpacity(next.opacity));
+      return;
+    }
+    if (previous.showShadowBehindNode !== next.showShadowBehindNode) {
+      applyEffectOperationAt(index, EffectOp.setShadowBehindNode(next.showShadowBehindNode));
+      return;
+    }
+  }, [effects, applyEffectOperationAt]);
 
-        return (
-          <div key={i} style={{ ...effectItemStyle, opacity: effect.visible === false ? 0.4 : 1 }}>
-            <div style={effectHeaderStyle}>
-              <Toggle
-                checked={effect.visible !== false}
-                onChange={(checked) => applyEffectOperationAt(i, EffectOp.setVisible(checked))}
-                ariaLabel={`Effect visible ${i + 1}`}
-              />
-              <Select<FigEffectType>
-                value={typeName}
-                onChange={(type) => applyEffectOperationAt(i, EffectOp.setType(type))}
-                options={effectTypeOptions}
-                ariaLabel={`Effect type ${i + 1}`}
-              />
-              <button type="button" title="Remove effect" onClick={() => removeEffect(i)} style={removeButtonStyle}>
-                <CloseIcon size={12} />
-              </button>
-            </div>
-            <div style={effectControlsStyle}>
-              <Input
-                type="number"
-                ariaLabel={`${formatEffectLabel(typeName)} radius`}
-                value={effect.radius ?? 0}
-                onChange={(v) => applyEffectOperationAt(i, EffectOp.setRadius(v as number))}
-                suffix="r"
-              />
-              {isShadow && (
-                <>
-                  <Select<BlendMode>
-                    value={effect.blendMode ?? "NORMAL"}
-                    onChange={(value) => applyEffectOperationAt(i, EffectOp.setBlendMode(value))}
-                    options={blendModeOptions}
-                    ariaLabel={`${formatEffectLabel(typeName)} blend mode`}
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${formatEffectLabel(typeName)} offset x`}
-                    value={effect.offset?.x ?? 0}
-                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setOffsetX(v as number))}
-                    suffix="x"
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${formatEffectLabel(typeName)} offset y`}
-                    value={effect.offset?.y ?? 0}
-                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setOffsetY(v as number))}
-                    suffix="y"
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${formatEffectLabel(typeName)} spread`}
-                    value={effect.spread ?? 0}
-                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setSpread(v as number))}
-                    suffix="s"
-                  />
-                  <input
-                    type="color"
-                    value={figColorToHex(color)}
-                    aria-label={`${formatEffectLabel(typeName)} color`}
-                    onChange={(e) => applyEffectOperationAt(i, EffectOp.setColor(e.target.value))}
-                    style={{ width: "100%", height: 28, padding: 0, border: `1px solid ${colorTokens.border.strong}`, borderRadius: 4 }}
-                  />
-                  <Input
-                    type="number"
-                    ariaLabel={`${formatEffectLabel(typeName)} opacity`}
-                    value={Math.round(color.a * 100)}
-                    min={0}
-                    max={100}
-                    onChange={(v) => applyEffectOperationAt(i, EffectOp.setOpacity((v as number) / 100))}
-                    suffix="%"
-                  />
-                  <Toggle
-                    checked={effect.showShadowBehindNode !== false}
-                    onChange={(checked) => applyEffectOperationAt(i, EffectOp.setShadowBehindNode(checked))}
-                    label="Behind"
-                    ariaLabel={`${formatEffectLabel(typeName)} show behind node`}
-                  />
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })}
-      <button type="button" onClick={addEffect} style={addButtonStyle}>
-        <AddIcon size={12} />
-        Add effect
-      </button>
-    </div>
+  return (
+    <EffectsSectionView
+      effects={effects.map(toEffectView)}
+      onAdd={addEffect}
+      onRemove={removeEffect}
+      onChange={handleChange}
+    />
   );
 }

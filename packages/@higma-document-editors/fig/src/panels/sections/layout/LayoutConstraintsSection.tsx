@@ -1,4 +1,4 @@
-/** @file Child layout constraints property section. */
+/** @file Child layout constraints property section adapter. */
 
 import { useCallback } from "react";
 import type { FigDesignNode, LayoutConstraints } from "@higma-document-models/fig/domain";
@@ -14,10 +14,13 @@ import {
   type StackSizing,
 } from "@higma-document-models/fig/constants";
 import { toEnumValue } from "@higma-document-models/fig/constants";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { Select } from "@higma-editor-kernel/ui/primitives/Select";
-import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
-import type { SelectOption } from "@higma-editor-kernel/ui/types";
+import {
+  LayoutConstraintsSectionView,
+  type ConstraintTypeId,
+  type StackCounterAlignId,
+  type StackPositioningId,
+  type StackSizingId,
+} from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 
@@ -38,33 +41,6 @@ type EditableLayoutConstraints = Required<
     | "stackChildPrimaryGrow"
   >
 > & Pick<LayoutConstraints, "stackChildAlignSelf">;
-
-const positioningOptions: readonly SelectOption<StackPositioning>[] = [
-  { value: "AUTO", label: "Auto" },
-  { value: "ABSOLUTE", label: "Absolute" },
-];
-
-const sizingOptions: readonly SelectOption<StackSizing>[] = [
-  { value: "FIXED", label: "Fixed" },
-  { value: "RESIZE_TO_FIT", label: "Hug" },
-  { value: "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE", label: "Implicit hug" },
-];
-
-const constraintOptions: readonly SelectOption<ConstraintType>[] = [
-  { value: "MIN", label: "Min" },
-  { value: "CENTER", label: "Center" },
-  { value: "MAX", label: "Max" },
-  { value: "STRETCH", label: "Stretch" },
-  { value: "SCALE", label: "Scale" },
-];
-
-const alignSelfOptions: readonly SelectOption<StackCounterAlign>[] = [
-  { value: "MIN", label: "Auto" },
-  { value: "CENTER", label: "Center" },
-  { value: "MAX", label: "Max" },
-  { value: "STRETCH", label: "Stretch" },
-  { value: "BASELINE", label: "Baseline" },
-];
 
 function enumName<T extends string>(val: KiwiEnumValue | undefined, fallback: T): T {
   return (val?.name ?? fallback) as T;
@@ -99,88 +75,43 @@ export function LayoutConstraintsSection({ node, target, dispatch }: LayoutConst
     [dispatch, target],
   );
 
-  const updatePositioning = useCallback((value: StackPositioning) => {
-    updateConstraints((current) => ({
-      ...current,
-      stackPositioning: toEnumValue(value, STACK_POSITIONING_VALUES)!,
-    }));
-  }, [updateConstraints]);
-
-  const updatePrimarySizing = useCallback((value: StackSizing) => {
-    updateConstraints((current) => ({
-      ...current,
-      stackPrimarySizing: toEnumValue(value, STACK_SIZING_VALUES)!,
-    }));
-  }, [updateConstraints]);
-
-  const updateCounterSizing = useCallback((value: StackSizing) => {
-    updateConstraints((current) => ({
-      ...current,
-      stackCounterSizing: toEnumValue(value, STACK_SIZING_VALUES)!,
-    }));
-  }, [updateConstraints]);
-
-  const updateHorizontalConstraint = useCallback((value: ConstraintType) => {
-    updateConstraints((current) => ({
-      ...current,
-      horizontalConstraint: toEnumValue(value, CONSTRAINT_TYPE_VALUES)!,
-    }));
-  }, [updateConstraints]);
-
-  const updateVerticalConstraint = useCallback((value: ConstraintType) => {
-    updateConstraints((current) => ({
-      ...current,
-      verticalConstraint: toEnumValue(value, CONSTRAINT_TYPE_VALUES)!,
-    }));
-  }, [updateConstraints]);
-
-  const updateAlignSelf = useCallback((value: StackCounterAlign) => {
-    updateConstraints((current) => ({
-      ...current,
-      stackChildAlignSelf: value === "MIN" ? undefined : toEnumValue(value, STACK_COUNTER_ALIGN_VALUES),
-    }));
-  }, [updateConstraints]);
-
-  const updateGrow = useCallback((value: number) => {
-    updateConstraints((current) => ({
-      ...current,
-      stackChildPrimaryGrow: value,
-    }));
-  }, [updateConstraints]);
-
-  const positioning: StackPositioning = enumName(constraints.stackPositioning, "AUTO" as StackPositioning);
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <FieldGroup label="Position">
-        <Select value={positioning} onChange={updatePositioning} options={positioningOptions} ariaLabel="Layout position" />
-      </FieldGroup>
-      <FieldRow>
-        <FieldGroup label="Primary fit" inline labelWidth={70}>
-          <Select value={enumName(constraints.stackPrimarySizing, "FIXED")} onChange={updatePrimarySizing} options={sizingOptions} ariaLabel="Layout primary fit" />
-        </FieldGroup>
-        <FieldGroup label="Counter fit" inline labelWidth={70}>
-          <Select value={enumName(constraints.stackCounterSizing, "FIXED")} onChange={updateCounterSizing} options={sizingOptions} ariaLabel="Layout counter fit" />
-        </FieldGroup>
-      </FieldRow>
-      <FieldRow>
-        <FieldGroup label="Align self" inline labelWidth={70}>
-          <Select value={enumName(constraints.stackChildAlignSelf, "MIN" as StackCounterAlign)} onChange={updateAlignSelf} options={alignSelfOptions} ariaLabel="Layout align self" />
-        </FieldGroup>
-        <FieldGroup label="Grow" inline labelWidth={44}>
-          <Input type="number" ariaLabel="Layout grow" value={constraints.stackChildPrimaryGrow} onChange={(v) => updateGrow(v as number)} />
-        </FieldGroup>
-      </FieldRow>
-      {positioning === "ABSOLUTE" && (
-        <FieldRow>
-          <FieldGroup label="Horizontal" inline labelWidth={70}>
-            <Select value={enumName(constraints.horizontalConstraint, "MIN")} onChange={updateHorizontalConstraint} options={constraintOptions} ariaLabel="Layout horizontal constraint" />
-          </FieldGroup>
-          <FieldGroup label="Vertical" inline labelWidth={70}>
-            <Select value={enumName(constraints.verticalConstraint, "MIN")} onChange={updateVerticalConstraint} options={constraintOptions} ariaLabel="Layout vertical constraint" />
-          </FieldGroup>
-        </FieldRow>
-      )}
-    </div>
+    <LayoutConstraintsSectionView
+      positioning={enumName(constraints.stackPositioning, "AUTO" as StackPositioningId) as StackPositioningId}
+      primarySizing={enumName(constraints.stackPrimarySizing, "FIXED" as StackSizingId) as StackSizingId}
+      counterSizing={enumName(constraints.stackCounterSizing, "FIXED" as StackSizingId) as StackSizingId}
+      horizontalConstraint={enumName(constraints.horizontalConstraint, "MIN" as ConstraintTypeId) as ConstraintTypeId}
+      verticalConstraint={enumName(constraints.verticalConstraint, "MIN" as ConstraintTypeId) as ConstraintTypeId}
+      alignSelf={enumName(constraints.stackChildAlignSelf, "MIN" as StackCounterAlignId) as StackCounterAlignId}
+      grow={constraints.stackChildPrimaryGrow}
+      onPositioningChange={(value) => updateConstraints((current) => ({
+        ...current,
+        stackPositioning: toEnumValue(value as StackPositioning, STACK_POSITIONING_VALUES)!,
+      }))}
+      onPrimarySizingChange={(value) => updateConstraints((current) => ({
+        ...current,
+        stackPrimarySizing: toEnumValue(value as StackSizing, STACK_SIZING_VALUES)!,
+      }))}
+      onCounterSizingChange={(value) => updateConstraints((current) => ({
+        ...current,
+        stackCounterSizing: toEnumValue(value as StackSizing, STACK_SIZING_VALUES)!,
+      }))}
+      onHorizontalConstraintChange={(value) => updateConstraints((current) => ({
+        ...current,
+        horizontalConstraint: toEnumValue(value as ConstraintType, CONSTRAINT_TYPE_VALUES)!,
+      }))}
+      onVerticalConstraintChange={(value) => updateConstraints((current) => ({
+        ...current,
+        verticalConstraint: toEnumValue(value as ConstraintType, CONSTRAINT_TYPE_VALUES)!,
+      }))}
+      onAlignSelfChange={(value) => updateConstraints((current) => ({
+        ...current,
+        stackChildAlignSelf: value === "MIN" ? undefined : toEnumValue(value as StackCounterAlign, STACK_COUNTER_ALIGN_VALUES),
+      }))}
+      onGrowChange={(value) => updateConstraints((current) => ({
+        ...current,
+        stackChildPrimaryGrow: value,
+      }))}
+    />
   );
 }

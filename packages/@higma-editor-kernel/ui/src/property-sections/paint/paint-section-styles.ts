@@ -1,7 +1,7 @@
-/** @file Shared styles for paint property sections (fill, stroke). */
+/** @file Shared styles for paint property section views. */
 
 import type { CSSProperties } from "react";
-import { colorTokens, fontTokens } from "@higma-editor-kernel/ui/design-tokens";
+import { colorTokens, fontTokens } from "../../design-tokens";
 
 export const paintRowStyle: CSSProperties = {
   display: "flex",

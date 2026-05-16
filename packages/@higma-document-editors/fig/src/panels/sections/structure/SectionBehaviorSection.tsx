@@ -1,7 +1,7 @@
-/** @file Section-specific property controls. */
+/** @file Section-specific property controls adapter. */
 
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import { Toggle } from "@higma-editor-kernel/ui/primitives/Toggle";
+import { SectionBehaviorSectionView } from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 
@@ -14,14 +14,12 @@ type SectionBehaviorSectionProps = {
 /** Edit SECTION node behavior fields that are modeled directly by fig Kiwi. */
 export function SectionBehaviorSection({ node, target, dispatch }: SectionBehaviorSectionProps) {
   return (
-    <Toggle
-      checked={Boolean(node.sectionContentsHidden)}
-      label="Hide section contents"
-      ariaLabel="Hide section contents"
-      onChange={(checked) => {
+    <SectionBehaviorSectionView
+      contentsHidden={Boolean(node.sectionContentsHidden)}
+      onContentsHiddenChange={(hidden) => {
         dispatch(createPropertyTargetUpdateAction({
           target,
-          updater: (current) => ({ ...current, sectionContentsHidden: checked }),
+          updater: (current) => ({ ...current, sectionContentsHidden: hidden }),
         }));
       }}
     />

@@ -1,11 +1,13 @@
 /**
- * @file Opacity property section
+ * @file Opacity property section adapter
+ *
+ * Thin adapter: derives a 0-100 percent from FigDesignNode.opacity, renders
+ * the kernel-level view, and converts changes back to fig editor actions.
  */
 
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import { OpacitySectionView } from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { Input } from "@higma-editor-kernel/ui/primitives/Input";
-import { FieldGroup, FieldRow } from "@higma-editor-kernel/ui/layout";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 
 type OpacitySectionProps = {
@@ -14,34 +16,19 @@ type OpacitySectionProps = {
   readonly dispatch: (action: FigEditorAction) => void;
 };
 
-
-
-
-
-
 /** Panel section for editing the opacity of a Figma node. */
 export function OpacitySection({ node, target, dispatch }: OpacitySectionProps) {
-  const opacityPercent = Math.round(node.opacity * 100);
+  const percent = Math.round(node.opacity * 100);
 
   return (
-    <FieldRow>
-      <FieldGroup label="Opacity" inline labelWidth={50}>
-        <Input
-          type="number"
-          value={opacityPercent}
-          min={0}
-          max={100}
-          step={1}
-          suffix="%"
-          onChange={(v) => {
-            dispatch(createPropertyTargetUpdateAction({
-              target,
-              updater: (n) => ({ ...n, opacity: Math.max(0, Math.min(1, (v as number) / 100)) }),
-            }));
-          }}
-          width={80}
-        />
-      </FieldGroup>
-    </FieldRow>
+    <OpacitySectionView
+      percent={percent}
+      onPercentChange={(value) => {
+        dispatch(createPropertyTargetUpdateAction({
+          target,
+          updater: (n) => ({ ...n, opacity: Math.max(0, Math.min(1, value / 100)) }),
+        }));
+      }}
+    />
   );
 }

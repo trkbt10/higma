@@ -20,6 +20,25 @@ import { PlayerStories } from "./Player.stories";
 // Viewer
 import { NavigationControlsStories } from "./NavigationControls.stories";
 
+// Property sections
+import { OpacitySectionStories } from "./property-sections/OpacitySection.stories";
+import { TransformSectionStories } from "./property-sections/TransformSection.stories";
+import { CornerRadiusSectionStories } from "./property-sections/CornerRadiusSection.stories";
+import { SectionBehaviorSectionStories } from "./property-sections/SectionBehavior.stories";
+import { OutlineSectionStories } from "./property-sections/Outline.stories";
+import { ExportSettingsSectionStories } from "./property-sections/ExportSettings.stories";
+import { AutoLayoutSectionStories } from "./property-sections/AutoLayoutSection.stories";
+import { LayoutConstraintsSectionStories } from "./property-sections/LayoutConstraintsSection.stories";
+import { FillSectionStories } from "./property-sections/FillSection.stories";
+import { StrokeSectionStories } from "./property-sections/StrokeSection.stories";
+import { EffectsSectionStories } from "./property-sections/EffectsSection.stories";
+import { VectorPathSectionStories } from "./property-sections/VectorPathSection.stories";
+import { ComponentPropertiesSectionStories } from "./property-sections/ComponentPropertiesSection.stories";
+import { VariantPropertiesSectionStories } from "./property-sections/VariantPropertiesSection.stories";
+import { ComponentSetVariantsSectionStories } from "./property-sections/ComponentSetVariantsSection.stories";
+import { InstanceOverridesSectionStories } from "./property-sections/InstanceOverridesSection.stories";
+import { TextPropertiesSectionStories } from "./property-sections/TextPropertiesSection.stories";
+
 /**
  * All component categories and their stories.
  */
@@ -42,5 +61,27 @@ export const catalog: readonly Category[] = [
   {
     name: "Viewer",
     components: [NavigationControlsStories],
+  },
+  {
+    name: "Property Sections",
+    components: [
+      TransformSectionStories,
+      OpacitySectionStories,
+      CornerRadiusSectionStories,
+      FillSectionStories,
+      StrokeSectionStories,
+      EffectsSectionStories,
+      AutoLayoutSectionStories,
+      LayoutConstraintsSectionStories,
+      ExportSettingsSectionStories,
+      SectionBehaviorSectionStories,
+      OutlineSectionStories,
+      VectorPathSectionStories,
+      ComponentPropertiesSectionStories,
+      VariantPropertiesSectionStories,
+      ComponentSetVariantsSectionStories,
+      InstanceOverridesSectionStories,
+      TextPropertiesSectionStories,
+    ],
   },
 ];

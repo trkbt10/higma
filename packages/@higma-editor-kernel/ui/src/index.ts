@@ -309,3 +309,6 @@ export type {
   NavigatorTab,
   NavigatorTabsProps,
 } from "./editor";
+
+// Property sections (presentational views)
+export * from "./property-sections";

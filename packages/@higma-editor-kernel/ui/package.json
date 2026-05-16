@@ -193,6 +193,10 @@
     "./dev": {
       "types": "./src/dev/index.ts",
       "default": "./src/dev/index.ts"
+    },
+    "./property-sections": {
+      "types": "./src/property-sections/index.ts",
+      "default": "./src/property-sections/index.ts"
     }
   },
   "higma": {

@@ -4,11 +4,18 @@ import { useCallback, useRef, type ChangeEvent, type RefObject } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigImageScaleMode, FigPaint } from "@higma-document-models/fig/types";
+import type { GradientHandleView, GradientStopView, PaintItemHandlers } from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
 import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
 import { createFigImageAsset } from "./image-asset";
 import { applyPaintOperation, PaintOp, PaintListOp, type PaintListKind } from "./paint-domain";
 import { applyAppearanceOperation, AppearanceOp } from "./appearance-domain";
+import {
+  addGradientStop,
+  removeGradientStop,
+  updateGradientHandle,
+  updateGradientStop,
+} from "./paint-view-adapter";
 
 export type PaintEditorConfig = {
   readonly node: FigDesignNode;
@@ -20,16 +27,8 @@ export type PaintEditorConfig = {
 
 export type PaintEditorCallbacks = {
   readonly updatePaint: (index: number, updater: (paint: FigPaint) => FigPaint) => void;
-  readonly updateColor: (index: number, hex: string) => void;
-  readonly updateOpacity: (index: number, opacity: number) => void;
-  readonly updateType: (index: number, type: FigPaint["type"]) => void;
-  readonly updateImageRef: (index: number, imageRef: string) => void;
-  readonly updateImageScaleMode: (index: number, scaleMode: FigImageScaleMode) => void;
-  readonly updateImageScale: (index: number, scale: number) => void;
-  readonly updateImageRotation: (index: number, rotationDeg: number) => void;
-  readonly startImageUpload: (index: number) => void;
+  readonly handlers: PaintItemHandlers;
   readonly handleImageFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  readonly removePaint: (index: number) => void;
   readonly addPaint: () => void;
   readonly uploadTargetRef: RefObject<number | null>;
   readonly fileInputRef: RefObject<HTMLInputElement | null>;
@@ -160,18 +159,54 @@ export function usePaintEditor(config: PaintEditorConfig): PaintEditorCallbacks 
     }));
   }, [dispatch, target, appearanceOp, kind]);
 
+  const updateGradientStopAt = useCallback(
+    (index: number, stopIndex: number, stop: GradientStopView) => {
+      updatePaint(index, (paint) => updateGradientStop(paint, stopIndex, stop));
+    },
+    [updatePaint],
+  );
+
+  const addGradientStopAt = useCallback(
+    (index: number) => {
+      updatePaint(index, addGradientStop);
+    },
+    [updatePaint],
+  );
+
+  const removeGradientStopAt = useCallback(
+    (index: number, stopIndex: number) => {
+      updatePaint(index, (paint) => removeGradientStop(paint, stopIndex));
+    },
+    [updatePaint],
+  );
+
+  const updateGradientHandleAt = useCallback(
+    (index: number, handleIndex: number, handle: GradientHandleView) => {
+      updatePaint(index, (paint) => updateGradientHandle(paint, handleIndex, handle));
+    },
+    [updatePaint],
+  );
+
+  const handlers: PaintItemHandlers = {
+    onTypeChange: (index, type) => updateType(index, type as FigPaint["type"]),
+    onOpacityChange: updateOpacity,
+    onColorChange: updateColor,
+    onImageRefChange: updateImageRef,
+    onImageScaleModeChange: (index, scaleMode) => updateImageScaleMode(index, scaleMode as FigImageScaleMode),
+    onImageScaleChange: updateImageScale,
+    onImageRotationChange: updateImageRotation,
+    onStartImageUpload: startImageUpload,
+    onGradientStopChange: updateGradientStopAt,
+    onAddGradientStop: addGradientStopAt,
+    onRemoveGradientStop: removeGradientStopAt,
+    onGradientHandleChange: updateGradientHandleAt,
+    onRemove: removePaint,
+  };
+
   return {
     updatePaint,
-    updateColor,
-    updateOpacity,
-    updateType,
-    updateImageRef,
-    updateImageScaleMode,
-    updateImageScale,
-    updateImageRotation,
-    startImageUpload,
+    handlers,
     handleImageFileChange,
-    removePaint,
     addPaint,
     uploadTargetRef,
     fileInputRef,

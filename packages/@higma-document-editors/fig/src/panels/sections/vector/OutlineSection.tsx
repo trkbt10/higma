@@ -1,32 +1,14 @@
-/** @file Outline conversion controls. */
+/** @file Outline conversion controls adapter. */
 
-import type { CSSProperties } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import { OutlineSectionView } from "@higma-editor-kernel/ui/property-sections";
 import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { colorTokens, fontTokens } from "@higma-editor-kernel/ui/design-tokens";
 import { allowsFigUserOperation, type FigUserOperationDomain } from "../../../context/fig-editor/user-operation";
 
 type OutlineSectionProps = {
   readonly node: FigDesignNode;
   readonly dispatch: (action: FigEditorAction) => void;
   readonly operationDomain?: FigUserOperationDomain;
-};
-
-const buttonStyle: CSSProperties = {
-  width: "100%",
-  border: `1px solid ${colorTokens.border.primary}`,
-  background: colorTokens.background.secondary,
-  color: colorTokens.text.primary,
-  borderRadius: 4,
-  padding: "6px 8px",
-  cursor: "pointer",
-  fontSize: fontTokens.size.sm,
-};
-
-const noteStyle: CSSProperties = {
-  color: colorTokens.text.tertiary,
-  fontSize: fontTokens.size.sm,
-  lineHeight: 1.4,
 };
 
 function supportsOutline(node: FigDesignNode): boolean {
@@ -44,25 +26,12 @@ function supportsOutline(node: FigDesignNode): boolean {
 export function OutlineSection({ node, dispatch, operationDomain }: OutlineSectionProps) {
   const allowed = operationDomain ? allowsFigUserOperation(operationDomain, "outline-selection") : true;
   const enabled = supportsOutline(node) && allowed;
+  const note = node.type === "TEXT" ? "Text outlines require glyph path data in the fig document." : undefined;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <button
-        type="button"
-        style={{ ...buttonStyle, opacity: enabled ? 1 : 0.5, cursor: enabled ? "pointer" : "default" }}
-        disabled={!enabled}
-        onClick={() => {
-          if (enabled) {
-            dispatch({ type: "OUTLINE_SELECTION" });
-          }
-        }}
-      >
-        Outline selection
-      </button>
-      {node.type === "TEXT" && (
-        <div style={noteStyle}>
-          Text outlines require glyph path data in the fig document.
-        </div>
-      )}
-    </div>
+    <OutlineSectionView
+      enabled={enabled}
+      onOutline={() => dispatch({ type: "OUTLINE_SELECTION" })}
+      note={note}
+    />
   );
 }
