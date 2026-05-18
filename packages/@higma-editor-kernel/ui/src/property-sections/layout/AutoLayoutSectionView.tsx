@@ -92,7 +92,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout gap"
               value={gap}
-              prefix="G"
+              prefix="Gap"
               suffix="px"
               dragToChange
               onChange={(v) => onGapChange(v as number)}
@@ -101,7 +101,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout counter gap"
               value={counterGap}
-              prefix="CG"
+              prefix="Cross"
               suffix="px"
               dragToChange
               onChange={(v) => onCounterGapChange(v as number)}
@@ -112,7 +112,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding top"
               value={padding.top}
-              prefix="T"
+              prefix="Top"
               suffix="px"
               dragToChange
               onChange={(v) => onPaddingChange("top", v as number)}
@@ -121,7 +121,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding right"
               value={padding.right}
-              prefix="R"
+              prefix="Right"
               suffix="px"
               dragToChange
               onChange={(v) => onPaddingChange("right", v as number)}
@@ -132,7 +132,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding bottom"
               value={padding.bottom}
-              prefix="B"
+              prefix="Bot"
               suffix="px"
               dragToChange
               onChange={(v) => onPaddingChange("bottom", v as number)}
@@ -141,19 +141,28 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding left"
               value={padding.left}
-              prefix="L"
+              prefix="Left"
               suffix="px"
               dragToChange
               onChange={(v) => onPaddingChange("left", v as number)}
             />
           </FieldRow>
-          <FieldGroup label="Primary align">
+          <FieldGroup
+            label="Primary align"
+            tooltip="Alignment along the stack's main axis (horizontal for HORIZONTAL stacks, vertical for VERTICAL stacks). Controls how children distribute along the stacking direction."
+          >
             <Select value={primaryAlign} onChange={onPrimaryAlignChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout primary align" />
           </FieldGroup>
-          <FieldGroup label="Counter align">
+          <FieldGroup
+            label="Counter align"
+            tooltip="Alignment perpendicular to the stacking direction."
+          >
             <Select value={counterAlign} onChange={onCounterAlignChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout counter align" />
           </FieldGroup>
-          <FieldGroup label="Align content">
+          <FieldGroup
+            label="Align content"
+            tooltip="When wrap is enabled, controls how rows/columns are distributed in the cross direction."
+          >
             <Select value={alignContent} onChange={onAlignContentChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout align content" />
           </FieldGroup>
           <FieldRow>

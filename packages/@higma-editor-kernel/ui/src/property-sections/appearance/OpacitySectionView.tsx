@@ -3,10 +3,8 @@
  *
  * Renders a single 0-100 % input. The section title surrounding this view
  * already conveys "Opacity" so no prefix label is needed; the suffix is the
- * `%` unit.
- *
- * The "O" prefix is provided to act as the drag-to-change scrubber so the
- * value can be edited Figma-style without typing.
+ * `%` unit, and the digit area itself acts as the drag-to-change scrubber
+ * via the Input primitive's internal drag handling.
  */
 
 import { Input } from "../../primitives";
@@ -30,7 +28,6 @@ export function OpacitySectionView({ percent, onPercentChange, disabled }: Opaci
       min={0}
       max={100}
       step={1}
-      prefix="O"
       suffix="%"
       dragToChange
       disabled={disabled}

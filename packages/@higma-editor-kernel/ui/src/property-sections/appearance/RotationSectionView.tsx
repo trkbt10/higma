@@ -51,7 +51,6 @@ export function RotationSectionView({
             type="number"
             ariaLabel="Rotation"
             value={rotation}
-            prefix="R"
             suffix="°"
             dragToChange
             disabled={disabled}

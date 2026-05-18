@@ -84,22 +84,37 @@ export function LayoutConstraintsSectionView({
         <Select value={positioning} onChange={onPositioningChange} options={POSITIONING_OPTIONS} ariaLabel="Layout position" />
       </FieldGroup>
       <FieldRow>
-        <FieldGroup label="Primary fit" inline labelWidth={70}>
+        <FieldGroup
+          label="Primary fit"
+          inline
+          labelWidth={70}
+          tooltip="Sizing along the parent stack's primary axis (the direction it stacks children). Fixed / Hug = match content / Implicit hug."
+        >
           <Select value={primarySizing} onChange={onPrimarySizingChange} options={SIZING_OPTIONS} ariaLabel="Layout primary fit" />
         </FieldGroup>
-        <FieldGroup label="Counter fit" inline labelWidth={70}>
+        <FieldGroup
+          label="Counter fit"
+          inline
+          labelWidth={70}
+          tooltip="Sizing along the parent stack's counter axis (perpendicular to the stacking direction)."
+        >
           <Select value={counterSizing} onChange={onCounterSizingChange} options={SIZING_OPTIONS} ariaLabel="Layout counter fit" />
         </FieldGroup>
       </FieldRow>
       <FieldRow>
-        <FieldGroup label="Align self" inline labelWidth={70}>
+        <FieldGroup
+          label="Align self"
+          inline
+          labelWidth={70}
+          tooltip="How this child aligns within its slot in the parent stack — overrides the parent's counter-axis alignment."
+        >
           <Select value={alignSelf} onChange={onAlignSelfChange} options={ALIGN_SELF_OPTIONS} ariaLabel="Layout align self" />
         </FieldGroup>
         <Input
           type="number"
           ariaLabel="Layout grow"
           value={grow}
-          prefix="G"
+          prefix="Grow"
           dragToChange
           onChange={(v) => onGrowChange(v as number)}
         />

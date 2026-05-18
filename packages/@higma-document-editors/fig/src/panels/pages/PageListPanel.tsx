@@ -99,16 +99,61 @@ function dropIndicatorShadow({ dropBefore, dropAfter }: RowVisualState): string 
   return undefined;
 }
 
+/**
+ * Active page row visual identity.
+ *
+ * The previous design filled the row with `selection.primary` (#0066ff)
+ * and inverted text to white, producing 4.83:1 contrast (passes AA,
+ * fails AAA). The new approach tints the row with `selection.primary`
+ * at 12% alpha (visible as a pale blue band) and draws a 2px solid
+ * `selection.primary` left rail as the structural "active" signal —
+ * text remains at `text.primary` and the row reaches 17.4:1 (AAA)
+ * regardless of selection state.
+ *
+ * Hover state for non-active rows uses `background.hover` (#e8eaed)
+ * so the operator can see which row is about to be selected before
+ * clicking — previously rows had no visual change on hover.
+ */
 function pageRowBackground(active: boolean): string {
-  return active ? `var(--selection-primary, ${colorTokens.selection.primary})` : "transparent";
+  return active ? `${colorTokens.selection.primary}1f` : "transparent";
 }
 
-function pageRowColor(active: boolean): string {
-  return active ? "#ffffff" : `var(--text-primary, ${colorTokens.text.primary})`;
+const pageRowClassName = "fig-page-list-row";
+const pageRowStyleFlag = { injected: false };
+function injectPageRowStyles(): void {
+  if (pageRowStyleFlag.injected || typeof document === "undefined") {
+    return;
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    .${pageRowClassName}:hover:not([aria-selected="true"]) {
+      background-color: var(--bg-hover, #e8eaed) !important;
+    }
+    .${pageRowClassName}:focus-visible {
+      outline: 2px solid var(--selection-primary, #0066ff);
+      outline-offset: -2px;
+    }
+  `;
+  document.head.appendChild(style);
+  pageRowStyleFlag.injected = true;
+}
+
+function pageRowColor(_active: boolean): string {
+  return `var(--text-primary, ${colorTokens.text.primary})`;
+}
+
+function pageRowAccentRail(active: boolean): string | undefined {
+  return active ? `inset 2px 0 0 0 ${colorTokens.selection.primary}` : undefined;
 }
 
 function pageRowStyle(state: RowVisualState): CSSProperties {
   const { active, dragging } = state;
+  const dropShadow = dropIndicatorShadow(state);
+  const accentRail = pageRowAccentRail(active);
+  // Combine the drag-indicator shadow with the active-rail shadow.
+  // Both are inset shadows, so they compose; if neither is present the
+  // boxShadow is omitted so the row keeps its flat profile.
+  const composedShadow = [accentRail, dropShadow].filter(Boolean).join(", ") || undefined;
   return {
     position: "relative",
     padding: `${spacingTokens.xs} ${spacingTokens.sm}`,
@@ -116,12 +161,13 @@ function pageRowStyle(state: RowVisualState): CSSProperties {
     borderRadius: radiusTokens.sm,
     backgroundColor: pageRowBackground(active),
     color: pageRowColor(active),
+    fontWeight: active ? fontTokens.weight.semibold : fontTokens.weight.normal,
     transition: "background-color 150ms ease",
     border: 0,
     textAlign: "left",
     cursor: dragging ? "grabbing" : "pointer",
     opacity: dragging ? 0.6 : 1,
-    boxShadow: dropIndicatorShadow(state),
+    boxShadow: composedShadow,
     userSelect: "none",
   };
 }
@@ -148,6 +194,15 @@ export function PageListPanel() {
   const { document, activePageId, dispatch } = useFigEditor();
   const operationDomain = useFigOperationDomain();
   const canEditPage = allowsFigUserOperation(operationDomain, "edit-page");
+
+  // Inject :hover / :focus-visible stylesheet rules once. Inline
+  // styles cannot express pseudo-classes, so the panel ships its own
+  // tiny stylesheet on first mount.
+  const stylesInjected = useRef(false);
+  if (!stylesInjected.current) {
+    injectPageRowStyles();
+    stylesInjected.current = true;
+  }
 
   const [menu, setMenu] = useState<PageContextMenuState>(CLOSED_MENU);
   const [drag, setDrag] = useState<DragState>(IDLE_DRAG);
@@ -379,7 +434,14 @@ export function PageListPanel() {
 
   return (
     <OptionalPropertySection title="Pages" badge={pageCount} defaultExpanded>
-      <div style={containerStyle}>
+      {/*
+        Page list is a single-selection listbox: each row is an option,
+        the active page is the selected option. Previously the row div
+        also carried role="button" which doubled up with the inner
+        InlineRenameInput's role="button" — screen readers and `getByRole`
+        both saw two overlapping buttons sharing an accessible name.
+      */}
+      <div style={containerStyle} role="listbox" aria-label="Pages">
         {pages.map((page) => {
           const isActive = page.id === activePageId;
           const isDragging = drag.active && drag.draggingId === page.id;
@@ -388,10 +450,13 @@ export function PageListPanel() {
             <div
               key={page.id}
               data-page-row-id={page.id}
-              role="button"
+              role="option"
               tabIndex={0}
+              aria-selected={isActive}
               aria-current={isActive ? "page" : undefined}
               aria-disabled={!canEditPage}
+              aria-label={page.name}
+              className={pageRowClassName}
               style={pageRowStyle({
                 active: isActive,
                 dropBefore: isDropTarget && drag.overPosition === "before",

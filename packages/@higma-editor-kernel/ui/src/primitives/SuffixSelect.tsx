@@ -32,9 +32,14 @@ const wrapperStyle: CSSProperties = {
   paddingRight: "8px",
 };
 
+// SuffixSelect's label mirrors Input's prefix/suffix chrome — it
+// carries functional information (the selectable suffix unit like
+// "px" or "%") so it follows the same text.primary contract as
+// Input.tsx's slotTextBaseStyle for AAA legibility.
 const labelStyle: CSSProperties = {
   fontSize: fontTokens.size.sm,
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  fontWeight: fontTokens.weight.medium,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   userSelect: "none",
   cursor: "pointer",
   pointerEvents: "none",

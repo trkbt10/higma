@@ -37,7 +37,7 @@ function buttonStyle(disabled: boolean, fullWidth: boolean): CSSProperties {
     borderRadius: 4,
     cursor: disabled ? "not-allowed" : "pointer",
     padding: "4px 8px",
-    color: colorTokens.text.secondary,
+    color: colorTokens.text.primary,
     fontSize: fontTokens.size.sm,
     width: fullWidth ? "100%" : undefined,
     opacity: disabled ? 0.5 : 1,

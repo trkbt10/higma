@@ -41,7 +41,16 @@ const rowStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: 6,
-  padding: "4px 0",
+  padding: "6px 0",
+  // Subtle separator between presets — without it adjacent presets
+  // visually blur together and the operator has to count to know
+  // which row belongs to which preset.
+  borderBottom: `1px solid ${colorTokens.border.subtle}`,
+};
+
+const lastRowStyle: CSSProperties = {
+  ...rowStyle,
+  borderBottom: "none",
 };
 
 const removeButtonStyle: CSSProperties = {
@@ -49,7 +58,7 @@ const removeButtonStyle: CSSProperties = {
   border: "none",
   cursor: "pointer",
   padding: 2,
-  color: colorTokens.text.tertiary,
+  color: colorTokens.text.primary,
   lineHeight: 0,
   flexShrink: 0,
 };
@@ -66,7 +75,7 @@ export function ExportSettingsSectionView({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {presets.map((preset, index) => (
-        <div key={index} style={rowStyle}>
+        <div key={index} style={index === presets.length - 1 ? lastRowStyle : rowStyle}>
           <Select
             value={preset.format}
             onChange={(value) => onFormatChange(index, value)}
@@ -87,7 +96,6 @@ export function ExportSettingsSectionView({
             value={preset.scale}
             min={0.01}
             step={0.25}
-            prefix="S"
             suffix="x"
             dragToChange
             dragStep={0.25}
@@ -99,6 +107,7 @@ export function ExportSettingsSectionView({
             style={removeButtonStyle}
             onClick={() => onRemovePreset(index)}
             title="Remove export setting"
+            aria-label={`Remove export preset ${index + 1}`}
           >
             <CloseIcon size={12} />
           </button>

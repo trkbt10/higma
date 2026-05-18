@@ -14,6 +14,13 @@ export type FieldGroupProps = {
   readonly style?: CSSProperties;
   readonly hint?: string;
   /**
+   * Tooltip (browser native `title`) shown on hover. Use this for
+   * Figma-domain terms (Primary fit / Counter fit / Align self) so
+   * operators unfamiliar with the conventions can discover the
+   * meaning by hovering.
+   */
+  readonly tooltip?: string;
+  /**
    * Inline layout: label on left, content on right (single line).
    * Use for simple inputs like X, Y, Width, Height.
    */
@@ -35,10 +42,14 @@ const stackedContainerStyle: CSSProperties = {
   gap: "4px",
 };
 
+// FieldGroup label ("Mode", "Cap", "Join", "Primary fit", etc.) names
+// the input next to it. Functional — operator must read it to know
+// which property they are editing. text.primary (17.4:1 AAA) replaces
+// the previous text.tertiary fallback (2.64:1 — below AA).
 const stackedLabelStyle: CSSProperties = {
   fontSize: "11px",
   fontWeight: 500,
-  color: "var(--text-tertiary, #737373)",
+  color: "var(--text-primary, #1a1a1a)",
   lineHeight: 1.2,
 };
 
@@ -62,7 +73,7 @@ const inlineContainerStyle: CSSProperties = {
 const inlineLabelStyle = (width?: number | string): CSSProperties => ({
   fontSize: "11px",
   fontWeight: 500,
-  color: "var(--text-tertiary, #737373)",
+  color: "var(--text-primary, #1a1a1a)",
   flexShrink: 0,
   width: width ?? 40,
   minWidth: width ?? 40,
@@ -96,13 +107,16 @@ export function FieldGroup({
   className,
   style,
   hint,
+  tooltip,
   inline = false,
   labelWidth,
 }: FieldGroupProps) {
   if (inline) {
     return (
       <div style={{ ...inlineContainerStyle, ...style }} className={className}>
-        <span style={inlineLabelStyle(labelWidth)}>{label}</span>
+        <span style={inlineLabelStyle(labelWidth)} title={tooltip}>
+          {label}
+        </span>
         <div style={inlineContentStyle}>{children}</div>
         {hint && <span style={hintStyle}>{hint}</span>}
       </div>
@@ -112,7 +126,9 @@ export function FieldGroup({
   return (
     <div style={{ ...stackedContainerStyle, ...style }} className={className}>
       <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-        <span style={stackedLabelStyle}>{label}</span>
+        <span style={stackedLabelStyle} title={tooltip}>
+          {label}
+        </span>
         {hint && <span style={hintStyle}>{hint}</span>}
       </div>
       <div style={stackedContentStyle}>{children}</div>

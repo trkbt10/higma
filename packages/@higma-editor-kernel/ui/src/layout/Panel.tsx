@@ -67,12 +67,17 @@ export function Panel({ children, title, badge, width = 280, className, style }:
     justifyContent: "space-between",
   };
 
+  // The count badge ("Layers 12") is a functional readout, not
+  // decoration — operators rely on it to know how many items are in
+  // the section. text.primary brings it to 15.4:1 (AAA) against the
+  // tertiary background, where text.tertiary was 2.34:1 (below AA).
   const badgeStyle: CSSProperties = {
     fontSize: fontTokens.size.xs,
-    color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+    color: `var(--text-primary, ${colorTokens.text.primary})`,
     backgroundColor: `var(--bg-tertiary, ${colorTokens.background.tertiary})`,
     padding: `${spacingTokens.xs} ${spacingTokens.sm}`,
     borderRadius: radiusTokens.sm,
+    fontWeight: fontTokens.weight.medium,
   };
 
   const contentStyle: CSSProperties = {

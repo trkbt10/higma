@@ -148,7 +148,32 @@ const rightPanelStyle: CSSProperties = {
 const rightTabsStyle: CSSProperties = {
   flex: 1,
   minHeight: 0,
-  overflow: "hidden",
+  // Tabs primitive owns horizontal layout; we keep horizontal overflow
+  // hidden so the tab strip never grows the panel wider. Vertical
+  // overflow stays `hidden` here too, because the active tab content
+  // wraps PropertyPanel/InspectorPanel in its own `overflowY: auto`
+  // pane — letting it scroll here as well would chain two scroll
+  // containers and break wheel events from reaching the inner one.
+  overflowX: "hidden",
+  overflowY: "hidden",
+};
+
+/**
+ * Wrapper around each tab's content that owns the vertical scroll for
+ * that tab. The outer Tabs primitive is a flex column whose content
+ * area gets `flex: 1; minHeight: 0`, so wrapping it again here with
+ * `flex: 1; minHeight: 0; overflowY: auto` gives us a scrollable pane
+ * that fills the remaining vertical space after the tab strip. Without
+ * this, every overflow rule above clamped the content to the panel's
+ * fixed height and the lower property sections were unreachable.
+ */
+const tabContentScrollableStyle: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: "auto",
+  overflowX: "hidden",
+  display: "flex",
+  flexDirection: "column",
 };
 
 const inspectorTabStyle: CSSProperties = {
@@ -186,6 +211,14 @@ function InspectorTabContent() {
   );
 }
 
+function PropertiesTabContent() {
+  return (
+    <div style={tabContentScrollableStyle}>
+      <PropertyPanel />
+    </div>
+  );
+}
+
 function LeftPanelContent() {
   return (
     <div style={leftPanelStyle}>
@@ -205,7 +238,7 @@ function RightPanelContent() {
       <Tabs<RightTab>
         items={[
           { id: "inspector", label: "Inspector", content: <InspectorTabContent /> },
-          { id: "properties", label: "Properties", content: <PropertyPanel /> },
+          { id: "properties", label: "Properties", content: <PropertiesTabContent /> },
         ]}
         defaultValue="inspector"
         size="sm"

@@ -55,12 +55,24 @@ const alignButtonGroupStyle: CSSProperties = {
   gap: 2,
 };
 
+// Active state is signalled by a 2px accent-colour border and a
+// stronger background tint. The previous "fill with accent + white
+// text" pattern gave 4.32:1 (failed AAA); the previous 1px outline
+// alone was visually too close to inactive (border weight is the only
+// difference at a glance). The new 2px border + 16% tint gives an
+// unambiguous active signal while text stays at text.primary (AAA).
 const alignButtonStyle = (active: boolean): CSSProperties => ({
-  background: active ? colorTokens.accent.primary : "transparent",
-  color: active ? "#fff" : colorTokens.text.secondary,
-  border: `1px solid ${active ? colorTokens.accent.primary : colorTokens.border.primary}`,
+  background: active ? `${colorTokens.accent.primary}29` : "transparent",
+  color: colorTokens.text.primary,
+  border: active
+    ? `2px solid ${colorTokens.accent.primary}`
+    : `1px solid ${colorTokens.border.primary}`,
+  // Preserve the 1px-vs-2px border-width difference WITHOUT making the
+  // inactive button visibly smaller (otherwise the layout shifts when
+  // toggling). Padding compensates: active gets 2px+1px less padding
+  // than inactive, so the outer box stays the same size.
   borderRadius: 4,
-  padding: "3px 5px",
+  padding: active ? "2px 4px" : "3px 5px",
   cursor: "pointer",
   lineHeight: 0,
 });

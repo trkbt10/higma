@@ -5,9 +5,45 @@
  * When label is omitted, renders as a square icon-only button.
  */
 
-import { type ReactNode, type CSSProperties, type MouseEvent } from "react";
+import { useRef, type ReactNode, type CSSProperties, type MouseEvent } from "react";
 import type { ButtonVariant } from "../types";
 import { colorTokens, radiusTokens, fontTokens } from "../design-tokens";
+
+/**
+ * IconButton shares Button's hover / focus-visible / active visual
+ * contract — the user expects identical interaction feedback from
+ * both. Stylesheet is injected once; variants gain the same
+ * hover-darken / hover-tint behaviour as Button.
+ */
+const styleFlag = { injected: false };
+function injectStyles(): void {
+  if (styleFlag.injected || typeof document === "undefined") {
+    return;
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    .office-editor-icon-button {
+      position: relative;
+    }
+    .office-editor-icon-button:focus-visible {
+      outline: 2px solid var(--selection-primary, #0066ff);
+      outline-offset: 2px;
+    }
+    .office-editor-icon-button:not(:disabled):hover.office-editor-icon-button--primary {
+      filter: brightness(0.92);
+    }
+    .office-editor-icon-button:not(:disabled):hover.office-editor-icon-button--secondary,
+    .office-editor-icon-button:not(:disabled):hover.office-editor-icon-button--ghost,
+    .office-editor-icon-button:not(:disabled):hover.office-editor-icon-button--outline {
+      background-color: var(--bg-hover, #e8eaed) !important;
+    }
+    .office-editor-icon-button:not(:disabled):active {
+      transform: translateY(1px);
+    }
+  `;
+  document.head.appendChild(style);
+  styleFlag.injected = true;
+}
 
 export type IconButtonSize = "sm" | "md" | "lg";
 
@@ -33,7 +69,7 @@ const baseStyle: CSSProperties = {
   fontFamily: "inherit",
   border: "none",
   cursor: "pointer",
-  transition: "all 150ms ease",
+  transition: "background-color 150ms ease, filter 150ms ease, transform 80ms ease",
   outline: "none",
 };
 
@@ -112,6 +148,11 @@ export function IconButton({
   className,
   style,
 }: IconButtonProps) {
+  const initialized = useRef(false);
+  if (!initialized.current) {
+    injectStyles();
+    initialized.current = true;
+  }
   const isIconOnly = !label;
   const sizeStyle = isIconOnly ? iconOnlySizeStyles[size] : sizeStyles[size];
 
@@ -124,12 +165,20 @@ export function IconButton({
     ...style,
   };
 
+  const composedClassName = [
+    "office-editor-icon-button",
+    `office-editor-icon-button--${variant}`,
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={className}
+      className={composedClassName}
       style={combinedStyle}
       aria-label={ariaLabel ?? label}
       title={title ?? ariaLabel ?? label}

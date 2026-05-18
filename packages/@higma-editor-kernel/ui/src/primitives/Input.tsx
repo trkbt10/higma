@@ -91,6 +91,25 @@ function injectStyles() {
     .office-editor-input {
       -moz-appearance: textfield;
     }
+    .office-editor-input__prefix-drag {
+      transition: color 100ms ease, background-color 100ms ease, box-shadow 100ms ease;
+    }
+    /*
+      Drag-scrubber affordance: the prefix label is already at
+      text.primary (AAA) so a color shift on hover would be invisible.
+      Instead the hover state adds a selection.primary underline +
+      bg.hover background so the operator gets two new visual cues
+      that the prefix is interactive. The ew-resize cursor is set
+      inline.
+    */
+    .office-editor-input__prefix-drag:hover {
+      background-color: var(--bg-hover, #e8eaed);
+      box-shadow: inset 0 -2px 0 0 var(--selection-primary, #0066ff);
+    }
+    .office-editor-input__container:focus-within {
+      outline: 2px solid var(--selection-primary, #0066ff);
+      outline-offset: 2px;
+    }
   `;
   document.head.appendChild(style);
   stylesInjected.current = true;
@@ -149,11 +168,22 @@ const inputInnerStyle = (
   textAlign: numeric ? "right" : undefined,
 });
 
+/**
+ * Prefix / suffix labels (X / Y / W / H / R / px / %, etc.) are
+ * functional — the operator must read them to know which field is
+ * which. They were previously rendered with `text.tertiary` (#9aa0a6)
+ * which gave only 2.34:1 contrast against the Input's tertiary
+ * background (#f0f1f3) — well below WCAG AA, and indistinguishable
+ * at a glance from the digit area. text.primary brings these labels
+ * to 15.4:1 (AAA). The medium font-weight is preserved so the labels
+ * remain visually subordinate to the digits typographically rather
+ * than chromatically.
+ */
 const slotTextBaseStyle: CSSProperties = {
   flexShrink: 0,
   fontSize: fontTokens.size.sm,
   fontWeight: fontTokens.weight.medium,
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   userSelect: "none",
   pointerEvents: "none",
 };
@@ -176,7 +206,23 @@ const prefixDragStyle: CSSProperties = {
   paddingRight: "2px",
   fontSize: fontTokens.size.sm,
   fontWeight: fontTokens.weight.medium,
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
+  userSelect: "none",
+  cursor: "ew-resize",
+  touchAction: "none",
+};
+
+// Suffix-as-drag-handle style (used when the Input has no prefix but
+// still wants the drag-scrubber affordance, e.g. the Opacity section
+// where the section title carries the role label and the `%` suffix
+// becomes the only chrome).
+const suffixDragStyle: CSSProperties = {
+  flexShrink: 0,
+  paddingLeft: "2px",
+  paddingRight: "6px",
+  fontSize: fontTokens.size.sm,
+  fontWeight: fontTokens.weight.medium,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   userSelect: "none",
   cursor: "ew-resize",
   touchAction: "none",
@@ -275,8 +321,17 @@ export function Input({
   const hasSuffix = suffix !== undefined && suffix !== null && suffix !== false;
   const suffixIsText = typeof suffix === "string" || typeof suffix === "number";
 
-  const dragEnabled =
+  // Drag-to-change can attach to either the prefix or the suffix
+  // label, whichever is present and is text. When BOTH are text the
+  // prefix wins (operator's eye scans left-to-right; the prefix is
+  // the canonical drag handle in Figma's inspector). When neither is
+  // text the feature is silently disabled — the call site is expected
+  // to supply at least one chrome label when it asks for drag.
+  const dragOnPrefix =
     dragToChange === true && type === "number" && prefixIsText && !disabled && !readOnly;
+  const dragOnSuffix =
+    dragToChange === true && type === "number" && !prefixIsText && suffixIsText && !disabled && !readOnly;
+  const dragEnabled = dragOnPrefix || dragOnSuffix;
 
   const dragStateRef = useRef<{
     pointerId: number;
@@ -340,16 +395,18 @@ export function Input({
   return (
     <div
       style={{ ...containerStyle(width), ...style }}
-      className={className}
+      className={["office-editor-input__container", className].filter(Boolean).join(" ")}
     >
       {hasPrefix && prefixIsText && (
         <span
-          style={dragEnabled ? prefixDragStyle : prefixTextStyle}
+          className={dragOnPrefix ? "office-editor-input__prefix-drag" : undefined}
+          style={dragOnPrefix ? prefixDragStyle : prefixTextStyle}
           aria-hidden="true"
-          onPointerDown={dragEnabled ? handlePrefixPointerDown : undefined}
-          onPointerMove={dragEnabled ? handlePrefixPointerMove : undefined}
-          onPointerUp={dragEnabled ? handlePrefixPointerEnd : undefined}
-          onPointerCancel={dragEnabled ? handlePrefixPointerEnd : undefined}
+          title={dragOnPrefix ? "Drag horizontally to change" : undefined}
+          onPointerDown={dragOnPrefix ? handlePrefixPointerDown : undefined}
+          onPointerMove={dragOnPrefix ? handlePrefixPointerMove : undefined}
+          onPointerUp={dragOnPrefix ? handlePrefixPointerEnd : undefined}
+          onPointerCancel={dragOnPrefix ? handlePrefixPointerEnd : undefined}
         >
           {prefix}
         </span>
@@ -376,7 +433,20 @@ export function Input({
         style={inputInnerStyle(hasPrefix, hasSuffix, type === "number")}
         className="office-editor-input"
       />
-      {hasSuffix && suffixIsText && <span style={suffixTextStyle}>{suffix}</span>}
+      {hasSuffix && suffixIsText && (
+        <span
+          className={dragOnSuffix ? "office-editor-input__prefix-drag" : undefined}
+          style={dragOnSuffix ? suffixDragStyle : suffixTextStyle}
+          aria-hidden="true"
+          title={dragOnSuffix ? "Drag horizontally to change" : undefined}
+          onPointerDown={dragOnSuffix ? handlePrefixPointerDown : undefined}
+          onPointerMove={dragOnSuffix ? handlePrefixPointerMove : undefined}
+          onPointerUp={dragOnSuffix ? handlePrefixPointerEnd : undefined}
+          onPointerCancel={dragOnSuffix ? handlePrefixPointerEnd : undefined}
+        >
+          {suffix}
+        </span>
+      )}
       {hasSuffix && !suffixIsText && <span style={suffixSlotStyle}>{suffix}</span>}
     </div>
   );

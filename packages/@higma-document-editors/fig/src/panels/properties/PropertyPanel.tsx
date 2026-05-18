@@ -80,11 +80,15 @@ const nodeIdentityNameStyle: CSSProperties = {
   lineHeight: 1.2,
 };
 
+// Node-type subtitle ("RECTANGLE", "2 selected · FRAME"). Functional
+// — operator reads it to confirm what they're editing. text.primary
+// (17.4:1 AAA) replaces text.tertiary (2.64:1).
 const nodeIdentityMetaStyle: CSSProperties = {
   display: "flex",
   gap: spacingTokens.sm,
   fontSize: fontTokens.size.xs,
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
+  fontWeight: fontTokens.weight.medium,
 };
 
 const nodeIdentityHiddenBadgeStyle: CSSProperties = {

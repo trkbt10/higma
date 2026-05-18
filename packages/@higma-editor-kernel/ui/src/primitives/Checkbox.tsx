@@ -6,6 +6,36 @@ import { useCallback, useEffect, useRef, type CSSProperties } from "react";
 import { CheckIcon } from "../icons";
 import { colorTokens, radiusTokens } from "../design-tokens";
 
+/**
+ * The Checkbox uses the invisible-overlay pattern (a native checkbox
+ * input sits on top of the visual surface at opacity:0). The native
+ * input correctly receives keyboard focus, but the browser's default
+ * focus ring renders against an invisible element, so it's not visible
+ * to the user. We project the focus ring onto the sibling visual box
+ * using `:has(input:focus-visible)` on the container.
+ *
+ * Hover state likewise needs CSS pseudo-classes — inline `style` can't
+ * express them — so the primitive ships its own stylesheet.
+ */
+const styleFlag = { injected: false };
+function injectStyles(): void {
+  if (styleFlag.injected || typeof document === "undefined") {
+    return;
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    .office-editor-checkbox:has(input:focus-visible) .office-editor-checkbox__box {
+      outline: 2px solid var(--selection-primary, #0066ff);
+      outline-offset: 2px;
+    }
+    .office-editor-checkbox:not(:has(input:disabled)):hover .office-editor-checkbox__box {
+      box-shadow: 0 0 0 2px var(--bg-hover, #e8eaed);
+    }
+  `;
+  document.head.appendChild(style);
+  styleFlag.injected = true;
+}
+
 export type CheckboxProps = {
   /** Toggle state. `"mixed"` renders the indeterminate variant for select-all rows. */
   readonly checked: boolean | "mixed";
@@ -88,6 +118,11 @@ export function Checkbox({
   style,
 }: CheckboxProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const initialized = useRef(false);
+  if (!initialized.current) {
+    injectStyles();
+    initialized.current = true;
+  }
 
   useEffect(() => {
     if (inputRef.current) {
@@ -106,9 +141,18 @@ export function Checkbox({
     onChange(!checked);
   }, [checked, disabled, onChange]);
 
+  const composedClassName = ["office-editor-checkbox", className].filter(Boolean).join(" ");
+
   return (
-    <span style={{ ...containerStyle, ...style, cursor: disabled ? "not-allowed" : "pointer" }} className={className}>
-      <span style={boxStyle(checked, disabled ?? false)} aria-hidden="true">
+    <span
+      style={{ ...containerStyle, ...style, cursor: disabled ? "not-allowed" : "pointer" }}
+      className={composedClassName}
+    >
+      <span
+        style={boxStyle(checked, disabled ?? false)}
+        className="office-editor-checkbox__box"
+        aria-hidden="true"
+      >
         {checked === "mixed" && <span style={indeterminateBarStyle} />}
         {checked === true && <CheckIcon size={12} strokeWidth={2.5} />}
       </span>

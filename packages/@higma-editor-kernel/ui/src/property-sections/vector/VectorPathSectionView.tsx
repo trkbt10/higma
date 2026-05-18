@@ -69,6 +69,26 @@ const headerStyle: CSSProperties = {
   gap: 6,
 };
 
+/**
+ * Sub-section heading inside a single Path.
+ *
+ * VectorPath shows two editing modes stacked: the raw SVG `d` string
+ * (textarea) and the structured command list. Without explicit
+ * headings the operator has no signal for "which one should I edit?"
+ * — both surfaces accept input and reflect the same underlying path.
+ * These headings name each surface so the operator can pick the right
+ * tool for the job: paste from clipboard → raw string; hand-tune
+ * coordinate-by-coordinate → command list.
+ */
+const subHeadingStyle: CSSProperties = {
+  fontSize: fontTokens.size.xs,
+  fontWeight: fontTokens.weight.semibold,
+  color: colorTokens.text.primary,
+  textTransform: "uppercase",
+  letterSpacing: "0.4px",
+  paddingTop: 4,
+};
+
 const textareaStyle: CSSProperties = {
   width: "100%",
   minHeight: 64,
@@ -92,7 +112,7 @@ const buttonStyle: CSSProperties = {
   background: "none",
   borderRadius: 4,
   padding: "4px 8px",
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   cursor: "pointer",
   fontSize: fontTokens.size.sm,
 };
@@ -113,7 +133,7 @@ const commandFieldsStyle: CSSProperties = {
 const removeButtonStyle: CSSProperties = {
   border: "none",
   background: "none",
-  color: colorTokens.text.tertiary,
+  color: colorTokens.text.primary,
   cursor: "pointer",
   lineHeight: 0,
   padding: 2,
@@ -146,6 +166,9 @@ export function VectorPathSectionView({
               <CloseIcon size={12} />
             </button>
           </div>
+          <span style={subHeadingStyle} title="SVG path d-string. Paste a full path here or edit it as a single text.">
+            Path data
+          </span>
           <textarea
             aria-label={`Path ${index + 1} data`}
             value={path.raw}
@@ -154,6 +177,9 @@ export function VectorPathSectionView({
           />
           {path.commands && (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <span style={subHeadingStyle} title="Per-command editor: change command type (Move/Line/Curve/Close) and tune each coordinate. Same path as above, expressed as a command list.">
+                Commands
+              </span>
               {path.commands.map((command, commandIndex) => (
                 <div key={commandIndex} style={commandRowStyle}>
                   <Select

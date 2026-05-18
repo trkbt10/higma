@@ -37,16 +37,22 @@ export const swatchStyle: CSSProperties = {
 export const hexStyle: CSSProperties = {
   fontSize: fontTokens.size.sm,
   fontFamily: "monospace",
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   minWidth: 60,
 };
 
+/**
+ * × remove buttons. The icon's `currentColor` inherits this style's
+ * `color`, so the icon's contrast against the panel background matters.
+ * text.primary (17.4:1 AAA) replaces text.tertiary (2.64:1) so the
+ * "remove" affordance is reliably visible against any panel surface.
+ */
 export const removeButtonStyle: CSSProperties = {
   background: "none",
   border: "none",
   cursor: "pointer",
   padding: 2,
-  color: colorTokens.text.tertiary,
+  color: colorTokens.text.primary,
   lineHeight: 0,
   flexShrink: 0,
 };
@@ -60,7 +66,7 @@ export const addButtonStyle: CSSProperties = {
   borderRadius: 4,
   cursor: "pointer",
   padding: "4px 8px",
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   fontSize: fontTokens.size.sm,
   width: "100%",
   justifyContent: "center",

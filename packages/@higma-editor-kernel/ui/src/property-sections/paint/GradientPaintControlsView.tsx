@@ -25,9 +25,10 @@ type GradientPaintControlsViewProps = {
 /**
  * Stop row uses two equal-width number cells (Position / Opacity) so that
  * the digits remain legible at typical inspector widths (~240 px panel →
- * ~95 px per cell after swatch / remove / gaps). The cells are role-labelled
- * by the prefix inside the input chrome ("P" / "O"); see the Figma fill
- * inspector for the same pattern.
+ * ~95 px per cell after swatch / remove / gaps). The columns are labelled
+ * once by the header row above the list — putting single-letter prefixes
+ * ("P" / "O") inside each input was opaque to first-time operators and
+ * stole pixels from the digits.
  */
 const stopRowStyle: CSSProperties = {
   display: "grid",
@@ -35,6 +36,27 @@ const stopRowStyle: CSSProperties = {
   alignItems: "center",
   gap: 6,
   width: "100%",
+};
+
+const stopHeaderRowStyle: CSSProperties = {
+  ...stopRowStyle,
+  marginBottom: 2,
+};
+
+/**
+ * Column headers for the gradient stop list. These are FUNCTIONAL —
+ * they tell the operator which numeric column is Position vs Opacity.
+ * Rendered in text.primary for AAA contrast (17.4:1 on the panel
+ * background) rather than text.tertiary (2.64:1, would-be hint colour
+ * that fails AAA and AA alike for functional labels).
+ */
+const stopHeaderLabelStyle: CSSProperties = {
+  fontSize: fontTokens.size.xs,
+  color: colorTokens.text.primary,
+  textTransform: "uppercase",
+  letterSpacing: fontTokens.letterSpacing.uppercase,
+  fontWeight: fontTokens.weight.semibold,
+  paddingLeft: 4,
 };
 
 /**
@@ -55,7 +77,7 @@ const handleRowStyle: CSSProperties = {
 
 const handleLabelStyle: CSSProperties = {
   fontSize: fontTokens.size.sm,
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   fontWeight: fontTokens.weight.medium,
   whiteSpace: "nowrap",
 };
@@ -93,6 +115,12 @@ export function GradientPaintControlsView({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={stopHeaderRowStyle} aria-hidden="true">
+        <span />
+        <span style={stopHeaderLabelStyle}>Position</span>
+        <span style={stopHeaderLabelStyle}>Opacity</span>
+        <span />
+      </div>
       {stops.map((stop, stopIndex) => (
         <div key={stopIndex} style={stopRowStyle}>
           <input
@@ -109,7 +137,6 @@ export function GradientPaintControlsView({
             min={0}
             max={100}
             step={1}
-            prefix="P"
             suffix="%"
             dragToChange
             onChange={(value) => onStopChange(stopIndex, {
@@ -124,7 +151,6 @@ export function GradientPaintControlsView({
             min={0}
             max={100}
             step={1}
-            prefix="O"
             suffix="%"
             dragToChange
             onChange={(value) => onStopChange(stopIndex, {

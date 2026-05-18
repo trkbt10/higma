@@ -4,7 +4,7 @@
  * A minimal toggle/switch component.
  */
 
-import { useCallback, type CSSProperties } from "react";
+import { useCallback, useRef, type CSSProperties } from "react";
 import { colorTokens, fontTokens } from "../design-tokens";
 
 export type ToggleProps = {
@@ -17,12 +17,59 @@ export type ToggleProps = {
   readonly style?: CSSProperties;
 };
 
+/**
+ * The Toggle used to be a non-focusable `<div role="switch">` — keyboard
+ * users could not toggle it. It is now a real `<button>` with
+ * `role="switch"`, which gets focus + Space + Enter for free from the
+ * browser. The container preserves the layout (label sits next to the
+ * track) by being a flex row inside the button.
+ *
+ * Styling notes:
+ * - `outline: none` is intentional; we render our own focus ring
+ *   (selection.primary, 2px) so it is visible against both white and
+ *   bg.tertiary panel backgrounds at >=4:1 contrast (WCAG 2.4.7 needs
+ *   >=3:1 for focus indicators).
+ * - `:focus-visible` is preferred over `:focus` so mouse clicks do not
+ *   light up the ring; only keyboard focus does.
+ */
 const containerStyle: CSSProperties = {
-  display: "flex",
+  display: "inline-flex",
   alignItems: "center",
   gap: "6px",
   cursor: "pointer",
+  background: "none",
+  border: "none",
+  padding: 0,
+  margin: 0,
+  fontFamily: "inherit",
+  borderRadius: "10px",
+  outline: "none",
 };
+
+// One-time injection of :focus-visible + :hover rules. Inline styles
+// cannot express pseudo-class selectors, so the toggle ships its own
+// stylesheet block once per page lifetime.
+const styleFlag = { injected: false };
+function injectStyles(): void {
+  if (styleFlag.injected || typeof document === "undefined") {
+    return;
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    .office-editor-toggle:focus-visible {
+      outline: 2px solid var(--selection-primary, #0066ff);
+      outline-offset: 2px;
+    }
+    .office-editor-toggle:hover:not(:disabled) .office-editor-toggle__track {
+      box-shadow: 0 0 0 2px var(--bg-hover, #e8eaed);
+    }
+    .office-editor-toggle:disabled {
+      cursor: not-allowed;
+    }
+  `;
+  document.head.appendChild(style);
+  styleFlag.injected = true;
+}
 
 function getTrackBackgroundColor(checked: boolean): string {
   if (checked) {
@@ -57,14 +104,24 @@ const thumbStyle = (checked: boolean): CSSProperties => ({
 
 const labelStyle: CSSProperties = {
   fontSize: fontTokens.size.md,
-  color: `var(--text-secondary, ${colorTokens.text.secondary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   userSelect: "none",
 };
 
 /**
  * Toggle switch input.
+ *
+ * Implemented as a real `<button role="switch">` so the browser
+ * supplies keyboard focus + Space/Enter activation natively. The
+ * previous `<div role="switch">` was a screen-reader-only control —
+ * keyboard users had no way to toggle it.
  */
 export function Toggle({ checked, onChange, label, ariaLabel, disabled, className, style }: ToggleProps) {
+  const initialized = useRef(false);
+  if (!initialized.current) {
+    injectStyles();
+    initialized.current = true;
+  }
   const handleClick = useCallback(() => {
     if (!disabled) {
       onChange(!checked);
@@ -72,18 +129,20 @@ export function Toggle({ checked, onChange, label, ariaLabel, disabled, classNam
   }, [checked, onChange, disabled]);
 
   return (
-    <div
+    <button
+      type="button"
       style={{ ...containerStyle, ...style }}
-      className={className}
+      className={["office-editor-toggle", className].filter(Boolean).join(" ")}
       onClick={handleClick}
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel ?? label}
+      disabled={disabled}
     >
-      <div style={trackStyle(checked, disabled ?? false)}>
-        <div style={thumbStyle(checked)} />
-      </div>
+      <span style={trackStyle(checked, disabled ?? false)} className="office-editor-toggle__track">
+        <span style={thumbStyle(checked)} />
+      </span>
       {label && <span style={labelStyle}>{label}</span>}
-    </div>
+    </button>
   );
 }

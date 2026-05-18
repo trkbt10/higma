@@ -83,14 +83,30 @@ function getNodeIcon(type: FigDesignNode["type"], color: string | undefined): Re
 // Layer badge
 // =============================================================================
 
+/**
+ * Layer-row badge ("Frame" / "Component" / "Set" / "Inherited").
+ *
+ * Visual identity:
+ * - Text: text.primary on white (17.4:1 AAA — operators always read
+ *   the label legibly regardless of the type colour).
+ * - Type colour: 2px LEFT-rail (inset border) instead of a 1px ring
+ *   around the whole badge. The rail is structurally more visible at
+ *   a glance — operators previously scanned the layer list by the
+ *   row's badge tint, and a 1px border was too quiet to preserve that
+ *   scanning affordance.
+ * - White background keeps each badge clearly delimited from the
+ *   layer row's hover/selected background tints.
+ */
 const layerBadgeBaseStyle: CSSProperties = {
   display: "inline-block",
   fontSize: "9px",
   lineHeight: "14px",
-  padding: "0 4px",
+  padding: "0 4px 0 6px",
   borderRadius: "3px",
   fontWeight: 600,
   letterSpacing: "0.02em",
+  color: "#1a1a1a",
+  backgroundColor: "#ffffff",
 };
 
 function LayerBadge({ label, color }: LayerNodeBadge) {
@@ -98,8 +114,7 @@ function LayerBadge({ label, color }: LayerNodeBadge) {
     <span
       style={{
         ...layerBadgeBaseStyle,
-        backgroundColor: `${color}1f`,
-        color,
+        boxShadow: `inset 3px 0 0 0 ${color}, inset 0 0 0 1px ${color}33`,
       }}
     >
       {label}

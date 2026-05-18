@@ -4,7 +4,7 @@
  * A minimal button component with variant and size support.
  */
 
-import { type ReactNode, type CSSProperties, type MouseEvent } from "react";
+import { useRef, type ReactNode, type CSSProperties, type MouseEvent } from "react";
 import type { ButtonVariant } from "../types";
 import { colorTokens, radiusTokens, fontTokens } from "../design-tokens";
 
@@ -22,6 +22,49 @@ export type ButtonProps = {
   readonly title?: string;
 };
 
+/**
+ * Inline `style` cannot express `:hover` / `:focus-visible` /
+ * `:active` pseudo-classes, so the Button ships its own scoped
+ * stylesheet on first mount. Variant-specific hover backgrounds are
+ * derived from the base background (subtle darken for filled variants,
+ * tint-on-transparent for ghost / outline).
+ *
+ * Focus indicator: 2px `selection.primary` outline at `:focus-visible`,
+ * which gives 4.84:1 against white and 4.26:1 against bg.tertiary —
+ * above the WCAG 2.4.7 minimum of 3:1.
+ */
+const styleFlag = { injected: false };
+function injectStyles(): void {
+  if (styleFlag.injected || typeof document === "undefined") {
+    return;
+  }
+  const style = document.createElement("style");
+  style.textContent = `
+    .office-editor-button {
+      position: relative;
+    }
+    .office-editor-button:focus-visible {
+      outline: 2px solid var(--selection-primary, #0066ff);
+      outline-offset: 2px;
+    }
+    .office-editor-button:not(:disabled):hover.office-editor-button--primary {
+      filter: brightness(0.92);
+    }
+    .office-editor-button:not(:disabled):hover.office-editor-button--secondary {
+      background-color: var(--bg-hover, #e8eaed) !important;
+    }
+    .office-editor-button:not(:disabled):hover.office-editor-button--ghost,
+    .office-editor-button:not(:disabled):hover.office-editor-button--outline {
+      background-color: var(--bg-hover, #e8eaed) !important;
+    }
+    .office-editor-button:not(:disabled):active {
+      transform: translateY(1px);
+    }
+  `;
+  document.head.appendChild(style);
+  styleFlag.injected = true;
+}
+
 const baseStyle: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -32,7 +75,7 @@ const baseStyle: CSSProperties = {
   borderRadius: `var(--radius-sm, ${radiusTokens.sm})`,
   border: "none",
   cursor: "pointer",
-  transition: "all 150ms ease",
+  transition: "background-color 150ms ease, filter 150ms ease, transform 80ms ease",
   outline: "none",
 };
 
@@ -91,6 +134,12 @@ export function Button({
   type = "button",
   title,
 }: ButtonProps) {
+  const initialized = useRef(false);
+  if (!initialized.current) {
+    injectStyles();
+    initialized.current = true;
+  }
+
   const combinedStyle: CSSProperties = {
     ...baseStyle,
     ...sizeStyles[size],
@@ -99,12 +148,20 @@ export function Button({
     ...style,
   };
 
+  const composedClassName = [
+    "office-editor-button",
+    `office-editor-button--${variant}`,
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
-      className={className}
+      className={composedClassName}
       style={combinedStyle}
       title={title}
     >

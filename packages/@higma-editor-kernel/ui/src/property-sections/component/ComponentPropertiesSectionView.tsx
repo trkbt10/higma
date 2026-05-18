@@ -36,37 +36,74 @@ export type ComponentPropertiesSectionViewProps = {
   readonly onValueChange: (propertyId: string, value: ComponentPropertyValueView) => void;
 };
 
+/**
+ * Property rows are stacked (name above value) so long property names
+ * (e.g. "Background variant", "Show secondary action label") can never
+ * push their input off the row. The previous layout used a single flex
+ * row with `flexShrink: 0` on the name, which silently squeezed Selects
+ * and Inputs to a few pixels of width when the panel was narrow or the
+ * name long. The new layout always gives the input the full panel width,
+ * matching the pattern used by every other Number-with-Suffix section.
+ */
 const styles = {
   row: {
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
+    flexDirection: "column" as const,
+    gap: spacingTokens["2xs"],
     padding: `${spacingTokens.xs} 0`,
     borderBottom: `1px solid ${colorTokens.border.subtle}`,
-    gap: spacingTokens.sm,
+  } as const,
+  nameRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: spacingTokens.xs,
+    minWidth: 0,
   } as const,
   name: {
     fontSize: fontTokens.size.sm,
-    color: colorTokens.text.secondary,
-    flexShrink: 0,
-  } as const,
-  value: {
-    fontSize: fontTokens.size.sm,
     color: colorTokens.text.primary,
-    textAlign: "right" as const,
-    wordBreak: "break-word" as const,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    minWidth: 0,
+    flex: 1,
+  } as const,
+  valueRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: spacingTokens.xs,
     minWidth: 0,
   } as const,
   overridden: {
     fontWeight: fontTokens.weight.semibold,
   } as const,
+  // Type chip ("TEXT" / "BOOL" / "NUMBER"). text.primary on bg.tertiary
+  // = 15.4:1 (AAA). Previously text.tertiary at 2.34:1 (below AA).
   badge: {
     fontSize: fontTokens.size.xs,
-    color: colorTokens.text.tertiary,
+    color: colorTokens.text.primary,
     backgroundColor: colorTokens.background.tertiary,
     borderRadius: "3px",
     padding: `0 ${spacingTokens.xs}`,
-    marginLeft: spacingTokens.xs,
+    flexShrink: 0,
+    fontWeight: fontTokens.weight.medium,
+  } as const,
+  // Override chip is a STRUCTURAL signal ("this prop is overridden").
+  // The previous design layered text.tertiary on accent.secondary
+  // (1.39:1 — essentially invisible). The new outline style keeps
+  // accent.secondary as the identity colour (border + dark text) while
+  // achieving 17.4:1 (AAA) against the panel background.
+  overrideBadge: {
+    fontSize: fontTokens.size.xs,
+    color: colorTokens.text.primary,
+    backgroundColor: "transparent",
+    border: `1px solid ${colorTokens.accent.secondary}`,
+    borderRadius: "3px",
+    padding: `0 ${spacingTokens.xs}`,
+    flexShrink: 0,
+    fontWeight: fontTokens.weight.semibold,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.04em",
   } as const,
   empty: {
     fontSize: fontTokens.size.sm,
@@ -74,10 +111,19 @@ const styles = {
     fontStyle: "italic" as const,
     padding: `${spacingTokens.sm} 0`,
   } as const,
+  // "Component: Header/Primary" — names which component this instance
+  // resolves to. Operationally important. text.primary (17.4:1 AAA);
+  // hierarchy below it is established by size (xs vs sm) and weight
+  // (medium vs normal) rather than colour gradation.
   symbolName: {
     fontSize: fontTokens.size.xs,
-    color: colorTokens.text.tertiary,
+    color: colorTokens.text.primary,
     marginBottom: spacingTokens.sm,
+    fontWeight: fontTokens.weight.medium,
+  } as const,
+  valueWrap: {
+    flex: 1,
+    minWidth: 0,
   } as const,
 } as const;
 
@@ -85,11 +131,7 @@ function renderOverrideBadge(isOverridden: boolean) {
   if (!isOverridden) {
     return null;
   }
-  return (
-    <span style={{ ...styles.badge, backgroundColor: colorTokens.accent.secondary }}>
-      override
-    </span>
-  );
+  return <span style={styles.overrideBadge}>override</span>;
 }
 
 function controlLabel(prop: ResolvedComponentPropertyView): string {
@@ -129,76 +171,71 @@ export function ComponentPropertiesSectionView({
         const overrideStyle = prop.isOverridden ? styles.overridden : {};
         return (
           <div key={prop.id} style={styles.row}>
-            <span style={styles.name}>
-              {prop.name}
+            <div style={styles.nameRow}>
+              <span style={styles.name} title={prop.name}>{prop.name}</span>
               <span style={styles.badge}>{prop.type}</span>
-            </span>
-            {prop.type === "BOOL" && prop.value.kind === "bool" && (
-              <span style={styles.value}>
+              {badge}
+            </div>
+            <div style={{ ...styles.valueRow, ...overrideStyle }}>
+              {prop.type === "BOOL" && prop.value.kind === "bool" && (
                 <input
                   type="checkbox"
                   aria-label={controlLabel(prop)}
                   checked={prop.value.value}
                   onChange={(e) => onValueChange(prop.id, { kind: "bool", value: e.currentTarget.checked })}
                 />
-                {badge}
-              </span>
-            )}
-            {prop.type === "TEXT" && prop.value.kind === "text" && (
-              <span style={{ ...styles.value, ...overrideStyle }}>
-                <Input
-                  type="text"
-                  ariaLabel={controlLabel(prop)}
-                  value={prop.value.value}
-                  onChange={(v) => onValueChange(prop.id, { kind: "text", value: String(v) })}
-                />
-                {badge}
-              </span>
-            )}
-            {prop.type === "NUMBER" && prop.value.kind === "number" && (
-              <span style={{ ...styles.value, ...overrideStyle }}>
-                <Input
-                  type="number"
-                  ariaLabel={controlLabel(prop)}
-                  value={prop.value.value}
-                  onChange={(v) => onValueChange(prop.id, { kind: "number", value: v as number })}
-                />
-                {badge}
-              </span>
-            )}
-            {prop.type === "INSTANCE_SWAP" && prop.value.kind === "reference" && (
-              <span style={{ ...styles.value, ...overrideStyle }}>
-                <Select
-                  value={prop.value.value}
-                  onChange={(v) => onValueChange(prop.id, { kind: "reference", value: v })}
-                  options={instanceSwapOptions}
-                  ariaLabel={controlLabel(prop)}
-                />
-                {badge}
-              </span>
-            )}
-            {prop.type === "VARIANT" && prop.value.kind === "reference" && (
-              <span style={{ ...styles.value, ...overrideStyle }}>
-                <Select
-                  value={prop.value.value}
-                  onChange={(v) => onValueChange(prop.id, { kind: "reference", value: v })}
-                  options={referenceOptions}
-                  ariaLabel={controlLabel(prop)}
-                />
-                {badge}
-              </span>
-            )}
-            {(prop.type === "COLOR" || prop.type === "IMAGE" || prop.type === "SLOT") && prop.value.kind === "reference" && (
-              <span style={{ ...styles.value, ...overrideStyle }}>
-                <Input
-                  type="text"
-                  ariaLabel={controlLabel(prop)}
-                  value={prop.value.value}
-                  onChange={(v) => onValueChange(prop.id, { kind: "reference", value: String(v) })}
-                />
-                {badge}
-              </span>
-            )}
+              )}
+              {prop.type === "TEXT" && prop.value.kind === "text" && (
+                <div style={styles.valueWrap}>
+                  <Input
+                    type="text"
+                    ariaLabel={controlLabel(prop)}
+                    value={prop.value.value}
+                    onChange={(v) => onValueChange(prop.id, { kind: "text", value: String(v) })}
+                  />
+                </div>
+              )}
+              {prop.type === "NUMBER" && prop.value.kind === "number" && (
+                <div style={styles.valueWrap}>
+                  <Input
+                    type="number"
+                    ariaLabel={controlLabel(prop)}
+                    value={prop.value.value}
+                    onChange={(v) => onValueChange(prop.id, { kind: "number", value: v as number })}
+                  />
+                </div>
+              )}
+              {prop.type === "INSTANCE_SWAP" && prop.value.kind === "reference" && (
+                <div style={styles.valueWrap}>
+                  <Select
+                    value={prop.value.value}
+                    onChange={(v) => onValueChange(prop.id, { kind: "reference", value: v })}
+                    options={instanceSwapOptions}
+                    ariaLabel={controlLabel(prop)}
+                  />
+                </div>
+              )}
+              {prop.type === "VARIANT" && prop.value.kind === "reference" && (
+                <div style={styles.valueWrap}>
+                  <Select
+                    value={prop.value.value}
+                    onChange={(v) => onValueChange(prop.id, { kind: "reference", value: v })}
+                    options={referenceOptions}
+                    ariaLabel={controlLabel(prop)}
+                  />
+                </div>
+              )}
+              {(prop.type === "COLOR" || prop.type === "IMAGE" || prop.type === "SLOT") && prop.value.kind === "reference" && (
+                <div style={styles.valueWrap}>
+                  <Input
+                    type="text"
+                    ariaLabel={controlLabel(prop)}
+                    value={prop.value.value}
+                    onChange={(v) => onValueChange(prop.id, { kind: "reference", value: String(v) })}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         );
       })}

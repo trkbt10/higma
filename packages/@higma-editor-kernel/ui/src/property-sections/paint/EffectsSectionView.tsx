@@ -106,20 +106,25 @@ const effectHeaderStyle: CSSProperties = {
 };
 
 /**
- * Two-column control grid for shadow detail rows.
+ * Three-column control grid for shadow detail rows.
  *
- * Each cell is ~115 px at default panel widths — enough for prefix +
- * 3-digit number + unit suffix. The previous 3-column grid collapsed
- * cells to ~75 px and clipped digits; the previous full-width color
- * picker (~28 px tall solid black bar) dominated the card and pushed
- * everything else out of the operator's line of sight, so the colour
- * lives in a compact swatch+hex pair sized like the gradient-stop
- * swatches in FillSection.
+ * Column 1 is a written row label ("Opacity", "Offset", "Blur",
+ * "Spread") so the role of each numeric field is discoverable without
+ * already knowing the single-letter prefix convention. Columns 2 and 3
+ * hold the inputs themselves: X/Y for offset (universal coordinate
+ * axes, scoped under "Offset"), a single span-2 input for the others.
+ *
+ * The previous layout used a 2-col grid where each cell carried only a
+ * single-letter prefix ("O" / "R" / "S") — first-time operators had to
+ * guess whether "O" meant Offset / Opacity / Orange. The new layout
+ * gives the same horizontal information density (3 grid lanes) but
+ * makes the field role read directly off the panel.
  */
 const effectControlsStyle: CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: 6,
+  gridTemplateColumns: "minmax(56px, max-content) minmax(0, 1fr) minmax(0, 1fr)",
+  rowGap: 6,
+  columnGap: 6,
   alignItems: "center",
 };
 
@@ -127,7 +132,19 @@ const fullWidthCellStyle: CSSProperties = {
   gridColumn: "1 / -1",
 };
 
-const colorCellStyle: CSSProperties = {
+const spanInputsCellStyle: CSSProperties = {
+  gridColumn: "2 / -1",
+};
+
+const rowLabelStyle: CSSProperties = {
+  fontSize: fontTokens.size.sm,
+  color: colorTokens.text.primary,
+  fontWeight: fontTokens.weight.medium,
+  whiteSpace: "nowrap",
+};
+
+const colorRowStyle: CSSProperties = {
+  gridColumn: "1 / -1",
   display: "flex",
   alignItems: "center",
   gap: 6,
@@ -147,7 +164,7 @@ const colorSwatchStyle: CSSProperties = {
 const colorHexLabelStyle: CSSProperties = {
   fontFamily: "monospace",
   fontSize: fontTokens.size.sm,
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   letterSpacing: "0.02em",
   minWidth: 0,
   overflow: "hidden",
@@ -184,7 +201,7 @@ function renderShadowDetails({ effect, index, label, onChange }: EffectDetailRen
   const i = index;
   return (
     <div style={effectControlsStyle}>
-      <div style={colorCellStyle}>
+      <div style={colorRowStyle}>
         <input
           type="color"
           value={effect.hex}
@@ -194,17 +211,20 @@ function renderShadowDetails({ effect, index, label, onChange }: EffectDetailRen
         />
         <span style={colorHexLabelStyle}>{effect.hex.toUpperCase()}</span>
       </div>
-      <Input
-        type="number"
-        ariaLabel={`${label} opacity`}
-        value={Math.round(effect.opacity * 100)}
-        min={0}
-        max={100}
-        onChange={(v) => onChange(i, { ...effect, opacity: (v as number) / 100 })}
-        prefix="O"
-        suffix="%"
-        dragToChange
-      />
+      <span style={rowLabelStyle}>Opacity</span>
+      <div style={spanInputsCellStyle}>
+        <Input
+          type="number"
+          ariaLabel={`${label} opacity`}
+          value={Math.round(effect.opacity * 100)}
+          min={0}
+          max={100}
+          onChange={(v) => onChange(i, { ...effect, opacity: (v as number) / 100 })}
+          suffix="%"
+          dragToChange
+        />
+      </div>
+      <span style={rowLabelStyle}>Offset</span>
       <Input
         type="number"
         ariaLabel={`${label} offset x`}
@@ -223,24 +243,28 @@ function renderShadowDetails({ effect, index, label, onChange }: EffectDetailRen
         suffix="px"
         dragToChange
       />
-      <Input
-        type="number"
-        ariaLabel={`${label} radius`}
-        value={effect.radius}
-        onChange={(v) => onChange(i, { ...effect, radius: v as number })}
-        prefix="R"
-        suffix="px"
-        dragToChange
-      />
-      <Input
-        type="number"
-        ariaLabel={`${label} spread`}
-        value={effect.spread}
-        onChange={(v) => onChange(i, { ...effect, spread: v as number })}
-        prefix="S"
-        suffix="px"
-        dragToChange
-      />
+      <span style={rowLabelStyle}>Blur</span>
+      <div style={spanInputsCellStyle}>
+        <Input
+          type="number"
+          ariaLabel={`${label} radius`}
+          value={effect.radius}
+          onChange={(v) => onChange(i, { ...effect, radius: v as number })}
+          suffix="px"
+          dragToChange
+        />
+      </div>
+      <span style={rowLabelStyle}>Spread</span>
+      <div style={spanInputsCellStyle}>
+        <Input
+          type="number"
+          ariaLabel={`${label} spread`}
+          value={effect.spread}
+          onChange={(v) => onChange(i, { ...effect, spread: v as number })}
+          suffix="px"
+          dragToChange
+        />
+      </div>
       <div style={fullWidthCellStyle}>
         <Select<BlendModeId>
           value={effect.blendMode}
@@ -282,17 +306,23 @@ function renderEffectDetails(args: EffectDetailRenderArgs, isShadow: boolean) {
   return renderBlurDetails(args);
 }
 
+function effectItemStyleFor(visible: boolean, isLast: boolean): CSSProperties {
+  const base = isLast ? effectItemLastStyle : effectItemStyle;
+  return { ...base, opacity: visible ? 1 : 0.4 };
+}
+
 /** Renders the effect list (drop/inner shadow, layer/background blur) with shadow detail controls. */
 export function EffectsSectionView({ effects, onAdd, onRemove, onChange }: EffectsSectionViewProps) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {effects.length === 0 && <div style={emptyStyle}>No effects</div>}
       {effects.map((effect, i) => {
         const isShadow = effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW";
         const label = effectLabel(effect.type);
+        const isLast = i === effects.length - 1;
 
         return (
-          <div key={i} style={{ ...effectItemStyle, opacity: effect.visible ? 1 : 0.4 }}>
+          <div key={i} style={effectItemStyleFor(effect.visible, isLast)}>
             <div style={effectHeaderStyle}>
               <Toggle
                 checked={effect.visible}
