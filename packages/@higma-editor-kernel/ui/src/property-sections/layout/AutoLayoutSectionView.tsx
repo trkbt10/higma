@@ -92,6 +92,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout gap"
               value={gap}
+              min={0}
               prefix="Gap"
               suffix="px"
               dragToChange
@@ -101,6 +102,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout counter gap"
               value={counterGap}
+              min={0}
               prefix="Cross"
               suffix="px"
               dragToChange
@@ -112,6 +114,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding top"
               value={padding.top}
+              min={0}
               prefix="Top"
               suffix="px"
               dragToChange
@@ -121,6 +124,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding right"
               value={padding.right}
+              min={0}
               prefix="Right"
               suffix="px"
               dragToChange
@@ -132,6 +136,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding bottom"
               value={padding.bottom}
+              min={0}
               prefix="Bot"
               suffix="px"
               dragToChange
@@ -141,6 +146,7 @@ export function AutoLayoutSectionView({
               type="number"
               ariaLabel="Auto layout padding left"
               value={padding.left}
+              min={0}
               prefix="Left"
               suffix="px"
               dragToChange

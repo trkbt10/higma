@@ -1,0 +1,57 @@
+/*
+ * ToggleButton — pressed state via `aria-pressed`. Both pressed and
+ * unpressed share the same 2px border width (transparent vs accent)
+ * plus `box-sizing: border-box` so the outer dimensions stay fixed
+ * when toggled — no padding-shuffle hack needed.
+ */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--font-size-md, 12px);
+  font-weight: 600;
+  font-family: inherit;
+  border-radius: var(--radius-sm, 4px);
+  border-width: 2px;
+  border-style: solid;
+  border-color: transparent;
+  background-color: var(--bg-tertiary, #f0f1f3);
+  color: var(--text-primary, #1a1a1a);
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+  user-select: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.button[aria-pressed="true"] {
+  background-color: rgba(59, 130, 246, 0.16);
+  border-color: var(--accent-secondary, #3b82f6);
+}
+
+.button[aria-pressed="mixed"] {
+  background-color: var(--bg-tertiary, #f0f1f3);
+  border-style: dashed;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: 2px;
+}
+
+.button:not(:disabled):not([aria-pressed="true"]):hover {
+  background-color: var(--bg-hover, #e8eaed);
+}
+
+.button[aria-pressed="true"]:not(:disabled):hover {
+  filter: brightness(0.92);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

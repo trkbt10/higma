@@ -1,0 +1,106 @@
+/*
+ * Button primitive — variants and sizes expressed via `data-variant`
+ * and `data-size` attributes (no className branching), pseudo-class
+ * rules in this stylesheet.
+ *
+ * Focus indicator: 2px `selection.primary` outline at `:focus-visible`,
+ * which gives 4.84:1 against white and 4.26:1 against bg.tertiary —
+ * above the WCAG 2.4.7 minimum of 3:1.
+ */
+
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: var(--radius-sm, 4px);
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms ease, filter 150ms ease, transform 80ms ease;
+  outline: none;
+}
+
+/* Size variants */
+.button[data-size="sm"] {
+  padding: 4px 8px;
+  font-size: var(--font-size-xs, 10px);
+}
+.button[data-size="md"] {
+  padding: 6px 12px;
+  font-size: var(--font-size-sm, 11px);
+}
+.button[data-size="lg"] {
+  padding: 8px 16px;
+  font-size: var(--font-size-lg, 13px);
+}
+
+/* Visual variants — primary (filled), secondary (filled), ghost
+ * (transparent), outline (transparent + border).
+ *
+ * ghost / outline use text.primary so the label reaches AAA on any
+ * surface — text.secondary (6.05:1) failed AAA for small labels.
+ */
+.button[data-variant="primary"] {
+  color: var(--text-inverse, #ffffff);
+  background-color: var(--accent-primary, #4472C4);
+}
+.button[data-variant="secondary"] {
+  color: var(--text-primary, #1a1a1a);
+  background-color: var(--bg-tertiary, #f0f1f3);
+  border: 1px solid var(--border-subtle, #e0e2e8);
+}
+.button[data-variant="ghost"] {
+  color: var(--text-primary, #1a1a1a);
+  background-color: transparent;
+}
+.button[data-variant="outline"] {
+  color: var(--text-primary, #1a1a1a);
+  background-color: transparent;
+  border: 1px solid var(--border-strong, #dadce0);
+}
+
+/* Hover behaviours per variant — primary darkens by filter,
+ * everything else gets a bg.hover wash. */
+.button:not(:disabled):hover[data-variant="primary"] {
+  filter: brightness(0.92);
+}
+.button:not(:disabled):hover[data-variant="secondary"],
+.button:not(:disabled):hover[data-variant="ghost"],
+.button:not(:disabled):hover[data-variant="outline"] {
+  background-color: var(--bg-hover, #e8eaed);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: 2px;
+}
+
+.button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Loading spinner glyph (the consumer renders the span itself; this
+ * class hosts the keyframe + the circular geometry). */
+@keyframes higuma-button-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: higuma-button-spin 0.7s linear infinite;
+  opacity: 0.8;
+}

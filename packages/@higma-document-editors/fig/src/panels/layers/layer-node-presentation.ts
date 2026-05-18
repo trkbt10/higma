@@ -10,9 +10,19 @@
  * lives in this module's caller — it cannot be inferred from
  * `node.type` alone. Callers pass `kind: "variant-set"` when the
  * surrounding tree-walk classifier identifies a Variant Set FRAME.
+ *
+ * No per-row background tint is returned. A per-row tint stamped on
+ * every row composes a banded strip across the panel that operators
+ * read as accidental ruled lines ("罫線"). Type identity stays on the
+ * coloured leading icon, and on the text badge for the cases where
+ * the icon alone is ambiguous ("Set" for variant-set FRAME and
+ * "Inherited" for nodes inside an INSTANCE — those distinctions can't
+ * be inferred from the icon's shape). Top-level FRAME / SYMBOL /
+ * INSTANCE rows do not need a text badge because their icon shape
+ * (FrameIcon vs RectIcon vs DiamondIcon) plus icon tint already
+ * carries the type signal.
  */
 
-import type { CSSProperties } from "react";
 import type { FigDesignNode } from "@higma-document-models/fig/domain";
 
 export type LayerNodeBadge = {
@@ -22,7 +32,6 @@ export type LayerNodeBadge = {
 
 export type LayerNodePresentation = {
   readonly iconColor: string | undefined;
-  readonly rowStyle: CSSProperties | undefined;
   readonly badge: LayerNodeBadge | undefined;
 };
 
@@ -38,26 +47,50 @@ export type LayerNodeKind = "variant-set" | undefined;
 const INSTANCE_COLOR = "#9747FF";
 const FRAME_COLOR = "#248EFF";
 
-const INSTANCE_ROW_STYLE: CSSProperties = {
-  backgroundColor: "rgba(151, 71, 255, 0.06)",
-};
-
-const FRAME_ROW_STYLE: CSSProperties = {
-  backgroundColor: "rgba(36, 142, 255, 0.05)",
-};
-
-const COMPONENT_ROW_STYLE: CSSProperties = {
-  backgroundColor: "rgba(151, 71, 255, 0.08)",
-};
-
-const SYMBOL_ROW_STYLE: CSSProperties = {
-  backgroundColor: "rgba(16, 185, 129, 0.07)",
-};
-
 function createBadge(label: string, color: string): LayerNodeBadge {
   return { label, color };
 }
 
+/**
+ * Top-level icon tint by disk type. Icon colour is the primary
+ * type-identity signal on a layer row (the row bg stays neutral so
+ * stacked rows don't read as a banded strip).
+ */
+function getStandaloneIconColor(
+  nodeType: FigDesignNode["type"],
+  kind: LayerNodeKind,
+): string | undefined {
+  if (kind === "variant-set") {
+    return INSTANCE_COLOR;
+  }
+  switch (nodeType) {
+    case "FRAME":
+      return FRAME_COLOR;
+    case "SYMBOL":
+      return INSTANCE_COLOR;
+    case "INSTANCE":
+      return INSTANCE_COLOR;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Text badges are restricted to non-obvious distinctions.
+ *
+ * - "Set" — a FRAME that is actually a Variant Set. The icon is the
+ *   same Frame icon as a regular FRAME, so the text label is the
+ *   only way to communicate the distinction.
+ * - "Inherited" — a child node living inside an INSTANCE that is
+ *   coming from the master SYMBOL. Without the text label the row is
+ *   indistinguishable from a freely-edited node.
+ *
+ * Plain FRAME / SYMBOL / INSTANCE rows return `undefined` — their
+ * icon shape + tint already encodes the type, and stamping a third
+ * redundant "FRAME" / "COMPONENT" / "INSTANCE" word on every row
+ * forces the row label into a strip too narrow to fit any realistic
+ * layer name ("App Ic..." truncation).
+ */
 function getStandaloneBadge(
   nodeType: FigDesignNode["type"],
   kind: LayerNodeKind,
@@ -65,40 +98,13 @@ function getStandaloneBadge(
   if (kind === "variant-set") {
     return createBadge("Set", INSTANCE_COLOR);
   }
-  switch (nodeType) {
-    case "FRAME":
-      return createBadge("Frame", FRAME_COLOR);
-    case "SYMBOL":
-      // Presentation-layer label for the SYMBOL disk type follows the
-      // Figma UI: a top-level SYMBOL surfaces as "Component".
-      return createBadge("Component", INSTANCE_COLOR);
-    case "INSTANCE":
-      return createBadge("Instance", INSTANCE_COLOR);
-    default:
-      return undefined;
-  }
+  // FRAME, SYMBOL, INSTANCE intentionally return no badge — the icon
+  // carries the type identity. See module docblock.
+  void nodeType;
+  return undefined;
 }
 
-function getStandaloneRowStyle(
-  nodeType: FigDesignNode["type"],
-  kind: LayerNodeKind,
-): CSSProperties | undefined {
-  if (kind === "variant-set") {
-    return COMPONENT_ROW_STYLE;
-  }
-  switch (nodeType) {
-    case "FRAME":
-      return FRAME_ROW_STYLE;
-    case "SYMBOL":
-      return SYMBOL_ROW_STYLE;
-    case "INSTANCE":
-      return INSTANCE_ROW_STYLE;
-    default:
-      return undefined;
-  }
-}
-
-/** Resolves icon tint, row background, and badge data for a layer tree row. */
+/** Resolves icon tint and badge data for a layer tree row. */
 export function resolveLayerNodePresentation(
   nodeType: FigDesignNode["type"],
   isInstanceContext: boolean,
@@ -107,13 +113,11 @@ export function resolveLayerNodePresentation(
   if (isInstanceContext) {
     return {
       iconColor: INSTANCE_COLOR,
-      rowStyle: INSTANCE_ROW_STYLE,
       badge: createBadge("Inherited", INSTANCE_COLOR),
     };
   }
   return {
-    iconColor: getStandaloneBadge(nodeType, kind)?.color,
-    rowStyle: getStandaloneRowStyle(nodeType, kind),
+    iconColor: getStandaloneIconColor(nodeType, kind),
     badge: getStandaloneBadge(nodeType, kind),
   };
 }

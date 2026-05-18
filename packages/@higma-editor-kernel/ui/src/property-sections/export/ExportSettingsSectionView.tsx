@@ -9,7 +9,7 @@
 import type { CSSProperties } from "react";
 import { Input, Select } from "../../primitives";
 import type { SelectOption } from "../../types";
-import { colorTokens, fontTokens } from "../../design-tokens";
+import { colorTokens } from "../../design-tokens";
 import { CloseIcon } from "../../icons";
 import { AddItemButton } from "../../primitives";
 

@@ -149,23 +149,23 @@ export function PaintItemEditorView({
               value={paint.image.scale}
               min={0}
               step={0.05}
-              prefix="S"
+              prefix="Scale"
               suffix="x"
               dragToChange
               dragStep={0.05}
               onChange={(v) => onImageScaleChange(index, v as number)}
-              width={80}
+              width={96}
             />
             <Input
               type="number"
               ariaLabel={`${labelPrefix} image rotation ${ordinal}`}
               value={Math.round(paint.image.rotationDeg)}
               step={1}
-              prefix="R"
+              prefix="Rot"
               suffix="°"
               dragToChange
               onChange={(v) => onImageRotationChange(index, v as number)}
-              width={80}
+              width={88}
             />
           </div>
         </>

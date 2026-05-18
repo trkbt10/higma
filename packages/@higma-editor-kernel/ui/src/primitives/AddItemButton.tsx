@@ -8,11 +8,18 @@
  * Visual: full-width dashed-border ghost button with leading `+` icon and a
  * compact label. Replaces the ad-hoc "+ Add X" buttons that previously each
  * carried their own inline styles.
+ *
+ * Styling
+ * -------
+ * Pseudo-class rules (`:hover`, `:focus-visible`, `:disabled`) and the
+ * `data-full-width` variant rule live in `AddItemButton.module.css`.
+ * The CSS Module import returns a JS-used class name map; no runtime
+ * style injection, no side-effect imports, no className branching.
  */
 
-import type { CSSProperties, MouseEvent } from "react";
-import { colorTokens, fontTokens } from "../design-tokens";
+import { type MouseEvent } from "react";
 import { AddIcon } from "../icons";
+import styles from "./AddItemButton.module.css";
 
 export type AddItemButtonProps = {
   /** Action verb phrase shown after the `+` icon, e.g. "Add fill". */
@@ -26,24 +33,6 @@ export type AddItemButtonProps = {
 
 const ICON_SIZE = 12;
 
-function buttonStyle(disabled: boolean, fullWidth: boolean): CSSProperties {
-  return {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    background: "none",
-    border: `1px dashed ${colorTokens.border.primary}`,
-    borderRadius: 4,
-    cursor: disabled ? "not-allowed" : "pointer",
-    padding: "4px 8px",
-    color: colorTokens.text.primary,
-    fontSize: fontTokens.size.sm,
-    width: fullWidth ? "100%" : undefined,
-    opacity: disabled ? 0.5 : 1,
-  };
-}
-
 /** Unified "+" add affordance for list-like surfaces. */
 export function AddItemButton({ label, onClick, disabled, ariaLabel, fullWidth = true }: AddItemButtonProps) {
   return (
@@ -52,7 +41,8 @@ export function AddItemButton({ label, onClick, disabled, ariaLabel, fullWidth =
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel ?? label}
-      style={buttonStyle(Boolean(disabled), fullWidth)}
+      className={styles.button}
+      data-full-width={fullWidth ? "true" : undefined}
     >
       <AddIcon size={ICON_SIZE} />
       <span>{label}</span>

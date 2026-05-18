@@ -2,10 +2,15 @@
  * @file Slider primitive component
  *
  * A minimal range slider component.
+ *
+ * Styling
+ * -------
+ * Cross-engine thumb styling lives in `Slider.module.css`. No
+ * imperative style injection, no className branching.
  */
 
 import { useCallback, type ChangeEvent, type CSSProperties } from "react";
-import { colorTokens, fontTokens } from "../design-tokens";
+import styles from "./Slider.module.css";
 
 export type SliderProps = {
   readonly value: number;
@@ -14,33 +19,9 @@ export type SliderProps = {
   readonly max?: number;
   readonly step?: number;
   readonly disabled?: boolean;
-  readonly className?: string;
   readonly style?: CSSProperties;
   readonly showValue?: boolean;
   readonly suffix?: string;
-};
-
-const containerStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-};
-
-const sliderStyle: CSSProperties = {
-  flex: 1,
-  height: "4px",
-  borderRadius: "2px",
-  appearance: "none",
-  backgroundColor: `var(--bg-tertiary, ${colorTokens.background.tertiary})`,
-  cursor: "pointer",
-  outline: "none",
-};
-
-const valueStyle: CSSProperties = {
-  minWidth: "40px",
-  fontSize: fontTokens.size.md,
-  color: `var(--text-secondary, ${colorTokens.text.secondary})`,
-  textAlign: "right",
 };
 
 /**
@@ -53,7 +34,6 @@ export function Slider({
   max = 100,
   step = 1,
   disabled,
-  className,
   style,
   showValue = true,
   suffix = "",
@@ -66,7 +46,10 @@ export function Slider({
   );
 
   return (
-    <div style={{ ...containerStyle, ...style }} className={className}>
+    <div
+      style={style}
+      className={styles.container}
+    >
       <input
         type="range"
         value={value}
@@ -75,10 +58,10 @@ export function Slider({
         max={max}
         step={step}
         disabled={disabled}
-        style={sliderStyle}
+        className={styles.slider}
       />
       {showValue && (
-        <span style={valueStyle}>
+        <span className={styles.value}>
           {value}
           {suffix}
         </span>

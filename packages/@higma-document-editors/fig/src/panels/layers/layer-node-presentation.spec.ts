@@ -3,35 +3,49 @@
 import { resolveLayerNodePresentation } from "./layer-node-presentation";
 
 describe("resolveLayerNodePresentation", () => {
-  it("decorates structural node types with stable badges and backgrounds", () => {
-    // The on-disk SYMBOL type is the encoding of the Figma UI concept
-    // "Component"; the badge label and row style follow the Component
-    // palette. The canonical schema has no COMPONENT NodeType — see
+  it("tints FRAME and SYMBOL icons but does not stamp a redundant text badge", () => {
+    // The leading icon shape (FrameIcon vs RectIcon) plus the tint
+    // already encodes the type for plain FRAME / SYMBOL / INSTANCE
+    // rows. A text badge here would steal the row's name strip and
+    // force "App Ic..." truncation, while reading as a redundant
+    // banded annotation across same-type runs. Badges are reserved
+    // for the cases the icon alone can't communicate ("Set",
+    // "Inherited") — see module docblock.
+    //
+    // The on-disk SYMBOL type encodes the Figma UI concept
+    // "Component"; SYMBOL keeps the INSTANCE_COLOR icon tint to
+    // match Figma's purple Component palette. See
     // `docs/refactor/component-type-cleanup.md`.
-    expect(resolveLayerNodePresentation("FRAME", false)).toMatchObject({
+    expect(resolveLayerNodePresentation("FRAME", false)).toEqual({
       iconColor: "#248EFF",
-      rowStyle: { backgroundColor: "rgba(36, 142, 255, 0.05)" },
-      badge: { label: "Frame", color: "#248EFF" },
+      badge: undefined,
     });
-    expect(resolveLayerNodePresentation("SYMBOL", false)).toMatchObject({
+    expect(resolveLayerNodePresentation("SYMBOL", false)).toEqual({
       iconColor: "#9747FF",
-      rowStyle: { backgroundColor: "rgba(16, 185, 129, 0.07)" },
-      badge: { label: "Component", color: "#9747FF" },
+      badge: undefined,
+    });
+    expect(resolveLayerNodePresentation("INSTANCE", false)).toEqual({
+      iconColor: "#9747FF",
+      badge: undefined,
     });
   });
 
   it("decorates a Variant-Set FRAME with a Set badge when caller provides the kind", () => {
-    expect(resolveLayerNodePresentation("FRAME", false, "variant-set")).toMatchObject({
+    // Variant-Set lives on a FRAME disk type — the icon is the same
+    // Frame icon as a plain FRAME. The text badge is the only way to
+    // communicate the variant-set distinction.
+    expect(resolveLayerNodePresentation("FRAME", false, "variant-set")).toEqual({
       iconColor: "#9747FF",
-      rowStyle: { backgroundColor: "rgba(151, 71, 255, 0.08)" },
       badge: { label: "Set", color: "#9747FF" },
     });
   });
 
   it("marks all rows inside an instance as inherited", () => {
-    expect(resolveLayerNodePresentation("RECTANGLE", true)).toMatchObject({
+    // Children of an INSTANCE inherit from the master SYMBOL.
+    // Without the "Inherited" badge a row is indistinguishable from
+    // a freely-edited node, so the badge is rendered here.
+    expect(resolveLayerNodePresentation("RECTANGLE", true)).toEqual({
       iconColor: "#9747FF",
-      rowStyle: { backgroundColor: "rgba(151, 71, 255, 0.06)" },
       badge: { label: "Inherited", color: "#9747FF" },
     });
   });
@@ -39,7 +53,6 @@ describe("resolveLayerNodePresentation", () => {
   it("keeps primitive rows undecorated outside special contexts", () => {
     expect(resolveLayerNodePresentation("RECTANGLE", false)).toEqual({
       iconColor: undefined,
-      rowStyle: undefined,
       badge: undefined,
     });
   });

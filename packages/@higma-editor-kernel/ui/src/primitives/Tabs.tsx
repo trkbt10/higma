@@ -2,10 +2,16 @@
  * @file Tabs primitive component
  *
  * A minimal tab component for switching between content panels.
+ *
+ * Styling
+ * -------
+ * Size (`data-size`) and selected state (`aria-selected`) drive the
+ * variant rules in `Tabs.module.css`. No imperative style injection,
+ * no className branching.
  */
 
 import { useState, useCallback, type ReactNode, type CSSProperties } from "react";
-import { colorTokens, radiusTokens, fontTokens, spacingTokens } from "../design-tokens";
+import styles from "./Tabs.module.css";
 
 export type TabItem<T extends string = string> = {
   readonly id: T;
@@ -25,76 +31,8 @@ export type TabsProps<T extends string = string> = {
   readonly defaultValue?: T;
   /** Tab list size */
   readonly size?: "sm" | "md";
-  /** Additional CSS class */
-  readonly className?: string;
   /** Inline style overrides */
   readonly style?: CSSProperties;
-};
-
-const containerStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: spacingTokens.md,
-  minHeight: 0,
-};
-
-const tabListStyle: CSSProperties = {
-  display: "flex",
-  gap: "2px",
-  backgroundColor: `var(--bg-tertiary, ${colorTokens.background.tertiary})`,
-  borderRadius: `var(--radius-sm, ${radiusTokens.sm})`,
-  padding: "2px",
-  flexShrink: 0,
-};
-
-function getTabTextColor(isActive: boolean, disabled: boolean): string {
-  if (isActive) {
-    return `var(--text-primary, ${colorTokens.text.primary})`;
-  }
-  if (disabled) {
-    return `var(--text-tertiary, ${colorTokens.text.tertiary})`;
-  }
-  return `var(--text-secondary, ${colorTokens.text.secondary})`;
-}
-
-function getTabBackgroundColor(isActive: boolean): string {
-  if (isActive) {
-    return `var(--bg-secondary, ${colorTokens.background.secondary})`;
-  }
-  return "transparent";
-}
-
-function getTabButtonStyle(isActive: boolean, disabled: boolean, size: "sm" | "md"): CSSProperties {
-  const paddingMap = {
-    sm: "4px 8px",
-    md: "6px 12px",
-  };
-  const fontSizeMap = {
-    sm: fontTokens.size.sm,
-    md: fontTokens.size.md,
-  };
-  const backgroundColor = getTabBackgroundColor(isActive);
-
-  return {
-    flex: 1,
-    padding: paddingMap[size],
-    fontSize: fontSizeMap[size],
-    fontWeight: fontTokens.weight.medium,
-    border: "none",
-    borderRadius: radiusTokens.sm,
-    cursor: disabled ? "not-allowed" : "pointer",
-    transition: "all 150ms ease",
-    backgroundColor,
-    color: getTabTextColor(isActive, disabled),
-    opacity: disabled ? 0.5 : 1,
-  };
-}
-
-const contentStyle: CSSProperties = {
-  minHeight: 0,
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
 };
 
 /**
@@ -106,7 +44,6 @@ export function Tabs<T extends string = string>({
   onChange,
   defaultValue,
   size = "md",
-  className,
   style,
 }: TabsProps<T>) {
   const [internalValue, setInternalValue] = useState<T>(() => {
@@ -138,22 +75,27 @@ export function Tabs<T extends string = string>({
   const activeItem = items.find((item) => item.id === activeId);
 
   return (
-    <div style={{ ...containerStyle, ...style }} className={className}>
-      <div style={tabListStyle} role="tablist">
+    <div
+      style={style}
+      className={styles.container}
+    >
+      <div className={styles.tabList} role="tablist">
         {items.map((item) => (
           <button
             key={item.id}
             type="button"
             role="tab"
             aria-selected={item.id === activeId}
-            style={getTabButtonStyle(item.id === activeId, item.disabled ?? false, size)}
+            disabled={item.disabled}
+            className={styles.tab}
+            data-size={size}
             onClick={() => handleTabClick(item.id, item.disabled)}
           >
             {item.label}
           </button>
         ))}
       </div>
-      <div style={contentStyle} role="tabpanel">
+      <div className={styles.content} role="tabpanel">
         {activeItem?.content}
       </div>
     </div>

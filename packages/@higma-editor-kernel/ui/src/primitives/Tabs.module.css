@@ -1,0 +1,76 @@
+/*
+ * Tabs primitive — tab buttons use `aria-selected` and `data-size`
+ * attributes for variants; pseudo-class rules in this stylesheet.
+ *
+ * All tab labels are functional. Inactive tabs were `text.secondary`
+ * (6.05:1 — fails AAA). Now both active and inactive use
+ * `text.primary` (17.4:1 AAA); the active / inactive distinction is
+ * conveyed by background tint and font weight, not text colour.
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md, 12px);
+  min-height: 0;
+}
+
+.tabList {
+  display: flex;
+  gap: 2px;
+  background-color: var(--bg-tertiary, #f0f1f3);
+  border-radius: var(--radius-sm, 4px);
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.tab {
+  flex: 1;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition: background-color 150ms ease;
+  background-color: transparent;
+  color: var(--text-primary, #1a1a1a);
+  font-weight: 500;
+  outline: none;
+}
+
+.tab[data-size="sm"] {
+  padding: 4px 8px;
+  font-size: var(--font-size-sm, 11px);
+}
+.tab[data-size="md"] {
+  padding: 6px 12px;
+  font-size: var(--font-size-md, 12px);
+}
+
+.tab[aria-selected="true"] {
+  background-color: var(--bg-secondary, #f8f9fa);
+  font-weight: 600;
+}
+
+.tab:not(:disabled):hover:not([aria-selected="true"]) {
+  background-color: var(--bg-hover, #e8eaed);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: -2px;
+}
+
+.tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  /* Disabled tabs lose the primary colour because opacity already
+   * signals non-interactivity; the lower-contrast text tertiary is
+   * decorative-only here. */
+  color: var(--text-tertiary, #9aa0a6);
+}
+
+.content {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}

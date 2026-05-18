@@ -86,16 +86,26 @@ const stretchHandleBaseStyle: CSSProperties = {
   justifyContent: "center",
 };
 
+/**
+ * Stretch-bar colour signals the constraint state.
+ *
+ * - Active: `accent.primary` (#4472C4, 4.45:1 vs white) — passes
+ *   WCAG 1.4.11 non-text 3:1 minimum so the active rail is clearly
+ *   visible.
+ * - Inactive: `text.secondary` (#5f6368, 6.05:1 vs white) — also
+ *   passes 3:1 so the inactive guides are still discoverable. The
+ *   previous design used `text.tertiary` at opacity 0.55 which gave
+ *   ~1.57:1 — effectively invisible against a white panel.
+ */
 function stretchBarColor(active: boolean): string {
   if (active) {
     return `var(--accent-primary, ${colorTokens.accent.primary})`;
   }
-  return `var(--text-tertiary, ${colorTokens.text.tertiary})`;
+  return `var(--text-secondary, ${colorTokens.text.secondary})`;
 }
 
 const stretchBarStyle = (active: boolean): CSSProperties => ({
   background: stretchBarColor(active),
-  opacity: active ? 1 : 0.55,
   borderRadius: 1,
 });
 

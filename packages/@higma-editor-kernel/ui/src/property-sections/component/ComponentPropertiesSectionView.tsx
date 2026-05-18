@@ -88,22 +88,27 @@ const styles = {
     flexShrink: 0,
     fontWeight: fontTokens.weight.medium,
   } as const,
-  // Override chip is a STRUCTURAL signal ("this prop is overridden").
-  // The previous design layered text.tertiary on accent.secondary
-  // (1.39:1 — essentially invisible). The new outline style keeps
-  // accent.secondary as the identity colour (border + dark text) while
-  // achieving 17.4:1 (AAA) against the panel background.
+  // Override indicator — a single 6px filled circle in accent.secondary
+  // shown next to the property name. This is Figma's convention: the
+  // override state is structural metadata, not content, so it gets
+  // an iconographic marker rather than a chip-with-text. The marker
+  // composes with the existing type-badge ("TEXT", "BOOL", etc.) and
+  // the property name; the operator reads "Background variant • TEXT"
+  // and the leading dot communicates "overridden" without taking
+  // chrome space.
+  //
+  // Contrast: a 6px solid circle on the panel surface is a graphical
+  // element (WCAG 1.4.11), which requires 3:1. accent.secondary on
+  // white gives 3.67:1, comfortably above the threshold.
   overrideBadge: {
-    fontSize: fontTokens.size.xs,
-    color: colorTokens.text.primary,
-    backgroundColor: "transparent",
-    border: `1px solid ${colorTokens.accent.secondary}`,
-    borderRadius: "3px",
-    padding: `0 ${spacingTokens.xs}`,
+    display: "inline-block",
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    backgroundColor: colorTokens.accent.secondary,
     flexShrink: 0,
-    fontWeight: fontTokens.weight.semibold,
-    textTransform: "uppercase" as const,
-    letterSpacing: "0.04em",
+    // Vertical alignment alongside the property name's baseline
+    verticalAlign: "middle",
   } as const,
   empty: {
     fontSize: fontTokens.size.sm,
@@ -131,7 +136,11 @@ function renderOverrideBadge(isOverridden: boolean) {
   if (!isOverridden) {
     return null;
   }
-  return <span style={styles.overrideBadge}>override</span>;
+  // Iconographic indicator only — no text content. The aria-label
+  // surfaces the meaning for screen readers; sighted users read the
+  // dot's contextual position (next to the property name) as the
+  // "overridden" signal.
+  return <span style={styles.overrideBadge} role="img" aria-label="Overridden from default" />;
 }
 
 function controlLabel(prop: ResolvedComponentPropertyView): string {

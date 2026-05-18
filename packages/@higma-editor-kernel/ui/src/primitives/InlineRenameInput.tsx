@@ -20,7 +20,6 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { Input } from "./Input";
 
 export type InlineRenameInputHandle = {
   /** Programmatically enter edit mode (e.g. from a context-menu "Rename"). */
@@ -40,16 +39,57 @@ export type InlineRenameInputProps = {
   readonly allowDoubleClickToEdit?: boolean;
 };
 
+// `cursor: inherit` — the display state is just a label sitting on
+// whatever surface the consumer renders it on. Setting `cursor: text`
+// here would tell the operator "this is editable text" on every host,
+// but most consumers (Pages row, Layers row, property header) are
+// also drag / click targets where the host cursor (`pointer` /
+// `grab`) is the correct affordance. Edit mode shows its own `<input>`
+// with the normal text caret cursor — the operator gets the right
+// signal at the right time without this primitive forcing one.
 const displayBaseStyle: CSSProperties = {
   display: "inline-block",
   width: "100%",
-  cursor: "text",
+  cursor: "inherit",
   userSelect: "none",
 };
 
 const disabledStyle: CSSProperties = {
   cursor: "default",
   opacity: 0.6,
+};
+
+/**
+ * Edit-mode input style.
+ *
+ * The previous implementation rendered the kernel `Input` primitive
+ * (with its own padding, border-radius, and `bg.tertiary` background)
+ * which made the row visibly resize and shift when transitioning
+ * display → edit. The operator critique was "ダブルクリックで編集
+ * モードに入るとレイアウトシフトまで起きる".
+ *
+ * The fix is to render a bare `<input>` that occupies the same
+ * footprint as the display span — same width (100%), `font: inherit`
+ * so it adopts the row's font-size / family / weight, transparent
+ * background, no border, no padding, no outline. Visually the row
+ * appearance doesn't change at all on transition; the only
+ * difference is the blinking caret + native text selection.
+ *
+ * The row's existing selection / focus background already signals
+ * "you're in this row" — a separate input chrome would just stack a
+ * second box on top of that signal.
+ */
+const editInputStyle: CSSProperties = {
+  display: "inline-block",
+  width: "100%",
+  boxSizing: "border-box",
+  font: "inherit",
+  color: "inherit",
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  margin: 0,
+  outline: "none",
 };
 
 /**
@@ -120,9 +160,10 @@ export const InlineRenameInput = forwardRef<InlineRenameInputHandle, InlineRenam
 
     if (editing) {
       return (
-        <Input
+        <input
+          type="text"
           value={draft}
-          onChange={(v) => setDraft(String(v))}
+          onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleKeyDown}
           onBlur={commit}
           onFocus={(event) => {
@@ -132,8 +173,10 @@ export const InlineRenameInput = forwardRef<InlineRenameInputHandle, InlineRenam
             focusedOnceRef.current = true;
             event.currentTarget.select();
           }}
-          ariaLabel={ariaLabel ?? `Rename ${value}`}
+          aria-label={ariaLabel ?? `Rename ${value}`}
           placeholder={placeholder}
+          style={editInputStyle}
+          autoFocus
         />
       );
     }

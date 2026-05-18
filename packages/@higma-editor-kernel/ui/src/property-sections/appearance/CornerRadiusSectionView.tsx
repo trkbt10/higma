@@ -129,7 +129,7 @@ export function CornerRadiusSectionView({
       value={uniformRadius}
       min={0}
       step={1}
-      prefix="R"
+      prefix="Radius"
       dragToChange
       onChange={(v) => onUniformChange(v as number)}
       suffix={

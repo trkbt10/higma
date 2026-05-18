@@ -16,15 +16,18 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+
 import { OptionalPropertySection } from "@higma-editor-surfaces/controls/ui";
 import {
   AddItemButton,
   ContextMenu,
   InlineRenameInput,
+  listRowDataAttributes,
+  LIST_ROW_CLASS_NAME,
   type InlineRenameInputHandle,
+  type ListRowVisualState,
   type MenuEntry,
 } from "@higma-editor-kernel/ui";
-import { colorTokens, fontTokens, spacingTokens, radiusTokens } from "@higma-editor-kernel/ui/design-tokens";
 import type { FigPageId } from "@higma-document-models/fig/domain";
 import { useFigEditor } from "../../context/FigEditorContext";
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
@@ -82,100 +85,26 @@ function isPageMenuActionId(value: string): value is PageMenuActionId {
 // Styles
 // =============================================================================
 
-type RowVisualState = {
-  readonly active: boolean;
-  readonly dropBefore: boolean;
-  readonly dropAfter: boolean;
-  readonly dragging: boolean;
-};
-
-function dropIndicatorShadow({ dropBefore, dropAfter }: RowVisualState): string | undefined {
-  if (dropBefore) {
-    return `inset 0 2px 0 0 ${colorTokens.selection.primary}`;
-  }
-  if (dropAfter) {
-    return `inset 0 -2px 0 0 ${colorTokens.selection.primary}`;
-  }
-  return undefined;
-}
-
 /**
- * Active page row visual identity.
- *
- * The previous design filled the row with `selection.primary` (#0066ff)
- * and inverted text to white, producing 4.83:1 contrast (passes AA,
- * fails AAA). The new approach tints the row with `selection.primary`
- * at 12% alpha (visible as a pale blue band) and draws a 2px solid
- * `selection.primary` left rail as the structural "active" signal —
- * text remains at `text.primary` and the row reaches 17.4:1 (AAA)
- * regardless of selection state.
- *
- * Hover state for non-active rows uses `background.hover` (#e8eaed)
- * so the operator can see which row is about to be selected before
- * clicking — previously rows had no visual change on hover.
+ * Row styling is delegated to the kernel's `SelectableListRow` SoT
+ * (see `@higma-editor-kernel/ui` → `SelectableListRow.ts`). Pages and
+ * Layers are both vertical lists of selectable items, and previously
+ * each panel defined its own row style — that produced inconsistent
+ * row heights, divergent hover/selection palettes, and a
+ * `border-radius` on Pages rows that curved the focus outline and
+ * drop indicator into rounded "stickers". The SoT fixes those
+ * contracts in one place.
  */
-function pageRowBackground(active: boolean): string {
-  return active ? `${colorTokens.selection.primary}1f` : "transparent";
-}
-
-const pageRowClassName = "fig-page-list-row";
-const pageRowStyleFlag = { injected: false };
-function injectPageRowStyles(): void {
-  if (pageRowStyleFlag.injected || typeof document === "undefined") {
-    return;
-  }
-  const style = document.createElement("style");
-  style.textContent = `
-    .${pageRowClassName}:hover:not([aria-selected="true"]) {
-      background-color: var(--bg-hover, #e8eaed) !important;
-    }
-    .${pageRowClassName}:focus-visible {
-      outline: 2px solid var(--selection-primary, #0066ff);
-      outline-offset: -2px;
-    }
-  `;
-  document.head.appendChild(style);
-  pageRowStyleFlag.injected = true;
-}
-
-function pageRowColor(_active: boolean): string {
-  return `var(--text-primary, ${colorTokens.text.primary})`;
-}
-
-function pageRowAccentRail(active: boolean): string | undefined {
-  return active ? `inset 2px 0 0 0 ${colorTokens.selection.primary}` : undefined;
-}
-
-function pageRowStyle(state: RowVisualState): CSSProperties {
-  const { active, dragging } = state;
-  const dropShadow = dropIndicatorShadow(state);
-  const accentRail = pageRowAccentRail(active);
-  // Combine the drag-indicator shadow with the active-rail shadow.
-  // Both are inset shadows, so they compose; if neither is present the
-  // boxShadow is omitted so the row keeps its flat profile.
-  const composedShadow = [accentRail, dropShadow].filter(Boolean).join(", ") || undefined;
-  return {
-    position: "relative",
-    padding: `${spacingTokens.xs} ${spacingTokens.sm}`,
-    fontSize: fontTokens.size.md,
-    borderRadius: radiusTokens.sm,
-    backgroundColor: pageRowBackground(active),
-    color: pageRowColor(active),
-    fontWeight: active ? fontTokens.weight.semibold : fontTokens.weight.normal,
-    transition: "background-color 150ms ease",
-    border: 0,
-    textAlign: "left",
-    cursor: dragging ? "grabbing" : "pointer",
-    opacity: dragging ? 0.6 : 1,
-    boxShadow: composedShadow,
-    userSelect: "none",
-  };
-}
 
 const containerStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: spacingTokens["2xs"],
+  // Gap is 0 so consecutive rows stack edge-to-edge — the row SoT
+  // declares its own 28px height and a drop indicator drawn as an
+  // inset 2px box-shadow at the row edge reads as a clean horizontal
+  // insertion line. A gap between rows would split that line into
+  // two short segments.
+  gap: 0,
 };
 
 const displayLabelStyle: CSSProperties = {
@@ -195,14 +124,9 @@ export function PageListPanel() {
   const operationDomain = useFigOperationDomain();
   const canEditPage = allowsFigUserOperation(operationDomain, "edit-page");
 
-  // Inject :hover / :focus-visible stylesheet rules once. Inline
-  // styles cannot express pseudo-classes, so the panel ships its own
-  // tiny stylesheet on first mount.
-  const stylesInjected = useRef(false);
-  if (!stylesInjected.current) {
-    injectPageRowStyles();
-    stylesInjected.current = true;
-  }
+  // Row pseudo-class rules come from `SelectableListRow.module.css`
+  // via the SoT's CSS-Module-hashed `LIST_ROW_CLASS_NAME`. No
+  // imperative style injection at runtime.
 
   const [menu, setMenu] = useState<PageContextMenuState>(CLOSED_MENU);
   const [drag, setDrag] = useState<DragState>(IDLE_DRAG);
@@ -346,11 +270,23 @@ export function PageListPanel() {
         return;
       }
       const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-rename-input='true']")) {
-        // Let the rename input own the pointer once it is in edit mode.
+      // Only bail when the pointer lands on the actual editable
+      // surface — the rename input in edit mode. The previous guard
+      // matched a wrapper span carrying `data-rename-input="true"`
+      // around the *whole* row content, so pointer-down on the row's
+      // display text (which sits inside that wrapper) always returned
+      // early and drag-reorder never started. The display state has
+      // no `<input>` mounted, so the narrowed guard only fires once
+      // the user has actually entered edit mode.
+      if (target?.closest("input, textarea, [contenteditable='true']")) {
         return;
       }
-      event.currentTarget.setPointerCapture(event.pointerId);
+      // Record the press but DO NOT call `setPointerCapture` yet.
+      // Calling capture immediately on pointerdown interferes with
+      // native dblclick dispatch in headless Chromium — operators
+      // would press-release-press-release on a row name and see no
+      // rename open. We claim the pointer only once movement crosses
+      // the drag-activation threshold in `handleRowPointerMove`.
       setDrag({
         active: true,
         draggingId: pageId,
@@ -370,6 +306,13 @@ export function PageListPanel() {
       const distance = Math.abs(event.clientY - drag.originY);
       if (distance < DRAG_ACTIVATION_THRESHOLD_PX && drag.overId === undefined) {
         return;
+      }
+      // First crossing of the threshold — claim the pointer now so
+      // subsequent moves outside the originating row still reach this
+      // handler. Idempotent: subsequent moves are no-ops once capture
+      // is held.
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.setPointerCapture(event.pointerId);
       }
       const target = computeDropTarget(event.clientY);
       if (target.overId === drag.overId && target.overPosition === drag.overPosition) {
@@ -446,6 +389,11 @@ export function PageListPanel() {
           const isActive = page.id === activePageId;
           const isDragging = drag.active && drag.draggingId === page.id;
           const isDropTarget = drag.active && drag.overId === page.id && drag.draggingId !== page.id;
+          const rowState: ListRowVisualState = {
+            dropBefore: isDropTarget && drag.overPosition === "before",
+            dropAfter: isDropTarget && drag.overPosition === "after",
+            dragging: isDragging,
+          };
           return (
             <div
               key={page.id}
@@ -456,29 +404,22 @@ export function PageListPanel() {
               aria-current={isActive ? "page" : undefined}
               aria-disabled={!canEditPage}
               aria-label={page.name}
-              className={pageRowClassName}
-              style={pageRowStyle({
-                active: isActive,
-                dropBefore: isDropTarget && drag.overPosition === "before",
-                dropAfter: isDropTarget && drag.overPosition === "after",
-                dragging: isDragging,
-              })}
+              className={LIST_ROW_CLASS_NAME}
+              {...listRowDataAttributes(rowState)}
               onPointerDown={(event) => handleRowPointerDown(event, page.id)}
               onPointerMove={handleRowPointerMove}
               onPointerUp={(event) => finalizeDrag(event, page.id)}
               onPointerCancel={handleRowPointerCancel}
               onContextMenu={(event) => handleContextMenu(event, page.id)}
             >
-              <span data-rename-input="true">
-                <InlineRenameInput
-                  ref={registerRenameHandle(page.id)}
-                  value={page.name}
-                  onCommit={(next) => handleRenameCommit(page.id, next)}
-                  disabled={!canEditPage}
-                  ariaLabel={`Rename page ${page.name}`}
-                  displayStyle={displayLabelStyle}
-                />
-              </span>
+              <InlineRenameInput
+                ref={registerRenameHandle(page.id)}
+                value={page.name}
+                onCommit={(next) => handleRenameCommit(page.id, next)}
+                disabled={!canEditPage}
+                ariaLabel={`Rename page ${page.name}`}
+                displayStyle={displayLabelStyle}
+              />
             </div>
           );
         })}

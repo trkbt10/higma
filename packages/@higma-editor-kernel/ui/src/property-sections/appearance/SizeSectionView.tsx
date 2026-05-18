@@ -41,6 +41,7 @@ export function SizeSectionView({
         type="number"
         ariaLabel="Width"
         value={width}
+        min={0}
         prefix="W"
         suffix={widthSuffix ?? "px"}
         dragToChange
@@ -51,6 +52,7 @@ export function SizeSectionView({
         type="number"
         ariaLabel="Height"
         value={height}
+        min={0}
         prefix="H"
         suffix={heightSuffix ?? "px"}
         dragToChange

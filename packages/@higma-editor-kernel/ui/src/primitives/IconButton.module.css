@@ -1,0 +1,102 @@
+/*
+ * IconButton primitive — shares Button's hover / focus / active
+ * contract. Variants via `data-variant`, sizes via `data-size`,
+ * icon-only shape via `data-icon-only="true"`.
+ */
+
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 500;
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+  transition: background-color 150ms ease, filter 150ms ease, transform 80ms ease;
+  outline: none;
+}
+
+/* Size with label */
+.button[data-size="sm"]:not([data-icon-only="true"]) {
+  padding: 4px 8px;
+  font-size: var(--font-size-xs, 10px);
+}
+.button[data-size="md"]:not([data-icon-only="true"]) {
+  padding: 6px 12px;
+  font-size: var(--font-size-sm, 11px);
+}
+.button[data-size="lg"]:not([data-icon-only="true"]) {
+  padding: 8px 16px;
+  font-size: var(--font-size-lg, 13px);
+}
+
+/* Size icon-only — fixed square */
+.button[data-size="sm"][data-icon-only="true"] {
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+}
+.button[data-size="md"][data-icon-only="true"] {
+  padding: 6px;
+  width: 32px;
+  height: 32px;
+}
+.button[data-size="lg"][data-icon-only="true"] {
+  padding: 8px;
+  width: 40px;
+  height: 40px;
+}
+
+/* Icon-only uses tighter corner radius so the square reads as a
+ * uniform tile; label variant uses the panel-card radius. */
+.button[data-icon-only="true"] {
+  border-radius: var(--radius-sm, 4px);
+}
+.button:not([data-icon-only="true"]) {
+  border-radius: var(--radius-md, 6px);
+}
+
+/* Variants */
+.button[data-variant="primary"] {
+  color: var(--text-inverse, #ffffff);
+  background-color: var(--accent-primary, #4472C4);
+}
+.button[data-variant="secondary"] {
+  color: var(--text-primary, #1a1a1a);
+  background-color: var(--bg-tertiary, #f0f1f3);
+  border: 1px solid var(--border-subtle, #e0e2e8);
+}
+.button[data-variant="ghost"] {
+  color: var(--text-primary, #1a1a1a);
+  background-color: transparent;
+}
+.button[data-variant="outline"] {
+  color: var(--text-primary, #1a1a1a);
+  background-color: transparent;
+  border: 1px solid var(--border-strong, #dadce0);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: 2px;
+}
+
+.button:not(:disabled):hover[data-variant="primary"] {
+  filter: brightness(0.92);
+}
+.button:not(:disabled):hover[data-variant="secondary"],
+.button:not(:disabled):hover[data-variant="ghost"],
+.button:not(:disabled):hover[data-variant="outline"] {
+  background-color: var(--bg-hover, #e8eaed);
+}
+
+.button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

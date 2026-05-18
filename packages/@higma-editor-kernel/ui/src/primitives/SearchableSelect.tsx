@@ -212,11 +212,13 @@ const listStyle: CSSProperties = {
   padding: spacingTokens.xs,
 };
 
+// Group header is functional — operator scans groups to find an item.
+// text.primary (17.4:1 AAA) instead of text.tertiary (2.64:1).
 const groupHeaderStyle: CSSProperties = {
   padding: `${spacingTokens.xs} ${spacingTokens.sm}`,
   fontSize: fontTokens.size.xs,
   fontWeight: fontTokens.weight.semibold,
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   textTransform: "uppercase",
   letterSpacing: "0.5px",
   userSelect: "none",

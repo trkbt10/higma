@@ -1,0 +1,18 @@
+/*
+ * OptionalPropertySection — section header pseudo-class rules.
+ *
+ * The header is a real `<button>`, so the browser provides keyboard
+ * focus + Space/Enter activation. Inline `style={{ outline: "none" }}`
+ * resets the default focus ring; the rules below restore a 2px
+ * `selection.primary` focus ring (WCAG 2.4.7 ≥3:1 — ~4.84:1 on
+ * white) and a subtle hover wash.
+ */
+
+.header:focus-visible {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: -2px;
+}
+
+.header:not(:disabled):hover {
+  background-color: var(--bg-hover, #e8eaed);
+}

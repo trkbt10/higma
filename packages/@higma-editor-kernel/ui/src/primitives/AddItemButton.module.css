@@ -1,0 +1,41 @@
+/*
+ * AddItemButton — full-width dashed-border ghost button with leading
+ * `+` icon. Hover darkens the border + adds a subtle wash; focus-
+ * visible draws the standard selection.primary 2px outline so
+ * keyboard operators see exactly where they are.
+ */
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: none;
+  border: 1px dashed var(--border-primary, rgba(0, 0, 0, 0.12));
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px 8px;
+  color: var(--text-primary, #1a1a1a);
+  font-size: var(--font-size-sm, 11px);
+  opacity: 1;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.button[data-full-width="true"] {
+  width: 100%;
+}
+
+.button:not(:disabled):hover {
+  background-color: var(--bg-hover, #e8eaed);
+  border-color: var(--border-strong, #dadce0);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: 2px;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

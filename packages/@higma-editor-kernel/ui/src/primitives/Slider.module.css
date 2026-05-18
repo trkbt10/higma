@@ -1,0 +1,71 @@
+/*
+ * Slider primitive — cross-engine thumb styling.
+ *
+ * The browser's default range input renders differently across
+ * Chromium / Firefox / WebKit. We override `::-webkit-slider-thumb`
+ * and `::-moz-range-thumb` to a unified 14px accent-coloured circle.
+ * Focus + hover are applied to the thumb for affordance — the
+ * previous implementation had `outline: none` with no replacement, so
+ * keyboard users could not tell where focus was.
+ */
+
+.container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--bg-tertiary, #f0f1f3);
+  cursor: pointer;
+  outline: none;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-secondary, #3b82f6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px var(--border-strong, #dadce0);
+  transition: box-shadow 100ms ease;
+}
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-secondary, #3b82f6);
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px var(--border-strong, #dadce0);
+  transition: box-shadow 100ms ease;
+}
+
+.slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--selection-primary, #0066ff);
+}
+.slider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--selection-primary, #0066ff);
+}
+
+.slider:not(:disabled):hover::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+}
+.slider:not(:disabled):hover::-moz-range-thumb {
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+}
+
+.value {
+  min-width: 40px;
+  font-size: var(--font-size-md, 12px);
+  color: var(--text-primary, #1a1a1a);
+  text-align: right;
+}

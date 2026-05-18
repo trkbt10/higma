@@ -40,7 +40,12 @@ import {
   UnknownShapeIcon,
 } from "@higma-editor-kernel/ui/icons";
 import { iconTokens, colorTokens, fontTokens, spacingTokens } from "@higma-editor-kernel/ui/design-tokens";
+import {
+  LIST_ROW_CLASS_NAME,
+  LIST_ROW_HEIGHT_PX,
+} from "@higma-editor-kernel/ui";
 import { resolveLayerNodePresentation, type LayerNodeBadge } from "./layer-node-presentation";
+import layerPanelStyles from "./LayerPanel.module.css";
 import { allowsFigUserOperation, type FigUserOperationDomain } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
 
@@ -84,43 +89,83 @@ function getNodeIcon(type: FigDesignNode["type"], color: string | undefined): Re
 // =============================================================================
 
 /**
- * Layer-row badge ("Frame" / "Component" / "Set" / "Inherited").
+ * Layer-row text badge — only rendered for "Set" (variant-set FRAME)
+ * and "Inherited" (node inside an INSTANCE) cases. Plain FRAME /
+ * SYMBOL / INSTANCE rows do not render a badge because their leading
+ * icon shape and tint already communicates the type, and a redundant
+ * "FRAME" / "COMPONENT" / "INSTANCE" word forces the layer name into
+ * a strip too narrow to fit ("App Ic..." truncation).
  *
- * Visual identity:
- * - Text: text.primary on white (17.4:1 AAA — operators always read
- *   the label legibly regardless of the type colour).
- * - Type colour: 2px LEFT-rail (inset border) instead of a 1px ring
- *   around the whole badge. The rail is structurally more visible at
- *   a glance — operators previously scanned the layer list by the
- *   row's badge tint, and a 1px border was too quiet to preserve that
- *   scanning affordance.
- * - White background keeps each badge clearly delimited from the
- *   layer row's hover/selected background tints.
+ * Typography only — no fill, no border, no rail. text.primary keeps
+ * the label readable on any panel background (16:1 against white).
  */
 const layerBadgeBaseStyle: CSSProperties = {
   display: "inline-block",
-  fontSize: "9px",
-  lineHeight: "14px",
-  padding: "0 4px 0 6px",
-  borderRadius: "3px",
-  fontWeight: 600,
+  fontSize: fontTokens.size.xs,
+  lineHeight: 1.2,
+  padding: 0,
+  fontWeight: fontTokens.weight.semibold,
   letterSpacing: "0.02em",
-  color: "#1a1a1a",
-  backgroundColor: "#ffffff",
+  textTransform: "uppercase",
+  whiteSpace: "nowrap",
+  color: colorTokens.text.primary,
+  marginRight: spacingTokens.xs,
 };
 
-function LayerBadge({ label, color }: LayerNodeBadge) {
-  return (
-    <span
-      style={{
-        ...layerBadgeBaseStyle,
-        boxShadow: `inset 3px 0 0 0 ${color}, inset 0 0 0 1px ${color}33`,
-      }}
-    >
-      {label}
-    </span>
-  );
+function LayerBadge({ label }: LayerNodeBadge) {
+  return <span style={layerBadgeBaseStyle}>{label}</span>;
 }
+
+// =============================================================================
+// react-editor-ui CSS variable overrides
+// =============================================================================
+
+/**
+ * react-editor-ui's LayerLabel paints non-selected labels with
+ * `--rei-color-text-muted` (default `#6b7280`, ~4.83:1 on white —
+ * fails AAA). We host LayerItem here so we override the upstream CSS
+ * variables on the wrapper:
+ *
+ *   --rei-color-text          → text.primary (selected label)
+ *   --rei-color-text-muted    → text.primary (non-selected label)
+ *   --rei-color-icon          → text.primary (default icon tint;
+ *                                per-row icon colour is passed via the
+ *                                icon's `color` prop and overrides this)
+ *   --rei-color-selected      → selection.primary @ 12% — matches the
+ *                                Pages active state so Layers and Pages
+ *                                share one selection language
+ *   --rei-color-hover         → selection.primary @ 6%  — matches Pages
+ *   --rei-color-drop-target   → selection.primary @ 20%
+ *   --rei-color-primary       → selection.primary       — drop indicator
+ *   --rei-size-layer-item-height → LIST_ROW_HEIGHT_PX (28px) so
+ *                                LayerItem's row outer height matches
+ *                                the SelectableListRow SoT used by
+ *                                Pages.
+ *
+ * We additionally pass `LIST_ROW_CLASS_NAME` to LayerItem so the SoT's
+ * injected `:hover` / `:focus-visible` rules apply to LayerItem rows —
+ * Pages and Layers now share one rule set, not two diverging ones.
+ *
+ * Casting to CSSProperties because TypeScript's strict CSSProperties
+ * type doesn't allow arbitrary custom properties on the inline-style
+ * object.
+ */
+const reiThemeOverrides = {
+  "--rei-color-text": colorTokens.text.primary,
+  "--rei-color-text-muted": colorTokens.text.primary,
+  "--rei-color-icon": colorTokens.text.primary,
+  "--rei-color-selected": `${colorTokens.selection.primary}1f`,
+  "--rei-color-hover": `${colorTokens.selection.primary}0f`,
+  "--rei-color-drop-target": `${colorTokens.selection.primary}33`,
+  "--rei-color-primary": colorTokens.selection.primary,
+  "--rei-size-layer-item-height": `${LIST_ROW_HEIGHT_PX}px`,
+} as CSSProperties;
+
+// `LayerPanel.module.css` (imported above) holds the
+// `box-sizing: border-box` override that forces LayerItem's row
+// container to a 28px outer height matching the Pages list SoT. The
+// rule is scoped under `.tree` so the consumer applies that class to
+// the Layers tree wrapper element.
 
 // =============================================================================
 // Expansion state context
@@ -367,7 +412,7 @@ function LayerTree({ nodes, depth, operationDomain, isInstanceContext }: LayerTr
         return (
           <div
             key={node.id}
-            style={{ ...presentation.rowStyle, opacity: isDragging ? 0.4 : undefined }}
+            style={{ opacity: isDragging ? 0.4 : undefined }}
           >
             <LayerItem
               id={node.id}
@@ -398,6 +443,7 @@ function LayerTree({ nodes, depth, operationDomain, isInstanceContext }: LayerTr
               contextMenuItems={[...menuItems]}
               onContextMenu={handleContextMenu(node.id)}
               badge={badge}
+              className={LIST_ROW_CLASS_NAME}
             />
             {hasChildren && expanded && (
               <LayerTree
@@ -441,7 +487,12 @@ function buildLayerContent({
   }
   return (
     <ExpansionContext.Provider value={{ expandedIds, toggle: toggleExpand }}>
-      <div role="tree" aria-label="Layers">
+      <div
+        role="tree"
+        aria-label="Layers"
+        className={layerPanelStyles.tree}
+        style={reiThemeOverrides}
+      >
         <LayerTree nodes={children} depth={0} operationDomain={operationDomain} isInstanceContext={false} />
       </div>
     </ExpansionContext.Provider>

@@ -55,26 +55,21 @@ const alignButtonGroupStyle: CSSProperties = {
   gap: 2,
 };
 
-// Active state is signalled by a 2px accent-colour border and a
-// stronger background tint. The previous "fill with accent + white
-// text" pattern gave 4.32:1 (failed AAA); the previous 1px outline
-// alone was visually too close to inactive (border weight is the only
-// difference at a glance). The new 2px border + 16% tint gives an
-// unambiguous active signal while text stays at text.primary (AAA).
+// Active vs inactive uses `box-sizing: border-box` plus a same-width
+// border (2px in both states — transparent when inactive, accent when
+// active). This keeps the outer dimensions identical so the row
+// doesn't shift when toggled, without the previous padding-shuffle
+// hack. Background tint reinforces the active state without
+// inverting text color, so the label stays AAA on either state.
 const alignButtonStyle = (active: boolean): CSSProperties => ({
   background: active ? `${colorTokens.accent.primary}29` : "transparent",
   color: colorTokens.text.primary,
-  border: active
-    ? `2px solid ${colorTokens.accent.primary}`
-    : `1px solid ${colorTokens.border.primary}`,
-  // Preserve the 1px-vs-2px border-width difference WITHOUT making the
-  // inactive button visibly smaller (otherwise the layout shifts when
-  // toggling). Padding compensates: active gets 2px+1px less padding
-  // than inactive, so the outer box stays the same size.
+  border: `2px solid ${active ? colorTokens.accent.primary : "transparent"}`,
   borderRadius: 4,
-  padding: active ? "2px 4px" : "3px 5px",
+  padding: "2px 5px",
   cursor: "pointer",
   lineHeight: 0,
+  boxSizing: "border-box",
 });
 
 /** Renders the text-node content/line-height/vertical-align/auto-resize rows with formatting/justify slots. */

@@ -14,18 +14,24 @@
  * `dragToChange`. The prefix label becomes a horizontal scrubber: hovering it
  * shows the `ew-resize` cursor, pointer-down + horizontal drag mutates the
  * value by `dragStep` (default = step) per pixel. Shift multiplies by 10.
+ *
+ * Styling
+ * -------
+ * Drag-scrubber affordance (`data-drag="true"`) and error state
+ * (`data-error="true"`) drive the variant rules in
+ * `Input.module.css`. No imperative style injection, no className
+ * branching.
  */
 
 import {
   useCallback,
-  useEffect,
   useRef,
   type ChangeEvent,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { colorTokens, fontTokens, radiusTokens } from "../design-tokens";
+import styles from "./Input.module.css";
 
 export type InputProps = {
   readonly value: string | number;
@@ -57,7 +63,6 @@ export type InputProps = {
   readonly onCompositionStart?: (event: React.CompositionEvent<HTMLInputElement>) => void;
   readonly onCompositionUpdate?: (event: React.CompositionEvent<HTMLInputElement>) => void;
   readonly onCompositionEnd?: (event: React.CompositionEvent<HTMLInputElement>) => void;
-  readonly className?: string;
   readonly style?: CSSProperties;
   readonly min?: number;
   readonly max?: number;
@@ -73,47 +78,20 @@ export type InputProps = {
   readonly dragToChange?: boolean;
   /** Value delta per pixel of horizontal drag. Defaults to `step ?? 1`. */
   readonly dragStep?: number;
+  /**
+   * Visual error state. Renders a `accent.danger` border around the
+   * input chrome and sets `aria-invalid="true"` so screen readers
+   * announce the field as invalid. Use when validation fails — e.g.
+   * Stroke weight = "-5" or Opacity = "200".
+   */
+  readonly error?: boolean;
+  /**
+   * Description of the validation failure, rendered as the `title`
+   * attribute (tooltip) and used as the screen-reader description via
+   * `aria-errormessage` linkage when present.
+   */
+  readonly errorMessage?: string;
 };
-
-// One-time style injection for spinner hiding
-const stylesInjected = { current: false };
-function injectStyles() {
-  if (stylesInjected.current || typeof document === "undefined") {
-    return;
-  }
-  const style = document.createElement("style");
-  style.textContent = `
-    .office-editor-input::-webkit-outer-spin-button,
-    .office-editor-input::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-      margin: 0;
-    }
-    .office-editor-input {
-      -moz-appearance: textfield;
-    }
-    .office-editor-input__prefix-drag {
-      transition: color 100ms ease, background-color 100ms ease, box-shadow 100ms ease;
-    }
-    /*
-      Drag-scrubber affordance: the prefix label is already at
-      text.primary (AAA) so a color shift on hover would be invisible.
-      Instead the hover state adds a selection.primary underline +
-      bg.hover background so the operator gets two new visual cues
-      that the prefix is interactive. The ew-resize cursor is set
-      inline.
-    */
-    .office-editor-input__prefix-drag:hover {
-      background-color: var(--bg-hover, #e8eaed);
-      box-shadow: inset 0 -2px 0 0 var(--selection-primary, #0066ff);
-    }
-    .office-editor-input__container:focus-within {
-      outline: 2px solid var(--selection-primary, #0066ff);
-      outline-offset: 2px;
-    }
-  `;
-  document.head.appendChild(style);
-  stylesInjected.current = true;
-}
 
 /**
  * Chrome / digit-area split.
@@ -131,119 +109,27 @@ function injectStyles() {
  * cannot fit all its inputs should wrap instead of forcing each to
  * become unusable.
  */
+const containerSizeStyle = (width?: number | string): CSSProperties => {
+  const resolved = width ?? "100%";
+  return {
+    width: resolved,
+    minWidth: width ?? "48px",
+    maxWidth: resolved,
+    flexShrink: width === undefined ? 1 : 0,
+  };
+};
 
-const containerStyle = (width?: number | string): CSSProperties => ({
-  display: "flex",
-  alignItems: "center",
-  backgroundColor: `var(--bg-tertiary, ${colorTokens.background.tertiary})`,
-  borderRadius: radiusTokens.sm,
-  overflow: "hidden",
-  width: width ?? "100%",
-  minWidth: width ?? "48px",
-  maxWidth: width ?? "100%",
-  flexShrink: width === undefined ? 1 : 0,
-});
-
-const inputInnerStyle = (
+const innerSlotPaddingStyle = (
   hasPrefix: boolean,
   hasSuffix: boolean,
-  numeric: boolean,
 ): CSSProperties => ({
-  flex: 1,
-  // The digit area must remain shrinkable so that prefix/suffix chrome
-  // never overflows the container; numeric values that overflow scroll
-  // horizontally inside the input rather than blowing out the cell.
-  minWidth: 0,
-  width: "100%",
   padding: `4px ${hasSuffix ? "2px" : "6px"} 4px ${hasPrefix ? "2px" : "6px"}`,
-  fontSize: fontTokens.size.md,
-  fontFamily: "inherit",
-  color: `var(--text-primary, ${colorTokens.text.primary})`,
-  backgroundColor: "transparent",
-  border: "none",
-  outline: "none",
-  // Right-align numeric values so the most-significant digits stay
-  // visible when the cell narrows. Free-text inputs keep the default so
-  // the caret behaves naturally mid-edit.
-  textAlign: numeric ? "right" : undefined,
 });
 
-/**
- * Prefix / suffix labels (X / Y / W / H / R / px / %, etc.) are
- * functional — the operator must read them to know which field is
- * which. They were previously rendered with `text.tertiary` (#9aa0a6)
- * which gave only 2.34:1 contrast against the Input's tertiary
- * background (#f0f1f3) — well below WCAG AA, and indistinguishable
- * at a glance from the digit area. text.primary brings these labels
- * to 15.4:1 (AAA). The medium font-weight is preserved so the labels
- * remain visually subordinate to the digits typographically rather
- * than chromatically.
- */
-const slotTextBaseStyle: CSSProperties = {
-  flexShrink: 0,
-  fontSize: fontTokens.size.sm,
-  fontWeight: fontTokens.weight.medium,
-  color: `var(--text-primary, ${colorTokens.text.primary})`,
-  userSelect: "none",
-  pointerEvents: "none",
-};
-
-const prefixTextStyle: CSSProperties = {
-  ...slotTextBaseStyle,
-  paddingLeft: "6px",
-  paddingRight: "2px",
-};
-
-const suffixTextStyle: CSSProperties = {
-  ...slotTextBaseStyle,
-  paddingLeft: "2px",
-  paddingRight: "6px",
-};
-
-const prefixDragStyle: CSSProperties = {
-  flexShrink: 0,
-  paddingLeft: "6px",
-  paddingRight: "2px",
-  fontSize: fontTokens.size.sm,
-  fontWeight: fontTokens.weight.medium,
-  color: `var(--text-primary, ${colorTokens.text.primary})`,
-  userSelect: "none",
-  cursor: "ew-resize",
-  touchAction: "none",
-};
-
-// Suffix-as-drag-handle style (used when the Input has no prefix but
-// still wants the drag-scrubber affordance, e.g. the Opacity section
-// where the section title carries the role label and the `%` suffix
-// becomes the only chrome).
-const suffixDragStyle: CSSProperties = {
-  flexShrink: 0,
-  paddingLeft: "2px",
-  paddingRight: "6px",
-  fontSize: fontTokens.size.sm,
-  fontWeight: fontTokens.weight.medium,
-  color: `var(--text-primary, ${colorTokens.text.primary})`,
-  userSelect: "none",
-  cursor: "ew-resize",
-  touchAction: "none",
-};
-
-const slotNodeBaseStyle: CSSProperties = {
-  flexShrink: 0,
-  display: "flex",
-  alignItems: "center",
-};
-
-const prefixSlotStyle: CSSProperties = {
-  ...slotNodeBaseStyle,
-  paddingLeft: "2px",
-  paddingRight: "2px",
-};
-
-const suffixSlotStyle: CSSProperties = {
-  ...slotNodeBaseStyle,
-  paddingLeft: "2px",
-  paddingRight: "2px",
+const slotInlinePadding = {
+  leftEdge: { paddingLeft: "6px", paddingRight: "2px" } as CSSProperties,
+  rightEdge: { paddingLeft: "2px", paddingRight: "6px" } as CSSProperties,
+  inset: { paddingLeft: "2px", paddingRight: "2px" } as CSSProperties,
 };
 
 function parseNumeric(value: string | number): number | undefined {
@@ -293,7 +179,6 @@ export function Input({
   onCompositionStart,
   onCompositionUpdate,
   onCompositionEnd,
-  className,
   style,
   min,
   max,
@@ -301,12 +186,9 @@ export function Input({
   width,
   dragToChange,
   dragStep,
+  error,
+  errorMessage,
 }: InputProps) {
-  // Inject spinner-hiding styles once
-  useEffect(() => {
-    injectStyles();
-  }, []);
-
   const handleChange = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
       onInputChange?.(e);
@@ -320,6 +202,20 @@ export function Input({
   const prefixIsText = typeof prefix === "string" || typeof prefix === "number";
   const hasSuffix = suffix !== undefined && suffix !== null && suffix !== false;
   const suffixIsText = typeof suffix === "string" || typeof suffix === "number";
+
+  // Auto-derive error state from min/max constraint violations so
+  // every numeric input shows a validation visual without each
+  // section needing to wire it manually. Caller-supplied `error`
+  // wins so a section can explicitly mark a valid-by-constraint
+  // value as invalid for higher-level reasons (e.g. cross-field).
+  const numericValue = type === "number" ? parseNumeric(value) : undefined;
+  const violatesMin = typeof min === "number" && numericValue !== undefined && numericValue < min;
+  const violatesMax = typeof max === "number" && numericValue !== undefined && numericValue > max;
+  const constraintError = violatesMin || violatesMax;
+  const effectiveError = error ?? constraintError;
+  const effectiveErrorMessage =
+    errorMessage ??
+    (violatesMin ? `Value must be at least ${min}` : violatesMax ? `Value must be at most ${max}` : undefined);
 
   // Drag-to-change can attach to either the prefix or the suffix
   // label, whichever is present and is text. When BOTH are text the
@@ -392,15 +288,20 @@ export function Input({
     [],
   );
 
+  const containerInline: CSSProperties = { ...containerSizeStyle(width), ...style };
+
   return (
     <div
-      style={{ ...containerStyle(width), ...style }}
-      className={["office-editor-input__container", className].filter(Boolean).join(" ")}
+      style={containerInline}
+      className={styles.container}
+      data-error={effectiveError ? "true" : undefined}
+      title={effectiveError ? effectiveErrorMessage : undefined}
     >
       {hasPrefix && prefixIsText && (
         <span
-          className={dragOnPrefix ? "office-editor-input__prefix-drag" : undefined}
-          style={dragOnPrefix ? prefixDragStyle : prefixTextStyle}
+          className={styles.slotText}
+          data-drag={dragOnPrefix ? "true" : undefined}
+          style={slotInlinePadding.leftEdge}
           aria-hidden="true"
           title={dragOnPrefix ? "Drag horizontally to change" : undefined}
           onPointerDown={dragOnPrefix ? handlePrefixPointerDown : undefined}
@@ -411,7 +312,11 @@ export function Input({
           {prefix}
         </span>
       )}
-      {hasPrefix && !prefixIsText && <span style={prefixSlotStyle}>{prefix}</span>}
+      {hasPrefix && !prefixIsText && (
+        <span className={styles.slotNode} style={slotInlinePadding.inset}>
+          {prefix}
+        </span>
+      )}
       <input
         type={type}
         value={value}
@@ -425,18 +330,20 @@ export function Input({
         onCompositionEnd={onCompositionEnd}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        aria-invalid={effectiveError || undefined}
         disabled={disabled}
         readOnly={readOnly}
         min={min}
         max={max}
         step={step}
-        style={inputInnerStyle(hasPrefix, hasSuffix, type === "number")}
-        className="office-editor-input"
+        style={innerSlotPaddingStyle(hasPrefix, hasSuffix)}
+        className={styles.input}
       />
       {hasSuffix && suffixIsText && (
         <span
-          className={dragOnSuffix ? "office-editor-input__prefix-drag" : undefined}
-          style={dragOnSuffix ? suffixDragStyle : suffixTextStyle}
+          className={styles.slotText}
+          data-drag={dragOnSuffix ? "true" : undefined}
+          style={slotInlinePadding.rightEdge}
           aria-hidden="true"
           title={dragOnSuffix ? "Drag horizontally to change" : undefined}
           onPointerDown={dragOnSuffix ? handlePrefixPointerDown : undefined}
@@ -447,7 +354,11 @@ export function Input({
           {suffix}
         </span>
       )}
-      {hasSuffix && !suffixIsText && <span style={suffixSlotStyle}>{suffix}</span>}
+      {hasSuffix && !suffixIsText && (
+        <span className={styles.slotNode} style={slotInlinePadding.inset}>
+          {suffix}
+        </span>
+      )}
     </div>
   );
 }

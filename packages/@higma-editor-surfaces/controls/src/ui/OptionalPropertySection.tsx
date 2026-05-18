@@ -20,6 +20,7 @@ import {
   inspectorTokens,
 } from "@higma-editor-kernel/ui/design-tokens";
 import { Button } from "@higma-editor-kernel/ui/primitives";
+import styles from "./OptionalPropertySection.module.css";
 
 // =============================================================================
 // Types
@@ -68,20 +69,42 @@ const containerStyle: CSSProperties = {
   borderBottom: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
 };
 
+/**
+ * Section header is a real `<button>` so the browser provides focus
+ * indicator, Space, and Enter activation. The previous `<div role="button">`
+ * was unreachable by keyboard and provided no hover feedback.
+ *
+ * Pseudo-class rules (`:focus-visible`, `:hover`) live in
+ * `OptionalPropertySection.module.css`. The inline `outline` reset
+ * has been removed from this style object — the CSS-Module rules and
+ * the UA default ordering give us a clean keyboard focus ring without
+ * any imperative style injection.
+ */
 const headerStyle = (disabled: boolean): CSSProperties => ({
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
+  width: "100%",
   padding: `${inspectorTokens.sectionPaddingBlock} ${inspectorTokens.sectionPaddingInline}`,
   cursor: disabled ? "not-allowed" : "pointer",
   userSelect: "none",
   opacity: disabled ? 0.5 : 1,
+  background: "none",
+  border: "none",
+  borderRadius: 0,
+  fontFamily: "inherit",
+  textAlign: "left",
 });
 
+// Section title — the headline of every accordion section ("Position",
+// "Fill", "Effects"). text.secondary at 6.05:1 fails AAA. text.primary
+// (17.4:1) restores AAA without changing the typographic identity:
+// the uppercase + tracking + semibold weight already communicate
+// "header" without needing a chromatic step down.
 const titleStyle: CSSProperties = {
   fontSize: fontTokens.size.sm,
   fontWeight: fontTokens.weight.semibold,
-  color: `var(--text-secondary, ${colorTokens.text.secondary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   textTransform: "uppercase",
   letterSpacing: "0.3px",
   display: "flex",
@@ -89,11 +112,15 @@ const titleStyle: CSSProperties = {
   gap: spacingTokens.xs,
 };
 
+// Disclosure chevron is non-text iconography. Its contrast against the
+// section header background still matters (operator needs to see the
+// expand/collapse affordance). Upgraded from text.tertiary (2.64:1)
+// to text.primary (17.4:1).
 const chevronContainerStyle = (expanded: boolean): CSSProperties => ({
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   transition: "transform 150ms ease",
   transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
 });
@@ -114,12 +141,16 @@ const contentStyle: CSSProperties = {
   padding: `0 ${inspectorTokens.sectionPaddingInline} ${inspectorTokens.sectionPaddingBlock} ${inspectorTokens.sectionPaddingInline}`,
 };
 
+// Section count badge ("Effects 2", "Layers 5"). Functional readout.
+// text.primary on bg.tertiary = 15.4:1 (AAA). Previously text.tertiary
+// at 2.34:1.
 const badgeStyle: CSSProperties = {
   fontSize: fontTokens.size.xs,
-  color: `var(--text-tertiary, ${colorTokens.text.tertiary})`,
+  color: `var(--text-primary, ${colorTokens.text.primary})`,
   backgroundColor: `var(--bg-tertiary, ${colorTokens.background.tertiary})`,
   padding: "2px 6px",
   borderRadius: "4px",
+  fontWeight: fontTokens.weight.medium,
 };
 
 const addButtonContainerStyle: CSSProperties = {
@@ -200,15 +231,22 @@ export function OptionalPropertySection<T>(props: OptionalPropertySectionProps<T
 
   return (
     <div style={containerStyle}>
-      <div style={headerStyle(disabled ?? false)} onClick={handleToggle} role="button" aria-expanded={expanded}>
+      <button
+        type="button"
+        style={headerStyle(disabled ?? false)}
+        className={styles.header}
+        onClick={handleToggle}
+        aria-expanded={expanded}
+        disabled={disabled}
+      >
         <span style={titleStyle}>
           {title}
           {props.badge !== undefined && <span style={badgeStyle}>{props.badge}</span>}
         </span>
-        <div style={chevronContainerStyle(expanded)}>
+        <span style={chevronContainerStyle(expanded)}>
           <ChevronRightIcon size={iconTokens.size.sm} strokeWidth={iconTokens.strokeWidth} />
-        </div>
-      </div>
+        </span>
+      </button>
       <div style={contentWrapperStyle(expanded)} aria-hidden={!expanded}>
         <div style={contentStyle}>{content}</div>
       </div>

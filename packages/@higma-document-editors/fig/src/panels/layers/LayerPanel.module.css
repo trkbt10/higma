@@ -1,0 +1,18 @@
+/*
+ * Fig-editor LayerPanel supplementary stylesheet.
+ *
+ * react-editor-ui's `LayerItem` container defaults to
+ * `box-sizing: content-box`, which lets its 2px vertical padding push
+ * the outer height from 28 → 32px and breaks row-height parity with
+ * the Pages list SoT.
+ *
+ * The `.tree` class is applied to the Layers tree wrapper. The
+ * descendant selector targets the LayerItem container by its
+ * `data-layer-id` attribute (which the upstream component always
+ * sets) — scoped under `.tree` so the rule never reaches DOM that
+ * happens to have a `data-layer-id` outside the Layers panel.
+ */
+
+.tree :global([data-layer-id]) {
+  box-sizing: border-box;
+}

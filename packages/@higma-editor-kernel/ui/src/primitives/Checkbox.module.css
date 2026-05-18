@@ -1,0 +1,78 @@
+/*
+ * Checkbox primitive — square with check / indeterminate states.
+ *
+ * Uses the invisible-overlay pattern (a native checkbox input sits on
+ * top of the visual surface at opacity:0). The native input correctly
+ * receives keyboard focus, but the browser's default focus ring
+ * renders against an invisible element, so it's not visible to the
+ * user. We project the focus ring onto the sibling visual box using
+ * `:has(input:focus-visible)` on the container.
+ *
+ * Variants are expressed via `data-checked="true|false|mixed"` and
+ * `data-disabled="true"` so the call site never branches on
+ * className.
+ */
+
+.container {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  position: relative;
+  cursor: pointer;
+}
+
+.container[data-disabled="true"] {
+  cursor: not-allowed;
+}
+
+.container:has(input:focus-visible) .box {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: 2px;
+}
+
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.box {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-xs, 3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
+  color: var(--text-inverse, #ffffff);
+}
+
+.box[data-checked="false"] {
+  border: 1px solid var(--border-strong, #dadce0);
+  background: var(--bg-primary, #ffffff);
+}
+
+.box[data-checked="true"],
+.box[data-checked="mixed"] {
+  border: 1px solid var(--accent-primary, #4472C4);
+  background: var(--accent-primary, #4472C4);
+}
+
+.container[data-disabled="true"] .box {
+  opacity: 0.5;
+}
+
+.indeterminateBar {
+  display: block;
+  width: 8px;
+  height: 2px;
+  background: var(--text-inverse, #ffffff);
+  border-radius: 1px;
+}

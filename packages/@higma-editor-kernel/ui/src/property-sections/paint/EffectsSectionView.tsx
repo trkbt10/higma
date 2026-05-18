@@ -249,6 +249,7 @@ function renderShadowDetails({ effect, index, label, onChange }: EffectDetailRen
           type="number"
           ariaLabel={`${label} radius`}
           value={effect.radius}
+          min={0}
           onChange={(v) => onChange(i, { ...effect, radius: v as number })}
           suffix="px"
           dragToChange
@@ -291,6 +292,7 @@ function renderBlurDetails({ effect, index, label, onChange }: EffectDetailRende
       type="number"
       ariaLabel={`${label} radius`}
       value={effect.radius}
+      min={0}
       onChange={(v) => onChange(index, { ...effect, radius: v as number })}
       prefix="Radius"
       suffix="px"

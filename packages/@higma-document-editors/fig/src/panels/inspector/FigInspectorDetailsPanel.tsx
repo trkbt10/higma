@@ -177,7 +177,7 @@ const sectionTitleStyle: CSSProperties = {
   fontWeight: fontTokens.weight.semibold,
   textTransform: "uppercase",
   letterSpacing: "0.05em",
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
 };
 
 const rowStyle: CSSProperties = {
@@ -189,8 +189,9 @@ const rowStyle: CSSProperties = {
 
 const rowLabelStyle: CSSProperties = {
   flex: "0 0 90px",
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   fontSize: fontTokens.size.xs,
+  fontWeight: fontTokens.weight.medium,
 };
 
 const rowValueStyle: CSSProperties = {
@@ -280,7 +281,7 @@ const rawBlockStyle: CSSProperties = {
 
 const rawToggleStyle: CSSProperties = {
   background: "transparent",
-  color: colorTokens.text.secondary,
+  color: colorTokens.text.primary,
   border: `1px solid ${colorTokens.border.subtle}`,
   borderRadius: radiusTokens.xs,
   fontSize: fontTokens.size.xs,

@@ -1,0 +1,79 @@
+/*
+ * Input primitive — chrome + slot styling.
+ *
+ * Variant axes (no className branching):
+ *   - `data-drag="true"`     → prefix/suffix slot becomes the ew-resize scrubber
+ *   - `data-error="true"`    → container shows the accent.danger inset ring
+ *
+ * Hide native number spinners in both engines; the operator scrubs by
+ * dragging the prefix/suffix label instead.
+ */
+
+.container {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-tertiary, #f0f1f3);
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+}
+
+.container[data-error="true"] {
+  box-shadow: inset 0 0 0 1px var(--accent-danger, #d92d20);
+}
+
+.container:focus-within {
+  outline: 2px solid var(--selection-primary, #0066ff);
+  outline-offset: 2px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  font-size: var(--font-size-md, 12px);
+  font-family: inherit;
+  color: var(--text-primary, #1a1a1a);
+  background-color: transparent;
+  border: none;
+  outline: none;
+}
+
+/* Hide native number spinners — operator scrubs via the prefix/suffix
+ * drag handle instead. */
+.input::-webkit-outer-spin-button,
+.input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.input[type="number"] {
+  -moz-appearance: textfield;
+  text-align: right;
+}
+
+.slotText {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm, 11px);
+  font-weight: 500;
+  color: var(--text-primary, #1a1a1a);
+  user-select: none;
+  pointer-events: none;
+}
+
+.slotNode {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Drag-scrubber slot: ew-resize cursor + hover wash so the operator
+ * can see WHICH label is the drag target — the cursor change alone
+ * doesn't show extent. */
+.slotText[data-drag="true"] {
+  cursor: ew-resize;
+  touch-action: none;
+  pointer-events: auto;
+  transition: background-color 100ms ease;
+}
+.slotText[data-drag="true"]:hover {
+  background-color: var(--bg-hover, #e8eaed);
+}

@@ -94,9 +94,11 @@ export function StrokeSectionView({
               value={strokeWeight}
               min={0}
               step={0.5}
-              prefix="W"
+              prefix="Weight"
               suffix="px"
               dragToChange
+              error={strokeWeight < 0}
+              errorMessage="Stroke weight cannot be negative"
               onChange={(v) => onStrokeWeightChange(v as number)}
             />
             <Select
