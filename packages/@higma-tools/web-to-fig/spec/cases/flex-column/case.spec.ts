@@ -2,7 +2,7 @@
  * @file Case `flex-column` — `flex-direction: column` produces a
  * `direction: "column"` AutoLayoutIR.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_GAP_PX, withFlexColumn } from "./fixture";
 

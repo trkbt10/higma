@@ -1,15 +1,11 @@
 /**
  * @file Public entry — componentize.
  *
- * Phase 2 of the SoT consolidation removed the in-place
- * `promoteIconCluster` mutator. Cluster promotion is now expressed
- * through the editor reducer (`PROMOTE_TO_SYMBOL` +
- * `PROMOTE_TO_INSTANCE`) inside `apply-plan.ts`; this module retains
- * only the read-only gating + fingerprint helpers the planner and
- * apply layer consume to decide whether a cluster qualifies.
+ * Cluster promotion planning reads Kiwi nodeChanges and returns
+ * decisions for the apply layer. It does not publish an editor-side
+ * document shape.
  */
 export {
   isPromotableCluster,
-  isLeafIconCluster,
-  subtreeFingerprint,
+  structureFingerprint,
 } from "./promote-icon-cluster";

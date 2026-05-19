@@ -4,8 +4,8 @@
  *
  * Coverage:
  *   - GRADIENT_LINEAR with arbitrary stops at any angle.
- *   - Other gradient types (RADIAL/ANGULAR/DIAMOND) return undefined;
- *     callers fall back to existing transparent-Control placeholder.
+ *   - Other gradient types (ANGULAR/DIAMOND) return undefined because
+ *     Godot has no built-in GradientTexture2D mode for them.
  *
  * Godot 4 `GradientTexture2D`:
  *   - `gradient`: a `Gradient` resource (inline as another sub_resource)
@@ -14,8 +14,7 @@
  *     the texture renders 1:1 in the parent `TextureRect`.
  *   - `fill`: 0=Linear, 1=Radial.
  *   - `fill_from`, `fill_to`: Vector2 in [0,1]² describing the gradient
- *     direction. Derived from fig's gradientHandlePositions or
- *     transform.
+ *     direction. Derived from fig's Kiwi transform.
  *
  * Fig's coordinate convention (per docs / probe output):
  *   - Stop position 0 lives at gradient_handle 1 (the "start").
@@ -36,10 +35,14 @@
  */
 import type {
   FigGradientPaint,
-  FigGradientStop,
-  FigGradientTransform,
   FigPaint,
 } from "@higma-document-models/fig/types";
+import { getPaintType } from "@higma-document-models/fig/color";
+import {
+  getGradientDirection,
+  getGradientStops,
+  getRadialGradientCenterAndRadius,
+} from "@higma-document-renderers/fig/paint";
 import {
   colorVal,
   property,
@@ -65,120 +68,20 @@ function firstVisibleGodotGradient(
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "GRADIENT_LINEAR" || paint.type === "GRADIENT_RADIAL") {
+    const paintType = getPaintType(paint);
+    if (paintType === "GRADIENT_LINEAR" || paintType === "GRADIENT_RADIAL") {
       return paint as FigGradientPaint;
     }
   }
   return undefined;
 }
 
-/** Read stops in either Kiwi (`stops`) or API (`gradientStops`) shape. */
-function readStops(paint: FigGradientPaint): readonly FigGradientStop[] {
-  if (paint.stops && paint.stops.length > 0) {
-    return paint.stops;
-  }
-  if (paint.gradientStops && paint.gradientStops.length > 0) {
-    return paint.gradientStops;
-  }
-  return [];
-}
-
-/**
- * Apply a 2x3 affine transform to a 2D point. Treats undefined matrix
- * components as identity (per `FigGradientTransform`'s optional fields).
- */
-function applyTransform(t: FigGradientTransform, p: { x: number; y: number }): { x: number; y: number } {
-  const m00 = t.m00 ?? 1;
-  const m01 = t.m01 ?? 0;
-  const m02 = t.m02 ?? 0;
-  const m10 = t.m10 ?? 0;
-  const m11 = t.m11 ?? 1;
-  const m12 = t.m12 ?? 0;
+function radialEndpoints(paint: FigGradientPaint): { start: { x: number; y: number }; end: { x: number; y: number } } {
+  const params = getRadialGradientCenterAndRadius(paint);
   return {
-    x: m00 * p.x + m01 * p.y + m02,
-    y: m10 * p.x + m11 * p.y + m12,
+    start: params.center,
+    end: { x: params.center.x + params.radius, y: params.center.y },
   };
-}
-
-/**
- * Resolve the gradient direction in normalised object space. Fig's
- * `transform` maps object space → gradient space where (1,0) is the
- * 0% stop (start) and (0,0) is the 100% stop (end). Inverting that
- * gives us the start/end in object space:
- *
- *   start_obj = transform⁻¹ · (1, 0)
- *   end_obj   = transform⁻¹ · (0, 0)
- *
- * For the common identity transform: start_obj=(1,0), end_obj=(0,0)
- * — i.e. a right-to-left gradient. Most fig fixtures author left-to-
- * right by setting `m00=-1, m02=1` so the start is at (0,0) and the
- * end at (1,0).
- *
- * We invert the 2x2 part and apply.
- */
-function gradientEndpoints(
-  transform: FigGradientTransform,
-): { start: { x: number; y: number }; end: { x: number; y: number } } {
-  const m00 = transform.m00 ?? 1;
-  const m01 = transform.m01 ?? 0;
-  const m02 = transform.m02 ?? 0;
-  const m10 = transform.m10 ?? 0;
-  const m11 = transform.m11 ?? 1;
-  const m12 = transform.m12 ?? 0;
-  const det = m00 * m11 - m01 * m10;
-  if (Math.abs(det) < 1e-9) {
-    // Degenerate transform — fall back to horizontal LTR.
-    return { start: { x: 0, y: 0 }, end: { x: 1, y: 0 } };
-  }
-  const inv = {
-    m00: m11 / det,
-    m01: -m01 / det,
-    m02: (m01 * m12 - m11 * m02) / det,
-    m10: -m10 / det,
-    m11: m00 / det,
-    m12: (m10 * m02 - m00 * m12) / det,
-  };
-  // Empirically: fig stop position 0 lives at gradient-space (0, 0)
-  // (NOT (1,0) as the docs suggest in some places). So fill_from
-  // (corresponding to Godot's offset 0 = stop 0) maps from (0,0),
-  // and fill_to from (1,0). Verified against decoration-combo's
-  // grad-radius-linear (blue→green left-to-right with identity-like
-  // transform).
-  return {
-    start: applyTransform(inv, { x: 0, y: 0 }),
-    end: applyTransform(inv, { x: 1, y: 0 }),
-  };
-}
-
-/**
- * Resolve a RADIAL gradient's centre and rim point in object space.
- *
- * Fig's RADIAL transform stores the centre directly at (m02, m12)
- * and the radius at m00 — the renderer's
- * `getRadialGradientCenterAndRadius` is the SoT and documents this.
- * Godot's `GradientTexture2D` (with `fill = 1` for Radial) takes
- * `fill_from` (centre) and `fill_to` (a point on the rim). We pick
- * a rim point along the +x axis of object space so the radius
- * matches Godot's `length(fill_to - fill_from)`.
- */
-function radialEndpoints(
-  transform: FigGradientTransform,
-): { start: { x: number; y: number }; end: { x: number; y: number } } {
-  const cx = transform.m02 ?? 0.5;
-  const cy = transform.m12 ?? 0.5;
-  const r = transform.m00 ?? 0.5;
-  return { start: { x: cx, y: cy }, end: { x: cx + r, y: cy } };
-}
-
-/** Dispatch endpoints by gradient kind. */
-function pickEndpoints(
-  isRadial: boolean,
-  transform: FigGradientTransform,
-): { start: { x: number; y: number }; end: { x: number; y: number } } {
-  if (isRadial) {
-    return radialEndpoints(transform);
-  }
-  return gradientEndpoints(transform);
 }
 
 /**
@@ -226,13 +129,14 @@ export function buildGradientFromPaint(
   gradientId: string,
   textureId: string,
 ): LinearGradientResult | undefined {
-  if (paint.type !== "GRADIENT_LINEAR" && paint.type !== "GRADIENT_RADIAL") {
+  const paintType = getPaintType(paint);
+  if (paintType !== "GRADIENT_LINEAR" && paintType !== "GRADIENT_RADIAL") {
     return undefined;
   }
-  const stops = readStops(paint);
-  if (stops.length === 0) {
-    return undefined;
+  if (!size) {
+    throw new Error("buildGradientFromPaint requires node size");
   }
+  const stops = getGradientStops(paint);
   const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
   const offsets: GodotValue = {
     kind: "raw",
@@ -259,9 +163,8 @@ export function buildGradientFromPaint(
     property("offsets", offsets),
     property("colors", colors),
   ]);
-  const transform = paint.transform ?? {};
-  const w = size ? Math.max(1, Math.round(size.x)) : 100;
-  const h = size ? Math.max(1, Math.round(size.y)) : 100;
+  const w = Math.max(1, Math.round(size.x));
+  const h = Math.max(1, Math.round(size.y));
   // Godot's `GradientTexture2D.fill`: 0=Linear, 1=Radial.
   //
   // The two endpoint conventions diverge on RADIAL:
@@ -276,9 +179,9 @@ export function buildGradientFromPaint(
   //     element on most fixtures (mask-rounded, grad-radial).
   //
   // We split the two cases so each carries the right math.
-  const isRadial = paint.type === "GRADIENT_RADIAL";
+  const isRadial = paintType === "GRADIENT_RADIAL";
   const fillKind = isRadial ? 1 : 0;
-  const endpoints = pickEndpoints(isRadial, transform);
+  const endpoints = isRadial ? radialEndpoints(paint) : getGradientDirection(paint);
   const fillFrom = endpoints.start;
   const fillTo = endpoints.end;
   const texture = subResource(textureId, "GradientTexture2D", [
@@ -295,4 +198,3 @@ export function buildGradientFromPaint(
     textureProperty: property("texture", { kind: "sub-resource", id: textureId }),
   };
 }
-

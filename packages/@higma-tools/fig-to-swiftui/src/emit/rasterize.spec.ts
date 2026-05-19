@@ -14,7 +14,12 @@
  */
 import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
 import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 import { planRasterization } from "./rasterize";
+
+const FIXTURE_SYMBOL_RESOLVER = createSymbolResolver({ document: indexFigKiwiDocument([]) });
+const childrenOfFixtureNode = FIXTURE_SYMBOL_RESOLVER.childrenOfResolvedNode;
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
@@ -33,7 +38,7 @@ function frame(overrides: Partial<FigNode> & { readonly localID: number }): FigN
 describe("complexityScore", () => {
   it("returns 1 for a sized leaf with no geometry", () => {
     const node = frame({ localID: 1, size: { x: 10, y: 10 } });
-    expect(complexityScore(node)).toBe(1);
+    expect(complexityScore(node, { childrenOf: childrenOfFixtureNode })).toBe(1);
   });
 
   it("counts each visible descendant as 1", () => {
@@ -45,14 +50,14 @@ describe("complexityScore", () => {
       children: [child1, child2],
     });
     // 1 (parent) + 1 (child1) + 1 (child2) = 3
-    expect(complexityScore(parent)).toBe(3);
+    expect(complexityScore(parent, { childrenOf: childrenOfFixtureNode })).toBe(3);
   });
 });
 
 describe("planRasterization", () => {
   it("returns no entries when nothing crosses the threshold", () => {
     const node = frame({ localID: 1, size: { x: 100, y: 100 } });
-    const plan = planRasterization([node], { threshold: 100 });
+    const plan = planRasterization([node], { threshold: 100, childrenOf: childrenOfFixtureNode });
     expect(plan).toHaveLength(0);
   });
 
@@ -73,7 +78,7 @@ describe("planRasterization", () => {
     // root subtree score: 1+1+1+1+1 = 5. With threshold=5 the
     // root crosses and is flagged; the planner stops there and
     // does not flag the inner child.
-    const plan = planRasterization([root], { threshold: 5 });
+    const plan = planRasterization([root], { threshold: 5, childrenOf: childrenOfFixtureNode });
     expect(plan).toHaveLength(1);
     expect(plan[0]?.key).toBe("1:1");
     expect(plan[0]?.width).toBe(100);
@@ -87,7 +92,7 @@ describe("planRasterization", () => {
       size: { x: 100, y: 100 },
       children: [child],
     });
-    const plan = planRasterization([root], { threshold: 1 });
+    const plan = planRasterization([root], { threshold: 1, childrenOf: childrenOfFixtureNode });
     // Both root and child cross threshold=1, but the planner
     // returns just the root — children inherit the bitmap.
     expect(plan).toHaveLength(1);
@@ -101,7 +106,7 @@ describe("planRasterization", () => {
       // No `size` — can't be rendered as a standalone PNG.
       children: [sizedChild],
     });
-    const plan = planRasterization([unsizedRoot], { threshold: 1 });
+    const plan = planRasterization([unsizedRoot], { threshold: 1, childrenOf: childrenOfFixtureNode });
     // The planner recurses past the unsized root and flags the
     // sized child instead.
     expect(plan).toHaveLength(1);
@@ -111,7 +116,7 @@ describe("planRasterization", () => {
   it("assigns unique slugs when two nodes share a name", () => {
     const a = frame({ localID: 1, name: "card", size: { x: 50, y: 50 } });
     const b = frame({ localID: 2, name: "card", size: { x: 50, y: 50 } });
-    const plan = planRasterization([a, b], { threshold: 1 });
+    const plan = planRasterization([a, b], { threshold: 1, childrenOf: childrenOfFixtureNode });
     expect(plan).toHaveLength(2);
     expect(plan[0]?.resourceSlug).toBe("card");
     // `uniqueId` from @higma-primitives/identifier appends "-N"
@@ -125,7 +130,7 @@ describe("planRasterization", () => {
       name: "Card 03 — Hearts",
       size: { x: 50, y: 50 },
     });
-    const plan = planRasterization([node], { threshold: 1 });
+    const plan = planRasterization([node], { threshold: 1, childrenOf: childrenOfFixtureNode });
     expect(plan[0]?.resourceSlug).toMatch(/^card-03/);
   });
 });

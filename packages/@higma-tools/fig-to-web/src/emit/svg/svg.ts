@@ -34,9 +34,9 @@ import type {
   FigVectorPath,
   KiwiEnumValue,
 } from "@higma-document-models/fig/types";
-import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigBlob, FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { decodeBlobToSvgPath } from "@higma-document-models/fig/domain";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { TokenIndex } from "../../tokens";
 import { synthesizeShapePath } from "./synth-shape";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
@@ -132,10 +132,13 @@ function isVisible(node: FigNode): boolean {
   return node.visible !== false;
 }
 
-function visibleChildren(node: FigNode): readonly FigNode[] {
+function visibleChildren(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): readonly FigNode[] {
   const out: FigNode[] = [];
-  for (const child of node.children ?? []) {
-    if (child && isVisible(child)) {
+  for (const child of childrenOf(node)) {
+    if (isVisible(child)) {
       out.push(child);
     }
   }
@@ -151,19 +154,22 @@ function visibleChildren(node: FigNode): readonly FigNode[] {
  * The check is recursive: a FRAME with only pure-vector-subtree
  * children is itself a pure-vector subtree.
  */
-export function isPureVectorSubtree(node: FigNode): boolean {
+export function isPureVectorSubtree(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): boolean {
   if (isVectorShaped(node)) {
     return true;
   }
   if (!isPlainContainer(node)) {
     return false;
   }
-  const children = visibleChildren(node);
+  const children = visibleChildren(node, childrenOf);
   if (children.length === 0) {
     return false;
   }
   for (const child of children) {
-    if (!isPureVectorSubtree(child)) {
+    if (!isPureVectorSubtree(child, childrenOf)) {
       return false;
     }
   }
@@ -176,27 +182,33 @@ export function isPureVectorSubtree(node: FigNode): boolean {
  * (so we can replace its `<div>` with an `<svg>` without losing visible
  * styling), and at least one descendant must contribute a real path.
  */
-export function isVectorOnlyContainer(node: FigNode): boolean {
+export function isVectorOnlyContainer(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): boolean {
   if (!isPlainContainer(node)) {
     return false;
   }
-  const children = visibleChildren(node);
+  const children = visibleChildren(node, childrenOf);
   if (children.length === 0) {
     return false;
   }
   for (const child of children) {
-    if (!isPureVectorSubtree(child)) {
+    if (!isPureVectorSubtree(child, childrenOf)) {
       return false;
     }
   }
-  return countVectors(node) > 0;
+  return countVectors(node, childrenOf) > 0;
 }
 
-function countVectors(node: FigNode): number {
+function countVectors(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): number {
   if (isVectorShaped(node)) {
     return 1;
   }
-  return visibleChildren(node).reduce((sum, child) => sum + countVectors(child), 0);
+  return visibleChildren(node, childrenOf).reduce((sum, child) => sum + countVectors(child, childrenOf), 0);
 }
 
 function maxStrokeWidth(weight: FigStrokeWeight | undefined): number | undefined {
@@ -333,8 +345,9 @@ function pathFromGeometry(geom: FigFillGeometry, blobs: readonly FigBlob[]): { d
 }
 
 export type VectorEmitInputs = {
-  readonly source: FigSymbolContext;
+  readonly source: FigDocumentContext;
   readonly index: TokenIndex;
+  readonly childrenOf: FigKiwiDocumentIndex["childrenOf"];
 };
 
 function strokeProps(
@@ -386,7 +399,7 @@ export function emitVectorSvg(
   inputs: VectorEmitInputs,
   wrapperProps: readonly JsxProp[],
 ): JsxNode | undefined {
-  const paths = collectPathsFor(node, inputs.source.loaded.blobs);
+  const paths = collectPathsFor(node, inputs.source.blobs);
   if (paths.length === 0) {
     return undefined;
   }
@@ -639,6 +652,7 @@ function collectComposedPaths(
   node: FigNode,
   blobs: readonly FigBlob[],
   index: TokenIndex,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
   parent: AffineMatrix,
 ): readonly ComposedPath[] {
   if (isVectorShaped(node)) {
@@ -646,8 +660,8 @@ function collectComposedPaths(
   }
   const next = multiplyMatrix(parent, matrixOfNode(node));
   const out: ComposedPath[] = [];
-  for (const child of visibleChildren(node)) {
-    out.push(...collectComposedPaths(child, blobs, index, next));
+  for (const child of visibleChildren(node, childrenOf)) {
+    out.push(...collectComposedPaths(child, blobs, index, childrenOf, next));
   }
   return out;
 }
@@ -681,8 +695,8 @@ function collectVectorPaths(
 
 function collectDescendantPaths(container: FigNode, inputs: VectorEmitInputs): readonly ComposedPath[] {
   const out: ComposedPath[] = [];
-  for (const child of visibleChildren(container)) {
-    out.push(...collectComposedPaths(child, inputs.source.loaded.blobs, inputs.index, IDENTITY_MATRIX));
+  for (const child of visibleChildren(container, inputs.childrenOf)) {
+    out.push(...collectComposedPaths(child, inputs.source.blobs, inputs.index, inputs.childrenOf, IDENTITY_MATRIX));
   }
   return out;
 }

@@ -5,11 +5,11 @@
  * image-to-fig pipeline) omit `fillGeometry` blobs for star,
  * polygon, line, and arc-shaped ellipse nodes. The Figma renderer
  * synthesises the contour from primitives (`pointCount`,
- * `starInnerScale`, `arcData`, …); we delegate to the same helpers
+ * `starInnerScale`, `arcData`, …); we delegate to the same routines
  * so the React output reproduces the identical path the
  * authoritative SVG render produces.
  *
- * The helpers below are pure: they consume only the subset of
+ * The routines below are pure: they consume only the subset of
  * `FigNode` fields that drive geometry, so each shape type's path
  * can be unit-tested in isolation.
  */

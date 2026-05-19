@@ -8,7 +8,7 @@
  * fails — the IR keeps DOM order and the rendered Figma frame
  * paints in the wrong stacking order.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { overlappingSiblings } from "./fixture";
 
 describe("case z-index-stacking", () => {

@@ -10,7 +10,7 @@ import { KiwiBuildError } from "./errors";
 // Import from core
 import { encodeDefinition } from "./core/definition-codec";
 import { createValueEncoder } from "./core/value-codec";
-import { findDefinitionByName } from "./core/schema-utils";
+import { findDefinitionByName } from "./core/definition-lookup";
 import { TYPE_IDS } from "./core/primitives";
 import type { KiwiFormat } from "./core/types";
 

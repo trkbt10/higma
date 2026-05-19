@@ -36,7 +36,7 @@ import {
 import { loadZipPackage } from "@higma-primitives/zip";
 import type { KiwiSchema } from "@higma-codecs/kiwi/types";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { normaliseNodeChanges } from "../parser/normalize";
+import { readNodeChanges } from "../parser/node-codec";
 import type { LintContext, LintFinding } from "./types";
 
 type StepError = {
@@ -44,6 +44,10 @@ type StepError = {
   readonly path: string;
   readonly message: string;
 };
+
+type StepResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly message: string };
 
 /**
  * Result of context construction. Errors collected here are appended
@@ -138,71 +142,100 @@ function decodeChain(canvasData: Uint8Array | null, errors: StepError[]): Decode
     return { canvasData, canvasHeader: null, schema: null, message: null, nodeChanges: [] };
   }
 
-  const headerResult = (() => {
-    try {
-      return { ok: true as const, header: parseFigCanvasHeader(canvasData) };
-    } catch (err) {
-      return { ok: false as const, message: (err as Error).message };
-    }
-  })();
+  const headerResult = readCanvasHeader(canvasData);
 
   if (!headerResult.ok) {
     errors.push({ ruleId: "fig.canvas.header", path: "canvas.fig/header", message: headerResult.message });
     return { canvasData, canvasHeader: null, schema: null, message: null, nodeChanges: [] };
   }
 
-  const header = headerResult.header;
+  const header = headerResult.value;
   const payload = getFigCanvasPayload(canvasData);
 
-  const chunkResult = (() => {
-    try {
-      return { ok: true as const, chunks: splitFigChunks(payload, header.payloadSize) };
-    } catch (err) {
-      return { ok: false as const, message: (err as Error).message };
-    }
-  })();
+  const chunkResult = readFigChunks(payload, header.payloadSize);
 
   if (!chunkResult.ok) {
     errors.push({ ruleId: "fig.canvas.payload-size", path: "canvas.fig/payload", message: chunkResult.message });
     return { canvasData, canvasHeader: header, schema: null, message: null, nodeChanges: [] };
   }
 
-  const schemaResult = (() => {
-    try {
-      const decompressed = decompressFigChunk(chunkResult.chunks.schema);
-      return { ok: true as const, schema: decodeFigSchema(decompressed) };
-    } catch (err) {
-      return { ok: false as const, message: (err as Error).message };
-    }
-  })();
+  const schemaResult = readFigSchema(chunkResult.value.schema);
 
   if (!schemaResult.ok) {
     errors.push({ ruleId: "fig.schema.coverage", path: "canvas.fig/schema", message: schemaResult.message });
     return { canvasData, canvasHeader: header, schema: null, message: null, nodeChanges: [] };
   }
 
-  const messageResult = (() => {
-    try {
-      const decompressed = decompressFigChunk(chunkResult.chunks.data);
-      return { ok: true as const, message: decodeFigMessage(schemaResult.schema, decompressed, "Message") };
-    } catch (err) {
-      return { ok: false as const, message: (err as Error).message };
-    }
-  })();
+  const messageResult = readFigMessage(schemaResult.value, chunkResult.value.data);
 
   if (!messageResult.ok) {
     errors.push({ ruleId: "fig.message.decode", path: "canvas.fig/message", message: messageResult.message });
-    return { canvasData, canvasHeader: header, schema: schemaResult.schema, message: null, nodeChanges: [] };
+    return { canvasData, canvasHeader: header, schema: schemaResult.value, message: null, nodeChanges: [] };
   }
 
-  const nodeChanges = normaliseNodeChanges(toUnknownArray(messageResult.message.nodeChanges));
+  const nodeChanges = readNodeChanges(toUnknownArray(messageResult.value.nodeChanges));
   return {
     canvasData,
     canvasHeader: header,
-    schema: schemaResult.schema,
-    message: messageResult.message,
+    schema: schemaResult.value,
+    message: messageResult.value,
     nodeChanges,
   };
+}
+
+function readCanvasHeader(canvasData: Uint8Array): StepResult<FigCanvasHeader> {
+  try {
+    return { ok: true, value: parseFigCanvasHeader(canvasData) };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+function readFigChunks(payload: Uint8Array, payloadSize: number): StepResult<ReturnType<typeof splitFigChunks>> {
+  try {
+    return { ok: true, value: splitFigChunks(payload, payloadSize) };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+function readFigSchema(schemaChunk: Uint8Array): StepResult<KiwiSchema> {
+  try {
+    const decompressed = decompressFigChunk(schemaChunk);
+    return { ok: true, value: decodeFigSchema(decompressed) };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+function readFigMessage(schema: KiwiSchema, dataChunk: Uint8Array): StepResult<Record<string, unknown>> {
+  try {
+    const decompressed = decompressFigChunk(dataChunk);
+    return { ok: true, value: decodeFigMessage(schema, decompressed, "Message") };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+async function readZipEntries(
+  bytes: Uint8Array,
+  isZip: boolean,
+  errors: StepError[],
+): Promise<ReadonlyMap<string, Uint8Array>> {
+  if (!isZip) {
+    return new Map<string, Uint8Array>();
+  }
+  try {
+    const zipPackage = await loadZipPackage(bytes);
+    return readEntries(zipPackage);
+  } catch (err) {
+    errors.push({
+      ruleId: "fig.zip.header",
+      path: "zip",
+      message: `ZIP package could not be opened: ${(err as Error).message}`,
+    });
+    return new Map<string, Uint8Array>();
+  }
 }
 
 /**
@@ -215,29 +248,8 @@ export async function buildLintContext(bytes: Uint8Array): Promise<LintContextBu
   const errors: StepError[] = [];
   const isZip = isZipPackage(bytes);
 
-  const zipEntries = await (async () => {
-    if (!isZip) {
-      return new Map<string, Uint8Array>();
-    }
-    try {
-      const zipPackage = await loadZipPackage(bytes);
-      return readEntries(zipPackage);
-    } catch (err) {
-      errors.push({
-        ruleId: "fig.zip.header",
-        path: "zip",
-        message: `ZIP package could not be opened: ${(err as Error).message}`,
-      });
-      return new Map<string, Uint8Array>();
-    }
-  })();
-
-  const canvasData = (() => {
-    if (isZip) {
-      return pickCanvasData(zipEntries);
-    }
-    return bytes;
-  })();
+  const zipEntries = await readZipEntries(bytes, isZip, errors);
+  const canvasData = isZip ? pickCanvasData(zipEntries) : bytes;
 
   if (isZip && !canvasData) {
     errors.push({

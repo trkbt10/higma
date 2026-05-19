@@ -2,7 +2,7 @@
  * @file Case `pseudo-before-bullet` — the `::before` glyph prepends
  * the host's text in the resulting TEXT IR.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { BULLET, ITEM_TEXT, liWithBeforeBullet } from "./fixture";
 
 describe("case pseudo-before-bullet", () => {

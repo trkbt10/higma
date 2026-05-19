@@ -57,7 +57,7 @@ import {
   type FontResolver,
 } from "./font-resolver";
 import { buildParagraphContent, isParagraphHost } from "./paragraph";
-import { transformPathData } from "../web-source/svg-utils";
+import { transformPathData } from "../web-source/svg-path-geometry";
 
 /**
  * Translate a captured CSS `font-family` value into the single family
@@ -534,9 +534,9 @@ function leafTextWantsVerticalCentre(host: RawElement, inner: RawElement): boole
   if (tag === "input" || tag === "select" || tag === "button" || tag === "textarea") {
     return true;
   }
-  const fontSize = parsePxOr(inner.computedStyle["font-size"], 16);
+  const fontSize = parsePx(inner.computedStyle["font-size"] ?? "");
   const lineHeightRaw = inner.computedStyle["line-height"] ?? "normal";
-  const lineStride = lineStridePxFromCss(lineHeightRaw, fontSize);
+  const lineStride = lineStridePxFromCss(lineHeightRaw, fontSize, inner);
   if (lineStride <= 0) {
     return false;
   }
@@ -546,20 +546,27 @@ function leafTextWantsVerticalCentre(host: RawElement, inner: RawElement): boole
   return inner.rect.height > lineStride * 1.5;
 }
 
-function lineStridePxFromCss(value: string, fontSize: number): number {
+function lineStridePxFromCss(value: string, fontSize: number, el: RawElement): number {
   const trimmed = value.trim();
   if (trimmed === "" || trimmed === "normal") {
-    return fontSize * 1.2;
+    return capturedNormalLineHeightPx(el);
   }
   if (trimmed.endsWith("px")) {
-    const n = parseFloat(trimmed.slice(0, -2));
-    return Number.isFinite(n) ? n : fontSize * 1.2;
+    return parseFiniteLineHeightPx(trimmed, value);
   }
   const ratio = parseFloat(trimmed);
   if (Number.isFinite(ratio)) {
     return fontSize * ratio;
   }
-  return fontSize * 1.2;
+  throw new Error(`lineStridePxFromCss: unsupported line-height "${value}"`);
+}
+
+function parseFiniteLineHeightPx(trimmed: string, raw: string): number {
+  const parsed = parseFloat(trimmed.slice(0, -2));
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`lineStridePxFromCss: malformed px line-height "${raw}"`);
+  }
+  return parsed;
 }
 
 /**
@@ -1955,7 +1962,7 @@ function normalizeTextStyle(el: RawElement, resolver: FontResolver): TextStyleIR
   const fontStyle = cssFontStyle(cs["font-style"]);
   const fontWeight = parseFontWeight(cs["font-weight"] ?? "400");
   const fontSize = parsePx(cs["font-size"] ?? "16px");
-  const lineHeight = normalizeLineHeight(cs["line-height"], fontSize);
+  const lineHeight = normalizeLineHeight(cs["line-height"], fontSize, el);
   const letterSpacing = letterSpacingFromCss(cs["letter-spacing"]);
   const textAlign = textAlignFromCss(cs["text-align"]);
   const decoration = decorationFromCss(cs["text-decoration-line"]);
@@ -2045,16 +2052,12 @@ function textAlignFromCss(value: string | undefined): TextStyleIR["textAlign"] {
   return "left";
 }
 
-function normalizeLineHeight(value: string | undefined, _fontSize: number): TextStyleIR["lineHeight"] {
+function normalizeLineHeight(value: string | undefined, fontSize: number, el: RawElement): TextStyleIR["lineHeight"] {
   if (!value) {
-    return { unit: "normal" };
+    throw new Error(`normalizeLineHeight: missing computed line-height for ${el.id}`);
   }
   if (value === "normal") {
-    // Defer to caller: `lineMetricForElement` measures the rendered
-    // line stride from the captured rect when the CSS keyword is
-    // `normal`. The IR carries `normal` so downstream tooling can
-    // pick its own font-native fallback.
-    return { unit: "normal" };
+    return { unit: "px", value: capturedNormalLineHeightPx(el) };
   }
   if (value.endsWith("px")) {
     return { unit: "px", value: parsePx(value) };
@@ -2064,6 +2067,18 @@ function normalizeLineHeight(value: string | undefined, _fontSize: number): Text
     return { unit: "ratio", value: ratio };
   }
   throw new Error(`normalizeLineHeight: cannot parse "${value}"`);
+}
+
+function capturedNormalLineHeightPx(el: RawElement): number {
+  const rects = el.textLineRects;
+  if (rects === undefined || rects.length === 0) {
+    throw new Error(`normalizeLineHeight: line-height=normal for ${el.id} requires captured textLineRects`);
+  }
+  const heights = rects.map((rect) => rect.height).filter((height) => Number.isFinite(height) && height > 0);
+  if (heights.length === 0) {
+    throw new Error(`normalizeLineHeight: line-height=normal for ${el.id} has no positive captured line height`);
+  }
+  return Math.max(...heights);
 }
 
 function decorationFromCss(value: string | undefined): TextStyleIR["textDecoration"] {

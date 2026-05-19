@@ -8,16 +8,16 @@
  *       ▼
  *     ViewportIR (`ir1`)
  *       │ buildDocument → exportFig → bytes
- *       │ createFigDesignDocument(bytes)
- *       │ figNodeToIR(rootFrame)
+ *       │ createFigDocumentContext(bytes)
+ *       │ inspect Kiwi root frame directly
  *       ▼
- *     NodeIR (`ir2`)
+ *     Kiwi root frame summary
  *
- * The contract: `ir1.root` and `ir2` agree on the diff-relevant
- * subset (kind, name, box, fills.length, characters, autoLayout
- * direction, child count) at every level. Anything stricter would
- * trip on Figma's id reassignment and on benign defaults Figma
- * applies during export — those are out of scope for the bridge,
+ * The contract: `ir1.root` and the reloaded Kiwi root agree on the
+ * diff-relevant subset (kind, name, box, paint counts, characters,
+ * autoLayout direction, child count) at every level. Anything stricter would
+ * trip on Figma's id reassignment and on fields outside this bridge's
+ * visual contract — those are out of scope for the bridge,
  * which only claims invariance on the *visual surface*.
  *
  * Asset round-trip is asserted separately for the (currently empty)
@@ -27,9 +27,9 @@
  * The spec runs entirely in memory — no Playwright, no network — by
  * starting from a hand-built RawViewportSnapshot.
  */
-import { createFigDesignDocument } from "@higma-document-io/fig";
-import { figNodeToIR } from "@higma-bridges/web-fig";
+import { createFigDocumentContext, type FigDocumentContext } from "@higma-document-io/fig";
 import type { NodeIR } from "@higma-bridges/web-fig";
+import type { FigNode } from "@higma-document-models/fig/types";
 import { normalizeViewport } from "../src/normalize";
 import { emitFig, buildDocument } from "../src/emit";
 import { exampleComFixture } from "./example-com-fixture";
@@ -42,7 +42,6 @@ function summarize(node: NodeIR): unknown {
     box: roundBox(node.box),
     fills: node.style.fills.length,
     strokes: node.style.strokes.length,
-    cornerRadius: node.style.cornerRadius,
     autoLayout: node.kind === "frame" ? node.autoLayout.direction : undefined,
     children: node.kind === "frame" ? node.children.map(summarize) : undefined,
     characters: node.kind === "text" ? node.characters : undefined,
@@ -60,6 +59,77 @@ function roundBox(b: NodeIR["box"]): NodeIR["box"] {
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function documentCanvas(context: FigDocumentContext): FigNode {
+  const canvases = context.document.nodeChanges.filter((node) => node.type.name === "CANVAS" && node.internalOnly !== true);
+  if (canvases.length !== 1) {
+    throw new Error(`expected exactly one visible CANVAS, got ${canvases.length}`);
+  }
+  return canvases[0]!;
+}
+
+function directKiwiSummary(context: FigDocumentContext, node: FigNode): unknown {
+  const transform = node.transform;
+  const size = node.size;
+  if (transform === undefined) {
+    throw new Error(`node ${node.name ?? node.type.name} missing transform`);
+  }
+  if (size === undefined) {
+    throw new Error(`node ${node.name ?? node.type.name} missing size`);
+  }
+  const kind = (() => {
+    switch (node.type.name) {
+      case "FRAME":
+      case "SYMBOL":
+      case "GROUP":
+      case "SECTION":
+        return "frame";
+      case "TEXT":
+        return "text";
+      case "RECTANGLE":
+      case "ROUNDED_RECTANGLE":
+      case "ELLIPSE":
+        return "rectangle";
+      case "VECTOR":
+      case "LINE":
+      case "STAR":
+      case "REGULAR_POLYGON":
+        return "vector";
+      default:
+        throw new Error(`unsupported Kiwi node type in round-trip summary: ${node.type.name}`);
+    }
+  })();
+  return {
+    kind,
+    name: node.name,
+    box: roundBox({
+      x: transform.m02,
+      y: transform.m12,
+      width: size.x,
+      height: size.y,
+    }),
+    fills: (node.fillPaints ?? []).length,
+    strokes: (node.strokePaints ?? []).length,
+    autoLayout: kind === "frame" ? directAutoLayoutDirection(node) : undefined,
+    children: kind === "frame" ? context.document.childrenOf(node).map((child) => directKiwiSummary(context, child)) : undefined,
+    characters: kind === "text" ? node.textData?.characters : undefined,
+  };
+}
+
+function directAutoLayoutDirection(node: FigNode): "row" | "column" | "none" {
+  const modeName = node.stackMode?.name;
+  switch (modeName) {
+    case "HORIZONTAL":
+      return "row";
+    case "VERTICAL":
+      return "column";
+    case undefined:
+    case "NONE":
+      return "none";
+    default:
+      throw new Error(`unsupported Kiwi stackMode in round-trip summary: ${modeName}`);
+  }
 }
 
 describe("web-to-fig round-trip", () => {
@@ -98,64 +168,37 @@ describe("web-to-fig round-trip", () => {
     expect(card.autoLayout.direction).toBe("column");
   });
 
-  it("builds an exportable FigDesignDocument from the IR", async () => {
+  it("builds an exportable Kiwi document from the IR", () => {
     const ir = normalizeViewport(exampleComFixture, { fontResolver: staticFontResolver() });
     const built = buildDocument(ir);
-    expect(built.doc.pages).toHaveLength(1);
-    const pageChildren = built.doc.pages[0]!.children;
-    function countNodes(node: { children?: readonly unknown[] }): number {
-      const childCount = (node.children ?? []).reduce<number>(
-        (acc, child) => acc + countNodes(child as { children?: readonly unknown[] }),
-        0,
-      );
-      return 1 + childCount;
-    }
-    const nodeCount = pageChildren.reduce<number>((acc, child) => acc + countNodes(child), 0);
+    const page = documentCanvas(built.context);
+    const pageChildren = built.context.document.childrenOf(page);
+    const nodeCount = pageChildren.reduce<number>((acc, child) => {
+      return acc + directKiwiSubtreeSize(built.context, child);
+    }, 0);
     // viewport root + card + 3 texts = 5
     expect(nodeCount).toBe(5);
   });
 
-  it("preserves the IR's structural shape after Web → IR → Fig → IR", async () => {
+  it("preserves the IR's structural shape after Web → IR → Fig → Kiwi", async () => {
     const ir1 = normalizeViewport(exampleComFixture, { fontResolver: staticFontResolver() });
     const exported = await emitFig(ir1);
     expect(exported.bytes.byteLength).toBeGreaterThan(0);
 
-    const reloaded = await createFigDesignDocument(exported.bytes);
-    const rootChildren = reloaded.pages[0]!.children;
+    const reloaded = await createFigDocumentContext(exported.bytes);
+    const page = documentCanvas(reloaded);
+    const rootChildren = reloaded.document.childrenOf(page);
     expect(rootChildren).toHaveLength(1);
-    const ir2 = figNodeToIR(rootChildren[0]!);
 
     const summary1 = summarize(ir1.root);
-    const summary2 = summarize(ir2);
+    const summary2 = directKiwiSummary(reloaded, rootChildren[0]!);
 
-    // The fig writer normalises empty fills to an opaque white frame
-    // default (see node-factory.ts > getDefaultFills). That changes the
-    // `fills` count but not the visual surface in any way the bridge
-    // promises to preserve. We compare structure, names, and geometry
-    // here; the round-trip is invariant on those.
-    function structuralOnly(s: unknown): unknown {
-      if (s === undefined || s === null) {
-        return s;
-      }
-      if (typeof s !== "object") {
-        return s;
-      }
-      const obj = s as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      for (const key of Object.keys(obj)) {
-        if (key === "fills" || key === "strokes" || key === "cornerRadius") {
-          continue;
-        }
-        const value = obj[key];
-        if (Array.isArray(value)) {
-          out[key] = value.map(structuralOnly);
-        } else {
-          out[key] = structuralOnly(value);
-        }
-      }
-      return out;
-    }
-
-    expect(structuralOnly(summary2)).toEqual(structuralOnly(summary1));
+    expect(summary2).toEqual(summary1);
   });
 });
+
+function directKiwiSubtreeSize(context: FigDocumentContext, node: FigNode): number {
+  return 1 + context.document.childrenOf(node).reduce<number>((acc, child) => {
+    return acc + directKiwiSubtreeSize(context, child);
+  }, 0);
+}

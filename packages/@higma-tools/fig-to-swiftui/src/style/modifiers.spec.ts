@@ -1,7 +1,8 @@
 /**
  * @file Spec for individual SwiftUI modifier builders.
  */
-import type { FigEffect, FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import type { FigEffect, FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { Modifier } from "../swift-tree/types";
 import { ident, leaf } from "../swift-tree/builder";
 import { serialize } from "../swift-tree/serialize";
@@ -20,6 +21,17 @@ import {
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
+}
+
+function solidPaint(
+  color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number },
+  fields: Partial<Pick<FigPaint, "opacity" | "visible" | "blendMode">> = {},
+): FigPaint {
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, ...fields };
+}
+
+function dropShadow(fields: Omit<FigEffect, "type">): FigEffect {
+  return { type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" }, ...fields };
 }
 
 function makeFrame(partial: Partial<FigNode>): FigNode {
@@ -69,7 +81,7 @@ describe("backgroundModifier", () => {
     // that pokes past the rounded foreground at the corners.
     const node = makeFrame({
       fillPaints: [
-        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } },
+        solidPaint({ r: 1, g: 0, b: 0, a: 1 }),
       ],
     });
     expect(applied(node, backgroundModifier)).toBe(
@@ -85,7 +97,7 @@ describe("backgroundModifier", () => {
     const node = makeFrame({
       cornerRadius: 8,
       fillPaints: [
-        { type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } },
+        solidPaint({ r: 0, g: 1, b: 0, a: 1 }),
       ],
     });
     expect(applied(node, backgroundModifier)).toBe(
@@ -100,7 +112,7 @@ describe("backgroundModifier", () => {
   it("ignores invisible paints", () => {
     const node = makeFrame({
       fillPaints: [
-        { type: "SOLID", visible: false, color: { r: 1, g: 0, b: 0, a: 1 } },
+        solidPaint({ r: 1, g: 0, b: 0, a: 1 }, { visible: false }),
       ],
     });
     expect(backgroundModifier(node)).toBeUndefined();
@@ -144,12 +156,11 @@ describe("cornerRadiusModifier", () => {
 
 describe("shadowModifier", () => {
   it("emits .shadow with color/radius/x/y", () => {
-    const effect: FigEffect = {
-      type: "DROP_SHADOW",
+    const effect = dropShadow({
       color: { r: 0, g: 0, b: 0, a: 0.25 },
       offset: { x: 0, y: 4 },
       radius: 8,
-    };
+    });
     const node = makeFrame({ effects: [effect] });
     expect(applied(node, shadowModifier)).toBe(
       "V\n  .shadow(color: Color(red: 0, green: 0, blue: 0, opacity: 0.25), radius: 8, x: 0, y: 4)",
@@ -157,24 +168,22 @@ describe("shadowModifier", () => {
   });
 
   it("throws on non-zero spread", () => {
-    const effect: FigEffect = {
-      type: "DROP_SHADOW",
+    const effect = dropShadow({
       color: { r: 0, g: 0, b: 0, a: 1 },
       offset: { x: 0, y: 0 },
       radius: 4,
       spread: 2,
-    };
+    });
     expect(() => shadowModifier(makeFrame({ effects: [effect] }))).toThrow(/spread/u);
   });
 
   it("ignores invisible effects", () => {
-    const effect: FigEffect = {
-      type: "DROP_SHADOW",
+    const effect = dropShadow({
       visible: false,
       color: { r: 0, g: 0, b: 0, a: 1 },
       offset: { x: 0, y: 4 },
       radius: 4,
-    };
+    });
     expect(shadowModifier(makeFrame({ effects: [effect] }))).toBeUndefined();
   });
 });
@@ -221,7 +230,7 @@ describe("fontModifier and swiftWeightForFigStyle", () => {
 describe("foregroundColorModifier", () => {
   it("emits .foregroundColor for the first visible SOLID fill", () => {
     const node = makeText({
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
     });
     expect(applied(node, foregroundColorModifier)).toBe(
       "V\n  .foregroundColor(Color(red: 0, green: 0, blue: 0))",

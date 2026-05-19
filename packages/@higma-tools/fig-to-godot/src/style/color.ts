@@ -128,13 +128,13 @@ export function solidPaintToColor(paint: FigSolidPaint, compensate: boolean = tr
  * over-compensates by half a byte for polygons and lands one byte
  * low.
  *
- * This helper writes the value Polygon2D needs to recover the same
+ * This routine writes the value Polygon2D needs to recover the same
  * byte the WebGL reference renders: `targetByte / 255 + ε` where
  * `ε` is small enough not to cross to the next byte. We use
  * `(targetByte + 0.5) / 255` for the byte centre — Polygon2D's
  * `floor(c * 255)` recovers the byte unchanged.
  *
- * Why two helpers instead of one: each Godot widget chooses its own
+ * Why two routines instead of one: each Godot widget chooses its own
  * shader path. StyleBoxFlat draws via an immediate-mode quad whose
  * fragment colour is set from the `Color` constant directly (the
  * `int(c*256)` path). Polygon2D draws via a vertex buffer whose

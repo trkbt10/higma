@@ -18,6 +18,7 @@ export {
   PAINT_TYPE_VALUES,
   BLEND_MODE_VALUES,
   SCALE_MODE_VALUES,
+  canonicaliseImageScaleMode,
   type PaintType,
   type BlendMode,
   type ScaleMode,
@@ -36,10 +37,14 @@ export {
 // Effects
 export { EFFECT_TYPE_VALUES, type EffectType } from "./effects";
 
+// Styles
+export { STYLE_TYPE_VALUES, type StyleType } from "./styles";
+
 // Text
 export {
   TEXT_ALIGN_H_VALUES,
   TEXT_ALIGN_V_VALUES,
+  TEXT_AUTO_RESIZE_OMITTED_DEFAULT,
   TEXT_AUTO_RESIZE_VALUES,
   TEXT_DECORATION_VALUES,
   TEXT_CASE_VALUES,
@@ -57,6 +62,7 @@ export {
   STACK_MODE_VALUES,
   STACK_ALIGN_VALUES,
   STACK_JUSTIFY_VALUES,
+  STACK_WRAP_VALUES,
   STACK_COUNTER_ALIGN_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
@@ -66,6 +72,7 @@ export {
   type StackMode,
   type StackAlign,
   type StackJustify,
+  type StackWrap,
   type StackCounterAlign,
   type StackPositioning,
   type StackSizing,
@@ -86,5 +93,5 @@ export {
   type ExportSVGIDMode,
 } from "./export";
 
-// Utilities
-export { toEnumValue, type EnumValue } from "./utils";
+// Kiwi enum values
+export { kiwiEnumName, toEnumValue, type EnumValue } from "./enum-value";

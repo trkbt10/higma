@@ -18,6 +18,8 @@
  * Figma does name effect-styles, none surface in this fixture.
  */
 import type { FigEffect, FigNode } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import type { ShadowToken } from "./types";
 import { figColorToCss } from "../lib/css-format/color";
 import { formatPx } from "../lib/css-format/numeric";
@@ -28,10 +30,7 @@ export type ShadowTokenTable = {
 };
 
 function effectTypeName(effect: FigEffect): string | undefined {
-  if (typeof effect.type === "string") {
-    return effect.type;
-  }
-  return effect.type.name;
+  return kiwiEnumName(effect.type, "FigEffect.type");
 }
 
 /** Convert one shadow effect to a single CSS box-shadow segment. */
@@ -72,11 +71,14 @@ export function effectsToBoxShadow(effects: readonly FigEffect[] | undefined): s
 }
 
 /** Walk the targeted subtrees and collect shadow tokens. */
-export function buildShadowTokens(usageNodes: readonly FigNode[]): ShadowTokenTable {
+export function buildShadowTokens(
+  usageNodes: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): ShadowTokenTable {
   const tokens = new Map<string, ShadowToken>();
   const idByKey = new Map<string, string>();
   for (const node of usageNodes) {
-    visit(node, tokens, idByKey);
+    visit(node, tokens, idByKey, childrenOf);
   }
   return { tokens, idByKey };
 }
@@ -85,6 +87,7 @@ function visit(
   node: FigNode,
   tokens: Map<string, ShadowToken>,
   idByKey: Map<string, string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   const cssValue = effectsToBoxShadow(node.effects);
   if (cssValue && !idByKey.has(cssValue)) {
@@ -92,10 +95,8 @@ function visit(
     tokens.set(id, { id, source: "usage", cssValue });
     idByKey.set(cssValue, id);
   }
-  for (const child of node.children ?? []) {
-    if (child) {
-      visit(child, tokens, idByKey);
-    }
+  for (const child of childrenOf(node)) {
+    visit(child, tokens, idByKey, childrenOf);
   }
 }
 

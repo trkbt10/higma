@@ -22,11 +22,11 @@
  * into a `variant` prop with a string-union type. Other props on the
  * set (TEXT / BOOL / NUMBER / etc.) become typed props.
  */
-import type { FigNode, FigGuid, FigComponentPropDef, FigVariantPropSpec } from "@higma-document-models/fig/types";
-import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import type { FigNode, FigComponentPropDef, FigVariantPropSpec } from "@higma-document-models/fig/types";
+import { findNodeByGuid, getNodeType, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import type { ComponentPropDecl, ComponentTarget, EmitRegistry, FrameTarget } from "../types";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "@higma-primitives/identifier";
 
 /**
@@ -35,12 +35,12 @@ import { toCssSlug, toPascalCase, uniqueId, uniqueIdent } from "@higma-primitive
  * Returns undefined when the node is not part of any canvas — this
  * never happens in well-formed fig files.
  */
-function ancestorCanvas(source: FigSymbolContext, node: FigNode): FigNode | undefined {
+function ancestorCanvas(source: FigDocumentContext, node: FigNode): FigNode | undefined {
   return walkAncestors(source, node, (candidate) => getNodeType(candidate) === "CANVAS");
 }
 
 function walkAncestors(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   start: FigNode,
   predicate: (node: FigNode) => boolean,
 ): FigNode | undefined {
@@ -49,7 +49,7 @@ function walkAncestors(
 }
 
 function stepUp(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   node: FigNode,
   predicate: (node: FigNode) => boolean,
   seen: Set<string>,
@@ -66,27 +66,17 @@ function stepUp(
   if (!parentGuid) {
     return undefined;
   }
-  const parent = source.nodesByGuid.get(guidToString(parentGuid));
+  const parent = findNodeByGuid(source.document, parentGuid);
   if (!parent) {
     return undefined;
   }
   return stepUp(source, parent, predicate, seen);
 }
 
-function getSymbolGuid(node: FigNode): FigGuid | undefined {
-  if (node.symbolID) {
-    return node.symbolID;
-  }
-  if (node.symbolData?.symbolID) {
-    return node.symbolData.symbolID;
-  }
-  return undefined;
-}
-
 /**
  * Determine whether a parent node is a Variant Set root on disk.
  *
- * Delegates to the SoT helper in `@higma-document-models/fig/symbols`
+ * Delegates to the SoT routine in `@higma-document-models/fig/symbols`
  * so every detection site shares one implementation. See
  * `docs/refactor/component-type-cleanup.md`.
  */
@@ -95,23 +85,20 @@ function isVariantSetRoot(node: FigNode): boolean {
 }
 
 /**
- * Resolve an INSTANCE's component target — either the SYMBOL's
- * variant-set root (when one exists) or the SYMBOL itself.
+ * Pick the generated component node for an INSTANCE. SymbolResolver
+ * owns INSTANCE → SYMBOL; this function only climbs from that SYMBOL
+ * to the variant-set frame when the disk metadata marks one.
  */
-function resolveInstanceTarget(source: FigSymbolContext, instance: FigNode): FigNode | undefined {
-  const symbolGuid = getSymbolGuid(instance);
-  if (!symbolGuid) {
-    return undefined;
-  }
-  const symbol = source.nodesByGuid.get(guidToString(symbolGuid));
-  if (!symbol) {
+function componentNodeForInstance(source: FigDocumentContext, instance: FigNode): FigNode | undefined {
+  const symbol = source.symbolResolver.resolveReferences(instance).effectiveSymbol?.node;
+  if (symbol === undefined) {
     return undefined;
   }
   const parentGuid = symbol.parentIndex?.guid;
   if (!parentGuid) {
     return symbol;
   }
-  const parent = source.nodesByGuid.get(guidToString(parentGuid));
+  const parent = findNodeByGuid(source.document, parentGuid);
   if (parent && isVariantSetRoot(parent)) {
     return parent;
   }
@@ -141,9 +128,9 @@ function variantValueOf(node: FigNode): string {
   return first.value;
 }
 
-function findVariantChildren(parent: FigNode): readonly FigNode[] {
+function findVariantChildren(source: FigDocumentContext, parent: FigNode): readonly FigNode[] {
   const out: FigNode[] = [];
-  for (const child of safeChildren(parent)) {
+  for (const child of source.document.childrenOf(parent)) {
     if (child.type.name !== "SYMBOL") {
       continue;
     }
@@ -152,7 +139,7 @@ function findVariantChildren(parent: FigNode): readonly FigNode[] {
   return out;
 }
 
-function buildVariantMap(target: FigNode): ReadonlyMap<string, FigNode> {
+function buildVariantMap(source: FigDocumentContext, target: FigNode): ReadonlyMap<string, FigNode> {
   if (!isVariantSetRoot(target)) {
     return new Map();
   }
@@ -167,7 +154,7 @@ function buildVariantMap(target: FigNode): ReadonlyMap<string, FigNode> {
   // an instance's `symbolID` to keep both sides in sync.
   const out = new Map<string, FigNode>();
   const counts = new Map<string, number>();
-  for (const child of findVariantChildren(target)) {
+  for (const child of findVariantChildren(source, target)) {
     const base = variantValueOf(child);
     const taken = counts.get(base) ?? 0;
     counts.set(base, taken + 1);
@@ -194,10 +181,9 @@ export function syntheticTextPropName(guidStr: string): string {
  * synthetic `string` prop for every TEXT descendant. Figma authors
  * routinely override the visible characters of a TEXT node on each
  * INSTANCE without declaring a typed `componentPropDefs` slot for
- * it — those overrides surface in `instance.symbolData.symbolOverrides`
- * via `textData.characters`. Without an explicit prop, the React
- * component would render the SYMBOL's authored default ("All", "On",
- * …) on every instance.
+ * it. The call-site emitter reads the resolved INSTANCE output from
+ * SymbolResolver and supplies these synthetic props when the resolved
+ * TEXT value differs from the SYMBOL's authored default.
  *
  * We deduplicate by descendant guid so the same TEXT inside multiple
  * variants only contributes one prop. The default value is the
@@ -206,6 +192,7 @@ export function syntheticTextPropName(guidStr: string): string {
  * renders the authored copy.
  */
 function augmentWithImplicitTextProps(
+  source: FigDocumentContext,
   base: readonly ComponentPropDecl[],
   target: FigNode,
   variants: ReadonlyMap<string, FigNode>,
@@ -221,9 +208,9 @@ function augmentWithImplicitTextProps(
   // value "Default" inside one set; both contribute distinct TEXT
   // descendants the INSTANCE may want to override).
   const roots: readonly FigNode[] =
-    variants.size === 0 ? [target] : [...findVariantChildren(target)];
+    variants.size === 0 ? [target] : [...findVariantChildren(source, target)];
   for (const root of roots) {
-    visitTextDescendants(root, (text) => {
+    visitTextDescendants(source, root, (text) => {
       const guidStr = guidToString(text.guid);
       if (seen.has(guidStr)) {
         return;
@@ -245,12 +232,12 @@ function augmentWithImplicitTextProps(
   return out;
 }
 
-function visitTextDescendants(node: FigNode, visit: (descendant: FigNode) => void): void {
-  for (const child of safeChildren(node)) {
+function visitTextDescendants(source: FigDocumentContext, node: FigNode, visit: (descendant: FigNode) => void): void {
+  for (const child of source.document.childrenOf(node)) {
     if (child.type?.name === "TEXT") {
       visit(child);
     }
-    visitTextDescendants(child, visit);
+    visitTextDescendants(source, child, visit);
   }
 }
 
@@ -271,16 +258,8 @@ function buildPropDecls(
   defs: readonly FigComponentPropDef[] | undefined,
   variants: ReadonlyMap<string, FigNode>,
 ): readonly ComponentPropDecl[] {
-  if (!defs || defs.length === 0) {
-    if (variants.size === 0) {
-      return [];
-    }
-    const values = [...variants.keys()];
-    const fallbackDefault = values[0];
-    if (fallbackDefault === undefined) {
-      return [];
-    }
-    return [{ kind: "variant", name: "variant", defId: "synthetic", values, defaultValue: fallbackDefault }];
+  if (defs === undefined || defs.length === 0) {
+    return buildVariantPropDeclFromComponentSet(variants);
   }
 
   return collapseVariantDecls(
@@ -289,6 +268,20 @@ function buildPropDecls(
       .map((def) => mapPropDef(def, variants))
       .filter((decl): decl is ComponentPropDecl => decl !== undefined),
   );
+}
+
+function buildVariantPropDeclFromComponentSet(
+  variants: ReadonlyMap<string, FigNode>,
+): readonly ComponentPropDecl[] {
+  if (variants.size === 0) {
+    return [];
+  }
+  const values = [...variants.keys()];
+  const defaultValue = values[0];
+  if (defaultValue === undefined) {
+    throw new Error("fig-to-web: non-empty variant map produced no variant value");
+  }
+  return [{ kind: "variant", name: "variant", defId: "synthetic", values, defaultValue }];
 }
 
 /**
@@ -360,18 +353,20 @@ function mapVariantPropDef(
   return { kind: "variant", name: "variant", defId, values, defaultValue };
 }
 
-function collectInstancesIn(node: FigNode, out: FigNode[]): void {
+function collectInstancesIn(
+  node: FigNode,
+  out: FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
   if (node.type.name === "INSTANCE") {
     out.push(node);
   }
-  for (const child of node.children ?? []) {
-    if (child) {
-      collectInstancesIn(child, out);
-    }
+  for (const child of childrenOf(node)) {
+    collectInstancesIn(child, out, childrenOf);
   }
 }
 
-function canvasSlugFor(source: FigSymbolContext, node: FigNode): string {
+function canvasSlugFor(source: FigDocumentContext, node: FigNode): string {
   const canvas = ancestorCanvas(source, node);
   if (canvas?.name) {
     return toCssSlug(canvas.name);
@@ -385,7 +380,7 @@ function canvasSlugFor(source: FigSymbolContext, node: FigNode): string {
  * Two passes are run: one for pages (frames the user picked), then one
  * for the components that those pages reference via INSTANCE.
  */
-export function buildRegistry(source: FigSymbolContext, frames: readonly FigNode[]): EmitRegistry {
+export function buildRegistry(source: FigDocumentContext, frames: readonly FigNode[]): EmitRegistry {
   const frameRegistry = new Map<string, FrameTarget>();
   const componentRegistry = new Map<string, ComponentTarget>();
   // The React identifier pool is shared between the page-side and
@@ -416,7 +411,7 @@ export function buildRegistry(source: FigSymbolContext, frames: readonly FigNode
 
   for (const frame of frames) {
     const instances: FigNode[] = [];
-    collectInstancesIn(frame, instances);
+    collectInstancesIn(frame, instances, source.document.childrenOf);
     for (const instance of instances) {
       registerInstanceTarget(source, instance, componentRegistry, nameUsed, componentSlugUsed);
     }
@@ -426,13 +421,13 @@ export function buildRegistry(source: FigSymbolContext, frames: readonly FigNode
 }
 
 function registerInstanceTarget(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   instance: FigNode,
   componentRegistry: Map<string, ComponentTarget>,
   nameUsed: Set<string>,
   componentSlugUsed: Set<string>,
 ): void {
-  const target = resolveInstanceTarget(source, instance);
+  const target = componentNodeForInstance(source, instance);
   if (!target) {
     return;
   }
@@ -446,9 +441,9 @@ function registerInstanceTarget(
   const slug = uniqueId(slugKey, componentSlugUsed).slice(canvasSlug.length + 1);
   const baseName = toPascalCase(target.name ?? "Component");
   const name = uniqueIdent(baseName, nameUsed);
-  const variants = buildVariantMap(target);
+  const variants = buildVariantMap(source, target);
   const baseProps = buildPropDecls(target.componentPropDefs, variants);
-  const props = augmentWithImplicitTextProps(baseProps, target, variants);
+  const props = augmentWithImplicitTextProps(source, baseProps, target, variants);
   componentRegistry.set(id, {
     node: target,
     componentName: name,
@@ -461,12 +456,12 @@ function registerInstanceTarget(
 }
 
 /** Resolve the component target for an INSTANCE node, or undefined when missing. */
-export function lookupInstanceTarget(
-  source: FigSymbolContext,
+export function componentTargetForInstance(
+  source: FigDocumentContext,
   registry: EmitRegistry,
   instance: FigNode,
 ): ComponentTarget | undefined {
-  const target = resolveInstanceTarget(source, instance);
+  const target = componentNodeForInstance(source, instance);
   if (!target) {
     return undefined;
   }
@@ -479,19 +474,16 @@ export function lookupInstanceTarget(
  * Returns undefined when the component is not a variant set.
  */
 export function variantValueForInstance(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   registry: EmitRegistry,
   instance: FigNode,
 ): string | undefined {
-  const symbolGuid = getSymbolGuid(instance);
-  if (!symbolGuid) {
+  const resolved = source.symbolResolver.resolveReferences(instance).effectiveSymbol;
+  if (resolved === undefined) {
     return undefined;
   }
-  const symbolNode = source.nodesByGuid.get(guidToString(symbolGuid));
-  if (!symbolNode) {
-    return undefined;
-  }
-  const target = lookupInstanceTarget(source, registry, instance);
+  const symbolNode = resolved.node;
+  const target = componentTargetForInstance(source, registry, instance);
   if (!target || target.variants.size === 0) {
     return undefined;
   }
@@ -499,7 +491,7 @@ export function variantValueForInstance(
   // looking it up by guid. Names alone cannot disambiguate when two
   // siblings share a variant value; the map already tracks which
   // SYMBOL ended up at which key, so we just reverse-lookup here.
-  const symbolGuidStr = guidToString(symbolGuid);
+  const symbolGuidStr = guidToString(resolved.guid);
   for (const [key, variant] of target.variants) {
     if (guidToString(variant.guid) === symbolGuidStr) {
       return key;

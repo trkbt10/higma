@@ -8,8 +8,9 @@
  */
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { loadFigSource } from "@higma-tools/fig-to-swiftui";
+import { createFigDocumentContext } from "@higma-document-io/fig/context";
 import type { FigNode } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 
 function readEnumName(value: unknown): string | undefined {
   if (typeof value === "string") {
@@ -61,12 +62,12 @@ function describePaint(p: unknown): string {
   const visible = obj.visible === false ? " hidden" : "";
   const t = obj.transform as Record<string, number> | undefined;
   const tStr = t ? formatTransform(t) : "";
-  const stopsRaw = (obj.stops ?? obj.gradientStops) as ReadonlyArray<ProbedStop> | undefined;
+  const stopsRaw = obj.stops as ReadonlyArray<ProbedStop> | undefined;
   const stopsStr = stopsRaw && stopsRaw.length > 0 ? ` stops=[${stopsRaw.map(formatStop).join(",")}]` : "";
   return `${type}${visible}${tStr}${stopsStr}`;
 }
 
-function walk(node: FigNode, depth = 0): void {
+function walk(node: FigNode, childrenOf: FigKiwiDocumentIndex["childrenOf"], depth = 0): void {
   const ind = "  ".repeat(depth);
   const props: string[] = [];
   if (node.size) {
@@ -137,10 +138,8 @@ function walk(node: FigNode, depth = 0): void {
     }
   }
   console.log(`${ind}${node.type.name} "${node.name ?? ""}" ${props.join(" ")}`);
-  for (const child of node.children ?? []) {
-    if (child) {
-      walk(child, depth + 1);
-    }
+  for (const child of childrenOf(node)) {
+    walk(child, childrenOf, depth + 1);
   }
 }
 
@@ -152,15 +151,12 @@ async function main(): Promise<void> {
   }
   const figPath = resolve(process.cwd(), arg);
   const bytes = new Uint8Array(await readFile(figPath));
-  const ctx = await loadFigSource(bytes);
-  const doc = ctx.tree.roots.find((r) => r.type.name === "DOCUMENT");
+  const ctx = await createFigDocumentContext(bytes);
+  const doc = ctx.document.roots.find((r) => r.type.name === "DOCUMENT");
   if (!doc) {
     throw new Error("no DOCUMENT root");
   }
-  for (const canvas of doc.children ?? []) {
-    if (!canvas) {
-      continue;
-    }
+  for (const canvas of ctx.document.childrenOf(doc)) {
     if (canvas.type.name !== "CANVAS") {
       continue;
     }
@@ -168,10 +164,8 @@ async function main(): Promise<void> {
       continue;
     }
     console.log(`# CANVAS "${canvas.name}"`);
-    for (const child of canvas.children ?? []) {
-      if (child) {
-        walk(child);
-      }
+    for (const child of ctx.document.childrenOf(canvas)) {
+      walk(child, ctx.document.childrenOf);
     }
   }
 }

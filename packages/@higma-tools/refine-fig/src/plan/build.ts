@@ -4,9 +4,9 @@
  *
  * Action order matters:
  *
- *   1. create-fill-proxy   (any new fill proxies)
- *   2. create-text-proxy   (any new text proxies)
- *   3. bind-fill-style     (rebind nodes to existing or fresh proxies)
+ *   1. create-fill-style-definition   (any new fill styleDefinitions)
+ *   2. create-text-style-definition   (any new text styleDefinitions)
+ *   3. bind-fill-style     (rebind nodes to existing or fresh styleDefinitions)
  *   4. bind-text-style     (deferred when the source has no template)
  *   5. promote-icon-cluster (componentize)
  *   6. rename              (cluster names propagated to members)
@@ -15,15 +15,15 @@
  * promote actions, so the SYMBOL ends up named after the cluster
  * and so do its INSTANCEs.
  */
-import type { Inventory, PaletteEntry, TypographyEntry, SubtreeClusterEntry } from "../inventory";
+import type { Inventory, PaletteEntry, TypographyEntry, StructureClusterEntry } from "../inventory";
 import type { Decisions, TypographyDecision } from "../decisions";
 import type { RefineSource } from "../refine-source/load";
 import type {
   RefinePlan,
   PlanAction,
   ActionEnsureInternalCanvas,
-  ActionCreateFillProxy,
-  ActionCreateTextProxy,
+  ActionCreateFillStyleDefinition,
+  ActionCreateTextStyleDefinition,
   ActionBindFillStyle,
   ActionBindTextStyle,
   ActionPromoteIconCluster,
@@ -31,7 +31,7 @@ import type {
   ActionGroupAsVariantSet,
   ActionSetLayout,
   ActionRename,
-  ProxyRef,
+  StyleDefinitionRef,
 } from "./types";
 import { isPromotableCluster } from "../componentize";
 
@@ -51,25 +51,30 @@ export function buildPlan(
 ): RefinePlan {
   const actions: PlanAction[] = [];
   const skippedNonPromotableClusters: string[] = [];
+  const variantSets = decisions.variantSets;
+  if (variantSets !== undefined && Object.keys(variantSets).length > 0) {
+    assertNoSharedClusterAcrossSets(variantSets);
+    assertClustersExistAndArePromoteToSymbol(variantSets, inventory, decisions);
+  }
 
-  // ---- Fill proxies + bindings ------------------------------------------
+  // ---- Fill styleDefinitions + bindings ------------------------------------------
   const tokenByPaletteKey = new Map<string, string>();
   for (const entry of inventory.palette) {
     const decision = decisions.palette[entry.key];
     if (!decision || !decision.name.trim()) {
       continue;
     }
-    if (entry.existingProxyGuid) {
-      // No proxy creation needed — bind to the existing GUID.
-      pushFillBindings(actions, entry, { kind: "existing", guid: entry.existingProxyGuid });
+    if (entry.existingStyleDefinitionGuid) {
+      // No styleDefinition creation needed — bind to the existing GUID.
+      pushFillBindings(actions, entry, { kind: "existing", guid: entry.existingStyleDefinitionGuid });
       continue;
     }
-    // No template? Bootstrap path in apply will build a proxy from
+    // No template? Bootstrap path in apply will build a styleDefinition from
     // scratch — emit the create action either way.
     const token = `fill:${entry.key}`;
     tokenByPaletteKey.set(entry.key, token);
-    const create: ActionCreateFillProxy = {
-      kind: "create-fill-proxy",
+    const create: ActionCreateFillStyleDefinition = {
+      kind: "create-fill-style-definition",
       token,
       name: decision.name,
       color: entry.color,
@@ -78,14 +83,14 @@ export function buildPlan(
     pushFillBindings(actions, entry, { kind: "token", token });
   }
 
-  // ---- Text proxies + bindings ------------------------------------------
+  // ---- Text styleDefinitions + bindings ------------------------------------------
   // Pre-resolve every text entry's bind target so a merge can point at
-  // either the merge target's existing proxy or the token allocated
-  // for its create-text-proxy action in this same plan.
+  // either the merge target's existing styleDefinition or the token allocated
+  // for its create-text-style-definition action in this same plan.
   const typographyByKey = new Map<string, TypographyEntry>(
     inventory.typography.map((entry) => [entry.key, entry] as const),
   );
-  const textProxyRefByKey = new Map<string, ProxyRef>();
+  const textStyleDefinitionRefByKey = new Map<string, StyleDefinitionRef>();
   for (const entry of inventory.typography) {
     const decision = decisions.typography[entry.key];
     if (!decision) {
@@ -99,13 +104,13 @@ export function buildPlan(
     if (!decision.name.trim()) {
       continue;
     }
-    if (entry.existingProxyGuid) {
-      textProxyRefByKey.set(entry.key, { kind: "existing", guid: entry.existingProxyGuid });
+    if (entry.existingStyleDefinitionGuid) {
+      textStyleDefinitionRefByKey.set(entry.key, { kind: "existing", guid: entry.existingStyleDefinitionGuid });
       continue;
     }
     const token = `text:${entry.key}`;
-    const create: ActionCreateTextProxy = {
-      kind: "create-text-proxy",
+    const create: ActionCreateTextStyleDefinition = {
+      kind: "create-text-style-definition",
       token,
       name: decision.name,
       fontFamily: entry.descriptor.fontFamily,
@@ -114,18 +119,18 @@ export function buildPlan(
       fontSize: entry.descriptor.fontSize,
     };
     actions.push(create);
-    textProxyRefByKey.set(entry.key, { kind: "token", token });
+    textStyleDefinitionRefByKey.set(entry.key, { kind: "token", token });
   }
   for (const entry of inventory.typography) {
     const decision = decisions.typography[entry.key];
     if (!decision) {
       continue;
     }
-    const proxyRef = resolveTypographyRef(entry, decision, decisions, typographyByKey, textProxyRefByKey);
-    if (!proxyRef) {
+    const styleDefinitionRef = resolveTypographyRef(entry, decision, decisions, typographyByKey, textStyleDefinitionRefByKey);
+    if (!styleDefinitionRef) {
       continue;
     }
-    pushTextBindings(actions, entry, proxyRef);
+    pushTextBindings(actions, entry, styleDefinitionRef);
   }
 
   // ---- Cluster promote -------------------------------------------------
@@ -134,7 +139,7 @@ export function buildPlan(
   // so the variant-set step can rewrite the SYMBOL's name to `Prop=Value`
   // without a subsequent rename overwriting it.
   const promotedClusterIds = new Set<string>();
-  for (const cluster of inventory.subtreeClusters) {
+  for (const cluster of inventory.structureClusters) {
     const decision = decisions.clusters[cluster.clusterId];
     if (!decision || !decision.name.trim()) {
       continue;
@@ -171,7 +176,7 @@ export function buildPlan(
   // Every cluster — promoted or not — gets explicit renames so the
   // agent's chosen name lands on each member node.
   const variantClusterIds = collectVariantClusterIds(decisions);
-  for (const cluster of inventory.subtreeClusters) {
+  for (const cluster of inventory.structureClusters) {
     const decision = decisions.clusters[cluster.clusterId];
     if (!decision || !decision.name.trim()) {
       continue;
@@ -210,9 +215,9 @@ export function buildPlan(
 /**
  * Emit `ensure-internal-canvas` at the head of the plan iff the
  * source carries no internal canvas AND the plan contains at least
- * one action that needs one (proxy creation). When the source already
+ * one action that needs one (styleDefinition creation). When the source already
  * has a canvas we emit nothing — re-creating it would orphan the
- * existing fill / text proxies. When nothing is named, the plan stays
+ * existing fill / text styleDefinitions. When nothing is named, the plan stays
  * empty — there is no work to do, so introducing a canvas would be a
  * pointless side effect.
  */
@@ -224,7 +229,7 @@ function prependEnsureCanvasIfNeeded(
     return actions;
   }
   const needsCanvas = actions.some(
-    (a) => a.kind === "create-fill-proxy" || a.kind === "create-text-proxy",
+    (a) => a.kind === "create-fill-style-definition" || a.kind === "create-text-style-definition",
   );
   if (!needsCanvas) {
     return actions;
@@ -237,60 +242,77 @@ function prependEnsureCanvasIfNeeded(
 }
 
 /**
- * Resolve which ProxyRef a typography entry's bind actions should
+ * Resolve which StyleDefinitionRef a typography entry's bind actions should
  * target. Honours `decision.merge`, throws on broken merges.
  *
- *   - `decision.merge = otherKey` → use otherKey's resolved ProxyRef.
- *     The target must itself produce a ProxyRef (own name + create, or
- *     existingProxyGuid). Throws when the merge target is unknown,
+ *   - `decision.merge = otherKey` → use otherKey's resolved StyleDefinitionRef.
+ *     The target must itself produce a StyleDefinitionRef (own name + create, or
+ *     existingStyleDefinitionGuid). Throws when the merge target is unknown,
  *     unnamed, or itself merged.
  *   - `decision.name` empty + no merge → no bind for this entry.
- *   - `existingProxyGuid` already in inventory → reuse.
- *   - Otherwise → token from the just-emitted `create-text-proxy`.
+ *   - `existingStyleDefinitionGuid` already in inventory → reuse.
+ *   - Otherwise → token from the just-emitted `create-text-style-definition`.
  */
 function resolveTypographyRef(
   entry: TypographyEntry,
   decision: TypographyDecision,
   decisions: Decisions,
   typographyByKey: ReadonlyMap<string, TypographyEntry>,
-  textProxyRefByKey: ReadonlyMap<string, ProxyRef>,
-): ProxyRef | undefined {
+  textStyleDefinitionRefByKey: ReadonlyMap<string, StyleDefinitionRef>,
+): StyleDefinitionRef | undefined {
   if (decision.merge) {
-    const targetKey = decision.merge;
-    const targetEntry = typographyByKey.get(targetKey);
-    if (!targetEntry) {
-      throw new Error(
-        `buildPlan: typography["${entry.key}"].merge points at "${targetKey}", `
-        + `which is not an inventory entry. Use the exact descriptor key from inventory.typography[].key.`,
-      );
-    }
-    const targetDecision = decisions.typography[targetKey];
-    if (targetDecision?.merge) {
-      throw new Error(
-        `buildPlan: typography["${entry.key}"].merge → "${targetKey}", but the target is itself merged into `
-        + `"${targetDecision.merge}". Merge chains are not allowed — bind directly to the leaf target.`,
-      );
-    }
-    const ref = textProxyRefByKey.get(targetKey);
-    if (!ref) {
-      throw new Error(
-        `buildPlan: typography["${entry.key}"].merge → "${targetKey}", but the target has no resolved proxy `
-        + `(neither an existing proxy nor a non-empty name). Name the target or pick a different merge.`,
-      );
-    }
-    return ref;
+    return resolveMergedTypographyRef(entry, decision.merge, decisions, typographyByKey, textStyleDefinitionRefByKey);
   }
+  return resolveOwnTypographyRef(entry, decision, textStyleDefinitionRefByKey);
+}
+
+function resolveMergedTypographyRef(
+  entry: TypographyEntry,
+  targetKey: string,
+  decisions: Decisions,
+  typographyByKey: ReadonlyMap<string, TypographyEntry>,
+  textStyleDefinitionRefByKey: ReadonlyMap<string, StyleDefinitionRef>,
+): StyleDefinitionRef {
+  const targetEntry = typographyByKey.get(targetKey);
+  if (!targetEntry) {
+    throw new Error(
+      `buildPlan: typography["${entry.key}"].merge points at "${targetKey}", `
+      + `which is not an inventory entry. Use the exact descriptor key from inventory.typography[].key.`,
+    );
+  }
+  const targetDecision = decisions.typography[targetKey];
+  if (targetDecision?.merge) {
+    throw new Error(
+      `buildPlan: typography["${entry.key}"].merge → "${targetKey}", but the target is itself merged into `
+      + `"${targetDecision.merge}". Merge chains are not allowed — bind directly to the leaf target.`,
+    );
+  }
+  const ref = textStyleDefinitionRefByKey.get(targetKey);
+  if (!ref) {
+    throw new Error(
+      `buildPlan: typography["${entry.key}"].merge → "${targetKey}", but the target has no resolved styleDefinition `
+      + `(neither an existing styleDefinition nor a non-empty name). Name the target or pick a different merge.`,
+    );
+  }
+  return ref;
+}
+
+function resolveOwnTypographyRef(
+  entry: TypographyEntry,
+  decision: TypographyDecision,
+  textStyleDefinitionRefByKey: ReadonlyMap<string, StyleDefinitionRef>,
+): StyleDefinitionRef | undefined {
   if (!decision.name.trim()) {
     return undefined;
   }
-  const own = textProxyRefByKey.get(entry.key);
+  const own = textStyleDefinitionRefByKey.get(entry.key);
   if (own) {
     return own;
   }
-  // Unreachable in practice — the create loop populates textProxyRefByKey
+  // Unreachable in practice — the create loop populates textStyleDefinitionRefByKey
   // for every named entry. The defensive throw documents the invariant.
   throw new Error(
-    `buildPlan: typography["${entry.key}"] is named but has no resolved proxy. This is a bug in build-plan; please report.`,
+    `buildPlan: typography["${entry.key}"] is named but has no resolved styleDefinition. This is a bug in build-plan; please report.`,
   );
 }
 
@@ -371,15 +393,8 @@ function pushVariantSetActions(
   if (!sets || Object.keys(sets).length === 0) {
     return;
   }
-  // Static-only checks first (cross-set uniqueness + clusterId
-  // existence + promoteToSymbol on the decision side). Apply-state
-  // checks (promoted action actually fired) come after, since they
-  // can throw with a higher-noise error message and would mask the
-  // simpler authoring mistakes.
-  assertNoSharedClusterAcrossSets(sets);
-  assertClustersExistAndArePromoteToSymbol(sets, inventory, decisions);
-  // Now that the decisions look well-formed, check the actual promote
-  // outcome (the exemplar might not be promotable).
+  // The static authoring checks run before promote analysis in
+  // `buildPlan`; here only the actual promote outcome remains.
   for (const [setName, set] of Object.entries(sets)) {
     const variants: { clusterId: string; propertyValue: string }[] = [];
     for (const [propertyValue, clusterId] of Object.entries(set.variants)) {
@@ -425,7 +440,7 @@ function assertClustersExistAndArePromoteToSymbol(
   decisions: Decisions,
 ): void {
   const clusterById = new Set<string>();
-  for (const c of inventory.subtreeClusters) {
+  for (const c of inventory.structureClusters) {
     clusterById.add(c.clusterId);
   }
   for (const [setName, set] of Object.entries(sets)) {
@@ -433,7 +448,7 @@ function assertClustersExistAndArePromoteToSymbol(
       if (!clusterById.has(clusterId)) {
         throw new Error(
           `buildPlan: variantSets["${setName}"].variants["${propertyValue}"] points at unknown cluster "${clusterId}". `
-          + `Use one of inventory.subtreeClusters[].clusterId.`,
+          + `Use one of inventory.structureClusters[].clusterId.`,
         );
       }
       const decision = decisions.clusters[clusterId];
@@ -496,7 +511,7 @@ function pushSetLayoutActions(actions: PlanAction[], inventory: Inventory, decis
   }
 }
 
-function pushFillBindings(actions: PlanAction[], entry: PaletteEntry, proxy: ProxyRef): void {
+function pushFillBindings(actions: PlanAction[], entry: PaletteEntry, styleDefinition: StyleDefinitionRef): void {
   for (const usage of entry.usages) {
     if (usage.role !== "fill") {
       continue;
@@ -507,24 +522,24 @@ function pushFillBindings(actions: PlanAction[], entry: PaletteEntry, proxy: Pro
     const action: ActionBindFillStyle = {
       kind: "bind-fill-style",
       nodeGuid: usage.nodeGuid,
-      proxy,
+      styleDefinition,
     };
     actions.push(action);
   }
 }
 
-function pushTextBindings(actions: PlanAction[], entry: TypographyEntry, proxy: ProxyRef): void {
+function pushTextBindings(actions: PlanAction[], entry: TypographyEntry, styleDefinition: StyleDefinitionRef): void {
   for (const usage of entry.usages) {
     const action: ActionBindTextStyle = {
       kind: "bind-text-style",
       nodeGuid: usage.nodeGuid,
-      proxy,
+      styleDefinition,
     };
     actions.push(action);
   }
 }
 
-function pickDeterministicExemplar(cluster: SubtreeClusterEntry): string {
+function pickDeterministicExemplar(cluster: StructureClusterEntry): string {
   return cluster.members
     .map((m) => m.nodeGuid)
     .reduce((best, candidate) => (candidate < best ? candidate : best));

@@ -6,7 +6,7 @@
  * characters length Y`, breaking emit on real-world Figma files
  * whose Kiwi encoding omits trailing zeros (the documented base-style
  * suffix) and on files that carry authoring residue (style ids
- * beyond an erased text tail). Post-fix: the helper pads with 0
+ * beyond an erased text tail). Post-fix: the routine pads with 0
  * (base style) when shorter and truncates when longer, mirroring the
  * SVG renderer's own post-normalise expectation.
  */

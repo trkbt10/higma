@@ -2,7 +2,7 @@
  * @file Case `table-basic` — `<table><tr><td>` becomes FRAME → FRAME
  * → TEXT (cell text). The hierarchy must survive.
  */
-import { asFrame, asText, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { basicTable } from "./fixture";
 
 describe("case table-basic", () => {

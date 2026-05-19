@@ -1,5 +1,5 @@
 /**
- * @file Filename slug + template application helpers.
+ * @file Filename slug + template application functions.
  *
  * Pure: no IO, no filesystem access. Lives in its own module so
  * the slug behaviour is unit-testable without touching the

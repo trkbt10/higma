@@ -11,7 +11,7 @@ import { decodeField, encodeField } from "./core/field-codec";
 import { decodeDefinition, encodeDefinition } from "./core/definition-codec";
 import { iterateMessageFields } from "./core/message-iterator";
 import { createValueDecoder, createValueEncoder } from "./core/value-codec";
-import { findDefinitionByName } from "./core/schema-utils";
+import { findDefinitionByName } from "./core/definition-lookup";
 import type { ValueDecoder, ValueEncoder } from "./core/types";
 
 // =============================================================================

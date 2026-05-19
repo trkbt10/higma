@@ -9,7 +9,7 @@
  * Filesystem-free by design: callers (CLI / test harnesses / browser
  * tools) decide where the bytes go.
  */
-import type { FigNodeId } from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
 import type { ViewportIR } from "@higma-bridges/web-fig";
 import { buildFigFileBytes } from "./build-fig-file";
 
@@ -20,8 +20,8 @@ export type EmitFigOptions = {
 
 export type EmitFigResult = {
   readonly bytes: Uint8Array;
-  /** IR id → assigned FigNodeId. */
-  readonly idMap: ReadonlyMap<string, FigNodeId>;
+  /** IR id → assigned FigGuid. */
+  readonly idMap: ReadonlyMap<string, FigGuid>;
 };
 
 /**

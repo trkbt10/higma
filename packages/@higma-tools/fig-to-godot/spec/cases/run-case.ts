@@ -32,7 +32,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { comparePng } from "@higma-codecs/png-compare";
-import { createFigSymbolContext, findCanvas } from "@higma-document-io/fig/context";
+import { createFigDocumentContext, findCanvas } from "@higma-document-io/fig/context";
 import {
   buildFrameScene,
   buildFrameTarget,
@@ -99,14 +99,14 @@ export type RunRoundtripCaseOptions = {
 export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promise<void> {
   const figPath = resolveFixturePath(options.caseName);
   const bytes = new Uint8Array(await readFile(figPath));
-  const ctx = await createFigSymbolContext(bytes);
-  const canvas = findCanvas(ctx.tree.roots, options.canvasName);
+  const ctx = await createFigDocumentContext(bytes);
+  const canvas = findCanvas(ctx.document, options.canvasName);
   if (!canvas) {
     throw new Error(
       `runRoundtripCase: fixture "${options.caseName}" missing canvas "${options.canvasName}"`,
     );
   }
-  const allFrames = listFrameTargets(canvas);
+  const allFrames = listFrameTargets(ctx.document, canvas);
   const wanted = new Set(options.frameNames);
   const frames = allFrames.filter((f) => f.name !== undefined && wanted.has(f.name));
   if (frames.length === 0) {
@@ -120,14 +120,15 @@ export async function runRoundtripCase(options: RunRoundtripCaseOptions): Promis
   const targets = frames.map((node) =>
     buildFrameTarget(node, { outputDir: "Pages", sceneNamesUsed, slugsUsed }),
   );
-  // Doc-level lookups passed to the emit walker. Carrying `symbolMap`
-  // here is what lets INSTANCE nodes resolve to their authoring
-  // SYMBOL — without it, frames built from instances (e.g. the
+  // Doc-level resolver passed to the emit walker. Carrying the
+  // canonical SymbolResolver here is what lets INSTANCE nodes resolve
+  // to their authoring SYMBOL — without it, frames built from instances (e.g. the
   // `constraints` fixture) emit as empty Controls. `images` lets
   // IMAGE paints resolve to their actual PNG/JPEG bytes — required
   // for the `image-fill` fixtures.
   const emitCtx: EmitContext = {
-    symbolMap: ctx.symbolMap,
+    symbolResolver: ctx.symbolResolver,
+    childrenOf: ctx.symbolResolver.childrenOfResolvedNode,
     blobs: ctx.blobs,
     images: ctx.images,
   };

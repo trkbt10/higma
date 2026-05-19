@@ -18,7 +18,7 @@ import {
   type SaveFigFamilyOptions,
 } from "@higma-figma-runtime/roundtrip";
 import type { FigCanvasMagic } from "@higma-figma-schema/profiles";
-import type { LoadedFigFile } from "@higma-document-models/fig/domain";
+import type { FigMessageHeader, LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 
@@ -44,7 +44,12 @@ export async function loadFigFile(data: Uint8Array): Promise<LoadedFigFile> {
     images: loaded.images as ReadonlyMap<string, FigPackageImage>,
     metadata: loaded.metadata as FigPackageMetadata | null,
     thumbnail: loaded.thumbnail,
-    messageHeader: loaded.messageHeader,
+    // LoadedFigFamilyFile.messageHeader is typed as Record<string, unknown>
+    // at the runtime boundary; the codec guarantees the shape but does not
+    // narrow it. The downstream FigMessageHeader contract is asserted by
+    // assertNodeChangesMessageHeader when the document is opened, so this
+    // cast is safe.
+    messageHeader: loaded.messageHeader as FigMessageHeader,
   };
 }
 

@@ -1,8 +1,7 @@
 /**
- * @file FigColor conversion utilities
+ * @file FigColor operations.
  *
- * Provides utility functions for working with FigColor (0-1 RGBA range).
- * FigColor is defined in types.ts — this module provides operations on it.
+ * FigColor is defined in types.ts and uses the 0..1 RGBA range.
  */
 
 import type { FigColor, FigPaint, FigSolidPaint, FigGradientPaint, FigImagePaint, FigPaintType } from "./types";
@@ -59,7 +58,7 @@ export function hexToFigColor(hex: string, alpha = 1): FigColor {
 }
 
 // =============================================================================
-// Paint Type Helper
+// Paint Type Access
 // =============================================================================
 
 /**
@@ -67,9 +66,6 @@ export function hexToFigColor(hex: string, alpha = 1): FigColor {
  */
 export function getPaintType(paint: { readonly type: unknown }): FigPaintType {
   const rawType: unknown = paint.type;
-  if (isPaintType(rawType)) {
-    return rawType;
-  }
   if (isKiwiEnumPaintType(rawType)) {
     return rawType.name;
   }
@@ -86,12 +82,12 @@ export function getSolidPaintColor(paint: FigPaint): FigColor | undefined {
 }
 
 // =============================================================================
-// Paint Narrowing Helpers (SSoT for FigPaint → variant)
+// Paint Narrowing (SSoT for FigPaint → variant)
 // =============================================================================
 //
-// FigPaint can carry either parser-normalized string tags or decoded
-// Kiwi enum-object tags. These helpers are the named entry points for
-// variant access so call sites do not re-derive tag handling.
+// FigPaint carries decoded Kiwi enum-object tags. These accessors are
+// the named entry points for variant access so call sites do not
+// re-derive tag handling.
 
 /**
  * Narrow a paint to `FigGradientPaint` when its type is one of the

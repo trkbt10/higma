@@ -8,7 +8,7 @@
  * `<ComponentName>.module.css` file emitted next to the TSX.
  *
  * Why a post-pass rather than threading the strategy through every
- * helper that builds JSX: the JsxNode tree is the single point where
+ * routine that builds JSX: the JsxNode tree is the single point where
  * "the element will receive this style record" is finalised. A walker
  * here keeps the css-modules logic localised; the rest of the emit
  * pipeline keeps emitting inline styles as before. The cost is one

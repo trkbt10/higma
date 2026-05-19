@@ -23,7 +23,7 @@
  * `.tscn` self-contained and avoids a name-resolution layer the v0
  * does not need.
  *
- * Each helper here returns the small number of `theme_override_*`
+ * Each routine here returns the small number of `theme_override_*`
  * properties that realise one fig styling concept on one Godot Control:
  *
  *   - `panelStyleOverride(node, subResId)` — `theme_override_styles/panel`

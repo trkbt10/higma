@@ -3,7 +3,7 @@
  * verbatim. The default 1 is asserted by the `box-leaf` case; this
  * case proves a non-default value survives.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_OPACITY, withOpacity } from "./fixture";
 

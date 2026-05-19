@@ -96,7 +96,7 @@ export function createNodeChangesMessageHeader(
 /**
  * Guard for loaded headers: rejects a `messageHeader` whose `type` is
  * anything other than `NODE_CHANGES`. Use this when handing a loaded
- * file off to a downstream consumer that assumes document content
+ * file off to a downstream consumer that requires document content
  * (e.g. the editor reducer). Session-sync messages are out of scope
  * for the editor pipeline and must be filtered upstream.
  */

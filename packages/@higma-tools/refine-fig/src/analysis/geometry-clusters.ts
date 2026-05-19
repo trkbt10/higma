@@ -1,8 +1,8 @@
 /**
- * @file VECTOR geometry cluster detection (affine-normalized).
+ * @file VECTOR geometry cluster detection (unit-space canonical form).
  *
  * Two VECTORs are considered the same shape iff their `commandsBlob`
- * commands, after **bbox normalisation to the unit square**, produce
+ * commands, after **bbox projection to the unit square**, produce
  * an identical canonical command stream at Float32 precision. Uniform
  * and non-uniform scale are absorbed (20x20 → 40x40 → 60x30 cluster
  * together). Reflections are NOT absorbed in this revision — the
@@ -10,7 +10,7 @@
  * original orientation, and that is invasive enough to land
  * separately.
  *
- * There is NO ε tolerance: the comparison is exact once normalised.
+ * There is NO ε tolerance: the comparison is exact once projected.
  * A 1-pixel-radius corner difference produces a different command
  * stream and therefore a different cluster — exactly the fail-fast
  * property the protocol requires.
@@ -21,10 +21,10 @@
  *      `strokeGeometry[].commandsBlob` into typed PathCommand arrays.
  *   2. Compute the bbox of every coordinate across all commands.
  *      Reject degenerate shapes (bbox width or height == 0): they
- *      cannot be normalised to a unit square without dividing by zero
+ *      cannot be projected to a unit square without dividing by zero
  *      and clustering 1D shapes is not what this analysis is for.
  *   3. For each of the 4 reflection variants, transform every
- *      coordinate `(x, y)` to its normalised form and re-serialise to
+ *      coordinate `(x, y)` to its unit-space form and re-serialise to
  *      a deterministic canonical string. Float32 quantisation is
  *      enforced (every coordinate routed through a DataView) so the
  *      same logical value always hashes identically across runs.
@@ -34,7 +34,7 @@
  *      first in the input.
  *
  * Paint and stroke parameters are folded into the fingerprint
- * unchanged. Two shapes with the same normalised geometry but
+ * unchanged. Two shapes with the same unit-space geometry but
  * different colours stay in different clusters — agent intent on
  * combining them is `decisions.geometryClusters[...]` with merged
  * naming, not silent collapse.
@@ -46,22 +46,25 @@
  *     `M 10 10 L 0 10 L 0 0 L 10 0 Z` will not cluster despite being
  *     the same shape. Figma's exporter is consistent about ordering so
  *     this is rarely a problem in practice; the fail-fast principle
- *     prevents introducing a heuristic to "guess" a canonical start.
+ *     prevents inventing a canonical start.
  *   - Axis-aligned reflections (flip-x, flip-y, rot-180) are NOT
- *     absorbed. The normalisation pipeline supports them (see
- *     `canonicaliseOne`) but `normaliseCommands` only emits the
+ *     absorbed. The unit-space pipeline supports them (see
+ *     `canonicaliseOne`) but `unitSpaceCommands` only emits the
  *     identity reflection's hash. Lifting this restriction requires
  *     apply to write `transform.m00 / m11 = -1` per INSTANCE.
  *   - Rotations other than 180° (90°, 270°) are not absorbed at all.
  */
 import type { FigBlob, LoadedFigFile } from "@higma-document-models/fig/domain";
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
+import { asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import {
   decodePathCommands,
+  type FigKiwiDocumentIndex,
   getNodeType,
   guidToString,
-  safeChildren,
 } from "@higma-document-models/fig/domain";
+import { getImageHash } from "@higma-document-renderers/fig/paint";
 import { pathCommandsBoundingBox, type PathCommand } from "@higma-primitives/path";
 import { createHash } from "node:crypto";
 
@@ -105,11 +108,11 @@ function quantizeF32(x: number): number {
 type Bbox = { readonly minX: number; readonly maxX: number; readonly minY: number; readonly maxY: number };
 
 /**
- * Bbox helper for cluster fingerprinting. Delegates to the primitive
+ * Bbox routine for cluster fingerprinting. Delegates to the primitive
  * `pathCommandsBoundingBox` (the SoT) and re-shapes the result into
- * the `{minX, maxX, minY, maxY}` form the normalisation pipeline uses
+ * the `{minX, maxX, minY, maxY}` form the unit-space pipeline uses
  * directly. Returns `undefined` for empty / degenerate inputs so
- * `normaliseCommands` can reject them.
+ * `unitSpaceCommands` can reject them.
  *
  * The primitive's bbox covers every endpoint and every Bézier control
  * point — same definition the previous in-file impl tracked — so the
@@ -125,15 +128,13 @@ function collectCoordsBbox(commands: readonly PathCommand[]): Bbox | undefined {
     return undefined;
   }
   const bbox = pathCommandsBoundingBox(commands);
-  if (bbox.w === 0 && bbox.h === 0) {
-    // The primitive returns the zero bbox when no extent-bearing
-    // command was seen. Mirror the old impl's "no extent" sentinel
-    // so degenerate inputs (a lone `Z`, an empty subpath) still get
-    // rejected by `normaliseCommands`.
-    const hasExtentSignal = commands.some((c) => c.type !== "Z");
-    if (!hasExtentSignal) {
-      return undefined;
-    }
+  const hasExtentSignal = commands.some((c) => c.type !== "Z");
+  // The primitive returns the zero bbox when no extent-bearing
+  // command was seen. Mirror the old impl's "no extent" sentinel
+  // so degenerate inputs (a lone `Z`, an empty subpath) still get
+  // rejected by `unitSpaceCommands`.
+  if (bbox.w === 0 && bbox.h === 0 && !hasExtentSignal) {
+    return undefined;
   }
   return {
     minX: bbox.x,
@@ -158,7 +159,7 @@ function reflectXY(reflection: Reflection, nx: number, ny: number): { x: number;
   return { x: 1 - nx, y: 1 - ny };
 }
 
-function normaliseCommand(cmd: PathCommand, bbox: Bbox, reflection: Reflection): string {
+function unitSpaceCommand(cmd: PathCommand, bbox: Bbox, reflection: Reflection): string {
   const w = bbox.maxX - bbox.minX;
   const h = bbox.maxY - bbox.minY;
   const normX = (x: number): number => quantizeF32((x - bbox.minX) / w);
@@ -187,8 +188,8 @@ function normaliseCommand(cmd: PathCommand, bbox: Bbox, reflection: Reflection):
   // PathCommand consumer reads both the blob and SVG-d channels.
   // Reaching this branch in the geometry-cluster pipeline means we
   // were given SVG-parsed commands, which would defeat the affine-
-  // normalised hash (radii and rotation describe an ellipse in the
-  // pre-normalisation space and cannot be reflected/rescaled the
+  // unit-space hash (radii and rotation describe an ellipse in the
+  // source coordinate space and cannot be reflected/rescaled the
   // same way endpoints can). Fail loudly rather than fingerprint
   // an arc to a misleading hash.
   throw new Error(
@@ -197,11 +198,11 @@ function normaliseCommand(cmd: PathCommand, bbox: Bbox, reflection: Reflection):
 }
 
 function canonicaliseOne(commands: readonly PathCommand[], bbox: Bbox, reflection: Reflection): string {
-  return commands.map((c) => normaliseCommand(c, bbox, reflection)).join("|");
+  return commands.map((c) => unitSpaceCommand(c, bbox, reflection)).join("|");
 }
 
 /**
- * Affine-normalised hash for one path commands array.
+ * Unit-space hash for one path commands array.
  *
  * Computes the bbox, rejects degenerate (1-D) shapes, generates 4
  * canonical strings (one per reflection), and returns the
@@ -209,7 +210,7 @@ function canonicaliseOne(commands: readonly PathCommand[], bbox: Bbox, reflectio
  * the same fingerprint regardless of which reflection happened to be
  * authored first.
  */
-function normaliseCommands(commands: readonly PathCommand[]): string | undefined {
+function unitSpaceCommands(commands: readonly PathCommand[]): string | undefined {
   if (commands.length === 0) {
     return "empty";
   }
@@ -219,10 +220,10 @@ function normaliseCommands(commands: readonly PathCommand[]): string | undefined
   }
   if (bbox.maxX - bbox.minX === 0 || bbox.maxY - bbox.minY === 0) {
     // Degenerate (single-axis) shape — clustering it would require a
-    // 1-D normalisation pass which is intentionally out of scope.
+    // 1-D projection pass which is intentionally out of scope.
     return undefined;
   }
-  // Identity-only normalisation: the bbox absorbs uniform AND
+  // Identity-only projection: the bbox absorbs uniform AND
   // non-uniform scale, but reflections stay distinct. This keeps
   // promote-vector-cluster simple — every cluster member's commands
   // render identically once scaled to the INSTANCE.size, with no
@@ -268,7 +269,7 @@ function blobsFingerprint(
       parts.push(`badblob:${idx}`);
       continue;
     }
-    const fp = normaliseCommands(commands);
+    const fp = unitSpaceCommands(commands);
     if (!fp) {
       parts.push(`degenerate:${idx}`);
       continue;
@@ -286,30 +287,43 @@ function paintsFingerprint(paints: readonly FigPaint[] | undefined): string {
     .map((p) => {
       const visible = p.visible !== false;
       const opacity = p.opacity ?? 1;
-      const blend = p.blendMode ?? "NORMAL";
-      if (p.type === "SOLID") {
-        const c = p.color;
+      const blend = paintBlendName(p);
+      const solid = asSolidPaint(p);
+      if (solid !== undefined) {
+        const c = solid.color;
         const r = c ? c.r.toFixed(3) : "0";
         const g = c ? c.g.toFixed(3) : "0";
         const b = c ? c.b.toFixed(3) : "0";
         const a = c ? c.a.toFixed(3) : "1";
         return `SOLID(${r},${g},${b},${a}):op=${opacity}:vis=${visible}:bl=${blend}`;
       }
-      if (p.type === "IMAGE") {
-        const ref = typeof p.imageRef === "string" ? p.imageRef : "";
+      const image = asImagePaint(p);
+      if (image !== undefined) {
+        const ref = getImageHash(image);
         return `IMAGE(${ref}):op=${opacity}:vis=${visible}:bl=${blend}`;
       }
       // GRADIENT paints would make per-INSTANCE handle positions
       // diverge — exclude clusters containing them by returning an
       // unstable sentinel that no other paint can collide with.
-      return `${p.type}:reject`;
+      return `${getPaintType(p)}:reject`;
     })
     .join(";");
 }
 
+function paintBlendName(paint: FigPaint): string {
+  if (paint.blendMode === undefined) {
+    return "UNSET";
+  }
+  const name = kiwiEnumName(paint.blendMode, "FigPaint.blendMode");
+  if (name === undefined) {
+    throw new Error("geometry-clusters: FigPaint.blendMode was present but resolved to undefined");
+  }
+  return name;
+}
+
 function vectorFingerprint(loaded: LoadedFigFile, node: FigNode): string | undefined {
   // size.x / size.y are intentionally not part of the fingerprint:
-  // bbox normalisation already absorbs scale, and including the raw
+  // bbox projection already absorbs scale, and including the raw
   // size would split shape-identical-but-different-size clusters back
   // apart. The node still needs *some* size to be renderable, so we
   // reject sizeless or zero-area nodes outright.
@@ -330,12 +344,12 @@ function vectorFingerprint(loaded: LoadedFigFile, node: FigNode): string | undef
     return undefined;
   }
   // Stroke weight is rendered relative to the node size; including it
-  // unscaled would re-fragment what bbox normalisation just unified.
+  // unscaled would re-fragment what bbox projection just unified.
   // Scaling stroke weight by the node's smaller dimension keeps two
   // INSTANCEs of the same SYMBOL visually consistent.
   const minDim = Math.min(node.size.x, node.size.y);
   const swRaw = typeof node.strokeWeight === "number" ? node.strokeWeight : Number.NaN;
-  const swNormalised = Number.isFinite(swRaw) && minDim > 0 ? quantizeF32(swRaw / minDim).toFixed(6) : "none";
+  const strokeWidthRatio = Number.isFinite(swRaw) && minDim > 0 ? quantizeF32(swRaw / minDim).toFixed(6) : "none";
   const sa = node.strokeAlign ?? "DEFAULT";
   const sj = node.strokeJoin ?? "DEFAULT";
   const sm = typeof node.strokeMiterAngle === "number" ? node.strokeMiterAngle : "none";
@@ -345,7 +359,7 @@ function vectorFingerprint(loaded: LoadedFigFile, node: FigNode): string | undef
     `strokeBlobs:${strokeBlobs}`,
     `fillPaints:${fillPaints}`,
     `strokePaints:${strokePaints}`,
-    `swNorm:${swNormalised}`,
+    `swRatio:${strokeWidthRatio}`,
     `sa:${sa}`,
     `sj:${sj}`,
     `sm:${sm}`,
@@ -353,27 +367,32 @@ function vectorFingerprint(loaded: LoadedFigFile, node: FigNode): string | undef
   ].join("|");
 }
 
-function walkVectors(node: FigNode, out: FigNode[]): void {
+function walkVectors(
+  node: FigNode,
+  out: FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
   if (getNodeType(node) === "VECTOR") {
     out.push(node);
   }
-  for (const child of safeChildren(node)) {
-    walkVectors(child, out);
+  for (const child of childrenOf(node)) {
+    walkVectors(child, out, childrenOf);
   }
 }
 
 /**
  * Detect strict-equal VECTOR groups across a set of root FRAMEs.
  * Strict means byte-equal `commandsBlob`, integer-equal size, same
- * paint stack, and same stroke parameters. No heuristic tolerance.
+ * paint stack, and same stroke parameters. No tolerance window.
  */
 export function detectGeometryClusters(
   loaded: LoadedFigFile,
   roots: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): GeometryClusterAnalysis {
   const vectors: FigNode[] = [];
   for (const root of roots) {
-    walkVectors(root, vectors);
+    walkVectors(root, vectors, childrenOf);
   }
   const byFingerprint = new Map<string, GeometryClusterMember[]>();
   for (const vec of vectors) {

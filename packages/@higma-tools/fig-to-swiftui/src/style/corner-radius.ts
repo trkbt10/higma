@@ -5,7 +5,7 @@
  * four per-corner fields (`rectangleTopLeftCornerRadius`, …). SwiftUI's
  * `RoundedRectangle(cornerRadius:)` accepts a uniform value only; the
  * per-corner case requires a custom `Shape` and is not yet in scope —
- * the helper throws (Fail-Fast) so the caller surfaces the gap rather
+ * the routine throws (Fail-Fast) so the caller surfaces the gap rather
  * than silently flattening to one corner.
  */
 import type { FigNode } from "@higma-document-models/fig/types";

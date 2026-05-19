@@ -16,6 +16,7 @@
  * LINE supports).
  */
 import type { FigNode, FigStrokeWeight } from "@higma-document-models/fig/types";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import { solidPaintToColor } from "../style/color";
 import { rotationModifier } from "../style/modifiers";
 import {
@@ -110,8 +111,9 @@ function pickFirstSolidStroke(node: FigNode) {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return paint;
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaint;
     }
   }
   return undefined;

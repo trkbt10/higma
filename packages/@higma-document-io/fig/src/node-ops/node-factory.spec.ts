@@ -6,14 +6,17 @@ import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import { createNodeFromSpec } from "./node-factory";
 
 describe("createNodeFromSpec", () => {
-  it("requires explicit builder state for identifier allocation", () => {
+  it("requires explicit builder state for GUID allocation", () => {
     const state = createFigBuilderState({
-      nodeIdCounter: { sessionID: 1, nextLocalID: 20 },
-      pageIdCounter: { sessionID: 0, nextLocalID: 1 },
+      nodeGuidCounter: { sessionID: 1, nextLocalID: 20 },
+      pageGuidCounter: { sessionID: 0, nextLocalID: 1 },
     });
+    const parentGuid = { sessionID: 0, localID: 1 };
 
     const node = createNodeFromSpec({
       state,
+      parentGuid,
+      position: "!",
       spec: {
         type: "RECTANGLE",
         name: "Rectangle",
@@ -24,9 +27,11 @@ describe("createNodeFromSpec", () => {
       },
     });
 
-    expect(node.id).toBe("1:20");
+    expect(node.guid).toEqual({ sessionID: 1, localID: 20 });
     expect(createNodeFromSpec({
       state,
+      parentGuid,
+      position: "\"",
       spec: {
         type: "ELLIPSE",
         name: "Ellipse",
@@ -35,7 +40,7 @@ describe("createNodeFromSpec", () => {
         width: 7,
         height: 8,
       },
-    }).id).toBe("1:21");
+    }).guid).toEqual({ sessionID: 1, localID: 21 });
   });
 
   it("fails when builder state is missing", () => {

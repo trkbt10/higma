@@ -4,7 +4,7 @@
  * IR. Paragraph collapse must NOT eat the wrapper (which would drop
  * the image entirely).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { IMG_RECT, PROSE, floatedImageBesideText } from "./fixture";
 
 describe("case floated-image-beside-text", () => {

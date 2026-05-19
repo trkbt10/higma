@@ -4,7 +4,7 @@
  * keeps the children verbatim but pins `direction: "none"` so the
  * downstream emitter doesn't try to re-flow them.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { CHILD_COUNT, withOverlappingChildren } from "./fixture";
 

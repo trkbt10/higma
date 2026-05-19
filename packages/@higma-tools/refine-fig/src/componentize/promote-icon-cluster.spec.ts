@@ -7,14 +7,14 @@
  * rewrite is now expressed as `PROMOTE_TO_SYMBOL` +
  * `PROMOTE_TO_INSTANCE` reducer dispatches inside `apply-plan.ts`.
  *
- * What remains here are the *read-only* helpers the planner / apply
+ * What remains here are the *read-only* routines the planner / apply
  * layer consult to decide whether a cluster qualifies and which
  * members share visual identity with the exemplar:
  *
  *   - `isPromotableCluster` — the structural gate (FRAME/GROUP root,
  *     no GRADIENT paints, only promotable descendant types).
- *   - `subtreeFingerprint` — a stable string that compares equal iff
- *     two subtrees would render to the same pixels once their
+ *   - `structureFingerprint` — a stable string that compares equal iff
+ *     two structures would render to the same pixels once their
  *     wrapping INSTANCE's transform is applied.
  *
  * The tests verify:
@@ -28,9 +28,34 @@
  *     dispatching `PROMOTE_TO_INSTANCE`.
  */
 
-import type { FigNode } from "@higma-document-models/fig/types";
+import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
-import { isPromotableCluster, subtreeFingerprint } from "./promote-icon-cluster";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, SCALE_MODE_VALUES } from "@higma-document-models/fig/constants";
+import { createNodeChangesMessageHeader } from "@higma-document-models/fig/domain";
+import { isPromotableCluster, structureFingerprint } from "./promote-icon-cluster";
+
+const NORMAL_BLEND = { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } as const;
+const FILL_IMAGE_SCALE = { value: SCALE_MODE_VALUES.FILL, name: "FILL" } as const;
+
+function imagePaint(hash: readonly number[]): FigPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    image: { hash },
+    imageScaleMode: FILL_IMAGE_SCALE,
+    opacity: 1,
+    visible: true,
+    blendMode: NORMAL_BLEND,
+  };
+}
+
+function linearGradientPaint(): FigPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+    opacity: 1,
+    visible: true,
+    blendMode: NORMAL_BLEND,
+  };
+}
 
 function makeFig(nodes: readonly FigNode[]): LoadedFigFile {
   return {
@@ -42,7 +67,7 @@ function makeFig(nodes: readonly FigNode[]): LoadedFigFile {
     images: new Map(),
     metadata: null,
     thumbnail: null,
-    messageHeader: {},
+    messageHeader: createNodeChangesMessageHeader(),
   };
 }
 
@@ -121,13 +146,7 @@ describe("isPromotableCluster", () => {
     const exemplar = frameNode("1:20", undefined);
     const rect = rectNode("1:21", "1:20", {
       fillPaints: [
-        {
-          type: "IMAGE",
-          imageRef: "imgref-abc",
-          opacity: 1,
-          visible: true,
-          blendMode: "NORMAL",
-        },
+        imagePaint([0xab, 0xcd]),
       ],
     });
     const loaded = makeFig([exemplar, rect]);
@@ -145,12 +164,7 @@ describe("isPromotableCluster", () => {
     const exemplar = frameNode("1:40", undefined);
     const rect = rectNode("1:41", "1:40", {
       fillPaints: [
-        {
-          type: "GRADIENT_LINEAR",
-          opacity: 1,
-          visible: true,
-          blendMode: "NORMAL",
-        },
+        linearGradientPaint(),
       ],
     });
     const loaded = makeFig([exemplar, rect]);
@@ -164,8 +178,8 @@ describe("isPromotableCluster", () => {
   });
 });
 
-describe("subtreeFingerprint fingerprint discrimination", () => {
-  // The apply-plan layer uses `subtreeFingerprint` to decide which
+describe("structureFingerprint fingerprint discrimination", () => {
+  // The apply-plan layer uses `structureFingerprint` to decide which
   // cluster members to flip to INSTANCEs. Two members are flipped
   // together iff they share a fingerprint with the exemplar.
 
@@ -175,7 +189,7 @@ describe("subtreeFingerprint fingerprint discrimination", () => {
     const match = frameNode("2:100", "0:1");
     const matchText = textNode("2:101", "2:100", "Save");
     const loaded = makeFig([exemplar, exemplarText, match, matchText]);
-    expect(subtreeFingerprint(loaded, "1:100")).toBe(subtreeFingerprint(loaded, "2:100"));
+    expect(structureFingerprint(loaded, "1:100")).toBe(structureFingerprint(loaded, "2:100"));
   });
 
   it("differs between members whose TEXT content diverges", () => {
@@ -184,20 +198,20 @@ describe("subtreeFingerprint fingerprint discrimination", () => {
     const divergent = frameNode("3:200", "0:1");
     const divergentText = textNode("3:201", "3:200", "Cancel");
     const loaded = makeFig([exemplar, exemplarText, divergent, divergentText]);
-    expect(subtreeFingerprint(loaded, "1:200")).not.toBe(subtreeFingerprint(loaded, "3:200"));
+    expect(structureFingerprint(loaded, "1:200")).not.toBe(structureFingerprint(loaded, "3:200"));
   });
 
-  it("differs between members whose IMAGE `imageRef` diverges", () => {
+  it("differs between members whose IMAGE `image.hash` diverges", () => {
     const exemplar = frameNode("1:300", "0:1");
     const exemplarRect = rectNode("1:301", "1:300", {
-      fillPaints: [{ type: "IMAGE", imageRef: "ref-A", opacity: 1, visible: true, blendMode: "NORMAL" }],
+      fillPaints: [imagePaint([0xaa])],
     });
     const divergent = frameNode("3:300", "0:1");
     const divergentRect = rectNode("3:301", "3:300", {
-      fillPaints: [{ type: "IMAGE", imageRef: "ref-B", opacity: 1, visible: true, blendMode: "NORMAL" }],
+      fillPaints: [imagePaint([0xbb])],
     });
     const loaded = makeFig([exemplar, exemplarRect, divergent, divergentRect]);
-    expect(subtreeFingerprint(loaded, "1:300")).not.toBe(subtreeFingerprint(loaded, "3:300"));
+    expect(structureFingerprint(loaded, "1:300")).not.toBe(structureFingerprint(loaded, "3:300"));
   });
 
   it("differs between members whose nested INSTANCE references diverge", () => {
@@ -206,6 +220,6 @@ describe("subtreeFingerprint fingerprint discrimination", () => {
     const divergent = frameNode("3:400", "0:1");
     const divergentInst = instanceNode("3:401", "3:400", "9:2");
     const loaded = makeFig([exemplar, exemplarInst, divergent, divergentInst]);
-    expect(subtreeFingerprint(loaded, "1:400")).not.toBe(subtreeFingerprint(loaded, "3:400"));
+    expect(structureFingerprint(loaded, "1:400")).not.toBe(structureFingerprint(loaded, "3:400"));
   });
 });

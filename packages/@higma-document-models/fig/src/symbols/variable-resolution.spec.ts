@@ -2,10 +2,10 @@
  * @file Tests for the RESOLVE_VARIANT evaluator and the
  * `FigVariableAnyValue` projection.
  *
- * The fixtures here are minimal hand-built node maps — they don't
+ * The fixtures here are minimal hand-built Kiwi document indexes — they don't
  * exercise the full Kiwi parser pipeline because the evaluator's
  * correctness depends on the *projected* shape, not the
- * presence-by-field details of the raw Kiwi message. The
+ * presence-by-field details of the Kiwi message. The
  * `projectVariableAnyValue` test does cover the projection itself.
  */
 
@@ -22,7 +22,7 @@ import type {
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
-import { guidToString } from "../domain";
+import { indexFigKiwiDocument, type FigKiwiDocumentIndex } from "../domain";
 
 function guid(sessionID: number, localID: number): FigGuid {
   return { sessionID, localID };
@@ -111,12 +111,20 @@ function instanceNode(g: FigGuid, symbolID: FigGuid, vcm: FigKiwiVariableDataMap
   };
 }
 
-function buildSymbolMap(nodes: readonly FigNode[]): Map<string, FigNode> {
-  const map = new Map<string, FigNode>();
+function buildVariantContext(nodes: readonly FigNode[]): {
+  readonly document: FigKiwiDocumentIndex;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
+} {
   for (const n of nodes) {
-    map.set(guidToString(n.guid), n);
+    if (n.guid === undefined) {
+      throw new Error("buildVariantContext requires every node to carry guid");
+    }
   }
-  return map;
+  const document = indexFigKiwiDocument(nodes);
+  return {
+    document,
+    childrenOf: document.childrenOf,
+  };
 }
 
 describe("projectVariableAnyValue", () => {
@@ -225,9 +233,9 @@ describe("resolveVariantOverride", () => {
     const compactSym = variantSymbol(guid(1, 101), "Type=Compact", guid(1, 1), propDefId, "Compact");
     const container = variantSetFrame(guid(1, 1), "_Variants", "Type", propDefId, [defaultSym, compactSym]);
     const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromTextLiteral("Type", "Compact"));
-    const symbolMap = buildSymbolMap([container, defaultSym, compactSym]);
+    const variantContext = buildVariantContext([container, defaultSym, compactSym]);
 
-    const out = resolveVariantOverride(inst, defaultSym, symbolMap);
+    const out = resolveVariantOverride(inst, defaultSym, variantContext);
     expect(out.resolvedSymbolID).toEqual(guid(1, 101));
   });
 
@@ -237,9 +245,9 @@ describe("resolveVariantOverride", () => {
     const compactSym = variantSymbol(guid(1, 101), "Type=Compact", guid(1, 1), propDefId, "Compact");
     const container = variantSetFrame(guid(1, 1), "_Variants", "Type", propDefId, [defaultSym, compactSym]);
     const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromTextLiteral("Type", "Default"));
-    const symbolMap = buildSymbolMap([container, defaultSym, compactSym]);
+    const variantContext = buildVariantContext([container, defaultSym, compactSym]);
 
-    const out = resolveVariantOverride(inst, defaultSym, symbolMap);
+    const out = resolveVariantOverride(inst, defaultSym, variantContext);
     expect(out.resolvedSymbolID).toEqual(guid(1, 100));
   });
 
@@ -278,9 +286,9 @@ describe("resolveVariantOverride", () => {
       ],
     };
     const inst = instanceNode(guid(1, 200), guid(1, 100), aliasVcm);
-    const symbolMap = buildSymbolMap([container, defaultSym, compactSym]);
+    const variantContext = buildVariantContext([container, defaultSym, compactSym]);
 
-    const out = resolveVariantOverride(inst, defaultSym, symbolMap);
+    const out = resolveVariantOverride(inst, defaultSym, variantContext);
     expect(out.resolvedSymbolID).toBeUndefined();
     expect(out.bailReason).toBe("unresolved-aliases");
   });
@@ -290,9 +298,9 @@ describe("resolveVariantOverride", () => {
     const sym = symbolNode(guid(1, 100), "Solo", guid(1, 1));
     const parent = frameNode(guid(1, 1), "Misc", [sym]);
     const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromTextLiteral("Type", "Compact"));
-    const symbolMap = buildSymbolMap([parent, sym]);
+    const variantContext = buildVariantContext([parent, sym]);
 
-    const out = resolveVariantOverride(inst, sym, symbolMap);
+    const out = resolveVariantOverride(inst, sym, variantContext);
     expect(out.resolvedSymbolID).toBeUndefined();
     expect(out.bailReason).toBe("no-variant-container");
   });
@@ -305,9 +313,9 @@ describe("resolveVariantOverride", () => {
       type: { value: 0, name: FIG_NODE_TYPE.INSTANCE },
       symbolData: { symbolID: guid(1, 100) },
     };
-    const symbolMap = buildSymbolMap([sym]);
+    const variantContext = buildVariantContext([sym]);
 
-    const out = resolveVariantOverride(inst, sym, symbolMap);
+    const out = resolveVariantOverride(inst, sym, variantContext);
     expect(out.bailReason).toBe("no-vcm-expression");
   });
 });

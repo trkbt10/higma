@@ -32,9 +32,12 @@
  *   BoxContainer is renamed `Stack` (or whatever the disambiguator
  *   produces) so node names stay unique within the parent.
  */
-import type { FigGradientPaint, FigNode, FigPaint, FigSolidPaint } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
-import { resolveInstanceNode } from "@higma-document-models/fig/symbols";
+import type { FigGradientPaint, FigImagePaint, FigNode, FigPaint, FigSolidPaint } from "@higma-document-models/fig/types";
+import { asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { getNodeType } from "@higma-document-models/fig/domain";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import type { SymbolResolver } from "@higma-document-models/fig/symbols";
+import { getGradientStops, getImageHash } from "@higma-document-renderers/fig/paint";
 import { toPascalCase, uniqueIdent } from "@higma-primitives/identifier";
 import {
   boolVal,
@@ -97,9 +100,10 @@ const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
 /**
  * Optional resources passed to the walker.
  *
- *   - `symbolMap` — `{guid → FigNode}` lookup used by INSTANCE
- *     expansion. When set, the walker resolves each INSTANCE via
- *     `resolveInstanceNode` and emits the merged node + its
+ *   - `symbolResolver` — canonical INSTANCE → SYMBOL resolver used
+ *     by INSTANCE expansion. When set, the walker resolves each
+ *     INSTANCE via `SymbolResolver.resolveInstance` and emits the
+ *     merged node + its
  *     SYMBOL-derived children. When omitted, INSTANCE nodes emit
  *     their literal direct children (typically empty for component
  *     instances whose authoring source lives on another canvas).
@@ -109,7 +113,8 @@ const FRAME_LIKE_TYPES: ReadonlySet<string> = new Set([
  * `measure-all-cases.ts`).
  */
 export type EmitContext = {
-  readonly symbolMap?: ReadonlyMap<string, FigNode>;
+  readonly symbolResolver?: SymbolResolver;
+  readonly childrenOf?: (node: FigNode) => readonly FigNode[];
   /**
    * Document-level blob array. Required for shape kinds whose
    * geometry lives in a `commandsBlob` referenced by
@@ -120,8 +125,8 @@ export type EmitContext = {
   readonly blobs?: readonly { readonly bytes: readonly number[] }[];
   /**
    * Document-level image map keyed by image hash. Required for IMAGE
-   * paint emission — the walker resolves a paint's `image.hash` /
-   * `imageHash` / `imageRef` against this map to recover the binary
+   * paint emission — the walker resolves a paint's Kiwi image hash
+   * against this map to recover the binary
    * PNG/JPEG bytes that get written next to the scene as a Godot
    * `ExtResource`. When absent, IMAGE paints fall through to a
    * placeholder Control (no fill rendered).
@@ -137,7 +142,7 @@ export type EmitContext = {
  *
  * `emit` carries the read-only EmitContext so INSTANCE resolution and
  * other doc-level lookups can flow through the walker without thread
- * passing every helper.
+ * passing every routine.
  *
  * `insideClipFrame` is set when the current node lives inside a
  * frame that already enforces clipping (rect or rounded). The
@@ -154,7 +159,7 @@ export type WalkContext = {
    * the emitted `.tscn`. Populated when an IMAGE paint resolves to a
    * Godot `Texture2D` companion file. The accumulator is mutable so
    * deeply-nested walks can append without threading the array back
-   * up through every helper.
+   * up through every routine.
    */
   readonly extResources: GodotExtResource[];
   /**
@@ -180,7 +185,7 @@ export type WalkContext = {
   gradientCounter: number;
   /** Counter feeding `nextImageTextureId`. */
   imageTextureCounter: number;
-  /** Read-only doc-level lookups (symbolMap etc.). */
+  /** Read-only doc-level resources (SymbolResolver, blobs, images). */
   readonly emit: EmitContext;
   /** True when any FRAME ancestor has `clipsContent`. */
   insideClipFrame: boolean;
@@ -287,20 +292,17 @@ function allocateImageIds(ctx: WalkContext): { readonly imageId: string; readonl
 /**
  * Look up the binary image data referenced by a fig IMAGE paint.
  *
- * The paint can carry the hash in three different shapes (in priority
- * order: Kiwi `image.hash` byte array → API/legacy `imageHash` string
- * or array → builder `imageRef` hash string). We normalise all three
- * to the lowercase-hex string the symbol context's images map keys
- * itself by.
+ * Image hash reading is delegated to the renderer paint interpreter
+ * so this emitter does not carry its own paint-shape reader.
  */
 function lookupImageBytes(
-  paint: { readonly image?: { readonly hash?: readonly number[] }; readonly imageHash?: string | readonly number[]; readonly imageRef?: string },
+  paint: FigImagePaint,
   images: ReadonlyMap<string, { readonly data: Uint8Array; readonly mimeType: string }> | undefined,
 ): { readonly hash: string; readonly data: Uint8Array; readonly mimeType: string } | undefined {
   if (!images) {
     return undefined;
   }
-  const hash = readPaintImageHash(paint);
+  const hash = getImageHash(paint);
   if (!hash) {
     return undefined;
   }
@@ -309,33 +311,6 @@ function lookupImageBytes(
     return undefined;
   }
   return { hash, data: entry.data, mimeType: entry.mimeType };
-}
-
-/**
- * Pick the canonical hex hash for a paint. Kiwi `image.hash` is the
- * byte-array shape the parser writes; API exports use a string. The
- * symbol context's `images` map keys on the lowercase-hex form, so
- * we normalise both shapes to that.
- */
-function readPaintImageHash(paint: {
-  readonly image?: { readonly hash?: readonly number[] };
-  readonly imageHash?: string | readonly number[];
-  readonly imageRef?: string;
-}): string | undefined {
-  const hashBytes = paint.image?.hash;
-  if (hashBytes && hashBytes.length > 0) {
-    return Array.from(hashBytes).map((b) => b.toString(16).padStart(2, "0")).join("");
-  }
-  if (Array.isArray(paint.imageHash)) {
-    return Array.from(paint.imageHash).map((b) => (b as number).toString(16).padStart(2, "0")).join("");
-  }
-  if (typeof paint.imageHash === "string" && paint.imageHash.length > 0) {
-    return paint.imageHash.toLowerCase();
-  }
-  if (typeof paint.imageRef === "string" && paint.imageRef.length > 0) {
-    return paint.imageRef.toLowerCase();
-  }
-  return undefined;
 }
 
 /**
@@ -363,7 +338,7 @@ function readPaintImageHash(paint: {
  * the embedded RGBA8 byte array with no filesystem traversal.
  */
 function resolveImageSubResource(
-  paint: { readonly image?: { readonly hash?: readonly number[] }; readonly imageHash?: string | readonly number[]; readonly imageRef?: string },
+  paint: FigImagePaint,
   ctx: WalkContext,
 ): { readonly id: string; readonly imageWidth: number; readonly imageHeight: number } | undefined {
   const found = lookupImageBytes(paint, ctx.emit.images);
@@ -451,8 +426,11 @@ function resolveRasterizedGradient(
  * rasterize the same gradient twice for two sibling paints.
  */
 function gradientCacheKey(paint: FigGradientPaint): string {
-  const stops = paint.stops ?? paint.gradientStops ?? [];
-  const t = paint.transform ?? {};
+  const stops = getGradientStops(paint);
+  const t = paint.transform;
+  if (!t) {
+    throw new Error("gradientCacheKey requires paint.transform");
+  }
   const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
   const stopsKey = stops
     .map((s) => `${s.position},${s.color.r},${s.color.g},${s.color.b},${s.color.a}`)
@@ -535,8 +513,9 @@ function decodeRgba8(data: Uint8Array): { readonly width: number; readonly heigh
  */
 function buildImageResolver(ctx: WalkContext): (paint: FigPaint) => { readonly width: number; readonly height: number; readonly rgba: Uint8Array } | undefined {
   return (paint) => {
-    if (paint.type !== "IMAGE") return undefined;
-    const found = lookupImageBytes(paint, ctx.emit.images);
+    const imagePaint = asImagePaint(paint);
+    if (imagePaint === undefined) return undefined;
+    const found = lookupImageBytes(imagePaint, ctx.emit.images);
     if (!found) return undefined;
     return decodeRgba8(found.data);
   };
@@ -568,12 +547,20 @@ function isRendered(node: FigNode): boolean {
   return true;
 }
 
+function requireChildrenOf(ctx: WalkContext): (node: FigNode) => readonly FigNode[] {
+  const childrenOf = ctx.emit.childrenOf;
+  if (childrenOf === undefined) {
+    throw new Error("fig-to-godot: EmitContext.childrenOf is required for Kiwi document traversal");
+  }
+  return childrenOf;
+}
+
 /**
  * If the node is an INSTANCE and the walker has access to a
- * symbolMap, resolve it through the canonical helper and return
+ * SymbolResolver, resolve it through the canonical resolver and return
  * both the merged node (carrying the SYMBOL's properties — fillPaints,
  * size, etc., with INSTANCE-level overrides folded in) and the
- * resolved children. For non-INSTANCE nodes (or when no symbolMap is
+ * resolved children. For non-INSTANCE nodes (or when no SymbolResolver is
  * available) returns the input unchanged. Mirrors the swiftui peer's
  * `resolveInstanceFor`.
  */
@@ -581,10 +568,10 @@ function resolveInstanceFor(
   node: FigNode,
   ctx: WalkContext,
 ): { readonly node: FigNode; readonly children: readonly FigNode[] } {
-  if (ctx.emit.symbolMap && node.type.name === "INSTANCE") {
-    return resolveInstanceNode(node, { symbolMap: ctx.emit.symbolMap });
+  if (ctx.emit.symbolResolver && node.type.name === "INSTANCE") {
+    return ctx.emit.symbolResolver.resolveInstance(node);
   }
-  return { node, children: safeChildren(node) };
+  return { node, children: requireChildrenOf(ctx)(node) };
 }
 
 
@@ -679,27 +666,7 @@ function isWrappedHorizontalStack(node_: FigNode): boolean {
   if (node_.stackMode?.name !== "HORIZONTAL") {
     return false;
   }
-  return readWrapFlag(node_.stackWrap);
-}
-
-/**
- * Type-guard reader for `stackWrap`. The model declares the field as
- * `boolean` but the parser actually emits the Kiwi-enum struct
- * (`{ value, name: "WRAP" | "NO_WRAP" }`). This helper handles
- * both shapes.
- */
-function readWrapFlag(raw: unknown): boolean {
-  if (raw === undefined || raw === null) {
-    return false;
-  }
-  if (typeof raw === "boolean") {
-    return raw;
-  }
-  if (typeof raw === "object" && "name" in raw) {
-    const name = (raw as { name: unknown }).name;
-    return typeof name === "string" && name === "WRAP";
-  }
-  return false;
+  return node_.stackWrap?.name === "WRAP";
 }
 
 /**
@@ -734,7 +701,7 @@ function appendAbsolutePosition(
   // size 80x40 becomes offset_left=12, offset_top=16, offset_right=92,
   // offset_bottom=56.
   //
-  // The container helpers (`plainControlProperties`,
+  // The container routines (`plainControlProperties`,
   // `boxContainerProperties`) already populated offset_right/offset_bottom
   // from the child's authored size assuming origin (0,0). Here we
   // *replace* those with the absolutely-positioned values rather than
@@ -1221,7 +1188,7 @@ function buildFramePanel(
   // so when the caller later turns this Panel into a clip-children
   // host, the silhouette is already viable.
   const needsClipSilhouette =
-    !ctx.insideClipFrame && frameNeedsRoundedClip(node_);
+    !ctx.insideClipFrame && frameNeedsRoundedClip(node_, ctx);
   const styleBox = buildStyleBoxFlat(node_, styleBoxId, compensate, {
     needsClipSilhouette,
   });
@@ -1488,7 +1455,7 @@ function emitContainer(rawNode: FigNode, ctx: WalkContext): GodotNode {
     // The narrow rule still wins on common UI cases: clip-rounded-
     // basic / pill / circle, simple cards with a single overflow
     // child.
-    if (!ctx.insideClipFrame && frameNeedsRoundedClip(node_)) {
+    if (!ctx.insideClipFrame && frameNeedsRoundedClip(node_, ctx)) {
       const clipPanelProps: GodotProperty[] = [
         ...background.panel.properties.filter((p) => p.name !== "show_behind_parent"),
         property("clip_children", intVal(1 /* CLIP_CHILDREN_ONLY */)),
@@ -1644,14 +1611,15 @@ function maskHasOpaqueSolidFill(mask: FigNode): boolean {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type !== "SOLID") {
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint === undefined) {
       return false;
     }
     const opacity = paint.opacity ?? 1;
     if (opacity < 0.999) {
       return false;
     }
-    const color = (paint as FigSolidPaint).color;
+    const color = solidPaint.color;
     if (!color) {
       return false;
     }
@@ -1669,7 +1637,7 @@ function maskHasOpaqueSolidFill(mask: FigNode): boolean {
  * a mask. Conservative — see `emitContainer` docstring for the
  * full rationale on why each guard is here.
  */
-function frameNeedsRoundedClip(node_: FigNode): boolean {
+function frameNeedsRoundedClip(node_: FigNode, ctx: WalkContext): boolean {
   if (!figClipsContent(node_)) {
     return false;
   }
@@ -1694,7 +1662,7 @@ function frameNeedsRoundedClip(node_: FigNode): boolean {
   // children": leaves paint in place, so the depth-1 mask is
   // sufficient. Frame-with-frame structures fall back to the
   // rect-clip baseline.
-  return childrenAreAllShapeLeaves(safeChildren(node_));
+  return childrenAreAllShapeLeaves(requireChildrenOf(ctx)(node_));
 }
 
 function frameHasShadowEffect(node_: FigNode): boolean {
@@ -1921,7 +1889,7 @@ function emitPlaceholder(node_: FigNode, ctx: WalkContext): GodotNode {
 /**
  * Run the path-bool composer only on `BOOLEAN_OPERATION` nodes;
  * everything else leaves the slot for `decodeNodeContours` to fill.
- * Pulled out as a named helper so the caller stays single-statement.
+ * Pulled out as a named routine so the caller stays single-statement.
  */
 function composeBooleanIfApplicable(
   node_: FigNode,
@@ -2143,7 +2111,7 @@ function emitBooleanFallback(node_: FigNode, ctx: WalkContext): GodotNode {
  * `offset_left/top/right/bottom` from the child's `transform.m02 / m12`
  * + `child.size`. To keep the half-strokeWeight y shift through that
  * pipeline we synthesise a sibling node — instead we adjust the size
- * and let the placement helper position the Panel at the LINE's
+ * and let the placement routine position the Panel at the LINE's
  * authored origin; the half-strokeWeight offset is folded into the
  * placement override's `y` post-hoc via the `appendAbsolutePosition`
  * code path.
@@ -2205,7 +2173,7 @@ function readDashPattern(node_: FigNode): readonly number[] {
 
 /**
  * Type-guard reader for fields declared on FigNode but not surfaced
- * in the model's exported shape (kept generic so the same helper
+ * in the model's exported shape (kept generic so the same routine
  * works for `dashPattern`, `strokeDashes` etc. when the schema
  * lags). Returns the field's positive numeric values or an empty
  * array when the field is absent / mistyped.
@@ -2238,7 +2206,7 @@ function readUntypedField(node_: FigNode, key: string): unknown {
  * colour is applied uniformly across all dashes.
  *
  * Layout: the Polygon2D vertices live in the LINE's local coord
- * space (same as the placement helper expects from the wrapping
+ * space (same as the placement routine expects from the wrapping
  * Control). Width = full segment length; height = strokeWeight.
  *
  * Pattern walking: `[on1, off1, on2, off2, ...]` — even indices are
@@ -2308,7 +2276,7 @@ function computeDashSegments(
   // The walker advances `cursor` along the line, alternating between
   // dash and gap. `index` tracks which pattern slot we're on (even =
   // dash, odd = gap). Reduce keeps state immutable per outer loop —
-  // we run a recursive helper to satisfy the no-let rule.
+  // we run a recursive routine to satisfy the no-let rule.
   const advance = (cursor: number, index: number): void => {
     if (cursor >= width) {
       return;
@@ -2345,8 +2313,9 @@ function firstVisibleSolidStroke(node_: FigNode): FigSolidPaint | undefined {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return paint;
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaint;
     }
   }
   return undefined;
@@ -2410,7 +2379,8 @@ function hasVisibleAngularOrDiamondGradient(node_: FigNode): boolean {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "GRADIENT_ANGULAR" || paint.type === "GRADIENT_DIAMOND") {
+    const paintType = getPaintType(paint);
+    if (paintType === "GRADIENT_ANGULAR" || paintType === "GRADIENT_DIAMOND") {
       return true;
     }
   }
@@ -2427,7 +2397,7 @@ function nonSolidVisiblePaint(node_: FigNode): boolean {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type !== "SOLID") {
+    if (asSolidPaint(paint) === undefined) {
       return true;
     }
   }
@@ -2449,12 +2419,13 @@ function countVisibleRasterizablePaints(
       continue;
     }
     visible += 1;
+    const paintType = getPaintType(paint);
     if (
-      paint.type === "GRADIENT_LINEAR" ||
-      paint.type === "GRADIENT_RADIAL" ||
-      paint.type === "GRADIENT_ANGULAR" ||
-      paint.type === "GRADIENT_DIAMOND" ||
-      paint.type === "IMAGE"
+      paintType === "GRADIENT_LINEAR" ||
+      paintType === "GRADIENT_RADIAL" ||
+      paintType === "GRADIENT_ANGULAR" ||
+      paintType === "GRADIENT_DIAMOND" ||
+      paintType === "IMAGE"
     ) {
       anyRasterizable = true;
     }
@@ -2472,7 +2443,7 @@ function hasVisibleImageFill(node_: FigNode): boolean {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "IMAGE") {
+    if (asImagePaint(paint) !== undefined) {
       return true;
     }
   }
@@ -2493,11 +2464,12 @@ function hasVisibleGradientFill(node_: FigNode): boolean {
     if (paint.visible === false) {
       continue;
     }
+    const paintType = getPaintType(paint);
     if (
-      paint.type === "GRADIENT_LINEAR" ||
-      paint.type === "GRADIENT_RADIAL" ||
-      paint.type === "GRADIENT_ANGULAR" ||
-      paint.type === "GRADIENT_DIAMOND"
+      paintType === "GRADIENT_LINEAR" ||
+      paintType === "GRADIENT_RADIAL" ||
+      paintType === "GRADIENT_ANGULAR" ||
+      paintType === "GRADIENT_DIAMOND"
     ) {
       return true;
     }
@@ -2565,7 +2537,8 @@ function firstSolidStrokePaint(node_: FigNode): FigSolidPaint | undefined {
   if (!paints) return undefined;
   for (const paint of paints) {
     if (paint.visible === false) continue;
-    if (paint.type === "SOLID") return paint as FigSolidPaint;
+    const solid = asSolidPaint(paint);
+    if (solid !== undefined) return solid;
   }
   return undefined;
 }
@@ -2626,19 +2599,8 @@ function computeStrokePadding(node_: FigNode): number {
  * cases continue through `emitContainer` (where Godot's StyleBoxFlat
  * shadow handles the bg, mismatched-AA but functional).
  */
-/**
- * Read the canonical `stackMode` name from a node. Some on-disk nodes
- * carry the enum as an object with a `name` field, others as the raw
- * string — this normalises both to a string.
- */
 function readStackModeName(stackMode: unknown): string | undefined {
-  if (stackMode && typeof stackMode === "object") {
-    return (stackMode as { readonly name?: string }).name;
-  }
-  if (typeof stackMode === "string") {
-    return stackMode;
-  }
-  return undefined;
+  return kiwiEnumName(stackMode, "FigNode.stackMode");
 }
 
 function tryEmitFrameWithShadow(node_: FigNode, ctx: WalkContext): GodotNode | undefined {
@@ -2754,7 +2716,7 @@ function tryEmitFrameWithShadow(node_: FigNode, ctx: WalkContext): GodotNode | u
     primary: "min",
   };
   const childNodes: GodotNode[] = [];
-  const renderedKids = safeChildren(node_).filter(isRendered);
+  const renderedKids = requireChildrenOf(ctx)(node_).filter(isRendered);
   for (const child of renderedKids) {
     const emitted = emitNode(child, childContext);
     const placement = placementFor(child, parentPlan, undefined);

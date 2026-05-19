@@ -2,7 +2,7 @@
  * @file Case `shadow-inset` — `inset` keyword routes the shadow to
  * the `inner-shadow` EffectIR variant.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withInsetShadow } from "./fixture";
 

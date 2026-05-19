@@ -1,17 +1,23 @@
 /**
- * @file Unit tests for affine-normalized VECTOR geometry clustering.
+ * @file Unit tests for unit-space VECTOR geometry clustering.
  *
- * The clusterer normalises every shape's commands into the unit
+ * The clusterer projects every shape's commands into the unit
  * square and tries 4 reflections. Two shapes that differ only by
  * uniform scale or by axis-aligned reflection end up in the same
  * cluster. A 1-pixel-radius corner difference produces a different
- * normalised command stream and stays in a different cluster.
+ * projected command stream and stays in a different cluster.
  */
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
-import type { FigBlob } from "@higma-document-models/fig/domain";
+import { indexFigKiwiDocument, type FigBlob } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { detectGeometryClusters } from "./geometry-clusters";
-import { fakeFigNode } from "./test-helpers";
+import { fakeFigNode } from "./fig-node-test-fixtures";
+
+const childrenOfFixtureNode = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+}).childrenOfResolvedNode;
 
 /**
  * Encode a list of (cmdByte, x, y, ...) into the Figma commands blob
@@ -92,7 +98,7 @@ function loadedWith(blobs: readonly FigBlob[]): LoadedFigFile {
 }
 
 function solid(r: number, g: number, b: number, a = 1): FigPaint {
-  return { type: "SOLID", color: { r, g, b, a } };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r, g, b, a } };
 }
 
 function vec(
@@ -111,9 +117,9 @@ function vec(
   return { ...base, fillGeometry: [{ commandsBlob: fillBlobIdx, windingRule: { value: 0, name: "NONZERO" }, styleID: 0 }] } as FigNode;
 }
 
-describe("detectGeometryClusters — affine-normalised", () => {
+describe("detectGeometryClusters — unit-space", () => {
   it("clusters identical-shape VECTORs of different sizes (scale absorption)", () => {
-    // Rectangles of 20x20 and 40x40 — bbox-normalised, both reduce to
+    // Rectangles of 20x20 and 40x40 — bbox-projected, both reduce to
     // the unit square and hash identically.
     const small = rectBlob(20, 20);
     const large = rectBlob(40, 40);
@@ -123,7 +129,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 20, y: 20 }, 0, black),
       vec(11, { x: 40, y: 40 }, 1, black),
     ];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(1);
     expect(result.clusters[0]?.members.length).toBe(2);
   });
@@ -137,7 +143,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 20, y: 10 }, 0, black),
       vec(11, { x: 60, y: 30 }, 1, black),
     ];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(1);
   });
 
@@ -153,7 +159,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 20, y: 30 }, 0, black),
       vec(11, { x: 20, y: 30 }, 1, black),
     ];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(0);
   });
 
@@ -166,7 +172,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 20, y: 30 }, 0, black),
       vec(11, { x: 20, y: 30 }, 1, black),
     ];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(0);
   });
 
@@ -177,7 +183,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 20, y: 20 }, 0, solid(0, 0, 0)),
       vec(11, { x: 20, y: 20 }, 0, solid(1, 0, 0)),
     ];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(0);
   });
 
@@ -185,7 +191,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
     const blob = rectBlob(20, 20);
     const loaded = loadedWith([blob]);
     const roots: FigNode[] = [vec(10, { x: 20, y: 20 }, 0, solid(0, 0, 0))];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(0);
   });
 
@@ -202,7 +208,7 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 10, y: 1 }, 0, black),
       vec(11, { x: 10, y: 1 }, 1, black),
     ];
-    const result = detectGeometryClusters(loaded, roots);
+    const result = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(result.clusters.length).toBe(0);
   });
 
@@ -214,8 +220,8 @@ describe("detectGeometryClusters — affine-normalised", () => {
       vec(10, { x: 20, y: 20 }, 0, black),
       vec(11, { x: 20, y: 20 }, 0, black),
     ];
-    const a = detectGeometryClusters(loaded, roots);
-    const b = detectGeometryClusters(loaded, roots);
+    const a = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
+    const b = detectGeometryClusters(loaded, roots, childrenOfFixtureNode);
     expect(a.clusters[0]?.clusterId).toBe(b.clusters[0]?.clusterId);
     expect(a.clusters[0]?.clusterId).toMatch(/^vec-[0-9a-f]{12}$/u);
   });

@@ -93,12 +93,8 @@ export async function preloadFonts(input: PreloadFontsInput): Promise<PreloadFon
     }
     missing.push(query);
     if (fallbackChain.length === 0) {
-      if (tolerateMissing) {
-        continue;
-      }
-      throw new Error(
-        `preloadFonts: font "${query.family}" (weight=${query.weight}, style=${query.style}) is not available via the configured loader, and no fallback was provided`,
-      );
+      throwIfFontMissingIsFatal(query, tolerateMissing);
+      continue;
     }
     const fb = fallbackChain[0];
     cache.set(key, fb.loaded);
@@ -106,4 +102,13 @@ export async function preloadFonts(input: PreloadFontsInput): Promise<PreloadFon
   }
 
   return { cache, missing, substituted };
+}
+
+function throwIfFontMissingIsFatal(query: FontQuery, tolerateMissing: boolean): void {
+  if (tolerateMissing) {
+    return;
+  }
+  throw new Error(
+    `preloadFonts: font "${query.family}" (weight=${query.weight}, style=${query.style}) is not available via the configured loader, and no fallback was provided`,
+  );
 }

@@ -15,7 +15,7 @@
  *   refs return paint arrays.
  *
  * - `resolveStyledPaint` is the higher-level SoT used by every
- *   consumer (node fill/stroke, scene-graph instance merge, vector
+ *   consumer (node fill/stroke, instance merge, vector
  *   per-path style overrides, text run override entries). It picks
  *   the registry value when the ref resolves and otherwise yields the
  *   caller's embedded paint cache — matching Figma's actual rendering
@@ -28,8 +28,8 @@
  * Regression guard for: Device 2×4 Apple logo (cross-canvas asset-ref
  * lookup), YouTube OFF-state chevron (FILL-style referenced via
  * `styleIdForStrokeFill`, which historically used the wrong field on
- * the style-definition node and silently fell back to the consumer's
- * stale stroke cache), and the E-Commerce Plant Shop Community export
+ * the style-definition node and silently reused the consumer's stale
+ * stroke cache), and the E-Commerce Plant Shop Community export
  * (intra-file guid pointing at a non-style FRAME — Figma renders the
  * consumer's own fillPaints, so the resolver must not throw).
  */
@@ -47,34 +47,52 @@ import {
   styleRefKey,
   styleRefKeys,
 } from "./style-registry";
-import { EMPTY_FIG_STYLE_REGISTRY } from "../domain/document";
+import { EMPTY_FIG_STYLE_REGISTRY, indexFigKiwiDocument } from "../domain";
 import type { FigNode, FigPaint, FigEffect } from "../types";
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "../constants";
 
 function dropShadow(radius: number): FigEffect {
-  return { type: "DROP_SHADOW", radius, visible: true, blendMode: "NORMAL" };
+  return {
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    radius,
+    visible: true,
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
+  };
 }
 
 function layerBlur(radius: number): FigEffect {
-  return { type: "LAYER_BLUR", radius, visible: true, blendMode: "NORMAL" };
+  return {
+    type: { value: EFFECT_TYPE_VALUES.FOREGROUND_BLUR, name: "FOREGROUND_BLUR" },
+    radius,
+    visible: true,
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
+  };
 }
 
 function solidPaint(r: number, g: number, b: number): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color: { r, g, b, a: 1 },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function node(overrides: Partial<FigNode>): FigNode {
-  return {
+  const base: FigNode = {
     guid: { sessionID: 0, localID: 0 },
     phase: { value: 0, name: "CREATED" },
     type: { value: 3, name: "RECTANGLE" },
+  };
+  return {
+    ...base,
     ...overrides,
-  } as FigNode;
+  };
+}
+
+function registryFrom(nodes: readonly FigNode[]) {
+  return buildFigStyleRegistry(indexFigKiwiDocument(nodes));
 }
 
 describe("styleRefKey / styleRefKeys / styleRefHasKey", () => {
@@ -130,7 +148,7 @@ describe("buildFigStyleRegistry", () => {
       styleType: { value: 1, name: "FILL" },
       fillPaints: [solidPaint(0, 0, 0)],
     });
-    const registry = buildFigStyleRegistry(new Map([["1:100", def]]));
+    const registry = registryFrom([def]);
     expect(registry.paints.get("1:100")).toEqual([solidPaint(0, 0, 0)]);
   });
 
@@ -140,7 +158,7 @@ describe("buildFigStyleRegistry", () => {
       styleType: { value: 2, name: "STROKE" },
       strokePaints: [solidPaint(0.5, 0.5, 0.5)],
     });
-    const registry = buildFigStyleRegistry(new Map([["1:101", def]]));
+    const registry = registryFrom([def]);
     expect(registry.paints.get("1:101")).toEqual([solidPaint(0.5, 0.5, 0.5)]);
   });
 
@@ -151,7 +169,7 @@ describe("buildFigStyleRegistry", () => {
       key: "c3ebcfd9acc3408d6578662e147b484f2e0b567d",
       fillPaints: [solidPaint(0, 0, 0)],
     });
-    const registry = buildFigStyleRegistry(new Map([["15:133", proxy]]));
+    const registry = registryFrom([proxy]);
     expect(registry.paints.get("15:133")).toEqual([solidPaint(0, 0, 0)]);
     expect(registry.paints.get("c3ebcfd9acc3408d6578662e147b484f2e0b567d"))
       .toEqual([solidPaint(0, 0, 0)]);
@@ -163,7 +181,7 @@ describe("buildFigStyleRegistry", () => {
       guid: { sessionID: 2, localID: 200 },
       fillPaints: [solidPaint(0, 0, 0)],
     });
-    const registry = buildFigStyleRegistry(new Map([["2:200", rect]]));
+    const registry = registryFrom([rect]);
     expect(registry.paints.size).toBe(0);
     expect(registry.effects.size).toBe(0);
     expect(registry.textProperties.size).toBe(0);
@@ -177,22 +195,22 @@ describe("buildFigStyleRegistry", () => {
       styleType: { value: 1, name: "FILL" },
       // no fillPaints
     });
-    const registry = buildFigStyleRegistry(new Map([["3:300", empty]]));
+    const registry = registryFrom([empty]);
     expect(registry.paints.size).toBe(0);
   });
 
-  it("does not cross-fall back fillPaints to strokePaints based on consumer intent", () => {
+  it("does not cross-map fillPaints to strokePaints based on consumer intent", () => {
     // A FILL style stores its paint in fillPaints. Even if a consumer
     // references it via styleIdForStrokeFill, the build-time indexing
     // uses the style's own type, not the consumer's intent. The
     // single-map SoT means both consumer intents resolve through the
-    // same paint array — no fallback needed at build time.
+    // same paint array.
     const fillStyle = node({
       guid: { sessionID: 7, localID: 80 },
       styleType: { value: 1, name: "FILL" },
       fillPaints: [solidPaint(1, 1, 1)],
     });
-    const registry = buildFigStyleRegistry(new Map([["7:80", fillStyle]]));
+    const registry = registryFrom([fillStyle]);
     // Same lookup key works regardless of intent — registry is intent-agnostic.
     expect(registry.paints.get("7:80")).toEqual([solidPaint(1, 1, 1)]);
   });
@@ -204,7 +222,7 @@ describe("buildFigStyleRegistry", () => {
       styleType: { value: 4, name: "EFFECT" },
       effects: [blur],
     });
-    const registry = buildFigStyleRegistry(new Map([["4:1", def]]));
+    const registry = registryFrom([def]);
     expect(registry.effects.get("4:1")).toEqual([blur]);
     expect(registry.paints.size).toBe(0);
   });
@@ -217,10 +235,10 @@ describe("buildFigStyleRegistry", () => {
       lineHeight: { value: 32, units: { value: 1, name: "PIXELS" } },
       // letterSpacing intentionally omitted — the style only sets
       // fontSize and lineHeight, and the registry must reflect that
-      // partial coverage so consumers fall back to embedded values
+      // partial coverage so consumers keep their embedded values
       // for unset properties.
     });
-    const registry = buildFigStyleRegistry(new Map([["5:1", def]]));
+    const registry = registryFrom([def]);
     const properties = registry.textProperties.get("5:1");
     expect(properties).toBeDefined();
     expect(properties?.fontSize).toBe(24);
@@ -235,7 +253,7 @@ describe("buildFigStyleRegistry", () => {
       styleType: { value: 6, name: "GRID" },
       layoutGrids: [grid],
     });
-    const registry = buildFigStyleRegistry(new Map([["6:1", def]]));
+    const registry = registryFrom([def]);
     expect(registry.layoutGrids.get("6:1")).toEqual([grid]);
   });
 });
@@ -255,7 +273,7 @@ describe("resolvePaintRef", () => {
       styleType: { value: 1, name: "FILL" },
       fillPaints: [solidPaint(0, 0, 0)],
     });
-    const registry = buildFigStyleRegistry(new Map([["1:100", def]]));
+    const registry = registryFrom([def]);
     const resolved = resolvePaintRef(
       { guid: { sessionID: 1, localID: 100 } },
       registry,
@@ -272,7 +290,7 @@ describe("resolvePaintRef", () => {
       styleType: { value: 1, name: "FILL" },
       fillPaints: [solidPaint(1, 1, 1)],
     });
-    const registry = buildFigStyleRegistry(new Map([["7:80", fillStyle]]));
+    const registry = registryFrom([fillStyle]);
     const ref = { guid: { sessionID: 7, localID: 80 } };
     expect(resolvePaintRef(ref, registry)).toEqual([solidPaint(1, 1, 1)]);
   });
@@ -298,7 +316,7 @@ describe("resolveStyledPaint (registry-vs-embedded SoT)", () => {
     styleType: { value: 1, name: "FILL" },
     fillPaints: [registryPaint],
   });
-  const registry = buildFigStyleRegistry(new Map([["1:100", styleNode]]));
+  const registry = registryFrom([styleNode]);
 
   it("returns the registry value when the ref resolves (registry wins over embedded)", () => {
     const got = resolveStyledPaint(
@@ -343,7 +361,7 @@ describe("resolveStyledEffects (registry-vs-embedded SoT for EFFECT styles)", ()
     styleType: { value: 4, name: "EFFECT" },
     effects: [styleEffect],
   });
-  const registry = buildFigStyleRegistry(new Map([["4:1", styleNode]]));
+  const registry = registryFrom([styleNode]);
 
   it("returns the registry effects when the ref resolves", () => {
     const got = resolveStyledEffects(
@@ -375,7 +393,7 @@ describe("resolveStyledTextProperties (per-property registry overlay)", () => {
     fontSize: 24,
     lineHeight: { value: 32, units: { value: 1, name: "PIXELS" } },
   });
-  const registry = buildFigStyleRegistry(new Map([["5:1", partialTextStyle]]));
+  const registry = registryFrom([partialTextStyle]);
 
   it("overrides only the properties the style sets, leaving others embedded", () => {
     const got = resolveStyledTextProperties(
@@ -422,7 +440,7 @@ describe("resolveStyledGrids (registry-vs-embedded SoT for GRID styles)", () => 
     styleType: { value: 6, name: "GRID" },
     layoutGrids: [styleGrid],
   });
-  const registry = buildFigStyleRegistry(new Map([["6:1", styleNode]]));
+  const registry = registryFrom([styleNode]);
 
   it("returns the registry grids when the ref resolves", () => {
     const got = resolveStyledGrids(
@@ -458,10 +476,7 @@ describe("resolveNodeStyleIds extended StyleType coverage", () => {
       fontSize: 12,
       letterSpacing: { value: 0.5, units: { value: 1, name: "PIXELS" } },
     });
-    const registry = buildFigStyleRegistry(new Map([
-      ["5:1", styleDef],
-      ["9:1", consumer],
-    ]));
+    const registry = registryFrom([styleDef, consumer]);
     const resolved = resolveNodeStyleIds(consumer, registry);
     expect(resolved.fontSize).toBe(24);
     expect(resolved.lineHeight?.value).toBe(32);
@@ -482,10 +497,7 @@ describe("resolveNodeStyleIds extended StyleType coverage", () => {
       styleIdForEffect: { guid: { sessionID: 4, localID: 1 } },
       effects: [],
     });
-    const registry = buildFigStyleRegistry(new Map([
-      ["4:1", styleDef],
-      ["9:2", consumer],
-    ]));
+    const registry = registryFrom([styleDef, consumer]);
     const resolved = resolveNodeStyleIds(consumer, registry);
     expect(resolved.effects).toEqual([styleEffect]);
   });
@@ -516,10 +528,7 @@ describe("resolveNodeStyleIds", () => {
       styleIdForFill: { assetRef: { key: "blackkey" } },
       fillPaints: [solidPaint(1, 1, 1)],
     });
-    const registry = buildFigStyleRegistry(new Map([
-      ["15:133", proxy],
-      ["15:500", consumer],
-    ]));
+    const registry = registryFrom([proxy, consumer]);
 
     const resolved = resolveNodeStyleIds(consumer, registry);
     expect(resolved.fillPaints?.[0]).toMatchObject({

@@ -13,7 +13,7 @@
  */
 
 import type { KiwiEnumValue } from "../types";
-import { CONSTRAINT_TYPE_VALUES } from "../constants/layout";
+import { CONSTRAINT_TYPE_VALUES } from "../constants";
 import { resolveConstraintAxis } from "./constraint-axis";
 
 // =============================================================================
@@ -31,7 +31,7 @@ export type ChildConstraintResolution = {
 };
 
 // =============================================================================
-// Helpers
+// Local Routines
 // =============================================================================
 
 /**

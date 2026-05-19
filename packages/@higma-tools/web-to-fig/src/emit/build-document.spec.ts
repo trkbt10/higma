@@ -2,8 +2,8 @@
  * @file Per-feature spec for `buildDocument`.
  *
  * Scope: only the contracts unique to `buildDocument` itself —
- * topology (one page, every IR descendant becomes a FigDesignNode),
- * id-map registration, and asset installation. Per-feature CSS-to-Fig
+ * topology (one page, every IR descendant becomes a Kiwi FigNode),
+ * GUID registration, and asset installation. Per-feature CSS-to-Fig
  * fidelity (paints / strokes / radii / autoLayout / text) is asserted
  * by the primitive cases under `spec/cases/<feature>/`. Re-asserting
  * here would split the SoT between two suites.
@@ -12,6 +12,16 @@ import { normalizeViewport } from "../normalize";
 import { buildDocument } from "./build-document";
 import { synthEl, synthViewport } from "../../spec/synth-snapshot";
 import { staticFontResolver } from "../../spec/test-font-resolver";
+import type { FigDocumentContext } from "@higma-document-io/fig";
+import type { FigNode } from "@higma-document-models/fig/types";
+
+function documentCanvas(context: FigDocumentContext): FigNode {
+  const canvases = context.document.nodeChanges.filter((node) => node.type.name === "CANVAS" && node.internalOnly !== true);
+  if (canvases.length !== 1) {
+    throw new Error(`expected exactly one visible CANVAS, got ${canvases.length}`);
+  }
+  return canvases[0]!;
+}
 
 describe("buildDocument — topology", () => {
   it("creates one page containing the viewport's root frame and its descendants", () => {
@@ -27,6 +37,7 @@ describe("buildDocument — topology", () => {
                 id: "0/0/0",
                 tag: "p",
                 rect: { x: 0, y: 0, width: 100, height: 24 },
+                styleOverrides: { "line-height": "24px" },
                 text: "Hi",
               }),
             ],
@@ -36,19 +47,21 @@ describe("buildDocument — topology", () => {
       { fontResolver: staticFontResolver() },
     );
     const built = buildDocument(ir);
-    expect(built.doc.pages).toHaveLength(1);
-    const top = built.doc.pages[0]!.children;
+    const page = documentCanvas(built.context);
+    const top = built.context.document.childrenOf(page);
     expect(top).toHaveLength(1);
     const body = top[0]!;
-    expect(body.type).toBe("FRAME");
-    expect((body.children ?? [])).toHaveLength(1);
-    const card = body.children![0]!;
-    expect(card.type).toBe("FRAME");
-    expect((card.children ?? [])).toHaveLength(1);
-    expect(card.children![0]!.type).toBe("TEXT");
+    expect(body.type.name).toBe("FRAME");
+    const bodyChildren = built.context.document.childrenOf(body);
+    expect(bodyChildren).toHaveLength(1);
+    const card = bodyChildren[0]!;
+    expect(card.type.name).toBe("FRAME");
+    const cardChildren = built.context.document.childrenOf(card);
+    expect(cardChildren).toHaveLength(1);
+    expect(cardChildren[0]!.type.name).toBe("TEXT");
   });
 
-  it("registers IR id → FigNodeId mappings for every emitted node", () => {
+  it("registers IR id → FigGuid mappings for every emitted node", () => {
     const ir = normalizeViewport(
       synthViewport({
         children: [
@@ -73,23 +86,23 @@ describe("buildDocument — assets", () => {
     const ir = normalizeViewport(
       synthViewport({
         assets: new Map([
-          ["asset-1", { id: "asset-1", mime: "image/png", bytes }],
+          ["abcdef", { id: "abcdef", mime: "image/png", bytes }],
         ]),
         children: [
           synthEl({
             id: "0/0",
             tag: "img",
             rect: { x: 0, y: 0, width: 10, height: 10 },
-            imageId: "asset-1",
-            imageIds: ["asset-1"],
+            imageId: "abcdef",
+            imageIds: ["abcdef"],
           }),
         ],
       }),
       { fontResolver: staticFontResolver() },
     );
     const built = buildDocument(ir);
-    expect(built.doc.images.has("asset-1")).toBe(true);
-    const img = built.doc.images.get("asset-1");
+    expect(built.context.images.has("abcdef")).toBe(true);
+    const img = built.context.images.get("abcdef");
     expect(img?.mimeType).toBe("image/png");
     expect(img?.data).toBe(bytes);
   });

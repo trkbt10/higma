@@ -26,6 +26,7 @@
  * resulting SwiftUI stack.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import type { StackKind, SwiftAlignment } from "../swift-tree/types";
 
 /** Padding inferred from a frame's stack-padding fields, per side, in px. */
@@ -124,7 +125,7 @@ export function resolvePadding(node: FigNode): Padding {
  *   - the node has no visible stroke,
  *   - the stroke alignment is not INSIDE,
  *   - the strokeWeight is zero / per-side (per-side isn't supported
- *     by the stroke-overlay helper either, so consistency wins),
+ *     by the stroke-overlay routine either, so consistency wins),
  *   - or the node carries `bordersTakeSpace: false` — Figma
  *     exposes this toggle in the UI as "Include borders in
  *     spacing" and a `false` value means strokes paint without
@@ -135,7 +136,7 @@ function insideStrokeWidth(node: FigNode): number {
   if (node.bordersTakeSpace === false) {
     return 0;
   }
-  if (node.strokeAlign !== "INSIDE") {
+  if (kiwiEnumName(node.strokeAlign, "FigNode.strokeAlign") !== "INSIDE") {
     return 0;
   }
   if (!hasVisibleStroke(node)) {

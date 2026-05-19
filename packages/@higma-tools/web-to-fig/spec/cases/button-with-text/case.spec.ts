@@ -6,7 +6,7 @@
  * corner radius, no border) — promoting to FRAME-wrapping-TEXT is
  * the only structurally faithful representation.
  */
-import { asFrame, asText, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { BUTTON_LABEL, buttonWithText } from "./fixture";
 
 describe("case button-with-text", () => {

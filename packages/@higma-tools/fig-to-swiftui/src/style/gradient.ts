@@ -13,27 +13,30 @@
  * of the matrix and back-map gradient (0,0) and (1,0) into object
  * space.
  *
- * (See `paint/interpret.ts` in `@higma-document-renderers/fig` for the
- * canonical interpretation; this helper deliberately mirrors it.)
+ * `@higma-document-renderers/fig/paint` owns the canonical
+ * interpretation; this emitter only formats those resolved values as
+ * SwiftUI expressions.
  *
  * For `RadialGradient` the same convention applies: the centre is at
  * the inverse-mapped (0, 0). The radius equals 1 unit of gradient-x
  * back-projected, which is the magnitude of the inverse matrix's
  * first column.
  *
- * Angular and diamond gradients are not yet in scope. Only LINEAR
- * and RADIAL are implemented; other types fall through with a
- * Fail-Fast error so the caller can extend the helper rather than
- * silently rendering a flat colour.
  */
 import type {
   FigGradientPaint,
   FigGradientStop,
   FigPaint,
 } from "@higma-document-models/fig/types";
+import { asGradientPaint, getPaintType } from "@higma-document-models/fig/color";
+import {
+  getAngularGradientParams,
+  getGradientDirection,
+  getGradientStops,
+  getRadialGradientCenterAndRadius,
+} from "@higma-document-renderers/fig/paint";
 import {
   call,
-  ident,
   member,
   namedArg,
   num,
@@ -57,13 +60,9 @@ export function firstVisibleGradientPaint(
     if (paint.visible === false) {
       continue;
     }
-    if (
-      paint.type === "GRADIENT_LINEAR" ||
-      paint.type === "GRADIENT_RADIAL" ||
-      paint.type === "GRADIENT_ANGULAR" ||
-      paint.type === "GRADIENT_DIAMOND"
-    ) {
-      return paint;
+    const gradientPaint = asGradientPaint(paint);
+    if (gradientPaint !== undefined) {
+      return gradientPaint;
     }
   }
   return undefined;
@@ -78,7 +77,7 @@ export function firstVisibleGradientPaint(
  * in points. SwiftUI projects gradient endpoints in pixel space (each
  * UnitPoint coordinate is multiplied by the view's width/height), while
  * the WebGL reference renderer projects in normalized unit space — for
- * a non-square view those produce different isolines. The helper
+ * a non-square view those produce different isolines. The routine
  * compensates by scaling the SwiftUI endpoints anisotropically so
  * SwiftUI's pixel-space projection of any unit-point gives the same t
  * value as the WebGL unit-space projection. Passing `undefined` skips
@@ -90,8 +89,8 @@ export function gradientExpr(
   paint: FigGradientPaint,
   elementSize: { readonly width: number; readonly height: number } | undefined,
 ): SwiftExpr {
-  const stopsArg = gradientStopsArg(resolveStops(paint), paint.opacity ?? 1);
-  switch (paint.type) {
+  const stopsArg = swiftGradientStopListArg(resolveStops(paint), paint.opacity ?? 1);
+  switch (getPaintType(paint)) {
     case "GRADIENT_LINEAR":
       return linearGradientExpr(paint, stopsArg, elementSize);
     case "GRADIENT_RADIAL":
@@ -106,24 +105,16 @@ export function gradientExpr(
       // corners. The diff against Figma's diamond renderer absorbs
       // that mismatch.
       return radialGradientExpr(paint, stopsArg, elementSize);
+    default:
+      throw new Error("gradientExpr requires a gradient paint");
   }
 }
 
-/**
- * Read gradient stops from whichever channel the parser populated
- * (`gradientStops` for the API path, `stops` for the Kiwi path).
- */
 function resolveStops(paint: FigGradientPaint): readonly FigGradientStop[] {
-  if (paint.gradientStops && paint.gradientStops.length > 0) {
-    return paint.gradientStops;
-  }
-  if (paint.stops && paint.stops.length > 0) {
-    return paint.stops;
-  }
-  throw new Error("fig-to-swiftui: gradient paint has no stops");
+  return getGradientStops(paint);
 }
 
-function gradientStopsArg(
+function swiftGradientStopListArg(
   stops: readonly FigGradientStop[],
   paintOpacity: number,
 ): SwiftCallArg {
@@ -141,13 +132,8 @@ function linearGradientExpr(
   stopsArg: SwiftCallArg,
   elementSize: { readonly width: number; readonly height: number } | undefined,
 ): SwiftExpr {
-  const inv = invertGradientTransform(paint);
-  // Back-map (0, 0) and (1, 0) from gradient space to object space.
-  // (0, 0) is the 0% stop → SwiftUI startPoint (in unit-space).
-  // (1, 0) is the 100% stop → SwiftUI endPoint (in unit-space).
-  const startUnit = { x: inv.tx, y: inv.ty };
-  const endUnit = { x: inv.a + inv.tx, y: inv.c + inv.ty };
-  const compensated = compensateForPixelSpace(startUnit, endUnit, elementSize);
+  const direction = getGradientDirection(paint);
+  const compensated = compensateForPixelSpace(direction.start, direction.end, elementSize);
   return call("LinearGradient", [
     stopsArg,
     namedArg("startPoint", unitPointExpr(compensated.start.x, compensated.start.y)),
@@ -169,7 +155,7 @@ function linearGradientExpr(
  * 12 o'clock in SwiftUI.
  */
 function angularGradientExpr(paint: FigGradientPaint, stopsArg: SwiftCallArg): SwiftExpr {
-  const t = resolveGradientTransform(paint);
+  const params = getAngularGradientParams(paint);
   // The WebGL reference renderer projects the angular gradient via
   //   angle = atan2(dy, dx) − u_rotation
   //   t     = mod(angle / 2π + 1, 1)
@@ -190,11 +176,10 @@ function angularGradientExpr(paint: FigGradientPaint, stopsArg: SwiftCallArg): S
   // start sat at 12 o'clock; that assumption was wrong — the WebGL
   // shader's screen-y-down `atan2(dy, dx)` resolves to +π/2 at the
   // bottom, not the top.)
-  const startAngleDeg = (Math.atan2(-t.m10, t.m00) * 180) / Math.PI + 90;
   return call("AngularGradient", [
     stopsArg,
-    namedArg("center", member("center")),
-    namedArg("angle", call(".degrees", [{ value: num(roundDegrees(startAngleDeg)) }])),
+    namedArg("center", unitPointExpr(params.center.x, params.center.y)),
+    namedArg("angle", call(".degrees", [{ value: num(roundDegrees(params.startAngle)) }])),
   ]);
 }
 
@@ -214,18 +199,13 @@ function roundDegrees(deg: number): number {
  * element with the gradient extending to the corners.
  */
 function ellipticalGradientExpr(paint: FigGradientPaint, stopsArg: SwiftCallArg): SwiftExpr {
-  const t = resolveGradientTransform(paint);
-  // Same convention as the circular path: centre = (m02, m12),
-  // radius (in fractional space) = m00. SwiftUI's
-  // startRadiusFraction / endRadiusFraction are 0..1 of the
-  // element's bounds, so we pass the transform's m00 directly as
-  // the end radius fraction.
-  const center = unitPointExpr(t.m02, t.m12);
+  const params = getRadialGradientCenterAndRadius(paint);
+  const center = unitPointExpr(params.center.x, params.center.y);
   return call("EllipticalGradient", [
     stopsArg,
     namedArg("center", center),
     namedArg("startRadiusFraction", num(0)),
-    namedArg("endRadiusFraction", num(t.m00 ?? 0.5)),
+    namedArg("endRadiusFraction", num(params.radius)),
   ]);
 }
 
@@ -252,8 +232,8 @@ function radialGradientExpr(
   //            for circular gradients, or different for elliptical)
   // SwiftUI's RadialGradient projects in pixel space; we still need
   // to compensate for non-square elements by scaling the radius.
-  const t = resolveGradientTransform(paint);
-  const center = unitPointExpr(t.m02, t.m12);
+  const params = getRadialGradientCenterAndRadius(paint);
+  const center = unitPointExpr(params.center.x, params.center.y);
   const startRadius = num(0);
   // Figma's WebGL radial-gradient shader stretches the gradient
   // ellipsoidally to match the element's aspect ratio:
@@ -265,7 +245,7 @@ function radialGradientExpr(
   // elements both choices coincide; for elongated pills /
   // landscape rectangles, this minimises the diff.
   const longerDim = elementSize ? Math.max(elementSize.width, elementSize.height) : 1;
-  const radius = (t.m00 ?? 0.5) * longerDim;
+  const radius = params.radius * longerDim;
   const endRadius = num(radius);
   return call("RadialGradient", [
     stopsArg,
@@ -291,7 +271,7 @@ function radialGradientExpr(
  * The fix: keep `start` in unit space and choose a new `end' = start +
  * (D.x · α/w², D.y · α/h²)` where α is picked so the SwiftUI
  * projection matches the WebGL projection at every point. The
- * algebra is detailed in the helper's comment block.
+ * algebra is detailed in the routine's comment block.
  *
  * Skips compensation when `elementSize` is undefined or describes a
  * square view (no projection mismatch).
@@ -331,41 +311,6 @@ function compensateForPixelSpace(
     start,
     end: { x: start.x + newDx, y: start.y + newDy },
   };
-}
-
-/**
- * Invert the 2×3 affine `paint.transform` so the resulting matrix
- * maps gradient space → object space. Returns the components as
- * `{ a, b, c, d, tx, ty }` corresponding to:
- *
- *   inv·(x, y) = (a·x + b·y + tx, c·x + d·y + ty)
- *
- * Throws when the upper 2×2 block is rank-deficient — Figma does not
- * emit such matrices for valid linear gradients (a deficient matrix
- * would have no well-defined direction).
- */
-function invertGradientTransform(paint: FigGradientPaint): {
-  readonly a: number;
-  readonly b: number;
-  readonly c: number;
-  readonly d: number;
-  readonly tx: number;
-  readonly ty: number;
-} {
-  const t = resolveGradientTransform(paint);
-  const det = t.m00 * t.m11 - t.m01 * t.m10;
-  if (det === 0) {
-    throw new Error(
-      `fig-to-swiftui: rank-deficient gradient transform (det=0): ${JSON.stringify(t)}`,
-    );
-  }
-  const inv00 = t.m11 / det;
-  const inv01 = -t.m01 / det;
-  const inv10 = -t.m10 / det;
-  const inv11 = t.m00 / det;
-  const tx = -(inv00 * t.m02 + inv01 * t.m12);
-  const ty = -(inv10 * t.m02 + inv11 * t.m12);
-  return { a: inv00, b: inv01, c: inv10, d: inv11, tx, ty };
 }
 
 function unitPointExpr(x: number, y: number): SwiftExpr {
@@ -421,71 +366,3 @@ function close(a: number, b: number): boolean {
 function roundUnit(v: number): number {
   return Math.round(v * 1000) / 1000;
 }
-
-function resolveGradientTransform(paint: FigGradientPaint): {
-  readonly m00: number;
-  readonly m01: number;
-  readonly m02: number;
-  readonly m10: number;
-  readonly m11: number;
-  readonly m12: number;
-} {
-  // Prefer the Kiwi `transform` channel; fall back to deriving from
-  // `gradientHandlePositions` when only the API form is present.
-  if (paint.transform) {
-    const t = paint.transform;
-    return {
-      m00: t.m00 ?? 1,
-      m01: t.m01 ?? 0,
-      m02: t.m02 ?? 0,
-      m10: t.m10 ?? 0,
-      m11: t.m11 ?? 1,
-      m12: t.m12 ?? 0,
-    };
-  }
-  if (paint.gradientHandlePositions && paint.gradientHandlePositions.length >= 2) {
-    return transformFromHandlePositions(paint.gradientHandlePositions);
-  }
-  // Identity — produces a flat single-stop gradient. Surfacing this
-  // explicitly rather than silently omitting the transform helps
-  // diagnose unexpected gradient inputs.
-  return { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
-}
-
-function transformFromHandlePositions(
-  handles: NonNullable<FigGradientPaint["gradientHandlePositions"]>,
-): {
-  readonly m00: number;
-  readonly m01: number;
-  readonly m02: number;
-  readonly m10: number;
-  readonly m11: number;
-  readonly m12: number;
-} {
-  // API format: handles are [start, end, width] in normalized object
-  // space. Convert to the same 2×3 affine the Kiwi `transform` would
-  // produce. The width handle is ignored — the v0 emitter doesn't yet
-  // honour gradient width / non-uniform scale beyond the handle
-  // direction.
-  const start = handles[0];
-  const end = handles[1];
-  if (!start || !end) {
-    return { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
-  }
-  // (1, 0) → start, (0, 0) → end
-  // m00 + m02 = start.x, m02 = end.x  ⇒  m00 = start.x - end.x
-  // similarly for m10 / m12
-  return {
-    m00: start.x - end.x,
-    m01: 0,
-    m02: end.x,
-    m10: start.y - end.y,
-    m11: 0,
-    m12: end.y,
-  };
-}
-
-// `ident` is currently unused; left imported so a future helper that
-// emits a bare identifier (e.g. a named `Gradient`) doesn't have to
-// re-introduce the import.
-void ident;

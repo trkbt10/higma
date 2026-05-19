@@ -10,7 +10,7 @@
  * If the normaliser ever starts adding the transform on top of the
  * already-transformed rect, this case catches the double-counting.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_BOX } from "../box-leaf/fixture";
 import { DEFAULT_TX, DEFAULT_TY, withTranslate } from "./fixture";

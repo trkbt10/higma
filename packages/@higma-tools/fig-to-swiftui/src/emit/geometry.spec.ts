@@ -1,5 +1,5 @@
 /**
- * @file Unit specs for the Path emit helpers.
+ * @file Unit specs for the Path emit routines.
  *
  * Focus: the fill-rule selector. fig's vector encoding packs
  * hollow Win98 chrome glyphs (maximize box, menu underline
@@ -18,7 +18,7 @@ import { buildFillArgs } from "./geometry";
  * exported by swift-tree is `SwiftView`-shaped; for expression
  * comparisons we look at the `kind`-specific text payload
  * directly. Only the shapes this spec produces are handled —
- * adding new exprs to the test means extending this helper.
+ * adding new exprs to the test means extending this routine.
  */
 function exprText(expr: SwiftExpr): string {
   if (expr.kind === "ident") {

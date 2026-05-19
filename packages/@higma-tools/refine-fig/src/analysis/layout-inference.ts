@@ -10,7 +10,7 @@
  * Fail-fast: no hint at all when the children fail any of these
  * gates. The point of the hint is to surface high-confidence cases
  * the agent then opts into via `decisions.layouts[guid] = { apply:
- * true }`. Heuristic adoption is never automatic.
+ * true }`. Adoption is never automatic.
  *
  * Gates (single-axis):
  *
@@ -28,15 +28,15 @@
  *      have different cross-axis sizes; this is what auto-layout
  *      HUG/FILL/FIXED is for.
  *
- * The translation `(tx, ty)` is read from the child's `transform.m02
+ * The offset `(tx, ty)` is read from the child's `transform.m02
  * / m12`. Sizes from `size.x / y`. Both are required — children with
  * either missing field disqualify the parent (cannot reason about
- * their bounding box). The size-only fallback case (transform == 0)
- * still works because m02/m12 default to 0.
+ * their bounding box). When the transform exists and omits m02/m12,
+ * those Kiwi fields read as 0.
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+import { getNodeType, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 
 const CROSS_AXIS_TOLERANCE_PX = 0.5;
 const GAP_TOLERANCE_PX = 1;
@@ -338,19 +338,51 @@ function paddingFor(
   };
 }
 
+function layoutHintForAxis(
+  frame: FigNode,
+  sorted: readonly RectChild[],
+  axis: LayoutAxis,
+  axisResult: AxisCheck,
+  childCount: number,
+): LayoutHint | undefined {
+  if (!axisResult.ok) {
+    return undefined;
+  }
+  const size = frame.size;
+  const guid = frame.guid;
+  if (!size || !guid) {
+    return undefined;
+  }
+  const padding = paddingFor(size, sorted, axis, axisResult.counterAxisAlign);
+  if (!padding) {
+    return undefined;
+  }
+  return {
+    nodeGuid: `${guid.sessionID}:${guid.localID}`,
+    layoutMode: axis,
+    itemSpacing: axisResult.itemSpacing,
+    ...padding,
+    counterAxisAlign: axisResult.counterAxisAlign,
+    childCount,
+  };
+}
+
 /**
  * Try to infer an auto-layout for a single FRAME. Returns undefined
  * when no high-confidence inference is possible (the agent will see
  * no hint and the plan will not propose anything).
  */
-export function inferLayoutForFrame(frame: FigNode): LayoutHint | undefined {
+export function inferLayoutForFrame(
+  frame: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): LayoutHint | undefined {
   if (getNodeType(frame) !== "FRAME") {
     return undefined;
   }
   if (!frame.guid || !frame.size) {
     return undefined;
   }
-  const rawChildren = safeChildren(frame);
+  const rawChildren = childrenOf(frame);
   if (rawChildren.length < 2) {
     return undefined;
   }
@@ -379,33 +411,13 @@ export function inferLayoutForFrame(frame: FigNode): LayoutHint | undefined {
   if (horizontal.ok && vertical.ok) {
     return undefined;
   }
-  if (horizontal.ok) {
-    const padding = paddingFor(frame.size, horizontalSorted, "HORIZONTAL", horizontal.counterAxisAlign);
-    if (!padding) {
-      return undefined;
-    }
-    return {
-      nodeGuid: `${frame.guid.sessionID}:${frame.guid.localID}`,
-      layoutMode: "HORIZONTAL",
-      itemSpacing: horizontal.itemSpacing,
-      ...padding,
-      counterAxisAlign: horizontal.counterAxisAlign,
-      childCount: children.length,
-    };
+  const horizontalHint = layoutHintForAxis(frame, horizontalSorted, "HORIZONTAL", horizontal, children.length);
+  if (horizontalHint) {
+    return horizontalHint;
   }
-  if (vertical.ok) {
-    const padding = paddingFor(frame.size, verticalSorted, "VERTICAL", vertical.counterAxisAlign);
-    if (!padding) {
-      return undefined;
-    }
-    return {
-      nodeGuid: `${frame.guid.sessionID}:${frame.guid.localID}`,
-      layoutMode: "VERTICAL",
-      itemSpacing: vertical.itemSpacing,
-      ...padding,
-      counterAxisAlign: vertical.counterAxisAlign,
-      childCount: children.length,
-    };
+  const verticalHint = layoutHintForAxis(frame, verticalSorted, "VERTICAL", vertical, children.length);
+  if (verticalHint) {
+    return verticalHint;
   }
   return undefined;
 }
@@ -414,22 +426,39 @@ export function inferLayoutForFrame(frame: FigNode): LayoutHint | undefined {
  * Walk every FRAME reachable from `roots` (incl. nested frames) and
  * collect every successful inference.
  */
-export function inferLayouts(roots: readonly FigNode[]): readonly LayoutHint[] {
+export function inferLayouts(
+  roots: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): readonly LayoutHint[] {
   const out: LayoutHint[] = [];
   for (const root of roots) {
-    walk(root, out);
+    walk(root, out, childrenOf);
   }
   return out;
 }
 
-function walk(node: FigNode, out: LayoutHint[]): void {
-  if (getNodeType(node) === "FRAME") {
-    const hint = inferLayoutForFrame(node);
-    if (hint) {
-      out.push(hint);
-    }
+function walk(
+  node: FigNode,
+  out: LayoutHint[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  if (getNodeType(node) !== "FRAME") {
+    walkChildren(node, out, childrenOf);
+    return;
   }
-  for (const child of safeChildren(node)) {
-    walk(child, out);
+  const hint = inferLayoutForFrame(node, childrenOf);
+  if (hint) {
+    out.push(hint);
+  }
+  walkChildren(node, out, childrenOf);
+}
+
+function walkChildren(
+  node: FigNode,
+  out: LayoutHint[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  for (const child of childrenOf(node)) {
+    walk(child, out, childrenOf);
   }
 }

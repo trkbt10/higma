@@ -3,7 +3,7 @@
  * Asserts the four-level structure and the row autoLayout on the
  * `<nav>` and the `<ul>`.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import {
   BRAND_TEXT,
   MENU_GAP,

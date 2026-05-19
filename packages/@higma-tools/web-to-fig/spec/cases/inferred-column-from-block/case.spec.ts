@@ -4,7 +4,7 @@
  * authored gap and top padding. Asserts the column branch of
  * `inferAutoLayout` is reachable from web-to-fig.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   CHILD_COUNT,

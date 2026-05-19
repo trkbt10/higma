@@ -65,8 +65,7 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
     "@higma-primitives/identifier": "workspace:*",
-    "@higma-primitives/path": "workspace:*",
-    "@higma-primitives/tree": "workspace:*"
+    "@higma-primitives/path": "workspace:*"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

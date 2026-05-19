@@ -38,14 +38,6 @@
       "types": "./src/geometry-interpret.ts",
       "default": "./src/geometry-interpret.ts"
     },
-    "./scene-graph": {
-      "types": "./src/scene-graph/index.ts",
-      "default": "./src/scene-graph/index.ts"
-    },
-    "./scene-graph/blend-mode": {
-      "types": "./src/scene-graph/blend-mode.ts",
-      "default": "./src/scene-graph/blend-mode.ts"
-    },
     "./symbols": {
       "types": "./src/symbols/index.ts",
       "default": "./src/symbols/index.ts"
@@ -54,25 +46,13 @@
       "types": "./src/symbols/autolayout-solver.ts",
       "default": "./src/symbols/autolayout-solver.ts"
     },
-    "./symbols/design-node-helpers": {
-      "types": "./src/symbols/design-node-helpers.ts",
-      "default": "./src/symbols/design-node-helpers.ts"
-    },
     "./symbols/extract": {
       "types": "./src/symbols/extract.ts",
       "default": "./src/symbols/extract.ts"
     },
-    "./symbols/design-instance-resolver": {
-      "types": "./src/symbols/design-instance-resolver.ts",
-      "default": "./src/symbols/design-instance-resolver.ts"
-    },
     "./domain": {
       "types": "./src/domain/index.ts",
       "default": "./src/domain/index.ts"
-    },
-    "./domain/conversion": {
-      "types": "./src/domain/conversion/index.ts",
-      "default": "./src/domain/conversion/index.ts"
     },
     "./node-factory": {
       "types": "./src/node-factory/index.ts",
@@ -81,14 +61,6 @@
     "./builder": {
       "types": "./src/builder/index.ts",
       "default": "./src/builder/index.ts"
-    },
-    "./diagnostics": {
-      "types": "./src/diagnostics/index.ts",
-      "default": "./src/diagnostics/index.ts"
-    },
-    "./diagnostics/defensive": {
-      "types": "./src/diagnostics/defensive.ts",
-      "default": "./src/diagnostics/defensive.ts"
     },
     "./font": {
       "types": "./src/font/index.ts",
@@ -104,7 +76,6 @@
     "@higma-codecs/kiwi": "workspace:*",
     "@higma-codecs/raster": "workspace:*",
     "@higma-primitives/path": "workspace:*",
-    "@higma-primitives/tree": "workspace:*",
     "@higma-figma-containers/package": "workspace:*",
     "@higma-figma-schema/profiles": "workspace:*"
   },

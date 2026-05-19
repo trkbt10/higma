@@ -15,7 +15,7 @@ import {
   createTestNode,
   createSampleFigPayload,
   buildTestFigPayload,
-} from "./test-helpers";
+} from "./test-fixtures";
 
 describe("StreamingFigDecoder", () => {
   it("yields node changes one at a time", () => {

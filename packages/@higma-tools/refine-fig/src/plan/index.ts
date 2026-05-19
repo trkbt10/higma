@@ -4,8 +4,8 @@
  *
  * The plan is a flat array consumed in order by `apply`. Each action
  * carries every field needed; apply does no inference. Action order
- * is significant — proxy creation must precede every binding action
- * that targets the new proxy.
+ * is significant — styleDefinition creation must precede every binding action
+ * that targets the new styleDefinition.
  */
 export { buildPlan } from "./build";
 export type {
@@ -13,13 +13,13 @@ export type {
   PlanAction,
   ActionEnsureInternalCanvas,
   ActionRename,
-  ActionCreateFillProxy,
-  ActionCreateTextProxy,
+  ActionCreateFillStyleDefinition,
+  ActionCreateTextStyleDefinition,
   ActionBindFillStyle,
   ActionBindTextStyle,
   ActionPromoteIconCluster,
   ActionPromoteVectorCluster,
   ActionGroupAsVariantSet,
   ActionSetLayout,
-  ProxyRef,
+  StyleDefinitionRef,
 } from "./types";

@@ -3,7 +3,7 @@
  * produces a `direction: "row"` AutoLayoutIR with the authored gap
  * verbatim, plus the right number of children.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   DEFAULT_CHILD_COUNT,

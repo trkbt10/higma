@@ -29,8 +29,8 @@
  * The pass is *additive* on top of `reparent.ts`'s overlay: this
  * function reuses the same `ReparentResult` shape (`childrenByParent`
  * / `transformByGuid` maps) so a single overlay covers both spatial
- * reparenting and row clustering. The emitter consumes both via
- * `safeChildren(node, context)`.
+ * reparenting and row clustering. The emitter consumes both through
+ * its explicit Kiwi-document child reader plus this overlay.
  *
  * Failure behaviour is "do nothing": when a frame's children do not
  * cluster cleanly, the original children list is left untouched and
@@ -53,7 +53,7 @@
  *      stack", and the existing inference gives a better answer.
  */
 import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
-import { guidToString, safeChildren as safeChildrenDomain } from "@higma-document-models/fig/domain";
+import { guidToString } from "@higma-document-models/fig/domain";
 
 /** Bands closer than this px count as a single band — see MIN_BAND_GAP comments. */
 const MIN_BAND_GAP = 1.5;
@@ -117,6 +117,7 @@ function hasExplicitAutoLayout(node: FigNode): boolean {
 }
 
 type Axis = "y" | "x";
+type ChildrenOf = (node: FigNode) => readonly FigNode[];
 
 function rangeOf(box: Box, axis: Axis): { readonly start: number; readonly end: number } {
   if (axis === "y") {
@@ -311,6 +312,7 @@ function synthesiseGroup(
   axis: Axis,
   newGuid: GuidGenerator,
   transformByGuid: Map<string, FigMatrix>,
+  childrenByParent: Map<string, readonly FigNode[]>,
 ): FigNode {
   const bounds = bandBounds(cluster, axis);
   // Sort children inside the band by source-order index to keep the
@@ -329,17 +331,17 @@ function synthesiseGroup(
     m02: bounds.x,
     m12: bounds.y,
   };
+  const guid = newGuid();
   // Clone the parent's `phase` and `type` (both `KiwiEnumValue`) so the
   // synthesised wrapper satisfies `FigNode` without inventing enum
   // values. Visual fields are explicitly cleared — the wrapper renders
   // nothing of its own; it is a pure layout box.
-  return Object.assign({}, template, {
-    guid: newGuid(),
+  const group = Object.assign({}, template, {
+    guid,
     name: axis === "y" ? "_row_group_" : "_col_group_",
     parentIndex: undefined,
     size: { x: bounds.w, y: bounds.h },
     transform: frameTransform,
-    children,
     fillPaints: undefined,
     strokePaints: undefined,
     backgroundPaints: undefined,
@@ -353,7 +355,6 @@ function synthesiseGroup(
     componentPropDefs: undefined,
     componentPropAssignments: undefined,
     overrides: undefined,
-    symbolID: undefined,
     symbolData: undefined,
     styleIdForFill: undefined,
     styleIdForStrokeFill: undefined,
@@ -369,6 +370,8 @@ function synthesiseGroup(
     stackPositioning: undefined,
     clipsContent: false,
   });
+  childrenByParent.set(guidToString(guid), children);
+  return group;
 }
 
 function markAbsolute(box: Box): FigNode {
@@ -385,13 +388,16 @@ function rebuildParentChildren(
   axis: Axis,
   newGuid: GuidGenerator,
   transformByGuid: Map<string, FigMatrix>,
+  childrenByParent: Map<string, readonly FigNode[]>,
 ): readonly FigNode[] {
   const finalClusters = clusterByAxis(flow, axis);
   // No clustering benefit if flow degenerates to one cluster.
   if (finalClusters.length < 2) {
     return [];
   }
-  const groups = finalClusters.map((cluster) => synthesiseGroup(template, cluster, axis, newGuid, transformByGuid));
+  const groups = finalClusters.map((cluster) =>
+    synthesiseGroup(template, cluster, axis, newGuid, transformByGuid, childrenByParent),
+  );
   const overlays = outliers.map(markAbsolute);
   return [...groups, ...overlays];
 }
@@ -409,20 +415,22 @@ export function applyRowClustering(
   root: FigNode,
   childrenByParent: Map<string, readonly FigNode[]>,
   transformByGuid: Map<string, FigMatrix>,
+  childrenOf: ChildrenOf,
 ): void {
   const newGuid = makeSyntheticGuidGenerator();
-  walk(root, childrenByParent, transformByGuid, newGuid);
+  walk(root, childrenByParent, transformByGuid, newGuid, childrenOf);
 }
 
 function effectiveChildren(
   parent: FigNode,
   childrenByParent: ReadonlyMap<string, readonly FigNode[]>,
+  childrenOf: ChildrenOf,
 ): readonly FigNode[] {
   const overlay = childrenByParent.get(guidToString(parent.guid));
   if (overlay) {
     return overlay;
   }
-  return safeChildrenDomain(parent);
+  return childrenOf(parent);
 }
 
 function shouldClusterParent(parent: FigNode): boolean {
@@ -448,12 +456,13 @@ function walk(
   childrenByParent: Map<string, readonly FigNode[]>,
   transformByGuid: Map<string, FigMatrix>,
   newGuid: GuidGenerator,
+  childrenOf: ChildrenOf,
 ): void {
   if (shouldClusterParent(node)) {
-    tryClusterFrame(node, childrenByParent, transformByGuid, newGuid);
+    tryClusterFrame(node, childrenByParent, transformByGuid, newGuid, childrenOf);
   }
-  for (const child of effectiveChildren(node, childrenByParent)) {
-    walk(child, childrenByParent, transformByGuid, newGuid);
+  for (const child of effectiveChildren(node, childrenByParent, childrenOf)) {
+    walk(child, childrenByParent, transformByGuid, newGuid, childrenOf);
   }
 }
 
@@ -462,8 +471,9 @@ function tryClusterFrame(
   childrenByParent: Map<string, readonly FigNode[]>,
   transformByGuid: Map<string, FigMatrix>,
   newGuid: GuidGenerator,
+  childrenOf: ChildrenOf,
 ): void {
-  const original = effectiveChildren(parent, childrenByParent);
+  const original = effectiveChildren(parent, childrenByParent, childrenOf);
   const visible = original.filter(isVisible);
   if (visible.length < MIN_CHILDREN_FOR_CLUSTERING) {
     return;
@@ -479,7 +489,7 @@ function tryClusterFrame(
     return;
   }
   const flowBoxes = choice.clusters.flatMap((c) => c.boxes);
-  const rebuilt = rebuildParentChildren(parent, flowBoxes, choice.outliers, choice.axis, newGuid, transformByGuid);
+  const rebuilt = rebuildParentChildren(parent, flowBoxes, choice.outliers, choice.axis, newGuid, transformByGuid, childrenByParent);
   if (rebuilt.length === 0) {
     return;
   }
@@ -492,5 +502,6 @@ function tryClusterFrame(
     }
     return child.size === undefined;
   });
-  childrenByParent.set(guidToString(parent.guid), [...rebuilt, ...invisibleOrSizeless]);
+  const finalChildren = [...rebuilt, ...invisibleOrSizeless];
+  childrenByParent.set(guidToString(parent.guid), finalChildren);
 }

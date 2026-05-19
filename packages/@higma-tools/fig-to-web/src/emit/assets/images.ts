@@ -1,10 +1,8 @@
 /**
  * @file Image-asset extraction.
  *
- * Image paints reference binary data by hash through one of three
- * fields the parser may surface (`imageRef`, `image.hash`,
- * `imageHash`). The bytes themselves live in
- * `source.loaded.images`, keyed by reference string.
+ * Image paints reference binary data by hash. The bytes themselves
+ * live in `source.loaded.images`, keyed by reference string.
  *
  * The emit pipeline cannot inline images into JSX — they have to land
  * on disk so the browser can fetch them. We collect every image
@@ -12,14 +10,10 @@
  * `assets/<hash>.<ext>` (extension from MIME), and return a resolver
  * the paint emitter calls to translate paint → URL.
  *
- * Hash format normalisation:
- *   - String form: a hex content-hash, used verbatim.
- *   - Byte-array form (`readonly number[]`): joined into a hex string.
- *   The resulting key matches the `ref` field on `FigPackageImage`,
- *   which is how `LoadedFigFile.images` is keyed.
  */
 import type { FigImagePaint } from "@higma-document-models/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
+import { getImageHash } from "@higma-document-renderers/fig/paint";
 
 export type ImageAsset = {
   /** Path relative to the output root, e.g. `"assets/1234abcd.png"`. */
@@ -42,25 +36,9 @@ const EXTENSION_BY_MIME: ReadonlyMap<string, string> = new Map([
   ["image/svg+xml", "svg"],
 ]);
 
-function bytesToHex(bytes: readonly number[]): string {
-  return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/** Pull a stable hex/string ref out of any of the encodings Figma uses. */
+/** Pull the canonical image ref through the renderer paint SoT. */
 export function paintImageRef(paint: FigImagePaint): string | undefined {
-  if (typeof paint.imageRef === "string" && paint.imageRef.length > 0) {
-    return paint.imageRef;
-  }
-  if (typeof paint.imageHash === "string" && paint.imageHash.length > 0) {
-    return paint.imageHash;
-  }
-  if (Array.isArray(paint.imageHash) && paint.imageHash.length > 0) {
-    return bytesToHex(paint.imageHash);
-  }
-  if (paint.image?.hash && paint.image.hash.length > 0) {
-    return bytesToHex(paint.image.hash);
-  }
-  return undefined;
+  return getImageHash(paint);
 }
 
 function extensionFor(image: FigPackageImage): string {

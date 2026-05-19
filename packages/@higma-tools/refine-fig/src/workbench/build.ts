@@ -26,7 +26,7 @@ import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
 import { isItalic } from "@higma-document-models/fig/font";
 import type { RefineSource } from "../refine-source/load";
-import type { Inventory, SubtreeClusterEntry, PaletteEntry, TypographyEntry } from "../inventory";
+import type { Inventory, StructureClusterEntry, PaletteEntry, TypographyEntry } from "../inventory";
 import { createWorkerClient, type WorkerClient } from "../visual/worker-client";
 
 export type BuildWorkbenchOptions = {
@@ -52,7 +52,7 @@ export type PaletteManifestEntry = {
   readonly hex: string;
   readonly usageCount: number;
   readonly bindEligibleCount: number;
-  readonly existingProxyName: string | undefined;
+  readonly existingStyleDefinitionName: string | undefined;
   readonly swatchPng: string;
   readonly samplePng: string | undefined;
 };
@@ -63,7 +63,7 @@ export type TypographyManifestEntry = {
   readonly fontStyle: string;
   readonly fontSize: number;
   readonly usageCount: number;
-  readonly existingProxyName: string | undefined;
+  readonly existingStyleDefinitionName: string | undefined;
   readonly samplePng: string | undefined;
 };
 
@@ -88,7 +88,7 @@ export async function buildWorkbench(
   const worker = createWorkerClient(figPath);
   const skipped = { renderFailures: 0 };
   try {
-    const clusters = await collectClusters(inventory.subtreeClusters, worker, join(outDir, "clusters"), memberWidth, skipped);
+    const clusters = await collectClusters(inventory.structureClusters, worker, join(outDir, "clusters"), memberWidth, skipped);
     const palette = await collectPalette(source, inventory.palette, worker, join(outDir, "palette"), memberWidth, skipped);
     const typography = collectTypography(inventory.typography, join(outDir, "typography"), sampleWidth);
     return { clusters, palette, typography, skipped };
@@ -106,7 +106,7 @@ async function ensureDir(path: string): Promise<void> {
 // ============================================================================
 
 async function collectClusters(
-  clusters: readonly SubtreeClusterEntry[],
+  clusters: readonly StructureClusterEntry[],
   worker: WorkerClient,
   outDir: string,
   memberWidth: number,
@@ -217,7 +217,7 @@ async function collectPalette(
       hex: entry.hex,
       usageCount: entry.usages.length,
       bindEligibleCount: entry.usages.filter((u) => u.bindEligible).length,
-      existingProxyName: entry.existingProxyName,
+      existingStyleDefinitionName: entry.existingStyleDefinitionName,
       swatchPng: swatchPath,
       samplePng,
     });
@@ -257,7 +257,7 @@ async function tryRenderPaletteSample(
 
 function pickPaletteSampleNodeGuid(source: RefineSource, entry: PaletteEntry): string | undefined {
   for (const u of entry.usages) {
-    const node = source.nodesByGuid.get(u.nodeGuid);
+    const node = source.document.nodesByGuid.get(u.nodeGuid);
     if (!node) {
       continue;
     }
@@ -305,7 +305,7 @@ function collectTypography(
         fontStyle: entry.descriptor.fontStyle,
         fontSize: entry.descriptor.fontSize,
         usageCount: entry.usages.length,
-        existingProxyName: entry.existingProxyName,
+        existingStyleDefinitionName: entry.existingStyleDefinitionName,
         samplePng: samplePath,
       });
     } else {
@@ -315,7 +315,7 @@ function collectTypography(
         fontStyle: entry.descriptor.fontStyle,
         fontSize: entry.descriptor.fontSize,
         usageCount: entry.usages.length,
-        existingProxyName: entry.existingProxyName,
+        existingStyleDefinitionName: entry.existingStyleDefinitionName,
         samplePng: undefined,
       });
     }
@@ -350,7 +350,7 @@ function escapeXml(s: string): string {
 }
 
 // ============================================================================
-// IO helpers
+// IO routines
 // ============================================================================
 
 /**

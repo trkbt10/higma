@@ -62,20 +62,22 @@ describe("inferAutoLayout", () => {
     expect(result.direction).toBe("none");
   });
 
-  it("converts symmetric vertical inset to primary-axis center on a column", () => {
+  it("keeps symmetric vertical inset as explicit column padding", () => {
     // Single-child paragraph hosts always emit a column stack.
-    // Symmetric vertical inset (top=bottom=20) drives primaryAlign=center
-    // on the column. Asymmetric horizontal inset (left=10 vs right=20)
-    // stays as fixed padding because there is no centring intent.
+    // Vertical CSS flow is top-anchored even when the captured top and
+    // bottom insets happen to match, so the vertical inset remains
+    // padding rather than becoming a primary-axis centering signal.
+    // Asymmetric horizontal inset (left=10 vs right=20) likewise stays
+    // as fixed padding because there is no centring intent.
     const result = inferAutoLayout({
       parent: { x: 0, y: 0, width: 100, height: 100 },
       children: [{ x: 10, y: 20, width: 70, height: 60 }],
     });
     expect(result.direction).toBe("column");
     if (result.direction === "column") {
-      expect(result.paddingTop).toBe(0);
-      expect(result.paddingBottom).toBe(0);
-      expect(result.primaryAlign).toBe("center");
+      expect(result.paddingTop).toBe(20);
+      expect(result.paddingBottom).toBe(20);
+      expect(result.primaryAlign).toBe("start");
       expect(result.paddingLeft).toBe(10);
       expect(result.paddingRight).toBe(20);
       expect(result.counterAlign).toBe("start");

@@ -13,7 +13,7 @@ import {
   type FigPackageImage,
 } from "@higma-figma-containers/package";
 import type { FigBlob } from "@higma-document-models/fig/domain";
-import { normaliseNodeChanges, asBlobArray } from "./normalize";
+import { readNodeChanges, asBlobArray } from "./node-codec";
 
 // =============================================================================
 // Parsed Fig File Result
@@ -47,7 +47,7 @@ export type ParsedFigFile = {
   readonly nodeChanges: readonly FigNode[];
   /** Blobs containing path data, images, etc. */
   readonly blobs: readonly FigBlob[];
-  /** Images extracted from the ZIP (keyed by imageRef) */
+  /** Images extracted from the ZIP (keyed by Paint.image.hash hex) */
   readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Raw message data */
   readonly message: Record<string, unknown>;
@@ -62,7 +62,7 @@ export type ParsedFigFile = {
  */
 function parseRawFigData(data: Uint8Array, images: ReadonlyMap<string, FigPackageImage> = new Map()): ParsedFigFile {
   const decoded = decodeRawFigmaKiwiCanvas(data, images);
-  const nodeChanges = normaliseNodeChanges(decoded.nodeChanges);
+  const nodeChanges = readNodeChanges(decoded.nodeChanges);
   const blobs = asBlobArray(decoded.blobs);
 
   return {
@@ -86,7 +86,7 @@ function parseRawFigData(data: Uint8Array, images: ReadonlyMap<string, FigPackag
  */
 export async function parseFigFile(data: Uint8Array): Promise<ParsedFigFile> {
   const decoded = await decodeFigmaKiwiCanvas(data);
-  const nodeChanges = normaliseNodeChanges(decoded.nodeChanges);
+  const nodeChanges = readNodeChanges(decoded.nodeChanges);
   const blobs = asBlobArray(decoded.blobs);
   return {
     schema: decoded.schema,

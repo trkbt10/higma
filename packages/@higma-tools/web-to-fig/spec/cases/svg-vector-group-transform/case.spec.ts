@@ -4,7 +4,7 @@
  * transform baked into `d` by the normaliser, so Figma's VECTOR
  * receives geometry already in viewBox coordinates.
  */
-import { asVector, normalizeOne, singleChild } from "../_helpers";
+import { asVector, normalizeOne, singleChild } from "../case-ir-assertions";
 import { PATH_AT_ORIGIN_D, svgWithGroupTransform } from "./fixture";
 
 describe("case svg-vector-group-transform", () => {

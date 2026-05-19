@@ -58,7 +58,7 @@ export type GodotProperty = {
 /**
  * A `[sub_resource type="..." id="..."]` block. The `id` must be unique
  * within the scene; the serializer does not deduplicate — callers
- * compose unique ids via the builder helpers.
+ * compose unique ids via the builder routines.
  */
 export type GodotSubResource = {
   readonly id: string;

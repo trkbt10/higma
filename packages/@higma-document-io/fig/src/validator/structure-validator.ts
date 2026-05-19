@@ -57,7 +57,8 @@ export async function validateFigFile(
         actual: "missing",
         message: "DOCUMENT node is missing",
       });
-    } else if (refDoc) {
+    }
+    if (genDoc && refDoc) {
       validateNodeFields({ nodeType: "DOCUMENT", generated: genDoc, reference: refDoc, errors });
     }
 
@@ -73,7 +74,8 @@ export async function validateFigFile(
         actual: "missing",
         message: "CANVAS node is missing",
       });
-    } else if (refCanvas) {
+    }
+    if (genCanvas && refCanvas) {
       validateNodeFields({ nodeType: "CANVAS", generated: genCanvas, reference: refCanvas, errors });
     }
 
@@ -177,18 +179,54 @@ function isKnownNodeType(nodeType: string): nodeType is keyof typeof REQUIRED_FI
   return nodeType in REQUIRED_FIELDS;
 }
 
+function requiredFieldsForNodeType(nodeType: string): readonly (keyof FigNode)[] {
+  if (!isKnownNodeType(nodeType)) {
+    return [];
+  }
+  return REQUIRED_FIELDS[nodeType];
+}
+
+function validateGuidShape(options: {
+  readonly nodeType: string;
+  readonly guid: NonNullable<FigNode["guid"]>;
+  readonly errors: ValidationError[];
+}): void {
+  const { nodeType, guid, errors } = options;
+  if (guid.sessionID !== undefined && guid.localID !== undefined) {
+    return;
+  }
+  errors.push({
+    path: `nodes.${nodeType}.guid`,
+    expected: { sessionID: "number", localID: "number" },
+    actual: guid,
+    message: `${nodeType} guid structure invalid`,
+  });
+}
+
+function validateParentIndexShape(options: {
+  readonly nodeType: string;
+  readonly parentIndex: NonNullable<FigNode["parentIndex"]>;
+  readonly errors: ValidationError[];
+}): void {
+  const { nodeType, parentIndex, errors } = options;
+  if (parentIndex.guid && parentIndex.position) {
+    return;
+  }
+  errors.push({
+    path: `nodes.${nodeType}.parentIndex`,
+    expected: { guid: "object", position: "string" },
+    actual: parentIndex,
+    message: `${nodeType} parentIndex structure invalid`,
+  });
+}
+
 function validateNodeFields(options: ValidateNodeFieldsOptions): void {
   const { nodeType, generated, reference, errors } = options;
 
   // Check required fields exist. `in` on a FigNode narrows nothing
   // extra here — we only need presence, which is correctly expressed
   // by the `<field> in <node>` operator over the typed record.
-  const requiredFields: readonly (keyof FigNode)[] = (() => {
-    if (isKnownNodeType(nodeType)) {
-      return REQUIRED_FIELDS[nodeType];
-    }
-    return [];
-  })();
+  const requiredFields = requiredFieldsForNodeType(nodeType);
   for (const field of requiredFields) {
     if (!(field in generated) && field in reference) {
       errors.push({
@@ -206,39 +244,23 @@ function validateNodeFields(options: ValidateNodeFieldsOptions): void {
   // the reference read.
   if (generated.guid && reference.guid) {
     const genGuid = generated.guid;
-    if (genGuid.sessionID === undefined || genGuid.localID === undefined) {
-      errors.push({
-        path: `nodes.${nodeType}.guid`,
-        expected: { sessionID: "number", localID: "number" },
-        actual: genGuid,
-        message: `${nodeType} guid structure invalid`,
-      });
-    }
+    validateGuidShape({ nodeType, guid: genGuid, errors });
   }
 
   // Check parentIndex structure (for non-DOCUMENT nodes)
   if (nodeType !== "DOCUMENT" && generated.parentIndex && reference.parentIndex) {
     const genPI = generated.parentIndex;
-    if (!genPI.guid || !genPI.position) {
-      errors.push({
-        path: `nodes.${nodeType}.parentIndex`,
-        expected: { guid: "object", position: "string" },
-        actual: genPI,
-        message: `${nodeType} parentIndex structure invalid`,
-      });
-    }
+    validateParentIndexShape({ nodeType, parentIndex: genPI, errors });
   }
 
   // Check type structure
-  if (generated.type && reference.type) {
-    if (generated.type.value !== reference.type.value) {
-      errors.push({
-        path: `nodes.${nodeType}.type.value`,
-        expected: reference.type.value,
-        actual: generated.type.value,
-        message: `${nodeType} type value mismatch`,
-      });
-    }
+  if (generated.type && reference.type && generated.type.value !== reference.type.value) {
+    errors.push({
+      path: `nodes.${nodeType}.type.value`,
+      expected: reference.type.value,
+      actual: generated.type.value,
+      message: `${nodeType} type value mismatch`,
+    });
   }
 
   // Check enum field structures. These are KiwiEnumValue-shaped on

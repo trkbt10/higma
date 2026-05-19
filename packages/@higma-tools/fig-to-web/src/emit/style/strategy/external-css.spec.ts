@@ -1,6 +1,6 @@
 /**
  * @file Lock down the external-css (BEM) registry, rewriter, and
- * path helpers.
+ * path routines.
  *
  * `external-css` differs from `css-modules` in three places the spec
  * pins: block-scoped class names (so a single global stylesheet can
@@ -103,7 +103,7 @@ describe("rewriteForExternalCss", () => {
   });
 });
 
-describe("stylesheet import / specifier helpers", () => {
+describe("stylesheet import / specifier routines", () => {
   it("computes a same-directory specifier from output root", () => {
     expect(relativeStylesheetSpecifier("Home.tsx", "styles.css")).toBe("./styles.css");
   });

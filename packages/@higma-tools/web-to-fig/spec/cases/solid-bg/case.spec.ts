@@ -2,7 +2,7 @@
  * @file Case `solid-bg` — `<div style="background-color: ...">` becomes
  * a FRAME with a single SOLID fill carrying the parsed colour.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_SOLID_COLOR, withSolidBg } from "./fixture";
 
@@ -31,7 +31,7 @@ describe("case solid-bg", () => {
     expect(transparent.style.fills).toHaveLength(0);
   });
 
-  it("default colour is the constant exported alongside the helper", () => {
+  it("default colour is the constant exported alongside the function", () => {
     expect(DEFAULT_SOLID_COLOR).toBe("rgb(220, 50, 47)");
   });
 });

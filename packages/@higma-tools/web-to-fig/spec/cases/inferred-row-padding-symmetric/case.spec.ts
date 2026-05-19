@@ -3,7 +3,7 @@
  * compute paddingLeft = paddingRight = HORIZ_PADDING and paddingTop =
  * TOP_PADDING from the children's rects.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   BOTTOM_PADDING,

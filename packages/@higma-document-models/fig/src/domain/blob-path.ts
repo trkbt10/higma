@@ -106,15 +106,9 @@ function findNextKnownCommand(bytes: readonly number[], startOffset: number): nu
  * SVG cubic Bézier.
  *
  * Well-formed glyph blobs always begin with `M` and only emit a
- * glyph quadratic after at least one `M`/`L`/`C`/`Q`. Earlier
- * versions carried two fallback branches — "no prev command" and
- * "prev command has no endpoint (`Z`)" — that returned the
- * curve-degenerating value (Q itself) instead of throwing.
- * Calibration showed both branches were dead across the production
- * fixture corpus and the existing test suite; per "don't guess;
- * resolve correctly or fail loudly" the fallbacks were removed.
- * Reaching either branch now means the blob is malformed and
- * deserves a parse error rather than silently rendered garbage.
+ * glyph quadratic after at least one `M`/`L`/`C`/`Q`. Reaching a
+ * missing-endpoint branch means the blob is malformed and deserves a
+ * parse error rather than silently rendered garbage.
  */
 function getCurrentPoint(prevCmd: PathCommand | undefined): { x: number; y: number } {
   if (!prevCmd) {
@@ -131,9 +125,8 @@ function getCurrentPoint(prevCmd: PathCommand | undefined): { x: number; y: numb
   ) {
     // "A" is part of the canonical PathCommand union but is unreachable
     // here: the Kiwi blob byte alphabet has no Arc opcode, so the
-    // decoder loop never pushes an "A". We accept the endpoint when
-    // reading prevCmd defensively so the exhaustiveness check survives
-    // the wider domain type.
+    // decoder loop never pushes an "A". Keeping it in this branch
+    // preserves exhaustiveness against the wider domain type.
     return { x: prevCmd.x, y: prevCmd.y };
   }
   throw new Error(

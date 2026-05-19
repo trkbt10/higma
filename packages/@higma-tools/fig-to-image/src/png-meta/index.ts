@@ -256,7 +256,7 @@ function crcUpdate(crc: number, bytes: Uint8Array, i: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Latin-1 helpers
+// Latin-1 functions
 // ---------------------------------------------------------------------------
 
 function latin1Encode(s: string): Uint8Array {

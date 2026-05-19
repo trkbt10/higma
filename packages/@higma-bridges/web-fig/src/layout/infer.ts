@@ -129,8 +129,12 @@ function inferInset(input: InferInput): InferenceResult {
 }
 
 function pickCounterAlign(stretch: boolean, symmetric: boolean): "stretch" | "center" | "start" {
-  if (stretch) return "stretch";
-  if (symmetric) return "center";
+  if (stretch) {
+    return "stretch";
+  }
+  if (symmetric) {
+    return "center";
+  }
   return "start";
 }
 
@@ -295,37 +299,39 @@ function computePadding(
   const maxRight = Math.max(...order.map((i) => children[i]!.x + children[i]!.width));
 
   if (axis === "row") {
-    const left = first.x;
-    const right = parent.width - (last.x + last.width);
-    const top = minTop;
-    const bottom = parent.height - maxBottom;
-    if (left < -INSET_TOLERANCE || right < -INSET_TOLERANCE
-      || top < -INSET_TOLERANCE || bottom < -INSET_TOLERANCE) {
-      return undefined;
-    }
-    return {
-      top: clampNonNeg(top),
-      right: clampNonNeg(right),
-      bottom: clampNonNeg(bottom),
-      left: clampNonNeg(left),
-    };
+    return resolvedPadding({
+      top: minTop,
+      right: parent.width - (last.x + last.width),
+      bottom: parent.height - maxBottom,
+      left: first.x,
+    });
   }
 
-  // column
-  const top = first.y;
-  const bottom = parent.height - (last.y + last.height);
-  const left = minLeft;
-  const right = parent.width - maxRight;
-  if (left < -INSET_TOLERANCE || right < -INSET_TOLERANCE
-    || top < -INSET_TOLERANCE || bottom < -INSET_TOLERANCE) {
+  return resolvedPadding({
+    top: first.y,
+    right: parent.width - maxRight,
+    bottom: parent.height - (last.y + last.height),
+    left: minLeft,
+  });
+}
+
+function resolvedPadding(padding: Padding): Padding | undefined {
+  if (hasNegativeInset(padding)) {
     return undefined;
   }
   return {
-    top: clampNonNeg(top),
-    right: clampNonNeg(right),
-    bottom: clampNonNeg(bottom),
-    left: clampNonNeg(left),
+    top: clampNonNeg(padding.top),
+    right: clampNonNeg(padding.right),
+    bottom: clampNonNeg(padding.bottom),
+    left: clampNonNeg(padding.left),
   };
+}
+
+function hasNegativeInset(padding: Padding): boolean {
+  return padding.left < -INSET_TOLERANCE
+    || padding.right < -INSET_TOLERANCE
+    || padding.top < -INSET_TOLERANCE
+    || padding.bottom < -INSET_TOLERANCE;
 }
 
 function endOnCounterAxis(box: BoxIR, axis: Axis): number {

@@ -4,7 +4,7 @@
  * The Figma "Layers" panel for a given page lists the direct children
  * of that page's CANVAS — there is no `"Layers"` container node.
  * Targeting "the frames under Design's Layers" therefore reduces to:
- * walk `safeChildren(designCanvas)` and collect every node whose
+ * walk the indexed Kiwi children of `designCanvas` and collect every node whose
  * `type` is FRAME or SYMBOL (a SYMBOL is the on-disk encoding of the
  * Figma UI concept "Component"; a "Component Set" / "Variant Set" is
  * a FRAME carrying variant metadata — already covered by the FRAME
@@ -33,7 +33,7 @@
  * (duplicate names) immediately.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { safeChildren } from "@higma-document-models/fig/domain";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 
 const FRAME_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
@@ -58,13 +58,13 @@ function isContainer(node: FigNode): boolean {
  * frames / symbols grouped under a SECTION in the Figma Layers panel
  * still surface as top-level targets.
  */
-function collectFrameLike(nodes: readonly FigNode[]): readonly FigNode[] {
+function collectFrameLike(document: FigKiwiDocumentIndex, nodes: readonly FigNode[]): readonly FigNode[] {
   return nodes.flatMap((node) => {
     if (isFrameLike(node)) {
       return [node];
     }
     if (isContainer(node)) {
-      return collectFrameLike(safeChildren(node));
+      return collectFrameLike(document, document.childrenOf(node));
     }
     return [];
   });
@@ -75,8 +75,8 @@ function collectFrameLike(nodes: readonly FigNode[]): readonly FigNode[] {
  * stored order. SECTION containers are flattened — their children
  * appear inline where the SECTION sits.
  */
-export function listFrameTargets(canvas: FigNode): readonly FigNode[] {
-  return collectFrameLike(safeChildren(canvas));
+export function listFrameTargets(document: FigKiwiDocumentIndex, canvas: FigNode): readonly FigNode[] {
+  return collectFrameLike(document, document.childrenOf(canvas));
 }
 
 /**

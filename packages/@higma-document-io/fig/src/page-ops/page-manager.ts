@@ -1,218 +1,100 @@
-/**
- * @file Page CRUD operations on FigDesignDocument
- *
- * All operations are pure functions that return new document instances.
- * Pages map to CANVAS nodes in the .fig format.
- */
+/** @file Page operations on the Kiwi document SoT. */
 
-import type { FigDesignDocument, FigDesignNode, FigPage, FigPageId } from "@higma-document-models/fig/domain";
+import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
 import { DEFAULT_PAGE_BACKGROUND } from "@higma-document-models/fig/domain";
-import { nextNodeId, nextPageId } from "@higma-document-models/fig/builder";
+import { NODE_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { nextPageGuid } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
+import {
+  createFigDocumentContextFromNodeChanges,
+  type FigDocumentContext,
+} from "../context";
 
-// =============================================================================
-// Add Page
-// =============================================================================
+const DOCUMENT_GUID: FigGuid = { sessionID: 0, localID: 0 };
+const FIRST_CANVAS_GUID: FigGuid = { sessionID: 0, localID: 1 };
+const POSITION_FIRST_CHAR = 0x21;
+const INTERNAL_ONLY_CANVAS_POSITION = "~";
 
-/**
- * AddPageOptions carries explicit builder state, document, and page name input.
- */
-type AddPageOptions = {
-  readonly state: FigBuilderState;
-  readonly doc: FigDesignDocument;
-  readonly name: string;
-  /**
-   * Mark this page as Figma's "Internal Only Canvas" — hidden from the
-   * Pages UI and used to host style-definition proxy nodes. Real Figma
-   * exports always include exactly one such page.
-   */
-  readonly internalOnly?: boolean;
-};
+function positionString(index: number): string {
+  return String.fromCharCode(POSITION_FIRST_CHAR + index);
+}
 
-/**
- * Add a new empty page to the document.
- *
- * @returns Updated document and the new page's ID
- */
-export function addPage(
-  { state, doc, name, internalOnly }: AddPageOptions,
-): { readonly doc: FigDesignDocument; readonly pageId: FigPageId } {
-  assertBuilderState(state, "addPage");
-  assertNonEmptyString(name, "addPage name");
-  const pageId = nextPageId(state.pageIdCounter);
+function documentNode(): FigNode {
+  return {
+    guid: DOCUMENT_GUID,
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.DOCUMENT, name: "DOCUMENT" },
+  };
+}
 
-  const page: FigPage = {
-    id: pageId,
+function canvasNode(
+  guid: FigGuid,
+  name: string,
+  position: string,
+  internalOnly: boolean | undefined,
+): FigNode {
+  return {
+    guid,
+    parentIndex: { guid: DOCUMENT_GUID, position },
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.CANVAS, name: "CANVAS" },
     name,
     backgroundColor: DEFAULT_PAGE_BACKGROUND,
-    children: [],
     internalOnly,
   };
-
-  return {
-    doc: { ...doc, pages: [...doc.pages, page] },
-    pageId,
-  };
 }
 
-// =============================================================================
-// Remove Page
-// =============================================================================
-
-/**
- * Remove a page from the document.
- *
- * If the document has only one page, this is a no-op (documents must
- * have at least one page).
- */
-export function removePage(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-): FigDesignDocument {
-  if (doc.pages.length <= 1) {
-    return doc;
-  }
-
-  const pages = doc.pages.filter((p) => p.id !== pageId);
-  return { ...doc, pages };
-}
-
-// =============================================================================
-// Reorder Page
-// =============================================================================
-
-/**
- * Move a page to a new position within the document.
- *
- * @param newIndex - Target index (clamped to valid range)
- */
-export function reorderPage(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  newIndex: number,
-): FigDesignDocument {
-  const currentIndex = doc.pages.findIndex((p) => p.id === pageId);
-  if (currentIndex === -1) {
-    return doc;
-  }
-
-  const clampedIndex = Math.max(0, Math.min(newIndex, doc.pages.length - 1));
-  if (currentIndex === clampedIndex) {
-    return doc;
-  }
-
-  const pages = [...doc.pages];
-  const [page] = pages.splice(currentIndex, 1);
-  pages.splice(clampedIndex, 0, page);
-
-  return { ...doc, pages };
-}
-
-// =============================================================================
-// Duplicate Page
-// =============================================================================
-
-/**
- * DuplicatePageOptions carries explicit builder state, document, source page identifier, and duplicate page name input.
- */
-type DuplicatePageOptions = {
-  readonly state: FigBuilderState;
-  readonly doc: FigDesignDocument;
-  readonly pageId: FigPageId;
-  readonly name: string;
-};
-
-/**
- * Duplicate a page and all its contents.
- *
- * The duplicated page is inserted immediately after the original.
- * All node IDs in the duplicate are regenerated to ensure uniqueness.
- */
-export function duplicatePage(
-  { state, doc, pageId, name }: DuplicatePageOptions,
-): { readonly doc: FigDesignDocument; readonly newPageId: FigPageId } {
-  assertBuilderState(state, "duplicatePage");
-  assertNonEmptyString(name, "duplicatePage name");
-  const sourceIndex = doc.pages.findIndex((p) => p.id === pageId);
-  if (sourceIndex === -1) {
-    throw new Error(`duplicatePage failed: page ${pageId} was not found`);
-  }
-
-  const source = doc.pages[sourceIndex];
-  const newPageId = nextPageId(state.pageIdCounter);
-
-  // Deep clone children with new IDs
-  const clonedChildren = deepCloneNodes(state, source.children);
-
-  const newPage: FigPage = {
-    id: newPageId,
-    name,
-    backgroundColor: source.backgroundColor,
-    children: clonedChildren,
-  };
-
-  const pages = [...doc.pages];
-  pages.splice(sourceIndex + 1, 0, newPage);
-
-  return {
-    doc: { ...doc, pages },
-    newPageId,
-  };
-}
-
-// =============================================================================
-// Rename Page
-// =============================================================================
-
-/**
- * Rename a page.
- */
-export function renamePage(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  name: string,
-): FigDesignDocument {
-  const pages = doc.pages.map((page) =>
-    page.id === pageId ? { ...page, name } : page,
-  );
-  return { ...doc, pages };
-}
-
-// =============================================================================
-// Deep Clone Helpers
-// =============================================================================
-
-/**
- * Deep clone a list of design nodes, regenerating all IDs.
- */
-function deepCloneNodes(
-  state: FigBuilderState,
-  nodes: readonly FigDesignNode[],
-): FigDesignNode[] {
-  return nodes.map((node) => {
-    const newId = nextNodeId(state.nodeIdCounter);
-    return {
-      ...node,
-      id: newId,
-      children: node.children ? deepCloneNodes(state, node.children) : undefined,
-    };
+function contextWithNodes(context: FigDocumentContext, nodeChanges: readonly FigNode[]): FigDocumentContext {
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges,
+    blobs: context.blobs,
+    images: context.images,
+    metadata: context.metadata,
   });
 }
 
-/**
- * assertBuilderState rejects missing explicit builder state for page operations.
- */
-function assertBuilderState(state: FigBuilderState, caller: string): void {
-  if (!state) {
-    throw new Error(`${caller} requires explicit builder state`);
-  }
-}
-
-/**
- * assertNonEmptyString rejects missing required page name input.
- */
 function assertNonEmptyString(value: string, name: string): void {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
+}
+
+/**
+ * Create a minimal Kiwi document with one CANVAS page.
+ */
+export function createEmptyFigDocument(pageName: string): FigDocumentContext {
+  assertNonEmptyString(pageName, "createEmptyFigDocument pageName");
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges: [
+      documentNode(),
+      canvasNode(FIRST_CANVAS_GUID, pageName, positionString(0), undefined),
+    ],
+    blobs: [],
+    images: new Map(),
+    metadata: null,
+  });
+}
+
+type AddPageOptions = {
+  readonly state: FigBuilderState;
+  readonly context: FigDocumentContext;
+  readonly name: string;
+  readonly internalOnly?: boolean;
+};
+
+/**
+ * Append a CANVAS page and return its allocated GUID.
+ */
+export function addPage(
+  { state, context, name, internalOnly }: AddPageOptions,
+): { readonly context: FigDocumentContext; readonly pageGuid: FigGuid } {
+  assertNonEmptyString(name, "addPage name");
+  const pageGuid = nextPageGuid(state.pageGuidCounter);
+  const canvasCount = context.document.nodeChanges.filter((node) => node.type.name === "CANVAS").length;
+  const position = internalOnly === true ? INTERNAL_ONLY_CANVAS_POSITION : positionString(canvasCount);
+  const page = canvasNode(pageGuid, name, position, internalOnly);
+  return {
+    context: contextWithNodes(context, [...context.document.nodeChanges, page]),
+    pageGuid,
+  };
 }

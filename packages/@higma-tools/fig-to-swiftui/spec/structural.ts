@@ -1,5 +1,5 @@
 /**
- * @file Structural-equivalence helpers for SwiftView trees.
+ * @file Structural-equivalence routines for SwiftView trees.
  *
  * `summarize` produces a JSON-friendly snapshot of a SwiftView that:
  *

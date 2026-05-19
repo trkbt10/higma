@@ -34,21 +34,21 @@ export function mapWindingRule(
  * scalar. When per-corner radii differ, returns the arithmetic average.
  *
  * Used by parity checks and renderer paths that need a single radius
- * value. Production paths that must preserve per-corner detail use
- * `extractDesignCornerRadius` from `./symbols/design-node-helpers`.
+ * value. Production render paths that must preserve per-corner detail
+ * read Kiwi `rectangleCornerRadii` directly at the renderer boundary.
  */
 export function extractUniformCornerRadius(
   cornerRadius: number | undefined,
   rectangleCornerRadii: readonly number[] | undefined,
 ): number | undefined {
-  if (rectangleCornerRadii && rectangleCornerRadii.length === 4) {
-    const [tl, tr, br, bl] = rectangleCornerRadii;
-    const allSame = tl === tr && tr === br && br === bl;
-    if (allSame) { return tl || undefined; }
-    const avg = (tl + tr + br + bl) / 4;
-    return avg || undefined;
+  if (!rectangleCornerRadii || rectangleCornerRadii.length !== 4) {
+    return cornerRadius;
   }
-  return cornerRadius;
+  const [tl, tr, br, bl] = rectangleCornerRadii;
+  const allSame = tl === tr && tr === br && br === bl;
+  if (allSame) { return tl || undefined; }
+  const avg = (tl + tr + br + bl) / 4;
+  return avg || undefined;
 }
 
 /**
@@ -75,7 +75,7 @@ const CLIPPING_NODE_TYPES = new Set(["FRAME"]);
  *
  * Order:
  * 1. Explicit domain `clipsContent` field
- * 2. `frameMaskDisabled` raw Kiwi field (inverted)
+ * 2. `frameMaskDisabled` Kiwi field (inverted)
  * 3. Default by node type — only `FRAME` clips by default; the
  *    canonical schema has no COMPONENT / COMPONENT_SET (Variant Sets
  *    are FRAMEs), and SYMBOL (on-disk Component) does not default-clip.

@@ -8,7 +8,7 @@
  *     (they're the same blue colour but separated by unstyled prose,
  *     so coalescing them would re-colour the gap text).
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import {
   FIRST_LINK,
   MIDDLE,

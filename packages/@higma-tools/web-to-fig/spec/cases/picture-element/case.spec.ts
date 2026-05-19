@@ -3,7 +3,7 @@
  * inner img carries the resolved imageId. Normaliser must reach the
  * inner img without losing the resolved asset.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { RESOLVED_IMAGE_ID, pictureWithImg } from "./fixture";
 
 describe("case picture-element", () => {

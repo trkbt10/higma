@@ -3,7 +3,7 @@
  * `linear-gradient` PaintIR with the angle in CSS-degree convention
  * (0° = up, 90° = right) and stops in source order.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withLinearGradient } from "./fixture";
 

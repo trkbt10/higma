@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createSampleFigPayload } from "@higma-codecs/kiwi/test-helpers";
+import { createSampleFigPayload } from "@higma-codecs/kiwi/test-fixtures";
 import { buildFigCanvasHeader } from "@higma-figma-containers/canvas";
 import { loadFigFamilyFile, saveFigFamilyFile } from "@higma-figma-runtime/roundtrip";
 

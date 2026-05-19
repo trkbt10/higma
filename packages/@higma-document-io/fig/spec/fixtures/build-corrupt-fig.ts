@@ -11,7 +11,7 @@
  * Strategy:
  *
  *   1. Generate a healthy ZIP-wrapped `.fig` via the canonical
- *      `createEmptyFigDesignDocument` + `addNode` + `exportFig`
+ *      `createEmptyFigDocument` + `addNode` + `exportFig`
  *      pipeline (gives us a real schema and message body to mutate).
  *   2. Open the ZIP, drop `thumbnail.png`, and patch the message
  *      stream so:
@@ -35,7 +35,7 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
@@ -73,23 +73,27 @@ async function generate(): Promise<void> {
   // 1. Healthy baseline (full schema, valid structure). The Internal
   //    Only Canvas page gets dropped during the corruption pass below
   //    so fig-lint can surface `fig.canvas.internal-only`.
-  const empty = createEmptyFigDesignDocument("Page");
+  const empty = createEmptyFigDocument("Page");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const page = empty.document.nodeChanges.find((node) => node.type.name === "CANVAS");
+  if (page === undefined) {
+    throw new Error("build-corrupt-fig: createEmptyFigDocument did not create a CANVAS");
+  }
+  const pageGuid = page.guid;
   const docWithInternal = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
   const frameResult = addNode({
     state,
-    doc: docWithInternal,
-    pageId,
-    parentId: null,
+    context: docWithInternal,
+    pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "frame",
@@ -103,9 +107,9 @@ async function generate(): Promise<void> {
   });
   const rectResult = addNode({
     state,
-    doc: frameResult.doc,
-    pageId,
-    parentId: frameResult.nodeId,
+    context: frameResult.context,
+    pageGuid,
+    parentGuid: frameResult.nodeGuid,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "rect",
@@ -118,7 +122,7 @@ async function generate(): Promise<void> {
     },
   });
 
-  const healthyExport = await exportFig(rectResult.doc);
+  const healthyExport = await exportFig(rectResult.context);
   const healthy = healthyExport.data;
 
   // 2. Open the ZIP and corrupt the message in-place.

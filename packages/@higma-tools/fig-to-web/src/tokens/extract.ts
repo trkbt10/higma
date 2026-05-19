@@ -10,7 +10,7 @@
  * stray colours from a hidden CANVAS the user did not select.
  */
 import type { FigEffect, FigNode, FigPaint } from "@higma-document-models/fig/types";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import { findInternalCanvas } from "@higma-document-io/fig/context";
 import type { TokenIndex, TokenSet } from "./types";
 import { buildColorTokens, lookupColorId } from "./color";
@@ -18,16 +18,13 @@ import { buildTypographyTokens, lookupTypographyId } from "./typography";
 import { buildRadiusTokens, buildSpacingTokens, lookupRadiusId, lookupSpacingId } from "./spacing";
 import { buildShadowTokens, lookupShadowId } from "./effect";
 
-function styleFillProxies(source: FigSymbolContext): readonly FigNode[] {
-  const internal = findInternalCanvas(source.tree.roots);
+function styleFillProxies(source: FigDocumentContext): readonly FigNode[] {
+  const internal = findInternalCanvas(source.document);
   if (!internal) {
     return [];
   }
   const out: FigNode[] = [];
-  for (const child of internal.children ?? []) {
-    if (!child) {
-      continue;
-    }
+  for (const child of source.document.childrenOf(internal)) {
     if (child.styleType?.name === "FILL") {
       out.push(child);
     }
@@ -45,16 +42,16 @@ export type TokenBuildResult = {
  * source restricted to the supplied target frames.
  */
 export function buildTokensFromFrames(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   frames: readonly FigNode[],
 ): TokenBuildResult {
   const proxies = styleFillProxies(source);
 
-  const colorTable = buildColorTokens(proxies, frames);
-  const typographyTable = buildTypographyTokens(frames);
-  const spacingTable = buildSpacingTokens(frames);
-  const radiusTable = buildRadiusTokens(frames);
-  const shadowTable = buildShadowTokens(frames);
+  const colorTable = buildColorTokens(proxies, frames, source.document.childrenOf);
+  const typographyTable = buildTypographyTokens(frames, source.document.childrenOf);
+  const spacingTable = buildSpacingTokens(frames, source.document.childrenOf);
+  const radiusTable = buildRadiusTokens(frames, source.document.childrenOf);
+  const shadowTable = buildShadowTokens(frames, source.document.childrenOf);
 
   const tokens: TokenSet = {
     colors: colorTable.tokens,

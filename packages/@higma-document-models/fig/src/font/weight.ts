@@ -90,7 +90,7 @@ export function detectWeight(style: string | undefined): FontWeight | undefined 
 }
 
 /** Snap an arbitrary numeric weight to the nearest standard CSS weight. */
-export function normalizeWeight(weight: number): FontWeight {
+export function snapFontWeight(weight: number): FontWeight {
   const weights: readonly FontWeight[] = Object.values(FONT_WEIGHTS);
   const closestRef: { value: FontWeight } = { value: FONT_WEIGHTS.REGULAR };
   const minDiffRef = { value: Math.abs(weight - closestRef.value) };
@@ -106,8 +106,8 @@ export function normalizeWeight(weight: number): FontWeight {
 
 /** Get a human-readable weight name from a numeric value. */
 export function getWeightName(weight: number): string {
-  const normalized = normalizeWeight(weight);
-  const entry = Object.entries(FONT_WEIGHTS).find(([, v]) => v === normalized);
+  const snapped = snapFontWeight(weight);
+  const entry = Object.entries(FONT_WEIGHTS).find(([, v]) => v === snapped);
   return entry ? entry[0].replace(/_/g, " ").toLowerCase() : "regular";
 }
 
@@ -115,7 +115,7 @@ export function getWeightName(weight: number): string {
  * Inverse of `detectWeight` — turn a numeric weight into the Figma
  * `fontName.style` label (`"Thin"`, `"Light"`, `"SemiBold"`, …).
  *
- * Uses the closest standard-weight bucket via `normalizeWeight` so a
+ * Uses the closest standard-weight bucket via `snapFontWeight` so a
  * round-trip `detectWeight(figmaWeightLabel(detectWeight("Bold")!))`
  * is the identity for the standard weight values. Anywhere that
  * round-trips Figma fontName.style — e.g. web-to-fig emit, Figma
@@ -123,8 +123,8 @@ export function getWeightName(weight: number): string {
  * the label so the inverse stays consistent with the forward.
  */
 export function figmaWeightLabel(weight: number): string {
-  const normalized = normalizeWeight(weight);
-  switch (normalized) {
+  const snapped = snapFontWeight(weight);
+  switch (snapped) {
     case FONT_WEIGHTS.THIN:
       return "Thin";
     case FONT_WEIGHTS.EXTRA_LIGHT:

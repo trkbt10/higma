@@ -1,7 +1,7 @@
 /**
  * @file Build SwiftUI modifier values from FigNode style fields.
  *
- * Each helper consumes one Figma concept (frame size, corner radius,
+ * Each routine consumes one Figma concept (frame size, corner radius,
  * fill, stroke, drop shadow, typography) and returns the small number
  * of `Modifier` values that realise it on a SwiftUI view. The emit
  * walker concatenates them in the canonical order
@@ -19,13 +19,13 @@ import type {
   FigSolidPaint,
   FigStrokeAlign,
   FigStrokeWeight,
-  KiwiEnumValue,
 } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import { asGradientPaint, asSolidPaint } from "@higma-document-models/fig/color";
 import {
   arg,
   array,
   call,
-  ident,
   leaf,
   member,
   modifier,
@@ -42,19 +42,8 @@ import { uniformCornerRadius } from "./corner-radius";
 import { gradientExpr } from "./gradient";
 import { shapeExprFor } from "./shape";
 
-/**
- * Read a Kiwi enum's `.name`. Effect types appear either as plain
- * strings or as `{ value, name }` structs depending on the parser
- * branch; this helper converges both shapes onto the string channel.
- */
-function effectTypeName(value: FigEffectType | KiwiEnumValue<FigEffectType>): FigEffectType | undefined {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object" && "name" in value) {
-    return value.name;
-  }
-  return undefined;
+function effectTypeName(value: unknown): FigEffectType | undefined {
+  return kiwiEnumName<FigEffectType>(value, "FigEffect.type");
 }
 
 /**
@@ -62,7 +51,7 @@ function effectTypeName(value: FigEffectType | KiwiEnumValue<FigEffectType>): Fi
  * back-to-front in the array order, so the LAST visible solid is
  * the one a single-paint emitter should pick. (For multi-paint
  * blending, see how `backgroundModifier` / `fillModifier` chain
- * paints; this helper is the single-paint shortcut.)
+ * paints; this routine is the single-paint shortcut.)
  *
  * Returns undefined when no visible SOLID paint exists.
  */
@@ -79,8 +68,9 @@ function firstVisibleSolidPaint(paints: readonly FigPaint[] | undefined): FigSol
     if (!paint || paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return paint;
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaint;
     }
   }
   return undefined;
@@ -119,13 +109,7 @@ function topmostFillPaintEntry(
     if (!paint || paint.visible === false) {
       continue;
     }
-    if (
-      paint.type === "SOLID" ||
-      paint.type === "GRADIENT_LINEAR" ||
-      paint.type === "GRADIENT_RADIAL" ||
-      paint.type === "GRADIENT_ANGULAR" ||
-      paint.type === "GRADIENT_DIAMOND"
-    ) {
+    if (asSolidPaint(paint) !== undefined || asGradientPaint(paint) !== undefined) {
       return { paint, index: i };
     }
   }
@@ -367,40 +351,26 @@ export function extraFillBackgroundModifiers(node: FigNode): readonly Modifier[]
 }
 
 function paintToExpr(paint: FigPaint, node: FigNode): SwiftExpr | undefined {
-  if (paint.type === "SOLID") {
-    return solidPaintToColor(paint);
+  const solidPaint = asSolidPaint(paint);
+  if (solidPaint !== undefined) {
+    return solidPaintToColor(solidPaint);
   }
-  if (
-    paint.type === "GRADIENT_LINEAR" ||
-    paint.type === "GRADIENT_RADIAL" ||
-    paint.type === "GRADIENT_ANGULAR" ||
-    paint.type === "GRADIENT_DIAMOND"
-  ) {
-    return gradientExpr(paint, sizeOf(node));
+  const gradientPaint = asGradientPaint(paint);
+  if (gradientPaint !== undefined) {
+    return gradientExpr(gradientPaint, sizeOf(node));
   }
   return undefined;
 }
 
-/** Read a `FigStrokeAlign` value through both the bare-string and the
- * `KiwiEnumValue` shapes the parser branches produce. */
-function strokeAlignName(value: FigStrokeAlign | KiwiEnumValue<FigStrokeAlign> | undefined): FigStrokeAlign | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object" && "name" in value) {
-    return value.name;
-  }
-  return undefined;
+function strokeAlignName(value: unknown): FigStrokeAlign | undefined {
+  return kiwiEnumName<FigStrokeAlign>(value, "FigNode.strokeAlign");
 }
 
 /**
  * Resolve the node's stroke weight to a single uniform value. Per-side
  * stroke weights are out of scope for the v0 emitter — SwiftUI has no
  * shape primitive that paints a different stroke per edge without a
- * custom `Path`, so the helper throws (Fail-Fast) instead of silently
+ * custom `Path`, so the routine throws (Fail-Fast) instead of silently
  * collapsing to one side.
  */
 function uniformStrokeWeight(weight: FigStrokeWeight | undefined): number | undefined {
@@ -689,7 +659,7 @@ export function blurModifier(node: FigNode): Modifier | undefined {
       continue;
     }
     const tname = effectTypeName(effect.type);
-    if (tname === "LAYER_BLUR" || tname === "FOREGROUND_BLUR") {
+    if (tname === "FOREGROUND_BLUR") {
       const radius = typeof effect.radius === "number" ? effect.radius : 0;
       if (radius <= 0) {
         return undefined;
@@ -719,7 +689,7 @@ export function blurModifier(node: FigNode): Modifier | undefined {
  * slightly from Figma's, similar to LAYER_BLUR.
  *
  * Returns undefined when no BACKGROUND_BLUR effect is present. The
- * helper builds a full modifier on its own (rather than just a
+ * routine builds a full modifier on its own (rather than just a
  * `.blur(radius:)` value) because background blur composes against
  * the backdrop, not the foreground content.
  */
@@ -1006,5 +976,5 @@ export function offsetModifier(x: number, y: number): Modifier | undefined {
  * semantics.
  */
 export function spacerExpr(): SwiftExpr {
-  return ident("Spacer(minLength: 0)");
+  return call("Spacer", [namedArg("minLength", num(0))]);
 }

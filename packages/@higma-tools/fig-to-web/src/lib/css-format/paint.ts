@@ -14,6 +14,7 @@
  */
 import type { FigPaint, FigSolidPaint } from "@higma-document-models/fig/types";
 import { figColorToCss } from "./color";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 
 /**
  * Minimum surface needed to resolve a paint to its design-token
@@ -84,10 +85,11 @@ export function firstSolidPaintCss(
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type !== "SOLID") {
+    const solid = asSolidPaint(paint);
+    if (solid === undefined) {
       continue;
     }
-    return solidPaintToCss(paint as FigSolidPaint, resolver, options);
+    return solidPaintToCss(solid, resolver, options);
   }
   return undefined;
 }

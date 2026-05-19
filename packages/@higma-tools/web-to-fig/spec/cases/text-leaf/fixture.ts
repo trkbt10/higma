@@ -31,6 +31,7 @@ export function textLeaf(overrides: {
     "font-family": overrides.fontFamily ?? DEFAULT_FONT_FAMILY,
     "font-size": `${overrides.fontSizePx ?? DEFAULT_FONT_SIZE_PX}px`,
     "font-weight": String(overrides.fontWeight ?? DEFAULT_FONT_WEIGHT),
+    "line-height": `${(overrides.rect ?? DEFAULT_TEXT_BOX).height}px`,
     color: overrides.color ?? DEFAULT_TEXT_COLOR,
     ...overrides.extra,
   };

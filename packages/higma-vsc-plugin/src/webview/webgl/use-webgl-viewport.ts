@@ -8,7 +8,7 @@
  * state, only paint state.
  */
 
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import {
   useWebGLViewportPipeline,

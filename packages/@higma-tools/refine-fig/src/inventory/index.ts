@@ -12,6 +12,6 @@ export type {
   TypographyEntry,
   TypographyDescriptorRecord,
   TypographyUsageRecord,
-  SubtreeClusterEntry,
-  SubtreeMemberRecord,
+  StructureClusterEntry,
+  StructureMemberRecord,
 } from "./types";

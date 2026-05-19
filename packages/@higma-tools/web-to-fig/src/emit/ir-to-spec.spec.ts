@@ -4,8 +4,8 @@
  * `irToSpecGraph` is the boundary where IR vocabulary
  * (`PaintIR`, `EffectIR`, `AutoLayoutIR`, …) becomes the document-io
  * `NodeSpec` shape that ultimately drives `addNode`. A drift here
- * silently corrupts the resulting `FigDesignNode` (wrong fills,
- * dropped effects, misnamed font style) — so each adapter category
+ * silently corrupts the resulting Kiwi FigNode (wrong fills,
+ * dropped effects, misnamed font style) — so each value category
  * gets a focused contract test before any composite case relies on it.
  */
 import type {
@@ -17,6 +17,8 @@ import type {
   StrokeIR,
 } from "@higma-bridges/web-fig";
 import { pxLength } from "@higma-bridges/web-fig";
+import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { TEXT_ALIGN_H_VALUES, TEXT_ALIGN_V_VALUES } from "@higma-document-models/fig/constants";
 import { irToSpecGraph } from "./ir-to-spec";
 
 const ZERO_BOX = { x: 0, y: 0, width: 100, height: 50 };
@@ -63,7 +65,7 @@ function textIR(overrides: Partial<TextNodeIR> = {}): TextNodeIR {
       fontStyle: "normal",
       fontWeight: 400,
       fontSize: 16,
-      lineHeight: { unit: "normal" },
+      lineHeight: { unit: "px", value: 24 },
       letterSpacing: 0,
       textAlign: "left",
       textAlignVertical: "top",
@@ -135,33 +137,35 @@ describe("irToSpecGraph — frame", () => {
     }
     expect(graph.spec.fills).toHaveLength(1);
     const fill = graph.spec.fills![0]!;
-    expect(fill.type).toBe("SOLID");
-    if (fill.type !== "SOLID") {
+    expect(getPaintType(fill)).toBe("SOLID");
+    const solid = asSolidPaint(fill);
+    if (solid === undefined) {
       throw new Error();
     }
-    expect(fill.color).toEqual({ r: 0.1, g: 0.2, b: 0.3, a: 1 });
+    expect(solid.color).toEqual({ r: 0.1, g: 0.2, b: 0.3, a: 1 });
   });
 
-  it("translates an IMAGE fill into a FigImagePaint with the corresponding scaleMode", () => {
+  it("translates an IMAGE fill into a FigImagePaint with the corresponding imageScaleMode", () => {
     const graph = irToSpecGraph(frameIR({
       style: {
         ...NEUTRAL_STYLE,
-        fills: [{ kind: "image", imageId: "img-9", scaleMode: "cover" }],
+        fills: [{ kind: "image", imageId: "abcdef", scaleMode: "cover" }],
       },
     }));
     if (graph.spec.type !== "FRAME") {
       throw new Error();
     }
     const fill = graph.spec.fills![0]!;
-    expect(fill.type).toBe("IMAGE");
-    if (fill.type !== "IMAGE") {
+    expect(getPaintType(fill)).toBe("IMAGE");
+    const image = asImagePaint(fill);
+    if (image === undefined) {
       throw new Error();
     }
-    expect(fill.imageRef).toBe("img-9");
-    expect(fill.scaleMode).toBe("FILL");
+    expect(image.image?.hash).toEqual([0xab, 0xcd, 0xef]);
+    expect(image.imageScaleMode).toMatchObject({ name: "FILL" });
   });
 
-  it("encodes a linear-gradient fill via gradientHandlePositions + gradientStops", () => {
+  it("encodes a linear-gradient fill via Kiwi transform + stops", () => {
     const graph = irToSpecGraph(frameIR({
       style: {
         ...NEUTRAL_STYLE,
@@ -179,12 +183,13 @@ describe("irToSpecGraph — frame", () => {
       throw new Error();
     }
     const fill = graph.spec.fills![0]!;
-    expect(fill.type).toBe("GRADIENT_LINEAR");
-    if (fill.type !== "GRADIENT_LINEAR") {
+    expect(getPaintType(fill)).toBe("GRADIENT_LINEAR");
+    const gradient = asGradientPaint(fill);
+    if (gradient === undefined) {
       throw new Error();
     }
-    expect(fill.gradientHandlePositions).toHaveLength(3);
-    expect(fill.gradientStops).toHaveLength(2);
+    expect(gradient.transform).toBeDefined();
+    expect(gradient.stops).toHaveLength(2);
   });
 
   it("translates strokes into FigPaint plus the widest weight", () => {
@@ -203,7 +208,7 @@ describe("irToSpecGraph — frame", () => {
     expect(graph.spec.strokeWeight).toBe(4);
   });
 
-  it("translates effects via the bridge adapter", () => {
+  it("projects effects through the bridge value projector", () => {
     const effect: EffectIR = {
       kind: "drop-shadow",
       color: { r: 0, g: 0, b: 0, a: 0.5 },
@@ -220,7 +225,7 @@ describe("irToSpecGraph — frame", () => {
     }
     expect(graph.spec.effects).toHaveLength(1);
     const out = graph.spec.effects![0]!;
-    expect(out.type).toBe("DROP_SHADOW");
+    expect(out.type).toMatchObject({ name: "DROP_SHADOW" });
     expect(out.offset).toEqual({ x: 1, y: 2 });
     expect(out.radius).toBe(4);
   });
@@ -242,18 +247,17 @@ describe("irToSpecGraph — frame", () => {
     if (graph.spec.type !== "FRAME") {
       throw new Error();
     }
-    const layout = graph.spec.autoLayout;
-    if (!layout) {
-      throw new Error("expected autoLayout");
-    }
-    expect(layout.stackMode.name).toBe("HORIZONTAL");
-    expect(layout.stackSpacing).toBe(8);
-    expect(layout.stackPadding).toEqual({ top: 1, right: 2, bottom: 3, left: 4 });
-    expect(layout.stackPrimaryAlignItems?.name).toBe("CENTER");
+    expect(graph.spec.stackMode?.name).toBe("HORIZONTAL");
+    expect(graph.spec.stackSpacing).toBe(8);
+    expect(graph.spec.stackVerticalPadding).toBe(1);
+    expect(graph.spec.stackPaddingRight).toBe(2);
+    expect(graph.spec.stackPaddingBottom).toBe(3);
+    expect(graph.spec.stackHorizontalPadding).toBe(4);
+    expect(graph.spec.stackPrimaryAlignItems?.name).toBe("CENTER");
     // The `StackAlign` Kiwi enum has no STRETCH variant — that category
     // is carried per-child as `stackChildAlignSelf=STRETCH`. The parent's
     // counterAlign falls back to MIN so the encoded `.fig` stays valid.
-    expect(layout.stackCounterAlignItems?.name).toBe("MIN");
+    expect(graph.spec.stackCounterAlignItems?.name).toBe("MIN");
   });
 
   it("recurses into children, returning a SpecGraph per child", () => {
@@ -301,7 +305,7 @@ describe("irToSpecGraph — text", () => {
         fontStyle: "italic",
         fontWeight: 400,
         fontSize: 16,
-        lineHeight: { unit: "normal" },
+        lineHeight: { unit: "px", value: 24 },
         letterSpacing: 0,
         textAlign: "left",
         textAlignVertical: "top",
@@ -315,7 +319,7 @@ describe("irToSpecGraph — text", () => {
     expect(graph.spec.fontStyle).toBe("Italic");
   });
 
-  it("leaves lineHeight undefined for ratio + normal units (resolution happens elsewhere)", () => {
+  it("resolves ratio lineHeight from the explicit font size", () => {
     const graph = irToSpecGraph(textIR({
       textStyle: {
         fontFamily: "Inter",
@@ -333,16 +337,33 @@ describe("irToSpecGraph — text", () => {
     if (graph.spec.type !== "TEXT") {
       throw new Error();
     }
-    expect(graph.spec.lineHeight).toBeUndefined();
+    expect(graph.spec.lineHeight).toBe(24);
   });
 
-  it("emits no horizontal/vertical alignment for the IR default (`left` / `top`) so the spec stays terse", () => {
+  it("rejects normal lineHeight because Fig emission requires an explicit value", () => {
+    expect(() => irToSpecGraph(textIR({
+      textStyle: {
+        fontFamily: "Inter",
+        fontStyle: "normal",
+        fontWeight: 400,
+        fontSize: 16,
+        lineHeight: { unit: "normal" },
+        letterSpacing: 0,
+        textAlign: "left",
+        textAlignVertical: "top",
+        textTransform: "none",
+        textDecoration: "none",
+      },
+    }))).toThrow("lineHeight=normal");
+  });
+
+  it("emits explicit horizontal/vertical alignment for the IR default (`left` / `top`)", () => {
     const graph = irToSpecGraph(textIR());
     if (graph.spec.type !== "TEXT") {
       throw new Error();
     }
-    expect(graph.spec.textAlignHorizontal).toBeUndefined();
-    expect(graph.spec.textAlignVertical).toBeUndefined();
+    expect(graph.spec.textAlignHorizontal).toEqual({ value: TEXT_ALIGN_H_VALUES.LEFT, name: "LEFT" });
+    expect(graph.spec.textAlignVertical).toEqual({ value: TEXT_ALIGN_V_VALUES.TOP, name: "TOP" });
   });
 
   it("encodes IR `textAlign: center` as Figma `textAlignHorizontal: CENTER`", () => {
@@ -352,7 +373,7 @@ describe("irToSpecGraph — text", () => {
         fontStyle: "normal",
         fontWeight: 400,
         fontSize: 16,
-        lineHeight: { unit: "normal" },
+        lineHeight: { unit: "px", value: 24 },
         letterSpacing: 0,
         textAlign: "center",
         textAlignVertical: "top",
@@ -373,7 +394,7 @@ describe("irToSpecGraph — text", () => {
         fontStyle: "normal",
         fontWeight: 400,
         fontSize: 16,
-        lineHeight: { unit: "normal" },
+        lineHeight: { unit: "px", value: 24 },
         letterSpacing: 0,
         textAlign: "left",
         textAlignVertical: "center",

@@ -2,7 +2,7 @@
  * @file Buzz document IO contract tests.
  */
 
-import { createSampleFigPayload } from "@higma-codecs/kiwi/test-helpers";
+import { createSampleFigPayload } from "@higma-codecs/kiwi/test-fixtures";
 import { buildFigCanvasHeader } from "@higma-figma-containers/canvas";
 
 import { loadBuzzDocumentResult } from ".";

@@ -13,20 +13,8 @@
  * `ImageResolver` here that returns a stable file path
  * (`./assets/<hash>.<ext>`) and writes the bytes to disk on the side.
  *
- * Why not centralise gradient handling earlier? Because two encodings
- * coexist in real .fig files:
- *
- *   1. **API form** — `gradientHandlePositions` (start, end, width)
- *      and `gradientStops`. Builder-emitted documents use this.
- *   2. **Kiwi form** — `transform` matrix mapping gradient space
- *      `(s, t)` → object normalised space, with `(1, 0)` = start and
- *      `(0, 0)` = end (per the type docs in
- *      `@higma-document-models/fig/types`). Real exports use this.
- *
- * The angle math diverges between the two and a single hardcoded
- * `180deg` (which the previous emitter shipped) gets it wrong for
- * every non-vertical gradient. This module derives the angle from
- * whichever encoding the paint actually carries.
+ * Gradient angle and stop interpretation is delegated to the renderer
+ * paint SoT so CSS emission does not re-derive Kiwi transform semantics.
  */
 import type {
   FigGradientPaint,
@@ -35,6 +23,9 @@ import type {
   FigNode,
   FigPaint,
 } from "@higma-document-models/fig/types";
+import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { canonicaliseImageScaleMode, type ScaleMode } from "@higma-document-models/fig/constants";
+import { getGradientDirection, getGradientStops, getScaleMode } from "@higma-document-renderers/fig/paint";
 import type { TokenIndex } from "../../tokens";
 import { figColorToCss } from "../../lib/css-format/color";
 import { clamp01, round3 } from "../../lib/css-format/numeric";
@@ -59,21 +50,13 @@ function stopsCss(stops: readonly FigGradientStop[]): string {
     .join(", ");
 }
 
-function paintStops(paint: FigGradientPaint): readonly FigGradientStop[] | undefined {
-  if (paint.gradientStops && paint.gradientStops.length > 0) {
-    return paint.gradientStops;
-  }
-  if (paint.stops && paint.stops.length > 0) {
-    return paint.stops;
-  }
-  return undefined;
+function paintStops(paint: FigGradientPaint): readonly FigGradientStop[] {
+  return getGradientStops(paint);
 }
 
 /**
- * Compute a CSS gradient angle from `gradientHandlePositions` (API
- * form) or from `transform` (Kiwi form). Returns degrees with 0deg =
- * "to top" per the CSS spec (matches `linear-gradient(<angle>, ...)`
- * usage). Returns undefined when the gradient lacks usable handles.
+ * Compute a CSS gradient angle from the Kiwi paint transform. Returns
+ * degrees with 0deg = "to top" per the CSS spec.
  *
  * Math:
  *   - Figma normalised coords: x rightward, y downward.
@@ -81,22 +64,9 @@ function paintStops(paint: FigGradientPaint): readonly FigGradientStop[] | undef
  *   - CSS angle is measured clockwise from the positive y-up axis,
  *     i.e. atan2(Dx, -Dy) in radians.
  */
-function linearGradientAngle(paint: FigGradientPaint): number | undefined {
-  const handles = paint.gradientHandlePositions;
-  if (handles && handles.length >= 2) {
-    const start = handles[0];
-    const end = handles[1];
-    if (start && end) {
-      return atan2DegFromUp(end.x - start.x, end.y - start.y);
-    }
-  }
-  if (paint.transform) {
-    // (1, 0) is start, (0, 0) is end → end - start = (-m00, -m10).
-    const m00 = paint.transform.m00 ?? 1;
-    const m10 = paint.transform.m10 ?? 0;
-    return atan2DegFromUp(-m00, -m10);
-  }
-  return undefined;
+function linearGradientAngle(paint: FigGradientPaint): number {
+  const { start, end } = getGradientDirection(paint);
+  return atan2DegFromUp(end.x - start.x, end.y - start.y);
 }
 
 function atan2DegFromUp(dx: number, dy: number): number {
@@ -109,19 +79,12 @@ function atan2DegFromUp(dx: number, dy: number): number {
 
 function linearGradientCss(paint: FigGradientPaint): string | undefined {
   const stops = paintStops(paint);
-  if (!stops) {
-    return undefined;
-  }
   const angle = linearGradientAngle(paint);
-  const angleStr = angle === undefined ? "180deg" : `${angle}deg`;
-  return `linear-gradient(${angleStr}, ${stopsCss(stops)})`;
+  return `linear-gradient(${angle}deg, ${stopsCss(stops)})`;
 }
 
 function radialGradientCss(paint: FigGradientPaint): string | undefined {
   const stops = paintStops(paint);
-  if (!stops) {
-    return undefined;
-  }
   // Figma radial gradients use the second handle as the radius point.
   // Without solving the ellipse mapping we fall back to `closest-side`,
   // which matches Figma's default circular gradient at the box's
@@ -133,17 +96,11 @@ function radialGradientCss(paint: FigGradientPaint): string | undefined {
 
 function angularGradientCss(paint: FigGradientPaint): string | undefined {
   const stops = paintStops(paint);
-  if (!stops) {
-    return undefined;
-  }
   return `conic-gradient(${stopsCss(stops)})`;
 }
 
 function diamondGradientCss(paint: FigGradientPaint): string | undefined {
   const stops = paintStops(paint);
-  if (!stops) {
-    return undefined;
-  }
   // CSS has no native diamond gradient. We approximate via a layered
   // conic-gradient — close enough for most authoring intent and
   // strictly better than rendering nothing.
@@ -158,8 +115,8 @@ function imagePaintCss(paint: FigImagePaint, resolver: ImageResolver): string | 
   return `url(${JSON.stringify(url)})`;
 }
 
-function imageScaleMode(paint: FigImagePaint): string | undefined {
-  return paint.scaleMode ?? paint.imageScaleMode;
+function imageScaleMode(paint: FigImagePaint): ScaleMode {
+  return canonicaliseImageScaleMode(getScaleMode(paint));
 }
 
 function imageBackgroundLayer(paint: FigImagePaint, resolver: ImageResolver): {
@@ -175,7 +132,6 @@ function imageBackgroundLayer(paint: FigImagePaint, resolver: ImageResolver): {
   const mode = imageScaleMode(paint);
   switch (mode) {
     case "FILL":
-    case "CROP":
       return { image, size: "cover", repeat: "no-repeat", position: "center" };
     case "FIT":
       return { image, size: "contain", repeat: "no-repeat", position: "center" };
@@ -183,8 +139,6 @@ function imageBackgroundLayer(paint: FigImagePaint, resolver: ImageResolver): {
       return { image, size: "auto", repeat: "repeat" };
     case "STRETCH":
       return { image, size: "100% 100%", repeat: "no-repeat" };
-    default:
-      return { image, size: "cover", repeat: "no-repeat", position: "center" };
   }
 }
 
@@ -201,7 +155,7 @@ type BackgroundLayer = {
 
 function gradientLayer(paint: FigGradientPaint): BackgroundLayer | undefined {
   const css = (() => {
-    switch (paint.type) {
+    switch (getPaintType(paint)) {
       case "GRADIENT_LINEAR":
         return linearGradientCss(paint);
       case "GRADIENT_RADIAL":
@@ -222,19 +176,20 @@ function paintToLayer(paint: FigPaint, index: TokenIndex, resolver: ImageResolve
   if (!isVisible(paint)) {
     return undefined;
   }
-  switch (paint.type) {
-    case "SOLID": {
-      const css = solidPaintToCss(paint, index);
-      return css ? { image: css } : undefined;
-    }
-    case "GRADIENT_LINEAR":
-    case "GRADIENT_RADIAL":
-    case "GRADIENT_ANGULAR":
-    case "GRADIENT_DIAMOND":
-      return gradientLayer(paint);
-    case "IMAGE":
-      return imageBackgroundLayer(paint, resolver);
+  const solid = asSolidPaint(paint);
+  if (solid !== undefined) {
+    const css = solidPaintToCss(solid, index);
+    return css ? { image: css } : undefined;
   }
+  const gradient = asGradientPaint(paint);
+  if (gradient !== undefined) {
+    return gradientLayer(gradient);
+  }
+  const image = asImagePaint(paint);
+  if (image !== undefined) {
+    return imageBackgroundLayer(image, resolver);
+  }
+  throw new Error(`paintToLayer: unsupported paint type "${getPaintType(paint)}"`);
 }
 
 /**
@@ -272,8 +227,9 @@ export function paintsToBackgroundStyle(
   }
 
   // Single SOLID — keep the simple form.
-  if (visible.length === 1 && visible[0]?.type === "SOLID") {
-    const css = solidPaintToCss(visible[0], index);
+  const singleSolid = visible.length === 1 ? asSolidPaint(visible[0]!) : undefined;
+  if (singleSolid !== undefined) {
+    const css = solidPaintToCss(singleSolid, index);
     return css ? { background: css } : {};
   }
 
@@ -304,8 +260,9 @@ export function paintsToBackgroundStyle(
 
 function pickBottomSolid(visible: readonly FigPaint[], index: TokenIndex): string | undefined {
   for (const paint of visible) {
-    if (paint.type === "SOLID") {
-      return solidPaintToCss(paint, index);
+    const solid = asSolidPaint(paint);
+    if (solid !== undefined) {
+      return solidPaintToCss(solid, index);
     }
   }
   return undefined;
@@ -324,7 +281,7 @@ function collectImageGradientLayers(
 ): readonly BackgroundLayer[] {
   const layers: BackgroundLayer[] = [];
   for (const paint of [...visible].reverse()) {
-    if (paint.type === "SOLID") {
+    if (asSolidPaint(paint) !== undefined) {
       continue;
     }
     const layer = paintToLayer(paint, index, resolver);
@@ -354,8 +311,9 @@ export function paintsForText(
   if (visible.length === 0) {
     return {};
   }
-  if (visible.length === 1 && visible[0]?.type === "SOLID") {
-    const css = solidPaintToCss(visible[0], index);
+  const singleSolid = visible.length === 1 ? asSolidPaint(visible[0]!) : undefined;
+  if (singleSolid !== undefined) {
+    const css = solidPaintToCss(singleSolid, index);
     return css ? { color: css } : {};
   }
   const fancy = paintsToBackgroundStyle(paints, index, resolver);

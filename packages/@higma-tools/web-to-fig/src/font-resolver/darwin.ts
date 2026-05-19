@@ -51,7 +51,7 @@ export type DarwinFontCatalog = {
  *
  * Sourced from WebKit's
  * `Source/WebCore/platform/graphics/cocoa/SystemFontDatabaseCocoa.mm`
- * (the `systemFontFamily()` helper) and Apple's "System Fonts" docs.
+ * (the `systemFontFamily()` routine) and Apple's "System Fonts" docs.
  * Hard-coded here rather than queried from `system_profiler` because
  * the alias chain is platform behaviour, not catalogue data.
  */

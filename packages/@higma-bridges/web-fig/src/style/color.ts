@@ -11,7 +11,7 @@
 import type { ColorIR } from "../ir/types";
 import { clamp01, round3 } from "./numeric";
 
-/** Convert a normalised IR color to a CSS color string. */
+/** Convert an IR color to a CSS color string. */
 export function colorIRToCss(c: ColorIR): string {
   const r = Math.round(c.r * 255);
   const g = Math.round(c.g * 255);
@@ -49,7 +49,7 @@ export function cssToColorIR(value: string): ColorIR {
   }
   throw new Error(
     `cssToColorIR: cannot parse css color value "${value}". `
-    + `Named CSS colours must be normalised by the caller before reaching the bridge.`,
+    + `Named CSS colours must be resolved by the caller before reaching the bridge.`,
   );
 }
 

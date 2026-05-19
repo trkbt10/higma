@@ -2,7 +2,7 @@
  * @file Case `inferred-zero-children-falls-through` — empty parent
  * must produce a FRAME with `direction: "none"` and zero children.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withNoChildren } from "./fixture";
 

@@ -3,7 +3,7 @@
  * VectorNodeIR with viewBox preserved and each `<path>` translated
  * to a `VectorPathIR` with the resolved fill.
  */
-import { asVector, normalizeOne, singleChild } from "../_helpers";
+import { asVector, normalizeOne, singleChild } from "../case-ir-assertions";
 import { DEFAULT_SVG_PATH_D, inlineSvgVector } from "./fixture";
 
 describe("case svg-vector-inline", () => {

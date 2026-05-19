@@ -19,7 +19,7 @@ import {
 } from "@higma-figma-containers/package";
 import type { FigCanvasMagic } from "@higma-figma-schema/profiles";
 
-import { denormaliseFigFamilyNodeForEncode, normaliseFigFamilyNodeChanges } from "./node-normalization";
+import { encodeFigFamilyNodeChange, readFigFamilyNodeChanges } from "./node-enum-codec";
 
 // Image / metadata shapes are owned by `@higma-figma-containers/package`
 // (`FigPackageImage` / `FigPackageMetadata`). This module deliberately does
@@ -125,7 +125,7 @@ export async function loadFigFamilyFile<NodeChange = Record<string, unknown>, Bl
     compressedSchema: chunks.schema,
     version: header.version,
     canvasMagic: header.magic,
-    nodeChanges: normaliseFigFamilyNodeChanges<NodeChange>(readRequiredArray(message.nodeChanges, "nodeChanges")),
+    nodeChanges: readFigFamilyNodeChanges<NodeChange>(readRequiredArray(message.nodeChanges, "nodeChanges")),
     blobs: readOptionalArray(message.blobs, "blobs") as readonly BlobValue[],
     images: extracted.images,
     metadata: extracted.metadata,
@@ -181,7 +181,7 @@ export async function saveFigFamilyFile<NodeChange, BlobValue>(
   encoder.writeHeader(createHeaderFields(loaded));
 
   for (const node of loaded.nodeChanges) {
-    encoder.writeNodeChange(denormaliseFigFamilyNodeForEncode(node));
+    encoder.writeNodeChange(encodeFigFamilyNodeChange(node));
   }
 
   const messageData = encoder.finalize();
@@ -214,7 +214,7 @@ export async function saveFigFamilyFile<NodeChange, BlobValue>(
 }
 
 export {
-  denormaliseFigFamilyNodeForEncode,
-  normaliseFigFamilyNodeChanges,
+  encodeFigFamilyNodeChange,
+  readFigFamilyNodeChanges,
   type FigKiwiEnumValue,
-} from "./node-normalization";
+} from "./node-enum-codec";

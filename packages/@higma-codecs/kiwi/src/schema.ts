@@ -9,6 +9,7 @@ import type {
   KiwiDefinitionKind,
   KiwiPrimitiveType,
 } from "./types";
+import { KiwiParseError } from "./errors";
 
 /** Kiwi definition kind constants */
 export const KIWI_KIND = {
@@ -61,10 +62,10 @@ export function resolveTypeName(
 ): KiwiPrimitiveType | string {
   if (typeId < 0) {
     const name = TYPE_NAMES[typeId];
-    if (name) {
+    if (name !== undefined) {
       return name;
     }
-    return `unknown(${typeId})`;
+    throw new KiwiParseError(`Unknown Kiwi primitive type id: ${typeId}`);
   }
 
   // Custom type - reference to another definition
@@ -72,7 +73,7 @@ export function resolveTypeName(
     return definitions[typeId].name;
   }
 
-  return `ref(${typeId})`;
+  throw new KiwiParseError(`Unknown Kiwi definition index: ${typeId}`);
 }
 
 /**
@@ -82,7 +83,11 @@ export function resolveTypeName(
  * @returns Kind name
  */
 export function resolveKindName(kindId: number): KiwiDefinitionKind {
-  return KIND_NAMES[kindId] ?? "MESSAGE";
+  const kind = KIND_NAMES[kindId];
+  if (kind === undefined) {
+    throw new KiwiParseError(`Unknown Kiwi definition kind id: ${kindId}`);
+  }
+  return kind;
 }
 
 /** Options for creating a field */

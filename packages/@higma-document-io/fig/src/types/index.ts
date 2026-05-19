@@ -1,14 +1,9 @@
 /**
  * @file Types barrel — io-specific NodeSpec discriminated union.
  *
- * Domain types (FigDesignDocument, FigDesignNode, FigPage, FigNodeId,
- * FigPageId, plus utilities like guidToNodeId / parseId) live in
- * `@higma-document-models/fig/domain`. Builder ID utilities
- * (FigBuilderState, createFigBuilderState, nextNodeId, nextPageId)
- * live in `@higma-document-models/fig/builder`. Consumers must import
- * those names directly from their owning packages — this barrel
- * deliberately does not re-publish them under shorter aliases (the
- * cross-package re-export ban guards this contract).
+ * Kiwi document types live in `@higma-document-models/fig/domain`.
+ * Builder GUID utilities live in `@higma-document-models/fig/builder`.
+ * Consumers must import those names directly from their owning packages.
  *
  * The only thing this module owns is the `NodeSpec` discriminated
  * union — the declarative shape consumed by `addNode` /
@@ -33,4 +28,6 @@ export type {
   TextNodeSpec,
   SymbolNodeSpec,
   InstanceNodeSpec,
+  KiwiStackLayoutFields,
+  KiwiChildLayoutFields,
 } from "./spec-types";

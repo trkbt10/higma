@@ -1,6 +1,6 @@
 /**
  * @file `@higma-bridges/web-fig` public entry — neutral IR plus
- * adapters used by both `@higma-tools/fig-to-web` and
+ * boundary codecs used by both `@higma-tools/fig-to-web` and
  * `@higma-tools/web-to-fig` to round-trip via a single contract.
  */
 export type {
@@ -49,14 +49,13 @@ export {
   figBlendModeToIR,
   figColorToIR,
   figEffectToIR,
-  figNodeToIR,
   figPaintToIR,
   irAutoLayoutToFig,
   irBlendModeToFig,
   irColorToFig,
   irEffectToFig,
   irPaintToFig,
-} from "./adapters";
+} from "./codecs";
 
 export type { InferInput, InferenceResult } from "./layout";
 export { inferAutoLayout } from "./layout";

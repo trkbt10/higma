@@ -3,9 +3,6 @@
  */
 
 export {
+  createEmptyFigDocument,
   addPage,
-  removePage,
-  reorderPage,
-  duplicatePage,
-  renamePage,
 } from "./page-manager";

@@ -1,19 +1,19 @@
 /**
  * @file Verify the `ensure-internal-canvas` plan action inserts a
  *  fresh CANVAS when the source lacks one, and that the rest of the
- *  pipeline (proxy bootstrap + bind) lands correctly afterwards.
+ *  pipeline (styleDefinition bootstrap + bind) lands correctly afterwards.
  *
  * The contract: a `.fig` without an Internal Only Canvas must still be
  * processable by refine-fig. The plan layer inserts an ensure action
  * at the head of the plan; the apply layer creates the canvas, records
- * its GUID, and threads it into every subsequent create-*-proxy
+ * its GUID, and threads it into every subsequent create-*-style-definition
  * action.
  *
  * Fixture strategy: start from `rectangle/rectangle.fig` (already known
  * to lint clean and exercise the bootstrap path), drop its existing
  * Internal Only Canvas before invoking refine-fig, and verify the
  * recovered output still lints clean and contains exactly one
- * Internal Only Canvas with the bootstrapped proxies parented under it.
+ * Internal Only Canvas with the bootstrapped styleDefinitions parented under it.
  */
 
 import { readFile } from "node:fs/promises";
@@ -141,12 +141,12 @@ describe("refine-fig ensure-internal-canvas", () => {
       });
 
       // ensure action must not appear in skipped — it is the precondition
-      // for every following create-*-proxy.
+      // for every following create-*-style-definition.
       const ensureSkips = result.skipped.filter((s) => s.action.kind === "ensure-internal-canvas");
       expect(ensureSkips, `ensure must not be skipped: ${JSON.stringify(ensureSkips)}`).toEqual([]);
 
       // Bootstrap path must still fire for every named palette entry.
-      expect(result.fillProxiesCreated, "expected at least one bootstrapped FILL proxy").toBeGreaterThan(0);
+      expect(result.fillStyleDefinitionsCreated, "expected at least one bootstrapped FILL styleDefinition").toBeGreaterThan(0);
 
       const out = await saveFigFile(result.loaded);
       const outLoaded = await loadFigFile(out);
@@ -160,14 +160,14 @@ describe("refine-fig ensure-internal-canvas", () => {
         throw new Error("expected internal canvas in output");
       }
       const newCanvasGuid = `${newCanvas.guid.sessionID}:${newCanvas.guid.localID}`;
-      const proxiesUnderNewCanvas = outLoaded.nodeChanges.filter((n) => {
+      const styleDefinitionsUnderNewCanvas = outLoaded.nodeChanges.filter((n) => {
         const p = n.parentIndex?.guid;
         if (!p) {
           return false;
         }
         return `${p.sessionID}:${p.localID}` === newCanvasGuid && n.styleType?.name === "FILL";
       });
-      expect(proxiesUnderNewCanvas.length, "bootstrapped FILL proxies must live under the new internal canvas")
+      expect(styleDefinitionsUnderNewCanvas.length, "bootstrapped FILL styleDefinitions must live under the new internal canvas")
         .toBeGreaterThan(0);
 
       const after = await runFigHealthCheck(out);

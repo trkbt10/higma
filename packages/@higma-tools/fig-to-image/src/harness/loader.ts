@@ -1,9 +1,9 @@
 /**
- * @file Lazy adapter that loads the WebGL harness at runtime.
+ * @file Lazy loader for the WebGL harness.
  *
  * Why dynamic import: `@higma-tools/web-fig-roundtrip` is a
  * same-scope sibling, so `enforce-package-boundaries` forbids
- * static imports. The CLI loads the harness via this adapter
+ * static imports. The CLI loads the harness through this module
  * only when it actually needs to rasterise; `--list` invocations
  * stay sub-second because they never touch puppeteer.
  *

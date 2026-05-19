@@ -8,7 +8,7 @@ import {
   isFigmaZipFile,
 } from "./fig-file";
 import { isFigCanvas } from "@higma-figma-containers/canvas";
-import { createSampleFigFile } from "./test-fig-file";
+import { createSampleFigFile } from "./fig-file-test-fixtures";
 
 describe("fig-file", () => {
   describe("isFigCanvas", () => {

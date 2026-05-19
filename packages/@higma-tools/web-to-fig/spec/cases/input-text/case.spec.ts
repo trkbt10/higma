@@ -2,7 +2,7 @@
  * @file Case `input-text` — `<input>` becomes a FRAME with the
  * authored chrome (background + border).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { INPUT_RECT, textInput } from "./fixture";
 
 describe("case input-text", () => {

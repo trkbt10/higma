@@ -11,7 +11,7 @@
  *      rather than silently corrupting fig payloads.
  *
  *   2. Make sure schema-vs-codebase aliases (CROP → FILL,
- *      LAYER_BLUR → FOREGROUND_BLUR, EVENODD → ODD) keep producing
+ *      EVENODD → ODD) keep producing
  *      the right numeric value. The aliases exist for legacy domain
  *      callers; if any of them drift, the encode side breaks.
  */
@@ -32,6 +32,7 @@ import {
   STACK_MODE_VALUES,
   STACK_ALIGN_VALUES,
   STACK_JUSTIFY_VALUES,
+  STACK_WRAP_VALUES,
   STACK_COUNTER_ALIGN_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
@@ -138,6 +139,10 @@ describe("layout constants", () => {
   it("StackJustify SPACE_EVENLY precedes SPACE_BETWEEN", () => {
     expect(STACK_JUSTIFY_VALUES.SPACE_EVENLY).toBe(3);
     expect(STACK_JUSTIFY_VALUES.SPACE_BETWEEN).toBe(4);
+  });
+
+  it("StackWrap is a schema enum, not a boolean payload", () => {
+    expect(STACK_WRAP_VALUES).toEqual({ NO_WRAP: 0, WRAP: 1 });
   });
 
   it("StackCounterAlign STRETCH=3 (where the actual stretch override lives)", () => {

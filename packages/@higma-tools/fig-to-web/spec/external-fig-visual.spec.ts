@@ -69,20 +69,19 @@ import {
   buildRegistry,
   emitFromFrames,
   listFrameTargets,
-  loadFigSource,
 } from "../src";
 import type {
   EmitFile,
   EmitRegistry,
   FrameTarget,
 } from "../src";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import { createFigDocumentContext, type FigDocumentContext } from "@higma-document-io/fig/context";
 import { doctype, el, raw, text } from "../src/lib/html-tree/builder";
 import { serialize } from "../src/lib/html-tree/serialize";
 import type { HtmlNode } from "../src/lib/html-tree/types";
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+import { getNodeType } from "@higma-document-models/fig/domain";
 
 // =============================================================================
 // External .fig discovery (mirrors external-fig-verification.spec.ts so the
@@ -152,13 +151,13 @@ function diffThreshold(): number {
 // Fig discovery (canvas + frames)
 // =============================================================================
 
-function listUserVisibleCanvases(source: FigSymbolContext): readonly FigNode[] {
+function listUserVisibleCanvases(source: FigDocumentContext): readonly FigNode[] {
   const out: FigNode[] = [];
-  for (const root of source.tree.roots) {
+  for (const root of source.document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
-    for (const child of safeChildren(root)) {
+    for (const child of source.document.childrenOf(root)) {
       if (getNodeType(child) === "CANVAS" && child.internalOnly !== true) {
         out.push(child);
       }
@@ -167,9 +166,9 @@ function listUserVisibleCanvases(source: FigSymbolContext): readonly FigNode[] {
   return out;
 }
 
-function pickCanvasWithFrames(canvases: readonly FigNode[]): FigNode | undefined {
+function pickCanvasWithFrames(source: FigDocumentContext, canvases: readonly FigNode[]): FigNode | undefined {
   for (const canvas of canvases) {
-    if (listFrameTargets(canvas).length > 0) {
+    if (listFrameTargets(source.document, canvas).length > 0) {
       return canvas;
     }
   }
@@ -439,7 +438,7 @@ type VisualState = {
   readonly figPath: string;
   readonly outDir: string;
   readonly diffDir: string;
-  readonly source: FigSymbolContext;
+  readonly source: FigDocumentContext;
   readonly registry: EmitRegistry;
   readonly frames: readonly FigNode[];
   readonly browser: Browser;
@@ -453,13 +452,13 @@ type Ref<T> = { value: T | null };
 async function startVisualState(figPath: string): Promise<VisualState> {
   const buffer = await fsp.readFile(figPath);
   const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const source = await loadFigSource(bytes);
+  const source = await createFigDocumentContext(bytes);
   const canvases = listUserVisibleCanvases(source);
-  const canvas = pickCanvasWithFrames(canvases);
+  const canvas = pickCanvasWithFrames(source, canvases);
   if (!canvas) {
     throw new Error(`fig file "${figPath}" has no user-visible CANVAS with frame-like top-level children`);
   }
-  const frames = listFrameTargets(canvas);
+  const frames = listFrameTargets(source.document, canvas);
   const registry = buildRegistry(source, frames);
   const result = await emitFromFrames(source, frames, { debugAttrs: false });
 

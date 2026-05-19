@@ -194,11 +194,9 @@ function buildRun(
 }
 
 function resolveOverrideColor(override: RawOverrideEntry, index: TokenIndex): string | undefined {
-  // Inline fillPaints have priority for the emitter — the override
-  // table's `styleIdForFill` is already pre-resolved by `loadFigSource`'s
-  // `resolveTree` walk against the file's style registry, so by the
-  // time we look here `override.fillPaints` reflects the live colour
-  // when one was bound to a style proxy.
+  // Inline fillPaints are the only colour payload this run emitter
+  // consumes. Style-id expansion is owned by the model style registry
+  // before a caller builds token inputs.
   const paints = override.fillPaints;
   if (!paints) {
     return undefined;

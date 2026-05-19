@@ -11,7 +11,7 @@
  *     glyphs in both axes — matching the captured CSS without
  *     re-implementing centring through FRAME auto-layout.
  */
-import { asFrame, asText, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { FLEX_BUTTON_LABEL, flexCentredButton } from "./fixture";
 
 describe("case leaf-text-flex-centred", () => {

@@ -3,7 +3,7 @@
  * axis but staggered counter axis must reject every alignment label
  * and fall through to `direction: "none"`.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { CHILD_COUNT, withMixedCounterAxis } from "./fixture";
 

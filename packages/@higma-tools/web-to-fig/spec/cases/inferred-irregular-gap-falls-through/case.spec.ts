@@ -4,7 +4,7 @@
  * conservative: the inferer never invents a uniform layout that the
  * captured geometry doesn't support.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { CHILD_COUNT, withIrregularGapRow } from "./fixture";
 

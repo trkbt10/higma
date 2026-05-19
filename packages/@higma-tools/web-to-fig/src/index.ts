@@ -7,8 +7,8 @@
  *   1. `web-source` — drive Playwright to capture a `RawViewportSnapshot`.
  *   2. `normalize`  — translate the snapshot into the shared
  *                     `@higma-bridges/web-fig` IR.
- *   3. `emit`       — convert the IR into a FigDesignDocument and
- *                     export `.fig` bytes via `@higma-document-io/fig`.
+ *   3. `emit`       — materialise Kiwi `nodeChanges` and export `.fig`
+ *                     bytes via `@higma-document-io/fig`.
  *
  * The shared IR is the contract that pairs this tool with
  * `@higma-tools/fig-to-web`: any IR `@higma-tools/web-to-fig` produces

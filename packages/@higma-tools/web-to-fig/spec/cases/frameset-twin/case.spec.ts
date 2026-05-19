@@ -12,7 +12,7 @@
  * legacy site depends on the normaliser leaving the assembled
  * geometry intact.
  */
-import { asFrame } from "../_helpers";
+import { asFrame } from "../case-ir-assertions";
 import { normalizeViewport } from "../../../src/normalize";
 import { staticFontResolver } from "../../test-font-resolver";
 import { LEFT_FRAME_RECT, RIGHT_FRAME_RECT, VIEWPORT, framesetTwin } from "./fixture";

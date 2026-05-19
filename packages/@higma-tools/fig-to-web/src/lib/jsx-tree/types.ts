@@ -6,7 +6,7 @@
  * every call site responsible for its own escaping; this module
  * replaces that with a structured tree (the `JsxNode` discriminated
  * union) plus a single serializer in `serialize.ts` that emits TSX
- * with all values funnelled through escape-correct helpers. Untrusted
+ * with all values funnelled through escape-correct routines. Untrusted
  * Figma-author content (TEXT characters, font names, layer names) can
  * never bypass the serializer because every public constructor takes
  * a typed value rather than a pre-formatted string.

@@ -4,7 +4,7 @@
  * `counterAlign: "end"`. Asserts the third branch (after
  * stretch / start) of `inferCounterAlignment` is reachable.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withCounterEndAlignment } from "./fixture";
 

@@ -1,23 +1,14 @@
 /**
  * @file Public entry — programmatic API for fig-to-godot.
  *
- * The package exposes two layers (the ".fig load + canvas lookup"
- * helpers live in `@higma-document-io/fig/context`; the boundary rule
- * forbids re-exporting them from a tools-scope package):
+ * The package exposes the Godot emitter and CLI. `.fig` loading,
+ * canvas lookup, and symbol resolution are owned by
+ * `@higma-document-io/fig/context`; callers import that SoT directly.
  *
- *   1. `loadFigSource` — load a `.fig` buffer into a symbol-resolved
- *      context. Thin alias for `createFigSymbolContext` exposed under
- *      a converter-friendly name; this is the only `fig-source` symbol
- *      the package owns.
- *   2. `emit` — convert target frames to Godot scene files (one
+ *   1. `emit` — convert target frames to Godot scene files (one
  *      `.tscn` per frame).
- *   3. `cli` — the argv parser + runtime that drives the pipeline.
- *
- * Consumers that need `findCanvas` / `findInternalCanvas` should
- * import them directly from `@higma-document-io/fig/context`.
+ *   2. `cli` — the argv parser + runtime that drives the pipeline.
  */
-export { loadFigSource } from "./fig-source/load";
-
 export type { FrameTarget, GodotFile, EmitResult } from "./emit";
 export {
   buildFrameTarget,

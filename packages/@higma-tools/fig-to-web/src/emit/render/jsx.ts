@@ -27,6 +27,7 @@
  *     parents.
  */
 import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { figmaFontToQuery, isItalic } from "@higma-document-models/fig/font";
 import type { TokenIndex } from "../../tokens";
 import type { EmitRegistry } from "../types";
@@ -36,18 +37,16 @@ import type { ImageResolver } from "../style/paint";
 import { absorbBackgroundDecoration } from "../style/decoration";
 import { isPlainRule } from "../style/rule";
 import type { PropBindings } from "../plan/prop-bindings";
-import { lookupInstanceTarget, variantValueForInstance } from "../plan/registry";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import { componentTargetForInstance, SYNTHETIC_TEXT_PREFIX, variantValueForInstance } from "../plan/registry";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import { emitMergedVectorSvg, emitVectorSvg, isVectorOnlyContainer, isVectorShaped } from "../svg/svg";
 import { hasOverrides, resolveTextRuns } from "../text/text-runs";
 import type { InferenceResult } from "../layout/infer-layout";
 import { inferLayout } from "../layout/infer-layout";
 import { collapseChain } from "../layout/collapse";
 import type { ReparentResult } from "../layout/reparent";
-import { guidToString, safeChildren as safeChildrenDomain } from "@higma-document-models/fig/domain";
-import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
-import { resolvePaintRef } from "@higma-document-models/fig/symbols";
-import type { FigPaint, FigStyleId } from "@higma-document-models/fig/types";
+import { guidToString } from "@higma-document-models/fig/domain";
+import type { FigPaint } from "@higma-document-models/fig/types";
 import type { JsxNode, JsxProp } from "../../lib/jsx-tree/types";
 import { el, expr, exprProp, flagProp, strProp, styleProp, text } from "../../lib/jsx-tree/builder";
 import type { IconRegistry } from "../assets/icons";
@@ -62,7 +61,7 @@ const NON_RENDERED_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 export type EmitContext = {
-  readonly source: FigSymbolContext;
+  readonly source: FigDocumentContext;
   readonly registry: EmitRegistry;
   readonly index: TokenIndex;
   readonly imageResolver: ImageResolver;
@@ -124,6 +123,7 @@ function styleInputsOf(context: EmitContext): StyleInputs {
   return {
     index: context.index,
     imageResolver: context.imageResolver,
+    childrenOf: (node) => childrenOfEmitNode(node, context),
     textBoundGuids: textBoundGuidsOf(context.propBindings),
   };
 }
@@ -178,33 +178,12 @@ function transformFromMatrix(matrix: FigMatrix | undefined): string | undefined 
   return `matrix(${m00}, ${m10}, ${m01}, ${m11}, 0, 0)`;
 }
 
-function safeChildren(node: FigNode, context?: EmitContext): readonly FigNode[] {
-  if (context) {
-    const overlay = context.reparent.childrenByParent.get(guidToString(node.guid));
-    if (overlay) {
-      return overlay;
-    }
+function childrenOfEmitNode(node: FigNode, context: EmitContext): readonly FigNode[] {
+  const overlay = context.reparent.childrenByParent.get(guidToString(node.guid));
+  if (overlay !== undefined) {
+    return overlay;
   }
-  const out: FigNode[] = [];
-  for (const child of node.children ?? []) {
-    if (child) {
-      out.push(child);
-    }
-  }
-  // Figma encodes z-order as a `parentIndex.position` fractional-index
-  // string on each child, NOT by the array order in the raw
-  // `nodeChanges` payload. The parser's `buildNodeTree` keeps the
-  // native array order, so two siblings authored as "circle behind /
-  // plus on top" can land in our `children` array as `[plus, circle]`
-  // — emitting them in DOM order then paints the circle on top of
-  // the plus and the icon disappears. Sorting by the position string
-  // here restores the bottom-to-top stack the renderer expects.
-  return [...out].sort((a, b) => positionKey(a).localeCompare(positionKey(b)));
-}
-
-function positionKey(node: FigNode): string {
-  const pos = node.parentIndex?.position;
-  return typeof pos === "string" ? pos : "";
+  return context.source.document.childrenOf(node);
 }
 
 function isRendered(node: FigNode): boolean {
@@ -244,7 +223,7 @@ export function emitFrameJsx(node: FigNode, context: EmitContext, root: RootMode
 export function emitNodeChildrenJsx(node: FigNode, context: EmitContext): readonly JsxNode[] {
   const parentLayout = parentLayoutOf(node);
   const out: JsxNode[] = [];
-  for (const child of safeChildren(node, context)) {
+  for (const child of childrenOfEmitNode(node, context)) {
     if (!isRendered(child)) {
       continue;
     }
@@ -287,7 +266,7 @@ function emitNodeJsx(node: FigNode, context: EmitContext, options: EmitOptions):
   // nodes flow through `collapseChain` which walks past any
   // transparent same-size wrapper layers and accumulates their
   // translation onto `offsetBias`.
-  const effective = collapseForEmit(node, options);
+  const effective = collapseForEmit(node, context, options);
   const next: EmitOptions = { ...options, offsetBias: nextBias(options.offsetBias, effective) };
   const target = effective.node;
 
@@ -302,11 +281,11 @@ function emitNodeJsx(node: FigNode, context: EmitContext, options: EmitOptions):
 
 type CollapsedNode = { readonly node: FigNode; readonly offsetX: number; readonly offsetY: number };
 
-function collapseForEmit(node: FigNode, options: EmitOptions): CollapsedNode {
+function collapseForEmit(node: FigNode, context: EmitContext, options: EmitOptions): CollapsedNode {
   if (options.rootMode !== undefined) {
     return { node, offsetX: 0, offsetY: 0 };
   }
-  return collapseChain(node, options.parentLayout);
+  return collapseChain(node, options.parentLayout, (candidate) => childrenOfEmitNode(candidate, context));
 }
 
 function nextBias(
@@ -330,6 +309,48 @@ function addBias(
   return { dx: current.dx + dx, dy: current.dy + dy };
 }
 
+function emitVectorOnlyContainerJsx(
+  node: FigNode,
+  context: EmitContext,
+  options: EmitOptions,
+  dataAttrs: readonly JsxProp[],
+): JsxNode | undefined {
+  if (options.rootMode !== undefined) {
+    return undefined;
+  }
+  const childrenOf = (candidate: FigNode): readonly FigNode[] => childrenOfEmitNode(candidate, context);
+  if (!isVectorOnlyContainer(node, childrenOf)) {
+    return undefined;
+  }
+  const svgStyle = nodeToStyle(
+    node,
+    styleInputsOf(context),
+    options.rootMode,
+    options.parentLayout,
+    options.offsetBias,
+    undefined,
+    parentContextOf(options),
+  );
+  const transform = transformForNode(node, options.rootMode, options.parentLayout);
+  const wrapperProps: JsxProp[] = [...dataAttrs];
+  wrapperProps.push(styleAsProp(svgStyle, transform));
+  const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index, childrenOf }, wrapperProps);
+  if (merged === undefined) {
+    return undefined;
+  }
+  // Icon externalisation: when the subtree's complexity score
+  // crosses the configured threshold AND the consumer asked for
+  // `externalize-complex`, write the SVG to `assets/icons/<slug>.svg`
+  // and replace the inline `<svg>` JSX with an `<img>` reference.
+  // Inline mode (or sub-threshold complexity) keeps the previous
+  // behaviour of emitting the SVG inline.
+  const externalized = maybeExternalizeIcon(merged, node, context, svgStyle, transform);
+  if (externalized !== undefined) {
+    return externalized;
+  }
+  return merged;
+}
+
 function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
   const { rootMode, parentLayout } = options;
   const dataAttrs = dataAttributes(node, context.debugAttrs);
@@ -341,25 +362,9 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   // do NOT run `inferLayout` here — that would double-emit the offset
   // as `padding` on the SVG element. The container's own style is
   // therefore computed without an inference result.
-  if (rootMode === undefined && isVectorOnlyContainer(node)) {
-    const svgStyle = nodeToStyle(node, styleInputsOf(context), rootMode, parentLayout, options.offsetBias, undefined, parentContextOf(options));
-    const transform = transformForNode(node, rootMode, parentLayout);
-    const wrapperProps: JsxProp[] = [...dataAttrs];
-    wrapperProps.push(styleAsProp(svgStyle, transform));
-    const merged = emitMergedVectorSvg(node, { source: context.source, index: context.index }, wrapperProps);
-    if (merged) {
-      // Icon externalisation: when the subtree's complexity score
-      // crosses the configured threshold AND the consumer asked for
-      // `externalize-complex`, write the SVG to `assets/icons/<slug>.svg`
-      // and replace the inline `<svg>` JSX with an `<img>` reference.
-      // Inline mode (or sub-threshold complexity) keeps the previous
-      // behaviour of emitting the SVG inline.
-      const externalized = maybeExternalizeIcon(merged, node, context, svgStyle, transform);
-      if (externalized) {
-        return externalized;
-      }
-      return merged;
-    }
+  const vectorOnlyContainer = emitVectorOnlyContainerJsx(node, context, options, dataAttrs);
+  if (vectorOnlyContainer !== undefined) {
+    return vectorOnlyContainer;
   }
 
   // Background-decoration absorption: a full-bleed first child becomes
@@ -368,7 +373,7 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
   // inference on the remaining children — what was a 2-child overlap
   // pattern becomes a 1-child inset pattern.
   const absorbed = absorbBackgroundDecoration(node, styleInputsOf(context));
-  const baseChildren = safeChildren(node, context)
+  const baseChildren = childrenOfEmitNode(node, context)
     .filter(isRendered)
     .filter((c) => c !== absorbed.absorbed);
   const inferred = inferLayout(node, baseChildren);
@@ -413,7 +418,7 @@ function emitContainerJsx(node: FigNode, context: EmitContext, options: EmitOpti
  *      generate a separate file — the bundler overhead outweighs the
  *      JS size win for small icons.
  *
- * When both gates pass the helper:
+ * When both gates pass the routine:
  *   - serialises the SVG JsxNode subtree to standalone XML via
  *     `serializeSvgDocument`,
  *   - registers it with `iconRegistry.register(node, svgText)`,
@@ -442,7 +447,10 @@ function maybeExternalizeIcon(
       `icons: emitMergedVectorSvg returned a non-<svg> root for node ${guidToString(node.guid)} — refusing to externalise.`,
     );
   }
-  const score = complexityScore(node, { blobs: context.source.blobs });
+  const score = complexityScore(node, {
+    blobs: context.source.blobs,
+    childrenOf: (candidate) => childrenOfEmitNode(candidate, context),
+  });
   if (score < context.assetComplexityThreshold) {
     return undefined;
   }
@@ -691,13 +699,21 @@ function emitLeafJsx(
     return el("div", { props: [...baseProps, flagProp("aria-hidden")] });
   }
   if (isVectorShaped(node)) {
-    const svg = emitVectorSvg(node, { source: context.source, index: context.index }, baseProps);
-    if (svg) {
-      return svg;
-    }
-    return el("div", { props: [...baseProps, flagProp("aria-hidden")] });
+    return emitVectorShapeJsx(node, context, baseProps);
   }
   return el("div", { props: [...baseProps] });
+}
+
+function emitVectorShapeJsx(node: FigNode, context: EmitContext, baseProps: readonly JsxProp[]): JsxNode {
+  const svg = emitVectorSvg(node, {
+    source: context.source,
+    index: context.index,
+    childrenOf: (candidate) => childrenOfEmitNode(candidate, context),
+  }, baseProps);
+  if (svg !== undefined) {
+    return svg;
+  }
+  return el("div", { props: [...baseProps, flagProp("aria-hidden")] });
 }
 
 function emitTextJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
@@ -768,11 +784,21 @@ function renderRunsBody(
   return segments;
 }
 
-function buildRunInlineStyle(
-  run: { readonly color?: string; readonly fontFamily?: string; readonly fontStyle?: string; readonly fontSize?: number },
-  base: { readonly family?: string; readonly styleName?: string; readonly fontSize?: number; readonly baseColor?: string },
-  _context: EmitContext,
-): Record<string, string> {
+type RunInlineStyleSource = {
+  readonly color?: string;
+  readonly fontFamily?: string;
+  readonly fontStyle?: string;
+  readonly fontSize?: number;
+};
+
+type RunInlineStyleBase = {
+  readonly family?: string;
+  readonly styleName?: string;
+  readonly fontSize?: number;
+  readonly baseColor?: string;
+};
+
+function buildRunInlineStyle(run: RunInlineStyleSource, base: RunInlineStyleBase, _context: EmitContext): Record<string, string> {
   const out: Record<string, string> = {};
   if (run.color !== undefined && run.color !== base.baseColor) {
     out.color = run.color;
@@ -792,26 +818,33 @@ function buildRunInlineStyle(
     // any special character in the family name safe.
     out.fontFamily = `"${run.fontFamily.replace(/"/g, '\\"')}"`;
   }
-  if (run.fontStyle !== undefined && run.fontStyle !== base.styleName) {
-    // SoT: weight + style detection routes through `figmaFontToQuery`
-    // so per-run overrides match cache keys / resolver lookups
-    // elsewhere. `figmaFontToQuery` requires a non-empty `family`
-    // structurally; we use the run's family (or the base, or an
-    // empty placeholder) — none of those affect the detected
-    // numeric weight or italic style which is what we read.
-    const query = figmaFontToQuery({
-      family: run.fontFamily ?? base.family ?? "",
-      style: run.fontStyle,
-    });
-    out.fontWeight = `${query.weight}`;
-    if (isItalic(run.fontStyle)) {
-      out.fontStyle = "italic";
-    }
-  }
+  applyRunFontStyle(out, run, base);
   if (run.fontSize !== undefined && run.fontSize !== base.fontSize) {
     out.fontSize = `${run.fontSize}px`;
   }
   return out;
+}
+
+function applyRunFontStyle(out: Record<string, string>, run: RunInlineStyleSource, base: RunInlineStyleBase): void {
+  const fontStyle = run.fontStyle;
+  if (fontStyle === undefined || fontStyle === base.styleName) {
+    return;
+  }
+  // SoT: weight + style detection routes through `figmaFontToQuery`
+  // so per-run overrides match cache keys / resolver lookups
+  // elsewhere. `figmaFontToQuery` requires a non-empty `family`
+  // structurally; we use the run's family (or the base, or an
+  // empty placeholder) — none of those affect the detected
+  // numeric weight or italic style which is what we read.
+  const query = figmaFontToQuery({
+    family: run.fontFamily ?? base.family ?? "",
+    style: fontStyle,
+  });
+  out.fontWeight = `${query.weight}`;
+  if (!isItalic(fontStyle)) {
+    return;
+  }
+  out.fontStyle = "italic";
 }
 
 function textCharsArePropBound(node: FigNode, context: EmitContext): boolean {
@@ -861,10 +894,11 @@ function propIdentForBinding(name: string): string {
 }
 
 function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptions): JsxNode {
-  const target = lookupInstanceTarget(context.source, context.registry, node);
+  const target = componentTargetForInstance(context.source, context.registry, node);
   if (!target) {
     return emitContainerJsx(node, context, options);
   }
+  const resolved = resolvedInstanceForComponent(node, context);
 
   const importPath = relativeImportPath(context.emittingFile, target.filePath);
   context.imports.set(target.componentName, importPath);
@@ -873,20 +907,8 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   const wrapTransform = transformForNode(node, options.rootMode, options.parentLayout);
 
   const variant = variantValueForInstance(context.source, context.registry, node);
-  // INSTANCE-level paint overrides (Figma's `symbolOverrides` array)
-  // re-colour individual children of the SYMBOL — the canonical case
-  // is YouTube's Camera icon dropping a black-stroke SYMBOL onto the
-  // dark Short page header where the overrides repaint it white.
-  // Because the React emit shares one `<Component .../>` per SYMBOL,
-  // we can't customise the inner paths per call site; we instead emit
-  // the override as a CSS variable on the wrapper and rely on the
-  // child path's `var(--token)` reference to inherit it. This works
-  // when the override targets the same token as the SYMBOL's
-  // authored paint (the common case for monochrome icon SYMBOLs);
-  // mixed-token children quietly fall back to the SYMBOL default.
-  const variantNode = pickVariantNode(target, variant);
-  const overrideVars = resolveInstancePaintOverrides(node, variantNode ?? target.node, context);
-  const mergedWrapStyle = Object.keys(overrideVars).length > 0 ? { ...wrapStyle, ...overrideVars } : wrapStyle;
+  const overrideVars = resolveInstancePaintOverrides(resolved.effectiveSymbol, resolved.resolvedChildren, context);
+  const mergedWrapStyle = mergeInstanceWrapperStyle(wrapStyle, overrideVars);
   const wrapStyleProp = styleAsProp(mergedWrapStyle, wrapTransform);
 
   const componentProps: JsxProp[] = [];
@@ -894,7 +916,7 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   if (variantProp) {
     componentProps.push(variantProp);
   }
-  for (const p of assignmentProps(node, target)) {
+  for (const p of assignmentProps(node, target, resolved, context)) {
     componentProps.push(p);
   }
 
@@ -907,7 +929,7 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   // of overflowing the wrapper. We rely on the wrapper itself
   // having `overflow: visible` (the Figma default for INSTANCE) so
   // the scaled content paints at the wrapper's outer dimensions.
-  const inner = wrapForScale(node, target, componentTag);
+  const inner = wrapForScale(node, context, componentTag);
 
   const wrapperProps: JsxProp[] = [];
   if (context.debugAttrs && node.name) {
@@ -917,125 +939,85 @@ function emitInstanceJsx(node: FigNode, context: EmitContext, options: EmitOptio
   return el("div", { props: wrapperProps, children: [inner], layout: "inline" });
 }
 
-/**
- * Pick the SYMBOL child a variant-set INSTANCE is rendering. For a
- * non-variant target the SYMBOL itself is the renderable; for a
- * variant set we look up by the resolved variant string. The
- * returned node is the right tree to walk for symbolOverride
- * targets — overrides reference variant-internal guids, not the
- * variant-set parent.
- */
-function pickVariantNode(
-  target: { readonly node: FigNode; readonly variants: ReadonlyMap<string, FigNode> },
-  variant: string | undefined,
-): FigNode | undefined {
-  if (target.variants.size === 0) {
-    return target.node;
+type ResolvedInstanceForEmit = {
+  readonly effectiveSymbol: FigNode;
+  readonly resolvedChildren: readonly FigNode[];
+};
+
+function resolvedInstanceForComponent(instance: FigNode, context: EmitContext): ResolvedInstanceForEmit {
+  const resolvedTarget = context.source.symbolResolver.resolveReferences(instance).effectiveSymbol;
+  if (resolvedTarget === undefined) {
+    throw new Error(`fig-to-web: INSTANCE ${guidToString(instance.guid)} has no SymbolResolver target`);
   }
-  if (variant === undefined) {
-    return target.node;
-  }
-  return target.variants.get(variant);
+  const resolved = context.source.symbolResolver.resolveInstance(instance);
+  return { effectiveSymbol: resolvedTarget.node, resolvedChildren: resolved.children };
 }
 
-/**
- * Resolve INSTANCE-level `symbolOverrides` into wrapper-level CSS
- * variable overrides. Each override that re-points a child's
- * stroke/fill style ID is converted to a `--<token>: <newColor>`
- * entry, where `<token>` is the CSS color token the SYMBOL's
- * authored paint maps to and `<newColor>` is the override paint's
- * resolved colour string. The Component's child path reads
- * `var(--<token>)`, so emitting the override on the wrapper makes
- * the CSS cascade hand it the new colour without forking the
- * Component file per call site.
- *
- * Limited scope: only SOLID overrides are supported (gradients /
- * images would need richer wrapper machinery), and only first-level
- * children are matched (deep guidPath chains aren't walked yet).
- * Anything we can't resolve cleanly is skipped — the SYMBOL's
- * default paint stays in place.
- */
+function mergeInstanceWrapperStyle(
+  base: Record<string, string>,
+  overrideVars: Record<string, string>,
+): Record<string, string> {
+  if (Object.keys(overrideVars).length === 0) {
+    return base;
+  }
+  return { ...base, ...overrideVars };
+}
+
 function resolveInstancePaintOverrides(
-  instance: FigNode,
   symbolBase: FigNode,
+  resolvedChildren: readonly FigNode[],
   context: EmitContext,
 ): Record<string, string> {
-  const overrides = readSymbolOverrides(instance);
-  if (overrides.length === 0) {
-    return {};
-  }
   const out: Record<string, string> = {};
-  const registry = context.source.styleRegistry;
-  for (const ov of overrides) {
-    const guidPath = ov.guidPath?.guids;
-    if (!guidPath || guidPath.length === 0) {
-      continue;
+  const baseByGuid = symbolDescendantsByGuid(symbolBase, context.source.document.childrenOf);
+  visitResolvedInstanceChildren(resolvedChildren, context, (resolvedNode) => {
+    const baseNode = baseByGuid.get(guidToString(resolvedNode.guid));
+    if (baseNode === undefined) {
+      return;
     }
-    const targetChild = findOverrideTarget(symbolBase, guidPath);
-    if (!targetChild) {
-      continue;
-    }
-    if (ov.styleIdForStrokeFill) {
-      collectPaintOverride(targetChild.strokePaints, ov.styleIdForStrokeFill, registry, context, out);
-    }
-    if (ov.styleIdForFill) {
-      collectPaintOverride(targetChild.fillPaints, ov.styleIdForFill, registry, context, out);
-    }
-    // Plain `fillPaints` overrides (no styleId indirection) re-paint
-    // the child by literal paint array. Match against the target's
-    // own `fillPaints` token so the wrapper var swap still works
-    // when the SYMBOL's authored paint is already a SOLID we can
-    // tokenise.
-    if (ov.fillPaints && ov.fillPaints.length > 0) {
-      collectPaintsOverride(targetChild.fillPaints, ov.fillPaints, context, out);
-    }
-  }
+    collectChangedPaints(baseNode, resolvedNode, context, out);
+  });
   return out;
 }
 
-function findOverrideTarget(
-  base: FigNode,
-  guidPath: ReadonlyArray<{ readonly sessionID: number; readonly localID: number }>,
-): FigNode | undefined {
-  // The mutable cursor is held in a const-bound ref struct so the
-  // descent stays a flat loop without hitting the no-`let` rule.
-  // `value: undefined` is the natural terminator when an intermediate
-  // step's guid doesn't resolve under the current parent.
-  const ref: { value: FigNode | undefined } = { value: base };
-  for (const step of guidPath) {
-    if (!ref.value) {
-      return undefined;
-    }
-    ref.value = findChildByGuid(ref.value, step);
-  }
-  return ref.value;
-}
-
-function findChildByGuid(
-  parent: FigNode,
-  step: { readonly sessionID: number; readonly localID: number },
-): FigNode | undefined {
-  const targetStr = guidToString(step);
-  for (const child of safeChildrenDomain(parent)) {
-    if (guidToString(child.guid) === targetStr) {
-      return child;
+function symbolDescendantsByGuid(
+  root: FigNode,
+  childrenOf: (node: FigNode) => readonly FigNode[],
+): ReadonlyMap<string, FigNode> {
+  const out = new Map<string, FigNode>();
+  function visit(node: FigNode): void {
+    for (const child of childrenOf(node)) {
+      out.set(guidToString(child.guid), child);
+      visit(child);
     }
   }
-  return undefined;
+  visit(root);
+  return out;
 }
 
-function collectPaintOverride(
-  originalPaints: readonly FigPaint[] | undefined,
-  newStyleId: FigStyleId,
-  registry: FigStyleRegistry,
+function visitResolvedInstanceChildren(
+  roots: readonly FigNode[],
+  context: EmitContext,
+  visit: (node: FigNode) => void,
+): void {
+  for (const node of roots) {
+    visit(node);
+    visitResolvedInstanceChildren(context.source.symbolResolver.childrenOfResolvedNode(node), context, visit);
+  }
+}
+
+function collectChangedPaints(
+  baseNode: FigNode,
+  resolvedNode: FigNode,
   context: EmitContext,
   out: Record<string, string>,
 ): void {
-  const newPaints = resolvePaintRef(newStyleId, registry);
-  if (!newPaints || newPaints.length === 0) {
-    return;
+  if (baseNode.strokePaints !== resolvedNode.strokePaints) {
+    collectPaintsOverride(baseNode.strokePaints, resolvedNode.strokePaints ?? [], context, out);
   }
-  collectPaintsOverride(originalPaints, newPaints, context, out);
+  if (baseNode.fillPaints !== resolvedNode.fillPaints) {
+    collectPaintsOverride(baseNode.fillPaints, resolvedNode.fillPaints ?? [], context, out);
+  }
 }
 
 function collectPaintsOverride(
@@ -1066,23 +1048,8 @@ function collectPaintsOverride(
   out[`--${originalToken}`] = newColor;
 }
 
-/**
- * Read a Kiwi enum's `.name` field. Raw fig nodes carry enum values
- * either as a serialised string or as a `{ value, name }` struct;
- * this helper converges both shapes onto the string `name` channel
- * with no implicit defaults.
- */
 function readKiwiEnumName(value: unknown): string | undefined {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object" && "name" in value) {
-    const name = (value as { readonly name?: unknown }).name;
-    if (typeof name === "string") {
-      return name;
-    }
-  }
-  return undefined;
+  return kiwiEnumName(value, "Kiwi enum field");
 }
 
 function solidPaintToCss(paint: FigPaint): string | undefined {
@@ -1124,10 +1091,10 @@ const SCALE_EPSILON = 1e-3;
  */
 function wrapForScale(
   instance: FigNode,
-  target: { readonly node: FigNode; readonly variants: ReadonlyMap<string, FigNode> },
+  context: EmitContext,
   componentTag: JsxNode,
 ): JsxNode {
-  const symbolSize = naturalSymbolSize(instance, target);
+  const symbolSize = naturalSymbolSize(instance, context);
   if (!symbolSize || !instance.size) {
     return componentTag;
   }
@@ -1159,28 +1126,13 @@ const SCALE_RATIO_TOLERANCE = 0.05;
 
 function naturalSymbolSize(
   instance: FigNode,
-  target: { readonly node: FigNode; readonly variants: ReadonlyMap<string, FigNode> },
+  context: EmitContext,
 ): { readonly x: number; readonly y: number } | undefined {
-  if (target.variants.size === 0) {
-    return target.node.size ?? undefined;
+  const resolved = context.source.symbolResolver.resolveReferences(instance).effectiveSymbol;
+  if (resolved === undefined) {
+    throw new Error(`fig-to-web: INSTANCE ${guidToString(instance.guid)} has no SymbolResolver target for scaling`);
   }
-  const symbolGuid = (instance as { readonly symbolData?: { readonly symbolID?: { readonly sessionID: number; readonly localID: number } } }).symbolData?.symbolID;
-  if (!symbolGuid) {
-    return target.node.size ?? undefined;
-  }
-  const symbolGuidStr = guidToString(symbolGuid);
-  for (const variant of target.variants.values()) {
-    if (guidToString(variant.guid) === symbolGuidStr) {
-      return variant.size ?? undefined;
-    }
-  }
-  // Pick any variant's size as a fallback — better than not scaling.
-  for (const variant of target.variants.values()) {
-    if (variant.size) {
-      return variant.size;
-    }
-  }
-  return undefined;
+  return resolved.node.size ?? undefined;
 }
 
 /**
@@ -1197,6 +1149,8 @@ function naturalSymbolSize(
 function assignmentProps(
   instance: FigNode,
   target: { readonly props: readonly { readonly defId: string; readonly name: string; readonly kind: string }[] },
+  resolved: ResolvedInstanceForEmit,
+  context: EmitContext,
 ): readonly JsxProp[] {
   const out: JsxProp[] = [];
   for (const a of instance.componentPropAssignments ?? []) {
@@ -1213,51 +1167,34 @@ function assignmentProps(
       out.push(prop);
     }
   }
-  // Walk `symbolData.symbolOverrides` for descendant text/visibility
-  // overrides that no `componentPropDefs` slot covers. The registry
-  // has already added a synthetic `string` decl for every TEXT
-  // descendant (see `augmentWithImplicitTextProps`); here we match
-  // each override's `guidPath` tail to that decl's defId and emit
-  // the override value as a JSX attribute.
-  for (const override of readSymbolOverrides(instance)) {
-    const targetGuid = lastGuidOf(override);
-    if (!targetGuid) {
-      continue;
-    }
-    const defIdStr = `synthetic-text:${targetGuid}`;
-    const decl = target.props.find((p) => p.defId === defIdStr);
-    if (!decl) {
-      continue;
-    }
-    const characters = override.textData?.characters;
-    if (typeof characters !== "string") {
-      continue;
-    }
-    out.push(strProp(decl.name, characters));
-  }
+  appendResolvedTextProps(out, target.props, resolved, context);
   return out;
 }
 
-type SymbolOverride = {
-  readonly guidPath?: { readonly guids?: readonly { readonly sessionID: number; readonly localID: number }[] };
-  readonly textData?: { readonly characters?: string };
-  readonly styleIdForStrokeFill?: FigStyleId;
-  readonly styleIdForFill?: FigStyleId;
-  readonly fillPaints?: readonly FigPaint[];
-};
-
-function readSymbolOverrides(instance: FigNode): readonly SymbolOverride[] {
-  const sd = (instance as { readonly symbolData?: { readonly symbolOverrides?: readonly SymbolOverride[] } }).symbolData;
-  return sd?.symbolOverrides ?? [];
-}
-
-function lastGuidOf(override: SymbolOverride): string | undefined {
-  const guids = override.guidPath?.guids;
-  if (!guids || guids.length === 0) {
-    return undefined;
-  }
-  const last = guids[guids.length - 1];
-  return guidToString(last);
+function appendResolvedTextProps(
+  out: JsxProp[],
+  props: readonly { readonly defId: string; readonly name: string; readonly kind: string; readonly defaultValue?: unknown }[],
+  resolved: ResolvedInstanceForEmit,
+  context: EmitContext,
+): void {
+  const propsByDefId = new Map(props.map((prop) => [prop.defId, prop]));
+  const baseByGuid = symbolDescendantsByGuid(resolved.effectiveSymbol, context.source.document.childrenOf);
+  visitResolvedInstanceChildren(resolved.resolvedChildren, context, (node) => {
+    if (node.type?.name !== TEXT_NODE_TYPE) {
+      return;
+    }
+    const guidStr = guidToString(node.guid);
+    const decl = propsByDefId.get(`${SYNTHETIC_TEXT_PREFIX}${guidStr}`);
+    if (decl === undefined) {
+      return;
+    }
+    const characters = textCharacters(node);
+    const baseCharacters = textCharacters(baseByGuid.get(guidStr) ?? node);
+    if (characters === baseCharacters) {
+      return;
+    }
+    out.push(strProp(decl.name, characters));
+  });
 }
 
 function formatAssignmentProp(

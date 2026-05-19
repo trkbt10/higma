@@ -2,7 +2,7 @@
  * @file Font resolution tests
  */
 
-import { detectWeight, normalizeWeight, getWeightName } from "./weight";
+import { detectWeight, snapFontWeight, getWeightName } from "./weight";
 import { detectStyle, isItalic, isOblique, isSlanted } from "./style";
 import { detectFontCategory, getDefaultFontStack, COMMON_FONT_MAPPINGS, isGenericCssFontFamily } from "./mappings";
 import { createFontResolver } from "./resolver";
@@ -49,21 +49,21 @@ describe("weight detection", () => {
   });
 });
 
-describe("weight normalization", () => {
-  it("normalizes to nearest standard weight", () => {
-    expect(normalizeWeight(149)).toBe(100);
-    expect(normalizeWeight(151)).toBe(200);
-    expect(normalizeWeight(349)).toBe(300);
-    expect(normalizeWeight(351)).toBe(400);
-    expect(normalizeWeight(649)).toBe(600);
-    expect(normalizeWeight(651)).toBe(700);
+describe("weight snapping", () => {
+  it("snaps to nearest standard weight", () => {
+    expect(snapFontWeight(149)).toBe(100);
+    expect(snapFontWeight(151)).toBe(200);
+    expect(snapFontWeight(349)).toBe(300);
+    expect(snapFontWeight(351)).toBe(400);
+    expect(snapFontWeight(649)).toBe(600);
+    expect(snapFontWeight(651)).toBe(700);
   });
 
   it("returns exact match for standard weights", () => {
-    expect(normalizeWeight(100)).toBe(100);
-    expect(normalizeWeight(400)).toBe(400);
-    expect(normalizeWeight(700)).toBe(700);
-    expect(normalizeWeight(900)).toBe(900);
+    expect(snapFontWeight(100)).toBe(100);
+    expect(snapFontWeight(400)).toBe(400);
+    expect(snapFontWeight(700)).toBe(700);
+    expect(snapFontWeight(900)).toBe(900);
   });
 });
 
@@ -99,7 +99,7 @@ describe("style detection", () => {
   });
 });
 
-describe("style helpers", () => {
+describe("style routines", () => {
   it("isItalic works correctly", () => {
     expect(isItalic("Italic")).toBe(true);
     expect(isItalic("Regular")).toBe(false);

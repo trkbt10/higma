@@ -43,9 +43,10 @@ export const requiredNodesRule: LintRule = (ctx, emit) => {
       severity: "error",
       path: "nodeChanges",
       message: "No DOCUMENT node found — every fig file needs exactly one DOCUMENT root",
-      remediation: "Call `createEmptyFigDesignDocument(name)` (the DOCUMENT root is synthesised by documentToTree at export time) before adding canvases",
+      remediation: "Call `createEmptyFigDocument(name)` before adding canvases",
     });
-  } else if (documents.length > 1) {
+  }
+  if (documents.length > 1) {
     emit({
       ruleId: "fig.message.required-roots",
       severity: "error",

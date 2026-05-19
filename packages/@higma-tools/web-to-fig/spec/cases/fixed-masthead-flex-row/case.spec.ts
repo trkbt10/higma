@@ -5,7 +5,7 @@
  * page load, and a regression in either half makes the entire header
  * disappear from the .fig output.
  */
-import { normalizeOne } from "../_helpers";
+import { normalizeOne } from "../case-ir-assertions";
 import { fixedMastheadFlexRow, MASTHEAD_RECT } from "./fixture";
 
 describe("case fixed-masthead-flex-row", () => {

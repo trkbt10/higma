@@ -12,9 +12,9 @@
  * API) live in `@higma-document-renderers/fig/font-drivers/*` because
  * they require `opentype.js` / DOM APIs the model layer must not depend on.
  *
- * Higher-level helpers — TEXT-subtree font collection, preload + resolver
+ * Document-level font collection, preload + resolver
  * construction, web-font emission planning — live under `./context`. They
- * are the canonical implementation of "given a Figma document tree, give
+ * are the canonical implementation of "given Kiwi FigNode roots, give
  * me the (queries / preloads / web font links) I need".
  */
 
@@ -49,7 +49,7 @@ export {
 } from "./query";
 
 // Weight detection
-export { FONT_WEIGHTS, type FontWeight, detectWeight, normalizeWeight, getWeightName, figmaWeightLabel } from "./weight";
+export { FONT_WEIGHTS, type FontWeight, detectWeight, snapFontWeight, getWeightName, figmaWeightLabel } from "./weight";
 
 // Style detection
 export { type FontStyle, detectStyle, isItalic, isOblique, isSlanted } from "./style";
@@ -88,8 +88,8 @@ export { createFontResolver, createBrowserAvailabilityChecker, type FontResolver
 // Font cache
 export { createFontCache, type FontCache, createCachingFontLoader, type CachingFontLoader } from "./cache";
 
-// Helpers
-export { fontHasGlyph } from "./helpers";
+// Glyph coverage
+export { fontHasGlyph } from "./glyph-coverage";
 
 // Context layer — TEXT collection, preload, web-font plan
 export type {

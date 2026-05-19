@@ -178,3 +178,4 @@ dist
 AGENTS.md
 tmp/
 *.tmp.*
+packages/@higma-editor-kernel/ui/dev/dist-dev

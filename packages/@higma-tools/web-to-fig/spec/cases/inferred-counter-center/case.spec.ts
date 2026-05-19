@@ -22,7 +22,7 @@
  * `center` for some downstream re-centring use case — this case is
  * the canary that will break and force a deliberate decision.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   CHILD_LEFT_INSET,

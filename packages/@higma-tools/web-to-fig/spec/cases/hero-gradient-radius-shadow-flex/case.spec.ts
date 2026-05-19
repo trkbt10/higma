@@ -2,7 +2,7 @@
  * @file Tier-2 case `hero-gradient-radius-shadow-flex` — gradient
  * survives alongside radius + shadow + column flex.
  */
-import { asFrame, buildOne, findFigNodeByName, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, buildOne, findFigNodeByName, normalizeOne, singleChild } from "../case-ir-assertions";
 import { DEFAULT_RADIUS_PX } from "../corner-radius-uniform/fixture";
 import { heroPanel } from "./fixture";
 
@@ -24,16 +24,16 @@ describe("hero-gradient-radius-shadow-flex — IR", () => {
   });
 });
 
-describe("hero-gradient-radius-shadow-flex — FigDesignNode", () => {
-  const { doc } = buildOne(heroPanel());
-  const node = findFigNodeByName(doc, "div");
+describe("hero-gradient-radius-shadow-flex — Kiwi FigNode", () => {
+  const { context } = buildOne(heroPanel());
+  const node = findFigNodeByName(context, "div");
 
   it("FRAME carries a GRADIENT_LINEAR fill (not SOLID)", () => {
     if (!node) {
       throw new Error("div not found");
     }
-    expect(node.fills).toHaveLength(1);
-    expect(node.fills[0]!.type).toBe("GRADIENT_LINEAR");
+    expect(node.fillPaints).toHaveLength(1);
+    expect(node.fillPaints![0]!.type).toMatchObject({ name: "GRADIENT_LINEAR" });
   });
 
   it("FRAME carries the uniform cornerRadius after gradient + shadow + flex stack", () => {

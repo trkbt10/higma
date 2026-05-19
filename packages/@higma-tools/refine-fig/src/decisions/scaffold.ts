@@ -12,7 +12,7 @@ import type { Decisions } from "./types";
 /** Generate a blank Decisions JSON whose keys mirror the inventory. */
 export function scaffoldDecisions(inventory: Inventory): Decisions {
   const clusters: Record<string, { readonly name: string }> = {};
-  for (const c of inventory.subtreeClusters) {
+  for (const c of inventory.structureClusters) {
     clusters[c.clusterId] = { name: "" };
   }
   const palette: Record<string, { readonly name: string }> = {};

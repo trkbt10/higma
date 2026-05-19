@@ -4,7 +4,7 @@ Capture a live web viewport and emit a `.fig` file. The package is split into th
 
 1. `web-source` — drive Playwright to capture a `RawViewportSnapshot`, or to extract a single-element subtree as a self-contained HTML snippet.
 2. `normalize` — translate the snapshot into the shared `@higma-bridges/web-fig` IR.
-3. `emit` — convert the IR into a `FigDesignDocument` and export `.fig` bytes via `@higma-document-io/fig`.
+3. `emit` — materialize the IR as Kiwi `nodeChanges` and export `.fig` bytes via `@higma-document-io/fig`.
 
 The shared IR is the contract that pairs this tool with `@higma-tools/fig-to-web`: any IR `web-to-fig` produces is a valid input for the inverse direction.
 

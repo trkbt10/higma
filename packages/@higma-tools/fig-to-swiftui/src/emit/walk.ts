@@ -22,8 +22,10 @@
  * address them rather than silently rendering an empty placeholder.
  */
 import type { FigImagePaint, FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren, type FigBlob } from "@higma-document-models/fig/domain";
-import { resolveInstanceNode } from "@higma-document-models/fig/symbols";
+import { asGradientPaint, asImagePaint, asSolidPaint } from "@higma-document-models/fig/color";
+import { getNodeType, type FigBlob } from "@higma-document-models/fig/domain";
+import { getImageHash, getScaleMode } from "@higma-document-renderers/fig/paint";
+import type { SymbolResolver } from "@higma-document-models/fig/symbols";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { LayoutPlan } from "../layout/autolayout";
 import { planLayout } from "../layout/autolayout";
@@ -37,7 +39,6 @@ import {
   imageBundleExpr,
   imageInlineExpr,
   imageSlug,
-  resolveImageRef,
 } from "../style/image";
 import { solidPaintToColor as solidPaintToColorImported } from "../style/color";
 import { gradientExpr as gradientExprImported } from "../style/gradient";
@@ -48,11 +49,12 @@ import { gradientExpr as gradientExprImported } from "../style/gradient";
  *   - `blobs` — backing storage for `commandsBlob` indices on
  *     geometry-driven nodes (VECTOR / STAR / REGULAR_POLYGON).
  *   - `images` — backing storage for `IMAGE` paints; keyed by
- *     `imageRef`. The walker base64-encodes the bytes inline into
+ *     `image.hash` hex. The walker base64-encodes the bytes inline into
  *     the emitted Swift source.
- *   - `symbolMap` — `{guid → FigNode}` lookup used by INSTANCE
- *     expansion. When set, the walker resolves each INSTANCE via
- *     `resolveInstanceNode` and emits the merged node + its
+ *   - `symbolResolver` — canonical INSTANCE → SYMBOL resolver used
+ *     by INSTANCE expansion. When set, the walker resolves each
+ *     INSTANCE via `SymbolResolver.resolveInstance` and emits the
+ *     merged node + its
  *     SYMBOL-derived children. When omitted, INSTANCE nodes emit
  *     their literal direct children (typically empty).
  *
@@ -63,7 +65,8 @@ import { gradientExpr as gradientExprImported } from "../style/gradient";
 export type EmitContext = {
   readonly blobs?: readonly FigBlob[];
   readonly images?: ReadonlyMap<string, FigPackageImage>;
-  readonly symbolMap?: ReadonlyMap<string, FigNode>;
+  readonly symbolResolver?: SymbolResolver;
+  readonly childrenOf?: (node: FigNode) => readonly FigNode[];
   /**
    * Lookup `nodeKey → resource-slug` for nodes that the CLI has
    * already rasterised to a PNG bundle resource. When the walker
@@ -93,7 +96,7 @@ export type EmitContext = {
    *
    * The walker picks between the two via this option; the file
    * emitter (`file.ts`) injects the `makeFigToSwiftuiImage`
-   * helper only when the body actually references it.
+   * routine only when the body actually references it.
    */
   readonly imageEmbedding?: "bundle" | "inline";
 };
@@ -598,25 +601,33 @@ function renderedChildren(node: FigNode, ctx?: EmitContext): readonly FigNode[] 
   return resolveInstanceFor(node, ctx).children.filter(isRendered);
 }
 
+function requireChildrenOf(ctx: EmitContext | undefined): (node: FigNode) => readonly FigNode[] {
+  const childrenOf = ctx?.childrenOf;
+  if (childrenOf === undefined) {
+    throw new Error("fig-to-swiftui: EmitContext.childrenOf is required for Kiwi document traversal");
+  }
+  return childrenOf;
+}
+
 /**
- * If the node is an INSTANCE and the context carries a symbolMap,
- * resolve it through the canonical helper and return both the
+ * If the node is an INSTANCE and the context carries a SymbolResolver,
+ * resolve it through the canonical resolver and return both the
  * merged node (carrying the SYMBOL's properties — fillPaints, size,
  * etc., with INSTANCE-level overrides folded in) and the resolved
- * children. For non-INSTANCE nodes (or when no symbolMap is
+ * children. For non-INSTANCE nodes (or when no SymbolResolver is
  * available) returns the input unchanged.
  */
 function resolveInstanceFor(node: FigNode, ctx?: EmitContext): {
   readonly node: FigNode;
   readonly children: readonly FigNode[];
 } {
-  if (ctx?.symbolMap && node.type.name === "INSTANCE") {
-    return resolveInstanceNode(node, { symbolMap: ctx.symbolMap });
+  if (ctx?.symbolResolver && node.type.name === "INSTANCE") {
+    return ctx.symbolResolver.resolveInstance(node);
   }
   if (node.type.name === "BOOLEAN_OPERATION") {
-    return { node, children: inheritFillsToBooleanChildren(node) };
+    return { node, children: inheritFillsToBooleanChildren(node, ctx) };
   }
-  return { node, children: safeChildren(node) };
+  return { node, children: requireChildrenOf(ctx)(node) };
 }
 
 /**
@@ -630,8 +641,8 @@ function resolveInstanceFor(node: FigNode, ctx?: EmitContext): {
  * fill of its own. (A child may already have its own paint when the
  * fixture overrides it.)
  */
-function inheritFillsToBooleanChildren(parent: FigNode): readonly FigNode[] {
-  const children = safeChildren(parent);
+function inheritFillsToBooleanChildren(parent: FigNode, ctx: EmitContext | undefined): readonly FigNode[] {
+  const children = requireChildrenOf(ctx)(parent);
   const parentFill = parent.fillPaints;
   const parentStrokes = parent.strokePaints;
   const parentStrokeWeight = parent.strokeWeight;
@@ -762,7 +773,7 @@ function readTextCharacters(node: FigNode): string {
  * Pick the right `Image(...)` expression for the requested
  * `imageEmbedding` mode. `bundle` returns
  * `Image("<slug>", bundle: .module)`; `inline` returns the
- * base64-decoder helper invocation. Extracted to a function so the
+ * base64-decoder routine invocation. Extracted to a function so the
  * call site stays a single statement (no inline ternary).
  */
 function pickImageExpr(
@@ -780,18 +791,17 @@ function pickImageExpr(
  * Build an `Image(...).resizable().aspectRatio(...).clipShape(...)`
  * leaf when the node carries a usable IMAGE fill. Returns undefined
  * when no image paint is present, when the paint references an
- * imageRef the context didn't bring along, or when the context
- * lacks an `images` map at all (callers fall back to the regular
- * shape emit).
+ * image hash the context didn't bring along, or when the context
+ * lacks an `images` map at all.
  */
 function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefined {
   const images = ctx.images;
-  if (!images) {
-    return undefined;
-  }
   const paint = firstVisibleImagePaint(node.fillPaints);
   if (!paint) {
     return undefined;
+  }
+  if (!images) {
+    throw new Error("IMAGE fill requires EmitContext.images");
   }
   // Only take the IMAGE-fill emit path when the image is the topmost
   // visible paint; if a SOLID/GRADIENT paints on top of it, that
@@ -802,16 +812,13 @@ function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefine
   // the (clipped) image.
   const visible = (node.fillPaints ?? []).filter((p) => p.visible !== false);
   const topVisible = visible.length > 0 ? visible[visible.length - 1] : undefined;
-  if (topVisible?.type !== "IMAGE") {
+  if (topVisible === undefined || asImagePaint(topVisible) === undefined) {
     return undefined;
   }
-  const ref = resolveImageRef(paint);
-  if (!ref) {
-    return undefined;
-  }
+  const ref = getImageHash(paint);
   const image = images.get(ref);
   if (!image) {
-    return undefined;
+    throw new Error(`IMAGE fill references missing image hash ${ref}`);
   }
   // Pick between bundle-resource and inline-base64 emit per
   // EmitContext (default: bundle). The CLI uses `bundle` so the
@@ -819,7 +826,7 @@ function tryEmitImageFill(node: FigNode, ctx: EmitContext): SwiftView | undefine
   // uses `inline` because it compiles a single .swift file with
   // `swift CLI` and has no `Bundle.module` available.
   const expr = pickImageExpr(ctx.imageEmbedding ?? "bundle", image, ref);
-  const shape = contentModeFor(paint.scaleMode ?? paint.imageScaleMode);
+  const shape = contentModeFor(getScaleMode(paint));
   const mods: Modifier[] = [];
   if (shape.resizing === "tile") {
     // SwiftUI's tiling resizable mode: `Image(...).resizable(resizingMode: .tile)`
@@ -943,17 +950,14 @@ function paintToBackgroundExpr(
   paint: NonNullable<FigNode["fillPaints"]>[number],
   node: FigNode,
 ): SwiftExpr | undefined {
-  if (paint.type === "SOLID") {
-    return solidPaintToColorImported(paint);
+  const solidPaint = asSolidPaint(paint);
+  if (solidPaint !== undefined) {
+    return solidPaintToColorImported(solidPaint);
   }
-  if (
-    paint.type === "GRADIENT_LINEAR" ||
-    paint.type === "GRADIENT_RADIAL" ||
-    paint.type === "GRADIENT_ANGULAR" ||
-    paint.type === "GRADIENT_DIAMOND"
-  ) {
+  const gradientPaint = asGradientPaint(paint);
+  if (gradientPaint !== undefined) {
     const size = node.size ? { width: node.size.x, height: node.size.y } : undefined;
-    return gradientExprImported(paint, size);
+    return gradientExprImported(gradientPaint, size);
   }
   return undefined;
 }
@@ -993,7 +997,7 @@ function emitShapeLeaf(node: FigNode, ctx: EmitContext): SwiftView {
  * Convert the modifier list of a stroke-only shape leaf from
  * `[overlay(<shape>().strokeBorder(...))]` to `[strokeBorder(...)]`
  * directly on the shape. The overlay form was emitted by
- * `strokeOverlayModifier` because the helper is shape-agnostic; the
+ * `strokeOverlayModifier` because the routine is shape-agnostic; the
  * leaf path knows the underlying shape and can move the stroke onto
  * the shape itself.
  */
@@ -1203,9 +1207,7 @@ function readGridColumnCount(node: FigNode): number {
  * "Wrap" autolayout option).
  */
 function isWrapNode(node: FigNode): boolean {
-  const wrap = (node as { stackWrap?: { name?: string } | string }).stackWrap;
-  const name = typeof wrap === "string" ? wrap : wrap?.name;
-  return name === "WRAP";
+  return node.stackWrap?.name === "WRAP";
 }
 
 /**
@@ -1230,7 +1232,7 @@ function chunkWrapRows(
   // wrap), accumulating each row's used extent until the next child
   // wouldn't fit; the row breaks there. Mirrors the renderer's
   // pre-layout row computation. Mutable accumulators are scoped
-  // inside this helper so the caller stays free of `let`.
+  // inside this routine so the caller stays free of `let`.
   const rows: FigNode[][] = [];
   const acc = { current: [] as FigNode[], used: 0 };
   for (const child of children) {
@@ -1476,7 +1478,7 @@ function isPlausibleMaskShape(child: FigNode, parent: FigNode): boolean {
   if (!paints || paints.length === 0) {
     return false;
   }
-  const firstSolid = paints.find((p) => p.visible !== false && p.type === "SOLID");
+  const firstSolid = paints.find((p) => p.visible !== false && asSolidPaint(p) !== undefined);
   if (!firstSolid) {
     return false;
   }
@@ -1697,7 +1699,7 @@ export function emitNode(node: FigNode, ctx: EmitContext = {}): SwiftView {
     // d-strings → path-bool engine → resulting d-strings → SwiftUI
     // `Path`. Falls back to the ZStack-of-children container emit
     // when blobs are unavailable or the engine rejects the input.
-    const composed = tryComposeBooleanLeaf(node, ctx.blobs);
+    const composed = tryComposeBooleanLeaf(node, ctx.blobs, requireChildrenOf(ctx));
     if (composed) {
       return composed;
     }

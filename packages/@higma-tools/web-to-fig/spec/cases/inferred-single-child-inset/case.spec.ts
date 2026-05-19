@@ -5,7 +5,7 @@
  * single-child and multi-child counter-axis treatment, which is
  * intentional per `infer.ts`'s `inferInset` comment.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { CHILD_TOP_INSET, withSingleCentredChild } from "./fixture";
 

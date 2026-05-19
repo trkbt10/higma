@@ -6,7 +6,7 @@
  * Strategy: use a fixture with multiple promotable clusters; the
  * `components` fixture has component instances we can rename, but it
  * is simpler to assert on the plan structure than to land a full apply
- * — apply is exercised separately in `proxy-bootstrap.spec.ts`.
+ * — apply is exercised separately in `styleDefinition-bootstrap.spec.ts`.
  *
  * The variant-set action runs AFTER `promote-icon-cluster`, so the
  * plan layer must emit them in that order. The apply layer threads the
@@ -17,11 +17,12 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import { loadFigFile, saveFigFile } from "@higma-document-io/fig/roundtrip";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { loadRefineSource } from "../src/refine-source/load";
-import type { Inventory, SubtreeClusterEntry, SubtreeMemberRecord } from "../src/inventory";
+import type { Inventory, StructureClusterEntry, StructureMemberRecord } from "../src/inventory";
 import type { Decisions } from "../src/decisions";
 import { buildPlan } from "../src/plan";
 import { applyPlan } from "../src/apply";
@@ -36,8 +37,8 @@ const FIXTURE = "rectangle/rectangle.fig";
  * inventory; the apply round-trip is covered by the integration spec
  * that runs against a real promote-eligible fixture.
  */
-function makeCluster(id: string, members: readonly { guid: string; name: string }[]): SubtreeClusterEntry {
-  const memberRecords: SubtreeMemberRecord[] = members.map((m) => ({
+function makeCluster(id: string, members: readonly { guid: string; name: string }[]): StructureClusterEntry {
+  const memberRecords: StructureMemberRecord[] = members.map((m) => ({
     nodeGuid: m.guid,
     nodeName: m.name,
     width: 100,
@@ -69,7 +70,7 @@ describe("buildPlan — group-as-variant-set static checks", () => {
     const inventory: Inventory = {
       palette: [],
       typography: [],
-      subtreeClusters: [makeCluster(id, [{ guid: "100:1", name: "x" }, { guid: "100:2", name: "y" }])],
+      structureClusters: [makeCluster(id, [{ guid: "100:1", name: "x" }, { guid: "100:2", name: "y" }])],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -94,7 +95,7 @@ describe("buildPlan — group-as-variant-set static checks", () => {
     const inventory: Inventory = {
       palette: [],
       typography: [],
-      subtreeClusters: [],
+      structureClusters: [],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -120,7 +121,7 @@ describe("buildPlan — group-as-variant-set static checks", () => {
     const inventory: Inventory = {
       palette: [],
       typography: [],
-      subtreeClusters: [makeCluster(id, [{ guid: "100:1", name: "x" }, { guid: "100:2", name: "y" }])],
+      structureClusters: [makeCluster(id, [{ guid: "100:1", name: "x" }, { guid: "100:2", name: "y" }])],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -155,7 +156,7 @@ describe("applyPlan — group-as-variant-set", () => {
     const inventory: Inventory = {
       palette: [],
       typography: [],
-      subtreeClusters: [
+      structureClusters: [
         makeCluster(spadesId, [
           { guid: synthetic.spadesExemplar, name: "Spades" },
           { guid: synthetic.spadesCopy, name: "Spades-copy" },
@@ -279,7 +280,7 @@ async function buildSyntheticFig(): Promise<{
         name: `${name}-glyph`,
         size: { x: 80, y: 80 },
         transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-        fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        fillPaints: [{ type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 0, g: 0, b: 0, a: 1 } }],
       },
       {
         guid: copy,
@@ -298,7 +299,7 @@ async function buildSyntheticFig(): Promise<{
         name: `${name}-glyph`,
         size: { x: 80, y: 80 },
         transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-        fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        fillPaints: [{ type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 0, g: 0, b: 0, a: 1 } }],
       },
     ];
     return {

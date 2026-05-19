@@ -4,7 +4,7 @@
  * width; the remaining cells in subsequent rows sit at their own
  * column origins.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { SPANNED_CELL_WIDTH, SINGLE_CELL_WIDTH, tableWithColspan } from "./fixture";
 
 describe("case table-cell-spans", () => {

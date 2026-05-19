@@ -99,7 +99,7 @@ export type ScaleMode = "STRETCH" | "FIT" | "FILL" | "TILE";
  * Real Figma exports never carry `CROP` as a discrete value — the
  * schema does not declare one. `CROP` is the editor's UI alias for
  * `FILL` (both crop the image to fit the bounding box). Pass any
- * input through this helper before encoding so encoder bytes always
+ * input through this routine before encoding so encoder bytes always
  * align with what Figma actually parses.
  */
 export function canonicaliseImageScaleMode(value: string): ScaleMode {

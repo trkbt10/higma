@@ -6,19 +6,19 @@
  *   0. `ensure-internal-canvas` — when the source carries no Internal
  *                                Only Canvas, insert one at the head
  *                                of the plan so subsequent
- *                                create-*-proxy actions have somewhere
+ *                                create-*-style-definition actions have somewhere
  *                                to live. Emitted only when the source
  *                                lacks an internal canvas AND the plan
  *                                contains at least one action that
  *                                requires one.
- *   1. `create-fill-proxy`     — synthesise a new fill-style proxy.
+ *   1. `create-fill-style-definition`     — synthesise a new fill-style styleDefinition.
  *                                Records the temporary token id used
  *                                to refer to it in subsequent bind
  *                                actions.
- *   2. `create-text-proxy`     — same shape, for a text style.
+ *   2. `create-text-style-definition`     — same shape, for a text style.
  *   3. `bind-fill-style`       — point a node's `styleIdForFill` at
- *                                either an existing proxy GUID or a
- *                                token id from a `create-fill-proxy`
+ *                                either an existing styleDefinition GUID or a
+ *                                token id from a `create-fill-style-definition`
  *                                emitted earlier in the same plan.
  *   4. `bind-text-style`       — same idea for `styleIdForText`.
  *   5. `promote-icon-cluster`  — turn one cluster member into a
@@ -35,10 +35,10 @@
  *                                clusters and for individual member
  *                                overrides.
  *
- * `ActionBindFillStyle.proxy` is a discriminated union: either
+ * `ActionBindFillStyle.styleDefinition` is a discriminated union: either
  * `{ kind: "existing", guid }` (a GUID already in the file) or
  * `{ kind: "token", token }` (resolved to whatever guid the
- * matching `create-fill-proxy` action allocates at apply time).
+ * matching `create-fill-style-definition` action allocates at apply time).
  */
 
 import type { ColorRGBA } from "../inventory";
@@ -46,7 +46,7 @@ import type { ColorRGBA } from "../inventory";
 /**
  * Insert a brand-new Internal Only Canvas at the document level. Apply
  * registers the new canvas's GUID internally; subsequent
- * `create-*-proxy` actions parent the proxy under it. The action
+ * `create-*-style-definition` actions parent the styleDefinition under it. The action
  * intentionally carries no plan-local token — at most one
  * `ensure-internal-canvas` may appear per plan, so the apply layer
  * tracks the resulting GUID as singleton state.
@@ -65,16 +65,16 @@ export type ActionRename = {
   readonly reason: string;
 };
 
-export type ActionCreateFillProxy = {
-  readonly kind: "create-fill-proxy";
-  /** Plan-local token used by later bind actions to refer to this proxy. */
+export type ActionCreateFillStyleDefinition = {
+  readonly kind: "create-fill-style-definition";
+  /** Plan-local token used by later bind actions to refer to this styleDefinition. */
   readonly token: string;
   readonly name: string;
   readonly color: ColorRGBA;
 };
 
-export type ActionCreateTextProxy = {
-  readonly kind: "create-text-proxy";
+export type ActionCreateTextStyleDefinition = {
+  readonly kind: "create-text-style-definition";
   readonly token: string;
   readonly name: string;
   readonly fontFamily: string;
@@ -83,20 +83,20 @@ export type ActionCreateTextProxy = {
   readonly fontSize: number;
 };
 
-export type ProxyRef =
+export type StyleDefinitionRef =
   | { readonly kind: "existing"; readonly guid: string }
   | { readonly kind: "token"; readonly token: string };
 
 export type ActionBindFillStyle = {
   readonly kind: "bind-fill-style";
   readonly nodeGuid: string;
-  readonly proxy: ProxyRef;
+  readonly styleDefinition: StyleDefinitionRef;
 };
 
 export type ActionBindTextStyle = {
   readonly kind: "bind-text-style";
   readonly nodeGuid: string;
-  readonly proxy: ProxyRef;
+  readonly styleDefinition: StyleDefinitionRef;
 };
 
 export type ActionPromoteIconCluster = {
@@ -173,8 +173,8 @@ export type ActionGroupAsVariantSet = {
 
 export type PlanAction =
   | ActionEnsureInternalCanvas
-  | ActionCreateFillProxy
-  | ActionCreateTextProxy
+  | ActionCreateFillStyleDefinition
+  | ActionCreateTextStyleDefinition
   | ActionBindFillStyle
   | ActionBindTextStyle
   | ActionPromoteIconCluster

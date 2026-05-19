@@ -3,7 +3,7 @@
  * sets `style.clipsContent: true`; the child's IR rect remains the
  * visual (un-clipped) size.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { OVERSIZED_CHILD_RECT, clippedParent } from "./fixture";
 
 describe("case overflow-hidden-clipping", () => {

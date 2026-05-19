@@ -14,7 +14,7 @@
 import { normalizeViewport } from "../../../src/normalize";
 import { synthViewport } from "../../synth-snapshot";
 import { staticFontResolver } from "../../test-font-resolver";
-import { asFrame } from "../_helpers";
+import { asFrame } from "../case-ir-assertions";
 import { BODY_BG, bodyWithBg } from "./fixture";
 
 describe("case html-body-bg-propagation", () => {

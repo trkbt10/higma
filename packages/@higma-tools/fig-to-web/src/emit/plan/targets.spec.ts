@@ -10,54 +10,70 @@
  * their FRAME / SYMBOL children in document order at the SECTION's
  * position.
  */
-import type { FigNode } from "@higma-document-models/fig/types";
+import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 import { listFrameTargets, pickFrameByName } from "./targets";
 
-/**
- * Minimal FigNode factory — the walker reads only `type.name`, `name`,
- * and `children`, so the rest of the FigNode fields are filled with
- * placeholder values just to satisfy the structural type. Using `as
- * FigNode` keeps the test fixture readable without a brittle full
- * NodeChange shape; the discriminating fields the SUT actually uses
- * are real.
- */
-function makeNode(typeName: string, name: string, children?: readonly FigNode[]): FigNode {
+const SESSION_ID = 1;
+
+function kiwiGuid(localID: number): FigGuid {
+  return { sessionID: SESSION_ID, localID };
+}
+
+function kiwiParentIndex(parent: { readonly localID: number; readonly position: number } | undefined) {
+  if (parent === undefined) {
+    return {};
+  }
+  return { parentIndex: { guid: kiwiGuid(parent.localID), position: `${parent.position}` } };
+}
+
+function kiwiNodeChange(
+  typeName: string,
+  name: string,
+  localID: number,
+  parent?: { readonly localID: number; readonly position: number },
+): FigNode {
   return {
-    guid: { sessionID: 0, localID: 0 },
+    guid: kiwiGuid(localID),
     phase: { value: 0, name: "CREATED" },
     type: { value: 0, name: typeName },
     name,
-    children,
+    ...kiwiParentIndex(parent),
   } as FigNode;
 }
 
-function canvas(children: readonly FigNode[]): FigNode {
-  return makeNode("CANVAS", "Test Canvas", children);
+function canvas(localID: number): FigNode {
+  return kiwiNodeChange("CANVAS", "Test Canvas", localID);
+}
+
+function indexedKiwiDocument(root: FigNode, nodeChanges: readonly FigNode[]) {
+  return { document: indexFigKiwiDocument([root, ...nodeChanges]), root };
 }
 
 describe("listFrameTargets", () => {
   it("returns direct FRAME and SYMBOL children, skipping non-frame types", () => {
-    const root = canvas([
-      makeNode("FRAME", "F1"),
-      makeNode("RECTANGLE", "R1"),
-      makeNode("SYMBOL", "S1"),
-      makeNode("TEXT", "T1"),
+    const root = canvas(1);
+    const kiwi = indexedKiwiDocument(root, [
+      kiwiNodeChange("FRAME", "F1", 2, { localID: 1, position: 0 }),
+      kiwiNodeChange("RECTANGLE", "R1", 3, { localID: 1, position: 1 }),
+      kiwiNodeChange("SYMBOL", "S1", 4, { localID: 1, position: 2 }),
+      kiwiNodeChange("TEXT", "T1", 5, { localID: 1, position: 3 }),
     ]);
-    const out = listFrameTargets(root);
+    const out = listFrameTargets(kiwi.document, kiwi.root);
     expect(out.map((n) => n.name)).toEqual(["F1", "S1"]);
   });
 
   it("descends through a SECTION to surface its FRAME / SYMBOL children inline", () => {
-    const root = canvas([
-      makeNode("FRAME", "Outer Frame"),
-      makeNode("SECTION", "Grouped", [
-        makeNode("SYMBOL", "Inner Symbol A"),
-        makeNode("FRAME", "Inner Frame B"),
-        makeNode("RECTANGLE", "Ignored"),
-      ]),
-      makeNode("SYMBOL", "Trailing Symbol"),
+    const root = canvas(1);
+    const kiwi = indexedKiwiDocument(root, [
+      kiwiNodeChange("FRAME", "Outer Frame", 2, { localID: 1, position: 0 }),
+      kiwiNodeChange("SECTION", "Grouped", 3, { localID: 1, position: 1 }),
+      kiwiNodeChange("SYMBOL", "Inner Symbol A", 4, { localID: 3, position: 0 }),
+      kiwiNodeChange("FRAME", "Inner Frame B", 5, { localID: 3, position: 1 }),
+      kiwiNodeChange("RECTANGLE", "Ignored", 6, { localID: 3, position: 2 }),
+      kiwiNodeChange("SYMBOL", "Trailing Symbol", 7, { localID: 1, position: 2 }),
     ]);
-    const out = listFrameTargets(root);
+    const out = listFrameTargets(kiwi.document, kiwi.root);
     expect(out.map((n) => n.name)).toEqual([
       "Outer Frame",
       "Inner Symbol A",
@@ -67,49 +83,51 @@ describe("listFrameTargets", () => {
   });
 
   it("descends through nested SECTIONs (SECTION-inside-SECTION)", () => {
-    const root = canvas([
-      makeNode("SECTION", "Outer Section", [
-        makeNode("SECTION", "Inner Section", [
-          makeNode("SYMBOL", "Deep Symbol"),
-        ]),
-        makeNode("FRAME", "Mid Frame"),
-      ]),
+    const root = canvas(1);
+    const kiwi = indexedKiwiDocument(root, [
+      kiwiNodeChange("SECTION", "Outer Section", 2, { localID: 1, position: 0 }),
+      kiwiNodeChange("SECTION", "Inner Section", 3, { localID: 2, position: 0 }),
+      kiwiNodeChange("SYMBOL", "Deep Symbol", 4, { localID: 3, position: 0 }),
+      kiwiNodeChange("FRAME", "Mid Frame", 5, { localID: 2, position: 1 }),
     ]);
-    const out = listFrameTargets(root);
+    const out = listFrameTargets(kiwi.document, kiwi.root);
     expect(out.map((n) => n.name)).toEqual(["Deep Symbol", "Mid Frame"]);
   });
 
   it("does NOT descend into FRAME / SYMBOL — those are emit boundaries", () => {
-    const root = canvas([
-      makeNode("FRAME", "Outer Frame", [
-        makeNode("FRAME", "Nested Frame"),
-        makeNode("SYMBOL", "Nested Symbol"),
-      ]),
+    const root = canvas(1);
+    const kiwi = indexedKiwiDocument(root, [
+      kiwiNodeChange("FRAME", "Outer Frame", 2, { localID: 1, position: 0 }),
+      kiwiNodeChange("FRAME", "Nested Frame", 3, { localID: 2, position: 0 }),
+      kiwiNodeChange("SYMBOL", "Nested Symbol", 4, { localID: 2, position: 1 }),
     ]);
-    const out = listFrameTargets(root);
+    const out = listFrameTargets(kiwi.document, kiwi.root);
     expect(out.map((n) => n.name)).toEqual(["Outer Frame"]);
   });
 
   it("preserves order across SECTION boundaries", () => {
-    const root = canvas([
-      makeNode("FRAME", "A"),
-      makeNode("SECTION", "Group", [makeNode("FRAME", "B"), makeNode("FRAME", "C")]),
-      makeNode("FRAME", "D"),
+    const root = canvas(1);
+    const kiwi = indexedKiwiDocument(root, [
+      kiwiNodeChange("FRAME", "A", 2, { localID: 1, position: 0 }),
+      kiwiNodeChange("SECTION", "Group", 3, { localID: 1, position: 1 }),
+      kiwiNodeChange("FRAME", "B", 4, { localID: 3, position: 0 }),
+      kiwiNodeChange("FRAME", "C", 5, { localID: 3, position: 1 }),
+      kiwiNodeChange("FRAME", "D", 6, { localID: 1, position: 2 }),
     ]);
-    const out = listFrameTargets(root);
+    const out = listFrameTargets(kiwi.document, kiwi.root);
     expect(out.map((n) => n.name)).toEqual(["A", "B", "C", "D"]);
   });
 });
 
 describe("pickFrameByName", () => {
   it("finds a frame surfaced via a SECTION descent", () => {
-    const root = canvas([
-      makeNode("SECTION", "App Store symbols", [
-        makeNode("SYMBOL", "Search toolbar"),
-        makeNode("SYMBOL", "Event Details Card"),
-      ]),
+    const root = canvas(1);
+    const kiwi = indexedKiwiDocument(root, [
+      kiwiNodeChange("SECTION", "App Store symbols", 2, { localID: 1, position: 0 }),
+      kiwiNodeChange("SYMBOL", "Search toolbar", 3, { localID: 2, position: 0 }),
+      kiwiNodeChange("SYMBOL", "Event Details Card", 4, { localID: 2, position: 1 }),
     ]);
-    const frames = listFrameTargets(root);
+    const frames = listFrameTargets(kiwi.document, kiwi.root);
     const picked = pickFrameByName(frames, "Search toolbar");
     expect(picked.name).toBe("Search toolbar");
   });

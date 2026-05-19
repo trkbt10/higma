@@ -3,7 +3,7 @@
  * EffectIR with offsetX / offsetY / blurRadius / spread propagated
  * verbatim and the colour parsed.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withDropShadow } from "./fixture";
 

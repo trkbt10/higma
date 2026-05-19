@@ -2,7 +2,7 @@
  * @file `flex-nested` — flex inside flex. Outer column, inner row.
  * Real-world: a card whose body is a horizontal action bar, stacked
  * under a title. Composes the existing flex-column and flex-row-gap
- * helpers, proving the helpers themselves compose to deeper trees.
+ * functions, proving the functions themselves compose to deeper trees.
  */
 import type { RawElement } from "../../../src/web-source/snapshot";
 import { synthEl } from "../../synth-snapshot";

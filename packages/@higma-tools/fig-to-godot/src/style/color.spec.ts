@@ -1,7 +1,16 @@
 /**
  * @file Spec for color → Godot Color value conversion.
  */
+import type { FigSolidPaint } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { colorExpr, solidPaintToColor } from "./color";
+
+function solidPaint(fields: Omit<FigSolidPaint, "type">): FigSolidPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    ...fields,
+  };
+}
 
 describe("colorExpr", () => {
   it("emits four channels, alpha=1 explicit", () => {
@@ -56,11 +65,10 @@ describe("colorExpr", () => {
 
 describe("solidPaintToColor", () => {
   it("respects an explicit paint opacity (with compensation)", () => {
-    const c = solidPaintToColor({
-      type: "SOLID",
+    const c = solidPaintToColor(solidPaint({
       color: { r: 1, g: 1, b: 1, a: 1 },
       opacity: 0.25,
-    });
+    }));
     if (c.kind !== "color") {
       throw new Error("expected color");
     }
@@ -69,10 +77,9 @@ describe("solidPaintToColor", () => {
   });
 
   it("treats missing opacity as 1 (preserved exact)", () => {
-    const c = solidPaintToColor({
-      type: "SOLID",
+    const c = solidPaintToColor(solidPaint({
       color: { r: 1, g: 0, b: 0, a: 1 },
-    });
+    }));
     if (c.kind !== "color") {
       throw new Error("expected color");
     }

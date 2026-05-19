@@ -20,7 +20,9 @@
  * silhouettes with a SOLID fill. Other paint types and shape types
  * fall through to `undefined` (caller skips the blur path).
  */
-import type { FigGradientPaint, FigGradientStop, FigNode, FigPaint, FigSolidPaint } from "@higma-document-models/fig/types";
+import type { FigGradientPaint, FigGradientStop, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import { asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { getGradientStops } from "@higma-document-renderers/fig/paint";
 
 export type BlurRasterResult = {
   readonly width: number;
@@ -775,27 +777,28 @@ function buildPaintSampler(
   imageResolver?: ImageResolver,
 ): ((x: number, y: number) => { r: number; g: number; b: number; a: number }) | undefined {
   const opacity = typeof paint.opacity === "number" ? paint.opacity : 1;
-  if (paint.type === "SOLID") {
-    const solid = paint as FigSolidPaint;
+  const solid = asSolidPaint(paint);
+  if (solid !== undefined) {
     const r = solid.color.r;
     const g = solid.color.g;
     const b = solid.color.b;
     const a = solid.color.a * opacity;
     return () => ({ r, g, b, a });
   }
-  if (paint.type === "GRADIENT_LINEAR") {
+  const paintType = getPaintType(paint);
+  if (paintType === "GRADIENT_LINEAR") {
     return buildLinearSampler(paint as FigGradientPaint, width, height, opacity);
   }
-  if (paint.type === "GRADIENT_RADIAL") {
+  if (paintType === "GRADIENT_RADIAL") {
     return buildRadialSampler(paint as FigGradientPaint, width, height, opacity);
   }
-  if (paint.type === "GRADIENT_ANGULAR") {
+  if (paintType === "GRADIENT_ANGULAR") {
     return buildAngularSampler(paint as FigGradientPaint, width, height, opacity);
   }
-  if (paint.type === "GRADIENT_DIAMOND") {
+  if (paintType === "GRADIENT_DIAMOND") {
     return buildDiamondSampler(paint as FigGradientPaint, width, height, opacity);
   }
-  if (paint.type === "IMAGE" && imageResolver) {
+  if (asImagePaint(paint) !== undefined && imageResolver) {
     return buildImageSampler(paint, width, height, opacity, imageResolver);
   }
   return undefined;
@@ -886,7 +889,7 @@ function buildAngularSampler(
   height: number,
   opacity: number,
 ): (x: number, y: number) => { r: number; g: number; b: number; a: number } {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const t = paint.transform ?? {};
   const m00 = t.m00 ?? 1;
   const m01 = t.m01 ?? 0;
@@ -914,7 +917,7 @@ function buildDiamondSampler(
   height: number,
   opacity: number,
 ): (x: number, y: number) => { r: number; g: number; b: number; a: number } {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const t = paint.transform ?? {};
   const m00 = t.m00 ?? 1;
   const m11 = t.m11 ?? 1;
@@ -948,7 +951,7 @@ function buildLinearSampler(
   height: number,
   opacity: number,
 ): (x: number, y: number) => { r: number; g: number; b: number; a: number } {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const t = paint.transform ?? {};
   const m00 = t.m00 ?? 1;
   const m01 = t.m01 ?? 0;
@@ -981,7 +984,7 @@ function buildRadialSampler(
   height: number,
   opacity: number,
 ): (x: number, y: number) => { r: number; g: number; b: number; a: number } {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const t = paint.transform ?? {};
   const cxNorm = t.m02 ?? 0.5;
   const cyNorm = t.m12 ?? 0.5;
@@ -1004,17 +1007,6 @@ function clamp01(v: number): number {
   if (v <= 0) return 0;
   if (v >= 1) return 1;
   return v;
-}
-
-/** Read stops in either Kiwi (`stops`) or API (`gradientStops`) shape. */
-function readStops(paint: FigGradientPaint): readonly FigGradientStop[] {
-  if (paint.stops && paint.stops.length > 0) {
-    return paint.stops;
-  }
-  if (paint.gradientStops && paint.gradientStops.length > 0) {
-    return paint.gradientStops;
-  }
-  return [];
 }
 
 function sampleStops(stops: readonly FigGradientStop[], t: number): { r: number; g: number; b: number; a: number } {
@@ -1550,4 +1542,3 @@ function byteFromUnit(value: number): number {
   if (value >= 1) return 255;
   return Math.floor(value * 255 + 0.5);
 }
-

@@ -2,7 +2,7 @@
  * @file Case `text-decoration` — `text-decoration-line` propagates to
  * `textStyle.textDecoration` for both supported variants.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { textLeafWithDecoration } from "./fixture";
 
 describe("case text-decoration", () => {

@@ -14,8 +14,8 @@
  * Visual fidelity goals (kept on parity with Figma's rendering):
  *
  *   - Multi-paint stacks composed in Figma's bottom-first ordering.
- *   - Linear gradients with the angle Figma actually authored
- *     (derived from `gradientHandlePositions` or the Kiwi `transform`).
+ *   - Linear gradients with the angle Figma actually authored from
+ *     the Kiwi `Paint.transform` field.
  *   - Image fills extracted as URL references (writer-side detail
  *     belongs to `images.ts`).
  *   - Stroke alignment honoured: INSIDE → `box-shadow inset`
@@ -36,7 +36,8 @@ import type {
   FigStrokeWeight,
   FigValueWithUnits,
 } from "@higma-document-models/fig/types";
-import { guidToString } from "@higma-document-models/fig/domain";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { buildCssFontFamily } from "@higma-document-models/fig/font";
 import { formatPx, round3 } from "../../lib/css-format/numeric";
 import type { TokenIndex } from "../../tokens";
@@ -84,7 +85,7 @@ const ELLIPSE_TYPE = "ELLIPSE";
  *   1. `node.clipsContent` — when Figma's tree-builder lifted the
  *      raw `frameMaskDisabled` into the typed domain field, this is
  *      the answer.
- *   2. `node.frameMaskDisabled` (raw Kiwi) — inverted semantics:
+ *   2. `node.frameMaskDisabled` (Kiwi) — inverted semantics:
  *      `frameMaskDisabled: true` means "do not clip", `false` means
  *      "clip". Real `.fig` exports often carry this field instead
  *      of (or in addition to) `clipsContent`, so missing this fork
@@ -315,15 +316,17 @@ export function parentLayoutOf(parent: FigNode | undefined): ParentLayout {
 export function nodeNeedsPositioningContext(
   node: FigNode,
   inferredLayoutDirection: "row" | "column" | "inset" | undefined,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): boolean {
-  if (!node.children || node.children.length === 0) {
+  const children = childrenOf(node);
+  if (children.length === 0) {
     return false;
   }
   // Vector-only containers emit as a single `<svg>` whose descendants
   // become `<path>` elements internally — no React DOM child appears
   // outside the SVG, so the container doesn't need `position:
   // relative` to anchor anything.
-  if (isVectorOnlyContainer(node)) {
+  if (isVectorOnlyContainer(node, childrenOf)) {
     return false;
   }
   const isRealFlex = node.stackMode?.name === "VERTICAL" || node.stackMode?.name === "HORIZONTAL";
@@ -331,8 +334,8 @@ export function nodeNeedsPositioningContext(
   // descendant of THIS node will need `position: absolute` unless a
   // child opted out with `stackPositioning === "ABSOLUTE"`.
   if (isRealFlex || inferredLayoutDirection !== undefined) {
-    for (const child of node.children) {
-      if (child && child.stackPositioning?.name === "ABSOLUTE") {
+    for (const child of children) {
+      if (child.stackPositioning?.name === "ABSOLUTE") {
         return true;
       }
     }
@@ -340,8 +343,8 @@ export function nodeNeedsPositioningContext(
   }
   // Static parent — every direct child paints absolute, so this node
   // must serve as their positioning ancestor.
-  for (const child of node.children) {
-    if (child && child.visible !== false) {
+  for (const child of children) {
+    if (child.visible !== false) {
       return true;
     }
   }
@@ -601,6 +604,7 @@ function childAlignSelfCss(name: string | undefined): string | undefined {
 export type StyleInputs = {
   readonly index: TokenIndex;
   readonly imageResolver: ImageResolver;
+  readonly childrenOf: FigKiwiDocumentIndex["childrenOf"];
   /**
    * Set of TEXT-descendant guids whose `characters` are bound to a
    * component prop (typed or synthetic). When a node's guid is in
@@ -653,7 +657,7 @@ export function nodeToStyle(
   applyPlainRule(node, inputs, style);
   applyVisuals(node, inputs, style);
   applyTextStyle(node, inputs, style);
-  applyOwnLayoutMode(node, inputs.index, inferred, style);
+  applyOwnLayoutMode(node, inputs.index, inferred, style, inputs.childrenOf);
   applyBlendMode(node, style);
   applyEffectFilters(node, style);
   // `box-sizing: border-box` was previously enforced via a `.fig-page`
@@ -715,7 +719,7 @@ function applyLayout(
   // Self-position decision is independent of root vs descendant.
   // The layout regime imposed BY THIS NODE on its children influences
   // whether we need to be a positioning context.
-  const needsPositioningContext = nodeNeedsPositioningContext(node, inferredDirection);
+  const needsPositioningContext = nodeNeedsPositioningContext(node, inferredDirection, inputs.childrenOf);
   const textBound = isTextPropBound(node, inputs);
 
   if (rootMode !== undefined) {
@@ -918,7 +922,7 @@ function applyVisuals(node: FigNode, inputs: StyleInputs, style: Record<string, 
 }
 
 function strokeAlignFor(node: FigNode): FigStrokeAlign {
-  return node.strokeAlign ?? "INSIDE";
+  return enumNameOf(node.strokeAlign, "FigNode.strokeAlign") ?? "INSIDE";
 }
 
 function strokeColorCss(node: FigNode, inputs: StyleInputs): string | undefined {
@@ -1102,7 +1106,7 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
 /**
  * Read the authored pixel line-height from `node.lineHeight` when the
  * units are `PIXELS`. Returns undefined for AUTO / PERCENT (the
- * caller falls through to the derived baseline path) so this helper
+ * caller falls through to the derived baseline path) so this routine
  * has no implicit defaults — every other unit category is rejected
  * by name rather than coerced.
  */
@@ -1252,14 +1256,12 @@ function quoteFontFamily(family: string): string {
  * of the JSX `isRendered` predicate; it only inspects fields the
  * emitter also treats as visibility signals.
  */
-function hasFlowableChildren(node: FigNode): boolean {
-  if (!node.children || node.children.length === 0) {
+function hasFlowableChildren(node: FigNode, childrenOf: FigKiwiDocumentIndex["childrenOf"]): boolean {
+  const children = childrenOf(node);
+  if (children.length === 0) {
     return false;
   }
-  for (const child of node.children) {
-    if (!child) {
-      continue;
-    }
+  for (const child of children) {
     if (child.visible === false) {
       continue;
     }
@@ -1273,13 +1275,14 @@ function applyOwnLayoutMode(
   index: TokenIndex,
   inferred: InferenceResult,
   style: Record<string, string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   if (!ROOT_FRAME_TYPES.has(node.type.name)) {
     return;
   }
   const stackMode = node.stackMode?.name;
   if (stackMode === "VERTICAL" || stackMode === "HORIZONTAL") {
-    applyExplicitStack(node, index, stackMode, style);
+    applyExplicitStack(node, index, stackMode, style, childrenOf);
     return;
   }
   if (inferred?.direction === "row" || inferred?.direction === "column") {
@@ -1296,6 +1299,7 @@ function applyExplicitStack(
   index: TokenIndex,
   stackMode: "VERTICAL" | "HORIZONTAL",
   style: Record<string, string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   // Authored auto-layout on a frame with no children emits a flex
   // container that has nothing to flow. Image-to-fig (and similar
@@ -1318,7 +1322,7 @@ function applyExplicitStack(
   if (node.type.name === "INSTANCE") {
     return;
   }
-  if (!hasFlowableChildren(node)) {
+  if (!hasFlowableChildren(node, childrenOf)) {
     return;
   }
   style.display = "flex";
@@ -1357,7 +1361,7 @@ function applyExplicitStack(
   if (cross !== "stretch") {
     style.alignItems = cross;
   }
-  if (node.stackWrap === true) {
+  if (node.stackWrap?.name === "WRAP") {
     style.flexWrap = "wrap";
   }
 }
@@ -1490,7 +1494,7 @@ function stackAlignToCss(name: string | undefined, axis: "primary" | "counter"):
 }
 
 function applyBlendMode(node: FigNode, style: Record<string, string>): void {
-  const blend = node.blendMode;
+  const blend = enumNameOf(node.blendMode, "FigNode.blendMode");
   if (!blend) {
     return;
   }
@@ -1545,11 +1549,12 @@ function blendModeToCss(blend: string): string | undefined {
   }
 }
 
+function enumNameOf<T extends string>(value: unknown, fieldName: string): T | undefined {
+  return kiwiEnumName<T>(value, fieldName);
+}
+
 function effectTypeName(effect: FigEffect): FigEffectType | undefined {
-  if (typeof effect.type === "string") {
-    return effect.type;
-  }
-  return effect.type.name;
+  return enumNameOf(effect.type, "FigEffect.type");
 }
 
 function applyEffectFilters(node: FigNode, style: Record<string, string>): void {
@@ -1564,7 +1569,7 @@ function applyEffectFilters(node: FigNode, style: Record<string, string>): void 
     if (typeof radius !== "number" || radius <= 0) {
       continue;
     }
-    if (name === "LAYER_BLUR" || name === "FOREGROUND_BLUR") {
+    if (name === "FOREGROUND_BLUR") {
       filters.push(`blur(${formatPx(radius)})`);
       continue;
     }
@@ -1581,4 +1586,3 @@ function applyEffectFilters(node: FigNode, style: Record<string, string>): void 
     style.WebkitBackdropFilter = backdropFilters.join(" ");
   }
 }
-

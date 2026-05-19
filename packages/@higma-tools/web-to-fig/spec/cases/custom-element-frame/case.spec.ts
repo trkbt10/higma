@@ -4,7 +4,7 @@
  * preserved. Asserts the normaliser is tag-agnostic at the structure
  * level.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { CHILD_COUNT, HOST_RECT, customElementFrame } from "./fixture";
 
 describe("case custom-element-frame", () => {

@@ -10,6 +10,7 @@
 
 import { ByteBuffer } from "./byte-buffer";
 import type { KiwiSchema } from "./types";
+import { KIWI_TYPE } from "./schema";
 
 function writeNullString(buffer: ByteBuffer, value: string): void {
   const encoder = new TextEncoder();
@@ -31,6 +32,13 @@ function encodeDefinitionKind(kind: string): number {
   }
 }
 
+function encodeFieldTypeId(definitionKind: string, fieldTypeId: number): number {
+  if (definitionKind === "ENUM") {
+    return KIWI_TYPE.UINT;
+  }
+  return fieldTypeId;
+}
+
 /**
  * Encode a Kiwi schema into the null-terminated string variant used by
  * fig-family canvases and the `.fig` file format.
@@ -46,7 +54,7 @@ export function encodeFigSchema(schema: KiwiSchema): Uint8Array {
 
     for (const field of def.fields) {
       writeNullString(buffer, field.name);
-      buffer.writeVarInt(field.typeId);
+      buffer.writeVarInt(encodeFieldTypeId(def.kind, field.typeId));
       buffer.writeByte(field.isArray ? 1 : 0);
       buffer.writeVarUint(field.value);
     }

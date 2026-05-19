@@ -1,207 +1,62 @@
-/**
- * @file Node CRUD operations on FigDesignDocument
- *
- * All operations are pure functions that return new document instances.
- * They never mutate the input document.
- */
+/** @file Node operations on the Kiwi document SoT. */
 
-import type { FigDesignDocument, FigDesignNode, FigPage, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
-import type { NodeSpec } from "../types/spec-types";
+import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
+import { guidToString } from "@higma-document-models/fig/domain";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import { createNodeFromSpec } from "./node-factory";
 import {
-  findNodeById,
-  updateNodeInTree,
-  removeNodeFromTree,
-  insertNodeInTree,
-  reorderNodeInTree,
-} from "./tree-utils";
+  createFigDocumentContextFromNodeChanges,
+  type FigDocumentContext,
+} from "../context";
+import type { NodeSpec } from "../types/spec-types";
+import { createNodeFromSpec } from "./node-factory";
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const POSITION_FIRST_CHAR = 0x21;
 
-/**
- * Find a page by ID.
- */
-function findPage(doc: FigDesignDocument, pageId: FigPageId): FigPage | undefined {
-  return doc.pages.find((p) => p.id === pageId);
+function positionString(index: number): string {
+  return String.fromCharCode(POSITION_FIRST_CHAR + index);
 }
 
-/**
- * Update a single page within a document.
- */
-function updatePage(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  updater: (page: FigPage) => FigPage,
-): FigDesignDocument {
-  const pages = doc.pages.map((page) =>
-    page.id === pageId ? updater(page) : page,
-  );
-  return { ...doc, pages };
+function contextWithNodes(context: FigDocumentContext, nodeChanges: readonly FigNode[]): FigDocumentContext {
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges,
+    blobs: context.blobs,
+    images: context.images,
+    metadata: context.metadata,
+  });
 }
 
-/**
- * Register a newly added node in the document's `components` map if it
- * is a SYMBOL. INSTANCE lookups (`doc.components.get(inst.symbolId)`)
- * resolve through this map. Non-SYMBOL nodes return the existing map.
- */
-function registerSymbolIfNeeded(
-  components: ReadonlyMap<string, FigDesignNode>,
-  node: FigDesignNode,
-): ReadonlyMap<string, FigDesignNode> {
-  if (node.type !== "SYMBOL") return components;
-  return new Map(components).set(node.id, node);
+function siblingIndex(context: FigDocumentContext, parentGuid: FigGuid): number {
+  const parent = context.document.nodesByGuid.get(guidToString(parentGuid));
+  if (parent === undefined) {
+    throw new Error(`addNode: parent ${guidToString(parentGuid)} does not exist`);
+  }
+  return context.document.childrenOf(parent).length;
 }
-
-// =============================================================================
-// Add Node
-// =============================================================================
 
 type AddNodeOptions = {
   readonly state: FigBuilderState;
-  readonly doc: FigDesignDocument;
-  readonly pageId: FigPageId;
-  readonly parentId: FigNodeId | null;
+  readonly context: FigDocumentContext;
+  readonly pageGuid: FigGuid;
+  readonly parentGuid: FigGuid | null;
   readonly spec: NodeSpec;
 };
 
 /**
- * Add a new node to a page.
- *
- * @returns Updated document and the new node's ID
+ * Append a new Kiwi node under an explicit page/parent GUID.
  */
 export function addNode(
-  { state, doc, pageId, parentId, spec }: AddNodeOptions,
-): { readonly doc: FigDesignDocument; readonly nodeId: FigNodeId } {
-  const node = createNodeFromSpec({ state, spec });
-
-  const updatedDoc = updatePage(doc, pageId, (page) => ({
-    ...page,
-    children: insertNodeInTree({ nodes: page.children, parentId, node }),
-  }));
-
-  // SYMBOL nodes need to be registered in the document's `components`
-  // map so INSTANCE lookups (`doc.components.get(inst.symbolId)`)
-  // resolve. The map is keyed by the SYMBOL's FigNodeId, matching the
-  // `referenceValue` shape on `ComponentPropertyValue` and the
-  // `symbolId` field on `FigDesignNode` (for INSTANCEs). Other node
-  // types leave the map untouched.
-  const updatedComponents = registerSymbolIfNeeded(updatedDoc.components, node);
-
+  { state, context, pageGuid, parentGuid, spec }: AddNodeOptions,
+): { readonly context: FigDocumentContext; readonly nodeGuid: FigGuid } {
+  const targetParentGuid = parentGuid ?? pageGuid;
+  const position = positionString(siblingIndex(context, targetParentGuid));
+  const node = createNodeFromSpec({
+    state,
+    parentGuid: targetParentGuid,
+    position,
+    spec,
+  });
   return {
-    doc: { ...updatedDoc, components: updatedComponents },
-    nodeId: node.id,
+    context: contextWithNodes(context, [...context.document.nodeChanges, node]),
+    nodeGuid: node.guid,
   };
-}
-
-// =============================================================================
-// Remove Node
-// =============================================================================
-
-/**
- * Remove a node from a page.
- *
- * Removes the node and all its descendants from the tree.
- */
-export function removeNode(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  nodeId: FigNodeId,
-): FigDesignDocument {
-  return updatePage(doc, pageId, (page) => ({
-    ...page,
-    children: removeNodeFromTree(page.children, nodeId),
-  }));
-}
-
-// =============================================================================
-// Update Node
-// =============================================================================
-
-type UpdateNodeOptions = {
-  readonly doc: FigDesignDocument;
-  readonly pageId: FigPageId;
-  readonly nodeId: FigNodeId;
-  readonly updater: (node: FigDesignNode) => FigDesignNode;
-};
-
-/**
- * Update a node within a page.
- *
- * The updater function receives the current node and returns the updated node.
- */
-export function updateNode(
-  { doc, pageId, nodeId, updater }: UpdateNodeOptions,
-): FigDesignDocument {
-  return updatePage(doc, pageId, (page) => ({
-    ...page,
-    children: updateNodeInTree(page.children, nodeId, updater),
-  }));
-}
-
-// =============================================================================
-// Reorder Node
-// =============================================================================
-
-type ReorderNodeOptions = {
-  readonly doc: FigDesignDocument;
-  readonly pageId: FigPageId;
-  readonly nodeId: FigNodeId;
-  readonly direction: "front" | "back" | "forward" | "backward";
-};
-
-/**
- * Reorder a node within its parent's children list.
- */
-export function reorderNode(
-  { doc, pageId, nodeId, direction }: ReorderNodeOptions,
-): FigDesignDocument {
-  return updatePage(doc, pageId, (page) => ({
-    ...page,
-    children: reorderNodeInTree(page.children, nodeId, direction),
-  }));
-}
-
-// =============================================================================
-// Move Node Between Pages
-// =============================================================================
-
-type MoveNodeToPageOptions = {
-  readonly doc: FigDesignDocument;
-  readonly fromPageId: FigPageId;
-  readonly toPageId: FigPageId;
-  readonly nodeId: FigNodeId;
-};
-
-/**
- * Move a node from one page to another.
- *
- * Removes the node from the source page and adds it as a top-level
- * node on the target page.
- */
-export function moveNodeToPage(
-  { doc, fromPageId, toPageId, nodeId }: MoveNodeToPageOptions,
-): FigDesignDocument {
-  // Find the node first
-  const sourcePage = findPage(doc, fromPageId);
-  if (!sourcePage) {
-    return doc;
-  }
-
-  const node = findNodeById(sourcePage.children, nodeId);
-  if (!node) {
-    return doc;
-  }
-
-  // Remove from source, then add to target
-  const withoutNode = updatePage(doc, fromPageId, (page) => ({
-    ...page,
-    children: removeNodeFromTree(page.children, nodeId),
-  }));
-  return updatePage(withoutNode, toPageId, (page) => ({
-    ...page,
-    children: [...page.children, node],
-  }));
 }

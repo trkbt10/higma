@@ -6,7 +6,7 @@
  * forget the matrix" loses the rotation entirely and produces a
  * non-rotated AABB-sized rectangle.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withRotate } from "./fixture";
 

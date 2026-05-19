@@ -1,11 +1,11 @@
 # @higma-document-renderers/fig
 
-SVG and WebGL rendering for Figma nodes. Converts parsed `.fig` file data into visual output.
+SVG and WebGL rendering for Kiwi FigNode data from `.fig` files.
 
 ## Rendering Pipeline
 
 ```
-FigNode[] → SceneGraph → RenderTree → SVG string / React / WebGL
+Kiwi nodeChanges → FigDocumentContext → SceneGraph → RenderTree → SVG string / React / WebGL
 ```
 
 ## SVG Rendering
@@ -15,20 +15,16 @@ FigNode[] → SceneGraph → RenderTree → SVG string / React / WebGL
 Render a canvas (page) to SVG. Derives dimensions from canvas children.
 
 ```typescript
-import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree } from "@higma-document-models/fig/domain";
+import { createFigDocumentContext, figDocumentResources } from "@higma-document-io/fig/context";
+import { getNodeType } from "@higma-document-models/fig/domain";
 import { renderCanvas } from "@higma-document-renderers/fig/svg";
 
-const parsed = await parseFigFile(fileData);
-const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
-
-const doc = roots[0];
-const page = doc.children?.find(c => c.type?.name === "CANVAS" && !c.internalOnly);
+const context = await createFigDocumentContext(fileData);
+const resources = figDocumentResources(context);
+const page = context.document.nodeChanges.find(node => getNodeType(node) === "CANVAS" && node.internalOnly !== true);
 
 const result = await renderCanvas(page, {
-  blobs: parsed.blobs,
-  images: parsed.images,
-  symbolMap: nodeMap,
+  ...resources,
 });
 
 console.log(result.svg);      // SVG string
@@ -45,9 +41,7 @@ import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
 const result = await renderFigToSvg(nodes, {
   width: 800,
   height: 600,
-  blobs: parsed.blobs,
-  images: parsed.images,
-  symbolMap: nodeMap,
+  ...resources,
   backgroundColor: "#ffffff",
   normalizeRootTransform: true,
 });

@@ -27,6 +27,7 @@
  * only kicks in when the node has a real arc or donut shape.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import { firstVisibleGradientPaint, gradientExpr } from "../style/gradient";
 import { solidPaintToColor } from "../style/color";
 import {
@@ -215,8 +216,9 @@ function readFillExpr(node: FigNode): SwiftExpr | undefined {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return solidPaintToColor(paint);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaintToColor(solidPaint);
     }
   }
   const grad = firstVisibleGradientPaint(paints);
@@ -252,8 +254,9 @@ function pickFirstSolidStroke(paints: NonNullable<FigNode["strokePaints"]>): Swi
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return solidPaintToColor(paint);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaintToColor(solidPaint);
     }
   }
   return undefined;

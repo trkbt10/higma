@@ -1,10 +1,10 @@
 /**
- * @file Font context — TEXT-tree scanning, preload, and web-font plan SoT.
+ * @file Font context — TEXT node scanning, preload, and web-font plan SoT.
  *
  * The "context" sits between parser-emitted Figma nodes and the
  * rendering / emit backends:
  *
- *   parser (FigDesignDocument / raw FigNode)
+ *   parser (raw FigNode)
  *     ↓
  *   font/context: collectFontQueries → FontQuery[]
  *                 preloadFonts(loader, queries) → cache

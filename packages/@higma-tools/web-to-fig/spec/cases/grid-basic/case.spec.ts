@@ -4,7 +4,7 @@
  * grid-aware layout descriptor or just absolute-positioned children
  * is acceptable, but the geometry must survive.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { COL_WIDTH, GAP, ROW_HEIGHT, twoColumnGrid } from "./fixture";
 
 describe("case grid-basic", () => {

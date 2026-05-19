@@ -1,15 +1,9 @@
 /**
  * @file @higma-document-io/fig main entry point
  *
- * High-level builder for .fig design files. Provides `FigDesignDocument`
- * CRUD operations and the export pipeline. Builder ID utilities
- * (`FigBuilderState`, `createFigBuilderState`, `nextNodeId`,
- * `nextPageId`) live in `@higma-document-models/fig/builder` —
- * consumers must import them directly from there (the cross-package
- * re-export ban prevents publishing them through a second name).
- *
- * Domain types (`FigDesignDocument`, `FigDesignNode`, `FigPage`,
- * `FigNodeId`, `FigPageId`) live in `@higma-document-models/fig/domain`.
+ * IO entry points operate on the decoded Kiwi document. The loaded
+ * nodeChanges array remains the SoT; the context index and SymbolResolver
+ * are lookup services over that document, not converted documents.
  */
 
 // NodeSpec discriminated union — declarative shape consumed by
@@ -19,35 +13,25 @@ export type { NodeSpec, BaseNodeSpec } from "./types";
 
 // Context
 export {
-  createFigDesignDocument,
-  createFigDesignDocumentFromLoaded,
-  createFigDesignDocumentFromKiwiCanvas,
-  createEmptyFigDesignDocument,
-  createFigSymbolContext,
-  createFigSymbolContextFromLoaded,
-  type FigSymbolContext,
+  createFigDocumentContext,
+  createFigDocumentContextFromLoaded,
+  createFigDocumentContextFromKiwiCanvas,
+  createFigDocumentContextFromNodeChanges,
+  type FigDocumentContext,
+  type CreateFigDocumentContextFromNodeChangesOptions,
   figDocumentResources,
-  figRawResources,
   type FigDocumentResources,
-  type FigRawResources,
 } from "./context";
 
 // Page operations
 export {
+  createEmptyFigDocument,
   addPage,
-  removePage,
-  reorderPage,
-  duplicatePage,
-  renamePage,
 } from "./page-ops";
 
 // Node operations
 export {
   addNode,
-  removeNode,
-  updateNode,
-  reorderNode,
-  moveNodeToPage,
   createNodeFromSpec,
 } from "./node-ops";
 
@@ -57,4 +41,3 @@ export {
   type FigExportOptions,
   type FigExportResult,
 } from "./export";
-

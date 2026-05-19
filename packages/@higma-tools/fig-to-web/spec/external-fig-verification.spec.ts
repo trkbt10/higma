@@ -50,7 +50,6 @@ import {
   buildTokensFromFrames,
   emitFromFrames,
   listFrameTargets,
-  loadFigSource,
   tokensToCss,
 } from "../src";
 import type {
@@ -66,11 +65,11 @@ import type {
   TokenSet,
   TypographyToken,
 } from "../src";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
-import { lookupInstanceTarget, variantValueForInstance } from "../src/emit";
+import { createFigDocumentContext, type FigDocumentContext } from "@higma-document-io/fig/context";
+import { componentTargetForInstance, variantValueForInstance } from "../src/emit";
 
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 
 // =============================================================================
 // External .fig discovery
@@ -125,7 +124,7 @@ function discoverFigPaths(): readonly string[] {
 
 type PipelineResult = {
   readonly figPath: string;
-  readonly source: FigSymbolContext;
+  readonly source: FigDocumentContext;
   readonly canvases: readonly FigNode[];
   readonly canvasName: string;
   readonly canvas: FigNode;
@@ -136,13 +135,13 @@ type PipelineResult = {
   readonly fileByPath: ReadonlyMap<string, EmitFile>;
 };
 
-function listUserVisibleCanvases(source: FigSymbolContext): readonly FigNode[] {
+function listUserVisibleCanvases(source: FigDocumentContext): readonly FigNode[] {
   const out: FigNode[] = [];
-  for (const root of source.tree.roots) {
+  for (const root of source.document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
-    for (const child of safeChildren(root)) {
+    for (const child of source.document.childrenOf(root)) {
       if (getNodeType(child) === "CANVAS" && child.internalOnly !== true) {
         out.push(child);
       }
@@ -151,9 +150,9 @@ function listUserVisibleCanvases(source: FigSymbolContext): readonly FigNode[] {
   return out;
 }
 
-function pickCanvasWithFrames(canvases: readonly FigNode[]): FigNode | undefined {
+function pickCanvasWithFrames(source: FigDocumentContext, canvases: readonly FigNode[]): FigNode | undefined {
   for (const canvas of canvases) {
-    if (listFrameTargets(canvas).length > 0) {
+    if (listFrameTargets(source.document, canvas).length > 0) {
       return canvas;
     }
   }
@@ -163,15 +162,15 @@ function pickCanvasWithFrames(canvases: readonly FigNode[]): FigNode | undefined
 async function runPipeline(figPath: string): Promise<PipelineResult> {
   const buffer = await fs.promises.readFile(figPath);
   const bytes = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const source = await loadFigSource(bytes);
+  const source = await createFigDocumentContext(bytes);
   const canvases = listUserVisibleCanvases(source);
-  const canvas = pickCanvasWithFrames(canvases);
+  const canvas = pickCanvasWithFrames(source, canvases);
   if (!canvas) {
     throw new Error(
       `fig file "${figPath}" has no user-visible CANVAS with frame-like top-level children — pipeline cannot proceed`,
     );
   }
-  const frames = listFrameTargets(canvas);
+  const frames = listFrameTargets(source.document, canvas);
   const built = buildTokensFromFrames(source, frames);
   const registry = buildRegistry(source, frames);
   const emitResult = await emitFromFrames(source, frames, { debugAttrs: false });
@@ -191,7 +190,7 @@ async function runPipeline(figPath: string): Promise<PipelineResult> {
 }
 
 // =============================================================================
-// Generic helpers
+// Shared verification routines
 // =============================================================================
 
 type Ref<T> = { value: T | null };
@@ -203,19 +202,19 @@ function requireState<T>(ref: Ref<T>): T {
   return ref.value;
 }
 
-function collectInstancesIn(node: FigNode, out: FigNode[]): void {
+function collectInstancesIn(source: FigDocumentContext, node: FigNode, out: FigNode[]): void {
   if (getNodeType(node) === "INSTANCE") {
     out.push(node);
   }
-  for (const child of safeChildren(node)) {
-    collectInstancesIn(child, out);
+  for (const child of source.document.childrenOf(node)) {
+    collectInstancesIn(source, child, out);
   }
 }
 
-function collectAllDescendants(node: FigNode, out: FigNode[]): void {
+function collectAllDescendants(source: FigDocumentContext, node: FigNode, out: FigNode[]): void {
   out.push(node);
-  for (const child of safeChildren(node)) {
-    collectAllDescendants(child, out);
+  for (const child of source.document.childrenOf(node)) {
+    collectAllDescendants(source, child, out);
   }
 }
 
@@ -355,7 +354,7 @@ function collectTokenDeclarations(css: string): ReadonlySet<string> {
 }
 
 // =============================================================================
-// Assertion helpers shared across `it` blocks
+// Assertions shared across `it` blocks
 // =============================================================================
 
 function isFiniteNonNegative(value: number): boolean {
@@ -489,7 +488,7 @@ function describeFigPath(figPath: string): void {
         state.frames.length,
         `expected ≥1 frame target on canvas "${state.canvasName}"`,
       ).toBeGreaterThan(0);
-      expect(state.source.nodesByGuid.size).toBeGreaterThan(0);
+      expect(state.source.document.nodesByGuid.size).toBeGreaterThan(0);
     });
 
     it("registers exactly one frame target per input frame", () => {
@@ -708,11 +707,11 @@ function describeFigPath(figPath: string): void {
       const state = requireState(stateRef);
       const instances: FigNode[] = [];
       for (const frame of state.frames) {
-        collectInstancesIn(frame, instances);
+        collectInstancesIn(state.source, frame, instances);
       }
       const issues: string[] = [];
       for (const instance of instances) {
-        const target = lookupInstanceTarget(state.source, state.registry, instance);
+        const target = componentTargetForInstance(state.source, state.registry, instance);
         if (!target) {
           // INSTANCE points at a SYMBOL outside the source, or has no
           // symbolID at all (Figma allows dangling instances). Skip.
@@ -913,8 +912,8 @@ function styleKeyOf(ref: { readonly guid?: { readonly sessionID: number; readonl
 function collectStyleResolutionIssues(state: PipelineResult): readonly string[] {
   const issues: string[] = [];
   const allNodes: FigNode[] = [];
-  for (const root of state.source.tree.roots) {
-    collectAllDescendants(root, allNodes);
+  for (const root of state.source.document.roots) {
+    collectAllDescendants(state.source, root, allNodes);
   }
   for (const node of allNodes) {
     if (getNodeType(node) !== "TEXT") {

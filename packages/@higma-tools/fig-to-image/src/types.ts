@@ -15,14 +15,14 @@
  * single place to update — the loader and CLI just see typed
  * values flow through.
  */
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 
 /** A single rasterisation target — output of `listFigFrameTargets`. */
 export type FigFrameTarget = {
   readonly page: string;
   readonly frame: string;
   readonly type: string;
-  readonly node: FigDesignNode;
+  readonly node: FigNode;
   readonly width: number;
   readonly height: number;
 };

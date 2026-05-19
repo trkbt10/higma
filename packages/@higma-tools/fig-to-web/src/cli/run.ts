@@ -11,8 +11,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { CliOptions } from "./args";
-import { findCanvas, type FigSymbolContext } from "@higma-document-io/fig/context";
-import { loadFigSource } from "../fig-source/load";
+import { createFigDocumentContext, findCanvas, type FigDocumentContext } from "@higma-document-io/fig/context";
 import { emitFromFrames, listFrameTargets, pickFrameByName } from "../emit";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { bundlePreview } from "./bundle";
@@ -33,25 +32,25 @@ async function readBuffer(path: string): Promise<Uint8Array> {
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
 
-function selectFrames(source: FigSymbolContext, options: CliOptions): readonly FigNode[] {
-  const canvas = findCanvas(source.tree.roots, options.page);
+function selectFrames(source: FigDocumentContext, options: CliOptions): readonly FigNode[] {
+  const canvas = findCanvas(source.document, options.page);
   if (!canvas) {
     throw new Error(`No user-visible page named "${options.page}" found in fig file`);
   }
-  const all = listFrameTargets(canvas);
+  const all = listFrameTargets(source.document, canvas);
   if (all.length === 0) {
     throw new Error(`Page "${options.page}" has no frame-like top-level children to emit`);
   }
   if (options.mode === "list") {
     return all;
   }
-  if (options.mode === "single") {
-    if (!options.frame) {
-      throw new Error("internal: mode=single without --frame value");
-    }
-    return [pickFrameByName(all, options.frame)];
+  if (options.mode !== "single") {
+    return all;
   }
-  return all;
+  if (!options.frame) {
+    throw new Error("internal: mode=single without --frame value");
+  }
+  return [pickFrameByName(all, options.frame)];
 }
 
 /**
@@ -63,7 +62,7 @@ function selectFrames(source: FigSymbolContext, options: CliOptions): readonly F
 export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_CONSOLE): Promise<void> {
   output.info(`Loading ${options.input}`);
   const buffer = await readBuffer(options.input);
-  const source = await loadFigSource(buffer);
+  const source = await createFigDocumentContext(buffer);
 
   const frames = selectFrames(source, options);
 

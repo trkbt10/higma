@@ -2,13 +2,24 @@
  * @file Symbol resolution for INSTANCE nodes
  */
 
-import type { FigNode, MutableFigNode, FigKiwiSymbolOverride, FigComponentPropAssignment, FigDerivedTextData } from "@higma-document-models/fig/types";
-import { guidToString, getNodeType, safeChildren, type FigGuid, type FigBlob } from "@higma-document-models/fig/domain";
-import { walkTree } from "@higma-primitives/tree";
-import { extractSymbolIDPair } from "@higma-document-models/fig/symbols";
-import { buildGuidTranslationMap, translateOverrides } from "./guid-translation";
+import type {
+  FigComponentPropAssignment,
+  FigDerivedTextData,
+  FigGuid,
+  FigKiwiSymbolData,
+  FigKiwiSymbolOverride,
+  FigNode,
+  MutableFigNode,
+} from "@higma-document-models/fig/types";
+import {
+  findNodeByGuid,
+  getNodeType,
+  guidToString,
+  isFigGuid,
+  type FigKiwiDocumentIndex,
+} from "../domain";
 import { resolveInstanceLayout } from "./constraints";
-import type { FigStyleRegistry } from "../domain/document";
+import type { FigStyleRegistry } from "../domain";
 import { resolveStyleIdOnMutableNode } from "./style-registry";
 import { resolveVariantOverride } from "./variable-resolution";
 
@@ -44,10 +55,9 @@ export type FigDerivedSymbolData = readonly FigKiwiSymbolOverride[];
  * Real-world fixtures emit self-overrides through paths whose first
  * guid is the INSTANCE's per-instance ghost-allocated guid (a session
  * that is never bound to a node in the file). Those entries must be
- * classified as self-overrides so the domain-conversion
- * `resolveOverridePaths` rerouter sends them to the SYMBOL root
- * instead of throwing on the unreachable guid. Examples surfaced
- * during Phase 0a H roundtrip verification:
+ * classified as self-overrides so SymbolResolver applies them to the
+ * SYMBOL root instead of treating the ghost guid as a descendant slot.
+ * Examples surfaced during Phase 0a H roundtrip verification:
  *
  *   - Figma Community E-commerce template `arrow-left` INSTANCEs:
  *     `{size, proportionsConstrained}`.
@@ -127,7 +137,7 @@ const SELF_OVERRIDE_PAYLOAD_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = n
 ]);
 
 export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = new Set([
-  // INSTANCE-only routing / layout fields — these never address a
+  // INSTANCE-only address / layout fields — these never address a
   // SYMBOL descendant. The applier handles `name`/`size`/etc. through
   // dedicated merge paths (not via `SELF_OVERRIDE_PAYLOAD_FIELDS`)
   // because they project to INSTANCE-level node properties rather
@@ -142,7 +152,7 @@ export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverr
   // Paint / geometry / effect fields shared with the applier (see
   // `SELF_OVERRIDE_PAYLOAD_FIELDS`). When paired with an unreachable
   // ghost-session guid, treating them as self-overrides and
-  // rerouting to the SYMBOL root preserves Figma's apparent
+  // binding them to the SYMBOL root preserves Figma's apparent
   // rendering (the SYMBOL root receives the override, not a
   // descendant). Real Figma exports of nested-component files
   // (`inherit.fig` etc., App Store Community template tab variants)
@@ -156,7 +166,7 @@ export const INSTANCE_SELF_OVERRIDE_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverr
  * so callers consume them with the same type-safety as a struct
  * traversal — no `Record<string, unknown>` widening or `as any`.
  *
- * `guidPath` and `overriddenSymbolID` are routing fields (the entry's
+ * `guidPath` and `overriddenSymbolID` are address fields (the entry's
  * "where to" / "instance-swap target") and never carry a slot-payload
  * meaning; they are excluded from the iteration so a self-override
  * detector doesn't have to special-case them at the call site.
@@ -173,68 +183,40 @@ export function* kiwiOverridePayloadKeys(
   // payload-key type — sound because the parser only emits keys
   // declared on `FigKiwiSymbolOverridePayload`.
   for (const key of Object.keys(entry) as (keyof FigKiwiSymbolOverride)[]) {
-    if (ROUTING_KEYS.has(key)) continue;
-    if (entry[key] === undefined) continue;
+    if (ROUTING_KEYS.has(key)) {
+      continue;
+    }
+    if (entry[key] === undefined) {
+      continue;
+    }
     yield key;
   }
 }
 
 /**
  * `true` when the override addresses the INSTANCE itself (single-guid
- * path with only INSTANCE-self fields). Used by both the raw and
- * domain resolver layers to re-route self-overrides onto the SYMBOL
- * root before the GUID translation primitive runs, so the
- * majority-vote heuristic doesn't pull them onto a sibling
- * descendant.
+ * path with only INSTANCE-self fields). SymbolResolver binds these
+ * entries to the SYMBOL root before descendant-slot address resolution.
  */
 export function isInstanceSelfOverride(entry: FigKiwiSymbolOverride): boolean {
   const guids = entry.guidPath?.guids;
-  if (!guids || guids.length !== 1) return false;
-  let hasField = false;
-  for (const key of kiwiOverridePayloadKeys(entry)) {
-    if (!INSTANCE_SELF_OVERRIDE_FIELDS.has(key)) return false;
-    hasField = true;
+  if (!guids || guids.length !== 1) {
+    return false;
   }
-  return hasField;
-}
-
-// =============================================================================
-// Symbol Override Extraction
-// =============================================================================
-
-/**
- * Extract symbolOverrides from an INSTANCE node.
- *
- * Handles both formats:
- * - `symbolData.symbolOverrides` (real Figma exports)
- * - `symbolOverrides` at node's top level (builder-generated files)
- */
-export function getInstanceSymbolOverrides(
-  nodeData: FigNode,
-): readonly FigKiwiSymbolOverride[] | undefined {
-  if (nodeData.symbolData?.symbolOverrides) {
-    return nodeData.symbolData.symbolOverrides;
-  }
-  return nodeData.symbolOverrides;
+  const keys = Array.from(kiwiOverridePayloadKeys(entry));
+  return keys.length > 0 && keys.every((key) => INSTANCE_SELF_OVERRIDE_FIELDS.has(key));
 }
 
 // =============================================================================
 // Symbol Resolution
 // =============================================================================
 
-// `resolveSymbolGuidStr` is owned by `./symbol-map-lookup` (the SoT module).
-// External consumers must import it directly from
-// `@higma-document-models/fig/symbols` (which re-exports from
-// `./symbol-map-lookup`); this module imports it only for internal use.
-import { resolveSymbolGuidStr } from "./symbol-map-lookup";
-
-// =============================================================================
-// INSTANCE reference resolution — Single Source of Truth
+// INSTANCE reference resolution
 //
 // Every consumer that needs "which SYMBOL does this INSTANCE point to?"
-// MUST go through resolveInstanceReferences(). This is used by both
-// the pre-resolver (dependency graph + clone expansion) and the
-// renderer (resolveInstance).
+// MUST go through a SymbolResolver instance. GUID lookup is private to
+// this file and reads from the Kiwi document index supplied at resolver
+// construction.
 // =============================================================================
 
 /**
@@ -246,15 +228,113 @@ import { resolveSymbolGuidStr } from "./symbol-map-lookup";
  *   (includes both symbolID and overriddenSymbolID for correct dep ordering).
  */
 export type InstanceResolution = {
-  readonly effectiveSymbol: { readonly node: FigNode; readonly guidStr: string } | undefined;
-  readonly allDependencyGuids: readonly string[];
+  readonly effectiveSymbol: ResolvedSymbolTarget | undefined;
+  readonly allDependencyGuids: readonly FigGuid[];
 };
 
+export type ResolvedSymbolTarget = {
+  readonly node: FigNode;
+  readonly guid: FigGuid;
+};
+
+export type SymbolResolver = {
+  readonly resolveReferences: (node: FigNode) => InstanceResolution;
+  readonly resolveInstanceTarget: (node: FigNode, overrideSymbolID?: FigGuid) => ResolvedSymbolTarget | undefined;
+  readonly resolveInstance: (node: FigNode) => ResolvedInstanceNode;
+  readonly childrenOfResolvedNode: (node: FigNode) => readonly FigNode[];
+};
+
+export type SymbolResolverInput = {
+  readonly document: FigKiwiDocumentIndex;
+  readonly styleRegistry?: FigStyleRegistry;
+};
+
+type SymbolIDPair = {
+  readonly symbolID: FigGuid;
+  readonly overriddenSymbolID?: FigGuid;
+};
+
+type SymbolIDSource = {
+  readonly symbolData?: FigKiwiSymbolData | Record<string, unknown>;
+  readonly overriddenSymbolID?: unknown;
+};
+
+function readSymbolID(symbolData: Record<string, unknown> | undefined): FigGuid | undefined {
+  const value = symbolData?.symbolID;
+  return isFigGuid(value) ? value : undefined;
+}
+
+function readOverriddenSymbolID(nodeData: SymbolIDSource): FigGuid | undefined {
+  const value = nodeData.overriddenSymbolID;
+  return isFigGuid(value) ? value : undefined;
+}
+
+function extractSymbolIDPair(nodeData: SymbolIDSource): SymbolIDPair | undefined {
+  const symbolData = nodeData.symbolData;
+  const symbolID = readSymbolID(symbolData);
+  if (symbolID === undefined) { return undefined; }
+  const overriddenSymbolID = readOverriddenSymbolID(nodeData);
+  if (overriddenSymbolID !== undefined) {
+    return { symbolID, overriddenSymbolID };
+  }
+  return { symbolID };
+}
+
+function resolveSymbolTarget(
+  symbolID: FigGuid,
+  document: FigKiwiDocumentIndex,
+): ResolvedSymbolTarget | undefined {
+  const exact = findNodeByGuid(document, symbolID);
+  if (exact === undefined) { return undefined; }
+  if (getNodeType(exact) !== "SYMBOL") { return undefined; }
+  return { node: exact, guid: exact.guid };
+}
+
+const EMPTY_RESOLVED_CHILDREN: readonly FigNode[] = [];
+
+function childrenOfResolvedNode(node: FigNode): readonly FigNode[] {
+  const children = node.children;
+  if (children === undefined || children.length === 0) {
+    return EMPTY_RESOLVED_CHILDREN;
+  }
+  for (const child of children) {
+    if (child === null || child === undefined) {
+      throw new Error(`SymbolResolver: resolved node ${guidToString(node.guid)} contains an empty child slot`);
+    }
+  }
+  return children as readonly FigNode[];
+}
+
 /**
- * Resolve an INSTANCE node's SYMBOL references.
- *
- * This is the single source of truth for "INSTANCE → SYMBOL" resolution.
- * Both dependency graph building, clone expansion, and rendering use this.
+ * Create the document-bound SymbolResolver. This is the only public
+ * entry for INSTANCE target selection, override address binding, and
+ * resolved INSTANCE child traversal.
+ */
+export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver {
+  const document = input.document;
+  const resolveInstanceTarget = (node: FigNode, overrideSymbolID?: FigGuid): ResolvedSymbolTarget | undefined => {
+    const pair = extractSymbolIDPair(node);
+    if (!pair) { return undefined; }
+    const targetSymbolID = overrideSymbolID ?? pair.overriddenSymbolID ?? pair.symbolID;
+    return resolveSymbolTarget(targetSymbolID, document);
+  };
+  const resolveReferences = (node: FigNode): InstanceResolution => resolveReferencesForNode(node, document);
+  const resolveInstance = (node: FigNode): ResolvedInstanceNode => resolveInstanceNodeWithResolver(node, {
+    document,
+    resolveReferences,
+    styleRegistry: input.styleRegistry,
+  });
+
+  return {
+    resolveReferences,
+    resolveInstanceTarget,
+    resolveInstance,
+    childrenOfResolvedNode,
+  };
+}
+
+/**
+ * Resolve an INSTANCE node's SYMBOL references inside the SymbolResolver unit.
  *
  * Resolution order:
  *   1. `overriddenSymbolID` (explicit author-set variant override).
@@ -271,41 +351,59 @@ export type InstanceResolution = {
  * evaluator bails and we fall through to step 3 — this is the same
  * behaviour the renderer had before this evaluator landed.
  */
-export function resolveInstanceReferences(
+function resolveReferencesForNode(
   node: FigNode,
-  symbolMap: ReadonlyMap<string, FigNode>,
+  document: FigKiwiDocumentIndex,
 ): InstanceResolution {
   const pair = extractSymbolIDPair(node);
   if (!pair) { return { effectiveSymbol: undefined, allDependencyGuids: [] }; }
 
-  const allDeps: string[] = [];
+  const allDeps: FigGuid[] = [];
 
-  const primaryResolved = resolveSymbolGuidStr(pair.symbolID, symbolMap);
-  if (primaryResolved) { allDeps.push(primaryResolved.guidStr); }
+  const primaryResolved = resolveSymbolTarget(pair.symbolID, document);
+  if (primaryResolved) { allDeps.push(primaryResolved.guid); }
 
-  const resolveOverride = () => resolveSymbolGuidStr(pair.overriddenSymbolID!, symbolMap) ?? undefined;
-  const overrideResolved = pair.overriddenSymbolID ? resolveOverride() : undefined;
-  if (overrideResolved) { allDeps.push(overrideResolved.guidStr); }
+  const overrideResolved = resolveOverriddenSymbolTarget(pair.overriddenSymbolID, document);
+  if (overrideResolved) { allDeps.push(overrideResolved.guid); }
 
-  // Variant resolution via RESOLVE_VARIANT: only when no explicit
-  // `overriddenSymbolID` was authored. We need the resolved primary
-  // SYMBOL to walk to its variant container.
-  let variantResolved: { node: FigNode; guidStr: string } | undefined;
-  if (!overrideResolved && primaryResolved) {
-    const variantOutcome = resolveVariantOverride(node, primaryResolved.node, symbolMap);
-    if (variantOutcome.resolvedSymbolID) {
-      const resolved = resolveSymbolGuidStr(variantOutcome.resolvedSymbolID, symbolMap);
-      if (resolved) {
-        variantResolved = resolved;
-        allDeps.push(resolved.guidStr);
-      }
-    }
+  const variantResolved = resolveVariantSymbolTarget(node, primaryResolved, overrideResolved, document);
+  if (variantResolved !== undefined) {
+    allDeps.push(variantResolved.guid);
   }
 
   return {
     effectiveSymbol: overrideResolved ?? variantResolved ?? primaryResolved,
     allDependencyGuids: allDeps,
   };
+}
+
+function resolveOverriddenSymbolTarget(
+  overriddenSymbolID: FigGuid | undefined,
+  document: FigKiwiDocumentIndex,
+): ResolvedSymbolTarget | undefined {
+  if (overriddenSymbolID === undefined) {
+    return undefined;
+  }
+  return resolveSymbolTarget(overriddenSymbolID, document);
+}
+
+function resolveVariantSymbolTarget(
+  node: FigNode,
+  primaryResolved: ResolvedSymbolTarget | undefined,
+  overrideResolved: ResolvedSymbolTarget | undefined,
+  document: FigKiwiDocumentIndex,
+): ResolvedSymbolTarget | undefined {
+  if (overrideResolved !== undefined || primaryResolved === undefined) {
+    return undefined;
+  }
+  const variantOutcome = resolveVariantOverride(node, primaryResolved.node, {
+    document,
+    childrenOf: document.childrenOf,
+  });
+  if (variantOutcome.resolvedSymbolID === undefined) {
+    return undefined;
+  }
+  return resolveSymbolTarget(variantOutcome.resolvedSymbolID, document);
 }
 
 // =============================================================================
@@ -315,14 +413,16 @@ export function resolveInstanceReferences(
 /**
  * Deep clone a FigNode and its children
  */
-function deepCloneNode(node: FigNode): MutableFigNode {
-  const children = safeChildren(node);
+type KiwiChildrenOf = (node: FigNode) => readonly FigNode[];
+
+function deepCloneNode(node: FigNode, childrenOf: KiwiChildrenOf): MutableFigNode {
+  const children = childrenOf(node);
   if (children.length === 0) {
     return { ...node };
   }
   return {
     ...node,
-    children: children.map((child) => deepCloneNode(child)),
+    children: children.map((child) => deepCloneNode(child, childrenOf)),
   };
 }
 
@@ -339,14 +439,13 @@ type ComponentPropRef = {
  * Options for cloning symbol children
  */
 export type CloneSymbolChildrenOptions = {
+  readonly childrenOf: KiwiChildrenOf;
   readonly symbolOverrides?: readonly FigKiwiSymbolOverride[];
   readonly derivedSymbolData?: FigDerivedSymbolData;
   /** Component property assignments from the INSTANCE node and its overrides */
   readonly componentPropAssignments?: readonly FigComponentPropAssignment[];
   /** Style registry for resolving styleIdForFill overrides to fillPaints */
   readonly styleRegistry?: FigStyleRegistry;
-  /** SYMBOL lookup for deeper weight-based GUID translation */
-  readonly symbolMap?: ReadonlyMap<string, FigNode>;
 };
 
 /**
@@ -356,22 +455,20 @@ export type CloneSymbolChildrenOptions = {
  * @param options - Optional overrides and derived data to apply
  * @returns Cloned children with overrides applied
  */
-export function cloneSymbolChildren(symbolNode: FigNode, options?: CloneSymbolChildrenOptions): readonly FigNode[] {
-  const children = safeChildren(symbolNode);
+export function cloneSymbolChildren(symbolNode: FigNode, options: CloneSymbolChildrenOptions): readonly FigNode[] {
+  const children = options.childrenOf(symbolNode);
   if (children.length === 0) {
     return [];
   }
 
   // Deep clone children
-  const cloned = children.map((child) => deepCloneNode(child));
+  const cloned = children.map((child) => deepCloneNode(child, options.childrenOf));
 
   const registry = options?.styleRegistry;
 
-  const symbolMap = options?.symbolMap;
-
   // Apply symbol overrides (property overrides)
   if (options?.symbolOverrides && options.symbolOverrides.length > 0) {
-    applyOverrides(cloned, options.symbolOverrides, registry, symbolMap);
+    applyOverrides(cloned, options.symbolOverrides, registry);
   }
 
   // Resolve component property assignments (text overrides — deletes stale derivedTextData)
@@ -388,20 +485,14 @@ export function cloneSymbolChildren(symbolNode: FigNode, options?: CloneSymbolCh
   // characters, not the SYMBOL's default text. After CPA clears the SYMBOL's
   // stale derivedTextData, the DSD re-adds the correct pre-rasterized glyphs.
   if (options?.derivedSymbolData && options.derivedSymbolData.length > 0) {
-    applyOverrides(cloned, options.derivedSymbolData, registry, symbolMap);
+    applyOverrides(cloned, options.derivedSymbolData, registry);
   }
 
   // Clean up stale derivedTextData:
   //  1. CPA-overridden TEXT nodes whose glyphs weren't re-supplied by DSD.
   //  2. Any TEXT node whose derivedTextData glyph count grossly mismatches
-  //     its final characters — this catches cases where GUID translation
-  //     paired an override's derivedTextData with the wrong TEXT sibling.
+  //     its final characters.
   cleanupStaleDerivedTextData(cloned, textOverrideGuids, options?.derivedSymbolData);
-
-  // Post-process: expand containers to fit their children.
-  // When override GUIDs partially apply (e.g., child sizes updated but parent size
-  // left at SYMBOL default), containers may be too small for their content.
-  expandContainersToFitChildren(cloned);
 
   return cloned;
 }
@@ -432,7 +523,7 @@ export function collectComponentPropAssignments(
   }
 
   // Assignments from symbolOverrides
-  const overrides = getInstanceSymbolOverrides(instanceData);
+  const overrides = instanceData.symbolData?.symbolOverrides;
   if (overrides) {
     for (const ov of overrides) {
       // FigKiwiSymbolOverride carries arbitrary node properties via index signature
@@ -451,7 +542,7 @@ export function collectComponentPropAssignments(
 /**
  * Apply component property assignments to cloned children.
  *
- * Walks the tree looking for nodes with `componentPropRefs` that reference
+ * Visits cloned SYMBOL nodes looking for `componentPropRefs` that reference
  * a matching `defID`. When found, applies the assignment value:
  * - TEXT_DATA: sets `textData` and `characters` on the TEXT node
  *
@@ -473,76 +564,85 @@ function applyComponentPropAssignments(
     assignMap.set(guidToString(a.defID), a);
   }
 
-  // Walk via the SoT primitive (`@higma-primitives/tree:walkTree`) — the
-  // visitor below carries the per-node CPA application logic. The
-  // recursion shape is shared with every other "visit every fig
-  // node" caller in the codebase.
-  walkTree(nodes, (node) => {
+  visitMutableNodes(nodes, (node) => {
     const propRefs = node.componentPropRefs as readonly ComponentPropRef[] | undefined;
     if (!propRefs) { return; }
     for (const ref of propRefs) {
       const defKey = guidToString(ref.defID);
       const assignment = assignMap.get(defKey);
-
-      // Apply based on field type
-      if (ref.componentPropNodeField?.name === "TEXT_DATA") {
-        if (assignment?.value.textValue) {
-          const tv = assignment.value.textValue;
-          // No-op detection: when CPA characters equal the node's existing
-          // characters, the override is redundant. Keep derivedTextData so
-          // its pre-rasterized glyph paths survive (used by the renderer to
-          // avoid font fallback for private-use codepoints like SF Symbols).
-          const existingTextData = node.textData;
-          const existingChars = existingTextData?.characters ?? node.characters ?? "";
-          const isNoOp = existingChars === tv.characters;
-
-          // Update textData with overridden characters
-          node.textData = {
-            ...(existingTextData ?? { characters: "" }),
-            characters: tv.characters,
-            lines: tv.lines ?? existingTextData?.lines,
-          };
-          // Also set top-level characters for renderers that check it
-          node.characters = tv.characters;
-
-          if (!isNoOp) {
-            // Clear derivedTextData — its glyph paths correspond to the
-            // original text, not the overridden content. Removing it forces
-            // the renderer to fall back to <text> element rendering.
-            // NOTE: derivedSymbolData applied later may re-add stale
-            // derivedTextData; cleanupStaleDerivedTextData() handles that
-            // in cloneSymbolChildren.
-            delete node.derivedTextData;
-            // Track this node so we can re-delete stale derivedTextData
-            // if it gets re-added by derivedSymbolData application.
-            if (textOverrideGuids && node.guid) {
-              textOverrideGuids.add(guidToString(node.guid));
-            }
-          }
-        }
-      } else if (ref.componentPropNodeField?.name === "VISIBLE") {
-        if (assignment) {
-          // Explicit CPA value
-          const boolVal = assignment.value.boolValue;
-          if (typeof boolVal === "boolean") {
-            node.visible = boolVal;
-          }
-        }
-      } else if (ref.componentPropNodeField?.name === "OVERRIDDEN_SYMBOL_ID") {
-        // Instance swap via component property: the CPA value specifies
-        // which SYMBOL this nested INSTANCE should resolve to. Set
-        // overriddenSymbolID so that resolveInstance() →
-        // getEffectiveSymbolID() picks up the swapped component during
-        // lazy rendering resolution.
-        if (assignment) {
-          const guidVal = assignment.value.guidValue as FigGuid | undefined;
-          if (guidVal) {
-            node.overriddenSymbolID = guidVal;
-          }
-        }
-      }
+      applyComponentPropRef(node, ref, assignment, textOverrideGuids);
     }
-  }, { getChildren: mutableChildren });
+  });
+}
+
+function applyComponentPropRef(
+  node: MutableFigNode,
+  ref: ComponentPropRef,
+  assignment: FigComponentPropAssignment | undefined,
+  textOverrideGuids: Set<string> | undefined,
+): void {
+  const field = ref.componentPropNodeField?.name;
+  if (field === "TEXT_DATA") {
+    applyTextDataAssignment(node, assignment, textOverrideGuids);
+    return;
+  }
+  if (field === "VISIBLE") {
+    applyVisibleAssignment(node, assignment);
+    return;
+  }
+  if (field === "OVERRIDDEN_SYMBOL_ID") {
+    applyInstanceSwapAssignment(node, assignment);
+  }
+}
+
+function applyTextDataAssignment(
+  node: MutableFigNode,
+  assignment: FigComponentPropAssignment | undefined,
+  textOverrideGuids: Set<string> | undefined,
+): void {
+  const textValue = assignment?.value.textValue;
+  if (textValue === undefined) {
+    return;
+  }
+  const existingTextData = node.textData;
+  const existingChars = existingTextData?.characters ?? node.characters ?? "";
+  const isNoOp = existingChars === textValue.characters;
+  node.textData = {
+    ...(existingTextData ?? { characters: "" }),
+    characters: textValue.characters,
+    lines: textValue.lines ?? existingTextData?.lines,
+  };
+  node.characters = textValue.characters;
+  if (isNoOp) {
+    return;
+  }
+  delete node.derivedTextData;
+  if (textOverrideGuids === undefined || node.guid === undefined) {
+    return;
+  }
+  textOverrideGuids.add(guidToString(node.guid));
+}
+
+function applyVisibleAssignment(
+  node: MutableFigNode,
+  assignment: FigComponentPropAssignment | undefined,
+): void {
+  const boolVal = assignment?.value.boolValue;
+  if (typeof boolVal !== "boolean") {
+    return;
+  }
+  node.visible = boolVal;
+}
+
+function applyInstanceSwapAssignment(
+  node: MutableFigNode,
+  assignment: FigComponentPropAssignment | undefined,
+): void {
+  const guidVal = assignment?.value.guidValue as FigGuid | undefined;
+  if (guidVal === undefined) {
+    return;
+  }
+  node.overriddenSymbolID = guidVal;
 }
 
 // =============================================================================
@@ -555,7 +655,7 @@ function applyComponentPropAssignments(
  * After applyComponentPropAssignments deletes derivedTextData (because the
  * glyph paths match the ORIGINAL text, not the CPA-overridden text),
  * applyOverrides with derivedSymbolData may blindly re-add stale
- * derivedTextData. This function walks the tree and re-deletes
+ * derivedTextData. This function visits cloned SYMBOL nodes and re-deletes
  * derivedTextData on any node whose GUID was recorded as text-overridden.
  */
 function cleanupStaleDerivedTextData(
@@ -570,7 +670,9 @@ function cleanupStaleDerivedTextData(
   if (derivedSymbolData) {
     for (const entry of derivedSymbolData) {
       const guids = entry.guidPath?.guids;
-      if (!guids || guids.length !== 1) continue;
+      if (!guids || guids.length !== 1) {
+        continue;
+      }
       if (entry.derivedTextData !== undefined) {
         freshDerivedGuids.add(guidToString(guids[0]));
       }
@@ -587,19 +689,29 @@ function cleanupStaleDerivedTextData(
     dtd: FigDerivedTextData | undefined,
     characters: string | undefined,
   ): boolean {
-    if (!dtd || typeof characters !== "string") return false;
+    if (!dtd || typeof characters !== "string") {
+      return false;
+    }
     const cpCount = countCodePoints(characters);
-    const lines = dtd.derivedLines;
-    if (Array.isArray(lines)) {
-      const sum = lines.reduce(
-        (acc, l) => acc + (typeof l.characters === "string" ? countCodePoints(l.characters) : 0),
-        0,
-      );
-      if (sum === cpCount) return true;
+    if (derivedLinesMatch(dtd.derivedLines, cpCount)) {
+      return true;
     }
     const glyphs = dtd.glyphs;
-    if (Array.isArray(glyphs) && glyphs.length === cpCount) return true;
-    return false;
+    return Array.isArray(glyphs) && glyphs.length === cpCount;
+  }
+
+  function derivedLinesMatch(
+    lines: FigDerivedTextData["derivedLines"],
+    cpCount: number,
+  ): boolean {
+    if (!Array.isArray(lines)) {
+      return false;
+    }
+    const sum = lines.reduce(
+      (acc, l) => acc + (typeof l.characters === "string" ? countCodePoints(l.characters) : 0),
+      0,
+    );
+    return sum === cpCount;
   }
 
   /**
@@ -629,7 +741,7 @@ function cleanupStaleDerivedTextData(
     return false;
   }
 
-  walkTree(nodes, (node) => {
+  visitMutableNodes(nodes, (node) => {
     if (!node.guid || !node.derivedTextData) { return; }
     const key = guidToString(node.guid);
     const cpaTarget = cpaGuids.has(key);
@@ -655,53 +767,7 @@ function cleanupStaleDerivedTextData(
     if (mismatchByLength || riskyCpaKeep) {
       delete node.derivedTextData;
     }
-  }, { getChildren: mutableChildren });
-}
-
-// =============================================================================
-// Container Size Propagation
-// =============================================================================
-
-/**
- * Expand container nodes (FRAME etc.) to fit their children.
- *
- * When GUID mapping partially applies overrides (e.g., child sizes are updated
- * but the parent container's size is left at its SYMBOL default), containers
- * may be too small. This bottom-up pass ensures containers are at least as
- * large as their largest child on each axis.
- */
-function expandContainersToFitChildren(nodes: MutableFigNode[]): void {
-  for (const node of nodes) {
-    const children = mutableChildren(node);
-    if (children.length === 0) {continue;}
-
-    // Skip INSTANCE nodes: their children come from pre-resolution and
-    // haven't been properly sized yet. Nested INSTANCE resolution during
-    // rendering (resolveInstance) will handle the correct sizing.
-    if (getNodeType(node) === "INSTANCE") {continue;}
-
-    // Recurse first (bottom-up)
-    expandContainersToFitChildren(children);
-
-    const nodeSize = node.size;
-    if (!nodeSize) {continue;}
-
-    const maxChildWidthRef = { value: 0 };
-    const maxChildHeightRef = { value: 0 };
-    for (const child of children) {
-      if (child.size) {
-        maxChildWidthRef.value = Math.max(maxChildWidthRef.value, child.size.x);
-        maxChildHeightRef.value = Math.max(maxChildHeightRef.value, child.size.y);
-      }
-    }
-
-    if (maxChildWidthRef.value > nodeSize.x || maxChildHeightRef.value > nodeSize.y) {
-      node.size = {
-        x: Math.max(nodeSize.x, maxChildWidthRef.value),
-        y: Math.max(nodeSize.y, maxChildHeightRef.value),
-      };
-    }
-  }
+  });
 }
 
 // =============================================================================
@@ -714,7 +780,7 @@ function expandContainersToFitChildren(nodes: MutableFigNode[]): void {
  * `MutableFigNode = -readonly { … }` lifts the outer per-property
  * `readonly` modifier but the array element type stays
  * `readonly FigNode[]`. The clones we work with were produced by
- * `deepCloneNode` and are safe to mutate; this helper centralises the
+ * `deepCloneNode` and are safe to mutate; this function centralises the
  * single structural assertion required to view them as such, so
  * `applyOverrides` and friends don't sprinkle `as MutableFigNode[]`
  * casts at every recursion site.
@@ -733,11 +799,21 @@ function mutableChildren(node: MutableFigNode): MutableFigNode[] {
   return cs as MutableFigNode[];
 }
 
+function visitMutableNodes(
+  nodes: readonly MutableFigNode[],
+  visit: (node: MutableFigNode) => void,
+): void {
+  for (const node of nodes) {
+    visit(node);
+    visitMutableNodes(mutableChildren(node), visit);
+  }
+}
+
 /**
  * Apply a single Kiwi-shape override's payload onto a mutable FigNode.
  *
  * Iterates the override's payload keys via `kiwiOverridePayloadKeys`
- * (the SSoT helper for "which Kiwi fields are present and not routing
+ * (the SoT function for "which Kiwi fields are present and not address
  * fields"). The two field-application patterns are:
  *
  *   - `componentPropAssignments`: merge by `defID` (incoming wins per
@@ -753,36 +829,42 @@ function applyKiwiOverrideToNode(node: MutableFigNode, override: FigKiwiSymbolOv
   // The kiwi→FigNode field-name correspondence: `FigKiwiSymbolOverridePayload`
   // is a strict subset of FigNode's override-eligible fields, so every
   // payload key from `kiwiOverridePayloadKeys` (which already filters
-  // out routing fields and undefined values) names a slot on the node
-  // with an assignment-compatible value type. TypeScript cannot prove
+  // out address fields and undefined values) names a slot on the node
+  // with an assignable value type. TypeScript cannot prove
   // that generically, so the single Record-of-unknown assertion below
-  // is the SSoT for that structural correspondence.
+  // is the SoT for that structural correspondence.
   const nodeRecord = node as Record<string, unknown>;
   for (const key of kiwiOverridePayloadKeys(override)) {
     if (key === "componentPropAssignments") {
-      const incoming = override.componentPropAssignments;
-      if (!incoming) {
-        continue;
-      }
-      const existing = node.componentPropAssignments;
-      if (existing && existing.length > 0) {
-        const incomingKeys = new Set(incoming.map((a) => guidToString(a.defID)));
-        const merged = existing.filter((a) => !incomingKeys.has(guidToString(a.defID)));
-        node.componentPropAssignments = [...merged, ...incoming];
-      } else {
-        node.componentPropAssignments = incoming;
-      }
+      applyComponentPropAssignmentOverride(node, override.componentPropAssignments);
       continue;
     }
     nodeRecord[key] = override[key];
   }
 }
 
+function applyComponentPropAssignmentOverride(
+  node: MutableFigNode,
+  incoming: readonly FigComponentPropAssignment[] | undefined,
+): void {
+  if (incoming === undefined) {
+    return;
+  }
+  const existing = node.componentPropAssignments;
+  if (existing === undefined || existing.length === 0) {
+    node.componentPropAssignments = incoming;
+    return;
+  }
+  const incomingKeys = new Set(incoming.map((a) => guidToString(a.defID)));
+  const merged = existing.filter((a) => !incomingKeys.has(guidToString(a.defID)));
+  node.componentPropAssignments = [...merged, ...incoming];
+}
+
 /**
  * Apply symbol overrides to cloned nodes.
  *
  * Each override carries a `guidPath` that names a slot relative to the
- * cloned tree's root. The algorithm walks the path one guid at a time:
+ * cloned SYMBOL root. The algorithm walks the path one guid at a time:
  *
  *   1. If the path has length 1, the matching descendant is the target
  *      and the override's payload is applied via
@@ -798,27 +880,21 @@ function applyKiwiOverrideToNode(node: MutableFigNode, override: FigKiwiSymbolOv
  *       - When that child is a non-INSTANCE container (FRAME, GROUP,
  *         …), the walker recurses into its `children` with the
  *         path-tail still untouched; descendant lookups happen step by
- *         step against the local children's own GUIDs, so no runtime
- *         path re-translation is needed.
+ *         step against the local children's own GUIDs, so no second
+ *         path rewrite is needed.
  *
- * This is the same forwarding pattern as the renderer-side
- * `forwardOverrideToDescendantInstance`. The two pipelines share the
- * single SSoT semantic: "carry a payload to the INSTANCE that owns
- * the final slot". The renderer-side helper takes one penultimate-walk
- * because the renderer's design-tree path is already in the local
- * namespace; the kiwi-side walker takes the same step-wise descent
- * because the kiwi tree's per-step guids are also in the local
- * children's namespace. Neither side performs runtime path
- * re-translation.
+ * This is the same forwarding semantic used by render-time INSTANCE
+ * expansion: carry a payload to the INSTANCE that owns the final slot.
+ * Kiwi children are walked step by step, so each lookup stays in the
+ * local child namespace and no second document path is introduced.
  */
 function applyOverrides(
   nodes: MutableFigNode[],
   overrides: readonly FigKiwiSymbolOverride[],
   styleRegistry?: FigStyleRegistry,
-  symbolMap?: ReadonlyMap<string, FigNode>,
 ): void {
   for (const override of overrides) {
-    applyOverrideAtPath(nodes, override, styleRegistry, symbolMap);
+    applyOverrideAtPath(nodes, override, styleRegistry);
   }
 }
 
@@ -826,28 +902,27 @@ function applyOverrides(
  * Walk `override.guidPath` through `nodes`, applying the override at
  * its target slot. See `applyOverrides` for the full algorithm.
  *
- * Returns silently when any step fails to find its target — a
- * misaddressed override is a soft no-op (mirrors the renderer-side
- * helper's "target unreachable" branch).
+ * Throws when any step fails to find its target. A misaddressed
+ * override means SymbolResolver could not bind the address to a
+ * SYMBOL slot, or the source Kiwi document is inconsistent.
  */
 function applyOverrideAtPath(
   nodes: readonly MutableFigNode[],
   override: FigKiwiSymbolOverride,
   styleRegistry?: FigStyleRegistry,
-  symbolMap?: ReadonlyMap<string, FigNode>,
 ): void {
   const guids = override.guidPath?.guids;
   if (!guids || guids.length === 0) {
-    return;
+    throw new Error("SymbolResolver: override entry is missing guidPath");
   }
   // Locate the descendant whose guid equals `guids[0]` anywhere in
-  // the subtree. Kiwi-side overrides may address slots at any depth,
+  // the cloned SYMBOL descendants. Kiwi-side overrides may address slots at any depth,
   // not just depth 1. Subsequent guids descend into that
   // descendant's immediate children one step at a time.
-  const headStr = guidToString(guids[0]);
-  const child = findDescendantByGuid(nodes, headStr);
+  const targetGuid = guids[0];
+  const child = findDescendantByGuid(nodes, targetGuid);
   if (!child) {
-    return;
+    throw new Error(`SymbolResolver: override target ${guidToString(targetGuid)} is not present in the cloned SYMBOL descendants`);
   }
   if (guids.length === 1) {
     applyDirectOverride(child, override, styleRegistry);
@@ -866,7 +941,7 @@ function applyOverrideAtPath(
     return;
   }
   // Non-INSTANCE container: descend with the tail untouched.
-  applyOverrideAtPath(mutableChildren(child), tail, styleRegistry, symbolMap);
+  applyOverrideAtPath(mutableChildren(child), tail, styleRegistry);
 }
 
 /**
@@ -885,30 +960,26 @@ function applyDirectOverride(
 }
 
 /**
- * Find a descendant whose `guid` (as `sessionID:localID` string)
- * equals `guidStr`, searching the whole subtree of `nodes`.
+ * Find a descendant whose `guid` equals `targetGuid`, searching the
+ * full descendant set of `nodes`.
  *
  * Kiwi-side overrides may address slots authored anywhere in the
- * SYMBOL's descendant tree, not just at depth 1. The applier's
- * walk semantically matches the renderer-side `findInDesignTree`
- * (which itself is a DFS through `dfsById`).
+ * SYMBOL's descendants, not just at depth 1.
  *
  * After the matched node is returned, subsequent path steps
  * descend into ITS immediate children — so the walk is actually
  * "deep DFS for path[0], then stepwise descent for path[1..]".
- * The result is the same shape as the renderer-side helper while
- * keeping kiwi-side concerns (no design-namespace pre-resolution)
- * intact.
+ * No second document shape is introduced.
  */
 function findDescendantByGuid(
   nodes: readonly MutableFigNode[],
-  guidStr: string,
+  targetGuid: FigGuid,
 ): MutableFigNode | undefined {
   for (const node of nodes) {
-    if (node.guid && guidToString(node.guid) === guidStr) {
+    if (node.guid.sessionID === targetGuid.sessionID && node.guid.localID === targetGuid.localID) {
       return node;
     }
-    const found = findDescendantByGuid(mutableChildren(node), guidStr);
+    const found = findDescendantByGuid(mutableChildren(node), targetGuid);
     if (found) {
       return found;
     }
@@ -934,20 +1005,12 @@ export type ResolvedInstanceNode = {
 };
 
 /**
- * Context required for full INSTANCE resolution.
+ * Context required for full INSTANCE resolution inside SymbolResolver.
  */
-export type InstanceResolveContext = {
-  readonly symbolMap: ReadonlyMap<string, FigNode>;
-  readonly resolvedSymbolCache?: ReadonlyMap<string, FigNode>;
+type InstanceResolveRuntime = {
+  readonly document: FigKiwiDocumentIndex;
+  readonly resolveReferences: (node: FigNode) => InstanceResolution;
   readonly styleRegistry?: FigStyleRegistry;
-  /**
-   * Optional blob array for GUID translation size fallback. When an
-   * INSTANCE override targets a descendant with only fillGeometry (no
-   * explicit size), decoding the blob yields the node's authored
-   * dimensions — required to disambiguate sibling descendants of
-   * different sizes (e.g. multi-avatar Contact variant).
-   */
-  readonly blobs?: readonly FigBlob[];
 };
 
 /**
@@ -977,17 +1040,7 @@ export function mergeSymbolProperties(instanceNode: FigNode, symbolNode: FigNode
   if (symbolNode.fillGeometry && sameSize) { merged.fillGeometry = symbolNode.fillGeometry; }
   if (symbolNode.strokeGeometry && sameSize) { merged.strokeGeometry = symbolNode.strokeGeometry; }
 
-  // clipsContent / frameMaskDisabled
-  const instanceHasOwnClip = instanceNode.frameMaskDisabled !== undefined || instanceNode.clipsContent !== undefined;
-  if (!instanceHasOwnClip) {
-    if (symbolNode.frameMaskDisabled !== undefined) {
-      merged.frameMaskDisabled = symbolNode.frameMaskDisabled;
-    } else if (symbolNode.clipsContent !== undefined) {
-      merged.clipsContent = symbolNode.clipsContent;
-    } else {
-      merged.frameMaskDisabled = false;
-    }
-  }
+  applySymbolClipFields(merged, instanceNode, symbolNode);
 
   if (symbolNode.effects) { merged.effects = symbolNode.effects; }
   if (symbolNode.strokeJoin !== undefined) { merged.strokeJoin = symbolNode.strokeJoin; }
@@ -996,9 +1049,34 @@ export function mergeSymbolProperties(instanceNode: FigNode, symbolNode: FigNode
   if (symbolNode.mask !== undefined) { merged.mask = symbolNode.mask; }
   if (symbolNode.cornerSmoothing !== undefined) { merged.cornerSmoothing = symbolNode.cornerSmoothing; }
   if (symbolNode.size) { merged.size = symbolNode.size; }
-  merged.opacity = symbolNode.opacity;
+  // opacity: the INSTANCE's opacity is the override channel — Figma
+  // renders an instance with its own opacity, not the symbol's. SYMBOL
+  // opacity only applies when the INSTANCE doesn't declare one.
+  if (instanceNode.opacity === undefined && symbolNode.opacity !== undefined) {
+    merged.opacity = symbolNode.opacity;
+  }
 
   return merged;
+}
+
+function applySymbolClipFields(
+  merged: MutableFigNode,
+  instanceNode: FigNode,
+  symbolNode: FigNode,
+): void {
+  const instanceHasOwnClip = instanceNode.frameMaskDisabled !== undefined || instanceNode.clipsContent !== undefined;
+  if (instanceHasOwnClip) {
+    return;
+  }
+  if (symbolNode.frameMaskDisabled !== undefined) {
+    merged.frameMaskDisabled = symbolNode.frameMaskDisabled;
+    return;
+  }
+  if (symbolNode.clipsContent !== undefined) {
+    merged.clipsContent = symbolNode.clipsContent;
+    return;
+  }
+  merged.frameMaskDisabled = false;
 }
 
 /**
@@ -1015,47 +1093,175 @@ export function applySelfOverridesToMergedNode(
   symbolGuidStr: string,
   styleRegistry?: FigStyleRegistry,
 ): void {
-  let hasStyleIdOverride = false;
-  for (const ov of overrides) {
-    const guids = ov.guidPath?.guids;
-    if (!guids || guids.length !== 1) { continue; }
-    if (guidToString(guids[0]) !== symbolGuidStr) { continue; }
-    for (const key of Object.keys(ov) as (keyof FigKiwiSymbolOverride)[]) {
-      if (key === "guidPath") { continue; }
-      if (!SELF_OVERRIDE_PAYLOAD_FIELDS.has(key)) { continue; }
-      const value = ov[key];
-      if (value === undefined) { continue; }
-      (mergedNode as Record<string, unknown>)[key] = value;
-      if (key === "styleIdForFill" || key === "styleIdForStrokeFill") {
-        hasStyleIdOverride = true;
-      }
-    }
-  }
+  const hasStyleIdOverride = overrides.some((override) => applySelfOverrideEntry(mergedNode, override, symbolGuidStr));
   if (hasStyleIdOverride && styleRegistry) {
     resolveStyleIdOnMutableNode(mergedNode, styleRegistry);
   }
 }
 
-/**
- * Translate override GUIDs if the translation map is non-empty.
- */
-function translateOverridesIfNeeded(
-  translationMap: ReadonlyMap<string, string>,
+function applySelfOverrideEntry(
+  mergedNode: MutableFigNode,
+  override: FigKiwiSymbolOverride,
+  symbolGuidStr: string,
+): boolean {
+  const guids = override.guidPath?.guids;
+  if (!guids || guids.length !== 1) {
+    return false;
+  }
+  if (guidToString(guids[0]) !== symbolGuidStr) {
+    return false;
+  }
+  const styleKeys = (Object.keys(override) as (keyof FigKiwiSymbolOverride)[])
+    .map((key) => applySelfOverrideField(mergedNode, override, key));
+  return styleKeys.includes(true);
+}
+
+function applySelfOverrideField(
+  mergedNode: MutableFigNode,
+  override: FigKiwiSymbolOverride,
+  key: keyof FigKiwiSymbolOverride,
+): boolean {
+  if (key === "guidPath" || !SELF_OVERRIDE_PAYLOAD_FIELDS.has(key)) {
+    return false;
+  }
+  const value = override[key];
+  if (value === undefined) {
+    return false;
+  }
+  (mergedNode as Record<string, unknown>)[key] = value;
+  return key === "styleIdForFill" || key === "styleIdForStrokeFill";
+}
+
+type SymbolOverrideSlotResolution = ReadonlyMap<string, FigGuid>;
+
+function firstOverrideGuidKeys(
+  ...sets: (readonly FigKiwiSymbolOverride[] | undefined)[]
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const set of sets) {
+    if (set === undefined) {
+      continue;
+    }
+    for (const entry of set) {
+      const first = entry.guidPath?.guids[0];
+      if (first !== undefined) {
+        keys.add(guidToString(first));
+      }
+    }
+  }
+  return keys;
+}
+
+type SymbolSlotIndex = {
+  readonly guidToSlot: ReadonlyMap<string, { readonly guid: FigGuid }>;
+  readonly exactSlotMap: ReadonlyMap<string, string>;
+};
+
+function buildSymbolSlotIndex(symbolRoot: FigNode, childrenOf: KiwiChildrenOf): SymbolSlotIndex {
+  const guidToSlot = new Map<string, { readonly guid: FigGuid }>();
+  const exactSlotMap = new Map<string, string>();
+
+  function visit(nodes: readonly FigNode[]): void {
+    for (const node of nodes) {
+      registerSymbolSlot(node, guidToSlot, exactSlotMap);
+      visit(childrenOf(node));
+    }
+  }
+
+  visit(childrenOf(symbolRoot));
+  return { guidToSlot, exactSlotMap };
+}
+
+function registerSymbolSlot(
+  node: FigNode,
+  guidToSlot: Map<string, { readonly guid: FigGuid }>,
+  exactSlotMap: Map<string, string>,
+): void {
+  const guid = node.guid;
+  if (guid === undefined) {
+    return;
+  }
+  const guidKey = guidToString(guid);
+  const overrideKey = node.overrideKey;
+  const overrideKeyAddress = overrideKey === undefined ? undefined : guidToString(overrideKey);
+  if (!guidToSlot.has(guidKey)) {
+    guidToSlot.set(guidKey, { guid });
+  }
+  if (!exactSlotMap.has(guidKey)) {
+    exactSlotMap.set(guidKey, guidKey);
+  }
+  if (overrideKeyAddress === undefined || exactSlotMap.has(overrideKeyAddress)) {
+    return;
+  }
+  exactSlotMap.set(overrideKeyAddress, guidKey);
+}
+
+function resolveOverrideSlotAddresses(
+  {
+    symbolRoot,
+    derivedSymbolData,
+    symbolOverrides,
+    childrenOf,
+  }: {
+    readonly symbolRoot: FigNode;
+    readonly derivedSymbolData?: readonly FigKiwiSymbolOverride[];
+    readonly symbolOverrides?: readonly FigKiwiSymbolOverride[];
+    readonly childrenOf: KiwiChildrenOf;
+  },
+): SymbolOverrideSlotResolution {
+  const slotIndex = buildSymbolSlotIndex(symbolRoot, childrenOf);
+  const keys = firstOverrideGuidKeys(derivedSymbolData, symbolOverrides);
+  if (keys.size === 0) {
+    return new Map();
+  }
+
+  const slots = new Map<string, FigGuid>();
+  for (const key of keys) {
+    const targetKey = slotIndex.exactSlotMap.get(key);
+    if (targetKey === undefined || targetKey === key) {
+      continue;
+    }
+    const target = slotIndex.guidToSlot.get(targetKey);
+    if (target === undefined) {
+      throw new Error(`SymbolResolver: override slot ${targetKey} is missing from SYMBOL slot index`);
+    }
+    slots.set(key, target.guid);
+  }
+  return slots;
+}
+
+function bindOverridesToResolvedSlots(
+  slotResolution: SymbolOverrideSlotResolution,
   overrides: readonly FigKiwiSymbolOverride[] | undefined,
 ): readonly FigKiwiSymbolOverride[] | undefined {
-  if (translationMap.size > 0 && overrides) {
-    return translateOverrides(overrides, translationMap);
+  if (overrides === undefined || slotResolution.size === 0) {
+    return overrides;
   }
-  return overrides;
+  return overrides.map((entry) => {
+    const guids = entry.guidPath?.guids;
+    if (guids === undefined || guids.length === 0) {
+      return entry;
+    }
+    const mapped = slotResolution.get(guidToString(guids[0]));
+    if (mapped === undefined) {
+      return entry;
+    }
+    return {
+      ...entry,
+      guidPath: {
+        guids: [mapped, ...guids.slice(1)],
+      },
+    };
+  });
 }
 
 /**
- * Resolve an INSTANCE node into renderable content.
+ * Resolve an INSTANCE node into renderable content inside SymbolResolver.
  *
  * This is the single source of truth for the full INSTANCE resolution pipeline:
  * 1. Resolve INSTANCE → SYMBOL reference
  * 2. Merge SYMBOL properties into INSTANCE
- * 3. Translate override GUIDs
+ * 3. Resolve overrideKey addresses to descendant GUIDs
  * 4. Apply self-referencing overrides to the merged node
  * 5. Clone SYMBOL children with overrides applied
  * 6. Resolve layout for resized instances
@@ -1063,130 +1269,156 @@ function translateOverridesIfNeeded(
  * The renderer calls this function and renders the result — it does NOT
  * implement any resolution logic itself.
  */
-export function resolveInstanceNode(
+function resolveInstanceNodeWithResolver(
   node: FigNode,
-  ctx: InstanceResolveContext,
+  ctx: InstanceResolveRuntime,
 ): ResolvedInstanceNode {
   // 1. Resolve INSTANCE → SYMBOL
-  const resolution = resolveInstanceReferences(node, ctx.symbolMap);
+  const resolution = ctx.resolveReferences(node);
   if (!resolution.effectiveSymbol) {
-    return { node, children: safeChildren(node) };
+    throw new Error(`SymbolResolver: INSTANCE ${guidToString(node.guid)} does not resolve to a SYMBOL`);
   }
 
-  const { node: resolvedSymNode, guidStr: resolvedGuidStr } = resolution.effectiveSymbol;
-  const symNode = ctx.resolvedSymbolCache?.get(resolvedGuidStr) ?? resolvedSymNode;
-  const originalSymNode = resolvedSymNode;
+  const { node: symNode } = resolution.effectiveSymbol;
+  const originalSymNode = symNode;
 
   // 2. Merge SYMBOL properties into INSTANCE
   const mergedNode = mergeSymbolProperties(node, symNode);
 
-  // 3. Translate override GUIDs
-  // CPA is collected BEFORE translation because Phase 1.3 content-signature
-  // reconciliation in buildGuidTranslationMap uses CPA character counts to
-  // disambiguate TEXT/INSTANCE descendants that collide under localID offset
-  // matching (e.g. 6 flat source action slots vs. 2 nested local groups).
+  // 3. Resolve overrideKey addresses to descendant GUIDs.
   const componentPropAssignments = collectComponentPropAssignments(node);
-  const rawSymbolOverridesUntouched = getInstanceSymbolOverrides(node);
-  // Re-route self-override entries (single-guid path carrying only
+  const sourceSymbolOverrides = node.symbolData?.symbolOverrides;
+  // Move self-override entries (single-guid path carrying only
   // INSTANCE-only fields like name/size/variableConsumptionMap/
   // parameterConsumptionMap) onto the SYMBOL root before the
-  // translation primitive runs. Otherwise the majority-vote heuristic
-  // can pull a self-override onto a sibling descendant — e.g. Contact
-  // INSTANCE 15:958's [127:58424] name="Contact" would land on Names
-  // FRAME 15:837 and rename it to "Contact", corrupting downstream
-  // walks that match by `node.name === "Contact"`. Mirrors the same
-  // fix in domain-side
-  // resolveOverridePaths in the FigNode conversion layer.
+  // descendant-slot address resolution runs.
   const symRootGuid = symNode.guid;
-  const rerouteSelfOverrides = <T extends FigKiwiSymbolOverride>(entries: readonly T[] | undefined): readonly T[] | undefined => {
-    if (!entries || !symRootGuid) return entries;
-    let changed = false;
-    const out: T[] = [];
-    for (const e of entries) {
-      if (isInstanceSelfOverride(e)) {
-        out.push({ ...e, guidPath: { guids: [symRootGuid] } } as T);
-        changed = true;
-      } else {
-        out.push(e);
-      }
-    }
-    return changed ? out : entries;
-  };
-  const rawSymbolOverrides = rerouteSelfOverrides(rawSymbolOverridesUntouched);
-  const rawDerivedSymbolData = rerouteSelfOverrides(node.derivedSymbolData as FigDerivedSymbolData | undefined);
-  // Strip self-override entries (path = SYMBOL root) BEFORE translation
-  // and BEFORE building the translation map — `buildGuidTranslationMap`'s
-  // majority-vote heuristic treats every override guid as a descendant
-  // candidate, so a SYMBOL-root entry forces a `root → child` mapping
-  // (Contact 15:910's rerouted self-override `[15:844]` → 15:849 Icon
-  // slot) which then re-routes *other* entries onto the wrong slot when
-  // translated. Self-overrides apply only to the INSTANCE's merged node
-  // (handled directly by `applySelfOverridesToMergedNode` using the
-  // *un-translated* rerouted path).
-  const symRootGuidStr = guidToString(symRootGuid);
-  const isSelfOverrideTargetingRoot = (e: FigKiwiSymbolOverride): boolean => {
-    const guids = e.guidPath?.guids;
-    if (!guids || guids.length !== 1) return false;
-    return guidToString(guids[0]) === symRootGuidStr;
-  };
-  const partition = <T extends FigKiwiSymbolOverride>(entries: readonly T[] | undefined): { selves: readonly T[]; rest: readonly T[] } => {
-    const selves: T[] = [];
-    const rest: T[] = [];
-    for (const e of entries ?? []) {
-      if (isSelfOverrideTargetingRoot(e)) selves.push(e);
-      else rest.push(e);
-    }
-    return { selves, rest };
-  };
-  // Self-overrides bypass translation entirely; the rest go through
-  // the primitive so descendant guids land in SYMBOL namespace.
-  const ovPart = partition(rawSymbolOverrides);
-  const dsdPart = partition(rawDerivedSymbolData);
-  // Re-build translation map *without* the self-overrides — they
-  // shouldn't influence the heuristic at all.
-  const translationMapNoSelf = buildGuidTranslationMap(
-    originalSymNode,
-    dsdPart.rest as FigDerivedSymbolData,
-    ovPart.rest,
-    componentPropAssignments.length > 0 ? componentPropAssignments : undefined,
-    ctx.symbolMap,
-    ctx.blobs,
+  const symbolRootBoundOverrides = bindSelfOverridesToSymbolRoot(sourceSymbolOverrides, symRootGuid);
+  const symbolRootBoundDerivedData = bindSelfOverridesToSymbolRoot(
+    node.derivedSymbolData as FigDerivedSymbolData | undefined,
+    symRootGuid,
   );
-  const symbolOverrides = translateOverridesIfNeeded(translationMapNoSelf, ovPart.rest);
-  const derivedSymbolData = translateOverridesIfNeeded(translationMapNoSelf, dsdPart.rest);
-  // Self-overrides keep their `[SYMBOL root]` path for
-  // applySelfOverridesToMergedNode below.
+  // Strip self-override entries (path = SYMBOL root) before descendant
+  // address resolution. Self-overrides apply only to the INSTANCE's merged node.
+  const symRootGuidStr = guidToString(symRootGuid);
+  const ovPart = partitionSymbolRootOverrides(symbolRootBoundOverrides, symRootGuidStr);
+  const dsdPart = partitionSymbolRootOverrides(symbolRootBoundDerivedData, symRootGuidStr);
+  const slotResolution = resolveOverrideSlotAddresses({
+    symbolRoot: originalSymNode,
+    derivedSymbolData: dsdPart.rest,
+    symbolOverrides: ovPart.rest,
+    childrenOf: ctx.document.childrenOf,
+  });
+  const symbolOverrides = bindOverridesToResolvedSlots(slotResolution, ovPart.rest);
+  const derivedSymbolData = bindOverridesToResolvedSlots(slotResolution, dsdPart.rest);
   const symbolSelfOverrides = ovPart.selves;
 
   // 4. Apply self-referencing overrides — only the entries we
   // partitioned out above (path = SYMBOL root). They never went
-  // through the translation primitive so they keep their authored
-  // INSTANCE-only fields intact.
+  // through descendant address resolution so they keep their INSTANCE-only fields.
   if (symbolSelfOverrides.length > 0) {
     applySelfOverridesToMergedNode(mergedNode, symbolSelfOverrides, guidToString(symNode.guid), ctx.styleRegistry);
   }
 
   // 5. Clone SYMBOL children with overrides
   const children = cloneSymbolChildren(symNode, {
+    childrenOf: ctx.document.childrenOf,
     symbolOverrides,
     derivedSymbolData,
     componentPropAssignments: componentPropAssignments.length > 0 ? componentPropAssignments : undefined,
     styleRegistry: ctx.styleRegistry,
-    symbolMap: ctx.symbolMap,
   });
 
   // 6. Layout resolution for resized instances
   const instanceSize = node.size;
   const symbolSize = symNode.size;
-  const isResized = instanceSize && symbolSize && (instanceSize.x !== symbolSize.x || instanceSize.y !== symbolSize.y);
-
-  if (isResized) {
-    const layout = resolveInstanceLayout({ children, symbolSize: symbolSize!, instanceSize: instanceSize!, derivedSymbolData });
-    if (layout.sizeApplied) {
-      mergedNode.size = instanceSize;
-    }
-    return { node: mergedNode, children: layout.children };
+  const resized = resolveResizedInstanceChildren({
+    children,
+    derivedSymbolData,
+    instanceSize,
+    symbolSize,
+  });
+  if (resized !== undefined) {
+    applyResolvedInstanceSize(mergedNode, resized);
+    return { node: mergedNode, children: resized.children };
   }
 
   return { node: mergedNode, children };
+}
+
+function applyResolvedInstanceSize(
+  mergedNode: MutableFigNode,
+  resized: { readonly sizeApplied: boolean; readonly instanceSize: NonNullable<FigNode["size"]> },
+): void {
+  if (!resized.sizeApplied) {
+    return;
+  }
+  mergedNode.size = resized.instanceSize;
+}
+
+function resolveResizedInstanceChildren(
+  input: {
+    readonly children: readonly FigNode[];
+    readonly derivedSymbolData: readonly FigKiwiSymbolOverride[] | undefined;
+    readonly instanceSize: FigNode["size"];
+    readonly symbolSize: FigNode["size"];
+  },
+): { readonly children: readonly FigNode[]; readonly sizeApplied: boolean; readonly instanceSize: NonNullable<FigNode["size"]> } | undefined {
+  if (input.instanceSize === undefined || input.symbolSize === undefined) {
+    return undefined;
+  }
+  if (input.instanceSize.x === input.symbolSize.x && input.instanceSize.y === input.symbolSize.y) {
+    return undefined;
+  }
+  const layout = resolveInstanceLayout({
+    children: input.children,
+    symbolSize: input.symbolSize,
+    instanceSize: input.instanceSize,
+    derivedSymbolData: input.derivedSymbolData,
+  });
+  return { children: layout.children, sizeApplied: layout.sizeApplied, instanceSize: input.instanceSize };
+}
+
+function bindSelfOverridesToSymbolRoot<T extends FigKiwiSymbolOverride>(
+  entries: readonly T[] | undefined,
+  symRootGuid: FigGuid,
+): readonly T[] | undefined {
+  if (entries === undefined) {
+    return entries;
+  }
+  const bound = entries.map((entry) => {
+    if (!isInstanceSelfOverride(entry)) {
+      return entry;
+    }
+    return { ...entry, guidPath: { guids: [symRootGuid] } } as T;
+  });
+  const changed = bound.some((entry, index) => entry !== entries[index]);
+  return changed ? bound : entries;
+}
+
+function partitionSymbolRootOverrides<T extends FigKiwiSymbolOverride>(
+  entries: readonly T[] | undefined,
+  symRootGuidStr: string,
+): { readonly selves: readonly T[]; readonly rest: readonly T[] } {
+  const selves: T[] = [];
+  const rest: T[] = [];
+  for (const entry of entries ?? []) {
+    if (isSelfOverrideTargetingRoot(entry, symRootGuidStr)) {
+      selves.push(entry);
+      continue;
+    }
+    rest.push(entry);
+  }
+  return { selves, rest };
+}
+
+function isSelfOverrideTargetingRoot(
+  entry: FigKiwiSymbolOverride,
+  symRootGuidStr: string,
+): boolean {
+  const guids = entry.guidPath?.guids;
+  if (!guids || guids.length !== 1) {
+    return false;
+  }
+  return guidToString(guids[0]) === symRootGuidStr;
 }

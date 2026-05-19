@@ -12,9 +12,11 @@
  */
 import type {
   FigBlob,
+  FigKiwiDocumentIndex,
 } from "@higma-document-models/fig/domain";
 import { decodePathCommands } from "@higma-document-models/fig/domain";
 import type { FigNode, FigMatrix } from "@higma-document-models/fig/types";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import {
   evaluateBooleanPathResult,
   type BooleanOperationType,
@@ -66,12 +68,13 @@ import {
 export function tryComposeBooleanLeaf(
   node: FigNode,
   blobs: readonly FigBlob[] | undefined,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): SwiftView | undefined {
   if (!blobs) {
     return undefined;
   }
   const op = resolveBooleanOperationType(node.booleanOperation);
-  const childInputs = collectChildPathInputs(node, blobs);
+  const childInputs = collectChildPathInputs(node, blobs, childrenOf);
   if (childInputs.length === 0) {
     return undefined;
   }
@@ -127,12 +130,10 @@ export function tryComposeBooleanLeaf(
 function collectChildPathInputs(
   node: FigNode,
   blobs: readonly FigBlob[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): BooleanPathInput[] {
   const out: BooleanPathInput[] = [];
-  for (const child of node.children ?? []) {
-    if (!child) {
-      continue;
-    }
+  for (const child of childrenOf(node)) {
     if (child.visible === false) {
       continue;
     }
@@ -141,7 +142,7 @@ function collectChildPathInputs(
     // transformed by the nested node's own transform.
     if (child.type.name === "BOOLEAN_OPERATION") {
       const innerOp = resolveBooleanOperationType(child.booleanOperation);
-      const innerInputs = collectChildPathInputs(child, blobs);
+      const innerInputs = collectChildPathInputs(child, blobs, childrenOf);
       if (innerInputs.length === 0) {
         continue;
       }
@@ -252,11 +253,10 @@ function pickUniformCornerRadius(node: FigNode): number | undefined {
 }
 
 /**
- * Adapt a Figma `FigMatrix` (where every field is optional) to the
- * primitive `AffineMatrix` (where every field is required). The
- * primitive lives in a layer-0 package and intentionally does not
- * depend on the fig domain, so this thin adapter sits at the
- * boundary.
+ * Read a Figma `FigMatrix` into the primitive `AffineMatrix` shape.
+ * The primitive lives in a layer-0 package and intentionally does not
+ * depend on the fig domain, so the field completion happens at this
+ * call boundary.
  */
 function toAffineMatrix(transform: FigMatrix | undefined): AffineMatrix | undefined {
   if (!transform) {
@@ -330,8 +330,9 @@ function readFillExpr(node: FigNode): SwiftExpr | undefined {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return solidPaintToColor(paint);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaintToColor(solidPaint);
     }
   }
   const grad = firstVisibleGradientPaint(paints);
@@ -367,8 +368,9 @@ function pickFirstSolidStroke(paints: NonNullable<FigNode["strokePaints"]>): Swi
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return solidPaintToColor(paint);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaintToColor(solidPaint);
     }
   }
   return undefined;

@@ -21,9 +21,9 @@
 import { computeFigExportBounds, renderFigToSvg } from "@higma-document-renderers/fig/svg";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
-import { figRawResources } from "@higma-document-io/fig/context";
+import { figDocumentResources } from "@higma-document-io/fig/context";
 import type { WebFontPlan } from "@higma-document-models/fig/font";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { EmitFile, FrameTarget } from "../types";
 import { renderFontLinkNodes } from "../font-links";
 import { doctype, el, raw, text } from "../../lib/html-tree/builder";
@@ -46,7 +46,7 @@ export type FigmaSvgFiles = {
  * layer.
  */
 export async function emitFigmaSvgForFrame(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   target: FrameTarget,
   fontPlan: WebFontPlan,
 ): Promise<FigmaSvgFiles | undefined> {
@@ -67,7 +67,7 @@ export async function emitFigmaSvgForFrame(
   // browser's React render.
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
   // SoT: spread the canonical four-field bundle from the IO layer
-  // instead of re-listing `symbolMap` / `styleRegistry` / `blobs` /
+  // instead of re-listing `symbolResolver` / `styleRegistry` / `blobs` /
   // `images` by hand. Re-deriving any of them inline would diverge
   // from the post-style-resolution maps other consumers see.
   //
@@ -95,8 +95,7 @@ export async function emitFigmaSvgForFrame(
     width: exportBox.width,
     height: exportBox.height,
     viewport: { x: exportBox.x, y: exportBox.y, width: exportBox.width, height: exportBox.height },
-    ...figRawResources(source),
-    normalizeRootTransform: true,
+    ...figDocumentResources(source),
     fontLoader,
     // The authoritative SVG is loaded inside an `<iframe>` running in a
     // normal web browser whose backbuffer is sRGB. Image paints flagged

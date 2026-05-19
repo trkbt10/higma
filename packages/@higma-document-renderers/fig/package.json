@@ -23,10 +23,7 @@
   "scripts": {
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-renderers/fig/src'",
-    "snapshot:generate": "bun run scripts/generate-snapshots.ts",
-    "test:webgl": "vitest run --config ../../../vitest.config.ts spec/renderer/webgl/comparison.spec.ts spec/renderer/webgl/background-blur.spec.ts spec/renderer/webgl/effect-attributes.spec.ts",
-    "test:webgl:update": "vitest run --config ../../../vitest.config.ts spec/renderer/webgl/comparison.spec.ts spec/renderer/webgl/background-blur.spec.ts spec/renderer/webgl/effect-attributes.spec.ts"
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-renderers/fig/src'"
   },
   "exports": {
     ".": {
@@ -76,6 +73,14 @@
     "./scene-graph": {
       "types": "./src/scene-graph/index.ts",
       "default": "./src/scene-graph/index.ts"
+    },
+    "./scene-graph/model": {
+      "types": "./src/scene-graph/model/index.ts",
+      "default": "./src/scene-graph/model/index.ts"
+    },
+    "./scene-graph/model/blend-mode": {
+      "types": "./src/scene-graph/model/blend-mode.ts",
+      "default": "./src/scene-graph/model/blend-mode.ts"
     },
     "./scene-graph/convert": {
       "types": "./src/scene-graph/convert/index.ts",

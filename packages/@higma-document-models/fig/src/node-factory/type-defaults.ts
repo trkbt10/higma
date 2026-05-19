@@ -2,9 +2,9 @@
  * @file Node-type load-bearing defaults SoT
  *
  * Single source of truth for the Kiwi field defaults Figma's binary format
- * requires per node type. Applied during `FigDesignDocument → FigNode[]`
- * projection so that every node type carries the load-bearing fields Figma
- * needs to render, edit, and persist correctly.
+ * requires per node type. Applied while constructing Kiwi `FigNode`
+ * entries so every node type carries the load-bearing fields Figma needs
+ * to render, edit, and persist correctly.
  *
  * The values here were empirically derived from real Figma `.fig`
  * exports (`docs/refactor/disk-sot-verification/`). Don't change a
@@ -24,9 +24,9 @@ const COLOR_PROFILE_SRGB = { value: 1, name: "SRGB" } as const;
 
 /**
  * Apply load-bearing Kiwi field defaults to a projected node base. The
- * `base` argument is a partial `FigNode` shape being built by the
- * `document-to-tree` projection; fields already populated are preserved
- * (`??=`), missing load-bearing fields are filled in.
+ * `base` argument is a partial `FigNode` shape being built for
+ * `nodeChanges`; fields already populated are preserved (`??=`), missing
+ * load-bearing fields are filled in.
  */
 export function applyNodeTypeDefaults(base: Record<string, unknown>, type: FigNodeType): void {
   switch (type) {

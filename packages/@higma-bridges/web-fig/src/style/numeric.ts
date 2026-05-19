@@ -1,5 +1,5 @@
 /**
- * @file Pure numeric helpers used when emitting / parsing CSS values.
+ * @file Numeric formatting used when emitting / parsing CSS values.
  *
  * Single SoT for the trivial maths that previously lived in
  * fig-to-web's `lib/css-format/numeric.ts`. The two directions
@@ -14,7 +14,7 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Round to 3 decimal places. Used for normalised colour channels and gradient stop positions. */
+/** Round to 3 decimal places. Used for unit-interval colour channels and gradient stop positions. */
 export function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
 }

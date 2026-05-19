@@ -43,6 +43,7 @@
  * `background-image`.
  */
 import type { FigEffect, FigNode } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { StyleInputs } from "./style";
 import { paintsToBackgroundStyle } from "./paint";
 import { effectsToBoxShadow } from "../../tokens";
@@ -66,16 +67,23 @@ export type AbsorptionResult = {
 
 const NONE: AbsorptionResult = { absorbed: undefined, style: {} };
 
-function firstVisibleChild(node: FigNode): FigNode | undefined {
-  for (const child of node.children ?? []) {
-    if (child && child.visible !== false) {
+function firstVisibleChild(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): FigNode | undefined {
+  for (const child of childrenOf(node)) {
+    if (child.visible !== false) {
       return child;
     }
   }
   return undefined;
 }
 
-function isLeafDecoration(child: FigNode, parentSize: { x: number; y: number }): boolean {
+function isLeafDecoration(
+  child: FigNode,
+  parentSize: { x: number; y: number },
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): boolean {
   if (!DECORATION_TYPES.has(child.type.name)) {
     return false;
   }
@@ -109,8 +117,8 @@ function isLeafDecoration(child: FigNode, parentSize: { x: number; y: number }):
     return false;
   }
   // Has no rendered children of its own.
-  for (const grandchild of child.children ?? []) {
-    if (grandchild && grandchild.visible !== false) {
+  for (const grandchild of childrenOf(child)) {
+    if (grandchild.visible !== false) {
       return false;
     }
   }
@@ -136,10 +144,8 @@ function parentHasInterferingPaint(parent: FigNode): boolean {
 /**
  * Real Figma `.fig` files store per-corner radii on individual fields
  * (`rectangleTopLeftCornerRadius` …) instead of as a uniform
- * `cornerRadius` or the array `rectangleCornerRadii`. The
- * `@higma-document-renderers/fig` renderer normalises these into
- * `rectangleCornerRadii` on `FigDesignNode`, but fig-to-web walks raw
- * `FigNode` so the same normalisation has to live here. Returns
+ * `cornerRadius` or the array `rectangleCornerRadii`. fig-to-web walks raw
+ * `FigNode`, so the per-corner read happens here. Returns
  * `undefined` when no per-corner field is set; otherwise emits the
  * 4-value `tl tr br bl` shorthand. Missing corners default to 0
  * (matching the renderer's `?? 0`).
@@ -225,11 +231,11 @@ export function absorbBackgroundDecoration(parent: FigNode, inputs: StyleInputs)
   if (parentHasInterferingPaint(parent)) {
     return NONE;
   }
-  const first = firstVisibleChild(parent);
+  const first = firstVisibleChild(parent, inputs.childrenOf);
   if (!first) {
     return NONE;
   }
-  if (!isLeafDecoration(first, parent.size)) {
+  if (!isLeafDecoration(first, parent.size, inputs.childrenOf)) {
     return NONE;
   }
   const style = decorationStyle(first, inputs);

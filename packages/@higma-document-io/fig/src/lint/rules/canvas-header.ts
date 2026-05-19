@@ -33,17 +33,18 @@ export const canvasHeaderRule: LintRule = (ctx, emit) => {
   }
 
   // Sanity: payload after header must be at least schema chunk size + 4 byte data prefix.
-  if (ctx.canvasData) {
-    const payloadLen = ctx.canvasData.length - 16;
-    const schemaSize = header.payloadSize;
-    if (payloadLen < schemaSize + 4) {
-      emit({
-        ruleId: "fig.canvas.payload-size",
-        severity: "error",
-        path: "canvas.fig/payload",
-        message: `Canvas payload is too small: schema=${schemaSize}, payload=${payloadLen}`,
-        remediation: "The file is truncated or the header lies — regenerate from the source builder",
-      });
-    }
+  if (!ctx.canvasData) {
+    return;
+  }
+  const payloadLen = ctx.canvasData.length - 16;
+  const schemaSize = header.payloadSize;
+  if (payloadLen < schemaSize + 4) {
+    emit({
+      ruleId: "fig.canvas.payload-size",
+      severity: "error",
+      path: "canvas.fig/payload",
+      message: `Canvas payload is too small: schema=${schemaSize}, payload=${payloadLen}`,
+      remediation: "The file is truncated or the header lies — regenerate from the source builder",
+    });
   }
 };

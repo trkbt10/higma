@@ -3,7 +3,7 @@
  * single `<p>` child must stay a FRAME, NOT collapse to a TEXT IR.
  * The inner `<p>` is the actual paragraph host.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { QUOTE_TEXT, blockquoteWithNestedParagraph } from "./fixture";
 
 describe("case blockquote-nested-paragraph", () => {

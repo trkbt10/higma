@@ -3,7 +3,7 @@
  * becomes a single image PaintIR with `scaleMode: "tile"` and
  * the imageId matches the registered asset.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_IMAGE_ID, withTiledBgImage } from "./fixture";
 

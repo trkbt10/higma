@@ -5,10 +5,10 @@
  * interfering with the other.
  *
  * If `solid-bg` and `border-uniform` both pass but THIS fails, the
- * regression is in feature *interaction* (e.g. one helper overwriting
+ * regression is in feature *interaction* (e.g. one function overwriting
  * the other's computed-style keys).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_BORDER_WIDTH_PX, withUniformBorder } from "../border-uniform/fixture";
 import { DEFAULT_SOLID_COLOR, withSolidBg } from "../solid-bg/fixture";

@@ -25,12 +25,21 @@
  *
  * Runs entirely in memory — no Playwright, no `.fig` binary, no Xcode.
  */
-import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import type { FigEffect, FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { runFigCase } from "./cases/run-fig-case";
 import { summarize } from "./structural";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
+}
+
+function solidPaint(color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }): FigPaint {
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color };
+}
+
+function dropShadow(fields: Omit<FigEffect, "type">): FigEffect {
+  return { type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" }, ...fields };
 }
 
 function frame(name: string, partial: Partial<FigNode> = {}): FigNode {
@@ -62,7 +71,7 @@ describe("fig-to-swiftui round-trip", () => {
         text("Hello", {
           fontSize: 16,
           fontName: { family: "Inter", style: "Bold" },
-          fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+          fillPaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
         }),
       ],
     });
@@ -77,21 +86,20 @@ describe("fig-to-swiftui round-trip", () => {
       stackPadding: 12,
       stackCounterAlignItems: enumName("CENTER"),
       size: { x: 200, y: 44 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 1, a: 1 })],
       cornerRadius: 22,
       effects: [
-        {
-          type: "DROP_SHADOW",
+        dropShadow({
           color: { r: 0, g: 0, b: 0, a: 0.25 },
           offset: { x: 0, y: 4 },
           radius: 8,
-        },
+        }),
       ],
       children: [
         text("Tap", {
           fontSize: 16,
           fontName: { family: "Inter", style: "Bold" },
-          fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+          fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
         }),
       ],
     });
@@ -102,7 +110,7 @@ describe("fig-to-swiftui round-trip", () => {
   it("preserves a non-autolayout ZStack with absolutely-positioned children", () => {
     const node = frame("Card", {
       size: { x: 320, y: 100 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
       cornerRadius: 12,
       children: [
         text("Headline", {

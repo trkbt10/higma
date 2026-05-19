@@ -14,8 +14,8 @@
  *     binding that would erase an IMAGE / GRADIENT layer.
  *   - typography: every distinct (family, style, size, line-height,
  *     letter-spacing) descriptor with its TEXT usages.
- *   - subtreeClusters: visually-confirmed clusters of repeated
- *     subtrees, bucketed by role signature × size class.
+ *   - structureClusters: visually-confirmed clusters of repeated
+ *     nested structures, bucketed by role signature × size class.
  *
  * The duplicate detector renders each candidate; an in-process
  * `NodeRenderer` is created here and torn down when the call returns.
@@ -32,8 +32,8 @@ import type {
   PaletteEntry,
   PaintUsageRecord,
   TypographyEntry,
-  SubtreeClusterEntry,
-  SubtreeMemberRecord,
+  StructureClusterEntry,
+  StructureMemberRecord,
   LayoutHintRecord,
   GeometryClusterEntry,
 } from "./types";
@@ -45,7 +45,7 @@ export type BuildInventoryOptions = {
   readonly skipClusters?: boolean;
 };
 
-/** Walk the resolved source tree and assemble the inventory. */
+/** Walk the resolved source hierarchy and assemble the inventory. */
 export async function buildInventory(
   source: RefineSource,
   options: BuildInventoryOptions,
@@ -55,18 +55,18 @@ export async function buildInventory(
   const layoutHints = collectLayoutHints(source);
   const geometryClusters = collectGeometryClusters(source);
   if (options.skipClusters) {
-    return { palette, typography, subtreeClusters: [], geometryClusters, unrenderable: [], layoutHints };
+    return { palette, typography, structureClusters: [], geometryClusters, unrenderable: [], layoutHints };
   }
-  // `RefineSource` extends `FigSymbolContext`, so we can pass the
+  // `RefineSource` extends `FigDocumentContext`, so we can pass the
   // source itself — no need to pluck out individual fields.
   const renderer = createNodeRenderer(source);
-  const dup = await detectDuplicates(source.topFrames, renderer);
-  const subtreeClusters: SubtreeClusterEntry[] = dup.clusters.map((c) => ({
+  const dup = await detectDuplicates(source.topFrames, renderer, source.document.childrenOf);
+  const structureClusters: StructureClusterEntry[] = dup.clusters.map((c) => ({
     clusterId: c.clusterId,
     roleSignature: c.roleSignature,
     structuralSignature: c.structuralSignature,
     sizeClass: c.sizeClass,
-    members: c.members.map((m): SubtreeMemberRecord => ({
+    members: c.members.map((m): StructureMemberRecord => ({
       nodeGuid: m.nodeGuid,
       nodeName: m.nodeName,
       width: m.width,
@@ -78,7 +78,7 @@ export async function buildInventory(
   return {
     palette,
     typography,
-    subtreeClusters,
+    structureClusters,
     geometryClusters,
     unrenderable: dup.unrenderable.map((u) => ({
       nodeGuid: u.nodeGuid,
@@ -90,7 +90,7 @@ export async function buildInventory(
 }
 
 function collectGeometryClusters(source: RefineSource): readonly GeometryClusterEntry[] {
-  const analysis = detectGeometryClusters(source.loaded, source.userCanvases);
+  const analysis = detectGeometryClusters(source.loaded, source.userCanvases, source.document.childrenOf);
   return analysis.clusters.map((c) => ({
     clusterId: c.clusterId,
     width: c.width,
@@ -109,7 +109,7 @@ function collectLayoutHints(source: RefineSource): readonly LayoutHintRecord[] {
   // Walk the visible user canvases for FRAMEs whose children form a
   // uniform single-axis stack. The cluster analyser already excludes
   // the Internal Only Canvas; auto-layout has the same scope.
-  return inferLayouts(source.userCanvases).map((h) => ({
+  return inferLayouts(source.userCanvases, source.document.childrenOf).map((h) => ({
     nodeGuid: h.nodeGuid,
     layoutMode: h.layoutMode,
     itemSpacing: h.itemSpacing,
@@ -123,10 +123,10 @@ function collectLayoutHints(source: RefineSource): readonly LayoutHintRecord[] {
 }
 
 function collectPalette(source: RefineSource): readonly PaletteEntry[] {
-  const palette = analysePalette(source.topFrames, source.fillStyleProxies);
+  const palette = analysePalette(source.topFrames, source.fillStyleDefinitions, source.document.childrenOf);
   return palette.entries.map((entry): PaletteEntry => {
     const usages: PaintUsageRecord[] = entry.usages.map((u) => {
-      const node = source.nodesByGuid.get(u.nodeGuid);
+      const node = source.document.nodesByGuid.get(u.nodeGuid);
       const eligible = node ? Boolean(bindablePaintsFor(node, u.role)) : false;
       return {
         nodeGuid: u.nodeGuid,
@@ -148,14 +148,14 @@ function collectPalette(source: RefineSource): readonly PaletteEntry[] {
         hex: a.hex,
         usageCount: a.usageCount,
       })),
-      existingProxyGuid: entry.proxyGuid,
-      existingProxyName: entry.proxyName,
+      existingStyleDefinitionGuid: entry.styleDefinitionGuid,
+      existingStyleDefinitionName: entry.styleDefinitionName,
     };
   });
 }
 
 function collectTypography(source: RefineSource): readonly TypographyEntry[] {
-  const typography = analyseTypography(source.topFrames, source.textStyleProxies);
+  const typography = analyseTypography(source.topFrames, source.textStyleDefinitions, source.document.childrenOf);
   return typography.clusters.map((c): TypographyEntry => ({
     key: c.key,
     descriptor: {
@@ -185,7 +185,7 @@ function collectTypography(source: RefineSource): readonly TypographyEntry[] {
       usageCount: a.usageCount,
       differingFields: a.differingFields.map(String),
     })),
-    existingProxyGuid: c.proxyGuid,
-    existingProxyName: c.proxyName,
+    existingStyleDefinitionGuid: c.styleDefinitionGuid,
+    existingStyleDefinitionName: c.styleDefinitionName,
   }));
 }

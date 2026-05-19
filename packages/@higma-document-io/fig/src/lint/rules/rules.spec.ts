@@ -2,7 +2,7 @@
  * @file Per-rule unit tests for fig-lint.
  *
  * Each rule is exercised in isolation against a synthetic
- * `LintContext`. The helpers below build minimal contexts that
+ * `LintContext`. The routines below build minimal contexts that
  * trip exactly one rule at a time so the assertions document
  * intent: "this is the precise condition under which rule X
  * fires, and this is everything it does in response."
@@ -26,6 +26,7 @@ import { zipPackageRule } from "./zip-package";
 import { PNG_SIGNATURE } from "@higma-codecs/png";
 import { FIG_THUMBNAIL_ZIP_ENTRY } from "@higma-figma-containers/package";
 import { FIGMA_KIWI_SCHEMA, type FigSchema } from "@higma-figma-schema/profiles/schema";
+import { PAINT_TYPE_VALUES, STROKE_ALIGN_VALUES, STROKE_JOIN_VALUES } from "@higma-document-models/fig/constants";
 import type { LintContext, LintFinding, LintRule, LintRuleId } from "../types";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
@@ -258,8 +259,8 @@ describe("shapeFieldsRule", () => {
       type: { value: 4, name: "FRAME" },
       name: "frame",
       strokeWeight: 1,
-      strokeAlign: "INSIDE",
-      strokeJoin: "MITER",
+      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
+      strokeJoin: { value: STROKE_JOIN_VALUES.MITER, name: "MITER" },
     });
   }
   function group(): FigNode {
@@ -296,7 +297,7 @@ describe("visibleBlobsRule", () => {
     return makeNode({
       type: { value: 12, name: "ROUNDED_RECTANGLE" },
       size: { x: 50, y: 50 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [{ type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 1, g: 0, b: 0, a: 1 } }],
       ...overrides,
     });
   }
@@ -378,10 +379,10 @@ describe("parentRefsRule", () => {
 });
 
 describe("imageRefsRule", () => {
-  function imageNode(ref: string | null): FigNode {
-    const paint: Record<string, unknown> = { type: "IMAGE" };
-    if (ref) {
-      paint.image = { hash: ref };
+  function imageNode(hash: readonly number[] | null): FigNode {
+    const paint: Record<string, unknown> = { type: { value: 5, name: "IMAGE" } };
+    if (hash) {
+      paint.image = { hash };
     }
     return makeNode({ fillPaints: [paint as never] });
   }
@@ -392,7 +393,7 @@ describe("imageRefsRule", () => {
   it("flags dangling image references", () => {
     const findings = runRule(imageRefsRule, emptyContext({
       isZip: true,
-      nodeChanges: [imageNode("ref-A")],
+      nodeChanges: [imageNode([0xab, 0xcd, 0xef])],
       images: new Map(),
     }));
     expect(ruleIdsOf(findings)).toContain("fig.image.references");
@@ -416,8 +417,8 @@ describe("imageRefsRule", () => {
   it("passes silently when references resolve and no orphans exist", () => {
     const findings = runRule(imageRefsRule, emptyContext({
       isZip: true,
-      nodeChanges: [imageNode("hashA")],
-      images: new Map([["hashA", pkgImage("hashA")]]),
+      nodeChanges: [imageNode([0xab, 0xcd, 0xef])],
+      images: new Map([["abcdef", pkgImage("abcdef")]]),
     }));
     expect(findings).toEqual([]);
   });
@@ -425,7 +426,7 @@ describe("imageRefsRule", () => {
   it("flags references in a non-zip input as errors", () => {
     const findings = runRule(imageRefsRule, emptyContext({
       isZip: false,
-      nodeChanges: [imageNode("hashA")],
+      nodeChanges: [imageNode([0xab, 0xcd, 0xef])],
       images: new Map(),
     }));
     expect(ruleIdsOf(findings)).toContain("fig.image.references");
@@ -443,12 +444,12 @@ describe("symbolInstanceRule", () => {
     });
   }
 
-  function childOf(parentId: number, id: number, overrides: Partial<FigNode> = {}): FigNode {
+  function childOf(parentLocalID: number, localID: number, overrides: Partial<FigNode> = {}): FigNode {
     return makeNode({
-      guid: { sessionID: 1, localID: id },
+      guid: { sessionID: 1, localID },
       type: { value: 12, name: "ROUNDED_RECTANGLE" },
-      name: `child-${id}`,
-      parentIndex: { guid: { sessionID: 1, localID: parentId }, position: "!" },
+      name: `child-${localID}`,
+      parentIndex: { guid: { sessionID: 1, localID: parentLocalID }, position: "!" },
       ...overrides,
     });
   }

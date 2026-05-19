@@ -4,7 +4,7 @@
  * UA `::marker` pseudo is intentionally NOT spliced into the
  * characters (Figma TEXT has no list-marker affordance).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { ITEM_COUNT, ITEM_TEXTS, orderedListWithMarkers } from "./fixture";
 
 describe("case ordered-list-with-markers", () => {

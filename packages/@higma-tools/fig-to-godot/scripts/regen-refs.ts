@@ -16,7 +16,7 @@
  * fixture as of this writing).
  *
  * This script only needs the WebGL half — load the `.fig`, render
- * every top-level frame via `renderFigFramesByName`, and write each
+ * every top-level frame via `listFigFrameTargets` + `streamFigFrames`, and write each
  * PNG under `cases/<case>/<frame>/reference.png`. The `cases/`
  * layout matches what `sync-references.ts` produces from the
  * fig-to-swiftui side, so downstream specs read the new bytes
@@ -26,8 +26,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  renderFigFramesByName,
+  listFigFrameTargets,
   startWebglHarness,
+  streamFigFrames,
 } from "@higma-tools/web-fig-roundtrip/verify";
 
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..", "..");
@@ -48,12 +49,12 @@ async function main(): Promise<void> {
       const figPath = resolve(FIXTURES_ROOT, caseName, `${caseName}.fig`);
       const figBytes = new Uint8Array(await readFile(figPath));
       process.stdout.write(`=== ${caseName} ===\n`);
-      const renders = await renderFigFramesByName(harness, figBytes, {});
-      for (const r of renders) {
-        const dir = resolve(CASES_ROOT, caseName, r.frame);
+      const targets = await listFigFrameTargets(figBytes);
+      for await (const r of streamFigFrames(harness, figBytes, targets)) {
+        const dir = resolve(CASES_ROOT, caseName, r.target.frame);
         await mkdir(dir, { recursive: true });
         await writeFile(resolve(dir, "reference.png"), r.png);
-        process.stdout.write(`  ${r.frame} (${r.width}x${r.height})\n`);
+        process.stdout.write(`  ${r.target.frame} (${r.width}x${r.height})\n`);
       }
     }
   } finally {

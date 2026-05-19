@@ -1,5 +1,5 @@
 /**
- * @file Fingerprint a fig design subtree so downstream tools can
+ * @file Fingerprint a raw fig subtree so downstream tools can
  * detect whether a re-rasterisation is required.
  *
  * The fingerprint is a SHA-256 of a canonical JSON serialisation
@@ -8,7 +8,7 @@
  * deliberately mirrors what the WebGL renderer actually consumes
  * (geometry, paints, strokes, effects, text data, autolayout,
  * blend modes) — fields that the renderer ignores (`name`,
- * `parentIndex`, `id`, layout grids) are excluded so a noisy
+ * `parentIndex`, `guid`, layout grids) are excluded so a noisy
  * rename of a node doesn't invalidate every downstream PNG.
  *
  * Rendering inputs that live outside the node tree (pixel ratio,
@@ -19,7 +19,9 @@
  * render config.
  */
 import { createHash } from "node:crypto";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
+import type { SymbolResolver } from "@higma-document-models/fig/symbols";
 
 const FINGERPRINT_ALGORITHM = "sha256";
 const FINGERPRINT_VERSION = "v1";
@@ -34,11 +36,10 @@ export type FingerprintOptions = {
   /** Output pixel ratio (e.g. 1 for @1x, 2 for @2x). */
   readonly pixelRatio: number;
   /**
-   * Resolved SYMBOL definitions, keyed by FigNodeId. Used to
-   * expand INSTANCE references inline so a SYMBOL edit
-   * propagates into every INSTANCE's fingerprint.
+   * SymbolResolver is the only authority for INSTANCE expansion.
    */
-  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly symbolResolver: SymbolResolver;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
   /**
    * Canvas background colour as RGBA in 0..1. Optional so
    * callers that only consume vector shapes (no background
@@ -60,11 +61,11 @@ export type FingerprintOptions = {
  * canonicalisation rules evolve.
  */
 export function fingerprintFigSubtree(
-  root: FigDesignNode,
+  root: FigNode,
   options: FingerprintOptions,
 ): string {
   const visited = new Set<string>();
-  const canonical = canonicaliseNode(root, options.symbolMap, visited);
+  const canonical = canonicaliseNode(root, options, visited);
   const payload = {
     version: FINGERPRINT_VERSION,
     pixelRatio: options.pixelRatio,
@@ -144,31 +145,35 @@ function compareEntryKeys(a: readonly [string, unknown], b: readonly [string, un
 }
 
 // ---------------------------------------------------------------------------
-// FigDesignNode canonicalisation
+// FigNode canonicalisation
 // ---------------------------------------------------------------------------
 
 /**
- * Reduce a `FigDesignNode` to a plain object containing only the
+ * Reduce a `FigNode` to a plain object containing only the
  * fields the renderer actually consumes, in a deterministic key
  * order. The `visited` set guards against SYMBOL cycles (a
  * SYMBOL transitively referencing itself through nested
  * INSTANCEs).
  */
 function canonicaliseNode(
-  node: FigDesignNode,
-  symbolMap: ReadonlyMap<string, FigDesignNode>,
+  node: FigNode,
+  options: FingerprintOptions,
   visited: Set<string>,
+  resolvedChildren?: readonly FigNode[],
+  expandInstance: boolean = true,
+  childrenOf: (node: FigNode) => readonly FigNode[] = options.childrenOf,
 ): unknown {
-  const expandedSymbol = expandSymbolReference(node, symbolMap, visited);
+  if (expandInstance && getNodeType(node) === "INSTANCE") {
+    return canonicaliseResolvedInstance(node, options, visited);
+  }
   return {
-    type: node.type,
+    type: getNodeType(node),
     visible: node.visible,
     opacity: node.opacity,
     transform: canonicaliseTransform(node.transform),
     size: canonicaliseSize(node.size),
-    transformOrigin: canonicaliseSize(node.transformOrigin),
-    fills: canonicalisePaints(node.fills),
-    strokes: canonicalisePaints(node.strokes),
+    fills: canonicalisePaints(node.fillPaints),
+    strokes: canonicalisePaints(node.strokePaints),
     strokeWeight: node.strokeWeight,
     strokeAlign: node.strokeAlign,
     strokeJoin: node.strokeJoin,
@@ -187,41 +192,49 @@ function canonicaliseNode(
     blendMode: node.blendMode,
     effects: mapOrUndefined(node.effects, canonicaliseEffect),
     clipsContent: node.clipsContent,
-    autoLayout: shallowCloneOrUndefined(node.autoLayout),
+    stackMode: node.stackMode,
+    stackSpacing: node.stackSpacing,
+    stackPadding: node.stackPadding,
+    stackPrimaryAlignItems: node.stackPrimaryAlignItems,
+    stackCounterAlignItems: node.stackCounterAlignItems,
+    stackPrimaryAlignContent: node.stackPrimaryAlignContent,
+    stackCounterAlignContent: node.stackCounterAlignContent,
+    stackWrap: node.stackWrap,
+    stackCounterSpacing: node.stackCounterSpacing,
+    stackReverseZIndex: node.stackReverseZIndex,
     textData: extractTextData(node),
-    symbol: expandedSymbol,
-    children: mapOrUndefined(node.children, (child) => canonicaliseNode(child, symbolMap, visited)),
+    children: mapOrUndefined(
+      resolvedChildren ?? childrenOf(node),
+      (child) => canonicaliseNode(child, options, visited, undefined, true, childrenOf),
+    ),
   };
 }
 
-function expandSymbolReference(
-  node: FigDesignNode,
-  symbolMap: ReadonlyMap<string, FigDesignNode>,
+function canonicaliseResolvedInstance(
+  node: FigNode,
+  options: FingerprintOptions,
   visited: Set<string>,
 ): unknown {
-  const symbolId = readSymbolId(node);
-  if (symbolId === undefined) {
-    return undefined;
+  const reference = options.symbolResolver.resolveReferences(node).effectiveSymbol;
+  if (reference === undefined) {
+    return canonicaliseNode({ ...node, symbolData: undefined }, options, visited, [], false);
   }
-  if (visited.has(symbolId)) {
-    return { __cycle: symbolId };
+  const referenceGuid = guidToString(reference.guid);
+  if (visited.has(referenceGuid)) {
+    return { __cycle: referenceGuid };
   }
-  const sym = symbolMap.get(symbolId);
-  if (!sym) {
-    return undefined;
-  }
-  visited.add(symbolId);
-  const expansion = canonicaliseNode(sym, symbolMap, visited);
-  visited.delete(symbolId);
+  visited.add(referenceGuid);
+  const resolved = options.symbolResolver.resolveInstance(node);
+  const expansion = canonicaliseNode(
+    resolved.node,
+    options,
+    visited,
+    resolved.children,
+    false,
+    options.symbolResolver.childrenOfResolvedNode,
+  );
+  visited.delete(referenceGuid);
   return expansion;
-}
-
-function readSymbolId(node: FigDesignNode): string | undefined {
-  const raw = (node as { readonly symbolId?: unknown }).symbolId;
-  if (typeof raw !== "string" || raw.length === 0) {
-    return undefined;
-  }
-  return raw;
 }
 
 type FigTransform = {
@@ -316,8 +329,19 @@ function shallowCloneOrUndefined(value: unknown): unknown {
   return { ...(value as Record<string, unknown>) };
 }
 
-function extractTextData(node: FigDesignNode): unknown {
-  return (node as { readonly textData?: unknown }).textData;
+function extractTextData(node: FigNode): unknown {
+  return node.textData ?? {
+    characters: node.characters,
+    fontSize: node.fontSize,
+    fontName: node.fontName,
+    lineHeight: node.lineHeight,
+    letterSpacing: node.letterSpacing,
+    textAlignHorizontal: node.textAlignHorizontal,
+    textAlignVertical: node.textAlignVertical,
+    textAutoResize: node.textAutoResize,
+    textDecoration: node.textDecoration,
+    textCase: node.textCase,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +354,7 @@ function canonicalisePaints(
   if (!paints) {
     return undefined;
   }
-  // Paints are already plain objects on the domain — but they
+  // Paints are already plain objects — but they
   // can carry `Uint8Array` for image bytes, which JSON.stringify
   // drops. Re-emit images as their byte length + a 16-byte head
   // slice so a paint swap flips the digest without forcing us to

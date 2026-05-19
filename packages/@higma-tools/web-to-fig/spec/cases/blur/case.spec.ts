@@ -2,7 +2,7 @@
  * @file Case `blur` — `filter: blur(Npx)` becomes a `layer-blur`
  * EffectIR with the px value as `radius`.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_BLUR_PX, withBlur } from "./fixture";
 

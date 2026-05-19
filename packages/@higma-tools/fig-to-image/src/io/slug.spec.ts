@@ -1,7 +1,7 @@
 /**
- * @file Unit specs for slug / filename helpers.
+ * @file Unit specs for slug / filename functions.
  *
- * Why so much detail for a 12-line helper: the slug is the
+ * Why so much detail for a 12-line function: the slug is the
  * public contract between fig source names and on-disk PNG
  * filenames. Downstream tools (SwiftUI Image asset lookups,
  * Android resource ids, web `<img src>` paths) match by the slug

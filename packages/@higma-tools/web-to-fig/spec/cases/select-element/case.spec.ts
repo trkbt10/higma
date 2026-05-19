@@ -2,7 +2,7 @@
  * @file Case `select-element` — `<select>` becomes a FRAME at its
  * bbox; invisible `<option>` children are filtered out of the IR.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { SELECT_RECT, selectWithOptions } from "./fixture";
 
 describe("case select-element", () => {

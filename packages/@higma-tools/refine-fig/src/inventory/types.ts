@@ -3,7 +3,7 @@
  * source `.fig` file.
  *
  * Inventory makes no naming choices, applies no thresholds, and emits
- * no proposals. It walks the resolved tree, groups what it sees by
+ * no proposals. It walks the resolved hierarchy, groups what it sees by
  * canonical keys, and reports what is there. The agent reviews the
  * inventory through the workbench and authors a `Decisions` JSON
  * separately — that is where naming and "is this worth promoting"
@@ -16,8 +16,8 @@
  *   - `typography[]`      — every distinct (family, style, fontSize,
  *                            lineHeight, letterSpacing) tuple seen on
  *                            a TEXT node, with every usage site.
- *   - `subtreeClusters[]` — every group of ≥ 2 visually-similar
- *                            subtrees the detector found. Members are
+ *   - `structureClusters[]` — every group of ≥ 2 visually-similar
+ *                            structures the detector found. Members are
  *                            unsorted within a cluster; the agent
  *                            picks the exemplar.
  */
@@ -39,7 +39,7 @@ export type PaintUsageRecord = {
   readonly paintIndex: number;
   /**
    * Whether the analyser considers this node's paint stack safe to
-   * rebind to a single-SOLID style proxy. Multi-paint stacks
+   * rebind to a single-SOLID style styleDefinition. Multi-paint stacks
    * (image-over-solid etc.) are flagged false so the plan layer
    * never proposes a binding for them.
    */
@@ -71,9 +71,9 @@ export type PaletteEntry = {
    * merge pass. Empty when the entry represents a single bucket.
    */
   readonly aliases: readonly PaletteAliasRecord[];
-  /** GUID of an existing FILL-style proxy whose paint matches, if any. */
-  readonly existingProxyGuid: string | undefined;
-  readonly existingProxyName: string | undefined;
+  /** GUID of an existing FILL-style styleDefinition whose paint matches, if any. */
+  readonly existingStyleDefinitionGuid: string | undefined;
+  readonly existingStyleDefinitionName: string | undefined;
 };
 
 export type TypographyDescriptorRecord = {
@@ -121,12 +121,12 @@ export type TypographyEntry = {
    * redirect bind actions away from the alias.
    */
   readonly aliases: readonly TypographyAliasRecord[];
-  /** GUID of an existing TEXT-style proxy whose descriptor matches, if any. */
-  readonly existingProxyGuid: string | undefined;
-  readonly existingProxyName: string | undefined;
+  /** GUID of an existing TEXT-style styleDefinition whose descriptor matches, if any. */
+  readonly existingStyleDefinitionGuid: string | undefined;
+  readonly existingStyleDefinitionName: string | undefined;
 };
 
-export type SubtreeMemberRecord = {
+export type StructureMemberRecord = {
   readonly nodeGuid: string;
   readonly nodeName: string;
   readonly width: number;
@@ -135,14 +135,14 @@ export type SubtreeMemberRecord = {
   readonly dHash: string;
 };
 
-export type SubtreeClusterEntry = {
+export type StructureClusterEntry = {
   /** Stable cluster id (role-signature × size class). */
   readonly clusterId: string;
   readonly roleSignature: string;
   readonly structuralSignature: string;
   /** Average width and height across members. */
   readonly sizeClass: { readonly width: number; readonly height: number };
-  readonly members: readonly SubtreeMemberRecord[];
+  readonly members: readonly StructureMemberRecord[];
 };
 
 /**
@@ -160,7 +160,7 @@ export type LayoutHintRecord = {
   readonly paddingLeft: number;
   /**
    * Cross-axis alignment recognised by the inferrer: MIN (top/left),
-   * CENTER, or MAX (bottom/right). Apply translates this to Figma's
+   * CENTER, or MAX (bottom/right). Apply writes this as Figma's
    * `stackCounterAlignItems`.
    */
   readonly counterAxisAlign: "MIN" | "CENTER" | "MAX";
@@ -186,7 +186,7 @@ export type GeometryClusterEntry = {
 export type Inventory = {
   readonly palette: readonly PaletteEntry[];
   readonly typography: readonly TypographyEntry[];
-  readonly subtreeClusters: readonly SubtreeClusterEntry[];
+  readonly structureClusters: readonly StructureClusterEntry[];
   /**
    * Strict-byte VECTOR groups: nodes that share the exact commands
    * blob, integer size, paint stack, and stroke parameters. The agent
@@ -194,7 +194,7 @@ export type Inventory = {
    * `decisions.geometryClusters[id] = { name }`.
    */
   readonly geometryClusters: readonly GeometryClusterEntry[];
-  /** Subtrees that could not be rendered (e.g. missing OS font). */
+  /** Structures that could not be rendered (e.g. missing OS font). */
   readonly unrenderable: readonly { readonly nodeGuid: string; readonly nodeName: string; readonly reason: string }[];
   /**
    * Auto-layout candidates the inferrer recognised with high

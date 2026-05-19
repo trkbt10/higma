@@ -4,13 +4,13 @@
  * Layers exposed as sub-paths in package.json:
  *
  *   - inventory  — facts about the file (palette, typography, clusters)
- *   - analysis   — low-level helpers shared between inventory and the
+ *   - analysis   — low-level routines shared between inventory and the
  *                  upcoming plan layer (palette / signature / hashing)
- *   - visual     — render any FigNode subtree to PNG with memoisation,
+ *   - visual     — render any FigNode structure to PNG with memoisation,
  *                  perceptual hash, frame-level renderer + diff
  *
  * Plan / apply / workbench were removed as part of the redesign that
- * moves naming and proxy creation out of heuristics and onto an agent
+ * moves naming and style-definition creation onto authored decisions
  * authored decisions JSON. They will be reintroduced as the rebuild
  * lands.
  */

@@ -10,13 +10,13 @@
  * The cluster keys match fig-to-web's typography token logic so the
  * skill's proposals stay aligned with the eventual CSS export.
  *
- * `existingTextProxies` is the list of `styleType.name === "TEXT"`
+ * `existingTextStyleDefinitions` is the list of `styleType.name === "TEXT"`
  * children of the Internal Only Canvas. When a cluster's descriptor
- * exactly matches a proxy, the cluster is marked already-themed and
+ * exactly matches a styleDefinition, the cluster is marked already-themed and
  * gets bound rather than newly proposed.
  */
 import type { FigNode, FigValueWithUnits } from "@higma-document-models/fig/types";
-import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { getNodeType, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { figmaFontToQuery } from "@higma-document-models/fig/font";
 
 /**
@@ -89,9 +89,9 @@ export type TypographyCluster = {
    * `decisions.typography[key].merge` whether to redirect bind actions.
    */
   readonly aliases: readonly TypographyAlias[];
-  /** Existing TEXT proxy whose properties match, if any. */
-  readonly proxyGuid: string | undefined;
-  readonly proxyName: string | undefined;
+  /** Existing TEXT styleDefinition whose properties match, if any. */
+  readonly styleDefinitionGuid: string | undefined;
+  readonly styleDefinitionName: string | undefined;
   readonly suggestedRole: TextStyleRole;
   readonly suggestedSlug: string;
 };
@@ -150,22 +150,22 @@ function suggestRole(d: TypographyDescriptor, sampleText: string): TextStyleRole
   if (d.fontSize >= 18) {
     return "heading-4";
   }
+  if (d.fontSize >= 16 && heavy) {
+    return "title";
+  }
   if (d.fontSize >= 16) {
-    if (heavy) {
-      return "title";
-    }
     return "body";
+  }
+  if (d.fontSize >= 14 && heavy) {
+    return "body-strong";
   }
   if (d.fontSize >= 14) {
-    if (heavy) {
-      return "body-strong";
-    }
     return "body";
   }
+  if (d.fontSize >= 12 && heavy) {
+    return "label";
+  }
   if (d.fontSize >= 12) {
-    if (heavy) {
-      return "label";
-    }
     return "body-small";
   }
   if (d.fontSize >= 10) {
@@ -195,48 +195,64 @@ function clamp(s: string): string {
   return s.length > 80 ? `${s.slice(0, 77)}…` : s;
 }
 
-function visit(node: FigNode, out: Map<string, TypographyCluster & { usages: TypographyUsage[] }>): void {
-  if (getNodeType(node) === "TEXT") {
-    const desc = describe(node);
-    if (desc) {
-      const key = descriptorKey(desc);
-      const usage: TypographyUsage = {
-        nodeGuid: guidToString(node.guid),
-        nodeName: node.name ?? "(unnamed)",
-        characters: clamp(node.characters ?? ""),
-        characterCount: (node.characters ?? "").length,
-      };
-      const existing = out.get(key);
-      if (existing) {
-        existing.usages.push(usage);
-      } else {
-        out.set(key, {
-          key,
-          descriptor: desc,
-          usages: [usage],
-          proxyGuid: undefined,
-          proxyName: undefined,
-          aliases: [],
-          // Resolved post-collection.
-          suggestedRole: "body",
-          suggestedSlug: "body",
-        });
-      }
-    }
+function visit(
+  node: FigNode,
+  out: Map<string, TypographyCluster & { usages: TypographyUsage[] }>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  if (getNodeType(node) !== "TEXT") {
+    visitDescendants(node, out, childrenOf);
+    return;
   }
-  for (const child of safeChildren(node)) {
-    visit(child, out);
+  const desc = describe(node);
+  if (!desc) {
+    visitDescendants(node, out, childrenOf);
+    return;
+  }
+  const key = descriptorKey(desc);
+  const usage: TypographyUsage = {
+    nodeGuid: guidToString(node.guid),
+    nodeName: node.name ?? "(unnamed)",
+    characters: clamp(node.characters ?? ""),
+    characterCount: (node.characters ?? "").length,
+  };
+  const existing = out.get(key);
+  if (existing) {
+    existing.usages.push(usage);
+  } else {
+    out.set(key, {
+      key,
+      descriptor: desc,
+      usages: [usage],
+      styleDefinitionGuid: undefined,
+      styleDefinitionName: undefined,
+      aliases: [],
+      // Resolved post-collection.
+      suggestedRole: "body",
+      suggestedSlug: "body",
+    });
+  }
+  visitDescendants(node, out, childrenOf);
+}
+
+function visitDescendants(
+  node: FigNode,
+  out: Map<string, TypographyCluster & { usages: TypographyUsage[] }>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  for (const child of childrenOf(node)) {
+    visit(child, out, childrenOf);
   }
 }
 
-function buildProxyIndex(proxies: readonly FigNode[]): ReadonlyMap<string, FigNode> {
+function buildStyleDefinitionIndex(styleDefinitions: readonly FigNode[]): ReadonlyMap<string, FigNode> {
   const out = new Map<string, FigNode>();
-  for (const proxy of proxies) {
-    const desc = describe(proxy);
+  for (const styleDefinition of styleDefinitions) {
+    const desc = describe(styleDefinition);
     if (!desc) {
       continue;
     }
-    out.set(descriptorKey(desc), proxy);
+    out.set(descriptorKey(desc), styleDefinition);
   }
   return out;
 }
@@ -316,13 +332,14 @@ function diffDescriptors(
 /** Walk frames, cluster typography, and label each cluster with a role + slug. */
 export function analyseTypography(
   frames: readonly FigNode[],
-  textProxies: readonly FigNode[],
+  textStyleDefinitions: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): TypographyAnalysis {
   const collected = new Map<string, TypographyCluster & { usages: TypographyUsage[] }>();
   for (const frame of frames) {
-    visit(frame, collected);
+    visit(frame, collected, childrenOf);
   }
-  const proxyIndex = buildProxyIndex(textProxies);
+  const styleDefinitionIndex = buildStyleDefinitionIndex(textStyleDefinitions);
   const sorted = [...collected.values()].sort((a, b) => b.usages.length - a.usages.length);
 
   // Alias assignment: walk in descending usage-count order. The most-
@@ -357,14 +374,14 @@ export function analyseTypography(
     roleCounts.set(role, ord);
     const base = ROLE_BASE_SLUG[role];
     const suggestedSlug = ord === 1 ? base : `${base}-${ord}`;
-    const proxy = proxyIndex.get(c.key);
+    const styleDefinition = styleDefinitionIndex.get(c.key);
     clusters.push({
       key: c.key,
       descriptor: c.descriptor,
       usages: c.usages,
       aliases: aliasesByPrimary.get(c.key) ?? [],
-      proxyGuid: proxy ? guidToString(proxy.guid) : undefined,
-      proxyName: proxy?.name,
+      styleDefinitionGuid: styleDefinition ? guidToString(styleDefinition.guid) : undefined,
+      styleDefinitionName: styleDefinition?.name,
       suggestedRole: role,
       suggestedSlug,
     });

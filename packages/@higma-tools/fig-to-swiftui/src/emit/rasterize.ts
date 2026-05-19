@@ -27,7 +27,7 @@
  *      subtree.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { safeChildren, type FigBlob } from "@higma-document-models/fig/domain";
+import type { FigBlob } from "@higma-document-models/fig/domain";
 import { toCssSlug, uniqueId } from "@higma-primitives/identifier";
 import { complexityScore } from "@higma-document-renderers/fig/asset-plan";
 
@@ -55,6 +55,8 @@ export type RasterizationEntry = {
 export type PlanRasterizationOptions = {
   /** Below this score, the node emits as plain SwiftUI views. */
   readonly threshold: number;
+  /** Parent/child view over the Kiwi document. */
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
   /** Used by `complexityScore` to count Path commands accurately. */
   readonly blobs?: readonly FigBlob[];
 };
@@ -81,12 +83,12 @@ export function planRasterization(
     if (!node.size || node.size.x <= 0 || node.size.y <= 0) {
       // No authored size — can't render. Recurse into children
       // (some intrinsic-size groups have sized descendants).
-      for (const child of safeChildren(node)) {
+      for (const child of options.childrenOf(node)) {
         visit(child);
       }
       return;
     }
-    const score = complexityScore(node, { blobs: options.blobs });
+    const score = complexityScore(node, { blobs: options.blobs, childrenOf: options.childrenOf });
     if (score >= options.threshold) {
       const baseSlug = toCssSlug(node.name ?? `node-${nodeKey(node)}`);
       const resourceSlug = uniqueId(baseSlug, slugs);
@@ -99,7 +101,7 @@ export function planRasterization(
       });
       return; // don't recurse — children are inside this PNG
     }
-    for (const child of safeChildren(node)) {
+    for (const child of options.childrenOf(node)) {
       visit(child);
     }
   };

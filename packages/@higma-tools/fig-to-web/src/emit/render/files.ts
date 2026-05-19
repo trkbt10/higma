@@ -28,7 +28,7 @@ import type { ComponentPropDecl, ComponentTarget, EmitFile, EmitRegistry, FrameT
 import type { EmitContext } from "./jsx";
 import { emitFrameJsx } from "./jsx";
 import type { TokenIndex } from "../../tokens";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { ImageResolver } from "../style/paint";
 import type { PropBindings } from "../plan/prop-bindings";
 import { buildPropBindings } from "../plan/prop-bindings";
@@ -124,19 +124,19 @@ export type EmitOpts = {
 
 const EMPTY_BINDINGS: PropBindings = new Map();
 
-function buildLayoutOverlay(rootNode: FigNode): EmitContext["reparent"] {
+function buildLayoutOverlay(source: FigDocumentContext, rootNode: FigNode): EmitContext["reparent"] {
   // Reparent first (image-to-fig flat-tree repair), then row-cluster on
   // top of the reparent overlay so the clustering pass operates on the
   // already-corrected children list.
-  const base = buildReparentResult(rootNode);
+  const base = buildReparentResult(rootNode, source.document.childrenOf);
   const childrenByParent = new Map(base.childrenByParent);
   const transformByGuid = new Map(base.transformByGuid);
-  applyRowClustering(rootNode, childrenByParent, transformByGuid);
+  applyRowClustering(rootNode, childrenByParent, transformByGuid, source.document.childrenOf);
   return { childrenByParent, transformByGuid };
 }
 
 function makeContext(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   registry: EmitRegistry,
   index: TokenIndex,
   emittingFile: string,
@@ -153,7 +153,7 @@ function makeContext(
     imports: new Map(),
     debugAttrs: opts.debugAttrs,
     propBindings,
-    reparent: buildLayoutOverlay(rootNode),
+    reparent: buildLayoutOverlay(source, rootNode),
     iconRegistry: opts.iconRegistry,
     assetStrategy: opts.assetStrategy,
     assetComplexityThreshold: opts.assetComplexityThreshold,
@@ -324,6 +324,16 @@ type CssStrategyHandle = {
   readonly cssModulesCollector: CssModulesCollector | undefined;
 };
 
+function externalCssRegistryOf(opts: EmitOpts): ExternalCssRegistry {
+  const registry = opts.externalCssRegistry;
+  if (registry === undefined) {
+    throw new Error(
+      "fig-to-web: external-css mode requires an externalCssRegistry on EmitOpts (orchestrator wiring bug)",
+    );
+  }
+  return registry;
+}
+
 function createCssStrategy(componentName: string, opts: EmitOpts): CssStrategyHandle {
   if (opts.cssMode === "css-modules") {
     const collector = createCssModulesCollector();
@@ -333,12 +343,7 @@ function createCssStrategy(componentName: string, opts: EmitOpts): CssStrategyHa
     };
   }
   if (opts.cssMode === "external-css") {
-    if (!opts.externalCssRegistry) {
-      throw new Error(
-        "fig-to-web: external-css mode requires an externalCssRegistry on EmitOpts (orchestrator wiring bug)",
-      );
-    }
-    const blockCollector = opts.externalCssRegistry.forBlock(blockSlugFromName(componentName));
+    const blockCollector = externalCssRegistryOf(opts).forBlock(blockSlugFromName(componentName));
     return {
       rewrite: (node) => rewriteForExternalCss(node, blockCollector),
       cssModulesCollector: undefined,
@@ -381,7 +386,7 @@ function cssImportFor(tsxFilePath: string, opts: EmitOpts): string {
  * the strategy collected at least one rule. The sidecar lives next
  * to the TSX at the same path with `.tsx` swapped for `.module.css`.
  * external-css mode has no per-file sidecar (one global stylesheet
- * lives at the output root), so this helper is a no-op there.
+ * lives at the output root), so this routine is a no-op there.
  */
 function appendCssSidecar(
   files: EmitFile[],
@@ -400,7 +405,7 @@ function appendCssSidecar(
 
 /** Render TSX + optional sidecar `.module.css` for a target page (top-level Figma frame). */
 export function emitPageFile(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: FrameTarget,
@@ -449,7 +454,7 @@ export function emitPageFile(
 }
 
 function emitVariantSwitch(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: ComponentTarget,
@@ -464,7 +469,7 @@ function emitVariantSwitch(
 }
 
 function emitVariantCase(
-  _source: FigSymbolContext,
+  _source: FigDocumentContext,
   _registry: EmitRegistry,
   _index: TokenIndex,
   variantValue: string,
@@ -581,7 +586,7 @@ function variantFilePath(originalPath: string, variantValue: string): string {
  * aggregate correctly across the recursive calls.
  */
 function emitExplodedVariantFiles(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: ComponentTarget,
@@ -739,7 +744,7 @@ function spreadEntry(decl: ComponentPropDecl): string {
 
 /** Render TSX + optional sidecar `.module.css` for a referenced SYMBOL / variant-set target. */
 export function emitComponentFile(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   registry: EmitRegistry,
   index: TokenIndex,
   target: ComponentTarget,
@@ -749,7 +754,7 @@ export function emitComponentFile(
   // target's typed props. The JSX emitter consults this when rendering
   // each TEXT node so a `componentPropRefs(TEXT_DATA)` slot reads
   // `{label}` instead of the SYMBOL-default literal.
-  const bindings = buildPropBindings(target);
+  const bindings = buildPropBindings(target, source.document.childrenOf);
   const context = makeContext(source, registry, index, target.filePath, opts, bindings, target.node);
   const isVariantSet = target.variants.size > 0;
 

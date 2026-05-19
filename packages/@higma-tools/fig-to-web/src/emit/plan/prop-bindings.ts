@@ -26,7 +26,7 @@
  * into JSX props.
  */
 import type { FigComponentPropRef, FigNode } from "@higma-document-models/fig/types";
-import { guidToString } from "@higma-document-models/fig/domain";
+import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { ComponentPropDecl, ComponentTarget } from "../types";
 import { SYNTHETIC_TEXT_PREFIX } from "./registry";
 
@@ -93,13 +93,14 @@ function declByDefId(target: ComponentTarget): ReadonlyMap<string, ComponentProp
   return out;
 }
 
-function visitDescendants(node: FigNode, visit: (descendant: FigNode) => void): void {
-  for (const child of node.children ?? []) {
-    if (!child) {
-      continue;
-    }
+function visitDescendants(
+  node: FigNode,
+  visit: (descendant: FigNode) => void,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  for (const child of childrenOf(node)) {
     visit(child);
-    visitDescendants(child, visit);
+    visitDescendants(child, visit, childrenOf);
   }
 }
 
@@ -125,11 +126,14 @@ function rootsOf(target: ComponentTarget): readonly FigNode[] {
  *   - Kiwi `componentPropRefs[]` on the descendant.
  *   - String `componentPropertyReferences[]` on the descendant.
  *   - Synthetic `text_<guid>` declarations the registry attaches to
- *     every TEXT descendant (so that `instance.symbolData.symbolOverrides`
- *     can supply a per-INSTANCE replacement for any text without the
- *     SYMBOL author having declared a `componentPropDefs` slot).
+ *     every TEXT descendant so SymbolResolver-resolved INSTANCE output
+ *     can supply per-call-site text values without the SYMBOL author
+ *     having declared a `componentPropDefs` slot.
  */
-export function buildPropBindings(target: ComponentTarget): PropBindings {
+export function buildPropBindings(
+  target: ComponentTarget,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): PropBindings {
   const declMap = declByDefId(target);
   const syntheticByGuid = syntheticTextDeclByGuid(target);
   if (declMap.size === 0 && syntheticByGuid.size === 0) {
@@ -146,13 +150,15 @@ export function buildPropBindings(target: ComponentTarget): PropBindings {
       // Don't overwrite an explicit Kiwi/string ref — the authored
       // typed prop wins. Synthetic text props only fill in the gap
       // where no explicit binding exists.
-      if (!out.has(guidStr)) {
-        const synthetic = syntheticByGuid.get(guidStr);
-        if (synthetic) {
-          out.set(guidStr, { field: "TEXT_DATA", decl: synthetic });
-        }
+      if (out.has(guidStr)) {
+        return;
       }
-    });
+      const synthetic = syntheticByGuid.get(guidStr);
+      if (synthetic === undefined) {
+        return;
+      }
+      out.set(guidStr, { field: "TEXT_DATA", decl: synthetic });
+    }, childrenOf);
   }
   return out;
 }

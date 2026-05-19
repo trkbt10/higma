@@ -13,7 +13,7 @@
  * GL renderer reports `ready`.
  */
 
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { useWebGLViewport } from "./use-webgl-viewport";
 import { WebGLLoadingOverlay } from "./WebGLLoadingOverlay";

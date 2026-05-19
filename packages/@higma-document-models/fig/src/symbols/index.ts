@@ -1,9 +1,4 @@
 /** @file Symbol resolution utilities */
-export {
-  extractSymbolIDPair,
-  getEffectiveSymbolID,
-  type SymbolIDPair,
-} from "./effective-symbol-id";
 
 export { resolveConstraintAxis } from "./constraint-axis";
 
@@ -15,50 +10,13 @@ export {
 
 // Instance resolution — SoT for "INSTANCE → renderable node + children"
 export {
-  resolveInstanceNode,
-  resolveInstanceReferences,
-  mergeSymbolProperties,
-  applySelfOverridesToMergedNode,
-  cloneSymbolChildren,
-  collectComponentPropAssignments,
-  getInstanceSymbolOverrides,
-  isInstanceSelfOverride,
-  kiwiOverridePayloadKeys,
-  INSTANCE_SELF_OVERRIDE_FIELDS,
+  createSymbolResolver,
   type ResolvedInstanceNode,
-  type InstanceResolveContext,
   type InstanceResolution,
-  type CloneSymbolChildrenOptions,
-  type FigDerivedSymbolData,
+  type SymbolResolver,
+  type SymbolResolverInput,
+  type ResolvedSymbolTarget,
 } from "./symbol-resolver";
-
-// Symbol map lookup — SoT for "GUID string → SYMBOL node in this map".
-export {
-  resolveSymbolGuidStr,
-  type SymbolMapResolution,
-} from "./symbol-map-lookup";
-
-export {
-  buildSymbolDependencyGraph,
-  preResolveSymbols,
-  type SymbolDependencyGraph,
-  type ResolvedSymbolCache,
-} from "./symbol-pre-resolver";
-
-export {
-  buildGuidTranslationMap,
-  analyzeOverrideSets,
-  translateOverrides,
-  type GuidTranslationMap,
-  type OverrideAnalysis,
-} from "./guid-translation";
-
-export {
-  reresolveOverridesForVariant,
-  type DesignNodeShape,
-  type DesignSymbolOverrideShape,
-  type DesignComponentPropertyAssignmentShape,
-} from "./design-override-resolver";
 
 export {
   resolveInstanceLayout,
@@ -81,13 +39,6 @@ export {
   styleRefKey,
   styleRefKeys,
 } from "./style-registry";
-
-export {
-  createFigResolveContext,
-  type FigResolveContext,
-  type SymbolDescendant,
-  type SymbolDescendantBundle,
-} from "./resolve-context";
 
 export {
   projectVariableAnyValue,

@@ -146,8 +146,8 @@ function contourCentroid(contour: Contour): { x: number; y: number } | undefined
 /**
  * Find the smallest contour (by absolute signed area) that fully
  * contains `probe`, excluding `selfIdx`. Returns `-1` when no contour
- * contains it. Helper extracted so `computeContainmentMap`'s inner
- * loop avoids a mutable accumulator.
+ * contains it. Kept as its own routine so `computeContainmentMap`'s
+ * inner loop avoids a mutable accumulator.
  */
 function findSmallestContainer(
   probe: { readonly x: number; readonly y: number },

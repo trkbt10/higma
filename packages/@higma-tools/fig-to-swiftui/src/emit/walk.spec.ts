@@ -6,12 +6,32 @@
  * that survives the spec is what real .fig content will produce when
  * the same node shapes flow through the IO loader.
  */
-import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
-import { serialize } from "../swift-tree";
-import { emitNode } from "./walk";
+import type { FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { serialize, type SwiftView } from "../swift-tree";
+import { emitNode as emitNodeWithContext, type EmitContext } from "./walk";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
+}
+
+function solidPaint(color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }): FigPaint {
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color };
+}
+
+function fixtureChildrenOf(parent: FigNode): readonly FigNode[] {
+  const children: FigNode[] = [];
+  for (const child of parent.children ?? []) {
+    if (child === undefined || child === null) {
+      throw new Error("fixtureChildrenOf: fixture contains an empty child slot");
+    }
+    children.push(child);
+  }
+  return children;
+}
+
+function emitNode(node: FigNode, ctx: EmitContext = {}): SwiftView {
+  return emitNodeWithContext(node, { ...ctx, childrenOf: fixtureChildrenOf });
 }
 
 function frame(partial: Partial<FigNode>): FigNode {
@@ -47,7 +67,7 @@ describe("emitNode — TEXT", () => {
       characters: "Hello",
       fontSize: 16,
       fontName: { family: "Inter", style: "Bold" },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
     });
     expect(serialize(emitNode(node))).toBe(
       [
@@ -76,7 +96,7 @@ describe("emitNode — RECTANGLE", () => {
   it("emits Rectangle() with .fill (not .background) so the shape paints the requested colour", () => {
     const node = rect({
       size: { x: 80, y: 80 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
       cornerRadius: 8,
     });
     expect(serialize(emitNode(node))).toBe(
@@ -99,7 +119,7 @@ describe("emitNode — autolayout HStack", () => {
       characters: "Tap",
       fontSize: 16,
       fontName: { family: "Inter", style: "Bold" },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
     });
     const node = frame({
       stackMode: enumName("HORIZONTAL"),
@@ -107,7 +127,7 @@ describe("emitNode — autolayout HStack", () => {
       stackPadding: 12,
       stackCounterAlignItems: enumName("CENTER"),
       size: { x: 200, y: 44 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 1, a: 1 })],
       cornerRadius: 22,
       children: [child],
     });

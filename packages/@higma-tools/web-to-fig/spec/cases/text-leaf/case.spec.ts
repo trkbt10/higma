@@ -3,7 +3,7 @@
  * weight / colour produces a TextNodeIR with the requested base style
  * and the colour landing on `style.fills` as a SOLID paint.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { recordingFontResolver, staticFontResolver } from "../../test-font-resolver";
 import {
   DEFAULT_FONT_FAMILY,

@@ -1,10 +1,10 @@
 /**
- * @file Helper for full-page (`selector="body"`) round-trip cases.
+ * @file Runner for full-page (`selector="body"`) round-trip cases.
  *
  * Differs from `spec/cases/run-html-case.ts` in two ways:
  *
  *   1. Fixture HTML lives outside git (see the package `.gitignore`),
- *      so the helper auto-skips the test when the file is missing.
+ *      so the function auto-skips the test when the file is missing.
  *      A `extract.sh` co-located with each case shows how to
  *      regenerate the fixture from the live URL.
  *   2. The case asserts whole-page structural invariants — viewport

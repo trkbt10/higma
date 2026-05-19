@@ -4,7 +4,7 @@
  * The Figma "Layers" panel lists exactly the direct children of the
  * page's CANVAS — there is no `"Layers"` container node. Targeting
  * "the frames directly under Design's Layers" reduces to enumerating
- * `safeChildren(designCanvas)` and filtering for FRAME nodes (the
+ * indexed Kiwi children of the chosen CANVAS and filtering for FRAME nodes (the
  * canonical Figma schema has no COMPONENT or COMPONENT_SET NodeType;
  * a "Variant Set" is a FRAME with variant metadata — see
  * `docs/refactor/component-type-cleanup.md`).
@@ -14,7 +14,7 @@
  * file produces matching frame lists for both.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { safeChildren } from "@higma-document-models/fig/domain";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 
 const FRAME_TYPES: ReadonlySet<string> = new Set([
   "FRAME",
@@ -25,8 +25,8 @@ function isFrameLike(node: FigNode): boolean {
 }
 
 /** All frame-like direct children of the chosen canvas, in Figma's stored order. */
-export function listFrameTargets(canvas: FigNode): readonly FigNode[] {
-  return safeChildren(canvas).filter(isFrameLike);
+export function listFrameTargets(document: FigKiwiDocumentIndex, canvas: FigNode): readonly FigNode[] {
+  return document.childrenOf(canvas).filter(isFrameLike);
 }
 
 /**

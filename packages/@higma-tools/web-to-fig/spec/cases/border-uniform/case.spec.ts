@@ -2,7 +2,7 @@
  * @file Case `border-uniform` — uniform CSS border becomes a single
  * StrokeIR with the authored width and colour.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_BORDER_COLOR, DEFAULT_BORDER_WIDTH_PX, withUniformBorder } from "./fixture";
 

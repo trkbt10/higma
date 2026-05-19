@@ -2,7 +2,7 @@
  * @file Case `img-with-srcset` — IR consumes the resolved imageId
  * verbatim; the normaliser doesn't need srcset awareness.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { RESOLVED_IMAGE_ID, imgWithSrcset } from "./fixture";
 
 describe("case img-with-srcset", () => {

@@ -16,7 +16,7 @@
 import { normalizeViewport } from "../../../src/normalize";
 import { synthViewport } from "../../synth-snapshot";
 import { staticFontResolver } from "../../test-font-resolver";
-import { asFrame } from "../_helpers";
+import { asFrame } from "../case-ir-assertions";
 import { SNAPSHOT_BG, emptyContentChild } from "./fixture";
 
 describe("case viewport-bg-from-snapshot", () => {

@@ -726,7 +726,7 @@ export function decorateAll(
 /**
  * Map a readonly array, returning the input verbatim when every
  * mapped element is referentially equal to its source. Functions as
- * a structural-sharing helper that lets the decorate walker skip
+ * a structural-sharing routine that lets the decorate walker skip
  * allocating a new array and a new parent element when no descendant
  * actually changed.
  */

@@ -1,5 +1,5 @@
 /**
- * @file Detect repeated subtrees that look like the same component.
+ * @file Detect repeated structures that look like the same component.
  *
  * Pipeline:
  *   1. Walk every FRAME / GROUP / INSTANCE in the user-visible
@@ -16,8 +16,8 @@
  * share a generic FRAME(VECTOR(),TEXT()) shape" false positive.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
-import { roleSignature, structuralSignature } from "./subtree-signature";
+import { getNodeType, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { roleSignature, structuralSignature } from "./structure-signature";
 import type { NodeRenderer } from "../visual/render-node";
 import { perceptualHash, combinedDistance } from "../visual/perceptual-hash";
 import type { PerceptualHash } from "../visual/perceptual-hash";
@@ -59,7 +59,7 @@ export type DuplicateAnalysis = {
   /** Diagnostic — buckets we considered but discarded. */
   readonly rejectedBuckets: number;
   /**
-   * Subtrees we attempted to render but the renderer rejected (commonly:
+   * Structures we attempted to render but the renderer rejected (commonly:
    * missing fonts on the host OS). Reported so the caller knows why some
    * clusters might be smaller than expected.
    */
@@ -72,16 +72,31 @@ type Candidate = {
   readonly height: number;
 };
 
-function collectCandidates(node: FigNode, out: Candidate[]): void {
-  const t = getNodeType(node);
-  if (CANDIDATE_TYPES.has(t)) {
-    const sz = node.size;
-    if (sz && sz.x >= MIN_CANDIDATE_DIM && sz.y >= MIN_CANDIDATE_DIM) {
-      out.push({ node, width: sz.x, height: sz.y });
-    }
+function candidateDimensions(node: FigNode): { readonly width: number; readonly height: number } | undefined {
+  if (!CANDIDATE_TYPES.has(getNodeType(node))) {
+    return undefined;
   }
-  for (const child of safeChildren(node)) {
-    collectCandidates(child, out);
+  const sz = node.size;
+  if (!sz) {
+    return undefined;
+  }
+  if (sz.x < MIN_CANDIDATE_DIM || sz.y < MIN_CANDIDATE_DIM) {
+    return undefined;
+  }
+  return { width: sz.x, height: sz.y };
+}
+
+function collectCandidates(
+  node: FigNode,
+  out: Candidate[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
+  const dimensions = candidateDimensions(node);
+  if (dimensions) {
+    out.push({ node, width: dimensions.width, height: dimensions.height });
+  }
+  for (const child of childrenOf(node)) {
+    collectCandidates(child, out, childrenOf);
   }
 }
 
@@ -94,7 +109,7 @@ function sizeClassKey(c: Candidate): string {
 
 function suggestNameFor(node: FigNode, sig: string): string {
   // Only look at the immediate name. Placeholder names like "Frame N"
-  // and "Group" get a structurally-derived fallback, otherwise the
+  // and "Group" get a structurally-derived name, otherwise the
   // existing name slug is reused so authored intent is respected.
   const raw = (node.name ?? "").trim();
   if (!raw || /^frame[\s_-]?\d+$/i.test(raw) || raw === "Group" || raw === "Frame") {
@@ -112,19 +127,19 @@ function slug(text: string): string {
 
 function slugFromSignature(sig: string): string {
   // Coarse: "FRAME<row>(ELLIPSE<avatar>...)" → "row-with-avatar"
+  if (sig.includes("<avatar>") && sig.includes("text-block")) {
+    return "comment-row";
+  }
   if (sig.includes("<avatar>")) {
-    if (sig.includes("text-block")) {
-      return "comment-row";
-    }
     return "avatar-row";
   }
   if (sig.includes("<thumbnail>")) {
     return "media-card";
   }
+  if (sig.includes("<icon>") && sig.includes("text-line")) {
+    return "icon-label";
+  }
   if (sig.includes("<icon>")) {
-    if (sig.includes("text-line")) {
-      return "icon-label";
-    }
     return "icon-tile";
   }
   if (sig.includes("<button-bg>") && sig.includes("text-line")) {
@@ -190,16 +205,17 @@ async function tryRender(renderer: NodeRenderer, cand: Candidate): Promise<Rende
 export async function detectDuplicates(
   frames: readonly FigNode[],
   renderer: NodeRenderer,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): Promise<DuplicateAnalysis> {
   const all: Candidate[] = [];
   for (const frame of frames) {
-    collectCandidates(frame, all);
+    collectCandidates(frame, all, childrenOf);
   }
   // Bucket by (role signature × size class). The size class keeps a
   // "card" 360×120 from clustering with a "card" 180×60.
   const buckets = new Map<string, Candidate[]>();
   for (const c of all) {
-    const sig = roleSignature(c.node, MAX_DEPTH);
+    const sig = roleSignature(c.node, childrenOf, MAX_DEPTH);
     const key = `${sig}|${sizeClassKey(c)}`;
     const arr = buckets.get(key) ?? [];
     arr.push(c);
@@ -225,8 +241,8 @@ export async function detectDuplicates(
       if (!node) {
         return;
       }
-      const sig = roleSignature(node, MAX_DEPTH);
-      const struct = structuralSignature(node, MAX_DEPTH);
+      const sig = roleSignature(node, childrenOf, MAX_DEPTH);
+      const struct = structuralSignature(node, childrenOf, MAX_DEPTH);
       const avgW = v.members.reduce((sum, m) => sum + m.width, 0) / v.members.length;
       const avgH = v.members.reduce((sum, m) => sum + m.height, 0) / v.members.length;
       // Disambiguate visual sub-clusters that share role signature

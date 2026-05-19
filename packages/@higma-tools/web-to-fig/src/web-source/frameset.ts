@@ -346,7 +346,7 @@ function translateRect(rect: RawRect, dx: number, dy: number): RawRect {
  * Convert the in-page JSON shape into the host-side `RawElement`
  * shape. Mirrors `elementJsonToRaw` in capture.ts but lives here so
  * the frameset assembly module is self-contained — capture.ts'
- * helper is `function`-private. Both helpers must stay in lock-step;
+ * routine is `function`-private. Both routines must stay in lock-step;
  * adding a field requires updating both.
  */
 function elementJsonToRaw(json: ElementJson): RawElement {
@@ -368,6 +368,8 @@ function elementJsonToRaw(json: ElementJson): RawElement {
     svgContent: json.svgContent,
     text: json.text,
     textFragments: json.textFragments,
+    textLineRects: json.textLineRects,
+    textLineBaselineYs: json.textLineBaselineYs,
     textCharacterFontRuns: json.textCharacterFontRuns,
     pseudo: json.pseudo,
     children: json.children.map(elementJsonToRaw),
@@ -398,4 +400,3 @@ export function matchFrame(
   }
   return undefined;
 }
-

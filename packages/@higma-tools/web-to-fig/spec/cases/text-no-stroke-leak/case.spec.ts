@@ -5,7 +5,7 @@
  * captured border there renders as glyph-outline strokes (the
  * regression this case prevents).
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { paragraphWithBorder } from "./fixture";
 
 describe("case text-no-stroke-leak", () => {

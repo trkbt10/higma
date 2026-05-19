@@ -1,7 +1,7 @@
 /**
  * @file Case `pseudo-after-arrow` — `::after` glyph appends after host text.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { ARROW, LINK_TEXT, anchorWithAfterArrow } from "./fixture";
 
 describe("case pseudo-after-arrow", () => {

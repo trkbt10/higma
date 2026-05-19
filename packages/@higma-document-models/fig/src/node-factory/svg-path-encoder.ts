@@ -15,7 +15,7 @@
  *   - 0x04 : CubicTo — payload (cp1x, cp1y, cp2x, cp2y, x, y) as 24 bytes
  *
  * SVG commands handled: M m L l H h V v C c S s Q q T t Z z A a (arcs
- * flattened to cubics via the primitive `arcToCubicBeziers` helper).
+ * flattened to cubics via the primitive `arcToCubicBeziers` routine).
  */
 
 import { arcToCubicBeziers } from "@higma-primitives/path";

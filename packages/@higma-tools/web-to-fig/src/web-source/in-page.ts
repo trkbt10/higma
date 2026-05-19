@@ -25,7 +25,7 @@ export type RawSnapshotJson = {
 /**
  * 2x3 affine matrix in column-major order. Maps (x, y) to
  * (a*x + c*y + e, b*x + d*y + f). Mirrors the type of the same name
- * in `svg-utils.ts`.
+ * in `svg-path-geometry.ts`.
  */
 export type SvgAffineJson = {
   readonly a: number;
@@ -176,7 +176,7 @@ export type ElementJson = {
 /**
  * Capture the document under `window` into a serialisable snapshot.
  * Designed for `page.evaluate(() => captureSnapshot())` — must not
- * close over any host-side state. All helpers and constants live
+ * close over any host-side state. All routines and constants live
  * inside the function body because Playwright serialises the
  * function into the page context, where outer-module bindings are
  * unreachable.
@@ -264,11 +264,8 @@ export function captureSnapshot(): RawSnapshotJson {
    * during the walk). That made fixtures non-reproducible and made
    * it impossible to correlate ids across `IR ↔ asset map ↔
    * downstream snapshots`. The current scheme hashes the URL with
-   * a portable djb2-style fold and surfaces both the hash digest
-   * and the URL inside the id, so a) two captures of the same
-   * page produce identical ids, and b) a developer can tell at a
-   * glance which asset an `img-…` id refers to without consulting
-   * the registry.
+   * a portable djb2-style fold and exposes the hex digest directly,
+   * matching Kiwi's `Paint.image.hash` representation.
    */
   function imageIdFor(url: string): string {
     // djb2 hash variant — straightforward, deterministic, no
@@ -280,7 +277,7 @@ export function captureSnapshot(): RawSnapshotJson {
       hash = (hash * 33) ^ url.charCodeAt(i);
     }
     const digest = (hash >>> 0).toString(16).padStart(8, "0");
-    return `img-${digest}`;
+    return digest;
   }
 
   function registerImage(url: string): string {
@@ -335,7 +332,7 @@ export function captureSnapshot(): RawSnapshotJson {
     // Both axes must be > 0 for the element to occupy any pixels.
     // Sites use `height: 0` (or `width: 0`) as a "render this in the
     // DOM but show nothing" trick — typically for consent bars and
-    // measurement helpers that animate open later. These should not
+    // measurement routines that animate open later. These should not
     // be captured as visible.
     if (r.width > 0 && r.height > 0) {
       return true;
@@ -677,7 +674,7 @@ export function captureSnapshot(): RawSnapshotJson {
    * then children". For paragraphs whose source order is `<a>X</a>Y`
    * (text after element) the run order produced by the normaliser
    * therefore disagrees with the visual flow. `interleavedTextSlots`
-   * fixes that by emitting per-position text fragments; this helper
+   * fixes that by emitting per-position text fragments; this routine
    * stays as a convenience for the rare callers that genuinely
    * want the concatenated form.
    */
@@ -760,13 +757,13 @@ export function captureSnapshot(): RawSnapshotJson {
     const svgEl = el as SVGSVGElement;
     const paths: SvgPathJson[] = [];
 
-    // ---- Inline mirrors of `svg-utils.ts` helpers ----
+    // ---- Inline mirror of `svg-path-geometry.ts` algorithms ----
     //
     // Playwright's `page.evaluate` serialises the function body into
     // the page context and outer-module bindings (the `parseSvgTransform`
     // / `shapeToPathData` exports) are unreachable. So the algorithms
-    // below intentionally *duplicate* those helpers verbatim. The SoT
-    // is `svg-utils.ts` (where they are unit-tested); any drift in
+    // below intentionally mirror that module verbatim. The SoT
+    // is `svg-path-geometry.ts` (where it is unit-tested); any drift in
     // either copy is a bug to be reconciled — keep the two in sync
     // when you change one.
     type Affine = { a: number; b: number; c: number; d: number; e: number; f: number };
@@ -1326,11 +1323,16 @@ export function captureSnapshot(): RawSnapshotJson {
     // these to skip its own approximate wrap re-derivation.
     //
     // Inlined here because Playwright serialises this whole walker
-    // into the page context — extracting it into a helper outside
+    // into the page context — extracting it into a routine outside
     // `walk` would lose the closure reference and break in-page
     // execution.
-    const textLineRects = text.length > 0 ? collectTextLineRects(el) : undefined;
-    const textLineBaselineYs = text.length > 0 ? collectTextLineBaselineYs(el) : undefined;
+    const emittedTextFragments = emitPaddedFragmentsIfNonEmpty(paddedFragments);
+    const hasTextBearingLine = text.length > 0
+      || emittedTextFragments !== undefined
+      || pseudo.length > 0
+      || children.some((child) => elementJsonHasTextBearingLine(child));
+    const textLineRects = hasTextBearingLine ? collectTextLineRects(el) : undefined;
+    const textLineBaselineYs = hasTextBearingLine ? collectTextLineBaselineYs(el) : undefined;
     return {
       id: path,
       tag: el.tagName.toLowerCase(),
@@ -1343,7 +1345,7 @@ export function captureSnapshot(): RawSnapshotJson {
       maskImageId,
       svgContent,
       text: text.length > 0 ? text : undefined,
-      textFragments: emitPaddedFragmentsIfNonEmpty(paddedFragments),
+      textFragments: emittedTextFragments,
       textLineRects,
       textLineBaselineYs,
       pseudo: pseudo.length > 0 ? pseudo : undefined,
@@ -1377,6 +1379,19 @@ export function captureSnapshot(): RawSnapshotJson {
       return undefined;
     }
     return collected.length > 0 ? collected : undefined;
+  }
+
+  function elementJsonHasTextBearingLine(el: ElementJson): boolean {
+    if (el.text !== undefined && el.text.length > 0) {
+      return true;
+    }
+    if (el.textFragments !== undefined && el.textFragments.some((fragment) => fragment.length > 0)) {
+      return true;
+    }
+    if (el.pseudo !== undefined && el.pseudo.length > 0) {
+      return true;
+    }
+    return el.children.some((child) => elementJsonHasTextBearingLine(child));
   }
 
   /**

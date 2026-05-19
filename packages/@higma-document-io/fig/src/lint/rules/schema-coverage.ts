@@ -9,8 +9,8 @@
  *
  * The bundled `figma-schema.json` is the SoT — it ships with every
  * release of `@higma-figma-schema/profiles` and is what `exportFig`
- * writes out (via `documentToTree` → `saveFigFile`). A healthy file
- * contains a superset of the bundled
+ * writes out through `saveFigFile`. A healthy file contains a superset
+ * of the bundled
  * schema's definitions (Figma may add new types over time, but it
  * never removes core ones).
  */

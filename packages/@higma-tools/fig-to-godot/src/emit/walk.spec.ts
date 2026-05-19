@@ -6,12 +6,26 @@
  * that survives the spec is what real .fig content will produce when
  * the same node shapes flow through the IO loader.
  */
-import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import type { FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { serializeScene, scene } from "../godot-tree";
 import { createWalkContext, emitNode } from "./walk";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
+}
+
+const NORMAL_BLEND = { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } as const;
+
+function solidPaint(
+  color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number },
+  fields: Partial<Pick<FigPaint, "opacity" | "visible" | "blendMode">> = {},
+): FigPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    color,
+    ...fields,
+  };
 }
 
 function frame(partial: Partial<FigNode>): FigNode {
@@ -41,8 +55,19 @@ function text(partial: Partial<FigNode>): FigNode {
   } as FigNode;
 }
 
+function fixtureChildrenOf(parent: FigNode): readonly FigNode[] {
+  const children: FigNode[] = [];
+  for (const child of parent.children ?? []) {
+    if (child === undefined || child === null) {
+      throw new Error("fixtureChildrenOf: fixture contains an empty child slot");
+    }
+    children.push(child);
+  }
+  return children;
+}
+
 function emitToScene(node: FigNode): string {
-  const ctx = createWalkContext();
+  const ctx = createWalkContext({ childrenOf: fixtureChildrenOf });
   const root = emitNode(node, ctx);
   return serializeScene(scene(root, { subResources: ctx.subResources }));
 }
@@ -53,7 +78,7 @@ describe("emitNode — TEXT", () => {
       name: "Greeting",
       characters: "Hello",
       fontSize: 16,
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
     });
     const out = emitToScene(node);
     expect(out).toContain('[node name="Greeting" type="Label"]');
@@ -78,7 +103,7 @@ describe("emitNode — RECTANGLE", () => {
     const node = rect({
       name: "Box",
       size: { x: 80, y: 80 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
       cornerRadius: 8,
     });
     const out = emitToScene(node);
@@ -106,12 +131,12 @@ describe("emitNode — FRAME (HBoxContainer)", () => {
     const a = rect({
       name: "A",
       size: { x: 40, y: 40 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const b = rect({
       name: "B",
       size: { x: 40, y: 40 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 1, b: 0, a: 1 })],
     });
     const root = frame({
       name: "Row",
@@ -137,12 +162,12 @@ describe("emitNode — FRAME (HBoxContainer)", () => {
     const a = rect({
       name: "A",
       size: { x: 40, y: 40 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const b = rect({
       name: "B",
       size: { x: 40, y: 40 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 1, b: 0, a: 1 })],
     });
     const root = frame({
       name: "Row",
@@ -165,7 +190,7 @@ describe("emitNode — FRAME (Control / non-autolayout)", () => {
       name: "Floater",
       size: { x: 20, y: 20 },
       transform: { m00: 1, m01: 0, m02: 12, m10: 0, m11: 1, m12: 16 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 1, a: 1 })],
     });
     const root = frame({
       name: "Page",
@@ -187,7 +212,7 @@ describe("emitNode — FRAME with padding", () => {
     const a = rect({
       name: "A",
       size: { x: 40, y: 40 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const root = frame({
       name: "Padded",
@@ -226,14 +251,14 @@ describe("emitNode — Figma mask fold", () => {
           cornerRadius: 20,
           mask: true,
           fillPaints: [
-            { type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+            solidPaint({ r: 1, g: 1, b: 1, a: 1 }, { opacity: 1, visible: true, blendMode: NORMAL_BLEND }),
           ],
         }),
         rect({
           name: "masked-content",
           size: { x: 200, y: 140 },
           fillPaints: [
-            { type: "SOLID", color: { r: 0.9, g: 0.2, b: 0.2, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+            solidPaint({ r: 0.9, g: 0.2, b: 0.2, a: 1 }, { opacity: 1, visible: true, blendMode: NORMAL_BLEND }),
           ],
         }),
       ],
@@ -260,14 +285,14 @@ describe("emitNode — Figma mask fold", () => {
           size: { x: 120, y: 120 },
           mask: true,
           fillPaints: [
-            { type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+            solidPaint({ r: 1, g: 1, b: 1, a: 1 }, { opacity: 1, visible: true, blendMode: NORMAL_BLEND }),
           ],
         }),
         rect({
           name: "masked-rect",
           size: { x: 120, y: 120 },
           fillPaints: [
-            { type: "SOLID", color: { r: 0.2, g: 0.6, b: 0.9, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+            solidPaint({ r: 0.2, g: 0.6, b: 0.9, a: 1 }, { opacity: 1, visible: true, blendMode: NORMAL_BLEND }),
           ],
         }),
       ],
@@ -297,14 +322,14 @@ describe("emitNode — Figma mask fold", () => {
           cornerRadius: 10,
           mask: true,
           fillPaints: [
-            { type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+            solidPaint({ r: 1, g: 1, b: 1, a: 1 }, { opacity: 1, visible: true, blendMode: NORMAL_BLEND }),
           ],
         }),
         rect({
           name: "content",
           size: { x: 160, y: 100 },
           fillPaints: [
-            { type: "SOLID", color: { r: 0.2, g: 0.6, b: 0.9, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" },
+            solidPaint({ r: 0.2, g: 0.6, b: 0.9, a: 1 }, { opacity: 1, visible: true, blendMode: NORMAL_BLEND }),
           ],
         }),
       ],

@@ -2,7 +2,7 @@
  * @file Figma autolayout solver — primary axis, counter axis, wrap, grid.
  *
  * Single entry point: `resolveAutoLayoutFrame(parent, children)`. It
- * dispatches on `parent.autoLayout.stackMode`:
+ * dispatches on the Kiwi `stackMode` field:
  *
  *   - GRID                       → `applyGridLayout`
  *   - HORIZONTAL / VERTICAL + stackWrap=WRAP → `applyWrapLayout`
@@ -17,7 +17,7 @@
  *   pin a child's transform we honour them verbatim (they're a SoT for
  *   that INSTANCE's resolved layout). But when a FRAME is plain
  *   autolayout — no DSD because it's not the root of an INSTANCE
- *   subtree, just a layout container — we have to *compute* the
+ *   descendant group, just a layout container — we have to *compute* the
  *   children's positions ourselves.
  *
  *   The counter-axis stretch alone is not enough: Toolbar - Top's
@@ -45,8 +45,10 @@
  *     local origin (so 90° / 180° / 270° rotations don't drift)
  *
  * Counter-axis stretch (one child's cross-axis dimension expanding to
- * fill the parent) lives upstream in `builder.ts:applyCounterAxisStretch`.
+ * fill the parent) is resolved here from the same raw stack fields.
  */
+
+import { computeFlexShare, interpretGridTrackSize, resolveTrackSize } from "./grid-track-size";
 
 export type PrimaryAxisParent = {
   readonly size?: { readonly x: number; readonly y: number };
@@ -59,21 +61,25 @@ export type PrimaryAxisParent = {
   readonly targetAspectRatio?: { readonly x: number; readonly y: number };
   readonly gridRows?: { readonly entries: readonly unknown[] };
   readonly gridColumns?: { readonly entries: readonly unknown[] };
-  readonly autoLayout?: {
-    readonly stackMode?: { readonly name?: string };
-    readonly stackPadding?: number | { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
-    readonly stackSpacing?: number;
-    readonly stackCounterSpacing?: number;
-    readonly stackCounterAlignItems?: { readonly name?: string };
-    readonly stackPrimaryAlignItems?: { readonly name?: string };
-    readonly stackPrimaryAlignContent?: { readonly name?: string };
-    readonly stackWrap?: boolean | { readonly name?: string };
-    readonly stackReverseZIndex?: boolean;
-  };
-  readonly layoutConstraints?: {
-    readonly stackPrimarySizing?: { readonly name?: string };
-    readonly stackCounterSizing?: { readonly name?: string };
-  };
+  readonly gridColumnsSizing?: { readonly entries: readonly { readonly trackSize?: unknown }[] };
+  readonly gridRowsSizing?: { readonly entries: readonly { readonly trackSize?: unknown }[] };
+  readonly gridRowGap?: number;
+  readonly gridColumnGap?: number;
+  readonly stackMode?: { readonly name?: string };
+  readonly stackPadding?: number;
+  readonly stackVerticalPadding?: number;
+  readonly stackHorizontalPadding?: number;
+  readonly stackPaddingRight?: number;
+  readonly stackPaddingBottom?: number;
+  readonly stackSpacing?: number;
+  readonly stackCounterSpacing?: number;
+  readonly stackCounterAlignItems?: { readonly name?: string };
+  readonly stackPrimaryAlignItems?: { readonly name?: string };
+  readonly stackPrimaryAlignContent?: { readonly name?: string };
+  readonly stackWrap?: { readonly name?: string };
+  readonly stackReverseZIndex?: boolean;
+  readonly stackPrimarySizing?: { readonly name?: string };
+  readonly stackCounterSizing?: { readonly name?: string };
 };
 
 export type PrimaryAxisChild = {
@@ -83,11 +89,13 @@ export type PrimaryAxisChild = {
     readonly m10: number; readonly m11: number; readonly m12: number;
   };
   readonly visible?: boolean;
-  readonly layoutConstraints?: {
-    readonly stackPositioning?: { readonly name?: string };
-    readonly stackChildPrimaryGrow?: number;
-    readonly stackChildAlignSelf?: { readonly name?: string };
-  };
+  readonly stackPositioning?: { readonly name?: string };
+  readonly stackChildPrimaryGrow?: number;
+  readonly stackChildAlignSelf?: { readonly name?: string };
+  readonly gridChildHorizontalAlign?: "MIN" | "CENTER" | "MAX" | "STRETCH";
+  readonly gridChildVerticalAlign?: "MIN" | "CENTER" | "MAX" | "STRETCH";
+  readonly gridColumnSpan?: number;
+  readonly gridRowSpan?: number;
 };
 
 export type AutoLayoutResolution<C extends PrimaryAxisChild, P extends PrimaryAxisParent> = {
@@ -95,14 +103,16 @@ export type AutoLayoutResolution<C extends PrimaryAxisChild, P extends PrimaryAx
   readonly children: readonly C[];
 };
 
-function readPadding(sp: number | { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number } | undefined): { top: number; right: number; bottom: number; left: number } {
-  if (typeof sp === "number") {
-    return { top: sp, right: sp, bottom: sp, left: sp };
-  }
-  if (sp && typeof sp === "object") {
-    return { top: sp.top, right: sp.right, bottom: sp.bottom, left: sp.left };
-  }
-  return { top: 0, right: 0, bottom: 0, left: 0 };
+function readStackPadding(parent: PrimaryAxisParent): { top: number; right: number; bottom: number; left: number } {
+  const uniform = parent.stackPadding ?? 0;
+  const vertical = parent.stackVerticalPadding ?? uniform;
+  const horizontal = parent.stackHorizontalPadding ?? uniform;
+  return {
+    top: vertical,
+    right: parent.stackPaddingRight ?? horizontal,
+    bottom: parent.stackPaddingBottom ?? vertical,
+    left: horizontal,
+  };
 }
 
 /**
@@ -142,27 +152,14 @@ function childAabb(child: PrimaryAxisChild): {
   return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
 }
 
-/**
- * Project the child's axis-aligned bounding-box size along the
- * requested parent axis. For unrotated children this is just
- * `size.x / size.y`; for a 90°/270°-rotated child the dimensions
- * swap, which auto-layout must consume when summing sibling primary
- * lengths and choosing the counter-axis stretch.
- */
-function childAabbAxisSize(child: PrimaryAxisChild, axis: "x" | "y"): number | undefined {
-  const aabb = childAabb(child);
-  if (!aabb) { return undefined; }
-  return axis === "x" ? aabb.max.x - aabb.min.x : aabb.max.y - aabb.min.y;
-}
-
 function resizePrimaryAxisIfChanged(
   size: { readonly x: number; readonly y: number } | undefined,
   newSizeAxis: number,
   horizontal: boolean,
 ): { readonly x: number; readonly y: number } | undefined {
   if (!size) { return undefined; }
+  if (horizontal && Math.abs(size.x - newSizeAxis) <= 0.5) { return size; }
   if (horizontal) {
-    if (Math.abs(size.x - newSizeAxis) <= 0.5) { return size; }
     return { x: newSizeAxis, y: size.y };
   }
   if (Math.abs(size.y - newSizeAxis) <= 0.5) { return size; }
@@ -174,12 +171,39 @@ function resizeAxis(
   axis: "x" | "y",
   value: number,
 ): { readonly x: number; readonly y: number } {
+  if (axis === "x" && Math.abs(size.x - value) <= 0.5) { return size; }
   if (axis === "x") {
-    if (Math.abs(size.x - value) <= 0.5) { return size; }
     return { x: value, y: size.y };
   }
   if (Math.abs(size.y - value) <= 0.5) { return size; }
   return { x: size.x, y: value };
+}
+
+function projectedAxisSpan(child: PrimaryAxisChild, axis: "x" | "y"): number {
+  if (!child.size) {
+    throw new Error("AutoLayout projectedAxisSpan requires child size.");
+  }
+  const aabb = childAabb(child);
+  if (!aabb) {
+    return axisSize(child.size, axis);
+  }
+  if (axis === "x") {
+    return aabb.max.x - aabb.min.x;
+  }
+  return aabb.max.y - aabb.min.y;
+}
+
+function resizePrimarySizeForPlacedChild<C extends PrimaryAxisChild>(
+  original: C,
+  oldT: NonNullable<PrimaryAxisChild["transform"]>,
+  primarySize: number,
+  horizontal: boolean,
+): { readonly x: number; readonly y: number } | undefined {
+  const childIsAxisAligned = oldT.m01 === 0 && oldT.m10 === 0 && oldT.m00 === 1 && oldT.m11 === 1;
+  if (!childIsAxisAligned) {
+    return original.size;
+  }
+  return resizePrimaryAxisIfChanged(original.size, primarySize, horizontal);
 }
 
 function resizeBothAxesIfChanged(
@@ -218,7 +242,7 @@ function readStrokeInsets(parent: PrimaryAxisParent): { top: number; right: numb
 }
 
 function contentInsets(parent: PrimaryAxisParent): { top: number; right: number; bottom: number; left: number } {
-  const padding = readPadding(parent.autoLayout?.stackPadding);
+  const padding = readStackPadding(parent);
   const stroke = readStrokeInsets(parent);
   return {
     top: padding.top + stroke.top,
@@ -242,18 +266,12 @@ function axisSize(size: { readonly x: number; readonly y: number }, axis: "x" | 
 
 function isFlowChild(child: PrimaryAxisChild): boolean {
   if (child.visible === false) { return false; }
-  if (child.layoutConstraints?.stackPositioning?.name === "ABSOLUTE") { return false; }
+  if (child.stackPositioning?.name === "ABSOLUTE") { return false; }
   return child.size !== undefined;
 }
 
-function stackWrapEnabled(value: boolean | { readonly name?: string } | undefined): boolean {
-  if (value === true) {
-    return true;
-  }
-  if (value && typeof value === "object") {
-    return value.name === "WRAP";
-  }
-  return false;
+function stackWrapEnabled(value: { readonly name?: string } | undefined): boolean {
+  return value?.name === "WRAP";
 }
 
 function resolveStartOffset(
@@ -292,7 +310,7 @@ function resolveStartOffset(
  *   - `proportionsConstrained=true` plus an explicit
  *     `targetAspectRatio` → "lock to this explicit ratio". When both
  *     fields are present we verify they agree with `size`; a divergence
- *     means our pipeline (parser / SYMBOL resize / override translation)
+     *     means our pipeline (parser / SYMBOL resize / override application)
  *     produced a node whose stored ratio doesn't match its stored size,
  *     which IS a real inconsistency.
  *
@@ -328,8 +346,8 @@ function applyHugSizing<P extends PrimaryAxisParent, C extends PrimaryAxisChild>
   if (!parent.size) {
     throw new Error("AutoLayout sizing requires parent size.");
   }
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout) { return parent; }
+  const modeName = parent.stackMode?.name;
+  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL" && modeName !== "GRID") { return parent; }
   const insets = contentInsets(parent);
   const pAxis = primaryAxis(horizontal);
   const cAxis = counterAxis(horizontal);
@@ -337,37 +355,13 @@ function applyHugSizing<P extends PrimaryAxisParent, C extends PrimaryAxisChild>
   const pEnd = horizontal ? insets.right : insets.bottom;
   const cStart = horizontal ? insets.top : insets.left;
   const cEnd = horizontal ? insets.bottom : insets.right;
-  const spacing = autoLayout.stackSpacing ?? 0;
-  const modeName = autoLayout.stackMode?.name;
-  const primaryHug = parent.layoutConstraints?.stackPrimarySizing?.name === "RESIZE_TO_FIT";
-  const counterHug = parent.layoutConstraints?.stackCounterSizing?.name === "RESIZE_TO_FIT";
+  const spacing = parent.stackSpacing ?? 0;
+  const primaryHug = parent.stackPrimarySizing?.name === "RESIZE_TO_FIT";
+  const counterHug = parent.stackCounterSizing?.name === "RESIZE_TO_FIT";
   if (!primaryHug && !counterHug) { return parent; }
 
-  const primaryContent = (() => {
-    if (modeName === "GRID") {
-      const cols = readGridColumns(parent, flow.length);
-      const widths = Array.from({ length: cols }, (_, col) => {
-        const columnChildren = flow.filter((_, index) => index % cols === col);
-        return columnChildren.reduce((max, child) => Math.max(max, axisSize(child.size!, pAxis)), 0);
-      });
-      return widths.reduce((sum, value) => sum + value, 0) + spacing * Math.max(0, cols - 1);
-    }
-    return flow.reduce((sum, child) => sum + axisSize(child.size!, pAxis), 0) + spacing * Math.max(0, flow.length - 1);
-  })();
-
-  const counterContent = (() => {
-    if (modeName === "GRID") {
-      const cols = readGridColumns(parent, flow.length);
-      const rows = Math.ceil(flow.length / cols);
-      const rowGap = autoLayout.stackCounterSpacing ?? 0;
-      const heights = Array.from({ length: rows }, (_, row) => {
-        const rowChildren = flow.slice(row * cols, row * cols + cols);
-        return rowChildren.reduce((max, child) => Math.max(max, axisSize(child.size!, cAxis)), 0);
-      });
-      return heights.reduce((sum, value) => sum + value, 0) + rowGap * Math.max(0, rows - 1);
-    }
-    return flow.reduce((max, child) => Math.max(max, axisSize(child.size!, cAxis)), 0);
-  })();
+  const primaryContent = computePrimaryContent(parent, flow, modeName, pAxis, spacing);
+  const counterContent = computeCounterContent(parent, flow, modeName, cAxis);
 
   const nextPrimary = primaryHug ? clampAxis(primaryContent + pStart + pEnd, pAxis, parent) : axisSize(parent.size, pAxis);
   const nextCounter = counterHug ? clampAxis(counterContent + cStart + cEnd, cAxis, parent) : axisSize(parent.size, cAxis);
@@ -377,12 +371,49 @@ function applyHugSizing<P extends PrimaryAxisParent, C extends PrimaryAxisChild>
   return { ...parent, size: resized };
 }
 
+function computePrimaryContent<C extends PrimaryAxisChild>(
+  parent: PrimaryAxisParent,
+  flow: readonly C[],
+  modeName: string,
+  pAxis: "x" | "y",
+  spacing: number,
+): number {
+  if (modeName === "GRID") {
+    const cols = readGridColumns(parent, flow.length);
+    const widths = Array.from({ length: cols }, (_, col) => {
+      const columnChildren = flow.filter((_, index) => index % cols === col);
+      return columnChildren.reduce((max, child) => Math.max(max, axisSize(child.size!, pAxis)), 0);
+    });
+    return widths.reduce((sum, value) => sum + value, 0) + spacing * Math.max(0, cols - 1);
+  }
+  return flow.reduce((sum, child) => sum + axisSize(child.size!, pAxis), 0) + spacing * Math.max(0, flow.length - 1);
+}
+
+function computeCounterContent<C extends PrimaryAxisChild>(
+  parent: PrimaryAxisParent,
+  flow: readonly C[],
+  modeName: string,
+  cAxis: "x" | "y",
+): number {
+  if (modeName === "GRID") {
+    const cols = readGridColumns(parent, flow.length);
+    const rows = Math.ceil(flow.length / cols);
+    const rowGap = parent.stackCounterSpacing ?? 0;
+    const heights = Array.from({ length: rows }, (_, row) => {
+      const rowChildren = flow.slice(row * cols, row * cols + cols);
+      return rowChildren.reduce((max, child) => Math.max(max, axisSize(child.size!, cAxis)), 0);
+    });
+    return heights.reduce((sum, value) => sum + value, 0) + rowGap * Math.max(0, rows - 1);
+  }
+  return flow.reduce((max, child) => Math.max(max, axisSize(child.size!, cAxis)), 0);
+}
+
 function readGridColumns(parent: PrimaryAxisParent, childCount: number): number {
   const gridColumns = parent.gridColumns;
   if (gridColumns !== undefined && gridColumns.entries.length > 0) {
     return gridColumns.entries.length;
   }
-  const content = parent.autoLayout?.stackPrimaryAlignContent?.name;
+  const content = parent.stackPrimaryAlignContent?.name;
   if (content === "CENTER" && childCount > 0) {
     return Math.ceil(Math.sqrt(childCount));
   }
@@ -396,13 +427,12 @@ function readGridColumns(parent: PrimaryAxisParent, childCount: number): number 
  * having its transform translated to the computed primary-axis offset.
  * Counter-axis position is preserved from the input child.
  *
- * `applyCounterAxisStretch` is expected to have already run, so each
- * child's `size` is already correct on the counter axis when relevant.
+ * `resolveAutoLayoutFrame` applies counter-axis stretch before calling
+ * this function, so each child's `size` is already correct on the
+ * counter axis when relevant.
  */
 export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: PrimaryAxisParent, children: readonly C[]): readonly C[] {
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout) return children;
-  const modeName = autoLayout.stackMode?.name;
+  const modeName = parent.stackMode?.name;
   if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") return children;
   const pSize = parent.size;
   if (!pSize) return children;
@@ -426,14 +456,10 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
   for (let i = 0; i < children.length; i++) {
     const c = children[i];
     if (c.visible === false) continue;
-    const pos = c.layoutConstraints?.stackPositioning?.name;
+    const pos = c.stackPositioning?.name;
     if (pos === "ABSOLUTE") continue;
     if (!c.size) continue;
-    const primaryAxisLetter = horizontal ? "x" : "y";
-    const aabb = childAabb(c);
-    const primarySize = aabb
-      ? (horizontal ? aabb.max.x - aabb.min.x : aabb.max.y - aabb.min.y)
-      : (horizontal ? c.size.x : c.size.y);
+    const primarySize = projectedAxisSpan(c, horizontal ? "x" : "y");
     // `aabbOriginOffset` = (current local origin) − (current AABB
     // min) along the primary axis. For unrotated children this is 0
     // (origin == AABB top-left); for rotated children it captures
@@ -441,6 +467,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
     // post-layout `m02 / m12` can be reconstructed by adding this
     // offset to the cursor.
     const originPos = horizontal ? (c.transform?.m02 ?? 0) : (c.transform?.m12 ?? 0);
+    const aabb = childAabb(c);
     const aabbMin = aabb ? (horizontal ? aabb.min.x : aabb.min.y) : originPos;
     flow.push({ idx: i, child: c, primarySize, aabbOriginOffset: originPos - aabbMin });
   }
@@ -449,21 +476,18 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
   // Apply FILL grow first: any child with stackChildPrimaryGrow=1 takes
   // the leftover space after fixed children + spacing. We split the
   // leftover evenly among grow children.
-  const spacing = autoLayout.stackSpacing ?? 0;
-  const align = autoLayout.stackPrimaryAlignItems?.name;
+  const spacing = parent.stackSpacing ?? 0;
+  const align = parent.stackPrimaryAlignItems?.name;
   const isJustifySpace = align === "SPACE_BETWEEN" || align === "SPACE_EVENLY" || align === "SPACE_AROUND";
 
   const fixedSizeSum = flow.reduce((s, e) => s + e.primarySize, 0);
-  const growChildren = flow.filter((e) => (e.child.layoutConstraints?.stackChildPrimaryGrow ?? 0) > 0);
-  if (growChildren.length > 0 && !isJustifySpace) {
-    // Available space minus base sizes minus inter-item spacing.
-    const totalSpacing = spacing * (flow.length - 1);
-    const free = contentSpan - fixedSizeSum - totalSpacing;
-    if (free > 0) {
-      const perGrow = free / growChildren.length;
-      for (const g of growChildren) {
-        g.primarySize = g.primarySize + perGrow;
-      }
+  const growChildren = flow.filter((e) => (e.child.stackChildPrimaryGrow ?? 0) > 0);
+  const totalSpacing = spacing * (flow.length - 1);
+  const free = contentSpan - fixedSizeSum - totalSpacing;
+  if (growChildren.length > 0 && !isJustifySpace && free > 0) {
+    const perGrow = free / growChildren.length;
+    for (const g of growChildren) {
+      g.primarySize = g.primarySize + perGrow;
     }
   }
 
@@ -493,11 +517,10 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
       // (equal gaps including edges) shifted every leading child
       // inward, which surfaced in real fig fixtures as headers
       // appearing to grow wider L/R margins and instance logos
-      // drifting right of their authored origin. The bridge
-      // (`web-fig/src/adapters/auto-layout.ts`) and the fig-to-web
-      // CSS emitter (`fig-to-web/.../style.ts`) already collapse
-      // both names to `space-between`; this branch keeps the scene
-      // graph aligned with them. Single child collapses to MIN.
+      // drifting right of their authored origin. The fig-to-web CSS
+      // emitter already collapses both names to `space-between`; this
+      // branch keeps the scene graph aligned with that authored
+      // interpretation. Single child collapses to MIN.
       if (flow.length > 1) {
         const free = contentSpan - flowSizeSum;
         gap = free / (flow.length - 1);
@@ -551,10 +574,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
     // child. The FILL-grow branch above does not assign rotated
     // children any extra space, so this guard never strands grow
     // distribution.
-    const childIsAxisAligned = oldT.m01 === 0 && oldT.m10 === 0 && oldT.m00 === 1 && oldT.m11 === 1;
-    const newSize = childIsAxisAligned
-      ? resizePrimaryAxisIfChanged(original.size, f.primarySize, horizontal)
-      : original.size;
+    const newSize = resizePrimarySizeForPlacedChild(original, oldT, f.primarySize, horizontal);
     const updated = {
       ...original,
       transform: { ...oldT, m02: newM02, m12: newM12 },
@@ -567,8 +587,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
 }
 
 function applyGridLayout<C extends PrimaryAxisChild>(parent: PrimaryAxisParent, children: readonly C[]): readonly C[] {
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout) { return children; }
+  if (parent.stackMode?.name !== "GRID") { return children; }
   const pSize = parent.size;
   if (!pSize) { throw new Error("GRID AutoLayout requires parent size."); }
   const flow = children
@@ -577,36 +596,117 @@ function applyGridLayout<C extends PrimaryAxisChild>(parent: PrimaryAxisParent, 
   if (flow.length === 0) { return children; }
 
   const columns = readGridColumns(parent, flow.length);
-  const rows = Math.ceil(flow.length / columns);
+  // Row count comes from the FRAME's `gridRows` / `gridRowsSizing`
+  // metadata when present — Figma's grid panel lets authors declare
+  // more row tracks than the children currently occupy, and the
+  // unused tracks reserve real space (children at row N appear at
+  // gridRowsSizing[N]'s computed Y, not at `N * intrinsicRowHeight`).
+  // Fall back to the content-derived row count when no metadata is
+  // available (un-authored grids).
+  const declaredRows = parent.gridRowsSizing?.entries.length ?? parent.gridRows?.entries.length ?? 0;
+  const rows = Math.max(declaredRows, Math.ceil(flow.length / columns));
   const insets = contentInsets(parent);
-  const columnGap = autoLayout.stackSpacing ?? 0;
-  const rowGap = autoLayout.stackCounterSpacing ?? 0;
-  const columnWidths = Array.from({ length: columns }, (_, col) => {
+  // Figma stores column/row gaps in dedicated `gridColumnGap` /
+  // `gridRowGap` fields on the FRAME; `stackSpacing` /
+  // `stackCounterSpacing` are the legacy spacing fields for VERTICAL /
+  // HORIZONTAL stacks. Prefer the grid-specific field when present.
+  const columnGap = parent.gridColumnGap ?? parent.stackSpacing ?? 0;
+  const rowGap = parent.gridRowGap ?? parent.stackCounterSpacing ?? 0;
+
+  // Interpret per-track sizing (FLEX / FIXED / AUTO). When the FRAME
+  // doesn't carry `gridColumnsSizing` (or fewer entries than columns)
+  // we pass `undefined` for those tracks — `computeFlexShare` /
+  // `resolveTrackSize` then fall through to the child-content size,
+  // preserving the previous behaviour for fixtures that don't author
+  // explicit grid sizing.
+  const interpretedColumnTracks = Array.from({ length: columns }, (_, col) => {
+    const raw = parent.gridColumnsSizing?.entries[col]?.trackSize;
+    return interpretGridTrackSize(raw);
+  });
+  const interpretedRowTracks = Array.from({ length: rows }, (_, row) => {
+    const raw = parent.gridRowsSizing?.entries[row]?.trackSize;
+    return interpretGridTrackSize(raw);
+  });
+
+  // Intrinsic (content) widths/heights per track — the MAX of child
+  // size in that column/row.
+  const intrinsicColumnWidths = Array.from({ length: columns }, (_, col) => {
     const columnChildren = flow.filter((_, index) => index % columns === col);
     return columnChildren.reduce((max, entry) => Math.max(max, entry.child.size?.x ?? 0), 0);
   });
-  const rowHeights = Array.from({ length: rows }, (_, row) => {
+  const intrinsicRowHeights = Array.from({ length: rows }, (_, row) => {
     const rowChildren = flow.slice(row * columns, row * columns + columns);
     return rowChildren.reduce((max, entry) => Math.max(max, entry.child.size?.y ?? 0), 0);
   });
+
+  // Available space for FLEX distribution = parent size − padding − gaps.
+  const availableColumnSpan = Math.max(
+    0,
+    pSize.x - insets.left - insets.right - columnGap * Math.max(0, columns - 1),
+  );
+  const availableRowSpan = Math.max(
+    0,
+    pSize.y - insets.top - insets.bottom - rowGap * Math.max(0, rows - 1),
+  );
+
+  const columnFlexShare = computeFlexShare(interpretedColumnTracks, intrinsicColumnWidths, availableColumnSpan);
+  const rowFlexShare = computeFlexShare(interpretedRowTracks, intrinsicRowHeights, availableRowSpan);
+
+  const columnWidths = interpretedColumnTracks.map((t, col) =>
+    resolveTrackSize(t, intrinsicColumnWidths[col], columnFlexShare),
+  );
+  const rowHeights = interpretedRowTracks.map((t, row) =>
+    resolveTrackSize(t, intrinsicRowHeights[row], rowFlexShare),
+  );
   const columnStarts = columnWidths.map((_, col) =>
     insets.left + columnWidths.slice(0, col).reduce((sum, width) => sum + width, 0) + columnGap * col,
   );
   const rowStarts = rowHeights.map((_, row) =>
     insets.top + rowHeights.slice(0, row).reduce((sum, height) => sum + height, 0) + rowGap * row,
   );
+
   const result: C[] = children.slice();
   for (let index = 0; index < flow.length; index++) {
     const entry = flow[index];
     const col = index % columns;
     const row = Math.floor(index / columns);
     const oldT = entry.child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+    const cellX = columnStarts[col];
+    const cellY = rowStarts[row];
+    const cellW = columnWidths[col];
+    const cellH = rowHeights[row];
+    const childW = entry.child.size?.x ?? 0;
+    const childH = entry.child.size?.y ?? 0;
+    // Per-child alignment inside the resolved cell. Default Figma
+    // behaviour for a sized child in an un-aligned cell is MIN (top-
+    // left of the cell), which matches the pre-FLEX behaviour.
+    const hAlign = entry.child.gridChildHorizontalAlign ?? "MIN";
+    const vAlign = entry.child.gridChildVerticalAlign ?? "MIN";
+    const offsetX = resolveCellAlignment(hAlign, cellW, childW);
+    const offsetY = resolveCellAlignment(vAlign, cellH, childH);
     result[entry.idx] = {
       ...entry.child,
-      transform: { ...oldT, m02: columnStarts[col], m12: rowStarts[row] },
+      transform: { ...oldT, m02: cellX + offsetX, m12: cellY + offsetY },
     } as C;
   }
   return result;
+}
+
+/**
+ * Resolve a single-axis alignment offset for a sized child inside a
+ * resolved grid cell. MIN pins to 0, CENTER centres the child, MAX
+ * pins to the trailing edge. STRETCH returns 0 — the child should
+ * also be resized to fill the cell, which is a separate concern not
+ * yet implemented here (children currently keep their authored size).
+ */
+function resolveCellAlignment(
+  align: "MIN" | "CENTER" | "MAX" | "STRETCH",
+  cellSize: number,
+  childSize: number,
+): number {
+  if (align === "CENTER") { return (cellSize - childSize) / 2; }
+  if (align === "MAX") { return cellSize - childSize; }
+  return 0;
 }
 
 function applyCounterAxisPosition<C extends PrimaryAxisChild>(
@@ -614,8 +714,9 @@ function applyCounterAxisPosition<C extends PrimaryAxisChild>(
   children: readonly C[],
   horizontal: boolean,
 ): readonly C[] {
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout || !parent.size) { return children; }
+  if (!parent.size) { return children; }
+  const modeName = parent.stackMode?.name;
+  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") { return children; }
   const flow = children
     .map((child, idx) => ({ child, idx }))
     .filter((entry) => isFlowChild(entry.child));
@@ -625,7 +726,7 @@ function applyCounterAxisPosition<C extends PrimaryAxisChild>(
   const counterEnd = horizontal ? insets.bottom : insets.right;
   const counterParent = horizontal ? parent.size.y : parent.size.x;
   const contentSpan = counterParent - counterStart - counterEnd;
-  const align = autoLayout.stackCounterAlignItems?.name;
+  const align = parent.stackCounterAlignItems?.name;
   const result: C[] = children.slice();
   for (const entry of flow) {
     if (!entry.child.size) { continue; }
@@ -638,11 +739,9 @@ function applyCounterAxisPosition<C extends PrimaryAxisChild>(
     // ends up half-out of the parent (the Short-screen "down button"
     // case where the AABB drifted up by the icon's height).
     const counterAxisLetter: "x" | "y" = horizontal ? "y" : "x";
-    const aabb = childAabb(entry.child);
-    const childSpan = aabb
-      ? (horizontal ? aabb.max.y - aabb.min.y : aabb.max.x - aabb.min.x)
-      : (horizontal ? entry.child.size.y : entry.child.size.x);
+    const childSpan = projectedAxisSpan(entry.child, horizontal ? "y" : "x");
     const originPos = horizontal ? oldT.m12 : oldT.m02;
+    const aabb = childAabb(entry.child);
     const aabbMin = aabb ? aabb.min[counterAxisLetter] : originPos;
     const aabbOriginOffset = originPos - aabbMin;
     const offset = resolveStartOffset(align, contentSpan, childSpan, counterStart);
@@ -722,8 +821,9 @@ function applyWrapLayout<C extends PrimaryAxisChild>(
   children: readonly C[],
   horizontal: boolean,
 ): readonly C[] {
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout || !parent.size) { return children; }
+  if (!parent.size) { return children; }
+  const modeName = parent.stackMode?.name;
+  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") { return children; }
   const insets = contentInsets(parent);
   const pStart = horizontal ? insets.left : insets.top;
   const pEnd = horizontal ? insets.right : insets.bottom;
@@ -732,9 +832,9 @@ function applyWrapLayout<C extends PrimaryAxisChild>(
   const primarySpan = (horizontal ? parent.size.x : parent.size.y) - pStart - pEnd;
   const counterSpan = (horizontal ? parent.size.y : parent.size.x) - cStart - cEnd;
   if (primarySpan <= 0 || counterSpan <= 0) { return children; }
-  const spacing = autoLayout.stackSpacing ?? 0;
-  const counterSpacing = autoLayout.stackCounterSpacing ?? 0;
-  const align = autoLayout.stackPrimaryAlignItems?.name;
+  const spacing = parent.stackSpacing ?? 0;
+  const counterSpacing = parent.stackCounterSpacing ?? 0;
+  const align = parent.stackPrimaryAlignItems?.name;
   // For SPACE_BETWEEN / SPACE_EVENLY / SPACE_AROUND Figma distributes
   // the free space at layout time, so the *literal* `stackSpacing`
   // must not influence the wrap decision — only the raw item widths
@@ -780,8 +880,8 @@ function applyWrapLayout<C extends PrimaryAxisChild>(
   // per-child counter alignment within each line — Figma's
   // `LayoutMode.WRAP` reuses the property for both axes when only one
   // is set.
-  const contentAlign = autoLayout.stackPrimaryAlignContent?.name ?? autoLayout.stackCounterAlignItems?.name;
-  const itemCounterAlign = autoLayout.stackCounterAlignItems?.name;
+  const contentAlign = parent.stackPrimaryAlignContent?.name ?? parent.stackCounterAlignItems?.name;
+  const itemCounterAlign = parent.stackCounterAlignItems?.name;
   const counterCursorRef = { value: resolveStartOffset(contentAlign, counterSpan, blockCounter, cStart) };
   const result: C[] = children.slice();
   for (const line of lines) {
@@ -898,7 +998,7 @@ function stretchCounterAxis<C extends PrimaryAxisChild>(
   const span = horizontal ? parent.size.y - insets.top - insets.bottom : parent.size.x - insets.left - insets.right;
   if (span <= 0) { return children; }
   return children.map((child) => {
-    if (child.layoutConstraints?.stackChildAlignSelf?.name !== "STRETCH" || !child.size) {
+    if (child.stackChildAlignSelf?.name !== "STRETCH" || !child.size) {
       return child;
     }
     const localAxis = localAxisForParentCounterAxis(child, horizontal);
@@ -918,11 +1018,7 @@ export function resolveAutoLayoutFrame<P extends PrimaryAxisParent, C extends Pr
   parent: P,
   children: readonly C[],
 ): AutoLayoutResolution<C, P> {
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout) {
-    return { parent: applyAspectLock(parent), children };
-  }
-  const modeName = autoLayout.stackMode?.name;
+  const modeName = parent.stackMode?.name;
   if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL" && modeName !== "GRID") {
     return { parent: applyAspectLock(parent), children };
   }
@@ -930,15 +1026,22 @@ export function resolveAutoLayoutFrame<P extends PrimaryAxisParent, C extends Pr
   const horizontal = modeName !== "VERTICAL";
   const sizedParent = applyAspectLock(applyHugSizing(parent, flow, horizontal));
   const stretched = modeName === "GRID" ? children : stretchCounterAxis(sizedParent, children, horizontal);
-  const positioned = (() => {
-    if (modeName === "GRID") {
-      return applyGridLayout(sizedParent, stretched);
-    }
-    if (stackWrapEnabled(autoLayout.stackWrap)) {
-      return applyWrapLayout(sizedParent, stretched, horizontal);
-    }
-    return applyCounterAxisPosition(sizedParent, applyAutoLayoutPrimaryAxis(sizedParent, stretched), horizontal);
-  })();
-  const ordered = autoLayout.stackReverseZIndex === true ? positioned.slice().reverse() : positioned;
+  const positioned = applyAutoLayoutPositioning(sizedParent, stretched, modeName, horizontal);
+  const ordered = parent.stackReverseZIndex === true ? positioned.slice().reverse() : positioned;
   return { parent: sizedParent, children: ordered };
+}
+
+function applyAutoLayoutPositioning<C extends PrimaryAxisChild, P extends PrimaryAxisParent>(
+  parent: P,
+  children: readonly C[],
+  modeName: string,
+  horizontal: boolean,
+): readonly C[] {
+  if (modeName === "GRID") {
+    return applyGridLayout(parent, children);
+  }
+  if (stackWrapEnabled(parent.stackWrap)) {
+    return applyWrapLayout(parent, children, horizontal);
+  }
+  return applyCounterAxisPosition(parent, applyAutoLayoutPrimaryAxis(parent, children), horizontal);
 }

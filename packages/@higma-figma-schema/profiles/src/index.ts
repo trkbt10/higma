@@ -15,6 +15,7 @@ export {
 export {
   FIGMA_KIWI_SCHEMA,
   getFigEnumTable,
+  kiwiOmittedEnumName,
   requireFigEnumTable,
   reverseFigEnumTable,
   type FigSchema,

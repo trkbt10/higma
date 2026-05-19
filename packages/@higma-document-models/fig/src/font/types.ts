@@ -115,7 +115,7 @@ export type AbstractFont = {
    * Argument shape mirrors opentype.js: callers may pass either the
    * `AbstractGlyph` object or its numeric glyph index, so the same
    * underlying Font instance can satisfy both this interface and the
-   * opentype.js native signature without an adapter layer.
+   * opentype.js native signature directly.
    *
    * Defined here rather than reaching into opentype.js so non-Node
    * font drivers (browser, future native) can stay free of the

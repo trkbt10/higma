@@ -3,7 +3,7 @@
  * headline, and a chrome-bearing CTA button. Asserts the
  * three-piece structural decomposition.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { CTA_LABEL, HEADLINE_TEXT, heroImageWithText } from "./fixture";
 
 describe("case hero-image-with-text", () => {

@@ -14,7 +14,7 @@
  * coordinate space (which, for a child of a Control, follows the
  * Control's transformed origin). We emit the vertices in the shape's
  * *local* coordinate space — the wrapping Control's offset_left/top
- * (set by the placement helper in `walk.ts`) carries the shape into
+ * (set by the placement routine in `walk.ts`) carries the shape into
  * the parent frame's coordinate system.
  *
  * Multi-contour fills (e.g. donuts, even-odd VECTOR) emit one
@@ -28,6 +28,7 @@
  * for stroked vector paths).
  */
 import type { FigGradientPaint, FigImagePaint, FigNode, FigPaint, FigSolidPaint } from "@higma-document-models/fig/types";
+import { asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
 import { decodePathCommands, type FigBlob } from "@higma-document-models/fig/domain";
 import {
   boolVal,
@@ -431,7 +432,7 @@ function contourPolygonProperty(contour: Contour): GodotProperty {
 }
 
 /**
- * Round-tripping helpers — Godot's `.tscn` floats are written without
+ * Round-tripping routines — Godot's `.tscn` floats are written without
  * trailing zeros, so emit `1` rather than `1.0` to match the editor's
  * own re-save format.
  */
@@ -559,14 +560,16 @@ export function buildPolygon2DNodes(
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      const polys = buildSolidPolygon(paint, fillContours, uniquify, options?.compensate ?? true);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      const polys = buildSolidPolygon(solidPaint, fillContours, uniquify, options?.compensate ?? true);
       for (const p of polys) {
         fillNodes.push(p);
       }
       continue;
     }
-    if (paint.type === "GRADIENT_LINEAR" || paint.type === "GRADIENT_RADIAL") {
+    const paintType = getPaintType(paint);
+    if (paintType === "GRADIENT_LINEAR" || paintType === "GRADIENT_RADIAL") {
       // BOOLEAN_OPERATION / VECTOR paths set
       // `preRasterLinearRadial` to swap Godot's `GradientTexture2D`
       // for a CPU-rasterised inline ImageTexture — the WebGL ref's
@@ -590,7 +593,7 @@ export function buildPolygon2DNodes(
           const gradPaint = paint as FigGradientPaint;
           const sizeForResolve = { x: bounds.width, y: bounds.height };
           const resolved = resolveLinearOrRadialGradient(
-            paint.type,
+            paintType,
             gradPaint,
             sizeForResolve,
             rasterizedGradientProvider,
@@ -629,11 +632,11 @@ export function buildPolygon2DNodes(
       }
       continue;
     }
-    if (paint.type === "IMAGE") {
+    const imagePaint = asImagePaint(paint);
+    if (imagePaint !== undefined) {
       if (!imageProvider) {
         continue;
       }
-      const imagePaint = paint as FigImagePaint;
       const resolved = imageProvider.resolveImage(imagePaint);
       if (!resolved) {
         continue;
@@ -644,13 +647,13 @@ export function buildPolygon2DNodes(
       }
       continue;
     }
-    if (paint.type === "GRADIENT_ANGULAR" || paint.type === "GRADIENT_DIAMOND") {
+    if (paintType === "GRADIENT_ANGULAR" || paintType === "GRADIENT_DIAMOND") {
       if (!rasterizedGradientProvider || !node_.size) {
         continue;
       }
       const gradPaint = paint as FigGradientPaint;
       const resolved = resolveAngularOrDiamondGradient(
-        paint.type,
+        paintType,
         gradPaint,
         node_.size,
         rasterizedGradientProvider,
@@ -774,8 +777,9 @@ function firstVisibleSolidStroke(paints: readonly FigPaint[] | undefined): FigSo
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return paint;
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaint;
     }
   }
   return undefined;
@@ -1020,7 +1024,7 @@ function buildImagePolygon(
   ];
   // Paint-level opacity: Figma stores `opacity` on each `FigPaint`
   // entry independently of the colour's own alpha. For SOLID and
-  // gradient paths the colour-emit helpers fold that into the
+  // gradient paths the colour-emit routines fold that into the
   // Polygon2D's `color` / Gradient stop alpha. Polygon2D's `texture`
   // path has no per-paint alpha control — instead we apply the
   // opacity through the Polygon2D's own `self_modulate` Color, which
@@ -1244,7 +1248,7 @@ function resolveAngularOrDiamondGradient(
 }
 
 /**
- * One-shot helper that bundles `decodeNodeContours` +
+ * One-shot routine that bundles `decodeNodeContours` +
  * `buildPolygon2DNodes` so call-sites that just want "produce the
  * Polygon2D nodes for this fig node, given the doc-level blob array"
  * don't have to duplicate the wiring.

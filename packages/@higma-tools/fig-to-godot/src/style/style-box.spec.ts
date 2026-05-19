@@ -1,7 +1,12 @@
 /**
  * @file Spec for StyleBoxFlat sub-resource construction.
  */
-import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import type { FigEffect, FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import {
+  EFFECT_TYPE_VALUES,
+  PAINT_TYPE_VALUES,
+  STROKE_ALIGN_VALUES,
+} from "@higma-document-models/fig/constants";
 import {
   bgColorProperties,
   buildStyleBoxFlat,
@@ -13,6 +18,26 @@ import {
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
 }
+
+function solidPaint(
+  color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number },
+  fields: Partial<Pick<FigPaint, "opacity" | "visible" | "blendMode">> = {},
+): FigPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    color,
+    ...fields,
+  };
+}
+
+function dropShadow(fields: Omit<FigEffect, "type">): FigEffect {
+  return {
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    ...fields,
+  };
+}
+
+const INSIDE_STROKE = { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" } as const;
 
 function rect(partial: Partial<FigNode>): FigNode {
   return {
@@ -26,7 +51,7 @@ function rect(partial: Partial<FigNode>): FigNode {
 describe("bgColorProperties", () => {
   it("emits bg_color from the first visible SOLID fill", () => {
     const props = bgColorProperties(
-      rect({ fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }] }),
+      rect({ fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })] }),
     );
     expect(props).toHaveLength(1);
     expect(props[0]?.name).toBe("bg_color");
@@ -38,7 +63,7 @@ describe("bgColorProperties", () => {
       bgColorProperties(
         rect({
           fillPaints: [
-            { type: "SOLID", visible: false, color: { r: 1, g: 0, b: 0, a: 1 } },
+            solidPaint({ r: 1, g: 0, b: 0, a: 1 }, { visible: false }),
           ],
         }),
       ),
@@ -89,7 +114,7 @@ describe("strokeProperties", () => {
   it("emits border_color + four border_width sides + four expand_margin sides for a CENTER-aligned stroke", () => {
     const props = strokeProperties(
       rect({
-        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
         strokeWeight: 2,
       }),
     );
@@ -109,9 +134,9 @@ describe("strokeProperties", () => {
   it("omits expand_margin for INSIDE strokeAlign (Godot default)", () => {
     const props = strokeProperties(
       rect({
-        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
         strokeWeight: 2,
-        strokeAlign: "INSIDE",
+        strokeAlign: INSIDE_STROKE,
       }),
     );
     expect(props.map((p) => p.name)).toEqual([
@@ -126,7 +151,7 @@ describe("strokeProperties", () => {
   it("respects independent per-side weights", () => {
     const props = strokeProperties(
       rect({
-        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
         borderStrokeWeightsIndependent: true,
         borderTopWeight: 1,
         borderRightWeight: 2,
@@ -147,9 +172,9 @@ describe("strokeProperties", () => {
     // ±strokeWeight/2 visual shift.
     const props = strokeProperties(
       rect({
-        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
         strokeWeight: 2,
-        strokeAlign: "INSIDE",
+        strokeAlign: INSIDE_STROKE,
       }),
     );
     expect(props.map((p) => p.name)).toContain("border_color");
@@ -160,7 +185,7 @@ describe("strokeProperties", () => {
     expect(() =>
       strokeProperties(
         rect({
-          strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+          strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
           strokeWeight: 2,
           strokeDashes: [4, 4],
         }),
@@ -174,12 +199,11 @@ describe("shadowProperties", () => {
     const props = shadowProperties(
       rect({
         effects: [
-          {
-            type: "DROP_SHADOW",
+          dropShadow({
             color: { r: 0, g: 0, b: 0, a: 0.5 },
             offset: { x: 2, y: 4 },
             radius: 6,
-          },
+          }),
         ],
       }),
     );
@@ -191,12 +215,11 @@ describe("shadowProperties", () => {
       shadowProperties(
         rect({
           effects: [
-            {
-              type: "DROP_SHADOW",
+            dropShadow({
               color: { r: 0, g: 0, b: 0, a: 1 },
               radius: 4,
               spread: 2,
-            },
+            }),
           ],
         }),
       ),
@@ -212,17 +235,16 @@ describe("buildStyleBoxFlat", () => {
   it("composes background + corners + stroke + shadow into one sub-resource", () => {
     const sub = buildStyleBoxFlat(
       rect({
-        fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+        fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
         cornerRadius: 4,
-        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+        strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
         strokeWeight: 1,
         effects: [
-          {
-            type: "DROP_SHADOW",
+          dropShadow({
             color: { r: 0, g: 0, b: 0, a: 1 },
             offset: { x: 0, y: 2 },
             radius: 4,
-          },
+          }),
         ],
       }),
       "id_001",

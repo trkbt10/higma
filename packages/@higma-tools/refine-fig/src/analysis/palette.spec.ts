@@ -1,13 +1,20 @@
 /**
- * @file Unit tests for palette helpers and the canonicalisation pass.
+ * @file Unit tests for palette routines and the canonicalisation pass.
  */
 import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { analysePalette, colorHex, colorKey } from "./palette";
-import { fakeFigNode } from "./test-helpers";
+import { fakeFigNode } from "./fig-node-test-fixtures";
+
+const childrenOfFixtureNode = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+}).childrenOfResolvedNode;
 
 function solid(r: number, g: number, b: number, a = 1): FigPaint {
   const color: FigColor = { r, g, b, a };
-  return { type: "SOLID", color };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color };
 }
 
 function vector(localID: number, name: string, fill: FigPaint): FigNode {
@@ -29,7 +36,7 @@ function frameWith(localID: number, children: readonly FigNode[]): FigNode {
   });
 }
 
-function proxyWith(localID: number, name: string, fill: FigPaint): FigNode {
+function styleDefinitionWith(localID: number, name: string, fill: FigPaint): FigNode {
   return fakeFigNode({
     type: { value: 17, name: "STYLE" },
     guid: { sessionID: 9, localID },
@@ -39,7 +46,7 @@ function proxyWith(localID: number, name: string, fill: FigPaint): FigNode {
   });
 }
 
-describe("palette helpers", () => {
+describe("palette routines", () => {
   it("colorKey buckets near-identical SOLID colours together (fine-grain quantisation)", () => {
     expect(colorKey({ r: 0.1, g: 0.2, b: 0.3, a: 1 })).toBe(colorKey({ r: 0.1004, g: 0.2003, b: 0.3001, a: 1 }));
   });
@@ -66,11 +73,11 @@ describe("analysePalette — canonicalisation across SVG round-trip drift", () =
       { r: 2 / 255, g: 0,       b: 0,       a: 1 },
       { r: 1 / 255, g: 0,       b: 0,       a: 1 },
     ];
-    const vectors = blackVariants.map((c, i) => vector(10 + i, `v${i}`, { type: "SOLID", color: c }));
+    const vectors = blackVariants.map((c, i) => vector(10 + i, `v${i}`, solid(c.r, c.g, c.b, c.a)));
     const frame = frameWith(1, vectors);
     const yellowFrame = frameWith(2, [vector(50, "y", solid(1, 1, 1 / 3))]);
 
-    const result = analysePalette([frame, yellowFrame], []);
+    const result = analysePalette([frame, yellowFrame], [], childrenOfFixtureNode);
 
     expect(result.entries).toHaveLength(2);
     const black = result.entries.find((e) => e.color.r < 0.5);
@@ -95,7 +102,7 @@ describe("analysePalette — canonicalisation across SVG round-trip drift", () =
       vector(13, "d", purpleDrift),
     ]);
 
-    const result = analysePalette([frame], []);
+    const result = analysePalette([frame], [], childrenOfFixtureNode);
 
     expect(result.entries).toHaveLength(2);
     const hexes = new Set(result.entries.map((e) => e.hex));
@@ -114,7 +121,7 @@ describe("analysePalette — canonicalisation across SVG round-trip drift", () =
       vector(15, "f", solid(0, 0, 1 / 255)),
     ]);
 
-    const result = analysePalette([frame], []);
+    const result = analysePalette([frame], [], childrenOfFixtureNode);
 
     expect(result.entries).toHaveLength(1);
     const entry = result.entries[0];
@@ -125,31 +132,31 @@ describe("analysePalette — canonicalisation across SVG round-trip drift", () =
     expect(entry.usages).toHaveLength(6);
   });
 
-  it("matches an existing FILL proxy whose colour is a near-alias of the merged entry", () => {
-    // Proxy is exact #000000, usage is drifted #000003. They must still
-    // bind to the same proxy after canonicalisation.
+  it("matches an existing FILL styleDefinition whose colour is a near-alias of the merged entry", () => {
+    // StyleDefinition is exact #000000, usage is drifted #000003. They must still
+    // bind to the same styleDefinition after canonicalisation.
     const frame = frameWith(1, [vector(10, "a", solid(0, 0, 3 / 255))]);
-    const proxy = proxyWith(100, "Black", solid(0, 0, 0));
+    const styleDefinition = styleDefinitionWith(100, "Black", solid(0, 0, 0));
 
-    const result = analysePalette([frame], [proxy]);
+    const result = analysePalette([frame], [styleDefinition], childrenOfFixtureNode);
 
     expect(result.entries).toHaveLength(1);
     const entry = result.entries[0];
     if (!entry) {
       throw new Error("expected one entry");
     }
-    expect(entry.proxyName).toBe("Black");
+    expect(entry.styleDefinitionName).toBe("Black");
   });
 
-  it("throws when two existing FILL proxies would collapse into one merged entry", () => {
+  it("throws when two existing FILL styleDefinitions would collapse into one merged entry", () => {
     // Same merged colour bucket cannot map to two different existing
-    // proxies — it is a real ambiguity the agent must resolve. Fail
+    // styleDefinitions — it is a real ambiguity the agent must resolve. Fail
     // fast rather than picking one silently.
     const frame = frameWith(1, [vector(10, "a", solid(0, 0, 0))]);
-    const proxyA = proxyWith(100, "Black", solid(0, 0, 0));
-    const proxyB = proxyWith(101, "Almost-Black", solid(0, 0, 2 / 255));
+    const styleDefinitionA = styleDefinitionWith(100, "Black", solid(0, 0, 0));
+    const styleDefinitionB = styleDefinitionWith(101, "Almost-Black", solid(0, 0, 2 / 255));
 
-    expect(() => analysePalette([frame], [proxyA, proxyB])).toThrow(/two FILL proxies/i);
+    expect(() => analysePalette([frame], [styleDefinitionA, styleDefinitionB], childrenOfFixtureNode)).toThrow(/two FILL styleDefinitions/i);
   });
 
   it("merge tolerance is configurable per call", () => {
@@ -160,8 +167,8 @@ describe("analysePalette — canonicalisation across SVG round-trip drift", () =
       vector(11, "b", solid(0, 0, 1 / 255)),
     ]);
 
-    const tight = analysePalette([frame], [], { mergeToleranceSrgb: 0 });
-    const default_ = analysePalette([frame], []);
+    const tight = analysePalette([frame], [], childrenOfFixtureNode, { mergeToleranceSrgb: 0 });
+    const default_ = analysePalette([frame], [], childrenOfFixtureNode);
 
     expect(tight.entries).toHaveLength(2);
     expect(default_.entries).toHaveLength(1);

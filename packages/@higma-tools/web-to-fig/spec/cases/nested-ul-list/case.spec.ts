@@ -3,7 +3,7 @@
  * stay a FRAME (not collapse to TEXT). Inner leaf-text `<li>`
  * collapses to a TEXT IR.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import {
   NESTED_LI_TEXT,
   nestedUnorderedList,

@@ -12,7 +12,7 @@
  * normaliser that drops both falls through this `||` and the case
  * fails.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_BOX } from "../box-leaf/fixture";
 import { DEFAULT_SCALE, withScale } from "./fixture";

@@ -22,6 +22,8 @@
  * folded into the same key.
  */
 import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import type { ColorToken, TokenColor } from "./types";
 import { toCssSlug, uniqueId } from "@higma-primitives/identifier";
 import { clamp01, round3 } from "../lib/css-format/numeric";
@@ -44,18 +46,19 @@ function toTokenColor(color: FigColor): TokenColor {
  * and per-paint opacity.
  */
 function paintToColor(paint: FigPaint): FigColor | undefined {
-  if (paint.type !== "SOLID") {
+  const solid = asSolidPaint(paint);
+  if (solid === undefined) {
     return undefined;
   }
-  if (paint.visible === false) {
+  if (solid.visible === false) {
     return undefined;
   }
-  const baseAlpha = paint.color.a;
-  const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const baseAlpha = solid.color.a;
+  const paintOpacity = typeof solid.opacity === "number" ? solid.opacity : 1;
   return {
-    r: paint.color.r,
-    g: paint.color.g,
-    b: paint.color.b,
+    r: solid.color.r,
+    g: solid.color.g,
+    b: solid.color.b,
     a: clamp01(baseAlpha * paintOpacity),
   };
 }
@@ -80,6 +83,7 @@ export type ColorTokenTable = {
 export function buildColorTokens(
   styleProxies: readonly FigNode[],
   usageNodes: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): ColorTokenTable {
   const tokens = new Map<string, ColorToken>();
   const idByKey = new Map<string, string>();
@@ -104,7 +108,7 @@ export function buildColorTokens(
     }
   }
 
-  collectUsageColors(usageNodes, tokens, idByKey, usedIds);
+  collectUsageColors(usageNodes, tokens, idByKey, usedIds, childrenOf);
 
   return { tokens, idByKey };
 }
@@ -114,9 +118,10 @@ function collectUsageColors(
   tokens: Map<string, ColorToken>,
   idByKey: Map<string, string>,
   usedIds: Set<string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   for (const node of nodes) {
-    visitColors(node, tokens, idByKey, usedIds);
+    visitColors(node, tokens, idByKey, usedIds, childrenOf);
   }
 }
 
@@ -125,14 +130,13 @@ function visitColors(
   tokens: Map<string, ColorToken>,
   idByKey: Map<string, string>,
   usedIds: Set<string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   registerPaints(node.fillPaints, tokens, idByKey, usedIds);
   registerPaints(node.backgroundPaints, tokens, idByKey, usedIds);
   registerPaints(node.strokePaints, tokens, idByKey, usedIds);
-  for (const child of node.children ?? []) {
-    if (child) {
-      visitColors(child, tokens, idByKey, usedIds);
-    }
+  for (const child of childrenOf(node)) {
+    visitColors(child, tokens, idByKey, usedIds, childrenOf);
   }
 }
 

@@ -3,7 +3,7 @@
  *
  * `renderSwiftToPng` itself depends on Apple's `swift` CLI and is
  * exercised end-to-end by `spec/cases/<name>/render.spec.ts` (gated by
- * `isSwiftAvailable()`). This spec covers the deterministic helpers:
+ * `isSwiftAvailable()`). This spec covers the deterministic routines:
  *
  *   - `stripPreviewMacro` — must drop the `#Preview { ... }` block at
  *     the file tail without touching the user struct.

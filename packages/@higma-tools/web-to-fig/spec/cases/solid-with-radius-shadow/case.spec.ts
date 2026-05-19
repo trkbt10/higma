@@ -7,7 +7,7 @@
  * ladder originally surfaced) holds when other style fields are
  * present.
  */
-import { asFrame, buildOne, findFigNodeByName, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, buildOne, findFigNodeByName, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_RADIUS_PX, withUniformRadius } from "../corner-radius-uniform/fixture";
 import { withDropShadow } from "../shadow-drop/fixture";
@@ -27,9 +27,9 @@ describe("case solid-with-radius-shadow — IR", () => {
   });
 });
 
-describe("case solid-with-radius-shadow — FigDesignNode", () => {
-  const { doc } = buildOne(composed);
-  const node = findFigNodeByName(doc, "div");
+describe("case solid-with-radius-shadow — Kiwi FigNode", () => {
+  const { context } = buildOne(composed);
+  const node = findFigNodeByName(context, "div");
 
   it("FRAME carries the uniform cornerRadius (not silently dropped)", () => {
     if (!node) {
@@ -49,6 +49,6 @@ describe("case solid-with-radius-shadow — FigDesignNode", () => {
     if (!node) {
       throw new Error("div not found");
     }
-    expect(node.fills).toHaveLength(1);
+    expect(node.fillPaints).toHaveLength(1);
   });
 });

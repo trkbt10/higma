@@ -12,7 +12,7 @@
  * over-fetching and duplicating this logic.
  *
  * Why a plan and not a direct HTML emitter: the consumer is the
- * caller's HTML builder (`html-tree`, JSX, etc.). The plan is an
+ * caller's HTML builder (JSX, string emitters, etc.). The plan is an
  * intermediate artefact so the same data drives:
  *   - `<link>` emission for fig-to-web's preview shell
  *   - `<link>` emission for the iframe-host of the authoritative

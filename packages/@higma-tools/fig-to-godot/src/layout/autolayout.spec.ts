@@ -9,6 +9,7 @@
  * parent enum).
  */
 import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { STACK_WRAP_VALUES } from "@higma-document-models/fig/constants";
 import {
   BOX_CONTAINER_ALIGNMENT,
   SIZE_FLAGS,
@@ -140,14 +141,9 @@ describe("NaN-safe spacing reads (fig kiwi sentinel for unset)", () => {
   }
 
   it("flowPositionsForGrid: NaN stackCounterSpacing inherits stackSpacing", () => {
-    // The model types `stackWrap` as `boolean`, but the kiwi parser
-    // emits the enum-struct form at runtime — both shapes resolve to
-    // the same primary-axis wrap behaviour. Pass `true` here so the
-    // partial conforms to the model type while still exercising the
-    // wrap branch.
     const parent = frame({
       stackMode: enumName("HORIZONTAL"),
-      stackWrap: true,
+      stackWrap: { name: "WRAP", value: STACK_WRAP_VALUES.WRAP },
       stackSpacing: 8,
       stackCounterSpacing: NaN,
       size: { x: 130, y: 160 },

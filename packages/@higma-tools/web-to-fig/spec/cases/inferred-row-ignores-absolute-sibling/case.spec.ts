@@ -8,7 +8,7 @@
  *   - The badge child carries `sizing.mode === "absolute"`.
  *   - The flow children carry `sizing.mode === "flow"`.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   FLOW_CHILD_COUNT,

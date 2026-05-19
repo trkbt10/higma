@@ -9,7 +9,7 @@ import { ByteBuffer } from "./byte-buffer";
 import { decodeSchemaFromBuffer } from "./core/schema-codec";
 import { decodeDefinition } from "./core/definition-codec";
 import { createValueDecoder } from "./core/value-codec";
-import { findDefinitionByName } from "./core/schema-utils";
+import { findDefinitionByName } from "./core/definition-lookup";
 import type { KiwiFormat } from "./core/types";
 
 /**

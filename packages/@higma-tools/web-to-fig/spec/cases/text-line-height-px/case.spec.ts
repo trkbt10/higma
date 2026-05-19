@@ -2,7 +2,7 @@
  * @file Case `text-line-height-px` — explicit px line-height becomes
  * `{ unit: "px", value }` in IR.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { DEFAULT_LINE_HEIGHT_PX, textLeafWithPxLineHeight } from "./fixture";
 
 describe("case text-line-height-px", () => {

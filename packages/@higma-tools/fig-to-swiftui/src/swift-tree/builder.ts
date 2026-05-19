@@ -1,7 +1,7 @@
 /**
- * @file Builder helpers for the SwiftUI view tree.
+ * @file Builder routines for the SwiftUI view tree.
  *
- * Each helper returns a frozen value-typed node so callers compose by
+ * Each routine returns a frozen value-typed node so callers compose by
  * passing references rather than mutating shared state. Modifiers are
  * appended through `withModifier` (single) and `withModifiers` (batch);
  * the originals are never mutated.

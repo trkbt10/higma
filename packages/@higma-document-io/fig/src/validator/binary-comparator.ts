@@ -68,14 +68,15 @@ function isZstd(data: Uint8Array): boolean {
 }
 
 function extractCanvasData(data: Uint8Array): Uint8Array {
-  if (isZipFile(data)) {
-    const files = unzipSync(data);
-    if (files["canvas.fig"]) {
-      return files["canvas.fig"];
-    }
+  if (!isZipFile(data)) {
+    return data;
+  }
+  const files = unzipSync(data);
+  const canvas = files["canvas.fig"];
+  if (canvas === undefined) {
     throw new Error("ZIP doesn't contain canvas.fig");
   }
-  return data;
+  return canvas;
 }
 
 function decompressChunk(data: Uint8Array): Uint8Array {
@@ -144,11 +145,7 @@ function compareBytes(
 
   for (const i of Array.from({ length: minLen }, (_, k) => k)) {
     if (working[i] !== generated[i]) {
-      if (result.firstDiff === null) {result.firstDiff = i;}
-      result.count++;
-      if (samples.length < maxSamples) {
-        samples.push({ offset: i, working: working[i], generated: generated[i] });
-      }
+      recordDiffSample({ result, samples, maxSamples, offset: i, working, generated });
     }
   }
 
@@ -156,6 +153,30 @@ function compareBytes(
   result.count += Math.abs(working.length - generated.length);
 
   return { firstDiff: result.firstDiff, count: result.count, samples };
+}
+
+function setFirstDiff(result: { firstDiff: number | null }, offset: number): void {
+  if (result.firstDiff !== null) {
+    return;
+  }
+  result.firstDiff = offset;
+}
+
+function recordDiffSample(options: {
+  readonly result: { firstDiff: number | null; count: number };
+  readonly samples: Array<{ offset: number; working: number; generated: number }>;
+  readonly maxSamples: number;
+  readonly offset: number;
+  readonly working: Uint8Array;
+  readonly generated: Uint8Array;
+}): void {
+  const { result, samples, maxSamples, offset, working, generated } = options;
+  setFirstDiff(result, offset);
+  result.count++;
+  if (samples.length >= maxSamples) {
+    return;
+  }
+  samples.push({ offset, working: working[offset], generated: generated[offset] });
 }
 
 /**

@@ -10,7 +10,7 @@ import {
 } from "@higma-editor-surfaces/controls/canvas";
 import {
   FigFamilyPageRendererFromResources,
-  figFamilyDocumentResources,
+  figDocumentResources,
 } from "@higma-figma-runtime/react-renderer";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
@@ -197,13 +197,7 @@ export function SiteEditorCanvas() {
     [editableUnits],
   );
   const figSurface = figRenderSurface;
-  // SoT: drive the renderer with the canonical resource bundle the IO
-  // context produces, accessed through runtime's
-  // `figFamilyDocumentResources` to honour the
-  // `enforce-package-boundaries` rule (site cannot import from the fig
-  // IO product directly). The four maps cannot drift relative to each
-  // other because they all flow through this single accessor.
-  const figResources = useMemo(() => figFamilyDocumentResources(figSurface.document), [figSurface.document]);
+  const figResources = useMemo(() => figDocumentResources(figSurface.context), [figSurface.context]);
   const renderRevision = useMemo(
     () => unitMoves.map((move) => `${move.unitId}:${move.deltaX}:${move.deltaY}`).join("|"),
     [unitMoves],
@@ -246,6 +240,7 @@ export function SiteEditorCanvas() {
         <FigFamilyPageRendererFromResources
           key={renderRevision}
           page={figSurface.page}
+          nodes={figSurface.nodes}
           canvasWidth={extents.width}
           canvasHeight={extents.height}
           resources={figResources}

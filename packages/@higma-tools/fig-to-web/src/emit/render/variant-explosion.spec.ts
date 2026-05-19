@@ -1,13 +1,13 @@
 /**
- * @file Smoke-test the variant explosion helpers.
+ * @file Smoke-test the variant explosion routines.
  *
  * The variant-explosion code paths in `files.ts` are private to the
- * module; the helpers most worth pinning are the slug derivations
+ * module; the routines most worth pinning are the slug derivations
  * because their output appears in both the file path and the
  * component name and any drift between the two breaks the barrel's
  * imports.
  *
- * The path / Pascal-case helpers are exported only via the variant
+ * The path / Pascal-case routines are exported only via the variant
  * file-path computation surface; we test them indirectly through a
  * minimal `emitComponentFile` call with `variantStrategy: "exploded"`
  * and a stub ComponentTarget. The stub builds the minimum FigNode
@@ -17,7 +17,8 @@
 import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
 import type { ComponentTarget, EmitRegistry } from "../types";
 import type { TokenIndex } from "../../tokens";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
+import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig/context";
 import type { EmitOpts } from "./files";
 import { emitComponentFile } from "./files";
 
@@ -25,45 +26,58 @@ function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
 }
 
-function variantSymbol(localID: number, name: string): FigNode {
+function variantSymbol(localID: number, name: string, parentLocalID: number, position: number): FigNode {
   return {
     guid: { sessionID: 1, localID },
+    parentIndex: {
+      guid: { sessionID: 1, localID: parentLocalID },
+      position: `${position}`,
+    },
     phase: enumName("CREATED"),
     type: enumName("SYMBOL"),
     name,
     size: { x: 100, y: 40 },
-    children: [],
   } as FigNode;
 }
 
-function makeVariantSet(): ComponentTarget {
+function makeVariantSet(): { readonly source: FigDocumentContext; readonly target: ComponentTarget } {
   const setFrame: FigNode = {
     guid: { sessionID: 1, localID: 100 },
     phase: enumName("CREATED"),
     type: enumName("FRAME"),
     name: "Button",
     size: { x: 100, y: 40 },
-    children: [variantSymbol(101, "Variant=On"), variantSymbol(102, "Variant=Off")],
   } as FigNode;
+  const onVariant = variantSymbol(101, "Variant=On", 100, 0);
+  const offVariant = variantSymbol(102, "Variant=Off", 100, 1);
+  const source = createFigDocumentContextFromNodeChanges({
+    nodeChanges: [setFrame, onVariant, offVariant],
+    blobs: [],
+    images: new Map(),
+    metadata: null,
+  });
   return {
-    node: setFrame,
-    componentName: "Button",
-    filePath: "components/Design/Button.tsx",
-    slug: "button",
-    canvasSlug: "design",
-    variants: new Map([
-      ["On", variantSymbol(101, "Variant=On")],
-      ["Off", variantSymbol(102, "Variant=Off")],
-    ]),
-    props: [
-      {
-        kind: "variant",
-        name: "variant",
-        defId: "variant-def",
-        values: ["On", "Off"],
-        defaultValue: "On",
-      },
-    ],
+    source,
+    target: {
+      node: setFrame,
+      componentName: "Button",
+      filePath: "components/Design/Button.tsx",
+      slug: "button",
+      canvasSlug: "design",
+      variants: new Map([
+        ["On", onVariant],
+        ["Off", offVariant],
+      ]),
+      props: [
+        {
+          kind: "variant",
+          name: "variant",
+          defId: "variant-def",
+          values: ["On", "Off"],
+          defaultValue: "On",
+        },
+      ],
+    },
   };
 }
 
@@ -83,33 +97,22 @@ function makeOpts(): EmitOpts {
   };
 }
 
-// Minimal stubs for the structures emitComponentFile reads. The
-// exploded-variant code path doesn't reach the layout / style /
-// asset-resolver fields the source / token index expose, but the
-// type system requires them present. The wrapper functions act as
-// type-guard-shaped trampolines so the casts stay localised.
-function pickFigSymbolContextStub(stub: Partial<FigSymbolContext>): FigSymbolContext {
-  return stub as FigSymbolContext;
-}
-function pickTokenIndexStub(stub: Partial<TokenIndex>): TokenIndex {
-  return stub as TokenIndex;
-}
-const STUB_SOURCE = pickFigSymbolContextStub({});
-const STUB_REGISTRY: EmitRegistry = {
+const EMPTY_REGISTRY: EmitRegistry = {
   frames: new Map(),
   components: new Map(),
 };
-const STUB_INDEX = pickTokenIndexStub({
+const EMPTY_TOKEN_INDEX: TokenIndex = {
   colorIdForPaints: () => undefined,
   spacingIdFor: () => undefined,
   radiusIdFor: () => undefined,
   shadowIdFor: () => undefined,
   typographyIdFor: () => undefined,
-});
+};
 
 describe("emitComponentFile with variantStrategy: exploded", () => {
   it("emits one TSX per variant plus a barrel that re-exports them", () => {
-    const files = emitComponentFile(STUB_SOURCE, STUB_REGISTRY, STUB_INDEX, makeVariantSet(), makeOpts());
+    const variantSet = makeVariantSet();
+    const files = emitComponentFile(variantSet.source, EMPTY_REGISTRY, EMPTY_TOKEN_INDEX, variantSet.target, makeOpts());
     const paths = files.map((f) => f.path).sort();
     expect(paths).toEqual([
       "components/Design/Button-off.tsx",
@@ -141,12 +144,13 @@ describe("emitComponentFile with variantStrategy: exploded", () => {
     expect(barrel.contents).toMatch(/return <ButtonOff \/>/);
   });
 
-  it("falls back to a single discriminated component when variantStrategy is the default", () => {
+  it("emits a single discriminated component when variantStrategy is discriminated", () => {
+    const variantSet = makeVariantSet();
     const files = emitComponentFile(
-      STUB_SOURCE,
-      STUB_REGISTRY,
-      STUB_INDEX,
-      makeVariantSet(),
+      variantSet.source,
+      EMPTY_REGISTRY,
+      EMPTY_TOKEN_INDEX,
+      variantSet.target,
       { ...makeOpts(), variantStrategy: "discriminated" },
     );
     expect(files.map((f) => f.path)).toEqual(["components/Design/Button.tsx"]);

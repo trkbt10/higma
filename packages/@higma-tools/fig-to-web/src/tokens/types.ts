@@ -77,7 +77,7 @@ export type TokenSet = {
 };
 
 /**
- * Lookup helpers used by the JSX emitter to resolve raw fig values
+ * Lookup routines used by the JSX emitter to resolve raw fig values
  * into token CSS-variable references. Built alongside the TokenSet so
  * the emitter does not have to re-derive ids.
  */

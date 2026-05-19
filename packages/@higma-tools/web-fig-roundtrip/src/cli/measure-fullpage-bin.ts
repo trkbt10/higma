@@ -33,7 +33,7 @@ import type { FontResolver, FontStackCandidate } from "@higma-tools/web-to-fig/n
 import { createHostFontResolver } from "@higma-tools/web-to-fig";
 import { emitFig } from "@higma-tools/web-to-fig/emit";
 import { comparePng } from "@higma-codecs/png-compare";
-import { renderFigFramesByName, startWebglHarness } from "../verify/render-fig-webgl";
+import { listFigFrameTargets, startWebglHarness, streamFigFrames } from "../verify/render-fig-webgl";
 
 /**
  * Wrap a host FontResolver so it also accepts the family names of the
@@ -281,12 +281,13 @@ async function measureCase(
     fontResolver: options.fontResolver,
   });
   const fig = await emitFig(ir);
-  // render via WebGL harness. `emitFig` (single-viewport) does not
-  // emit a `<breakpoint>/<size>`-named wrapper FRAME, so we render
-  // every top-level FRAME and pick the one whose size matches the
-  // captured viewport. `renderFigFramesByName` is the entry that
-  // doesn't impose the slug filter.
-  const rendered = await renderFigFramesByName(harness, fig.bytes);
+  // Render every top-level FRAME and pick the one whose size matches
+  // the captured viewport.
+  const targets = await listFigFrameTargets(fig.bytes);
+  const rendered: { readonly frame: string; readonly png: Uint8Array; readonly width: number; readonly height: number }[] = [];
+  for await (const r of streamFigFrames(harness, fig.bytes, targets)) {
+    rendered.push({ frame: r.target.frame, png: r.png, width: r.width, height: r.height });
+  }
   if (rendered.length === 0) {
     return {
       case: options.caseName,

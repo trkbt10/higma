@@ -3,7 +3,7 @@
  * an `<img>` does not collapse to a single TEXT. The result is a
  * FRAME containing the image as a child.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { paragraphWithInlineImg } from "./fixture";
 
 describe("case inline-replaced-img-in-paragraph", () => {

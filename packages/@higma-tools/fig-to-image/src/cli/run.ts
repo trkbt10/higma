@@ -3,7 +3,7 @@
  *
  * Sequence:
  *
- *   1. Load the .fig file (SoT: `createFigDesignDocument`).
+ *   1. Load the .fig file as a `FigDocumentContext`.
  *   2. Dynamic-import the rasterisation harness.
  *   3. List candidate targets without starting puppeteer.
  *   4. Compute each target's source-subtree fingerprint and
@@ -20,7 +20,7 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { createFigDesignDocument } from "@higma-document-io/fig/context";
+import { createFigDocumentContext } from "@higma-document-io/fig/context";
 import type { CliOptions } from "./args";
 import { loadHarnessApi } from "../harness/loader";
 import { FINGERPRINT_PNG_KEY, planTargets, type RenderPlanEntry } from "../plan/cache";
@@ -121,13 +121,14 @@ async function collectPlans(
   if (targets.length === 0) {
     return { plans: [], frameNames };
   }
-  const document = await createFigDesignDocument(figBytes);
+  const context = await createFigDocumentContext(figBytes);
   const plans = await planTargets(targets, {
     outDir: options.out,
     filename: options.filename,
     scale: options.scale,
     force: options.force,
-    symbolMap: document.components,
+    symbolResolver: context.symbolResolver,
+    childrenOf: context.document.childrenOf,
     background: options.background,
     readFile: readFileIfExists,
     joinPath: (dir: string, file: string) => resolve(dir, file),

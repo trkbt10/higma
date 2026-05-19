@@ -51,12 +51,8 @@ function skipToNextField(data: Uint8Array, startOffset: number): number {
     if (cursor.value >= data.length) {break;}
     const byte = data[cursor.value];
     // Check if this looks like a field ID marker
-    if (byte > 0 && byte < 30) {
-      // Check if next byte(s) don't have continuation bit for a reasonable value
-      const nextByte = data[cursor.value + 1] ?? 0;
-      if ((nextByte & 0x80) === 0 || nextByte === 0) {
-        break;
-      }
+    if (looksLikeFieldIdMarker(byte, data[cursor.value + 1] ?? 0)) {
+      break;
     }
     cursor.value++;
   }
@@ -131,14 +127,22 @@ export function analyzeMessageData(compressedData: Uint8Array): MessageAnalysis 
  * Extract canvas data from a .fig file, handling ZIP wrapping
  */
 function extractCanvasFromFig(figData: Uint8Array): Uint8Array {
-  if (figData[0] === 0x50 && figData[1] === 0x4b) {
-    const files = unzipSync(figData);
-    if (!files["canvas.fig"]) {
-      throw new Error("ZIP doesn't contain canvas.fig");
-    }
-    return files["canvas.fig"];
+  if (figData[0] !== 0x50 || figData[1] !== 0x4b) {
+    return figData;
   }
-  return figData;
+  const files = unzipSync(figData);
+  const canvas = files["canvas.fig"];
+  if (canvas === undefined) {
+    throw new Error("ZIP doesn't contain canvas.fig");
+  }
+  return canvas;
+}
+
+function looksLikeFieldIdMarker(byte: number, nextByte: number): boolean {
+  if (byte <= 0 || byte >= 30) {
+    return false;
+  }
+  return (nextByte & 0x80) === 0 || nextByte === 0;
 }
 
 /**

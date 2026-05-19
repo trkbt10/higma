@@ -16,10 +16,14 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { findCanvas, type FigSymbolContext } from "@higma-document-io/fig/context";
+import {
+  createFigDocumentContext,
+  findCanvas,
+  type FigDocumentContext,
+} from "@higma-document-io/fig/context";
+import { guidToString } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { CliOptions } from "./args";
-import { loadFigSource } from "../fig-source/load";
 import { emitFromFrames, listFrameTargets, pickFrameByName } from "../emit";
 import { planRasterization, type RasterizationEntry } from "../emit/rasterize";
 import { imageSlug } from "../style/image";
@@ -45,6 +49,16 @@ const DEFAULT_CONSOLE: CliConsole = {
   error: (message: string) => process.stderr.write(`${message}\n`),
 };
 
+function childrenOfSwiftEmitNode(source: FigDocumentContext): (node: FigNode) => readonly FigNode[] {
+  return (node) => {
+    const kiwiNode = source.document.nodesByGuid.get(guidToString(node.guid));
+    if (kiwiNode === node) {
+      return source.document.childrenOf(node);
+    }
+    return source.symbolResolver.childrenOfResolvedNode(node);
+  };
+}
+
 async function readBuffer(path: string): Promise<Uint8Array> {
   const buffer = await readFile(resolve(path));
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
@@ -54,7 +68,7 @@ type RasterizationStepInputs = {
   readonly rasterizer: Rasterizer | undefined;
   readonly options: CliOptions;
   readonly frames: readonly FigNode[];
-  readonly source: FigSymbolContext;
+  readonly source: FigDocumentContext;
   readonly buffer: Uint8Array;
   readonly output: CliConsole;
 };
@@ -76,6 +90,7 @@ async function runRasterizationStep(
   const plan = planRasterization(frames, {
     threshold: options.rasterizeThreshold,
     blobs: source.blobs,
+    childrenOf: source.document.childrenOf,
   });
   if (plan.length === 0) {
     return undefined;
@@ -103,25 +118,25 @@ async function runRasterizationStep(
   return map;
 }
 
-function selectFrames(source: FigSymbolContext, options: CliOptions): readonly FigNode[] {
-  const canvas = findCanvas(source.tree.roots, options.page);
+function selectFrames(source: FigDocumentContext, options: CliOptions): readonly FigNode[] {
+  const canvas = findCanvas(source.document, options.page);
   if (!canvas) {
     throw new Error(`No user-visible page named "${options.page}" found in fig file`);
   }
-  const all = listFrameTargets(canvas, { includeSymbols: options.includeSymbols });
+  const all = listFrameTargets(source.document, canvas, { includeSymbols: options.includeSymbols });
   if (all.length === 0) {
     throw new Error(`Page "${options.page}" has no frame-like top-level children to emit`);
   }
   if (options.mode === "list") {
     return all;
   }
-  if (options.mode === "single") {
-    if (!options.frame) {
-      throw new Error("internal: mode=single without --frame value");
-    }
-    return [pickFrameByName(all, options.frame)];
+  if (options.mode !== "single") {
+    return all;
   }
-  return all;
+  if (!options.frame) {
+    throw new Error("internal: mode=single without --frame value");
+  }
+  return [pickFrameByName(all, options.frame)];
 }
 
 /**
@@ -143,7 +158,7 @@ export async function runCli(
 ): Promise<void> {
   output.info(`Loading ${options.input}`);
   const buffer = await readBuffer(options.input);
-  const source = await loadFigSource(buffer);
+  const source = await createFigDocumentContext(buffer);
 
   const frames = selectFrames(source, options);
 
@@ -197,7 +212,8 @@ export async function runCli(
   const result = emitFromFrames(frames, {
     blobs: source.blobs,
     images: source.images,
-    symbolMap: source.symbolMap,
+    symbolResolver: source.symbolResolver,
+    childrenOf: childrenOfSwiftEmitNode(source),
     rasterizedSubtrees,
   });
 

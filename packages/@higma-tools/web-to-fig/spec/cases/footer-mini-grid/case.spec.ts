@@ -3,7 +3,7 @@
  * wrappers. Asserts row direction on the footer (explicit flex) and
  * column direction inferred on each wrapper (no explicit flex).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import {
   COLUMN_GAP,
   COLUMN_HEADINGS,

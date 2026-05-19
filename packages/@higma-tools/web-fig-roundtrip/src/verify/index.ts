@@ -20,7 +20,6 @@ export type {
 export {
   listFigFrameTargets,
   renderFigViewports,
-  renderFigFramesByName,
   renderFigNodes,
   startWebglHarness,
   streamFigFrames,

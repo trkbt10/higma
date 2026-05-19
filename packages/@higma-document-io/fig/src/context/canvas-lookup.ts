@@ -1,45 +1,24 @@
 /**
- * @file Canonical canvas-lookup helpers shared by every `.fig` consumer.
+ * @file Canonical canvas lookup over FigDocumentContext.
  *
- * These two helpers were copy-pasted across `@higma-tools/fig-to-web/
- * fig-source/load`, `@higma-tools/fig-to-swiftui/fig-source/load`,
- * and `@higma-tools/fig-to-godot/fig-source/load` — the same recursive
- * walk over `tree.roots`, the same DOCUMENT / CANVAS / `internalOnly`
- * filtering, three identical implementations.
- *
- * Lifting them here:
- *
- *   - keeps the scope `@higma-tools` boundary rule happy (sibling
- *     `@higma-tools/*` packages cannot depend on each other), and
- *   - puts the helpers next to the `FigSymbolContext` they operate on,
- *     so a future change to the context shape only has to touch one
- *     place to keep the lookup helpers correct.
- *
- * `loadFigSource` is intentionally **not** added — it would just be an
- * alias for `createFigSymbolContext`. Converters call
- * `createFigSymbolContext` directly; the alias added nothing structural
- * beyond a friendlier name from a tools-side reading order, and the
- * boundary rule made the alias impossible to host in `@higma-tools/`.
+ * The indexed Kiwi document owns DOCUMENT / CANVAS / `internalOnly`
+ * traversal. Tools consume these lookups directly instead of carrying
+ * their own page-discovery functions.
  */
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+import { getNodeType } from "@higma-document-models/fig/domain";
 
 /**
- * Locate the user-visible CANVAS with the given name (typically
- * "Design") within a parsed tree's roots.
- *
- * Takes the raw root array — `FigSymbolContext.tree.roots` — rather
- * than the full context, because nothing else in the context is
- * consulted. Narrowing the parameter is what lets specs build a
- * minimal real `FigNode[]` and exercise the helper without bypassing
- * the type system.
+ * Locate the user-visible CANVAS with the given name (typically "Design")
+ * within the indexed Kiwi document.
  */
-export function findCanvas(roots: readonly FigNode[], canvasName: string): FigNode | undefined {
-  for (const root of roots) {
+export function findCanvas(document: FigKiwiDocumentIndex, canvasName: string): FigNode | undefined {
+  for (const root of document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
-    for (const canvas of safeChildren(root)) {
+    for (const canvas of document.childrenOf(root)) {
       if (canvas.name === canvasName && canvas.internalOnly !== true) {
         return canvas;
       }
@@ -49,12 +28,12 @@ export function findCanvas(roots: readonly FigNode[], canvasName: string): FigNo
 }
 
 /** Locate the (single) Internal-Only Canvas — Figma's holder for shared style proxies. */
-export function findInternalCanvas(roots: readonly FigNode[]): FigNode | undefined {
-  for (const root of roots) {
+export function findInternalCanvas(document: FigKiwiDocumentIndex): FigNode | undefined {
+  for (const root of document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
-    for (const canvas of safeChildren(root)) {
+    for (const canvas of document.childrenOf(root)) {
       if (canvas.internalOnly === true) {
         return canvas;
       }

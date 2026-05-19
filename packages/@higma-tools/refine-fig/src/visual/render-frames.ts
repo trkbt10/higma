@@ -3,16 +3,16 @@
  * `.fig` byte buffer to SVG + PNG. Used by the verify command to
  * compare two refinement runs frame-by-frame.
  */
-import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
+import { renderFigToSvg, requireFigNodeViewport } from "@higma-document-renderers/fig/svg";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren } from "@higma-document-models/fig/domain";
+import { getNodeType } from "@higma-document-models/fig/domain";
 import {
-  createFigSymbolContext,
-  figRawResources,
-  type FigSymbolContext,
+  createFigDocumentContext,
+  figDocumentResources,
+  type FigDocumentContext,
 } from "@higma-document-io/fig/context";
 
 export type RenderedFrame = {
@@ -40,22 +40,22 @@ export async function renderFrames(
   bytes: Uint8Array,
   options: RenderFramesOptions = {},
 ): Promise<readonly RenderedFrame[]> {
-  const ctx = await createFigSymbolContext(bytes);
+  const ctx = await createFigDocumentContext(bytes);
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
   const dpr = options.devicePixelRatio ?? 1;
 
   const tolerate = options.tolerateRenderErrors === true;
   const onSkip = options.onSkipFrame;
   const out: RenderedFrame[] = [];
-  for (const root of ctx.roots) {
+  for (const root of ctx.document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
-    for (const canvas of safeChildren(root)) {
+    for (const canvas of ctx.document.childrenOf(root)) {
       if (getNodeType(canvas) !== "CANVAS" || canvas.internalOnly === true || canvas.visible === false) {
         continue;
       }
-      for (const frame of safeChildren(canvas)) {
+      for (const frame of ctx.document.childrenOf(canvas)) {
         const t = getNodeType(frame);
         if (t !== "FRAME") {
           continue;
@@ -82,7 +82,7 @@ type FrameRenderAttempt =
 
 type RenderArgs = {
   readonly frame: FigNode;
-  readonly ctx: FigSymbolContext;
+  readonly ctx: FigDocumentContext;
   readonly fontLoader: ReturnType<typeof createCachingFontLoader>;
   readonly dpr: number;
   readonly tolerate: boolean;
@@ -123,8 +123,8 @@ async function renderOne(
   const result = await renderFigToSvg([frame], {
     width: frame.size.x,
     height: frame.size.y,
-    ...figRawResources(ctx),
-    normalizeRootTransform: true,
+    viewport: requireFigNodeViewport(frame, "renderFrames"),
+    ...figDocumentResources(ctx),
     fontLoader,
   });
   const svg = String(result.svg);

@@ -7,12 +7,18 @@
  *     the same y with uniform gaps (the Win98 "10" digit pair case).
  *   - Recognise a vertical column likewise.
  *   - Reject mixed cross-axis positions, overlapping children, and
- *     non-uniform gaps (fail-fast — no silent guessing).
+ *     non-uniform gaps (fail-fast — no inferred recovery).
  *   - Recursively walk nested FRAMEs.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { inferLayoutForFrame, inferLayouts } from "./layout-inference";
-import { fakeFigNode } from "./test-helpers";
+import { fakeFigNode } from "./fig-node-test-fixtures";
+
+const childrenOfFixtureNode = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+}).childrenOfResolvedNode;
 
 function rect(
   localID: number,
@@ -57,7 +63,7 @@ describe("inferLayoutForFrame — horizontal row", () => {
     const right = rect(11, 17, 4, 11, 42);
     const f = frame(1, 35, 50, [left, right]);
 
-    const hint = inferLayoutForFrame(f);
+    const hint = inferLayoutForFrame(f, childrenOfFixtureNode);
     expect(hint).toBeDefined();
     if (!hint) {
       throw new Error("hint expected");
@@ -78,7 +84,7 @@ describe("inferLayoutForFrame — horizontal row", () => {
     const left = rect(10, 4, 4, 11, 42);
     const right = rect(11, 18, 4, 11, 30);
     const f = frame(1, 35, 50, [left, right]);
-    const hint = inferLayoutForFrame(f);
+    const hint = inferLayoutForFrame(f, childrenOfFixtureNode);
     expect(hint).toBeDefined();
     expect(hint?.layoutMode).toBe("HORIZONTAL");
     expect(hint?.counterAxisAlign).toBe("MIN");
@@ -92,14 +98,14 @@ describe("inferLayoutForFrame — horizontal row", () => {
     const b = rect(11, 18, 9, 10, 25); // top=9, center=21.5, bottom=34
     const c = rect(12, 32, 13, 10, 40); // top=13, center=33, bottom=53
     const f = frame(1, 50, 60, [a, b, c]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("rejects when children sit at different y (the row is staircased)", () => {
     const left = rect(10, 4, 4, 11, 42);
     const right = rect(11, 18, 10, 11, 42); // ty differs
     const f = frame(1, 35, 50, [left, right]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("rejects when inter-child gaps are not uniform", () => {
@@ -107,14 +113,14 @@ describe("inferLayoutForFrame — horizontal row", () => {
     const b = rect(11, 17, 4, 10, 42); // gap=3
     const c = rect(12, 40, 4, 10, 42); // gap=13
     const f = frame(1, 60, 50, [a, b, c]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("rejects when children overlap on the primary axis", () => {
     const a = rect(10, 4, 4, 20, 42);
     const b = rect(11, 10, 4, 20, 42); // tx=10 < a.tx+a.width=24
     const f = frame(1, 50, 50, [a, b]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 });
 
@@ -123,7 +129,7 @@ describe("inferLayoutForFrame — vertical column", () => {
     const top = rect(10, 5, 6, 20, 8);
     const bot = rect(11, 5, 18, 20, 8); // ty = 6 + 8 + 4 = 18
     const f = frame(1, 30, 40, [top, bot]);
-    const hint = inferLayoutForFrame(f);
+    const hint = inferLayoutForFrame(f, childrenOfFixtureNode);
     expect(hint).toBeDefined();
     if (!hint) {
       throw new Error("hint expected");
@@ -140,7 +146,7 @@ describe("inferLayoutForFrame — vertical column", () => {
 describe("inferLayoutForFrame — refuses ambiguous & degenerate cases", () => {
   it("returns undefined for a frame with fewer than 2 children", () => {
     const f = frame(1, 30, 30, [rect(10, 0, 0, 30, 30)]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("returns undefined when a child is invisible (cannot tell whether to honour it)", () => {
@@ -155,7 +161,7 @@ describe("inferLayoutForFrame — refuses ambiguous & degenerate cases", () => {
     const a = rect(10, 0, 0, 10, 10);
     const b = rect(11, 20, 0, 10, 10);
     const f = frame(1, 40, 10, [a, b, hidden]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("returns undefined when both axes pass (single-point children, degenerate)", () => {
@@ -164,7 +170,7 @@ describe("inferLayoutForFrame — refuses ambiguous & degenerate cases", () => {
     const a = rect(10, 5, 5, 0, 0);
     const b = rect(11, 5, 5, 0, 0);
     const f = frame(1, 10, 10, [a, b]);
-    expect(inferLayoutForFrame(f)).toBeUndefined();
+    expect(inferLayoutForFrame(f, childrenOfFixtureNode)).toBeUndefined();
   });
 });
 
@@ -174,7 +180,7 @@ describe("inferLayoutForFrame — cross-axis alignment", () => {
     const a = rect(10, 4, 5, 10, 40);   // top=5, center=25, bottom=45
     const b = rect(11, 18, 15, 10, 20); // top=15, center=25, bottom=35
     const f = frame(1, 40, 50, [a, b]);
-    const hint = inferLayoutForFrame(f);
+    const hint = inferLayoutForFrame(f, childrenOfFixtureNode);
     expect(hint?.counterAxisAlign).toBe("CENTER");
     expect(hint?.layoutMode).toBe("HORIZONTAL");
   });
@@ -184,7 +190,7 @@ describe("inferLayoutForFrame — cross-axis alignment", () => {
     const a = rect(10, 4, 5, 10, 40);   // top=5, bottom=45
     const b = rect(11, 18, 25, 10, 20); // top=25, bottom=45
     const f = frame(1, 40, 50, [a, b]);
-    const hint = inferLayoutForFrame(f);
+    const hint = inferLayoutForFrame(f, childrenOfFixtureNode);
     expect(hint?.counterAxisAlign).toBe("MAX");
     expect(hint?.layoutMode).toBe("HORIZONTAL");
   });
@@ -194,7 +200,7 @@ describe("inferLayouts — recursive walk", () => {
   it("finds hints in nested frames", () => {
     const innerRow = frame(2, 30, 10, [rect(20, 5, 0, 10, 10), rect(21, 17, 0, 10, 10)]);
     const outerCol = frame(1, 30, 40, [innerRow, rect(22, 0, 14, 30, 26)]);
-    const hints = inferLayouts([outerCol]);
+    const hints = inferLayouts([outerCol], childrenOfFixtureNode);
     expect(hints.length).toBeGreaterThan(0);
     const inner = hints.find((h) => h.nodeGuid === "1:2");
     expect(inner?.layoutMode).toBe("HORIZONTAL");

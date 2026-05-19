@@ -21,7 +21,7 @@
  * Co-located with the integration suite under `spec/` rather than
  * inside `src/` because it is test-only infrastructure; promoting it
  * to `src/` would leak fixture-shaped APIs into the package's public
- * surface (per AGENTS.md: cross-module spec helpers live in `spec/`).
+ * surface (per AGENTS.md: cross-module spec functions live in `spec/`).
  */
 import type {
   RawAsset,
@@ -122,6 +122,8 @@ export type SynthElInput = {
   readonly styleOverrides?: Record<string, string>;
   readonly text?: string;
   readonly textFragments?: readonly string[];
+  readonly textLineRects?: readonly RawRect[];
+  readonly textLineBaselineYs?: readonly number[];
   readonly children?: readonly RawElement[];
   readonly imageId?: string;
   readonly imageIds?: readonly string[];
@@ -145,6 +147,7 @@ export type SynthElInput = {
 export function synthEl(input: SynthElInput): RawElement {
   const cs = input.computedStyle
     ?? (input.styleOverrides !== undefined ? withStyle(input.styleOverrides) : NEUTRAL_COMPUTED);
+  const textLineRects = input.textLineRects ?? synthTextLineRects(input, cs);
   return {
     id: input.id,
     tag: input.tag,
@@ -154,6 +157,8 @@ export function synthEl(input: SynthElInput): RawElement {
     computedStyle: cs,
     text: input.text,
     textFragments: input.textFragments,
+    textLineRects,
+    textLineBaselineYs: input.textLineBaselineYs,
     children: input.children ?? [],
     imageId: input.imageId,
     imageIds: input.imageIds,
@@ -166,6 +171,94 @@ export function synthEl(input: SynthElInput): RawElement {
     maskSvgContent: input.maskSvgContent,
     pseudo: input.pseudo,
   };
+}
+
+function synthTextLineRects(
+  input: SynthElInput,
+  computedStyle: Readonly<Record<string, string>>,
+): readonly RawRect[] | undefined {
+  if (!inputHasTextBearingLine(input)) {
+    return undefined;
+  }
+  const lineHeight = lineHeightPxForSynthText(input, computedStyle);
+  return [{
+    x: input.rect.x,
+    y: input.rect.y,
+    width: input.rect.width,
+    height: lineHeight,
+  }];
+}
+
+function inputHasTextBearingLine(input: SynthElInput): boolean {
+  if (input.visible === false) {
+    return false;
+  }
+  if (input.text !== undefined && input.text.length > 0) {
+    return true;
+  }
+  if (input.textFragments !== undefined && input.textFragments.some((fragment) => fragment.length > 0)) {
+    return true;
+  }
+  if (input.pseudo !== undefined && input.pseudo.length > 0) {
+    return true;
+  }
+  return input.children !== undefined && input.children.some((child) => rawElementHasTextBearingLine(child));
+}
+
+function rawElementHasTextBearingLine(el: RawElement): boolean {
+  if (!el.visible) {
+    return false;
+  }
+  if (el.text !== undefined && el.text.length > 0) {
+    return true;
+  }
+  if (el.textFragments !== undefined && el.textFragments.some((fragment) => fragment.length > 0)) {
+    return true;
+  }
+  if (el.pseudo !== undefined && el.pseudo.length > 0) {
+    return true;
+  }
+  return el.children.some((child) => rawElementHasTextBearingLine(child));
+}
+
+function lineHeightPxForSynthText(
+  input: SynthElInput,
+  computedStyle: Readonly<Record<string, string>>,
+): number {
+  const raw = computedStyle["line-height"];
+  if (raw === undefined) {
+    throw new Error(`synthEl: ${input.id} text requires computedStyle["line-height"]`);
+  }
+  if (raw === "normal") {
+    return positiveSynthTextRectHeight(input);
+  }
+  if (raw.endsWith("px")) {
+    return parseSynthPx(raw, input.id, "line-height");
+  }
+  const ratio = Number.parseFloat(raw);
+  if (Number.isFinite(ratio)) {
+    const fontSize = parseSynthPx(computedStyle["font-size"], input.id, "font-size");
+    return ratio * fontSize;
+  }
+  throw new Error(`synthEl: ${input.id} cannot resolve line-height "${raw}"`);
+}
+
+function positiveSynthTextRectHeight(input: SynthElInput): number {
+  if (input.rect.height <= 0) {
+    throw new Error(`synthEl: ${input.id} line-height=normal requires a positive text rect height`);
+  }
+  return input.rect.height;
+}
+
+function parseSynthPx(value: string | undefined, id: string, field: string): number {
+  if (value === undefined || !value.endsWith("px")) {
+    throw new Error(`synthEl: ${id} ${field} must be an explicit px value`);
+  }
+  const parsed = Number.parseFloat(value.slice(0, -2));
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`synthEl: ${id} ${field} has malformed px value "${value}"`);
+  }
+  return parsed;
 }
 
 /** Wrap a single body subtree in a viewport snapshot of the given size. */

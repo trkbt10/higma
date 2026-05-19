@@ -6,7 +6,7 @@
  * regressing it would freeze every non-flex-authored toolbar as
  * absolute children.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   CHILD_COUNT,

@@ -16,6 +16,7 @@
  * budget.
  */
 import type { FigGradientPaint, FigGradientStop } from "@higma-document-models/fig/types";
+import { getGradientStops } from "@higma-document-renderers/fig/paint";
 
 /**
  * Sample the gradient stop array at parameter `t ∈ [0, 1]` and return
@@ -100,7 +101,7 @@ export function rasterizeAngularGradient(
   width: number,
   height: number,
 ): RasterizedGradient {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const transform = paint.transform ?? {};
   // For angular gradients the centre is always (0.5, 0.5) in object
   // space. The fig `transform` maps object → gradient space, so we
@@ -156,7 +157,7 @@ export function rasterizeDiamondGradient(
   width: number,
   height: number,
 ): RasterizedGradient {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const transform = paint.transform ?? {};
   // Diamond gradient stays on the simple axis-aligned formula. The
   // forward-transform approach used for angular doesn't apply here:
@@ -218,7 +219,7 @@ export function rasterizeLinearGradient(
   width: number,
   height: number,
 ): RasterizedGradient {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const t = paint.transform ?? {};
   const m00 = t.m00 ?? 1;
   const m01 = t.m01 ?? 0;
@@ -300,7 +301,7 @@ export function rasterizeRadialGradient(
   width: number,
   height: number,
 ): RasterizedGradient {
-  const stops = readStops(paint);
+  const stops = getGradientStops(paint);
   const t = paint.transform ?? {};
   const cx = t.m02 ?? 0.5;
   const cy = t.m12 ?? 0.5;
@@ -321,17 +322,6 @@ export function rasterizeRadialGradient(
     }
   }
   return { width, height, rgba };
-}
-
-/** Read stops in either Kiwi (`stops`) or API (`gradientStops`) shape. */
-function readStops(paint: FigGradientPaint): readonly FigGradientStop[] {
-  if (paint.stops && paint.stops.length > 0) {
-    return paint.stops;
-  }
-  if (paint.gradientStops && paint.gradientStops.length > 0) {
-    return paint.gradientStops;
-  }
-  return [];
 }
 
 function byteFromUnit(value: number): number {

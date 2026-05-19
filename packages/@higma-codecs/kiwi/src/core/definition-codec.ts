@@ -4,8 +4,9 @@
 
 import type { DecodeDefinitionOptions, EncodeDefinitionOptions } from "./types";
 import { decodeField, encodeField } from "./field-codec";
-import { extractEnumValue, extractEnumValueStrict } from "./enum-utils";
+import { extractEnumValue } from "./enum-value";
 import { iterateMessageFields } from "./message-iterator";
+import { KiwiParseError } from "../errors";
 
 /**
  * Decode a definition (STRUCT/MESSAGE/ENUM).
@@ -28,7 +29,10 @@ export function decodeDefinition(options: DecodeDefinitionOptions): unknown {
     case "ENUM": {
       const value = buffer.readVarUint();
       const field = definition.fields.find((f) => f.value === value);
-      return { value, name: field?.name ?? `unknown(${value})` };
+      if (field === undefined) {
+        throw new KiwiParseError(`Unknown enum value ${value} for ${definition.name}`);
+      }
+      return { value, name: field.name };
     }
     default:
       break;
@@ -62,7 +66,7 @@ export function encodeDefinition(options: EncodeDefinitionOptions): void {
       buffer.writeVarUint(0); // End marker
       break;
     case "ENUM": {
-      const enumValue = strict ? extractEnumValueStrict(message) : extractEnumValue(message);
+      const enumValue = extractEnumValue(message);
       buffer.writeVarUint(enumValue);
       break;
     }

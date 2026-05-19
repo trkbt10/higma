@@ -2,7 +2,7 @@
  * @file Case `mask-vector-tint` — `mask-image` SVG re-coloured with
  * the host's CSS `color` (no `background-color`).
  */
-import { asVector, normalizeOne, singleChild } from "../_helpers";
+import { asVector, normalizeOne, singleChild } from "../case-ir-assertions";
 import { DEFAULT_MASK_PATH_D, maskedSpan } from "./fixture";
 
 describe("case mask-vector-tint", () => {

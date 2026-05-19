@@ -15,10 +15,10 @@
  *      refine-fig's serialisation path.
  *
  *   2. Active flow — scaffold's blank names are filled in so plan
- *      actually emits `create-*-proxy`, `bind-*-style`, `rename`,
+ *      actually emits `create-*-style-definition`, `bind-*-style`, `rename`,
  *      and (when eligible) `promote-icon-cluster` actions. Only
  *      runs against fixtures that have an internalCanvas plus at
- *      least one fill OR text style proxy template — apply throws
+ *      least one fill OR text style styleDefinition template — apply throws
  *      otherwise.
  *
  * The assertion is "no new lint regressions vs baseline", not "zero
@@ -48,7 +48,7 @@ const FIXTURES_ROOT = resolve(__dirname, "../../../@higma-document-renderers/fig
 /**
  * Fixtures that lint cleanly AND have an internalCanvas. The no-op
  * flow runs against every entry; the active flow runs only against
- * fixtures with at least one fill or text style proxy template.
+ * fixtures with at least one fill or text style styleDefinition template.
  *
  * "shapes/shapes-template.fig" and the *-corrupt fixtures are
  * intentionally excluded — they fail baseline lint by design and
@@ -120,14 +120,14 @@ async function runApplyAndSave(bytes: Uint8Array, fillDecisions: boolean): Promi
   const result = applyPlan(source.loaded, plan, {
     internalCanvasGuid: guidToString(source.internalCanvas.guid),
     userCanvasGuid: source.userCanvases[0] ? guidToString(source.userCanvases[0].guid) : undefined,
-    fillTemplateGuid: firstProxyGuid(source.fillStyleProxies),
-    textTemplateGuid: firstProxyGuid(source.textStyleProxies),
+    fillTemplateGuid: firstStyleDefinitionGuid(source.fillStyleDefinitions),
+    textTemplateGuid: firstStyleDefinitionGuid(source.textStyleDefinitions),
   });
   return saveFigFile(result.loaded);
 }
 
-function firstProxyGuid(proxies: Awaited<ReturnType<typeof loadRefineSource>>["fillStyleProxies"]): string | undefined {
-  const head = proxies[0];
+function firstStyleDefinitionGuid(styleDefinitions: Awaited<ReturnType<typeof loadRefineSource>>["fillStyleDefinitions"]): string | undefined {
+  const head = styleDefinitions[0];
   if (!head) {
     return undefined;
   }
@@ -199,13 +199,13 @@ describe("refine-fig pipeline preserves fig-lint health", () => {
 });
 
 describe("refine-fig active apply preserves fig-lint health", () => {
-  /** Only fixtures with at least one style proxy template can run the
-   * active flow without apply skipping every create-*-proxy action. */
+  /** Only fixtures with at least one style styleDefinition template can run the
+   * active flow without apply skipping every create-*-style-definition action. */
   const ACTIVE_FIXTURES = ["inherit/inherit.fig"] as const;
 
   for (const rel of ACTIVE_FIXTURES) {
     it(
-      `${rel}: active apply (proxy + bind + rename) leaves no new lint findings`,
+      `${rel}: active apply (styleDefinition + bind + rename) leaves no new lint findings`,
       async () => {
         const bytes = await readFixtureBytes(rel);
         const baseline = await runFigHealthCheck(bytes);

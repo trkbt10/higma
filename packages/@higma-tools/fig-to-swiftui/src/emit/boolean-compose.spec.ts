@@ -18,12 +18,23 @@
  * primitive-shape generator.
  */
 import type { FigBlob } from "@higma-document-models/fig/domain";
-import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
+import type { FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { serialize } from "../swift-tree";
 import { tryComposeBooleanLeaf } from "./boolean-compose";
 
+const childrenOfFixtureNode = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+}).childrenOfResolvedNode;
+
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
+}
+
+function solidPaint(color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }): FigPaint {
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color };
 }
 
 /**
@@ -81,7 +92,7 @@ function makeBooleanFixture(
     name: `bool-${op.toLowerCase()}`,
     size: { x: 90, y: 90 },
     booleanOperation: enumName(op),
-    fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+    fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     children: [childA, childB],
   } as FigNode;
   return { node, blobs: [] };
@@ -90,7 +101,7 @@ function makeBooleanFixture(
 describe("tryComposeBooleanLeaf", () => {
   it("returns undefined when blobs are missing", () => {
     const { node } = makeBooleanFixture("UNION");
-    expect(tryComposeBooleanLeaf(node, undefined)).toBeUndefined();
+    expect(tryComposeBooleanLeaf(node, undefined, childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("returns undefined when there are no children", () => {
@@ -101,15 +112,15 @@ describe("tryComposeBooleanLeaf", () => {
       name: "bool-empty",
       size: { x: 60, y: 60 },
       booleanOperation: enumName("UNION"),
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
       children: [],
     } as FigNode;
-    expect(tryComposeBooleanLeaf(node, [])).toBeUndefined();
+    expect(tryComposeBooleanLeaf(node, [], childrenOfFixtureNode)).toBeUndefined();
   });
 
   it("composes UNION into a Path leaf with the boolean's fill", () => {
     const { node, blobs } = makeBooleanFixture("UNION");
-    const view = tryComposeBooleanLeaf(node, blobs);
+    const view = tryComposeBooleanLeaf(node, blobs, childrenOfFixtureNode);
     expect(view).toBeDefined();
     if (!view) {
       return;
@@ -122,7 +133,7 @@ describe("tryComposeBooleanLeaf", () => {
 
   it("composes SUBTRACT", () => {
     const { node, blobs } = makeBooleanFixture("SUBTRACT");
-    const view = tryComposeBooleanLeaf(node, blobs);
+    const view = tryComposeBooleanLeaf(node, blobs, childrenOfFixtureNode);
     expect(view).toBeDefined();
     if (!view) {
       return;
@@ -133,13 +144,13 @@ describe("tryComposeBooleanLeaf", () => {
 
   it("composes INTERSECT", () => {
     const { node, blobs } = makeBooleanFixture("INTERSECT");
-    const view = tryComposeBooleanLeaf(node, blobs);
+    const view = tryComposeBooleanLeaf(node, blobs, childrenOfFixtureNode);
     expect(view).toBeDefined();
   });
 
   it("composes EXCLUDE", () => {
     const { node, blobs } = makeBooleanFixture("EXCLUDE");
-    const view = tryComposeBooleanLeaf(node, blobs);
+    const view = tryComposeBooleanLeaf(node, blobs, childrenOfFixtureNode);
     expect(view).toBeDefined();
   });
 });

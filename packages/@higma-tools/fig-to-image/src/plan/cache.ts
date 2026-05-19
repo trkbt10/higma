@@ -14,7 +14,8 @@
  * `isCacheHit` / `planTargets` without touching the
  * filesystem.
  */
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
+import type { SymbolResolver } from "@higma-document-models/fig/symbols";
 import { fingerprintFigSubtree } from "../fingerprint";
 import { getTextMetadata } from "../png-meta";
 import { applyFilename } from "../io/slug";
@@ -40,12 +41,12 @@ export type PlanTargetsOptions = {
   readonly filename: string;
   readonly scale: number;
   readonly force: boolean;
-  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly symbolResolver: SymbolResolver;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
   readonly readFile: ReadFileFn;
   /**
    * Path-join function (injectable so tests can run independent of
-   * the platform's path separator). Defaults to `node:path.resolve`-
-   * compatible behaviour: `joinPath(dir, file)`.
+   * the platform's path separator).
    */
   readonly joinPath: (dir: string, file: string) => string;
   /**
@@ -56,12 +57,8 @@ export type PlanTargetsOptions = {
 };
 
 /**
- * Probe the on-disk PNG at `path` and report whether its
- * embedded fingerprint matches `expected`.
- *
- * Returns `false` on any read or parse failure — the caller will
- * re-rasterise and overwrite. We never let a defensive branch
- * pass off a stale-but-readable file as a cache hit.
+ * Probe the on-disk PNG at `path` and report whether its embedded
+ * fingerprint matches `expected`.
  */
 export async function isCacheHit(
   path: string,
@@ -72,22 +69,8 @@ export async function isCacheHit(
   if (!bytes) {
     return false;
   }
-  const existing = readFingerprintSafely(bytes);
+  const existing = getTextMetadata(bytes, FINGERPRINT_PNG_KEY);
   return existing === expected;
-}
-
-function readFingerprintSafely(bytes: Uint8Array): string | undefined {
-  try {
-    return getTextMetadata(bytes, FINGERPRINT_PNG_KEY);
-  } catch (error: unknown) {
-    // A malformed PNG can't carry a trustworthy fingerprint —
-    // treat it as a cache miss. We log the error class so the
-    // operator can investigate; we don't surface the message
-    // because partial PNGs are common during interrupted writes
-    // and don't reflect a bug in the writer.
-    void error;
-    return undefined;
-  }
 }
 
 /**
@@ -105,7 +88,8 @@ export async function planTargets(
     const outPath = options.joinPath(options.outDir, filename);
     const fingerprint = fingerprintFigSubtree(target.node, {
       pixelRatio: options.scale,
-      symbolMap: options.symbolMap,
+      symbolResolver: options.symbolResolver,
+      childrenOf: options.childrenOf,
       backgroundColor: options.background,
     });
     const skip = !options.force && (await isCacheHit(outPath, fingerprint, options.readFile));

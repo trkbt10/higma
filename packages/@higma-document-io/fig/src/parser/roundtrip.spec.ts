@@ -16,8 +16,8 @@ import { decompressDeflateRaw, decompressZstd } from "@higma-document-io/fig/par
 import { isZstdCompressed } from "@higma-codecs/compression";
 import { decodeFigSchema, decodeFigMessage, splitFigChunks } from "@higma-codecs/kiwi/decoder";
 import { StreamingFigEncoder } from "@higma-codecs/kiwi/stream";
-import { createTestSchema, createTestNode } from "@higma-codecs/kiwi/test-helpers";
-import { buildTestFigFile, createSampleFigFile } from "./test-fig-file";
+import { createTestSchema, createTestNode } from "@higma-codecs/kiwi/test-fixtures";
+import { buildTestFigFile, createSampleFigFile } from "./fig-file-test-fixtures";
 
 describe("fig file parsing (generated data)", () => {
   it("validates header", () => {

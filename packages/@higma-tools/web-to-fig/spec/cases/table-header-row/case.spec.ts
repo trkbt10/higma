@@ -2,7 +2,7 @@
  * @file Case `table-header-row` — header `<th>` retains the bold
  * weight from `font-weight: 700`; the table topology is preserved.
  */
-import { asFrame, asText, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { tableWithHeaderRow } from "./fixture";
 
 describe("case table-header-row", () => {

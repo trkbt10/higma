@@ -33,9 +33,9 @@ export type EmitOptions = {
   /** Name of the Theme `.tres` file (no extension). Default `"Default"`. */
   readonly themeName?: string;
   /**
-   * Doc-level lookups passed to the walker. Currently carries the
-   * `symbolMap` used for INSTANCE → SYMBOL resolution. Required for
-   * any fixture that references components defined on another canvas.
+   * Doc-level resolver passed to the walker. Carries the canonical
+   * SymbolResolver for INSTANCE → SYMBOL resolution. Required for any
+   * fixture that references components defined on another canvas.
    */
   readonly emit?: EmitContext;
 };

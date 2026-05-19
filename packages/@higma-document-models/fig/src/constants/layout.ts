@@ -54,6 +54,14 @@ export const STACK_JUSTIFY_VALUES = requireFigEnumTable("StackJustify", [
 
 export type StackJustify = "MIN" | "CENTER" | "MAX" | "SPACE_EVENLY" | "SPACE_BETWEEN";
 
+/** Stack wrapping values — schema `StackWrap`. */
+export const STACK_WRAP_VALUES = requireFigEnumTable("StackWrap", [
+  "NO_WRAP",
+  "WRAP",
+]);
+
+export type StackWrap = "NO_WRAP" | "WRAP";
+
 /**
  * Per-child counter-axis alignment override (`stackChildAlignSelf`).
  *

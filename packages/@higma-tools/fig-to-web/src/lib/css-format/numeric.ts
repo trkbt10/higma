@@ -1,5 +1,5 @@
 /**
- * @file Numeric CSS-format helpers — fig-to-web's local entry point.
+ * @file Numeric CSS-format routines — fig-to-web's local entry point.
  *
  * Behaviour and rounding precision are owned by `@higma-bridges/web-fig`'s
  * `style` module. The wrappers below thread the bridge implementation

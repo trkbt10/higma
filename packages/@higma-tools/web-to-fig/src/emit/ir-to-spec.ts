@@ -1,19 +1,7 @@
 /**
  * @file IR node → document-io NodeSpec.
- *
- * The two sides:
- *   - IR carries CSS-flavoured paint / effect / blend / auto-layout
- *     vocabulary.
- *   - NodeSpec carries Figma's normalised vocabulary
- *     (`FigPaint`, `FigEffect`, `AutoLayoutProps`, ...).
- *
- * The bridge adapters (`@higma-bridges/web-fig/adapters`) handle the
- * leaf conversions; this module composes them into a complete
- * `NodeSpec` graph and tracks the `parent → children` topology so the
- * caller can drive `addNode`.
  */
 import type {
-  AutoLayoutIR,
   NodeIR,
   StrokeIR,
 } from "@higma-bridges/web-fig";
@@ -23,9 +11,10 @@ import {
   irPaintToFig,
   resolveCornerRadius,
 } from "@higma-bridges/web-fig";
-import type { FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
-import { fontQueryToStyleName, normalizeWeight } from "@higma-document-models/fig/font";
+import type { FigPaint, FigStrokeAlign, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { fontQueryToStyleName, snapFontWeight } from "@higma-document-models/fig/font";
 import {
+  STROKE_ALIGN_VALUES,
   TEXT_ALIGN_H_VALUES,
   TEXT_ALIGN_V_VALUES,
   type TextAlignHorizontal,
@@ -76,11 +65,12 @@ function frameSpec(node: NodeIR & { readonly kind: "frame" }): FrameNodeSpec {
     fills: node.style.fills.map(irPaintToFig),
     strokes: node.style.strokes.map(strokeToFig),
     strokeWeight: maxStrokeWeight(node.style.strokes),
+    strokeAlign: strokeAlignToFig(node.style.strokes),
     effects: node.style.effects.map(irEffectToFig),
     opacity: node.style.opacity,
     visible: node.visible,
     clipsContent: node.style.clipsContent,
-    autoLayout: irAutoLayoutToFigOrUndefined(node.autoLayout),
+    ...irAutoLayoutToFig(node.autoLayout),
     cornerRadius: radii?.uniform,
     rectangleCornerRadii: radii?.perCorner,
   };
@@ -108,13 +98,13 @@ function resolveFrameCornerRadii(
     resolveCornerRadius(radii[2], node.box),
     resolveCornerRadius(radii[3], node.box),
   ];
-  if (resolved.every((r) => r === resolved[0])) {
-    if (resolved[0] === 0) {
-      return undefined;
-    }
-    return { uniform: resolved[0] };
+  if (!resolved.every((r) => r === resolved[0])) {
+    return { perCorner: resolved };
   }
-  return { perCorner: resolved };
+  if (resolved[0] === 0) {
+    return undefined;
+  }
+  return { uniform: resolved[0] };
 }
 
 function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
@@ -128,6 +118,7 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
     fills: node.style.fills.map(irPaintToFig),
     strokes: node.style.strokes.map(strokeToFig),
     strokeWeight: maxStrokeWeight(node.style.strokes),
+    strokeAlign: strokeAlignToFig(node.style.strokes),
     effects: node.style.effects.map(irEffectToFig),
     opacity: node.style.opacity,
     visible: node.visible,
@@ -141,16 +132,14 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
     // into a "Regular" Figma label.
     fontStyle: fontQueryToStyleName({
       family: node.textStyle.fontFamily,
-      weight: normalizeWeight(node.textStyle.fontWeight),
+      weight: snapFontWeight(node.textStyle.fontWeight),
       style: node.textStyle.fontStyle,
     }),
-    lineHeight: irLineHeightToPx(node.textStyle.lineHeight),
+    lineHeight: irLineHeightToPx(node.textStyle.lineHeight, node.textStyle.fontSize),
     // Browser-resolved CSS `letter-spacing` arrives in IR as a numeric
-    // CSS-pixel value. Skip the field for the dominant 0px case so the
-    // produced spec stays terse — `node-factory` reads `undefined` as
-    // "no override" and Figma falls back to its default tracking. A
-    // non-zero value flows verbatim with unit PIXELS.
-    letterSpacing: node.textStyle.letterSpacing !== 0 ? node.textStyle.letterSpacing : undefined,
+    // CSS-pixel value. It is emitted explicitly so TEXT creation never
+    // relies on a reader-side default.
+    letterSpacing: node.textStyle.letterSpacing,
     textAlignHorizontal: textAlignHToFig(node.textStyle.textAlign),
     textAlignVertical: textAlignVToFig(node.textStyle.textAlignVertical),
   };
@@ -158,17 +147,14 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
 
 /**
  * Translate the IR's CSS `text-align` value (`left` / `center` / ...) into
- * Figma's TextAlignHorizontal enum value. Returns undefined for the
- * default `left` so the spec stays terse for the dominant case (Figma's
- * fallback is also LEFT). Anything else is encoded explicitly.
+ * Figma's TextAlignHorizontal enum value.
  */
 function textAlignHToFig(
   value: TextStyleIR["textAlign"],
-): KiwiEnumValue<TextAlignHorizontal> | undefined {
-  if (value === "left") {
-    return undefined;
-  }
+): KiwiEnumValue<TextAlignHorizontal> {
   switch (value) {
+    case "left":
+      return { value: TEXT_ALIGN_H_VALUES.LEFT, name: "LEFT" };
     case "center":
       return { value: TEXT_ALIGN_H_VALUES.CENTER, name: "CENTER" };
     case "right":
@@ -180,19 +166,14 @@ function textAlignHToFig(
 
 /**
  * Translate the IR's vertical text alignment (`top` / `center` /
- * `bottom`) into Figma's TextAlignVertical enum value. Returns
- * undefined for the default `top` so the spec stays terse — Figma's
- * fallback is also TOP. Used when the captured element's flex /
- * grid container expressed cross-axis centring around its single
- * text child (see normaliser's `textAlignVerticalFromCss`).
+ * `bottom`) into Figma's TextAlignVertical enum value.
  */
 function textAlignVToFig(
   value: TextStyleIR["textAlignVertical"],
-): KiwiEnumValue<TextAlignVertical> | undefined {
-  if (value === "top") {
-    return undefined;
-  }
+): KiwiEnumValue<TextAlignVertical> {
   switch (value) {
+    case "top":
+      return { value: TEXT_ALIGN_V_VALUES.TOP, name: "TOP" };
     case "center":
       return { value: TEXT_ALIGN_V_VALUES.CENTER, name: "CENTER" };
     case "bottom":
@@ -200,11 +181,17 @@ function textAlignVToFig(
   }
 }
 
-function irLineHeightToPx(lh: { readonly unit: "px"; readonly value: number } | { readonly unit: "ratio"; readonly value: number } | { readonly unit: "normal" }): number | undefined {
+function irLineHeightToPx(
+  lh: { readonly unit: "px"; readonly value: number } | { readonly unit: "ratio"; readonly value: number } | { readonly unit: "normal" },
+  fontSize: number,
+): number {
   if (lh.unit === "px") {
     return lh.value;
   }
-  return undefined;
+  if (lh.unit === "ratio") {
+    return lh.value * fontSize;
+  }
+  throw new Error("irToSpecGraph: TEXT lineHeight=normal must be resolved before Fig emission");
 }
 
 function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeSpec | RoundedRectNodeSpec {
@@ -226,6 +213,7 @@ function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeS
       fills: node.style.fills.map(irPaintToFig),
       strokes: node.style.strokes.map(strokeToFig),
       strokeWeight: maxStrokeWeight(node.style.strokes),
+      strokeAlign: strokeAlignToFig(node.style.strokes),
       effects: node.style.effects.map(irEffectToFig),
       opacity: node.style.opacity,
       visible: node.visible,
@@ -242,6 +230,7 @@ function rectangleSpec(node: NodeIR & { readonly kind: "rectangle" }): RectNodeS
     fills: node.style.fills.map(irPaintToFig),
     strokes: node.style.strokes.map(strokeToFig),
     strokeWeight: maxStrokeWeight(node.style.strokes),
+    strokeAlign: strokeAlignToFig(node.style.strokes),
     effects: node.style.effects.map(irEffectToFig),
     opacity: node.style.opacity,
     visible: node.visible,
@@ -282,12 +271,28 @@ function vectorSpec(node: NodeIR & { readonly kind: "vector" }): VectorNodeSpec 
   };
 }
 
-function irAutoLayoutToFigOrUndefined(layout: AutoLayoutIR): FrameNodeSpec["autoLayout"] {
-  return irAutoLayoutToFig(layout);
-}
-
 function strokeToFig(stroke: StrokeIR): FigPaint {
   return irPaintToFig(stroke.paint);
+}
+
+function strokeAlignToFig(strokes: readonly StrokeIR[]): KiwiEnumValue<FigStrokeAlign> | undefined {
+  if (strokes.length === 0) {
+    return undefined;
+  }
+  const first = strokes[0]!.align;
+  for (const stroke of strokes) {
+    if (stroke.align !== first) {
+      throw new Error("irToSpecGraph: multiple stroke alignments cannot be collapsed into one Kiwi strokeAlign");
+    }
+  }
+  switch (first) {
+    case "inside":
+      return { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" };
+    case "outside":
+      return { value: STROKE_ALIGN_VALUES.OUTSIDE, name: "OUTSIDE" };
+    case "center":
+      return { value: STROKE_ALIGN_VALUES.CENTER, name: "CENTER" };
+  }
 }
 
 function maxStrokeWeight(strokes: readonly StrokeIR[]): number | undefined {
@@ -296,4 +301,3 @@ function maxStrokeWeight(strokes: readonly StrokeIR[]): number | undefined {
   }
   return strokes.reduce((acc, s) => (s.weight > acc ? s.weight : acc), 0);
 }
-

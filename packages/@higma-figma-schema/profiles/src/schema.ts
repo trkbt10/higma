@@ -109,6 +109,40 @@ export function requireFigEnumTable<const Name extends string>(
 }
 
 /**
+ * Schema-prescribed default name for a Kiwi enum when the field is
+ * omitted from the binary encoding.
+ *
+ * Kiwi's `MESSAGE` framing is tag-prefixed: enum fields whose value
+ * equals the declaration's first listed name (always assigned numeric
+ * value 0 in canonical Figma definitions) are not written to disk and
+ * decode back as `undefined`. The semantically correct way to handle
+ * those holes is to materialise the "first listed name" — that is the
+ * value Figma's runtime would observe on the missing field.
+ *
+ * SoT: the schema's declaration order. Anything else (e.g. a hand-
+ * picked fallback at the consumer) drifts the moment Figma reorders
+ * fields or renames a value, so consumers must route through this
+ * helper rather than hard-code an enum name.
+ *
+ * Throws when the named ENUM is missing or its declaration is empty
+ * — both are bugs the caller cannot meaningfully recover from.
+ */
+export function kiwiOmittedEnumName<const Name extends string>(
+  definitionName: string,
+  requiredNames: readonly Name[],
+): Name {
+  const table = requireFigEnumTable(definitionName, requiredNames);
+  for (const name of Object.keys(table)) {
+    if (table[name as Name] === 0) {
+      return name as Name;
+    }
+  }
+  throw new Error(
+    `Figma schema ENUM "${definitionName}" has no value-0 entry. Cannot derive Kiwi-omitted default.`,
+  );
+}
+
+/**
  * Reverse lookup: numeric value → name. Useful when decoding raw
  * Kiwi enum values back into their string identifier.
  */

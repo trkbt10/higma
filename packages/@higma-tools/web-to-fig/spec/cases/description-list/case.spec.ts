@@ -3,7 +3,7 @@
  * must stay a FRAME with two TEXT children, regardless of the
  * non-mainstream tag names.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { DESC, TERM, descriptionList } from "./fixture";
 
 describe("case description-list", () => {

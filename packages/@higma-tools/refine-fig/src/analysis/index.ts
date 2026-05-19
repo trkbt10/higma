@@ -13,8 +13,8 @@ export type {
 } from "./palette";
 export { analyseTypography } from "./text-styles";
 export type { TypographyAnalysis, TypographyCluster, TypographyDescriptor, TypographyUsage, TextStyleRole } from "./text-styles";
-export { structuralSignature, roleSignature, roleHintFor } from "./subtree-signature";
-export type { NodeRoleHint } from "./subtree-signature";
+export { structuralSignature, roleSignature, roleHintFor } from "./structure-signature";
+export type { NodeRoleHint } from "./structure-signature";
 export { detectDuplicates } from "./duplicate-clusters";
 export type { DuplicateAnalysis, DuplicateCluster, DuplicateMember, UnrenderableNote } from "./duplicate-clusters";
 export { inferLayoutForFrame, inferLayouts } from "./layout-inference";

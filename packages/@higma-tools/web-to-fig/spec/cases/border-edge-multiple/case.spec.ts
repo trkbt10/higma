@@ -3,7 +3,7 @@
  * surfaces *every* visible edge as a separate FRAME, not just the
  * dominant one. Two edges authored ⇒ two children.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { divWithTopBottomBorder } from "./fixture";
 
 describe("case border-edge-multiple", () => {

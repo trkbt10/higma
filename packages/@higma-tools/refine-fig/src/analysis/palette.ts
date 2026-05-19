@@ -1,9 +1,9 @@
 /**
  * @file Palette analysis.
  *
- * Builds a normalised palette of every solid colour used inside the
+ * Builds a canonical palette of every solid colour used inside the
  * user-visible canvases, attaches each colour to its dominant Figma
- * FILL style proxy when one already exists, and proposes new theme
+ * FILL style styleDefinition when one already exists, and proposes new theme
  * tokens (with semantic names — accent / surface / on-surface / …)
  * for the colours that occur often enough to deserve a slot.
  *
@@ -26,7 +26,9 @@
  *      original node.
  */
 import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
-import { getNodeType, safeChildren, guidToString } from "@higma-document-models/fig/domain";
+import { asSolidPaint } from "@higma-document-models/fig/color";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import { getNodeType, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 
 const PRECISION = 1000;
 
@@ -61,18 +63,19 @@ export function colorHex(color: FigColor): string {
 
 /** Resolve a paint to a colour, folding paint opacity into alpha (matches tokens/color). */
 function paintToColor(paint: FigPaint): FigColor | undefined {
-  if (paint.type !== "SOLID") {
+  const solid = asSolidPaint(paint);
+  if (solid === undefined) {
     return undefined;
   }
-  if (paint.visible === false) {
+  if (solid.visible === false) {
     return undefined;
   }
-  const baseAlpha = paint.color.a;
-  const paintOpacity = typeof paint.opacity === "number" ? paint.opacity : 1;
+  const baseAlpha = solid.color.a;
+  const paintOpacity = typeof solid.opacity === "number" ? solid.opacity : 1;
   return {
-    r: paint.color.r,
-    g: paint.color.g,
-    b: paint.color.b,
+    r: solid.color.r,
+    g: solid.color.g,
+    b: solid.color.b,
     a: clamp01(baseAlpha * paintOpacity),
   };
 }
@@ -109,12 +112,12 @@ export type PaletteEntry = {
    * `colorKey` is `entry.key` and is NOT repeated here.
    */
   readonly aliases: readonly PaletteAlias[];
-  /** Existing FILL proxy whose paint matches this colour, if any. */
-  readonly proxyGuid: string | undefined;
-  readonly proxyName: string | undefined;
+  /** Existing FILL styleDefinition whose paint matches this colour, if any. */
+  readonly styleDefinitionGuid: string | undefined;
+  readonly styleDefinitionName: string | undefined;
   /** Semantic role suggested by relative luminance and usage. */
   readonly suggestedRole: SuggestedRole;
-  /** Slug suggested for a new proxy when none exists. */
+  /** Slug suggested for a new styleDefinition when none exists. */
   readonly suggestedSlug: string;
 };
 
@@ -183,12 +186,12 @@ function suggestRole(color: FigColor, usages: readonly PaintUsage[]): SuggestedR
   const lum = relativeLuminance(color);
   const ch = chroma(color);
   const hueRole = dominantHueRole(color);
+  // Vivid hues default to accent unless they dominate full-frame surfaces.
+  const usedAsBackgroundCount = usages.filter((u) => u.role === "background" || (u.role === "fill" && u.nodeType === "FRAME")).length;
+  if (hueRole && usedAsBackgroundCount >= 4 && ch > 0.5) {
+    return "accent";
+  }
   if (hueRole) {
-    // Vivid hues default to accent unless they dominate full-frame surfaces.
-    const usedAsBackgroundCount = usages.filter((u) => u.role === "background" || (u.role === "fill" && u.nodeType === "FRAME")).length;
-    if (usedAsBackgroundCount >= 4 && ch > 0.5) {
-      return "accent";
-    }
     return hueRole;
   }
   // Achromatic — split by luminance.
@@ -241,10 +244,10 @@ function pushUsage(buckets: Map<string, PaintBucket>, color: FigColor, usage: Pa
 }
 
 function alreadyBoundFor(node: FigNode, role: PaintRole): boolean {
-  // A node whose paint already comes from a shared style proxy does
-  // not need another binding action. Mirrors the renderer's SoT —
-  // styleIdForFill / styleIdForStrokeFill point at the live paint via
-  // the registry, and overwriting the binding adds no information.
+  // A node whose paint already comes from a shared STYLE node does not
+  // need another binding action. styleIdForFill / styleIdForStrokeFill
+  // point at the live paint via the registry, and overwriting the
+  // binding adds no information.
   if (role === "fill" || role === "background") {
     return Boolean(node.styleIdForFill?.guid);
   }
@@ -260,7 +263,7 @@ function alreadyBoundFor(node: FigNode, role: PaintRole): boolean {
  * other than NORMAL is in effect. Multi-paint stacks (image-over-
  * solid, gradient-over-solid, two solids stacked, …) are NOT
  * eligible for fill-style binding — pointing styleIdForFill at a
- * SOLID proxy on such a node would erase the IMAGE / GRADIENT layer
+ * SOLID styleDefinition on such a node would erase the IMAGE / GRADIENT layer
  * the renderer expects on top.
  */
 export function isSingleSolidStack(paints: readonly FigPaint[] | undefined): boolean {
@@ -272,13 +275,13 @@ export function isSingleSolidStack(paints: readonly FigPaint[] | undefined): boo
     return false;
   }
   const sole = visible[0];
-  if (!sole || sole.type !== "SOLID") {
+  if (!sole || asSolidPaint(sole) === undefined) {
     return false;
   }
-  // FigPaintBase.blendMode is already a typed BlendMode | undefined.
+  const blendMode = kiwiEnumName(sole.blendMode, "FigPaint.blendMode");
   // Anything other than the two pass-through-equivalent values means
-  // the paint is materially different from the proxy's flat SOLID.
-  if (sole.blendMode !== undefined && sole.blendMode !== "NORMAL" && sole.blendMode !== "PASS_THROUGH") {
+  // the paint is materially different from the flat SOLID style.
+  if (blendMode !== undefined && blendMode !== "NORMAL" && blendMode !== "PASS_THROUGH") {
     return false;
   }
   return true;
@@ -297,22 +300,22 @@ export function bindablePaintsFor(
   if (alreadyBoundFor(node, role)) {
     return undefined;
   }
+  if (role === "fill" && isSingleSolidStack(node.fillPaints)) {
+    return node.fillPaints;
+  }
   if (role === "fill") {
-    if (isSingleSolidStack(node.fillPaints)) {
-      return node.fillPaints;
-    }
     return undefined;
+  }
+  if (role === "stroke" && isSingleSolidStack(node.strokePaints)) {
+    return node.strokePaints;
   }
   if (role === "stroke") {
-    if (isSingleSolidStack(node.strokePaints)) {
-      return node.strokePaints;
-    }
     return undefined;
   }
+  if (role === "background" && isSingleSolidStack(node.backgroundPaints)) {
+    return node.backgroundPaints;
+  }
   if (role === "background") {
-    if (isSingleSolidStack(node.backgroundPaints)) {
-      return node.backgroundPaints;
-    }
     return undefined;
   }
   return undefined;
@@ -352,20 +355,24 @@ function visitPaintsRole(
   });
 }
 
-function walkForPaints(node: FigNode, buckets: Map<string, PaintBucket>): void {
+function walkForPaints(
+  node: FigNode,
+  buckets: Map<string, PaintBucket>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): void {
   visitPaintsRole(node.fillPaints, "fill", node, buckets);
   visitPaintsRole(node.strokePaints, "stroke", node, buckets);
   visitPaintsRole(node.backgroundPaints, "background", node, buckets);
-  for (const child of safeChildren(node)) {
-    walkForPaints(child, buckets);
+  for (const child of childrenOf(node)) {
+    walkForPaints(child, buckets, childrenOf);
   }
 }
 
-/** Build a colour-key → fill style proxy index from the Internal Only Canvas. */
-function indexFillProxiesByColor(proxies: readonly FigNode[]): ReadonlyMap<string, FigNode> {
+/** Build a colour-key → fill style styleDefinition index from the Internal Only Canvas. */
+function indexFillStyleDefinitionsByColor(styleDefinitions: readonly FigNode[]): ReadonlyMap<string, FigNode> {
   const out = new Map<string, FigNode>();
-  for (const proxy of proxies) {
-    const fp = proxy.fillPaints ?? [];
+  for (const styleDefinition of styleDefinitions) {
+    const fp = styleDefinition.fillPaints ?? [];
     for (const paint of fp) {
       const color = paintToColor(paint);
       if (!color) {
@@ -375,7 +382,7 @@ function indexFillProxiesByColor(proxies: readonly FigNode[]): ReadonlyMap<strin
       if (out.has(key)) {
         continue;
       }
-      out.set(key, proxy);
+      out.set(key, styleDefinition);
     }
   }
   return out;
@@ -472,39 +479,39 @@ function mergedUsages(group: MergedBucket): readonly PaintUsage[] {
 }
 
 /**
- * Resolve which existing FILL proxy (if any) belongs to a merged
- * group. The match is again perceptual — proxies in the file can also
+ * Resolve which existing FILL styleDefinition (if any) belongs to a merged
+ * group. The match is again perceptual — styleDefinitions in the file can also
  * have drifted exactly the way usage paints have. Throws when two
- * different proxies both belong to the group: that is a real conflict
- * in the file's style proxy set and the agent must resolve it before
+ * different styleDefinitions both belong to the group: that is a real conflict
+ * in the file's style styleDefinition set and the agent must resolve it before
  * any plan can name the colour unambiguously.
  */
-function resolveProxyForGroup(
+function resolveStyleDefinitionForGroup(
   group: MergedBucket,
-  proxyByColor: ReadonlyMap<string, FigNode>,
+  styleDefinitionByColor: ReadonlyMap<string, FigNode>,
   tolerance: number,
 ): { readonly node: FigNode | undefined } {
-  // Every proxy whose colour falls inside the group's perceptual
+  // Every styleDefinition whose colour falls inside the group's perceptual
   // radius is a candidate — direct fine-key match and perceptual match
   // are the same test once the radius is non-zero. We always scan the
-  // full proxy set so a second proxy that lies just outside the fine
+  // full styleDefinition set so a second styleDefinition that lies just outside the fine
   // keys but inside the perceptual radius cannot be silently missed.
   const candidates: FigNode[] = [];
   const targetKeys = new Set<string>([group.representative.key, ...group.aliases.map((a) => a.key)]);
-  for (const [key, proxy] of proxyByColor) {
+  for (const [key, styleDefinition] of styleDefinitionByColor) {
     if (targetKeys.has(key)) {
-      candidates.push(proxy);
+      candidates.push(styleDefinition);
       continue;
     }
     if (tolerance <= 0) {
       continue;
     }
-    const proxyColor = firstSolidColor(proxy);
-    if (!proxyColor) {
+    const styleDefinitionColor = firstSolidColor(styleDefinition);
+    if (!styleDefinitionColor) {
       continue;
     }
-    if (colorDistance(proxyColor, group.representative.color) <= tolerance) {
-      candidates.push(proxy);
+    if (colorDistance(styleDefinitionColor, group.representative.color) <= tolerance) {
+      candidates.push(styleDefinition);
     }
   }
   if (candidates.length === 0) {
@@ -514,15 +521,15 @@ function resolveProxyForGroup(
   if (distinct.length > 1) {
     const names = distinct.map((p) => p.name ?? guidToString(p.guid)).join(", ");
     throw new Error(
-      `analysePalette: two FILL proxies match the same merged colour (${colorHex(group.representative.color)}): ${names}. `
-      + `Rename or recolour one of them before running refine-fig — automatic disambiguation would silently lose either proxy.`,
+      `analysePalette: two FILL styleDefinitions match the same merged colour (${colorHex(group.representative.color)}): ${names}. `
+      + `Rename or recolour one of them before running refine-fig — automatic disambiguation would silently lose either styleDefinition.`,
     );
   }
   return { node: distinct[0] };
 }
 
-function firstSolidColor(proxy: FigNode): FigColor | undefined {
-  const fp = proxy.fillPaints ?? [];
+function firstSolidColor(styleDefinition: FigNode): FigColor | undefined {
+  const fp = styleDefinition.fillPaints ?? [];
   for (const paint of fp) {
     const color = paintToColor(paint);
     if (color) {
@@ -558,19 +565,20 @@ function toAlias(bucket: FineBucket): PaletteAlias {
 /**
  * Analyse the palette of a set of frames.
  *
- * @param frames        — top-level frames whose subtree we inspect.
- * @param fillProxies   — children of the Internal Only Canvas whose
+ * @param frames        — top-level frames whose structure we inspect.
+ * @param fillStyleDefinitions   — children of the Internal Only Canvas whose
  *                        styleType is FILL.
  */
 export function analysePalette(
   frames: readonly FigNode[],
-  fillProxies: readonly FigNode[],
+  fillStyleDefinitions: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
   options: AnalysePaletteOptions = {},
 ): PaletteAnalysis {
   const tolerance = options.mergeToleranceSrgb ?? DEFAULT_MERGE_TOLERANCE_SRGB;
   const rawBuckets = new Map<string, PaintBucket>();
   for (const frame of frames) {
-    walkForPaints(frame, rawBuckets);
+    walkForPaints(frame, rawBuckets, childrenOf);
   }
   const fineBuckets: FineBucket[] = [...rawBuckets.entries()].map(([key, b]) => ({
     key,
@@ -578,7 +586,7 @@ export function analysePalette(
     usages: b.usages,
   }));
   const merged = mergeBuckets(fineBuckets, tolerance);
-  const proxyByColor = indexFillProxiesByColor(fillProxies);
+  const styleDefinitionByColor = indexFillStyleDefinitionsByColor(fillStyleDefinitions);
 
   const byRole = new Map<SuggestedRole, PaletteEntry[]>();
   const sorted = [...merged].sort((a, b) => mergedUsages(b).length - mergedUsages(a).length);
@@ -592,15 +600,15 @@ export function analysePalette(
     roleCounts.set(role, ord);
     const baseSlug = ROLE_BASE_SLUG[role];
     const suggestedSlug = ord === 1 ? baseSlug : `${baseSlug}-${ord}`;
-    const { node: proxy } = resolveProxyForGroup(group, proxyByColor, tolerance);
+    const { node: styleDefinition } = resolveStyleDefinitionForGroup(group, styleDefinitionByColor, tolerance);
     const entry: PaletteEntry = {
       key: group.representative.key,
       hex: colorHex(color),
       color,
       usages,
       aliases: group.aliases.map(toAlias),
-      proxyGuid: proxy ? guidToString(proxy.guid) : undefined,
-      proxyName: proxy?.name,
+      styleDefinitionGuid: styleDefinition ? guidToString(styleDefinition.guid) : undefined,
+      styleDefinitionName: styleDefinition?.name,
       suggestedRole: role,
       suggestedSlug,
     };

@@ -5,7 +5,7 @@
  * `letterSpacingKey` (with the same family/style/weight/size) are
  * almost certainly the *same* style entered twice — one with a stray
  * line-height. We surface that as `aliases[]` on the most-used entry
- * so the agent can decide whether to bind both to the same TEXT proxy
+ * so the agent can decide whether to bind both to the same TEXT styleDefinition
  * via the `merge` field on decisions.
  *
  * We never merge automatically: the entries remain distinct in the
@@ -13,8 +13,14 @@
  * primary` is what redirects the bind. Fail-fast — silence is honest.
  */
 import type { FigNode, FigValueWithUnits } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { analyseTypography } from "./text-styles";
-import { fakeFigNode } from "./test-helpers";
+import { fakeFigNode } from "./fig-node-test-fixtures";
+
+const childrenOfFixtureNode = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+}).childrenOfResolvedNode;
 
 function units(value: number, name: "PIXELS" | "PERCENT"): FigValueWithUnits {
   // KiwiEnumValue requires { value, name }; the analyser only reads the
@@ -69,7 +75,7 @@ describe("analyseTypography — near-duplicate detection", () => {
       textNode(14, "hello", { family: "MS Sans Serif", style: "Regular", size: 11, lh: lh12 }),
       textNode(20, "hello", { family: "MS Sans Serif", style: "Regular", size: 11, lh: lh13 }),
     ]);
-    const result = analyseTypography([frame], []);
+    const result = analyseTypography([frame], [], childrenOfFixtureNode);
 
     expect(result.clusters.length).toBe(2);
     const major = result.clusters[0];
@@ -91,7 +97,7 @@ describe("analyseTypography — near-duplicate detection", () => {
       textNode(11, "b", { family: "Helvetica", style: "Regular", size: 12 }),
       textNode(12, "c", { family: "Arial", style: "Regular", size: 18 }),
     ]);
-    const result = analyseTypography([frame], []);
+    const result = analyseTypography([frame], [], childrenOfFixtureNode);
     expect(result.clusters.length).toBe(3);
     for (const c of result.clusters) {
       expect(c.aliases, `cluster ${c.key} must have no aliases`).toEqual([]);
@@ -109,7 +115,7 @@ describe("analyseTypography — near-duplicate detection", () => {
       textNode(13, "x", { family: "MS Sans Serif", style: "Regular", size: 11, lh: lh13 }),
       textNode(14, "x", { family: "MS Sans Serif", style: "Regular", size: 11, lh: lh14 }),
     ]);
-    const result = analyseTypography([frame], []);
+    const result = analyseTypography([frame], [], childrenOfFixtureNode);
     const primary = result.clusters[0];
     if (!primary) {
       throw new Error("expected primary cluster");

@@ -13,8 +13,9 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { createFigSymbolContext } from "@higma-document-io/fig/context";
-import { getNodeType, guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { createFigDocumentContext } from "@higma-document-io/fig/context";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { createWorkerClient } from "./worker-client";
 
@@ -47,8 +48,8 @@ export async function renderFramesViaWorker(
   // worker subprocess loads its own copy from `figPath` and consumes
   // the same SoT internally — we don't pass the context across the
   // process boundary.
-  const ctx = await createFigSymbolContext(bytes);
-  const frames = discoverTopLevelFrames(ctx.roots);
+  const ctx = await createFigDocumentContext(bytes);
+  const frames = discoverTopLevelFrames(ctx.document);
 
   const tmpRoot = join(tmpdir(), `refine-fig-verify-${process.pid}-${Date.now()}`);
   await mkdir(tmpRoot, { recursive: true });
@@ -81,17 +82,17 @@ type DiscoveredFrame = {
   readonly node: FigNode;
 };
 
-function discoverTopLevelFrames(roots: readonly FigNode[]): readonly DiscoveredFrame[] {
+function discoverTopLevelFrames(document: FigKiwiDocumentIndex): readonly DiscoveredFrame[] {
   const out: DiscoveredFrame[] = [];
-  for (const root of roots) {
+  for (const root of document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
-    for (const canvas of safeChildren(root)) {
+    for (const canvas of document.childrenOf(root)) {
       if (getNodeType(canvas) !== "CANVAS" || canvas.internalOnly === true || canvas.visible === false) {
         continue;
       }
-      for (const frame of safeChildren(canvas)) {
+      for (const frame of document.childrenOf(canvas)) {
         const t = getNodeType(frame);
         if (t !== "FRAME") {
           continue;

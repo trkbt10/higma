@@ -18,9 +18,9 @@
       "types": "./src/ir/index.ts",
       "default": "./src/ir/index.ts"
     },
-    "./adapters": {
-      "types": "./src/adapters/index.ts",
-      "default": "./src/adapters/index.ts"
+    "./codecs": {
+      "types": "./src/codecs/index.ts",
+      "default": "./src/codecs/index.ts"
     },
     "./style": {
       "types": "./src/style/index.ts",
@@ -36,8 +36,7 @@
     }
   },
   "dependencies": {
-    "@higma-document-models/fig": "workspace:*",
-    "@higma-primitives/tree": "workspace:*"
+    "@higma-document-models/fig": "workspace:*"
   },
   "higma": {
     "boundary": {

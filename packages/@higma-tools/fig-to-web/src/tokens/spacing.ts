@@ -20,6 +20,7 @@
  * audit flagged them as 85% structural duplicates.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { RadiusToken, SpacingToken } from "./types";
 import { round2 } from "../lib/css-format/numeric";
 
@@ -57,12 +58,11 @@ function visitTree(
   node: FigNode,
   counts: Map<number, number>,
   collect: (node: FigNode, record: (value: number | undefined) => void) => void,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   collect(node, (value) => recordValue(counts, value));
-  for (const child of node.children ?? []) {
-    if (child) {
-      visitTree(child, counts, collect);
-    }
+  for (const child of childrenOf(node)) {
+    visitTree(child, counts, collect, childrenOf);
   }
 }
 
@@ -77,10 +77,11 @@ function tallyTokens<T extends { readonly id: string; readonly value: number }>(
   usageNodes: readonly FigNode[],
   prefix: string,
   collect: (node: FigNode, record: (value: number | undefined) => void) => void,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): ReadonlyMap<string, T> {
   const counts = new Map<number, number>();
   for (const node of usageNodes) {
-    visitTree(node, counts, collect);
+    visitTree(node, counts, collect, childrenOf);
   }
   const tokens = new Map<string, T>();
   for (const [value, hits] of counts) {
@@ -115,13 +116,19 @@ function collectRadii(node: FigNode, record: (value: number | undefined) => void
 }
 
 /** Walk the targeted subtrees and collect spacing tokens. */
-export function buildSpacingTokens(usageNodes: readonly FigNode[]): SpacingTokenTable {
-  return { tokens: tallyTokens<SpacingToken>(usageNodes, "spacing", collectSpacing) };
+export function buildSpacingTokens(
+  usageNodes: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): SpacingTokenTable {
+  return { tokens: tallyTokens<SpacingToken>(usageNodes, "spacing", collectSpacing, childrenOf) };
 }
 
 /** Walk the targeted subtrees and collect corner-radius tokens. */
-export function buildRadiusTokens(usageNodes: readonly FigNode[]): RadiusTokenTable {
-  return { tokens: tallyTokens<RadiusToken>(usageNodes, "radius", collectRadii) };
+export function buildRadiusTokens(
+  usageNodes: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): RadiusTokenTable {
+  return { tokens: tallyTokens<RadiusToken>(usageNodes, "radius", collectRadii, childrenOf) };
 }
 
 /**

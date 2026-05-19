@@ -38,9 +38,9 @@
       "types": "./src/stream.ts",
       "default": "./src/stream.ts"
     },
-    "./test-helpers": {
-      "types": "./src/test-helpers.ts",
-      "default": "./src/test-helpers.ts"
+    "./test-fixtures": {
+      "types": "./src/test-fixtures.ts",
+      "default": "./src/test-fixtures.ts"
     }
   },
   "dependencies": {

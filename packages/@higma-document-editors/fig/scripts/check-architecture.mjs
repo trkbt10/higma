@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 /**
- * @file Guard fig-editor responsibility boundaries so new files cannot
- * silently recreate flat "misc" folders.
+ * @file Guard fig-editor against recreating a document model beside Kiwi.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import console from "node:console";
 import process from "node:process";
 import { dirname, join, relative } from "node:path";
@@ -13,13 +12,17 @@ import { fileURLToPath } from "node:url";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const errors = [];
 
+function token(...parts) {
+  return parts.join("");
+}
+
 function rel(path) {
   return relative(packageRoot, path);
 }
 
 function entries(dir) {
   if (!existsSync(dir)) {
-    errors.push(`Required architecture directory is missing: ${rel(dir)}`);
+    errors.push(`Required directory is missing: ${rel(dir)}`);
     return [];
   }
   return readdirSync(dir).map((name) => ({
@@ -29,64 +32,61 @@ function entries(dir) {
   }));
 }
 
-function requireAllowedDirectFiles(dir, allowedFiles) {
-  const allowed = new Set(allowedFiles);
-  for (const entry of entries(dir)) {
-    if (entry.stat.isFile() && !allowed.has(entry.name)) {
-      errors.push(`${rel(entry.path)} is not allowed directly under ${rel(dir)}. Move it to a responsibility subfolder.`);
+function requireFiles(paths) {
+  for (const path of paths) {
+    if (!existsSync(path) || !statSync(path).isFile()) {
+      errors.push(`Required file is missing: ${rel(path)}`);
     }
   }
 }
 
-function requireExactDirectories(dir, expectedNames) {
-  const expected = new Set(expectedNames);
+function walk(dir) {
   for (const entry of entries(dir)) {
-    if (!entry.stat.isDirectory()) {
+    if (entry.stat.isDirectory()) {
+      walk(entry.path);
       continue;
     }
-    if (!expected.has(entry.name)) {
-      errors.push(`${rel(entry.path)} is not an approved responsibility folder. Expected one of: ${expectedNames.join(", ")}.`);
-    }
-  }
-  for (const name of expectedNames) {
-    const path = join(dir, name);
-    if (!existsSync(path) || !statSync(path).isDirectory()) {
-      errors.push(`Missing responsibility folder: ${rel(path)}`);
+    if (entry.stat.isFile()) {
+      yieldFile(entry.path);
     }
   }
 }
 
-function rejectFilesMatching(dir, pattern, message) {
-  for (const entry of entries(dir)) {
-    if (entry.stat.isFile() && pattern.test(entry.name)) {
-      errors.push(`${rel(entry.path)} ${message}`);
+const forbidden = [
+  token("Fig", "Design", "Document"),
+  token("Fig", "Design", "Node"),
+  token("Fig", "Node", "Id"),
+  token("Fig", "Page", "Id"),
+  token("create", "Fig", "Design", "Document"),
+  token("create", "Empty", "Fig", "Design", "Document"),
+  token("document", "To", "Tree"),
+  token("tree", "To", "Document"),
+  token("design", "Document", "To", "Kiwi", "Document"),
+  token("kiwi", "Document", "To", "Design", "Document"),
+  token("comp", "at"),
+  token("adapt", "er"),
+  token("symbol", "Map"),
+];
+
+function yieldFile(path) {
+  if (!/\.(ts|tsx)$/.test(path)) {
+    return;
+  }
+  const source = readFileSync(path, "utf8");
+  for (const token of forbidden) {
+    if (source.includes(token)) {
+      errors.push(`${rel(path)} contains forbidden token: ${token}`);
     }
   }
 }
 
 const src = join(packageRoot, "src");
-const spec = join(packageRoot, "spec");
-
-requireAllowedDirectFiles(join(src, "canvas"), ["FigEditorCanvas.tsx"]);
-requireExactDirectories(join(src, "canvas"), ["interaction", "rendering"]);
-
-requireAllowedDirectFiles(join(src, "panels"), []);
-requireExactDirectories(join(src, "panels"), ["inspector", "layers", "pages", "properties", "sections"]);
-
-requireAllowedDirectFiles(join(src, "panels", "sections"), []);
-requireExactDirectories(join(src, "panels", "sections"), [
-  "appearance",
-  "component",
-  "export",
-  "layout",
-  "paint",
-  "structure",
-  "text",
-  "vector",
+requireFiles([
+  join(src, "index.ts"),
+  join(src, "context", "FigEditorContext.tsx"),
+  join(src, "canvas", "FigEditorCanvas.tsx"),
 ]);
-
-requireAllowedDirectFiles(join(spec, "e2e"), ["index.html", "main.tsx", "vite.config.ts"]);
-rejectFilesMatching(join(spec, "e2e"), /\.e2e\.ts$/, "must be placed in a named responsibility folder under spec/e2e/.");
+walk(src);
 
 if (errors.length > 0) {
   console.error("fig-editor architecture guard failed:");

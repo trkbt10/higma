@@ -4,7 +4,7 @@
  * average), not reject the row pattern. Asserts the tolerance budget
  * does its job for subpixel-rounded captures.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { NOMINAL_GAP, withSubToleranceGapNoise } from "./fixture";
 

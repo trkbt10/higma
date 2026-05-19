@@ -12,7 +12,7 @@
  *   - autoLayout `direction: "none"` (no children means no inference)
  *   - geometry equals the input rect
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv, DEFAULT_BOX } from "./fixture";
 
 describe("case box-leaf", () => {

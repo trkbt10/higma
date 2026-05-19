@@ -1,52 +1,50 @@
 /**
- * @file ViewportIR → FigDesignDocument (in-memory, ready to export).
+ * @file ViewportIR → Kiwi FigDocumentContext.
  *
- * Walks the IR root frame depth-first, calling `addNode` for every
- * descendant so the resulting document has the same parent-child
- * topology. The page is created empty; the IR root frame becomes a
- * top-level FRAME at (0, 0). Asset bytes from `viewport.assets`
- * become entries in the document's `images` map keyed by the same
- * id used by IR image paints.
- *
- * IR id ↔ FigNodeId mapping is returned alongside the document so
- * round-trip tooling can correlate IR nodes with the resulting Figma
- * tree.
+ * Walks the IR root frame depth-first and appends Kiwi nodeChanges
+ * directly. IR id ↔ FigGuid mapping is returned alongside the context
+ * so round-trip tooling can correlate IR nodes with the resulting
+ * Figma document.
  */
 import {
   addNode,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import type { FigDesignDocument, FigNodeId, FigPageId } from "@higma-document-models/fig/domain";
+import type { FigDocumentContext } from "@higma-document-io/fig";
+import type { FigGuid } from "@higma-document-models/fig/types";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { NodeIR, ViewportIR } from "@higma-bridges/web-fig";
 import { irToSpecGraph } from "./ir-to-spec";
 
 export type BuildDocumentResult = {
-  readonly doc: FigDesignDocument;
-  /** IR id → assigned FigNodeId. Useful for round-trip tracing. */
-  readonly idMap: ReadonlyMap<string, FigNodeId>;
+  readonly context: FigDocumentContext;
+  /** IR id → assigned FigGuid. Useful for round-trip tracing. */
+  readonly idMap: ReadonlyMap<string, FigGuid>;
 };
 
-/** Convert a ViewportIR into a FigDesignDocument plus an IR id → FigNodeId map. */
+/** Convert a ViewportIR into a FigDocumentContext plus an IR id → FigGuid map. */
 export function buildDocument(viewport: ViewportIR): BuildDocumentResult {
-  const initialDoc = createEmptyFigDesignDocument(viewport.source);
-  const docWithAssets = installAssets(initialDoc, viewport.assets);
+  const initialContext = createEmptyFigDocument(viewport.source);
+  const contextWithAssets = installAssets(initialContext, viewport.assets);
   const builderState = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 1 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 1 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = docWithAssets.pages[0]!.id;
-  const idMap = new Map<string, FigNodeId>();
-  const finalDoc = appendIR({
-    doc: docWithAssets,
+  const page = contextWithAssets.document.nodeChanges.find((node) => node.type.name === "CANVAS");
+  if (page === undefined) {
+    throw new Error("buildDocument: createEmptyFigDocument did not create a CANVAS");
+  }
+  const idMap = new Map<string, FigGuid>();
+  const finalContext = appendIR({
+    context: contextWithAssets,
     state: builderState,
-    pageId,
-    parentId: null,
+    pageGuid: page.guid,
+    parentGuid: null,
     irNode: viewport.root,
     idMap,
   });
-  return { doc: finalDoc, idMap };
+  return { context: finalContext, idMap };
 }
 
 /**
@@ -55,13 +53,13 @@ export function buildDocument(viewport: ViewportIR): BuildDocumentResult {
  * folds every viewport's assets into one shared map.
  */
 export function installAssets(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   assets: ViewportIR["assets"],
-): FigDesignDocument {
+): FigDocumentContext {
   if (assets.size === 0) {
-    return doc;
+    return context;
   }
-  const images = new Map(doc.images);
+  const images = new Map(context.images);
   for (const asset of assets.values()) {
     images.set(asset.id, {
       ref: asset.id,
@@ -69,46 +67,49 @@ export function installAssets(
       mimeType: asset.mime,
     });
   }
-  return { ...doc, images };
+  return {
+    ...context,
+    images,
+  };
 }
 
 export type AppendIROptions = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
-  readonly parentId: FigNodeId | null;
+  readonly pageGuid: FigGuid;
+  readonly parentGuid: FigGuid | null;
   readonly irNode: NodeIR;
-  readonly idMap: Map<string, FigNodeId>;
+  readonly idMap: Map<string, FigGuid>;
 };
 
 /**
- * Append an IR subtree under `parentId` (null = page root). Walks
- * children depth-first and threads the updated document through each
- * `addNode` call. Returns the final document; the IR id → FigNodeId
+ * Append an IR subtree under `parentGuid` (null = page root). Walks
+ * children depth-first and threads the updated context through each
+ * `addNode` call. Returns the final context; the IR id → FigGuid
  * map is populated in place via `opts.idMap`.
  *
  * Shared with `buildMultiFigFileBytes`'s per-viewport emit pass.
  */
-export function appendIR(opts: AppendIROptions): FigDesignDocument {
+export function appendIR(opts: AppendIROptions): FigDocumentContext {
   const graph = irToSpecGraph(opts.irNode);
-  const { doc: afterAdd, nodeId } = addNode({
+  const { context: afterAdd, nodeGuid } = addNode({
     state: opts.state,
-    doc: opts.doc,
-    pageId: opts.pageId,
-    parentId: opts.parentId,
+    context: opts.context,
+    pageGuid: opts.pageGuid,
+    parentGuid: opts.parentGuid,
     spec: graph.spec,
   });
-  opts.idMap.set(opts.irNode.id, nodeId);
+  opts.idMap.set(opts.irNode.id, nodeGuid);
 
   if (opts.irNode.kind !== "frame") {
     return afterAdd;
   }
-  return opts.irNode.children.reduce<FigDesignDocument>(
-    (doc, child) => appendIR({
-      doc,
+  return opts.irNode.children.reduce<FigDocumentContext>(
+    (context, child) => appendIR({
+      context,
       state: opts.state,
-      pageId: opts.pageId,
-      parentId: nodeId,
+      pageGuid: opts.pageGuid,
+      parentGuid: nodeGuid,
       irNode: child,
       idMap: opts.idMap,
     }),

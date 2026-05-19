@@ -13,7 +13,7 @@
  * distinct inline-anchor stack (`"Inter", monospace`) so the spec
  * can confirm BOTH paths reach the resolver in source order.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { recordingFontResolver } from "../../test-font-resolver";
 import {
   HOST_FONT_STACK,

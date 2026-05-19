@@ -38,6 +38,7 @@
  *     gaps and aligns against.
  */
 import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { ParentLayout } from "../style/style";
 
 const SIZE_TOLERANCE = 0.5;
@@ -70,13 +71,16 @@ function isRendered(node: FigNode): boolean {
   return node.visible !== false;
 }
 
-function singleRenderedChild(node: FigNode): FigNode | undefined {
-  const children = node.children ?? [];
+function singleRenderedChild(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): FigNode | undefined {
+  const children = childrenOf(node);
   return findOnlyRendered(children, 0, undefined);
 }
 
 function findOnlyRendered(
-  children: readonly (FigNode | undefined | null)[],
+  children: readonly FigNode[],
   index: number,
   found: FigNode | undefined,
 ): FigNode | undefined {
@@ -84,7 +88,7 @@ function findOnlyRendered(
     return found;
   }
   const candidate = children[index];
-  if (!candidate || !isRendered(candidate)) {
+  if (!isRendered(candidate)) {
     return findOnlyRendered(children, index + 1, found);
   }
   if (found) {
@@ -109,7 +113,10 @@ function sizesMatch(parent: FigNode, child: FigNode): boolean {
  * be static, node must not be a root) — this predicate only verifies
  * the node-local conditions.
  */
-export function isTransparentWrapper(node: FigNode): boolean {
+export function isTransparentWrapper(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): boolean {
   if (node.type.name === "TEXT" || node.type.name === "INSTANCE") {
     return false;
   }
@@ -140,7 +147,7 @@ export function isTransparentWrapper(node: FigNode): boolean {
   if (!isPureTranslation(node.transform)) {
     return false;
   }
-  const child = singleRenderedChild(node);
+  const child = singleRenderedChild(node, childrenOf);
   if (!child) {
     return false;
   }
@@ -166,22 +173,31 @@ export type Collapsed = {
  * level — children of a flex parent are never collapsed (see file
  * header).
  */
-export function collapseChain(node: FigNode, parentLayout: ParentLayout): Collapsed {
+export function collapseChain(
+  node: FigNode,
+  parentLayout: ParentLayout,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): Collapsed {
   if (parentLayout === "flex-row" || parentLayout === "flex-column") {
     return { node, offsetX: 0, offsetY: 0 };
   }
-  return walkChain(node, 0, 0);
+  return walkChain(node, 0, 0, childrenOf);
 }
 
-function walkChain(node: FigNode, offsetX: number, offsetY: number): Collapsed {
-  if (!isTransparentWrapper(node)) {
+function walkChain(
+  node: FigNode,
+  offsetX: number,
+  offsetY: number,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): Collapsed {
+  if (!isTransparentWrapper(node, childrenOf)) {
     return { node, offsetX, offsetY };
   }
-  const child = singleRenderedChild(node);
+  const child = singleRenderedChild(node, childrenOf);
   if (!child) {
     return { node, offsetX, offsetY };
   }
   const dx = node.transform?.m02 ?? 0;
   const dy = node.transform?.m12 ?? 0;
-  return walkChain(child, offsetX + dx, offsetY + dy);
+  return walkChain(child, offsetX + dx, offsetY + dy, childrenOf);
 }

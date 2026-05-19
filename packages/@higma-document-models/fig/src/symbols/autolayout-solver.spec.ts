@@ -20,7 +20,7 @@ type Vec = { x: number; y: number };
 
 type ParentOpts = {
   mode?: "VERTICAL" | "HORIZONTAL" | "NONE" | "GRID";
-  padding?: number | { top: number; right: number; bottom: number; left: number };
+  padding?: number;
   spacing?: number;
   counterSpacing?: number;
   primaryAlign?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN" | "SPACE_EVENLY" | "SPACE_AROUND";
@@ -32,9 +32,9 @@ type ParentOpts = {
   name?: string;
 };
 
-function buildAutoLayout(opts: ParentOpts): PrimaryAxisParent["autoLayout"] {
+function buildParentLayoutFields(opts: ParentOpts): Partial<PrimaryAxisParent> {
   if (opts.mode === undefined) {
-    return undefined;
+    return {};
   }
   return {
     stackMode: { name: opts.mode },
@@ -54,16 +54,13 @@ function parent(size: Vec, opts: ParentOpts = {}): PrimaryAxisParent & { name?: 
     name: opts.name,
     proportionsConstrained: opts.proportionsConstrained,
     targetAspectRatio: opts.targetAspectRatio,
-    autoLayout: buildAutoLayout(opts),
+    ...buildParentLayoutFields(opts),
   };
 }
 
 type ChildOpts = { grow?: number; absolute?: boolean; visible?: boolean };
 
-function buildChildLayoutConstraints(opts: ChildOpts): PrimaryAxisChild["layoutConstraints"] {
-  if (opts.grow === undefined && !opts.absolute) {
-    return undefined;
-  }
+function buildChildLayoutFields(opts: ChildOpts): Partial<PrimaryAxisChild> {
   return {
     stackPositioning: opts.absolute ? { name: "ABSOLUTE" } : undefined,
     stackChildPrimaryGrow: opts.grow,
@@ -75,7 +72,7 @@ function child(size: Vec, opts: ChildOpts = {}): PrimaryAxisChild {
     size,
     visible: opts.visible,
     transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    layoutConstraints: buildChildLayoutConstraints(opts),
+    ...buildChildLayoutFields(opts),
   };
 }
 
@@ -95,7 +92,7 @@ describe("resolveAutoLayoutFrame — aspect-lock verification gate", () => {
   });
 
   it("does NOT throw when proportionsConstrained=true on a non-autolayout parent", () => {
-    // The aspect-lock gate runs even for plain FRAMEs (autoLayout=undefined).
+    // The aspect-lock gate runs even for plain FRAMEs (stackMode absent).
     const p = parent({ x: 16, y: 16 }, { proportionsConstrained: true });
     expect(() => resolveAutoLayoutFrame(p, [])).not.toThrow();
   });
@@ -144,7 +141,7 @@ describe("resolveAutoLayoutFrame — aspect-lock verification gate", () => {
 });
 
 describe("applyAutoLayoutPrimaryAxis — distribution", () => {
-  it("returns children unchanged when parent has no autoLayout", () => {
+  it("returns children unchanged when parent has no stackMode", () => {
     const p = parent({ x: 100, y: 100 });
     const cs = [child({ x: 10, y: 10 })];
     expect(applyAutoLayoutPrimaryAxis(p, cs)).toBe(cs);
@@ -182,7 +179,7 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
   // Regression: Figma serialises what the UI calls "Space between"
   // as StackJustify=3 (Kiwi name "SPACE_EVENLY"). The sibling
   // bridge / fig-to-web CSS layer collapses both names to CSS
-  // `space-between`; this spec pins the scene-graph solver to the
+  // `space-between`; this spec pins the solver to the
   // same semantics so headers like the YouTube Mobile UIKit
   // Subscription title bar render with their authored 2 px L/R
   // margins instead of the (n+1)-equal-gap drift.
@@ -225,7 +222,7 @@ describe("applyAutoLayoutPrimaryAxis — distribution", () => {
     const c = child({ x: 50, y: 20 });
     const out = applyAutoLayoutPrimaryAxis(p, [a, abs, c]);
     expect(out[0].transform!.m02).toBeCloseTo(0);
-    // ABSOLUTE child is left at its authored transform (m02=0 from helper).
+    // ABSOLUTE child is left at its authored transform (m02=0 from function).
     expect(out[1]).toBe(abs);
     expect(out[2].transform!.m02).toBeCloseTo(50);
   });

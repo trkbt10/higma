@@ -1,8 +1,8 @@
 /**
- * @file Unit specs for the frameset assembly helpers.
+ * @file Unit specs for the frameset assembly routines.
  *
  * The Playwright capture surface is mocked out — only the pure
- * `assembleFramesetSnapshot` and `matchFrame` helpers are exercised.
+ * `assembleFramesetSnapshot` and `matchFrame` routines are exercised.
  * Why those two: every other piece of the frameset pipeline either
  * runs inside the browser (`probeFrameset`) or is a thin Playwright
  * call (`captureFrameContent`); the fragile, host-side coordinate-

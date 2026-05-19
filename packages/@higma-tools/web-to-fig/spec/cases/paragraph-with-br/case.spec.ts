@@ -3,7 +3,7 @@
  * a literal `\n` between the two text fragments. Without the break
  * the paragraph collapses to one line and the visual output is wrong.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { EXPECTED_TEXT_WITH_BREAK, paragraphWithBr } from "./fixture";
 
 describe("case paragraph-with-br", () => {

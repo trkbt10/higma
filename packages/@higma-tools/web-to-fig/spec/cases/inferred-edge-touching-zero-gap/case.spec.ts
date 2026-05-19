@@ -2,7 +2,7 @@
  * @file Case `inferred-edge-touching-zero-gap` — touching children
  * must produce a row with `gap: 0`, not be rejected as overlapping.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { CHILD_COUNT, withEdgeTouchingChildren } from "./fixture";
 

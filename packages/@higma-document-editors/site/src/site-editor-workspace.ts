@@ -9,12 +9,14 @@ import {
   type SiteEditPayload,
 } from "@higma-document-io/site";
 import {
-  createFigFamilyDesignDocument,
+  createFigFamilyDocumentContext,
   createFigFamilyRenderOptions,
-  type FigFamilyDesignDocument,
+  type FigFamilyDocumentContext,
   type FigFamilyPage,
   type FigFamilyRenderOptions,
 } from "@higma-figma-runtime/react-renderer";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 import {
   createSiteRenderPlan,
   type SiteBreakpointVariant,
@@ -58,8 +60,9 @@ export type SiteEditableUnit = {
 };
 
 export type SiteFigRenderSurface = {
-  readonly document: FigFamilyDesignDocument;
+  readonly context: FigFamilyDocumentContext;
   readonly page: FigFamilyPage;
+  readonly nodes: readonly FigNode[];
   readonly renderOptions?: FigFamilyRenderOptions;
 };
 
@@ -123,7 +126,7 @@ export function createSiteEditorSession(document: SiteDocument): SiteEditorSessi
   return createEditorSession("site", document, document.insights);
 }
 
-type FigFamilyRenderableNode = FigFamilyPage["children"][number];
+type FigFamilyRenderableNode = FigNode;
 
 function variantBelongsToActiveSurface(
   variant: SiteBreakpointVariant,
@@ -150,20 +153,24 @@ function readVariantNodeIds(options: SiteFigRenderSurfaceOptions | null): Readon
 }
 
 function filterNodeForVariantIds(
+  context: FigFamilyDocumentContext,
   node: FigFamilyRenderableNode,
   variantNodeIds: ReadonlySet<string>,
 ): FigFamilyRenderableNode | null {
-  if (variantNodeIds.has(node.id)) {
+  if (node.guid === undefined) {
+    throw new Error(`Site fig render surface found node without guid: ${node.name ?? "(unnamed)"}`);
+  }
+  if (variantNodeIds.has(guidToString(node.guid))) {
     return node;
   }
-  const children = node.children?.flatMap((child) => {
-    const filteredChild = filterNodeForVariantIds(child, variantNodeIds);
+  const children = context.document.childrenOf(node).flatMap((child) => {
+    const filteredChild = filterNodeForVariantIds(context, child, variantNodeIds);
     if (!filteredChild) {
       return [];
     }
     return [filteredChild];
   });
-  if (!children || children.length === 0) {
+  if (children.length === 0) {
     return null;
   }
   return {
@@ -173,6 +180,7 @@ function filterNodeForVariantIds(
 }
 
 function filterPageChildrenForVariants(
+  context: FigFamilyDocumentContext,
   children: readonly FigFamilyRenderableNode[],
   variantNodeIds: ReadonlySet<string> | null,
 ): readonly FigFamilyRenderableNode[] {
@@ -180,7 +188,7 @@ function filterPageChildrenForVariants(
     return children;
   }
   const filteredChildren = children.flatMap((child) => {
-    const filteredChild = filterNodeForVariantIds(child, variantNodeIds);
+    const filteredChild = filterNodeForVariantIds(context, child, variantNodeIds);
     if (!filteredChild) {
       return [];
     }
@@ -192,25 +200,35 @@ function filterPageChildrenForVariants(
   return filteredChildren;
 }
 
+function firstCanvas(context: FigFamilyDocumentContext): FigNode {
+  for (const root of context.document.roots) {
+    if (getNodeType(root) !== "DOCUMENT") {
+      continue;
+    }
+    for (const canvas of context.document.childrenOf(root)) {
+      if (getNodeType(canvas) === "CANVAS") {
+        return canvas;
+      }
+    }
+  }
+  throw new Error("Site editor requires at least one CANVAS in the fig-family Kiwi document");
+}
+
 /** Create the shared fig renderer input for a site document canvas. */
 export function createSiteFigRenderSurface(
   document: SiteDocument,
   options: SiteFigRenderSurfaceOptions | null = null,
 ): SiteFigRenderSurface {
-  const figDocument = createFigFamilyDesignDocument(document.canvas, { canvasVisibility: "all" });
-  const page = figDocument.pages[0];
-  if (!page) {
-    throw new Error("Site editor requires at least one renderable fig-family page");
-  }
+  const context = createFigFamilyDocumentContext(document.canvas);
+  const page = firstCanvas(context);
   const variantNodeIds = readVariantNodeIds(options);
-  const children = filterPageChildrenForVariants(figDocument.pages.flatMap((item) => item.children), variantNodeIds);
+  const pageChildren = context.document.childrenOf(page);
+  const nodes = filterPageChildrenForVariants(context, pageChildren, variantNodeIds);
   return {
-    document: figDocument,
-    page: {
-      ...page,
-      children,
-    },
-    renderOptions: createFigFamilyRenderOptions(figDocument),
+    context,
+    page,
+    nodes,
+    renderOptions: createFigFamilyRenderOptions(context),
   };
 }
 

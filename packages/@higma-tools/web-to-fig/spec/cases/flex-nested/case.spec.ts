@@ -3,7 +3,7 @@
  * carry their own AutoLayoutIR. Asserts the recursion through
  * `normalizeFrame` doesn't lose autolayout on inner subtrees.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { INNER_GAP, OUTER_GAP, nestedFlex } from "./fixture";
 
 describe("case flex-nested", () => {

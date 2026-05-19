@@ -47,7 +47,7 @@ export function decodeSchemaFromBuffer(options: DecodeSchemaOptions): KiwiSchema
 
       return {
         name: fieldName,
-        type: resolveTypeName(typeId, definitions),
+        type: "",
         typeId,
         isArray,
         value,
@@ -57,5 +57,13 @@ export function decodeSchemaFromBuffer(options: DecodeSchemaOptions): KiwiSchema
     definitions.push({ name, kind, fields });
   });
 
-  return { definitions };
+  return {
+    definitions: definitions.map((definition) => ({
+      ...definition,
+      fields: definition.fields.map((field) => ({
+        ...field,
+        type: resolveTypeName(field.typeId, definitions),
+      })),
+    })),
+  };
 }

@@ -56,7 +56,7 @@ describe("html-tree serialize", () => {
     expect(out).toBe(`<meta charset="utf-8" />\n<br />\n<hr />`);
   });
 
-  it("raw nodes pass through verbatim — used for trusted SVG bodies", () => {
+  it("literal nodes pass through verbatim — used for trusted SVG bodies", () => {
     const svg = `<svg viewBox="0 0 1 1"><path d="M0 0L1 1"/></svg>`;
     const out = serialize([el("body", {}, [raw(svg)])]);
     expect(out).toBe(`<body>${svg}</body>`);

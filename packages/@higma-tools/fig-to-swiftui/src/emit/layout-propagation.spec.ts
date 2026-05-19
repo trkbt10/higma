@@ -29,12 +29,51 @@
  * position in the chain. Reordering an existing modifier? Update
  * the test FIRST so the regression cause is explicit.
  */
-import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
-import { serialize } from "../swift-tree";
-import { emitNode } from "./walk";
+import type { FigEffect, FigGradientPaint, FigNode, FigPaint, KiwiEnumValue } from "@higma-document-models/fig/types";
+import {
+  EFFECT_TYPE_VALUES,
+  PAINT_TYPE_VALUES,
+  STROKE_ALIGN_VALUES,
+} from "@higma-document-models/fig/constants";
+import { serialize, type SwiftView } from "../swift-tree";
+import { emitNode as emitNodeWithContext, type EmitContext } from "./walk";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
+}
+
+function solidPaint(
+  color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number },
+  fields: Partial<Pick<FigPaint, "opacity" | "visible" | "blendMode">> = {},
+): FigPaint {
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, ...fields };
+}
+
+function linearGradientPaint(
+  fields: Omit<FigGradientPaint, "type">,
+): FigGradientPaint {
+  return { type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" }, ...fields };
+}
+
+function dropShadow(fields: Omit<FigEffect, "type">): FigEffect {
+  return { type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" }, ...fields };
+}
+
+const INSIDE_STROKE = { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" } as const;
+
+function fixtureChildrenOf(parent: FigNode): readonly FigNode[] {
+  const children: FigNode[] = [];
+  for (const child of parent.children ?? []) {
+    if (child === undefined || child === null) {
+      throw new Error("fixtureChildrenOf: fixture contains an empty child slot");
+    }
+    children.push(child);
+  }
+  return children;
+}
+
+function emitNode(node: FigNode, ctx: EmitContext = {}): SwiftView {
+  return emitNodeWithContext(node, { ...ctx, childrenOf: fixtureChildrenOf });
 }
 
 function rect(partial: Partial<FigNode> = {}): FigNode {
@@ -60,18 +99,17 @@ describe("shape-leaf modifier order", () => {
     const node = rect({
       size: { x: 100, y: 50 },
       cornerRadius: 8,
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
-      strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
+      strokePaints: [solidPaint({ r: 0, g: 0, b: 0, a: 1 })],
       strokeWeight: 2,
-      strokeAlign: "INSIDE",
+      strokeAlign: INSIDE_STROKE,
       effects: [
-        {
-          type: "DROP_SHADOW",
+        dropShadow({
           radius: 4,
           offset: { x: 0, y: 2 },
           color: { r: 0, g: 0, b: 0, a: 0.3 },
           visible: true,
-        },
+        }),
       ],
       opacity: 0.9,
     });
@@ -99,7 +137,7 @@ describe("container modifier order — non-autolayout (ZStack)", () => {
   it("padding → frame → clipShape → background → cornerRadius for plain frame", () => {
     const node = frame({
       size: { x: 200, y: 100 },
-      fillPaints: [{ type: "SOLID", color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0.5, g: 0.5, b: 0.5, a: 1 })],
       cornerRadius: 12,
       stackPadding: 8,
       children: [],
@@ -126,9 +164,9 @@ describe("container modifier order — non-autolayout (ZStack)", () => {
     // shape's `.shadow(...)` extend outside the silhouette.
     const node = frame({
       size: { x: 100, y: 100 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
       effects: [
-        { type: "DROP_SHADOW", radius: 8, offset: { x: 0, y: 4 }, color: { r: 0, g: 0, b: 0, a: 0.3 }, visible: true },
+        dropShadow({ radius: 8, offset: { x: 0, y: 4 }, color: { r: 0, g: 0, b: 0, a: 0.3 }, visible: true }),
       ],
       children: [],
     });
@@ -143,10 +181,10 @@ describe("container modifier order — non-autolayout (ZStack)", () => {
     // shadow to outside-of-silhouette only.
     const node = frame({
       size: { x: 100, y: 100 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 0.7 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 0.7 })],
       cornerRadius: 8,
       effects: [
-        { type: "DROP_SHADOW", radius: 6, offset: { x: 0, y: 3 }, color: { r: 0, g: 0, b: 0, a: 0.4 }, visible: true },
+        dropShadow({ radius: 6, offset: { x: 0, y: 3 }, color: { r: 0, g: 0, b: 0, a: 0.4 }, visible: true }),
       ],
       children: [],
     });
@@ -171,12 +209,12 @@ describe("container modifier order — non-autolayout (ZStack)", () => {
     const child1 = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 50, y: 50 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const child2 = rect({
       guid: { sessionID: 1, localID: 3 },
       size: { x: 50, y: 50 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 1, b: 0, a: 1 })],
     });
     const multi = frame({
       size: { x: 100, y: 100 },
@@ -204,7 +242,7 @@ describe("frame clip propagation", () => {
     // FRAME gets `.clipShape(...)`, GROUP doesn't.
     const fnode = frame({
       size: { x: 100, y: 100 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
       children: [],
     });
     const gnode: FigNode = {
@@ -225,7 +263,7 @@ describe("frame clip propagation", () => {
     // FRAME-like behaviour (autolayout, padding, etc.).
     const node = frame({
       size: { x: 100, y: 100 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
       frameMaskDisabled: true,
       children: [],
     });
@@ -237,7 +275,7 @@ describe("frame clip propagation", () => {
     const node = frame({
       size: { x: 100, y: 100 },
       cornerRadius: 16,
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
       children: [],
     });
     const src = serialize(emitNode(node));
@@ -250,7 +288,7 @@ describe("ZStack absolute children carry their own offset", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 30, y: 30 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
       transform: { m00: 1, m01: 0, m02: 12, m10: 0, m11: 1, m12: 8 },
     });
     const node = frame({
@@ -275,7 +313,7 @@ describe("HStack vs VStack sets primary axis correctly", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 30, y: 30 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const node = frame({
       size: { x: 200, y: 60 },
@@ -296,7 +334,7 @@ describe("HStack vs VStack sets primary axis correctly", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 30, y: 30 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const node = frame({
       size: { x: 100, y: 200 },
@@ -321,7 +359,7 @@ describe("autolayout HStack child sizing", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 100, y: 40 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
       stackChildPrimaryGrow: 1,
     });
     const node = frame({
@@ -340,7 +378,7 @@ describe("autolayout HStack child sizing", () => {
       ...rect({
         guid: { sessionID: 1, localID: 2 },
         size: { x: 50, y: 30 },
-        fillPaints: [{ type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } }],
+        fillPaints: [solidPaint({ r: 0, g: 1, b: 0, a: 1 })],
       }),
       stackChildAlignSelf: enumName("STRETCH"),
     } as FigNode;
@@ -406,7 +444,7 @@ describe("ZStack alignment vs .frame alignment", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 30, y: 30 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const node = frame({ size: { x: 200, y: 100 }, children: [child] });
     const src = serialize(emitNode(node));
@@ -423,7 +461,7 @@ describe("fixed-size primitives don't grow with parent", () => {
   it("RECTANGLE has explicit frame at authored size", () => {
     const node = rect({
       size: { x: 64, y: 32 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
     });
     const src = serialize(emitNode(node));
     expect(src).toContain(".frame(width: 64, height: 32, alignment: .topLeading)");
@@ -440,15 +478,14 @@ describe("multi-paint fills", () => {
     const node = rect({
       size: { x: 100, y: 100 },
       fillPaints: [
-        { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, visible: true },
-        {
-          type: "GRADIENT_LINEAR",
-          gradientStops: [
+        solidPaint({ r: 1, g: 0, b: 0, a: 1 }, { visible: true }),
+        linearGradientPaint({
+          stops: [
             { position: 0, color: { r: 0, g: 0, b: 1, a: 1 } },
             { position: 1, color: { r: 0, g: 1, b: 0, a: 1 } },
           ],
           transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-        },
+        }),
       ],
     });
     const src = serialize(emitNode(node));
@@ -475,7 +512,7 @@ describe("background silhouette tracks the foreground clip", () => {
     const node = frame({
       size: { x: 120, y: 44 },
       cornerRadius: 12,
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 0.478, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 0.478, b: 1, a: 1 })],
       children: [],
     });
     const src = serialize(emitNode(node));
@@ -490,7 +527,7 @@ describe("background silhouette tracks the foreground clip", () => {
   it("non-rounded frame: background uses Rectangle silhouette", () => {
     const node = frame({
       size: { x: 100, y: 50 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
       children: [],
     });
     const src = serialize(emitNode(node));
@@ -513,7 +550,7 @@ describe("rasterized subtree short-circuit", () => {
       // Loud fill that the rasterized leaf MUST NOT show — if the
       // emit accidentally recurses, the SOLID red would still
       // appear in the output.
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const map = new Map<string, string>([["1:42", "card-of-spades"]]);
     const src = serialize(emitNode(node, { rasterizedSubtrees: map }));
@@ -529,7 +566,7 @@ describe("rasterized subtree short-circuit", () => {
     const node = rect({
       guid: { sessionID: 1, localID: 42 },
       size: { x: 50, y: 30 },
-      fillPaints: [{ type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 0, g: 1, b: 0, a: 1 })],
     });
     const map = new Map<string, string>([["999:0", "unrelated"]]);
     const src = serialize(emitNode(node, { rasterizedSubtrees: map }));
@@ -546,7 +583,7 @@ describe("rasterized subtree short-circuit", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 100 },
       size: { x: 30, y: 30 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
     });
     const parent = frame({
       guid: { sessionID: 1, localID: 1 },
@@ -574,7 +611,7 @@ describe("rotation applies anchor: topLeading + offset placement", () => {
     const child = rect({
       guid: { sessionID: 1, localID: 2 },
       size: { x: 50, y: 20 },
-      fillPaints: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+      fillPaints: [solidPaint({ r: 1, g: 0, b: 0, a: 1 })],
       transform: {
         // 30 degrees CW: cos≈0.866, sin≈0.5
         m00: 0.866, m01: -0.5, m02: 30,

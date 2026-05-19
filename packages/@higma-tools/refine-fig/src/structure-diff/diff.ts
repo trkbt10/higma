@@ -12,7 +12,7 @@
  *   - missing       — nodeGuid present in `before` but absent in `after`
  *                     (and not because it became an INSTANCE descendant).
  *   - added         — nodeGuid present in `after` only. Expected for
- *                     new style proxies.
+ *                     new style styleDefinitions.
  *   - parent-moved  — parentIndex.guid changed between before/after.
  *   - type-changed  — node.type.name changed (the legitimate cases:
  *                     promoted SYMBOL exemplar, INSTANCE-rewritten
@@ -20,8 +20,8 @@
  *   - image-fill-lost   — node had an IMAGE paint before, doesn't
  *                          after.
  *   - image-fill-orphan — node still has an IMAGE paint, but its
- *                          `imageRef` no longer resolves to a stored
- *                          image in the file.
+ *                          `Paint.image.hash` no longer resolves to a
+ *                          stored image in the file.
  *   - blob-rewired      — fillGeometry / strokeGeometry commandsBlob
  *                          index changed (different shape encoded).
  *
@@ -31,6 +31,8 @@
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { LoadedFigFile } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
+import { asImagePaint } from "@higma-document-models/fig/color";
+import { getImageHash } from "@higma-document-renderers/fig/paint";
 
 export type StructureDelta =
   | { readonly kind: "missing"; readonly nodeGuid: string; readonly nodeName: string; readonly typeName: string }
@@ -177,11 +179,12 @@ function imageRefsOf(node: FigNode): readonly string[] {
   }
   const refs: string[] = [];
   for (const paint of fp) {
-    if (paint.type !== "IMAGE") {
+    const image = asImagePaint(paint);
+    if (image === undefined) {
       continue;
     }
-    const ref = paint.imageRef;
-    if (typeof ref === "string" && ref.length > 0) {
+    const ref = getImageHash(image);
+    if (ref !== null && ref.length > 0) {
       refs.push(ref);
     }
   }

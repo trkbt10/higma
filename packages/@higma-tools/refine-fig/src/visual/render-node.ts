@@ -1,12 +1,12 @@
 /**
- * @file Render any FigNode subtree to SVG / PNG with a content-keyed
+ * @file Render any FigNode structure to SVG / PNG with a content-keyed
  * memoization layer.
  *
  * The renderer is the same `renderFigToSvg` the verify-fidelity
  * pipeline uses; we only change the entry shape so a caller can
  * render *any* node in the document, not just top-level frames. The
  * rasterised PNG width is clamped (default 256px) so a perceptual
- * hash can be computed cheaply over thousands of subtrees without
+ * hash can be computed cheaply over thousands of structures without
  * blowing memory.
  *
  * Memoization key: a stable hash over the node's GUID *plus* the
@@ -17,7 +17,7 @@
  * so a simple reference-equality cache is enough.
  */
 import { createHash } from "node:crypto";
-import { renderFigToSvg } from "@higma-document-renderers/fig/svg";
+import { renderFigToSvg, requireFigNodeViewport } from "@higma-document-renderers/fig/svg";
 import {
   createCachingFontLoader,
   collectFontQueries,
@@ -26,12 +26,12 @@ import {
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { Resvg } from "@resvg/resvg-js";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { guidToString, safeChildren } from "@higma-document-models/fig/domain";
-import { figRawResources, type FigSymbolContext } from "@higma-document-io/fig/context";
+import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { figDocumentResources, type FigDocumentContext } from "@higma-document-io/fig/context";
 
-// The renderer accepts the full `FigSymbolContext` SoT (owned by
+// The renderer accepts the full `FigDocumentContext` SoT (owned by
 // `@higma-document-io/fig/context`) — it reads `blobs`, `images`, and
-// `symbolMap` from it. Consumers must import `FigSymbolContext` directly
+// SymbolResolver from it. Consumers must import `FigDocumentContext` directly
 // from its origin package; this module deliberately does not republish it
 // under a `NodeRenderContext` alias.
 
@@ -44,7 +44,7 @@ export type RenderedNode = {
 };
 
 export type RenderOptions = {
-  /** Maximum raster width. Subtrees wider than this are scaled. Default 256. */
+  /** Maximum raster width. Structures wider than this are scaled. Default 256. */
   readonly maxRasterWidth?: number;
 };
 
@@ -60,7 +60,7 @@ export type NodeRenderer = {
  * loader and renderer are shared across every render so the OpenType
  * cache hits across calls.
  */
-export function createNodeRenderer(ctx: FigSymbolContext): NodeRenderer {
+export function createNodeRenderer(ctx: FigDocumentContext): NodeRenderer {
   const cache: Cache = new Map();
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
   const counter = { hits: 0, misses: 0 };
@@ -76,29 +76,29 @@ export function createNodeRenderer(ctx: FigSymbolContext): NodeRenderer {
       return undefined;
     }
     const max = options.maxRasterWidth ?? 256;
-    const key = cacheKey(node, max);
+    const key = cacheKey(node, max, ctx.document.childrenOf);
     const cached = cache.get(key);
     if (cached) {
       counter.hits = counter.hits + 1;
       return cached;
     }
     counter.misses = counter.misses + 1;
-    // Pre-flight: refuse to render subtrees that contain TEXT whose
+    // Pre-flight: refuse to render structures that contain TEXT whose
     // font cannot be resolved by the configured loader. The renderer
     // itself throws on missing fonts, but resvg-js can panic at a
     // deeper layer when partially-resolvable fonts are encountered;
     // a panic from native code crashes the host process. Pre-checking
     // keeps the workbench loop alive so the agent gets every reviewable
     // candidate.
-    const missing = await unresolvableFonts(node, fontLoader);
+    const missing = await unresolvableFonts(node, fontLoader, ctx);
     if (missing) {
-      throw new Error(`createNodeRenderer: subtree references font "${missing}" which the host font loader cannot resolve`);
+      throw new Error(`createNodeRenderer: structure references font "${missing}" which the host font loader cannot resolve`);
     }
     const result = await renderFigToSvg([node], {
       width: node.size.x,
       height: node.size.y,
-      ...figRawResources(ctx),
-      normalizeRootTransform: true,
+      viewport: requireFigNodeViewport(node, "createNodeRenderer.render"),
+      ...figDocumentResources(ctx),
       fontLoader,
     });
     const svg = String(result.svg);
@@ -126,7 +126,7 @@ export function createNodeRenderer(ctx: FigSymbolContext): NodeRenderer {
 }
 
 /**
- * Walk the subtree and ask the font loader about every distinct
+ * Walk the structure and ask the font loader about every distinct
  * `(family, weight, style)` referenced by a TEXT node. Returns the
  * first family that the loader cannot satisfy, or `undefined` when
  * every TEXT-required face resolves.
@@ -134,21 +134,20 @@ export function createNodeRenderer(ctx: FigSymbolContext): NodeRenderer {
  * Pre-flighting before resvg avoids a class of native-side panics
  * triggered by partially-resolvable fonts: the renderer's own
  * `loadFont` call can succeed for one weight while resvg later
- * panics on a different weight referenced inside the same subtree.
+ * panics on a different weight referenced inside the same structure.
  * Asking the loader first short-circuits that whole code path.
  *
- * Tree-walking + override + INSTANCE traversal is delegated to the
+ * Document traversal + override + INSTANCE traversal is delegated to the
  * canonical `collectFontQueries` SoT in
  * `@higma-document-models/fig/font` — re-implementing it here would
  * drift on edge cases the SoT spec already covers.
  */
-async function unresolvableFonts(node: FigNode, loader: FontLoader): Promise<string | undefined> {
-  // refine-fig's render-node entry point operates on a single subtree
-  // without a separate symbol map (INSTANCE traversal happens at the
-  // workbench layer). Pass `roots: [node]` and no symbolMap; SYMBOLs
-  // referenced from inside a TEXT node will surface as override
-  // entries, which `collectFontQueries` walks too.
-  const { queries } = collectFontQueries({ roots: [node] });
+async function unresolvableFonts(node: FigNode, loader: FontLoader, ctx: FigDocumentContext): Promise<string | undefined> {
+  const { queries } = collectFontQueries({
+    roots: [node],
+    symbolResolver: ctx.symbolResolver,
+    childrenOf: ctx.document.childrenOf,
+  });
   for (const query of queries) {
     if (!query.family) {
       continue;
@@ -171,7 +170,11 @@ function svgToPng(svg: string, width: number): Uint8Array {
   return new Uint8Array(png.buffer, png.byteOffset, png.byteLength);
 }
 
-function cacheKey(node: FigNode, maxRasterWidth: number): string {
+function cacheKey(
+  node: FigNode,
+  maxRasterWidth: number,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): string {
   // Include guid + size + a structural digest so swap-out of a single
   // descendant invalidates the cache.
   const guid = guidToString(node.guid);
@@ -180,13 +183,14 @@ function cacheKey(node: FigNode, maxRasterWidth: number): string {
   digest.update("|");
   digest.update(String(maxRasterWidth));
   digest.update("|");
-  appendStructuralDigest(node, digest, 0);
+  appendStructuralDigest(node, digest, childrenOf, 0);
   return `${guid}@${maxRasterWidth}:${digest.digest("hex").slice(0, 16)}`;
 }
 
 function appendStructuralDigest(
   node: FigNode,
   digest: { update: (s: string) => unknown },
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
   depth: number,
 ): void {
   digest.update(node.type?.name ?? "?");
@@ -201,9 +205,9 @@ function appendStructuralDigest(
   if (depth > 6) {
     return;
   }
-  const kids = safeChildren(node);
+  const kids = childrenOf(node);
   digest.update(`<${kids.length}>`);
   for (const child of kids) {
-    appendStructuralDigest(child, digest, depth + 1);
+    appendStructuralDigest(child, digest, childrenOf, depth + 1);
   }
 }

@@ -3,7 +3,7 @@
  * padding sides must be derived independently. Asserts none collapses
  * into a single value.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   BOTTOM_PADDING,

@@ -7,10 +7,14 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { findCanvas, type FigSymbolContext } from "@higma-document-io/fig/context";
+import {
+  createFigDocumentContext,
+  findCanvas,
+  type FigDocumentContext,
+} from "@higma-document-io/fig/context";
+import { guidToString } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type { CliOptions } from "./args";
-import { loadFigSource } from "../fig-source/load";
 import { emitFromFrames, listFrameTargets, pickFrameByName } from "../emit";
 
 export type CliConsole = {
@@ -23,30 +27,40 @@ const DEFAULT_CONSOLE: CliConsole = {
   error: (message: string) => process.stderr.write(`${message}\n`),
 };
 
+function childrenOfGodotEmitNode(source: FigDocumentContext): (node: FigNode) => readonly FigNode[] {
+  return (node) => {
+    const kiwiNode = source.document.nodesByGuid.get(guidToString(node.guid));
+    if (kiwiNode === node) {
+      return source.document.childrenOf(node);
+    }
+    return source.symbolResolver.childrenOfResolvedNode(node);
+  };
+}
+
 async function readBuffer(path: string): Promise<Uint8Array> {
   const buffer = await readFile(resolve(path));
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 }
 
-function selectFrames(source: FigSymbolContext, options: CliOptions): readonly FigNode[] {
-  const canvas = findCanvas(source.tree.roots, options.page);
+function selectFrames(source: FigDocumentContext, options: CliOptions): readonly FigNode[] {
+  const canvas = findCanvas(source.document, options.page);
   if (!canvas) {
     throw new Error(`No user-visible page named "${options.page}" found in fig file`);
   }
-  const all = listFrameTargets(canvas);
+  const all = listFrameTargets(source.document, canvas);
   if (all.length === 0) {
     throw new Error(`Page "${options.page}" has no frame-like top-level children to emit`);
   }
   if (options.mode === "list") {
     return all;
   }
-  if (options.mode === "single") {
-    if (!options.frame) {
-      throw new Error("internal: mode=single without --frame value");
-    }
-    return [pickFrameByName(all, options.frame)];
+  if (options.mode !== "single") {
+    return all;
   }
-  return all;
+  if (!options.frame) {
+    throw new Error("internal: mode=single without --frame value");
+  }
+  return [pickFrameByName(all, options.frame)];
 }
 
 /**
@@ -58,7 +72,7 @@ function selectFrames(source: FigSymbolContext, options: CliOptions): readonly F
 export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_CONSOLE): Promise<void> {
   output.info(`Loading ${options.input}`);
   const buffer = await readBuffer(options.input);
-  const source = await loadFigSource(buffer);
+  const source = await createFigDocumentContext(buffer);
 
   const frames = selectFrames(source, options);
 
@@ -78,7 +92,11 @@ export async function runCli(options: CliOptions, output: CliConsole = DEFAULT_C
   const result = emitFromFrames(frames, {
     sharedTheme: options.sharedTheme,
     themeName: options.themeName,
-    emit: { symbolMap: source.symbolMap, blobs: source.blobs },
+    emit: {
+      symbolResolver: source.symbolResolver,
+      childrenOf: childrenOfGodotEmitNode(source),
+      blobs: source.blobs,
+    },
   });
 
   for (const file of result.files) {

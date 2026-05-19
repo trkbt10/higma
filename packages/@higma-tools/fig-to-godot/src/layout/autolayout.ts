@@ -230,24 +230,8 @@ function isAutolayoutFrame(node: FigNode): boolean {
   return mode === "HORIZONTAL" || mode === "VERTICAL";
 }
 
-/**
- * Read the `stackWrap` enum's `.name` field, normalising the
- * runtime shape that may be either a Kiwi enum struct or a plain
- * string. The model declares the field as `boolean` but the parser
- * actually emits the Kiwi-enum form (`{ value, name }`).
- */
 function readWrapName(raw: FigNode["stackWrap"]): string | undefined {
-  if (raw === undefined || raw === null) {
-    return undefined;
-  }
-  if (typeof raw === "boolean") {
-    return raw ? "WRAP" : "NO_WRAP";
-  }
-  if (typeof raw === "object" && "name" in raw) {
-    const name = (raw as { name: unknown }).name;
-    return typeof name === "string" ? name : undefined;
-  }
-  return undefined;
+  return raw?.name;
 }
 
 /**

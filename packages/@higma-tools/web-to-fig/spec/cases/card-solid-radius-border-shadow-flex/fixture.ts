@@ -20,7 +20,7 @@ import { withSolidBg } from "../solid-bg/fixture";
 /** Compose: solid bg + uniform radius + uniform border + drop shadow + flex column. */
 export function elevatedCard(): RawElement {
   // Apply primitives in source order. Last applied wins for any
-  // computedStyle key two helpers touch — none of these helpers
+  // computedStyle key two functions touch — none of these functions
   // overlap on the same key in this composition.
   return withFlexColumn(
     withDropShadow(

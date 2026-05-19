@@ -87,12 +87,7 @@ export const symbolInstanceRule: LintRule = (ctx, emit) => {
     }
     const parentKey = guidKey(node.parentIndex?.guid);
     if (parentKey) {
-      const list = childrenByParent.get(parentKey);
-      if (list) {
-        list.push({ node, index });
-      } else {
-        childrenByParent.set(parentKey, [{ node, index }]);
-      }
+      registerChildByParent(childrenByParent, parentKey, { node, index });
     }
   }
 
@@ -105,7 +100,7 @@ export const symbolInstanceRule: LintRule = (ctx, emit) => {
     if (node.type?.name !== "INSTANCE") {
       continue;
     }
-    const symbolRef = node.symbolData?.symbolID ?? node.symbolData?.overriddenSymbolID;
+    const symbolRef = node.overriddenSymbolID ?? node.symbolData?.symbolID;
     const symKey = guidKey(symbolRef);
     if (!symKey) {
       continue;
@@ -164,7 +159,7 @@ export const symbolInstanceRule: LintRule = (ctx, emit) => {
         severity: "error",
         path: `${describeNode(node, index)}.symbolData.symbolID`,
         message: "INSTANCE has no symbolData.symbolID",
-        remediation: "Use `addNode({state, doc, pageId, parentId, spec: {type: 'INSTANCE', symbolId, ...}})` with a valid symbol GUID",
+        remediation: "Use `addNode({ state, context, pageGuid, parentGuid, spec: { type: 'INSTANCE', symbolId, ... } })` with a valid symbol GUID",
       });
       continue;
     }
@@ -190,3 +185,16 @@ export const symbolInstanceRule: LintRule = (ctx, emit) => {
     }
   }
 };
+
+function registerChildByParent(
+  childrenByParent: Map<string, Array<{ node: FigNode; index: number }>>,
+  parentKey: string,
+  entry: { node: FigNode; index: number },
+): void {
+  const list = childrenByParent.get(parentKey);
+  if (!list) {
+    childrenByParent.set(parentKey, [entry]);
+    return;
+  }
+  list.push(entry);
+}

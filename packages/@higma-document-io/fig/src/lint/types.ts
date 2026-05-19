@@ -109,7 +109,7 @@ export type LintContext = {
   readonly schema: KiwiSchema | null;
   /** Decoded message, when schema decoding succeeded. */
   readonly message: Record<string, unknown> | null;
-  /** nodeChanges array from the message, normalised. */
+  /** nodeChanges array from the message. */
   readonly nodeChanges: readonly FigNode[];
   /** Image entries discovered in the ZIP. */
   readonly images: ReadonlyMap<string, FigPackageImage>;

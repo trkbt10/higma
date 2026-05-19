@@ -11,7 +11,7 @@
  * surrounding `<p>`'s and derive a noisy row/column; without (2) the
  * shadow would silently vanish on every floated thumbnail.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { floatedImageWithShadow } from "./fixture";
 
 describe("case float-image-shadow", () => {

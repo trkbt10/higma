@@ -1,42 +1,26 @@
 /**
  * @file Image reference integrity rule.
  *
- * Image paints carry a `imageRef` (hex string) that must resolve to
+ * Image paints carry `image.hash` bytes that must resolve to
  * an entry in the ZIP's `images/` directory. The lint flags
  * dangling references and orphaned image entries on both sides.
  */
 
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
+import { asImagePaint } from "@higma-document-models/fig/color";
 import type { LintRule } from "../types";
 
 function bytesToHex(bytes: readonly number[]): string {
   return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Read the image ref string from any of the shapes a parsed
- * FigPaint can carry. The Kiwi binary stores `image.hash` as a
- * byte array, the project's encoder also writes `imageRef` as a
- * hex string, and round-tripped buffers may surface either.
- * Falling back to the byte array keeps the rule honest against
- * real Figma exports.
- */
-function imageRef(paint: FigPaint): string | null {
-  const wide = paint as {
-    image?: { hash?: string | readonly number[] };
-    imageRef?: string;
-  };
-  const hashField = wide.image?.hash;
-  if (typeof hashField === "string" && hashField.length > 0) {
-    return hashField;
+function imageHash(paint: FigPaint): string | null {
+  const imagePaint = asImagePaint(paint);
+  if (imagePaint === undefined) {
+    return null;
   }
-  if (Array.isArray(hashField) && hashField.length > 0) {
-    return bytesToHex(hashField);
-  }
-  if (typeof wide.imageRef === "string" && wide.imageRef.length > 0) {
-    return wide.imageRef;
-  }
-  return null;
+  const hash = imagePaint.image?.hash;
+  return hash && hash.length > 0 ? bytesToHex(hash) : null;
 }
 
 function collectImagePaints(nodes: readonly FigNode[]): readonly { ref: string; nodeIndex: number; paintIndex: number }[] {
@@ -44,10 +28,7 @@ function collectImagePaints(nodes: readonly FigNode[]): readonly { ref: string; 
   for (const [nodeIndex, node] of nodes.entries()) {
     const paints = [...(node.fillPaints ?? []), ...(node.strokePaints ?? []), ...(node.backgroundPaints ?? [])];
     for (const [paintIndex, paint] of paints.entries()) {
-      if (paint.type !== "IMAGE") {
-        continue;
-      }
-      const ref = imageRef(paint);
+      const ref = imageHash(paint);
       if (ref) {
         result.push({ ref, nodeIndex, paintIndex });
       }
@@ -67,16 +48,18 @@ export const imageRefsRule: LintRule = (ctx, emit) => {
     referencedRefs.add(item.ref);
   }
 
+  if (!ctx.isZip && referenced.length > 0) {
+    emit({
+      ruleId: "fig.image.references",
+      severity: "error",
+      path: "input",
+      message: `${referenced.length} image paint(s) reference images, but the input is not a ZIP package`,
+      remediation: "Wrap the canvas data in the ZIP container so images/<ref> entries can resolve",
+    });
+    return;
+  }
+
   if (!ctx.isZip) {
-    if (referenced.length > 0) {
-      emit({
-        ruleId: "fig.image.references",
-        severity: "error",
-        path: "input",
-        message: `${referenced.length} image paint(s) reference images, but the input is not a ZIP package`,
-        remediation: "Wrap the canvas data in the ZIP container so images/<ref> entries can resolve",
-      });
-    }
     return;
   }
 
@@ -85,9 +68,9 @@ export const imageRefsRule: LintRule = (ctx, emit) => {
       emit({
         ruleId: "fig.image.references",
         severity: "error",
-        path: `nodeChanges[${item.nodeIndex}].fillPaints[${item.paintIndex}].imageRef`,
+        path: `nodeChanges[${item.nodeIndex}].fillPaints[${item.paintIndex}].image.hash`,
         message: `Image ref ${item.ref} is not present in the ZIP's images/ directory`,
-        remediation: "Add the missing image bytes via addImage(doc, ref, image) or fix the imageRef",
+        remediation: "Add the missing image bytes to images/<hash> or fix Paint.image.hash",
       });
     }
   }

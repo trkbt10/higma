@@ -1,53 +1,43 @@
-/**
- * @file Tests for explicit state page construction.
- */
+/** @file Spec for page construction over Kiwi nodeChanges. */
 
-import { toPageId } from "@higma-document-models/fig/domain";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { addPage, duplicatePage } from "./page-manager";
-
-function createDocument(): FigDesignDocument {
-  return {
-    name: "Document",
-    pages: [{
-      id: toPageId("0:1"),
-      name: "Page",
-      backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
-      children: [],
-    }],
-    components: new Map(),
-    styles: new Map(),
-    images: new Map(),
-    blobs: new Map(),
-    metadata: {},
-  };
-}
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import { addPage, createEmptyFigDocument } from "./page-manager";
 
 describe("page creation operations", () => {
-  it("requires explicit state and page name when adding pages", () => {
-    const state = createFigBuilderState({
-      nodeIdCounter: { sessionID: 1, nextLocalID: 1 },
-      pageIdCounter: { sessionID: 0, nextLocalID: 5 },
-    });
-
-    const result = addPage({ state, doc: createDocument(), name: "Explicit Page" });
-
-    expect(result.pageId).toBe("0:5");
-    expect(result.doc.pages[1]?.name).toBe("Explicit Page");
+  it("creates a DOCUMENT plus first CANVAS directly in nodeChanges", () => {
+    const context = createEmptyFigDocument("Page");
+    expect(context.document.nodeChanges.map((node) => getNodeType(node))).toEqual(["DOCUMENT", "CANVAS"]);
+    const canvas = context.document.nodeChanges[1];
+    expect(canvas?.name).toBe("Page");
+    expect(canvas?.parentIndex?.guid).toEqual({ sessionID: 0, localID: 0 });
   });
 
-  it("fails when duplicate page cannot find the source page", () => {
+  it("requires explicit state and page name when adding pages", () => {
     const state = createFigBuilderState({
-      nodeIdCounter: { sessionID: 1, nextLocalID: 1 },
-      pageIdCounter: { sessionID: 0, nextLocalID: 5 },
+      nodeGuidCounter: { sessionID: 1, nextLocalID: 1 },
+      pageGuidCounter: { sessionID: 0, nextLocalID: 5 },
     });
+    const base = createEmptyFigDocument("Page");
+    const result = addPage({ state, context: base, name: "Explicit Page" });
+    const pageKey = guidToString(result.pageGuid);
+    expect(pageKey).toBe("0:5");
+    expect(result.context.document.nodesByGuid.get(pageKey)?.name).toBe("Explicit Page");
+  });
 
-    expect(() => duplicatePage({
+  it("marks explicitly internal canvases through Kiwi fields", () => {
+    const state = createFigBuilderState({
+      nodeGuidCounter: { sessionID: 1, nextLocalID: 1 },
+      pageGuidCounter: { sessionID: 0, nextLocalID: 5 },
+    });
+    const result = addPage({
       state,
-      doc: createDocument(),
-      pageId: toPageId("0:99"),
-      name: "Duplicate",
-    })).toThrow("duplicatePage failed: page 0:99 was not found");
+      context: createEmptyFigDocument("Page"),
+      name: "Internal",
+      internalOnly: true,
+    });
+    const page = result.context.document.nodesByGuid.get(guidToString(result.pageGuid));
+    expect(page?.internalOnly).toBe(true);
+    expect(page?.parentIndex?.position).toBe("~");
   });
 });

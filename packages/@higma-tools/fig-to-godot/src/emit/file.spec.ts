@@ -8,6 +8,17 @@ function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name } as KiwiEnumValue<T>;
 }
 
+function fixtureChildrenOf(node: FigNode): readonly FigNode[] {
+  const children: FigNode[] = [];
+  for (const child of node.children ?? []) {
+    if (child === undefined || child === null) {
+      throw new Error("fixtureChildrenOf: fixture contains an empty child slot");
+    }
+    children.push(child);
+  }
+  return children;
+}
+
 function frame(partial: Partial<FigNode>): FigNode {
   return {
     guid: { sessionID: 1, localID: 1 },
@@ -58,7 +69,7 @@ describe("emitFrameFile", () => {
         slugsUsed: new Set(),
       },
     );
-    const file = emitFrameFile(target);
+    const file = emitFrameFile(target, { childrenOf: fixtureChildrenOf });
     expect(file.path).toBe("Pages/HomePage.tscn");
     expect(file.contents).toContain('[node name="HomePage" type="Control"]');
     expect(file.contents).toContain("offset_right = 320.0");

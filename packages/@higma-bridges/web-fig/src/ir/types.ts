@@ -4,7 +4,7 @@
  *
  * Contract: every conversion between Fig and Web goes through this IR.
  * Neither side may invent fields the other side cannot interpret;
- * adding a field requires updating both adapters and the round-trip
+ * adding a field requires updating both boundary codecs and the round-trip
  * spec under `@higma-tools/web-to-fig/spec`.
  *
  * The IR is intentionally a *strict subset* of Figma's domain — only
@@ -14,7 +14,7 @@
  * that need them must use the full `@higma-document-models/fig` types
  * directly.
  *
- * Fail-fast policy: missing required values must throw at the adapter
+ * Fail-fast policy: missing required values must throw at the codec
  * boundary, not be silently filled in. The IR uses `undefined` only
  * for fields that are genuinely optional (e.g. `cornerRadius` on a
  * rectangle that has none).
@@ -47,7 +47,7 @@ export type BoxIR = {
  * apply the actual rotation around the box centre.
  *
  * Identity (`a=1, b=0, c=0, d=1, tx=0, ty=0`) is omitted — the IR
- * uses `transform: undefined` for the no-op case to keep tree
+ * uses `transform: undefined` for the no-op case to keep serialized
  * snapshots small.
  */
 export type TransformIR = {
@@ -69,7 +69,7 @@ export type TransformIR = {
  * element's box at the call site that knows the axis (width,
  * height, or min(width,height)) the percentage references.
  *
- * Storing pre-resolved px upstream would require the normaliser to
+ * Storing pre-resolved px upstream would require the producer to
  * know each property's percentage axis (radius → min, padding-top →
  * width, padding-left → width, gap → main axis), which fragments the
  * resolution rules across the codebase. Carrying the unit through to
@@ -231,7 +231,7 @@ export type TextStyleIR = {
    * Vertical alignment within the TEXT box.
    *
    * CSS does not have a direct text-vertical-align. The IR defaults to
-   * `top` (Figma's `TOP` is the no-op). The web-to-fig normaliser
+   * `top` (Figma's `TOP` is the no-op). The web-to-fig capture pipeline
    * promotes it to `center` / `bottom` when the captured element's
    * computed style describes a leaf-text host whose flex container is
    * centring its single text child vertically (a `display: flex;
@@ -303,7 +303,7 @@ export type NodeBaseIR = {
    * concrete proof that the captured layout is responsive.
    *
    * For Web→Fig this is the DOM element's path (`0/0/2/1` etc.) —
-   * stable across viewports unless media queries alter the tree.
+   * stable across viewports unless media queries alter the hierarchy.
    */
   readonly componentKey: string;
   /** Human-readable label. Carried into the Figma layer name. */
@@ -495,15 +495,15 @@ export type ViewportIR = {
   readonly devicePixelRatio: number;
   readonly background: ColorIR;
   /**
-   * The static-flow content tree rooted at the captured surface's
-   * outermost element. `position: fixed` / `sticky` subtrees are
+   * The static-flow content rooted at the captured surface's
+   * outermost element. `position: fixed` / `sticky` descendants are
    * lifted out into `viewportLayer` so they can be emitted at
    * viewport-anchored absolute coordinates without distorting the
    * static layout's auto-layout inference.
    */
   readonly root: FrameNodeIR;
   /**
-   * Subtrees that paint at viewport-anchored coordinates regardless
+   * Descendants that paint at viewport-anchored coordinates regardless
    * of how the static content scrolls / reflows — i.e. anything CSS
    * declared `position: fixed` (or `sticky` once it has stuck).
    * Each entry's `box` is in viewport-absolute coordinates (top-left

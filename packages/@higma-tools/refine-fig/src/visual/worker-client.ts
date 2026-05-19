@@ -123,19 +123,26 @@ export function createWorkerClient(figPath: string): WorkerClient {
       try {
         const parsed: unknown = JSON.parse(trimmed);
         const response = toWorkerResponse(parsed);
-        if (response) {
-          const pending = newState.pending.get(response.id);
-          if (pending) {
-            newState.pending.delete(response.id);
-            pending.resolve(response);
-          }
+        if (!response) {
+          throw new Error(`worker-client: unexpected JSON protocol message ${trimmed}`);
         }
+        const pending = newState.pending.get(response.id);
+        if (!pending) {
+          throw new Error(`worker-client: response for unknown render id ${response.id}`);
+        }
+        newState.pending.delete(response.id);
+        pending.resolve(response);
       } catch (parseError) {
-        // Non-JSON noise from worker (debug logs etc.) is expected and
-        // safe to ignore — every protocol message is whole-line JSON.
-        // We surface the line on stderr to aid debugging when the
-        // protocol does drift.
-        process.stderr.write(`worker-client: non-JSON line ignored (${parseError instanceof Error ? parseError.message : String(parseError)}): ${trimmed}\n`);
+        newState.crashed = true;
+        newState.proc.kill();
+        for (const [id, p] of newState.pending) {
+          p.resolve({
+            id,
+            ok: false,
+            error: parseError instanceof Error ? parseError.message : String(parseError),
+          });
+        }
+        newState.pending.clear();
       }
     });
     proc.on("close", () => {

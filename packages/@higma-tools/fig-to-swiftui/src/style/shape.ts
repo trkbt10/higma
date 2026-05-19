@@ -10,15 +10,15 @@
  *     → `RoundedRectangle(cornerRadius: r)`
  *   - ELLIPSE → `Ellipse()`
  *
- * A single `shapeExprFor(node)` helper concentrates that decision so the
+ * A single `shapeExprFor(node)` routine concentrates that decision so the
  * stroke overlay (`.overlay(<shape>().stroke(...))`) and the leaf
  * primitive itself paint with the same silhouette — without it the
  * overlay's outline would not follow the rounded corners of the fill
  * underneath.
  *
- * The helper is silhouette-only; it does not attach `.fill(...)` or
+ * The routine is silhouette-only; it does not attach `.fill(...)` or
  * `.stroke(...)`. Callers compose those separately through the
- * `fillModifier` / `strokeOverlayModifier` helpers in `modifiers.ts`.
+ * `fillModifier` / `strokeOverlayModifier` routines in `modifiers.ts`.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import { call, ident, namedArg, num, type SwiftExpr } from "../swift-tree";

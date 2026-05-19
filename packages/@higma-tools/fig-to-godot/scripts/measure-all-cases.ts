@@ -23,7 +23,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { comparePng } from "@higma-codecs/png-compare";
-import { createFigSymbolContext } from "@higma-document-io/fig/context";
+import { createFigDocumentContext } from "@higma-document-io/fig/context";
 import {
   buildFrameTarget,
   emitFrameFile,
@@ -177,23 +177,20 @@ async function emitCase(
   figPath: string,
 ): Promise<{ readonly canvasName: string | undefined; readonly jobs: readonly FrameJob[] }> {
   const bytes = new Uint8Array(await readFile(figPath));
-  const ctx = await createFigSymbolContext(bytes);
-  const doc = ctx.tree.roots.find((r) => r.type.name === "DOCUMENT");
-  const canvas = doc?.children?.find(
-    (c): c is FigNode => c?.type?.name === "CANVAS" && c.internalOnly !== true,
-  );
+  const ctx = await createFigDocumentContext(bytes);
+  const doc = ctx.document.roots.find((r) => r.type.name === "DOCUMENT");
+  const canvas = doc
+    ? ctx.document.childrenOf(doc).find((c) => c.type.name === "CANVAS" && c.internalOnly !== true)
+    : undefined;
   if (!canvas) {
     return { canvasName: undefined, jobs: [] };
   }
-  const frames = listFrameTargets(canvas);
+  const frames = listFrameTargets(ctx.document, canvas);
   const sceneNamesUsed = new Set<string>();
   const slugsUsed = new Set<string>();
-  // Plumbing the symbolMap is what lets INSTANCE frames (constraints,
-  // symbol-resolution, decoration-combo's instance-* cases) resolve
-  // to their authoring SYMBOL. Without it those frames emit empty
-  // Controls.
   const emitCtx: EmitContext = {
-    symbolMap: ctx.symbolMap,
+    symbolResolver: ctx.symbolResolver,
+    childrenOf: ctx.document.childrenOf,
     blobs: ctx.blobs,
     images: ctx.images,
   };

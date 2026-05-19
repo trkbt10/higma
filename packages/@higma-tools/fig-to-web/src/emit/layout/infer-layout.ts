@@ -147,16 +147,6 @@ function isVisible(node: FigNode): boolean {
   return node.visible !== false;
 }
 
-function visibleChildren(node: FigNode): readonly FigNode[] {
-  const out: FigNode[] = [];
-  for (const child of node.children ?? []) {
-    if (child && isVisible(child)) {
-      out.push(child);
-    }
-  }
-  return out;
-}
-
 function hasExplicitAutoLayout(node: FigNode): boolean {
   const m = node.stackMode?.name;
   return m === "VERTICAL" || m === "HORIZONTAL";
@@ -185,14 +175,14 @@ function hasExplicitAutoLayout(node: FigNode): boolean {
  * stay inside their parent's box (which is the case under the
  * inset-tolerance check anyway).
  */
-export function inferLayout(frame: FigNode, childrenOverride?: readonly FigNode[]): InferenceResult {
+export function inferLayout(frame: FigNode, candidateChildren: readonly FigNode[]): InferenceResult {
   if (hasExplicitAutoLayout(frame)) {
     return undefined;
   }
   if (!frame.size) {
     return undefined;
   }
-  const allChildren = childrenOverride ?? visibleChildren(frame);
+  const allChildren = candidateChildren.filter(isVisible);
   if (allChildren.length === 0) {
     return undefined;
   }
@@ -201,12 +191,12 @@ export function inferLayout(frame: FigNode, childrenOverride?: readonly FigNode[
   // measuring; the caller is expected to render them as positioned
   // overlays inside the inferred flex container (matching Figma's
   // own rendering of "absolute inside auto-layout").
-  const children = allChildren.filter((child) => child.stackPositioning?.name !== "ABSOLUTE");
-  if (children.length === 0) {
+  const flowChildren = allChildren.filter((child) => child.stackPositioning?.name !== "ABSOLUTE");
+  if (flowChildren.length === 0) {
     return undefined;
   }
-  const boxes = boxesOf(children);
-  if (boxes.length !== children.length) {
+  const boxes = boxesOf(flowChildren);
+  if (boxes.length !== flowChildren.length) {
     return undefined;
   }
   const containerW = frame.size.x;

@@ -1,58 +1,30 @@
-/**
- * @file Node factory for creating FigDesignNode from NodeSpec
- *
- * Converts declarative spec objects into concrete FigDesignNode instances
- * with proper defaults and transforms.
- */
+/** @file NodeSpec to Kiwi FigNode construction. */
 
-import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
-import type { FigDesignNode, TextData } from "@higma-document-models/fig/domain";
-import { NUMBER_UNITS_VALUES } from "@higma-document-models/fig/constants";
-import type { NodeSpec } from "../types/spec-types";
-import { nextNodeId } from "@higma-document-models/fig/builder";
+import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import { NODE_TYPE_VALUES, NUMBER_UNITS_VALUES, type NodeType } from "@higma-document-models/fig/constants";
+import type { NodeSpec, TextNodeSpec } from "../types/spec-types";
+import { nextNodeGuid } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 
-/**
- * Project the spec's optional pixel-valued lineHeight onto the
- * schema's `FigValueWithUnits` shape.
- *
- * When the caller omits `lineHeight`, default to `1.25 × fontSize`
- * (the renderer requires every non-empty TEXT node to carry a
- * lineHeight; without one, layout falls through to `extract-props`'s
- * fail-fast guard). 1.25× is the same fallback Figma's text engine
- * applies when an authored line-height is absent, so the visual
- * output stays close to what the legacy `fig-file` `.lineHeight()`
- * default produced.
- */
-function textLineHeightSpec(
-  lineHeight: number | undefined,
-  fontSize: number,
-): TextData["lineHeight"] {
-  const value = lineHeight ?? fontSize * 1.25;
-  return { value, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
-}
+export type CreateNodeFromSpecOptions = {
+  readonly state: FigBuilderState;
+  readonly parentGuid: FigGuid;
+  readonly position: string;
+  readonly spec: NodeSpec;
+};
 
-/**
- * Map a CSS-pixel tracking value onto the schema's `FigValueWithUnits`
- * shape with unit PIXELS. Returns undefined when the spec omits
- * letter-spacing, so `document-to-tree` leaves the Kiwi field absent —
- * the caller can later compose this with style-runs without a spurious
- * 0px overlay.
- */
-function textLetterSpacingSpec(letterSpacing: number | undefined): TextData["letterSpacing"] | undefined {
-  if (letterSpacing === undefined) {
-    return undefined;
+function assertCreateNodeFromSpecOptions(options: CreateNodeFromSpecOptions): void {
+  if (options.state === undefined) {
+    throw new Error("createNodeFromSpec requires explicit builder state");
   }
-  return { value: letterSpacing, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
+  if (options.parentGuid === undefined) {
+    throw new Error("createNodeFromSpec requires explicit parentGuid");
+  }
+  if (typeof options.position !== "string" || options.position.length === 0) {
+    throw new Error("createNodeFromSpec requires explicit position");
+  }
 }
 
-// =============================================================================
-// Transform Construction
-// =============================================================================
-
-/**
- * Create a 2x3 affine transform matrix from position and rotation.
- */
 function createTransform(x: number, y: number, rotation?: number): FigMatrix {
   if (rotation === undefined || rotation === 0) {
     return { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y };
@@ -72,250 +44,143 @@ function createTransform(x: number, y: number, rotation?: number): FigMatrix {
   };
 }
 
-// =============================================================================
-// Default Paint
-// =============================================================================
+function textLineHeightSpec(spec: TextNodeSpec): NonNullable<FigNode["lineHeight"]> {
+  if (spec.lineHeight === undefined) {
+    throw new Error("createNodeFromSpec: TEXT spec requires explicit lineHeight");
+  }
+  return { value: spec.lineHeight, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
+}
 
-/**
- * Default fill for shapes when none is specified.
- */
-const DEFAULT_SHAPE_FILL: readonly FigPaint[] = [
-  {
-    type: "SOLID",
-    color: { r: 0.85, g: 0.85, b: 0.85, a: 1 },
-    visible: true,
-    opacity: 1,
-  },
-];
+function textLetterSpacingSpec(letterSpacing: number | undefined): FigNode["letterSpacing"] {
+  if (letterSpacing === undefined) {
+    return undefined;
+  }
+  return { value: letterSpacing, units: { name: "PIXELS", value: NUMBER_UNITS_VALUES.PIXELS } };
+}
 
-/**
- * Default fill for text nodes.
- */
-const DEFAULT_TEXT_FILL: readonly FigPaint[] = [
-  {
-    type: "SOLID",
-    color: { r: 0, g: 0, b: 0, a: 1 },
-    visible: true,
-    opacity: 1,
-  },
-];
+function requiredTextFontSize(spec: TextNodeSpec): number {
+  if (spec.fontSize === undefined) {
+    throw new Error("createNodeFromSpec: TEXT spec requires explicit fontSize");
+  }
+  return spec.fontSize;
+}
 
-/**
- * Default fill for frames (white).
- */
-const DEFAULT_FRAME_FILL: readonly FigPaint[] = [
-  {
-    type: "SOLID",
-    color: { r: 1, g: 1, b: 1, a: 1 },
-    visible: true,
-    opacity: 1,
-  },
-];
+function requiredTextFontName(spec: TextNodeSpec): NonNullable<FigNode["fontName"]> {
+  if (spec.fontFamily === undefined || spec.fontStyle === undefined) {
+    throw new Error("createNodeFromSpec: TEXT spec requires explicit fontFamily and fontStyle");
+  }
+  return {
+    family: spec.fontFamily,
+    style: spec.fontStyle,
+    postscript: `${spec.fontFamily}-${spec.fontStyle.replace(/\s+/g, "")}`,
+  };
+}
 
-// =============================================================================
-// Factory
-// =============================================================================
-
-/**
- * CreateNodeFromSpecOptions provides explicit builder state and node spec input for createNodeFromSpec.
- */
-export type CreateNodeFromSpecOptions = {
-  readonly state: FigBuilderState;
-  readonly spec: NodeSpec;
-};
-
-/**
- * Create a FigDesignNode from a NodeSpec.
- *
- * Allocates the node ID from the caller-provided builder state.
- *
- * @param spec - Declarative spec describing the node to create
- */
-export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigDesignNode {
-  assertCreateNodeOptions(options);
-  const { state, spec } = options;
-  const nodeId = nextNodeId(state.nodeIdCounter);
-  const transform = createTransform(spec.x, spec.y, spec.rotation);
-  const size = { x: spec.width, y: spec.height };
-
-  const base: FigDesignNode = {
-    id: nodeId,
-    type: spec.type,
-    name: spec.name ?? getDefaultName(spec.type),
-    visible: spec.visible ?? true,
-    opacity: spec.opacity ?? 1,
-    transform,
-    size,
-    fills: spec.fills ?? getDefaultFills(spec.type),
-    strokes: spec.strokes ?? [],
-    strokeWeight: spec.strokeWeight ?? 0,
+function baseNode(options: CreateNodeFromSpecOptions): FigNode {
+  const { state, parentGuid, position, spec } = options;
+  const typeValue = NODE_TYPE_VALUES[spec.type as NodeType];
+  if (typeValue === undefined) {
+    throw new Error(`createNodeFromSpec: unsupported node type ${spec.type}`);
+  }
+  return {
+    guid: nextNodeGuid(state.nodeGuidCounter),
+    parentIndex: { guid: parentGuid, position },
+    phase: { value: 0, name: "CREATED" },
+    type: { value: typeValue, name: spec.type },
+    name: spec.name,
+    visible: spec.visible,
+    opacity: spec.opacity,
+    transform: createTransform(spec.x, spec.y, spec.rotation),
+    size: { x: spec.width, y: spec.height },
+    fillPaints: spec.fills,
+    strokePaints: spec.strokes,
+    strokeWeight: spec.strokeWeight,
     strokeCap: spec.strokeCap,
     strokeJoin: spec.strokeJoin,
     strokeAlign: spec.strokeAlign,
     strokeDashes: spec.strokeDashes,
-    effects: spec.effects ?? [],
-    layoutConstraints: spec.layoutConstraints,
+    effects: spec.effects,
+    stackPositioning: spec.stackPositioning,
+    stackPrimarySizing: spec.stackPrimarySizing,
+    stackCounterSizing: spec.stackCounterSizing,
+    horizontalConstraint: spec.horizontalConstraint,
+    verticalConstraint: spec.verticalConstraint,
+    stackChildAlignSelf: spec.stackChildAlignSelf,
+    stackChildPrimaryGrow: spec.stackChildPrimaryGrow,
   };
-
-  return applyTypeSpecificFields(base, spec);
 }
 
 /**
- * assertCreateNodeOptions rejects missing explicit builder state or node spec input.
+ * Convert an explicit node spec into a Kiwi FigNode.
  */
-function assertCreateNodeOptions(options: CreateNodeFromSpecOptions): void {
-  if (!options) {
-    throw new Error("createNodeFromSpec requires options");
-  }
-  if (!options.state) {
-    throw new Error("createNodeFromSpec requires explicit builder state");
-  }
-  if (!options.spec) {
-    throw new Error("createNodeFromSpec requires a node spec");
-  }
-}
-
-// =============================================================================
-// Type-Specific Fields
-// =============================================================================
-
-/**
- * applyTypeSpecificFields applies node-kind-specific fields after identifier allocation.
- */
-function applyTypeSpecificFields(base: FigDesignNode, spec: NodeSpec): FigDesignNode {
+export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode {
+  assertCreateNodeFromSpecOptions(options);
+  const node = baseNode(options);
+  const spec = options.spec;
   switch (spec.type) {
     case "FRAME":
-      return {
-        ...base,
-        clipsContent: spec.clipsContent ?? true,
-        autoLayout: spec.autoLayout,
-        cornerRadius: spec.cornerRadius,
-        rectangleCornerRadii: spec.rectangleCornerRadii,
-        children: [],
-      };
-
     case "SYMBOL":
-      // SYMBOL is the on-disk encoding of the Figma UI concept
-      // "Component". It is a container-like node carrying its definition
-      // children. See `docs/refactor/component-type-cleanup.md`.
       return {
-        ...base,
-        clipsContent: spec.clipsContent ?? true,
-        autoLayout: spec.autoLayout,
-        children: [],
+        ...node,
+        clipsContent: spec.clipsContent,
+        stackMode: spec.stackMode,
+        stackSpacing: spec.stackSpacing,
+        stackPadding: spec.stackPadding,
+        stackVerticalPadding: spec.stackVerticalPadding,
+        stackHorizontalPadding: spec.stackHorizontalPadding,
+        stackPaddingRight: spec.stackPaddingRight,
+        stackPaddingBottom: spec.stackPaddingBottom,
+        stackPrimaryAlignItems: spec.stackPrimaryAlignItems,
+        stackCounterAlignItems: spec.stackCounterAlignItems,
+        stackPrimaryAlignContent: spec.stackPrimaryAlignContent,
+        stackCounterAlignContent: spec.stackCounterAlignContent,
+        stackWrap: spec.stackWrap,
+        stackCounterSpacing: spec.stackCounterSpacing,
+        stackReverseZIndex: spec.stackReverseZIndex,
+        cornerRadius: spec.type === "FRAME" ? spec.cornerRadius : undefined,
+        rectangleCornerRadii: spec.type === "FRAME" ? spec.rectangleCornerRadii : undefined,
       };
-
-    case "GROUP":
-    case "SECTION":
-      return {
-        ...base,
-        children: [],
-      };
-
     case "BOOLEAN_OPERATION":
-      return {
-        ...base,
-        booleanOperation: spec.booleanOperation,
-        children: [],
-      };
-
+      return { ...node, booleanOperation: spec.booleanOperation };
     case "ROUNDED_RECTANGLE":
       return {
-        ...base,
+        ...node,
         cornerRadius: spec.cornerRadius,
         rectangleCornerRadii: spec.rectangleCornerRadii,
       };
-
     case "STAR":
-      return {
-        ...base,
-        pointCount: spec.pointCount ?? 5,
-        starInnerRadius: spec.starInnerRadius ?? 0.382,
-      };
-
     case "REGULAR_POLYGON":
-      return {
-        ...base,
-        pointCount: spec.pointCount ?? 3,
-      };
-
+      return { ...node, pointCount: spec.pointCount };
     case "VECTOR":
-      return {
-        ...base,
-        vectorPaths: spec.vectorPaths,
-      };
-
+      return { ...node, vectorPaths: spec.vectorPaths };
     case "TEXT": {
-      const fontSize = spec.fontSize ?? 14;
+      const fontSize = requiredTextFontSize(spec);
+      const fontName = requiredTextFontName(spec);
+      const lineHeight = textLineHeightSpec(spec);
+      const letterSpacing = textLetterSpacingSpec(spec.letterSpacing);
       return {
-        ...base,
+        ...node,
+        fontSize,
+        fontName,
+        lineHeight,
+        letterSpacing,
         textData: {
           characters: spec.characters,
           fontSize,
-          fontName: {
-            family: spec.fontFamily ?? "Inter",
-            style: spec.fontStyle ?? "Regular",
-            postscript: `${spec.fontFamily ?? "Inter"}-${(spec.fontStyle ?? "Regular").replace(/\s+/g, "")}`,
-          },
-          textAlignHorizontal: spec.textAlignHorizontal,
-          textAlignVertical: spec.textAlignVertical,
-          lineHeight: textLineHeightSpec(spec.lineHeight, fontSize),
-          letterSpacing: textLetterSpacingSpec(spec.letterSpacing),
+          fontName,
+          lineHeight,
+          letterSpacing,
         },
+        textAlignHorizontal: spec.textAlignHorizontal,
+        textAlignVertical: spec.textAlignVertical,
       };
     }
-
     case "INSTANCE":
       return {
-        ...base,
-        symbolId: spec.symbolId,
-        children: [],
+        ...node,
+        symbolData: { symbolID: spec.symbolId },
       };
-
     default:
-      return base;
-  }
-}
-
-// =============================================================================
-// Defaults
-// =============================================================================
-
-function getDefaultName(type: string): string {
-  switch (type) {
-    case "RECTANGLE": return "Rectangle";
-    case "ROUNDED_RECTANGLE": return "Rectangle";
-    case "ELLIPSE": return "Ellipse";
-    case "LINE": return "Line";
-    case "STAR": return "Star";
-    case "REGULAR_POLYGON": return "Polygon";
-    case "VECTOR": return "Vector";
-    case "FRAME": return "Frame";
-    case "GROUP": return "Group";
-    case "SECTION": return "Section";
-    case "BOOLEAN_OPERATION": return "Union";
-    case "TEXT": return "Text";
-    // The presentation-layer label for a SYMBOL (Figma's UI concept
-    // "Component") is "Component". SYMBOL is the on-disk type;
-    // "Component" is the editor-facing label.
-    case "SYMBOL": return "Component";
-    case "INSTANCE": return "Instance";
-    default: return type;
-  }
-}
-
-function getDefaultFills(type: string): readonly FigPaint[] {
-  switch (type) {
-    case "TEXT":
-      return DEFAULT_TEXT_FILL;
-    case "FRAME":
-    case "SYMBOL":
-      return DEFAULT_FRAME_FILL;
-    case "GROUP":
-    case "LINE":
-    case "BOOLEAN_OPERATION":
-      return [];
-    default:
-      return DEFAULT_SHAPE_FILL;
+      return node;
   }
 }

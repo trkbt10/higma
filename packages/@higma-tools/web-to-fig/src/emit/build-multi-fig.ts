@@ -13,24 +13,19 @@
  * viewport are emitted once as a shared SYMBOL on the canvas and
  * each per-viewport occurrence becomes an INSTANCE referencing it.
  *
- * The pipeline goes through the canonical `FigDesignDocument`
- * builder (`createEmptyFigDesignDocument` + `addNode` + `exportFig`).
- * Per-node emission lives in `ir-to-spec.ts`; this module is the
- * multi-viewport driver that orchestrates wrapper FRAMEs, asset
- * pooling, and SYMBOL/INSTANCE substitution.
+ * The pipeline appends Kiwi nodeChanges directly; no projected document
+ * model is created between IR and export.
  */
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import type { FigDocumentContext } from "@higma-document-io/fig";
+import type { FigGuid } from "@higma-document-models/fig/types";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FrameNodeSpec, InstanceNodeSpec, SymbolNodeSpec } from "@higma-document-io/fig/types";
 import type { MultiViewportIR, NodeIR, ViewportIR } from "@higma-bridges/web-fig";
@@ -41,8 +36,8 @@ const BREAKPOINT_GUTTER = 64;
 
 export type MultiFigBuildResult = {
   readonly bytes: Uint8Array;
-  /** breakpoint name → IR id → assigned FigNodeId. */
-  readonly idMap: ReadonlyMap<string, ReadonlyMap<string, FigNodeId>>;
+  /** breakpoint name → IR id → assigned FigGuid. */
+  readonly idMap: ReadonlyMap<string, ReadonlyMap<string, FigGuid>>;
 };
 
 /**
@@ -72,20 +67,24 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
     throw new Error("buildMultiFigFileBytes: MultiViewportIR has no viewports");
   }
 
-  // ----- doc setup -----
-  const initialDoc = createEmptyFigDesignDocument("Web Capture");
+  // ----- Kiwi document setup -----
+  const initialContext = createEmptyFigDocument("Web Capture");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 1 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 1 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = initialDoc.pages[0]!.id;
+  const page = initialContext.document.nodeChanges.find((node) => node.type.name === "CANVAS");
+  if (page === undefined) {
+    throw new Error("buildMultiFigFileBytes: createEmptyFigDocument did not create a CANVAS");
+  }
+  const pageGuid = page.guid;
 
   // Pool every viewport's assets into the document's image map so
   // the produced `.fig` is self-contained no matter which viewport
   // owns the original asset reference.
-  const docWithAssets = multi.viewports.reduce<FigDesignDocument>(
+  const contextWithAssets = multi.viewports.reduce<FigDocumentContext>(
     (acc, viewport) => installAssets(acc, viewport.assets),
-    initialDoc,
+    initialContext,
   );
 
   // Emit shared SYMBOLs in a right-side column. Each shared key
@@ -97,69 +96,69 @@ export async function buildMultiFigFileBytes(multi: MultiViewportIR): Promise<Mu
     0,
   ) + BREAKPOINT_GUTTER * Math.max(multi.viewports.length - 1, 0);
   const symbolColumnX = totalContentWidth + BREAKPOINT_GUTTER * 2;
-  const sharedSymbolMap = new Map<string, FigNodeId>();
-  const docAfterSymbols = emitSharedSymbols({
+  const sharedSymbolGuidsByComponentKey = new Map<string, FigGuid>();
+  const contextAfterSymbols = emitSharedSymbols({
     viewports: multi.viewports,
     sharedKeys,
-    doc: docWithAssets,
+    context: contextWithAssets,
     state,
-    pageId,
+    pageGuid,
     columnX: symbolColumnX,
-    output: sharedSymbolMap,
+    output: sharedSymbolGuidsByComponentKey,
   });
 
   // Lay each viewport's wrapper FRAME left-to-right and emit its
   // body underneath. The cursor and the per-viewport IR id map
   // thread through `reduce` so we don't need a mutable cursor.
-  const idMap = new Map<string, ReadonlyMap<string, FigNodeId>>();
-  const docAfterWrappers = multi.viewports.reduce<{
-    readonly doc: FigDesignDocument;
+  const idMap = new Map<string, ReadonlyMap<string, FigGuid>>();
+  const contextAfterWrappers = multi.viewports.reduce<{
+    readonly context: FigDocumentContext;
     readonly cursorX: number;
   }>(
     (acc, viewport) => emitOneViewportWrapper({
-      doc: acc.doc,
+      context: acc.context,
       state,
-      pageId,
+      pageGuid,
       cursorX: acc.cursorX,
       viewport,
-      sharedSymbolMap,
+      sharedSymbolGuidsByComponentKey,
       idMap,
     }),
-    { doc: docAfterSymbols, cursorX: 0 },
+    { context: contextAfterSymbols, cursorX: 0 },
   );
 
   // Real Figma exports always carry a second CANVAS marked
   // `internalOnly: true` that hosts style-definition proxy nodes.
   // Even with no proxies to host the page must exist or Figma's
   // importer rejects the file.
-  const finalDoc = addPage({
+  const finalContext = addPage({
     state,
-    doc: docAfterWrappers.doc,
+    context: contextAfterWrappers.context,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   return { bytes: exported.data, idMap };
 }
 
 type EmitOneWrapperOptions = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
   readonly cursorX: number;
   readonly viewport: ViewportIR;
-  readonly sharedSymbolMap: ReadonlyMap<string, FigNodeId>;
-  readonly idMap: Map<string, ReadonlyMap<string, FigNodeId>>;
+  readonly sharedSymbolGuidsByComponentKey: ReadonlyMap<string, FigGuid>;
+  readonly idMap: Map<string, ReadonlyMap<string, FigGuid>>;
 };
 
 /**
- * Fall back to white when the captured viewport background is fully
- * transparent. Browsers paint the body's "no explicit color" as
- * `rgba(0,0,0,0)`, but emitting a SOLID α=0 fill makes naive
- * renderers paint solid black instead of letting the canvas show.
+ * Resolve the visible browser canvas color when the captured body
+ * background is fully transparent. The browser canvas behind a normal
+ * document is white; the emitted wrapper FRAME needs that visible color
+ * because `.fig` has no browser canvas layer behind it.
  */
-function resolveViewportBackground(
+function resolveBrowserViewportBackground(
   background: { r: number; g: number; b: number; a: number },
 ): { r: number; g: number; b: number; a: number } {
   if (background.a > 0) return background;
@@ -191,11 +190,11 @@ function reanchorSymbolBody(node: NodeIR): NodeIR {
 }
 
 /**
- * Build the `layoutConstraints.stackPositioning = ABSOLUTE` patch for
- * INSTANCE nodes whose IR sizing is absolute. Non-absolute modes return
- * `undefined` to leave the field unset on the spec.
+ * Build the `stackPositioning = ABSOLUTE` patch for INSTANCE nodes
+ * whose IR sizing is absolute. Non-absolute modes return `undefined`
+ * to leave the field unset on the spec.
  */
-function buildAbsoluteLayoutConstraints(
+function buildAbsoluteStackPositioning(
   sizingMode: NodeIR["sizing"]["mode"],
 ): { stackPositioning: { value: number; name: "ABSOLUTE" } } | undefined {
   if (sizingMode !== "absolute") return undefined;
@@ -203,10 +202,10 @@ function buildAbsoluteLayoutConstraints(
 }
 
 function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly cursorX: number;
 } {
-  const { viewport, sharedSymbolMap, state, pageId, idMap } = opts;
+  const { viewport, sharedSymbolGuidsByComponentKey, state, pageGuid, idMap } = opts;
   // The captured `viewport.background` is the body's
   // `getComputedStyle().backgroundColor`. Sites whose body has no
   // explicit color resolve that to `rgba(0,0,0,0)` — visually
@@ -215,7 +214,7 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
   // paint with α=0 confuses renderers that ignore alpha and paints a
   // solid black rectangle. White is the correct default the browser
   // would paint for a transparent body.
-  const bg = resolveViewportBackground(viewport.background);
+  const bg = resolveBrowserViewportBackground(viewport.background);
   const wrapperSpec: FrameNodeSpec = {
     type: "FRAME",
     name: `${viewport.breakpoint} / ${Math.round(viewport.box.width)}×${Math.round(viewport.box.height)}`,
@@ -225,15 +224,15 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
     height: viewport.box.height,
     clipsContent: true,
     fills: [{
-      type: "SOLID",
+      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
       color: bg,
       opacity: 1,
       visible: true,
-      blendMode: "NORMAL",
+      blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     }],
   };
-  const wrapperResult = addNode({ state, doc: opts.doc, pageId, parentId: null, spec: wrapperSpec });
-  const wrapperId = wrapperResult.nodeId;
+  const wrapperResult = addNode({ state, context: opts.context, pageGuid, parentGuid: null, spec: wrapperSpec });
+  const wrapperGuid = wrapperResult.nodeGuid;
 
   // The captured root's `body` child is the visible page content.
   // Emit it as a single FRAME inside the wrapper. Its IR `box` is
@@ -244,32 +243,32 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
   // layout) doesn't try to flow-stack children at the parent origin.
   const rootBodyNode: NodeIR = viewport.root.children.find((c) => c.visible) ?? viewport.root;
   const bodyForEmit: NodeIR = forceAbsoluteSizingOnFrame(rootBodyNode);
-  const perViewport = new Map<string, FigNodeId>();
-  const docAfterBody = appendIRWithSharedSymbols({
-    doc: wrapperResult.doc,
+  const perViewport = new Map<string, FigGuid>();
+  const contextAfterBody = appendIRWithSharedSymbols({
+    context: wrapperResult.context,
     state,
-    pageId,
-    parentId: wrapperId,
+    pageGuid,
+    parentGuid: wrapperGuid,
     irNode: bodyForEmit,
     idMap: perViewport,
-    sharedSymbolMap,
+    sharedSymbolGuidsByComponentKey,
   });
-  const docAfterLayer = viewport.viewportLayer.reduce<FigDesignDocument>(
-    (doc, layerNode) => appendIRWithSharedSymbols({
-      doc,
+  const contextAfterLayer = viewport.viewportLayer.reduce<FigDocumentContext>(
+    (context, layerNode) => appendIRWithSharedSymbols({
+      context,
       state,
-      pageId,
-      parentId: wrapperId,
+      pageGuid,
+      parentGuid: wrapperGuid,
       irNode: layerNode,
       idMap: perViewport,
-      sharedSymbolMap,
+      sharedSymbolGuidsByComponentKey,
     }),
-    docAfterBody,
+    contextAfterBody,
   );
   idMap.set(viewport.breakpoint, perViewport);
 
   return {
-    doc: docAfterLayer,
+    context: contextAfterLayer,
     cursorX: opts.cursorX + viewport.box.width + BREAKPOINT_GUTTER,
   };
 }
@@ -358,11 +357,11 @@ function pruneInnerKeys(node: NodeIR, shared: Set<string>, ancestorIsShared: boo
 type EmitSharedSymbolsOptions = {
   readonly viewports: readonly ViewportIR[];
   readonly sharedKeys: ReadonlySet<string>;
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
   readonly columnX: number;
-  readonly output: Map<string, FigNodeId>;
+  readonly output: Map<string, FigGuid>;
 };
 
 /**
@@ -370,13 +369,13 @@ type EmitSharedSymbolsOptions = {
  * viewport's instance of the subtree (Figma INSTANCEs resize
  * naturally narrower; authoring at the widest size keeps text wraps
  * minimal so smaller INSTANCEs reflow correctly). Populates the
- * `output` map from `componentKey` to the SYMBOL's `FigNodeId`.
- * Returns the updated document.
+ * `output` map from `componentKey` to the SYMBOL's FigGuid.
+ * Returns the updated context.
  */
-function emitSharedSymbols(opts: EmitSharedSymbolsOptions): FigDesignDocument {
-  const { viewports, sharedKeys, doc, state, pageId, columnX, output } = opts;
+function emitSharedSymbols(opts: EmitSharedSymbolsOptions): FigDocumentContext {
+  const { viewports, sharedKeys, context, state, pageGuid, columnX, output } = opts;
   if (sharedKeys.size === 0) {
-    return doc;
+    return context;
   }
   // Pick the widest viewport as the authoring source. INSTANCE
   // shrinks naturally; the widest source carries the fewest forced
@@ -386,30 +385,30 @@ function emitSharedSymbols(opts: EmitSharedSymbolsOptions): FigDesignDocument {
     viewports[0]!,
   );
   return walkAndEmitSymbols({
-    doc,
+    context,
     state,
-    pageId,
+    pageGuid,
     columnX,
     sharedKeys,
     output,
     node: representative.root,
     stackY: 0,
-  }).doc;
+  }).context;
 }
 
 type WalkSymbolOptions = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
   readonly columnX: number;
   readonly sharedKeys: ReadonlySet<string>;
-  readonly output: Map<string, FigNodeId>;
+  readonly output: Map<string, FigGuid>;
   readonly node: NodeIR;
   readonly stackY: number;
 };
 
 function walkAndEmitSymbols(opts: WalkSymbolOptions): {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly stackY: number;
 } {
   const { node, sharedKeys, output } = opts;
@@ -417,24 +416,24 @@ function walkAndEmitSymbols(opts: WalkSymbolOptions): {
     return emitSymbolForNode(opts);
   }
   if (node.kind !== "frame") {
-    return { doc: opts.doc, stackY: opts.stackY };
+    return { context: opts.context, stackY: opts.stackY };
   }
-  return node.children.reduce<{ readonly doc: FigDesignDocument; readonly stackY: number }>(
+  return node.children.reduce<{ readonly context: FigDocumentContext; readonly stackY: number }>(
     (acc, child) => walkAndEmitSymbols({
       ...opts,
-      doc: acc.doc,
+      context: acc.context,
       node: child,
       stackY: acc.stackY,
     }),
-    { doc: opts.doc, stackY: opts.stackY },
+    { context: opts.context, stackY: opts.stackY },
   );
 }
 
 function emitSymbolForNode(opts: WalkSymbolOptions): {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly stackY: number;
 } {
-  const { node, columnX, output, state, pageId } = opts;
+  const { node, columnX, output, state, pageGuid } = opts;
   const symbolSpec: SymbolNodeSpec = {
     type: "SYMBOL",
     name: node.name || "Component",
@@ -443,60 +442,60 @@ function emitSymbolForNode(opts: WalkSymbolOptions): {
     width: node.box.width,
     height: node.box.height,
   };
-  const symbolResult = addNode({ state, doc: opts.doc, pageId, parentId: null, spec: symbolSpec });
-  output.set(node.componentKey, symbolResult.nodeId);
+  const symbolResult = addNode({ state, context: opts.context, pageGuid, parentGuid: null, spec: symbolSpec });
+  output.set(node.componentKey, symbolResult.nodeGuid);
   // Children of the shared node become the SYMBOL's body. Re-anchor
   // the inner copy at (0,0) inside the SYMBOL — the outer SYMBOL's
   // `position` already places the component on the canvas — and pass
-  // an empty shared map so a SYMBOL containing another SYMBOL'd
+  // an empty component-key index so a SYMBOL containing another SYMBOL'd
   // descendant doesn't recursively emit an INSTANCE inside its own
   // definition (that would form a cycle).
   const innerNode: NodeIR = reanchorSymbolBody(node);
-  const docAfterBody = appendIRWithSharedSymbols({
-    doc: symbolResult.doc,
+  const contextAfterBody = appendIRWithSharedSymbols({
+    context: symbolResult.context,
     state,
-    pageId,
-    parentId: symbolResult.nodeId,
+    pageGuid,
+    parentGuid: symbolResult.nodeGuid,
     irNode: innerNode,
-    idMap: new Map<string, FigNodeId>(),
-    sharedSymbolMap: new Map<string, FigNodeId>(),
+    idMap: new Map<string, FigGuid>(),
+    sharedSymbolGuidsByComponentKey: new Map<string, FigGuid>(),
   });
   // Don't recurse into children at the outer level — pruneInnerKeys
   // already trimmed nested shared keys, so any descendants are non-
   // shared and we'd just be re-walking through children that the
   // SYMBOL body already covers.
   return {
-    doc: docAfterBody,
+    context: contextAfterBody,
     stackY: opts.stackY + node.box.height + BREAKPOINT_GUTTER,
   };
 }
 
 type AppendIRWithSymbolsOptions = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
-  readonly parentId: FigNodeId;
+  readonly pageGuid: FigGuid;
+  readonly parentGuid: FigGuid;
   readonly irNode: NodeIR;
-  readonly idMap: Map<string, FigNodeId>;
-  readonly sharedSymbolMap: ReadonlyMap<string, FigNodeId>;
+  readonly idMap: Map<string, FigGuid>;
+  readonly sharedSymbolGuidsByComponentKey: ReadonlyMap<string, FigGuid>;
 };
 
 /**
- * Variant of `appendIR` (single-viewport SoT) that consults a
- * SYMBOL map before recursing. When the current IR node's
- * `componentKey` is in the map, emit an INSTANCE pointing at the
+ * Variant of `appendIR` (single-viewport SoT) that consults the
+ * shared component-key index before recursing. When the current IR
+ * node's `componentKey` is in the index, emit an INSTANCE pointing at the
  * matching SYMBOL and stop descending — the SYMBOL's body already
- * carries the subtree. Otherwise fall through to the standard
+ * carries the subtree. Otherwise continue with the standard
  * IR → spec emission via `appendIR`'s logic (we don't reuse
  * `appendIR` directly because the recursion needs to know about
- * the shared map at every level).
+ * the shared component-key index at every level).
  */
-function appendIRWithSharedSymbols(opts: AppendIRWithSymbolsOptions): FigDesignDocument {
-  // sharedSymbolMap is keyed by `componentKey` (see emitSharedSymbols).
-  // Match the IR node's componentKey against the map; a hit means we
+function appendIRWithSharedSymbols(opts: AppendIRWithSymbolsOptions): FigDocumentContext {
+  // sharedSymbolGuidsByComponentKey is keyed by `componentKey` (see emitSharedSymbols).
+  // Match the IR node's componentKey against the index; a hit means we
   // emit an INSTANCE of the matching SYMBOL instead of recursing into
   // the subtree (which would re-emit the SYMBOL's body in-place).
-  const matchedSymbolId = opts.sharedSymbolMap.get(opts.irNode.componentKey);
+  const matchedSymbolId = opts.sharedSymbolGuidsByComponentKey.get(opts.irNode.componentKey);
   if (matchedSymbolId !== undefined) {
     const instanceSpec: InstanceNodeSpec = {
       type: "INSTANCE",
@@ -507,46 +506,46 @@ function appendIRWithSharedSymbols(opts: AppendIRWithSymbolsOptions): FigDesignD
       width: opts.irNode.box.width,
       height: opts.irNode.box.height,
       visible: opts.irNode.visible,
-      layoutConstraints: buildAbsoluteLayoutConstraints(opts.irNode.sizing.mode),
+      ...buildAbsoluteStackPositioning(opts.irNode.sizing.mode),
     };
     const result = addNode({
       state: opts.state,
-      doc: opts.doc,
-      pageId: opts.pageId,
-      parentId: opts.parentId,
+      context: opts.context,
+      pageGuid: opts.pageGuid,
+      parentGuid: opts.parentGuid,
       spec: instanceSpec,
     });
-    opts.idMap.set(opts.irNode.id, result.nodeId);
-    return result.doc;
+    opts.idMap.set(opts.irNode.id, result.nodeGuid);
+    return result.context;
   }
 
-  // No symbol match — fall through to the standard
-  // `appendIR`-style emission, with the caveat that we need the
-  // shared map to propagate to descendants for nested matches.
-  // We can't reuse `appendIR` directly (it has no shared-map
+  // No symbol match — continue with the standard `appendIR`-style
+  // emission, with the caveat that we need the shared component-key
+  // index to propagate to descendants for nested matches.
+  // We can't reuse `appendIR` directly (it has no shared-index
   // parameter), so inline the equivalent walk here.
   const graph = irToSpecGraphLocal(opts.irNode);
-  const { doc: afterAdd, nodeId } = addNode({
+  const { context: afterAdd, nodeGuid } = addNode({
     state: opts.state,
-    doc: opts.doc,
-    pageId: opts.pageId,
-    parentId: opts.parentId,
+    context: opts.context,
+    pageGuid: opts.pageGuid,
+    parentGuid: opts.parentGuid,
     spec: graph,
   });
-  opts.idMap.set(opts.irNode.id, nodeId);
+  opts.idMap.set(opts.irNode.id, nodeGuid);
 
   if (opts.irNode.kind !== "frame") {
     return afterAdd;
   }
-  return opts.irNode.children.reduce<FigDesignDocument>(
-    (doc, child) => appendIRWithSharedSymbols({
-      doc,
+  return opts.irNode.children.reduce<FigDocumentContext>(
+    (context, child) => appendIRWithSharedSymbols({
+      context,
       state: opts.state,
-      pageId: opts.pageId,
-      parentId: nodeId,
+      pageGuid: opts.pageGuid,
+      parentGuid: nodeGuid,
       irNode: child,
       idMap: opts.idMap,
-      sharedSymbolMap: opts.sharedSymbolMap,
+      sharedSymbolGuidsByComponentKey: opts.sharedSymbolGuidsByComponentKey,
     }),
     afterAdd,
   );
@@ -554,7 +553,7 @@ function appendIRWithSharedSymbols(opts: AppendIRWithSymbolsOptions): FigDesignD
 
 // Unwrap the `SpecGraph` returned by `irToSpecGraph` to its `spec`
 // field. The multi-viewport path drives recursion itself (to consult
-// `sharedSymbolMap` at every level), so the graph's `children`
+// `sharedSymbolGuidsByComponentKey` at every level), so the graph's `children`
 // slot — useful for callers that emit children in lock-step — is
 // not needed here.
 function irToSpecGraphLocal(node: NodeIR): ReturnType<typeof irToSpecGraph>["spec"] {

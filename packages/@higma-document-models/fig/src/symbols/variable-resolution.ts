@@ -42,7 +42,7 @@ import type {
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
-import { getNodeType, guidToString } from "../domain";
+import { findNodeByGuid, getNodeType, guidToString, type FigKiwiDocumentIndex } from "../domain";
 import { isVariantSetFrame } from "./variant-set-kiwi";
 
 // =============================================================================
@@ -122,7 +122,7 @@ const EXPRESSION_FUNCTION_RESOLVE_VARIANT = 2;
 /**
  * Test whether `expr` is the RESOLVE_VARIANT function. The schema
  * uses both numeric `value` (binary serialisation) and a string `name`
- * (developer-friendly), so we check either route.
+ * (developer-facing schema tag), so both are accepted.
  */
 function isResolveVariant(expr: FigVariableExpression): boolean {
   const fn = expr.expressionFunction;
@@ -148,13 +148,13 @@ function isResolveVariant(expr: FigVariableExpression): boolean {
  */
 function findVariantContainer(
   symbolNode: FigNode,
-  symbolMap: ReadonlyMap<string, FigNode>,
+  document: FigKiwiDocumentIndex,
 ): FigNode | undefined {
   const parentGuid = symbolNode.parentIndex?.guid;
   if (!parentGuid) {
     return undefined;
   }
-  const parent = symbolMap.get(guidToString(parentGuid));
+  const parent = findNodeByGuid(document, parentGuid);
   if (!parent) {
     return undefined;
   }
@@ -251,7 +251,7 @@ function resolveVariableLiteral(data: FigKiwiVariableData | undefined): string |
 
 /**
  * Score a candidate variant against the requested property-value
- * map. Higher is better; -1 means "incompatible" (a property the
+ * map. Higher is better; -1 means "mismatch" (a property the
  * map demands has a different value on this variant). When all
  * properties tie (or the map is empty), the function returns 0 so
  * the caller's tie-breaker (authored order) decides.
@@ -309,7 +309,10 @@ export type ResolveVariantResult = {
 export function resolveVariantOverride(
   instance: FigNode,
   symbolNode: FigNode,
-  symbolMap: ReadonlyMap<string, FigNode>,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly childrenOf: (node: FigNode) => readonly FigNode[];
+  },
 ): ResolveVariantResult {
   const located = findVariableConsumptionExpression(instance.variableConsumptionMap);
   if (!located) {
@@ -322,7 +325,7 @@ export function resolveVariantOverride(
   if (!mapEntries || mapEntries.length === 0) {
     return { resolvedSymbolID: undefined, bailReason: "no-map-arg" };
   }
-  const container = findVariantContainer(symbolNode, symbolMap);
+  const container = findVariantContainer(symbolNode, input.document);
   if (!container) {
     return { resolvedSymbolID: undefined, bailReason: "no-variant-container" };
   }
@@ -340,7 +343,7 @@ export function resolveVariantOverride(
   }
 
   // Score each variant; pick the highest. Authored order breaks ties.
-  const variants = (container.children ?? []).filter((c): c is FigNode => c != null && getNodeType(c) === FIG_NODE_TYPE.SYMBOL);
+  const variants = input.childrenOf(container).filter((c): c is FigNode => getNodeType(c) === FIG_NODE_TYPE.SYMBOL);
   let best: FigNode | undefined;
   let bestScore = -1;
   for (const v of variants) {
@@ -355,4 +358,3 @@ export function resolveVariantOverride(
   }
   return { resolvedSymbolID: best.guid };
 }
-

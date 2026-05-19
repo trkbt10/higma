@@ -18,10 +18,7 @@ import type { LintRule } from "../types";
 
 // STAR and REGULAR_POLYGON are excluded because Figma derives their
 // geometry procedurally from `starInnerScale` / `count` fields and
-// real Figma exports also omit fillGeometry on these types. The
-// list below is what `documentToTree`'s fillGeometry auto-synthesis
-// actually serialises with a blob (see
-// `@higma-document-io/fig/context/document-to-tree.ts`).
+// real Figma exports also omit fillGeometry on these types.
 const PAINTABLE_TYPES: ReadonlySet<string> = new Set([
   "RECTANGLE",
   "ROUNDED_RECTANGLE",
@@ -124,7 +121,7 @@ export const visibleBlobsRule: LintRule = (ctx, emit) => {
             severity: "error",
             path: `nodeChanges[${index}].fillGeometry[${geoIndex}].commandsBlob`,
             message: `commandsBlob=${blobIndex} is out of range (message has ${messageBlobs.length} blobs)`,
-            remediation: "Re-encode geometry through `documentToTree` (which auto-synthesises fillGeometry) so blob indices are reassigned",
+            remediation: "Rebuild the nodeChanges with blob indices assigned from the Kiwi document context",
           });
         }
       }

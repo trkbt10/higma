@@ -1,9 +1,9 @@
 /**
  * @file Case `corner-radius-asymmetric` — per-corner radius surfaces
- * as `rectangleCornerRadii` on the FigDesignNode (the corners do NOT
+ * as `rectangleCornerRadii` on the Kiwi FigNode (the corners do NOT
  * collapse to a single `cornerRadius` because they differ).
  */
-import { asFrame, buildOne, findFigNodeByName, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, buildOne, findFigNodeByName, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_RADII_PX, withAsymmetricRadius } from "./fixture";
 
@@ -21,9 +21,9 @@ describe("case corner-radius-asymmetric — IR", () => {
   });
 });
 
-describe("case corner-radius-asymmetric — FigDesignNode", () => {
-  const { doc } = buildOne(withAsymmetricRadius(baseDiv()));
-  const node = findFigNodeByName(doc, "div");
+describe("case corner-radius-asymmetric — Kiwi FigNode", () => {
+  const { context } = buildOne(withAsymmetricRadius(baseDiv()));
+  const node = findFigNodeByName(context, "div");
 
   it("emits `rectangleCornerRadii` (not the uniform-collapse form)", () => {
     if (!node) {

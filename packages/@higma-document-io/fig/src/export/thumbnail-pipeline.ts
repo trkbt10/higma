@@ -1,42 +1,11 @@
-/**
- * @file Thumbnail rendering pipeline for fig export.
- *
- * Figma's editor stores a "Set as thumbnail" pointer on the DOCUMENT
- * NodeChange (Kiwi field `thumbnailInfo: { nodeID, thumbnailVersion }`).
- * Our domain surfaces it as `FigDesignDocument.thumbnailTarget`.
- *
- * When that pointer is set, the exporter must rasterise the target
- * frame into `thumbnail.png` and update the matching `client_meta`
- * fields (`thumbnail_size` + `render_coordinates`) so the .fig opens
- * with the user-chosen cover instead of a stale snapshot.
- *
- * Rasterisation requires platform-specific bytes (resvg-js in Node,
- * an OffscreenCanvas pipeline in browsers, …). This module therefore
- * does **not** ship a default renderer — callers inject one via
- * `FigExportOptions.renderThumbnail`. See AGENTS.md ("No Magic Policy"
- * / "Fail-Fast"): we never invent a fallback that silently degrades.
- */
+/** @file Thumbnail rendering pipeline for Kiwi fig export. */
 
 import { isPng } from "@higma-codecs/png";
 import type { FigPackageMetadata } from "@higma-figma-containers/package";
-import type {
-  FigDesignDocument,
-  FigDesignNode,
-  FigPageId,
-  FigThumbnailTarget,
-} from "@higma-document-models/fig/domain";
-import { parseId } from "@higma-document-models/fig/domain";
-import type { FigGuid } from "@higma-document-models/fig/types";
+import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
+import { getNodeType, guidToString, isFigGuid } from "@higma-document-models/fig/domain";
+import type { FigDocumentContext } from "../context";
 
-// =============================================================================
-// Types
-// =============================================================================
-
-/**
- * Canvas-space axis-aligned bounding box of the target node. Figma
- * records the same shape in `meta.json` → `client_meta.render_coordinates`,
- * so the renderer receives bounds already in the SoT's units.
- */
 export type FigCanvasBounds = {
   readonly x: number;
   readonly y: number;
@@ -45,141 +14,130 @@ export type FigCanvasBounds = {
 };
 
 export type FigThumbnailRenderRequest = {
-  /** The document being exported — gives the renderer access to images, blobs, components. */
-  readonly document: FigDesignDocument;
-  /** The page that contains `target`. */
-  readonly pageId: FigPageId;
-  /** The frame the user picked via "Set as thumbnail". */
-  readonly target: FigDesignNode;
-  /** Canvas-space bounds of `target` (already accounts for the target's transform). */
+  readonly context: FigDocumentContext;
+  readonly page: FigNode;
+  readonly target: FigNode;
   readonly canvasBounds: FigCanvasBounds;
-  /**
-   * Maximum PNG width or height in pixels — the larger axis is clamped
-   * here, preserving aspect ratio. Figma exports cap at 400.
-   */
   readonly maxDimension: number;
 };
 
 export type FigThumbnailRenderResult = {
-  /** PNG bytes. Must begin with the PNG magic — exporter does not validate further. */
   readonly png: Uint8Array;
-  /** Actual rendered PNG dimensions (after aspect-preserving clamp). */
   readonly thumbnailSize: { readonly width: number; readonly height: number };
-  /**
-   * Canvas-space rectangle covered by the rendered PNG. When omitted,
-   * the exporter writes `canvasBounds` from the request. Override only
-   * when the renderer expanded/cropped the source rectangle.
-   */
-  readonly renderCoordinates?: FigCanvasBounds;
+  readonly renderCoordinates: FigCanvasBounds;
 };
 
 export type FigThumbnailRenderer = (
   request: FigThumbnailRenderRequest,
 ) => Promise<FigThumbnailRenderResult>;
 
-/** Output of `prepareExportThumbnail` — the bits the exporter needs to inject. */
 export type FigPreparedThumbnail = {
   readonly png: Uint8Array;
   readonly thumbnailSize: { readonly width: number; readonly height: number };
   readonly renderCoordinates: FigCanvasBounds;
 };
 
-// =============================================================================
-// Node lookup
-// =============================================================================
-
-function nodeIdMatchesGuid(node: FigDesignNode, guid: FigGuid): boolean {
-  const { sessionID, localID } = parseId(node.id);
-  return sessionID === guid.sessionID && localID === guid.localID;
-}
-
 type FoundNode = {
-  readonly node: FigDesignNode;
-  readonly pageId: FigPageId;
-  /** Parent chain from canvas-root down to `node`, used for bounds composition. */
-  readonly ancestors: readonly FigDesignNode[];
+  readonly node: FigNode;
+  readonly page: FigNode;
+  readonly ancestors: readonly FigNode[];
 };
 
-function findInChildren(
-  children: readonly FigDesignNode[],
-  guid: FigGuid,
-  pageId: FigPageId,
-  ancestors: readonly FigDesignNode[],
-): FoundNode | undefined {
-  for (const child of children) {
-    if (nodeIdMatchesGuid(child, guid)) {
-      return { node: child, pageId, ancestors };
+function readThumbnailTarget(context: FigDocumentContext): FigGuid | undefined {
+  for (const root of context.document.roots) {
+    if (getNodeType(root) !== "DOCUMENT") {
+      continue;
     }
-    const grand = child.children;
-    if (grand && grand.length > 0) {
-      const hit = findInChildren(grand, guid, pageId, [...ancestors, child]);
-      if (hit) {
-        return hit;
-      }
+    const raw = root.thumbnailInfo;
+    if (raw === undefined || raw === null) {
+      return undefined;
     }
+    if (typeof raw !== "object") {
+      throw new Error(`prepareExportThumbnail: DOCUMENT.thumbnailInfo must be an object; got ${typeof raw}`);
+    }
+    const nodeID = (raw as { readonly nodeID?: unknown }).nodeID;
+    if (!isFigGuid(nodeID)) {
+      throw new Error(`prepareExportThumbnail: DOCUMENT.thumbnailInfo.nodeID must be a FigGuid; got ${JSON.stringify(nodeID)}`);
+    }
+    return nodeID;
   }
   return undefined;
 }
 
-function findThumbnailTargetNode(
-  doc: FigDesignDocument,
-  target: FigThumbnailTarget,
-): FoundNode {
-  for (const page of doc.pages) {
-    const hit = findInChildren(page.children, target.nodeID, page.id, []);
-    if (hit) {
-      return hit;
-    }
+function requiredGuid(node: FigNode, owner: string): FigGuid {
+  if (node.guid === undefined) {
+    throw new Error(`prepareExportThumbnail: ${owner} is missing guid`);
   }
-  // Last-chance: a thumbnailTarget pointing at a SYMBOL definition (not on any page).
-  for (const [, symbol] of doc.components) {
-    if (nodeIdMatchesGuid(symbol, target.nodeID)) {
-      throw new Error(
-        `prepareExportThumbnail: thumbnailTarget points at SYMBOL definition ` +
-          `"${symbol.name}" (id=${symbol.id}), which has no canvas position to render. ` +
-          `Re-target an INSTANCE or FRAME on a CANVAS.`,
-      );
-    }
-  }
-  const idStr = `${target.nodeID.sessionID}:${target.nodeID.localID}`;
-  throw new Error(
-    `prepareExportThumbnail: thumbnailTarget.nodeID=${idStr} not found in any page. ` +
-      `The "Set as thumbnail" pointer is stale; either re-pick a frame in the editor ` +
-      `or clear FigDesignDocument.thumbnailTarget before export.`,
-  );
+  return node.guid;
 }
 
-// =============================================================================
-// Bounds composition
-// =============================================================================
+function parentOf(context: FigDocumentContext, node: FigNode): FigNode | undefined {
+  const parentGuid = node.parentIndex?.guid;
+  if (parentGuid === undefined) {
+    return undefined;
+  }
+  return context.document.nodesByGuid.get(guidToString(parentGuid));
+}
 
-/**
- * Compose ancestor transforms with the target's transform to derive a
- * canvas-space axis-aligned bbox. Only translation + scale are composed
- * (rotation/skew are rare for thumbnail-marked frames and would require
- * a full corner-walk — out of scope until a real case appears).
- */
+function findThumbnailTargetNode(context: FigDocumentContext, targetGuid: FigGuid): FoundNode {
+  const target = context.document.nodesByGuid.get(guidToString(targetGuid));
+  if (!target) {
+    throw new Error(`prepareExportThumbnail: thumbnailInfo.nodeID=${guidToString(targetGuid)} was not found in nodeChanges`);
+  }
+  if (getNodeType(target) === "SYMBOL") {
+    throw new Error(
+      `prepareExportThumbnail: thumbnailInfo points at SYMBOL definition "${target.name ?? guidToString(targetGuid)}"; ` +
+      `thumbnail targets must be positioned on a CANVAS`,
+    );
+  }
+
+  return findCanvasAncestor(context, target, parentOf(context, target), []);
+}
+
+function findCanvasAncestor(
+  context: FigDocumentContext,
+  target: FigNode,
+  current: FigNode | undefined,
+  ancestors: readonly FigNode[],
+): FoundNode {
+  if (current === undefined) {
+    throw new Error(`prepareExportThumbnail: target ${guidToString(requiredGuid(target, "target"))} is not under a CANVAS`);
+  }
+  if (getNodeType(current) === "CANVAS") {
+    return { node: target, page: current, ancestors };
+  }
+  return findCanvasAncestor(context, target, parentOf(context, current), [current, ...ancestors]);
+}
+
+function requiredTransform(node: FigNode): NonNullable<FigNode["transform"]> {
+  if (node.transform === undefined) {
+    throw new Error(`prepareExportThumbnail: node "${node.name ?? guidToString(requiredGuid(node, "node"))}" is missing transform`);
+  }
+  return node.transform;
+}
+
+function requiredSize(node: FigNode): NonNullable<FigNode["size"]> {
+  if (node.size === undefined) {
+    throw new Error(`prepareExportThumbnail: node "${node.name ?? guidToString(requiredGuid(node, "node"))}" is missing size`);
+  }
+  return node.size;
+}
+
 function composeCanvasBounds(found: FoundNode): FigCanvasBounds {
-  const composeOffsetX = (acc: number, n: FigDesignNode): number => acc + n.transform.m02;
-  const composeOffsetY = (acc: number, n: FigDesignNode): number => acc + n.transform.m12;
-  const offsetX = found.ancestors.reduce(composeOffsetX, 0) + found.node.transform.m02;
-  const offsetY = found.ancestors.reduce(composeOffsetY, 0) + found.node.transform.m12;
+  const composeOffsetX = (acc: number, node: FigNode): number => acc + requiredTransform(node).m02;
+  const composeOffsetY = (acc: number, node: FigNode): number => acc + requiredTransform(node).m12;
+  const targetTransform = requiredTransform(found.node);
+  const targetSize = requiredSize(found.node);
   return {
-    x: offsetX,
-    y: offsetY,
-    width: found.node.size.x,
-    height: found.node.size.y,
+    x: found.ancestors.reduce(composeOffsetX, 0) + targetTransform.m02,
+    y: found.ancestors.reduce(composeOffsetY, 0) + targetTransform.m12,
+    width: targetSize.x,
+    height: targetSize.y,
   };
 }
 
-// =============================================================================
-// Metadata patch
-// =============================================================================
-
 /**
- * Merge fresh thumbnail dimensions into a `client_meta` block, leaving
- * the rest of metadata (background color, file name, exported_at, raw
- * unknown fields) untouched.
+ * Merge rendered thumbnail dimensions into package metadata.
  */
 export function patchMetadataForThumbnail(
   base: FigPackageMetadata | null,
@@ -210,79 +168,63 @@ function mergeClientMetaForThumbnail(
   return next;
 }
 
-// =============================================================================
-// Public entry
-// =============================================================================
-
 /**
- * Render the document's "Set as thumbnail" target if one is set.
- *
- * Returns `undefined` when no target exists — callers should preserve
- * whatever thumbnail bytes the loaded file already carries.
- *
- * Throws when:
- *  - the target nodeID resolves to a missing or non-canvas node
- *  - `renderThumbnail` is missing despite a target being set
- *  - the renderer returns malformed bytes (not PNG magic)
- *
- * The exporter wraps the result into `saveFigFile`'s `thumbnail` option
- * and a patched `metadata`. This function never mutates the document.
+ * Render and package a thumbnail when the Kiwi document declares one.
  */
 export async function prepareExportThumbnail(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   renderer: FigThumbnailRenderer | undefined,
   maxDimension: number,
 ): Promise<FigPreparedThumbnail | undefined> {
-  const target = doc.thumbnailTarget;
-  if (!target) {
+  const targetGuid = readThumbnailTarget(context);
+  if (targetGuid === undefined) {
     return undefined;
   }
   if (!renderer) {
     throw new Error(
-      `prepareExportThumbnail: doc.thumbnailTarget is set but FigExportOptions.renderThumbnail ` +
-        `was not provided. The exporter never auto-rasterises — supply a renderer ` +
-        `(see @higma-document-renderers/fig/svg + resvg-js for a reference Node-side wiring).`,
+      `prepareExportThumbnail: DOCUMENT.thumbnailInfo is set but FigExportOptions.renderThumbnail was not provided`,
     );
   }
-  const found = findThumbnailTargetNode(doc, target);
+  const found = findThumbnailTargetNode(context, targetGuid);
   const canvasBounds = composeCanvasBounds(found);
   if (!(canvasBounds.width > 0) || !(canvasBounds.height > 0)) {
     throw new Error(
-      `prepareExportThumbnail: thumbnailTarget node "${found.node.name}" (id=${found.node.id}) ` +
-        `has non-positive size ${canvasBounds.width}x${canvasBounds.height}; cannot rasterise.`,
+      `prepareExportThumbnail: thumbnail target "${found.node.name ?? guidToString(targetGuid)}" ` +
+      `has non-positive size ${canvasBounds.width}x${canvasBounds.height}`,
     );
   }
   if (!(maxDimension > 0)) {
-    throw new Error(
-      `prepareExportThumbnail: maxDimension must be > 0; got ${maxDimension}`,
-    );
+    throw new Error(`prepareExportThumbnail: maxDimension must be > 0; got ${maxDimension}`);
   }
   const result = await renderer({
-    document: doc,
-    pageId: found.pageId,
+    context,
+    page: found.page,
     target: found.node,
     canvasBounds,
     maxDimension,
   });
   if (!isPng(result.png)) {
-    // `isPng` covers both "too short" and "wrong magic" — see
-    // `@higma-codecs/png/detector`. Surface the original payload size
-    // in the message so the call site knows whether the renderer
-    // returned an empty buffer or just the wrong bytes.
     throw new Error(
-      `renderThumbnail returned ${result.png.length}-byte payload for "${found.node.name}" ` +
-        `that does not begin with the PNG magic; fig-lint's fig.zip.thumbnail rule would reject the export.`,
+      `renderThumbnail returned ${result.png.length}-byte payload for "${found.node.name ?? guidToString(targetGuid)}" ` +
+      `that does not begin with the PNG magic`,
     );
   }
   if (!(result.thumbnailSize.width > 0) || !(result.thumbnailSize.height > 0)) {
     throw new Error(
-      `renderThumbnail returned non-positive thumbnailSize ` +
-        `${result.thumbnailSize.width}x${result.thumbnailSize.height}`,
+      `renderThumbnail returned non-positive thumbnailSize ${result.thumbnailSize.width}x${result.thumbnailSize.height}`,
+    );
+  }
+  if (result.renderCoordinates === undefined) {
+    throw new Error("renderThumbnail must return explicit renderCoordinates");
+  }
+  if (!(result.renderCoordinates.width > 0) || !(result.renderCoordinates.height > 0)) {
+    throw new Error(
+      `renderThumbnail returned non-positive renderCoordinates ${result.renderCoordinates.width}x${result.renderCoordinates.height}`,
     );
   }
   return {
     png: result.png,
     thumbnailSize: result.thumbnailSize,
-    renderCoordinates: result.renderCoordinates ?? canvasBounds,
+    renderCoordinates: result.renderCoordinates,
   };
 }

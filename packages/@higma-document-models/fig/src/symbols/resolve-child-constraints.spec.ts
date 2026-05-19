@@ -1,6 +1,6 @@
 /** @file Tests for child constraint resolution */
 import { getConstraintValue, resolveChildConstraints } from "./resolve-child-constraints";
-import { CONSTRAINT_TYPE_VALUES } from "../constants/layout";
+import { CONSTRAINT_TYPE_VALUES } from "../constants";
 
 describe("getConstraintValue", () => {
   it("returns MIN for undefined", () => {

@@ -2,22 +2,7 @@
  * @file Fig format types
  */
 
-import type { KiwiSchema } from "@higma-codecs/kiwi/types";
-import type { CompressionType } from "@higma-codecs/compression";
-
-// =============================================================================
-// File Header Types
-// =============================================================================
-
-/** .fig file header structure */
-export type FigHeader = {
-  /** Magic header identifying the raw fig canvas container */
-  readonly magic: string;
-  /** Version character (typically '0') */
-  readonly version: string;
-  /** Payload size in bytes */
-  readonly payloadSize: number;
-};
+import type { StackWrap } from "./constants";
 
 // =============================================================================
 // Kiwi Schema Types
@@ -27,30 +12,6 @@ export type FigHeader = {
 // `KiwiDefinition`, `KiwiSchema`) are owned by `@higma-codecs/kiwi/types`.
 // Consumers must import them directly from there — this module deliberately
 // does not republish them under domain-prefixed aliases.
-
-// =============================================================================
-// Parsed Fig File Types
-// =============================================================================
-
-/** Parsed resource (image, etc.) */
-export type FigResource = {
-  readonly id: string;
-  readonly type: "image" | "video" | "font" | "unknown";
-  readonly data: Uint8Array;
-  readonly mimeType?: string;
-};
-
-/** Parsed fig file data */
-export type FigFile = {
-  readonly header: FigHeader;
-  readonly schema: KiwiSchema;
-  readonly document: FigDocument;
-  readonly resources: readonly FigResource[];
-};
-
-// =============================================================================
-// Raw Kiwi Node Types (matching binary format)
-// =============================================================================
 
 /** Enum value as stored in Kiwi binary format */
 export type KiwiEnumValue<T extends string = string> = {
@@ -143,6 +104,15 @@ export type FigTextStyleOverrideEntry = {
  */
 export type FigKiwiTextData = {
   readonly characters: string;
+  readonly fontName?: FigFontName;
+  readonly fontSize?: number;
+  readonly lineHeight?: FigValueWithUnits;
+  readonly letterSpacing?: FigValueWithUnits;
+  readonly textAutoResize?: KiwiEnumValue;
+  readonly textTruncation?: KiwiEnumValue;
+  readonly leadingTrim?: KiwiEnumValue;
+  readonly fontVariations?: readonly { readonly axisTag: number; readonly axisValue: number }[];
+  readonly hyperlink?: { readonly url?: string };
   /**
    * Per-character style ID array. Each element corresponds to a character
    * and references a styleOverrideTable entry by its styleID field.
@@ -274,6 +244,724 @@ export type FigGuidPath = {
 };
 
 /**
+ * Maps a single GUID to a longer GUID path. Used by Kiwi
+ * `unflatteningMappings` / `forceUnflatteningMappings` to record how a
+ * flattened vector should be re-split into its component shapes when
+ * re-edited.
+ */
+export type FigGuidPathMapping = {
+  readonly id: FigGuid;
+  readonly path: FigGuidPath;
+};
+
+/**
+ * A canvas guide (horizontal or vertical ruler). Authored by users in
+ * Figma's canvas to align content.
+ */
+export type FigGuide = {
+  readonly axis: KiwiEnumValue;
+  readonly offset: number;
+  readonly guid: FigGuid;
+};
+
+/**
+ * A symbol-link metadata entry (canonical URL + display labels).
+ * Round-trip only — the renderer does not present these.
+ */
+export type FigSymbolLink = {
+  readonly uri: string;
+  readonly displayName: string;
+  readonly displayText: string;
+};
+
+/**
+ * A single dev-mode annotation property.
+ */
+export type FigAnnotationProperty = {
+  readonly type: KiwiEnumValue;
+};
+
+/**
+ * A dev-mode annotation attached to a node (text label + structured
+ * properties).
+ */
+export type FigAnnotation = {
+  readonly label: string;
+  readonly properties?: readonly FigAnnotationProperty[];
+  readonly labelV2?: string;
+  readonly categoryId?: FigGuid;
+};
+
+/**
+ * A dev-mode measurement edge between two nodes.
+ */
+export type FigAnnotationMeasurement = {
+  readonly id: FigGuid;
+  readonly fromNode: FigGuid;
+  readonly toNode: FigGuid;
+  readonly fromNodeSide: KiwiEnumValue;
+  readonly toSameSide: boolean;
+  readonly innerOffsetRelative: number;
+  readonly outerOffsetFixed: number;
+  readonly toNodeStablePath: FigGuidPath;
+  readonly freeText: string;
+};
+
+// =============================================================================
+// Library / publish round-trip metadata (Kiwi-decoded structs)
+// =============================================================================
+
+/** Records the prior key of an asset that has moved between libraries. */
+export type FigLibraryMoveInfo = {
+  readonly oldKey: string;
+  readonly pasteFileKey: string;
+};
+
+/** One historical move entry tracking a node's prior identity. */
+export type FigLibraryMoveHistoryItem = {
+  readonly sourceNodeId: FigGuid;
+  readonly sourceComponentKey: string;
+};
+
+/** Master / shared style metadata recorded by Figma's library system. */
+export type FigSharedStyleMasterData = {
+  readonly styleKey: string;
+  readonly sortPosition: string;
+  readonly fileKey: string;
+};
+
+export type FigSharedStyleReference = {
+  readonly styleKey: string;
+  readonly versionHash: string;
+};
+
+export type FigSharedComponentMasterData = {
+  readonly componentKey: string;
+  readonly publishingGUIDPathToTeamLibraryGUID?: readonly FigGuidPathMapping[];
+  readonly isUnflattened?: boolean;
+};
+
+/** Section status (in-progress / approved / etc.) and edit metadata. */
+export type FigSectionStatusInfo = {
+  readonly status?: KiwiEnumValue;
+  readonly lastUpdateUnixTimestamp?: number;
+  readonly description?: string;
+  readonly userId?: string;
+  readonly prevStatus?: KiwiEnumValue;
+};
+
+/** Source coordinates for a paste operation. */
+export type FigPasteSource = {
+  readonly srcFile: string;
+  readonly srcNode: FigGuid;
+};
+
+/** Last-edit author / timestamp metadata. */
+export type FigEditInfo = {
+  readonly timestampIso8601?: string;
+  readonly userId?: string;
+  readonly lastEditedAt?: number;
+  readonly createdAt?: number;
+};
+
+/**
+ * Transform modifier (repeat / skew variant of a node's geometry).
+ * Used by Figma's repeat/grid pattern tools.
+ */
+export type FigTransformModifier = {
+  readonly type: KiwiEnumValue;
+  readonly offset?: { readonly x: number; readonly y: number };
+  readonly visible?: boolean;
+  readonly count?: number;
+  readonly repeatType?: KiwiEnumValue;
+  readonly axis?: KiwiEnumValue;
+  readonly unitType?: KiwiEnumValue;
+  readonly order?: KiwiEnumValue;
+  readonly skewX?: number;
+  readonly skewY?: number;
+};
+
+/**
+ * A swapped-instance's prior overrides stashed against the original
+ * `componentKey` so the swap can be reverted losslessly. Modern
+ * exports use `InstanceOverrideStashV2` (carrying `localSymbolID`
+ * instead of the legacy `componentKey`).
+ */
+export type FigInstanceOverrideStash = {
+  readonly overridePathOfSwappedInstance: FigGuidPath;
+  readonly componentKey: string;
+  readonly overrides?: readonly unknown[];
+};
+
+export type FigInstanceOverrideStashV2 = {
+  readonly overridePathOfSwappedInstance: FigGuidPath;
+  readonly localSymbolID: FigGuid;
+  readonly overrides?: readonly unknown[];
+};
+
+/**
+ * A responsive-text variant — pinned to a breakpoint by `minWidth`.
+ * `fields` carries a sparse NodeChange shape; the variable* fields are
+ * VariableData passthroughs. Reference fields use typeId in the Kiwi
+ * schema so the deepest payload is preserved verbatim.
+ */
+export type FigResponsiveTextStyleVariant = {
+  readonly minWidth: number;
+  readonly fields?: unknown;
+  readonly variableFontSize?: unknown;
+  readonly variableLineHeight?: unknown;
+  readonly variableLetterSpacing?: unknown;
+  readonly variableParagraphSpacing?: unknown;
+  readonly name: string;
+};
+
+/**
+ * Snapshot of the symbol-resolution result baked into a frame for
+ * faster re-renders. `overrides` carries sparse NodeChange payloads
+ * (typeId 211 in the Kiwi schema) and is preserved verbatim.
+ */
+export type FigDerivedImmutableFrameData = {
+  readonly overrides?: readonly unknown[];
+  readonly version?: number;
+};
+
+/**
+ * Sync metadata for instance regeneration (fine-grained diff). The
+ * `overrides` arrays carry sparse NodeChange payloads (typeId 211).
+ */
+export type FigNodeGenerationData = {
+  readonly overrides?: readonly unknown[];
+  readonly useFineGrainedSyncing?: boolean;
+  readonly diffOnlyRemovals?: readonly unknown[];
+};
+
+/** Approval request entry for Figma's Buzz approval workflow. */
+export type FigBuzzApprovalRequestInfo = {
+  readonly requestId: string;
+  readonly requesterUserId: string;
+  readonly requestedAt: number;
+  readonly reviewerUserIds: readonly string[];
+  readonly title: string;
+  readonly note: string;
+  readonly assetsInRequest: readonly FigGuid[];
+};
+
+export type FigBuzzApprovalRequests = {
+  readonly requests?: readonly FigBuzzApprovalRequestInfo[];
+};
+
+export type FigBuzzApprovalNodeStatusInfo = {
+  readonly currentStatus?: KiwiEnumValue;
+  readonly wasPreviouslyApproved?: boolean;
+  readonly approvalRevokedAtHistory?: readonly number[];
+};
+
+/**
+ * Per-paragraph list marker / indentation data attached to a text run.
+ */
+export type FigTextListData = {
+  readonly listID?: number;
+  readonly bulletType?: KiwiEnumValue;
+  readonly indentationLevel?: number;
+  readonly lineNumber?: number;
+};
+
+/**
+ * Settings for a responsive variant set (Figma's Responsive feature).
+ * Controls breakpoint-aware text scaling parameters.
+ */
+export type FigResponsiveSetSettings = {
+  readonly title?: string;
+  readonly description?: string;
+  readonly scalingMode?: KiwiEnumValue;
+  readonly scalingMinFontSize?: number;
+  readonly scalingMaxFontSize?: number;
+  readonly scalingMinLayoutWidth?: number;
+  readonly scalingMaxLayoutWidth?: number;
+  readonly lang?: string;
+};
+
+/**
+ * Wrapper around a list of inherited variable IDs. The Kiwi `variableIds`
+ * field is a typeId-260 array (variableId payload, opaque on the wire);
+ * we preserve the inner array verbatim.
+ */
+export type FigInheritedVariablesData = {
+  readonly variableIds?: readonly unknown[];
+};
+
+/**
+ * Generic Kiwi "entries map" wrapper. Many fields in the schema take the
+ * form `{ entries: ItemT[] }` — the codec preserves the inner array
+ * verbatim, and consumers introspect it on demand.
+ */
+export type FigKiwiEntriesMap = {
+  readonly entries?: readonly unknown[];
+};
+
+/** Slide theme reference (`{ themeID, version }`). */
+export type FigSlideThemeData = {
+  readonly themeID?: FigGuid;
+  readonly version?: string;
+};
+
+/** Handoff (dev-mode) status map (`{ entries: HandoffStatusMapEntry[] }`). */
+export type FigHandoffStatusMap = FigKiwiEntriesMap;
+
+/** Migration status flags. */
+export type FigMigrationStatus = {
+  readonly dsdCleanup?: boolean;
+};
+
+/** Edit-scope diagnostics (`{ editScopeStacks, snapshots }`). */
+export type FigEditScopeInfo = {
+  readonly editScopeStacks?: readonly unknown[];
+  readonly snapshots?: readonly unknown[];
+};
+
+/** Cooper-revert original NodeChange payload (`{ originalValues }`). */
+export type FigCooperRevertData = {
+  readonly originalValues?: unknown;
+};
+
+/** Hub-file attribution (`{ hubFileId, hubFileName }`). */
+export type FigHubFileAttribution = {
+  readonly hubFileId?: string;
+  readonly hubFileName?: string;
+};
+
+/**
+ * Node-level interaction / behavior bag. Each field carries a typed
+ * sub-struct (link, appear, hover, etc.) — preserved verbatim; the
+ * renderer does not yet emit interactions.
+ */
+export type FigNodeBehaviors = {
+  readonly link?: unknown;
+  readonly appear?: unknown;
+  readonly hover?: unknown;
+  readonly press?: unknown;
+  readonly focus?: unknown;
+  readonly scrollParallax?: unknown;
+  readonly scrollTransform?: unknown;
+  readonly cursor?: unknown;
+};
+
+// =============================================================================
+// Round-trip metadata struct types for prototype / connector / widget /
+// code / animation features. All preserved verbatim; renderer ignores.
+// =============================================================================
+
+/** Comment / collab mention attached to a node. */
+export type FigMention = {
+  readonly id: FigGuid;
+  readonly mentionedUserId: string;
+  readonly mentionedByUserId: string;
+  readonly fileKey: string;
+  readonly source?: KiwiEnumValue;
+  readonly mentionedUserIdInt?: number;
+  readonly mentionedByUserIdInt?: number;
+};
+
+export type FigTransitionInfo = {
+  readonly type: KiwiEnumValue;
+  readonly duration: number;
+};
+
+export type FigPrototypeDevice = {
+  readonly type: KiwiEnumValue;
+  readonly size?: FigVector;
+  readonly presetIdentifier?: string;
+  readonly rotation?: KiwiEnumValue;
+};
+
+/**
+ * One prototype interaction (event → actions). The sub-typed payloads
+ * for `event` and `actions` are preserved as opaque arrays — the
+ * renderer does not run prototype interactions today.
+ */
+export type FigPrototypeInteraction = {
+  readonly id: FigGuid;
+  readonly event?: unknown;
+  readonly actions?: readonly unknown[];
+  readonly isDeleted?: boolean;
+  readonly stateManagementVersion?: number;
+};
+
+export type FigPrototypeStartingPoint = {
+  readonly name: string;
+  readonly description: string;
+  readonly position: string;
+};
+
+export type FigPluginData = {
+  readonly pluginID: string;
+  readonly value: string;
+  readonly key: string;
+};
+
+export type FigPluginRelaunchData = {
+  readonly pluginID: string;
+  readonly message: string;
+  readonly command: string;
+  readonly isDeleted?: boolean;
+};
+
+export type FigConnectorEndpoint = {
+  readonly endpointNodeID?: FigGuid;
+  readonly position?: FigVector;
+  readonly magnet?: KiwiEnumValue;
+  readonly relativePosition?: FigVector;
+};
+
+export type FigConnectorControlPoint = {
+  readonly position: FigVector;
+  readonly axis?: FigVector;
+};
+
+export type FigConnectorTextMidpoint = {
+  readonly section?: KiwiEnumValue;
+  readonly offset?: number;
+  readonly offAxisOffset?: KiwiEnumValue;
+};
+
+/** JSX-mode override snapshot (overrides is sparse NodeChange[]). */
+export type FigJsxData = { readonly overrides?: readonly unknown[] };
+export type FigDerivedJsxData = { readonly overrides?: readonly unknown[] };
+
+export type FigLinkPreviewData = {
+  readonly url: string;
+  readonly title?: string;
+  readonly provider?: string;
+  readonly description?: string;
+  readonly thumbnailImageHash?: string;
+  readonly faviconImageHash?: string;
+  readonly thumbnailImageWidth?: number;
+  readonly thumbnailImageHeight?: number;
+};
+
+export type FigVideoPlayback = {
+  readonly autoplay?: boolean;
+  readonly mediaLoop?: boolean;
+  readonly muted?: boolean;
+  readonly showControls?: boolean;
+  readonly startTimeMs?: number;
+  readonly endTimeMs?: number;
+};
+
+export type FigStampData = {
+  readonly userId: string;
+  readonly votingSessionId?: string;
+  readonly stampedByUserId?: string;
+};
+
+export type FigSectionPresetInfo = {
+  readonly shelfId?: number;
+  readonly templateId?: number;
+  readonly templateName?: string;
+  readonly state?: KiwiEnumValue;
+};
+
+export type FigPlatformShapeDefinition = {
+  readonly propertyMapEntries?: readonly unknown[];
+  readonly behaviorType?: KiwiEnumValue;
+  readonly thumbnailNode?: FigGuidPath;
+};
+
+/** A Kiwi `MultiplayerMap` (used for jsxProps / widgetSyncedState / renderedSyncedState). */
+export type FigMultiplayerMap = FigKiwiEntriesMap;
+
+export type FigWidgetDerivedSubtreeCursor = {
+  readonly sessionID: number;
+  readonly counter: number;
+};
+
+export type FigWidgetPointer = {
+  readonly nodeId: FigGuid;
+};
+
+export type FigWidgetHoverStyle = {
+  readonly fillPaints?: readonly FigPaint[];
+  readonly strokePaints?: readonly FigPaint[];
+  readonly opacity?: number;
+  readonly areFillPaintsSet?: boolean;
+  readonly areStrokePaintsSet?: boolean;
+  readonly isOpacitySet?: boolean;
+};
+
+export type FigWidgetMetadata = {
+  readonly pluginID: string;
+  readonly pluginVersionID?: string;
+  readonly widgetName?: string;
+  readonly isResizable?: boolean;
+  readonly isRotatable?: boolean;
+};
+
+export type FigWidgetPropertyMenuItem = {
+  readonly propertyName?: string;
+  readonly tooltip?: string;
+  readonly itemType?: KiwiEnumValue;
+  readonly icon?: string;
+  readonly options?: readonly unknown[];
+  readonly selectedOption?: string;
+  readonly isToggled?: boolean;
+  readonly href?: string;
+  readonly allowCustomColor?: boolean;
+};
+
+export type FigOverlayBackgroundAppearance = {
+  readonly backgroundType: KiwiEnumValue;
+  readonly backgroundColor?: FigColor;
+};
+
+export type FigKeyTrigger = {
+  readonly keyCodes?: readonly number[];
+  readonly triggerDevice?: KiwiEnumValue;
+};
+
+export type FigEmbedData = {
+  readonly url: string;
+  readonly srcUrl?: string;
+  readonly title?: string;
+  readonly thumbnailUrl?: string;
+  readonly width?: number;
+  readonly height?: number;
+  readonly embedType?: string;
+  readonly thumbnailImageHash?: string;
+  readonly faviconImageHash?: string;
+  readonly provider?: string;
+  readonly originalText?: string;
+  readonly description?: string;
+  readonly embedVersionId?: string;
+};
+
+export type FigRichMediaData = {
+  readonly mediaHash: string;
+  readonly richMediaType?: KiwiEnumValue;
+};
+
+export type FigVariableWidthPoint = {
+  readonly position: number;
+  readonly ascent: number;
+  readonly descent: number;
+  readonly segmentId?: number;
+};
+
+export type FigDynamicStrokeSettings = {
+  readonly frequency?: number;
+  readonly wiggle?: number;
+  readonly smoothen?: number;
+};
+
+export type FigScatterStrokeSettings = {
+  readonly gap?: number;
+  readonly wiggle?: number;
+  readonly angularJitter?: number;
+  readonly rotation?: number;
+  readonly sizeJitter?: number;
+};
+
+export type FigStretchStrokeSettings = {
+  readonly orientation: KiwiEnumValue;
+};
+
+export type FigCollaborativeTextOpID = {
+  readonly sessionID: number;
+  readonly counterID: number;
+};
+
+export type FigCollaborativePlainText = {
+  readonly historyOpsWithIds?: readonly unknown[];
+  readonly historyOpsWithLoc?: readonly unknown[];
+  readonly historyStringContentBuffer?: Uint8Array;
+  readonly changesToAppend?: readonly unknown[];
+};
+
+/** Generic GUID-or-assetRef payload used by SymbolId / CanvasNodeId / CodeLibraryId / etc. */
+export type FigGuidOrAssetRefId = {
+  readonly guid?: FigGuid;
+  readonly assetRef?: FigAssetRef;
+};
+
+export type FigSymbolIdRef = FigGuidOrAssetRefId;
+export type FigCodeLibraryId = FigGuidOrAssetRefId;
+export type FigCodeFileId = FigGuidOrAssetRefId;
+export type FigCodeComponentId = FigGuidOrAssetRefId;
+export type FigCanvasNodeId = {
+  readonly guid?: FigGuid;
+  readonly symbolId?: FigSymbolIdRef;
+  readonly stateGroupId?: FigGuidOrAssetRefId;
+};
+
+export type FigAssetId = {
+  readonly guid?: FigGuid;
+  readonly assetRef?: FigAssetRef;
+  readonly stateGroupId?: FigGuidOrAssetRefId;
+  readonly styleId?: FigStyleId;
+  readonly symbolId?: FigSymbolIdRef;
+  readonly variableId?: FigGuidOrAssetRefId;
+  readonly variableSetId?: FigGuidOrAssetRefId;
+};
+
+export type FigAssetIdMap = {
+  readonly entries?: readonly {
+    readonly assetKey: string;
+    readonly assetId: FigAssetId;
+  }[];
+};
+
+export type FigImportedCodeFiles = FigKiwiEntriesMap;
+export type FigImageImportMap = { readonly imports?: readonly unknown[] };
+
+export type FigUsedMakeLibrary = {
+  readonly makeLibraryId: string;
+};
+
+export type FigCodeExample = {
+  readonly exampleName: string;
+  readonly codeExportName?: string;
+};
+
+export type FigNodeChatMessage = {
+  readonly id: FigGuid;
+  readonly type?: KiwiEnumValue;
+  readonly userId?: string;
+  readonly textContent?: string;
+  readonly sentAt?: number;
+  readonly toolCalls?: readonly unknown[];
+  readonly toolResults?: readonly unknown[];
+  readonly sentAt64?: number;
+};
+
+export type FigNodeChatCompressionState = {
+  readonly startIndex?: number;
+  readonly summary?: string;
+};
+
+export type FigAIChatThread = {
+  readonly messages?: readonly unknown[];
+};
+
+export type FigCodeSnapshot = {
+  readonly state?: KiwiEnumValue;
+  readonly invalidatedAt?: number;
+  readonly paints?: readonly FigPaint[];
+  readonly offset?: FigVector;
+  readonly layoutSize?: FigVector;
+  readonly canvasSize?: FigVector;
+  readonly devicePixelRatio?: number;
+};
+
+export type FigCodeBehaviorData = {
+  readonly name?: string;
+  readonly icon?: string;
+  readonly nodeTypes?: readonly string[];
+  readonly category?: string;
+  readonly apiVersion?: number;
+};
+
+export type FigCodeEmbedInfo = {
+  readonly url: string;
+  readonly srcUrl?: string;
+  readonly title?: string;
+  readonly thumbnailImageHash?: string;
+};
+
+export type FigCMSSelector = {
+  readonly cmsCollectionId: string;
+  readonly filterCriteria?: unknown;
+  readonly sorts?: readonly unknown[];
+  readonly limit?: number;
+};
+
+export type FigCMSConsumptionMap = FigKiwiEntriesMap;
+export type FigCMSRichTextStyleMap = FigKiwiEntriesMap;
+
+export type FigRepeaterCmsOverrideData = {
+  readonly overrides?: readonly unknown[];
+};
+
+export type FigRepeaterOverrideData = {
+  readonly parentIndexOverrides?: readonly unknown[];
+};
+
+export type FigFirstDraftData = {
+  readonly generationId: string;
+  readonly kit?: KiwiEnumValue;
+};
+
+export type FigFirstDraftKitElementData = {
+  readonly type: KiwiEnumValue;
+};
+
+export type FigCooperTemplateData = {
+  readonly type: KiwiEnumValue;
+};
+
+export type FigManagedStringData = {
+  readonly key: string;
+  readonly context?: string;
+  readonly locale?: string;
+  readonly content?: unknown;
+  readonly contentSchema?: unknown;
+};
+
+export type FigAiCanvasPrompt = {
+  readonly userPrompt: string;
+  readonly authorId?: string;
+  readonly parentNodeIds?: readonly FigGuid[];
+};
+
+export type FigTRSSTransform2D = {
+  readonly translation?: FigVector;
+  readonly rotation?: number;
+  readonly scale?: FigVector;
+  readonly shearX?: number;
+};
+
+export type FigKeyframeValueData = {
+  readonly value?: unknown;
+  readonly valueType?: KiwiEnumValue;
+};
+
+export type FigBezierHandles = {
+  readonly p1x: number;
+  readonly p1y: number;
+  readonly p2x: number;
+  readonly p2y: number;
+};
+
+export type FigEasingData = {
+  readonly easingType?: KiwiEnumValue;
+  readonly easingValue?: unknown;
+};
+
+export type FigAnimationPresets = {
+  readonly presets?: readonly unknown[];
+};
+
+export type FigTransitionOverrideData = {
+  readonly all?: readonly unknown[];
+  readonly propertyOverrides?: unknown;
+};
+
+/**
+ * A shared/published-symbol reference snapshot. Carries the master
+ * key, the GUID-path mappings for nested overrides, and the
+ * library subscription metadata.
+ */
+export type FigSharedSymbolReference = {
+  readonly fileKey: string;
+  readonly symbolID: FigGuid;
+  readonly versionHash: string;
+  readonly guidPathMappings?: readonly FigGuidPathMapping[];
+  readonly bytes?: Uint8Array;
+  readonly libraryGUIDToSubscribingGUID?: readonly unknown[];
+  readonly componentKey: string;
+  readonly unflatteningMappings?: readonly FigGuidPathMapping[];
+  readonly isUnflattened?: boolean;
+};
+
+/**
  * `VariableID` references a Figma variable, either local (sessionID +
  * localID, like any other GUID) or imported from a published library
  * (`assetRef`). The library-asset form cannot be resolved from a
@@ -401,8 +1089,7 @@ export type FigKiwiSymbolOverridePayload = {
   readonly name?: string;
   readonly visible?: boolean;
   readonly opacity?: number;
-  // Domain BlendMode string union — same SSoT rule as stroke enums.
-  readonly blendMode?: BlendMode;
+  readonly blendMode?: KiwiEnumValue<BlendMode>;
   readonly mask?: boolean;
   readonly clipsContent?: boolean;
   readonly frameMaskDisabled?: boolean;
@@ -411,14 +1098,15 @@ export type FigKiwiSymbolOverridePayload = {
   readonly fillPaints?: readonly FigPaint[];
   readonly strokePaints?: readonly FigPaint[];
   readonly strokeWeight?: FigStrokeWeight;
-  // Stroke enums are the **domain** string-union representation across
-  // FigNode, FigKiwiSymbolOverride, and FigDesignNode. The parser
-  // converts raw Kiwi `{ value, name }` to the string at input, and
-  // the builder maps back at emission. There is only one in-memory
-  // shape per concept — no `KiwiEnumValue | string` unions anywhere.
-  readonly strokeJoin?: FigStrokeJoin;
-  readonly strokeCap?: FigStrokeCap;
-  readonly strokeAlign?: FigStrokeAlign;
+  readonly individualStrokeWeights?: {
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+    readonly left: number;
+  };
+  readonly strokeJoin?: KiwiEnumValue<FigStrokeJoin>;
+  readonly strokeCap?: KiwiEnumValue<FigStrokeCap>;
+  readonly strokeAlign?: KiwiEnumValue<FigStrokeAlign>;
   readonly strokeDashes?: readonly number[];
   readonly borderTopWeight?: number;
   readonly borderRightWeight?: number;
@@ -488,7 +1176,7 @@ export type FigKiwiSymbolOverridePayload = {
   readonly stackCounterAlignContent?: KiwiEnumValue;
   readonly stackCounterSpacing?: number;
   readonly stackCounterSizing?: KiwiEnumValue;
-  readonly stackWrap?: boolean;
+  readonly stackWrap?: KiwiEnumValue<StackWrap>;
   readonly stackReverseZIndex?: boolean;
   readonly stackChildAlignSelf?: KiwiEnumValue;
   readonly stackChildPrimaryGrow?: number;
@@ -510,7 +1198,6 @@ export type FigKiwiSymbolOverride = FigKiwiSymbolOverridePayload & {
  */
 export type FigKiwiSymbolData = {
   readonly symbolID?: FigGuid;
-  readonly overriddenSymbolID?: FigGuid;
   readonly symbolOverrides?: readonly FigKiwiSymbolOverride[];
   readonly [key: string]: unknown;
 };
@@ -602,7 +1289,7 @@ export type FigComponentPropAssignment = {
 
 /**
  * Fig node as decoded from Kiwi binary format.
- * This represents the raw structure, not a high-level API.
+ * This represents the Kiwi structure, not a secondary API.
  *
  * Typed fields cover the most commonly accessed properties.
  * The index signature provides access to additional Kiwi schema fields.
@@ -622,14 +1309,15 @@ export type FigNode = {
   readonly backgroundPaints?: readonly FigPaint[];
   readonly strokePaints?: readonly FigPaint[];
   readonly strokeWeight?: FigStrokeWeight;
-  // Stroke enums use domain string-unions (FigStroke{Join,Cap,Align})
-  // across FigNode, FigKiwiSymbolOverride, FigDesignNode, and
-  // SymbolOverride. The parser converts raw Kiwi `{ value, name }`
-  // to the string at input time; the builder emits the `{ value,
-  // name }` form back at output time. No mixed shapes in memory.
-  readonly strokeAlign?: FigStrokeAlign;
-  readonly strokeJoin?: FigStrokeJoin;
-  readonly strokeCap?: FigStrokeCap;
+  readonly individualStrokeWeights?: {
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+    readonly left: number;
+  };
+  readonly strokeAlign?: KiwiEnumValue<FigStrokeAlign>;
+  readonly strokeJoin?: KiwiEnumValue<FigStrokeJoin>;
+  readonly strokeCap?: KiwiEnumValue<FigStrokeCap>;
   readonly cornerRadius?: number;
   readonly rectangleCornerRadii?: readonly number[];
   /** Individual corner radius fields (real .fig format — alternative to array) */
@@ -642,6 +1330,8 @@ export type FigNode = {
   readonly vectorPaths?: readonly FigVectorPath[];
   /** Vector data including network blob and per-path style overrides */
   readonly vectorData?: FigVectorData;
+  /** Canvas guide definitions authored on frame-like nodes (Kiwi `Guide[]`). */
+  readonly guides?: readonly FigGuide[];
   readonly effects?: readonly FigEffect[];
   /** Style reference for fill paint (Kiwi schema field 332) */
   readonly styleIdForFill?: FigStyleId;
@@ -658,7 +1348,7 @@ export type FigNode = {
   /**
    * Style reference for effects (Kiwi schema field 335). Resolves to
    * an EFFECT-type style-definition node whose own `effects` array
-   * (DROP_SHADOW / INNER_SHADOW / LAYER_BLUR / BACKGROUND_BLUR)
+   * (DROP_SHADOW / INNER_SHADOW / FOREGROUND_BLUR / BACKGROUND_BLUR)
    * defines the shared effect style.
    */
   readonly styleIdForEffect?: FigStyleId;
@@ -684,6 +1374,17 @@ export type FigNode = {
   readonly borderBottomWeight?: number;
   readonly borderLeftWeight?: number;
   readonly borderStrokeWeightsIndependent?: boolean;
+  /** Per-side border visibility ("hidden" sides skip the stroke entirely). */
+  readonly borderTopHidden?: boolean;
+  readonly borderRightHidden?: boolean;
+  readonly borderBottomHidden?: boolean;
+  readonly borderLeftHidden?: boolean;
+  /**
+   * When true, the node's exported / measurement bounds use its absolute
+   * (post-transform) bounding box rather than its layout-flow bounds.
+   * Figma's "Use absolute bounds for measurements" toggle. Kiwi field 258.
+   */
+  readonly useAbsoluteBounds?: boolean;
   readonly mask?: boolean;
   readonly clipsContent?: boolean;
   readonly frameMaskDisabled?: boolean;
@@ -691,8 +1392,8 @@ export type FigNode = {
   readonly backgroundEnabled?: boolean;
   readonly backgroundOpacity?: number;
   readonly documentColorProfile?: KiwiEnumValue;
-  /** Blend mode for compositing (domain string-union SSoT). */
-  readonly blendMode?: BlendMode;
+  /** Blend mode for compositing. */
+  readonly blendMode?: KiwiEnumValue<BlendMode>;
   /** iOS-style corner smoothing (0-1 range) */
   readonly cornerSmoothing?: number;
 
@@ -717,8 +1418,10 @@ export type FigNode = {
   readonly stackCounterAlignItems?: KiwiEnumValue;
   /** Primary axis content distribution */
   readonly stackPrimaryAlignContent?: KiwiEnumValue;
+  /** Counter axis content distribution (parallel to Primary; written by modern Figma when stackWrap is enabled). */
+  readonly stackCounterAlignContent?: KiwiEnumValue;
   /** Whether children wrap to next line */
-  readonly stackWrap?: boolean;
+  readonly stackWrap?: KiwiEnumValue<StackWrap>;
   /** Spacing between wrapped rows/columns */
   readonly stackCounterSpacing?: number;
   /** Reverse z-order of children */
@@ -747,14 +1450,12 @@ export type FigNode = {
   // ---- Symbol/Instance fields ----
   /** Symbol data for INSTANCE nodes (symbolID, overrides) */
   readonly symbolData?: FigKiwiSymbolData;
-  /** Top-level symbolID (builder-generated format) */
-  readonly symbolID?: FigGuid;
   /** Overridden symbol ID for variant swapping */
   readonly overriddenSymbolID?: FigGuid;
-  /** Top-level symbol overrides (builder-generated format) */
-  readonly symbolOverrides?: readonly FigKiwiSymbolOverride[];
   /** Derived symbol data (computed transforms for INSTANCE children) */
   readonly derivedSymbolData?: readonly FigKiwiSymbolOverride[];
+  /** Kiwi layout-version marker for `derivedSymbolData`; preserved with the INSTANCE. */
+  readonly derivedSymbolDataLayoutVersion?: number;
   /** Component property references (bound property definition IDs, string format) */
   readonly componentPropertyReferences?: readonly string[];
   /** Component property assignments (overridden values on INSTANCE) */
@@ -765,6 +1466,10 @@ export type FigNode = {
   readonly componentPropRefs?: readonly FigComponentPropRef[];
   /** Variant property values on SYMBOL nodes inside a variant-set FRAME */
   readonly variantPropSpecs?: readonly FigVariantPropSpec[];
+  /** Canonical link metadata attached to SYMBOL/component definitions. */
+  readonly symbolLinks?: readonly FigSymbolLink[];
+  /** Variant backing node reference stored in Kiwi as CanvasNodeId. */
+  readonly backingNodeId?: FigCanvasNodeId;
   /**
    * Variant-Set marker on a FRAME. On disk, a "Component Set" /
    * "Variant Set" is a FRAME bearing `isStateGroup === true` plus
@@ -825,6 +1530,10 @@ export type FigNode = {
    * another Figma file.
    */
   readonly key?: string;
+  /** File asset id map stored on library/style/component metadata nodes. */
+  readonly fileAssetIds?: FigAssetIdMap;
+  /** Legacy style-definition marker stored as Kiwi uint field 49. */
+  readonly styleID?: number;
 
   // ---- Section fields ----
   /** Whether section contents are hidden (collapsed) */
@@ -837,7 +1546,7 @@ export type FigNode = {
   readonly starInnerRadius?: number;
   /** Star inner scale factor (0-1). Controls inner vertex positions relative to outer. */
   readonly starInnerScale?: number;
-  /** Stroke dash pattern (separate from strokeDashes for legacy compat) */
+  /** Stroke dash pattern emitted by older Kiwi captures. */
   readonly dashPattern?: readonly number[];
   /** Handle mirroring mode for vector point handles */
   readonly handleMirroring?: KiwiEnumValue;
@@ -900,8 +1609,8 @@ export type FigNode = {
   /**
    * Override key — Figma's stable identifier used by SYMBOL-side overrides
    * to address descendant slots. Different from `guid` (instance-side).
-   * DSD `guidPath` entries reference this key, so slot-resolution must
-   * fall back to `overrideKey` matching when a literal `guid` lookup fails.
+   * DSD `guidPath` entries reference this key, so SymbolResolver treats
+   * `overrideKey` as an exact slot address alongside the descendant GUID.
    */
   readonly overrideKey?: FigGuid;
 
@@ -913,16 +1622,7 @@ export type FigNode = {
     readonly innerRadius: number;
   };
 
-  /**
-   * Children (added by tree-builder, not present in raw Kiwi format).
-   *
-   * The element type is `FigNode | undefined | null` because real .fig
-   * files encountered in the wild have sparse arrays: Figma's edit
-   * history can leave deleted-node slots as `undefined` and some
-   * library fixtures carry explicit `null` placeholders. All
-   * tree-walking code must go through `safeChildren`, which filters
-   * both out at the boundary (`c != null` covers both cases).
-   */
+  /** Child nodes when a parser/runtime source already materialized nested children. */
   readonly children?: readonly (FigNode | null | undefined)[];
   /** Additional fields (Kiwi schema has many optional fields) */
   readonly [key: string]: unknown;
@@ -940,32 +1640,6 @@ export type FigNode = {
  */
 export type MutableFigNode = {
   -readonly [K in keyof FigNode]: FigNode[K];
-};
-
-/** Fig document tree (high-level, for tree building) */
-export type FigDocument = {
-  readonly type: KiwiEnumValue<FigNodeType>;
-  readonly children?: readonly FigNode[];
-  readonly [key: string]: unknown;
-};
-
-// =============================================================================
-// Builder Types
-// =============================================================================
-
-/** Options for building a .fig file */
-export type FigBuildOptions = {
-  /** Compression type to use (default: "deflate") */
-  compression?: CompressionType;
-  /** Compression level (0-9, default: 6) */
-  compressionLevel?: number;
-};
-
-/** Input for building a .fig file */
-export type FigBuildInput = {
-  readonly schema: KiwiSchema;
-  readonly document: FigDocument;
-  readonly resources?: readonly FigResource[];
 };
 
 // =============================================================================
@@ -1006,9 +1680,15 @@ export const FIG_NODE_TYPE = {
   EMBED: "EMBED",
   LINK_UNFURL: "LINK_UNFURL",
   MEDIA: "MEDIA",
+  HIGHLIGHT: "HIGHLIGHT",
   SECTION: "SECTION",
+  SECTION_OVERLAY: "SECTION_OVERLAY",
+  WASHI_TAPE: "WASHI_TAPE",
+  VARIABLE: "VARIABLE",
   TABLE: "TABLE",
   TABLE_CELL: "TABLE_CELL",
+  VARIABLE_SET: "VARIABLE_SET",
+  SLIDE: "SLIDE",
 } as const;
 
 export type FigNodeType = typeof FIG_NODE_TYPE[keyof typeof FIG_NODE_TYPE];
@@ -1102,31 +1782,28 @@ export type FigGradientStop = {
 /**
  * Base paint interface.
  *
- * `type` and `blendMode` are SSoT string unions across the fig package.
- * Kiwi binary stores these as `KiwiEnumValue { value, name }`; the
- * parser normalises to the string name at input time and the builder
- * rebuilds the enum shape at output time. No in-memory paint carries
- * the raw enum shape.
+ * `type` and `blendMode` are decoded Kiwi enum payloads. Consumers
+ * must read them through the paint accessors in `color.ts`.
  */
 export type FigPaintBase = {
-  readonly type: FigPaintType;
+  readonly type: KiwiEnumValue<FigPaintType>;
   readonly visible?: boolean;
   readonly opacity?: number;
-  readonly blendMode?: BlendMode;
+  readonly blendMode?: KiwiEnumValue<BlendMode>;
 };
 
 /**
  * Solid paint
  */
 export type FigSolidPaint = FigPaintBase & {
-  readonly type: "SOLID";
+  readonly type: KiwiEnumValue<"SOLID">;
   readonly color: FigColor;
 };
 
 /**
  * Gradient paint transform matrix.
  *
- * Maps gradient space → normalized object space (0..1, 0..1).
+ * Maps element unit object space (0..1, 0..1) to gradient space.
  * Same structure as FigMatrix but fields are optional because the
  * Kiwi binary format may omit identity components.
  *
@@ -1146,22 +1823,19 @@ export type FigGradientTransform = {
 /**
  * Gradient paint
  *
- * Supports both API format (gradientHandlePositions, gradientStops)
- * and Kiwi format (transform, stops).
+ * Shape follows Kiwi schema `Paint`: `transform` and `stops`.
  */
 export type FigGradientPaint = FigPaintBase & {
   readonly type:
-    | "GRADIENT_LINEAR"
-    | "GRADIENT_RADIAL"
-    | "GRADIENT_ANGULAR"
-    | "GRADIENT_DIAMOND";
-  /** API format: gradient handle positions (start, end, width handle) */
-  readonly gradientHandlePositions?: readonly FigVector[];
-  /** API format: gradient color stops */
-  readonly gradientStops?: readonly FigGradientStop[];
-  /** Kiwi format: 2x3 affine transform mapping gradient space → normalized object space */
+    KiwiEnumValue<
+      | "GRADIENT_LINEAR"
+      | "GRADIENT_RADIAL"
+      | "GRADIENT_ANGULAR"
+      | "GRADIENT_DIAMOND"
+    >;
+  /** 2x3 affine transform mapping unit object space to gradient space. */
   readonly transform?: FigGradientTransform;
-  /** Kiwi format: gradient color stops (equivalent to gradientStops) */
+  /** Gradient color stops. */
   readonly stops?: readonly FigGradientStop[];
 };
 
@@ -1170,15 +1844,15 @@ export type FigGradientPaint = FigPaintBase & {
  *
  * Controls how the image is positioned and scaled within the element.
  * Uses the same 2x3 affine matrix structure as gradient transforms.
- * The transform maps image space → normalized object space (0..1, 0..1).
+ * The transform maps image space to the element's unit object space (0..1, 0..1).
  */
 export type FigImageTransform = FigGradientTransform;
 
 /**
  * Image paint
  */
-/** Image paint scale mode — SSoT string union. */
-export type FigImageScaleMode = "FILL" | "FIT" | "CROP" | "TILE" | "STRETCH";
+/** Kiwi ImageScaleMode enum names. */
+export type FigImageScaleMode = "FILL" | "FIT" | "TILE" | "STRETCH";
 
 export type FigImagePaintFilter = {
   readonly tint?: number;
@@ -1195,31 +1869,17 @@ export type FigImagePaintFilter = {
 };
 
 export type FigImagePaint = FigPaintBase & {
-  readonly type: "IMAGE";
-  /** API format: image reference string */
-  readonly imageRef?: string;
-  /** API format: scale mode (SSoT string). Parser normalises Kiwi enum to string. */
-  readonly scaleMode?: FigImageScaleMode;
-  /** Kiwi format: image scale mode — same semantic as scaleMode, string form. */
-  readonly imageScaleMode?: FigImageScaleMode;
+  readonly type: KiwiEnumValue<"IMAGE">;
+  /** Kiwi image scale mode enum payload. */
+  readonly imageScaleMode?: KiwiEnumValue<FigImageScaleMode>;
   /** 2x3 affine transform for image positioning within the element */
   readonly transform?: FigImageTransform;
-  /** API/builder format: 2x3 affine transform for image positioning. */
-  readonly imageTransform?: FigImageTransform;
-  /**
-   * Multiplier on the natural image size (TILE tile scale, or user-adjusted
-   * scale for FILL/FIT/CROP). API format uses `scalingFactor`; Kiwi binary
-   * stores `scale`.
-   */
-  readonly scalingFactor?: number;
-  /** Kiwi-format multiplier. Semantics match `scalingFactor`. */
+  /** Multiplier on the natural image size. */
   readonly scale?: number;
-  /** Kiwi/API image colour adjustment payload. */
-  readonly paintFilter?: FigImagePaintFilter;
-  /** Older builder/API colour adjustment payload. */
+  /** Legacy Kiwi colour-adjustment payload. */
   readonly filterColorAdjust?: FigImagePaintFilter;
-  /** Builder-level alias used by local fixtures. */
-  readonly filters?: FigImagePaintFilter;
+  /** Image colour-adjustment payload. */
+  readonly paintFilter?: FigImagePaintFilter;
   /** Whether browser colour management should be used while decoding/uploading. */
   readonly imageShouldColorManage?: boolean;
   /**
@@ -1227,22 +1887,11 @@ export type FigImagePaint = FigPaintBase & {
    * Kiwi binary field.
    */
   readonly rotation?: number;
-  /** Kiwi format: image data reference (hash-based) */
+  /** Image data reference. */
   readonly image?: { readonly hash?: readonly number[] };
-  /** Kiwi format: alternative image hash (string or byte array) */
-  readonly imageHash?: string | readonly number[];
 };
 
-/**
- * Union of all paint types. Discriminated by the `type` string so
- * TypeScript can narrow via `paint.type === "SOLID"` etc.
- *
- * Historically this union also included the bare `FigPaintBase`, used
- * as a catch-all for unrecognised paint kinds coming out of the kiwi
- * decoder. That shape is no longer representable: the parser layer
- * normalises every `type` field to a `FigPaintType` literal, and
- * anything it cannot normalise is rejected at the parser boundary.
- */
+/** Union of all supported Kiwi paint payloads. */
 export type FigPaint =
   | FigSolidPaint
   | FigGradientPaint
@@ -1267,10 +1916,8 @@ export type FigStrokeWeight =
 /**
  * Blend mode string literals matching SVG/CSS mix-blend-mode values.
  *
- * SSoT for blend-mode representation across the fig package. Kiwi
- * stores a `KiwiEnumValue { value, name }`; parser normalises to this
- * string at input time and the builder maps back at output. No
- * in-memory Fig* type carries the raw enum shape.
+ * SSoT for blend-mode names across the fig package. Decoded Kiwi
+ * documents may carry either this string or a `KiwiEnumValue`.
  */
 export type BlendMode =
   | "PASS_THROUGH"
@@ -1348,7 +1995,7 @@ export type FigVectorStyleOverride = {
 /**
  * Vector data as stored in Kiwi binary format.
  *
- * Contains the vector network blob, normalized size, and per-path
+ * Contains the vector network blob, Kiwi `normalizedSize`, and per-path
  * style overrides for VECTOR nodes.
  */
 export type FigVectorData = {
@@ -1380,7 +2027,6 @@ export type FigVectorPath = {
 export type FigEffectType =
   | "INNER_SHADOW"
   | "DROP_SHADOW"
-  | "LAYER_BLUR"
   | "FOREGROUND_BLUR"
   | "BACKGROUND_BLUR";
 
@@ -1388,12 +2034,12 @@ export type FigEffectType =
  * Figma effect as stored in Kiwi binary format.
  */
 export type FigEffect = {
-  readonly type: FigEffectType | KiwiEnumValue<FigEffectType>;
+  readonly type: KiwiEnumValue<FigEffectType>;
   readonly visible?: boolean;
   readonly color?: FigColor;
   readonly offset?: FigVector;
   readonly radius?: number;
   readonly spread?: number;
-  readonly blendMode?: BlendMode;
+  readonly blendMode?: KiwiEnumValue<BlendMode>;
   readonly showShadowBehindNode?: boolean;
 };

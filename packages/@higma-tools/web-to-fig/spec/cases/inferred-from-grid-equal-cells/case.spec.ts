@@ -6,7 +6,7 @@
  * fallback to the inferer Just Works for the 1xN case (the most
  * common one in real pages).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   CELL_COUNT,

@@ -1,6 +1,6 @@
 /**
  * @file Verify `Decisions.typography[*].merge` redirects bind actions
- * away from the alias and onto the primary's resolved proxy.
+ * away from the alias and onto the primary's resolved styleDefinition.
  *
  * The alias entry is fabricated by hand on top of the inventory built
  * from a real fixture: this keeps the inventory shape identical to
@@ -17,7 +17,7 @@ import { buildInventory } from "../src/inventory";
 import type { Inventory, TypographyEntry } from "../src/inventory";
 import type { Decisions } from "../src/decisions";
 import { buildPlan } from "../src/plan";
-import type { ActionBindTextStyle, ActionCreateTextProxy } from "../src/plan";
+import type { ActionBindTextStyle, ActionCreateTextStyleDefinition } from "../src/plan";
 
 const FIXTURES_ROOT = resolve(__dirname, "../../../@higma-document-renderers/fig/fixtures");
 const FIXTURE = "text-styling/text-styling.fig";
@@ -42,13 +42,13 @@ function makeAlias(primary: TypographyEntry, key: string, lhValue: number, usage
       },
     ],
     aliases: [],
-    existingProxyGuid: undefined,
-    existingProxyName: undefined,
+    existingStyleDefinitionGuid: undefined,
+    existingStyleDefinitionName: undefined,
   };
 }
 
 describe("refine-fig typography merge — plan layer", () => {
-  it("binds the alias's usages to the primary's just-created proxy", async () => {
+  it("binds the alias's usages to the primary's just-created styleDefinition", async () => {
     const buf = await readFile(resolve(FIXTURES_ROOT, FIXTURE));
     const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
     const source = await loadRefineSource(bytes);
@@ -65,7 +65,7 @@ describe("refine-fig typography merge — plan layer", () => {
     const inventory: Inventory = {
       palette: baseInventory.palette,
       typography: [...baseInventory.typography, alias],
-      subtreeClusters: [],
+      structureClusters: [],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -81,11 +81,11 @@ describe("refine-fig typography merge — plan layer", () => {
 
     const plan = buildPlan(source, inventory, decisions, { file: FIXTURE, bytes: bytes.byteLength });
 
-    // The primary has no existing proxy in the fixture (it's an untouched
-    // rectangle fixture), so a create-text-proxy lands first and the
+    // The primary has no existing styleDefinition in the fixture (it's an untouched
+    // rectangle fixture), so a create-text-style-definition lands first and the
     // bind actions reference its token.
-    const creates = plan.actions.filter((a) => a.kind === "create-text-proxy") as readonly ActionCreateTextProxy[];
-    expect(creates.length, "expected exactly one create-text-proxy for the primary").toBe(1);
+    const creates = plan.actions.filter((a) => a.kind === "create-text-style-definition") as readonly ActionCreateTextStyleDefinition[];
+    expect(creates.length, "expected exactly one create-text-style-definition for the primary").toBe(1);
     const token = creates[0]?.token;
     if (!token) {
       throw new Error("expected a token");
@@ -97,7 +97,7 @@ describe("refine-fig typography merge — plan layer", () => {
     if (!aliasBind) {
       throw new Error("alias usage must be bound");
     }
-    expect(aliasBind.proxy).toEqual({ kind: "token", token });
+    expect(aliasBind.styleDefinition).toEqual({ kind: "token", token });
   });
 
   it("throws when merge target is unknown", async () => {
@@ -109,7 +109,7 @@ describe("refine-fig typography merge — plan layer", () => {
     const augmented: Inventory = {
       palette: inventory.palette,
       typography: [...inventory.typography, alias],
-      subtreeClusters: [],
+      structureClusters: [],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -139,7 +139,7 @@ describe("refine-fig typography merge — plan layer", () => {
     const augmented: Inventory = {
       palette: inventory.palette,
       typography: [...inventory.typography, aliasA, aliasB],
-      subtreeClusters: [],
+      structureClusters: [],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -159,7 +159,7 @@ describe("refine-fig typography merge — plan layer", () => {
     );
   });
 
-  it("throws when merge target has no resolved proxy", async () => {
+  it("throws when merge target has no resolved styleDefinition", async () => {
     const buf = await readFile(resolve(FIXTURES_ROOT, FIXTURE));
     const bytes = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
     const source = await loadRefineSource(bytes);
@@ -169,7 +169,7 @@ describe("refine-fig typography merge — plan layer", () => {
     const augmented: Inventory = {
       palette: inventory.palette,
       typography: [...inventory.typography, alias],
-      subtreeClusters: [],
+      structureClusters: [],
       geometryClusters: [],
       unrenderable: [],
       layoutHints: [],
@@ -184,7 +184,7 @@ describe("refine-fig typography merge — plan layer", () => {
     };
 
     expect(() => buildPlan(source, augmented, decisions, { file: FIXTURE, bytes: bytes.byteLength })).toThrow(
-      /no resolved proxy/i,
+      /no resolved styleDefinition/i,
     );
   });
 });

@@ -208,20 +208,20 @@ function renderModifiers(mods: readonly Modifier[], depth: number): string {
 
 /** Render a complete Swift file for a frame target. */
 /**
- * `fileprivate` helper that decodes a base64 PNG/JPEG into a
+ * `fileprivate` routine that decodes a base64 PNG/JPEG into a
  * SwiftUI `Image` — only emitted when the body actually uses it,
  * so files without IMAGE paints stay free of CoreGraphics imports.
  *
  * `fileprivate` keeps each file's copy isolated; without it,
  * compiling N image-bearing files in one module re-declares the
- * helper N times.
+ * routine N times.
  *
- * The helper is only generated when `EmitContext.imageEmbedding`
+ * The routine is only generated when `EmitContext.imageEmbedding`
  * is `"inline"` (the visual-roundtrip spec path). The default
  * `"bundle"` mode emits `Image("<slug>", bundle: .module)`
- * directly and doesn't need a decoder helper.
+ * directly and doesn't need a decoder routine.
  */
-const INLINE_IMAGE_HELPER = `fileprivate func makeFigToSwiftuiImage(data: Data?, options: Data.Base64DecodingOptions = []) -> Image {
+const INLINE_IMAGE_DECODER_SOURCE = `fileprivate func makeFigToSwiftuiImage(data: Data?, options: Data.Base64DecodingOptions = []) -> Image {
 ${INDENT}guard let data = data,
 ${INDENT}      let src  = CGImageSourceCreateWithData(data as CFData, nil),
 ${INDENT}      let cg   = CGImageSourceCreateImageAtIndex(src, 0, nil)
@@ -237,7 +237,7 @@ ${INDENT}return Image(decorative: cg, scale: 1.0)
  * are split into `private var cN: some View` properties to keep
  * SwiftUI's body type-checker tractable. When IMAGE paints are
  * embedded inline (spec-harness mode), the file also includes
- * `CoreGraphics` / `ImageIO` imports + the base64 decoder helper.
+ * `CoreGraphics` / `ImageIO` imports + the base64 decoder routine.
  */
 export function emitFrameFile(target: FrameTarget, ctx: EmitContext = {}): SwiftFile {
   const tree = emitRootFrame(target.node, ctx);
@@ -245,14 +245,14 @@ export function emitFrameFile(target: FrameTarget, ctx: EmitContext = {}): Swift
   const body = split ? split.body : `${INDENT}${INDENT}${serialize(tree, 2)}`;
   const propertyBlock = split ? split.properties.join("\n\n") : "";
   // The inline-image path needs CoreGraphics + ImageIO for the
-  // base64 → CGImage decoder helper. The bundle-resource path
+  // base64 → CGImage decoder routine. The bundle-resource path
   // doesn't (SwiftUI's `Image(_:bundle:)` is purely SwiftUI).
   const usesInlineImage = body.includes("makeFigToSwiftuiImage");
   const lines = [
     "import SwiftUI",
     ...(usesInlineImage ? ["import CoreGraphics", "import ImageIO"] : []),
     "",
-    ...(usesInlineImage ? [INLINE_IMAGE_HELPER, ""] : []),
+    ...(usesInlineImage ? [INLINE_IMAGE_DECODER_SOURCE, ""] : []),
     `struct ${target.structName}: View {`,
     ...(propertyBlock ? [propertyBlock, ""] : []),
     `${INDENT}var body: some View {`,

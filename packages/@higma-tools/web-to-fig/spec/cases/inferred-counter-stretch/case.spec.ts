@@ -4,7 +4,7 @@
  * is what allows a downstream renderer to re-flow the children on a
  * resized INSTANCE.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withCounterStretchColumn } from "./fixture";
 

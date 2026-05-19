@@ -23,6 +23,7 @@
  * the existing SVG path so we don't regress on richer line styling.
  */
 import type { FigMatrix, FigNode, FigPaint, FigSolidPaint, FigStrokeWeight } from "@higma-document-models/fig/types";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import type { TokenIndex } from "../../tokens";
 import { solidPaintToCss as solidPaintToCssShared } from "../../lib/css-format/paint";
 
@@ -144,14 +145,15 @@ function resolveStrokeColor(paints: readonly FigPaint[] | undefined, index: Toke
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type !== "SOLID") {
+    const solid = asSolidPaint(paint);
+    if (solid === undefined) {
       return undefined;
     }
     stateRef.visibleSolids += 1;
     if (stateRef.visibleSolids > 1) {
       return undefined;
     }
-    stateRef.resolved = solidPaintToCss(paint, index);
+    stateRef.resolved = solidPaintToCss(solid, index);
   }
   return stateRef.resolved;
 }

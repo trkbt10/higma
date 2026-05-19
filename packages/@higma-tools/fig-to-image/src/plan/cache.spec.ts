@@ -1,21 +1,13 @@
-/**
- * @file Unit specs for the cache probe + plan builder.
- *
- * These specs run without spinning up the harness — `readFile`
- * and `joinPath` are injected so we can exercise the plan
- * builder against a synthetic FigDesignNode tree.
- */
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+/** @file Unit specs for cache probing and render planning. */
+
+import type { FigNode } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { fingerprintFigSubtree } from "../fingerprint";
 import { setTextMetadata } from "../png-meta";
 import { FINGERPRINT_PNG_KEY, isCacheHit, planTargets, type ReadFileFn } from "./cache";
 import type { FigFrameTarget } from "../types";
 
-/**
- * Smallest valid PNG: 1×1 white pixel, RGBA, zlib-deflated.
- * Mirrors the literal used in `png-meta/index.spec.ts` so both
- * tests exercise the codec against an identical byte stream.
- */
 const MIN_PNG = Uint8Array.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
   0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -28,43 +20,31 @@ const MIN_PNG = Uint8Array.from([
   0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 ]);
 
-/**
- * Build a minimum `FigDesignNode` for tests. The synthetic
- * node carries every field the renderer's fingerprint walker
- * consumes; we mark it via a guard so the test stays free of
- * raw `as unknown` casts that `custom/no-as-outside-guard`
- * forbids.
- */
-function isFigDesignNode(value: unknown): value is FigDesignNode {
-  return Boolean(value) && typeof value === "object";
-}
+const EMPTY_SYMBOL_RESOLVER = createSymbolResolver({ document: indexFigKiwiDocument([]) });
 
-function makeNode(overrides: Record<string, unknown>): FigDesignNode {
-  const base: Record<string, unknown> = {
-    id: "0:1",
-    type: "FRAME",
+function makeNode(overrides: Partial<FigNode>): FigNode {
+  return {
+    guid: { sessionID: 1, localID: 1 },
+    phase: { value: 0, name: "CREATED" },
+    type: { value: 4, name: "FRAME" },
     name: "test-frame",
     visible: true,
     opacity: 1,
     transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     size: { x: 100, y: 100 },
-    fills: [],
-    strokes: [],
+    fillPaints: [],
+    strokePaints: [],
     strokeWeight: 0,
     effects: [],
+    ...overrides,
   };
-  const merged = { ...base, ...overrides };
-  if (!isFigDesignNode(merged)) {
-    throw new Error("makeNode: failed to produce a FigDesignNode");
-  }
-  return merged;
 }
 
-function makeTarget(node: FigDesignNode, frame: string): FigFrameTarget {
+function makeTarget(node: FigNode, frame: string): FigFrameTarget {
   return {
     page: "Test",
     frame,
-    type: node.type,
+    type: node.type.name,
     node,
     width: 100,
     height: 100,
@@ -72,6 +52,23 @@ function makeTarget(node: FigDesignNode, frame: string): FigFrameTarget {
 }
 
 const noopJoinPath = (dir: string, file: string): string => `${dir}/${file}`;
+
+function planOptions(
+  readFile: ReadFileFn,
+  scale: number,
+  force: boolean,
+) {
+  return {
+    outDir: "/out",
+    filename: "{name}.png",
+    scale,
+    force,
+    symbolResolver: EMPTY_SYMBOL_RESOLVER,
+    childrenOf: EMPTY_SYMBOL_RESOLVER.childrenOfResolvedNode,
+    readFile,
+    joinPath: noopJoinPath,
+  };
+}
 
 describe("isCacheHit", () => {
   it("returns false when the file does not exist", async () => {
@@ -96,9 +93,9 @@ describe("isCacheHit", () => {
     expect(await isCacheHit("/tmp/tagged.png", "fp-new", readFile)).toBe(false);
   });
 
-  it("returns false when the file is not a valid PNG", async () => {
+  it("throws when the file is not a valid PNG", async () => {
     const readFile: ReadFileFn = async () => Uint8Array.from([1, 2, 3]);
-    expect(await isCacheHit("/tmp/garbage.bin", "fp-x", readFile)).toBe(false);
+    await expect(isCacheHit("/tmp/garbage.bin", "fp-x", readFile)).rejects.toThrow();
   });
 });
 
@@ -108,19 +105,12 @@ describe("planTargets", () => {
     const target = makeTarget(node, "test-frame");
     const fingerprint = fingerprintFigSubtree(node, {
       pixelRatio: 2,
-      symbolMap: new Map(),
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: EMPTY_SYMBOL_RESOLVER.childrenOfResolvedNode,
     });
     const tagged = setTextMetadata(MIN_PNG, FINGERPRINT_PNG_KEY, fingerprint);
     const readFile: ReadFileFn = async () => tagged;
-    const plans = await planTargets([target], {
-      outDir: "/out",
-      filename: "{name}.png",
-      scale: 2,
-      force: false,
-      symbolMap: new Map(),
-      readFile,
-      joinPath: noopJoinPath,
-    });
+    const plans = await planTargets([target], planOptions(readFile, 2, false));
     expect(plans).toHaveLength(1);
     expect(plans[0]?.skip).toBe(true);
     expect(plans[0]?.filename).toBe("test-frame.png");
@@ -128,54 +118,38 @@ describe("planTargets", () => {
     expect(plans[0]?.fingerprint).toBe(fingerprint);
   });
 
-  it("marks targets as not-skip when --force is set, even on a cache hit", async () => {
+  it("marks targets as not-skip when force is set, even on a cache hit", async () => {
     const node = makeNode({});
     const target = makeTarget(node, "test-frame");
     const fingerprint = fingerprintFigSubtree(node, {
       pixelRatio: 2,
-      symbolMap: new Map(),
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: EMPTY_SYMBOL_RESOLVER.childrenOfResolvedNode,
     });
     const tagged = setTextMetadata(MIN_PNG, FINGERPRINT_PNG_KEY, fingerprint);
     const readFile: ReadFileFn = async () => tagged;
-    const plans = await planTargets([target], {
-      outDir: "/out",
-      filename: "{name}.png",
-      scale: 2,
-      force: true,
-      symbolMap: new Map(),
-      readFile,
-      joinPath: noopJoinPath,
-    });
+    const plans = await planTargets([target], planOptions(readFile, 2, true));
     expect(plans[0]?.skip).toBe(false);
   });
 
   it("computes different fingerprints for different scales", async () => {
     const node = makeNode({});
     const target = makeTarget(node, "test-frame");
-    const symbolMap = new Map<string, FigDesignNode>();
-    const fpA = fingerprintFigSubtree(node, { pixelRatio: 1, symbolMap });
-    const fpB = fingerprintFigSubtree(node, { pixelRatio: 2, symbolMap });
+    const fpA = fingerprintFigSubtree(node, {
+      pixelRatio: 1,
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: EMPTY_SYMBOL_RESOLVER.childrenOfResolvedNode,
+    });
+    const fpB = fingerprintFigSubtree(node, {
+      pixelRatio: 2,
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: EMPTY_SYMBOL_RESOLVER.childrenOfResolvedNode,
+    });
     expect(fpA).not.toBe(fpB);
 
     const readFile: ReadFileFn = async () => undefined;
-    const plansA = await planTargets([target], {
-      outDir: "/out",
-      filename: "{name}.png",
-      scale: 1,
-      force: false,
-      symbolMap,
-      readFile,
-      joinPath: noopJoinPath,
-    });
-    const plansB = await planTargets([target], {
-      outDir: "/out",
-      filename: "{name}.png",
-      scale: 2,
-      force: false,
-      symbolMap,
-      readFile,
-      joinPath: noopJoinPath,
-    });
+    const plansA = await planTargets([target], planOptions(readFile, 1, false));
+    const plansB = await planTargets([target], planOptions(readFile, 2, false));
     expect(plansA[0]?.fingerprint).toBe(fpA);
     expect(plansB[0]?.fingerprint).toBe(fpB);
     expect(plansA[0]?.fingerprint).not.toBe(plansB[0]?.fingerprint);

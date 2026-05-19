@@ -17,7 +17,7 @@
  * Stroke alignment maps to `.stroke` / `.strokeBorder` per
  * `strokeOverlayModifier`'s contract — but since `Path` isn't an
  * `InsettableShape`, we have to inline the stroke + overlay rather
- * than reuse the shape-leaf helpers.
+ * than reuse the shape-leaf routines.
  *
  * The path closure is encoded as a single `ident` carrying literal
  * Swift source; the IR doesn't yet model multi-statement closures
@@ -30,6 +30,7 @@ import type {
 } from "@higma-document-models/fig/domain";
 import { decodePathCommands } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import { countSubpaths, type PathCommand } from "@higma-primitives/path";
 import {
   generateLineContour,
@@ -350,8 +351,9 @@ function readFillExpr(node: FigNode): SwiftExpr | undefined {
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return solidPaintToColor(paint);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaintToColor(solidPaint);
     }
   }
   const grad = firstVisibleGradientPaint(paints);
@@ -387,8 +389,9 @@ function pickFirstSolidStrokeColor(paints: NonNullable<FigNode["strokePaints"]>)
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return solidPaintToColor(paint);
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaintToColor(solidPaint);
     }
   }
   return undefined;

@@ -1,58 +1,25 @@
-/**
- * @file Spec for the thumbnail rendering pipeline.
- *
- * Locks in the contract that the export pipeline:
- *   1. Calls `renderThumbnail` when `doc.thumbnailTarget` is set.
- *   2. Writes the returned PNG into the ZIP's `thumbnail.png`.
- *   3. Updates `meta.json`'s `client_meta.thumbnail_size` and
- *      `render_coordinates` to match.
- *   4. Re-emits `NodeChange.thumbnailInfo` on the DOCUMENT root so a
- *      subsequent load reconstructs `thumbnailTarget`.
- *   5. Refuses to silently ship a placeholder thumbnail when the target
- *      is set but the renderer is missing (AGENTS.md fail-fast policy).
- *
- * The spec uses a fake `renderThumbnail` that returns a fixed 2×3 PNG.
- * The real Node-side wiring (renderFigToSvg + resvg-js) is covered by
- * a companion spec in `@higma-document-renderers/fig` that depends on
- * both io and the renderer — putting it here would invert the package
- * boundary.
- */
+/** @file Spec for thumbnail rendering over DOCUMENT.thumbnailInfo. */
 
 import { encodeRgbaToPng, isPng } from "@higma-codecs/png";
+import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { getNodeType } from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+import { addNode, createEmptyFigDocument } from "@higma-document-io/fig";
 import {
-  addNode,
-  createEmptyFigDesignDocument,
-} from "@higma-document-io/fig";
-import {
-  createFigDesignDocument,
-  createFigDesignDocumentFromLoaded,
+  createFigDocumentContext,
+  createFigDocumentContextFromNodeChanges,
+  type FigDocumentContext,
 } from "@higma-document-io/fig/context";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
-import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import {
-  parseId,
-  type FigDesignDocument,
-  type FigThumbnailTarget,
-} from "@higma-document-models/fig/domain";
-import { exportFig } from "./fig-exporter";
 import { parseFigFile } from "../parser";
+import { exportFig } from "./fig-exporter";
 import type {
+  FigCanvasBounds,
   FigThumbnailRenderRequest,
   FigThumbnailRenderResult,
 } from "./thumbnail-pipeline";
 
-// =============================================================================
-// Test fixture — PNG produced via the codec SoT
-// =============================================================================
-
-/**
- * 2×3 opaque-red PNG built via `@higma-codecs/png` (`encodeRgbaToPng`).
- * Using the codec SoT — instead of a hand-baked byte array — means a
- * schema bump in the codec is not silently masked by a frozen
- * fixture. The exporter compares byte-equality after roundtrip, so
- * accidental re-encoding by `saveFigFile` still fails this spec.
- */
-const FAKE_PNG = (() => {
+function createFakePng(): Uint8Array {
   const width = 2;
   const height = 3;
   const rgba = new Uint8ClampedArray(width * height * 4);
@@ -67,24 +34,29 @@ const FAKE_PNG = (() => {
     throw new Error("encodeRgbaToPng produced bytes that do not start with the PNG magic");
   }
   return png;
-})();
+}
 
-// =============================================================================
-// Helpers
-// =============================================================================
+const FAKE_PNG = createFakePng();
 
-function buildDocumentWithFrame(): { doc: FigDesignDocument; frameId: string } {
+function firstCanvasGuid(context: FigDocumentContext): FigGuid {
+  const canvas = context.document.nodeChanges.find((node) => getNodeType(node) === "CANVAS");
+  if (canvas?.guid === undefined) {
+    throw new Error("thumbnail pipeline test expected an initial CANVAS guid");
+  }
+  return canvas.guid;
+}
+
+function buildContextWithFrame(): { readonly context: FigDocumentContext; readonly frameGuid: FigGuid } {
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 17, nextLocalID: 1 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 17, nextLocalID: 1 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const empty = createEmptyFigDesignDocument("Cover Page");
-  const pageId = empty.pages[0]!.id;
+  const empty = createEmptyFigDocument("Cover Page");
   const step = addNode({
     state,
-    doc: empty,
-    pageId,
-    parentId: null,
+    context: empty,
+    pageGuid: firstCanvasGuid(empty),
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "Hero",
@@ -94,8 +66,31 @@ function buildDocumentWithFrame(): { doc: FigDesignDocument; frameId: string } {
       height: 200,
     },
   });
-  const frame = step.doc.pages[0]!.children[0]!;
-  return { doc: step.doc, frameId: frame.id };
+  return { context: step.context, frameGuid: step.nodeGuid };
+}
+
+function withThumbnailInfo(
+  context: FigDocumentContext,
+  nodeID: FigGuid,
+  thumbnailVersion?: string,
+): FigDocumentContext {
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges: context.document.nodeChanges.map((node) => {
+      if (getNodeType(node) !== "DOCUMENT") {
+        return node;
+      }
+      return {
+        ...node,
+        thumbnailInfo: {
+          nodeID,
+          ...(thumbnailVersion === undefined ? {} : { thumbnailVersion }),
+        },
+      };
+    }),
+    blobs: context.blobs,
+    images: context.images,
+    metadata: context.metadata,
+  });
 }
 
 type RendererRecord = {
@@ -115,160 +110,101 @@ function makeRecordingRenderer(
   };
 }
 
-// =============================================================================
-// Specs
-// =============================================================================
+const HERO_BOUNDS: FigCanvasBounds = { x: 12, y: 34, width: 320, height: 200 };
 
 describe("export thumbnail pipeline", () => {
-  it("rasterises the thumbnailTarget frame and writes it into the ZIP", async () => {
-    const { doc, frameId } = buildDocumentWithFrame();
-    const frameGuid = parseId(frameId);
-    const target: FigThumbnailTarget = {
-      nodeID: frameGuid,
-      thumbnailVersion: "v-test-1",
-    };
-    const docWithTarget: FigDesignDocument = { ...doc, thumbnailTarget: target };
-
+  it("rasterises the DOCUMENT.thumbnailInfo target and writes it into the ZIP", async () => {
+    const { context, frameGuid } = buildContextWithFrame();
+    const contextWithTarget = withThumbnailInfo(context, frameGuid, "v-test-1");
     const { renderer, calls } = makeRecordingRenderer({
       png: FAKE_PNG,
       thumbnailSize: { width: 2, height: 3 },
-      // Renderer returns the canonical canvas-space coords back unchanged.
-      renderCoordinates: { x: 12, y: 34, width: 320, height: 200 },
+      renderCoordinates: HERO_BOUNDS,
     });
 
-    const exported = await exportFig(docWithTarget, { renderThumbnail: renderer });
+    const exported = await exportFig(contextWithTarget, { renderThumbnail: renderer });
 
-    // The renderer must have been invoked exactly once, with bounds
-    // composed from the frame's `transform` + `size`.
     expect(calls).toHaveLength(1);
-    expect(calls[0].call.target.id).toBe(frameId);
-    expect(calls[0].call.canvasBounds).toEqual({
-      x: 12,
-      y: 34,
-      width: 320,
-      height: 200,
-    });
-    expect(calls[0].call.maxDimension).toBe(400);
+    expect(calls[0]?.call.target.guid).toEqual(frameGuid);
+    expect(calls[0]?.call.canvasBounds).toEqual(HERO_BOUNDS);
+    expect(calls[0]?.call.maxDimension).toBe(400);
 
-    // Reload via the raw fig-family loader so we can inspect the
-    // thumbnail PNG bytes the exporter wrote into the ZIP.
     const reloaded = await loadFigFile(exported.data);
-    expect(reloaded.thumbnail).not.toBeNull();
-    expect(reloaded.thumbnail!).toEqual(FAKE_PNG);
+    expect(reloaded.thumbnail).toEqual(FAKE_PNG);
     expect(reloaded.metadata?.clientMeta?.thumbnailSize).toEqual({ width: 2, height: 3 });
-    expect(reloaded.metadata?.clientMeta?.renderCoordinates).toEqual({
-      x: 12,
-      y: 34,
-      width: 320,
-      height: 200,
-    });
+    expect(reloaded.metadata?.clientMeta?.renderCoordinates).toEqual(HERO_BOUNDS);
 
-    // The DOCUMENT NodeChange must carry the same `thumbnailInfo` —
-    // otherwise a second load wouldn't reconstruct `thumbnailTarget`.
     const parsed = await parseFigFile(exported.data);
-    const documentNode = parsed.nodeChanges.find((n) => n.type?.name === "DOCUMENT");
-    expect(documentNode).toBeDefined();
-    // `FigNode` carries a `[key: string]: unknown` index signature, so
-    // `thumbnailInfo` is readable directly — no cast needed.
-    expect(documentNode!["thumbnailInfo"]).toEqual({
-      nodeID: frameGuid,
-      thumbnailVersion: "v-test-1",
-    });
-
-    // And the round-trip back to the domain reconstructs `thumbnailTarget`.
-    const reloadedDoc = createFigDesignDocumentFromLoaded(reloaded);
-    expect(reloadedDoc.thumbnailTarget).toEqual({
+    const documentNode = parsed.nodeChanges.find((node) => getNodeType(node) === "DOCUMENT");
+    expect(documentNode?.thumbnailInfo).toEqual({
       nodeID: frameGuid,
       thumbnailVersion: "v-test-1",
     });
   });
 
-  it("falls back to the bounds-derived renderCoordinates when the renderer omits them", async () => {
-    const { doc, frameId } = buildDocumentWithFrame();
-    const target: FigThumbnailTarget = { nodeID: parseId(frameId) };
-    const docWithTarget: FigDesignDocument = { ...doc, thumbnailTarget: target };
-
-    const { renderer } = makeRecordingRenderer({
-      png: FAKE_PNG,
-      thumbnailSize: { width: 2, height: 3 },
-      // renderCoordinates omitted — exporter must use canvasBounds.
-    });
-
-    const exported = await exportFig(docWithTarget, { renderThumbnail: renderer });
-    const reloaded = await loadFigFile(exported.data);
-    expect(reloaded.metadata?.clientMeta?.renderCoordinates).toEqual({
-      x: 12,
-      y: 34,
-      width: 320,
-      height: 200,
-    });
+  it("requires renderThumbnail when DOCUMENT.thumbnailInfo is set", async () => {
+    const { context, frameGuid } = buildContextWithFrame();
+    await expect(exportFig(withThumbnailInfo(context, frameGuid))).rejects.toThrow(/renderThumbnail.*was not provided/);
   });
 
-  it("throws when thumbnailTarget is set but no renderThumbnail is supplied", async () => {
-    const { doc, frameId } = buildDocumentWithFrame();
-    const docWithTarget: FigDesignDocument = {
-      ...doc,
-      thumbnailTarget: { nodeID: parseId(frameId) },
-    };
-    await expect(exportFig(docWithTarget)).rejects.toThrow(/renderThumbnail.*was not provided/);
-  });
-
-  it("throws when thumbnailTarget points at a nodeID that does not exist", async () => {
-    const { doc } = buildDocumentWithFrame();
-    const docWithStaleTarget: FigDesignDocument = {
-      ...doc,
-      thumbnailTarget: { nodeID: { sessionID: 999, localID: 999 } },
-    };
+  it("throws when DOCUMENT.thumbnailInfo points outside nodeChanges", async () => {
+    const { context } = buildContextWithFrame();
     await expect(
-      exportFig(docWithStaleTarget, {
+      exportFig(withThumbnailInfo(context, { sessionID: 999, localID: 999 }), {
         renderThumbnail: async () => {
           throw new Error("should not be called");
         },
       }),
-    ).rejects.toThrow(/not found in any page/);
+    ).rejects.toThrow(/was not found in nodeChanges/);
   });
 
   it("rejects renderer output that lacks the PNG magic", async () => {
-    const { doc, frameId } = buildDocumentWithFrame();
-    const docWithTarget: FigDesignDocument = {
-      ...doc,
-      thumbnailTarget: { nodeID: parseId(frameId) },
-    };
+    const { context, frameGuid } = buildContextWithFrame();
     await expect(
-      exportFig(docWithTarget, {
+      exportFig(withThumbnailInfo(context, frameGuid), {
         renderThumbnail: async () => ({
           png: new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
           thumbnailSize: { width: 1, height: 1 },
+          renderCoordinates: HERO_BOUNDS,
         }),
       }),
     ).rejects.toThrow(/PNG magic/);
   });
 
-  it("preserves placeholder thumbnail behaviour when no thumbnailTarget is set", async () => {
-    const { doc } = buildDocumentWithFrame();
+  it("requires renderer-owned renderCoordinates", async () => {
+    const { context, frameGuid } = buildContextWithFrame();
+    await expect(
+      exportFig(withThumbnailInfo(context, frameGuid), {
+        renderThumbnail: async () => ({
+          png: FAKE_PNG,
+          thumbnailSize: { width: 1, height: 1 },
+        } as FigThumbnailRenderResult),
+      }),
+    ).rejects.toThrow(/renderCoordinates/);
+  });
+
+  it("preserves placeholder thumbnail behavior when DOCUMENT.thumbnailInfo is absent", async () => {
+    const { context } = buildContextWithFrame();
     const { renderer, calls } = makeRecordingRenderer({
       png: FAKE_PNG,
       thumbnailSize: { width: 2, height: 3 },
+      renderCoordinates: HERO_BOUNDS,
     });
-    const exported = await exportFig(doc, { renderThumbnail: renderer });
+    const exported = await exportFig(context, { renderThumbnail: renderer });
     expect(calls).toHaveLength(0);
     const reloaded = await loadFigFile(exported.data);
-    // The fresh-export placeholder is a 1×1 grayscale PNG — definitely
-    // not our 2×3 fixture.
     expect(reloaded.thumbnail).not.toBeNull();
-    expect(reloaded.thumbnail!).not.toEqual(FAKE_PNG);
-    // No metadata mutation either.
+    expect(reloaded.thumbnail).not.toEqual(FAKE_PNG);
     expect(reloaded.metadata?.clientMeta?.thumbnailSize).not.toEqual({ width: 2, height: 3 });
   });
 });
 
-describe("loaded document thumbnailTarget surfacing", () => {
-  it("does not invent a thumbnailTarget when the loaded DOCUMENT has no thumbnailInfo", async () => {
-    // Build a fresh doc, export it (no thumbnailTarget), reload, and
-    // confirm the reloaded domain doc also has no thumbnailTarget.
-    const { doc } = buildDocumentWithFrame();
-    const exported = await exportFig(doc);
-    const reloadedDoc = await createFigDesignDocument(exported.data);
-    expect(reloadedDoc.thumbnailTarget).toBeUndefined();
+describe("loaded document thumbnailInfo surfacing", () => {
+  it("does not invent DOCUMENT.thumbnailInfo when the loaded root has none", async () => {
+    const { context } = buildContextWithFrame();
+    const exported = await exportFig(context);
+    const reloadedContext = await createFigDocumentContext(exported.data);
+    const documentNode = reloadedContext.document.nodeChanges.find((node) => getNodeType(node) === "DOCUMENT");
+    expect(documentNode?.thumbnailInfo).toBeUndefined();
   });
 });

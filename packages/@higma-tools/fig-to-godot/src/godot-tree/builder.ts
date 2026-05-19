@@ -1,7 +1,7 @@
 /**
- * @file Builder helpers for the Godot scene-tree IR.
+ * @file Builder routines for the Godot scene-tree IR.
  *
- * Each helper returns a frozen value-typed node so callers compose by
+ * Each routine returns a frozen value-typed node so callers compose by
  * passing references rather than mutating shared state. Properties are
  * appended through `withProperty` (single) and `withProperties` (batch);
  * the originals are never mutated.

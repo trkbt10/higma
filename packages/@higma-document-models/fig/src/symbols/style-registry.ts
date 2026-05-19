@@ -39,7 +39,7 @@
  * for licensing reasons, and intra-file refs occasionally point at
  * non-style nodes (e.g. a stale guid pointing at a now-FRAME node).
  * Figma itself renders such cases using the consumer's own embedded
- * `fillPaints` / `strokePaints` cache. The resolution helpers therefore
+ * `fillPaints` / `strokePaints` fields. The resolution functions therefore
  * return `undefined` for dangling refs so callers fall through to the
  * embedded paint, matching Figma's actual behaviour. A successful
  * registry lookup still wins over the embedded cache (the registry is
@@ -47,8 +47,12 @@
  */
 
 import type { FigNode, MutableFigNode, FigPaint, FigEffect, FigStyleId } from "../types";
-import type { FigStyleRegistry, FigTextStyleProperties } from "../domain/document";
-import { guidToString } from "@higma-document-models/fig/domain";
+import {
+  guidToString,
+  type FigKiwiDocumentIndex,
+  type FigStyleRegistry,
+  type FigTextStyleProperties,
+} from "../domain";
 
 // =============================================================================
 // Construction
@@ -113,36 +117,50 @@ type StyleDefinitionEntry =
 function readStyleDefinition(node: FigNode): StyleDefinitionEntry | undefined {
   const typeName = node.styleType?.name;
   if (typeName === "FILL") {
-    if (node.fillPaints && node.fillPaints.length > 0) {
-      return { kind: "paint", paints: node.fillPaints };
-    }
-    return undefined;
+    return readPaintStyleDefinition(node.fillPaints);
   }
   if (typeName === "STROKE") {
-    if (node.strokePaints && node.strokePaints.length > 0) {
-      return { kind: "paint", paints: node.strokePaints };
-    }
-    return undefined;
+    return readPaintStyleDefinition(node.strokePaints);
   }
   if (typeName === "EFFECT") {
-    if (node.effects && node.effects.length > 0) {
-      return { kind: "effect", effects: node.effects };
-    }
-    return undefined;
+    return readEffectStyleDefinition(node.effects);
   }
   if (typeName === "TEXT") {
-    const properties = readTextStyleProperties(node);
-    if (properties === undefined) { return undefined; }
-    return { kind: "text", properties };
+    return readTextStyleDefinition(node);
   }
   if (typeName === "GRID") {
-    const grids = node.layoutGrids;
-    if (Array.isArray(grids) && grids.length > 0) {
-      return { kind: "grid", layoutGrids: grids as readonly unknown[] };
-    }
-    return undefined;
+    return readGridStyleDefinition(node.layoutGrids);
   }
   return undefined;
+}
+
+function readTextStyleDefinition(node: FigNode): StyleDefinitionEntry | undefined {
+  const properties = readTextStyleProperties(node);
+  if (properties === undefined) {
+    return undefined;
+  }
+  return { kind: "text", properties };
+}
+
+function readPaintStyleDefinition(paints: readonly FigPaint[] | undefined): StyleDefinitionEntry | undefined {
+  if (paints === undefined || paints.length === 0) {
+    return undefined;
+  }
+  return { kind: "paint", paints };
+}
+
+function readEffectStyleDefinition(effects: readonly FigEffect[] | undefined): StyleDefinitionEntry | undefined {
+  if (effects === undefined || effects.length === 0) {
+    return undefined;
+  }
+  return { kind: "effect", effects };
+}
+
+function readGridStyleDefinition(grids: FigNode["layoutGrids"]): StyleDefinitionEntry | undefined {
+  if (!Array.isArray(grids) || grids.length === 0) {
+    return undefined;
+  }
+  return { kind: "grid", layoutGrids: grids as readonly unknown[] };
 }
 
 /**
@@ -178,7 +196,7 @@ function readTextStyleProperties(node: FigNode): FigTextStyleProperties | undefi
 }
 
 /**
- * Build a style registry from a node map.
+ * Build a style registry from the Kiwi document index.
  *
  * Walks every node and indexes the ones that are style definitions
  * (`styleType` set). Each style is registered under its GUID (via
@@ -189,12 +207,12 @@ function readTextStyleProperties(node: FigNode): FigTextStyleProperties | undefi
  * Five Kiwi `StyleType` values get their own map so consumers can
  * resolve with type-correct value shapes without a runtime tag check.
  */
-export function buildFigStyleRegistry(nodeMap: ReadonlyMap<string, FigNode>): FigStyleRegistry {
+export function buildFigStyleRegistry(document: FigKiwiDocumentIndex): FigStyleRegistry {
   const paints = new Map<string, readonly FigPaint[]>();
   const effects = new Map<string, readonly FigEffect[]>();
   const textProperties = new Map<string, FigTextStyleProperties>();
   const layoutGrids = new Map<string, readonly unknown[]>();
-  for (const [, node] of nodeMap) {
+  for (const node of document.nodeChanges) {
     const entry = readStyleDefinition(node);
     if (!entry) { continue; }
     indexEntryUnderKeys(node, entry, { paints, effects, textProperties, layoutGrids });
@@ -250,15 +268,25 @@ function lookupRegistryEntry<V>(
   byKey: ReadonlyMap<string, V>,
 ): V | undefined {
   if (!ref) { return undefined; }
-  if (ref.guid && !isSentinelGuid(ref.guid)) {
-    const hit = byKey.get(guidToString(ref.guid));
-    if (hit !== undefined) { return hit; }
+  const guidHit = lookupGuidRegistryEntry(ref, byKey);
+  if (guidHit !== undefined) {
+    return guidHit;
   }
-  if (ref.assetRef?.key) {
-    const hit = byKey.get(ref.assetRef.key);
-    if (hit !== undefined) { return hit; }
+  const assetKey = ref.assetRef?.key;
+  if (assetKey === undefined) {
+    return undefined;
   }
-  return undefined;
+  return byKey.get(assetKey);
+}
+
+function lookupGuidRegistryEntry<V>(
+  ref: FigStyleId,
+  byKey: ReadonlyMap<string, V>,
+): V | undefined {
+  if (ref.guid === undefined || isSentinelGuid(ref.guid)) {
+    return undefined;
+  }
+  return byKey.get(guidToString(ref.guid));
 }
 
 /**
@@ -407,7 +435,7 @@ export function resolveStyledEffects(
  * a TEXT style overlays a *subset* of properties on top of the
  * consumer's embedded values. The style may set, say, only
  * `lineHeight` and `fontSize` while leaving `fontName` for the
- * consumer to control. This helper materialises the per-property
+ * consumer to control. This function materialises the per-property
  * precedence: registry property when set, else embedded property.
  *
  * Dangling refs return the embedded bundle unchanged (matches Figma's
@@ -447,13 +475,10 @@ export function resolveStyledGrids(
 /**
  * Format `"<sessionID:localID> (<name>)"` for diagnostic output.
  *
- * Accepts either a raw FigNode (`guid: FigGuid`) or a domain
- * FigDesignNode (`id: FigNodeId`, the string-form of the GUID) so the
- * same locator can serve both layers without callers having to convert.
+ * Accepts a raw FigNode-like object with a Kiwi GUID.
  */
 export function formatNodeLocator(node: {
   readonly guid?: { readonly sessionID: number; readonly localID: number };
-  readonly id?: string;
   readonly name?: string | undefined;
 }): string {
   return `${pickGuidString(node)} (${node.name ?? "?"})`;
@@ -461,10 +486,8 @@ export function formatNodeLocator(node: {
 
 function pickGuidString(node: {
   readonly guid?: { readonly sessionID: number; readonly localID: number };
-  readonly id?: string;
 }): string {
   if (node.guid) { return guidToString(node.guid); }
-  if (typeof node.id === "string" && node.id.length > 0) { return node.id; }
   return "<no-guid>";
 }
 
@@ -590,4 +613,3 @@ function pickResolvedTextField<K extends keyof FigTextStyleProperties & keyof St
   // through the keyed lookup.
   overlay[field] = value as StyleOverlay[K];
 }
-

@@ -4,7 +4,7 @@
  * tr(FRAME) → cells. Asserts the structural nesting survives the
  * normaliser end-to-end (no row-group flattening, no caption merge).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { CAPTION_TEXT, tableWithCaptionAndThead } from "./fixture";
 
 describe("case table-with-caption-and-thead", () => {

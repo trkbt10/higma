@@ -4,7 +4,7 @@
  * carries `sizing: { mode: "absolute" }` so the parent's autoLayout
  * inferer treats it as out-of-flow.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { relativeWithAbsoluteBadge } from "./fixture";
 
 describe("case position-absolute-in-relative", () => {

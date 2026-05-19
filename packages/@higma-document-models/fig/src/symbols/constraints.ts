@@ -133,9 +133,9 @@ export type InstanceLayoutResult = {
  * Strategy:
  * 1. If derivedSymbolData exists and its GUIDs match actual children,
  *    Figma has pre-computed the layout — use it as-is.
- *    When dsd only partially covers children (e.g. partial GUID translation),
+ *    When dsd only partially covers children,
  *    supplement with constraint-based resolution for uncovered children.
- * 2. Otherwise, fall back to constraint-based resolution.
+ * 2. Otherwise, run constraint-based resolution.
  *
  * @param children           Cloned children (overrides already applied)
  * @param symbolSize         Original SYMBOL size
@@ -146,18 +146,10 @@ export function resolveInstanceLayout(
   { children, symbolSize, instanceSize, derivedSymbolData }: { children: readonly FigNode[]; symbolSize: { x: number; y: number }; instanceSize: { x: number; y: number }; derivedSymbolData: FigDerivedSymbolData | undefined; }
 ): InstanceLayoutResult {
   // Strategy 1: derivedSymbolData with valid GUIDs
-  if (derivedSymbolData && derivedSymbolData.length > 0) {
-    if (isDerivedDataApplicable(derivedSymbolData, children)) {
-      const coveredGuids = clearDerivedGeometry(derivedSymbolData, children);
-
-      // Supplement: apply constraint-based resolution to children NOT
-      // covered by dsd. This handles partial GUID translation where some
-      // dsd entries couldn't be mapped to children (e.g. non-contiguous
-      // session GUIDs that majority-vote can't resolve).
-      const supplemented = supplementConstraints({ children, symbolSize, instanceSize, coveredGuids });
-
-      return { children: supplemented, sizeApplied: true };
-    }
+  if (derivedSymbolData && derivedSymbolData.length > 0 && isDerivedDataApplicable(derivedSymbolData, children)) {
+    const coveredGuids = clearDerivedGeometry(derivedSymbolData, children);
+    const supplemented = supplementConstraints({ children, symbolSize, instanceSize, coveredGuids });
+    return { children: supplemented, sizeApplied: true };
   }
 
   // Strategy 2: constraint-based resolution

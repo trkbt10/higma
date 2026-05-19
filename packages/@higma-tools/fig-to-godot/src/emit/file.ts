@@ -90,7 +90,7 @@ export function buildFrameTarget(
  * `.tscn` text is produced.
  *
  * The optional `emit` context carries doc-level lookups (currently the
- * `symbolMap` for INSTANCE → SYMBOL resolution). When omitted, the
+ * SymbolResolver for INSTANCE → SYMBOL resolution). When omitted, the
  * walker treats INSTANCE nodes as opaque containers whose direct
  * children are the only render source — fine for fixtures without
  * components, lossy for any case that uses them.

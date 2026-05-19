@@ -1,16 +1,16 @@
-/**
- * @file React renderer boundary color profile tests.
- */
+/** @file React renderer boundary color profile tests. */
 
 import { Buffer } from "node:buffer";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
+import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import { createNodeId, type SceneGraph } from "@higma-document-models/fig/scene-graph";
+import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
 import {
   createFigFamilyRenderOptions,
   FigFamilyPageRenderer,
+  figDocumentResources,
 } from "./index";
 
 const ONE_PIXEL_PNG = Uint8Array.from(Buffer.from(
@@ -18,16 +18,17 @@ const ONE_PIXEL_PNG = Uint8Array.from(Buffer.from(
   "base64",
 ));
 
-function createDocument(profile: FigDesignDocument["documentColorProfile"]): FigDesignDocument {
-  return {
-    pages: [],
-    documentColorProfile: profile,
-    components: new Map(),
-    images: new Map(),
+function createContext(profile: { readonly value: number; readonly name: string } | undefined): FigDocumentContext {
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges: [{
+      guid: { sessionID: 0, localID: 0 },
+      type: { value: 1, name: "DOCUMENT" },
+      documentColorProfile: profile,
+    }],
     blobs: [],
+    images: new Map(),
     metadata: null,
-    styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
-  };
+  });
 }
 
 function createManagedImageSceneGraph(): SceneGraph {
@@ -71,36 +72,37 @@ function createManagedImageSceneGraph(): SceneGraph {
 
 describe("createFigFamilyRenderOptions", () => {
   it("maps an explicit SRGB document color profile into renderer export settings", () => {
-    const options = createFigFamilyRenderOptions(createDocument({ value: 1, name: "SRGB" }));
+    const options = createFigFamilyRenderOptions(createContext({ value: 1, name: "SRGB" }));
 
     expect(options).toEqual({ exportSettings: { colorProfile: "SRGB" } });
   });
 
   it("keeps missing document color profile detectable by managed image rendering", () => {
-    const options = createFigFamilyRenderOptions(createDocument(undefined));
+    const options = createFigFamilyRenderOptions(createContext(undefined));
 
     expect(options).toBeUndefined();
   });
 
   it("requires an explicit Display P3 ICC profile instead of guessing one", () => {
-    expect(() => createFigFamilyRenderOptions(createDocument({ value: 2, name: "DISPLAY_P3_V4" })))
+    expect(() => createFigFamilyRenderOptions(createContext({ value: 2, name: "DISPLAY_P3_V4" })))
       .toThrow("Display P3 rendering requires explicit exportSettings.displayP3IccProfile");
   });
 });
 
 describe("FigFamilyPageRenderer", () => {
   it("passes explicit render export settings to color-managed image fills", () => {
+    const context = createContext({ value: 1, name: "SRGB" });
     const sceneGraph = createManagedImageSceneGraph();
-    const renderOptions = createFigFamilyRenderOptions(createDocument({ value: 1, name: "SRGB" }));
+    const renderOptions = createFigFamilyRenderOptions(context);
 
     const html = renderToStaticMarkup(createElement(FigFamilyPageRenderer, {
       page: null,
       canvasWidth: 1,
       canvasHeight: 1,
-      images: new Map(),
-      blobs: [],
-      symbolMap: new Map(),
-      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      resources: {
+        ...figDocumentResources(context),
+        styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      },
       sceneGraph,
       renderOptions,
     }));

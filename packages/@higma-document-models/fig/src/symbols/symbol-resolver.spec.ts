@@ -18,17 +18,17 @@ function isFigNodeType(value: string): value is FigNodeType {
   return FIG_NODE_TYPE_VALUES.has(value);
 }
 
-function normalizeType(type: TestFigNodeInput["type"]): FigNode["type"] {
-  if (typeof type === "string") {
-    if (!isFigNodeType(type)) {
-      throw new Error(`Unknown FigNodeType in symbol-resolver spec fixture: ${type}`);
-    }
-    return { value: -1, name: type };
+function kiwiType(type: TestFigNodeInput["type"]): FigNode["type"] {
+  if (typeof type !== "string") {
+    return type ?? { value: -1, name: "VECTOR" };
   }
-  return type ?? { value: -1, name: "VECTOR" };
+  if (!isFigNodeType(type)) {
+    throw new Error(`Unknown FigNodeType in symbol-resolver spec fixture: ${type}`);
+  }
+  return { value: -1, name: type };
 }
 
-function normalizeChildren(
+function kiwiChildren(
   children: readonly (TestFigNodeInput | FigNode | null | undefined)[] | undefined,
 ): readonly FigNode[] | undefined {
   return children
@@ -42,9 +42,13 @@ function createTestNode(data: TestFigNodeInput | FigNode): FigNode {
     ...data,
     guid: data.guid ?? { sessionID: 0, localID: 0 },
     phase: data.phase ?? { value: 1, name: "CREATED" },
-    type: normalizeType(data.type),
-    children: normalizeChildren(data.children),
+    type: kiwiType(data.type),
+    children: kiwiChildren(data.children),
   };
+}
+
+function childrenOfFixtureNode(node: FigNode): readonly FigNode[] {
+  return node.children?.filter((child): child is FigNode => child !== null && child !== undefined) ?? [];
 }
 
 describe("cloneSymbolChildren", () => {
@@ -54,7 +58,7 @@ describe("cloneSymbolChildren", () => {
       name: "EmptySymbol",
     });
 
-    const result = cloneSymbolChildren(symbolNode);
+    const result = cloneSymbolChildren(symbolNode, { childrenOf: childrenOfFixtureNode });
     expect(result).toEqual([]);
   });
 
@@ -77,7 +81,7 @@ describe("cloneSymbolChildren", () => {
       children: [child1, child2],
     });
 
-    const result = cloneSymbolChildren(symbolNode);
+    const result = cloneSymbolChildren(symbolNode, { childrenOf: childrenOfFixtureNode });
 
     expect(result).toHaveLength(2);
     expect(result[0]!).not.toBe(child1);
@@ -106,7 +110,7 @@ describe("cloneSymbolChildren", () => {
       children: [child],
     });
 
-    const result = cloneSymbolChildren(symbolNode);
+    const result = cloneSymbolChildren(symbolNode, { childrenOf: childrenOfFixtureNode });
 
     expect(result).toHaveLength(1);
     expect(result[0]!.children).toHaveLength(1);
@@ -128,6 +132,7 @@ describe("cloneSymbolChildren", () => {
     });
 
     const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
       symbolOverrides: [
         {
           guidPath: { guids: [{ sessionID: 1, localID: 10 }] },
@@ -162,6 +167,7 @@ describe("cloneSymbolChildren", () => {
     });
 
     const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
       componentPropAssignments: [
         {
           defID: { sessionID: 1, localID: 100 },
@@ -195,6 +201,7 @@ describe("cloneSymbolChildren", () => {
     });
 
     const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
       symbolOverrides: [
         {
           guidPath: { guids: [{ sessionID: 1, localID: 20 }, { sessionID: 1, localID: 30 }] },
@@ -240,6 +247,7 @@ describe("cloneSymbolChildren", () => {
     });
 
     const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
       componentPropAssignments: [
         {
           defID: { sessionID: 1, localID: 100 },
@@ -273,6 +281,7 @@ describe("cloneSymbolChildren", () => {
 
     const newSymbolGuid = { sessionID: 2, localID: 10 };
     const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
       componentPropAssignments: [
         {
           defID: { sessionID: 1, localID: 200 },
@@ -308,6 +317,7 @@ describe("cloneSymbolChildren", () => {
     });
 
     const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
       componentPropAssignments: [
         {
           defID: { sessionID: 1, localID: 300 },

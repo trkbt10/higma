@@ -19,7 +19,9 @@ import type {
   FigImageScaleMode,
   FigPaint,
 } from "@higma-document-models/fig/types";
+import { asImagePaint } from "@higma-document-models/fig/color";
 import type { FigPackageImage } from "@higma-figma-containers/package";
+import { getImageHash } from "@higma-document-renderers/fig/paint";
 import { call, ident, member, namedArg, type SwiftExpr } from "../swift-tree";
 
 /**
@@ -46,31 +48,10 @@ export function firstVisibleImagePaint(
     if (!paint || paint.visible === false) {
       continue;
     }
-    if (paint.type === "IMAGE") {
-      return paint;
+    const imagePaint = asImagePaint(paint);
+    if (imagePaint !== undefined) {
+      return imagePaint;
     }
-  }
-  return undefined;
-}
-
-/**
- * Resolve the imageRef channel an `IMAGE` paint carries. Mirrors the
- * renderer's `getImageRef` ordering: API-format `imageRef` first,
- * then Kiwi-format `image.hash`, then alternative `imageHash`.
- */
-export function resolveImageRef(paint: FigImagePaint): string | undefined {
-  if (paint.imageRef) {
-    return paint.imageRef;
-  }
-  if (paint.image?.hash && Array.isArray(paint.image.hash) && paint.image.hash.length > 0) {
-    return hashArrayToHex(paint.image.hash);
-  }
-  const imageHash = paint.imageHash;
-  if (typeof imageHash === "string") {
-    return imageHash;
-  }
-  if (Array.isArray(imageHash) && imageHash.length > 0) {
-    return hashArrayToHex(imageHash);
   }
   return undefined;
 }
@@ -107,8 +88,8 @@ export function imageBundleExpr(slug: string): SwiftExpr {
  * `imageBundleExpr` + a Resources/ folder declared in Package.swift.
  *
  * The returned expression assumes the user file declared the
- * `makeFigToSwiftuiImage` helper at file scope (see
- * `INLINE_IMAGE_HELPER` in `emit/file.ts`).
+ * `makeFigToSwiftuiImage` routine at file scope (see
+ * `INLINE_IMAGE_DECODER_SOURCE` in `emit/file.ts`).
  */
 export function imageInlineExpr(image: FigPackageImage): SwiftExpr {
   const base64 = uint8ArrayToBase64(image.data);
@@ -166,7 +147,8 @@ export type ImageEmitShape = {
 /**
  * Resolve a Figma `scaleMode` / `imageScaleMode` value to the
  * `ImageEmitShape` (resizing × aspect) the SwiftUI emitter needs.
- * `undefined` defaults to `FILL` to match Figma's authoring default.
+ * `undefined` is accepted only for callers that have no authored
+ * ImageScaleMode field in the Kiwi payload; it maps to FILL.
  */
 export function contentModeFor(scale: FigImageScaleMode | undefined): ImageEmitShape {
   if (!scale) {
@@ -174,7 +156,6 @@ export function contentModeFor(scale: FigImageScaleMode | undefined): ImageEmitS
   }
   switch (scale) {
     case "FILL":
-    case "CROP":
       return { aspect: "fill", resizing: "stretch" };
     case "FIT":
       return { aspect: "fit", resizing: "stretch" };
@@ -185,13 +166,9 @@ export function contentModeFor(scale: FigImageScaleMode | undefined): ImageEmitS
   }
 }
 
-function hashArrayToHex(bytes: readonly number[]): string {
-  return bytes.map((b) => (b & 0xff).toString(16).padStart(2, "0")).join("");
-}
-
 /**
  * Stable filesystem-safe slug for a fig image. Uses the image's
- * resolved `imageRef` (a hex hash) as-is — SHA-1-style ids stay
+ * resolved `image.hash` hex as-is — SHA-1-style ids stay
  * stable across emit runs even when the order of paints changes,
  * so the `<out>/Resources/<slug>.png` filename doesn't churn for
  * unchanged inputs.
@@ -212,13 +189,10 @@ export function hasUsableImagePaint(
   if (!paint) {
     return false;
   }
-  const ref = resolveImageRef(paint);
-  if (!ref) {
-    return false;
-  }
+  const ref = getImageHash(paint);
   return images.has(ref);
 }
 
 /** Suppress the unused-import warning when the consumer module
- * imports `ident` indirectly through this helper. */
+ * imports `ident` indirectly through this routine. */
 void ident;

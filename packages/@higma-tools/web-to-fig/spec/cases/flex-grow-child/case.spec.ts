@@ -9,7 +9,7 @@
  *     so the wide width is the only signal a downstream renderer can
  *     use to reproduce the layout at the captured viewport size).
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import {
   GAP,

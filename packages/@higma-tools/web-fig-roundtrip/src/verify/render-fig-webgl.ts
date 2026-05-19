@@ -3,7 +3,7 @@
  *
  * Uses the same harness pattern the renderer's WebGL parity tests use:
  *
- *   loadFigFile  → FigDesignDocument
+ *   loadFigFile  → FigDocumentContext
  *                → buildSceneGraph (per wrapper FRAME)
  *                → vite-served harness page
  *                → puppeteer captureWebGL → PNG
@@ -17,8 +17,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import puppeteer, { type Browser, type Page } from "puppeteer";
 import { createServer, type ViteDevServer } from "vite";
-import { createFigDesignDocument, figDocumentResources } from "@higma-document-io/fig/context";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import { createFigDocumentContext, figDocumentResources } from "@higma-document-io/fig/context";
+import { findNodesByType, getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
+import type { FigNode } from "@higma-document-models/fig/types";
 import { buildSceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeFontLoaderWithFontsource } from "@higma-document-renderers/fig/font-drivers/node";
 import {
@@ -111,16 +113,12 @@ export async function renderFigViewports(
   figBytes: Uint8Array,
   options: { readonly breakpoints?: readonly string[] } = {},
 ): Promise<readonly FigDirectRenderResult[]> {
-  // SoT: `createFigDesignDocument` owns the
-  // `loadFigFile → buildNodeTree → treeToDocument` orchestration. The
-  // verifier consumes `document.components` (already-resolved SYMBOLs)
-  // for INSTANCE references rather than building its own raw symbolMap.
-  const document = await createFigDesignDocument(figBytes);
+  const context = await createFigDocumentContext(figBytes);
   const wantedBreakpoints = new Set(options.breakpoints ?? ["mobile", "tablet", "desktop"]);
 
-  const wrappers: { breakpoint: string; node: FigDesignNode }[] = [];
-  for (const page of document.pages) {
-    for (const child of page.children) {
+  const wrappers: { breakpoint: string; node: FigNode }[] = [];
+  for (const page of canvasNodes(context)) {
+    for (const child of context.document.childrenOf(page)) {
       const breakpoint = parseBreakpointSlug(child.name);
       if (!breakpoint) continue;
       if (!wantedBreakpoints.has(breakpoint)) continue;
@@ -134,8 +132,8 @@ export async function renderFigViewports(
   // run, so all fonts must be in the cache by the time we call
   // `buildSceneGraph`.
   const fontResolver = await buildFontResolver(
-    wrappers.map((w) => normalizeRootNode(w.node)),
-    document.components,
+    wrappers.map((w) => rootAtOrigin(w.node)),
+    context,
   );
 
   const results: FigDirectRenderResult[] = [];
@@ -146,8 +144,8 @@ export async function renderFigViewports(
     }
     const width = Math.round(sz.x);
     const height = Math.round(sz.y);
-    const sceneGraph = buildSceneGraph([normalizeRootNode(w.node)], {
-      ...figDocumentResources(document),
+    const sceneGraph = buildSceneGraph([rootAtOrigin(w.node)], {
+      ...figDocumentResources(context),
       canvasSize: { width, height },
       viewport: { x: 0, y: 0, width, height },
       showHiddenNodes: false,
@@ -162,14 +160,14 @@ export async function renderFigViewports(
 
 /**
  * A single top-level node selected for rasterisation. Surfaces the
- * (page, frame) coordinates plus the resolved FigDesignNode so
+ * (page, frame) coordinates plus the raw FigNode so
  * callers can compute fingerprints before paying the harness cost.
  */
 export type FigFrameTarget = {
   readonly page: string;
   readonly frame: string;
   readonly type: string;
-  readonly node: FigDesignNode;
+  readonly node: FigNode;
   readonly width: number;
   readonly height: number;
 };
@@ -209,7 +207,7 @@ function selectableTypes(includeSymbols: boolean): ReadonlySet<string> {
  * before opening puppeteer.
  *
  * Why this is a separate entry: the previous one-shot
- * `renderFigFramesByName` API folded discovery + rasterisation
+ * earlier one-shot API folded discovery + rasterisation
  * together, which forced the harness to start even when every
  * target's fingerprint already matched the on-disk PNG. Splitting
  * discovery out lets callers gate harness startup on whether any
@@ -223,16 +221,17 @@ export async function listFigFrameTargets(
     readonly includeSymbols?: boolean;
   } = {},
 ): Promise<readonly FigFrameTarget[]> {
-  const document = await createFigDesignDocument(figBytes);
+  const context = await createFigDocumentContext(figBytes);
   const wantedNames = options.frameNames ? new Set(options.frameNames) : undefined;
   const rasterisable = selectableTypes(options.includeSymbols === true);
   const out: FigFrameTarget[] = [];
-  for (const page of document.pages) {
+  for (const page of canvasNodes(context)) {
     if (options.pageName !== undefined && page.name !== options.pageName) {
       continue;
     }
-    for (const child of page.children) {
-      if (!rasterisable.has(child.type)) {
+    for (const child of context.document.childrenOf(page)) {
+      const typeName = getNodeType(child);
+      if (!rasterisable.has(typeName)) {
         continue;
       }
       const name = child.name ?? "";
@@ -246,7 +245,7 @@ export async function listFigFrameTargets(
       out.push({
         page: page.name ?? "",
         frame: name,
-        type: child.type,
+        type: typeName,
         node: child,
         width: Math.round(sz.x),
         height: Math.round(sz.y),
@@ -297,15 +296,15 @@ export async function* streamFigFrames(
   if (targets.length === 0) {
     return;
   }
-  const document = await createFigDesignDocument(figBytes);
+  const context = await createFigDocumentContext(figBytes);
   const fontResolver = await buildFontResolver(
-    targets.map((t) => normalizeRootNode(t.node)),
-    document.components,
+    targets.map((t) => rootAtOrigin(t.node)),
+    context,
   );
   const pixelRatio = options.pixelRatio ?? 1;
   for (const t of targets) {
-    const sceneGraph = buildSceneGraph([normalizeRootNode(t.node)], {
-      ...figDocumentResources(document),
+    const sceneGraph = buildSceneGraph([rootAtOrigin(t.node)], {
+      ...figDocumentResources(context),
       canvasSize: { width: t.width, height: t.height },
       viewport: { x: 0, y: 0, width: t.width, height: t.height },
       showHiddenNodes: false,
@@ -323,60 +322,17 @@ export async function* streamFigFrames(
 }
 
 /**
- * Backwards-compatible one-shot wrapper around `listFigFrameTargets`
- * + `streamFigFrames`. Kept so existing consumers
- * (fig-to-swiftui's visual round-trip loop) don't have to migrate
- * to the streaming surface. New code should call the two
- * underlying functions directly — that exposes the discovery /
- * fingerprint / harness-lifecycle split.
- *
- * The `frame` field on each result echoes the source name so the
- * caller can correlate by name. Duplicate names round-trip through
- * the result array unchanged.
- */
-export async function renderFigFramesByName(
-  harness: WebglHarness,
-  figBytes: Uint8Array,
-  options: {
-    readonly frameNames?: readonly string[];
-    readonly pageName?: string;
-    readonly includeSymbols?: boolean;
-    readonly pixelRatio?: number;
-  } = {},
-): Promise<readonly { readonly frame: string; readonly png: Uint8Array; readonly width: number; readonly height: number }[]> {
-  const targets = await listFigFrameTargets(figBytes, {
-    frameNames: options.frameNames,
-    pageName: options.pageName,
-    includeSymbols: options.includeSymbols,
-  });
-  const results: { frame: string; png: Uint8Array; width: number; height: number }[] = [];
-  for await (const r of streamFigFrames(harness, figBytes, targets, { pixelRatio: options.pixelRatio })) {
-    results.push({
-      frame: r.target.frame,
-      png: r.png,
-      width: r.width,
-      height: r.height,
-    });
-  }
-  return results;
-}
-
-/**
  * Render an explicit list of fig nodes (each given as a node-key
  * tuple `${sessionID}:${localID}` plus authored width/height) and
  * return a PNG per node.
  *
- * Unlike `renderFigFramesByName` this entry doesn't filter by
- * `FRAME_LIKE_TYPES` — the caller selects which nodes to rasterise
+ * The caller selects which nodes to rasterise
  * via guid lookup. Used by the fig-to-swiftui complexity-threshold
  * rasteriser to burn down deeply-nested SwiftUI subtrees into
  * single bundle-resource Images.
  *
- * Nodes whose guid isn't present in the document are silently
- * dropped — the caller's plan reflected the live document, so a
- * missing guid means the harness's view of the file diverged
- * (e.g. the file was edited between scoring and rendering). The
- * caller decides whether to retry or accept the gap.
+ * Nodes whose guid isn't present in the document fail the render
+ * immediately.
  */
 export async function renderFigNodes(
   harness: WebglHarness,
@@ -386,39 +342,12 @@ export async function renderFigNodes(
   if (targets.length === 0) {
     return [];
   }
-  const document = await createFigDesignDocument(figBytes);
-  // Index every node in the document by its FigNodeId
-  // (`"sessionID:localID"` string brand). The id field is the SoT
-  // identifier on `FigDesignNode` — derived from the raw fig GUID
-  // at document construction via `guidToNodeId(node.guid)`. We
-  // consume the resolved string directly so this lookup is
-  // structurally identical to `document.components`'s key shape,
-  // and we never construct the format ourselves.
-  const byKey = new Map<string, FigDesignNode>();
-  const indexNode = (node: FigDesignNode): void => {
-    if (node.id) {
-      byKey.set(node.id, node);
-    }
-    for (const child of node.children ?? []) {
-      indexNode(child);
-    }
-  };
-  for (const page of document.pages) {
-    for (const child of page.children) {
-      indexNode(child);
-    }
-  }
-  // Also index the resolved SYMBOL definitions — INSTANCE-targeted
-  // rasterisation needs to find SYMBOLs by guid even though they
-  // aren't in `pages.children`.
-  for (const sym of document.components.values()) {
-    indexNode(sym);
-  }
-  const resolved: { readonly key: string; readonly node: FigDesignNode; readonly width: number; readonly height: number }[] = [];
+  const context = await createFigDocumentContext(figBytes);
+  const resolved: { readonly key: string; readonly node: FigNode; readonly width: number; readonly height: number }[] = [];
   for (const t of targets) {
-    const node = byKey.get(t.key);
+    const node = context.document.nodesByGuid.get(t.key);
     if (!node) {
-      continue;
+      throw new Error(`renderFigNodes: target ${t.key} was not found in the Kiwi document`);
     }
     resolved.push({ key: t.key, node, width: t.width, height: t.height });
   }
@@ -426,13 +355,13 @@ export async function renderFigNodes(
     return [];
   }
   const fontResolver = await buildFontResolver(
-    resolved.map((r) => normalizeRootNode(r.node)),
-    document.components,
+    resolved.map((r) => rootAtOrigin(r.node)),
+    context,
   );
   const out: { key: string; png: Uint8Array; width: number; height: number }[] = [];
   for (const t of resolved) {
-    const sceneGraph = buildSceneGraph([normalizeRootNode(t.node)], {
-      ...figDocumentResources(document),
+    const sceneGraph = buildSceneGraph([rootAtOrigin(t.node)], {
+      ...figDocumentResources(context),
       canvasSize: { width: t.width, height: t.height },
       viewport: { x: 0, y: 0, width: t.width, height: t.height },
       showHiddenNodes: false,
@@ -475,10 +404,14 @@ export async function renderFigNodes(
  * but which lacks CJK glyphs).
  */
 async function buildFontResolver(
-  roots: readonly FigDesignNode[],
-  symbolMap: ReadonlyMap<string, FigDesignNode>,
+  roots: readonly FigNode[],
+  context: FigDocumentContext,
 ): Promise<TextFontResolver> {
-  const { queries } = collectFontQueries({ roots, symbolMap });
+  const { queries } = collectFontQueries({
+    roots,
+    symbolResolver: context.symbolResolver,
+    childrenOf: context.document.childrenOf,
+  });
 
   // Two-stage fallback chain:
   //   1. Noto Sans JP — picks up CJK and other Pan-Unicode glyphs
@@ -493,7 +426,7 @@ async function buildFontResolver(
 
   const loader = createCachingFontLoader(createNodeFontLoaderWithFontsource());
 
-  const cjkFace = documentHasCjk(roots, symbolMap) ? await loadCjkFace(loader) : undefined;
+  const cjkFace = documentHasCjk(roots, context) ? await loadCjkFace(loader) : undefined;
   if (cjkFace !== undefined) {
     return () => cjkFace.font;
   }
@@ -659,27 +592,31 @@ async function loadCjkFace(loader: ReturnType<typeof createCachingFontLoader>): 
  * flips the resolver into CJK-priority mode for the whole render.
  */
 function documentHasCjk(
-  roots: readonly FigDesignNode[],
-  symbolMap: ReadonlyMap<string, FigDesignNode>,
+  roots: readonly FigNode[],
+  context: FigDocumentContext,
 ): boolean {
   const visited = new Set<string>();
-  function walk(node: FigDesignNode | undefined): boolean {
+  function walk(node: FigNode | undefined): boolean {
     if (!node) {
       return false;
     }
-    const text = node.textData?.characters;
+    const text = node.textData?.characters ?? node.characters;
     if (text !== undefined && hasCjkChar(text)) {
       return true;
     }
-    const symbolId = node.symbolId;
-    if (symbolId !== undefined && !visited.has(symbolId)) {
-      visited.add(symbolId);
-      const target = symbolMap.get(symbolId);
-      if (target !== undefined && walk(target)) {
-        return true;
+    if (getNodeType(node) === "INSTANCE") {
+      const reference = context.symbolResolver.resolveReferences(node).effectiveSymbol;
+      const referenceGuid = reference === undefined ? undefined : guidToString(reference.guid);
+      if (referenceGuid !== undefined && !visited.has(referenceGuid)) {
+        visited.add(referenceGuid);
+        const resolved = context.symbolResolver.resolveInstance(node);
+        if (resolved.children.some((child) => walk(child))) {
+          return true;
+        }
       }
+      return false;
     }
-    for (const child of node.children ?? []) {
+    for (const child of context.document.childrenOf(node)) {
       if (walk(child)) {
         return true;
       }
@@ -729,10 +666,10 @@ function hasCjkChar(s: string): boolean {
 }
 
 /**
- * Translate a wrapper FRAME so its top-left lands at (0, 0) — the
+ * Place a wrapper FRAME at (0, 0) — the
  * harness assumes the SceneGraph origin matches the canvas origin.
  */
-function normalizeRootNode(node: FigDesignNode): FigDesignNode {
+function rootAtOrigin(node: FigNode): FigNode {
   if (!node.transform) {
     return node;
   }
@@ -740,6 +677,10 @@ function normalizeRootNode(node: FigDesignNode): FigDesignNode {
     ...node,
     transform: { ...node.transform, m02: 0, m12: 0 },
   };
+}
+
+function canvasNodes(context: FigDocumentContext): readonly FigNode[] {
+  return findNodesByType(context.document, "CANVAS");
 }
 
 function parseBreakpointSlug(name: string | undefined): string | undefined {

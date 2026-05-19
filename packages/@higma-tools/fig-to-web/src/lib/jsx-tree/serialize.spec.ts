@@ -4,7 +4,7 @@
  * These cover the cases that motivated the rewrite — Figma-author
  * content (TEXT characters, layer names, font names) flowing into
  * generated TSX must round-trip without breaking the parser or
- * leaking syntax. The helpers funnel everything through
+ * leaking syntax. The routines funnel everything through
  * `JSON.stringify`, which makes the safety property easy to assert:
  * the serialized form contains the *escaped* JS literal of the
  * input, never the literal characters themselves.

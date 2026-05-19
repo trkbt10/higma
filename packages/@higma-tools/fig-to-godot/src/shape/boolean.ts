@@ -17,7 +17,7 @@
  *   2. Apply each child's `transform` so every command lands in the
  *      BOOLEAN_OPERATION node's local coord space.
  *   3. Serialise to SVG `d`-strings and feed pairwise into
- *      `evaluateBooleanPaths` (the renderer's path-bool adapter).
+ *      `evaluateBooleanPaths` (the renderer's path-bool operation).
  *   4. Re-parse the resulting `d`-strings, flatten Bézier curves via
  *      `flattenPathCommands`, and pack into a single multi-contour
  *      `Contour` so `buildPolygon2DNodes` emits one Polygon2D with the
@@ -146,7 +146,7 @@ function splitFigureEightContour(contour: Contour): readonly Contour[] {
 
 /**
  * Resolve a Figma booleanOperation enum to one of the four canonical
- * names the renderer's path-bool adapter accepts. Figma authors the
+ * names the renderer's path-bool operation accepts. Figma authors the
  * "Exclude" operation via the `XOR` enum value (symmetric difference)
  * — same semantic as `EXCLUDE` in the canonical naming. The renderer
  * package's `resolveBooleanOperationType` doesn't recognise the alias
@@ -287,10 +287,10 @@ function pickUniformCornerRadius(node_: FigNode): number | undefined {
 }
 
 /**
- * Adapt a `FigMatrix` (every field optional) to the primitive's
+ * Read a `FigMatrix` (every field optional) into the primitive's
  * `AffineMatrix` (every field required). The primitive lives at
- * layer 0 and must not depend on the fig domain, so this thin
- * adapter sits at the boundary.
+ * layer 0 and must not depend on the fig domain, so field completion
+ * happens at this call boundary.
  */
 function toAffineMatrix(transform: FigMatrix | undefined): AffineMatrix | undefined {
   if (!transform) {

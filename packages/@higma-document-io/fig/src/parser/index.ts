@@ -18,7 +18,7 @@ export {
 export type { ParsedFigFile } from "./fig-file";
 
 export {
-  normaliseNodeChanges,
-  denormaliseNodeForEncode,
+  readNodeChanges,
+  encodeNodeForKiwi,
   asBlobArray,
-} from "./normalize";
+} from "./node-codec";

@@ -7,7 +7,7 @@
  *   - Each row carries its label TEXT and an input FRAME.
  *   - The submit button promotes to FRAME-wrapping-TEXT.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { FIELDS, SUBMIT_LABEL, loginForm } from "./fixture";
 
 describe("case form-login-fields", () => {

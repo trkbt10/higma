@@ -22,7 +22,7 @@
  */
 import type { FigNode } from "@higma-document-models/fig/types";
 import { buildWebFontPlan, collectFontQueries, type WebFontPlan } from "@higma-document-models/fig/font";
-import type { FigSymbolContext } from "@higma-document-io/fig/context";
+import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import type { EmitFile, EmitRegistry, FrameTarget } from "./types";
 import { buildRegistry } from "./plan/registry";
 import { emitComponentFile, emitPageFile } from "./render/files";
@@ -68,7 +68,7 @@ function emitIndexFile(registry: EmitRegistry): EmitFile {
   return { path: "index.ts", contents: lines.join("\n") };
 }
 
-function emitTokensFile(source: FigSymbolContext, frames: readonly FigNode[]): {
+function emitTokensFile(source: FigDocumentContext, frames: readonly FigNode[]): {
   readonly file: EmitFile;
   readonly registryInputs: ReturnType<typeof buildTokensFromFrames>;
 } {
@@ -121,10 +121,11 @@ function emitIndexHtml(fontPlan: WebFontPlan): EmitFile {
  * actually needs, then turn that into a `WebFontPlan` whose Google
  * Fonts URL only requests those weights — never a 100..900 sweep.
  */
-function buildSourceFontPlan(source: FigSymbolContext, frames: readonly FigNode[]): WebFontPlan {
+function buildSourceFontPlan(source: FigDocumentContext, frames: readonly FigNode[]): WebFontPlan {
   const { queries } = collectFontQueries({
     roots: frames,
-    symbolMap: source.nodesByGuid,
+    symbolResolver: source.symbolResolver,
+    childrenOf: source.document.childrenOf,
   });
   return buildWebFontPlan(queries);
 }
@@ -577,14 +578,14 @@ function resolveOptions(options: EmitFromFramesOptions): ResolvedEmitOptions {
  * graph builder, whose font / image decode steps are async.
  */
 export async function emitFromFrames(
-  source: FigSymbolContext,
+  source: FigDocumentContext,
   frames: readonly FigNode[],
   options: EmitFromFramesOptions = {},
 ): Promise<EmitResult> {
   const resolved = resolveOptions(options);
   const tokens = emitTokensFile(source, frames);
   const registry = buildRegistry(source, frames);
-  const imageRegistry = createImageRegistry(source.loaded.images);
+  const imageRegistry = createImageRegistry(source.images);
   // The external-css strategy needs one registry shared across every
   // component/page emit because all generated TSX files reference a
   // single `styles.css` at the output root. The registry stays

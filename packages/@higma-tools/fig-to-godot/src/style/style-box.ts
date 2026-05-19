@@ -17,7 +17,7 @@
  * `.tscn`, so the empty case is a hard no-op.
  *
  * Mirrors the modifier-builder factoring from `fig-to-swiftui/src/style/modifiers.ts`:
- * one small helper per fig concept, each returning a typed value (here:
+ * one small routine per fig concept, each returning a typed value (here:
  * a `GodotProperty` array) so the caller composes the final StyleBox
  * without string concatenation.
  */
@@ -27,8 +27,9 @@ import type {
   FigNode,
   FigPaint,
   FigSolidPaint,
-  KiwiEnumValue,
 } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import {
   colorVal,
   floatVal,
@@ -42,19 +43,8 @@ import {
 } from "../godot-tree";
 import { colorExpr, solidPaintToColor } from "./color";
 
-/**
- * Read a Kiwi enum's `.name`. Effect types appear either as plain
- * strings or as `{ value, name }` structs depending on the parser
- * branch; this helper converges both shapes onto the string channel.
- */
-function effectTypeName(value: FigEffectType | KiwiEnumValue<FigEffectType>): FigEffectType | undefined {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object" && "name" in value) {
-    return value.name;
-  }
-  return undefined;
+function effectTypeName(value: FigEffect["type"]): FigEffectType | undefined {
+  return kiwiEnumName<FigEffectType>(value, "FigEffect.type");
 }
 
 /**
@@ -71,27 +61,17 @@ function firstVisibleSolidPaint(paints: readonly FigPaint[] | undefined): FigSol
     if (paint.visible === false) {
       continue;
     }
-    if (paint.type === "SOLID") {
-      return paint;
+    const solidPaint = asSolidPaint(paint);
+    if (solidPaint !== undefined) {
+      return solidPaint;
     }
   }
   return undefined;
 }
 
-/**
- * Read the blend mode name on a paint, normalising the string-vs-enum
- * shapes the parser branches produce. Unset / null is treated as
- * NORMAL — that's Figma's documented default.
- */
+/** Read the Kiwi blend-mode enum name on a paint. */
 function paintBlendModeName(paint: FigPaint): string {
-  const bm = (paint as { blendMode?: { name?: string } | string }).blendMode;
-  if (typeof bm === "string") {
-    return bm;
-  }
-  if (bm && typeof bm === "object" && "name" in bm && typeof bm.name === "string") {
-    return bm.name;
-  }
-  return "NORMAL";
+  return kiwiEnumName(paint.blendMode, "FigPaint.blendMode") ?? "NORMAL";
 }
 
 /** RGBA in the same 0..1 space FigColor uses, kept as a plain tuple. */
@@ -152,8 +132,8 @@ function foldSolidStack(
   if (index >= paints.length) {
     return acc;
   }
-  const paint = paints[index]!;
-  if (paint.type !== "SOLID") {
+  const paint = asSolidPaint(paints[index]!);
+  if (paint === undefined) {
     return undefined;
   }
   if (paintBlendModeName(paint) !== "NORMAL") {
@@ -325,44 +305,17 @@ function strokeExpandMargins(
   ];
 }
 
-/**
- * Normalize `node.strokeAlign` to a string label. Figma's authored
- * default is CENTER (the field is omitted when the value matches the
- * default). Kiwi enum values arrive as `{ name: string }`; raw string
- * legacy data is also tolerated.
- */
 function strokeAlignName(
   raw: FigNode["strokeAlign"],
 ): "INSIDE" | "CENTER" | "OUTSIDE" {
   if (raw === undefined) {
     return "CENTER";
   }
-  // FigStrokeAlign is a canonical string-union type. Use the
-  // explicit type-narrowing helper instead of `as any` so the
-  // reader doesn't have to follow a cast to know which branch
-  // applies.
-  const name = readStrokeAlign(raw);
+  const name = kiwiEnumName<"INSIDE" | "CENTER" | "OUTSIDE">(raw, "FigNode.strokeAlign");
   if (name === "INSIDE" || name === "OUTSIDE") {
     return name;
   }
   return "CENTER";
-}
-
-/**
- * Type-narrowing reader for stroke-align values that arrive either as
- * a plain string or as a Kiwi enum struct (`{ name }`). Returns the
- * underlying name string in both cases. Acts as the type-guard
- * function the linter expects in place of an unsafe cast.
- */
-function readStrokeAlign(raw: unknown): string | undefined {
-  if (typeof raw === "string") {
-    return raw;
-  }
-  if (raw && typeof raw === "object" && "name" in raw) {
-    const name = (raw as { name: unknown }).name;
-    return typeof name === "string" ? name : undefined;
-  }
-  return undefined;
 }
 
 function resolveBorderWidths(
@@ -523,7 +476,7 @@ export function pickLayerBlur(node: FigNode): FigEffect | undefined {
       continue;
     }
     const name = effectTypeName(effect.type);
-    if (name === "LAYER_BLUR" || name === "FOREGROUND_BLUR") {
+    if (name === "FOREGROUND_BLUR") {
       return effect;
     }
   }
@@ -757,4 +710,3 @@ export function modulateAlphaProperty(node: FigNode): GodotProperty | undefined 
   }
   return property("modulate", colorVal(1, 1, 1, node.opacity));
 }
-

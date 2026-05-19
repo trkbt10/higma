@@ -32,7 +32,7 @@
  *      the host and would never have been visible.
  */
 import type { FigNode, FigMatrix } from "@higma-document-models/fig/types";
-import { guidToString, safeChildren } from "@higma-document-models/fig/domain";
+import { guidToString } from "@higma-document-models/fig/domain";
 
 const EPSILON_PX = 0.5;
 
@@ -41,8 +41,8 @@ type Bounds = { readonly x: number; readonly y: number; readonly width: number; 
 export type ReparentResult = {
   /**
    * Children-overlay keyed by `guidToString(parent)`. Consumers walk
-   * the original tree but consult this map first; missing entries
-   * mean "no reparenting happened, use `safeChildren` directly".
+   * the Kiwi document through this overlay first; missing entries
+   * mean "use the caller-supplied Kiwi children view".
    */
   readonly childrenByParent: ReadonlyMap<string, readonly FigNode[]>;
   /**
@@ -55,11 +55,13 @@ export type ReparentResult = {
   readonly transformByGuid: ReadonlyMap<string, FigMatrix>;
 };
 
-/** Run the reparent pass on the entire tree rooted at `root`. */
-export function buildReparentResult(root: FigNode): ReparentResult {
+type ChildrenOf = (node: FigNode) => readonly FigNode[];
+
+/** Run the reparent pass on the entire document view rooted at `root`. */
+export function buildReparentResult(root: FigNode, childrenOf: ChildrenOf): ReparentResult {
   const childrenByParent = new Map<string, readonly FigNode[]>();
   const transformByGuid = new Map<string, FigMatrix>();
-  visit(root, childrenByParent, transformByGuid);
+  visit(root, childrenByParent, transformByGuid, childrenOf);
   return { childrenByParent, transformByGuid };
 }
 
@@ -67,25 +69,28 @@ function visit(
   node: FigNode,
   childrenByParent: Map<string, readonly FigNode[]>,
   transformByGuid: Map<string, FigMatrix>,
+  childrenOf: ChildrenOf,
 ): void {
-  const reparented = reparentChildren(node, transformByGuid);
+  const reparented = reparentChildren(node, childrenByParent, transformByGuid, childrenOf);
   if (reparented) {
     childrenByParent.set(guidToString(node.guid), reparented);
     for (const child of reparented) {
-      visit(child, childrenByParent, transformByGuid);
+      visit(child, childrenByParent, transformByGuid, childrenOf);
     }
     return;
   }
-  for (const child of safeChildren(node)) {
-    visit(child, childrenByParent, transformByGuid);
+  for (const child of effectiveChildren(node, childrenByParent, childrenOf)) {
+    visit(child, childrenByParent, transformByGuid, childrenOf);
   }
 }
 
 function reparentChildren(
   parent: FigNode,
+  childrenByParent: Map<string, readonly FigNode[]>,
   transformByGuid: Map<string, FigMatrix>,
+  childrenOf: ChildrenOf,
 ): readonly FigNode[] | undefined {
-  const original = safeChildren(parent);
+  const original = effectiveChildren(parent, childrenByParent, childrenOf);
   if (original.length < 2) {
     return undefined;
   }
@@ -93,7 +98,7 @@ function reparentChildren(
   const adopted = new Map<number, number[]>(); // hostIndex → adoptedIndices
   for (let i = 0; i < original.length; i += 1) {
     const host = original[i];
-    if (!isEmptySectionFrame(host)) {
+    if (!isEmptySectionFrame(host, childrenByParent, childrenOf)) {
       continue;
     }
     const hostBounds = boundsOf(host);
@@ -123,7 +128,7 @@ function reparentChildren(
   if (adopted.size === 0) {
     return undefined;
   }
-  return rebuildChildren(original, adopted, claimed, transformByGuid);
+  return rebuildChildren(original, adopted, claimed, transformByGuid, childrenByParent);
 }
 
 function rebuildChildren(
@@ -131,6 +136,7 @@ function rebuildChildren(
   adopted: ReadonlyMap<number, readonly number[]>,
   claimed: ReadonlySet<number>,
   transformByGuid: Map<string, FigMatrix>,
+  childrenByParent: Map<string, readonly FigNode[]>,
 ): readonly FigNode[] {
   const out: FigNode[] = [];
   for (let i = 0; i < original.length; i += 1) {
@@ -144,10 +150,16 @@ function rebuildChildren(
       continue;
     }
     const wrapped = wrapWithAdopted(node, adoptedIdx.map((idx) => original[idx]), transformByGuid);
-    out.push(wrapped);
+    childrenByParent.set(guidToString(wrapped.node.guid), wrapped.children);
+    out.push(wrapped.node);
   }
   return out;
 }
+
+type VirtualHost = {
+  readonly node: FigNode;
+  readonly children: readonly FigNode[];
+};
 
 /**
  * Produce a virtual host node that exposes the adopted siblings as
@@ -170,7 +182,7 @@ function wrapWithAdopted(
   host: FigNode,
   adoptedNodes: readonly FigNode[],
   transformByGuid: Map<string, FigMatrix>,
-): FigNode {
+): VirtualHost {
   const hostX = host.transform?.m02 ?? 0;
   const hostY = host.transform?.m12 ?? 0;
   const wrappedChildren = adoptedNodes.map((node) => {
@@ -187,8 +199,7 @@ function wrapWithAdopted(
     transformByGuid.set(guidToString(node.guid), newTransform);
     return Object.assign({}, node, { transform: newTransform });
   });
-  return Object.assign({}, host, {
-    children: wrappedChildren,
+  const node = Object.assign({}, host, {
     stackMode: undefined,
     stackSpacing: undefined,
     stackPrimaryAlignItems: undefined,
@@ -199,9 +210,14 @@ function wrapWithAdopted(
     stackPaddingRight: undefined,
     stackPaddingBottom: undefined,
   });
+  return { node, children: wrappedChildren };
 }
 
-function isEmptySectionFrame(node: FigNode): boolean {
+function isEmptySectionFrame(
+  node: FigNode,
+  childrenByParent: ReadonlyMap<string, readonly FigNode[]>,
+  childrenOf: ChildrenOf,
+): boolean {
   if (node.type.name !== "FRAME") {
     return false;
   }
@@ -209,8 +225,20 @@ function isEmptySectionFrame(node: FigNode): boolean {
   if (stack !== "VERTICAL" && stack !== "HORIZONTAL") {
     return false;
   }
-  const children = safeChildren(node);
+  const children = effectiveChildren(node, childrenByParent, childrenOf);
   return children.length === 0;
+}
+
+function effectiveChildren(
+  node: FigNode,
+  childrenByParent: ReadonlyMap<string, readonly FigNode[]>,
+  childrenOf: ChildrenOf,
+): readonly FigNode[] {
+  const overlay = childrenByParent.get(guidToString(node.guid));
+  if (overlay !== undefined) {
+    return overlay;
+  }
+  return childrenOf(node);
 }
 
 function boundsOf(node: FigNode): Bounds | undefined {

@@ -3,7 +3,7 @@
  * children of distinct styles produces two TextRunIRs in document
  * order, each over its own character range.
  */
-import { asText, normalizeOne, singleChild } from "../_helpers";
+import { asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { PARAGRAPH_TEXT, paragraphMultiInline } from "./fixture";
 
 describe("case paragraph-multi-inline", () => {

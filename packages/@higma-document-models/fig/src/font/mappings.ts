@@ -188,15 +188,16 @@ export function detectFontCategory(
 
   // Serif indicators (but not "sans-serif").
   if (
-    lower.includes("serif") ||
-    lower.includes("times") ||
-    lower.includes("georgia") ||
-    lower.includes("garamond") ||
-    lower.includes("palatino")
+    !lower.includes("sans") &&
+    (
+      lower.includes("serif") ||
+      lower.includes("times") ||
+      lower.includes("georgia") ||
+      lower.includes("garamond") ||
+      lower.includes("palatino")
+    )
   ) {
-    if (!lower.includes("sans")) {
-      return "serif";
-    }
+    return "serif";
   }
 
   // Display/decorative indicators.

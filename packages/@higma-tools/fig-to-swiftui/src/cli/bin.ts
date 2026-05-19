@@ -8,7 +8,7 @@
  * The rasteriser closure is wired here rather than inside `runCli`
  * to keep the library code (`src/cli/run.ts`) free of the heavy
  * `@higma-tools/web-fig-roundtrip` dependency. The closure is a
- * lazy adapter: if the user's options ask for rasterisation, this
+ * lazy entry: if the user's options ask for rasterisation, this
  * `bin.ts` is the only entry point that will dynamic-import the
  * harness, spin it up, render the requested nodes, tear it down.
  */

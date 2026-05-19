@@ -3,7 +3,7 @@
  * the renderer-/codegen-side `BooleanOperationType` literal owned by
  * `@higma-primitives/path`. The path-algebra evaluator itself lives in
  * primitives; this module only owns the Figma-specific numeric mapping
- * and the Kiwi enum construction/parsing helpers.
+ * and the Kiwi enum construction/parsing routines.
  */
 
 import type { BooleanOperationType } from "@higma-primitives/path";

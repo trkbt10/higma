@@ -1,67 +1,64 @@
 /**
- * @file Spec for the canvas-lookup helpers. Loading a real `.fig`
+ * @file Spec for the canvas-lookup functions. Loading a real `.fig`
  * binary is exercised by the per-converter spec suites; here we only
  * lock in the canvas-name matching rule and the internal-only filter.
  *
- * The helpers take `readonly FigNode[]` directly — the parsed roots —
- * so the spec builds real `FigNode` literals end-to-end. No casts
- * through `unknown` are needed because every field this spec exercises
- * (`type`, `internalOnly`, `name`, `children`) is a real `FigNode`
- * field.
+ * The functions take the Kiwi document index, so the spec builds
+ * nodeChanges with explicit parentIndex links.
  */
 import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 import { findCanvas, findInternalCanvas } from "./canvas-lookup";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name };
 }
 
-function canvas(partial: Partial<FigNode>): FigNode {
+function canvas(localID: number, partial: Partial<FigNode>): FigNode {
   return {
-    guid: { sessionID: 1, localID: 1 },
+    guid: { sessionID: 1, localID },
+    parentIndex: { guid: { sessionID: 1, localID: 0 }, position: `${localID}` },
     phase: enumName("CREATED"),
     type: enumName("CANVAS"),
     ...partial,
   };
 }
 
-function document(children: readonly FigNode[]): FigNode {
+function documentRoot(): FigNode {
   return {
     guid: { sessionID: 1, localID: 0 },
     phase: enumName("CREATED"),
     type: enumName("DOCUMENT"),
-    children,
   };
+}
+
+function kiwiDocument(canvases: readonly FigNode[]) {
+  return indexFigKiwiDocument([documentRoot(), ...canvases]);
 }
 
 describe("findCanvas", () => {
   it("returns the user-visible canvas matching the requested name", () => {
-    const design = canvas({ name: "Design" });
-    const roots: readonly FigNode[] = [document([design])];
-    expect(findCanvas(roots, "Design")).toBe(design);
+    const design = canvas(1, { name: "Design" });
+    expect(findCanvas(kiwiDocument([design]), "Design")).toBe(design);
   });
 
   it("ignores the Internal Only canvas even when its name matches", () => {
-    const internal = canvas({ name: "Design", internalOnly: true });
-    const roots: readonly FigNode[] = [document([internal])];
-    expect(findCanvas(roots, "Design")).toBeUndefined();
+    const internal = canvas(1, { name: "Design", internalOnly: true });
+    expect(findCanvas(kiwiDocument([internal]), "Design")).toBeUndefined();
   });
 
   it("returns undefined when no canvas matches", () => {
-    const roots: readonly FigNode[] = [document([canvas({ name: "Other" })])];
-    expect(findCanvas(roots, "Design")).toBeUndefined();
+    expect(findCanvas(kiwiDocument([canvas(1, { name: "Other" })]), "Design")).toBeUndefined();
   });
 });
 
 describe("findInternalCanvas", () => {
   it("returns the (single) internal-only canvas", () => {
-    const internal = canvas({ name: "Internal Only", internalOnly: true });
-    const roots: readonly FigNode[] = [document([canvas({ name: "Design" }), internal])];
-    expect(findInternalCanvas(roots)).toBe(internal);
+    const internal = canvas(2, { name: "Internal Only", internalOnly: true });
+    expect(findInternalCanvas(kiwiDocument([canvas(1, { name: "Design" }), internal]))).toBe(internal);
   });
 
   it("returns undefined when there is no internal canvas", () => {
-    const roots: readonly FigNode[] = [document([canvas({ name: "Design" })])];
-    expect(findInternalCanvas(roots)).toBeUndefined();
+    expect(findInternalCanvas(kiwiDocument([canvas(1, { name: "Design" })]))).toBeUndefined();
   });
 });

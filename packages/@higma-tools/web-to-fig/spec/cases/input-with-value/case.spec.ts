@@ -5,7 +5,7 @@
  * because UA `<input>` chrome paints the value baseline-centred,
  * regardless of the captured `display` value.
  */
-import { asFrame, asText, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, asText, normalizeOne, singleChild } from "../case-ir-assertions";
 import { INPUT_VALUE, inputWithValue } from "./fixture";
 
 describe("case input-with-value", () => {

@@ -6,7 +6,7 @@ import type { KiwiFormat, ValueDecoder, ValueEncoder } from "./types";
 import { decodePrimitive, encodePrimitive, encodePrimitiveStrict } from "./primitive-codec";
 import { decodeDefinition, encodeDefinition } from "./definition-codec";
 import { getPrimitiveTypeName, isPrimitiveTypeId } from "./primitives";
-import { getDefinitionByIndex } from "./schema-utils";
+import { getDefinitionByIndex } from "./definition-lookup";
 import { KiwiBuildError } from "../errors";
 
 /**

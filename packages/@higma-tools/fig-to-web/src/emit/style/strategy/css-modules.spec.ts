@@ -136,7 +136,7 @@ describe("rewriteForCssModules", () => {
   });
 });
 
-describe("buildCssModuleFile / path helpers", () => {
+describe("buildCssModuleFile / path routines", () => {
   it("derives the .module.css path from a .tsx path", () => {
     expect(cssModulePathFor("pages/home/index.tsx")).toBe("pages/home/index.module.css");
   });

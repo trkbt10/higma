@@ -17,7 +17,7 @@ const EMPTY_BBOX: Bbox = { x: 0, y: 0, w: 0, h: 0 };
  * bbox: callers that need exact Bézier extrema must compute curve
  * derivatives separately. The control-hull definition matches the
  * three private impls this function consolidates
- * (`guid-translation.ts:pathCommandsExtent`,
+ * (`symbol override size routing`,
  *  `render-culling.ts:pathBounds` — which flattens first then takes
  *   extents, an equivalent measure for polylines —, and
  *  `geometry-clusters.ts:collectCoordsBbox`), so swapping in the

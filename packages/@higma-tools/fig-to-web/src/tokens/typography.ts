@@ -18,6 +18,7 @@
  * forces a distinct id so the emitter does not collapse them).
  */
 import type { FigFontName, FigNode, FigValueWithUnits } from "@higma-document-models/fig/types";
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { TypographyToken } from "./types";
 import { figmaFontToQuery } from "@higma-document-models/fig/font";
 import { toCssSlug, uniqueId } from "@higma-primitives/identifier";
@@ -112,13 +113,16 @@ function describe(node: FigNode): TypographyDescriptor | undefined {
 }
 
 /** Walk the targeted subtrees and collect typography tokens. */
-export function buildTypographyTokens(usageNodes: readonly FigNode[]): TypographyTokenTable {
+export function buildTypographyTokens(
+  usageNodes: readonly FigNode[],
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+): TypographyTokenTable {
   const tokens = new Map<string, TypographyToken>();
   const idByKey = new Map<string, string>();
   const usedIds = new Set<string>();
 
   for (const node of usageNodes) {
-    visit(node, tokens, idByKey, usedIds);
+    visit(node, tokens, idByKey, usedIds, childrenOf);
   }
   return { tokens, idByKey };
 }
@@ -128,6 +132,7 @@ function visit(
   tokens: Map<string, TypographyToken>,
   idByKey: Map<string, string>,
   usedIds: Set<string>,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
 ): void {
   if (node.type.name === "TEXT") {
     const descriptor = describe(node);
@@ -143,10 +148,8 @@ function visit(
       register(overrideDescriptor, tokens, idByKey, usedIds);
     }
   }
-  for (const child of node.children ?? []) {
-    if (child) {
-      visit(child, tokens, idByKey, usedIds);
-    }
+  for (const child of childrenOf(node)) {
+    visit(child, tokens, idByKey, usedIds, childrenOf);
   }
 }
 

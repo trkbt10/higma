@@ -8,18 +8,18 @@
  *
  * The CLI scaffolds an empty Decisions file from an Inventory; the
  * agent edits it. Empty / blank fields mean "do nothing for this
- * entry". There is no implicit naming, no fallback proxy creation —
+ * entry". There is no implicit naming, no implicit style-definition creation —
  * silence is honest.
  *
  * Shape:
  *
- *   - `clusters[clusterId]`     — what to do with a duplicate-subtree
+ *   - `clusters[clusterId]`     — what to do with a duplicate-structure
  *                                  cluster (give it a name, optionally
  *                                  promote it to a SYMBOL).
  *
  *   - `palette[colorKey]`       — give a colour an authored name.
  *                                  When `name` is set we will create
- *                                  a fill-style proxy (or reuse the
+ *                                  a fill-style styleDefinition (or reuse the
  *                                  existing one) and bind every
  *                                  bind-eligible usage. When `name`
  *                                  is empty we do nothing.
@@ -60,13 +60,13 @@ export type TypographyDecision = {
   /**
    * Optional: when set to another inventory `typography[key]`, the
    * plan layer redirects every `bind-text-style` action for this
-   * descriptor to the merge target's proxy instead of creating its
+   * descriptor to the merge target's styleDefinition instead of creating its
    * own. The agent uses this to collapse near-duplicate descriptors
    * (e.g. a stray line-height typo) onto the real style. Empty when
    * the descriptor stands alone.
    *
    * The merge target must itself carry a non-empty `name` (or an
-   * `existingProxyGuid` in the inventory). The plan layer throws when
+   * `existingStyleDefinitionGuid` in the inventory). The plan layer throws when
    * the target is missing or also merged elsewhere — alias chains and
    * orphaned merges are caught at plan time so apply has nothing to
    * untangle.

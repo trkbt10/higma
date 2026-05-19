@@ -2,7 +2,7 @@
  * @file Case `flex-justify-space-between` — `justify-content:
  * space-between` maps to `primaryAlign: "space-between"`.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { withFlexRowSpaceBetween } from "./fixture";
 

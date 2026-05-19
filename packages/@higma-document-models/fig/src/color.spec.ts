@@ -1,39 +1,39 @@
-/** @file Fig paint color helper tests. */
+/** @file Fig paint color tests. */
 
 import { asImagePaint, asSolidPaint, getPaintType } from "./color";
 import type { FigImagePaint } from "./types";
 
-function isObject(value: unknown): value is { readonly type: unknown; readonly imageRef?: unknown } {
+function isObject(value: unknown): value is { readonly type: unknown; readonly image?: unknown } {
   return typeof value === "object" && value !== null && "type" in value;
 }
 
-function isRawImagePaint(value: unknown): value is FigImagePaint {
+function isKiwiImagePaint(value: unknown): value is FigImagePaint {
   if (!isObject(value)) {
     return false;
   }
   return getPaintType(value) === "IMAGE";
 }
 
-describe("paint type helpers", () => {
-  it("reads parser-normalized string paint types", () => {
-    expect(getPaintType({ type: "SOLID" })).toBe("SOLID");
+describe("paint type accessors", () => {
+  it("rejects string paint type tags", () => {
+    expect(() => getPaintType({ type: "SOLID" })).toThrow("FigPaint.type must be a supported paint type");
   });
 
-  it("reads raw Kiwi enum paint types when conversion receives decoded canvas nodes", () => {
-    const raw = {
+  it("reads Kiwi enum paint types from decoded canvas nodes", () => {
+    const paint = {
       type: { value: 5, name: "IMAGE" },
-      imageRef: "image-ref",
+      image: { hash: [0xab, 0xcd] },
     };
-    if (!isRawImagePaint(raw)) {
-      throw new Error("test fixture must be a raw IMAGE paint");
+    if (!isKiwiImagePaint(paint)) {
+      throw new Error("test fixture must be a Kiwi IMAGE paint");
     }
 
-    expect(getPaintType(raw)).toBe("IMAGE");
-    expect(asImagePaint(raw)?.imageRef).toBe("image-ref");
-    expect(asSolidPaint(raw)).toBeUndefined();
+    expect(getPaintType(paint)).toBe("IMAGE");
+    expect(asImagePaint(paint)?.image?.hash).toEqual([0xab, 0xcd]);
+    expect(asSolidPaint(paint)).toBeUndefined();
   });
 
-  it("throws on unsupported raw paint type values", () => {
+  it("throws on unsupported Kiwi paint type values", () => {
     const paint = { type: { value: 999, name: "UNKNOWN" } };
 
     expect(() => getPaintType(paint)).toThrow("FigPaint.type must be a supported paint type");

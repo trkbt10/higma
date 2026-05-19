@@ -97,7 +97,7 @@ async function commandInventory(args: ParsedArgs): Promise<void> {
   await writeInventory(outDir, basename(inputPath), bytes.byteLength, inventory);
   process.stdout.write(
     `refine-fig inventory: palette=${inventory.palette.length} typography=${inventory.typography.length}`
-    + ` clusters=${inventory.subtreeClusters.length} geometryClusters=${inventory.geometryClusters.length}`
+    + ` clusters=${inventory.structureClusters.length} geometryClusters=${inventory.geometryClusters.length}`
     + ` layoutHints=${inventory.layoutHints.length}\n`,
   );
 }
@@ -123,7 +123,7 @@ async function readInventoryFromDisk(outDir: string): Promise<Inventory> {
   return {
     palette: inventory.palette,
     typography: inventory.typography,
-    subtreeClusters: inventory.subtreeClusters,
+    structureClusters: inventory.structureClusters,
     geometryClusters: inventory.geometryClusters ?? [],
     unrenderable: inventory.unrenderable,
     layoutHints: inventory.layoutHints ?? [],
@@ -212,8 +212,8 @@ async function commandApply(args: ParsedArgs): Promise<void> {
   process.stdout.write(
     `refine-fig apply:`
     + (result.internalCanvasCreated ? ` createdInternalCanvas=1` : ``)
-    + ` createdFillProxies=${result.fillProxiesCreated}`
-    + ` createdTextProxies=${result.textProxiesCreated}`
+    + ` createdFillStyleDefinitions=${result.fillStyleDefinitionsCreated}`
+    + ` createdTextStyleDefinitions=${result.textStyleDefinitionsCreated}`
     + ` boundFill=${result.fillBound}`
     + ` boundText=${result.textBound}`
     + ` clustersPromoted=${result.clustersPromoted}`
@@ -232,15 +232,15 @@ function applyContextFromSource(
 ): { internalCanvasGuid: string | undefined; userCanvasGuid: string | undefined; fillTemplateGuid: string | undefined; textTemplateGuid: string | undefined } {
   // No internal canvas? Leave it undefined — the plan's
   // ensure-internal-canvas action (when present) will create one and
-  // the apply layer threads the new guid into every create-*-proxy.
-  // If the plan needs proxies but failed to emit the ensure action,
+  // the apply layer threads the new guid into every create-*-style-definition.
+  // If the plan needs styleDefinitions but failed to emit the ensure action,
   // apply records that as a skipped action with a clear reason.
   const firstUserCanvas = source.userCanvases[0];
   return {
     internalCanvasGuid: source.internalCanvas ? guidToString(source.internalCanvas.guid) : undefined,
     userCanvasGuid: firstUserCanvas ? guidToString(firstUserCanvas.guid) : undefined,
-    fillTemplateGuid: source.fillStyleProxies[0] ? guidToString(source.fillStyleProxies[0].guid) : undefined,
-    textTemplateGuid: source.textStyleProxies[0] ? guidToString(source.textStyleProxies[0].guid) : undefined,
+    fillTemplateGuid: source.fillStyleDefinitions[0] ? guidToString(source.fillStyleDefinitions[0].guid) : undefined,
+    textTemplateGuid: source.textStyleDefinitions[0] ? guidToString(source.textStyleDefinitions[0].guid) : undefined,
   };
 }
 

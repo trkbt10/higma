@@ -10,7 +10,7 @@
  * only the authored edge renders, and the IR's single-stroke surface
  * stays clean for the symmetric case.
  */
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import { baseDiv } from "../box-leaf/fixture";
 import { DEFAULT_EDGE_COLOR, DEFAULT_EDGE_WIDTH_PX, withSingleEdgeBorder } from "./fixture";
 

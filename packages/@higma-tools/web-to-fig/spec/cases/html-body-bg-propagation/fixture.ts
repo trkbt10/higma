@@ -10,7 +10,7 @@
  *
  * `synthViewport` already wraps children under a synthetic root frame
  * with viewport-sized rect and no background — we use that as the
- * stand-in for `<html>`. The exported helper builds the inner `<body>`
+ * stand-in for `<html>`. The exported function builds the inner `<body>`
  * surrogate with the requested background colour and the captured
  * rect example.com produces in practice (centred, narrow).
  */

@@ -1,10 +1,4 @@
-/**
- * @file Node spec types for creating new design nodes
- *
- * Specs are plain data objects describing what node to create.
- * They are consumed by the node factory to produce FigDesignNode instances.
- * The type field discriminates the union.
- */
+/** @file Node spec types for creating Kiwi fig nodes. */
 
 import type {
   FigColor,
@@ -13,9 +7,39 @@ import type {
   FigStrokeAlign,
   FigStrokeCap,
   FigStrokeJoin,
+  FigGuid,
+  FigNode,
   KiwiEnumValue,
 } from "@higma-document-models/fig/types";
-import type { FigNodeId, AutoLayoutProps, LayoutConstraints } from "@higma-document-models/fig/domain";
+
+export type KiwiStackLayoutFields = Pick<
+  FigNode,
+  | "stackMode"
+  | "stackSpacing"
+  | "stackPadding"
+  | "stackVerticalPadding"
+  | "stackHorizontalPadding"
+  | "stackPaddingRight"
+  | "stackPaddingBottom"
+  | "stackPrimaryAlignItems"
+  | "stackCounterAlignItems"
+  | "stackPrimaryAlignContent"
+  | "stackCounterAlignContent"
+  | "stackWrap"
+  | "stackCounterSpacing"
+  | "stackReverseZIndex"
+>;
+
+export type KiwiChildLayoutFields = Pick<
+  FigNode,
+  | "stackPositioning"
+  | "stackPrimarySizing"
+  | "stackCounterSizing"
+  | "horizontalConstraint"
+  | "verticalConstraint"
+  | "stackChildAlignSelf"
+  | "stackChildPrimaryGrow"
+>;
 
 // =============================================================================
 // Base Spec
@@ -37,15 +61,11 @@ export type BaseNodeSpec = {
   /**
    * Stroke geometry attributes. Load-bearing for Figma import — every
    * shape node with strokes carries `strokeAlign`, `strokeJoin`, and
-   * (for LINE / VECTOR) `strokeCap`. The Fig lint rules reject shape
-   * nodes that omit them, so making these first-class spec fields
-   * keeps fixture builders honest. The factory writes them onto the
-   * resulting `FigDesignNode`; `documentToTree` projects each to the
-   * Kiwi-level enum value on the output node.
+   * (for LINE / VECTOR) `strokeCap`.
    */
-  readonly strokeCap?: FigStrokeCap;
-  readonly strokeJoin?: FigStrokeJoin;
-  readonly strokeAlign?: FigStrokeAlign;
+  readonly strokeCap?: KiwiEnumValue<FigStrokeCap>;
+  readonly strokeJoin?: KiwiEnumValue<FigStrokeJoin>;
+  readonly strokeAlign?: KiwiEnumValue<FigStrokeAlign>;
   /**
    * Dash pattern as a sequence of pixel lengths (CSS `stroke-dasharray`
    * semantics: `[on, off, on, off, …]`). When set, the renderer paints
@@ -55,16 +75,7 @@ export type BaseNodeSpec = {
   readonly effects?: readonly FigEffect[];
   readonly opacity?: number;
   readonly visible?: boolean;
-  /**
-   * Per-child auto-layout overrides — `stackPositioning=ABSOLUTE` for
-   * out-of-flow children (CSS position:fixed / sticky / absolute),
-   * `stackChildAlignSelf=STRETCH` for children that fill the parent's
-   * counter axis, etc. The factory copies this onto the resulting
-   * `FigDesignNode.layoutConstraints`; `documentToTree` then projects
-   * each field to its Kiwi-level counterpart on the output node.
-   */
-  readonly layoutConstraints?: LayoutConstraints;
-};
+} & Partial<KiwiChildLayoutFields>;
 
 // =============================================================================
 // Shape Specs
@@ -111,7 +122,6 @@ export type VectorNodeSpec = BaseNodeSpec & {
 export type FrameNodeSpec = BaseNodeSpec & {
   readonly type: "FRAME";
   readonly clipsContent?: boolean;
-  readonly autoLayout?: AutoLayoutProps;
   readonly backgroundColor?: FigColor;
   /**
    * Optional uniform corner radius. CSS `border-radius` on a non-leaf
@@ -127,7 +137,7 @@ export type FrameNodeSpec = BaseNodeSpec & {
    * whichever the caller supplied.
    */
   readonly rectangleCornerRadii?: readonly [number, number, number, number];
-};
+} & Partial<KiwiStackLayoutFields>;
 
 export type GroupNodeSpec = BaseNodeSpec & {
   readonly type: "GROUP";
@@ -179,12 +189,11 @@ export type TextNodeSpec = BaseNodeSpec & {
 export type SymbolNodeSpec = BaseNodeSpec & {
   readonly type: "SYMBOL";
   readonly clipsContent?: boolean;
-  readonly autoLayout?: AutoLayoutProps;
-};
+} & Partial<KiwiStackLayoutFields>;
 
 export type InstanceNodeSpec = BaseNodeSpec & {
   readonly type: "INSTANCE";
-  readonly symbolId: FigNodeId;
+  readonly symbolId: FigGuid;
 };
 
 // =============================================================================

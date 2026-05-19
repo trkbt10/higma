@@ -17,7 +17,7 @@
  * fullpage diff regresses.
  */
 import type { AutoLayoutIR, FrameNodeIR, NodeIR, TextNodeIR } from "@higma-bridges/web-fig";
-import { asFrame, normalizeOne, singleChild } from "../_helpers";
+import { asFrame, normalizeOne, singleChild } from "../case-ir-assertions";
 import {
   EXPECTED_VERTICAL_GAP,
   FIRST_RECT_HEIGHT,
