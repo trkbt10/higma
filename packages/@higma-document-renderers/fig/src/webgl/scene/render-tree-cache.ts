@@ -21,16 +21,16 @@
  *    tessellation cost.
  */
 
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import {
   resolveRenderTreeIncremental,
   type RenderTree,
   type RenderTreeResolutionCache,
-} from "../../scene-graph/render-tree";
+} from "../../scene-graph";
 import type {
   FigmaRenderExportSettings,
   SceneGraphRenderOptions,
-} from "../../scene-graph/render";
+} from "../../scene-graph";
 import {
   createWebGLSceneResourceIdentityStore,
   type WebGLSceneResourceIdentityStore,

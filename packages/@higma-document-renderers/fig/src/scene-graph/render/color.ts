@@ -5,7 +5,7 @@
  * Duplicating color-to-hex logic elsewhere is a parity violation.
  */
 
-import type { Color } from "@higma-document-models/fig/scene-graph";
+import type { Color } from "@higma-document-renderers/fig/scene-graph";
 
 /**
  * Convert a 0–1 float channel to 0–255 integer.
@@ -21,7 +21,7 @@ function channelToByte(c: number): number {
   return Math.round(c * 255 + 1e-4);
 }
 
-/** Convert a normalized Color {r,g,b} (0–1) to #RRGGBB hex string */
+/** Convert a unit-range Color {r,g,b} to #RRGGBB hex string */
 export function colorToHex(c: Color): string {
   const r = channelToByte(c.r).toString(16).padStart(2, "0");
   const g = channelToByte(c.g).toString(16).padStart(2, "0");

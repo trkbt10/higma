@@ -1,317 +1,158 @@
-/**
- * @file Property panel
- *
- * Right panel displaying properties of the selected node.
- * Uses OptionalPropertySection for each property group.
- */
-
-import { useCallback, type ReactNode, type CSSProperties } from "react";
-import { useFigEditor } from "../../context/FigEditorContext";
-import { OptionalPropertySection } from "@higma-editor-surfaces/controls/ui";
+/** @file Fig node property panel over Kiwi nodes. */
+import type { CSSProperties, ReactNode } from "react";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import { InlineRenameInput } from "@higma-editor-kernel/ui";
-import { colorTokens, fontTokens, spacingTokens } from "@higma-editor-kernel/ui/design-tokens";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigEditorAction } from "../../context/fig-editor/types";
+import { useFigEditor } from "../../context/FigEditorContext";
 import { PositionSection } from "../sections/appearance/PositionSection";
 import { SizeSection } from "../sections/appearance/SizeSection";
 import { RotationSection } from "../sections/appearance/RotationSection";
-import { AlignmentSection } from "../sections/layout/AlignmentSection";
 import { OpacitySection } from "../sections/appearance/OpacitySection";
+import { CornerRadiusSection } from "../sections/appearance/CornerRadiusSection";
 import { FillSection } from "../sections/paint/FillSection";
 import { StrokeSection } from "../sections/paint/StrokeSection";
-import { CornerRadiusSection } from "../sections/appearance/CornerRadiusSection";
-import { isCornerRadiusEditableNode } from "../sections/appearance/corner-radius-domain";
 import { EffectsSection } from "../sections/paint/EffectsSection";
-import { AutoLayoutSection } from "../sections/layout/AutoLayoutSection";
-import { ComponentPropertiesSection } from "../sections/component/ComponentPropertiesSection";
 import { TextPropertiesSection } from "../sections/text/TextPropertiesSection";
+import { AlignmentSection } from "../sections/layout/AlignmentSection";
+import { AutoLayoutSection } from "../sections/layout/AutoLayoutSection";
 import { LayoutConstraintsSection } from "../sections/layout/LayoutConstraintsSection";
+import { ComponentPropertiesSection } from "../sections/component/ComponentPropertiesSection";
+import { InstanceOverridesSection } from "../sections/component/InstanceOverridesSection";
+import { VariantPropertiesSection } from "../sections/component/VariantPropertiesSection";
+import { ComponentSetVariantsSection } from "../sections/component/ComponentSetVariantsSection";
 import { ExportSettingsSection } from "../sections/export/ExportSettingsSection";
 import { SectionBehaviorSection } from "../sections/structure/SectionBehaviorSection";
-import { VariantPropertiesSection } from "../sections/component/VariantPropertiesSection";
-import { InstanceOverridesSection } from "../sections/component/InstanceOverridesSection";
-import { ComponentSetVariantsSection } from "../sections/component/ComponentSetVariantsSection";
+import { VectorPathSection } from "../sections/vector/VectorPathSection";
+import { OutlineSection } from "../sections/vector/OutlineSection";
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
-import { createPropertyMutationTarget } from "./property-mutation-target";
-import { isVariantSetFrame } from "@higma-document-models/fig/domain";
 
-// =============================================================================
-// Component
-// =============================================================================
+const rootStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+  font: "12px system-ui, sans-serif",
+};
 
-const propertyMutationScopeStyle: CSSProperties = {
+const headerStyle: CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid #d6dee8",
+};
+
+const nameStyle: CSSProperties = {
+  fontWeight: 600,
+};
+
+const mutationScopeStyle: CSSProperties = {
   border: 0,
   padding: 0,
   margin: 0,
   minWidth: 0,
 };
 
-function PropertyMutationScope({
-  disabled,
+const bodyStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 0,
+};
+
+export const sectionStyle: CSSProperties = {
+  padding: "10px 12px",
+  borderBottom: "1px solid #e2e8f0",
+};
+
+export const sectionTitleStyle: CSSProperties = {
+  fontWeight: 600,
+  marginBottom: 8,
+};
+
+export const fieldGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+  gap: 8,
+};
+
+/** Render a labeled property input row. */
+export function PropertyField({
+  label,
   children,
 }: {
-  readonly disabled: boolean;
+  readonly label: string;
   readonly children: ReactNode;
 }) {
   return (
-    <fieldset
-      disabled={disabled}
-      aria-disabled={disabled}
-      style={propertyMutationScopeStyle}
-    >
+    <label style={{ display: "grid", gap: 4, minWidth: 0 }}>
+      <span style={{ color: "#64748b", fontSize: 11 }}>{label}</span>
       {children}
-    </fieldset>
+    </label>
   );
 }
 
-const nodeIdentityHeaderStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: spacingTokens["2xs"],
-  padding: `${spacingTokens.md} ${spacingTokens.lg}`,
-  borderBottom: `1px solid var(--border-subtle, ${colorTokens.border.subtle})`,
+export const inputStyle: CSSProperties = {
+  width: "100%",
+  minWidth: 0,
+  boxSizing: "border-box",
+  border: "1px solid #cbd5e1",
+  borderRadius: 4,
+  padding: "4px 6px",
+  font: "12px system-ui, sans-serif",
 };
 
-const nodeIdentityNameStyle: CSSProperties = {
-  fontSize: fontTokens.size.lg,
-  fontWeight: fontTokens.weight.semibold,
-  color: `var(--text-primary, ${colorTokens.text.primary})`,
-  lineHeight: 1.2,
-};
-
-// Node-type subtitle ("RECTANGLE", "2 selected · FRAME"). Functional
-// — operator reads it to confirm what they're editing. text.primary
-// (17.4:1 AAA) replaces text.tertiary (2.64:1).
-const nodeIdentityMetaStyle: CSSProperties = {
-  display: "flex",
-  gap: spacingTokens.sm,
-  fontSize: fontTokens.size.xs,
-  color: `var(--text-primary, ${colorTokens.text.primary})`,
-  fontWeight: fontTokens.weight.medium,
-};
-
-const nodeIdentityHiddenBadgeStyle: CSSProperties = {
-  fontStyle: "italic",
-};
-
-function buildNodeIdentitySubtitle(selectionCount: number, nodeType: FigDesignNode["type"]): string {
-  if (selectionCount > 1) {
-    return `${selectionCount} selected · ${nodeType}`;
-  }
-  return nodeType;
-}
-
-type NodeIdentityHeaderProps = {
-  readonly primaryNode: FigDesignNode;
-  readonly selectionCount: number;
-  readonly canRename: boolean;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
-
-function NodeIdentityHeader({
-  primaryNode,
-  selectionCount,
-  canRename,
-  dispatch,
-}: NodeIdentityHeaderProps) {
-  const handleCommit = useCallback(
-    (next: string) => {
-      dispatch({ type: "RENAME_NODE", nodeId: primaryNode.id, name: next, source: "property-panel" });
-    },
-    [dispatch, primaryNode.id],
-  );
-
-  const subtitle = buildNodeIdentitySubtitle(selectionCount, primaryNode.type);
-
-  return (
-    <header style={nodeIdentityHeaderStyle}>
-      <InlineRenameInput
-        value={primaryNode.name}
-        onCommit={handleCommit}
-        disabled={!canRename}
-        ariaLabel={`Rename ${primaryNode.name}`}
-        displayStyle={nodeIdentityNameStyle}
-      />
-      <div style={nodeIdentityMetaStyle}>
-        <span>{subtitle}</span>
-        {primaryNode.visible === false && (
-          <span style={nodeIdentityHiddenBadgeStyle}>Hidden</span>
-        )}
-        {primaryNode.locked === true && (
-          <span style={nodeIdentityHiddenBadgeStyle}>Locked</span>
-        )}
-      </div>
-    </header>
-  );
-}
-
-/**
- * Property panel for the fig editor.
- *
- * Shows property editors when a node is selected,
- * or a message prompting selection when nothing is selected.
- */
+/** Render editable properties for the primary selected Kiwi node. */
 export function PropertyPanel() {
-  const { primaryNode, selectedNodes, dispatch, document } = useFigEditor();
+  const { primaryNode, selectedNodes, updateNode } = useFigEditor();
   const operationDomain = useFigOperationDomain();
   const propertyMutationDisabled = !allowsFigUserOperation(operationDomain, "update-property");
-
-  if (!primaryNode) {
+  if (primaryNode === undefined) {
     return (
-      <div style={{ padding: `${spacingTokens.xl} ${spacingTokens.lg}`, textAlign: "center", color: colorTokens.text.tertiary, fontSize: fontTokens.size.lg }}>
-        Select a layer to edit its properties
-      </div>
+      <section style={rootStyle}>
+        <div style={headerStyle}>Properties</div>
+        <div style={{ padding: 12, color: "#64748b" }}>No selection</div>
+      </section>
     );
   }
-
-  const propertyTarget = createPropertyMutationTarget({ primaryNode, selectedNodes });
-
+  if (primaryNode.guid === undefined) {
+    throw new Error("PropertyPanel selected Kiwi node is missing guid");
+  }
+  const primaryGuid = primaryNode.guid;
+  const typeName = getNodeType(primaryNode);
   return (
-    <div>
-      <NodeIdentityHeader
-        primaryNode={primaryNode}
-        selectionCount={selectedNodes.length}
-        canRename={!propertyMutationDisabled}
-        dispatch={dispatch}
-      />
-
-      {/* Alignment (within parent) */}
-      <OptionalPropertySection title="Alignment" defaultExpanded={false}>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <AlignmentSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Position (X, Y) — always shown */}
-      <OptionalPropertySection title="Position" defaultExpanded>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <PositionSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Size — always rendered. SizeSection itself toggles Fixed/Hug/Fill sizing-mode suffix when the node is or sits inside an AutoLayout container. */}
-      <OptionalPropertySection title="Size" defaultExpanded>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <SizeSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Rotation + flip/rotate actions */}
-      <OptionalPropertySection title="Rotation" defaultExpanded={false}>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <RotationSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Opacity (only show if not fully opaque or for convenience) */}
-      <OptionalPropertySection title="Opacity" defaultExpanded>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <OpacitySection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Corner Radius (only for applicable node types) */}
-      {isCornerRadiusEditableNode(primaryNode) && (
-        <OptionalPropertySection title="Corner Radius" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <CornerRadiusSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {/* Fill */}
-      <OptionalPropertySection title="Fill" defaultExpanded>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <FillSection node={primaryNode} target={propertyTarget} images={document.images} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Stroke */}
-      <OptionalPropertySection title="Stroke" defaultExpanded>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <StrokeSection node={primaryNode} target={propertyTarget} images={document.images} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      <OptionalPropertySection title="Export" badge={primaryNode.exportSettings?.length ?? 0} defaultExpanded={false}>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <ExportSettingsSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Text Properties (TEXT nodes only) */}
-      {primaryNode.textData && (
-        <OptionalPropertySection title="Text" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <TextPropertiesSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {/* Effects */}
-      <OptionalPropertySection title="Effects" badge={primaryNode.effects.length} defaultExpanded>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <EffectsSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {/* Auto Layout */}
-      {(primaryNode.type === "FRAME" || primaryNode.type === "SYMBOL" || primaryNode.autoLayout) && (
-        <OptionalPropertySection title="Auto Layout" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <AutoLayoutSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {/* Child layout constraints */}
-      <OptionalPropertySection title="Layout Constraints" defaultExpanded={false}>
-        <PropertyMutationScope disabled={propertyMutationDisabled}>
-          <LayoutConstraintsSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-        </PropertyMutationScope>
-      </OptionalPropertySection>
-
-      {primaryNode.type === "SECTION" && (
-        <OptionalPropertySection title="Section" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <SectionBehaviorSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {primaryNode.variantPropSpecs && primaryNode.variantPropSpecs.length > 0 && (
-        <OptionalPropertySection title="Variant Properties" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <VariantPropertiesSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {isVariantSetFrame(primaryNode) && (
-        <OptionalPropertySection title="Component Set Variants" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <ComponentSetVariantsSection node={primaryNode} target={propertyTarget} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {/* Component Properties (INSTANCE nodes only) */}
-      {primaryNode.symbolId && (
-        <OptionalPropertySection title="Component Properties" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <ComponentPropertiesSection node={primaryNode} target={propertyTarget} document={document} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-
-      {primaryNode.type === "INSTANCE" && primaryNode.symbolId && (
-        <OptionalPropertySection title="Instance Overrides" defaultExpanded>
-          <PropertyMutationScope disabled={propertyMutationDisabled}>
-            <InstanceOverridesSection node={primaryNode} target={propertyTarget} document={document} dispatch={dispatch} />
-          </PropertyMutationScope>
-        </OptionalPropertySection>
-      )}
-    </div>
+    <section style={rootStyle}>
+      <div style={headerStyle}>
+        <InlineRenameInput
+          value={primaryNode.name ?? typeName}
+          onCommit={(name) => updateNode(primaryGuid, (current) => ({ ...current, name }), "property-panel")}
+          disabled={propertyMutationDisabled}
+          ariaLabel={`Rename selected ${primaryNode.name ?? typeName}`}
+          displayStyle={nameStyle}
+        />
+        <div style={{ color: "#64748b", marginTop: 2 }}>
+          {selectedNodes.length > 1 ? `${selectedNodes.length} selected · ${typeName}` : typeName} · {guidToString(primaryNode.guid)}
+        </div>
+      </div>
+      <fieldset disabled={propertyMutationDisabled} aria-disabled={propertyMutationDisabled} style={mutationScopeStyle}>
+        <div style={bodyStyle}>
+          <AlignmentSection node={primaryNode} />
+          <PositionSection node={primaryNode} />
+          <SizeSection node={primaryNode} />
+          <RotationSection node={primaryNode} />
+          <OpacitySection node={primaryNode} />
+          <CornerRadiusSection node={primaryNode} />
+          <FillSection node={primaryNode} />
+          <StrokeSection node={primaryNode} />
+          <EffectsSection node={primaryNode} />
+          <TextPropertiesSection node={primaryNode} />
+          <AutoLayoutSection node={primaryNode} />
+          <LayoutConstraintsSection node={primaryNode} />
+          <ComponentPropertiesSection node={primaryNode} />
+          <InstanceOverridesSection node={primaryNode} />
+          <VariantPropertiesSection node={primaryNode} />
+          <ComponentSetVariantsSection node={primaryNode} />
+          <SectionBehaviorSection node={primaryNode} />
+          <VectorPathSection node={primaryNode} />
+          <OutlineSection node={primaryNode} />
+          <ExportSettingsSection node={primaryNode} />
+        </div>
+      </fieldset>
+    </section>
   );
 }

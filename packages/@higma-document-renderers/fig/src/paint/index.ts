@@ -6,7 +6,7 @@
  * builder consume these functions, ensuring a single source of truth for
  * gradient direction, stop extraction, image reference resolution, etc.
  *
- * These functions operate on FigPaint (the raw Kiwi/API union type).
+ * These functions operate on Kiwi FigPaint payloads.
  * They do NOT produce SVG strings or React elements — consumers handle
  * their own output format.
  */
@@ -18,7 +18,7 @@ export {
   getRadialGradientCenterAndRadius,
   getAngularGradientParams,
   getDiamondGradientParams,
-  getImageRef,
+  getImageHash,
   getImageTransform,
   getScaleMode,
   getScalingFactor,

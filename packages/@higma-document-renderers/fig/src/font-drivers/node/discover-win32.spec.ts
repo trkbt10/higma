@@ -12,7 +12,7 @@
 
 import { discoverWin32, parseRegQueryOutput } from "./discover-win32";
 import type { DiscoveryEnv } from "./discover-types";
-import { createFakeExec, createFakeFs } from "./test-helpers";
+import { createFakeExec, createFakeFs } from "./font-driver-test-fixtures";
 
 function makeEnv(overrides: Partial<DiscoveryEnv>): DiscoveryEnv {
   return {

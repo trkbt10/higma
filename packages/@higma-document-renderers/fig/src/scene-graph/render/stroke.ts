@@ -4,7 +4,7 @@
  * Both SVG string and React renderers MUST consume this output.
  */
 
-import type { Stroke, BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { Stroke, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 import { colorToHex } from "./color";
 import { resolveFill, type IdGenerator, type ResolvedFill } from "./fill";
 

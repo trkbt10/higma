@@ -8,7 +8,7 @@
 
 import type { TextRendering, TextRenderingGlyphs } from "../../../text/rendering";
 import type { PathContour } from "../../../text/paths/types";
-import type { RenderTextGlyphRun } from "../../../scene-graph/render-tree";
+import type { RenderTextGlyphRun } from "../../../scene-graph";
 import { path as svgPath, text, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";
 import { buildTextAttrs } from "./attrs";
@@ -129,7 +129,7 @@ export function formatTextRenderingToSvg(rendering: TextRendering): SvgString {
   if (rendering.kind === "glyphs") {
     // Group glyph contours by TextRun. Decorations always paint with the
     // base run's fill (Figma applies them at the line level, not per
-    // character). Glyphs without `firstCharacter` (e.g. opentype fallback
+    // character). Glyphs without `firstCharacter` (e.g. opentype synthesised
     // line contours, Figma ellipsis glyph) are folded into the base run.
     const runs = rendering.runs;
     const runPaths = runs.length > 0 ? buildPerRunPathData(rendering, PATH_PRECISION) : [];

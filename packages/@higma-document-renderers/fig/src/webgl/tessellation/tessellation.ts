@@ -6,7 +6,7 @@
  */
 
 import earcut from "earcut";
-import { flattenPathCommands } from "@higma-primitives/path";
+import { buildSmoothedRoundedRectPathD, flattenPathCommands, parseSvgPathD } from "@higma-primitives/path";
 import type { CornerRadius, PathContour } from "@higma-primitives/path";
 
 // =============================================================================
@@ -93,6 +93,15 @@ export function tessellateContour(
  */
 
 type FlatContour = { coords: number[]; area: number };
+type ClassifiedContour = {
+  coords: number[];
+  isHole: boolean;
+  absArea: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
 
 /**
  * Determine whether outer contours have negative signed area.
@@ -119,10 +128,44 @@ function resolveOuterIsNegative(autoDetectWinding: boolean, flatContours: FlatCo
   const negativeAbsSumRef = { value: 0 };
   const positiveAbsSumRef = { value: 0 };
   for (const fc of flatContours) {
-    if (fc.area < 0) {negativeAbsSumRef.value += -fc.area;}
-    else if (fc.area > 0) {positiveAbsSumRef.value += fc.area;}
+    if (fc.area < 0) {
+      negativeAbsSumRef.value += -fc.area;
+      continue;
+    }
+    if (fc.area > 0) {
+      positiveAbsSumRef.value += fc.area;
+    }
   }
   return negativeAbsSumRef.value >= positiveAbsSumRef.value;
+}
+
+function contourCenterIsInsideBounds(
+  hole: ClassifiedContour,
+  outer: ClassifiedContour,
+): boolean {
+  const hCx = (hole.minX + hole.maxX) / 2;
+  const hCy = (hole.minY + hole.maxY) / 2;
+  return hCx >= outer.minX && hCx <= outer.maxX && hCy >= outer.minY && hCy <= outer.maxY;
+}
+
+function findSmallestContainingOuterIndex(
+  hole: ClassifiedContour,
+  outers: readonly ClassifiedContour[],
+): number {
+  const bestIdxRef = { value: -1 };
+  const bestAreaRef = { value: Infinity };
+  for (let i = 0; i < outers.length; i++) {
+    const outer = outers[i];
+    if (!contourCenterIsInsideBounds(hole, outer)) {
+      continue;
+    }
+    if (outer.absArea >= bestAreaRef.value) {
+      continue;
+    }
+    bestAreaRef.value = outer.absArea;
+    bestIdxRef.value = i;
+  }
+  return bestIdxRef.value;
 }
 
 /**
@@ -155,12 +198,6 @@ export function tessellateContours(
   const outerIsNegative = resolveOuterIsNegative(autoDetectWinding, flatContours);
 
   // Classify as outer / hole and compute bounding boxes
-  type ClassifiedContour = {
-    coords: number[];
-    isHole: boolean;
-    absArea: number;
-    minX: number; minY: number; maxX: number; maxY: number;
-  };
   const classifiedContours: ClassifiedContour[] = flatContours.map((fc) => {
     const boundsRef = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     for (let i = 0; i < fc.coords.length; i += 2) {
@@ -189,21 +226,9 @@ export function tessellateContours(
 
   for (const hole of holes) {
     // Find the smallest containing outer by bounding box
-    const bestIdxRef = { value: -1 };
-    const bestAreaRef = { value: Infinity };
-    const hCx = (hole.minX + hole.maxX) / 2;
-    const hCy = (hole.minY + hole.maxY) / 2;
-    for (let i = 0; i < outers.length; i++) {
-      const o = outers[i];
-      if (hCx >= o.minX && hCx <= o.maxX && hCy >= o.minY && hCy <= o.maxY) {
-        if (o.absArea < bestAreaRef.value) {
-          bestAreaRef.value = o.absArea;
-          bestIdxRef.value = i;
-        }
-      }
-    }
-    if (bestIdxRef.value >= 0) {
-      groups[bestIdxRef.value].holes.push(hole.coords);
+    const containingOuterIndex = findSmallestContainingOuterIndex(hole, outers);
+    if (containingOuterIndex >= 0) {
+      groups[containingOuterIndex].holes.push(hole.coords);
     }
     // Holes not contained by any outer are dropped
   }
@@ -254,15 +279,20 @@ export function tessellateContours(
 export function generateRectVertices(
   width: number,
   height: number,
-  cornerRadius?: CornerRadius
+  cornerRadius?: CornerRadius,
+  cornerSmoothing?: number,
 ): Float32Array {
-  const radii = normalizeCornerRadii({ width, height, cornerRadius });
+  const radii = clampCornerRadii({ width, height, cornerRadius });
   if (radii.every((r) => r <= 0)) {
     // Simple rectangle: 2 triangles
     return new Float32Array([
       0, 0, width, 0, width, height,
       0, 0, width, height, 0, height,
     ]);
+  }
+  if (cornerSmoothing !== undefined && cornerSmoothing > 0) {
+    const d = buildSmoothedRoundedRectPathD(width, height, radii, cornerSmoothing);
+    return tessellateContours([{ commands: parseSvgPathD(d), windingRule: "nonzero" }], 0.25, true);
   }
 
   const points = roundedRectFillPoints({ width, height, radii, segments: 8 });
@@ -277,7 +307,7 @@ export function generateRectVertices(
   return vertices;
 }
 
-function normalizeCornerRadii(
+function clampCornerRadii(
   { width, height, cornerRadius }: { width: number; height: number; cornerRadius?: CornerRadius },
 ): readonly [number, number, number, number] {
   const maxRadius = Math.min(width / 2, height / 2);

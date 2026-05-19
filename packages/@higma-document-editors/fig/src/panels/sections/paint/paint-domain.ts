@@ -1,168 +1,580 @@
-/** @file Paint editing domain shared by fill and stroke property sections. */
-/* eslint-disable jsdoc/require-jsdoc -- Exported operation names form the paint mutation contract and are covered by colocated specs. */
-
-import { hexToFigColor } from "@higma-document-models/fig/color";
-import type { FigColor, FigImageScaleMode, FigPaint, FigPaintType } from "@higma-document-models/fig/types";
+/** @file Paint operations over Kiwi paint arrays. */
+import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import {
+  BLEND_MODE_VALUES,
+  PAINT_TYPE_VALUES,
+  SCALE_MODE_VALUES,
+  STROKE_ALIGN_VALUES,
+  STROKE_CAP_VALUES,
+  STROKE_JOIN_VALUES,
+  canonicaliseImageScaleMode,
+  kiwiEnumName,
+  toEnumValue,
+  type EnumValue,
+} from "@higma-document-models/fig/constants";
+import type {
+  BlendMode,
+  FigColor,
+  FigGradientPaint,
+  FigGradientStop,
+  FigGradientTransform,
+  FigImagePaint,
+  FigImageScaleMode,
+  FigNode,
+  FigPaint,
+  FigSolidPaint,
+} from "@higma-document-models/fig/types";
+import { getGradientDirectionFromTransform, getGradientStops, getImageHash, getScaleMode } from "@higma-document-renderers/fig/paint";
+import type {
+  GradientHandleView,
+  GradientStopView,
+  ImageScaleModeId,
+  PaintItemView,
+  PaintTypeId,
+} from "@higma-editor-kernel/ui/property-sections";
 
 export type PaintListKind = "fill" | "stroke";
 
-export type PaintOperation =
-  | { readonly type: "set-color"; readonly hex: string }
-  | { readonly type: "set-opacity"; readonly opacity: number }
-  | { readonly type: "set-type"; readonly paintType: FigPaint["type"]; readonly kind: PaintListKind }
-  | { readonly type: "set-image-ref"; readonly imageRef: string }
-  | { readonly type: "set-image-scale-mode"; readonly scaleMode: FigImageScaleMode }
-  | { readonly type: "set-image-scale"; readonly scale: number }
-  | { readonly type: "set-image-rotation-deg"; readonly rotationDeg: number }
-  | { readonly type: "replace"; readonly paint: FigPaint };
+const EDITOR_AUTHORED_BLACK: FigColor = { r: 0, g: 0, b: 0, a: 1 };
+const EDITOR_AUTHORED_WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
+const EDITOR_AUTHORED_LINEAR_TRANSFORM: FigGradientTransform = {
+  m00: 1,
+  m01: 0,
+  m02: 0,
+  m10: 0,
+  m11: 1,
+  m12: -0.5,
+};
 
-export type PaintListOperation =
-  | { readonly type: "update"; readonly index: number; readonly operation: PaintOperation }
-  | { readonly type: "remove"; readonly index: number }
-  | { readonly type: "add"; readonly kind: PaintListKind };
+const PAINT_TYPES = new Set<PaintTypeId>([
+  "SOLID",
+  "GRADIENT_LINEAR",
+  "GRADIENT_RADIAL",
+  "GRADIENT_ANGULAR",
+  "GRADIENT_DIAMOND",
+  "IMAGE",
+]);
 
-// =============================================================================
-// Operation Factories (SoT for operation creation)
-// =============================================================================
-
-export const PaintOp = {
-  setColor: (hex: string): PaintOperation => ({ type: "set-color", hex }),
-  setOpacity: (opacity: number): PaintOperation => ({ type: "set-opacity", opacity }),
-  setType: (paintType: FigPaint["type"], kind: PaintListKind): PaintOperation => ({ type: "set-type", paintType, kind }),
-  setImageRef: (imageRef: string): PaintOperation => ({ type: "set-image-ref", imageRef }),
-  setImageScaleMode: (scaleMode: FigImageScaleMode): PaintOperation => ({ type: "set-image-scale-mode", scaleMode }),
-  setImageScale: (scale: number): PaintOperation => ({ type: "set-image-scale", scale }),
-  setImageRotationDeg: (rotationDeg: number): PaintOperation => ({ type: "set-image-rotation-deg", rotationDeg }),
-  replace: (paint: FigPaint): PaintOperation => ({ type: "replace", paint }),
-} as const;
-
-export const PaintListOp = {
-  add: (kind: PaintListKind): PaintListOperation => ({ type: "add", kind }),
-  remove: (index: number): PaintListOperation => ({ type: "remove", index }),
-  update: (index: number, operation: PaintOperation): PaintListOperation => ({ type: "update", index, operation }),
-} as const;
-
-// =============================================================================
-// Paint Accessors
-// =============================================================================
-
-export function getPaintColor(paint: FigPaint): FigColor | undefined {
-  if ("color" in paint && paint.color) {
-    return paint.color;
+function requirePaintType(name: string): PaintTypeId {
+  if (PAINT_TYPES.has(name as PaintTypeId)) {
+    return name as PaintTypeId;
   }
-  return undefined;
+  throw new Error(`Paint editor does not support Kiwi paint type ${name}`);
 }
 
-export function getPaintOpacity(paint: FigPaint): number {
-  if ("opacity" in paint && typeof paint.opacity === "number") {
-    return paint.opacity;
-  }
-  return 1;
+function componentToHex(value: number): string {
+  const byte = Math.round(Math.max(0, Math.min(1, value)) * 255);
+  return byte.toString(16).padStart(2, "0");
 }
 
-export function createDefaultPaint(kind: PaintListKind, type: FigPaint["type"] = "SOLID"): FigPaint {
-  if (type === "SOLID") {
-    return createDefaultSolidPaint(kind);
+/** Convert a Fig color to a CSS hex color. */
+export function figColorToHex(color: FigColor): string {
+  return `#${componentToHex(color.r)}${componentToHex(color.g)}${componentToHex(color.b)}`;
+}
+
+/** Convert a CSS hex color to a Fig color while preserving alpha. */
+export function hexToFigColor(hex: string, alpha: number): FigColor {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (match === null) {
+    throw new Error(`hexToFigColor requires #rrggbb, got ${hex}`);
+  }
+  const value = match[1]!;
+  return {
+    r: Number.parseInt(value.slice(0, 2), 16) / 255,
+    g: Number.parseInt(value.slice(2, 4), 16) / 255,
+    b: Number.parseInt(value.slice(4, 6), 16) / 255,
+    a: alpha,
+  };
+}
+
+/** Require the first solid paint for the currently editable paint list. */
+export function firstSolidPaint(paints: readonly FigPaint[] | undefined): FigSolidPaint | undefined {
+  return paints?.map(asSolidPaint).find((paint) => paint !== undefined);
+}
+
+/** Create a Kiwi solid paint payload for editor-authored paint edits. */
+export function solidPaint(color: FigColor, current: FigSolidPaint | undefined): FigSolidPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    color,
+    opacity: current?.opacity ?? 1,
+    visible: current?.visible ?? true,
+  };
+}
+
+/** Read the selected Kiwi paint list from a node. */
+export function paintList(node: FigNode, kind: PaintListKind): readonly FigPaint[] {
+  if (kind === "fill") {
+    return node.fillPaints ?? [];
+  }
+  return node.strokePaints ?? [];
+}
+
+/** Write the selected Kiwi paint list onto a node. */
+export function writePaintList(node: FigNode, kind: PaintListKind, paints: readonly FigPaint[]): FigNode {
+  if (kind === "fill") {
+    return { ...node, fillPaints: paints };
+  }
+  return { ...node, strokePaints: paints };
+}
+
+function paintOpacity(paint: FigPaint): number {
+  return paint.opacity ?? 1;
+}
+
+function paintColor(paint: FigPaint): FigColor {
+  const solid = asSolidPaint(paint);
+  if (solid !== undefined) {
+    return solid.color;
+  }
+  const gradient = asGradientPaint(paint);
+  if (gradient === undefined) {
+    return EDITOR_AUTHORED_BLACK;
+  }
+  const first = getGradientStops(gradient)[0];
+  if (first === undefined) {
+    throw new Error("Gradient paint requires a first stop color");
+  }
+  return first.color;
+}
+
+function kiwiPaintType<T extends PaintTypeId>(type: T): EnumValue<T> {
+  const value = PAINT_TYPE_VALUES[type];
+  if (typeof value !== "number") {
+    throw new Error(`Paint type ${type} is not present in the Kiwi schema`);
+  }
+  return { value, name: type };
+}
+
+function kiwiImageScaleMode(scaleMode: ImageScaleModeId): EnumValue<FigImageScaleMode> {
+  const mode = canonicaliseImageScaleMode(scaleMode);
+  const value = toEnumValue(mode, SCALE_MODE_VALUES);
+  if (value === undefined) {
+    throw new Error(`Image scale mode ${scaleMode} is not present in the Kiwi schema`);
+  }
+  return value;
+}
+
+function kiwiBlendMode(blendMode: BlendMode): EnumValue<BlendMode> {
+  const value = toEnumValue(blendMode, BLEND_MODE_VALUES);
+  if (value === undefined) {
+    throw new Error(`Blend mode ${blendMode} is not present in the Kiwi schema`);
+  }
+  return value;
+}
+
+function authoredGradientStops(color: FigColor): readonly FigGradientStop[] {
+  return [
+    { position: 0, color },
+    { position: 1, color: EDITOR_AUTHORED_WHITE },
+  ];
+}
+
+function gradientHandles(paint: FigGradientPaint): readonly GradientHandleView[] {
+  const type = getPaintType(paint);
+  if (type === "GRADIENT_LINEAR") {
+    const direction = getGradientDirectionFromTransform(paint.transform);
+    return [
+      direction.start,
+      direction.end,
+      { x: direction.start.x, y: direction.end.y },
+    ];
+  }
+  const transform = paint.transform;
+  if (transform === undefined) {
+    throw new Error(`${type} paint requires transform before editing gradient handles`);
+  }
+  const m00 = transform.m00 ?? 1;
+  const m01 = transform.m01 ?? 0;
+  const m02 = transform.m02 ?? 0;
+  const m10 = transform.m10 ?? 0;
+  const m11 = transform.m11 ?? 1;
+  const m12 = transform.m12 ?? 0;
+  return [
+    { x: m02, y: m12 },
+    { x: m02 + m00, y: m12 + m10 },
+    { x: m02 + m01, y: m12 + m11 },
+  ];
+}
+
+function stopsToView(stops: readonly FigGradientStop[]): readonly GradientStopView[] {
+  return stops.map((stop) => ({
+    position: stop.position,
+    hex: figColorToHex(stop.color),
+    alpha: stop.color.a,
+  }));
+}
+
+function imageScaleModeToView(paint: FigImagePaint): ImageScaleModeId {
+  const scaleMode = getScaleMode(paint);
+  if (scaleMode === "STRETCH") {
+    return "FILL";
+  }
+  return scaleMode;
+}
+
+/** Convert a Kiwi paint into the property-section view state. */
+export function paintToView(paint: FigPaint): PaintItemView {
+  const type = requirePaintType(getPaintType(paint));
+  const color = paintColor(paint);
+  const gradient = asGradientPaint(paint);
+  if (type.startsWith("GRADIENT_") && gradient !== undefined) {
+    return {
+      type,
+      hex: figColorToHex(color),
+      opacity: paintOpacity(paint),
+      gradient: {
+        stops: stopsToView(getGradientStops(gradient)),
+        handles: gradientHandles(gradient),
+      },
+    };
+  }
+  if (type.startsWith("GRADIENT_")) {
+    throw new Error(`Paint ${type} is not a Kiwi gradient paint`);
+  }
+  const image = asImagePaint(paint);
+  if (type === "IMAGE" && image !== undefined) {
+    return {
+      type,
+      hex: figColorToHex(color),
+      opacity: paintOpacity(paint),
+      image: {
+        imageRef: getImageHash(image),
+        scaleMode: imageScaleModeToView(image),
+        scale: image.scale ?? 1,
+        rotationDeg: ((image.rotation ?? 0) * 180) / Math.PI,
+      },
+    };
   }
   if (type === "IMAGE") {
-    return createDefaultImagePaint();
+    throw new Error("IMAGE paint is not a Kiwi image paint");
   }
-  return createDefaultGradientPaint(kind, type);
+  return { type, hex: figColorToHex(color), opacity: paintOpacity(paint) };
 }
 
-export function applyPaintListOperation(
-  paints: readonly FigPaint[],
-  operation: PaintListOperation,
-): readonly FigPaint[] {
-  switch (operation.type) {
-    case "add":
-      return [...paints, createDefaultPaint(operation.kind)];
-    case "remove":
-      return paints.filter((_paint, index) => index !== operation.index);
-    case "update":
-      return paints.map((paint, index) => {
-        return index === operation.index ? applyPaintOperation(paint, operation.operation) : paint;
-      });
-  }
+function writeGradientStops(paint: FigGradientPaint, stops: readonly FigGradientStop[]): FigGradientPaint {
+  return {
+    ...paint,
+    stops: [...stops].sort((left, right) => left.position - right.position),
+  };
 }
 
-export function applyPaintOperation(paint: FigPaint, operation: PaintOperation): FigPaint {
-  switch (operation.type) {
-    case "set-color": {
-      if (!("color" in paint)) {
-        return paint;
-      }
-      const alpha = getPaintColor(paint)?.a ?? 1;
-      return { ...paint, color: hexToFigColor(operation.hex, alpha) };
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function interpolateColor(left: FigColor, right: FigColor, t: number): FigColor {
+  return {
+    r: left.r + (right.r - left.r) * t,
+    g: left.g + (right.g - left.g) * t,
+    b: left.b + (right.b - left.b) * t,
+    a: left.a + (right.a - left.a) * t,
+  };
+}
+
+function largestStopGapMidpoint(stops: readonly FigGradientStop[]): number {
+  const sorted = [...stops].sort((left, right) => left.position - right.position);
+  if (sorted.length < 2) {
+    throw new Error("Adding a gradient stop requires at least two existing stops");
+  }
+  const seed = {
+    start: sorted[0]!.position,
+    end: sorted[1]!.position,
+    gap: sorted[1]!.position - sorted[0]!.position,
+  };
+  const best = sorted.slice(2).reduce((current, stop, index) => {
+    const previous = sorted[index + 1]!;
+    const gap = stop.position - previous.position;
+    if (gap <= current.gap) {
+      return current;
     }
-    case "set-opacity":
-      return { ...paint, opacity: operation.opacity };
-    case "set-type":
-      return {
-        ...createDefaultPaint(operation.kind, operation.paintType),
-        opacity: getPaintOpacity(paint),
-        visible: paint.visible,
-      };
-    case "set-image-ref":
-      if (paint.type !== "IMAGE") {
-        return paint;
-      }
-      return { ...paint, imageRef: operation.imageRef };
-    case "set-image-scale-mode":
-      if (paint.type !== "IMAGE") {
-        return paint;
-      }
-      return { ...paint, scaleMode: operation.scaleMode, imageScaleMode: operation.scaleMode };
-    case "set-image-scale":
-      if (paint.type !== "IMAGE") {
-        return paint;
-      }
-      return { ...paint, scalingFactor: operation.scale, scale: operation.scale };
-    case "set-image-rotation-deg":
-      if (paint.type !== "IMAGE") {
-        return paint;
-      }
-      return { ...paint, rotation: operation.rotationDeg * (Math.PI / 180) };
-    case "replace":
-      return operation.paint;
+    return { start: previous.position, end: stop.position, gap };
+  }, seed);
+  return clamp01((best.start + best.end) / 2);
+}
+
+function colorAtPosition(stops: readonly FigGradientStop[], position: number): FigColor {
+  const sorted = [...stops].sort((left, right) => left.position - right.position);
+  const before = [...sorted].reverse().find((stop) => stop.position <= position);
+  const after = sorted.find((stop) => stop.position >= position);
+  if (before === undefined || after === undefined) {
+    throw new Error(`Gradient stop position ${position} is outside the authored stop range`);
   }
+  const span = after.position - before.position;
+  if (span === 0) {
+    return before.color;
+  }
+  return interpolateColor(before.color, after.color, (position - before.position) / span);
 }
 
-function createDefaultSolidPaint(kind: PaintListKind): FigPaint {
+function transformFromHandles(handles: readonly GradientHandleView[]): FigGradientTransform {
+  const start = handles[0];
+  const end = handles[1];
+  if (start === undefined || end === undefined) {
+    throw new Error("Linear gradient editing requires start and end handles");
+  }
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) {
+    throw new Error("Linear gradient start and end handles must not overlap");
+  }
   return {
-    type: "SOLID",
-    color: kind === "fill" ? { r: 0.85, g: 0.85, b: 0.85, a: 1 } : { r: 0, g: 0, b: 0, a: 1 },
-    opacity: 1,
-    visible: true,
+    m00: dx / lengthSquared,
+    m01: dy / lengthSquared,
+    m02: -((start.x * dx + start.y * dy) / lengthSquared),
+    m10: -dy / lengthSquared,
+    m11: dx / lengthSquared,
+    m12: -((start.x * -dy + start.y * dx) / lengthSquared),
   };
 }
 
-function createDefaultGradientPaint(kind: PaintListKind, type: Extract<FigPaintType, `GRADIENT_${string}`>): FigPaint {
-  const firstColor = kind === "fill" ? { r: 0.2, g: 0.45, b: 1, a: 1 } : { r: 0, g: 0, b: 0, a: 1 };
-  const secondColor = kind === "fill" ? { r: 0.8, g: 0.25, b: 0.9, a: 1 } : { r: 0.2, g: 0.45, b: 1, a: 1 };
+function affineFromHandles(handles: readonly GradientHandleView[]): FigGradientTransform {
+  const origin = handles[0];
+  const axisX = handles[1];
+  const axisY = handles[2];
+  if (origin === undefined || axisX === undefined || axisY === undefined) {
+    throw new Error("Gradient editing requires three handles");
+  }
   return {
-    type,
-    visible: true,
-    opacity: 1,
-    gradientStops: [
-      { position: 0, color: firstColor },
-      { position: 1, color: secondColor },
-    ],
-    gradientHandlePositions: [
-      { x: 0, y: 0.5 },
-      { x: 1, y: 0.5 },
-      { x: 0, y: 1 },
-    ],
+    m00: axisX.x - origin.x,
+    m01: axisY.x - origin.x,
+    m02: origin.x,
+    m10: axisX.y - origin.y,
+    m11: axisY.y - origin.y,
+    m12: origin.y,
   };
 }
 
-function createDefaultImagePaint(): FigPaint {
-  return {
-    type: "IMAGE",
-    visible: true,
-    opacity: 1,
-    imageRef: "",
-    scaleMode: "FILL",
-  };
+function hexToHashBytes(value: string): readonly number[] {
+  if (!/^[0-9a-f]+$/i.test(value) || value.length % 2 !== 0) {
+    throw new Error(`Image ref must be an even-length hex Kiwi hash, got ${value}`);
+  }
+  return Array.from({ length: value.length / 2 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16));
 }
 
+function updateGradientPaint(paint: FigPaint, updater: (paint: FigGradientPaint) => FigGradientPaint): FigPaint {
+  const gradient = asGradientPaint(paint);
+  if (gradient === undefined) {
+    throw new Error(`Paint ${getPaintType(paint)} is not editable as a gradient`);
+  }
+  return updater(gradient);
+}
+
+function updateImagePaint(paint: FigPaint, updater: (paint: FigImagePaint) => FigImagePaint): FigPaint {
+  const image = asImagePaint(paint);
+  if (image === undefined) {
+    throw new Error(`Paint ${getPaintType(paint)} is not editable as an image`);
+  }
+  return updater(image);
+}
+
+/** Replace one paint in a Kiwi paint list. */
+export function replacePaint(paints: readonly FigPaint[], index: number, updater: (paint: FigPaint) => FigPaint): readonly FigPaint[] {
+  const paint = paints[index];
+  if (paint === undefined) {
+    throw new Error(`Paint index ${index} is outside the paint list`);
+  }
+  return paints.map((current, currentIndex) => {
+    if (currentIndex === index) {
+      return updater(current);
+    }
+    return current;
+  });
+}
+
+/** Append an editor-authored solid paint. */
+export function addPaint(paints: readonly FigPaint[]): readonly FigPaint[] {
+  return [
+    ...paints,
+    solidPaint(EDITOR_AUTHORED_BLACK, undefined),
+  ];
+}
+
+/** Remove one paint from a Kiwi paint list. */
+export function removePaint(paints: readonly FigPaint[], index: number): readonly FigPaint[] {
+  if (paints[index] === undefined) {
+    throw new Error(`Paint index ${index} is outside the paint list`);
+  }
+  return paints.filter((_, currentIndex) => currentIndex !== index);
+}
+
+/** Change the Kiwi paint type while preserving fields accepted by that type. */
+export function setPaintType(paint: FigPaint, type: PaintTypeId): FigPaint {
+  if (type === "SOLID") {
+    return solidPaint(paintColor(paint), asSolidPaint(paint));
+  }
+  if (type.startsWith("GRADIENT_")) {
+    const gradient = asGradientPaint(paint);
+    return {
+      ...paint,
+      type: kiwiPaintType(type),
+      stops: gradient?.stops ?? authoredGradientStops(paintColor(paint)),
+      transform: gradient?.transform ?? EDITOR_AUTHORED_LINEAR_TRANSFORM,
+    } as FigGradientPaint;
+  }
+  const image = asImagePaint(paint);
+  if (type === "IMAGE" && image !== undefined) {
+    return { ...image, type: kiwiPaintType("IMAGE") };
+  }
+  if (type === "IMAGE") {
+    throw new Error("Changing a non-image paint to IMAGE requires selecting an existing Kiwi image hash first");
+  }
+  throw new Error(`Paint editor does not support paint type ${type}`);
+}
+
+/** Set Kiwi paint opacity. */
+export function setPaintOpacity(paint: FigPaint, opacity: number): FigPaint {
+  return { ...paint, opacity };
+}
+
+/** Set the primary editable color for a Kiwi paint. */
+export function setPaintColor(paint: FigPaint, hex: string): FigPaint {
+  const solid = asSolidPaint(paint);
+  if (solid !== undefined) {
+    return solidPaint(hexToFigColor(hex, solid.color.a), solid);
+  }
+  return updateGradientPaint(paint, (gradient) => {
+    const stops = getGradientStops(gradient);
+    const first = stops[0];
+    if (first === undefined) {
+      throw new Error("Gradient paint requires a first stop before color editing");
+    }
+    return writeGradientStops(gradient, [
+      { ...first, color: hexToFigColor(hex, first.color.a) },
+      ...stops.slice(1),
+    ]);
+  });
+}
+
+/** Set the Kiwi image hash for an image paint. */
+export function setImageRef(paint: FigPaint, imageRef: string): FigPaint {
+  return updateImagePaint(paint, (image) => ({
+    ...image,
+    image: { hash: hexToHashBytes(imageRef) },
+  }));
+}
+
+/** Set the Kiwi image scale mode for an image paint. */
+export function setImageScaleMode(paint: FigPaint, scaleMode: ImageScaleModeId): FigPaint {
+  return updateImagePaint(paint, (image) => ({
+    ...image,
+    imageScaleMode: kiwiImageScaleMode(scaleMode),
+  }));
+}
+
+/** Set the Kiwi image scale factor for an image paint. */
+export function setImageScale(paint: FigPaint, scale: number): FigPaint {
+  return updateImagePaint(paint, (image) => ({ ...image, scale }));
+}
+
+/** Set the Kiwi image rotation from editor degrees. */
+export function setImageRotationDeg(paint: FigPaint, rotationDeg: number): FigPaint {
+  return updateImagePaint(paint, (image) => ({ ...image, rotation: (rotationDeg * Math.PI) / 180 }));
+}
+
+/** Update one Kiwi gradient stop. */
+export function setGradientStop(paint: FigPaint, stopIndex: number, stop: GradientStopView): FigPaint {
+  return updateGradientPaint(paint, (gradient) => {
+    const stops = getGradientStops(gradient);
+    if (stops[stopIndex] === undefined) {
+      throw new Error(`Gradient stop index ${stopIndex} is outside the stop list`);
+    }
+    return writeGradientStops(gradient, stops.map((current, index) => {
+      if (index !== stopIndex) {
+        return current;
+      }
+      return {
+        position: stop.position,
+        color: hexToFigColor(stop.hex, stop.alpha),
+      };
+    }));
+  });
+}
+
+/** Add a Kiwi gradient stop at the largest stop gap midpoint. */
+export function addGradientStop(paint: FigPaint): FigPaint {
+  return updateGradientPaint(paint, (gradient) => {
+    const stops = getGradientStops(gradient);
+    const position = largestStopGapMidpoint(stops);
+    return writeGradientStops(gradient, [
+      ...stops,
+      { position, color: colorAtPosition(stops, position) },
+    ]);
+  });
+}
+
+/** Remove one Kiwi gradient stop. */
+export function removeGradientStop(paint: FigPaint, stopIndex: number): FigPaint {
+  return updateGradientPaint(paint, (gradient) => {
+    const stops = getGradientStops(gradient);
+    if (stops.length <= 2) {
+      throw new Error("Removing a gradient stop requires at least three stops");
+    }
+    if (stops[stopIndex] === undefined) {
+      throw new Error(`Gradient stop index ${stopIndex} is outside the stop list`);
+    }
+    return writeGradientStops(gradient, stops.filter((_, index) => index !== stopIndex));
+  });
+}
+
+/** Update one Kiwi gradient handle. */
+export function setGradientHandle(paint: FigPaint, handleIndex: number, handle: GradientHandleView): FigPaint {
+  return updateGradientPaint(paint, (gradient) => {
+    const handles = gradientHandles(gradient);
+    if (handles[handleIndex] === undefined) {
+      throw new Error(`Gradient handle index ${handleIndex} is outside the handle list`);
+    }
+    const nextHandles = handles.map((current, index) => {
+      if (index === handleIndex) {
+        return handle;
+      }
+      return current;
+    });
+    const type = getPaintType(gradient);
+    if (type === "GRADIENT_LINEAR") {
+      return { ...gradient, transform: transformFromHandles(nextHandles) };
+    }
+    return { ...gradient, transform: affineFromHandles(nextHandles) };
+  });
+}
+
+/** Read the Kiwi stroke alignment name. */
+export function strokeAlignName(node: FigNode): "CENTER" | "INSIDE" | "OUTSIDE" {
+  return kiwiEnumName<"CENTER" | "INSIDE" | "OUTSIDE">(node.strokeAlign, "strokeAlign") ?? "CENTER";
+}
+
+/** Read the Kiwi stroke cap name. */
+export function strokeCapName(node: FigNode): "NONE" | "ROUND" | "SQUARE" | "ARROW_LINES" | "ARROW_EQUILATERAL" {
+  return kiwiEnumName<"NONE" | "ROUND" | "SQUARE" | "ARROW_LINES" | "ARROW_EQUILATERAL">(node.strokeCap, "strokeCap") ?? "NONE";
+}
+
+/** Read the Kiwi stroke join name. */
+export function strokeJoinName(node: FigNode): "MITER" | "BEVEL" | "ROUND" {
+  return kiwiEnumName<"MITER" | "BEVEL" | "ROUND">(node.strokeJoin, "strokeJoin") ?? "MITER";
+}
+
+/** Set the Kiwi stroke alignment. */
+export function setStrokeAlign(node: FigNode, value: "CENTER" | "INSIDE" | "OUTSIDE"): FigNode {
+  return { ...node, strokeAlign: toEnumValue(value, STROKE_ALIGN_VALUES) };
+}
+
+/** Set the Kiwi stroke cap. */
+export function setStrokeCap(node: FigNode, value: "NONE" | "ROUND" | "SQUARE" | "ARROW_LINES" | "ARROW_EQUILATERAL"): FigNode {
+  return { ...node, strokeCap: toEnumValue(value, STROKE_CAP_VALUES) };
+}
+
+/** Set the Kiwi stroke join. */
+export function setStrokeJoin(node: FigNode, value: "MITER" | "BEVEL" | "ROUND"): FigNode {
+  return { ...node, strokeJoin: toEnumValue(value, STROKE_JOIN_VALUES) };
+}
+
+/** Set the Kiwi stroke dash array. */
+export function setStrokeDashes(node: FigNode, value: readonly number[]): FigNode {
+  return { ...node, strokeDashes: value.length > 0 ? value : undefined };
+}
+
+/** Set the Kiwi paint blend mode. */
+export function setPaintBlendMode(paint: FigPaint, blendMode: BlendMode): FigPaint {
+  return { ...paint, blendMode: kiwiBlendMode(blendMode) };
+}

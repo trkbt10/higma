@@ -1,142 +1,138 @@
-/** @file Effect editing domain consumed by the effect property section. */
-/* eslint-disable jsdoc/require-jsdoc -- Exported operation names form the effect mutation contract and are covered by colocated specs. */
-
-import { hexToFigColor } from "@higma-document-models/fig/color";
+/** @file Effect operations over Kiwi effect arrays. */
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, kiwiEnumName, toEnumValue, type EnumValue } from "@higma-document-models/fig/constants";
 import type { BlendMode, FigColor, FigEffect, FigEffectType } from "@higma-document-models/fig/types";
+import { extractShadowParams, getEffectTypeName, isEffectVisible } from "@higma-document-renderers/fig/effects";
+import type { BlendModeId, EffectTypeId, EffectView } from "@higma-editor-kernel/ui/property-sections";
+import { figColorToHex, hexToFigColor } from "./paint-domain";
 
-export type EffectOperation =
-  | { readonly type: "set-visible"; readonly visible: boolean }
-  | { readonly type: "set-type"; readonly effectType: FigEffectType }
-  | { readonly type: "set-radius"; readonly radius: number }
-  | { readonly type: "set-blend-mode"; readonly blendMode: BlendMode }
-  | { readonly type: "set-offset-x"; readonly x: number }
-  | { readonly type: "set-offset-y"; readonly y: number }
-  | { readonly type: "set-spread"; readonly spread: number }
-  | { readonly type: "set-color"; readonly hex: string }
-  | { readonly type: "set-opacity"; readonly opacity: number }
-  | { readonly type: "set-shadow-behind-node"; readonly showShadowBehindNode: boolean };
+const EDITOR_AUTHORED_SHADOW_COLOR: FigColor = { r: 0, g: 0, b: 0, a: 0.25 };
 
-export type EffectListOperation =
-  | { readonly type: "add"; readonly effectType: FigEffectType }
-  | { readonly type: "remove"; readonly index: number }
-  | { readonly type: "update"; readonly index: number; readonly operation: EffectOperation };
-
-// =============================================================================
-// Operation Factories (SoT for operation creation)
-// =============================================================================
-
-export const EffectOp = {
-  setVisible: (visible: boolean): EffectOperation => ({ type: "set-visible", visible }),
-  setType: (effectType: FigEffectType): EffectOperation => ({ type: "set-type", effectType }),
-  setRadius: (radius: number): EffectOperation => ({ type: "set-radius", radius }),
-  setBlendMode: (blendMode: BlendMode): EffectOperation => ({ type: "set-blend-mode", blendMode }),
-  setOffsetX: (x: number): EffectOperation => ({ type: "set-offset-x", x }),
-  setOffsetY: (y: number): EffectOperation => ({ type: "set-offset-y", y }),
-  setSpread: (spread: number): EffectOperation => ({ type: "set-spread", spread }),
-  setColor: (hex: string): EffectOperation => ({ type: "set-color", hex }),
-  setOpacity: (opacity: number): EffectOperation => ({ type: "set-opacity", opacity }),
-  setShadowBehindNode: (showShadowBehindNode: boolean): EffectOperation => ({ type: "set-shadow-behind-node", showShadowBehindNode }),
-} as const;
-
-export const EffectListOp = {
-  add: (effectType: FigEffectType): EffectListOperation => ({ type: "add", effectType }),
-  remove: (index: number): EffectListOperation => ({ type: "remove", index }),
-  update: (index: number, operation: EffectOperation): EffectListOperation => ({ type: "update", index, operation }),
-} as const;
-
-export function getEffectTypeName(effect: FigEffect): FigEffectType {
-  const type = effect.type;
-  if (typeof type === "string") { return type; }
-  if (type && typeof type === "object" && "name" in type) {
-    return (type as { name: FigEffectType }).name;
+function kiwiEffectType(type: EffectTypeId): EnumValue<FigEffectType> {
+  const value = toEnumValue(type, EFFECT_TYPE_VALUES);
+  if (value === undefined) {
+    throw new Error(`Effect type ${type} is not present in the Kiwi schema`);
   }
-  return "DROP_SHADOW";
+  return value;
 }
 
-export function formatEffectLabel(typeName: string): string {
-  switch (typeName) {
-    case "DROP_SHADOW": return "Drop Shadow";
-    case "INNER_SHADOW": return "Inner Shadow";
-    case "LAYER_BLUR": return "Layer Blur";
-    case "FOREGROUND_BLUR": return "Layer Blur";
-    case "BACKGROUND_BLUR": return "Background Blur";
-    default: return typeName;
+function kiwiBlendMode(blendMode: BlendModeId): EnumValue<BlendMode> {
+  const value = toEnumValue(blendMode, BLEND_MODE_VALUES);
+  if (value === undefined) {
+    throw new Error(`Blend mode ${blendMode} is not present in the Kiwi schema`);
   }
+  return value;
 }
 
-export function createDefaultEffect(type: FigEffectType): FigEffect {
-  const effectType = createEffectTypeEnum(type);
+function blendModeName(effect: FigEffect): BlendModeId {
+  const blendMode = kiwiEnumName<BlendMode>(effect.blendMode, "effect.blendMode");
+  if (blendMode === undefined) {
+    return "NORMAL";
+  }
+  if (blendMode === "PASS_THROUGH" || blendMode === "LINEAR_BURN" || blendMode === "LINEAR_DODGE") {
+    throw new Error(`Effect blend mode ${blendMode} is not supported by the property section`);
+  }
+  return blendMode;
+}
+
+/** Convert a Kiwi effect into property-section view state. */
+export function effectToView(effect: FigEffect): EffectView {
+  const type = getEffectTypeName(effect) as EffectTypeId;
+  const shadow = extractShadowParams(effect);
+  const color = shadow.color;
+  return {
+    type,
+    visible: isEffectVisible(effect),
+    radius: shadow.radius,
+    offsetX: shadow.offsetX,
+    offsetY: shadow.offsetY,
+    spread: effect.spread ?? 0,
+    blendMode: blendModeName(effect),
+    hex: figColorToHex(color),
+    opacity: color.a,
+    showShadowBehindNode: effect.showShadowBehindNode !== false,
+  };
+}
+
+function createEffect(type: EffectTypeId): FigEffect {
   if (type === "DROP_SHADOW" || type === "INNER_SHADOW") {
     return {
-      type: effectType,
+      type: kiwiEffectType(type),
       visible: true,
       offset: { x: 0, y: 4 },
       radius: 8,
       spread: 0,
-      color: { r: 0, g: 0, b: 0, a: 0.25 },
+      color: EDITOR_AUTHORED_SHADOW_COLOR,
+      blendMode: kiwiBlendMode("NORMAL"),
+      showShadowBehindNode: true,
     };
   }
   return {
-    type: effectType,
+    type: kiwiEffectType(type),
     visible: true,
     radius: 8,
   };
 }
 
-export function applyEffectListOperation(
-  effects: readonly FigEffect[],
-  operation: EffectListOperation,
+/** Append an editor-authored drop shadow effect. */
+export function addEffect(effects: readonly FigEffect[] | undefined): readonly FigEffect[] {
+  return [...(effects ?? []), createEffect("DROP_SHADOW")];
+}
+
+/** Remove one Kiwi effect from an effect list. */
+export function removeEffect(effects: readonly FigEffect[] | undefined, index: number): readonly FigEffect[] {
+  const list = effects ?? [];
+  if (list[index] === undefined) {
+    throw new Error(`Effect index ${index} is outside the effect list`);
+  }
+  return list.filter((_, currentIndex) => currentIndex !== index);
+}
+
+function replaceEffect(
+  effects: readonly FigEffect[] | undefined,
+  index: number,
+  updater: (effect: FigEffect) => FigEffect,
 ): readonly FigEffect[] {
-  switch (operation.type) {
-    case "add":
-      return [...effects, createDefaultEffect(operation.effectType)];
-    case "remove":
-      return effects.filter((_effect, index) => index !== operation.index);
-    case "update":
-      return effects.map((effect, index) => {
-        return index === operation.index ? applyEffectOperation(effect, operation.operation) : effect;
-      });
+  const list = effects ?? [];
+  const effect = list[index];
+  if (effect === undefined) {
+    throw new Error(`Effect index ${index} is outside the effect list`);
   }
+  return list.map((current, currentIndex) => {
+    if (currentIndex === index) {
+      return updater(current);
+    }
+    return current;
+  });
 }
 
-export function applyEffectOperation(effect: FigEffect, operation: EffectOperation): FigEffect {
-  switch (operation.type) {
-    case "set-visible":
-      return { ...effect, visible: operation.visible };
-    case "set-type":
-      return createDefaultEffect(operation.effectType);
-    case "set-radius":
-      return { ...effect, radius: operation.radius };
-    case "set-blend-mode":
-      return { ...effect, blendMode: operation.blendMode };
-    case "set-offset-x":
-      return { ...effect, offset: { x: operation.x, y: effect.offset?.y ?? 0 } };
-    case "set-offset-y":
-      return { ...effect, offset: { x: effect.offset?.x ?? 0, y: operation.y } };
-    case "set-spread":
-      return { ...effect, spread: operation.spread };
-    case "set-color":
-      return { ...effect, color: hexToFigColor(operation.hex, effect.color?.a ?? 0.25) };
-    case "set-opacity":
-      return { ...effect, color: { ...(effect.color ?? defaultShadowColor), a: operation.opacity } };
-    case "set-shadow-behind-node":
-      return { ...effect, showShadowBehindNode: operation.showShadowBehindNode };
+function writeEffectView(effect: FigEffect, view: EffectView): FigEffect {
+  const currentType = getEffectTypeName(effect);
+  if (currentType !== view.type) {
+    return createEffect(view.type);
   }
+  return {
+    ...effect,
+    visible: view.visible,
+    radius: view.radius,
+    offset: { x: view.offsetX, y: view.offsetY },
+    spread: view.spread,
+    blendMode: kiwiBlendMode(view.blendMode),
+    color: hexToFigColor(view.hex, view.opacity),
+    showShadowBehindNode: view.showShadowBehindNode,
+  };
 }
 
-const defaultShadowColor: FigColor = { r: 0, g: 0, b: 0, a: 0.25 };
-
-function createEffectTypeEnum(type: FigEffectType): FigEffect["type"] {
-  switch (type) {
-    case "INNER_SHADOW":
-      return { value: 0, name: "INNER_SHADOW" };
-    case "DROP_SHADOW":
-      return { value: 1, name: "DROP_SHADOW" };
-    case "LAYER_BLUR":
-    case "FOREGROUND_BLUR":
-      return { value: 2, name: "FOREGROUND_BLUR" };
-    case "BACKGROUND_BLUR":
-      return { value: 3, name: "BACKGROUND_BLUR" };
-  }
+/** Update one Kiwi effect from property-section view state. */
+export function updateEffect(
+  effects: readonly FigEffect[] | undefined,
+  index: number,
+  view: EffectView,
+): readonly FigEffect[] {
+  return replaceEffect(effects, index, (effect) => writeEffectView(effect, view));
 }
 
+/** Return a compact effect count label. */
+export function effectSummary(effects: readonly FigEffect[] | undefined): string {
+  const count = effects?.length ?? 0;
+  return `${count}`;
+}

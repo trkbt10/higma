@@ -36,7 +36,7 @@
  */
 
 import type { AffineMatrix } from "@higma-primitives/path";
-import type { SceneGraph, SceneNode } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph, SceneNode } from "@higma-document-renderers/fig/scene-graph";
 
 type WorldBox = {
   readonly x: number;

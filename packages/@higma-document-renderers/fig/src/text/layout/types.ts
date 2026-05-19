@@ -6,7 +6,7 @@
 
 import type { FigMatrix, FigPaint } from "@higma-document-models/fig/types";
 import type { FontQuery } from "@higma-document-models/fig/font";
-import type { TextAutoResize, BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { TextAutoResize, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 /**
  * Text data structure from .fig files

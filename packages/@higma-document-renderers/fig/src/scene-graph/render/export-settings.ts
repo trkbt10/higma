@@ -42,7 +42,7 @@ export type PdfImageQualitySettings =
   | { readonly kind: "not-requested" }
   | { readonly kind: "figma-export"; readonly quality: FigmaPdfImageQuality };
 
-export type NormalizedFigmaRenderExportSettings = {
+export type ResolvedFigmaRenderExportSettings = {
   readonly imageColorManagement: ImageColorManagementSettings;
   readonly imageResampling: ImageResamplingSettings;
   readonly pdfImageQuality: PdfImageQualitySettings;
@@ -65,7 +65,7 @@ export function assertRasterScale(scale: number): void {
   }
 }
 
-function normalizeImageColorManagement(settings: FigmaRenderExportSettings | undefined): ImageColorManagementSettings {
+function resolveImageColorManagement(settings: FigmaRenderExportSettings | undefined): ImageColorManagementSettings {
   if (settings === undefined || settings.colorProfile === undefined) {
     return { kind: "unmanaged" };
   }
@@ -78,7 +78,7 @@ function normalizeImageColorManagement(settings: FigmaRenderExportSettings | und
   return { kind: "managed", profile: { kind: "display-p3", iccProfile: settings.displayP3IccProfile } };
 }
 
-function normalizeImageResampling(settings: FigmaImageResamplingSettings | undefined): ImageResamplingSettings {
+function resolveImageResampling(settings: FigmaImageResamplingSettings | undefined): ImageResamplingSettings {
   if (settings === undefined) {
     return { kind: "source" };
   }
@@ -90,21 +90,21 @@ function normalizeImageResampling(settings: FigmaImageResamplingSettings | undef
   };
 }
 
-function normalizePdfImageQuality(quality: FigmaPdfImageQuality | undefined): PdfImageQualitySettings {
+function resolvePdfImageQuality(quality: FigmaPdfImageQuality | undefined): PdfImageQualitySettings {
   if (quality === undefined) {
     return { kind: "not-requested" };
   }
   return { kind: "figma-export", quality };
 }
 
-/** Convert public export settings into explicit image rendering domains. */
-export function normalizeFigmaRenderExportSettings(
+/** Resolve public export settings into explicit image rendering domains. */
+export function resolveFigmaRenderExportSettings(
   settings: FigmaRenderExportSettings | undefined,
-): NormalizedFigmaRenderExportSettings {
+): ResolvedFigmaRenderExportSettings {
   return {
-    imageColorManagement: normalizeImageColorManagement(settings),
-    imageResampling: normalizeImageResampling(settings?.imageResampling),
-    pdfImageQuality: normalizePdfImageQuality(settings?.pdfQuality),
+    imageColorManagement: resolveImageColorManagement(settings),
+    imageResampling: resolveImageResampling(settings?.imageResampling),
+    pdfImageQuality: resolvePdfImageQuality(settings?.pdfQuality),
   };
 }
 
@@ -151,8 +151,8 @@ function pdfQualityKey(settings: PdfImageQualitySettings): string {
   return `pdf-quality:${settings.quality}`;
 }
 
-/** Build the cache identity for normalized export settings. */
-export function renderExportSettingsCacheKey(settings: NormalizedFigmaRenderExportSettings): RenderExportSettingsCacheKey {
+/** Build the cache identity for resolved export settings. */
+export function renderExportSettingsCacheKey(settings: ResolvedFigmaRenderExportSettings): RenderExportSettingsCacheKey {
   return makeRenderExportSettingsCacheKey([
     colorManagementKey(settings.imageColorManagement),
     resamplingKey(settings.imageResampling),

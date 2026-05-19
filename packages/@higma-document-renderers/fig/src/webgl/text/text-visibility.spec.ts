@@ -1,6 +1,6 @@
 /** @file Tests for WebGL text visibility checks. */
 
-import type { RenderTextLines } from "../../scene-graph/render-tree";
+import type { RenderTextLines } from "../../scene-graph";
 import { hasVisibleLineText } from "./text-visibility";
 
 function makeLines(lines: readonly string[]): RenderTextLines {

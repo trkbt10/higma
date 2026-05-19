@@ -17,9 +17,9 @@ import type {
   RenderPatternDef,
   RenderMaskDef,
   ClipPathShape,
-} from "../../scene-graph/render-tree";
+} from "../../scene-graph";
 import { RenderNodeComponent } from "../nodes/RenderNodeComponent";
-import type { ResolvedFilterPrimitive, ResolvedGradientStop } from "../../scene-graph/render";
+import type { ResolvedFilterPrimitive, ResolvedGradientStop } from "../../scene-graph";
 
 // =============================================================================
 // Gradient Stops

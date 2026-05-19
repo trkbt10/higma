@@ -5,7 +5,7 @@
  * The exported viewBox is the union of three contributions:
  *
  *  1. The node's intrinsic `size`, padded by its outward effect halo
- *     (DROP_SHADOW offset+radius+spread, LAYER_BLUR radius, etc.) — see
+ *     (DROP_SHADOW offset+radius+spread, FOREGROUND_BLUR radius, etc.) — see
  *     `effect-bounds.ts`.
  *
  *  2. The bounding box of every visible descendant, transformed back
@@ -30,7 +30,7 @@
  * A node with a non-trivial 2D rotation/scale would need the full
  * transformed-corner-bbox computation; the simple model documented here
  * stays general enough that introducing that later does not change the
- * shape of the helper.
+ * shape of the function.
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
@@ -45,7 +45,7 @@ import { computeNodeEffectExpansion } from "./effect-bounds";
  *
  * The returned box is in the node's OWN local coordinate system. To
  * compute world-space (canvas-space) bounds, callers must add the chain
- * of ancestor transforms — this helper deliberately stays at the local
+ * of ancestor transforms — this function deliberately stays at the local
  * level so it can be composed recursively without re-walking the tree.
  */
 export type FigExportBox = {
@@ -89,7 +89,7 @@ function negZeroSafe(value: number): number {
  * Compute the union local-space export box for a node.
  *
  * Recurses into descendants ONLY when the node has
- * `frameMaskDisabled === true` (raw Kiwi field; semantically the
+ * `frameMaskDisabled === true` (Kiwi field; semantically the
  * inversion of the Figma UI's "Clip content" toggle). Otherwise the
  * box is just the node's intrinsic size + effect halo.
  */

@@ -43,9 +43,9 @@
  *    handling it in the resolver produces a compile error (never check).
  */
 
-import type { SceneNodeId, Fill, Stroke, PathContour, Color, TextLineLayout, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, ImageNode, BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { SceneNodeId, Fill, Stroke, PathContour, Color, TextLineLayout, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, ImageNode, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 
-import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
+import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
 
 import type {
   ResolvedFillAttrs,
@@ -399,6 +399,8 @@ export type RenderFrameBackground = {
   readonly fillLayers?: readonly ResolvedFillLayer[];
   /** Stroke rendering — single discriminated union replaces stroke/strokeLayers/strokeMaskId/individualStrokes */
   readonly strokeRendering?: StrokeRendering;
+  /** Drop/inner shadow filter for the frame surface only, not its children. */
+  readonly filterAttr?: string;
 };
 
 // -- Rect --
@@ -554,7 +556,7 @@ export type RenderImageNode = RenderNodeBase<ImageNode> & {
   readonly preserveAspectRatio: string;
   readonly needsWrapper: boolean;
   // Source data for WebGL
-  readonly sourceImageRef: string;
+  readonly sourceImageHash: string;
   readonly sourceData: Uint8Array;
   readonly sourceMimeType: string;
   readonly sourceScaleMode: string;

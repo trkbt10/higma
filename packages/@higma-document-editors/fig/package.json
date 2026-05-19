@@ -8,17 +8,29 @@
     "@higma-document-models/fig": "workspace:*",
     "@higma-document-io/fig": "workspace:*",
     "@higma-document-renderers/fig": "workspace:*",
-    "@higma-figma-runtime/react-renderer": "workspace:*"
+    "@higma-figma-containers/package": "workspace:*",
+    "@higma-primitives/path": "workspace:*",
+    "@higma-primitives/tree": "workspace:*",
+    "@higma-editor-kernel/core": "workspace:*",
+    "@higma-editor-surfaces/controls": "workspace:*",
+    "@higma-editor-kernel/ui": "workspace:*",
+    "@higma-figma-runtime/react-renderer": "workspace:*",
+    "react-editor-ui": "^0.4.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.2.0"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "scripts": {
-    "lint": "bun run lint:architecture && eslint src",
+    "lint": "bun run lint:architecture && eslint src dev spec/e2e",
     "lint:architecture": "bun scripts/check-architecture.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit --rootDir ../../..",
-    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-editors/fig/src'"
+    "test": "vitest --run --passWithNoTests --config ../../../vitest.config.ts '../../../packages/@higma-document-editors/fig/src'",
+    "e2e": "playwright test",
+    "dev": "vite --config dev/vite.config.ts --open"
   },
   "exports": {
     ".": {

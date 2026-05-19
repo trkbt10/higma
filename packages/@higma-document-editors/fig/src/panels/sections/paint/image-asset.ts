@@ -1,4 +1,4 @@
-/** @file Fig image asset helpers for fill/stroke editors. */
+/** @file Image asset creation for fill/stroke editors. */
 
 import type { FigPackageImage } from "@higma-figma-containers/package";
 
@@ -16,28 +16,37 @@ export function createFigImageAsset({ data, mimeType, fileName }: CreateFigImage
   if (!mimeType.startsWith("image/")) {
     throw new Error(`Unsupported image MIME type: ${mimeType}`);
   }
-  const extension = resolveImageExtension({ mimeType, fileName });
-  const ref = `${hashBytes(data)}.${extension}`;
+  requireSupportedImageName({ mimeType, fileName });
+  const ref = hashBytes(data);
   return { ref, data, mimeType };
 }
 
-function resolveImageExtension({ mimeType, fileName }: { readonly mimeType: string; readonly fileName: string }): string {
+function requireSupportedImageName({ mimeType, fileName }: { readonly mimeType: string; readonly fileName: string }): void {
   const lowerName = fileName.toLowerCase();
   const nameExt = lowerName.match(/\.([a-z0-9]+)$/)?.[1];
-  if (nameExt && ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(nameExt)) {
-    return nameExt === "jpeg" ? "jpg" : nameExt;
+  if (nameExt === "jpeg") {
+    return;
+  }
+  if (nameExt !== undefined && ["png", "jpg", "gif", "webp", "svg"].includes(nameExt)) {
+    return;
   }
   switch (mimeType) {
-    case "image/png": return "png";
-    case "image/jpeg": return "jpg";
-    case "image/gif": return "gif";
-    case "image/webp": return "webp";
-    case "image/svg+xml": return "svg";
-    default: throw new Error(`Unsupported image MIME type: ${mimeType}`);
+    case "image/png":
+      return;
+    case "image/jpeg":
+      return;
+    case "image/gif":
+      return;
+    case "image/webp":
+      return;
+    case "image/svg+xml":
+      return;
+    default:
+      throw new Error(`Unsupported image MIME type: ${mimeType}`);
   }
 }
 
 function hashBytes(data: Uint8Array): string {
-  const hash = data.reduce((current, byte) => Math.imul(current ^ byte, 0x01000193), 0x811C9DC5);
+  const hash = data.reduce((current, byte) => Math.imul(current ^ byte, 0x01000193), 0x811c9dc5);
   return (hash >>> 0).toString(16).padStart(8, "0");
 }

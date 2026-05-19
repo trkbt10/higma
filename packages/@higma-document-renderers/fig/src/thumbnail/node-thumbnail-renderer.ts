@@ -1,7 +1,7 @@
 /**
  * @file Node-side thumbnail renderer wiring for `exportFig`.
  *
- * Bridges the io package's `FigThumbnailRenderer` DI hook (defined in
+ * Connects the io package's `FigThumbnailRenderer` DI hook (defined in
  * `@higma-document-io/fig/export`) to this package's SVG renderer +
  * `@resvg/resvg-js` for PNG output.
  *
@@ -15,27 +15,19 @@
  * Why the renderer lives here and not in io:
  *   - `@higma-document-renderers/fig` already depends on
  *     `@higma-document-io/fig` (it consumes `parseFigFile`,
- *     `createFigSymbolContext`, etc.). Putting the renderer in io and
+ *     `createFigDocumentContext`, etc.). Putting the renderer in io and
  *     having io import this package would invert the dependency.
  *   - resvg-js is a native module; io must stay browser-compatible.
  */
 
 import { Resvg } from "@resvg/resvg-js";
 import { fitFigThumbnailSize } from "@higma-figma-containers/package";
-import { documentToTree } from "@higma-document-io/fig/context";
 import type {
-  FigThumbnailRenderRequest,
   FigThumbnailRenderResult,
   FigThumbnailRenderer,
 } from "@higma-document-io/fig/export";
-import {
-  buildNodeTree,
-  guidToString,
-  parseId,
-} from "@higma-document-models/fig/domain";
-import type { FigNode } from "@higma-document-models/fig/types";
 import type { FontLoader } from "@higma-document-models/fig/font";
-import type { FigmaRenderExportSettings } from "../scene-graph/render";
+import type { FigmaRenderExportSettings } from "../scene-graph";
 import { renderFigToSvg } from "../svg/renderer";
 
 // =============================================================================
@@ -65,10 +57,6 @@ export type CreateNodeThumbnailRendererOptions = {
   readonly rasterise?: (svg: string, options: { width: number; height: number }) => Promise<Uint8Array>;
 };
 
-// =============================================================================
-// Internal helpers
-// =============================================================================
-
 function defaultRasterise(
   svg: string,
   options: { width: number; height: number },
@@ -84,61 +72,34 @@ function defaultRasterise(
   return Promise.resolve(new Uint8Array(png.buffer, png.byteOffset, png.byteLength));
 }
 
-/**
- * Find the raw FigNode (post-projection) whose GUID matches the
- * domain target. We project the document via `documentToTree` here so
- * edits made on the FigDesignDocument since load are reflected in the
- * thumbnail — using `_loaded.nodeChanges` directly would render the
- * pre-edit snapshot.
- */
-function locateRawNode(
-  request: FigThumbnailRenderRequest,
-): { readonly raw: FigNode; readonly symbolMap: ReadonlyMap<string, FigNode>; readonly blobs: readonly { readonly bytes: readonly number[] }[] } {
-  const { nodeChanges, blobs } = documentToTree(request.document);
-  const tree = buildNodeTree(nodeChanges);
-  const { sessionID, localID } = parseId(request.target.id);
-  const key = guidToString({ sessionID, localID });
-  const raw = tree.nodeMap.get(key);
-  if (!raw) {
-    throw new Error(
-      `node-thumbnail-renderer: projected document does not contain target GUID ${key}; ` +
-        `documentToTree(...) lost the node.`,
-    );
-  }
-  return { raw, symbolMap: tree.nodeMap, blobs };
-}
-
 // =============================================================================
 // Public API
 // =============================================================================
 
 /**
  * Build a `FigThumbnailRenderer` suitable for passing into
- * `exportFig(doc, { renderThumbnail: ... })` in a Node environment.
+ * `exportFig(context, { renderThumbnail: ... })` in a Node environment.
  *
  * The renderer:
- *   1. Projects the document via `documentToTree` so the latest edits
- *      are picked up.
- *   2. Locates the target node by GUID in the projected nodeMap.
- *   3. Renders it as a self-contained SVG root (no parent transform).
- *   4. Pipes the SVG through resvg-js (or the override).
- *   5. Clamps PNG dimensions to `request.maxDimension`.
+ *   1. Renders the request target from the Kiwi document context.
+ *   2. Pipes the SVG through resvg-js (or the override).
+ *   3. Clamps PNG dimensions to `request.maxDimension`.
  */
 export function createNodeThumbnailRenderer(
   options: CreateNodeThumbnailRendererOptions = {},
 ): FigThumbnailRenderer {
   const rasterise = options.rasterise ?? defaultRasterise;
   return async (request) => {
-    const located = locateRawNode(request);
     const pngDimensions = fitFigThumbnailSize(request.canvasBounds, request.maxDimension);
-    const svgResult = await renderFigToSvg([located.raw], {
+    const svgResult = await renderFigToSvg([request.target], {
       width: request.canvasBounds.width,
       height: request.canvasBounds.height,
-      viewport: { x: 0, y: 0, width: request.canvasBounds.width, height: request.canvasBounds.height },
-      normalizeRootTransform: true,
-      blobs: located.blobs,
-      images: request.document.images,
-      symbolMap: located.symbolMap,
+      viewport: request.canvasBounds,
+      blobs: request.context.blobs,
+      images: request.context.images,
+      childrenOf: request.context.document.childrenOf,
+      symbolResolver: request.context.symbolResolver,
+      styleRegistry: request.context.styleRegistry,
       ...(options.fontLoader ? { fontLoader: options.fontLoader } : {}),
       ...(options.exportSettings ? { exportSettings: options.exportSettings } : {}),
     });

@@ -5,7 +5,7 @@
  * Uses SceneNodeId for stable identity matching (React-style keyed reconciliation).
  */
 
-import type { SceneGraph, SceneNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph, SceneNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
 
 // =============================================================================
 // Diff Operation Types
@@ -88,7 +88,7 @@ export type SceneGraphDiff = {
  * TypeScript doesn't narrow `unknown` to `Record<string, unknown>`
  * even after `typeof v === "object" && v !== null`, and the caller
  * only ever uses the result for `Object.keys` + indexed access —
- * both of which are safe on any non-null object. This helper isolates
+ * both of which are safe on any non-null object. This function isolates
  * the unavoidable type widening into one place so the comparison
  * functions below never sprinkle `as Record<string, unknown>` casts
  * around their bodies.

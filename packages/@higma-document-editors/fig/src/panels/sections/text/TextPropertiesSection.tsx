@@ -1,183 +1,107 @@
-/**
- * @file Text properties section adapter
- *
- * Wires the kernel TextPropertiesSectionView to FigDesignNode.textData. The
- * formatting block and horizontal-justify block come from upper-layer shared
- * editors and are passed in as slots, because they depend on FigDesignNode's
- * text shape and surface-level controls that the kernel cannot import.
- */
+/** @file Text node property section over Kiwi textData. */
+import { getNodeType } from "@higma-document-models/fig/domain";
+import type { FigFontName, FigKiwiTextData, FigNode } from "@higma-document-models/fig/types";
+import { useFigEditor } from "../../../context/FigEditorContext";
+import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
-import { useCallback } from "react";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { TextData } from "@higma-document-models/fig/domain";
-import type { KiwiEnumValue } from "@higma-document-models/fig/types";
-import { TextFormattingEditor } from "@higma-editor-surfaces/controls/text";
-import type { TextFormatting, TextFormattingFeatures } from "@higma-editor-surfaces/controls/text";
-import { TextJustifySection } from "react-editor-ui/sections/TextJustifySection";
-import type { TextJustifyData } from "@higma-editor-kernel/core/adapter-types";
-import {
-  TextPropertiesSectionView,
-  type AutoResizeId,
-  type VerticalAlignId,
-} from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import {
-  figTextToFormatting,
-  applyFormattingUpdate,
-  getAutoResize,
-  makeAutoResizeEnum,
-  type FigTextAutoResize,
-} from "./fig-text-adapter";
-import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-
-const FIG_TEXT_FEATURES: TextFormattingFeatures = {
-  showFontFamily: true,
-  showFontSize: true,
-  showBold: true,
-  showItalic: true,
-  showUnderline: true,
-  showStrikethrough: true,
-  showTextColor: false,
-  showHighlight: false,
-  showSuperSubscript: false,
-  showUnderlineStyle: false,
-  showStrikeStyle: false,
-  showCaps: false,
-  showSpacing: true,
-};
-
-type TextJustify = "left" | "center" | "right" | "justify";
-
-const H_ALIGN_TO_JUSTIFY: Record<string, TextJustify> = {
-  LEFT: "left",
-  CENTER: "center",
-  RIGHT: "right",
-  JUSTIFIED: "justify",
-};
-
-const JUSTIFY_TO_H_ALIGN: Record<string, { name: string; value: number }> = {
-  left: { name: "LEFT", value: 0 },
-  center: { name: "CENTER", value: 1 },
-  right: { name: "RIGHT", value: 2 },
-  justify: { name: "JUSTIFIED", value: 3 },
-};
-
-const VERTICAL_ALIGN_VALUES: Record<VerticalAlignId, number> = {
-  TOP: 0,
-  CENTER: 1,
-  BOTTOM: 2,
-};
-
-function kiwiName(value: unknown): string {
-  if (!value) {return "";}
-  if (typeof value === "string") {return value;}
-  if (typeof value === "object" && value !== null && "name" in value) {
-    return (value as { name: string }).name ?? "";
+function requireTextData(node: FigNode): FigKiwiTextData {
+  if (node.textData === undefined) {
+    throw new Error("TextPropertiesSection requires Kiwi textData on TEXT nodes");
   }
-  return "";
+  return node.textData;
 }
 
-function makeKiwiEnum(name: string, value: number) {
-  return { value, name } as KiwiEnumValue;
+function readTextFontSize(node: FigNode): number {
+  const textData = requireTextData(node);
+  const fontSize = textData.fontSize ?? node.fontSize;
+  if (fontSize === undefined) {
+    throw new Error("TextPropertiesSection requires a Kiwi fontSize on TEXT nodes");
+  }
+  return fontSize;
 }
 
-type KiwiLineHeight = { readonly value: number; readonly units: KiwiEnumValue };
-const PIXELS_UNITS = { value: 0, name: "PIXELS" } as KiwiEnumValue;
-
-function mergeTextDataLineHeight(existing: KiwiLineHeight | undefined, newValue: number): KiwiLineHeight {
-  return existing ? { ...existing, value: newValue } : { value: newValue, units: PIXELS_UNITS };
+function readTextFontName(node: FigNode): FigFontName {
+  const textData = requireTextData(node);
+  const fontName = textData.fontName ?? node.fontName;
+  if (fontName === undefined) {
+    throw new Error("TextPropertiesSection requires a Kiwi fontName on TEXT nodes");
+  }
+  return fontName;
 }
 
-type TextPropertiesSectionProps = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
-
-/** Panel section for editing text formatting and layout properties of a Figma text node. */
-export function TextPropertiesSection({ node, target, dispatch }: TextPropertiesSectionProps) {
-  const textData = node.textData;
-  if (!textData) {
+/** Render text content and base font controls from Kiwi textData. */
+export function TextPropertiesSection({ node }: { readonly node: FigNode }) {
+  const { updateNode } = useFigEditor();
+  if (getNodeType(node) !== "TEXT") {
     return null;
   }
-
-  const updateTextData = useCallback(
-    (updater: (td: TextData) => TextData) => {
-      dispatch(createPropertyPrimaryUpdateAction({
-        target,
-        updater: (n) => {
-          if (!n.textData) {return n;}
-          return { ...n, textData: updater(n.textData) };
-        },
-      }));
-    },
-    [dispatch, target],
-  );
-
-  const textFormatting = figTextToFormatting(textData);
-  const handleFormattingChange = useCallback(
-    (update: Partial<TextFormatting>) => {
-      updateTextData((td) => applyFormattingUpdate(td, update));
-    },
-    [updateTextData],
-  );
-
-  const hAlign = kiwiName(textData.textAlignHorizontal);
-  const justifyData: TextJustifyData = { align: H_ALIGN_TO_JUSTIFY[hAlign] ?? "left" };
-  const handleJustifyChange = useCallback(
-    (data: TextJustifyData) => {
-      const mapped = JUSTIFY_TO_H_ALIGN[data.align];
-      if (mapped) {
-        updateTextData((td) => ({
-          ...td,
-          textAlignHorizontal: makeKiwiEnum(mapped.name, mapped.value),
-        }));
-      }
-    },
-    [updateTextData],
-  );
-
-  const lineHeight = textData.lineHeight;
-  const lineHeightMultiplier = lineHeight
-    ? Math.round((lineHeight.value / textData.fontSize) * 100) / 100
-    : undefined;
-
-  const verticalAlign = (kiwiName(textData.textAlignVertical) || "TOP") as VerticalAlignId;
-  const autoResize = getAutoResize(textData) as AutoResizeId;
-
+  if (node.guid === undefined) {
+    throw new Error("TextPropertiesSection requires a Kiwi node guid");
+  }
+  const guid = node.guid;
+  const textData = requireTextData(node);
+  const fontSize = readTextFontSize(node);
+  const fontName = readTextFontName(node);
   return (
-    <TextPropertiesSectionView
-      characters={textData.characters}
-      onCharactersChange={(value) => updateTextData((td) => ({ ...td, characters: value }))}
-      formattingSlot={
-        <TextFormattingEditor
-          value={textFormatting}
-          onChange={handleFormattingChange}
-          features={FIG_TEXT_FEATURES}
+    <section style={sectionStyle}>
+      <div style={sectionTitleStyle}>Text</div>
+      <PropertyField label="Characters">
+        <textarea
+          style={{ ...inputStyle, minHeight: 70, resize: "vertical" }}
+          value={textData.characters}
+          onChange={(event) => updateNode(guid, (current) => ({
+            ...current,
+            textData: {
+              ...requireTextData(current),
+              characters: event.currentTarget.value,
+            },
+          }), "property-panel")}
         />
-      }
-      justifySlot={
-        <TextJustifySection
-          data={justifyData}
-          onChange={handleJustifyChange}
-          size="sm"
-        />
-      }
-      lineHeightMultiplier={lineHeightMultiplier}
-      onLineHeightMultiplierChange={(multiplier) => updateTextData((td) => ({
-        ...td,
-        lineHeight: mergeTextDataLineHeight(td.lineHeight, multiplier * td.fontSize),
-      }))}
-      verticalAlign={verticalAlign}
-      onVerticalAlignChange={(value) => updateTextData((td) => ({
-        ...td,
-        textAlignVertical: makeKiwiEnum(value, VERTICAL_ALIGN_VALUES[value]),
-      }))}
-      autoResize={autoResize}
-      onAutoResizeChange={(value) => updateTextData((td) => ({
-        ...td,
-        textAutoResize: makeAutoResizeEnum(value as FigTextAutoResize),
-      }))}
-    />
+      </PropertyField>
+      <div style={{ ...fieldGridStyle, marginTop: 8 }}>
+        <PropertyField label="Size">
+          <input
+            style={inputStyle}
+            type="number"
+            min={1}
+            value={fontSize}
+            onChange={(event) => updateNode(guid, (current) => {
+              const fontSize = Number(event.currentTarget.value);
+              return {
+                ...current,
+                fontSize,
+                textData: {
+                  ...requireTextData(current),
+                  fontSize,
+                },
+              };
+            }, "property-panel")}
+          />
+        </PropertyField>
+        <PropertyField label="Family">
+          <input
+            style={inputStyle}
+            value={fontName.family}
+            onChange={(event) => updateNode(guid, (current) => {
+              const currentTextData = requireTextData(current);
+              const currentFontName = readTextFontName(current);
+              const nextFontName = {
+                family: event.currentTarget.value,
+                style: currentFontName.style,
+                postscript: `${event.currentTarget.value}-${currentFontName.style.replace(/\s+/g, "")}`,
+              };
+              return {
+                ...current,
+                fontName: nextFontName,
+                textData: {
+                  ...currentTextData,
+                  fontName: nextFontName,
+                },
+              };
+            }, "property-panel")}
+          />
+        </PropertyField>
+      </div>
+    </section>
   );
 }

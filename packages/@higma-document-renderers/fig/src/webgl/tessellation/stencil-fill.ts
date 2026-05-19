@@ -19,7 +19,7 @@
  */
 
 import { flattenPathCommands } from "@higma-primitives/path";
-import type { PathContour } from "@higma-document-models/fig/scene-graph";
+import type { PathContour } from "@higma-document-renderers/fig/scene-graph";
 
 /** Stencil bit for frame clipping (bit 7) */
 export const CLIP_STENCIL_BIT = 0x80;

@@ -1,9 +1,9 @@
 /**
- * @file Adapter from an explicit loaded-font cache to text glyph resolution.
+ * @file Resolver backed by an explicit loaded-font cache.
  *
  * Both sides speak the canonical `FontQuery` — no normalization happens
  * here. If the cache and resolver disagree on what "the same font" means,
- * fix `figmaFontToQuery` (the SoT), not this adapter.
+ * fix `figmaFontToQuery` (the SoT), not this resolver.
  */
 
 import type { FontQuery } from "@higma-document-models/fig/font";

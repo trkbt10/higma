@@ -10,8 +10,11 @@
 
 import { useMemo, useState, useCallback, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
-import { createFigDesignDocument, createEmptyFigDesignDocument } from "@higma-document-io/fig";
+import {
+  createEmptyFigDocument,
+  createFigDocumentContext,
+  type FigDocumentContext,
+} from "@higma-document-io/fig";
 import type { EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
 import { Button, Select, Tabs, Toggle, injectCSSVariables, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import { FigEditor } from "../src/editor/FigEditor";
@@ -21,12 +24,9 @@ import { LayerPanel } from "../src/panels/layers/LayerPanel";
 import { PropertyPanel } from "../src/panels/properties/PropertyPanel";
 import { FigInspectorPanel } from "../src/panels/inspector/FigInspectorPanel";
 import { FigInspectorDetailsPanel } from "../src/panels/inspector/FigInspectorDetailsPanel";
-import { FigInspectorOverlay } from "../src/inspector/FigInspectorOverlay";
-import { FigInspectorProvider } from "../src/inspector/FigInspectorContext";
+import { FigInspectorOverlay, FigInspectorProvider } from "../src/inspector";
 import { FileDropZone } from "./components/FileDropZone";
 import { RendererDebugView } from "./components/RendererDebugView";
-import { createBrowserFontLoader } from "@higma-document-renderers/fig/font-drivers/browser";
-import { createCachingFontLoader } from "@higma-document-models/fig/font";
 
 injectCSSVariables();
 
@@ -42,7 +42,7 @@ const editorRendererOptions = [
 ] satisfies readonly { readonly value: FigEditorRendererKind; readonly label: string }[];
 
 type LoadedFile = {
-  readonly document: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly raw: Uint8Array;
   readonly fileName: string;
 };
@@ -259,7 +259,6 @@ function App() {
   const [mode, setMode] = useState<DevMode>("editor");
   const [inspectorOverlayEnabled, setInspectorOverlayEnabled] = useState(false);
   const [editorRenderer, setEditorRenderer] = useState<FigEditorRendererKind>("svg");
-  const editorFontLoader = useMemo(() => createCachingFontLoader(createBrowserFontLoader()), []);
 
   const editorPanels = useMemo<EditorPanel[]>(
     () => [
@@ -287,8 +286,8 @@ function App() {
     try {
       const buffer = await file.arrayBuffer();
       const data = new Uint8Array(buffer);
-      const document = await createFigDesignDocument(data);
-      setLoadedFile({ document, raw: data, fileName: file.name });
+      const context = await createFigDocumentContext(data);
+      setLoadedFile({ context, raw: data, fileName: file.name });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to parse file";
       setError(message);
@@ -299,8 +298,8 @@ function App() {
   }, []);
 
   const handleNewDocument = useCallback(() => {
-    const document = createEmptyFigDesignDocument();
-    setLoadedFile({ document, raw: new Uint8Array(), fileName: "Untitled.fig" });
+    const context = createEmptyFigDocument("Page 1");
+    setLoadedFile({ context, raw: new Uint8Array(), fileName: "Untitled.fig" });
     setError(null);
   }, []);
 
@@ -364,12 +363,12 @@ function App() {
               <div style={mainStyle}>
                 <FigInspectorProvider>
                   <FigEditor
-                    initialDocument={loadedFile.document}
+                    context={loadedFile.context}
                     panels={editorPanels}
-                    canvasOverlay={inspectorOverlayEnabled ? <FigInspectorOverlay /> : null}
                     renderer={editorRenderer}
-                    fontLoader={editorFontLoader}
-                  />
+                  >
+                    {inspectorOverlayEnabled ? <FigInspectorOverlay /> : null}
+                  </FigEditor>
                 </FigInspectorProvider>
               </div>
             ),

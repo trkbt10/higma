@@ -22,11 +22,11 @@
 import { flattenPathCommands, type PathCommand } from "@higma-primitives/path";
 import { tessellateContours, tessellateContour } from "../tessellation/tessellation";
 import { tessellateTextNode } from "./text-renderer";
-import type { PathContour, TextNode } from "@higma-document-models/fig/scene-graph";
+import type { PathContour, TextNode } from "@higma-document-renderers/fig/scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
-// Test Helpers
+// Test Routines
 // =============================================================================
 
 const IDENTITY: AffineMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
@@ -570,7 +570,7 @@ describe("Text tessellation pipeline", () => {
     it("classifies outers correctly even when holes outnumber outers (₱-shape case)", () => {
       // Build a single GlyphContour that mimics a peso sign:
       //   1 large outer (14×14) + 3 small holes (a bowl + 2 bars).
-      // Use the helper shapes so signed-area convention matches
+      // Use the routine shapes so signed-area convention matches
       // the rest of the spec (outerRect = negative area → outer in
       // this spec's coords; holeRect = positive → hole).
       const outerCmds = outerRect({ x: 0, y: 0, w: 14, h: 14 }).commands;

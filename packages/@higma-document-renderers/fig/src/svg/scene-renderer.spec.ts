@@ -1,8 +1,8 @@
 /** @file SceneGraph SVG renderer viewport tests. */
 import { renderSceneGraphToSvg, formatRenderTreeToSvg } from "./scene-renderer";
 import { resolveRenderTree } from "../scene-graph/render-tree/resolve";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
-import { createNodeId } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
 import { createPngImage, readPng, writePng, type PngImage } from "@higma-codecs/png";
 
 function createPngBytes(size: { readonly width: number; readonly height: number }, rgb = 128): Uint8Array {
@@ -72,7 +72,7 @@ describe("renderSceneGraphToSvg viewport", () => {
           height: 100,
           fills: [{
             type: "image",
-            imageRef: "img-ref",
+            imageHash: "img-ref",
             data: source,
             mimeType: "image/png",
             scaleMode: "FILL",

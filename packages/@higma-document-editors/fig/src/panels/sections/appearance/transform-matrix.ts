@@ -1,61 +1,37 @@
-/**
- * @file Transform matrix helpers shared by the position / size / rotation
- * section adapters and the alignment adapter.
- *
- * Keeps the matrix-update logic in one place so each section adapter stays
- * focused on translating UI intents to property mutations.
- */
-
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+/** @file Transform field operations for Kiwi nodes. */
 import type { FigMatrix } from "@higma-document-models/fig/types";
+import { readKiwiTransform } from "../../../context/fig-editor/matrix";
 import { extractRotationDeg } from "../../../context/fig-editor/rotation";
 
-/**
- * Rebuild a rotation matrix from a pre-rotation top-left and the node's
- * current rotation. Used by both position editing and parent alignment.
- */
-export function rebuildTransformFromTopLeft(
-  node: FigDesignNode,
-  topLeft: { readonly x: number; readonly y: number },
+/** Return transform translation X/Y with schema identity values applied. */
+export function readTransformPosition(transform: FigMatrix | undefined): { readonly x: number; readonly y: number } {
+  const matrix = readKiwiTransform(transform);
+  return { x: matrix.m02, y: matrix.m12 };
+}
+
+/** Return transform rotation in degrees. */
+export function readTransformRotation(transform: FigMatrix | undefined): number {
+  return extractRotationDeg(readKiwiTransform(transform));
+}
+
+/** Set transform translation while preserving current affine basis. */
+export function setTransformPosition(
+  transform: FigMatrix | undefined,
+  x: number,
+  y: number,
 ): FigMatrix {
-  const currentAngle = extractRotationDeg(node.transform);
-  const radians = (currentAngle * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  const halfW = node.size.x / 2;
-  const halfH = node.size.y / 2;
-  const newCx = topLeft.x + halfW;
-  const newCy = topLeft.y + halfH;
-  return {
-    m00: cos,
-    m01: -sin,
-    m02: newCx - cos * halfW + sin * halfH,
-    m10: sin,
-    m11: cos,
-    m12: newCy - sin * halfW - cos * halfH,
-  };
+  return { ...readKiwiTransform(transform), m02: x, m12: y };
 }
 
-/** Mirror the matrix about the node's local vertical axis (x = width/2). */
-export function flipMatrixHorizontalLocal(m: FigMatrix, width: number): FigMatrix {
+/** Set transform rotation around the node origin while preserving translation. */
+export function setTransformRotation(transform: FigMatrix | undefined, degrees: number): FigMatrix {
+  const matrix = readKiwiTransform(transform);
+  const radians = (degrees * Math.PI) / 180;
   return {
-    m00: -m.m00,
-    m01: m.m01,
-    m02: m.m02 + m.m00 * width,
-    m10: -m.m10,
-    m11: m.m11,
-    m12: m.m12 + m.m10 * width,
-  };
-}
-
-/** Mirror the matrix about the node's local horizontal axis (y = height/2). */
-export function flipMatrixVerticalLocal(m: FigMatrix, height: number): FigMatrix {
-  return {
-    m00: m.m00,
-    m01: -m.m01,
-    m02: m.m02 + m.m01 * height,
-    m10: m.m10,
-    m11: -m.m11,
-    m12: m.m12 + m.m11 * height,
+    ...matrix,
+    m00: Math.cos(radians),
+    m01: -Math.sin(radians),
+    m10: Math.sin(radians),
+    m11: Math.cos(radians),
   };
 }

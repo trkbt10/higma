@@ -53,28 +53,9 @@ export type AlignYOptions = {
    * exceeds the content-area height the extra space is split half above
    * and half below, shifting the first-line baseline down by
    * `(line-height - content-area-height) / 2`.
-   *
-   * Optional for backwards compatibility: when omitted the half-leading
-   * term is zero and the baseline sits exactly at `fontSize *
-   * ascenderRatio` from the top — which is what the renderer did before
-   * the half-leading fix landed, and what the .fig snapshots compiled
-   * against legacy callers expect.
    */
-  descenderRatio?: number;
+  descenderRatio: number;
 };
-
-/**
- * Resolve a descender ratio to a usable non-negative finite number. The
- * CSS half-leading rule treats missing or pathological values as zero —
- * the loader can omit it entirely (legacy callers), or surface an
- * undefined/NaN/negative value when the font lacks proper OS/2 metrics.
- */
-function resolveDescenderRatio(descenderRatio: number | undefined): number {
-  if (descenderRatio === undefined) { return 0; }
-  if (!Number.isFinite(descenderRatio)) { return 0; }
-  if (descenderRatio < 0) { return 0; }
-  return descenderRatio;
-}
 
 /**
  * Calculate starting y position based on vertical alignment
@@ -99,6 +80,9 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
   if (!Number.isFinite(ascenderRatio) || ascenderRatio <= 0) {
     throw new Error("getAlignedYWithMetrics requires a positive ascenderRatio from font metrics");
   }
+  if (!Number.isFinite(descenderRatio) || descenderRatio < 0) {
+    throw new Error("getAlignedYWithMetrics requires a non-negative descenderRatio from font metrics");
+  }
 
   // CSS 2.1 §10.8.1 baseline placement with Chromium's integer
   // rounding on the font's typographic ascent / descent applied.
@@ -119,9 +103,8 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
   // Verified against `capturedLineBaselineYs` (browser-truth) for
   // SFNS body 16px, SFNS headline 24px, Inter 16px / 14px, Noto Sans
   // JP 16px — every case matches to within 1 px (AA tolerance).
-  const descenderRatioResolved = resolveDescenderRatio(descenderRatio);
   const ascentPx = Math.round(fontSize * ascenderRatio);
-  const descentPx = Math.round(fontSize * descenderRatioResolved);
+  const descentPx = Math.round(fontSize * descenderRatio);
   const contentAreaPx = ascentPx + descentPx;
   const halfLeading = Math.max(0, (lineHeight - contentAreaPx) / 2);
   const baselineOffset = halfLeading + ascentPx;
@@ -130,7 +113,7 @@ export function getAlignedYWithMetrics(options: AlignYOptions): number {
   const totalTextHeight = baselineOffset + (lineCount - 1) * lineHeight;
 
   if (!height) {
-    return baselineOffset; // Default: baseline at ascender from top
+    return baselineOffset;
   }
 
   switch (align) {

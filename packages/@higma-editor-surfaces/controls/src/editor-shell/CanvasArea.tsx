@@ -27,6 +27,8 @@ const containerStyle: CSSProperties = {
   flexDirection: "column",
   width: "100%",
   height: "100%",
+  minWidth: 0,
+  minHeight: 0,
   backgroundColor: `var(--bg-tertiary, ${colorTokens.background.tertiary})`,
   overflow: "hidden",
 };
@@ -43,6 +45,8 @@ const canvasWrapperStyle: CSSProperties = {
   flex: 1,
   display: "flex",
   position: "relative",
+  minWidth: 0,
+  minHeight: 0,
   overflow: "hidden",
 };
 

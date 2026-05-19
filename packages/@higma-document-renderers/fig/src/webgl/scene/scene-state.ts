@@ -5,22 +5,13 @@
  * (tessellated vertices, fill info, transforms). Supports incremental
  * updates via applyDiff() to avoid full re-tessellation on every frame.
  */
-import type { SceneGraph, SceneNode, SceneNodeId, PathContour, Fill, Color, Effect, ClipShape, BlendMode } from "@higma-document-models/fig/scene-graph";
-import type { SceneGraphDiff, DiffOp } from "../../scene-graph/diff";
+import type { SceneGraph, SceneNode, SceneNodeId, PathContour, Fill, Color, Effect, ClipShape, BlendMode, SceneGraphDiff, DiffOp } from "@higma-document-renderers/fig/scene-graph";
 import {
   generateRectVertices,
   generateEllipseVertices,
   tessellateContours,
 } from "../tessellation/tessellation";
 import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
-
-/** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
-function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
-  if (cr === undefined) { return undefined; }
-  if (typeof cr === "number") { return cr; }
-  const avg = (cr[0] + cr[1] + cr[2] + cr[3]) / 4;
-  return avg > 0 ? avg : undefined;
-}
 
 /** Tessellate contours if they exist and are non-empty, otherwise return null */
 function tessellateContoursOrNull(
@@ -77,8 +68,8 @@ export type NodeGPUState = {
   clip: ClipShape | undefined;
   /** Ordered child IDs (groups/frames only) */
   childIds: SceneNodeId[];
-  /** Image reference (image nodes only) */
-  imageRef: string | null;
+  /** Image hash (image nodes only) */
+  imageHash: string | null;
   imageData: Uint8Array | null;
   imageMimeType: string | null;
   imageWidth: number;
@@ -87,7 +78,8 @@ export type NodeGPUState = {
   clipsContent: boolean;
   width: number;
   height: number;
-  cornerRadius: number | undefined;
+  cornerRadius: CornerRadius | undefined;
+  cornerSmoothing: number | undefined;
 };
 // =============================================================================
 // Scene State
@@ -136,7 +128,7 @@ export function createSceneState(): SceneStateInstance {
       effects: node.effects,
       clip: node.clip,
       childIds: [],
-      imageRef: null,
+      imageHash: null,
       imageData: null,
       imageMimeType: null,
       imageWidth: 0,
@@ -145,6 +137,7 @@ export function createSceneState(): SceneStateInstance {
       width: 0,
       height: 0,
       cornerRadius: undefined,
+      cornerSmoothing: undefined,
     };
     switch (node.type) {
       case "group":
@@ -154,20 +147,22 @@ export function createSceneState(): SceneStateInstance {
         base.childIds = node.children.map((c) => c.id);
         base.width = node.width;
         base.height = node.height;
-        base.cornerRadius = uniformRadiusForGL(node.cornerRadius);
+        base.cornerRadius = node.cornerRadius;
+        base.cornerSmoothing = node.cornerSmoothing;
         base.clipsContent = node.clipsContent;
         if (node.fills.length > 0) {
           base.fill = node.fills[node.fills.length - 1];
-          base.vertices = generateRectVertices(node.width, node.height, uniformRadiusForGL(node.cornerRadius));
+          base.vertices = generateRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
         }
         break;
       case "rect":
         base.width = node.width;
         base.height = node.height;
-        base.cornerRadius = uniformRadiusForGL(node.cornerRadius);
+        base.cornerRadius = node.cornerRadius;
+        base.cornerSmoothing = node.cornerSmoothing;
         if (node.fills.length > 0) {
           base.fill = node.fills[node.fills.length - 1];
-          base.vertices = generateRectVertices(node.width, node.height, uniformRadiusForGL(node.cornerRadius));
+          base.vertices = generateRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
         }
         break;
       case "ellipse":
@@ -201,7 +196,7 @@ export function createSceneState(): SceneStateInstance {
       case "image":
         base.width = node.width;
         base.height = node.height;
-        base.imageRef = node.imageRef;
+        base.imageHash = node.imageHash;
         base.imageData = node.data;
         base.imageMimeType = node.mimeType;
         base.imageWidth = node.width;
@@ -288,13 +283,13 @@ export function createSceneState(): SceneStateInstance {
     switch (op.nodeType) {
       case "rect": {
         const c = op.changes;
-        applyGeometryRetessellation(state, c.width, c.height, c.cornerRadius);
+        applyGeometryRetessellation(state, c.width, c.height, c.cornerRadius, c.cornerSmoothing);
         applyFillsUpdate(state, c.fills);
         break;
       }
       case "frame": {
         const c = op.changes;
-        applyGeometryRetessellation(state, c.width, c.height, c.cornerRadius);
+        applyGeometryRetessellation(state, c.width, c.height, c.cornerRadius, c.cornerSmoothing);
         applyFillsUpdate(state, c.fills);
         if (c.clipsContent !== undefined) {
           state.clipsContent = c.clipsContent;
@@ -303,16 +298,7 @@ export function createSceneState(): SceneStateInstance {
       }
       case "ellipse": {
         const c = op.changes;
-        if (c.cx !== undefined || c.cy !== undefined || c.rx !== undefined || c.ry !== undefined) {
-          if (state.fill) {
-            state.vertices = generateEllipseVertices({
-              cx: c.cx ?? 0,
-              cy: c.cy ?? 0,
-              rx: c.rx ?? 0,
-              ry: c.ry ?? 0,
-            });
-          }
-        }
+        applyEllipseGeometryRetessellation(state, c);
         applyFillsUpdate(state, c.fills);
         break;
       }
@@ -346,8 +332,8 @@ export function createSceneState(): SceneStateInstance {
       }
       case "image": {
         const c = op.changes;
-        if (c.imageRef !== undefined) {
-          state.imageRef = c.imageRef;
+        if (c.imageHash !== undefined) {
+          state.imageHash = c.imageHash;
         }
         if (c.data !== undefined) {
           state.imageData = c.data;
@@ -362,26 +348,52 @@ export function createSceneState(): SceneStateInstance {
 
   /**
    * Re-tessellate rect / frame geometry when any of width / height /
-   * cornerRadius changed. Mutates `state` in place.
+   * cornerRadius / cornerSmoothing changed. Mutates `state` in place.
    */
   function applyGeometryRetessellation(
     state: NodeGPUState,
     width: number | undefined,
     height: number | undefined,
     cornerRadius: CornerRadius | undefined,
+    cornerSmoothing: number | undefined,
   ): void {
-    if (width === undefined && height === undefined && cornerRadius === undefined) {
+    if (width === undefined && height === undefined && cornerRadius === undefined && cornerSmoothing === undefined) {
       return;
     }
     const w = width ?? state.width;
     const h = height ?? state.height;
-    const cr = cornerRadius !== undefined ? uniformRadiusForGL(cornerRadius) : state.cornerRadius;
+    const cr = cornerRadius !== undefined ? cornerRadius : state.cornerRadius;
+    const cs = cornerSmoothing !== undefined ? cornerSmoothing : state.cornerSmoothing;
     state.width = w;
     state.height = h;
     state.cornerRadius = cr;
+    state.cornerSmoothing = cs;
     if (state.fill) {
-      state.vertices = generateRectVertices(w, h, cr);
+      state.vertices = generateRectVertices(w, h, cr, cs);
     }
+  }
+
+  function applyEllipseGeometryRetessellation(
+    state: NodeGPUState,
+    changes: {
+      readonly cx?: number;
+      readonly cy?: number;
+      readonly rx?: number;
+      readonly ry?: number;
+    },
+  ): void {
+    if (changes.cx === undefined && changes.cy === undefined && changes.rx === undefined && changes.ry === undefined) {
+      return;
+    }
+    if (!state.fill) {
+      return;
+    }
+    state.vertices = generateEllipseVertices({
+      cx: changes.cx ?? 0,
+      cy: changes.cy ?? 0,
+      rx: changes.rx ?? 0,
+      ry: changes.ry ?? 0,
+    });
   }
 
   /**

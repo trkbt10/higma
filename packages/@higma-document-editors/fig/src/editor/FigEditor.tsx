@@ -1,80 +1,33 @@
 /**
- * @file Top-level fig editor component
- *
- * Composes EditorShell with all panels and the canvas.
- * This is the main entry point for embedding the fig editor.
+ * @file Public Fig editor composition entry.
  */
-
 import { useMemo, type CSSProperties, type ReactNode } from "react";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
-import { EditorShell, CanvasArea, StackedEditorPanel, type EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
-import { FigEditorProvider } from "../context/FigEditorContext";
+import type { FigDocumentContext } from "@higma-document-io/fig";
+import type { TextFontResolver } from "@higma-document-renderers/fig/text";
+import {
+  CanvasArea,
+  EditorShell,
+  StackedEditorPanel,
+  type EditorPanel,
+} from "@higma-editor-surfaces/controls/editor-shell";
 import { FigEditorCanvas } from "../canvas/FigEditorCanvas";
+import type { FigEditorRendererKind } from "../canvas/rendering/renderer-kind";
+import { FigEditorProvider } from "../context/FigEditorContext";
 import { FigEditorToolbar } from "./FigEditorToolbar";
 import { PageListPanel } from "../panels/pages/PageListPanel";
-import { PropertyPanel } from "../panels/properties/PropertyPanel";
 import { LayerPanel } from "../panels/layers/LayerPanel";
-import type { FigEditorRendererKind } from "../canvas/rendering/renderer-kind";
-import type { CachingFontLoader } from "@higma-document-models/fig/font";
+import { PropertyPanel } from "../panels/properties/PropertyPanel";
 
-// =============================================================================
-// Types
-// =============================================================================
-
-type FigEditorProps = {
-  readonly initialDocument: FigDesignDocument;
-  /**
-   * Custom panel configuration. If omitted, the default panels are used
-   * (Pages & Layers on left, Properties on right).
-   *
-   * Use this to add, remove, or replace panels — e.g. adding FigInspectorPanel.
-   *
-   * @example
-   * ```tsx
-   * <FigEditor
-   *   initialDocument={doc}
-   *   panels={[
-   *     { id: "layers", position: "left", content: <LayerPanel />, drawerLabel: "Layers" },
-   *     { id: "inspector", position: "right", content: <FigInspectorPanel />, drawerLabel: "Inspector" },
-   *   ]}
-   * />
-   * ```
-   */
-  readonly panels?: EditorPanel[];
-  /**
-   * Optional overlay rendered inside the canvas page-coordinate space,
-   * above the rendered page and below selection chrome.
-   *
-   * Intended for inspection overlays (e.g. FigInspectorOverlay).
-   * Toggling and conditional rendering are the caller's responsibility —
-   * pass `null` to hide.
-   *
-   * @example
-   * ```tsx
-   * const [inspect, setInspect] = useState(false);
-   * <FigEditor
-   *   initialDocument={doc}
-   *   canvasOverlay={inspect ? <FigInspectorOverlay /> : null}
-   * />
-   * ```
-   */
-  readonly canvasOverlay?: ReactNode;
-  /** Renderer backend used for the inert page layer. React remains the editor shell. */
+export type FigEditorProps = {
+  readonly context: FigDocumentContext;
   readonly renderer?: FigEditorRendererKind;
-  /** Optional preloaded/caching font loader used to outline text for WebGL. */
-  readonly fontLoader?: CachingFontLoader;
+  readonly textFontResolver?: TextFontResolver;
+  readonly children?: ReactNode;
+  readonly style?: CSSProperties;
+  readonly panels?: EditorPanel[];
+  readonly onContextChange?: (context: FigDocumentContext) => void;
 };
 
-// =============================================================================
-// Left panel content: pages (fixed) + layers (scrollable)
-// =============================================================================
-
-/**
- * Left panel: Pages (compact, always visible) above Layers (scrollable, fills remaining space).
- *
- * Using flex layout: PageListPanel gets its natural height,
- * LayerPanel wrapper takes remaining space with independent scroll.
- */
 function LeftPanelContent() {
   return (
     <StackedEditorPanel
@@ -86,12 +39,7 @@ function LeftPanelContent() {
   );
 }
 
-// =============================================================================
-// Inner Component (uses context)
-// =============================================================================
-
-/** Default panel configuration for FigEditor. */
-const DEFAULT_PANELS: EditorPanel[] = [
+const defaultPanels: EditorPanel[] = [
   {
     id: "pages-layers",
     position: "left",
@@ -109,59 +57,47 @@ const DEFAULT_PANELS: EditorPanel[] = [
 ];
 
 function FigEditorContent({
-  panels,
-  canvasOverlay,
   renderer,
-  fontLoader,
+  textFontResolver,
+  children,
+  panels,
 }: {
-  readonly panels?: EditorPanel[];
-  readonly canvasOverlay?: ReactNode;
   readonly renderer?: FigEditorRendererKind;
-  readonly fontLoader?: CachingFontLoader;
+  readonly textFontResolver?: TextFontResolver;
+  readonly children?: ReactNode;
+  readonly panels?: EditorPanel[];
 }) {
-  const toolbarContent = useMemo(() => <FigEditorToolbar />, []);
-  const resolvedPanels = panels ?? DEFAULT_PANELS;
-
+  const toolbar = useMemo(() => <FigEditorToolbar />, []);
+  const resolvedPanels = panels ?? defaultPanels;
   return (
-    <EditorShell toolbar={toolbarContent} panels={resolvedPanels}>
+    <EditorShell toolbar={toolbar} panels={resolvedPanels}>
       <CanvasArea>
-        <FigEditorCanvas canvasOverlay={canvasOverlay} renderer={renderer} fontLoader={fontLoader} />
+        <FigEditorCanvas renderer={renderer} textFontResolver={textFontResolver}>
+          {children}
+        </FigEditorCanvas>
       </CanvasArea>
     </EditorShell>
   );
 }
 
-// =============================================================================
-// Public Component
-// =============================================================================
-
-const containerStyle: CSSProperties = {
-  width: "100%",
-  height: "100%",
-};
-
 /**
- * Fig design editor.
- *
- * Provides a full-featured editor for .fig design files with:
- * - Page management (left panel)
- * - Interactive canvas with selection, move, resize, rotate (center)
- * - Property editing + layer tree (right panel)
- * - Creation tools toolbar (top)
- * - Undo/redo (top)
- * - Keyboard shortcuts
- *
- * @example
- * ```tsx
- * const doc = await createFigDesignDocument(buffer);
- * <FigEditor initialDocument={doc} />
- * ```
+ * Full Kiwi-backed Fig editor shell.
  */
-export function FigEditor({ initialDocument, panels, canvasOverlay, renderer, fontLoader }: FigEditorProps) {
+export function FigEditor({
+  context,
+  renderer,
+  textFontResolver,
+  children,
+  style,
+  panels,
+  onContextChange,
+}: FigEditorProps) {
   return (
-    <FigEditorProvider initialDocument={initialDocument}>
-      <div style={containerStyle}>
-        <FigEditorContent panels={panels} canvasOverlay={canvasOverlay} renderer={renderer} fontLoader={fontLoader} />
+    <FigEditorProvider context={context} onContextChange={onContextChange}>
+      <div style={{ width: "100%", height: "100%", ...style }}>
+        <FigEditorContent renderer={renderer} textFontResolver={textFontResolver} panels={panels}>
+          {children}
+        </FigEditorContent>
       </div>
     </FigEditorProvider>
   );

@@ -2,7 +2,7 @@
  * @file SVG path data serialization
  *
  * Re-exports `pathCommandsToSvgPath` from `@higma-primitives/path`
- * and provides text-specific helpers (decoration rects, text path
+ * and provides text-specific functions (decoration rects, text path
  * results).
  */
 

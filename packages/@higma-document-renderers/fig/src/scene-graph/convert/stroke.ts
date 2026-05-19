@@ -5,17 +5,18 @@
  * Supports gradient strokes and multi-paint stroke layers.
  */
 
-import type { FigPaint, FigStrokeWeight, FigGradientPaint, FigStrokeCap, FigStrokeJoin, FigStrokeAlign } from "@higma-document-models/fig/types";
+import type { FigPaint, FigStrokeWeight, FigGradientPaint, FigStrokeCap, FigStrokeJoin, FigStrokeAlign, KiwiEnumValue } from "@higma-document-models/fig/types";
 import { getPaintType, asGradientPaint, asSolidPaint } from "@higma-document-models/fig/color";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { resolveStrokeWeight, mapStrokeCap, mapStrokeJoin } from "../../stroke";
-import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, Color } from "@higma-document-models/fig/scene-graph";
+import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, Color } from "@higma-document-renderers/fig/scene-graph";
 import { figColorToSceneColor } from "./fill";
 import {
   getGradientStops,
   getGradientDirection,
   getRadialGradientCenterAndRadius,
 } from "../../paint";
-import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
+import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 /**
@@ -55,7 +56,7 @@ function extractGradientTransform(paint: FigGradientPaint): AffineMatrix | undef
  * Carries the paint.transform through to the resulting fill so the
  * render-tree finalizer can convert the gradient coordinates from
  * objectBoundingBox percentages to userSpaceOnUse pixels. Without the
- * transform, stroke gradients fall back to the normalized start/end
+ * transform, stroke gradients use the percentage start/end
  * which produce nonsense extrapolated percentages (e.g. y=-7522%) for
  * matrices whose inverse puts the gradient-space origin outside
  * [0, 1] — breaking every non-identity stroke gradient.
@@ -176,10 +177,10 @@ export function convertStrokeToSceneStroke(
   paints: readonly FigPaint[] | undefined,
   strokeWeight: FigStrokeWeight | undefined,
   options?: {
-    strokeCap?: FigStrokeCap;
-    strokeJoin?: FigStrokeJoin;
+    strokeCap?: KiwiEnumValue<FigStrokeCap>;
+    strokeJoin?: KiwiEnumValue<FigStrokeJoin>;
     dashPattern?: readonly number[];
-    strokeAlign?: FigStrokeAlign;
+    strokeAlign?: KiwiEnumValue<FigStrokeAlign>;
   },
 ): Stroke | undefined {
   const width = resolveStrokeWeight(strokeWeight);
@@ -228,8 +229,12 @@ export function convertStrokeToSceneStroke(
   };
 }
 
-function resolveStrokeAlign(raw: FigStrokeAlign | undefined): StrokeAlign | undefined {
+function resolveStrokeAlign(raw: KiwiEnumValue<FigStrokeAlign> | undefined): StrokeAlign | undefined {
   if (!raw) { return undefined; }
-  if (raw === "INSIDE" || raw === "OUTSIDE") { return raw; }
+  const name = kiwiEnumName<FigStrokeAlign>(raw, "FigNode.strokeAlign");
+  if (name === undefined) {
+    throw new Error("FigNode.strokeAlign was present but resolved to undefined");
+  }
+  if (name === "INSIDE" || name === "OUTSIDE") { return name; }
   return undefined; // CENTER is the SVG default, no need to store
 }

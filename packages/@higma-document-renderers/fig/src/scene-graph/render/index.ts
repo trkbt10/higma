@@ -1,5 +1,5 @@
 /**
- * @file Scene graph render utilities — shared SoT for SVG attribute resolution
+ * @file Scene graph render operations — shared SoT for SVG attribute resolution
  *
  * This module is the SINGLE source of truth for converting SceneGraph types
  * to SVG rendering attributes. Both the SVG string renderer and the React
@@ -9,7 +9,7 @@
  * ## Architecture
  *
  * ```
- * FigDesignNode / FigNode
+ * FigNode
  *       ↓
  * scene-graph/builder (or convert/)
  *       ↓
@@ -65,12 +65,13 @@ export type {
   FigmaImageResamplingSettings,
   FigmaPdfImageQuality,
   FigmaRenderExportSettings,
-  NormalizedFigmaRenderExportSettings,
+  RenderExportSettingsCacheKey,
+  ResolvedFigmaRenderExportSettings,
   SceneGraphRenderOptions,
 } from "./export-settings";
 
 export {
-  normalizeFigmaRenderExportSettings,
+  resolveFigmaRenderExportSettings,
   renderExportSettingsCacheKey,
   requireManagedImageColorProfile,
 } from "./export-settings";
@@ -88,3 +89,10 @@ export {
   type ResolvedFilter,
   type ResolvedFilterPrimitive,
 } from "./effects";
+
+export {
+  buildEffectStack,
+  renderShapeEffectStack,
+  type ResolvedEffectStack,
+  type ShapeEffectStackParams,
+} from "./effect-stack";

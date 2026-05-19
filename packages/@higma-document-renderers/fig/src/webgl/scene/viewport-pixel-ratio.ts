@@ -23,8 +23,8 @@ function finitePositiveOrOne(value: number): number {
 }
 
 function quantizeUp(value: number, step: number): number {
-  const normalizedStep = finitePositiveOrOne(step);
-  return Math.ceil(value / normalizedStep) * normalizedStep;
+  const positiveStep = finitePositiveOrOne(step);
+  return Math.ceil(value / positiveStep) * positiveStep;
 }
 
 function requireFinitePositive(name: string, value: number): number {

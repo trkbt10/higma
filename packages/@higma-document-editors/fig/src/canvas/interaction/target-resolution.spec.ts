@@ -1,100 +1,57 @@
-/** @file Tests for canvas interaction target resolution. */
+/** @file Canvas interaction target resolution tests over Kiwi GUIDs. */
 
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import type { FigMatrix } from "@higma-document-models/fig/types";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { NODE_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
 import { flattenAllNodeBounds } from "./bounds";
-import { resolveCanvasInteractionTarget } from "./target-resolution";
+import { resolveInteractionTargetGuid } from "./target-resolution";
 
-function makeTransform(x: number, y: number): FigMatrix {
-  return { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y };
+function guid(localID: number): FigGuid {
+  return { sessionID: 71, localID };
 }
 
-function makeNode(
-  id: string,
-  options: {
-    readonly type?: FigDesignNode["type"];
-    readonly x: number;
-    readonly y: number;
-    readonly width: number;
-    readonly height: number;
-    readonly children?: readonly FigDesignNode[];
-    readonly editable?: boolean;
-  },
-): FigDesignNode {
+function figNode(localID: number, parent: FigGuid | undefined, x: number, y: number, width: number, height: number): FigNode {
   return {
-    id: id as FigNodeId,
-    type: options.type ?? "RECTANGLE",
-    name: id,
+    guid: guid(localID),
+    phase: { value: 0, name: "PAINT" },
+    type: { value: NODE_TYPE_VALUES.RECTANGLE, name: "RECTANGLE" },
+    name: `node-${localID}`,
+    parentIndex: parent === undefined ? undefined : { guid: parent, position: `${localID}` },
     visible: true,
     opacity: 1,
-    transform: makeTransform(options.x, options.y),
-    size: { x: options.width, y: options.height },
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    children: options.children,
-    vectorPaths: options.editable ? [{ windingRule: "NONZERO", data: "M 0 0 L 10 0 L 10 10 Z" }] : undefined,
-  } as FigDesignNode;
+    transform: { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y },
+    size: { x: width, y: height },
+  };
 }
 
-describe("resolveCanvasInteractionTarget", () => {
-  it("keeps the browser hit target for select mode", () => {
-    const child = makeNode("child", { x: 20, y: 20, width: 40, height: 30, editable: true });
-    const group = makeNode("group", { type: "GROUP", x: 100, y: 100, width: 140, height: 100, children: [child] });
-    const bounds = flattenAllNodeBounds([group]);
-
-    const result = resolveCanvasInteractionTarget({
-      pageChildren: [group],
+describe("resolveInteractionTargetGuid", () => {
+  it("chooses the deepest bounds containing the point", () => {
+    const parent = figNode(1, undefined, 100, 100, 140, 100);
+    const child = figNode(2, parent.guid, 20, 20, 40, 30);
+    const document = indexFigKiwiDocument([parent, child]);
+    const bounds = flattenAllNodeBounds(document, document.roots);
+    const result = resolveInteractionTargetGuid({
+      document,
       itemBounds: bounds,
+      hitId: "71:1",
       point: { x: 125, y: 125 },
-      hitNodeId: "group" as FigNodeId,
-      mode: "select",
-      canEditPath: (node) => Boolean(node?.vectorPaths),
     });
 
-    expect(result).toBe("group");
+    expect(result).toEqual(child.guid);
   });
 
-  it("resolves to the deepest editable descendant for path-edit mode", () => {
-    const child = makeNode("child", { x: 20, y: 20, width: 40, height: 30, editable: true });
-    const group = makeNode("group", { type: "GROUP", x: 100, y: 100, width: 140, height: 100, children: [child] });
-    const bounds = flattenAllNodeBounds([group]);
-
-    const result = resolveCanvasInteractionTarget({
-      pageChildren: [group],
+  it("uses the browser hit id when the point is not inside a known bound", () => {
+    const parent = figNode(1, undefined, 100, 100, 140, 100);
+    const child = figNode(2, parent.guid, 20, 20, 40, 30);
+    const document = indexFigKiwiDocument([parent, child]);
+    const bounds = flattenAllNodeBounds(document, document.roots);
+    const result = resolveInteractionTargetGuid({
+      document,
       itemBounds: bounds,
-      point: { x: 125, y: 125 },
-      hitNodeId: "group" as FigNodeId,
-      mode: "path-edit",
-      canEditPath: (node) => Boolean(node?.vectorPaths),
+      hitId: "71:1",
+      point: { x: 10, y: 10 },
     });
 
-    expect(result).toBe("child");
-  });
-
-  it("prefers the editable child when an imported frame also carries render vectorPaths", () => {
-    const child = makeNode("child", { type: "VECTOR", x: 20, y: 20, width: 40, height: 30, editable: true });
-    const frame = makeNode("frame", {
-      type: "FRAME",
-      x: 100,
-      y: 100,
-      width: 140,
-      height: 100,
-      children: [child],
-      editable: true,
-    });
-    const bounds = flattenAllNodeBounds([frame]);
-
-    const result = resolveCanvasInteractionTarget({
-      pageChildren: [frame],
-      itemBounds: bounds,
-      point: { x: 125, y: 125 },
-      hitNodeId: "frame" as FigNodeId,
-      mode: "path-edit",
-      canEditPath: (node) => node?.type === "VECTOR" && Boolean(node.vectorPaths),
-    });
-
-    expect(result).toBe("child");
+    expect(result).toEqual(parent.guid);
   });
 });

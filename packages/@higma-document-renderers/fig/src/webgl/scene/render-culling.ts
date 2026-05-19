@@ -1,7 +1,7 @@
 /** @file Viewport culling and lightweight LOD decisions for the WebGL renderer. */
 /* eslint-disable jsdoc/require-jsdoc -- Exported functions form the WebGL visibility contract and are covered by colocated specs. */
 
-import type { RenderNode } from "../../scene-graph/render-tree";
+import type { RenderNode } from "../../scene-graph";
 import { svgPathDToContours } from "../tessellation/path-contours";
 import { pathContoursBoundingBox } from "@higma-primitives/path";
 import type { AffineMatrix } from "@higma-primitives/path";

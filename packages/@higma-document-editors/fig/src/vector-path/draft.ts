@@ -1,7 +1,7 @@
 /** @file Domain object for continuous vector path drawing. */
 
-import type { FigNodeId } from "@higma-document-models/fig/domain";
-import type { FigMatrix } from "@higma-document-models/fig/types";
+import type { FigGuid, FigMatrix } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import {
   computeVectorPathPointBounds,
@@ -29,7 +29,7 @@ type VectorPathDraftCubicSegment = {
 type VectorPathDraftSegment = VectorPathDraftLineSegment | VectorPathDraftCubicSegment;
 
 export type VectorPathDraft = {
-  readonly parentId: FigNodeId | null;
+  readonly parentId: FigGuid | null;
   readonly parentTransform: FigMatrix | undefined;
   readonly start: VectorPathPoint;
   readonly pageStart: VectorPathPoint;
@@ -42,7 +42,7 @@ export type VectorPathDraft = {
 };
 
 export type VectorPathDraftParent = {
-  readonly parentId: FigNodeId | null;
+  readonly parentId: FigGuid | null;
   readonly parentTransform: FigMatrix | undefined;
 };
 
@@ -443,7 +443,7 @@ export function vectorPathDraftToPreviewPath(draft: VectorPathDraft): string {
   return `${base} L ${formatVectorPathNumber(draft.previewPagePoint.x)} ${formatVectorPathNumber(draft.previewPagePoint.y)}`;
 }
 
-/** Convert a complete draft into a normalized vector node creation spec. */
+/** Convert a complete draft into a local-bounds Kiwi VECTOR creation spec. */
 export function commitVectorPathDraftToNodeSpec(draft: VectorPathDraft): NodeSpec {
   if (!canCommitVectorPathDraft(draft)) {
     throw new Error("Vector path draft requires at least two anchors before commit");
@@ -459,7 +459,12 @@ export function commitVectorPathDraftToNodeSpec(draft: VectorPathDraft): NodeSpe
     width: Math.max(1, bounds.right - bounds.left),
     height: Math.max(1, bounds.bottom - bounds.top),
     fills: [],
-    strokes: [{ type: "SOLID", color: { r: 0.15, g: 0.35, b: 0.95, a: 1 }, opacity: 1, visible: true }],
+    strokes: [{
+      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+      color: { r: 0.15, g: 0.35, b: 0.95, a: 1 },
+      opacity: 1,
+      visible: true,
+    }],
     strokeWeight: 2,
     vectorPaths: [{
       windingRule: "NONZERO",

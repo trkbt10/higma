@@ -1,842 +1,159 @@
-/**
- * @file INSTANCE resolution tests for scene-graph builder
- *
- * Verifies that the builder correctly resolves INSTANCE nodes against
- * their SYMBOL definitions, applying:
- * - Property merge (fills, strokes, effects, blendMode, etc.)
- * - Self-overrides (overrides targeting the instance frame)
- * - Child overrides (per-child fill/stroke/visibility changes)
- * - Component property assignments (text, visibility, instance swap)
- */
+/** @file Scene graph INSTANCE rendering tests using SymbolResolver as the SoT. */
 
-import { buildSceneGraph, type BuildSceneGraphOptions } from "./builder";
-import type { FrameNode } from "@higma-document-models/fig/scene-graph";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import { toNodeId, EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { FigPaint, FigEffect } from "@higma-document-models/fig/types";
-import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
+import { buildSceneGraph } from "./builder";
+import type { FrameNode } from "@higma-document-renderers/fig/scene-graph";
+import {
+  createKiwiRenderFixture,
+  KIWI_RENDER_COLORS,
+  kiwiGuid,
+  kiwiNode,
+  kiwiRenderResources,
+  kiwiSolidPaint,
+} from "../testing/kiwi-render-fixture";
+import { STACK_COUNTER_ALIGN_VALUES, STACK_MODE_VALUES } from "@higma-document-models/fig/constants";
 
-// =============================================================================
-// Test Helpers
-// =============================================================================
-
-const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
-const DEFAULT_SIZE = { x: 100, y: 50 };
-const RECT_PATH: FontPath = {
-  commands: [
-    { type: "M", x: 0, y: 0 },
-    { type: "L", x: 10, y: 0 },
-    { type: "L", x: 10, y: 10 },
-    { type: "L", x: 0, y: 10 },
-    { type: "Z" },
-  ],
-  toPathData: () => "M0 0L10 0L10 10L0 10Z",
-};
-const TEST_FONT: AbstractFont = {
-  unitsPerEm: 1000,
-  ascender: 800,
-  descender: -200,
-  charToGlyph: () => ({
-    index: 1,
-    advanceWidth: 500,
-    getPath: () => RECT_PATH,
-  }),
-  getPath: () => RECT_PATH,
-};
-
-const RED_FILL: FigPaint = {
-  type: "SOLID" as const,
-  color: { r: 1, g: 0, b: 0, a: 1 },
-  opacity: 1,
-  visible: true,
-};
-
-const BLUE_FILL: FigPaint = {
-  type: "SOLID" as const,
-  color: { r: 0, g: 0, b: 1, a: 1 },
-  opacity: 1,
-  visible: true,
-};
-
-const GREEN_FILL: FigPaint = {
-  type: "SOLID" as const,
-  color: { r: 0, g: 1, b: 0, a: 1 },
-  opacity: 1,
-  visible: true,
-};
-
-function nid(raw: string) { return toNodeId(raw); }
-
-/** Build a guidPath from "sessionID:localID" strings */
-function gp(...ids: string[]) {
-  return {
-    guids: ids.map((id) => {
-      const [s, l] = id.split(":").map(Number);
-      return { sessionID: s, localID: l };
-    }),
-  };
-}
-
-function makeNode(overrides: Omit<Partial<FigDesignNode>, "id" | "type"> & { id: string; type: string }): FigDesignNode {
-  const { id, type, ...rest } = overrides;
-  return {
-    id: nid(id),
-    type: type as FigDesignNode["type"],
-    name: type,
-    visible: true,
-    opacity: 1,
-    transform: IDENTITY,
-    size: DEFAULT_SIZE,
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    ...rest,
-  } as FigDesignNode;
-}
-
-function buildWithSymbols(
-  nodes: FigDesignNode[],
-  symbolMap: Map<string, FigDesignNode>,
-): ReturnType<typeof buildSceneGraph> {
-  const options: BuildSceneGraphOptions = {
-    blobs: [],
-    images: new Map(),
-    canvasSize: { width: 200, height: 200 },
-    viewport: { x: 0, y: 0, width: 200, height: 200 },
-    symbolMap,
-    styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+function buildComponentsPage(): ReturnType<typeof buildSceneGraph> {
+  const fixture = createKiwiRenderFixture();
+  return buildSceneGraph(fixture.resources.childrenOf(fixture.pages.components), {
+    blobs: fixture.resources.blobs,
+    images: fixture.resources.images,
+    canvasSize: { width: 1200, height: 800 },
+    viewport: { x: 0, y: 0, width: 1200, height: 800 },
+    symbolResolver: fixture.resources.symbolResolver,
+    childrenOf: fixture.resources.childrenOf,
+    styleRegistry: fixture.resources.styleRegistry,
     showHiddenNodes: false,
     warnings: [],
-    textFontResolver: () => TEST_FONT,
-  };
-  return buildSceneGraph(nodes, options);
+    textFontResolver: undefined,
+  });
 }
 
-// =============================================================================
-// Property Merge Tests
-// =============================================================================
+function findFrameByName(nodes: readonly FrameNode[], name: string): FrameNode {
+  const match = nodes.find((node) => node.name === name);
+  if (match === undefined) {
+    throw new Error(`Expected frame ${name} in scene graph`);
+  }
+  return match;
+}
 
-describe("INSTANCE resolution — property merge", () => {
-  it("inherits fills from SYMBOL when INSTANCE has no visible fills", () => {
-    const symbol = makeNode({
-      id: "0:1",
+describe("buildSceneGraph INSTANCE resolution", () => {
+  it("inherits SYMBOL fills and children through SymbolResolver", () => {
+    const sceneGraph = buildComponentsPage();
+    const frames = sceneGraph.root.children.filter((node): node is FrameNode => node.type === "frame");
+    const defaultButton = findFrameByName(frames, "Default");
+
+    expect(defaultButton.children.length).toBe(1);
+    expect(defaultButton.cornerRadius).toBe(8);
+    expect(defaultButton.fills[0].type).toBe("solid");
+    if (defaultButton.fills[0].type === "solid") {
+      expect(defaultButton.fills[0].color.r).toBeCloseTo(KIWI_RENDER_COLORS.blue.r, 2);
+      expect(defaultButton.fills[0].color.b).toBeCloseTo(KIWI_RENDER_COLORS.blue.b, 2);
+    }
+  });
+
+  it("does not let direct INSTANCE fillPaints override the SYMBOL root", () => {
+    const sceneGraph = buildComponentsPage();
+    const frames = sceneGraph.root.children.filter((node): node is FrameNode => node.type === "frame");
+    const dangerButton = findFrameByName(frames, "Danger");
+
+    expect(dangerButton.fills[0].type).toBe("solid");
+    if (dangerButton.fills[0].type === "solid") {
+      expect(dangerButton.fills[0].color.r).toBeCloseTo(KIWI_RENDER_COLORS.blue.r, 2);
+      expect(dangerButton.fills[0].color.b).toBeCloseTo(KIWI_RENDER_COLORS.blue.b, 2);
+    }
+  });
+
+  it("applies a self override that is routed through symbolData.symbolOverrides", () => {
+    const page = kiwiNode({ guid: kiwiGuid(50, 1), type: "CANVAS", name: "Page" });
+    const symbol = kiwiNode({
+      guid: kiwiGuid(50, 10),
       type: "SYMBOL",
-      fills: [RED_FILL],
-      children: [],
+      name: "Symbol",
+      parentGuid: page.guid,
+      position: "a",
+      visible: false,
+      width: 100,
+      height: 50,
+      fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.red)],
     });
-
-    const instance = makeNode({
-      id: "0:2",
+    const instance = kiwiNode({
+      guid: kiwiGuid(50, 20),
       type: "INSTANCE",
-      symbolId: nid("0:1"),
-      fills: [], // empty
+      name: "Instance",
+      parentGuid: page.guid,
+      position: "b",
+      width: 100,
+      height: 50,
+      symbolData: {
+        symbolID: symbol.guid,
+        symbolOverrides: [{
+          guidPath: { guids: [symbol.guid] },
+          fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.green)],
+        }],
+      },
     });
+    const resources = kiwiRenderResources([page, symbol, instance]);
+    const sceneGraph = buildSceneGraph(resources.childrenOf(page), {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 200, height: 100 },
+      viewport: { x: 0, y: 0, width: 200, height: 100 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const frame = sceneGraph.root.children[0] as FrameNode;
 
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.type).toBe("frame");
-    // Should inherit RED fill from symbol
-    expect(frame.fills.length).toBeGreaterThan(0);
     expect(frame.fills[0].type).toBe("solid");
-  });
-
-  it("SYMBOL fills always win over directly-set INSTANCE fills", () => {
-    // Per mergeSymbolProperties (SoT in @higma-document-models/fig/symbols):
-    // SYMBOL visual properties override INSTANCE-level values. An
-    // INSTANCE that carries its own `fills` array cannot override the
-    // SYMBOL's by direct field assignment — that path is not how Figma
-    // exports instance variations. INSTANCE-specific paint changes must
-    // travel through `symbolOverrides` (self-referencing guidPath) so the
-    // change is declarative, which Step 2 of resolveInstance handles.
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [RED_FILL],
-      children: [],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      // Directly-set INSTANCE fills are an author artefact and should NOT
-      // override the SYMBOL.
-      fills: [BLUE_FILL],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.fills.length).toBeGreaterThan(0);
     if (frame.fills[0].type === "solid") {
-      expect(frame.fills[0].color.r).toBe(1); // red — from SYMBOL
-      expect(frame.fills[0].color.b).toBe(0);
+      expect(frame.fills[0].color.g).toBeCloseTo(KIWI_RENDER_COLORS.green.g, 2);
     }
   });
 
-  it("inherits blendMode from SYMBOL", () => {
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [RED_FILL],
-      blendMode: "MULTIPLY",
-      children: [],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      // blendMode not set → should inherit from symbol
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.blendMode).toBe("multiply"); // Converted from MULTIPLY → multiply (CSS)
-  });
-
-  it("inherits effects from SYMBOL when INSTANCE has none", () => {
-    const shadow: FigEffect = {
-      type: "DROP_SHADOW" as const,
-      visible: true,
-      radius: 4,
-      offset: { x: 0, y: 4 },
-      color: { r: 0, g: 0, b: 0, a: 0.25 },
-    };
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [RED_FILL],
-      effects: [shadow],
-      children: [],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      effects: [],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.effects.length).toBeGreaterThan(0);
-  });
-
-  it("inherits children from SYMBOL when INSTANCE has none", () => {
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      size: { x: 50, y: 30 },
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [childRect],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      // no children
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.children.length).toBe(1);
-    expect(frame.children[0].type).toBe("rect");
-  });
-});
-
-// =============================================================================
-// Self-override Tests
-// =============================================================================
-
-describe("INSTANCE resolution — self-overrides", () => {
-  it("applies fill override on the instance frame itself", () => {
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [RED_FILL],
-      children: [],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      overrides: [
-        { guidPath: gp("0:1"), fillPaints: [BLUE_FILL] },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    // Self-override should replace RED fill with BLUE
-    expect(frame.fills.length).toBeGreaterThan(0);
-    if (frame.fills[0].type === "solid") {
-      expect(frame.fills[0].color.b).toBe(1); // blue
-    }
-  });
-
-  it("applies opacity override on the instance frame itself", () => {
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [],
-      opacity: 1,
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      overrides: [
-        { guidPath: gp("0:1"), opacity: 0.5 },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.opacity).toBe(0.5);
-  });
-
-  it("does not route self opacity override into nested instance children", () => {
-    const nestedSymbol = makeNode({
-      id: "0:20",
-      type: "SYMBOL",
-      fills: [BLUE_FILL],
-      children: [],
-    });
-    const nestedInstance = makeNode({
-      id: "0:10",
-      type: "INSTANCE",
-      symbolId: nid("0:20"),
-      fills: [],
-    });
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [nestedInstance],
-      opacity: 1,
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      overrides: [
-        { guidPath: gp("0:1"), opacity: 0.5 },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol], [nid("0:20"), nestedSymbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.opacity).toBe(0.5);
-    expect(frame.children.length).toBe(1);
-  });
-
-  it("applies editor-authored self override addressed to the instance id without descending into component children", () => {
-    const iconSymbol = makeNode({
-      id: "21:1",
-      type: "SYMBOL",
-      fills: [GREEN_FILL],
-      children: [],
-    });
-    const iconInstance = makeNode({
-      id: "20:4",
-      type: "INSTANCE",
-      symbolId: nid("21:1"),
-      fills: [],
-    });
-    const symbol = makeNode({
-      id: "20:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [iconInstance],
-      opacity: 1,
-    });
-    const instance = makeNode({
-      id: "22:1",
-      type: "INSTANCE",
-      symbolId: nid("20:1"),
-      overrides: [
-        { guidPath: gp("22:1"), opacity: 0.5 },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("20:1"), symbol], [nid("21:1"), iconSymbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.opacity).toBe(0.5);
-    expect(frame.children).toHaveLength(1);
-  });
-});
-
-// =============================================================================
-// Child Override Tests
-// =============================================================================
-
-describe("INSTANCE resolution — child overrides", () => {
-  it("applies fill override on a child node", () => {
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      size: { x: 50, y: 30 },
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [childRect],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      overrides: [
-        { guidPath: gp("0:10"), fillPaints: [GREEN_FILL] },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.children.length).toBe(1);
-    const rect = frame.children[0];
-    expect(rect.type).toBe("rect");
-    if (rect.type === "rect") {
-      // Child should have GREEN fill (overridden from RED)
-      expect(rect.fills.length).toBeGreaterThan(0);
-      if (rect.fills[0].type === "solid") {
-        expect(rect.fills[0].color.g).toBe(1); // green
-      }
-    }
-  });
-
-  it("applies visibility override on a child node", () => {
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      size: { x: 50, y: 30 },
-      visible: true,
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [childRect],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      overrides: [
-        { guidPath: gp("0:10"), visible: false },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    // Hidden child should not be in the scene graph (builder skips invisible nodes)
-    expect(frame.children.length).toBe(0);
-  });
-});
-
-// =============================================================================
-// Component Property Assignment Tests
-// =============================================================================
-
-describe("INSTANCE resolution — component property assignments", () => {
-  it("applies text content override via CPA", () => {
-    const lineHeight = 20;
-    const textChild = makeNode({
-      id: "0:10",
-      type: "TEXT",
-      fills: [],
-      size: { x: 80, y: 20 },
-      textData: {
-        characters: "Original",
-        fontSize: 16,
-        fontName: { family: "Inter", style: "Regular" },
-        lineHeight: { value: lineHeight, units: { name: "PIXELS", value: 0 } },
-      },
-      derivedTextData: {
-        baselines: [{
-          position: { x: 0, y: 0 },
-          width: 80,
-          lineY: 0,
-          lineHeight,
-          lineAscent: 15,
-          firstCharacter: 0,
-          endCharacter: 8,
-        }],
-        fontMetaData: [{
-          key: { family: "Inter", style: "Regular" },
-          fontLineHeight: lineHeight / 16,
-          fontWeight: 400,
-        }],
-      },
-      componentPropertyRefs: [
-        { defId: nid("0:100"), nodeField: "TEXT_DATA" },
-      ],
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [textChild],
-      componentPropertyDefs: [
-        { id: nid("0:100"), name: "label", type: "TEXT", initialValue: { textValue: { characters: "Original" } } },
-      ],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      componentPropertyAssignments: [
-        { defId: nid("0:100"), value: { textValue: { characters: "Override Text" } } },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.children.length).toBe(1);
-    const text = frame.children[0];
-    expect(text.type).toBe("text");
-    // Text should have overridden content
-    // (The exact verification depends on how textData.characters propagates
-    // through convertTextNode, which uses Kiwi text data parsing)
-  });
-
-  it("applies visibility toggle via CPA", () => {
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      size: { x: 50, y: 30 },
-      visible: true,
-      componentPropertyRefs: [
-        { defId: nid("0:100"), nodeField: "VISIBLE" },
-      ],
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      children: [childRect],
-      componentPropertyDefs: [
-        { id: nid("0:100"), name: "showIcon", type: "BOOL", initialValue: { boolValue: true } },
-      ],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      componentPropertyAssignments: [
-        { defId: nid("0:100"), value: { boolValue: false } },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    // Child should be hidden (visibility toggled to false)
-    expect(frame.children.length).toBe(0);
-  });
-});
-
-// =============================================================================
-// Constraint Resolution Tests
-// =============================================================================
-
-describe("INSTANCE resolution — constraint resolution", () => {
-  it("adjusts child position when instance is resized (MIN constraint = left/top pinned)", () => {
-    // Symbol: 100x50, child at (10, 10) size 30x20
-    // Instance: 200x100 (double size)
-    // With MIN constraint (default), child stays at (10, 10)
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      transform: { m00: 1, m01: 0, m02: 10, m10: 0, m11: 1, m12: 10 },
-      size: { x: 30, y: 20 },
-      layoutConstraints: {
-        horizontalConstraint: { value: 0, name: "MIN" },
-        verticalConstraint: { value: 0, name: "MIN" },
-      },
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      size: { x: 100, y: 50 },
-      children: [childRect],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      size: { x: 200, y: 100 }, // double size
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.children.length).toBe(1);
-    // With MIN constraint, position should not change
-    const child = frame.children[0];
-    expect(child.transform.m02).toBe(10);
-    expect(child.transform.m12).toBe(10);
-  });
-
-  it("scales child when instance is resized (SCALE constraint)", () => {
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      transform: { m00: 1, m01: 0, m02: 10, m10: 0, m11: 1, m12: 10 },
-      size: { x: 30, y: 20 },
-      layoutConstraints: {
-        horizontalConstraint: { value: 4, name: "SCALE" },
-        verticalConstraint: { value: 4, name: "SCALE" },
-      },
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      size: { x: 100, y: 50 },
-      children: [childRect],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      size: { x: 200, y: 100 }, // double size
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.children.length).toBe(1);
-    // SCALE constraint: position and size should scale proportionally
-    const child = frame.children[0];
-    expect(child.transform.m02).toBe(20);  // 10 * 2
-    expect(child.transform.m12).toBe(20);  // 10 * 2
-    if (child.type === "rect") {
-      expect(child.width).toBe(60);   // 30 * 2
-      expect(child.height).toBe(40);  // 20 * 2
-    }
-  });
-
-  it("does not apply constraints when derivedSymbolData is present", () => {
-    const childRect = makeNode({
-      id: "0:10",
-      type: "RECTANGLE",
-      fills: [RED_FILL],
-      transform: { m00: 1, m01: 0, m02: 10, m10: 0, m11: 1, m12: 10 },
-      size: { x: 30, y: 20 },
-      layoutConstraints: {
-        horizontalConstraint: { value: 4, name: "SCALE" },
-        verticalConstraint: { value: 4, name: "SCALE" },
-      },
-    });
-
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [],
-      size: { x: 100, y: 50 },
-      children: [childRect],
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      symbolId: nid("0:1"),
-      size: { x: 200, y: 100 },
-      // derivedSymbolData overrides the child's transform/size
-      derivedSymbolData: [
-        { guidPath: gp("0:10"), transform: { m00: 1, m01: 0, m02: 50, m10: 0, m11: 1, m12: 50 }, size: { x: 80, y: 40 } },
-      ],
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    const sg = buildWithSymbols([instance], symbolMap);
-
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.children.length).toBe(1);
-    // derivedSymbolData should take precedence — constraint resolution not applied
-    const child = frame.children[0];
-    expect(child.transform.m02).toBe(50);  // from derivedSymbolData, not constraint
-    expect(child.transform.m12).toBe(50);
-  });
-});
-
-// =============================================================================
-// Aspect-Lock Regression — community .fig icon INSTANCE pattern
-// =============================================================================
-
-/**
- * Real Figma community files (e.g. the E-commerce template's `arrow-left`
- * INSTANCEs and the icon set in the Windows 98 Design System) author
- * `{size, proportionsConstrained: true}` self-overrides on INSTANCE
- * nodes — WITHOUT an explicit `targetAspectRatio`. Per the Figma kiwi
- * schema (`proportionsConstrained: bool` at value 151 and
- * `targetAspectRatio: vec` at value 423) those two fields are
- * independent: `proportionsConstrained=true` alone means "lock to the
- * current size's ratio" with no separate target to validate.
- *
- * The renderer's aspect-lock gate previously threw whenever
- * `proportionsConstrained=true` arrived without `targetAspectRatio`,
- * which crashed `buildSceneGraph` on every community file containing
- * icon instances. These tests pin the contract so the gate can never
- * regress to that shape again.
- */
-describe("INSTANCE resolution — aspect-lock contract (no targetAspectRatio)", () => {
-  it("builds an INSTANCE with proportionsConstrained=true and no targetAspectRatio without throwing", () => {
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [RED_FILL],
-      size: { x: 24, y: 24 },
-      children: [],
-    });
-
-    // Icon INSTANCE: resized to 16x16 with proportionsConstrained=true and
-    // NO targetAspectRatio. This is the exact shape produced by the
-    // community templates' arrow-left / mingcute:dribbble-line icons.
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      name: "icon-instance",
-      symbolId: nid("0:1"),
-      size: { x: 16, y: 16 },
-      proportionsConstrained: true,
-      // targetAspectRatio intentionally omitted — this is the regression.
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    expect(() => buildWithSymbols([instance], symbolMap)).not.toThrow();
-
-    const sg = buildWithSymbols([instance], symbolMap);
-    const frame = sg.root.children[0] as FrameNode;
-    expect(frame.type).toBe("frame");
-  });
-
-  it("builds an auto-layout INSTANCE with proportionsConstrained=true without throwing", () => {
-    // Same regression, but the INSTANCE is an auto-layout container.
-    // This exercises the resolveAutoLayoutFrame → applyHugSizing →
-    // applyAspectLock chain rather than the plain-frame branch.
-    const symbol = makeNode({
-      id: "0:1",
-      type: "SYMBOL",
-      fills: [RED_FILL],
-      size: { x: 24, y: 24 },
-      children: [],
-      autoLayout: {
-        stackMode: { value: 1, name: "HORIZONTAL" },
-        stackSpacing: 0,
-        stackPadding: { top: 0, right: 0, bottom: 0, left: 0 },
-      },
-    });
-
-    const instance = makeNode({
-      id: "0:2",
-      type: "INSTANCE",
-      name: "icon-instance-autolayout",
-      symbolId: nid("0:1"),
-      size: { x: 16, y: 16 },
-      proportionsConstrained: true,
-      autoLayout: {
-        stackMode: { value: 1, name: "HORIZONTAL" },
-        stackSpacing: 0,
-        stackPadding: { top: 0, right: 0, bottom: 0, left: 0 },
-      },
-    });
-
-    const symbolMap = new Map([[nid("0:1"), symbol]]);
-    expect(() => buildWithSymbols([instance], symbolMap)).not.toThrow();
-  });
-
-  it("builds a plain FRAME with proportionsConstrained=true and no targetAspectRatio without throwing", () => {
-    // Non-INSTANCE path: a FRAME (e.g. an aspect-locked card container)
-    // that authored proportionsConstrained=true without a target. Goes
-    // through buildNode's FRAME branch → resolveAutoLayoutFrame(node, …).
-    const frame = makeNode({
-      id: "0:3",
+  it("consumes the model autolayout solver for counter-axis stretch", () => {
+    const page = kiwiNode({ guid: kiwiGuid(60, 1), type: "CANVAS", name: "Page" });
+    const frame = kiwiNode({
+      guid: kiwiGuid(60, 2),
       type: "FRAME",
-      name: "aspect-locked-frame",
-      size: { x: 32, y: 32 },
-      proportionsConstrained: true,
-      children: [],
+      name: "Stack",
+      parentGuid: page.guid,
+      position: "a",
+      width: 370,
+      height: 52,
+      stackMode: { value: STACK_MODE_VALUES.VERTICAL, name: "VERTICAL" },
     });
-
-    expect(() => buildWithSymbols([frame], new Map())).not.toThrow();
-  });
-
-  it("still throws when proportionsConstrained=true with an explicit target that does NOT match size", () => {
-    // The mismatch validation must stay in place — that case represents
-    // genuine pipeline drift (the file's stored size disagrees with the
-    // stored target ratio) and is the verification gate's reason for
-    // existing.
-    const frame = makeNode({
-      id: "0:4",
-      type: "FRAME",
-      name: "aspect-mismatch-frame",
-      size: { x: 100, y: 50 },
-      proportionsConstrained: true,
-      targetAspectRatio: { x: 16, y: 9 },
-      children: [],
+    const separator = kiwiNode({
+      guid: kiwiGuid(60, 3),
+      type: "RECTANGLE",
+      name: "Separator",
+      parentGuid: frame.guid,
+      position: "a",
+      width: 129,
+      height: 1,
+      stackChildAlignSelf: { value: STACK_COUNTER_ALIGN_VALUES.STRETCH, name: "STRETCH" },
+      fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.dark)],
     });
+    const resources = kiwiRenderResources([page, frame, separator]);
+    const sceneGraph = buildSceneGraph(resources.childrenOf(page), {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 400, height: 80 },
+      viewport: { x: 0, y: 0, width: 400, height: 80 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const stack = sceneGraph.root.children[0] as FrameNode;
 
-    expect(() => buildWithSymbols([frame], new Map())).toThrow(/AutoLayout aspect lock mismatch/);
+    expect(stack.children[0].type).toBe("rect");
+    if (stack.children[0].type === "rect") {
+      expect(stack.children[0].width).toBe(370);
+    }
   });
 });

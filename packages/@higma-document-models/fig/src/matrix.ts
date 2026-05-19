@@ -1,7 +1,7 @@
 /**
  * @file FigMatrix operations
  *
- * Provides utility functions for working with FigMatrix (2x3 affine transform).
+ * Provides operations for working with FigMatrix (2x3 affine transform).
  * FigMatrix is defined in types.ts — this module provides operations on it.
  */
 

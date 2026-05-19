@@ -12,11 +12,11 @@ describe("imageTextureResource", () => {
 
     expect(resource.kind).toBe("image");
     expect(resource.id).toBe("image:abc123:color:unmanaged");
-    expect(resource.imageRef).toBe("abc123");
+    expect(resource.imageHash).toBe("abc123");
   });
 
   it("rejects empty image references", () => {
-    expect(() => imageTextureResource("", UNMANAGED)).toThrow("imageTextureResource requires a non-empty imageRef");
+    expect(() => imageTextureResource("", UNMANAGED)).toThrow("imageTextureResource requires a non-empty image hash");
   });
 
   it("separates explicit color management variants", () => {

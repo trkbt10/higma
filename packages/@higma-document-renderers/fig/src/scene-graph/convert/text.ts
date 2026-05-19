@@ -1,16 +1,17 @@
 /**
  * @file Convert Figma TEXT nodes to scene graph TextNode data
  *
- * Accepts FigDesignNode (domain object) directly.
+ * Accepts Kiwi FigNode directly.
  */
 
-import type { FigDesignNode, FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
-import type { TextRun } from "@higma-document-models/fig/scene-graph";
+import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
 import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
 import { textAlignHorizontalToAnchor, getAllVisibleSolidFills } from "../../text/layout";
 import type { ExtractedTextProps } from "../../text/layout/types";
-import type { PathContour, GlyphContour, Color, TextLineLayout, BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { PathContour, GlyphContour, Color, TextLineLayout, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 /** Map Figma text decoration value to scene graph text decoration string */
 function mapTextDecoration(decoration: string | undefined): "underline" | "strikethrough" | undefined {
@@ -23,18 +24,7 @@ function mapTextDecoration(decoration: string | undefined): "underline" | "strik
   return undefined;
 }
 
-/**
- * Normalize text-path contours into the scene-graph `PathContour`
- * shape — same commands, just stamped with the required winding rule.
- *
- * The text-paths layer and the scene-graph share the same canonical
- * `PathCommand` union (`@higma-primitives/path`) since the SoT
- * consolidation, so this function is now a trivial windingRule
- * stamp. The "bridge" wrapper survives because the scene-graph
- * `PathContour` type also carries an optional fill rule and
- * downstream code keys off the named function call site.
- */
-function normalizeContours(
+function toScenePathContours(
   contours: readonly { readonly commands: readonly PathContour["commands"][number][] }[],
 ): PathContour[] {
   return contours.map((c) => ({
@@ -43,15 +33,8 @@ function normalizeContours(
   }));
 }
 
-/**
- * Glyph variant of `normalizeContours` that retains each contour's
- * `firstCharacter` annotation so downstream code can group glyphs by
- * `TextRun`. Bridges the text-paths shape (font/types PathCommand) into
- * the scene-graph shape (which adds optional arc commands for general
- * paths but never carries them for text glyphs).
- */
-function normalizeGlyphContours(contours: readonly PathGlyphContour[]): GlyphContour[] {
-  const base = normalizeContours(contours);
+function toSceneGlyphContours(contours: readonly PathGlyphContour[]): GlyphContour[] {
+  const base = toScenePathContours(contours);
   return base.map((c, i) => ({ ...c, firstCharacter: contours[i].firstCharacter }));
 }
 
@@ -101,15 +84,15 @@ export type TextConversionOptions = {
    * Document-wide style registry — required when a TEXT carries
    * `characterStyleIDs` whose override entries reference shared FILL styles
    * via `styleIdForFill`. Without it, run resolution treats the registry
-   * as empty and the no-fallback policy throws on unresolved references.
+   * as empty and the no-substitution policy throws on unresolved references.
    */
   readonly styleRegistry?: FigStyleRegistry;
 };
 
 /**
- * Convert a TEXT FigDesignNode to scene graph text data
+ * Convert a TEXT FigNode to scene graph text data
  *
- * @param node - FigDesignNode of type TEXT
+ * @param node - FigNode of type TEXT
  * @param blobs - Blob array from .fig file (for derived paths)
  * @returns Text conversion result for scene graph TextNode
  */
@@ -136,8 +119,8 @@ function buildFontVariationSettings(
   return parts.length > 0 ? parts.join(", ") : undefined;
 }
 
-/** Convert a TEXT FigDesignNode into scene-graph text rendering data. */
-export function convertTextNode(node: FigDesignNode, options: TextConversionOptions): TextConversionResult {
+/** Convert a TEXT FigNode into scene-graph text rendering data. */
+export function convertTextNode(node: FigNode, options: TextConversionOptions): TextConversionResult {
   // Delegate resolution to the unified text rendering SoT. This is the only
   // place (alongside svg/renderer.ts) that decides glyphs-vs-lines strategy.
   const rendering = resolveTextRendering(node, {
@@ -145,7 +128,7 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
     fontResolver: options.fontResolver,
     styleRegistry: options.styleRegistry,
   });
-  const fontVariationSettings = buildFontVariationSettings(node.textData?.fontVariations);
+  const fontVariationSettings = buildFontVariationSettings(node.fontVariations ?? node.textData?.fontVariations);
 
   if (rendering.kind === "empty") {
     // Scene-graph downstream expects a textLineLayout even for empty
@@ -188,8 +171,8 @@ export function convertTextNode(node: FigDesignNode, options: TextConversionOpti
   }));
 
   if (rendering.kind === "glyphs") {
-    const glyphContours = normalizeGlyphContours(rendering.glyphContours);
-    const decorationContours = normalizeContours(rendering.decorationContours);
+    const glyphContours = toSceneGlyphContours(rendering.glyphContours);
+    const decorationContours = toScenePathContours(rendering.decorationContours);
     return {
       glyphContours,
       decorationContours: decorationContours.length > 0 ? decorationContours : undefined,

@@ -1,10 +1,7 @@
 /**
  * @file Text property extraction
  *
- * Extracts text rendering properties from either FigDesignNode (domain)
- * or FigNode (raw parser type). The structural input type `TextNodeInput`
- * is satisfied by both, allowing a single extraction function to serve
- * both the scene-graph path and Direct SVG path.
+ * Extracts text rendering properties from Kiwi FigNode-shaped input.
  */
 
 import type {
@@ -22,15 +19,14 @@ import type {
   TextCase,
   TextDecoration,
 } from "./types";
-import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
+import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
+import { TEXT_AUTO_RESIZE_OMITTED_DEFAULT } from "@higma-document-models/fig/constants";
 import { figmaFontToQuery } from "@higma-document-models/fig/font";
 
 /**
  * Structured text data fields.
  *
- * Picked from FigNode's text-related fields. This is the same set of fields
- * that FigDesignNode.textData provides in domain form, and that FigNode
- * carries directly on the node object.
+ * Picked from FigNode's text-related fields.
  *
  * SoT: FigNode type in @higma-document-models/fig/types.
  */
@@ -50,21 +46,18 @@ type TextDataFields = Pick<FigNode,
 /**
  * Input for extractTextProps.
  *
- * Accepted by both FigDesignNode (scene-graph path) and FigNode (direct SVG path).
- * FigDesignNode provides text fields via the structured `textData` object.
- * FigNode carries them as flat fields and satisfies this via the index signature.
+ * FigNode carries text fields directly and may also carry the nested
+ * `textData` payload for per-character styling.
  */
 export type TextNodeInput = {
   readonly transform?: FigMatrix;
   readonly opacity?: number;
   readonly size?: FigVector;
-  /** Structured text data (FigDesignNode.textData or compatible) */
+  /** Kiwi TextData payload. */
   readonly textData?: TextDataFields;
-  /** Domain fill paints (FigDesignNode.fills) */
-  readonly fills?: readonly FigPaint[];
-  /** Raw parser fill paints (FigNode.fillPaints) */
+  /** Kiwi fill paints. */
   readonly fillPaints?: readonly FigPaint[];
-  /** Index signature for FigNode compatibility (additional Kiwi fields) */
+  /** Additional Kiwi fields carried by FigNode. */
   readonly [key: string]: unknown;
 };
 
@@ -139,21 +132,17 @@ function applyTextCase(characters: string, textCase: TextCase): string {
 }
 
 /**
- * Extract text properties from a FigDesignNode or FigNode.
+ * Extract text properties from a FigNode-shaped value.
  *
- * For FigDesignNode: reads typed `textData` field (which holds the
- * structured text properties).
- * For FigNode: reads the same fields directly via the index signature.
- *
- * @param node - FigDesignNode or FigNode (structural match via TextNodeInput)
+ * @param node - FigNode-shaped text input
  * @returns Extracted text properties
  */
 export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   const transform = node.transform;
   const opacity = node.opacity ?? 1;
   const td = node.textData;
-  // For FigNode the flat fields live directly on the node; cast through
-  // TextDataFields to reuse the same readers as the FigDesignNode path.
+  // Flat Kiwi fields live directly on the node; cast through
+  // TextDataFields to keep the readers typed.
   const raw = node as TextDataFields;
 
   const characters = td?.characters ?? raw?.characters ?? "";
@@ -199,10 +188,14 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   // Size of text box
   const size = node.size ? { width: node.size.x ?? 0, height: node.size.y ?? 0 } : undefined;
 
-  // Text auto-resize mode
+  // Text auto-resize mode.
+  // Default = schema's value-0 entry (NONE) — the Kiwi binary's "omitted
+  // field = first enum value" semantic. WIDTH_AND_HEIGHT would mean
+  // "grow to content, no wrap" and silently disagrees with what Figma
+  // reads back from the same omitted field.
   const textAutoResize = getEnumName<TextAutoResize>(
     td?.textAutoResize ?? raw?.textAutoResize,
-    "WIDTH_AND_HEIGHT",
+    TEXT_AUTO_RESIZE_OMITTED_DEFAULT,
   );
 
   // Text decoration (underline, strikethrough)
@@ -218,7 +211,7 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
     font,
     letterSpacing: letterSpacing !== 0 ? letterSpacing : undefined,
     lineHeight,
-    fillPaints: node.fills ?? node.fillPaints,
+    fillPaints: node.fillPaints,
     opacity,
     textAlignHorizontal,
     textAlignVertical,

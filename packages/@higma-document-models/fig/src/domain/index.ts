@@ -39,6 +39,10 @@ export {
 } from "./kiwi-node";
 
 export {
+  derivedTextDataHasVisualPayload,
+} from "./derived-text-data";
+
+export {
   indexFigKiwiDocument,
   findNodesByType,
   findNodeByGuid,

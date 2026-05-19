@@ -1,28 +1,11 @@
-/**
- * @file Node bounds calculation
- *
- * Extracts position, size, and rotation from FigDesignNode transform + size.
- * Used for hit testing and selection overlay positioning.
- *
- * Figma uses 2x3 affine transform matrices. A child node's transform is
- * relative to its parent, so to get absolute (page-space) bounds we must
- * compose the parent chain: M_abs = M_parent * M_child.
- *
- * The composition is standard 2x3 affine matrix multiplication:
- *   [a' b' tx']   [a1 b1 tx1]   [a2 b2 tx2]
- *   [c' d' ty'] = [c1 d1 ty1] * [c2 d2 ty2]
- *   [0  0   1 ]   [ 0  0   1]   [ 0  0   1]
- */
+/** @file Bounds calculation over Kiwi FigNode values. */
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { guidToString } from "@higma-document-models/fig/domain";
+import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
+import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
+import { computePreRotationTopLeft, extractRotationDeg } from "../../context/fig-editor/rotation";
+import { composeTransforms, readKiwiTransform } from "../../context/fig-editor/matrix";
 
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import type { FigMatrix } from "@higma-document-models/fig/types";
-import { dfsById, dfsByIdWithContext } from "@higma-primitives/tree";
-import { extractRotationDeg as extractRotationDegSoT, computePreRotationTopLeft } from "../../context/fig-editor/rotation";
-import { IDENTITY_MATRIX, composeTransforms } from "../../context/fig-editor/matrix";
-
-/**
- * Bounds representation for editor canvas items.
- */
 export type NodeBounds = {
   readonly id: string;
   readonly x: number;
@@ -32,7 +15,6 @@ export type NodeBounds = {
   readonly rotation: number;
 };
 
-/** Axis-aligned page-space bounds. */
 export type BoundsLike = {
   readonly x: number;
   readonly y: number;
@@ -40,226 +22,166 @@ export type BoundsLike = {
   readonly height: number;
 };
 
-/** Page-space point. */
 export type PointLike = {
   readonly x: number;
   readonly y: number;
 };
 
+function requireGuid(node: FigNode): FigGuid {
+  if (node.guid === undefined) {
+    throw new Error(`Kiwi node "${node.name ?? "(unnamed)"}" is missing guid`);
+  }
+  return node.guid;
+}
+
+function requireSize(node: FigNode): NonNullable<FigNode["size"]> {
+  if (node.size === undefined) {
+    throw new Error(`Kiwi node ${guidToString(requireGuid(node))} is missing size`);
+  }
+  return node.size;
+}
+
+function boundsForNode(node: FigNode, absoluteTransform: FigMatrix): NodeBounds {
+  const size = requireSize(node);
+  const topLeft = computePreRotationTopLeft(absoluteTransform, size.x, size.y);
+  return {
+    id: guidToString(requireGuid(node)),
+    x: topLeft.x,
+    y: topLeft.y,
+    width: size.x,
+    height: size.y,
+    rotation: extractRotationDeg(absoluteTransform),
+  };
+}
+
 /** Return whether a point is inside or on the edge of an axis-aligned bounds. */
 export function containsPointInBounds(bounds: BoundsLike, point: PointLike): boolean {
-  return (
-    point.x >= bounds.x &&
-    point.y >= bounds.y &&
-    point.x <= bounds.x + bounds.width &&
-    point.y <= bounds.y + bounds.height
-  );
+  return point.x >= bounds.x
+    && point.y >= bounds.y
+    && point.x <= bounds.x + bounds.width
+    && point.y <= bounds.y + bounds.height;
 }
 
 /** Return the topmost/deepest bounds containing a point, optionally filtered. */
 export function findDeepestBoundsAtPoint<T extends BoundsLike>(
   boundsList: readonly T[],
   point: PointLike,
-  predicate: (bounds: T) => boolean = () => true,
+  predicate?: (bounds: T) => boolean,
 ): T | undefined {
-  for (let index = boundsList.length - 1; index >= 0; index -= 1) {
-    const bounds = boundsList[index]!;
-    if (containsPointInBounds(bounds, point) && predicate(bounds)) {
+  for (const bounds of boundsList.toReversed()) {
+    const predicateAccepts = predicate === undefined || predicate(bounds);
+    if (containsPointInBounds(bounds, point) && predicateAccepts) {
       return bounds;
     }
   }
   return undefined;
 }
 
-/**
- * Calculate bounds for a single design node using an absolute transform.
- *
- * Uses the rotation SoT to derive the "pre-rotation top-left" position.
- * See rotation.ts for why (x, y) cannot simply be (m02, m12).
- */
-function getNodeBoundsWithAbsoluteTransform(node: FigDesignNode, absoluteTransform: FigMatrix): NodeBounds {
-  const { x, y } = computePreRotationTopLeft(absoluteTransform, node.size.x, node.size.y);
-  return {
-    id: node.id,
-    x,
-    y,
-    width: node.size.x,
-    height: node.size.y,
-    rotation: extractRotationDegSoT(absoluteTransform),
-  };
-}
-
-/**
- * Calculate bounds for a single design node (top-level, no parent transform).
- *
- * Position comes from the transform's translation (m02, m12).
- * Size comes from the node's size vector.
- * Rotation is extracted from the transform matrix.
- */
-export function getNodeBoundsForCanvas(node: FigDesignNode): NodeBounds {
-  return getNodeBoundsWithAbsoluteTransform(node, node.transform);
-}
-
-/**
- * Calculate bounds for all top-level nodes in a page.
- *
- * Returns a flat array of bounds for EditorCanvas's itemBounds prop.
- * Only includes direct children (not deeply nested nodes).
- */
-export function getPageNodeBounds(nodes: readonly FigDesignNode[]): readonly NodeBounds[] {
-  return nodes.map(getNodeBoundsForCanvas);
-}
-
-/**
- * Recursively flatten all nodes in the tree into a flat array of
- * absolute-coordinate bounds.
- *
- * The traversal is pre-order (parent before children). Since EditorCanvas
- * renders hit-area rects in array order, children's hit areas overlap and
- * sit above their parents in the SVG z-stack. This means clicking at a
- * position occupied by a leaf node will hit the leaf — not the ancestor
- * frame — matching Figma's "click-through to deepest element" behavior.
- *
- * Every visible node gets a hit area, including containers (frames,
- * groups). When the user needs to select a frame itself (rather than a
- * child inside it), the frame's hit area still exists beneath its
- * children's hit areas. Clicking an empty region inside the frame (where
- * no child covers) will therefore select the frame.
- *
- * @param nodes - Page's direct children (root of the design tree)
- * @returns Flat array of NodeBounds in pre-order, with absolute coordinates
- */
+/** Recursively flatten Kiwi nodes into page-coordinate editor bounds. */
 export function flattenAllNodeBounds(
-  nodes: readonly FigDesignNode[],
+  document: FigKiwiDocumentIndex,
+  nodes: readonly FigNode[],
 ): readonly NodeBounds[] {
-  const result: NodeBounds[] = [];
-  flattenRecursive(nodes, IDENTITY_MATRIX, result);
-  return result;
+  const out: NodeBounds[] = [];
+  flattenRecursive(document, nodes, IDENTITY_MATRIX, out);
+  return out;
 }
 
 function flattenRecursive(
-  nodes: readonly FigDesignNode[],
+  document: FigKiwiDocumentIndex,
+  nodes: readonly FigNode[],
   parentTransform: FigMatrix,
   out: NodeBounds[],
 ): void {
   for (const node of nodes) {
-    if (!node.visible) {
+    if (node.visible === false) {
       continue;
     }
-    const absTransform = composeTransforms(parentTransform, node.transform);
-    out.push(getNodeBoundsWithAbsoluteTransform(node, absTransform));
-    if (node.children && node.children.length > 0) {
-      flattenRecursive(node.children, absTransform, out);
+    const transform = composeTransforms(parentTransform, readKiwiTransform(node.transform));
+    out.push(boundsForNode(node, transform));
+    flattenRecursive(document, document.childrenOf(node), transform, out);
+  }
+}
+
+/** Compute the absolute transform for a Kiwi node. */
+export function computeAbsoluteTransform(
+  document: FigKiwiDocumentIndex,
+  target: FigGuid,
+  roots: readonly FigNode[],
+): FigMatrix | undefined {
+  return computeAbsoluteTransformInner(document, roots, target, IDENTITY_MATRIX);
+}
+
+function computeAbsoluteTransformInner(
+  document: FigKiwiDocumentIndex,
+  nodes: readonly FigNode[],
+  target: FigGuid,
+  parentTransform: FigMatrix,
+): FigMatrix | undefined {
+  for (const node of nodes) {
+    const transform = composeTransforms(parentTransform, readKiwiTransform(node.transform));
+    if (guidToString(requireGuid(node)) === guidToString(target)) {
+      return transform;
+    }
+    const childResult = computeAbsoluteTransformInner(document, document.childrenOf(node), target, transform);
+    if (childResult !== undefined) {
+      return childResult;
     }
   }
+  return undefined;
 }
 
-/**
- * Compute the absolute transform for a node identified by its ID.
- *
- * Walks the tree from root, composing transforms along the path.
- * Returns undefined if the node is not found.
- */
-export function computeAbsoluteTransform(
-  nodes: readonly FigDesignNode[],
-  targetId: FigNodeId,
-  parentTransform: FigMatrix = IDENTITY_MATRIX,
-): FigMatrix | undefined {
-  return dfsByIdWithContext(nodes, targetId, {
-    getId: (node) => node.id,
-    getChildren: (node) => node.children ?? [],
-    initialContext: parentTransform,
-    deriveContext: (node, context) => composeTransforms(context, node.transform),
-  })?.context;
-}
-
-/**
- * Compute absolute bounds for a node anywhere in the tree.
- *
- * This is used when a node is selected from the layer panel (which can
- * select any node regardless of drill-down scope). The bounds are
- * computed by walking the tree to find the node, composing ancestor
- * transforms along the path, and then applying the node's own size.
- *
- * Returns undefined if the node is not found.
- */
+/** Compute absolute bounds for a Kiwi node. */
 export function computeAbsoluteNodeBounds(
-  nodes: readonly FigDesignNode[],
-  targetId: FigNodeId,
+  document: FigKiwiDocumentIndex,
+  target: FigGuid,
+  roots: readonly FigNode[],
 ): NodeBounds | undefined {
-  return computeAbsoluteNodeBoundsInner(nodes, targetId, IDENTITY_MATRIX);
-}
-
-function computeAbsoluteNodeBoundsInner(
-  nodes: readonly FigDesignNode[],
-  targetId: FigNodeId,
-  parentTransform: FigMatrix,
-): NodeBounds | undefined {
-  const found = dfsByIdWithContext(nodes, targetId, {
-    getId: (node) => node.id,
-    getChildren: (node) => node.children ?? [],
-    initialContext: parentTransform,
-    deriveContext: (node, context) => composeTransforms(context, node.transform),
-  });
-  if (!found) {
+  const transform = computeAbsoluteTransform(document, target, roots);
+  if (transform === undefined) {
     return undefined;
   }
-  return getNodeBoundsWithAbsoluteTransform(found.node, found.context);
+  const node = document.nodesByGuid.get(guidToString(target));
+  if (node === undefined) {
+    return undefined;
+  }
+  return boundsForNode(node, transform);
 }
 
-/**
- * Find the direct parent of a node in the tree.
- *
- * Returns the parent node's ID, or undefined if the target is a top-level
- * node or not found.
- */
-export function findParentId(
-  nodes: readonly FigDesignNode[],
-  targetId: FigNodeId,
-): FigNodeId | undefined {
-  const parentRef: { value: FigNodeId | undefined } = { value: undefined };
-  dfsById(nodes, targetId, {
-    getId: (n) => n.id,
-    getChildren: (n) => n.children ?? [],
-    onVisit: (n) => {
-      const children = n.children;
-      if (children && children.some((c) => c.id === targetId)) {
-        parentRef.value = n.id as FigNodeId;
-      }
-    },
-  });
-  return parentRef.value;
-}
-
-/**
- * Filter marquee hits so container ancestors do not get selected together
- * with their descendants.
- *
- * A marquee rect can intersect a FRAME/SYMBOL container and one or more children at
- * the same time. For editing, the child hit is the first-class selection; the
- * ancestor container remains selectable by dragging only over its empty area.
- */
+/** Remove ancestor hits when descendants are already hit by marquee selection. */
 export function filterMarqueeSelectionByHierarchy(
-  nodes: readonly FigDesignNode[],
+  document: FigKiwiDocumentIndex,
   itemIds: readonly string[],
 ): readonly string[] {
   const selected = new Set(itemIds);
   const ancestorsWithSelectedDescendant = new Set<string>();
-
-  const visit = (node: FigDesignNode, ancestors: readonly string[]) => {
-    if (selected.has(node.id)) {
-      for (const ancestor of ancestors) {
-        ancestorsWithSelectedDescendant.add(ancestor);
-      }
+  for (const id of itemIds) {
+    const node = document.nodesByGuid.get(id);
+    if (node === undefined) {
+      throw new Error(`filterMarqueeSelectionByHierarchy: node ${id} is not present`);
     }
-    for (const child of node.children ?? []) {
-      visit(child, [...ancestors, node.id]);
-    }
-  };
-
-  for (const node of nodes) {
-    visit(node, []);
+    collectSelectedAncestors(document, selected, ancestorsWithSelectedDescendant, node.parentIndex?.guid);
   }
-
   return itemIds.filter((id) => !ancestorsWithSelectedDescendant.has(id));
+}
+
+function collectSelectedAncestors(
+  document: FigKiwiDocumentIndex,
+  selected: ReadonlySet<string>,
+  ancestorsWithSelectedDescendant: Set<string>,
+  parent: FigGuid | undefined,
+): void {
+  if (parent === undefined) {
+    return;
+  }
+  const parentKey = guidToString(parent);
+  if (selected.has(parentKey)) {
+    ancestorsWithSelectedDescendant.add(parentKey);
+  }
+  collectSelectedAncestors(
+    document,
+    selected,
+    ancestorsWithSelectedDescendant,
+    document.nodesByGuid.get(parentKey)?.parentIndex?.guid,
+  );
 }

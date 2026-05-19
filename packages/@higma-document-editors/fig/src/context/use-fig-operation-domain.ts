@@ -1,16 +1,18 @@
-/** @file Hook for resolving the current fig editor operation domain. */
-
+/** @file Hook for resolving allowed Fig editor operations. */
 import { useMemo } from "react";
-import { useFigDrag, useFigEditor } from "./FigEditorContext";
+import { useFigEditor } from "./FigEditorContext";
 import { resolveFigUserIntent } from "./fig-editor/user-intent";
 import { resolveFigUserOperationDomain, type FigUserOperationDomain } from "./fig-editor/user-operation";
 
-/** Resolves user operations from the same editor state that reducer guards consume. */
+/** Return the operation domain for the current editor tool. */
 export function useFigOperationDomain(): FigUserOperationDomain {
-  const { creationMode, textEdit } = useFigEditor();
-  const { drag } = useFigDrag();
+  const { creationMode, textEdit, canvasTransformActive } = useFigEditor();
   return useMemo(
-    () => resolveFigUserOperationDomain(resolveFigUserIntent({ creationMode, textEdit, drag })),
-    [creationMode, drag, textEdit],
+    () => resolveFigUserOperationDomain(resolveFigUserIntent({
+      mode: creationMode,
+      textEditActive: textEdit.type === "active",
+      canvasTransformActive,
+    })),
+    [canvasTransformActive, creationMode, textEdit.type],
   );
 }

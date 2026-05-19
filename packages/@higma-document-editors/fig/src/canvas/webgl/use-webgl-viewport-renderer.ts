@@ -1,40 +1,37 @@
-/** @file WebGL viewport renderer lifecycle and resource preparation hook. */
-
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+/** @file Fig editor wrapper around the renderer-owned WebGL pipeline. */
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import {
   useWebGLViewportPipeline,
   type WebGLViewportPipelineState,
+  type WebGLViewportPipelineParams,
 } from "@higma-document-renderers/fig/webgl/react";
 
-type UseWebGLViewportRendererParams = {
-  readonly sceneGraph: SceneGraph;
+export type UseFigWebGLViewportRendererOptions = {
+  readonly sceneGraph: SceneGraph | null;
   readonly renderOptions?: SceneGraphRenderOptions;
   readonly viewportScale: number;
+  readonly viewportRevision?: number;
   readonly initializationDelayMs?: number;
+  readonly onMetrics?: WebGLViewportPipelineParams["onMetrics"];
 };
 
-/**
- * Manage WebGL renderer creation, resource preparation, rendering, and metrics.
- *
- * Surfaces renderer metrics on the canvas dataset (`data-webgl-*`) so the
- * editor's WebGL Playwright tests can assert on prepare/render counts.
- *
- * The hook returns a `WebGLViewportPipelineState` (owned by
- * `@higma-document-renderers/fig/webgl/react`) — consumers that need the
- * type must import that name directly from its origin.
- */
-export function useWebGLViewportRenderer(
-  params: UseWebGLViewportRendererParams,
-): WebGLViewportPipelineState {
+/** Use the shared WebGL viewport renderer lifecycle from the renderer package. */
+export function useFigWebGLViewportRenderer({
+  sceneGraph,
+  renderOptions,
+  viewportScale,
+  viewportRevision,
+  initializationDelayMs,
+  onMetrics,
+}: UseFigWebGLViewportRendererOptions): WebGLViewportPipelineState {
   return useWebGLViewportPipeline({
-    ...params,
-    errorContext: "useWebGLViewportRenderer",
-    onMetrics: (canvas, metrics) => {
-      canvas.dataset.webglLastPrepareMs = metrics.lastPrepareMs.toFixed(3);
-      canvas.dataset.webglPrepareCount = `${metrics.prepareCount}`;
-      canvas.dataset.webglLastRenderMs = metrics.lastRenderMs.toFixed(3);
-      canvas.dataset.webglRenderCount = `${metrics.renderCount}`;
-    },
+    sceneGraph,
+    renderOptions,
+    viewportScale,
+    viewportRevision,
+    initializationDelayMs,
+    onMetrics,
+    errorContext: "useFigWebGLViewportRenderer",
   });
 }

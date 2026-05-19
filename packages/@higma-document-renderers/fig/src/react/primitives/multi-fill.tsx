@@ -10,10 +10,10 @@
  */
 
 import type { ReactNode } from "react";
-import type { ResolvedFillLayer } from "../../scene-graph/render-tree";
-import type { ResolvedStrokeLayer } from "../../scene-graph/render";
+import type { ResolvedFillLayer } from "../../scene-graph";
+import type { ResolvedStrokeLayer } from "../../scene-graph";
 import type { CornerRadius } from "@higma-primitives/path";
-import type { BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { BlendMode } from "@higma-document-renderers/fig/scene-graph";
 import { RectShape } from "./rect-shape";
 import type { UniformStrokeDomAttrs } from "./stroke-rendering";
 
@@ -26,10 +26,11 @@ type MultiFillRectLayersProps = {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  readonly cornerSmoothing?: number;
   readonly stroke?: UniformStrokeDomAttrs;
 };
 
-export function MultiFillRectLayers({ layers, width, height, cornerRadius, stroke }: MultiFillRectLayersProps): ReactNode {
+export function MultiFillRectLayers({ layers, width, height, cornerRadius, cornerSmoothing, stroke }: MultiFillRectLayersProps): ReactNode {
   return (
     <>
       {layers.map((layer, i) => (
@@ -38,6 +39,7 @@ export function MultiFillRectLayers({ layers, width, height, cornerRadius, strok
           width={width}
           height={height}
           cornerRadius={cornerRadius}
+          cornerSmoothing={cornerSmoothing}
           fill={layer.attrs.fill}
           fillOpacity={layer.attrs.fillOpacity}
           style={blendModeStyle(layer.blendMode)}
@@ -115,9 +117,10 @@ type MultiStrokeRectLayersProps = {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  readonly cornerSmoothing?: number;
 };
 
-export function MultiStrokeRectLayers({ layers, width, height, cornerRadius }: MultiStrokeRectLayersProps): ReactNode {
+export function MultiStrokeRectLayers({ layers, width, height, cornerRadius, cornerSmoothing }: MultiStrokeRectLayersProps): ReactNode {
   return (
     <>
       {layers.map((layer, i) => (
@@ -126,6 +129,7 @@ export function MultiStrokeRectLayers({ layers, width, height, cornerRadius }: M
           width={width}
           height={height}
           cornerRadius={cornerRadius}
+          cornerSmoothing={cornerSmoothing}
           fill="none"
           style={blendModeStyle(layer.blendMode)}
           {...layer.attrs}

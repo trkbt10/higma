@@ -7,6 +7,7 @@
  */
 
 import type { FigEffect, FigEffectType } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 
 // =============================================================================
 // Effect Type
@@ -15,15 +16,13 @@ import type { FigEffect, FigEffectType } from "@higma-document-models/fig/types"
 /**
  * Get the effect type name from a Figma effect.
  *
- * Handles both string ("DROP_SHADOW") and KiwiEnumValue ({ name: "DROP_SHADOW" }).
  */
 export function getEffectTypeName(effect: FigEffect): FigEffectType {
-  const type = effect.type;
-  if (typeof type === "string") {return type;}
-  if (type && typeof type === "object" && "name" in type) {
-    return type.name;
+  const type = kiwiEnumName<FigEffectType>(effect.type, "FigEffect.type");
+  if (type === undefined) {
+    throw new Error("FigEffect.type is required");
   }
-  return "DROP_SHADOW";
+  return type;
 }
 
 // =============================================================================
@@ -74,7 +73,7 @@ export function extractShadowParams(effect: FigEffect): ShadowParams {
 }
 
 // =============================================================================
-// Effect Classification Helpers
+// Effect Classification
 // =============================================================================
 
 /**

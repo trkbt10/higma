@@ -19,7 +19,7 @@
  *   - `Offset32` (4 bytes), used by the Extension subtable for its inner
  *     payload pointer so an Extension-wrapped subtable can sit anywhere
  *     in the font (the very reason `LookupType 9` exists).
- * Every helper here takes absolute byte offsets — the caller is expected
+ * Every routine here takes absolute byte offsets — the caller is expected
  * to resolve the relative pointer at the call site so this module never
  * needs to know about its position in the lookup tree.
  */

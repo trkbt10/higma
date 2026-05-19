@@ -17,8 +17,10 @@ export {
   createFigDocumentContextFromLoaded,
   createFigDocumentContextFromKiwiCanvas,
   createFigDocumentContextFromNodeChanges,
+  replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
   type CreateFigDocumentContextFromNodeChangesOptions,
+  type ReplaceFigDocumentContextNodeChangesOptions,
   figDocumentResources,
   type FigDocumentResources,
 } from "./context";

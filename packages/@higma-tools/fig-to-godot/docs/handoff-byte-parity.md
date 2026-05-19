@@ -131,7 +131,7 @@ once the actual.png refreshes.
 
 8. **Stroke padding for pre-raster paths** (`src/style/blur-raster.ts`, `src/emit/walk.ts`)
    - `rasterizeShapeWithEffects` now accepts `options.strokePadding` to reserve room around the silhouette for a CENTER / OUTSIDE stroke band that extends past the silhouette edge. Without this padding, a 2px CENTER stroke extends 1px outside the silhouette but the texture stopped at the silhouette edge — the outer half of the stroke got clipped (`grad-stroke-radius` showed 217-byte deviation at the outer band).
-   - `computeStrokePadding` helper computes the right padding from the stroke's weight and alignment.
+   - `computeStrokePadding` computes the right padding from the stroke's weight and alignment.
    - Called from both `tryEmitAntialiasedFillShape` (AA-fill path, no effects) and `tryEmitBlurredShape` (effects path) before invoking the rasterizer.
    - Win: `grad-stroke-radius` 1.71% → 0.05%. Cap tightened from 2% to 0.1%.
    - Note: stroke-only plain rects (no corner radius, no fill, e.g. `stroke-basic`) routed through pre-raster regressed 2.48%→5.00% — `paintStrokeBand`'s SDF positions the stroke 1px off from Godot's StyleBoxFlat stroke for hard-cornered rects. Reverted that experiment; only fill+stroke combinations (already routing through pre-raster) get the padding benefit.
@@ -188,7 +188,7 @@ The rasterizer composites the whole stack in float space when the AA-fill path l
 
 Both `tryEmitBlurredShape` and `tryEmitAntialiasedFillShape` call it after the fill rasterization, so stroked curved-gradient shapes route through pre-raster too.
 
-### Color quantization helpers (`src/style/color.ts`)
+### Color quantization routines (`src/style/color.ts`)
 
 Two compensation paths because Godot's `Color` quantization differs per widget:
 

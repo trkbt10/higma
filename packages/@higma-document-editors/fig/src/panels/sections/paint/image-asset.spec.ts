@@ -7,7 +7,7 @@ describe("createFigImageAsset", () => {
     const data = new Uint8Array([137, 80, 78, 71]);
     const image = createFigImageAsset({ data, mimeType: "image/png", fileName: "sample.png" });
 
-    expect(image.ref).toBe("4e4a5c83.png");
+    expect(image.ref).toBe("4e4a5c83");
     expect(image.data).toBe(data);
     expect(image.mimeType).toBe("image/png");
   });

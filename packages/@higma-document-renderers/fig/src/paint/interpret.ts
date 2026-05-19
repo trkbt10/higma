@@ -4,13 +4,10 @@
  * Extracts gradient direction, stops, image references, etc. from FigPaint.
  * These are the authoritative implementations — no other module should
  * re-derive these values from FigPaint.
- *
- * Handles both formats:
- * - API format: gradientHandlePositions, gradientStops
- * - Kiwi (.fig) format: transform matrix, stops array
  */
 
 import type { FigGradientPaint, FigGradientStop, FigGradientTransform, FigImagePaint, FigImagePaintFilter, FigImageScaleMode } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 
 export type GradientDirection = {
   readonly start: { readonly x: number; readonly y: number };
@@ -27,19 +24,13 @@ export type RadialGradientParams = {
 // =============================================================================
 
 /**
- * Extract gradient stops from a paint, handling both API and Kiwi formats.
- *
- * API format: `paint.gradientStops` — array of { color, position }
- * Kiwi format: `paint.stops` — same structure, different field name
+ * Extract gradient stops from a Kiwi paint.
  */
 export function getGradientStops(paint: FigGradientPaint): readonly FigGradientStop[] {
-  if (paint.gradientStops && paint.gradientStops.length > 0) {
-    return paint.gradientStops;
-  }
   if (paint.stops && paint.stops.length > 0) {
     return paint.stops;
   }
-  return [];
+  throw new Error("Gradient paint requires non-empty stops");
 }
 
 // =============================================================================
@@ -63,13 +54,13 @@ export function getGradientStops(paint: FigGradientPaint): readonly FigGradientS
  * matrices for valid linear gradients.
  *
  * The SSoT for pixel-space endpoints lives in
- * `paint/svg-gradient-transform.ts`. This helper returns normalized
+ * `paint/svg-gradient-transform.ts`. This routine returns normalized
  * (0..1) object-space points for consumers that emit gradient attrs as
  * objectBoundingBox percentages rather than userSpaceOnUse pixels.
  */
 export function getGradientDirectionFromTransform(transform: FigGradientTransform | undefined): GradientDirection {
   if (!transform) {
-    return { start: { x: 0, y: 0 }, end: { x: 0, y: 1 } };
+    throw new Error("Linear gradient paint requires transform");
   }
   const m00 = transform.m00 ?? 1;
   const m01 = transform.m01 ?? 0;
@@ -105,19 +96,9 @@ export function getGradientDirectionFromTransform(transform: FigGradientTransfor
 }
 
 /**
- * Get gradient direction from a paint, handling both API and Kiwi formats.
- *
- * API format: `paint.gradientHandlePositions` — [start, end, ...]
- * Kiwi format: `paint.transform` — 2x3 affine matrix
+ * Get gradient direction from a Kiwi paint.
  */
 export function getGradientDirection(paint: FigGradientPaint): GradientDirection {
-  const handles = paint.gradientHandlePositions;
-  if (handles && handles.length >= 2) {
-    return {
-      start: handles[0] ?? { x: 0, y: 0.5 },
-      end: handles[1] ?? { x: 1, y: 0.5 },
-    };
-  }
   return getGradientDirectionFromTransform(paint.transform);
 }
 
@@ -128,21 +109,16 @@ export function getGradientDirection(paint: FigGradientPaint): GradientDirection
 /**
  * Get radial gradient center and radius from a paint.
  *
- * API format: center = handles[0], radius = distance(handles[0], handles[1])
- * Kiwi format: center = (m02, m12), radius = m00
+ * Kiwi transform stores center translation and radius scale.
  */
 export function getRadialGradientCenterAndRadius(paint: FigGradientPaint): RadialGradientParams {
-  const handles = paint.gradientHandlePositions;
-  if (handles && handles.length >= 2) {
-    const center = handles[0] ?? { x: 0.5, y: 0.5 };
-    const edge = handles[1] ?? { x: 1, y: 0.5 };
-    const radius = Math.sqrt(Math.pow(edge.x - center.x, 2) + Math.pow(edge.y - center.y, 2));
-    return { center, radius };
-  }
   const transform = paint.transform;
+  if (!transform) {
+    throw new Error("Radial gradient paint requires transform");
+  }
   return {
-    center: { x: transform?.m02 ?? 0.5, y: transform?.m12 ?? 0.5 },
-    radius: transform?.m00 ?? 0.5,
+    center: { x: transform.m02 ?? 0.5, y: transform.m12 ?? 0.5 },
+    radius: transform.m00 ?? 0.5,
   };
 }
 
@@ -184,17 +160,9 @@ export type AngularGradientParams = {
  * right.
  */
 export function getAngularGradientParams(paint: FigGradientPaint): AngularGradientParams {
-  const handles = paint.gradientHandlePositions;
-  if (handles && handles.length >= 2) {
-    const center = handles[0] ?? { x: 0.5, y: 0.5 };
-    const edge = handles[1] ?? { x: 1, y: 0.5 };
-    const angle = Math.atan2(edge.y - center.y, edge.x - center.x) * (180 / Math.PI);
-    return { center, startAngle: angle };
-  }
-
   const transform = paint.transform;
   if (!transform) {
-    return { center: { x: 0.5, y: 0.5 }, startAngle: 0 };
+    throw new Error("Angular gradient paint requires transform");
   }
 
   // Rotation from the 2×2 upper block.
@@ -239,16 +207,14 @@ export type DiamondGradientParams = {
  * The transform maps gradient space to object space; center is at (m02, m12).
  */
 export function getDiamondGradientParams(paint: FigGradientPaint): DiamondGradientParams {
-  const handles = paint.gradientHandlePositions;
-  if (handles && handles.length >= 1) {
-    return { center: handles[0] ?? { x: 0.5, y: 0.5 } };
-  }
-
   const transform = paint.transform;
+  if (!transform) {
+    throw new Error("Diamond gradient paint requires transform");
+  }
   return {
     center: {
-      x: transform?.m02 ?? 0.5,
-      y: transform?.m12 ?? 0.5,
+      x: transform.m02 ?? 0.5,
+      y: transform.m12 ?? 0.5,
     },
   };
 }
@@ -265,71 +231,46 @@ function hashArrayToHex(hash: readonly number[]): string {
 }
 
 /**
- * Extract image reference from an image paint.
- *
- * Tries multiple locations where the image ref may be stored:
- * 1. `paint.imageRef` — API format
- * 2. `paint.image.hash` — Kiwi format (array of bytes → hex string)
- * 3. `paint.imageHash` — alternative Kiwi field (string or byte array)
+ * Extract the package image hash from a Kiwi image paint.
  */
-export function getImageRef(paint: FigImagePaint): string | null {
-  if (paint.imageRef) {
-    return paint.imageRef;
-  }
+export function getImageHash(paint: FigImagePaint): string {
   if (paint.image?.hash && Array.isArray(paint.image.hash) && paint.image.hash.length > 0) {
     return hashArrayToHex(paint.image.hash);
   }
-  const imageHash = paint.imageHash;
-  if (typeof imageHash === "string") {
-    return imageHash;
-  }
-  if (Array.isArray(imageHash) && imageHash.length > 0) {
-    return hashArrayToHex(imageHash);
-  }
-  return null;
+  throw new Error("IMAGE paint requires image.hash");
 }
 
 /**
- * Get scale mode from an image paint. Both `scaleMode` and
- * `imageScaleMode` are SSoT string unions; the parser normalises the
- * Kiwi enum shape at file-read time.
+ * Get scale mode from an image paint.
  */
 export function getScaleMode(paint: FigImagePaint): FigImageScaleMode {
-  const scaleMode = readImageScaleMode(paint.scaleMode) ?? readImageScaleMode(paint.imageScaleMode);
+  const scaleMode = readImageScaleMode(paint.imageScaleMode);
   if (scaleMode) {
     return scaleMode;
   }
-  return "FILL";
+  throw new Error("IMAGE paint requires imageScaleMode");
 }
 
 /**
- * Get image transform from either raw Kiwi or API/builder field names.
+ * Get image transform from the Kiwi paint payload.
  */
 export function getImageTransform(paint: FigImagePaint): FigImagePaint["transform"] {
-  if (paint.transform) {
-    return paint.transform;
-  }
-  return paint.imageTransform;
+  return paint.transform;
 }
 
 /**
  * Get tile scaling factor from an image paint.
- *
- * API format uses `scalingFactor`. Kiwi binary format uses `scale`.
  */
 export function getScalingFactor(paint: FigImagePaint): number | undefined {
-  if (typeof paint.scalingFactor === "number" && paint.scalingFactor > 0) {
-    return paint.scalingFactor;
-  }
   if (typeof paint.scale === "number" && paint.scale > 0) {
     return paint.scale;
   }
   return undefined;
 }
 
-/** Read the image paint colour-adjustment payload, regardless of source field name. */
+/** Read the image paint colour-adjustment payload. */
 export function getPaintFilter(paint: FigImagePaint): FigImagePaintFilter | undefined {
-  return paint.paintFilter ?? paint.filterColorAdjust ?? paint.filters;
+  return paint.paintFilter ?? paint.filterColorAdjust;
 }
 
 /** Read the explicit image decode colour-management flag. */
@@ -337,28 +278,20 @@ export function getImageShouldColorManage(paint: FigImagePaint): boolean | undef
   return paint.imageShouldColorManage;
 }
 
-const IMAGE_SCALE_MODES = ["FILL", "FIT", "CROP", "TILE", "STRETCH"] as const;
+const IMAGE_SCALE_MODES = ["FILL", "FIT", "TILE", "STRETCH"] as const;
 
 function readImageScaleMode(value: unknown): FigImageScaleMode | undefined {
-  if (isImageScaleMode(value)) {
-    return value;
-  }
   if (typeof value === "string") {
-    throw new Error("IMAGE scale mode must be a supported FigImageScaleMode");
+    throw new Error("IMAGE imageScaleMode must be a Kiwi enum object");
   }
-  if (value === null || typeof value !== "object") {
+  const name = kiwiEnumName<FigImageScaleMode>(value, "IMAGE imageScaleMode");
+  if (name === undefined) {
     return undefined;
   }
-  if (!("name" in value)) {
-    return undefined;
-  }
-  if (typeof value.name !== "string") {
-    throw new Error("IMAGE imageScaleMode.name must be a string");
-  }
-  if (!isImageScaleMode(value.name)) {
+  if (!isImageScaleMode(name)) {
     throw new Error("IMAGE imageScaleMode.name must be a supported FigImageScaleMode");
   }
-  return value.name;
+  return name;
 }
 
 function isImageScaleMode(value: unknown): value is FigImageScaleMode {

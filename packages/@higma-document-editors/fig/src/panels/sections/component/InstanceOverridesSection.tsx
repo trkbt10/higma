@@ -1,236 +1,211 @@
-/** @file INSTANCE self-override controls adapter. */
-
-import {
-  parseId,
-  type FigDesignDocument,
-  type FigDesignNode,
-  type FigNodeId,
-  type SymbolOverride,
-  guidToString,
-} from "@higma-document-models/fig/domain";
+/** @file INSTANCE override controls over Kiwi symbolData. */
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigGuid, FigKiwiSymbolOverride, FigNode } from "@higma-document-models/fig/types";
 import {
   InstanceOverridesSectionView,
   type InstanceOverrideRowView,
 } from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-
-type InstanceOverridesSectionProps = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly document: FigDesignDocument;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
-
-const SELF_KEY = "__self__";
-
-/** Edit self-overrides that the renderer already resolves through SymbolOverride SoT. */
-export function InstanceOverridesSection({ node, target, document, dispatch }: InstanceOverridesSectionProps) {
-  if (node.type !== "INSTANCE" || !node.symbolId) {
-    return null;
-  }
-
-  const override = findSelfOverride(node);
-  const opacityPercent = Math.round((override?.opacity ?? node.opacity) * 100);
-  const childTargets = collectOverrideTargets(node, document);
-
-  const childRows: readonly InstanceOverrideRowView[] = childTargets.map((childTarget) => {
-    const childOverride = findOverrideByPath(node.overrides ?? [], childTarget.path);
-    const childOpacityPercent = Math.round((childOverride?.opacity ?? childTarget.node.opacity) * 100);
-    return {
-      key: childTarget.path.join("/"),
-      label: childTarget.label,
-      opacityPercent: childOpacityPercent,
-    };
-  });
-
-  const targetByKey = new Map(childTargets.map((target) => [target.path.join("/"), target] as const));
-
-  return (
-    <InstanceOverridesSectionView
-      selfRow={{ key: SELF_KEY, label: "Opacity override", opacityPercent }}
-      childRows={childRows}
-      onOpacityChange={(key, percent) => {
-        const opacity = percent / 100;
-        if (key === SELF_KEY) {
-          dispatch(createPropertyPrimaryUpdateAction({
-            target,
-            updater: (current) => updateSelfOverrideOpacity(current, opacity),
-          }));
-          return;
-        }
-        const childTarget = targetByKey.get(key);
-        if (!childTarget) {
-          return;
-        }
-        dispatch(createPropertyPrimaryUpdateAction({
-          target,
-          updater: (current) => updatePathOverrideOpacity(current, childTarget.path, opacity),
-        }));
-      }}
-    />
-  );
-}
+import { useFigEditor } from "../../../context/FigEditorContext";
+import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 type OverrideTarget = {
-  readonly path: readonly FigNodeId[];
-  readonly node: FigDesignNode;
+  readonly key: string;
+  readonly path: readonly FigGuid[];
+  readonly node: FigNode;
   readonly label: string;
 };
 
-function collectOverrideTargets(node: FigDesignNode, document: FigDesignDocument): readonly OverrideTarget[] {
-  if (!node.symbolId) {
-    return [];
-  }
-  const symbol = document.components.get(node.symbolId);
-  if (!symbol?.children || symbol.children.length === 0) {
-    return [];
-  }
-  return collectTargetsFromChildren({ children: symbol.children, document, prefix: [], labelPrefix: "" });
+function sameGuid(left: FigGuid, right: FigGuid): boolean {
+  return left.sessionID === right.sessionID && left.localID === right.localID;
 }
 
-function collectTargetsFromChildren({
-  children,
-  document,
+function sameGuidPath(left: readonly FigGuid[], right: readonly FigGuid[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((guid, index) => {
+    const other = right[index];
+    if (other === undefined) {
+      return false;
+    }
+    return sameGuid(guid, other);
+  });
+}
+
+function requireOpacity(value: number | undefined, owner: string): number {
+  if (typeof value !== "number") {
+    throw new Error(`${owner} is missing Kiwi opacity`);
+  }
+  return value;
+}
+
+function opacityPercent(value: number | undefined, owner: string): number {
+  return Math.round(requireOpacity(value, owner) * 100);
+}
+
+function opacityFromPercent(percent: number): number {
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+    throw new Error(`Opacity percent must be between 0 and 100, got ${percent}`);
+  }
+  return percent / 100;
+}
+
+function overrideForPath(
+  overrides: readonly FigKiwiSymbolOverride[],
+  path: readonly FigGuid[],
+): FigKiwiSymbolOverride | undefined {
+  return overrides.find((override) => {
+    const guids = override.guidPath?.guids;
+    if (guids === undefined) {
+      return false;
+    }
+    return sameGuidPath(guids, path);
+  });
+}
+
+function targetLabel(labelPrefix: string, node: FigNode): string {
+  if (node.name === undefined) {
+    throw new Error(`Override target ${guidToString(node.guid)} is missing name`);
+  }
+  if (labelPrefix.length === 0) {
+    return node.name;
+  }
+  return `${labelPrefix} / ${node.name}`;
+}
+
+function collectOverrideTargets({
+  nodes,
+  childrenOf,
   prefix,
   labelPrefix,
 }: {
-  readonly children: readonly FigDesignNode[];
-  readonly document: FigDesignDocument;
-  readonly prefix: readonly FigNodeId[];
+  readonly nodes: readonly FigNode[];
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
+  readonly prefix: readonly FigGuid[];
   readonly labelPrefix: string;
 }): readonly OverrideTarget[] {
-  return children.flatMap((child) => {
-    const path = [...prefix, child.id];
-    const label = labelPrefix ? `${labelPrefix} / ${child.name}` : child.name;
-    const nestedTargets = collectNestedOverrideTargets({ child, document, prefix: path, labelPrefix: label });
-    return [{ path, node: child, label }, ...nestedTargets];
+  return nodes.flatMap((child) => {
+    const path = [...prefix, child.guid];
+    const label = targetLabel(labelPrefix, child);
+    const key = path.map(guidToString).join("/");
+    const descendants = collectOverrideTargets({
+      nodes: childrenOf(child),
+      childrenOf,
+      prefix: path,
+      labelPrefix: label,
+    });
+    return [{ key, path, node: child, label }, ...descendants];
   });
 }
 
-function findSelfOverride(node: FigDesignNode): SymbolOverride | undefined {
-  return node.overrides?.find((override) => {
-    const first = override.guidPath.guids[0];
-    if (!first) {
-      return false;
-    }
-    const key = guidToString(first);
-    return key === node.symbolId;
+function childRows(
+  targets: readonly OverrideTarget[],
+  overrides: readonly FigKiwiSymbolOverride[],
+): readonly InstanceOverrideRowView[] {
+  return targets.map((target) => {
+    const override = overrideForPath(overrides, target.path);
+    const owner = `Override target ${guidToString(target.node.guid)}`;
+    return {
+      key: target.key,
+      label: target.label,
+      opacityPercent: opacityPercent(override?.opacity ?? target.node.opacity, owner),
+    };
   });
 }
 
-function updateSelfOverrideOpacity(node: FigDesignNode, opacity: number): FigDesignNode {
-  if (node.type !== "INSTANCE" || !node.symbolId) {
-    return node;
-  }
-
-  const symbolId = node.symbolId;
-  const normalized = Math.max(0, Math.min(1, opacity));
-  const overrides = node.overrides ?? [];
-  const next = overrides.map((override) => {
-    if (!targetsSymbolFrame(override, symbolId)) {
-      return override;
-    }
-    return { ...override, opacity: normalized };
-  });
-  const hasSelfOverride = overrides.some((override) => targetsSymbolFrame(override, symbolId));
-
-  return {
-    ...node,
-    overrides: hasSelfOverride ? next : [...next, createSelfOverride(symbolId, normalized)],
-  };
-}
-
-function updatePathOverrideOpacity(
-  node: FigDesignNode,
-  path: readonly FigNodeId[],
+function upsertOpacityOverride(
+  overrides: readonly FigKiwiSymbolOverride[],
+  path: readonly FigGuid[],
   opacity: number,
-): FigDesignNode {
-  if (node.type !== "INSTANCE" || !node.symbolId) {
-    return node;
-  }
-  const normalized = Math.max(0, Math.min(1, opacity));
-  const overrides = node.overrides ?? [];
-  const next = overrides.map((override) => {
-    if (!sameGuidPath(override, path)) {
-      return override;
-    }
-    return { ...override, opacity: normalized };
-  });
-  const hasOverride = overrides.some((override) => sameGuidPath(override, path));
-  return {
-    ...node,
-    overrides: hasOverride ? next : [...next, createPathOverride(path, normalized)],
-  };
-}
-
-function targetsSymbolFrame(override: SymbolOverride, symbolId: FigNodeId): boolean {
-  const first = override.guidPath.guids[0];
-  if (!first) {
-    return false;
-  }
-  const key = guidToString(first);
-  return key === symbolId;
-}
-
-function createSelfOverride(symbolId: FigNodeId, opacity: number): SymbolOverride {
-  const parsed = parseId(symbolId);
-  return {
-    guidPath: { guids: [{ sessionID: parsed.sessionID, localID: parsed.localID }] },
-    opacity,
-  };
-}
-
-function createPathOverride(path: readonly FigNodeId[], opacity: number): SymbolOverride {
-  if (path.length === 0) {
-    throw new Error("Override path requires at least one target id.");
-  }
-  return {
-    guidPath: {
-      guids: path.map((id) => {
-        const parsed = parseId(id);
-        return { sessionID: parsed.sessionID, localID: parsed.localID };
-      }),
-    },
-    opacity,
-  };
-}
-
-function findOverrideByPath(overrides: readonly SymbolOverride[], path: readonly FigNodeId[]): SymbolOverride | undefined {
-  return overrides.find((override) => sameGuidPath(override, path));
-}
-
-function sameGuidPath(override: SymbolOverride, path: readonly FigNodeId[]): boolean {
-  const guids = override.guidPath.guids;
-  if (guids.length !== path.length) {
-    return false;
-  }
-  return guids.every((guid, index) => {
-    const id = path[index];
-    if (!id) {
+): readonly FigKiwiSymbolOverride[] {
+  const hasOverride = overrides.some((override) => {
+    const guids = override.guidPath?.guids;
+    if (guids === undefined) {
       return false;
     }
-    return guidToString(guid) === id;
+    return sameGuidPath(guids, path);
+  });
+  if (!hasOverride) {
+    return [...overrides, { guidPath: { guids: path }, opacity }];
+  }
+  return overrides.map((override) => {
+    const guids = override.guidPath?.guids;
+    if (guids === undefined || !sameGuidPath(guids, path)) {
+      return override;
+    }
+    return { ...override, opacity };
   });
 }
 
-function collectNestedOverrideTargets({
-  child,
-  document,
-  prefix,
-  labelPrefix,
-}: {
-  readonly child: FigDesignNode;
-  readonly document: FigDesignDocument;
-  readonly prefix: readonly FigNodeId[];
-  readonly labelPrefix: string;
-}): readonly OverrideTarget[] {
-  if (child.type !== "INSTANCE" || !child.symbolId) {
-    return [];
+function writeChildOpacityOverride(
+  node: FigNode,
+  path: readonly FigGuid[],
+  opacity: number,
+): FigNode {
+  if (getNodeType(node) !== "INSTANCE") {
+    throw new Error("Child symbol override updates require an INSTANCE node");
   }
-  const nestedSymbol = document.components.get(child.symbolId);
-  if (!nestedSymbol?.children) {
-    return [];
+  const symbolData = node.symbolData;
+  if (symbolData?.symbolID === undefined) {
+    throw new Error(`INSTANCE ${guidToString(node.guid)} is missing symbolData.symbolID`);
   }
-  return collectTargetsFromChildren({ children: nestedSymbol.children, document, prefix, labelPrefix });
+  const overrides = symbolData.symbolOverrides ?? [];
+  return {
+    ...node,
+    symbolData: {
+      ...symbolData,
+      symbolOverrides: upsertOpacityOverride(overrides, path, opacity),
+    },
+  };
+}
+
+function requireTargetByKey(targets: readonly OverrideTarget[], key: string): OverrideTarget {
+  const target = targets.find((candidate) => candidate.key === key);
+  if (target === undefined) {
+    throw new Error(`Override target ${key} is not present on the resolved SYMBOL`);
+  }
+  return target;
+}
+
+/** Render INSTANCE self and descendant opacity overrides from SymbolResolver. */
+export function InstanceOverridesSection({ node }: { readonly node: FigNode }) {
+  const { context, updateNode } = useFigEditor();
+  if (getNodeType(node) !== "INSTANCE") {
+    return null;
+  }
+  const resolution = context.symbolResolver.resolveReferences(node);
+  const symbol = resolution.effectiveSymbol?.node;
+  if (symbol === undefined) {
+    throw new Error(`InstanceOverridesSection: INSTANCE ${guidToString(node.guid)} does not resolve to a SYMBOL`);
+  }
+  const targets = collectOverrideTargets({
+    nodes: context.document.childrenOf(symbol),
+    childrenOf: context.document.childrenOf,
+    prefix: [],
+    labelPrefix: "",
+  });
+  const overrides = node.symbolData?.symbolOverrides ?? [];
+  const selfKey = guidToString(node.guid);
+  return (
+    <section style={sectionStyle}>
+      <div style={sectionTitleStyle}>Instance</div>
+      <InstanceOverridesSectionView
+        selfRow={{
+          key: selfKey,
+          label: "Opacity override",
+          opacityPercent: opacityPercent(node.opacity, `INSTANCE ${guidToString(node.guid)}`),
+        }}
+        childRows={childRows(targets, overrides)}
+        onOpacityChange={(key, percent) => {
+          const opacity = opacityFromPercent(percent);
+          if (key === selfKey) {
+            updateNode(node.guid, (current) => ({ ...current, opacity }), "property-panel");
+            return;
+          }
+          const target = requireTargetByKey(targets, key);
+          updateNode(node.guid, (current) => writeChildOpacityOverride(current, target.path, opacity), "property-panel");
+        }}
+      />
+    </section>
+  );
 }

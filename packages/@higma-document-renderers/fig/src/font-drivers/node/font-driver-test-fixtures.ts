@@ -1,5 +1,5 @@
 /**
- * @file Shared test helpers for the node font driver.
+ * @file Node font driver test fixtures.
  *
  * Two pieces:
  *   - `createFakeFs` — an in-memory filesystem implementing the
@@ -40,7 +40,7 @@ export type FakeFs = DiscoveryFs & {
  * Windows discovery should use forward-slash paths in the fake;
  * the real driver uses `path.join` which honours the host
  * separator, but the seam is internally consistent because we test
- * the join helpers separately and pass the fake's pre-joined paths.
+ * the path join routines separately and pass the fake's pre-joined paths.
  */
 export function createFakeFs(): FakeFs {
   const entries = new Map<string, FakeFsEntry>();

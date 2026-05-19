@@ -313,6 +313,15 @@ function effectItemStyleFor(visible: boolean, isLast: boolean): CSSProperties {
   return { ...base, opacity: visible ? 1 : 0.4 };
 }
 
+function effectControlLabel(effects: readonly EffectView[], effect: EffectView, index: number): string {
+  const base = effectLabel(effect.type);
+  const sameTypeBefore = effects.slice(0, index).filter((candidate) => candidate.type === effect.type).length;
+  if (sameTypeBefore === 0) {
+    return base;
+  }
+  return `${base} ${sameTypeBefore + 1}`;
+}
+
 /** Renders the effect list (drop/inner shadow, layer/background blur) with shadow detail controls. */
 export function EffectsSectionView({ effects, onAdd, onRemove, onChange }: EffectsSectionViewProps) {
   return (
@@ -320,7 +329,7 @@ export function EffectsSectionView({ effects, onAdd, onRemove, onChange }: Effec
       {effects.length === 0 && <div style={emptyStyle}>No effects</div>}
       {effects.map((effect, i) => {
         const isShadow = effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW";
-        const label = effectLabel(effect.type);
+        const label = effectControlLabel(effects, effect, i);
         const isLast = i === effects.length - 1;
 
         return (

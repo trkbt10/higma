@@ -1,14 +1,14 @@
-/**
- * @file E2E test harness — canvas only
- *
- * Renders FigEditorCanvas inside FigEditorProvider with only the toolbar.
- * This isolates canvas text editing from PropertyPanel textarea interference
- * while still covering first-class tool selection from the UI.
- */
+/** @file E2E test harness backed directly by Kiwi nodeChanges. */
 
-import { StrictMode, type CSSProperties } from "react";
+import { StrictMode, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { injectCSSVariables } from "@higma-editor-kernel/ui/design-tokens";
+import {
+  createFigDocumentContextFromNodeChanges,
+  figDocumentResources,
+  type FigDocumentContext,
+} from "@higma-document-io/fig";
+import type { FigPackageImage } from "@higma-figma-containers/package";
 import { FigEditorProvider } from "../../src/context/FigEditorContext";
 import { FigEditorCanvas } from "../../src/canvas/FigEditorCanvas";
 import { FigEditorToolbar } from "../../src/editor/FigEditorToolbar";
@@ -16,43 +16,65 @@ import { PropertyPanel } from "../../src/panels/properties/PropertyPanel";
 import { PageListPanel } from "../../src/panels/pages/PageListPanel";
 import { LayerPanel } from "../../src/panels/layers/LayerPanel";
 import type { FigEditorRendererKind } from "../../src/canvas/rendering/renderer-kind";
-import type {
-  FigDesignDocument,
-  FigDesignNode,
-  FigPage,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
-import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { FigPackageImage } from "@higma-figma-containers/package";
-import type { FigDerivedTextData, FigMatrix, KiwiEnumValue } from "@higma-document-models/fig/types";
-import {
-  createCachingFontLoader,
-  type AbstractFont,
-  type CachingFontLoader,
-  type FontLoader,
-  type FontQuery,
-  type FontPath,
-  type LoadedFont,
-} from "@higma-document-models/fig/font";
+import { createCachedTextFontResolver, type TextFontResolver } from "@higma-document-renderers/fig/text";
 import { createBrowserFontLoader } from "@higma-document-renderers/fig/font-drivers/browser";
+import type {
+  AbstractFont,
+  FontPath,
+} from "@higma-document-models/fig/font";
+import { collectFontQueries, createCachingFontLoader, preloadFonts } from "@higma-document-models/fig/font";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
+import type {
+  FigEffect,
+  FigFontName,
+  FigGuid,
+  FigMatrix,
+  FigNode,
+  FigColor,
+  FigDerivedTextData,
+  FigPaint,
+  FigValueWithUnits,
+} from "@higma-document-models/fig/types";
+import {
+  EFFECT_TYPE_VALUES,
+  NODE_TYPE_VALUES,
+  NUMBER_UNITS_VALUES,
+  PAINT_TYPE_VALUES,
+  SCALE_MODE_VALUES,
+} from "@higma-document-models/fig/constants";
 
 injectCSSVariables();
 
+const DOCUMENT_GUID: FigGuid = { sessionID: 0, localID: 0 };
+const PAGE_GUID: FigGuid = { sessionID: 0, localID: 1 };
+const COMPONENT_GUID: FigGuid = { sessionID: 20, localID: 1 };
+const COMPONENT_LABEL_DEF_GUID: FigGuid = { sessionID: 20, localID: 10 };
+const COMPONENT_ICON_DEF_GUID: FigGuid = { sessionID: 20, localID: 11 };
+const COMPONENT_ICON_VISIBLE_DEF_GUID: FigGuid = { sessionID: 20, localID: 12 };
+const COMPONENT_VARIANT_DEF_GUID: FigGuid = { sessionID: 20, localID: 13 };
+const ICON_A_GUID: FigGuid = { sessionID: 21, localID: 1 };
+const ICON_B_GUID: FigGuid = { sessionID: 21, localID: 2 };
+const COMPONENT_SET_GUID: FigGuid = { sessionID: 30, localID: 1 };
+const COMPONENT_SET_PRIMARY_GUID: FigGuid = { sessionID: 30, localID: 2 };
+const COMPONENT_SET_SECONDARY_GUID: FigGuid = { sessionID: 30, localID: 3 };
+const COMPONENT_SET_VARIANT_DEF_GUID: FigGuid = { sessionID: 30, localID: 10 };
+const TEST_IMAGE_REF = "a1b2c3d4";
+const TEST_IMAGE_HASH_BYTES: readonly number[] = [0xa1, 0xb2, 0xc3, 0xd4];
+
 function createTestFontPath({ x, y, fontSize }: { readonly x: number; readonly y: number; readonly fontSize: number }): FontPath {
-  const w = fontSize * 0.48;
-  const h = fontSize * 0.7;
-  const top = y - h;
+  const width = fontSize * 0.48;
+  const height = fontSize * 0.7;
+  const top = y - height;
   const commands: FontPath["commands"] = [
     { type: "M", x, y: top },
-    { type: "L", x: x + w, y: top },
-    { type: "L", x: x + w, y },
+    { type: "L", x: x + width, y: top },
+    { type: "L", x: x + width, y },
     { type: "L", x, y },
     { type: "Z" },
   ];
   return {
     commands,
-    toPathData: () => `M${x} ${top}L${x + w} ${top}L${x + w} ${y}L${x} ${y}Z`,
+    toPathData: () => `M${x} ${top}L${x + width} ${top}L${x + width} ${y}L${x} ${y}Z`,
   };
 }
 
@@ -68,9 +90,12 @@ const TEST_FONT: AbstractFont = {
   getPath: (text, x, y, fontSize, options) => {
     const letterSpacing = options?.letterSpacing ?? 0;
     const advance = fontSize * 0.5 + letterSpacing;
-    const commands = Array.from(text).flatMap((char, index): FontPath["commands"] => (
-      char === " " ? [] : createTestFontPath({ x: x + index * advance, y, fontSize }).commands
-    ));
+    const commands = Array.from(text).flatMap((character, index): FontPath["commands"] => {
+      if (character === " ") {
+        return [];
+      }
+      return createTestFontPath({ x: x + index * advance, y, fontSize }).commands;
+    });
     return {
       commands,
       toPathData: () => commands.map((command) => {
@@ -90,56 +115,77 @@ const TEST_FONT: AbstractFont = {
   },
 };
 
-const TEST_FONT_LOADER = createCachingFontLoader({
-  async loadFont(options: FontQuery): Promise<LoadedFont> {
-    return {
-      font: TEST_FONT,
-      // FontQuery — echo the requested options back. The mock has a
-      // single physical font and isn't doing real closest-match
-      // substitution. Real loaders return the actually-loaded query.
-      query: options,
-      postscriptName: `${options.family}-Test`,
-    };
-  },
-  async isFontAvailable(): Promise<boolean> {
-    return true;
-  },
-} satisfies FontLoader);
+const TEST_TEXT_FONT_RESOLVER: TextFontResolver = () => TEST_FONT;
+const BROWSER_FONT_LOADER = createCachingFontLoader(createBrowserFontLoader());
+const BROWSER_TEXT_FONT_RESOLVER = createCachedTextFontResolver(BROWSER_FONT_LOADER);
 
-type FontMode = "default" | "browser-real";
+type FontMode = "test" | "browser-real";
 
 function resolveFontModeFromLocation(location: Location): FontMode {
   const mode = new URLSearchParams(location.search).get("fontMode");
   if (mode === "browser-real") {
     return mode;
   }
-  return "default";
+  return "test";
 }
 
-// =============================================================================
-// Node construction
-// =============================================================================
+function guid(localID: number, sessionID = 1): FigGuid {
+  return { sessionID, localID };
+}
 
-function makeTransform(x: number, y: number): FigMatrix {
+function position(index: number): string {
+  return String.fromCharCode(0x21 + index);
+}
+
+function transform(x: number, y: number): FigMatrix {
   return { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y };
 }
 
-function makeKiwiEnum(name: string, value: number): KiwiEnumValue {
-  return { value, name } as KiwiEnumValue;
+function solid(color: FigColor): FigPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+    color,
+    opacity: 1,
+    visible: true,
+  };
 }
 
-function makeDerivedTextData({
+function imageFill(): FigPaint {
+  return {
+    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    imageScaleMode: { value: SCALE_MODE_VALUES.FILL, name: "FILL" },
+    image: { hash: TEST_IMAGE_HASH_BYTES },
+    opacity: 1,
+    visible: true,
+  };
+}
+
+const BLUE = solid({ r: 0.16, g: 0.36, b: 0.88, a: 1 });
+const RED = solid({ r: 0.9, g: 0.2, b: 0.2, a: 1 });
+const GREEN = solid({ r: 0.2, g: 0.65, b: 0.32, a: 1 });
+const DARK = solid({ r: 0.08, g: 0.09, b: 0.12, a: 1 });
+const WHITE = solid({ r: 1, g: 1, b: 1, a: 1 });
+
+function lineHeight(value: number): FigValueWithUnits {
+  return { value, units: { value: NUMBER_UNITS_VALUES.PIXELS, name: "PIXELS" } };
+}
+
+function fontName(family: string, style: string): FigFontName {
+  return { family, style, postscript: `${family}-${style.replace(/\s+/g, "")}` };
+}
+
+function derivedTextMetrics({
   text,
-  fontFamily,
-  fontStyle,
+  family,
+  style,
   fontSize,
-  lineHeight,
+  textLineHeight,
 }: {
   readonly text: string;
-  readonly fontFamily: string;
-  readonly fontStyle: string;
+  readonly family: string;
+  readonly style: string;
   readonly fontSize: number;
-  readonly lineHeight: number;
+  readonly textLineHeight: number;
 }): FigDerivedTextData | undefined {
   if (text.length === 0) {
     return undefined;
@@ -149,563 +195,36 @@ function makeDerivedTextData({
       position: { x: 0, y: fontSize * 0.8 },
       width: text.length * fontSize * 0.5,
       lineY: 0,
-      lineHeight,
+      lineHeight: textLineHeight,
       lineAscent: fontSize * 0.8,
       firstCharacter: 0,
       endCharacter: text.length,
     }],
     fontMetaData: [{
-      key: { family: fontFamily, style: fontStyle, postscript: `${fontFamily}-${fontStyle}` },
-      fontLineHeight: lineHeight / fontSize,
+      key: { family, style, postscript: `${family}-${style.replace(/\s+/g, "")}` },
+      fontLineHeight: textLineHeight / fontSize,
       fontWeight: 400,
     }],
   };
 }
 
-type MakeTextNodeOptions = {
-  readonly id: string;
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-  readonly text: string;
-  readonly fontSize?: number;
-  readonly lineHeight: number;
-  readonly fontFamily?: string;
-  readonly fontStyle?: string;
-};
-
-function makeTextNode(
-  { id, x, y, width, height, text, fontSize = 16, lineHeight, fontFamily = "Inter", fontStyle = "Regular" }: MakeTextNodeOptions,
-): FigDesignNode {
-  return {
-    id: id as FigNodeId,
-    type: "TEXT",
-    name: `Text: ${text.substring(0, 20)}`,
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(x, y),
-    size: { x: width, y: height },
-    fills: [
-      {
-        type: "SOLID",
-        color: { r: 0, g: 0, b: 0, a: 1 },
-        opacity: 1,
-        visible: true,
-      },
-    ],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    textData: {
-      characters: text,
-      fontSize,
-      lineHeight: { value: lineHeight, units: makeKiwiEnum("PIXELS", 0) },
-      fontName: { family: fontFamily, style: fontStyle, postscript: `${fontFamily}-${fontStyle}` },
-      textAlignHorizontal: makeKiwiEnum("LEFT", 0),
-      textAlignVertical: makeKiwiEnum("TOP", 0),
-      textAutoResize: makeKiwiEnum("NONE", 2),
-    },
-    derivedTextData: makeDerivedTextData({ text, fontFamily, fontStyle, fontSize, lineHeight }),
-  } as FigDesignNode;
-}
-
-type MakeRectNodeOptions = {
-  readonly id: string;
-  readonly type?: "RECTANGLE" | "ELLIPSE" | "LINE";
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-};
-
-function makeRectNode(
-  { id, type = "RECTANGLE", x, y, width, height }: MakeRectNodeOptions,
-): FigDesignNode {
-  return {
-    id: id as FigNodeId,
-    type,
-    name: resolveShapeName(type),
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(x, y),
-    size: { x: width, y: height },
-    fills: [
-      {
-        type: "SOLID",
-        color: { r: 0.8, g: 0.8, b: 0.8, a: 1 },
-        opacity: 1,
-        visible: true,
-      },
-    ],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-  } as FigDesignNode;
-}
-
-const TEST_IMAGE_REF = "fixture-image.png";
-const TEST_IMAGE: FigPackageImage = {
-  ref: TEST_IMAGE_REF,
-  mimeType: "image/png",
-  data: createFixtureImageBytes(),
-};
-
-function makeImageFillNode(): FigDesignNode {
-  return {
-    ...makeRectNode({ id: "2:15", x: 960, y: 310, width: 90, height: 70 }),
-    name: "Image Fill Rect",
-    fills: [{
-      type: "IMAGE",
-      imageRef: TEST_IMAGE_REF,
-      scaleMode: "FILL",
-      opacity: 1,
-      visible: true,
-    }],
-  } as FigDesignNode;
-}
-
-function resolveShapeName(type: "RECTANGLE" | "ELLIPSE" | "LINE"): string {
-  switch (type) {
-    case "ELLIPSE":
-      return "Ellipse";
-    case "LINE":
-      return "Line";
-    case "RECTANGLE":
-      return "Rectangle";
-  }
-}
-
-type MakeVectorNodeOptions = {
-  readonly id?: string;
-  readonly name?: string;
-  readonly x?: number;
-  readonly y?: number;
-  readonly width?: number;
-  readonly height?: number;
-  readonly pathData?: string;
-};
-
-function makeVectorNode(
-  {
-    id = "2:8",
-    name = "Editable Vector",
-    x = 330,
-    y = 310,
-    width = 120,
-    height = 100,
-    pathData = "M 0 0 C 60 0 80 20 100 40 L 70 90 L 0 70 Z",
-  }: MakeVectorNodeOptions = {},
-): FigDesignNode {
-  return {
-    id: id as FigNodeId,
-    type: "VECTOR",
-    name,
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(x, y),
-    size: { x: width, y: height },
-    vectorPaths: [{
-      windingRule: "NONZERO",
-      data: pathData,
-    }],
-    fills: [
-      {
-        type: "SOLID",
-        color: { r: 0.55, g: 0.72, b: 0.95, a: 1 },
-        opacity: 1,
-        visible: true,
-      },
-    ],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-  } as FigDesignNode;
-}
-
-function makeNestedFrameNode(): FigDesignNode {
-  return {
-    id: "2:9" as FigNodeId,
-    type: "FRAME",
-    name: "Nested Frame",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(520, 300),
-    size: { x: 220, y: 150 },
-    fills: [
-      {
-        type: "SOLID",
-        color: { r: 0.94, g: 0.96, b: 0.98, a: 1 },
-        opacity: 1,
-        visible: true,
-      },
-    ],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    vectorPaths: [{ windingRule: "NONZERO", data: "M 0 0 L 220 0 L 220 150 L 0 150 Z" }],
-    children: [makeInnerFrameNode()],
-  } as FigDesignNode;
-}
-
-function makeInnerFrameNode(): FigDesignNode {
-  return {
-    id: "2:10" as FigNodeId,
-    type: "FRAME",
-    name: "Inner Frame",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(28, 22),
-    size: { x: 160, y: 110 },
-    fills: [
-      {
-        type: "SOLID",
-        color: { r: 0.88, g: 0.91, b: 0.95, a: 1 },
-        opacity: 1,
-        visible: true,
-      },
-    ],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    vectorPaths: [{ windingRule: "NONZERO", data: "M 0 0 L 160 0 L 160 110 L 0 110 Z" }],
-    children: [makeFrameChildRectNode(), makeFrameChildVectorNode()],
-  } as FigDesignNode;
-}
-
-function makeFrameChildRectNode(): FigDesignNode {
-  return {
-    id: "2:11" as FigNodeId,
-    type: "RECTANGLE",
-    name: "Frame Child Rect",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(34, 28),
-    size: { x: 92, y: 58 },
-    fills: [
-      {
-        type: "SOLID",
-        color: { r: 0.25, g: 0.65, b: 0.43, a: 1 },
-        opacity: 1,
-        visible: true,
-      },
-    ],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-  } as FigDesignNode;
-}
-
-function makeFrameChildVectorNode(): FigDesignNode {
-  return makeVectorNode({
-    id: "2:12",
-    name: "Frame Child Vector",
-    x: 98,
-    y: 18,
-    width: 58,
-    height: 42,
-    pathData: "M 0 0 C 25 0 45 12 50 24 L 32 40 L 0 30 Z",
-  });
-}
-
-function makeCoveringGroupNode(): FigDesignNode {
-  return {
-    id: "2:13" as FigNodeId,
-    type: "GROUP",
-    name: "Covering Group",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(760, 300),
-    size: { x: 170, y: 120 },
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    children: [
-      {
-        ...makeRectNode({ id: "2:14", x: 24, y: 26, width: 90, height: 54 }),
-        name: "Group Child Rect",
-      },
-      makeVectorNode({
-        id: "2:16",
-        name: "Group Child Vector",
-        x: 92,
-        y: 40,
-        width: 52,
-        height: 38,
-        pathData: "M 0 0 C 20 0 44 8 48 22 L 25 36 L 0 26 Z",
-      }),
-    ],
-  } as FigDesignNode;
-}
-
-const COMPONENT_ID = "20:1" as FigNodeId;
-const COMPONENT_LABEL_DEF_ID = "20:10" as FigNodeId;
-const COMPONENT_ICON_DEF_ID = "20:11" as FigNodeId;
-const COMPONENT_ICON_VISIBLE_DEF_ID = "20:12" as FigNodeId;
-const COMPONENT_VARIANT_DEF_ID = "20:13" as FigNodeId;
-const ICON_A_ID = "21:1" as FigNodeId;
-const ICON_B_ID = "21:2" as FigNodeId;
-const COMPONENT_SET_ID = "30:1" as FigNodeId;
-const COMPONENT_SET_VARIANT_DEF_ID = "30:10" as FigNodeId;
-
-function makeIconComponent(id: FigNodeId, name: string, fill: FigDesignNode["fills"][number]): FigDesignNode {
-  return {
-    ...makeRectNode({ id, x: 0, y: 0, width: 18, height: 18 }),
-    id,
-    type: "SYMBOL",
-    name,
-    fills: [fill],
-  } as FigDesignNode;
-}
-
-function makeComponentSymbol(): FigDesignNode {
-  return {
-    id: COMPONENT_ID,
-    type: "SYMBOL",
-    name: "Button Component",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(0, 0),
-    size: { x: 180, y: 60 },
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    componentPropertyDefs: [
-      {
-        id: COMPONENT_LABEL_DEF_ID,
-        name: "Label",
-        type: "TEXT",
-        initialValue: { textValue: { characters: "Default label" } },
-      },
-      {
-        id: COMPONENT_ICON_DEF_ID,
-        name: "Icon",
-        type: "INSTANCE_SWAP",
-        initialValue: { referenceValue: ICON_A_ID },
-      },
-      {
-        id: COMPONENT_ICON_VISIBLE_DEF_ID,
-        name: "Show icon",
-        type: "BOOL",
-        initialValue: { boolValue: true },
-      },
-      {
-        id: COMPONENT_VARIANT_DEF_ID,
-        name: "State",
-        type: "VARIANT",
-        initialValue: { referenceValue: COMPONENT_ID },
-      },
-    ],
-    children: [
-      {
-        ...makeRectNode({ id: "20:2", x: 0, y: 0, width: 180, height: 60 }),
-        name: "Button Background",
-        fills: [{ type: "SOLID", color: { r: 0.92, g: 0.95, b: 1, a: 1 }, opacity: 1, visible: true }],
-      } as FigDesignNode,
-      {
-        ...makeTextNode({ id: "20:3", x: 48, y: 20, width: 110, height: 22, text: "Default label", fontSize: 16, lineHeight: 20 }),
-        name: "Button Label",
-        componentPropertyRefs: [{ defId: COMPONENT_LABEL_DEF_ID, nodeField: "TEXT_DATA" }],
-      } as FigDesignNode,
-      {
-        id: "20:4" as FigNodeId,
-        type: "INSTANCE",
-        name: "Button Icon",
-        visible: true,
-        opacity: 1,
-        transform: makeTransform(18, 21),
-        size: { x: 18, y: 18 },
-        fills: [],
-        strokes: [],
-        strokeWeight: 0,
-        effects: [],
-        symbolId: ICON_A_ID,
-        componentPropertyRefs: [
-          { defId: COMPONENT_ICON_DEF_ID, nodeField: "OVERRIDDEN_SYMBOL_ID" },
-          { defId: COMPONENT_ICON_VISIBLE_DEF_ID, nodeField: "VISIBLE" },
-        ],
-      } as FigDesignNode,
-    ],
-  } as FigDesignNode;
-}
-
-function makeComponentInstanceNode(): FigDesignNode {
-  return {
-    id: "22:1" as FigNodeId,
-    type: "INSTANCE",
-    name: "Button Instance",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(760, 70),
-    size: { x: 180, y: 60 },
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    symbolId: COMPONENT_ID,
-  } as FigDesignNode;
-}
-
-function makeSectionNode(): FigDesignNode {
-  return {
-    id: "2:17" as FigNodeId,
-    type: "SECTION",
-    name: "Editable Section",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(760, 170),
-    size: { x: 180, y: 90 },
-    fills: [{ type: "SOLID", color: { r: 0.96, g: 0.91, b: 0.72, a: 1 }, opacity: 1, visible: true }],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    sectionContentsHidden: false,
-  } as FigDesignNode;
-}
-
-function makeVariantComponentNode(): FigDesignNode {
-  return {
-    ...makeRectNode({ id: "2:18", x: 960, y: 80, width: 150, height: 70 }),
-    type: "SYMBOL",
-    name: "Variant Component",
-    fills: [{ type: "SOLID", color: { r: 0.82, g: 0.74, b: 0.96, a: 1 }, opacity: 1, visible: true }],
-    variantPropSpecs: [{ propDefId: COMPONENT_VARIANT_DEF_ID, value: "Default" }],
-  } as FigDesignNode;
-}
-
-function makeComponentSetNode(): FigDesignNode {
-  const defaultVariant = {
-    ...makeRectNode({ id: "30:2", x: 12, y: 18, width: 90, height: 48 }),
-    type: "SYMBOL",
-    name: "Primary",
-    fills: [{ type: "SOLID", color: { r: 0.78, g: 0.88, b: 1, a: 1 }, opacity: 1, visible: true }],
-    variantPropSpecs: [{ propDefId: COMPONENT_SET_VARIANT_DEF_ID, value: "Default" }],
-  } as FigDesignNode;
-  const hoverVariant = {
-    ...makeRectNode({ id: "30:3", x: 114, y: 18, width: 90, height: 48 }),
-    type: "SYMBOL",
-    name: "Secondary",
-    fills: [{ type: "SOLID", color: { r: 0.9, g: 0.82, b: 1, a: 1 }, opacity: 1, visible: true }],
-    variantPropSpecs: [{ propDefId: COMPONENT_SET_VARIANT_DEF_ID, value: "Hover" }],
-  } as FigDesignNode;
-  // A "Component Set" / "Variant Set" on disk is a FRAME bearing
-  // `isStateGroup` + VARIANT-typed `componentPropertyDefs`; its
-  // children are SYMBOLs. The canonical schema has no COMPONENT_SET
-  // NodeType. See `docs/refactor/component-type-cleanup.md`.
-  return {
-    id: COMPONENT_SET_ID,
-    type: "FRAME",
-    name: "Button Variant Set",
-    visible: true,
-    opacity: 1,
-    transform: makeTransform(1120, 170),
-    size: { x: 220, y: 90 },
-    fills: [{ type: "SOLID", color: { r: 0.98, g: 0.98, b: 0.98, a: 1 }, opacity: 1, visible: true }],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-    isStateGroup: true,
-    componentPropertyDefs: [{
-      id: COMPONENT_SET_VARIANT_DEF_ID,
-      name: "State",
-      type: "VARIANT",
-      initialValue: { referenceValue: "30:2" as FigNodeId },
-    }],
-    children: [defaultVariant, hoverVariant],
-  } as FigDesignNode;
-}
-
-// =============================================================================
-// Test document
-// =============================================================================
-
-const testPage: FigPage = {
-  id: "0:1" as FigPageId,
-  name: "Test Page",
-  backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
-  children: [
-    makeTextNode({ id: "2:1", x: 50, y: 50, width: 200, height: 30, text: "Hello World", lineHeight: 20 }),
-    makeTextNode({ id: "2:2", x: 50, y: 120, width: 250, height: 80, text: "Line one\nLine two\nLine three", fontSize: 14, lineHeight: 18 }),
-    makeTextNode({ id: "2:3", x: 50, y: 240, width: 200, height: 30, text: "", lineHeight: 20 }),
-    makeTextNode({ id: "2:4", x: 260, y: 50, width: 60, height: 80, text: "Hello World", fontSize: 16, lineHeight: 20 }),
-    makeRectNode({ id: "2:5", x: 50, y: 310, width: 150, height: 80 }),
-    makeRectNode({ id: "2:6", type: "ELLIPSE", x: 130, y: 330, width: 120, height: 80 }),
-    makeRectNode({ id: "2:7", type: "LINE", x: 280, y: 455, width: 120, height: 40 }),
-    makeVectorNode(),
-    makeComponentInstanceNode(),
-    makeSectionNode(),
-    makeVariantComponentNode(),
-    makeComponentSetNode(),
-    makeNestedFrameNode(),
-    makeCoveringGroupNode(),
-    makeImageFillNode(),
-  ],
-};
-
-const testDocument: FigDesignDocument = {
-  pages: [testPage],
-  components: new Map([
-    [COMPONENT_ID, makeComponentSymbol()],
-    [ICON_A_ID, makeIconComponent(ICON_A_ID, "Icon A", { type: "SOLID", color: { r: 0.1, g: 0.35, b: 1, a: 1 }, opacity: 1, visible: true })],
-    [ICON_B_ID, makeIconComponent(ICON_B_ID, "Icon B", { type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 }, opacity: 1, visible: true })],
-  ]),
-  images: new Map([[TEST_IMAGE_REF, TEST_IMAGE]]),
-  blobs: [],
-  styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
-  metadata: null,
-};
-
-/**
- * Minimal document used by the `fontMode=browser-real` e2e
- * (`spec/e2e/sf-pro-font-aliasing/…`). The Chromium-shaped Local Font
- * Access mock the test installs synthesises tiny fonts with only `A`,
- * space, and `.notdef` glyphs. To avoid spurious "WebGL text renderer
- * requires glyph contours" failures on Hello-World-shaped strings
- * (whose chars aren't in the synthetic font), this document keeps a
- * single TEXT node whose characters all sit inside the synthesised
- * coverage — the goal of the test is to exercise the SF Pro alias
- * chain, not the full canvas surface.
- */
-const sfProAliasTestDocument: FigDesignDocument = {
-  pages: [{
-    id: "0:1" as FigPageId,
-    name: "SF Pro alias test page",
-    backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
-    children: [
-      makeTextNode({
-        id: "2:50",
-        x: 50,
-        y: 420,
-        width: 240,
-        height: 30,
-        // Synthesised font covers only `A`, so the WebGL renderer can
-        // produce a non-empty glyph-contour set and reach
-        // `data-webgl-ready` without hitting the "lines mode requires
-        // contours" hard error. Real designs would have richer fonts;
-        // this test isolates the alias resolution path.
-        text: "AAA A",
-        lineHeight: 20,
-        fontFamily: "SF Pro",
-        fontStyle: "Regular",
-      }),
-    ],
-  }],
-  components: new Map(),
-  images: new Map(),
-  blobs: [],
-  styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
-  metadata: null,
-};
-
-function selectInitialDocument(mode: FontMode): FigDesignDocument {
-  return mode === "browser-real" ? sfProAliasTestDocument : testDocument;
+function componentPropType(name: "BOOL" | "TEXT" | "NUMBER" | "INSTANCE_SWAP" | "VARIANT" | "COLOR" | "IMAGE" | "SLOT") {
+  const values = {
+    BOOL: 0,
+    TEXT: 1,
+    NUMBER: 2,
+    INSTANCE_SWAP: 3,
+    VARIANT: 4,
+    COLOR: 5,
+    IMAGE: 6,
+    SLOT: 7,
+  } as const;
+  return { value: values[name], name };
 }
 
 function base64ToBytes(base64: string): Uint8Array {
   const binary = atob(base64);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 function createFixtureImageBytes(): Uint8Array {
@@ -713,62 +232,751 @@ function createFixtureImageBytes(): Uint8Array {
   canvas.width = 2;
   canvas.height = 2;
   const context = canvas.getContext("2d");
-  if (!context) {
+  if (context === null) {
     throw new Error("Could not create image fixture canvas context");
   }
   context.fillStyle = "#ff0000";
   context.fillRect(0, 0, 2, 2);
-  return base64ToBytes(canvas.toDataURL("image/png").split(",")[1] ?? "");
+  const encoded = canvas.toDataURL("image/png").split(",")[1];
+  if (encoded === undefined) {
+    throw new Error("Image fixture canvas did not produce a PNG data URL");
+  }
+  return base64ToBytes(encoded);
 }
 
-// =============================================================================
-// App — canvas only, no panels
-// =============================================================================
+function fixtureImage(): FigPackageImage {
+  return {
+    ref: TEST_IMAGE_REF,
+    mimeType: "image/png",
+    data: createFixtureImageBytes(),
+  };
+}
+
+function documentNode(): FigNode {
+  return {
+    guid: DOCUMENT_GUID,
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.DOCUMENT, name: "DOCUMENT" },
+  };
+}
+
+function canvasNode(): FigNode {
+  return {
+    guid: PAGE_GUID,
+    parentIndex: { guid: DOCUMENT_GUID, position: position(0) },
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.CANVAS, name: "CANVAS" },
+    name: "Page 1",
+    backgroundColor: { r: 0.96, g: 0.96, b: 0.96, a: 1 },
+  };
+}
+
+type NodeInput = {
+  readonly localID: number;
+  readonly parentGuid: FigGuid;
+  readonly positionIndex: number;
+  readonly type: keyof typeof NODE_TYPE_VALUES;
+  readonly name: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly fills?: readonly FigPaint[];
+  readonly strokes?: readonly FigPaint[];
+  readonly effects?: readonly FigEffect[];
+  readonly extra?: Partial<FigNode>;
+};
+
+function node(input: NodeInput): FigNode {
+  return {
+    guid: guid(input.localID),
+    parentIndex: { guid: input.parentGuid, position: position(input.positionIndex) },
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES[input.type], name: input.type },
+    name: input.name,
+    visible: true,
+    opacity: 1,
+    transform: transform(input.x, input.y),
+    size: { x: input.width, y: input.height },
+    fillPaints: input.fills,
+    strokePaints: input.strokes,
+    effects: input.effects,
+    ...input.extra,
+  };
+}
+
+function textNode({
+  localID,
+  parentGuid,
+  positionIndex,
+  text,
+  x,
+  y,
+  width,
+  height,
+  family,
+}: {
+  readonly localID: number;
+  readonly parentGuid: FigGuid;
+  readonly positionIndex: number;
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly family: string;
+}): FigNode {
+  const font = fontName(family, "Regular");
+  const fontSize = 16;
+  const textLineHeight = lineHeight(24);
+  return node({
+    localID,
+    parentGuid,
+    positionIndex,
+    type: "TEXT",
+    name: `Text: ${text.slice(0, 20)}`,
+    x,
+    y,
+    width,
+    height,
+    fills: [DARK],
+    extra: {
+      fontName: font,
+      fontSize,
+      lineHeight: textLineHeight,
+      textData: {
+        characters: text,
+        fontName: font,
+        fontSize,
+        lineHeight: textLineHeight,
+      },
+      derivedTextData: derivedTextMetrics({
+        text,
+        family,
+        style: "Regular",
+        fontSize,
+        textLineHeight: textLineHeight.value,
+      }),
+    },
+  });
+}
+
+function testEffect(): FigEffect {
+  return {
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    visible: true,
+    color: { r: 0, g: 0, b: 0, a: 0.25 },
+    offset: { x: 0, y: 4 },
+    radius: 8,
+    spread: 0,
+  };
+}
+
+function componentSymbolNode(): FigNode {
+  return {
+    guid: COMPONENT_GUID,
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.SYMBOL, name: "SYMBOL" },
+    name: "Button Component",
+    visible: true,
+    opacity: 1,
+    transform: transform(0, 0),
+    size: { x: 180, y: 60 },
+    fillPaints: [WHITE],
+    componentPropDefs: [
+      {
+        id: COMPONENT_LABEL_DEF_GUID,
+        name: "Label",
+        type: componentPropType("TEXT"),
+        initialValue: { textValue: { characters: "Default label" } },
+      },
+      {
+        id: COMPONENT_ICON_DEF_GUID,
+        name: "Icon",
+        type: componentPropType("INSTANCE_SWAP"),
+        initialValue: { guidValue: ICON_A_GUID },
+      },
+      {
+        id: COMPONENT_ICON_VISIBLE_DEF_GUID,
+        name: "Show icon",
+        type: componentPropType("BOOL"),
+        initialValue: { boolValue: true },
+      },
+      {
+        id: COMPONENT_VARIANT_DEF_GUID,
+        name: "State",
+        type: componentPropType("VARIANT"),
+        initialValue: { guidValue: COMPONENT_GUID },
+      },
+    ],
+  };
+}
+
+function componentBackgroundNode(): FigNode {
+  return {
+    ...node({
+      localID: 2,
+      parentGuid: COMPONENT_GUID,
+      positionIndex: 0,
+      type: "ROUNDED_RECTANGLE",
+      name: "Button Background",
+      x: 0,
+      y: 0,
+      width: 180,
+      height: 60,
+      fills: [solid({ r: 0.92, g: 0.95, b: 1, a: 1 })],
+      extra: { cornerRadius: 8 },
+    }),
+    guid: { sessionID: 20, localID: 2 },
+  };
+}
+
+function componentLabelNode(): FigNode {
+  return {
+    ...textNode({
+      localID: 3,
+      parentGuid: COMPONENT_GUID,
+      positionIndex: 1,
+      text: "Default label",
+      x: 48,
+      y: 20,
+      width: 110,
+      height: 22,
+      family: "Inter",
+    }),
+    guid: { sessionID: 20, localID: 3 },
+    name: "Button Label",
+    componentPropRefs: [{
+      defID: COMPONENT_LABEL_DEF_GUID,
+      componentPropNodeField: { value: 0, name: "TEXT_DATA" },
+    }],
+  };
+}
+
+function componentIconInstanceNode(): FigNode {
+  return {
+    ...node({
+      localID: 4,
+      parentGuid: COMPONENT_GUID,
+      positionIndex: 2,
+      type: "INSTANCE",
+      name: "Button Icon",
+      x: 18,
+      y: 21,
+      width: 18,
+      height: 18,
+      extra: {
+        symbolData: { symbolID: ICON_A_GUID },
+        componentPropRefs: [
+          {
+            defID: COMPONENT_ICON_DEF_GUID,
+            componentPropNodeField: { value: 0, name: "OVERRIDDEN_SYMBOL_ID" },
+          },
+          {
+            defID: COMPONENT_ICON_VISIBLE_DEF_GUID,
+            componentPropNodeField: { value: 0, name: "VISIBLE" },
+          },
+        ],
+      },
+    }),
+    guid: { sessionID: 20, localID: 4 },
+  };
+}
+
+function iconSymbolNode(guidValue: FigGuid, name: string, fill: FigPaint): FigNode {
+  return {
+    guid: guidValue,
+    phase: { value: 0, name: "CREATED" },
+    type: { value: NODE_TYPE_VALUES.SYMBOL, name: "SYMBOL" },
+    name,
+    visible: true,
+    opacity: 1,
+    transform: transform(0, 0),
+    size: { x: 18, y: 18 },
+    fillPaints: [fill],
+  };
+}
+
+function componentInstanceNode(page: FigGuid): FigNode {
+  return node({
+    localID: 18,
+    parentGuid: page,
+    positionIndex: 10,
+    type: "INSTANCE",
+    name: "Button Instance",
+    x: 760,
+    y: 70,
+    width: 180,
+    height: 60,
+    extra: { symbolData: { symbolID: COMPONENT_GUID } },
+  });
+}
+
+function editableSectionNode(page: FigGuid): FigNode {
+  return node({
+    localID: 19,
+    parentGuid: page,
+    positionIndex: 11,
+    type: "SECTION",
+    name: "Editable Section",
+    x: 760,
+    y: 170,
+    width: 180,
+    height: 90,
+    fills: [solid({ r: 0.96, g: 0.91, b: 0.72, a: 1 })],
+    extra: { sectionContentsHidden: false },
+  });
+}
+
+function variantComponentNode(page: FigGuid): FigNode {
+  return node({
+    localID: 20,
+    parentGuid: page,
+    positionIndex: 12,
+    type: "SYMBOL",
+    name: "Variant Component",
+    x: 960,
+    y: 80,
+    width: 150,
+    height: 70,
+    fills: [solid({ r: 0.82, g: 0.74, b: 0.96, a: 1 })],
+    extra: { variantPropSpecs: [{ propDefId: COMPONENT_VARIANT_DEF_GUID, value: "Default" }] },
+  });
+}
+
+function componentSetNode(page: FigGuid): FigNode {
+  return {
+    ...node({
+      localID: COMPONENT_SET_GUID.localID,
+      parentGuid: page,
+      positionIndex: 13,
+      type: "FRAME",
+      name: "Button Variant Set",
+      x: 1120,
+      y: 170,
+      width: 220,
+      height: 90,
+      fills: [solid({ r: 0.98, g: 0.98, b: 0.98, a: 1 })],
+      extra: {
+        isStateGroup: true,
+        componentPropDefs: [{
+          id: COMPONENT_SET_VARIANT_DEF_GUID,
+          name: "State",
+          type: componentPropType("VARIANT"),
+          initialValue: { guidValue: COMPONENT_SET_PRIMARY_GUID },
+        }],
+      },
+    }),
+    guid: COMPONENT_SET_GUID,
+  };
+}
+
+function componentSetVariantNode({
+  guidValue,
+  parentGuid,
+  positionIndex,
+  name,
+  x,
+  value,
+  fill,
+}: {
+  readonly guidValue: FigGuid;
+  readonly parentGuid: FigGuid;
+  readonly positionIndex: number;
+  readonly name: string;
+  readonly x: number;
+  readonly value: string;
+  readonly fill: FigPaint;
+}): FigNode {
+  return {
+    ...node({
+      localID: guidValue.localID,
+      parentGuid,
+      positionIndex,
+      type: "SYMBOL",
+      name,
+      x,
+      y: 18,
+      width: 90,
+      height: 48,
+      fills: [fill],
+      extra: { variantPropSpecs: [{ propDefId: COMPONENT_SET_VARIANT_DEF_GUID, value }] },
+    }),
+    guid: guidValue,
+  };
+}
+
+function imageFillNode(page: FigGuid): FigNode {
+  return node({
+    localID: 23,
+    parentGuid: page,
+    positionIndex: 16,
+    type: "ROUNDED_RECTANGLE",
+    name: "Image Fill Rect",
+    x: 960,
+    y: 310,
+    width: 90,
+    height: 70,
+    fills: [imageFill()],
+  });
+}
+
+function createSfProHarnessContext(): FigDocumentContext {
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges: [
+      documentNode(),
+      canvasNode(),
+      textNode({
+        localID: 50,
+        parentGuid: PAGE_GUID,
+        positionIndex: 0,
+        text: "AAA A",
+        x: 50,
+        y: 420,
+        width: 240,
+        height: 30,
+        family: "SF Pro",
+      }),
+    ],
+    blobs: [],
+    images: new Map(),
+    metadata: null,
+  });
+}
+
+function createHarnessContext(fontMode: FontMode): FigDocumentContext {
+  if (fontMode === "browser-real") {
+    return createSfProHarnessContext();
+  }
+  const page = PAGE_GUID;
+  const nestedFrameGuid = guid(9);
+  const innerFrameGuid = guid(10);
+  const textFamily = "Inter";
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges: [
+      documentNode(),
+      canvasNode(),
+      textNode({
+        localID: 2,
+        parentGuid: page,
+        positionIndex: 0,
+        text: "Hello World",
+        x: 50,
+        y: 50,
+        width: 200,
+        height: 30,
+        family: textFamily,
+      }),
+      textNode({
+        localID: 7,
+        parentGuid: page,
+        positionIndex: 1,
+        text: "Line one\nLine two\nLine three",
+        x: 50,
+        y: 120,
+        width: 250,
+        height: 80,
+        family: textFamily,
+      }),
+      textNode({
+        localID: 8,
+        parentGuid: page,
+        positionIndex: 2,
+        text: "",
+        x: 50,
+        y: 240,
+        width: 200,
+        height: 30,
+        family: textFamily,
+      }),
+      textNode({
+        localID: 16,
+        parentGuid: page,
+        positionIndex: 3,
+        text: "Hello World",
+        x: 260,
+        y: 50,
+        width: 60,
+        height: 80,
+        family: textFamily,
+      }),
+      node({
+        localID: 3,
+        parentGuid: page,
+        positionIndex: 4,
+        type: "ROUNDED_RECTANGLE",
+        name: "Rectangle",
+        x: 50,
+        y: 310,
+        width: 150,
+        height: 80,
+        fills: [BLUE],
+        effects: [testEffect()],
+        extra: { cornerRadius: 8 },
+      }),
+      node({
+        localID: 4,
+        parentGuid: page,
+        positionIndex: 5,
+        type: "ELLIPSE",
+        name: "Ellipse",
+        x: 130,
+        y: 330,
+        width: 120,
+        height: 80,
+        fills: [RED],
+      }),
+      node({
+        localID: 5,
+        parentGuid: page,
+        positionIndex: 6,
+        type: "LINE",
+        name: "Line",
+        x: 280,
+        y: 455,
+        width: 120,
+        height: 40,
+        strokes: [DARK],
+        extra: { strokeWeight: 2 },
+      }),
+      node({
+        localID: 6,
+        parentGuid: page,
+        positionIndex: 7,
+        type: "VECTOR",
+        name: "Vector",
+        x: 330,
+        y: 310,
+        width: 120,
+        height: 100,
+        fills: [GREEN],
+        extra: { vectorPaths: [{ windingRule: "NONZERO", data: "M 0 0 C 60 0 80 20 100 40 L 70 90 L 0 70 Z" }] },
+      }),
+      node({
+        localID: 9,
+        parentGuid: page,
+        positionIndex: 8,
+        type: "FRAME",
+        name: "Nested Frame",
+        x: 520,
+        y: 300,
+        width: 220,
+        height: 150,
+        fills: [WHITE],
+        extra: { clipsContent: true, strokeWeight: 1, strokePaints: [DARK] },
+      }),
+      node({
+        localID: 10,
+        parentGuid: nestedFrameGuid,
+        positionIndex: 0,
+        type: "FRAME",
+        name: "Inner Frame",
+        x: 28,
+        y: 22,
+        width: 160,
+        height: 110,
+        fills: [WHITE],
+        extra: { clipsContent: true },
+      }),
+      node({
+        localID: 11,
+        parentGuid: innerFrameGuid,
+        positionIndex: 0,
+        type: "ROUNDED_RECTANGLE",
+        name: "Frame Child Rect",
+        x: 34,
+        y: 28,
+        width: 92,
+        height: 58,
+        fills: [GREEN],
+        extra: { cornerRadius: 6 },
+      }),
+      node({
+        localID: 12,
+        parentGuid: innerFrameGuid,
+        positionIndex: 1,
+        type: "VECTOR",
+        name: "Frame Child Vector",
+        x: 98,
+        y: 18,
+        width: 58,
+        height: 42,
+        fills: [BLUE],
+        extra: { vectorPaths: [{ windingRule: "NONZERO", data: "M 0 0 C 25 0 45 12 50 24 L 32 40 L 0 30 Z" }] },
+      }),
+      node({
+        localID: 13,
+        parentGuid: page,
+        positionIndex: 9,
+        type: "GROUP",
+        name: "Covering Group",
+        x: 760,
+        y: 300,
+        width: 170,
+        height: 120,
+      }),
+      node({
+        localID: 14,
+        parentGuid: guid(13),
+        positionIndex: 0,
+        type: "ROUNDED_RECTANGLE",
+        name: "Group Child Rect",
+        x: 24,
+        y: 26,
+        width: 90,
+        height: 54,
+        fills: [RED],
+        extra: { cornerRadius: 4 },
+      }),
+      node({
+        localID: 17,
+        parentGuid: guid(13),
+        positionIndex: 1,
+        type: "VECTOR",
+        name: "Group Child Vector",
+        x: 92,
+        y: 40,
+        width: 52,
+        height: 38,
+        fills: [BLUE],
+        extra: { vectorPaths: [{ windingRule: "NONZERO", data: "M 0 0 C 20 0 44 8 48 22 L 25 36 L 0 26 Z" }] },
+      }),
+      editableSectionNode(page),
+      componentSymbolNode(),
+      componentBackgroundNode(),
+      componentLabelNode(),
+      componentIconInstanceNode(),
+      iconSymbolNode(ICON_A_GUID, "Icon A", solid({ r: 0.1, g: 0.35, b: 1, a: 1 })),
+      iconSymbolNode(ICON_B_GUID, "Icon B", solid({ r: 0, g: 1, b: 0, a: 1 })),
+      componentInstanceNode(page),
+      variantComponentNode(page),
+      componentSetNode(page),
+      componentSetVariantNode({
+        guidValue: COMPONENT_SET_PRIMARY_GUID,
+        parentGuid: COMPONENT_SET_GUID,
+        positionIndex: 0,
+        name: "Primary",
+        x: 12,
+        value: "Default",
+        fill: solid({ r: 0.78, g: 0.88, b: 1, a: 1 }),
+      }),
+      componentSetVariantNode({
+        guidValue: COMPONENT_SET_SECONDARY_GUID,
+        parentGuid: COMPONENT_SET_GUID,
+        positionIndex: 1,
+        name: "Secondary",
+        x: 114,
+        value: "Hover",
+        fill: solid({ r: 0.9, g: 0.82, b: 1, a: 1 }),
+      }),
+      imageFillNode(page),
+    ],
+    blobs: [],
+    images: new Map([[TEST_IMAGE_REF, fixtureImage()]]),
+    metadata: null,
+  });
+}
 
 const containerStyle: CSSProperties = {
   width: "100vw",
   height: "100vh",
-  display: "grid",
-  gridTemplateRows: "36px 1fr",
-};
-
-const editorBodyStyle = (panelMode: PanelMode): CSSProperties => ({
-  minHeight: 0,
-  display: "grid",
-  gridTemplateColumns: panelMode === "all" ? "260px 1fr 280px" : panelMode === "property" ? "1fr 280px" : "1fr",
-});
-
-const leftPanelStyle: CSSProperties = {
-  minWidth: 0,
-  overflow: "auto",
-  borderRight: "1px solid #d9dee7",
-  background: "#ffffff",
-};
-
-const propertyPanelStyle: CSSProperties = {
-  minWidth: 0,
-  overflow: "auto",
-  borderLeft: "1px solid #d9dee7",
-  background: "#ffffff",
+  display: "flex",
+  flexDirection: "column",
 };
 
 const toolbarStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  padding: "4px 8px",
-  borderBottom: "1px solid #d9dee7",
-  background: "#ffffff",
+  borderBottom: "1px solid #d6dee8",
 };
 
-function selectFontLoader(mode: FontMode): CachingFontLoader {
-  if (mode === "browser-real") {
-    // Wire the actual production browser loader so the
-    // physical-alias chain inside `createBrowserFontLoader` is the
-    // code under test. Tests preload a `window.queryLocalFonts` mock
-    // via Playwright's addInitScript before the page boots.
-    return createCachingFontLoader(createBrowserFontLoader());
+function editorBodyStyle(panelMode: PanelMode): CSSProperties {
+  if (panelMode === "none") {
+    return { flex: 1, minHeight: 0, display: "grid" };
   }
-  return TEST_FONT_LOADER;
+  return {
+    flex: 1,
+    minHeight: 0,
+    display: "grid",
+    gridTemplateColumns: panelMode === "all" ? "240px minmax(0, 1fr) 320px" : "minmax(0, 1fr) 320px",
+  };
+}
+
+const leftPanelStyle: CSSProperties = {
+  minHeight: 0,
+  overflow: "auto",
+  borderRight: "1px solid #d6dee8",
+};
+
+const propertyPanelStyle: CSSProperties = {
+  minHeight: 0,
+  overflow: "auto",
+  borderLeft: "1px solid #d6dee8",
+};
+
+function requiresBrowserTextFonts(mode: FontMode, renderer: FigEditorRendererKind): boolean {
+  return mode === "browser-real" && renderer === "webgl";
+}
+
+function selectTextFontResolver(mode: FontMode, renderer: FigEditorRendererKind, browserFontsReady: boolean): TextFontResolver | undefined {
+  if (renderer === "svg") {
+    return undefined;
+  }
+  if (mode !== "browser-real") {
+    return TEST_TEXT_FONT_RESOLVER;
+  }
+  if (!browserFontsReady) {
+    return undefined;
+  }
+  return BROWSER_TEXT_FONT_RESOLVER;
+}
+
+function collectHarnessFontQueries(context: FigDocumentContext) {
+  const resources = figDocumentResources(context);
+  return collectFontQueries({
+    roots: context.document.nodeChanges,
+    symbolResolver: createSymbolResolver({ document: context.document }),
+    childrenOf: resources.childrenOf,
+  }).queries;
+}
+
+function useBrowserTextFontPreload({
+  enabled,
+  context,
+}: {
+  readonly enabled: boolean;
+  readonly context: FigDocumentContext;
+}): boolean {
+  const [ready, setReady] = useState(!enabled);
+  const [error, setError] = useState<Error | null>(null);
+  const queries = useMemo(() => {
+    if (!enabled) {
+      return [];
+    }
+    return collectHarnessFontQueries(context);
+  }, [context, enabled]);
+
+  useEffect(() => {
+    if (!enabled) {
+      setReady(true);
+      return;
+    }
+    setReady(false);
+    setError(null);
+    void preloadFonts({ queries, loader: BROWSER_FONT_LOADER }).then(
+      () => setReady(true),
+      (reason: unknown) => {
+        if (reason instanceof Error) {
+          setError(reason);
+          return;
+        }
+        setError(new Error(`Browser font preload failed with non-Error reason: ${String(reason)}`));
+      },
+    );
+  }, [enabled, queries]);
+
+  if (error !== null) {
+    throw error;
+  }
+  return ready;
 }
 
 function App() {
@@ -776,10 +984,17 @@ function App() {
   const panelMode = resolvePanelModeFromLocation(window.location);
   const webglInitializationDelayMs = resolveWebGLInitializationDelayMsFromLocation(window.location);
   const fontMode = resolveFontModeFromLocation(window.location);
-  const fontLoader = selectFontLoader(fontMode);
-  const initialDocument = selectInitialDocument(fontMode);
+  const initialContext = useMemo(() => createHarnessContext(fontMode), [fontMode]);
+  const browserFontsReady = useBrowserTextFontPreload({
+    enabled: requiresBrowserTextFonts(fontMode, renderer),
+    context: initialContext,
+  });
+  const textFontResolver = selectTextFontResolver(fontMode, renderer, browserFontsReady);
+  if (requiresBrowserTextFonts(fontMode, renderer) && !browserFontsReady) {
+    return <div data-browser-font-preload="pending" />;
+  }
   return (
-    <FigEditorProvider initialDocument={initialDocument}>
+    <FigEditorProvider context={initialContext}>
       <div style={containerStyle}>
         <div style={toolbarStyle}>
           <FigEditorToolbar />
@@ -791,7 +1006,11 @@ function App() {
               <LayerPanel />
             </aside>
           )}
-          <FigEditorCanvas renderer={renderer} fontLoader={fontLoader} webglInitializationDelayMs={webglInitializationDelayMs} />
+          <FigEditorCanvas
+            renderer={renderer}
+            textFontResolver={textFontResolver}
+            webglInitializationDelayMs={webglInitializationDelayMs}
+          />
           {(panelMode === "property" || panelMode === "all") && (
             <aside aria-label="Properties" style={propertyPanelStyle}>
               <PropertyPanel />
@@ -815,25 +1034,30 @@ function resolvePanelModeFromLocation(location: Location): PanelMode {
 
 function resolveRendererFromLocation(location: Location): FigEditorRendererKind {
   const renderer = new URLSearchParams(location.search).get("renderer");
-  if (renderer === "svg" || renderer === "webgl") {
-    return renderer;
+  if (renderer === "webgl") {
+    return "webgl";
   }
   return "svg";
 }
 
 function resolveWebGLInitializationDelayMsFromLocation(location: Location): number | undefined {
-  const delay = new URLSearchParams(location.search).get("webglInitializationDelayMs");
-  if (delay === null) {
+  const raw = new URLSearchParams(location.search).get("webglInitializationDelayMs");
+  if (raw === null) {
     return undefined;
   }
-  const value = Number(delay);
+  const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) {
-    throw new Error("webglInitializationDelayMs must be a non-negative number");
+    throw new Error(`Invalid webglInitializationDelayMs query value: ${raw}`);
   }
   return value;
 }
 
-createRoot(document.getElementById("root")!).render(
+const root = document.getElementById("root");
+if (root === null) {
+  throw new Error("Root element #root not found");
+}
+
+createRoot(root).render(
   <StrictMode>
     <App />
   </StrictMode>,

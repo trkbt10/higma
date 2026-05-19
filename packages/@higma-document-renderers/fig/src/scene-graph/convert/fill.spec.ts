@@ -2,7 +2,7 @@
  * @file Fill conversion tests
  *
  * Verifies that the scene graph fill conversion correctly handles
- * domain-format paints and decoded Kiwi enum paint tags.
+ * Kiwi paint payloads.
  */
 
 import { convertPaintToFill, convertPaintsToFills } from "./fill";
@@ -13,6 +13,7 @@ import type {
 } from "@higma-document-models/fig/types";
 import { getPaintType } from "@higma-document-models/fig/color";
 import type { FigPackageImage } from "@higma-figma-containers/package";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, SCALE_MODE_VALUES } from "@higma-document-models/fig/constants";
 
 const NO_IMAGES: ReadonlyMap<string, FigPackageImage> = new Map();
 
@@ -29,9 +30,9 @@ function isRawImagePaint(value: unknown): value is FigImagePaint {
 
 describe("convertPaintToFill", () => {
   describe("solid paint", () => {
-    it("converts SOLID paint with string type", () => {
+    it("converts SOLID paint", () => {
       const paint: FigSolidPaint = {
-        type: "SOLID",
+        type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
         color: { r: 0, g: 0.5, b: 1, a: 1 },
         opacity: 0.8,
         visible: true,
@@ -45,14 +46,13 @@ describe("convertPaintToFill", () => {
     });
   });
 
-  describe("linear gradient (domain format: stops + transform)", () => {
-    it("converts builder-generated linear gradient", () => {
-      // This is the shape the builder emits after parser normalisation.
+  describe("linear gradient", () => {
+    it("converts Kiwi linear gradient", () => {
       const paint: FigGradientPaint = {
-        type: "GRADIENT_LINEAR",
+        type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
         opacity: 1,
         visible: true,
-        blendMode: "NORMAL",
+        blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
         stops: [
           { color: { r: 0.24, g: 0.47, b: 0.85, a: 1 }, position: 0 },
           { color: { r: 0.55, g: 0.30, b: 0.85, a: 1 }, position: 1 },
@@ -73,13 +73,13 @@ describe("convertPaintToFill", () => {
     });
   });
 
-  describe("radial gradient (domain format: stops + transform)", () => {
-    it("converts builder-generated radial gradient", () => {
+  describe("radial gradient", () => {
+    it("converts Kiwi radial gradient", () => {
       const paint: FigGradientPaint = {
-        type: "GRADIENT_RADIAL",
+        type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
         opacity: 1,
         visible: true,
-        blendMode: "NORMAL",
+        blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
         stops: [
           { color: { r: 0.95, g: 0.55, b: 0.15, a: 1 }, position: 0 },
           { color: { r: 0.90, g: 0.25, b: 0.25, a: 1 }, position: 1 },
@@ -101,8 +101,8 @@ describe("convertPaintToFill", () => {
 
   describe("invisible paints", () => {
     it("skips paints with visible=false", () => {
-      const hidden: FigSolidPaint = { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1, visible: false };
-      const visible: FigSolidPaint = { type: "SOLID", color: { r: 0, g: 1, b: 0, a: 1 }, opacity: 1, visible: true };
+      const hidden: FigSolidPaint = { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1, visible: false };
+      const visible: FigSolidPaint = { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 0, g: 1, b: 0, a: 1 }, opacity: 1, visible: true };
       const fills = convertPaintsToFills([hidden, visible], NO_IMAGES);
       expect(fills).toHaveLength(1);
       expect(fills[0].type).toBe("solid");
@@ -113,22 +113,22 @@ describe("convertPaintToFill", () => {
   });
 
   describe("image paint", () => {
-    it("preserves API imageTransform and TILE scalingFactor", () => {
-      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+    it("preserves Kiwi image transform and TILE scale", () => {
+      const image = { ref: "abcdef", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["abcdef", image]]);
       const paint: FigImagePaint = {
-        type: "IMAGE",
-        imageRef: "img-ref",
-        scaleMode: "TILE",
-        scalingFactor: 0.5,
-        imageTransform: { m00: 0.5, m01: 0, m02: 0.25, m10: 0, m11: 0.5, m12: 0.25 },
+        type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+        image: { hash: [0xab, 0xcd, 0xef] },
+        imageScaleMode: { value: SCALE_MODE_VALUES.TILE, name: "TILE" },
+        scale: 0.5,
+        transform: { m00: 0.5, m01: 0, m02: 0.25, m10: 0, m11: 0.5, m12: 0.25 },
       };
 
       const fill = convertPaintToFill(paint, images);
 
       expect(fill).toEqual({
         type: "image",
-        imageRef: "img-ref",
+        imageHash: "abcdef",
         data: image.data,
         mimeType: "image/png",
         scaleMode: "TILE",
@@ -139,12 +139,12 @@ describe("convertPaintToFill", () => {
     });
 
     it("preserves paintFilter and explicit color management", () => {
-      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+      const image = { ref: "abcdef", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["abcdef", image]]);
       const paint: FigImagePaint = {
-        type: "IMAGE",
-        imageRef: "img-ref",
-        scaleMode: "FILL",
+        type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+        image: { hash: [0xab, 0xcd, 0xef] },
+        imageScaleMode: { value: SCALE_MODE_VALUES.FILL, name: "FILL" },
         paintFilter: { highlights: -0.98 },
         imageShouldColorManage: true,
       };
@@ -159,18 +159,18 @@ describe("convertPaintToFill", () => {
     });
 
     it("normalises STRETCH + non-identity transform to CROP (wire-format spelling of Figma's Crop mode)", () => {
-      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+      const image = { ref: "abcdef", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["abcdef", image]]);
       // Figma's binary ImageScaleMode enum has no CROP value: when the user
       // picks "Crop" in the editor, the wire-level scaleMode stays STRETCH
       // and the user's crop rectangle is written into paint.transform. The
       // convert layer must reconcile this so the renderers see scaleMode
       // "CROP" and honour the transform instead of plain-stretching.
       const paint: FigImagePaint = {
-        type: "IMAGE",
-        imageRef: "img-ref",
-        scaleMode: "STRETCH",
-        imageTransform: { m00: 2.143, m01: 0, m02: -1.063, m10: 0, m11: 0.658, m12: 0.046 },
+        type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+        image: { hash: [0xab, 0xcd, 0xef] },
+        imageScaleMode: { value: SCALE_MODE_VALUES.STRETCH, name: "STRETCH" },
+        transform: { m00: 2.143, m01: 0, m02: -1.063, m10: 0, m11: 0.658, m12: 0.046 },
       };
 
       const fill = convertPaintToFill(paint, images);
@@ -183,13 +183,13 @@ describe("convertPaintToFill", () => {
     });
 
     it("leaves STRETCH with an identity transform untouched", () => {
-      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+      const image = { ref: "abcdef", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["abcdef", image]]);
       const paint: FigImagePaint = {
-        type: "IMAGE",
-        imageRef: "img-ref",
-        scaleMode: "STRETCH",
-        imageTransform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+        image: { hash: [0xab, 0xcd, 0xef] },
+        imageScaleMode: { value: SCALE_MODE_VALUES.STRETCH, name: "STRETCH" },
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
       };
 
       const fill = convertPaintToFill(paint, images);
@@ -198,11 +198,11 @@ describe("convertPaintToFill", () => {
     });
 
     it("converts decoded Kiwi enum image paints", () => {
-      const image = { ref: "img-ref", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
-      const images: ReadonlyMap<string, FigPackageImage> = new Map([["img-ref", image]]);
+      const image = { ref: "abcdef", data: new Uint8Array([1, 2, 3]), mimeType: "image/png" };
+      const images: ReadonlyMap<string, FigPackageImage> = new Map([["abcdef", image]]);
       const raw = {
         type: { value: 5, name: "IMAGE" },
-        imageRef: "img-ref",
+        image: { hash: [0xab, 0xcd, 0xef] },
         imageScaleMode: { value: 1, name: "FILL" },
         scale: 0.5,
       };
@@ -214,7 +214,7 @@ describe("convertPaintToFill", () => {
 
       expect(fill).toMatchObject({
         type: "image",
-        imageRef: "img-ref",
+        imageHash: "abcdef",
         scaleMode: "FILL",
         scalingFactor: 0.5,
       });

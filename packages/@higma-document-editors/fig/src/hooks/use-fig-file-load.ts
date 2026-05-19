@@ -1,50 +1,48 @@
 /**
- * @file File loading hook for fig files
- *
- * Loads a .fig file from a File object or Uint8Array
- * and creates a FigDesignDocument.
+ * @file React hook for loading .fig bytes into a Kiwi document context.
  */
+import { useCallback, useState } from "react";
+import { createFigDocumentContext, type FigDocumentContext } from "@higma-document-io/fig";
 
-import { useState, useCallback } from "react";
-import { createFigDesignDocument } from "@higma-document-io/fig/context";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
-
-type UseFigFileLoadResult = {
-  readonly loadFromBuffer: (buffer: Uint8Array) => Promise<FigDesignDocument>;
-  readonly loadFromFile: (file: File) => Promise<FigDesignDocument>;
+export type UseFigFileLoadResult = {
+  readonly loadFromBuffer: (buffer: Uint8Array) => Promise<FigDocumentContext>;
+  readonly loadFromFile: (file: File) => Promise<FigDocumentContext>;
   readonly isLoading: boolean;
-  readonly error: Error | undefined;
+  readonly error: Error | null;
 };
 
+function errorFromUnknown(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(String(error));
+}
+
 /**
- * Hook for loading .fig files into FigDesignDocument.
+ * Load .fig bytes through the document context factory used by renderers.
  */
 export function useFigFileLoad(): UseFigFileLoadResult {
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | undefined>();
+  const [error, setError] = useState<Error | null>(null);
 
-  const loadFromBuffer = useCallback(async (buffer: Uint8Array): Promise<FigDesignDocument> => {
+  const loadFromBuffer = useCallback(async (buffer: Uint8Array): Promise<FigDocumentContext> => {
     setIsLoading(true);
-    setError(undefined);
-
+    setError(null);
     try {
-      return await createFigDesignDocument(buffer);
-    } catch (e) {
-      const err = e instanceof Error ? e : new Error(String(e));
-      setError(err);
-      throw err;
+      return await createFigDocumentContext(buffer);
+    } catch (caught: unknown) {
+      const nextError = errorFromUnknown(caught);
+      setError(nextError);
+      throw nextError;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  const loadFromFile = useCallback(
-    async (file: File): Promise<FigDesignDocument> => {
-      const arrayBuffer = await file.arrayBuffer();
-      return loadFromBuffer(new Uint8Array(arrayBuffer));
-    },
-    [loadFromBuffer],
-  );
+  const loadFromFile = useCallback(async (file: File): Promise<FigDocumentContext> => {
+    const buffer = new Uint8Array(await file.arrayBuffer());
+    return loadFromBuffer(buffer);
+  }, [loadFromBuffer]);
 
   return { loadFromBuffer, loadFromFile, isLoading, error };
 }

@@ -27,7 +27,7 @@ import { createBrowserFontLoader } from "./browser-loader";
 // The Node driver ships a richer `synthesizeFontBytes` co-located with
 // its own spec; the browser driver lives in a separate directory and
 // the package-wide lint rule routes cross-directory imports through
-// `index.ts`. Re-exporting a test helper through `font-drivers/node`'s
+// `index.ts`. Re-exporting a test routine through `font-drivers/node`'s
 // public API would force production consumers to step over a test-only
 // symbol, so we inline a minimal font builder here. The only methods
 // the loader consults on the returned bytes are opentype.js's parse

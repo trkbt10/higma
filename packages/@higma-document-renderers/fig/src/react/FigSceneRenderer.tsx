@@ -21,7 +21,7 @@
  */
 
 import { memo, useMemo, useRef } from "react";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "../scene-graph";
 import {
   resolveRenderTreeIncremental,
@@ -73,7 +73,6 @@ export const FigRenderTreeRenderer = memo(FigRenderTreeRendererImpl);
  * Render a SceneGraph as React SVG elements.
  *
  * Resolves the SceneGraph to a RenderTree internally, then renders.
- * This is the backward-compatible entry point.
  */
 function FigSceneRendererImpl({ sceneGraph, renderOptions }: FigSceneRendererProps) {
   const cacheRef = useRef<RenderTreeResolutionCache | undefined>(undefined);

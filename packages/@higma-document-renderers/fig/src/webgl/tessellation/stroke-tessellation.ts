@@ -6,7 +6,7 @@
  */
 
 import { flattenPathCommands } from "@higma-primitives/path";
-import type { PathContour } from "@higma-document-models/fig/scene-graph";
+import type { PathContour } from "@higma-document-renderers/fig/scene-graph";
 import { triangulate } from "./tessellation";
 
 // =============================================================================
@@ -114,7 +114,7 @@ type PathStrokeOptions = StrokeDashOptions & {
   readonly tolerance?: number;
 };
 
-function normalizeDashPattern(dashPattern: readonly number[] | undefined): number[] | undefined {
+function resolveDashPattern(dashPattern: readonly number[] | undefined): number[] | undefined {
   if (!dashPattern) { return undefined; }
   const positive = dashPattern.filter((value) => Number.isFinite(value) && value > 0);
   if (positive.length === 0) { return undefined; }
@@ -155,7 +155,7 @@ function splitPolylineByDashPattern(
   points: readonly number[],
   dashPattern: readonly number[] | undefined,
 ): number[][] {
-  const pattern = normalizeDashPattern(dashPattern);
+  const pattern = resolveDashPattern(dashPattern);
   if (!pattern) { return [Array.from(points)]; }
 
   const segments: number[][] = [];
@@ -410,7 +410,7 @@ function tessellateDashedRectStroke(
 }
 
 // =============================================================================
-// Helpers
+// Local Routines
 // =============================================================================
 
 function rectPoints(

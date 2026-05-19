@@ -1,59 +1,30 @@
-/** @file Canvas selection target resolution helpers. */
-
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import { canEnterVectorPathEdit } from "../../vector-path/editor-model";
+/** @file Selection hit resolution for Kiwi editor bounds. */
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { guidToString } from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
 import { filterMarqueeSelectionByHierarchy } from "./bounds";
-import { resolveCanvasInteractionTarget, type CanvasTargetMode } from "./target-resolution";
 
-type ActivePageChildren = {
-  readonly children: readonly FigDesignNode[];
-};
-
-type ItemBounds = {
-  readonly id: string;
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-};
-
-/** Resolve marquee IDs while preserving hierarchy selection rules. */
-export function resolveSelectableMarqueeIds({
-  activePage,
-  itemIds,
-}: {
-  readonly activePage: ActivePageChildren | null | undefined;
-  readonly itemIds: readonly string[];
-}): readonly string[] {
-  if (!activePage) {
-    return itemIds;
+/** Resolve a canvas hit string back to the Kiwi GUID carried by the node. */
+export function resolveNodeGuidFromCanvasId(
+  document: FigKiwiDocumentIndex,
+  id: string,
+): FigGuid {
+  const node = document.nodesByGuid.get(id);
+  if (node === undefined || node.guid === undefined) {
+    throw new Error(`resolveNodeGuidFromCanvasId: node ${id} is not present in the Kiwi document`);
   }
-  return filterMarqueeSelectionByHierarchy(activePage.children, itemIds);
+  return node.guid;
 }
 
-/** Resolve the fig node that should receive a canvas interaction. */
-export function resolveInteractionTargetNodeId({
-  activePage,
-  itemBounds,
-  hitNodeId,
-  targetMode,
-  point,
-}: {
-  readonly activePage: ActivePageChildren | null | undefined;
-  readonly itemBounds: readonly ItemBounds[];
-  readonly hitNodeId: FigNodeId;
-  readonly targetMode: CanvasTargetMode;
-  readonly point: { readonly x: number; readonly y: number };
-}): FigNodeId {
-  if (!activePage) {
-    return hitNodeId;
-  }
-  return resolveCanvasInteractionTarget({
-    pageChildren: activePage.children,
-    itemBounds,
-    point,
-    hitNodeId,
-    mode: targetMode,
-    canEditPath: canEnterVectorPathEdit,
-  });
+/** Resolve marquee hits to selectable Kiwi GUIDs without ancestor duplicates. */
+export function resolveSelectableMarqueeGuids(
+  document: FigKiwiDocumentIndex,
+  itemIds: readonly string[],
+): readonly FigGuid[] {
+  return filterMarqueeSelectionByHierarchy(document, itemIds).map((id) => resolveNodeGuidFromCanvasId(document, id));
+}
+
+/** Convert GUIDs to the canvas id strings required by the shared EditorCanvas. */
+export function canvasIdsFromGuids(guids: readonly FigGuid[]): readonly string[] {
+  return guids.map(guidToString);
 }

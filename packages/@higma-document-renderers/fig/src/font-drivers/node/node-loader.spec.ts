@@ -27,7 +27,7 @@ import {
   createFakeFs,
   synthesizeFontBytes,
   type FakeFs,
-} from "./test-helpers";
+} from "./font-driver-test-fixtures";
 
 type EnvOverrides = {
   readonly platform?: NodeJS.Platform;

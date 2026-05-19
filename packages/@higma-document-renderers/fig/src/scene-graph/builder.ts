@@ -1,52 +1,155 @@
 /**
  * @file Scene graph builder
  *
- * Converts a FigDesignNode tree (domain objects) to a format-agnostic scene graph.
+ * Converts Kiwi FigNode values to a format-agnostic scene graph.
  * The resulting scene graph can be consumed by both SVG and WebGL backends.
  *
- * This builder accepts FigDesignNode directly — no intermediate conversion
- * from the raw parser type (FigNode) is needed. This ensures the renderer
- * stays in sync with the domain model by construction.
+ * This builder accepts Kiwi FigNode directly and must not route through
+ * another document shape.
  */
 
-import type { FigDesignNode, MutableFigDesignNode, FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigFillGeometry, FigPaint } from "@higma-document-models/fig/types";
+import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigFillGeometry, FigNode, FigPaint, FigStyleId } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
-import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
+import { resolveStyledPaint, type SymbolResolver } from "@higma-document-models/fig/symbols";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
-import {
-  extractBaseProps, extractSizeProps, extractPaintProps, extractGeometryProps, extractEffectsProps, } from "@higma-document-models/fig/symbols/extract";
-import { resolveAutoLayoutFrame, type PrimaryAxisChild, type PrimaryAxisParent } from "@higma-document-models/fig/symbols/autolayout-solver";
+import { resolveAutoLayoutFrame } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type {
-  SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
-import { createNodeId } from "@higma-document-models/fig/scene-graph";
-import { convertPaintsToFills } from "./convert/fill";
-import { convertStrokeToSceneStroke } from "./convert/stroke";
-import { convertEffectsToScene } from "./convert/effects";
-import { decodeGeometryToContours, convertVectorPathsToContours, type DecodedContour } from "./convert/path";
+  SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
+import {
+  convertEffectsToScene,
+  convertPaintsToFills,
+  convertStrokeToSceneStroke,
+  convertTextNode,
+  convertVectorPathsToContours,
+  decodeGeometryToContours,
+  type DecodedContour,
+} from "./convert";
 import { reconstructStrokeCenterline } from "@higma-primitives/path";
 import {
   generateEllipseContour, generateLineContour, generatePolygonContour, generateRectContour, generateStarContour, parseSvgPathD, } from "@higma-primitives/path";
-import { convertTextNode } from "./convert/text";
-import type { Fill, PathContour, BlendMode, ArcData } from "@higma-document-models/fig/scene-graph";
-import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
-import type { TextAutoResize } from "@higma-document-models/fig/scene-graph";
-import type { TextFontResolver } from "../text/rendering";
+import type { Fill, PathContour, BlendMode, ArcData } from "@higma-document-renderers/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
+import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
+import { TEXT_AUTO_RESIZE_OMITTED_DEFAULT, kiwiEnumName } from "@higma-document-models/fig/constants";
+import type { TextFontResolver } from "../text";
 import { evaluateBooleanPathResult, type BooleanPathInput } from "@higma-primitives/path";
 import { resolveBooleanOperationType } from "@higma-document-models/fig/boolean-operation";
-import {
-  convertDesignTransform,
-  deepCloneDesignNode,
-  extractDesignCornerRadius,
-  getDesignNodeTypeName,
-  resolveDesignClipsContent,
-} from "@higma-document-models/fig/symbols/design-node-helpers";
-import { resolveDesignInstance } from "@higma-document-models/fig/symbols/design-instance-resolver";
-import type { AffineMatrix } from "@higma-primitives/path";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import { resolveClipsContent as resolveGeometryClipsContent } from "@higma-document-models/fig/geometry-interpret";
+import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
-function convertBlendMode(node: FigDesignNode): BlendMode | undefined {
+function convertBlendMode(node: FigNode): BlendMode | undefined {
   return convertFigmaBlendMode(node.blendMode);
+}
+
+function convertKiwiTransform(
+  matrix: { m00?: number; m01?: number; m02?: number; m10?: number; m11?: number; m12?: number } | undefined,
+): AffineMatrix {
+  if (!matrix) { return IDENTITY_MATRIX; }
+  return {
+    m00: matrix.m00 ?? 1,
+    m01: matrix.m01 ?? 0,
+    m02: matrix.m02 ?? 0,
+    m10: matrix.m10 ?? 0,
+    m11: matrix.m11 ?? 1,
+    m12: matrix.m12 ?? 0,
+  };
+}
+
+function extractKiwiCornerRadius(node: FigNode): CornerRadius | undefined {
+  const radii = node.rectangleCornerRadii;
+  if (radii !== undefined && radii.length === 4) {
+    return normalizeCornerRadiusTuple(radii[0], radii[1], radii[2], radii[3]);
+  }
+  const individual = extractKiwiIndividualCornerRadius(node);
+  if (individual !== undefined) {
+    return individual;
+  }
+  return node.cornerRadius;
+}
+
+function extractKiwiIndividualCornerRadius(node: FigNode): CornerRadius | undefined {
+  const topLeft = node.rectangleTopLeftCornerRadius;
+  const topRight = node.rectangleTopRightCornerRadius;
+  const bottomRight = node.rectangleBottomRightCornerRadius;
+  const bottomLeft = node.rectangleBottomLeftCornerRadius;
+  if (
+    topLeft === undefined &&
+    topRight === undefined &&
+    bottomRight === undefined &&
+    bottomLeft === undefined
+  ) {
+    return undefined;
+  }
+  if (node.rectangleCornerRadiiIndependent === true) {
+    return normalizeCornerRadiusTuple(
+      topLeft ?? 0,
+      topRight ?? 0,
+      bottomRight ?? 0,
+      bottomLeft ?? 0,
+    );
+  }
+  return normalizeCornerRadiusTuple(
+    topLeft ?? requireKiwiCornerRadiusField(node, "rectangleTopLeftCornerRadius"),
+    topRight ?? requireKiwiCornerRadiusField(node, "rectangleTopRightCornerRadius"),
+    bottomRight ?? requireKiwiCornerRadiusField(node, "rectangleBottomRightCornerRadius"),
+    bottomLeft ?? requireKiwiCornerRadiusField(node, "rectangleBottomLeftCornerRadius"),
+  );
+}
+
+function requireKiwiCornerRadiusField(
+  node: FigNode,
+  field: "rectangleTopLeftCornerRadius" | "rectangleTopRightCornerRadius" | "rectangleBottomRightCornerRadius" | "rectangleBottomLeftCornerRadius",
+): number {
+  if (node.cornerRadius !== undefined) {
+    return node.cornerRadius;
+  }
+  throw new Error(`buildSceneGraph: Kiwi node "${node.name ?? "(unnamed)"}" has ${field} omitted while using individual corner radius fields`);
+}
+
+function normalizeCornerRadiusTuple(
+  topLeft: number,
+  topRight: number,
+  bottomRight: number,
+  bottomLeft: number,
+): CornerRadius | undefined {
+  if (topLeft === topRight && topRight === bottomRight && bottomRight === bottomLeft) {
+    return topLeft || undefined;
+  }
+  return [topLeft, topRight, bottomRight, bottomLeft];
+}
+
+function resolveKiwiClipsContent(node: FigNode): boolean {
+  if (node.clipsContent !== undefined) { return node.clipsContent; }
+  return resolveGeometryClipsContent(undefined, node.frameMaskDisabled, getNodeType(node));
+}
+
+type FramePaintSource = {
+  readonly paints: readonly FigPaint[] | undefined;
+  readonly styleRef: FigStyleId | undefined;
+};
+
+function frameBackgroundStyleRef(node: FigNode): FigStyleId | undefined {
+  if (node.inheritFillStyleIDForBackground === undefined) {
+    return undefined;
+  }
+  return { guid: node.inheritFillStyleIDForBackground };
+}
+
+function resolveFramePaintSource(node: FigNode): FramePaintSource {
+  if (node.backgroundPaints !== undefined) {
+    return {
+      paints: node.backgroundPaints,
+      styleRef: frameBackgroundStyleRef(node),
+    };
+  }
+  return {
+    paints: node.fillPaints,
+    styleRef: node.styleIdForFill,
+  };
 }
 
 // =============================================================================
@@ -54,10 +157,10 @@ function convertBlendMode(node: FigDesignNode): BlendMode | undefined {
 // =============================================================================
 
 /**
- * Check if a FigDesignNode acts as a mask for subsequent siblings.
- * Figma's mask property is stored on the raw node data.
+ * Check if a FigNode acts as a mask for subsequent siblings.
+ * Figma's mask property is stored on the Kiwi node.
  */
-function isMaskNode(node: FigDesignNode): boolean {
+function isMaskNode(node: FigNode): boolean {
   return node.mask === true;
 }
 
@@ -71,7 +174,7 @@ function selectPaintsForFills(
   return convertPaintsToFills(source, images);
 }
 
-function resolveScalarStrokeWeight(strokeWeight: FigDesignNode["strokeWeight"] | undefined): number {
+function resolveScalarStrokeWeight(strokeWeight: FigNode["strokeWeight"] | undefined): number {
   if (typeof strokeWeight === "number") {
     return strokeWeight;
   }
@@ -95,14 +198,27 @@ function resolveVectorFills(
 function resolveVectorStroke(
   treatAsFill: boolean,
   strokePaints: readonly FigPaint[] | undefined,
-  strokeWeight: FigDesignNode["strokeWeight"] | undefined,
-  strokeCap: FigDesignNode["strokeCap"],
-  strokeJoin: FigDesignNode["strokeJoin"],
-  strokeDashes: FigDesignNode["strokeDashes"],
-  strokeAlign: FigDesignNode["strokeAlign"],
+  strokeWeight: FigNode["strokeWeight"] | undefined,
+  strokeCap: FigNode["strokeCap"],
+  strokeJoin: FigNode["strokeJoin"],
+  strokeDashes: readonly number[] | undefined,
+  strokeAlign: FigNode["strokeAlign"],
 ) {
   if (treatAsFill) { return undefined; }
   return convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign });
+}
+
+function resolveNodeFillPaints(node: FigNode, fillPaints: readonly FigPaint[] | undefined, ctx: BuildContext): readonly FigPaint[] | undefined {
+  return resolveStyledPaint(node.styleIdForFill, fillPaints, ctx.styleRegistry);
+}
+
+function resolveNodeStrokePaints(node: FigNode, strokePaints: readonly FigPaint[] | undefined, ctx: BuildContext): readonly FigPaint[] | undefined {
+  return resolveStyledPaint(node.styleIdForStrokeFill, strokePaints, ctx.styleRegistry);
+}
+
+function resolveFrameFillPaints(node: FigNode, ctx: BuildContext): readonly FigPaint[] | undefined {
+  const source = resolveFramePaintSource(node);
+  return resolveStyledPaint(source.styleRef, source.paints, ctx.styleRegistry);
 }
 
 // =============================================================================
@@ -112,14 +228,14 @@ function resolveVectorStroke(
 /**
  * Configuration for building a scene graph.
  *
- * symbolMap uses FigDesignNode (domain type) — symbol resolution operates
- * on domain objects, not raw parser types.
+ * Symbol resolution operates on Kiwi FigNode values.
  */
 /**
  * Configuration for `buildSceneGraph`. Every field is required: the builder
  * does not invent defaults. If an input is genuinely absent for a call
- * site (e.g. a tree without INSTANCE nodes needs no symbolMap), the caller
- * passes the explicit "empty" value (`new Map()`, `[]`, `EMPTY_FIG_STYLE_
+ * site (e.g. a document without INSTANCE nodes still needs a resolver over
+ * the document index), the caller passes the explicit "empty" value (`[]`,
+ * `EMPTY_FIG_STYLE_
  * REGISTRY`, `false`) so intent is visible at the call site and never
  * hidden inside the builder.
  */
@@ -132,8 +248,10 @@ export type BuildSceneGraphOptions = {
   readonly canvasSize: { width: number; height: number };
   /** World-space window to render into the output canvas. */
   readonly viewport: { x: number; y: number; width: number; height: number };
-  /** Symbol map for INSTANCE resolution. Pass `new Map()` when absent. */
-  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  /** Symbol resolver for INSTANCE resolution. */
+  readonly symbolResolver: SymbolResolver;
+  /** Parent/child view over the Kiwi document. */
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
   /** Whether to include nodes with `visible: false`. */
   readonly showHiddenNodes: boolean;
   /**
@@ -156,29 +274,21 @@ export type BuildSceneGraphOptions = {
 };
 
 /**
- * Internal build context — pure-domain. The scene-graph builder does
- * not read raw FigNode, does not translate override guid paths, and
- * does not perform GUID translation. All such work is the
- * responsibility of the domain-convert layer
- * (`@higma-document-models/fig/domain`).
- *
- * The shape is a superset of `InstanceResolveDesignContext` from
- * `@higma-document-models/fig/symbols/design-instance-resolver`, so
- * `ctx` is passed through structurally when the builder delegates
- * INSTANCE resolution.
+ * Internal build context for Kiwi FigNode rendering.
  */
 type BuildContext = {
   readonly blobs: readonly FigBlob[];
   readonly images: ReadonlyMap<string, FigPackageImage>;
-  readonly symbolMap: ReadonlyMap<string, FigDesignNode>;
+  readonly symbolResolver: SymbolResolver;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
   readonly styleRegistry: FigStyleRegistry;
   readonly showHiddenNodes: boolean;
   readonly warnings: string[];
   readonly textFontResolver: TextFontResolver | undefined;
   readonly previousCache?: SceneGraphBuildCache;
-  readonly nextNodesBySource: WeakMap<FigDesignNode, SceneNode>;
+  readonly nextNodesBySource: WeakMap<FigNode, SceneNode>;
   /**
-   * Identity set of top-level FigDesignNodes passed to
+   * Identity set of top-level FigNodes passed to
    * `buildSceneGraph`. Used by `resolveCornerSmoothing` to honour
    * Figma's SVG-exporter rule: `cornerSmoothing` propagates into the
    * emitted path data ONLY for the export root. Nested FRAME / RECT
@@ -188,12 +298,12 @@ type BuildContext = {
    * the visible cornerless rect is bounded by some other clip /
    * stack interaction.
    */
-  readonly exportRoots: WeakSet<FigDesignNode>;
+  readonly exportRoots: WeakSet<FigNode>;
   nodeCounter: number;
 };
 
 export type SceneGraphBuildCache = {
-  readonly nodesBySource: WeakMap<FigDesignNode, SceneNode>;
+  readonly nodesBySource: WeakMap<FigNode, SceneNode>;
 };
 
 export type BuildSceneGraphResult = {
@@ -202,69 +312,76 @@ export type BuildSceneGraphResult = {
 };
 
 // =============================================================================
-// Node Type & ID helpers
+// Node Type & ID functions
 // =============================================================================
 
 /**
- * Generate a SceneNodeId from a FigDesignNode.
+ * Generate a SceneNodeId from a FigNode.
  *
- * FigDesignNode.id is a branded string "sessionID:localID",
- * which is already unique — use it directly as the SceneNodeId.
+ * Kiwi node GUID is the document identity SoT. Scene graph ids are derived
+ * from that GUID only; a source node without GUID is an invalid render input.
  */
-function getNodeId(node: FigDesignNode, ctx: BuildContext): SceneNodeId {
-  if (node.id) {
-    return createNodeId(node.id);
+function getNodeId(node: FigNode): SceneNodeId {
+  if (node.guid === undefined) {
+    throw new Error(`Cannot build scene graph for node "${node.name ?? "(unnamed)"}" without Kiwi guid.`);
   }
-  return createNodeId(`node-${ctx.nodeCounter++}`);
+  return createNodeId(guidToString(node.guid));
 }
 
 const IDENTITY: AffineMatrix = IDENTITY_MATRIX;
 
+function requireNodeSize(node: FigNode, operationName: string): NonNullable<FigNode["size"]> {
+  const size = node.size;
+  if (size === undefined) {
+    throw new Error(`${operationName}: Kiwi node "${node.name ?? "(unnamed)"}" is missing size`);
+  }
+  return size;
+}
 
 // =============================================================================
 // Node Builders
 // =============================================================================
 
-function buildGroupNode(node: FigDesignNode, ctx: BuildContext, children: readonly SceneNode[]): GroupNode {
-  const base = extractBaseProps(node);
-  const { effects } = extractEffectsProps(node);
+function buildGroupNode(node: FigNode, children: readonly SceneNode[]): GroupNode {
   return {
     type: "group",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     children,
   };
 }
 
-function buildFrameNode(node: FigDesignNode, ctx: BuildContext, children: readonly SceneNode[]): FrameNode {
-  const base = extractBaseProps(node);
-  const { size } = extractSizeProps(node);
-  const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
-  const { effects } = extractEffectsProps(node);
-  const cornerRadius = extractDesignCornerRadius(node);
+function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly SceneNode[]): FrameNode {
+  const size = requireNodeSize(node, "buildFrameNode");
+  const cornerRadius = extractKiwiCornerRadius(node);
   const cornerSmoothing = resolveCornerSmoothing(node, ctx);
-  const clipsContent = resolveDesignClipsContent(node);
+  const clipsContent = resolveKiwiClipsContent(node);
 
   return {
     type: "frame",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     width: size.x,
     height: size.y,
     cornerRadius,
     cornerSmoothing,
-    fills: convertPaintsToFills(fillPaints, ctx.images),
-    stroke: convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign }),
+    fills: convertPaintsToFills(resolveFrameFillPaints(node, ctx), ctx.images),
+    stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
+      strokeCap: node.strokeCap,
+      strokeJoin: node.strokeJoin,
+      dashPattern: node.strokeDashes ?? node.dashPattern,
+      strokeAlign: node.strokeAlign,
+    }),
     individualStrokeWeights: node.individualStrokeWeights,
     clipsContent,
     children,
@@ -272,29 +389,31 @@ function buildFrameNode(node: FigDesignNode, ctx: BuildContext, children: readon
   };
 }
 
-function buildRectNode(node: FigDesignNode, ctx: BuildContext): RectNode {
-  const base = extractBaseProps(node);
-  const { size } = extractSizeProps(node);
-  const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
-  const { effects } = extractEffectsProps(node);
-  const cornerRadius = extractDesignCornerRadius(node);
+function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
+  const size = requireNodeSize(node, "buildRectNode");
+  const cornerRadius = extractKiwiCornerRadius(node);
   const cornerSmoothing = resolveCornerSmoothing(node, ctx);
 
   return {
     type: "rect",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     width: size.x,
     height: size.y,
     cornerRadius,
     cornerSmoothing,
-    fills: convertPaintsToFills(fillPaints, ctx.images),
-    stroke: convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign }),
+    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images),
+    stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
+      strokeCap: node.strokeCap,
+      strokeJoin: node.strokeJoin,
+      dashPattern: node.strokeDashes ?? node.dashPattern,
+      strokeAlign: node.strokeAlign,
+    }),
     individualStrokeWeights: node.individualStrokeWeights,
   };
 }
@@ -310,7 +429,7 @@ function buildRectNode(node: FigDesignNode, ctx: BuildContext): RectNode {
  *
  * Additionally, the SVG exporter falls back to a sharp `<rect rx>` even
  * on the export-root when the node carries a visible effect
- * (DROP_SHADOW / INNER_SHADOW / LAYER_BLUR / BACKGROUND_BLUR). Figma
+ * (DROP_SHADOW / INNER_SHADOW / FOREGROUND_BLUR / BACKGROUND_BLUR). Figma
  * wraps the content in `<g filter="url(...)">` and emits the fill plus
  * its `<clipPath>` companion as a sharp `<rect>` regardless of the
  * source cornerSmoothing — the pre-computed `fillGeometry` blob still
@@ -324,7 +443,7 @@ function buildRectNode(node: FigDesignNode, ctx: BuildContext): RectNode {
  * from the scene-graph and callers can short-circuit on the
  * quarter-circle path.
  */
-function resolveCornerSmoothing(node: FigDesignNode, ctx: BuildContext): number | undefined {
+function resolveCornerSmoothing(node: FigNode, ctx: BuildContext): number | undefined {
   if (!ctx.exportRoots.has(node)) { return undefined; }
   const s = node.cornerSmoothing;
   if (typeof s !== "number" || s <= 0) { return undefined; }
@@ -332,7 +451,7 @@ function resolveCornerSmoothing(node: FigDesignNode, ctx: BuildContext): number 
   return s;
 }
 
-function hasVisibleEffect(node: FigDesignNode): boolean {
+function hasVisibleEffect(node: FigNode): boolean {
   const effects = node.effects;
   if (!Array.isArray(effects)) { return false; }
   for (const e of effects) {
@@ -343,27 +462,29 @@ function hasVisibleEffect(node: FigDesignNode): boolean {
   return false;
 }
 
-function buildEllipseNode(node: FigDesignNode, ctx: BuildContext): EllipseNode {
-  const base = extractBaseProps(node);
-  const { size } = extractSizeProps(node);
-  const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
-  const { effects } = extractEffectsProps(node);
+function buildEllipseNode(node: FigNode, ctx: BuildContext): EllipseNode {
+  const size = requireNodeSize(node, "buildEllipseNode");
 
   return {
     type: "ellipse",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     cx: size.x / 2,
     cy: size.y / 2,
     rx: size.x / 2,
     ry: size.y / 2,
-    fills: convertPaintsToFills(fillPaints, ctx.images),
-    stroke: convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign }),
+    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images),
+    stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
+      strokeCap: node.strokeCap,
+      strokeJoin: node.strokeJoin,
+      dashPattern: node.strokeDashes ?? node.dashPattern,
+      strokeAlign: node.strokeAlign,
+    }),
     arcData: extractArcData(node),
   };
 }
@@ -371,7 +492,7 @@ function buildEllipseNode(node: FigDesignNode, ctx: BuildContext): EllipseNode {
 /**
  * Extract arc data from an ellipse node (partial arcs and donuts).
  */
-function extractArcData(node: FigDesignNode): ArcData | undefined {
+function extractArcData(node: FigNode): ArcData | undefined {
   const arcData = node.arcData;
   if (!arcData) { return undefined; }
   const startingAngle = arcData.startingAngle ?? 0;
@@ -388,15 +509,15 @@ function extractArcData(node: FigDesignNode): ArcData | undefined {
  * Synthesize contours from parametric shape properties when no
  * pre-computed geometry blobs exist (e.g., builder-generated documents).
  */
-function synthesizeContours(node: FigDesignNode): DecodedContour[] {
-  const typeName = getDesignNodeTypeName(node);
+function synthesizeContours(node: FigNode): DecodedContour[] {
+  const typeName = getNodeType(node);
   const w = node.size?.x ?? 0;
   const h = node.size?.y ?? 0;
 
   switch (typeName) {
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
-      return [generateRectContour(w, h, extractDesignCornerRadius(node))];
+      return [generateRectContour(w, h, extractKiwiCornerRadius(node))];
     case "ELLIPSE":
       return [generateEllipseContour(w, h)];
     case "STAR":
@@ -416,26 +537,12 @@ function synthesizeContours(node: FigDesignNode): DecodedContour[] {
   }
 }
 
-function hasRenderablePathGeometry(node: FigDesignNode): boolean {
-  if (node.vectorPaths?.some((path) => path.data !== undefined && path.data.length > 0)) {
-    return true;
-  }
-  const { fillGeometry, strokeGeometry } = extractGeometryProps(node);
-  return (fillGeometry !== undefined && fillGeometry.length > 0)
-    || (strokeGeometry !== undefined && strokeGeometry.length > 0);
-}
-
-function shouldRenderInteractiveSlideElementAsPath(node: FigDesignNode, children: readonly FigDesignNode[]): boolean {
-  return children.length === 0 && hasRenderablePathGeometry(node);
-}
-
 /**
  * Resolve the effective fill paints for a vector per-path style override entry.
  *
  * Delegates to the styled-paint SoT: registry wins when
  * `styleIdForFill` resolves; otherwise the entry's inline `fillPaints`
- * is the SoT. An empty inline list is treated as "no paint authored
- * here, use the base fill" so it is normalised to `undefined`.
+ * is the SoT. An empty inline list means the entry authors no paint.
  */
 function resolveOverrideEntryPaints(
   entry: {
@@ -461,7 +568,7 @@ function resolveOverrideEntryPaints(
  */
 function applyStyleOverrides(
   contours: readonly DecodedContour[],
-  node: FigDesignNode,
+  node: FigNode,
   ctx: BuildContext,
 ): PathContour[] {
   const overrideTable = node.vectorData?.styleOverrideTable;
@@ -474,12 +581,14 @@ function applyStyleOverrides(
   const overrideMap = new Map<number, Fill>();
   for (const entry of overrideTable) {
     const paints = resolveOverrideEntryPaints(entry, ctx.styleRegistry);
-    if (paints) {
-      const fills = convertPaintsToFills(paints, ctx.images);
-      if (fills.length > 0) {
-        overrideMap.set(entry.styleID, fills[fills.length - 1]);
-      }
+    if (paints === undefined) {
+      continue;
     }
+    const fills = convertPaintsToFills(paints, ctx.images);
+    if (fills.length === 0) {
+      continue;
+    }
+    overrideMap.set(entry.styleID, fills[fills.length - 1]);
   }
 
   return contours.map(({ geometryStyleId, ...rest }) => {
@@ -490,21 +599,29 @@ function applyStyleOverrides(
   });
 }
 
-function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
-  const base = extractBaseProps(node);
-  const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
-  const { fillGeometry, strokeGeometry } = extractGeometryProps(node);
-  const { effects } = extractEffectsProps(node);
+function reconstructThinCenterline(
+  contours: Parameters<typeof reconstructStrokeCenterline>[0],
+  isStrokeGeometry: boolean,
+  strokeAlign: FigNode["strokeAlign"],
+  scalarWeight: number,
+): ReturnType<typeof reconstructStrokeCenterline> {
+  const align = kiwiEnumName(strokeAlign, "FigNode.strokeAlign");
+  if (!isStrokeGeometry || align !== "CENTER" || scalarWeight <= 0 || scalarWeight > 1.5) {
+    return undefined;
+  }
+  return reconstructStrokeCenterline(contours, scalarWeight);
+}
 
+function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
   const vectorPaths = node.vectorPaths;
 
   const contoursRef = { value: convertVectorPathsToContours(vectorPaths) };
   const isStrokeGeometryRef = { value: false };
   if (contoursRef.value.length === 0) {
-    contoursRef.value = decodeGeometryToContours(fillGeometry, ctx.blobs);
+    contoursRef.value = decodeGeometryToContours(node.fillGeometry, ctx.blobs);
   }
   if (contoursRef.value.length === 0) {
-    contoursRef.value = decodeGeometryToContours(strokeGeometry, ctx.blobs);
+    contoursRef.value = decodeGeometryToContours(node.strokeGeometry, ctx.blobs);
     isStrokeGeometryRef.value = contoursRef.value.length > 0;
   }
 
@@ -518,14 +635,12 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
   // Figma's SVG exporter emits the centerline directly, so we reverse the
   // expansion when the strokeGeometry matches the documented thin-stroke
   // pattern. Falls back to fill-the-outline when reconstruction fails.
-  const scalarWeight = resolveScalarStrokeWeight(strokeWeight);
+  const scalarWeight = resolveScalarStrokeWeight(node.strokeWeight);
   const reconstructedRef = { value: false };
-  if (isStrokeGeometryRef.value && strokeAlign === "CENTER" && scalarWeight > 0 && scalarWeight <= 1.5) {
-    const centerline = reconstructStrokeCenterline(contoursRef.value, scalarWeight);
-    if (centerline) {
-      contoursRef.value = centerline;
-      reconstructedRef.value = true;
-    }
+  const centerline = reconstructThinCenterline(contoursRef.value, isStrokeGeometryRef.value, node.strokeAlign, scalarWeight);
+  if (centerline !== undefined) {
+    contoursRef.value = centerline;
+    reconstructedRef.value = true;
   }
 
   // Apply per-path style overrides from vectorData
@@ -537,26 +652,28 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
   // case the strokeGeometry is gone and we render the centerline as a
   // proper stroke.
   const treatAsFill = isStrokeGeometryRef.value && !reconstructedRef.value;
-  const fills = resolveVectorFills(reconstructedRef.value, treatAsFill, strokePaints, fillPaints, ctx.images);
-  const stroke = resolveVectorStroke(treatAsFill, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign);
+  const resolvedFillPaints = resolveNodeFillPaints(node, node.fillPaints, ctx);
+  const resolvedStrokePaints = resolveNodeStrokePaints(node, node.strokePaints, ctx);
+  const fills = resolveVectorFills(reconstructedRef.value, treatAsFill, resolvedStrokePaints, resolvedFillPaints, ctx.images);
+  const stroke = resolveVectorStroke(treatAsFill, resolvedStrokePaints, node.strokeWeight, node.strokeCap, node.strokeJoin, node.strokeDashes ?? node.dashPattern, node.strokeAlign);
 
-  const { size } = extractSizeProps(node);
+  const size = requireNodeSize(node, "buildVectorNode");
   // Carry source rect-shape parameters through to PathNode so the
   // stroke resolver can route INSIDE/OUTSIDE-aligned smoothed strokes
   // through `kind: "rect"` strokeShape. See PathNode docs in
-  // @higma-document-models/fig/scene-graph/types and the resolve.ts
+  // @higma-document-renderers/fig/scene-graph/types and the resolve.ts
   // strokeShape branch.
-  const cornerRadius = extractDesignCornerRadius(node);
+  const cornerRadius = extractKiwiCornerRadius(node);
   const cornerSmoothingRaw = node.cornerSmoothing;
   const cornerSmoothing = typeof cornerSmoothingRaw === "number" && cornerSmoothingRaw > 0 ? cornerSmoothingRaw : undefined;
   return {
     type: "path",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     contours: resolvedContours,
     fills,
@@ -568,29 +685,27 @@ function buildVectorNode(node: FigDesignNode, ctx: BuildContext): PathNode {
   };
 }
 
-/** Extract the name string from a KiwiEnumValue or return the string as-is. */
 function extractEnumName(value: unknown): string | undefined {
-  if (typeof value === "string") { return value; }
-  if (value && typeof value === "object" && "name" in value) {
-    // `"name" in value` narrows to `value & { name: unknown }`, so
-    // `value.name` is safely `unknown` without any cast.
-    const name: unknown = value.name;
-    return typeof name === "string" ? name : undefined;
-  }
-  return undefined;
+  return kiwiEnumName(value, "Kiwi text enum");
 }
 
 function resolveTextAutoResize(rawAutoResize: unknown): TextAutoResize {
   const name = extractEnumName(rawAutoResize);
-  if (name === "NONE" || name === "HEIGHT" || name === "TRUNCATE") {
+  if (name === "NONE" || name === "WIDTH_AND_HEIGHT" || name === "HEIGHT" || name === "TRUNCATE") {
     return name;
   }
-  return "WIDTH_AND_HEIGHT";
+  // Kiwi binary's "omitted field = first enum value" semantic.
+  // Schema declares TextAutoResize starting with NONE=0, so a missing
+  // textAutoResize must read back as NONE — "fixed bounds, wrap inside
+  // the authored box". The previous WIDTH_AND_HEIGHT default meant
+  // "grow to content, no wrap" and silently inverted the box behaviour
+  // wherever the field was omitted (e.g. CPA-driven text whose
+  // derivedTextData was discarded slipped through here and stopped
+  // wrapping).
+  return TEXT_AUTO_RESIZE_OMITTED_DEFAULT;
 }
 
-function buildTextNode(node: FigDesignNode, ctx: BuildContext): TextNode {
-  const base = extractBaseProps(node);
-  const { effects } = extractEffectsProps(node);
+function buildTextNode(node: FigNode, ctx: BuildContext): TextNode {
   const textData = convertTextNode(node, {
     blobs: ctx.blobs,
     fontResolver: ctx.textFontResolver,
@@ -603,12 +718,12 @@ function buildTextNode(node: FigDesignNode, ctx: BuildContext): TextNode {
 
   return {
     type: "text",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     width: node.size?.x ?? 0,
     height: node.size?.y ?? 0,
@@ -656,35 +771,27 @@ function applyTransformToPathD(d: string, m: AffineMatrix): string {
  * transforming each to the parent's coordinate system.
  */
 function collectChildPathsForBoolean(
-  children: readonly FigDesignNode[],
+  children: readonly FigNode[],
   ctx: BuildContext,
 ): BooleanPathInput[] {
   const result: BooleanPathInput[] = [];
 
   for (const child of children) {
-    const base = extractBaseProps(child);
-    if (!base.visible && !ctx.showHiddenNodes) {
+    if (child.visible === false && !ctx.showHiddenNodes) {
       continue;
     }
 
-    const typeName = getDesignNodeTypeName(child);
-    const childTransform = convertDesignTransform(base.transform);
+    const typeName = getNodeType(child);
+    const childTransform = convertKiwiTransform(child.transform);
 
     // Nested BOOLEAN_OPERATION: recurse
     if (typeName === "BOOLEAN_OPERATION") {
-      const nestedResult = computeBooleanResultFromNode(child, ctx);
-      if (nestedResult) {
-        for (const d of nestedResult) {
-          const td = applyTransformToPathD(d, childTransform);
-          result.push({ d: td, windingRule: "nonzero" });
-        }
-      }
+      appendNestedBooleanResult(result, child, childTransform, ctx);
       continue;
     }
 
     // Extract geometry
-    const { fillGeometry, strokeGeometry } = extractGeometryProps(child);
-    const contours = resolveBooleanInputContours(child, fillGeometry, strokeGeometry, ctx);
+    const contours = resolveBooleanInputContours(child, child.fillGeometry, child.strokeGeometry, ctx);
 
     for (const contour of contours) {
       const d = contour.commands.map((cmd) => {
@@ -706,8 +813,24 @@ function collectChildPathsForBoolean(
   return result;
 }
 
+function appendNestedBooleanResult(
+  result: BooleanPathInput[],
+  child: FigNode,
+  childTransform: AffineMatrix,
+  ctx: BuildContext,
+): void {
+  const nestedResult = computeBooleanResultFromNode(child, ctx);
+  if (nestedResult === undefined) {
+    return;
+  }
+  for (const d of nestedResult) {
+    const td = applyTransformToPathD(d, childTransform);
+    result.push({ d: td, windingRule: "nonzero" });
+  }
+}
+
 function resolveBooleanInputContours(
-  child: FigDesignNode,
+  child: FigNode,
   fillGeometry: readonly FigFillGeometry[] | undefined,
   strokeGeometry: readonly FigFillGeometry[] | undefined,
   ctx: BuildContext,
@@ -733,10 +856,10 @@ function resolveBooleanInputContours(
  * Evaluation failures are thrown so callers and tests can observe them.
  */
 function computeBooleanResultFromNode(
-  node: FigDesignNode,
+  node: FigNode,
   ctx: BuildContext,
 ): readonly string[] | undefined {
-  const children: readonly FigDesignNode[] = node.children ?? [];
+  const children = ctx.childrenOf(node);
   const childPaths = collectChildPathsForBoolean(children, ctx);
   const result = evaluateBooleanPathResult(childPaths, resolveBooleanOperationType(node.booleanOperation));
   if (result.ok) {
@@ -752,14 +875,10 @@ function computeBooleanResultFromNode(
  * Build a PathNode from boolean operation result paths.
  */
 function buildBooleanOperationNode(
-  node: FigDesignNode,
+  node: FigNode,
   ctx: BuildContext,
   resultPaths: readonly string[],
 ): PathNode {
-  const base = extractBaseProps(node);
-  const { fillPaints, strokePaints, strokeWeight, strokeCap, strokeJoin, strokeDashes, strokeAlign } = extractPaintProps(node);
-  const { effects } = extractEffectsProps(node);
-
   const contours: PathContour[] = resultPaths.map((d) => ({
     commands: parseSvgPathDToCommands(d),
     windingRule: "evenodd" as const,
@@ -767,16 +886,21 @@ function buildBooleanOperationNode(
 
   return {
     type: "path",
-    id: getNodeId(node, ctx),
+    id: getNodeId(node),
     name: node.name,
-    transform: convertDesignTransform(base.transform),
-    opacity: base.opacity,
-    visible: base.visible,
-    effects: convertEffectsToScene(effects),
+    transform: convertKiwiTransform(node.transform),
+    opacity: node.opacity ?? 1,
+    visible: node.visible ?? true,
+    effects: convertEffectsToScene(node.effects),
     blendMode: convertBlendMode(node),
     contours,
-    fills: convertPaintsToFills(fillPaints, ctx.images),
-    stroke: convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign }),
+    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images),
+    stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
+      strokeCap: node.strokeCap,
+      strokeJoin: node.strokeJoin,
+      dashPattern: node.strokeDashes ?? node.dashPattern,
+      strokeAlign: node.strokeAlign,
+    }),
   };
 }
 
@@ -787,244 +911,68 @@ function parseSvgPathDToCommands(d: string): PathContour["commands"][number][] {
   return parseSvgPathD(d);
 }
 
-function cacheBuiltNode<T extends SceneNode>(source: FigDesignNode, sceneNode: T, ctx: BuildContext): T {
+function cacheBuiltNode<T extends SceneNode>(source: FigNode, sceneNode: T, ctx: BuildContext): T {
   ctx.nextNodesBySource.set(source, sceneNode);
   return sceneNode;
 }
 
-// =============================================================================
-// Auto-layout stretch (narrow)
-// =============================================================================
-
-/**
- * Apply the Figma auto-layout `stackChildAlignSelf=STRETCH` rule.
- *
- * When the parent FRAME is an auto-layout container (stackMode VERTICAL or
- * HORIZONTAL) and a child has `stackChildAlignSelf=STRETCH`, the child's
- * counter-axis (horizontal for VERTICAL stack, vertical for HORIZONTAL)
- * dimension resolves to the parent's content area on that axis.
- *
- * Scope is deliberately narrow: this only handles the COUNTER-axis stretch,
- * not the primary-axis grow / SPACE_BETWEEN / primary-axis sizing rules
- * (those belong to Task #39's full auto-layout implementation). The
- * narrow fix is enough to correct list-row separator STRETCH rendering,
- * where `_Separator` carries `stackChildAlignSelf=STRETCH` and its
- * stored size (e.g. 129×1, copied from an unrelated SYMBOL default)
- * is smaller than the parent list-row's inner width.
- *
- * Returns a new children array with stretched sizes applied; children
- * that don't match the stretch condition are returned unchanged so
- * reference equality holds for the common case.
- *
- * The function only reads the subset of FigDesignNode captured by the
- * `StretchParent` / `StretchChild` interfaces below, so it can be
- * unit-tested with minimal literal structures without casting.
- */
-export type StretchParent = {
-  readonly size?: { readonly x: number; readonly y: number };
-  readonly autoLayout?: {
-    readonly stackMode?: { readonly name?: string };
-    readonly stackPadding?: number | { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
-  };
-};
-export type StretchChild = {
-  readonly size?: { readonly x: number; readonly y: number };
-  readonly layoutConstraints?: {
-    readonly stackChildAlignSelf?: { readonly name?: string };
-  };
-};
-
-function resizeCounterAxis(
-  size: { readonly x: number; readonly y: number },
-  counterContent: number,
-  counterAxis: "x" | "y",
-): { readonly x: number; readonly y: number } {
-  if (counterAxis === "x") {
-    return { x: counterContent, y: size.y };
-  }
-  return { x: size.x, y: counterContent };
-}
-
-/**
- * Stretch auto-layout children along the counter axis.
- */
-export function applyCounterAxisStretch<C extends StretchChild>(
-  parent: StretchParent,
-  children: readonly C[],
-): readonly C[] {
-  const autoLayout = parent.autoLayout;
-  if (!autoLayout) {
-    return children;
-  }
-  const modeName = autoLayout.stackMode?.name;
-  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") {
-    return children;
-  }
-
-  // Parent's content area = size minus padding. `stackPadding` may be a
-  // uniform number (Kiwi shorthand) OR a per-side `{top,right,bottom,
-  // left}` object (domain expanded form); both are honoured here.
-  // When no stackPadding is set the content area equals the parent's size.
-  const padCounter = resolveCounterAxisPadding(autoLayout.stackPadding, modeName);
-  const pSize = parent.size;
-  if (!pSize) {
-    return children;
-  }
-  const counterAxis = modeName === "VERTICAL" ? "x" : "y";
-  const counterContent = (counterAxis === "x" ? pSize.x : pSize.y) - padCounter;
-  if (counterContent <= 0) {
-    return children;
-  }
-
-  const state: { changed: boolean; children: C[] } = { changed: false, children: [] };
-  for (const child of children) {
-    const alignSelf = child.layoutConstraints?.stackChildAlignSelf?.name;
-    if (alignSelf !== "STRETCH" || !child.size) {
-      state.children.push(child);
-      continue;
-    }
-    const current = counterAxis === "x" ? child.size.x : child.size.y;
-    if (Math.abs(current - counterContent) < 0.5) {
-      state.children.push(child);
-      continue;
-    }
-    const newSize = resizeCounterAxis(child.size, counterContent, counterAxis);
-    state.children.push({ ...child, size: newSize });
-    state.changed = true;
-  }
-  return state.changed ? state.children : children;
-}
-
-function resolveCounterAxisPadding(
-  stackPadding: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number } | number | undefined,
-  modeName: "VERTICAL" | "HORIZONTAL",
-): number {
-  if (typeof stackPadding === "number") {
-    return stackPadding * 2;
-  }
-  if (stackPadding && typeof stackPadding === "object") {
-    return modeName === "VERTICAL" ? stackPadding.left + stackPadding.right : stackPadding.top + stackPadding.bottom;
-  }
-  return 0;
-}
-
-function cloneOwnInstanceChildren(children: readonly FigDesignNode[]): MutableFigDesignNode[] {
-  if (children.length === 0) { return []; }
-  return children.map(deepCloneDesignNode);
-}
-
-function positionResolvedInstanceChildren<C extends PrimaryAxisChild>(
-  sizeChanged: boolean,
-  dsdPinsTransform: boolean,
-  parent: PrimaryAxisParent,
-  children: readonly C[],
-): readonly C[] {
-  if (sizeChanged && !dsdPinsTransform) {
-    return resolveAutoLayoutFrame(parent, children).children;
-  }
-  return children;
+function withChildrenOf(ctx: BuildContext, childrenOf: (node: FigNode) => readonly FigNode[]): BuildContext {
+  return { ...ctx, childrenOf };
 }
 
 // =============================================================================
 // Recursive Builder
 // =============================================================================
 
-function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
+function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
   const cached = ctx.previousCache?.nodesBySource.get(node);
   if (cached) {
     ctx.nextNodesBySource.set(node, cached);
     return cached;
   }
 
-  const base = extractBaseProps(node);
-
   // Skip hidden nodes unless explicitly shown
-  if (!base.visible && !ctx.showHiddenNodes) {
+  if (node.visible === false && !ctx.showHiddenNodes) {
     return null;
   }
 
-  const typeName = getDesignNodeTypeName(node);
-  const children = node.children ?? [];
+  const typeName = getNodeType(node);
+  const children = ctx.childrenOf(node);
 
   switch (typeName) {
     case "DOCUMENT":
     case "CANVAS": {
       const childNodes = buildChildren(children, ctx);
-      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
+      return cacheBuiltNode(node, buildGroupNode(node, childNodes), ctx);
     }
 
-    // SYMBOL is the on-disk encoding of the Figma UI concept "Component";
-    // the canonical schema has no COMPONENT or COMPONENT_SET NodeType
-    // (a "Variant Set" is a FRAME with variant metadata, already covered).
-    // See `docs/refactor/component-type-cleanup.md`.
     case "FRAME":
     case "SECTION":
     case "SLIDE":
-    case "SLIDE_GRID":
-    case "SLIDE_ROW":
     case "SYMBOL": {
       const resolved = resolveAutoLayoutFrame(node, children);
       const childNodes = buildChildren(resolved.children, ctx);
       return cacheBuiltNode(node, buildFrameNode(resolved.parent, ctx, childNodes), ctx);
     }
 
-    case "INTERACTIVE_SLIDE_ELEMENT": {
-      if (shouldRenderInteractiveSlideElementAsPath(node, children)) {
-        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
-      }
-      const resolved = resolveAutoLayoutFrame(node, children);
-      const childNodes = buildChildren(resolved.children, ctx);
-      return cacheBuiltNode(node, buildFrameNode(resolved.parent, ctx, childNodes), ctx);
-    }
-
     case "INSTANCE": {
-      // Resolve INSTANCE against its SYMBOL:
-      // - Merge visual properties (fills, cornerRadius, effects, etc.)
-      // - Inherit children if instance has none
-      //
-      // Top-level callers pass `node.children` straight from the input
-      // tree, which is read-only and shared with the input. Clone here
-      // so the resolver may safely mutate. Empty input is handled
-      // inside the resolver (clones from `symbol.children`).
-      const ownChildren = cloneOwnInstanceChildren(children);
-      const resolved = resolveDesignInstance(node, ownChildren, ctx);
-      // Primary-axis re-solve gate (SoT for "when does our layout solver
-      // override authored child positions"):
-      //
-      //   1. INSTANCE size differs from SYMBOL size (sizeChanged) AND
-      //   2. DSD does NOT pin a direct child's transform.
-      //
-      // (1) ensures we only touch instances that were actually resized
-      // (otherwise SYMBOL-time positions are still valid). (2) honours
-      // Figma's pre-computed layout when present — DSD that carries a
-      // `transform` on a depth-1 path is Figma's resolved post-resize
-      // value and must not be clobbered.
-      const symId = node.symbolId;
-      const symSize = symId ? ctx.symbolMap.get(symId)?.size : undefined;
-      const sizeChanged = symSize !== undefined && (
-        Math.abs(symSize.x - resolved.effectiveNode.size.x) > 0.5 ||
-        Math.abs(symSize.y - resolved.effectiveNode.size.y) > 0.5
-      );
-      const dsdPinsTransform = (node.derivedSymbolData ?? []).some((e) =>
-        e.transform !== undefined && (e.guidPath?.guids?.length ?? 0) === 1,
-      );
-      const positioned = positionResolvedInstanceChildren(sizeChanged, dsdPinsTransform, resolved.effectiveNode, resolved.children);
-      const layoutResolved = resolveAutoLayoutFrame(resolved.effectiveNode, positioned);
-      const childNodes = buildChildren(layoutResolved.children, ctx);
+      const resolved = ctx.symbolResolver.resolveInstance(node);
+      const layoutResolved = resolveAutoLayoutFrame(resolved.node, resolved.children);
+      const resolvedCtx = withChildrenOf(ctx, ctx.symbolResolver.childrenOfResolvedNode);
+      const childNodes = buildChildren(layoutResolved.children, resolvedCtx);
       return cacheBuiltNode(node, buildFrameNode(layoutResolved.parent, ctx, childNodes), ctx);
     }
 
     case "GROUP": {
       const childNodes = buildChildren(children, ctx);
-      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
+      return cacheBuiltNode(node, buildGroupNode(node, childNodes), ctx);
     }
 
     case "BOOLEAN_OPERATION": {
       // 1. Pre-computed fillGeometry (set by Figma export)
-      const { fillGeometry, strokeGeometry } = extractGeometryProps(node);
       const hasMergedGeometry =
-        (fillGeometry && fillGeometry.length > 0) ||
-        (strokeGeometry && strokeGeometry.length > 0);
+        (node.fillGeometry !== undefined && node.fillGeometry.length > 0) ||
+        (node.strokeGeometry !== undefined && node.strokeGeometry.length > 0);
       if (hasMergedGeometry) {
         return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
       }
@@ -1038,9 +986,15 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
 
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
+      if (node.vectorPaths !== undefined && node.vectorPaths.length > 0) {
+        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+      }
       return cacheBuiltNode(node, buildRectNode(node, ctx), ctx);
 
     case "ELLIPSE":
+      if (node.vectorPaths !== undefined && node.vectorPaths.length > 0) {
+        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+      }
       return cacheBuiltNode(node, buildEllipseNode(node, ctx), ctx);
 
     case "VECTOR":
@@ -1052,25 +1006,27 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
     case "TEXT":
       return cacheBuiltNode(node, buildTextNode(node, ctx), ctx);
 
-    // IMAGE nodes in .fig are rectangles with image fills.
-    // The image data lives in the fills array as an IMAGE paint.
-    // Render as a rect node — the image fill is handled by the
-    // fill conversion pipeline (convertPaintsToFills → ImageFill).
-    case "IMAGE":
-      return cacheBuiltNode(node, buildRectNode(node, ctx), ctx);
-
     default:
-      // Unknown node type - try to render children as group
-      if (children.length > 0) {
-        const childNodes = buildChildren(children, ctx);
-        return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
-      }
-      return null;
+      return buildUnknownNodeTypeGroup(node, children, ctx);
   }
 }
 
+function buildUnknownNodeTypeGroup(node: FigNode, children: readonly FigNode[], ctx: BuildContext): SceneNode | null {
+  if (children.length === 0) {
+    return null;
+  }
+  const childNodes = buildChildren(children, ctx);
+  return cacheBuiltNode(node, buildGroupNode(node, childNodes), ctx);
+}
+
+type MaskBuildState = {
+  activeMaskContent: SceneNode | null;
+  activeMaskId: SceneNodeId | null;
+  maskedChildren: SceneNode[];
+};
+
 /**
- * Build scene nodes from a list of FigDesignNode children.
+ * Build scene nodes from a list of FigNode children.
  *
  * Handles mask processing in a single pass: when a child has `mask: true`,
  * it becomes an SVG mask for all subsequent siblings until the next mask
@@ -1080,86 +1036,67 @@ function buildNode(node: FigDesignNode, ctx: BuildContext): SceneNode | null {
  * This mirrors the old SVG renderer's `renderChildrenWithMasks()` logic,
  * but produces SceneNodes instead of SVG strings.
  */
-function buildChildren(children: readonly FigDesignNode[], ctx: BuildContext): SceneNode[] {
+function buildChildren(children: readonly FigNode[], ctx: BuildContext): SceneNode[] {
   const result: SceneNode[] = [];
 
-  const maskState: {
-    activeMaskContent: SceneNode | null;
-    activeMaskId: SceneNodeId | null;
-    maskedChildren: SceneNode[];
-  } = {
+  const maskState: MaskBuildState = {
     activeMaskContent: null,
     activeMaskId: null,
     maskedChildren: [],
   };
 
   for (const child of children) {
-    const base = extractBaseProps(child);
-    if (!base.visible && !ctx.showHiddenNodes) {
+    if (child.visible === false && !ctx.showHiddenNodes) {
       continue;
     }
 
     if (isMaskNode(child)) {
-      // Flush previously accumulated masked children
-      if (maskState.activeMaskId && maskState.activeMaskContent && maskState.maskedChildren.length > 0) {
-        result.push(wrapWithMask(maskState.activeMaskId, maskState.activeMaskContent, maskState.maskedChildren, ctx));
-        maskState.maskedChildren = [];
-      }
-
-      // Build the mask node and start a new mask group. The mask
-      // node's own painted appearance does not flow into `result`
-      // here: in the App Store template, both Aluminum nodes inside
-      // a Phone (one `mask=true`, one `mask=undefined`) share the
-      // same source transform but Figma's INSTANCE-resolver emits
-      // them at slightly different world positions when applying
-      // their differing layout constraints (SCALE vs CENTER).
-      // Without that constraint difference our two Aluminum strokes
-      // would coincide pixel-for-pixel and the AA stack would over-
-      // darken the perimeter compared to Figma's exporter — strictly
-      // worse than dropping the mask node's paint. Until the
-      // constraint solver places the two correctly, leaving the
-      // mask source as a pure clip avoids the over-darken regression.
-      //
-      // The naive approach of always emitting the mask node as
-      // visible content fails because most mask=true nodes carry an
-      // alpha-only `#D9D9D9` rect that paints solid grey over their
-      // siblings (verified by experiment 2026-05-16: Search Toolbar
-      // 0/0 → 200/11271 h60/h30, Event Details Card 0/0 → 17639/17772).
-      //
-      // Refined heuristic: emit the mask node as visible content
-      // ONLY when it has a non-empty stroke definition on the
-      // source FigNode. Alpha-source masks (rounded rects, plain
-      // shapes used purely to define a clip region) typically have
-      // fills but no strokes; the iPhone bezel Aluminum mask=true
-      // has both, and theirs's SVG emits its stroke as a separate
-      // visible path at a 0.101 px sub-pixel offset from the
-      // non-mask sibling stroke.
-      const maskNode = buildNode(child, ctx);
-      if (maskNode) {
-        maskState.activeMaskId = maskNode.id;
-        maskState.activeMaskContent = maskNode;
-      } else {
-        maskState.activeMaskId = null;
-        maskState.activeMaskContent = null;
-      }
-    } else {
-      const node = buildNode(child, ctx);
-      if (node) {
-        if (maskState.activeMaskId) {
-          maskState.maskedChildren.push(node);
-        } else {
-          result.push(node);
-        }
-      }
+      flushMaskState(result, maskState, ctx);
+      startMaskState(maskState, child, ctx);
+      continue;
     }
+    appendBuiltChild(result, maskState, buildNode(child, ctx));
   }
 
   // Flush final masked group
-  if (maskState.activeMaskId && maskState.activeMaskContent && maskState.maskedChildren.length > 0) {
-    result.push(wrapWithMask(maskState.activeMaskId, maskState.activeMaskContent, maskState.maskedChildren, ctx));
-  }
+  flushMaskState(result, maskState, ctx);
 
   return result;
+}
+
+function flushMaskState(result: SceneNode[], maskState: MaskBuildState, ctx: BuildContext): void {
+  const maskId = maskState.activeMaskId;
+  const maskContent = maskState.activeMaskContent;
+  if (maskId === null || maskContent === null || maskState.maskedChildren.length === 0) {
+    return;
+  }
+  result.push(wrapWithMask(maskId, maskContent, maskState.maskedChildren, ctx));
+  maskState.maskedChildren = [];
+}
+
+function startMaskState(maskState: MaskBuildState, child: FigNode, ctx: BuildContext): void {
+  // The mask source is stored on the group as mask data only; it is not
+  // appended as visible content. SVG/WebGL formatting decides how source
+  // fill/stroke affect the mask shape from the same RenderTree definition.
+  const maskNode = buildNode(child, ctx);
+  if (maskNode === null) {
+    maskState.activeMaskId = null;
+    maskState.activeMaskContent = null;
+    return;
+  }
+  maskState.activeMaskId = maskNode.id;
+  maskState.activeMaskContent = maskNode;
+}
+
+function appendBuiltChild(result: SceneNode[], maskState: MaskBuildState, node: SceneNode | null): void {
+  if (node === null) {
+    return;
+  }
+  if (maskState.activeMaskId !== null) {
+    maskState.maskedChildren.push(node);
+    return;
+  }
+  result.push(node);
 }
 
 /**
@@ -1188,32 +1125,33 @@ function wrapWithMask(
 // =============================================================================
 
 /**
- * Build a scene graph from FigDesignNode domain objects.
+ * Build a scene graph from FigNode domain objects.
  *
- * @param nodes - Root FigDesignNode nodes to render
+ * @param nodes - Root FigNode nodes to render
  * @param options - Build configuration
  * @returns Format-agnostic scene graph
  */
-export function buildSceneGraph(nodes: readonly FigDesignNode[], options: BuildSceneGraphOptions): SceneGraph {
+export function buildSceneGraph(nodes: readonly FigNode[], options: BuildSceneGraphOptions): SceneGraph {
   return buildSceneGraphWithCache(nodes, options, undefined).sceneGraph;
 }
 
 /**
  * Build a scene graph and preserve SceneNode references for unchanged
- * immutable FigDesignNode source objects.
+ * immutable FigNode source objects.
  */
 export function buildSceneGraphWithCache(
-  nodes: readonly FigDesignNode[],
+  nodes: readonly FigNode[],
   options: BuildSceneGraphOptions,
   previousCache: SceneGraphBuildCache | undefined,
 ): BuildSceneGraphResult {
-  const nextNodesBySource = new WeakMap<FigDesignNode, SceneNode>();
-  const exportRoots = new WeakSet<FigDesignNode>();
+  const nextNodesBySource = new WeakMap<FigNode, SceneNode>();
+  const exportRoots = new WeakSet<FigNode>();
   for (const root of nodes) { exportRoots.add(root); }
   const ctx: BuildContext = {
     blobs: options.blobs,
     images: options.images,
-    symbolMap: options.symbolMap,
+    symbolResolver: options.symbolResolver,
+    childrenOf: options.childrenOf,
     styleRegistry: options.styleRegistry,
     showHiddenNodes: options.showHiddenNodes,
     warnings: options.warnings,

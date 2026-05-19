@@ -11,7 +11,7 @@ export type TextureColorManagement =
 export type ImageTextureResource = {
   readonly kind: "image";
   readonly id: TextureResourceId;
-  readonly imageRef: string;
+  readonly imageHash: string;
   readonly colorManagement: TextureColorManagement;
 };
 
@@ -29,15 +29,15 @@ function textureColorManagementKey(colorManagement: TextureColorManagement): str
 }
 
 /** Build the domain identity for an image texture. */
-export function imageTextureResource(imageRef: string, colorManagement: TextureColorManagement): ImageTextureResource {
-  if (imageRef.length === 0) {
-    throw new Error("imageTextureResource requires a non-empty imageRef");
+export function imageTextureResource(imageHash: string, colorManagement: TextureColorManagement): ImageTextureResource {
+  if (imageHash.length === 0) {
+    throw new Error("imageTextureResource requires a non-empty image hash");
   }
   const colorManagementKey = textureColorManagementKey(colorManagement);
   return {
     kind: "image",
-    id: makeTextureResourceId(`image:${imageRef}:${colorManagementKey}`),
-    imageRef,
+    id: makeTextureResourceId(`image:${imageHash}:${colorManagementKey}`),
+    imageHash,
     colorManagement,
   };
 }

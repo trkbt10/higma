@@ -2,11 +2,11 @@
 import { createSceneState } from "./scene-state";
 import { diffSceneGraphs } from "../../scene-graph/diff";
 import type {
-  SceneGraph, GroupNode, RectNode } from "@higma-document-models/fig/scene-graph";
-import { createNodeId } from "@higma-document-models/fig/scene-graph";
+  SceneGraph, GroupNode, RectNode } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 // =============================================================================
-// Test Helpers
+// Test Fixtures
 // =============================================================================
 const IDENTITY: AffineMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 function makeRect(id: string, width: number, height: number): RectNode {

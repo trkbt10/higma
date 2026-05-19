@@ -9,7 +9,7 @@
 
 import { discoverLinux, parseFcListOutput } from "./discover-linux";
 import type { DiscoveryEnv } from "./discover-types";
-import { createFakeExec, createFakeFs } from "./test-helpers";
+import { createFakeExec, createFakeFs } from "./font-driver-test-fixtures";
 
 function makeEnv(overrides: Partial<DiscoveryEnv>): DiscoveryEnv {
   return {

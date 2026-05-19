@@ -70,6 +70,11 @@ export type CreateFigDocumentContextFromNodeChangesOptions = {
   readonly metadata: LoadedFigFile["metadata"];
 };
 
+export type ReplaceFigDocumentContextNodeChangesOptions = {
+  readonly context: FigDocumentContext;
+  readonly nodeChanges: LoadedFigFile["nodeChanges"];
+};
+
 /** Build a `FigDocumentContext` from a buffer of raw `.fig` bytes. */
 export async function createFigDocumentContext(buffer: Uint8Array): Promise<FigDocumentContext> {
   const loaded = await loadFigFile(buffer);
@@ -114,6 +119,30 @@ export function createFigDocumentContextFromNodeChanges(
     blobs: options.blobs,
     images: options.images,
     metadata: options.metadata,
+  });
+}
+
+/**
+ * Re-index the same loaded fig package after editing its Kiwi nodeChanges.
+ */
+export function replaceFigDocumentContextNodeChanges({
+  context,
+  nodeChanges,
+}: ReplaceFigDocumentContextNodeChangesOptions): FigDocumentContext {
+  if (context.loaded) {
+    return createFigDocumentContextFromLoaded({
+      ...context.loaded,
+      nodeChanges,
+      blobs: context.blobs,
+      images: context.images,
+      metadata: context.metadata,
+    });
+  }
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges,
+    blobs: context.blobs,
+    images: context.images,
+    metadata: context.metadata,
   });
 }
 

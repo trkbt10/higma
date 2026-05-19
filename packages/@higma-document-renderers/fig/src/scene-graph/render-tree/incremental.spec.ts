@@ -1,7 +1,7 @@
 /** @file Incremental RenderTree resolution tests. */
 
-import { createNodeId } from "@higma-document-models/fig/scene-graph";
-import type { FrameNode, RectNode, SceneGraph, SceneNode } from "@higma-document-models/fig/scene-graph";
+import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
+import type { FrameNode, RectNode, SceneGraph, SceneNode } from "@higma-document-renderers/fig/scene-graph";
 import { resolveRenderTreeIncremental } from "./resolve";
 
 const identity = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };

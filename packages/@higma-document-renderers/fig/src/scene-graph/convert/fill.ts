@@ -5,14 +5,14 @@
  * to ensure parity with the SVG string renderer's fill handling.
  */
 
-import type { FigPaint, FigColor, FigGradientPaint, FigImagePaint } from "@higma-document-models/fig/types";
+import type { FigPaint, FigColor, FigGradientPaint, FigImagePaint, FigImageScaleMode } from "@higma-document-models/fig/types";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
   getPaintType, asGradientPaint, asImagePaint, asSolidPaint, } from "@higma-document-models/fig/color";
 import {
-  getGradientStops, getGradientDirection, getRadialGradientCenterAndRadius, getAngularGradientParams, getDiamondGradientParams, getImageRef, getImageTransform, getScaleMode, getScalingFactor, getPaintFilter, getImageShouldColorManage, } from "../../paint";
-import type { Fill, Color, GradientStop, BlendMode } from "@higma-document-models/fig/scene-graph";
-import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
+  getGradientStops, getGradientDirection, getRadialGradientCenterAndRadius, getAngularGradientParams, getDiamondGradientParams, getImageHash, getImageTransform, getScaleMode, getScalingFactor, getPaintFilter, getImageShouldColorManage, } from "../../paint";
+import type { Fill, Color, GradientStop, BlendMode } from "@higma-document-renderers/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 /**
  * Convert FigColor to scene graph Color
@@ -54,8 +54,8 @@ function isFullyTransparentGradient(
 
 /**
  * Extract paint-level blend mode from a FigPaint.
- * The blendMode field is typed `string | KiwiEnumValue` on FigPaintBase;
- * `convertFigmaBlendMode` accepts both shapes.
+ * `convertFigmaBlendMode` is the single renderer-side mapping from
+ * Kiwi BlendMode to scene-graph BlendMode.
  */
 function extractPaintBlendMode(paint: FigPaint): BlendMode | undefined {
   return convertFigmaBlendMode(paint.blendMode);
@@ -124,7 +124,7 @@ function extractImageTransform(imagePaint: FigImagePaint): AffineMatrix | undefi
 function resolveImageScaleMode(
   wireScaleMode: ReturnType<typeof getScaleMode>,
   imageTransform: AffineMatrix | undefined,
-): ReturnType<typeof getScaleMode> {
+): FigImageScaleMode | "CROP" {
   if (wireScaleMode !== "STRETCH") {
     return wireScaleMode;
   }
@@ -224,7 +224,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
       const rawStops = getGradientStops(gradientPaint);
       if (isFullyTransparentGradient(rawStops)) { return null; }
       // Diamond gradients, like angular, are centred on the object —
-      // delegating to the dedicated helper keeps the convention
+      // delegating to the dedicated function keeps the convention
       // explicit and consistent with angular.
       const { center } = getDiamondGradientParams(gradientPaint);
       const stops = convertGradientStops(rawStops);
@@ -240,18 +240,19 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
     case "IMAGE": {
       const imagePaint = asImagePaint(paint);
       if (!imagePaint) { return null; }
-      const imageRef = getImageRef(imagePaint);
-      if (!imageRef) { return null; }
+      const imageHash = getImageHash(imagePaint);
 
-      const figImage = images.get(imageRef);
-      if (!figImage) { return null; }
+      const figImage = images.get(imageHash);
+      if (!figImage) {
+        throw new Error(`IMAGE paint references missing package image "${imageHash}"`);
+      }
 
       const imageTransform = extractImageTransform(imagePaint);
       const scaleMode = resolveImageScaleMode(getScaleMode(imagePaint), imageTransform);
 
       return {
         type: "image",
-        imageRef,
+        imageHash,
         data: figImage.data,
         mimeType: figImage.mimeType,
         scaleMode,

@@ -9,20 +9,21 @@ import { resolveRenderTree } from "./resolve";
 import type {
   RenderRectNode, RenderEllipseNode, RenderPathNode, RenderFrameNode, } from "./types";
 import type {
-  SceneGraph, GroupNode, RectNode, EllipseNode, PathNode, FrameNode, Fill, Stroke } from "@higma-document-models/fig/scene-graph";
-import { createNodeId } from "@higma-document-models/fig/scene-graph";
+  SceneGraph, GroupNode, RectNode, EllipseNode, PathNode, FrameNode, Fill, Stroke } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
-// Helpers
+// Local Routines
 // =============================================================================
 
 const IDENTITY: AffineMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 
-function makeSceneGraph(children: GroupNode["children"]): SceneGraph {
+function makeSceneGraph(children: GroupNode["children"], viewport?: SceneGraph["viewport"]): SceneGraph {
   return {
     width: 100,
     height: 100,
+    viewport,
     root: {
       type: "group",
       id: createNodeId("root"),
@@ -47,6 +48,20 @@ const BASIC_STROKE: Stroke = {
   color: { r: 0, g: 0, b: 0, a: 1 },
   opacity: 1,
 };
+
+function makeRect(id: string, transform: AffineMatrix = IDENTITY): RectNode {
+  return {
+    type: "rect",
+    id: createNodeId(id),
+    transform,
+    opacity: 1,
+    visible: true,
+    effects: [],
+    width: 20,
+    height: 20,
+    fills: [RED_SOLID],
+  };
+}
 
 // =============================================================================
 // Multi-paint fill tests
@@ -122,6 +137,51 @@ describe("resolveRenderTree — multi-paint fills", () => {
     expect(node.background).toBeDefined();
     expect(node.background!.fillLayers).toBeDefined();
     expect(node.background!.fillLayers).toHaveLength(2);
+  });
+});
+
+describe("resolveRenderTree — viewport-root frame clip", () => {
+  it("marks a square viewport-root frame clip as viewport-owned", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("viewport-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      fills: [],
+      clipsContent: true,
+      children: [makeRect("overflowing-child", { ...IDENTITY, m02: 120 })],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame], { x: 0, y: 0, width: 100, height: 100 }));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeDefined();
+    expect(node.omitChildClip).toBe(true);
+  });
+
+  it("keeps a rounded viewport-root frame clip on the frame", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("rounded-viewport-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      cornerRadius: 12,
+      fills: [],
+      clipsContent: true,
+      children: [makeRect("contained-child")],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame], { x: 0, y: 0, width: 100, height: 100 }));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeDefined();
+    expect(node.omitChildClip).toBeUndefined();
   });
 });
 
@@ -448,6 +508,35 @@ describe("resolveRenderTree — stroke layers", () => {
 // =============================================================================
 
 describe("resolveRenderTree — drop shadow z-order", () => {
+  it("puts frame surface shadows on the background instead of the child wrapper", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("frame-shadow"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [{
+        type: "drop-shadow",
+        offset: { x: 0, y: 4 },
+        radius: 8,
+        color: { r: 0, g: 0, b: 0, a: 0.5 },
+      }],
+      width: 50,
+      height: 30,
+      fills: [RED_SOLID],
+      clipsContent: false,
+      children: [makeRect("frame-child")],
+    };
+    const sg = makeSceneGraph([frame]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderFrameNode;
+    expect(node.wrapper.filterAttr).toBeUndefined();
+    expect(node.background?.filterAttr).toMatch(/^url\(#filter-/);
+    const filterDefs = node.defs.filter((d) => d.type === "filter");
+    expect(filterDefs).toHaveLength(1);
+  });
+
   it("shadow is placed BEHIND SourceGraphic (not composited on top)", () => {
     // Regression for a VECTOR shadow z-order bug: a prior
     // implementation composited the shadow on top of SourceGraphic via
@@ -482,16 +571,18 @@ describe("resolveRenderTree — drop shadow z-order", () => {
     const filterDefs = node.defs.filter((d) => d.type === "filter");
     expect(filterDefs).toHaveLength(1);
     const filterDef = filterDefs[0];
-    if (filterDef.type === "filter") {
-      const prims = filterDef.filter.primitives;
-      // Last primitive must be feMerge with (shadow, SourceGraphic) in
-      // that order — this is what guarantees z-order.
-      const last = prims[prims.length - 1];
-      expect(last.type).toBe("feMerge");
-      if (last.type === "feMerge") {
-        expect(last.nodes.length).toBe(2);
-        expect(last.nodes[1]).toBe("SourceGraphic");
-      }
+    if (filterDef.type !== "filter") {
+      throw new Error("Expected a filter def");
     }
+    const prims = filterDef.filter.primitives;
+    // Last primitive must be feMerge with (shadow, SourceGraphic) in
+    // that order — this is what guarantees z-order.
+    const last = prims[prims.length - 1];
+    expect(last.type).toBe("feMerge");
+    if (last.type !== "feMerge") {
+      throw new Error("Expected the final filter primitive to be feMerge");
+    }
+    expect(last.nodes.length).toBe(2);
+    expect(last.nodes[1]).toBe("SourceGraphic");
   });
 });

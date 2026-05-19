@@ -1,62 +1,29 @@
-/**
- * @file Inspector tree panel for fig editor.
- *
- * Renders an InspectorTreePanel using the active page's node tree
- * from FigEditorContext. Designed to be placed in an EditorShell panel slot.
- *
- * This is a "drop-in" panel that works alongside LayerPanel, PropertyPanel,
- * etc. Editor builders can include or exclude it as needed.
- *
- * @example
- * ```tsx
- * // Custom editor composition with inspector panel
- * <FigEditorProvider initialDocument={doc}>
- *   <EditorShell panels={[
- *     { id: "layers", position: "left", content: <LayerPanel /> },
- *     { id: "inspector-tree", position: "right", content: <FigInspectorPanel /> },
- *   ]}>
- *     <CanvasArea><FigEditorCanvas /></CanvasArea>
- *   </EditorShell>
- * </FigEditorProvider>
- * ```
- */
+/** @file Inspector tree panel for Kiwi Fig nodes. */
 
 import { useMemo, useState, type CSSProperties } from "react";
-import { colorTokens, fontTokens, spacingTokens } from "@higma-editor-kernel/ui/design-tokens";
-import { InspectorTreePanel } from "@higma-editor-surfaces/controls/inspector";
-import { CategoryLegend } from "@higma-editor-surfaces/controls/inspector";
+import { CategoryLegend, InspectorTreePanel } from "@higma-editor-surfaces/controls/inspector";
+import { guidToString } from "@higma-document-models/fig/domain";
+import type { InspectorTreeNode } from "@higma-editor-kernel/core/inspector-types";
 import { useFigEditor } from "../../context/FigEditorContext";
-import { FIG_NODE_CATEGORY_REGISTRY, FIG_LEGEND_ORDER } from "../../inspector/fig-node-categories";
-import { designNodeToInspectorTree } from "../../inspector/fig-inspector-adapter";
-import { useFigInspectorContextOptional } from "../../inspector/FigInspectorContext";
-import type { FigNodeId } from "@higma-document-models/fig/domain";
-import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
-import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
-
-// =============================================================================
-// Props
-// =============================================================================
+import {
+  FIG_LEGEND_ORDER,
+  FIG_NODE_CATEGORY_REGISTRY,
+  figNodeToInspectorTree,
+} from "../../inspector";
 
 export type FigInspectorPanelProps = {
-  /** Whether to show hidden (invisible) nodes. Default: false */
   readonly showHiddenNodes?: boolean;
-  /** Currently highlighted node ID (controlled). If omitted, managed internally. */
   readonly highlightedNodeId?: string | null;
-  /** Called when a node is highlighted */
   readonly onNodeHighlight?: (nodeId: string | null) => void;
-  /** Called when a node is hovered */
   readonly onNodeHover?: (nodeId: string | null) => void;
 };
-
-// =============================================================================
-// Styles
-// =============================================================================
 
 const containerStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
   height: "100%",
-  gap: spacingTokens.sm,
+  minHeight: 0,
+  gap: 8,
   overflow: "hidden",
 };
 
@@ -67,88 +34,77 @@ const treeWrapperStyle: CSSProperties = {
 };
 
 const emptyStyle: CSSProperties = {
-  padding: spacingTokens.xl,
+  padding: 16,
   textAlign: "center",
-  color: colorTokens.text.tertiary,
-  fontSize: fontTokens.size.md,
+  color: "#64748b",
+  font: "12px system-ui, sans-serif",
 };
 
-// =============================================================================
-// Component
-// =============================================================================
+function requireActivePageRoot(rootNode: InspectorTreeNode | null): InspectorTreeNode {
+  if (rootNode === null) {
+    throw new Error("FigInspectorPanel requires an active CANVAS root");
+  }
+  return rootNode;
+}
 
-/**
- * Inspector tree panel for the fig editor.
- *
- * Reads the active page from FigEditorContext and renders an InspectorTreePanel
- * with the Fig node category registry. Optionally synchronizes highlight state
- * with external components (e.g. BoundingBoxOverlay on the canvas).
- */
+/** Render an inspector tree over the active Kiwi CANVAS. */
 export function FigInspectorPanel({
   showHiddenNodes = false,
   highlightedNodeId: controlledHighlightedId,
   onNodeHighlight,
   onNodeHover,
 }: FigInspectorPanelProps) {
-  const { activePage, nodeSelection, dispatch } = useFigEditor();
-  const inspectorCtx = useFigInspectorContextOptional();
-  const [localHoveredId, setLocalHoveredId] = useState<FigNodeId | null>(null);
-  const operationDomain = useFigOperationDomain();
-
-  // Convert active page children to inspector tree
-  const treeRoot = useMemo(() => {
-    if (!activePage || activePage.children.length === 0) {
+  const { activePage, resources, selectedGuids, selectNodeGuid, context } = useFigEditor();
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const treeRoot = useMemo<InspectorTreeNode | null>(() => {
+    if (activePage === undefined) {
       return null;
     }
-
-    // Wrap page children in a virtual root node
+    if (activePage.guid === undefined) {
+      throw new Error("FigInspectorPanel active CANVAS is missing guid");
+    }
     return {
-      id: activePage.id,
-      name: activePage.name,
+      id: guidToString(activePage.guid),
+      name: activePage.name ?? "CANVAS",
       nodeType: "CANVAS",
       width: 0,
       height: 0,
-      opacity: 1,
-      visible: true,
-      children: activePage.children.map(designNodeToInspectorTree),
+      opacity: activePage.opacity ?? 1,
+      visible: activePage.visible !== false,
+      children: resources.childrenOf(activePage)
+        .filter((child) => showHiddenNodes || child.visible !== false)
+        .map((child) => figNodeToInspectorTree({
+          root: child,
+          childrenOf: resources.childrenOf,
+          showHiddenNodes,
+        })),
     };
-  }, [activePage]);
-
-  // Use controlled highlight or fall back to editor selection
-  const highlightedNodeId = controlledHighlightedId ?? nodeSelection.primaryId ?? null;
-  const hoveredId = inspectorCtx ? inspectorCtx.hoveredId : localHoveredId;
-
-  const handleNodeClick = (nodeId: string) => {
-    if (onNodeHighlight) {
-      onNodeHighlight(highlightedNodeId === nodeId ? null : nodeId);
-    } else {
-      // Default: drive editor selection
-      if (allowsFigUserOperation(operationDomain, "select-node")) {
-        dispatch({ type: "SELECT_NODE", nodeId: nodeId as FigNodeId, addToSelection: false });
-      }
-    }
-  };
-
-  const handleNodeHover = (nodeId: string | null) => {
-    const typed = (nodeId as FigNodeId | null) ?? null;
-    if (inspectorCtx) {
-      inspectorCtx.setHoveredId(typed);
-    } else {
-      setLocalHoveredId(typed);
-    }
-    onNodeHover?.(nodeId);
-  };
-
-  if (!treeRoot) {
+  }, [activePage, resources, showHiddenNodes]);
+  if (treeRoot === null) {
     return <div style={emptyStyle}>No page selected</div>;
   }
-
+  const highlightedNodeId = controlledHighlightedId ?? (selectedGuids[0] === undefined ? null : guidToString(selectedGuids[0]));
+  const handleNodeHover = (nodeId: string | null): void => {
+    setHoveredId(nodeId);
+    onNodeHover?.(nodeId);
+  };
+  const handleNodeClick = (nodeId: string): void => {
+    if (onNodeHighlight !== undefined) {
+      onNodeHighlight(highlightedNodeId === nodeId ? null : nodeId);
+      return;
+    }
+    const node = context.document.nodesByGuid.get(nodeId);
+    if (node?.guid === undefined) {
+      throw new Error(`FigInspectorPanel: node ${nodeId} is not present in the Kiwi document`);
+    }
+    selectNodeGuid(node.guid);
+  };
   return (
     <div style={containerStyle}>
       <CategoryLegend registry={FIG_NODE_CATEGORY_REGISTRY} order={FIG_LEGEND_ORDER} />
       <div style={treeWrapperStyle}>
         <InspectorTreePanel
-          rootNode={treeRoot}
+          rootNode={requireActivePageRoot(treeRoot)}
           registry={FIG_NODE_CATEGORY_REGISTRY}
           highlightedNodeId={highlightedNodeId}
           hoveredNodeId={hoveredId}

@@ -1,7 +1,7 @@
 /**
  * @file Font type definitions.
  *
- * Provides abstract font types that are compatible with opentype.js
+ * Provides abstract font types that can be backed by opentype.js
  * but don't directly depend on it. The renderer-side `font-drivers/*`
  * implementations satisfy these interfaces.
  */
@@ -11,7 +11,7 @@ import type { FontQuery } from "./query";
 import type { FontStyle } from "./style";
 
 // =============================================================================
-// Abstract Font Types (opentype.js compatible)
+// Abstract Font Types
 // =============================================================================
 
 // `PathCommand` lives in `@higma-primitives/path` — the SoT. Local
@@ -38,7 +38,7 @@ export type AbstractGlyph = {
 };
 
 /**
- * Abstract font interface compatible with opentype.js Font.
+ * Abstract font interface satisfied by opentype.js Font.
  *
  * This allows font drivers to return opentype.js Font objects while
  * keeping the model module independent of opentype.js.

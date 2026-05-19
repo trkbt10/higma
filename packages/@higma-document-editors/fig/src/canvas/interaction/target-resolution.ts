@@ -1,40 +1,24 @@
-/** @file Resolve canvas interaction targets from hit areas, selection mode, and point. */
-
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import { findNodeById } from "@higma-document-io/fig/node-ops";
-import { findDeepestBoundsAtPoint, type BoundsLike, type PointLike } from "./bounds";
-
-export type CanvasTargetBounds = BoundsLike & {
-  readonly id: string;
-};
-
-export type CanvasTargetMode = "select" | "path-edit";
+/** @file Canvas hit target resolution. */
+import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+import type { NodeBounds, PointLike } from "./bounds";
+import { findDeepestBoundsAtPoint } from "./bounds";
+import { resolveNodeGuidFromCanvasId } from "./selection-resolution";
 
 export type ResolveCanvasInteractionTargetOptions = {
-  readonly pageChildren: readonly FigDesignNode[];
-  readonly itemBounds: readonly CanvasTargetBounds[];
+  readonly document: FigKiwiDocumentIndex;
+  readonly itemBounds: readonly NodeBounds[];
+  readonly hitId: string;
   readonly point: PointLike;
-  readonly hitNodeId: FigNodeId;
-  readonly mode: CanvasTargetMode;
-  readonly canEditPath: (node: FigDesignNode | undefined) => boolean;
 };
 
-/** Resolve the node that should receive the current canvas interaction. */
-export function resolveCanvasInteractionTarget({
-  pageChildren,
+/** Resolve the deepest node at a page point, falling back to the browser hit id only when no bound contains the point. */
+export function resolveInteractionTargetGuid({
+  document,
   itemBounds,
+  hitId,
   point,
-  hitNodeId,
-  mode,
-  canEditPath,
-}: ResolveCanvasInteractionTargetOptions): FigNodeId {
-  if (mode !== "path-edit") {
-    return hitNodeId;
-  }
-
-  const targetBounds = findDeepestBoundsAtPoint(itemBounds, point, (bounds) => {
-    return canEditPath(findNodeById(pageChildren, bounds.id as FigNodeId));
-  });
-
-  return targetBounds ? targetBounds.id as FigNodeId : hitNodeId;
+}: ResolveCanvasInteractionTargetOptions): FigGuid {
+  const deepest = findDeepestBoundsAtPoint(itemBounds, point);
+  return resolveNodeGuidFromCanvasId(document, deepest?.id ?? hitId);
 }

@@ -12,12 +12,12 @@ import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/st
 type Props = { readonly node: RenderRectNode };
 
 function renderRectShape(node: RenderRectNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
-  return <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} fill={node.fill.attrs.fill} fillOpacity={node.fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+  return <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} fill={node.fill.attrs.fill} fillOpacity={node.fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
 }
 
 function renderRectFillContent(node: RenderRectNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
   if (node.fillLayers) {
-    return <MultiFillRectLayers layers={node.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} stroke={uniformStroke} />;
+    return <MultiFillRectLayers layers={node.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} stroke={uniformStroke} />;
   }
   return renderRectShape(node, uniformStroke);
 }

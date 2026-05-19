@@ -4,7 +4,7 @@ import type {
   RenderNode,
   RenderTree,
   StrokeRendering,
-} from "../../scene-graph/render-tree";
+} from "../../scene-graph";
 import { createWebGLPathFillPlan } from "../fill/render-path-fill-plan";
 
 export type WebGLRenderTreeContractIssue = {
@@ -188,8 +188,8 @@ function auditImage(node: Extract<RenderNode, { type: "image" }>, stats: Mutable
   if (node.width <= 0 || node.height <= 0) {
     addIssue(stats, node, "image dimensions must be positive");
   }
-  if (node.sourceImageRef.length === 0) {
-    addIssue(stats, node, "image must expose sourceImageRef for WebGL texture lookup");
+  if (node.sourceImageHash.length === 0) {
+    addIssue(stats, node, "image must expose sourceImageHash for WebGL texture lookup");
   }
   if (node.sourceData.length === 0) {
     addIssue(stats, node, "image must expose sourceData for WebGL texture creation");

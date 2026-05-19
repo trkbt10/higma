@@ -94,11 +94,8 @@ export type ComputeLayoutOptions = {
    * baseline at `top + half-leading + ascent` — without it the
    * baseline sits a few pixels too high on body paragraphs that ship
    * an explicit `line-height` value.
-   *
-   * Optional for backwards compatibility: callers that omit it get
-   * the legacy baseline placement (no half-leading).
    */
-  readonly descenderRatio?: number;
+  readonly descenderRatio: number;
   /** Override line height (e.g., from font metrics for 100% line height) */
   readonly lineHeight?: number;
   /**
@@ -274,6 +271,9 @@ export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
     throw new Error("computeTextLayout requires a positive ascenderRatio from font metrics");
   }
   const descenderRatio = options.descenderRatio;
+  if (!Number.isFinite(descenderRatio) || descenderRatio < 0) {
+    throw new Error("computeTextLayout requires a non-negative descenderRatio from font metrics");
+  }
   const lineHeight = options.lineHeight ?? props.lineHeight;
 
   // Get lines with paragraph origin tracking.

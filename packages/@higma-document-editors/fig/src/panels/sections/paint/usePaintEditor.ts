@@ -1,32 +1,35 @@
-/** @file Shared paint editing hook for fill and stroke property sections. */
-
+/** @file React hook for editing Kiwi paint fields from property sections. */
 import { useCallback, useRef, type ChangeEvent, type RefObject } from "react";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigPackageImage } from "@higma-figma-containers/package";
-import type { FigImageScaleMode, FigPaint } from "@higma-document-models/fig/types";
-import type { GradientHandleView, GradientStopView, PaintItemHandlers } from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
+import type {
+  GradientHandleView,
+  GradientStopView,
+  ImageScaleModeId,
+  PaintItemHandlers,
+  PaintTypeId,
+} from "@higma-editor-kernel/ui/property-sections";
+import { useFigEditor } from "../../../context/FigEditorContext";
 import { createFigImageAsset } from "./image-asset";
-import { applyPaintOperation, PaintOp, PaintListOp, type PaintListKind } from "./paint-domain";
-import { applyAppearanceOperation, AppearanceOp } from "./appearance-domain";
 import {
   addGradientStop,
+  addPaint,
+  paintList,
   removeGradientStop,
-  updateGradientHandle,
-  updateGradientStop,
-} from "./paint-view-adapter";
+  removePaint,
+  replacePaint,
+  setGradientHandle,
+  setGradientStop,
+  setImageRef,
+  setImageRotationDeg,
+  setImageScale,
+  setImageScaleMode,
+  setPaintColor,
+  setPaintOpacity,
+  setPaintType,
+  writePaintList,
+  type PaintListKind,
+} from "./paint-domain";
 
-export type PaintEditorConfig = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly images: ReadonlyMap<string, FigPackageImage>;
-  readonly dispatch: (action: FigEditorAction) => void;
-  readonly kind: PaintListKind;
-};
-
-export type PaintEditorCallbacks = {
-  readonly updatePaint: (index: number, updater: (paint: FigPaint) => FigPaint) => void;
+export type PaintEditor = {
   readonly handlers: PaintItemHandlers;
   readonly handleImageFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   readonly addPaint: () => void;
@@ -35,179 +38,85 @@ export type PaintEditorCallbacks = {
   readonly imageOptions: readonly { readonly value: string; readonly label: string }[];
 };
 
-export function usePaintEditor(config: PaintEditorConfig): PaintEditorCallbacks {
-  const { target, images, dispatch, kind } = config;
+/** Create paint mutators for the selected Kiwi nodes. */
+export function usePaintEditor(kind: PaintListKind): PaintEditor {
+  const { resources, updateSelectedNodes, updateSelectedNodesWithImages } = useFigEditor();
   const uploadTargetRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageOptions = [...resources.images.keys()].map((ref) => ({ value: ref, label: ref }));
 
-  const appearanceOp = kind === "fill" ? AppearanceOp.fillPaints : AppearanceOp.strokePaints;
+  const updatePaint = useCallback((index: number, updater: Parameters<typeof replacePaint>[2]): void => {
+    updateSelectedNodes(
+      (node) => writePaintList(node, kind, replacePaint(paintList(node, kind), index, updater)),
+      "property-panel",
+    );
+  }, [kind, updateSelectedNodes]);
 
-  const imageOptions = [
-    { value: "", label: "No image" },
-    ...[...images.keys()].map((ref) => ({ value: ref, label: ref })),
-  ];
+  const addPaintItem = useCallback((): void => {
+    updateSelectedNodes(
+      (node) => writePaintList(node, kind, addPaint(paintList(node, kind))),
+      "property-panel",
+    );
+  }, [kind, updateSelectedNodes]);
 
-  const updatePaint = useCallback(
-    (index: number, updater: (paint: FigPaint) => FigPaint) => {
-      dispatch(createPropertyTargetUpdateAction({
-        target,
-        updater: (n) => {
-          const paintList = kind === "fill" ? n.fills : n.strokes;
-          const paint = paintList[index];
-          if (!paint) {
-            return n;
-          }
-          return applyAppearanceOperation(n, appearanceOp(
-            PaintListOp.update(index, PaintOp.replace(updater(paint))),
-          ));
-        },
-      }));
-    },
-    [dispatch, target, kind, appearanceOp],
-  );
+  const removePaintItem = useCallback((index: number): void => {
+    updateSelectedNodes(
+      (node) => writePaintList(node, kind, removePaint(paintList(node, kind), index)),
+      "property-panel",
+    );
+  }, [kind, updateSelectedNodes]);
 
-  const updateColor = useCallback(
-    (index: number, hex: string) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setColor(hex)));
-    },
-    [updatePaint],
-  );
-
-  const updateOpacity = useCallback(
-    (index: number, opacity: number) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setOpacity(opacity)));
-    },
-    [updatePaint],
-  );
-
-  const updateType = useCallback(
-    (index: number, type: FigPaint["type"]) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setType(type, kind)));
-    },
-    [updatePaint, kind],
-  );
-
-  const updateImageRef = useCallback(
-    (index: number, imageRef: string) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setImageRef(imageRef)));
-    },
-    [updatePaint],
-  );
-
-  const updateImageScaleMode = useCallback(
-    (index: number, scaleMode: FigImageScaleMode) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setImageScaleMode(scaleMode)));
-    },
-    [updatePaint],
-  );
-
-  const updateImageScale = useCallback(
-    (index: number, scale: number) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setImageScale(scale)));
-    },
-    [updatePaint],
-  );
-
-  const updateImageRotation = useCallback(
-    (index: number, rotationDeg: number) => {
-      updatePaint(index, (paint) => applyPaintOperation(paint, PaintOp.setImageRotationDeg(rotationDeg)));
-    },
-    [updatePaint],
-  );
-
-  const startImageUpload = useCallback((index: number) => {
+  const startImageUpload = useCallback((index: number): void => {
     uploadTargetRef.current = index;
     fileInputRef.current?.click();
   }, []);
 
-  const handleImageFileChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const file = event.currentTarget.files?.[0];
-      const paintIndex = uploadTargetRef.current;
-      event.currentTarget.value = "";
-      uploadTargetRef.current = null;
-      if (!file || paintIndex === null) {
-        return;
-      }
-      void file.arrayBuffer().then((buffer) => {
-        const image = createFigImageAsset({
-          data: new Uint8Array(buffer),
-          mimeType: file.type,
-          fileName: file.name,
-        });
-        dispatch({ type: "ADD_IMAGE_ASSET", image, source: "property-panel" });
-        updateImageRef(paintIndex, image.ref);
+  const handleImageFileChange = useCallback((event: ChangeEvent<HTMLInputElement>): void => {
+    const file = event.currentTarget.files?.[0];
+    const paintIndex = uploadTargetRef.current;
+    event.currentTarget.value = "";
+    uploadTargetRef.current = null;
+    if (file === undefined || paintIndex === null) {
+      return;
+    }
+    void file.arrayBuffer().then((buffer) => {
+      const image = createFigImageAsset({
+        data: new Uint8Array(buffer),
+        mimeType: file.type,
+        fileName: file.name,
       });
-    },
-    [dispatch, updateImageRef],
-  );
-
-  const removePaint = useCallback(
-    (index: number) => {
-      dispatch(createPropertyTargetUpdateAction({
-        target,
-        updater: (n) => applyAppearanceOperation(n, appearanceOp(PaintListOp.remove(index))),
-      }));
-    },
-    [dispatch, target, appearanceOp],
-  );
-
-  const addPaint = useCallback(() => {
-    dispatch(createPropertyTargetUpdateAction({
-      target,
-      updater: (n) => applyAppearanceOperation(n, appearanceOp(PaintListOp.add(kind))),
-    }));
-  }, [dispatch, target, appearanceOp, kind]);
-
-  const updateGradientStopAt = useCallback(
-    (index: number, stopIndex: number, stop: GradientStopView) => {
-      updatePaint(index, (paint) => updateGradientStop(paint, stopIndex, stop));
-    },
-    [updatePaint],
-  );
-
-  const addGradientStopAt = useCallback(
-    (index: number) => {
-      updatePaint(index, addGradientStop);
-    },
-    [updatePaint],
-  );
-
-  const removeGradientStopAt = useCallback(
-    (index: number, stopIndex: number) => {
-      updatePaint(index, (paint) => removeGradientStop(paint, stopIndex));
-    },
-    [updatePaint],
-  );
-
-  const updateGradientHandleAt = useCallback(
-    (index: number, handleIndex: number, handle: GradientHandleView) => {
-      updatePaint(index, (paint) => updateGradientHandle(paint, handleIndex, handle));
-    },
-    [updatePaint],
-  );
+      updateSelectedNodesWithImages(
+        [image],
+        (node) => writePaintList(
+          node,
+          kind,
+          replacePaint(paintList(node, kind), paintIndex, (paint) => setImageRef(paint, image.ref)),
+        ),
+        "property-panel",
+      );
+    });
+  }, [kind, updateSelectedNodesWithImages]);
 
   const handlers: PaintItemHandlers = {
-    onTypeChange: (index, type) => updateType(index, type as FigPaint["type"]),
-    onOpacityChange: updateOpacity,
-    onColorChange: updateColor,
-    onImageRefChange: updateImageRef,
-    onImageScaleModeChange: (index, scaleMode) => updateImageScaleMode(index, scaleMode as FigImageScaleMode),
-    onImageScaleChange: updateImageScale,
-    onImageRotationChange: updateImageRotation,
+    onTypeChange: (index: number, type: PaintTypeId) => updatePaint(index, (paint) => setPaintType(paint, type)),
+    onOpacityChange: (index: number, opacity: number) => updatePaint(index, (paint) => setPaintOpacity(paint, opacity)),
+    onColorChange: (index: number, hex: string) => updatePaint(index, (paint) => setPaintColor(paint, hex)),
+    onImageRefChange: (index: number, imageRef: string) => updatePaint(index, (paint) => setImageRef(paint, imageRef)),
+    onImageScaleModeChange: (index: number, scaleMode: ImageScaleModeId) => updatePaint(index, (paint) => setImageScaleMode(paint, scaleMode)),
+    onImageScaleChange: (index: number, scale: number) => updatePaint(index, (paint) => setImageScale(paint, scale)),
+    onImageRotationChange: (index: number, rotationDeg: number) => updatePaint(index, (paint) => setImageRotationDeg(paint, rotationDeg)),
     onStartImageUpload: startImageUpload,
-    onGradientStopChange: updateGradientStopAt,
-    onAddGradientStop: addGradientStopAt,
-    onRemoveGradientStop: removeGradientStopAt,
-    onGradientHandleChange: updateGradientHandleAt,
-    onRemove: removePaint,
+    onGradientStopChange: (index: number, stopIndex: number, stop: GradientStopView) => updatePaint(index, (paint) => setGradientStop(paint, stopIndex, stop)),
+    onAddGradientStop: (index: number) => updatePaint(index, addGradientStop),
+    onRemoveGradientStop: (index: number, stopIndex: number) => updatePaint(index, (paint) => removeGradientStop(paint, stopIndex)),
+    onGradientHandleChange: (index: number, handleIndex: number, handle: GradientHandleView) => updatePaint(index, (paint) => setGradientHandle(paint, handleIndex, handle)),
+    onRemove: removePaintItem,
   };
 
   return {
-    updatePaint,
     handlers,
     handleImageFileChange,
-    addPaint,
+    addPaint: addPaintItem,
     uploadTargetRef,
     fileInputRef,
     imageOptions,

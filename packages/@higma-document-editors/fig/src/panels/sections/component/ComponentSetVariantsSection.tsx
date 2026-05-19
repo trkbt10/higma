@@ -1,106 +1,150 @@
-/**
- * @file Variant Set authoring controls adapter.
- *
- * A "Component Set" / "Variant Set" on disk is a FRAME bearing
- * `isStateGroup` + VARIANT-typed `componentPropertyDefs`; the canonical
- * Figma schema has no COMPONENT_SET NodeType.
- */
-
-import type { ComponentPropertyDef, FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import { isVariantSetFrame } from "@higma-document-models/fig/domain";
+/** @file Variant set controls over Kiwi FRAME state-group fields. */
+import { guidToString } from "@higma-document-models/fig/domain";
+import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
+import type {
+  FigComponentPropDef,
+  FigGuid,
+  FigNode,
+  FigVariantPropSpec,
+} from "@higma-document-models/fig/types";
 import {
   ComponentSetVariantsSectionView,
   type VariantChildValueView,
   type VariantDefView,
 } from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-import { updateVariantSpec, findVariantSpec } from "./variant-domain";
+import { useFigEditor } from "../../../context/FigEditorContext";
+import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
-type ComponentSetVariantsSectionProps = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
+function requireDefId(def: FigComponentPropDef): FigGuid {
+  if (def.id === undefined) {
+    throw new Error("Component set variant definition is missing id");
+  }
+  return def.id;
+}
 
-/** Edit variant definitions and child component variant values on a Variant-Set FRAME. */
-export function ComponentSetVariantsSection({ node, target, dispatch }: ComponentSetVariantsSectionProps) {
+function requireDefName(def: FigComponentPropDef): string {
+  if (def.name === undefined) {
+    throw new Error(`Component set variant definition ${guidToString(requireDefId(def))} is missing name`);
+  }
+  return def.name;
+}
+
+function requireChildName(child: FigNode): string {
+  if (child.name === undefined) {
+    throw new Error(`Component set child ${guidToString(child.guid)} is missing name`);
+  }
+  return child.name;
+}
+
+function requireSpecPropDefId(spec: FigVariantPropSpec): FigGuid {
+  if (spec.propDefId === undefined) {
+    throw new Error("Component set child variant spec is missing propDefId");
+  }
+  return spec.propDefId;
+}
+
+function requireSpecValue(spec: FigVariantPropSpec): string {
+  if (spec.value === undefined) {
+    throw new Error(`Component set child variant spec ${guidToString(requireSpecPropDefId(spec))} is missing value`);
+  }
+  return spec.value;
+}
+
+function variantDefs(node: FigNode): readonly FigComponentPropDef[] {
+  return (node.componentPropDefs ?? []).filter((def) => def.type?.name === "VARIANT");
+}
+
+function defViews(defs: readonly FigComponentPropDef[]): readonly VariantDefView[] {
+  return defs.map((def) => ({
+    id: guidToString(requireDefId(def)),
+    name: requireDefName(def),
+  }));
+}
+
+function specForDef(child: FigNode, def: FigComponentPropDef): FigVariantPropSpec {
+  const defKey = guidToString(requireDefId(def));
+  const spec = (child.variantPropSpecs ?? []).find((entry) => guidToString(requireSpecPropDefId(entry)) === defKey);
+  if (spec === undefined) {
+    throw new Error(`Component set child ${guidToString(child.guid)} is missing variant spec ${defKey}`);
+  }
+  return spec;
+}
+
+function childValueViews(
+  children: readonly FigNode[],
+  defs: readonly FigComponentPropDef[],
+): readonly VariantChildValueView[] {
+  return children.flatMap((child) => defs.map((def) => ({
+    childId: guidToString(child.guid),
+    defId: guidToString(requireDefId(def)),
+    childName: requireChildName(child),
+    defName: requireDefName(def),
+    value: requireSpecValue(specForDef(child, def)),
+  })));
+}
+
+function writeVariantDefName(node: FigNode, defKey: string, name: string): FigNode {
+  const defs = node.componentPropDefs ?? [];
+  const hasDef = defs.some((def) => guidToString(requireDefId(def)) === defKey);
+  if (!hasDef) {
+    throw new Error(`Component set variant definition ${defKey} is not present on ${guidToString(node.guid)}`);
+  }
+  return {
+    ...node,
+    componentPropDefs: defs.map((def) => {
+      if (guidToString(requireDefId(def)) !== defKey) {
+        return def;
+      }
+      return { ...def, name };
+    }),
+  };
+}
+
+function writeChildVariantValue(node: FigNode, defKey: string, value: string): FigNode {
+  const specs = node.variantPropSpecs ?? [];
+  const hasSpec = specs.some((spec) => guidToString(requireSpecPropDefId(spec)) === defKey);
+  if (!hasSpec) {
+    throw new Error(`Component set child ${guidToString(node.guid)} is missing variant spec ${defKey}`);
+  }
+  return {
+    ...node,
+    variantPropSpecs: specs.map((spec) => {
+      if (guidToString(requireSpecPropDefId(spec)) !== defKey) {
+        return spec;
+      }
+      return { ...spec, value };
+    }),
+  };
+}
+
+/** Render and edit Variant Set metadata from Kiwi FRAME + child SYMBOL fields. */
+export function ComponentSetVariantsSection({ node }: { readonly node: FigNode }) {
+  const { context, updateNode } = useFigEditor();
   if (!isVariantSetFrame(node)) {
     return null;
   }
-
-  const variantDefs = (node.componentPropertyDefs ?? []).filter((def) => def.type === "VARIANT");
-  const componentChildren = (node.children ?? []).filter((child) => child.type === "SYMBOL");
-
-  const defViews: readonly VariantDefView[] = variantDefs.map((def) => ({ id: def.id, name: def.name }));
-  const childValues: readonly VariantChildValueView[] = componentChildren.flatMap((child) =>
-    variantDefs.map((def) => {
-      const spec = findVariantSpec(child.variantPropSpecs ?? [], def.id);
-      return {
-        childId: child.id,
-        defId: def.id,
-        childName: child.name,
-        defName: def.name,
-        value: spec?.value ?? "",
-      };
-    })
-  );
-
+  const defs = variantDefs(node);
+  if (defs.length === 0) {
+    return null;
+  }
+  const children = context.document.childrenOf(node).filter((child) => child.type.name === "SYMBOL");
   return (
-    <ComponentSetVariantsSectionView
-      variantDefs={defViews}
-      childValues={childValues}
-      onDefNameChange={(defId, name) => {
-        dispatch(createPropertyPrimaryUpdateAction({
-          target,
-          updater: (current) => updateVariantDefName(current, defId as FigNodeId, name),
-        }));
-      }}
-      onChildValueChange={(childId, defId, value) => {
-        dispatch(createPropertyPrimaryUpdateAction({
-          target,
-          updater: (current) => updateChildVariantValue({
-            node: current,
-            childId: childId as FigNodeId,
-            propDefId: defId as FigNodeId,
-            value,
-          }),
-        }));
-      }}
-    />
+    <section style={sectionStyle}>
+      <div style={sectionTitleStyle}>Component set</div>
+      <ComponentSetVariantsSectionView
+        variantDefs={defViews(defs)}
+        childValues={childValueViews(children, defs)}
+        onDefNameChange={(defId, name) => {
+          updateNode(node.guid, (current) => writeVariantDefName(current, defId, name), "property-panel");
+        }}
+        onChildValueChange={(childId, defId, value) => {
+          const child = context.document.nodesByGuid.get(childId);
+          if (child === undefined) {
+            throw new Error(`Component set child ${childId} is not present in the Kiwi document`);
+          }
+          updateNode(child.guid, (current) => writeChildVariantValue(current, defId, value), "property-panel");
+        }}
+      />
+    </section>
   );
-}
-
-function updateVariantDefName(node: FigDesignNode, defId: FigNodeId, name: string): FigDesignNode {
-  return {
-    ...node,
-    componentPropertyDefs: (node.componentPropertyDefs ?? []).map((def) => (
-      def.id === defId ? { ...def, name } satisfies ComponentPropertyDef : def
-    )),
-  };
-}
-
-function updateChildVariantValue({
-  node,
-  childId,
-  propDefId,
-  value,
-}: {
-  readonly node: FigDesignNode;
-  readonly childId: FigNodeId;
-  readonly propDefId: FigNodeId;
-  readonly value: string;
-}): FigDesignNode {
-  return {
-    ...node,
-    children: (node.children ?? []).map((child) => {
-      if (child.id !== childId) {
-        return child;
-      }
-      return {
-        ...child,
-        variantPropSpecs: updateVariantSpec(child.variantPropSpecs ?? [], propDefId, value),
-      };
-    }),
-  };
 }

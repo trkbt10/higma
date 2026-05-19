@@ -1,67 +1,27 @@
 /**
- * @file @higma-document-editors/fig main entry point
- *
- * React editor for .fig design files.
+ * @file Public exports for the Kiwi-backed Fig editor package.
  */
-
-// Top-level editor component
-export { FigEditor } from "./editor/FigEditor";
-
-// Context and hooks
-export { FigEditorProvider, useFigEditor, useFigEditorOptional, useFigDrag } from "./context/FigEditorContext";
-export { useExportFig } from "./hooks/use-export-fig";
-export { useFigFileLoad } from "./hooks/use-fig-file-load";
+export { FigEditor, type FigEditorProps } from "./editor/FigEditor";
+export {
+  FigEditorProvider,
+  useFigEditor,
+  useFigEditorOptional,
+  type FigEditorContextValue,
+  type FigEditorProviderProps,
+} from "./context/FigEditorContext";
+export {
+  FigEditorCanvas,
+  type FigEditorCanvasProps,
+  type FigEditorViewport,
+} from "./canvas/FigEditorCanvas";
+export { useFigFileLoad, type UseFigFileLoadResult } from "./hooks/use-fig-file-load";
+export { useExportFig, type UseExportFigResult } from "./hooks/use-export-fig";
 export {
   useFigDocumentResources,
-  useFigDocumentResourcesFor,
 } from "./hooks/use-fig-document-resources";
-
-// Types
-export type {
-  FigEditorState,
-  FigEditorAction,
-  FigEditorContextValue,
-  FigCreationMode,
-  FigTextEditState,
-  FigClipboardContent,
-} from "./context/fig-editor/types";
-
-export { createSelectMode, isSelectMode } from "./context/fig-editor/types";
-
-// Reducer (for advanced use)
-export { figEditorReducer, createFigEditorState } from "./context/fig-editor/reducer/reducer";
-
-// Canvas components (for composition)
-export { FigEditorCanvas } from "./canvas/FigEditorCanvas";
-export { FigPageRenderer } from "./canvas/rendering/FigPageRenderer";
-export type { FigEditorRendererKind } from "./canvas/rendering/renderer-kind";
-
-// Panels (for composition)
-export { PropertyPanel } from "./panels/properties/PropertyPanel";
-export { PageListPanel } from "./panels/pages/PageListPanel";
-export { LayerPanel } from "./panels/layers/LayerPanel";
-export { FigInspectorPanel, type FigInspectorPanelProps } from "./panels/inspector/FigInspectorPanel";
 export {
-  FigInspectorDetailsPanel,
-  type FigInspectorDetailsPanelProps,
-  type DetailSectionRenderer,
-  FIG_DETAIL_SECTIONS,
-  DetailSection,
-  DetailRow,
-  DetailSwatch,
-} from "./panels/inspector/FigInspectorDetailsPanel";
-
-// Toolbar
-export { FigEditorToolbar } from "./editor/FigEditorToolbar";
-
-// Inspector (Fig-specific category registry, adapters, overlay, panel)
-export { FIG_NODE_CATEGORY_REGISTRY, FIG_LEGEND_ORDER } from "./inspector";
-export {
-  getRootNormalizationTransform,
-  collectFigBoxes,
-  collectDesignBoxes,
-  figNodeToInspectorTree,
-  designNodeToInspectorTree,
+  FigInspectorProvider,
+  useFigInspectorContextOptional,
+  type FigInspectorContextValue,
+  type FigInspectorProviderProps,
 } from "./inspector";
-export { FigInspectorOverlay, type FigInspectorOverlayProps } from "./inspector";
-export { FigInspectorProvider, useFigInspectorContextOptional } from "./inspector";

@@ -2,13 +2,26 @@
  * @file resolveTextRuns unit tests — pin the SoT contract.
  */
 
-import type { FigPaint } from "@higma-document-models/fig/types";
-import type { FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
+import type { FigPaint, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
+import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { resolveTextRuns } from "./resolve";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
-const black: FigPaint = { type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" };
-const red: FigPaint = { type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1, visible: true, blendMode: "NORMAL" };
+const black: FigPaint = {
+  type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+  color: { r: 0, g: 0, b: 0, a: 1 },
+  opacity: 1,
+  visible: true,
+  blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
+};
+const red: FigPaint = {
+  type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+  color: { r: 1, g: 0, b: 0, a: 1 },
+  opacity: 1,
+  visible: true,
+  blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
+};
 
 describe("resolveTextRuns", () => {
   it("returns an empty list for an empty source string", () => {
@@ -48,7 +61,7 @@ describe("resolveTextRuns", () => {
   });
 
   it("groups contiguous identical styleIDs into runs and switches fill on boundary", () => {
-    const overrides: TextStyleOverride[] = [
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 2, fillPaints: [red] },
     ];
     const runs = resolveTextRuns({
@@ -66,8 +79,47 @@ describe("resolveTextRuns", () => {
     ]);
   });
 
+  it("uses Kiwi UTF-16 string offsets for astral-plane icon characters", () => {
+    const characters = "􀋃􀋃􀋃􀋃􀋃 ";
+    expect([...characters].length).toBeLessThan(characters.length);
+
+    const runs = resolveTextRuns({
+      characters,
+      baseFillPaints: [black],
+      characterStyleIDs: Array.from({ length: characters.length }, () => 0),
+      styleOverrideTable: undefined,
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      locator: () => "node 2303:17900",
+    });
+    expect(runs).toEqual([{ start: 0, end: characters.length, fillColor: "#000000", fillOpacity: 1 }]);
+  });
+
+  it("uses Figma logical offsets when symbol override text data aligns with derived glyphs", () => {
+    const characters = "This Week’s Favorites 􀯻";
+    const logicalLength = [...characters].length;
+    expect(logicalLength).toBeLessThan(characters.length);
+    const runs = resolveTextRuns({
+      characters,
+      baseFillPaints: [black],
+      characterStyleIDs: [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 2,
+      ],
+      styleOverrideTable: [
+        { styleID: 2, fillPaints: [red] },
+        { styleID: 3, fillPaints: [black] },
+      ],
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      locator: () => "node 2310:42212",
+    });
+    expect(runs).toEqual([
+      { start: 0, end: 21, fillColor: "#000000", fillOpacity: 1 },
+      { start: 21, end: 22, fillColor: "#000000", fillOpacity: 1 },
+      { start: 22, end: 23, fillColor: "#ff0000", fillOpacity: 1 },
+    ]);
+  });
+
   it("partitions every character — no gaps, no overlaps, contiguous", () => {
-    const overrides: TextStyleOverride[] = [
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 1, fillPaints: [red] },
       { styleID: 2, fillPaints: [red] },
     ];
@@ -96,7 +148,7 @@ describe("resolveTextRuns", () => {
       textProperties: new Map(),
       layoutGrids: new Map(),
     };
-    const overrides: TextStyleOverride[] = [
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 2, styleIdForFill: { guid: { sessionID: 7, localID: 81 } } },
     ];
     const runs = resolveTextRuns({
@@ -114,8 +166,8 @@ describe("resolveTextRuns", () => {
   it("inherits the base fill when an override entry omits both styleIdForFill and fillPaints", () => {
     // A sparse override (e.g. only changes fontSize) intentionally leaves
     // the fill unchanged from the base. This is the documented Kiwi
-    // NodeChange semantic — not a fallback.
-    const overrides: TextStyleOverride[] = [
+    // NodeChange semantic — not a substitution.
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 5, fontSize: 24 },
     ];
     const runs = resolveTextRuns({
@@ -131,7 +183,7 @@ describe("resolveTextRuns", () => {
   });
 
   it("resolves sparse fontName overrides into run font metadata", () => {
-    const overrides: TextStyleOverride[] = [
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 5, fontName: { family: "Amazon Ember", style: "Bold", postscript: "AmazonEmber-Bold" } },
     ];
     const runs = resolveTextRuns({
@@ -149,10 +201,9 @@ describe("resolveTextRuns", () => {
   });
 
   it("throws when characterStyleIDs length doesn't match the source", () => {
-    // The resolver expects post-normalised input where the length already
-    // equals `characters.length` (the conversion layer pads Figma's
-    // trailing-zero-omitted Kiwi array). Feeding it un-normalised data is
-    // a caller bug and should fail loudly.
+    // The resolver expects input whose length already equals
+    // `characters.length`. Incomplete data is a caller bug and should
+    // fail loudly.
     expect(() => resolveTextRuns({
       characters: "abc",
       baseFillPaints: [black],
@@ -160,7 +211,7 @@ describe("resolveTextRuns", () => {
       styleOverrideTable: undefined,
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       locator: () => "node 1:2",
-    })).toThrow(/length 2 does not match characters length 3 on node 1:2/);
+    })).toThrow(/length 2 does not match characters length 3 or Figma logical length 3 on node 1:2/);
   });
 
   it("throws when characterStyleIDs references a styleID that has no override entry", () => {
@@ -179,7 +230,7 @@ describe("resolveTextRuns", () => {
     // resolve must use the override's own embedded fillPaints (when
     // present). Figma Community exports routinely emit dangling refs
     // and Figma itself renders them with the embedded paint.
-    const overrides: TextStyleOverride[] = [
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 2, styleIdForFill: { guid: { sessionID: 99, localID: 99 } }, fillPaints: [red] },
     ];
     const runs = resolveTextRuns({
@@ -200,7 +251,7 @@ describe("resolveTextRuns", () => {
     // the node's base fill (Figma's "this override doesn't touch
     // fill" semantic, applied even when the dangling styleId is
     // present).
-    const overrides: TextStyleOverride[] = [
+    const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 2, styleIdForFill: { guid: { sessionID: 99, localID: 99 } } },
     ];
     const runs = resolveTextRuns({

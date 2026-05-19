@@ -1,189 +1,783 @@
 /**
- * @file Fig editor React context
- *
- * Provides the FigEditorProvider and useFigEditor hook.
- * Follows the same fine-grained memoization pattern as PresentationEditorContext.
- *
- * ## Performance: Context Splitting
- *
- * Drag state (which updates at 40-60Hz during interactions) is separated into
- * its own context (FigDragContext) so that high-frequency drag preview updates
- * do NOT cause re-renders in components that only consume the main editor
- * context (PropertyPanel, LayerPanel, Toolbar, etc.).
- *
- * Only FigEditorCanvas subscribes to FigDragContext via useFigDrag().
+ * @file React state boundary for the Kiwi-backed Fig editor.
  */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  addNode,
+  addPage,
+  createFigDocumentContextFromLoaded,
+  createFigDocumentContextFromNodeChanges,
+  figDocumentResources,
+  replaceFigDocumentContextNodeChanges,
+  type FigDocumentContext,
+  type FigDocumentResources,
+} from "@higma-document-io/fig";
+import type { FigPackageImage } from "@higma-figma-containers/package";
+import type { NodeSpec } from "@higma-document-io/fig/types";
+import type { BooleanOperationType } from "@higma-primitives/path";
+import {
+  createFigBuilderStateFromDocument,
+  type FigBuilderState,
+} from "@higma-document-models/fig/builder";
+import { createBooleanOperationEnum } from "@higma-document-models/fig/boolean-operation";
+import {
+  findNodesByType,
+  getNodeType,
+  guidToString,
+} from "@higma-document-models/fig/domain";
+import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
+import { readKiwiTransform, translateTransform } from "./fig-editor/matrix";
 
-import { createContext, useContext, useReducer, useMemo } from "react";
-import type { ReactNode } from "react";
-import type { FigDesignDocument, FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import type { DragState } from "@higma-editor-kernel/core/drag-state";
-import { findNodeById } from "@higma-document-io/fig/node-ops";
-import { canUndo, canRedo } from "@higma-editor-kernel/core/history";
-import type { FigEditorContextValue, FigEditorAction } from "./fig-editor/types";
-import { figEditorReducer, createFigEditorState } from "./fig-editor/reducer/reducer";
+export type FigCreationMode =
+  | "select"
+  | "frame"
+  | "rectangle"
+  | "ellipse"
+  | "line"
+  | "star"
+  | "polygon"
+  | "text"
+  | "pen";
 
-// =============================================================================
-// Context — Main (low-frequency: document, selection, clipboard, etc.)
-// =============================================================================
+export type FigNodeMutationSource =
+  | "canvas"
+  | "property-panel"
+  | "layer-panel"
+  | "page-panel"
+  | "toolbar"
+  | "text-edit";
 
-const FigEditorContext = createContext<FigEditorContextValue | null>(null);
+export type FigTextEditState =
+  | { readonly type: "inactive" }
+  | { readonly type: "active"; readonly guid: FigGuid };
 
-// =============================================================================
-// Context — Drag (high-frequency: updates every mouse move during drag)
-// =============================================================================
-
-type FigDragContextValue = {
-  readonly drag: DragState<FigNodeId>;
-  readonly dispatch: (action: FigEditorAction) => void;
+export type FigEditorContextValue = {
+  readonly context: FigDocumentContext;
+  readonly resources: FigDocumentResources;
+  readonly pages: readonly FigNode[];
+  readonly activePage: FigNode | undefined;
+  readonly activePageGuid: FigGuid | undefined;
+  readonly selectedGuids: readonly FigGuid[];
+  readonly selectedNodes: readonly FigNode[];
+  readonly primaryNode: FigNode | undefined;
+  readonly creationMode: FigCreationMode;
+  readonly textEdit: FigTextEditState;
+  readonly canvasTransformActive: boolean;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly setActivePageGuid: (guid: FigGuid) => void;
+  readonly setSelectedGuids: (guids: readonly FigGuid[]) => void;
+  readonly selectNodeGuid: (guid: FigGuid, options?: SelectNodeOptions) => void;
+  readonly clearSelection: () => void;
+  readonly setCreationMode: (mode: FigCreationMode) => void;
+  readonly enterTextEdit: (guid: FigGuid) => void;
+  readonly exitTextEdit: () => void;
+  readonly beginCanvasTransform: () => void;
+  readonly endCanvasTransform: () => void;
+  readonly updateNode: (guid: FigGuid, updater: (node: FigNode) => FigNode, source: FigNodeMutationSource) => void;
+  readonly updateSelectedNodes: (updater: (node: FigNode) => FigNode, source: FigNodeMutationSource) => void;
+  readonly updateSelectedNodesWithImages: (
+    images: readonly FigPackageImage[],
+    updater: (node: FigNode) => FigNode,
+    source: FigNodeMutationSource,
+  ) => void;
+  readonly addNodeToActivePage: (spec: NodeSpec, parentGuid: FigGuid | null, source: FigNodeMutationSource) => FigGuid;
+  readonly createBooleanOperationFromSelection: (operation: BooleanOperationType, source: FigNodeMutationSource) => void;
+  readonly deleteSelectedNodes: (source: FigNodeMutationSource) => void;
+  readonly addPage: (name: string, source: FigNodeMutationSource) => FigGuid;
+  readonly renamePage: (guid: FigGuid, name: string, source: FigNodeMutationSource) => void;
+  readonly deletePage: (guid: FigGuid, source: FigNodeMutationSource) => void;
+  readonly movePage: (guid: FigGuid, toIndex: number, source: FigNodeMutationSource) => void;
+  readonly undo: () => void;
+  readonly redo: () => void;
 };
 
-const FigDragContext = createContext<FigDragContextValue | null>(null);
-
-// =============================================================================
-// Provider
-// =============================================================================
-
-type FigEditorProviderProps = {
-  readonly initialDocument: FigDesignDocument;
+export type FigEditorProviderProps = {
+  readonly context: FigDocumentContext;
   readonly children: ReactNode;
+  readonly onContextChange?: (context: FigDocumentContext) => void;
 };
+
+export type SelectNodeOptions = {
+  readonly additive?: boolean;
+  readonly toggle?: boolean;
+};
+
+function createFigContextWithImages(
+  currentContext: FigDocumentContext,
+  nodeChanges: readonly FigNode[],
+  images: Map<string, FigPackageImage>,
+): FigDocumentContext {
+  if (currentContext.loaded) {
+    return createFigDocumentContextFromLoaded({ ...currentContext.loaded, nodeChanges, images });
+  }
+  return createFigDocumentContextFromNodeChanges({
+    nodeChanges,
+    blobs: currentContext.blobs,
+    images,
+    metadata: currentContext.metadata,
+  });
+}
+
+type FigContextHistory = {
+  readonly past: readonly FigDocumentContext[];
+  readonly future: readonly FigDocumentContext[];
+};
+
+const EDITOR_AUTHORED_NODE_SESSION_ID = 1;
+const EDITOR_AUTHORED_PAGE_SESSION_ID = 0;
+const FIRST_AUTHORED_LOCAL_ID = 1;
+const POSITION_FIRST_CHAR = 0x21;
+const FigEditorContext = createContext<FigEditorContextValue | null>(null);
+const INACTIVE_TEXT_EDIT_STATE: FigTextEditState = { type: "inactive" };
+
+function guidEquals(left: FigGuid, right: FigGuid): boolean {
+  return left.sessionID === right.sessionID && left.localID === right.localID;
+}
+
+function guidKey(guid: FigGuid): string {
+  return guidToString(guid);
+}
+
+function positionString(index: number): string {
+  return String.fromCharCode(POSITION_FIRST_CHAR + index);
+}
+
+function requireNodeGuid(node: FigNode, owner: string): FigGuid {
+  if (node.guid === undefined) {
+    throw new Error(`${owner}: Kiwi node "${node.name ?? "(unnamed)"}" is missing guid`);
+  }
+  return node.guid;
+}
+
+function requireNodeParentGuid(node: FigNode, owner: string): FigGuid {
+  const guid = node.parentIndex?.guid;
+  if (guid === undefined) {
+    const nodeGuid = requireNodeGuid(node, owner);
+    throw new Error(`${owner}: Kiwi node ${guidKey(nodeGuid)} is missing parentIndex.guid`);
+  }
+  return guid;
+}
+
+function requireNodeSize(node: FigNode, owner: string): NonNullable<FigNode["size"]> {
+  if (node.size === undefined) {
+    const nodeGuid = requireNodeGuid(node, owner);
+    throw new Error(`${owner}: Kiwi node ${guidKey(nodeGuid)} is missing size`);
+  }
+  return node.size;
+}
+
+function requireSameParentGuid(nodes: readonly FigNode[], owner: string): FigGuid {
+  const first = nodes[0];
+  if (first === undefined) {
+    throw new Error(`${owner} requires at least one Kiwi node`);
+  }
+  const parentGuid = requireNodeParentGuid(first, owner);
+  const parentKey = guidKey(parentGuid);
+  const mismatch = nodes.find((node) => guidKey(requireNodeParentGuid(node, owner)) !== parentKey);
+  if (mismatch !== undefined) {
+    const mismatchGuid = requireNodeGuid(mismatch, owner);
+    throw new Error(`${owner}: selected Kiwi node ${guidKey(mismatchGuid)} has a different parent`);
+  }
+  return parentGuid;
+}
+
+type NodeFrame = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+};
+
+function nodeFrame(node: FigNode, owner: string): NodeFrame {
+  const transform = readKiwiTransform(node.transform);
+  const size = requireNodeSize(node, owner);
+  return {
+    x: transform.m02,
+    y: transform.m12,
+    width: size.x,
+    height: size.y,
+  };
+}
+
+function booleanOperationFrame(nodes: readonly FigNode[], owner: string): NodeFrame {
+  const frames = nodes.map((node) => nodeFrame(node, owner));
+  const left = Math.min(...frames.map((frame) => frame.x));
+  const top = Math.min(...frames.map((frame) => frame.y));
+  const right = Math.max(...frames.map((frame) => frame.x + frame.width));
+  const bottom = Math.max(...frames.map((frame) => frame.y + frame.height));
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function firstPageGuid(pages: readonly FigNode[]): FigGuid | undefined {
+  const first = pages[0];
+  if (first === undefined) {
+    return undefined;
+  }
+  return requireNodeGuid(first, "FigEditorProvider");
+}
+
+function pageByGuid(pages: readonly FigNode[], guid: FigGuid): FigNode | undefined {
+  return pages.find((page) => {
+    const pageGuid = requireNodeGuid(page, "FigEditorProvider page lookup");
+    return guidEquals(pageGuid, guid);
+  });
+}
+
+function requireCanvasPage(pages: readonly FigNode[], guid: FigGuid): FigNode {
+  const page = pageByGuid(pages, guid);
+  if (page === undefined) {
+    throw new Error(`FigEditorProvider: CANVAS ${guidKey(guid)} is not present in the Kiwi document`);
+  }
+  if (getNodeType(page) !== "CANVAS") {
+    throw new Error(`FigEditorProvider: ${guidKey(guid)} is not a CANVAS node`);
+  }
+  return page;
+}
+
+function nodeByGuid(context: FigDocumentContext, guid: FigGuid): FigNode {
+  const key = guidKey(guid);
+  const node = context.document.nodesByGuid.get(key);
+  if (node === undefined) {
+    throw new Error(`FigEditorProvider: node ${key} is not present in the Kiwi document`);
+  }
+  return node;
+}
+
+function validateSelection(context: FigDocumentContext, guids: readonly FigGuid[]): readonly FigNode[] {
+  return guids.map((guid) => nodeByGuid(context, guid));
+}
+
+function createBuilderState(context: FigDocumentContext): FigBuilderState {
+  return createFigBuilderStateFromDocument({
+    document: context.document,
+    nodeSessionID: EDITOR_AUTHORED_NODE_SESSION_ID,
+    pageSessionID: EDITOR_AUTHORED_PAGE_SESSION_ID,
+    minimumNodeLocalID: FIRST_AUTHORED_LOCAL_ID,
+    minimumPageLocalID: FIRST_AUTHORED_LOCAL_ID,
+  });
+}
+
+function removeDescendants(
+  context: FigDocumentContext,
+  selected: ReadonlySet<string>,
+): readonly FigNode[] {
+  const shouldRemove = (node: FigNode): boolean => {
+    const guid = requireNodeGuid(node, "deleteSelectedNodes");
+    if (selected.has(guidKey(guid))) {
+      return true;
+    }
+    const parent = node.parentIndex?.guid;
+    if (parent === undefined) {
+      return false;
+    }
+    return selected.has(guidKey(parent));
+  };
+
+  const retained: FigNode[] = [];
+  const removed = new Set(selected);
+  for (const node of context.document.nodeChanges) {
+    const parent = node.parentIndex?.guid;
+    if (parent !== undefined && removed.has(guidKey(parent))) {
+      const guid = requireNodeGuid(node, "deleteSelectedNodes descendant");
+      removed.add(guidKey(guid));
+      continue;
+    }
+    if (shouldRemove(node)) {
+      const guid = requireNodeGuid(node, "deleteSelectedNodes target");
+      removed.add(guidKey(guid));
+      continue;
+    }
+    retained.push(node);
+  }
+  return retained;
+}
 
 /**
- * Fig editor context provider.
- *
- * Wraps children with editor state management.
- * Fine-grained memoization prevents unnecessary re-renders.
- *
- * Drag state is provided via a separate FigDragContext so that
- * high-frequency preview updates (PREVIEW_MOVE, PREVIEW_RESIZE,
- * PREVIEW_ROTATE) only re-render drag consumers (the canvas),
- * not panels/toolbar/layer tree.
+ * Provide Kiwi document state and editor-only selection/tool state.
  */
-export function FigEditorProvider({ initialDocument, children }: FigEditorProviderProps) {
-  const [state, dispatch] = useReducer(figEditorReducer, initialDocument, createFigEditorState);
+export function FigEditorProvider({ context, children, onContextChange }: FigEditorProviderProps) {
+  const builderStateRef = useRef(createBuilderState(context));
+  const [currentContext, setCurrentContext] = useState(context);
+  const [contextHistory, setContextHistory] = useState<FigContextHistory>({ past: [], future: [] });
+  const pages = useMemo(() => findNodesByType(currentContext.document, "CANVAS"), [currentContext]);
+  const resources = useMemo(() => figDocumentResources(currentContext), [currentContext]);
+  const [activePageGuid, setActivePageGuidState] = useState<FigGuid | undefined>(() => firstPageGuid(pages));
+  const [selectedGuids, setSelectedGuidsState] = useState<readonly FigGuid[]>([]);
+  const [creationMode, setCreationMode] = useState<FigCreationMode>("select");
+  const [textEdit, setTextEdit] = useState<FigTextEditState>(INACTIVE_TEXT_EDIT_STATE);
+  const [canvasTransformActive, setCanvasTransformActive] = useState(false);
 
-  const document = state.documentHistory.present;
-  const { activePageId, nodeSelection, drag, clipboard, creationMode, textEdit } = state;
+  const publishContext = useCallback((next: FigDocumentContext): void => {
+    setContextHistory((previous) => ({
+      past: [...previous.past, currentContext],
+      future: [],
+    }));
+    setCurrentContext(next);
+    onContextChange?.(next);
+  }, [currentContext, onContextChange]);
 
-  // Compute active page
-  const activePage = useMemo(
-    () => document.pages.find((p) => p.id === activePageId),
-    [document.pages, activePageId],
-  );
+  const restoreContext = useCallback((next: FigDocumentContext): void => {
+    setCurrentContext(next);
+    setSelectedGuidsState([]);
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+    setCanvasTransformActive(false);
+    onContextChange?.(next);
+  }, [onContextChange]);
 
-  // Compute selected nodes
-  const selectedNodes = useMemo(() => {
-    if (!activePage || nodeSelection.selectedIds.length === 0) {
-      return [] as readonly FigDesignNode[];
-    }
-    const result: FigDesignNode[] = [];
-    for (const id of nodeSelection.selectedIds) {
-      const node = findNodeById(activePage.children, id);
-      if (node) {
-        result.push(node);
-      }
-    }
-    return result;
-  }, [activePage, nodeSelection.selectedIds]);
-
-  // Compute primary node
-  const primaryNode = useMemo(() => {
-    if (!activePage || !nodeSelection.primaryId) {
+  const activePage = useMemo(() => {
+    if (activePageGuid === undefined) {
       return undefined;
     }
-    return findNodeById(activePage.children, nodeSelection.primaryId);
-  }, [activePage, nodeSelection.primaryId]);
+    return requireCanvasPage(pages, activePageGuid);
+  }, [activePageGuid, pages]);
 
-  // Main context value — excludes drag (drag changes don't trigger re-renders here)
-  const contextValue = useMemo<FigEditorContextValue>(
-    () => ({
-      dispatch,
-      document,
-      activePage,
-      activePageId,
-      selectedNodes,
-      primaryNode,
-      nodeSelection,
-      clipboard,
-      canUndo: canUndo(state.documentHistory),
-      canRedo: canRedo(state.documentHistory),
-      creationMode,
-      textEdit,
-    }),
-    [
-      dispatch,
-      document,
-      activePage,
-      activePageId,
-      selectedNodes,
-      primaryNode,
-      nodeSelection,
-      clipboard,
-      state.documentHistory,
-      creationMode,
-      textEdit,
-    ],
+  const selectedNodes = useMemo(
+    () => validateSelection(currentContext, selectedGuids),
+    [currentContext, selectedGuids],
   );
 
-  // Drag context value — only consumers of useFigDrag() re-render on drag changes
-  const dragContextValue = useMemo<FigDragContextValue>(
-    () => ({ drag, dispatch }),
-    [drag, dispatch],
-  );
+  const setActivePageGuid = useCallback((guid: FigGuid): void => {
+    requireCanvasPage(pages, guid);
+    setActivePageGuidState(guid);
+    setSelectedGuidsState([]);
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+    setCanvasTransformActive(false);
+  }, [pages]);
 
-  return (
-    <FigEditorContext.Provider value={contextValue}>
-      <FigDragContext.Provider value={dragContextValue}>
-        {children}
-      </FigDragContext.Provider>
-    </FigEditorContext.Provider>
-  );
+  const setSelectedGuids = useCallback((guids: readonly FigGuid[]): void => {
+    validateSelection(currentContext, guids);
+    setSelectedGuidsState([...guids]);
+  }, [currentContext]);
+
+  const selectNodeGuid = useCallback((guid: FigGuid, options?: SelectNodeOptions): void => {
+    nodeByGuid(currentContext, guid);
+    setSelectedGuidsState((previous) => {
+      const alreadySelected = previous.some((selected) => guidEquals(selected, guid));
+      if (options?.toggle === true && alreadySelected) {
+        return previous.filter((selected) => !guidEquals(selected, guid));
+      }
+      if (options?.additive === true && !alreadySelected) {
+        return [...previous, guid];
+      }
+      return [guid];
+    });
+  }, [currentContext]);
+
+  const clearSelection = useCallback((): void => {
+    setSelectedGuidsState([]);
+  }, []);
+
+  const enterTextEdit = useCallback((guid: FigGuid): void => {
+    const node = nodeByGuid(currentContext, guid);
+    if (getNodeType(node) !== "TEXT") {
+      throw new Error(`enterTextEdit requires a TEXT node, received ${getNodeType(node)}`);
+    }
+    setSelectedGuidsState([guid]);
+    setCreationMode("select");
+    setTextEdit({ type: "active", guid });
+  }, [currentContext]);
+
+  const exitTextEdit = useCallback((): void => {
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+  }, []);
+
+  const beginCanvasTransform = useCallback((): void => {
+    setCanvasTransformActive(true);
+  }, []);
+
+  const endCanvasTransform = useCallback((): void => {
+    setCanvasTransformActive(false);
+  }, []);
+
+  const updateNode = useCallback((
+    guid: FigGuid,
+    updater: (node: FigNode) => FigNode,
+    _source: FigNodeMutationSource,
+  ): void => {
+    const key = guidKey(guid);
+    const found = currentContext.document.nodeChanges.some((node) => guidKey(requireNodeGuid(node, "updateNode")) === key);
+    if (!found) {
+      throw new Error(`updateNode: node ${key} is not present in the Kiwi document`);
+    }
+    const nodeChanges = currentContext.document.nodeChanges.map((node) => {
+      const nodeGuid = requireNodeGuid(node, "updateNode");
+      if (guidKey(nodeGuid) !== key) {
+        return node;
+      }
+      const next = updater(node);
+      const nextGuid = requireNodeGuid(next, "updateNode result");
+      if (guidKey(nextGuid) !== key) {
+        throw new Error("updateNode must not change Kiwi node guid");
+      }
+      return next;
+    });
+    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+  }, [currentContext, publishContext]);
+
+  const updateSelectedNodes = useCallback((
+    updater: (node: FigNode) => FigNode,
+    _source: FigNodeMutationSource,
+  ): void => {
+    if (selectedGuids.length === 0) {
+      throw new Error("updateSelectedNodes requires at least one selected Kiwi node");
+    }
+    const selected = new Set(selectedGuids.map(guidKey));
+    const nodeChanges = currentContext.document.nodeChanges.map((node) => {
+      const nodeGuid = requireNodeGuid(node, "updateSelectedNodes");
+      const key = guidKey(nodeGuid);
+      if (!selected.has(key)) {
+        return node;
+      }
+      const next = updater(node);
+      const nextGuid = requireNodeGuid(next, "updateSelectedNodes result");
+      if (guidKey(nextGuid) !== key) {
+        throw new Error("updateSelectedNodes must not change Kiwi node guid");
+      }
+      return next;
+    });
+    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+  }, [currentContext, publishContext, selectedGuids]);
+
+  const updateSelectedNodesWithImages = useCallback((
+    images: readonly FigPackageImage[],
+    updater: (node: FigNode) => FigNode,
+    _source: FigNodeMutationSource,
+  ): void => {
+    if (images.length === 0) {
+      throw new Error("updateSelectedNodesWithImages requires at least one image asset");
+    }
+    if (selectedGuids.length === 0) {
+      throw new Error("updateSelectedNodesWithImages requires at least one selected Kiwi node");
+    }
+    const imageMap = new Map(currentContext.images);
+    for (const image of images) {
+      imageMap.set(image.ref, image);
+    }
+    const selected = new Set(selectedGuids.map(guidKey));
+    const nodeChanges = currentContext.document.nodeChanges.map((node) => {
+      const nodeGuid = requireNodeGuid(node, "updateSelectedNodesWithImages");
+      const key = guidKey(nodeGuid);
+      if (!selected.has(key)) {
+        return node;
+      }
+      const nextNode = updater(node);
+      const nextGuid = requireNodeGuid(nextNode, "updateSelectedNodesWithImages result");
+      if (guidKey(nextGuid) !== key) {
+        throw new Error("updateSelectedNodesWithImages must not change Kiwi node guid");
+      }
+      return nextNode;
+    });
+    const next = createFigContextWithImages(currentContext, nodeChanges, imageMap);
+    publishContext(next);
+  }, [currentContext, publishContext, selectedGuids]);
+
+  const createBooleanOperationFromSelection = useCallback((
+    operation: BooleanOperationType,
+    _source: FigNodeMutationSource,
+  ): void => {
+    if (activePageGuid === undefined) {
+      throw new Error("createBooleanOperationFromSelection requires an active CANVAS");
+    }
+    if (selectedGuids.length < 2) {
+      throw new Error("createBooleanOperationFromSelection requires at least two selected Kiwi nodes");
+    }
+    const selectedNodesForOperation = validateSelection(currentContext, selectedGuids);
+    const parentGuid = requireSameParentGuid(selectedNodesForOperation, "createBooleanOperationFromSelection");
+    if (!guidEquals(parentGuid, activePageGuid)) {
+      throw new Error("createBooleanOperationFromSelection currently requires selected Kiwi nodes under the active CANVAS");
+    }
+    const frame = booleanOperationFrame(selectedNodesForOperation, "createBooleanOperationFromSelection");
+    const result = addNode({
+      state: builderStateRef.current,
+      context: currentContext,
+      pageGuid: activePageGuid,
+      parentGuid: null,
+      spec: {
+        type: "BOOLEAN_OPERATION",
+        name: `${operation} Selection`,
+        x: frame.x,
+        y: frame.y,
+        width: frame.width,
+        height: frame.height,
+        booleanOperation: createBooleanOperationEnum(operation),
+      },
+    });
+    const selectedKeys = selectedGuids.map(guidKey);
+    const selectedKeySet = new Set(selectedKeys);
+    const childPositions = new Map(selectedKeys.map((key, index) => [key, positionString(index)]));
+    const nodeChanges = result.context.document.nodeChanges.map((node) => {
+      const nodeGuid = requireNodeGuid(node, "createBooleanOperationFromSelection");
+      const key = guidKey(nodeGuid);
+      if (!selectedKeySet.has(key)) {
+        return node;
+      }
+      const position = childPositions.get(key);
+      if (position === undefined) {
+        throw new Error(`createBooleanOperationFromSelection: missing child position for ${key}`);
+      }
+      return {
+        ...node,
+        parentIndex: { guid: result.nodeGuid, position },
+        transform: translateTransform(node.transform, -frame.x, -frame.y),
+      };
+    });
+    const nextContext = replaceFigDocumentContextNodeChanges({ context: result.context, nodeChanges });
+    publishContext(nextContext);
+    setSelectedGuidsState([result.nodeGuid]);
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+  }, [activePageGuid, currentContext, publishContext, selectedGuids]);
+
+  const addNodeToActivePage = useCallback((
+    spec: NodeSpec,
+    parentGuid: FigGuid | null,
+    _source: FigNodeMutationSource,
+  ): FigGuid => {
+    if (activePageGuid === undefined) {
+      throw new Error("addNodeToActivePage requires an active CANVAS");
+    }
+    const result = addNode({
+      state: builderStateRef.current,
+      context: currentContext,
+      pageGuid: activePageGuid,
+      parentGuid,
+      spec,
+    });
+    publishContext(result.context);
+    setSelectedGuidsState([result.nodeGuid]);
+    setCreationMode("select");
+    if (spec.type === "TEXT") {
+      setTextEdit({ type: "active", guid: result.nodeGuid });
+      return result.nodeGuid;
+    }
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+    return result.nodeGuid;
+  }, [activePageGuid, currentContext, publishContext]);
+
+  const deleteSelectedNodes = useCallback((_source: FigNodeMutationSource): void => {
+    if (selectedGuids.length === 0) {
+      return;
+    }
+    const selected = new Set(selectedGuids.map(guidKey));
+    const nodeChanges = removeDescendants(currentContext, selected);
+    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+    setSelectedGuidsState([]);
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+  }, [currentContext, publishContext, selectedGuids]);
+
+  const addCanvasPage = useCallback((name: string, _source: FigNodeMutationSource): FigGuid => {
+    const result = addPage({
+      state: builderStateRef.current,
+      context: currentContext,
+      name,
+    });
+    publishContext(result.context);
+    setActivePageGuidState(result.pageGuid);
+    setSelectedGuidsState([]);
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+    return result.pageGuid;
+  }, [currentContext, publishContext]);
+
+  const renamePage = useCallback((guid: FigGuid, name: string, _source: FigNodeMutationSource): void => {
+    const key = guidKey(guid);
+    const page = requireCanvasPage(pages, guid);
+    const nodeChanges = currentContext.document.nodeChanges.map((node) => {
+      const nodeGuid = requireNodeGuid(node, "renamePage");
+      if (guidKey(nodeGuid) !== key) {
+        return node;
+      }
+      if (getNodeType(node) !== "CANVAS") {
+        throw new Error(`renamePage: node ${key} is not a CANVAS`);
+      }
+      return { ...node, name };
+    });
+    requireNodeGuid(page, "renamePage target");
+    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+  }, [currentContext, pages, publishContext]);
+
+  const deletePage = useCallback((guid: FigGuid, _source: FigNodeMutationSource): void => {
+    const key = guidKey(guid);
+    requireCanvasPage(pages, guid);
+    if (pages.length <= 1) {
+      throw new Error("deletePage requires at least one remaining CANVAS");
+    }
+    const nodeChanges = removeDescendants(currentContext, new Set([key]));
+    const next = replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges });
+    const remainingPages = findNodesByType(next.document, "CANVAS");
+    const nextActivePage = remainingPages[0];
+    if (nextActivePage === undefined) {
+      throw new Error("deletePage removed every CANVAS from the Kiwi document");
+    }
+    publishContext(next);
+    setActivePageGuidState(requireNodeGuid(nextActivePage, "deletePage next active page"));
+    setSelectedGuidsState([]);
+    setTextEdit(INACTIVE_TEXT_EDIT_STATE);
+  }, [currentContext, pages, publishContext]);
+
+  const movePage = useCallback((guid: FigGuid, toIndex: number, _source: FigNodeMutationSource): void => {
+    const key = guidKey(guid);
+    requireCanvasPage(pages, guid);
+    if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= pages.length) {
+      throw new Error(`movePage target index ${toIndex} is outside the CANVAS list`);
+    }
+    const fromIndex = pages.findIndex((page) => guidKey(requireNodeGuid(page, "movePage page")) === key);
+    if (fromIndex === -1) {
+      throw new Error(`movePage: CANVAS ${key} is not present`);
+    }
+    const movingPage = pages[fromIndex];
+    if (movingPage === undefined) {
+      throw new Error(`movePage: CANVAS ${key} cannot be read`);
+    }
+    const without = pages.filter((page) => guidKey(requireNodeGuid(page, "movePage filter")) !== key);
+    const orderedPages = [
+      ...without.slice(0, toIndex),
+      movingPage,
+      ...without.slice(toIndex),
+    ];
+    const pagePositionByGuid = new Map(orderedPages.map((page, index) => [
+      guidKey(requireNodeGuid(page, "movePage ordered page")),
+      positionString(index),
+    ]));
+    const nodeChanges = currentContext.document.nodeChanges.map((node) => {
+      const nodeGuid = requireNodeGuid(node, "movePage");
+      const position = pagePositionByGuid.get(guidKey(nodeGuid));
+      if (position === undefined) {
+        return node;
+      }
+      const parentIndex = node.parentIndex;
+      if (parentIndex === undefined) {
+        throw new Error(`movePage: CANVAS ${guidKey(nodeGuid)} is missing parentIndex.guid`);
+      }
+      return { ...node, parentIndex: { ...parentIndex, position } };
+    });
+    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+  }, [currentContext, pages, publishContext]);
+
+  const undo = useCallback((): void => {
+    const previousContext = contextHistory.past[contextHistory.past.length - 1];
+    if (previousContext === undefined) {
+      throw new Error("FigEditorProvider: undo requires a previous Kiwi document context");
+    }
+    setContextHistory({
+      past: contextHistory.past.slice(0, -1),
+      future: [currentContext, ...contextHistory.future],
+    });
+    restoreContext(previousContext);
+  }, [contextHistory.future, contextHistory.past, currentContext, restoreContext]);
+
+  const redo = useCallback((): void => {
+    const nextContext = contextHistory.future[0];
+    if (nextContext === undefined) {
+      throw new Error("FigEditorProvider: redo requires a future Kiwi document context");
+    }
+    setContextHistory({
+      past: [...contextHistory.past, currentContext],
+      future: contextHistory.future.slice(1),
+    });
+    restoreContext(nextContext);
+  }, [contextHistory.future, contextHistory.past, currentContext, restoreContext]);
+
+  const value = useMemo<FigEditorContextValue>(() => ({
+    context: currentContext,
+    resources,
+    pages,
+    activePage,
+    activePageGuid,
+    selectedGuids,
+    selectedNodes,
+    primaryNode: selectedNodes[0],
+    creationMode,
+    textEdit,
+    canvasTransformActive,
+    canUndo: contextHistory.past.length > 0,
+    canRedo: contextHistory.future.length > 0,
+    setActivePageGuid,
+    setSelectedGuids,
+    selectNodeGuid,
+    clearSelection,
+    setCreationMode,
+    enterTextEdit,
+    exitTextEdit,
+    beginCanvasTransform,
+    endCanvasTransform,
+    updateNode,
+    updateSelectedNodes,
+    updateSelectedNodesWithImages,
+    addNodeToActivePage,
+    createBooleanOperationFromSelection,
+    deleteSelectedNodes,
+    addPage: addCanvasPage,
+    renamePage,
+    deletePage,
+    movePage,
+    undo,
+    redo,
+  }), [
+    currentContext,
+    contextHistory.future.length,
+    contextHistory.past.length,
+    resources,
+    pages,
+    activePage,
+    activePageGuid,
+    selectedGuids,
+    selectedNodes,
+    creationMode,
+    textEdit,
+    canvasTransformActive,
+    setActivePageGuid,
+    setSelectedGuids,
+    selectNodeGuid,
+    clearSelection,
+    setCreationMode,
+    enterTextEdit,
+    exitTextEdit,
+    beginCanvasTransform,
+    endCanvasTransform,
+    updateNode,
+    updateSelectedNodes,
+    updateSelectedNodesWithImages,
+    addNodeToActivePage,
+    createBooleanOperationFromSelection,
+    deleteSelectedNodes,
+    addCanvasPage,
+    renamePage,
+    deletePage,
+    movePage,
+    undo,
+    redo,
+  ]);
+
+  return <FigEditorContext.Provider value={value}>{children}</FigEditorContext.Provider>;
 }
 
-// =============================================================================
-// Hooks
-// =============================================================================
-
 /**
- * Access the fig editor context (main state: document, selection, etc.).
- *
- * This context does NOT include drag state. Components that need drag state
- * (typically only the canvas) should use `useFigDrag()` in addition.
- * This separation ensures that high-frequency drag updates don't cause
- * re-renders in panels, toolbar, layer tree, etc.
- *
- * Must be used within a FigEditorProvider.
+ * Read the required Fig editor context.
  */
 export function useFigEditor(): FigEditorContextValue {
-  const ctx = useContext(FigEditorContext);
-  if (!ctx) {
-    throw new Error("useFigEditor must be used within a FigEditorProvider");
+  const value = useContext(FigEditorContext);
+  if (value === null) {
+    throw new Error("useFigEditor must be used within FigEditorProvider");
   }
-  return ctx;
+  return value;
 }
 
 /**
- * Access the fig editor context (optional).
- * Returns null if not within a FigEditorProvider.
+ * Read the Fig editor context when the caller may be outside the provider.
  */
 export function useFigEditorOptional(): FigEditorContextValue | null {
   return useContext(FigEditorContext);
-}
-
-/**
- * Access drag state separately from the main editor context.
- *
- * Drag state updates at mouse-move frequency (40-60Hz) during interactions.
- * Only components that actually need drag state for rendering (e.g., the
- * canvas with selection box preview) should subscribe to this context.
- *
- * Must be used within a FigEditorProvider.
- */
-export function useFigDrag(): FigDragContextValue {
-  const ctx = useContext(FigDragContext);
-  if (!ctx) {
-    throw new Error("useFigDrag must be used within a FigEditorProvider");
-  }
-  return ctx;
 }

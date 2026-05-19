@@ -11,7 +11,7 @@
  */
 
 import type { ReactNode } from "react";
-import type { ResolvedWrapperAttrs, RenderDef, RenderBackgroundBlur, RenderMask } from "../../scene-graph/render-tree";
+import type { ResolvedWrapperAttrs, RenderDef, RenderBackgroundBlur, RenderMask } from "../../scene-graph";
 import { formatRenderDefs } from "./render-defs";
 import { RenderWrapper } from "./wrapper";
 import { BackgroundBlurElement } from "./background-blur";

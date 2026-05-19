@@ -9,7 +9,7 @@
 
 import { parse as parseFont } from "opentype.js";
 import { extractTtcFaces, isTtc } from "./ttc";
-import { synthesizeFontBytes } from "./test-helpers";
+import { synthesizeFontBytes } from "./font-driver-test-fixtures";
 
 const TTC_MAGIC = 0x74746366; // 'ttcf'
 

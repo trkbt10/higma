@@ -8,7 +8,7 @@
  * This module exists because gradient coordinate resolution depends on
  * two inputs that live at different levels:
  *   1. The Fill data (gradient stops, transform matrix) — known at fill level
- *   2. The element size (width, height) — known at node level
+ *   2. The element bounds (x, y, width, height) — known at node level
  *
  * resolveFill() produces ResolvedFillDef with the raw gradientTransform
  * preserved. This module's finalizeGradientDefs() is called by the node
@@ -17,7 +17,7 @@
  * Architecture:
  *   resolveFill(fill) → ResolvedFillDef (with raw transform)
  *       ↓
- *   finalizeGradientDefs(defs, elementSize) ← called in node resolver
+ *   finalizeGradientDefs(defs, elementBounds) ← called in node resolver
  *       ↓
  *   ResolvedFillDef (with userSpaceOnUse pixel coordinates)
  */
@@ -52,12 +52,10 @@ function gradientMatrixFromDef(
 /**
  * Element bounding box for gradient coordinate computation.
  *
- * `width`/`height` is required. `x`/`y` defaults to (0, 0) for the
- * common case (FRAME / RECTANGLE / ELLIPSE / TEXT — origin sits at the
- * node's top-left). VECTOR paths whose contour bbox is offset inside
- * the node must pass `(bbox.x, bbox.y)` so the gradient origin lines
- * up with the path's actual extent (Figma's paint.transform encodes
- * gradient endpoints relative to that bbox, not to path-local 0,0).
+ * FRAME / RECTANGLE / ELLIPSE / TEXT pass explicit `(0, 0, width,
+ * height)` bounds because their coordinate systems begin at the
+ * node's top-left. VECTOR paths pass their contour bbox so the
+ * gradient origin lines up with the path's actual extent.
  */
 export type ElementSize = { readonly width: number; readonly height: number };
 export type ElementBounds = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -71,7 +69,7 @@ export type ElementBounds = { readonly x: number; readonly y: number; readonly w
  */
 export function finalizeGradientDefs(
   defs: RenderDef[],
-  elementBounds: ElementSize | ElementBounds,
+  elementBounds: ElementBounds,
 ): void {
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
@@ -98,7 +96,7 @@ export function finalizeGradientDefs(
  */
 function finalizeLinearGradient(
   def: ResolvedLinearGradient,
-  elementBounds: ElementSize | ElementBounds,
+  elementBounds: ElementBounds,
 ): ResolvedLinearGradient | undefined {
   const gt = gradientMatrixFromDef(def.gradientTransform);
   if (!gt) { return undefined; }
@@ -124,7 +122,7 @@ function finalizeLinearGradient(
  */
 function finalizeRadialGradient(
   def: ResolvedRadialGradient,
-  elementBounds: ElementSize | ElementBounds,
+  elementBounds: ElementBounds,
 ): ResolvedRadialGradient | undefined {
   const gt = gradientMatrixFromDef(def.gradientTransform);
   if (!gt) { return undefined; }

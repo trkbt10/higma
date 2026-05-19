@@ -8,7 +8,7 @@
  * usable by both string concatenation and React JSX.
  */
 
-import type { Fill, GradientStop } from "@higma-document-models/fig/scene-graph";
+import type { Fill, GradientStop } from "@higma-document-renderers/fig/scene-graph";
 import type { ImagePaintFilter } from "@higma-codecs/raster";
 import { writePng } from "@higma-codecs/png";
 import { colorToHex, uint8ArrayToBase64 } from "./color";
@@ -25,12 +25,12 @@ import {
   resolveManagedRasterSourceProfile,
 } from "./image-raster-decode";
 import {
-  normalizeFigmaRenderExportSettings,
+  resolveFigmaRenderExportSettings,
   renderExportSettingsCacheKey,
   requireManagedDisplayP3IccProfile,
   requireManagedImageColorProfile,
   type FigmaRenderExportSettings,
-  type NormalizedFigmaRenderExportSettings,
+  type ResolvedFigmaRenderExportSettings,
 } from "./export-settings";
 import type { AffineMatrix } from "@higma-primitives/path";
 
@@ -262,7 +262,7 @@ function imageFilterCacheKey(
   mimeType: string,
   paintFilter: ImagePaintFilter | undefined,
   colorManage: boolean | undefined,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): string {
   return [
     mimeType,
@@ -293,7 +293,7 @@ function filteredPngSrgbIntent(
 function outputIccProfile(
   targetProfile: ReturnType<typeof requireManagedImageColorProfile> | undefined,
   sourceIccProfile: { readonly name: string; readonly data: Uint8Array } | undefined,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): { readonly name: string; readonly data: Uint8Array } | undefined {
   if (targetProfile === "DISPLAY_P3_V4") {
     return { name: "Display P3", data: requireManagedDisplayP3IccProfile(exportSettings.imageColorManagement) };
@@ -325,7 +325,7 @@ function resolveImageRasterData(
   mimeType: string,
   paintFilter: ImagePaintFilter | undefined,
   colorManage: boolean | undefined,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): ResolvedRasterImageData {
   const hasFilter = hasImagePaintFilter(paintFilter);
   if (!hasFilter && colorManage !== true) {
@@ -404,7 +404,7 @@ function resolveImageRasterData(
 export function resolveFillWithRenderSettings(
   fill: Fill,
   ids: IdGenerator,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): ResolvedFill {
   switch (fill.type) {
     case "solid":
@@ -514,7 +514,7 @@ function unsupportedFill(fill: never): ResolvedFill {
 
 /** Resolve a fill through public export settings. */
 export function resolveFill(fill: Fill, ids: IdGenerator, exportSettings?: FigmaRenderExportSettings): ResolvedFill {
-  return resolveFillWithRenderSettings(fill, ids, normalizeFigmaRenderExportSettings(exportSettings));
+  return resolveFillWithRenderSettings(fill, ids, resolveFigmaRenderExportSettings(exportSettings));
 }
 
 /**
@@ -523,7 +523,7 @@ export function resolveFill(fill: Fill, ids: IdGenerator, exportSettings?: Figma
 export function resolveTopFillWithRenderSettings(
   fills: readonly Fill[],
   ids: IdGenerator,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): ResolvedFill {
   if (fills.length > 0) {
     return resolveFillWithRenderSettings(fills[fills.length - 1], ids, exportSettings);
@@ -533,5 +533,5 @@ export function resolveTopFillWithRenderSettings(
 
 /** Resolve the visible top fill through public export settings. */
 export function resolveTopFill(fills: readonly Fill[], ids: IdGenerator, exportSettings?: FigmaRenderExportSettings): ResolvedFill {
-  return resolveTopFillWithRenderSettings(fills, ids, normalizeFigmaRenderExportSettings(exportSettings));
+  return resolveTopFillWithRenderSettings(fills, ids, resolveFigmaRenderExportSettings(exportSettings));
 }

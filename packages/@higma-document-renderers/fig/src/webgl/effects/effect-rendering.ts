@@ -6,7 +6,7 @@ import type {
   Color,
   Effect,
   Fill,
-} from "@higma-document-models/fig/scene-graph";
+} from "@higma-document-renderers/fig/scene-graph";
 import { createTranslationMatrix, multiplyMatrices } from "@higma-document-models/fig/matrix";
 import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";

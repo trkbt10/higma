@@ -19,8 +19,8 @@
  * RenderTree to JSX elements.
  */
 
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
-import type { SceneGraphRenderOptions } from "../scene-graph/render";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraphRenderOptions } from "../scene-graph";
 import {
   resolveRenderTree,
   type RenderTree,
@@ -40,11 +40,11 @@ import {
   type ClipPathShape,
   type RenderBackgroundBlur,
   type RenderNodeBase,
-} from "../scene-graph/render-tree";
+} from "../scene-graph";
 
-import type { ResolvedStrokeAttrs, ResolvedAngularGradient, ResolvedDiamondGradient } from "../scene-graph/render";
+import type { ResolvedStrokeAttrs, ResolvedAngularGradient, ResolvedDiamondGradient } from "../scene-graph";
 
-import type { ResolvedFilterPrimitive } from "../scene-graph/render";
+import type { ResolvedFilterPrimitive } from "../scene-graph";
 
 import {
   svg,
@@ -565,12 +565,12 @@ function wrapperAttrs(node: { wrapper: ResolvedWrapperAttrs; mask?: { maskAttr: 
 }
 
 // =============================================================================
-// Corner Radius Helpers
+// Corner Radius Routines
 // =============================================================================
 
-import type { BlendMode } from "@higma-document-models/fig/scene-graph";
-import type { ResolvedFillLayer } from "../scene-graph/render-tree";
-import type { ResolvedStrokeLayer } from "../scene-graph/render";
+import type { BlendMode } from "@higma-document-renderers/fig/scene-graph";
+import type { ResolvedFillLayer } from "../scene-graph";
+import type { ResolvedStrokeLayer } from "../scene-graph";
 
 import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD, type CornerRadius } from "@higma-primitives/path";
 
@@ -666,7 +666,7 @@ function uniformCornerRadius(cr: CornerRadius | undefined): number | undefined {
 }
 
 // =============================================================================
-// Multi-fill Layer Helpers
+// Multi-fill Layer Routines
 // =============================================================================
 
 function blendModeStyle(bm: BlendMode | undefined): string | undefined {
@@ -789,7 +789,7 @@ function formatMultiFillPathLayers(
 }
 
 // =============================================================================
-// Multi-stroke Layer Helpers
+// Multi-stroke Layer Routines
 // =============================================================================
 
 /**
@@ -900,7 +900,7 @@ function getUniformStrokeAttrs(sr: StrokeRendering | undefined): StrokeSvgAttrs 
   return strokeToSvgAttrs(sr.attrs);
 }
 
-import type { StrokeRendering, StrokeShape } from "../scene-graph/render-tree";
+import type { StrokeRendering, StrokeShape } from "../scene-graph";
 
 /**
  * Format a stroked shape element from StrokeShape + stroke attrs.
@@ -1040,7 +1040,7 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
     case "masked": {
       // Rect/rounded-rect with INSIDE/OUTSIDE alignment: emit Figma's
       // canonical inset/outset-rect pattern so the stroke's dash phase
-      // matches Figma's exporter. The masked-doubled-stroke fallback
+      // matches Figma's exporter. The masked-doubled-stroke path
       // remains for ellipse/path shapes, where the offset transform is
       // more involved.
       const aligned = tryFormatAlignedRectStroke(sr.shape, sr.attrs);
@@ -1266,6 +1266,7 @@ function formatFrameNode(node: RenderFrameNode): SvgString {
   if (node.backgroundBlur) {
     bgFillParts.push(formatBackgroundBlur(node.backgroundBlur));
   }
+  const filteredBgFillParts = formatFrameBackgroundSurface(node, bgFillParts);
 
   const childElements = node.children.map(formatNode);
   const childClipId = node.omitChildClip ? undefined : node.childClipId;
@@ -1284,16 +1285,27 @@ function formatFrameNode(node: RenderFrameNode): SvgString {
       // descendant that sits inside a nested clip-path. The frame's
       // own rect bg above already enforces the visible boundary
       // exactly because the frame is square-cornered.
-      parts.push(...bgFillParts, ...childElements, ...bgStrokeParts);
+      parts.push(...filteredBgFillParts, ...childElements, ...bgStrokeParts);
     } else {
-      parts.push(g({ "clip-path": `url(#${childClipId})` }, ...bgFillParts, ...childElements));
+      parts.push(g({ "clip-path": `url(#${childClipId})` }, ...filteredBgFillParts, ...childElements));
       parts.push(...bgStrokeParts);
     }
   } else {
-    parts.push(...bgFillParts, ...childElements, ...bgStrokeParts);
+    parts.push(...filteredBgFillParts, ...childElements, ...bgStrokeParts);
   }
 
   return g(wrapperAttrs(node), ...parts);
+}
+
+function formatFrameBackgroundSurface(
+  node: RenderFrameNode,
+  bgFillParts: readonly SvgString[],
+): readonly SvgString[] {
+  const filterAttr = node.background?.filterAttr;
+  if (filterAttr === undefined || bgFillParts.length === 0) {
+    return bgFillParts;
+  }
+  return [g({ filter: filterAttr }, ...bgFillParts)];
 }
 
 function formatRectNodeContent(node: RenderRectNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString[] {
@@ -1555,7 +1567,7 @@ function formatNode(node: RenderNode): SvgString {
  * paints every shape with its resolved fill (often the source node's
  * #000 colour), which renders the mask black and hides everything.
  *
- * This helper walks the tree and emits each geometric primitive with an
+ * This function walks the tree and emits each geometric primitive with an
  * explicit `fill="white"` (so the rendered luminance is 1.0 inside the
  * shape, 0.0 outside — exactly the alpha pattern the mask shape
  * encodes). Transforms and the node's own wrapper are preserved so
@@ -1706,7 +1718,7 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string, strokeAttrs?:
     case "frame": {
       // Frame as a mask: emit its rounded-rect background as the shape.
       // Children of a frame-as-mask are unusual and would each need to
-      // be treated as additive mask geometry — fall through to a group.
+      // be treated as additive mask geometry — drop through to a group.
       const uniform = uniformCornerRadius(node.cornerRadius);
       const bgEl = (() => {
         if (uniform === undefined && node.cornerRadius !== undefined && typeof node.cornerRadius !== "number") {
@@ -2160,14 +2172,13 @@ function rewritePathDWithMagnitudeRule(d: string, parent: { readonly tx: number;
 }
 
 // =============================================================================
-// Public API (backward-compatible)
+// Public API
 // =============================================================================
 
 /**
  * Render a scene graph to SVG string.
  *
  * Resolves the SceneGraph to a RenderTree, then formats to SVG.
- * This is the backward-compatible entry point.
  */
 export function renderSceneGraphToSvg(sceneGraph: SceneGraph, options?: SceneGraphRenderOptions): SvgString {
   const renderTree = resolveRenderTree(sceneGraph, options);

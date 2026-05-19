@@ -20,7 +20,7 @@ import type { TextLayout } from "../layout/compute-layout";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { AbstractFont } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";
-import type { TextRun } from "@higma-document-models/fig/scene-graph";
+import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
 
 /**
  * Resolved per-line-height metric for line-mode rendering.
@@ -185,9 +185,8 @@ export type TextRenderingLines = {
    */
   readonly truncation?: TextTruncation;
   /**
-   * Per-line-height font metrics resolved from Figma's fontMetaData. Present
-   * when Figma pre-computed font metrics for this TEXT node; absent when
-   * we fall back to CSS/font-library defaults.
+   * Per-line-height font metrics resolved from Figma's fontMetaData.
+   * Present when Figma pre-computed font metrics for this TEXT node.
    */
   readonly fontMetrics?: ResolvedFontMetrics;
 };

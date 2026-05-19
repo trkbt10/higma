@@ -1,4 +1,4 @@
-/** @file WebGL canvas surface sizing helpers. */
+/** @file WebGL canvas surface sizing routines. */
 
 export type WebGLCanvasRenderSurface = {
   width: number;

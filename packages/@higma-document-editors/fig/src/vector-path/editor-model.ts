@@ -1,19 +1,7 @@
-/** @file Vector path editor model consumed by canvas interaction code. */
-/* eslint-disable jsdoc/require-jsdoc -- Exported operation names are the vector-path domain contract and are covered by colocated specs. */
-
-import type { FigDesignBlob, FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
-import type { FigMatrix, FigVectorPath } from "@higma-document-models/fig/types";
-import { findNodeById } from "@higma-document-io/fig/node-ops";
-import { decodeGeometryToContours } from "@higma-document-renderers/fig/scene-graph";
-import { contourToSvgD } from "@higma-primitives/path";
-import {
-  generateEllipseContour,
-  generateLineContour,
-  generatePolygonContour,
-  generateRectContour,
-  generateStarContour,
-} from "@higma-primitives/path/contours";
-import { computeAbsoluteTransform, findDeepestBoundsAtPoint } from "../canvas/interaction/bounds";
+/** @file Kiwi vector path editor model. */
+import { getNodeType } from "@higma-document-models/fig/domain";
+import type { FigBlob } from "@higma-document-models/fig/domain";
+import type { FigGuid, FigMatrix, FigNode, FigVectorPath } from "@higma-document-models/fig/types";
 import {
   applyEditableVectorPathOperation,
   getEditableCommandEndpoint,
@@ -24,10 +12,12 @@ import {
   type EditablePathCommand,
   type EditableVectorPathOperation,
 } from "./commands";
-import type { VectorPathDraft } from "./draft";
+import type { VectorPathPoint } from "./geometry";
+import { readKiwiTransform } from "../context/fig-editor/matrix";
 
 export type VectorPathHandle = {
   readonly key: string;
+  readonly nodeGuid: FigGuid;
   readonly pathIndex: number;
   readonly commandIndex: number;
   readonly valueIndex: number;
@@ -37,504 +27,372 @@ export type VectorPathHandle = {
 };
 
 export type VectorPathDragState = {
-  readonly nodeId: FigNodeId;
-  readonly pathIndex: number;
-  readonly commandIndex: number;
-  readonly valueIndex: number;
-  readonly editableVectorPaths?: EditableVectorPathSource;
+  readonly handle: VectorPathHandle;
 };
 
 export type EditableVectorPathSource = readonly FigVectorPath[];
 
 export type VectorPathControlLine = {
   readonly key: string;
-  readonly from: { readonly x: number; readonly y: number };
-  readonly to: { readonly x: number; readonly y: number };
+  readonly from: VectorPathPoint;
+  readonly to: VectorPathPoint;
 };
 
 export type EditableVectorPathOverlay = {
   readonly key: string;
   readonly pathIndex: number;
   readonly data: string;
-  readonly transform: string;
+  readonly transform?: string;
 };
 
-type ItemBounds = {
-  readonly id: string;
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-};
-
-
-
-
-
-
-export function resolveEditableVectorPaths(
-  node: FigDesignNode | undefined,
-  blobs: readonly FigDesignBlob[] = [],
-): readonly FigVectorPath[] | undefined {
-  if (!node) {
-    return undefined;
+function requireSize(node: FigNode): NonNullable<FigNode["size"]> {
+  if (node.size === undefined) {
+    throw new Error(`vector-path editor requires size for ${node.name ?? "(unnamed)"}`);
   }
-  if (isExplicitEditableVectorPathNode(node) && node.vectorPaths && node.vectorPaths.length > 0) {
-    return node.vectorPaths;
-  }
-  if (isExplicitEditableVectorPathNode(node)) {
-    const geometryPaths = decodeEditableGeometryVectorPaths(node, blobs);
-    if (geometryPaths.length > 0) {
-      return geometryPaths;
-    }
-  }
-  return synthesizeEditableVectorPaths(node);
+  return node.size;
 }
 
-
-
-
-
-
-export function collectVectorPathHandles(
-  node: FigDesignNode | undefined,
-  activePage: { readonly children: readonly FigDesignNode[] } | null | undefined,
-  editableVectorPaths?: EditableVectorPathSource,
-): readonly VectorPathHandle[] {
-  const vectorPaths = editableVectorPaths ?? resolveEditableVectorPaths(node);
-  if (!node || !activePage || !vectorPaths) {
-    return [];
+function requireGuid(node: FigNode): FigGuid {
+  if (node.guid === undefined) {
+    throw new Error(`vector-path editor requires a Kiwi guid for ${node.name ?? "(unnamed)"}`);
   }
-  const transform = computeAbsoluteTransform(activePage.children, node.id);
-  if (!transform) {
-    return [];
-  }
-  return vectorPaths.flatMap((path, pathIndex) => {
-    const commands = parseEditablePathData(path.data ?? "");
-    if (!commands) {
-      return [];
-    }
-    return commands.flatMap((command, commandIndex) => getEditableCommandPoints(command)
-      .filter((point) => !isClosingAnchorPoint(commands, commandIndex, point))
-      .map((point) => ({
-        key: `${pathIndex}:${commandIndex}:${point.valueIndex}`,
-        pathIndex,
-        commandIndex,
-        valueIndex: point.valueIndex,
-        role: point.role,
-        ...transformPoint(transform, point),
-      })));
-  });
+  return node.guid;
 }
 
-
-
-
-
-
-export function collectVectorPathControlLines(
-  node: FigDesignNode | undefined,
-  activePage: { readonly children: readonly FigDesignNode[] } | null | undefined,
-  editableVectorPaths?: EditableVectorPathSource,
-): readonly VectorPathControlLine[] {
-  const vectorPaths = editableVectorPaths ?? resolveEditableVectorPaths(node);
-  if (!node || !activePage || !vectorPaths) {
-    return [];
-  }
-  const transform = computeAbsoluteTransform(activePage.children, node.id);
-  if (!transform) {
-    return [];
-  }
-  return vectorPaths.flatMap((path, pathIndex) => {
-    const commands = parseEditablePathData(path.data ?? "");
-    if (!commands) {
-      return [];
-    }
-    return getEditableControlLines(commands).map((line) => ({
-      key: `${pathIndex}:${line.key}`,
-      from: transformPoint(transform, line.from),
-      to: transformPoint(transform, line.to),
-    }));
-  });
+function rectanglePath(node: FigNode): FigVectorPath {
+  const size = requireSize(node);
+  return { windingRule: "NONZERO", data: `M 0 0 L ${size.x} 0 L ${size.x} ${size.y} L 0 ${size.y} Z` };
 }
 
-
-
-
-
-
-export function collectEditableVectorPathOverlays(
-  node: FigDesignNode | undefined,
-  activePage: { readonly children: readonly FigDesignNode[] } | null | undefined,
-  editableVectorPaths?: EditableVectorPathSource,
-): readonly EditableVectorPathOverlay[] {
-  const vectorPaths = editableVectorPaths ?? resolveEditableVectorPaths(node);
-  if (!node || !activePage || !vectorPaths) {
-    return [];
-  }
-  const transform = computeAbsoluteTransform(activePage.children, node.id);
-  if (!transform) {
-    return [];
-  }
-  return vectorPaths.map((path, pathIndex) => ({
-    key: `${node.id}:${pathIndex}`,
-    pathIndex,
-    data: path.data ?? "",
-    transform: matrixToSvgTransform(transform),
-  }));
-}
-
-
-
-
-
-
-export function findNearestVectorHandle(
-  handles: readonly VectorPathHandle[],
-  point: { readonly x: number; readonly y: number },
-): VectorPathHandle | undefined {
-  return handles.reduce<VectorPathHandle | undefined>((best, handle) => {
-    if (handle.role !== "anchor") {
-      return best;
-    }
-    if (!best) {
-      return handle;
-    }
-    const bestDistance = Math.hypot(best.x - point.x, best.y - point.y);
-    const candidateDistance = Math.hypot(handle.x - point.x, handle.y - point.y);
-    return candidateDistance < bestDistance ? handle : best;
-  }, undefined);
-}
-
-
-
-
-
-
-export function resolveContextVectorHandle(
-  contextMenu: { readonly pageX: number; readonly pageY: number; readonly vectorHandle?: VectorPathHandle } | null,
-  handles: readonly VectorPathHandle[],
-): VectorPathHandle | undefined {
-  if (!contextMenu) {
-    return undefined;
-  }
-  if (contextMenu.vectorHandle) {
-    return contextMenu.vectorHandle;
-  }
-  return findNearestVectorHandle(handles, { x: contextMenu.pageX, y: contextMenu.pageY });
-}
-
-
-
-
-
-
-export function canEnterVectorPathEdit(node: FigDesignNode | undefined): boolean {
-  if (!node) {
-    return false;
-  }
-  if (isExplicitEditableVectorPathNode(node)) {
-    return Boolean(
-      (node.vectorPaths && node.vectorPaths.length > 0)
-      || (node.fillGeometry && node.fillGeometry.length > 0)
-      || (node.strokeGeometry && node.strokeGeometry.length > 0),
-    );
-  }
-  return Boolean(synthesizeEditableVectorPaths(node));
-}
-
-
-
-
-
-
-export function resolvePathDrawingParent({
-  activePage,
-  itemBounds,
-  point,
-}: {
-  readonly activePage: { readonly children: readonly FigDesignNode[] } | null | undefined;
-  readonly itemBounds: readonly ItemBounds[];
-  readonly point: { readonly x: number; readonly y: number };
-}): { readonly parentId: FigNodeId | null; readonly parentTransform: FigMatrix | undefined } {
-  if (!activePage) {
-    return { parentId: null, parentTransform: undefined };
-  }
-  const parentBounds = findDeepestBoundsAtPoint(itemBounds, point, (bounds) => {
-    return isContainerNode(findNodeById(activePage.children, bounds.id as FigNodeId));
-  });
-  if (!parentBounds) {
-    return { parentId: null, parentTransform: undefined };
-  }
-  const parentId = parentBounds.id as FigNodeId;
+function ellipsePath(node: FigNode): FigVectorPath {
+  const size = requireSize(node);
+  const rx = size.x / 2;
+  const ry = size.y / 2;
+  const k = 0.5522847498307936;
   return {
-    parentId,
-    parentTransform: computeAbsoluteTransform(activePage.children, parentId),
+    windingRule: "NONZERO",
+    data: [
+      `M ${rx} 0`,
+      `C ${rx + rx * k} 0 ${size.x} ${ry - ry * k} ${size.x} ${ry}`,
+      `C ${size.x} ${ry + ry * k} ${rx + rx * k} ${size.y} ${rx} ${size.y}`,
+      `C ${rx - rx * k} ${size.y} 0 ${ry + ry * k} 0 ${ry}`,
+      `C 0 ${ry - ry * k} ${rx - rx * k} 0 ${rx} 0`,
+      "Z",
+    ].join(" "),
   };
 }
 
-
-
-
-
-
-export function addVectorPathPoint({
-  node,
-  pathIndex,
-  point,
-  editableVectorPaths,
-}: {
-  readonly node: FigDesignNode;
-  readonly pathIndex: number;
-  readonly point: { readonly x: number; readonly y: number };
-  readonly editableVectorPaths?: EditableVectorPathSource;
-}): FigDesignNode {
-  const editableNode = toExplicitEditableVectorNode(node, editableVectorPaths);
-  const paths = editableNode.vectorPaths ?? [];
-  const vectorPaths = paths.map((path, index) => {
-    if (index !== pathIndex) {
-      return path;
-    }
-    const commands = parseEditablePathData(path.data ?? "");
-    if (!commands) {
-      return path;
-    }
-    return { ...path, data: serializeEditablePathData(applyEditableVectorPathOperation(commands, {
-      type: "insert-point-at-nearest-segment",
-      point,
-    })) };
-  });
-  return { ...editableNode, vectorPaths };
+function linePath(node: FigNode): FigVectorPath {
+  const size = requireSize(node);
+  return { windingRule: "NONZERO", data: `M 0 0 L ${size.x} ${size.y}` };
 }
 
-
-
-
-
-
-export function updateVectorPathCommands({
-  node,
-  pathIndex,
-  operation,
-  editableVectorPaths,
-}: {
-  readonly node: FigDesignNode;
-  readonly pathIndex: number;
-  readonly operation: EditableVectorPathOperation;
-  readonly editableVectorPaths?: EditableVectorPathSource;
-}): FigDesignNode {
-  const editableNode = toExplicitEditableVectorNode(node, editableVectorPaths);
-  const paths = editableNode.vectorPaths ?? [];
-  const vectorPaths = paths.map((path, index) => {
-    if (index !== pathIndex) {
-      return path;
-    }
-    const commands = parseEditablePathData(path.data ?? "");
-    if (!commands) {
-      return path;
-    }
-    return { ...path, data: serializeEditablePathData(applyEditableVectorPathOperation(commands, operation)) };
-  });
-  return { ...editableNode, vectorPaths };
-}
-
-
-
-
-
-
-export function updateVectorPathEndpoint({
-  node,
-  pathIndex,
-  commandIndex,
-  valueIndex,
-  point,
-  editableVectorPaths,
-}: {
-  readonly node: FigDesignNode;
-  readonly pathIndex: number;
-  readonly commandIndex: number;
-  readonly valueIndex: number;
-  readonly point: { readonly x: number; readonly y: number };
-  readonly editableVectorPaths?: EditableVectorPathSource;
-}): FigDesignNode {
-  const editableNode = toExplicitEditableVectorNode(node, editableVectorPaths);
-  const paths = editableNode.vectorPaths ?? [];
-  const vectorPaths = paths.map((path, index) => {
-    if (index !== pathIndex) {
-      return path;
-    }
-    const commands = parseEditablePathData(path.data ?? "");
-    if (!commands) {
-      return path;
-    }
-    const nextCommands = applyEditableVectorPathOperation(commands, {
-      type: "move-command-point",
-      commandIndex,
-      valueIndex,
-      point,
-    });
-    return { ...path, data: serializeEditablePathData(nextCommands) };
-  });
-  return { ...editableNode, vectorPaths };
-}
-
-
-
-
-
-
-export function pageToDrawingLocalPoint(
-  draw: Pick<VectorPathDraft, "parentTransform">,
-  point: { readonly x: number; readonly y: number },
-): { readonly x: number; readonly y: number } {
-  if (!draw.parentTransform) {
-    return point;
-  }
-  return worldToLocalPoint(draw.parentTransform, point);
-}
-
-
-
-
-
-
-export function getVectorHandleAriaLabel(handle: VectorPathHandle): string {
-  const index = handle.commandIndex + 1;
-  return handle.role === "control" ? `Vector path control handle ${index}` : `Vector path anchor handle ${index}`;
-}
-
-function isClosingAnchorPoint(
-  commands: readonly EditablePathCommand[],
-  commandIndex: number,
-  point: { readonly x: number; readonly y: number; readonly role: "anchor" | "control" },
-): boolean {
-  if (point.role !== "anchor" || commands[commandIndex + 1]?.type !== "Z") {
-    return false;
-  }
-  const start = getEditableCommandEndpoint(commands[0]!);
-  return Boolean(start && Math.hypot(start.x - point.x, start.y - point.y) < 0.001);
-}
-
-function synthesizeEditableVectorPaths(node: FigDesignNode): readonly FigVectorPath[] | undefined {
-  switch (node.type) {
+function syntheticEditableVectorPaths(node: FigNode): EditableVectorPathSource | undefined {
+  switch (getNodeType(node)) {
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
-      return [toEditablePath(contourToSvgD(generateRectContour(node.size.x, node.size.y, resolveEditableCornerRadius(node))))];
+      return [rectanglePath(node)];
     case "ELLIPSE":
-      return [toEditablePath(contourToSvgD(generateEllipseContour(node.size.x, node.size.y)))];
+      return [ellipsePath(node)];
     case "LINE":
-      return [toEditablePath(contourToSvgD(generateLineContour(node.size.x)))];
-    case "REGULAR_POLYGON":
-      return [toEditablePath(contourToSvgD(generatePolygonContour(node.size.x, node.size.y, node.pointCount ?? 3)))];
-    case "STAR":
-      return [toEditablePath(contourToSvgD(generateStarContour({
-        width: node.size.x,
-        height: node.size.y,
-        pointCount: node.pointCount ?? 5,
-        innerRadiusRatio: node.starInnerScale ?? node.starInnerRadius ?? 0.382,
-      })))];
+      return [linePath(node)];
     default:
       return undefined;
   }
 }
 
-function toEditablePath(data: string): FigVectorPath {
-  return { windingRule: "NONZERO", data };
+/** Return editable vector paths directly from the Kiwi node. */
+export function resolveEditableVectorPaths(
+  node: FigNode | undefined,
+  _blobs: readonly FigBlob[] = [],
+): EditableVectorPathSource | undefined {
+  if (node === undefined) {
+    return undefined;
+  }
+  if (node.vectorPaths !== undefined && node.vectorPaths.length > 0) {
+    return node.vectorPaths;
+  }
+  return syntheticEditableVectorPaths(node);
 }
 
-function decodeEditableGeometryVectorPaths(
-  node: FigDesignNode,
-  blobs: readonly FigDesignBlob[],
-): readonly FigVectorPath[] {
-  if (blobs.length === 0) {
+/** Collect committed vector path handles from a Kiwi VECTOR node. */
+export function collectVectorPathHandles(
+  node: FigNode | undefined,
+  _activePage: FigNode | null | undefined,
+  paths: EditableVectorPathSource | undefined,
+): readonly VectorPathHandle[] {
+  if (node === undefined || paths === undefined) {
     return [];
   }
-  const fillContours = decodeGeometryToContours(node.fillGeometry, blobs);
-  const contours = fillContours.length > 0 ? fillContours : decodeGeometryToContours(node.strokeGeometry, blobs);
-  return contours.map((contour) => ({
-    windingRule: contour.windingRule === "evenodd" ? "EVENODD" : "NONZERO",
-    data: contourToSvgD(contour),
+  const nodeGuid = requireGuid(node);
+  return paths.flatMap((path, pathIndex) => {
+    const commands = editablePathCommands(path, "collectVectorPathHandles");
+    return commands.flatMap((command, commandIndex) => commandPointHandles(command, commands, nodeGuid, pathIndex, commandIndex));
+  });
+}
+
+function commandPointHandles(
+  command: EditablePathCommand,
+  commands: readonly EditablePathCommand[],
+  nodeGuid: FigGuid,
+  pathIndex: number,
+  commandIndex: number,
+): readonly VectorPathHandle[] {
+  return getEditableCommandPoints(command).filter((point) => !isClosingDuplicateAnchor({
+    commands,
+    commandIndex,
+    point,
+  })).map((point) => ({
+    key: `${pathIndex}:${commandIndex}:${point.valueIndex}`,
+    nodeGuid,
+    pathIndex,
+    commandIndex,
+    valueIndex: point.valueIndex,
+    role: point.role,
+    x: point.x,
+    y: point.y,
   }));
 }
 
-function resolveEditableCornerRadius(node: FigDesignNode): number | readonly [number, number, number, number] | undefined {
-  const radii = node.rectangleCornerRadii;
-  if (radii && radii.length === 4) {
-    return [radii[0] ?? 0, radii[1] ?? 0, radii[2] ?? 0, radii[3] ?? 0];
+function isClosingDuplicateAnchor({
+  commands,
+  commandIndex,
+  point,
+}: {
+  readonly commands: readonly EditablePathCommand[];
+  readonly commandIndex: number;
+  readonly point: { readonly x: number; readonly y: number; readonly role: "anchor" | "control" };
+}): boolean {
+  if (point.role !== "anchor") {
+    return false;
   }
-  return node.cornerRadius;
-}
-
-function isContainerNode(node: FigDesignNode | undefined): boolean {
-  // SYMBOL is the on-disk encoding of the Figma UI concept "Component"
-  // (the canonical schema has no COMPONENT or COMPONENT_SET NodeType;
-  // a "Variant Set" is a FRAME with variant metadata, covered by the
-  // FRAME case). See `docs/refactor/component-type-cleanup.md`.
-  return node?.type === "FRAME" || node?.type === "SYMBOL";
-}
-
-function isExplicitEditableVectorPathNode(node: FigDesignNode): boolean {
-  return node.type === "VECTOR" || node.type === "BOOLEAN_OPERATION";
-}
-
-function toExplicitEditableVectorNode(
-  node: FigDesignNode,
-  editableVectorPaths?: EditableVectorPathSource,
-): FigDesignNode {
-  if (isExplicitEditableVectorPathNode(node) && node.vectorPaths && node.vectorPaths.length > 0) {
-    return node;
+  if (commands[commandIndex + 1]?.type !== "Z") {
+    return false;
   }
-  const vectorPaths = editableVectorPaths ?? resolveEditableVectorPaths(node);
-  if (!vectorPaths) {
-    return node;
+  const firstCommand = commands[0];
+  if (firstCommand === undefined) {
+    throw new Error("vector-path editor cannot resolve a closed path without commands");
+  }
+  const start = getEditableCommandEndpoint(firstCommand);
+  if (start === undefined) {
+    throw new Error("vector-path editor cannot resolve a closed path without a start anchor");
+  }
+  return point.x === start.x && point.y === start.y;
+}
+
+function editablePathCommands(path: FigVectorPath | undefined, owner: string): readonly EditablePathCommand[] {
+  if (path?.data === undefined) {
+    throw new Error(`${owner} requires vector path data`);
+  }
+  return parseEditablePathData(path.data);
+}
+
+function editablePathsForUpdate(node: FigNode): EditableVectorPathSource {
+  const paths = resolveEditableVectorPaths(node);
+  if (paths === undefined) {
+    throw new Error(`vector-path editor cannot edit ${getNodeType(node)} node ${node.name ?? "(unnamed)"}`);
+  }
+  return paths;
+}
+
+function updateVectorPathAt(
+  node: FigNode,
+  pathIndex: number,
+  commands: readonly EditablePathCommand[],
+): FigNode {
+  const paths = editablePathsForUpdate(node);
+  const target = paths[pathIndex];
+  if (target === undefined) {
+    throw new Error(`vector-path editor missing path ${pathIndex}`);
   }
   return {
     ...node,
-    type: "VECTOR",
-    vectorPaths,
-    fillGeometry: undefined,
-    strokeGeometry: undefined,
-    vectorData: undefined,
-    cornerRadius: undefined,
-    rectangleCornerRadii: undefined,
-    pointCount: undefined,
-    starInnerRadius: undefined,
-    starInnerScale: undefined,
+    vectorPaths: paths.map((path, index) => {
+      if (index !== pathIndex) {
+        return path;
+      }
+      return {
+        ...target,
+        data: serializeEditablePathData(commands),
+      };
+    }),
   };
 }
 
-
-
-
-
-
-export function worldToLocalPoint(
-  transform: FigMatrix,
-  point: { readonly x: number; readonly y: number },
-): { readonly x: number; readonly y: number } {
-  const det = transform.m00 * transform.m11 - transform.m01 * transform.m10;
-  if (Math.abs(det) < 0.000001) {
-    return { x: point.x - transform.m02, y: point.y - transform.m12 };
+/** Return control guide lines for committed paths. */
+export function collectVectorPathControlLines(
+  _node: FigNode | undefined,
+  _activePage: FigNode | null | undefined,
+  paths: EditableVectorPathSource | undefined,
+): readonly VectorPathControlLine[] {
+  if (paths === undefined) {
+    return [];
   }
-  const dx = point.x - transform.m02;
-  const dy = point.y - transform.m12;
-  return {
-    x: (transform.m11 * dx - transform.m01 * dy) / det,
-    y: (-transform.m10 * dx + transform.m00 * dy) / det,
-  };
+  return paths.flatMap((path, pathIndex) => {
+    const commands = editablePathCommands(path, "collectVectorPathControlLines");
+    return getEditableControlLines(commands).map((line) => ({
+      key: `${pathIndex}:${line.key}`,
+      from: line.from,
+      to: line.to,
+    }));
+  });
 }
 
-function transformPoint(
-  transform: FigMatrix,
-  point: { readonly x: number; readonly y: number },
-): { readonly x: number; readonly y: number } {
-  return {
-    x: transform.m00 * point.x + transform.m01 * point.y + transform.m02,
-    y: transform.m10 * point.x + transform.m11 * point.y + transform.m12,
-  };
+/** Return path overlays for hit testing committed vector paths. */
+export function collectEditableVectorPathOverlays(
+  _node: FigNode | undefined,
+  _activePage: FigNode | null | undefined,
+  paths: EditableVectorPathSource | undefined,
+): readonly EditableVectorPathOverlay[] {
+  if (paths === undefined) {
+    return [];
+  }
+  return paths.map((path, pathIndex) => ({
+    key: `path:${pathIndex}`,
+    pathIndex,
+    data: path.data ?? "",
+  }));
 }
 
-function matrixToSvgTransform(transform: FigMatrix): string {
-  return `matrix(${transform.m00} ${transform.m10} ${transform.m01} ${transform.m11} ${transform.m02} ${transform.m12})`;
+/** Find the nearest vector handle. */
+export function findNearestVectorHandle(
+  handles: readonly VectorPathHandle[],
+  point: VectorPathPoint,
+): VectorPathHandle | undefined {
+  return handles.reduce<VectorPathHandle | undefined>((best, handle) => {
+    const distance = Math.hypot(handle.x - point.x, handle.y - point.y);
+    if (best === undefined) {
+      return handle;
+    }
+    const bestDistance = Math.hypot(best.x - point.x, best.y - point.y);
+    return distance < bestDistance ? handle : best;
+  }, undefined);
+}
+
+/** Resolve a context-menu handle at a page point. */
+export function resolveContextVectorHandle(
+  handles: readonly VectorPathHandle[],
+  point: VectorPathPoint,
+): VectorPathHandle | undefined {
+  return findNearestVectorHandle(handles, point);
+}
+
+/** Return whether this Kiwi node supports vector path editing. */
+export function canEnterVectorPathEdit(node: FigNode | undefined): boolean {
+  return resolveEditableVectorPaths(node) !== undefined;
+}
+
+/** Add a point to a vector path. */
+export function addVectorPathPoint({
+  node,
+  pathIndex,
+  point,
+}: {
+  readonly node: FigNode;
+  readonly pathIndex: number;
+  readonly point: VectorPathPoint;
+}): FigNode {
+  const paths = editablePathsForUpdate(node);
+  const commands = editablePathCommands(paths[pathIndex], "addVectorPathPoint");
+  return updateVectorPathAt(
+    node,
+    pathIndex,
+    applyEditableVectorPathOperation(commands, { type: "insert-point-at-nearest-segment", point }),
+  );
+}
+
+/** Replace vector path commands on the selected node. */
+export function updateVectorPathCommands({
+  node,
+  pathIndex,
+  commands,
+}: {
+  readonly node: FigNode;
+  readonly pathIndex: number;
+  readonly commands: readonly EditablePathCommand[];
+}): FigNode {
+  return updateVectorPathAt(node, pathIndex, commands);
+}
+
+/** Update one command endpoint on a vector path. */
+export function updateVectorPathEndpoint({
+  node,
+  pathIndex,
+  commandIndex,
+  point,
+}: {
+  readonly node: FigNode;
+  readonly pathIndex: number;
+  readonly commandIndex: number;
+  readonly point: VectorPathPoint;
+}): FigNode {
+  const paths = editablePathsForUpdate(node);
+  const commands = editablePathCommands(paths[pathIndex], "updateVectorPathEndpoint");
+  const command = commands[commandIndex];
+  if (command === undefined) {
+    throw new Error(`updateVectorPathEndpoint missing command ${commandIndex}`);
+  }
+  const anchor = getEditableCommandPoints(command).find((candidate) => candidate.role === "anchor");
+  if (anchor === undefined) {
+    throw new Error(`updateVectorPathEndpoint command ${commandIndex} has no anchor`);
+  }
+  return updateVectorPathCommands({
+    node,
+    pathIndex,
+    commands: applyEditableVectorPathOperation(commands, {
+      type: "move-command-point",
+      commandIndex,
+      valueIndex: anchor.valueIndex,
+      point,
+    }),
+  });
+}
+
+/** Apply an editable vector path operation to the Kiwi node path. */
+export function updateVectorPathWithOperation({
+  node,
+  pathIndex,
+  operation,
+}: {
+  readonly node: FigNode;
+  readonly pathIndex: number;
+  readonly operation: EditableVectorPathOperation;
+}): FigNode {
+  const paths = editablePathsForUpdate(node);
+  const commands = editablePathCommands(paths[pathIndex], "updateVectorPathWithOperation");
+  return updateVectorPathAt(node, pathIndex, applyEditableVectorPathOperation(commands, operation));
+}
+
+/** Convert a page-space point to drawing-local coordinates. */
+export function pageToDrawingLocalPoint(
+  parent: { readonly parentTransform?: FigMatrix },
+  point: VectorPathPoint,
+): VectorPathPoint {
+  if (parent.parentTransform === undefined) {
+    return point;
+  }
+  return worldToLocalPoint(parent.parentTransform, point);
+}
+
+/** Human-readable label for a vector path handle. */
+export function getVectorHandleAriaLabel(handle: VectorPathHandle): string {
+  if (handle.role === "anchor") {
+    return `Vector path anchor handle ${handle.commandIndex + 1}`;
+  }
+  return `Vector path control handle ${handle.commandIndex + 1}`;
+}
+
+/** Convert world point to local point using the inverse 2x3 transform. */
+export function worldToLocalPoint(transform: FigMatrix, point: VectorPathPoint): VectorPathPoint {
+  const matrix = readKiwiTransform(transform);
+  const determinant = matrix.m00 * matrix.m11 - matrix.m01 * matrix.m10;
+  if (determinant === 0) {
+    throw new Error("worldToLocalPoint requires an invertible transform");
+  }
+  const x = point.x - matrix.m02;
+  const y = point.y - matrix.m12;
+  return {
+    x: (matrix.m11 * x - matrix.m01 * y) / determinant,
+    y: (-matrix.m10 * x + matrix.m00 * y) / determinant,
+  };
 }

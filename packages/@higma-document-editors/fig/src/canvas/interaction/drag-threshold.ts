@@ -1,22 +1,18 @@
-/** @file Canvas pointer drag threshold helpers. */
+/** @file Pointer drag threshold predicate. */
 
-import { isDragThresholdExceeded } from "@higma-editor-kernel/core/drag-utils";
-
-type ExceedsThresholdOptions = {
+/** Return true when a pointer move exceeds the explicit pixel threshold. */
+export function exceedsThreshold({
+  startClientX,
+  startClientY,
+  clientX,
+  clientY,
+  thresholdPx,
+}: {
   readonly startClientX: number;
   readonly startClientY: number;
   readonly clientX: number;
   readonly clientY: number;
-};
-
-/** Return whether a pointer has moved far enough to start a drag operation. */
-export function exceedsThreshold(
-  { startClientX, startClientY, clientX, clientY }: ExceedsThresholdOptions,
-): boolean {
-  return isDragThresholdExceeded({
-    startX: startClientX,
-    startY: startClientY,
-    currentX: clientX,
-    currentY: clientY,
-  });
+  readonly thresholdPx: number;
+}): boolean {
+  return Math.hypot(clientX - startClientX, clientY - startClientY) > thresholdPx;
 }

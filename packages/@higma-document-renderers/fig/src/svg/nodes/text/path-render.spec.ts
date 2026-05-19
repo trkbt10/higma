@@ -11,6 +11,7 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { AbstractFont, FontLoader, FontQuery, LoadedFont } from "@higma-document-models/fig/font";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 function createFakeFont(supportedChars: string): AbstractFont {
   return {
@@ -77,7 +78,7 @@ function createTextNode(characters: string): FigNode {
     size: { x: 100, y: 30 },
     textAlignHorizontal: { value: 0, name: "LEFT" },
     textAlignVertical: { value: 0, name: "TOP" },
-    fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
+    fillPaints: [{ type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
     guid: { sessionID: 0, localID: 0 },
     phase: { value: 1, name: "CREATED" },
   };

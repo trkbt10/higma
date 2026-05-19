@@ -26,7 +26,7 @@
  * measurement; this module just hands them a comparable number.
  */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { safeChildren, type FigBlob, decodePathCommands } from "@higma-document-models/fig/domain";
+import { type FigBlob, decodePathCommands } from "@higma-document-models/fig/domain";
 
 function geometryCommandCount(
   geom: { readonly commandsBlob?: number } | undefined,
@@ -59,6 +59,7 @@ function pathCommandCount(node: FigNode, blobs: readonly FigBlob[] | undefined):
 }
 
 export type ComplexityOptions = {
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
   readonly blobs?: readonly FigBlob[];
   readonly maxDepth?: number;
 };
@@ -71,10 +72,10 @@ export type ComplexityOptions = {
  * leaf nodes whose cost is genuinely trivial (TEXT, plain RECTANGLE
  * without geometry).
  */
-export function complexityScore(node: FigNode, options: ComplexityOptions = {}): number {
+export function complexityScore(node: FigNode, options: ComplexityOptions): number {
   const blobs = options.blobs;
   const maxDepth = options.maxDepth ?? 6;
-  return scoreSubtree(node, 0, maxDepth, blobs);
+  return scoreSubtree(node, 0, maxDepth, blobs, options.childrenOf);
 }
 
 function scoreSubtree(
@@ -82,12 +83,13 @@ function scoreSubtree(
   depth: number,
   maxDepth: number,
   blobs: readonly FigBlob[] | undefined,
+  childrenOf: (node: FigNode) => readonly FigNode[],
 ): number {
   if (depth > maxDepth) {
     return 0;
   }
-  const childTotal = safeChildren(node).reduce(
-    (sum, c) => sum + scoreSubtree(c, depth + 1, maxDepth, blobs),
+  const childTotal = childrenOf(node).reduce(
+    (sum, c) => sum + scoreSubtree(c, depth + 1, maxDepth, blobs, childrenOf),
     0,
   );
   return pathCommandCount(node, blobs) + 1 + childTotal;

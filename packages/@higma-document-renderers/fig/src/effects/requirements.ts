@@ -57,7 +57,6 @@ export const FIG_EFFECT_REQUIREMENTS: readonly EffectRequirement[] = [
   { figType: "DROP_SHADOW", sceneType: "drop-shadow", keys: SHADOW_KEYS },
   { figType: "INNER_SHADOW", sceneType: "inner-shadow", keys: INNER_SHADOW_KEYS },
   { figType: "FOREGROUND_BLUR", sceneType: "layer-blur", keys: BLUR_KEYS },
-  { figType: "LAYER_BLUR", sceneType: "layer-blur", keys: BLUR_KEYS },
   { figType: "BACKGROUND_BLUR", sceneType: "background-blur", keys: BLUR_KEYS },
 ];
 

@@ -108,7 +108,7 @@ describe("bindPositionBufferVertices", () => {
     };
     const fakeGlState: GLStateCache = {} as GLStateCache;
     const ctx: GLContext = {
-      // The helper only touches `gl.ARRAY_BUFFER`, `gl.DYNAMIC_DRAW`,
+      // The routine only touches `gl.ARRAY_BUFFER`, `gl.DYNAMIC_DRAW`,
       // `gl.bindBuffer`, and `gl.bufferData`, so the structural subset
       // we built above is the full contract — widening to
       // `WebGLRenderingContext` keeps `GLContext`'s public shape intact

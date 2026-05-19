@@ -7,19 +7,18 @@ import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 
 import type { FontLoader } from "@higma-document-models/fig/font";
-import type { FigResolver } from "./symbols/fig-resolver";
 
 // =============================================================================
 // SVG Render Context
 // =============================================================================
 
 /**
- * Render context for the legacy text-path helpers
+ * Render context for the legacy text-path routines
  * (`renderTextNodeAsPath` / `renderDerivedPathText`).
  *
- * These helpers predate the `SceneGraph` → `RenderTree` pipeline and only
+ * These routines predate the `SceneGraph` → `RenderTree` pipeline and only
  * consume `fontLoader` + `blobs`. All other fields are carried so call sites
- * can share a context object across helpers, but SVG defs and IDs for
+ * can share a context object across routines, but SVG defs and IDs for
  * gradients / masks / clip-paths are NOT produced here — those flow through
  * `scene-graph/render-tree/resolve.ts` which is the single source of truth
  * for SVG def IDs (see `IdGenerator` in `scene-graph/render/fill.ts`).
@@ -34,12 +33,10 @@ export type FigSvgRenderContext = {
   readonly canvasSize: { width: number; height: number };
   /** Blobs from parsed .fig file for path decoding */
   readonly blobs: readonly FigBlob[];
-  /** Images extracted from .fig file (keyed by imageRef) */
+  /** Images extracted from .fig file (keyed by Paint.image.hash hex) */
   readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Whether to render hidden nodes (visible: false) */
   readonly showHiddenNodes: boolean;
-  /** Instance resolver for SYMBOL/INSTANCE resolution */
-  readonly resolver?: FigResolver;
   /** Font loader for path-based text rendering */
   readonly fontLoader?: FontLoader;
   /** Style registry for resolving stale fillPaints via styleIdForFill */
@@ -55,8 +52,6 @@ export type FigSvgRenderContextConfig = {
   readonly images?: ReadonlyMap<string, FigPackageImage>;
   /** Whether to render hidden nodes (visible: false) */
   readonly showHiddenNodes?: boolean;
-  /** Instance resolver for SYMBOL/INSTANCE resolution */
-  readonly resolver?: FigResolver;
   /** Font loader for path-based text rendering */
   readonly fontLoader?: FontLoader;
   /** Style registry for resolving stale fillPaints via styleIdForFill */

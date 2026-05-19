@@ -10,7 +10,7 @@
  */
 
 import type { ReactNode } from "react";
-import type { ResolvedWrapperAttrs, RenderMask } from "../../scene-graph/render-tree";
+import type { ResolvedWrapperAttrs, RenderMask } from "../../scene-graph";
 
 type WrapperProps = {
   readonly wrapper: ResolvedWrapperAttrs;

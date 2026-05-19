@@ -4,7 +4,7 @@ import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import {
-  createFigDocumentContextFromNodeChanges,
+  replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
 } from "../context";
 import type { NodeSpec } from "../types/spec-types";
@@ -17,12 +17,7 @@ function positionString(index: number): string {
 }
 
 function contextWithNodes(context: FigDocumentContext, nodeChanges: readonly FigNode[]): FigDocumentContext {
-  return createFigDocumentContextFromNodeChanges({
-    nodeChanges,
-    blobs: context.blobs,
-    images: context.images,
-    metadata: context.metadata,
-  });
+  return replaceFigDocumentContextNodeChanges({ context, nodeChanges });
 }
 
 function siblingIndex(context: FigDocumentContext, parentGuid: FigGuid): number {

@@ -6,7 +6,7 @@
  * that single shape instead of reading FigNode fields directly.
  */
 
-export { resolveTextRendering, resolveTextAscenderRatio } from "./resolve";
+export { resolveTextRendering, resolveTextAscenderRatio, resolveTextDescenderRatio } from "./resolve";
 export { createCachedTextFontResolver, type CachedTextFontSource } from "./cached-font-resolver";
 export type { ResolveTextContext } from "./resolve";
 export type {

@@ -5,13 +5,11 @@
  * platform-agnostic intermediate values. Both the SVG string renderer
  * and the SceneGraph builder consume these.
  *
- * Consumes domain-level string unions (FigStrokeCap, FigStrokeJoin).
- * Parser normalises Kiwi `{ value, name }` to the string name at input
- * time; the builder materialises the enum shape on output. No consumer
- * in the render pipeline needs to handle the raw enum shape.
+ * Consumes decoded Kiwi enum payloads.
  */
 
-import type { FigStrokeWeight, FigStrokeCap, FigStrokeJoin } from "@higma-document-models/fig/types";
+import type { FigStrokeWeight, FigStrokeCap, FigStrokeJoin, KiwiEnumValue } from "@higma-document-models/fig/types";
+import { kiwiEnumName } from "@higma-document-models/fig/constants";
 
 // =============================================================================
 // Stroke Weight
@@ -42,8 +40,19 @@ export type SvgStrokeCap = "butt" | "round" | "square";
  * Arrow caps (ARROW_LINES, ARROW_EQUILATERAL) fall back to "butt" —
  * arrow markers require separate SVG marker definitions not handled here.
  */
-export function mapStrokeCap(cap: FigStrokeCap | undefined | null): SvgStrokeCap {
-  switch (cap) {
+function enumName<T extends string>(value: KiwiEnumValue<T> | undefined | null): T | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const name = kiwiEnumName<T>(value, "stroke enum");
+  if (name === undefined) {
+    throw new Error("stroke enum was present but resolved to undefined");
+  }
+  return name;
+}
+
+export function mapStrokeCap(cap: KiwiEnumValue<FigStrokeCap> | undefined | null): SvgStrokeCap {
+  switch (enumName(cap)) {
     case "ROUND":
       return "round";
     case "SQUARE":
@@ -66,8 +75,8 @@ export type SvgStrokeJoin = "miter" | "round" | "bevel";
  * Map Figma stroke join to SVG linejoin value.
  * Default is "miter" (SVG default and Figma default).
  */
-export function mapStrokeJoin(join: FigStrokeJoin | undefined | null): SvgStrokeJoin {
-  switch (join) {
+export function mapStrokeJoin(join: KiwiEnumValue<FigStrokeJoin> | undefined | null): SvgStrokeJoin {
+  switch (enumName(join)) {
     case "ROUND":
       return "round";
     case "BEVEL":

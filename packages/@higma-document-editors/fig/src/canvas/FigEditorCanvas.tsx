@@ -1,75 +1,47 @@
 /**
- * @file Fig editor canvas component
- *
- * The main editing surface for Figma-like .fig files.
- * Unlike PPTX's fixed-size slide canvas, this is an infinite canvas:
- * - No fixed background (no "paper")
- * - No viewport clamping (pan freely in any direction)
- * - Canvas size derived from actual node bounds (with padding)
- *
- * Selection model (matching Figma):
- * - Single click selects the deepest (topmost z-order) node at the cursor.
- *   Clicking inside a frame selects the child element directly, not the
- *   frame. Clicking empty space inside a frame selects the frame itself.
- * - Double-click on TEXT nodes enters text editing mode.
- * - Click canvas background clears selection.
- * - Right-click shows context menu with copy/paste/duplicate/delete/reorder.
- *
- * Implementation: the entire node tree is flattened into absolute-coordinate
- * hit-area bounds (pre-order traversal). Children's hit areas sit above
- * their parents in the SVG z-stack, so the browser's native event dispatch
- * delivers the deepest node's ID on click.
- *
- * Composes:
- * - EditorCanvas (from editor-controls) for viewport, selection, interaction
- * - FigPageRenderer for the selected SVG/WebGL backend layer
+ * @file Interactive canvas surface for the Kiwi-backed Fig editor.
  */
-
-import { useRef, useMemo, useCallback, useState, useEffect, type ReactNode } from "react";
-import type { EditorCanvasHandle, CanvasPageCoords, EditorCanvasViewportContentContext } from "@higma-editor-surfaces/controls/canvas";
-import { EditorCanvas } from "@higma-editor-surfaces/controls/canvas";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import {
+  EditorCanvas,
+  type CanvasPageCoords,
+  type EditorCanvasHandle,
+  type EditorCanvasViewportContentContext,
+} from "@higma-editor-surfaces/controls/canvas";
+import { ContextMenu, type MenuEntry } from "@higma-editor-kernel/ui/context-menu";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
-import type { ResizeHandlePosition } from "@higma-editor-kernel/core/geometry";
-import type { DragState } from "@higma-editor-kernel/core/drag-state";
-import type { FigNodeId } from "@higma-document-models/fig/domain";
-import type { FigMatrix } from "@higma-document-models/fig/types";
-import { findNodeById } from "@higma-document-io/fig/node-ops";
-import { useFigEditor, useFigDrag } from "../context/FigEditorContext";
-import { useFigDocumentResources } from "../hooks/use-fig-document-resources";
+import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import type { TextFontResolver } from "@higma-document-renderers/fig/text";
+import type { BooleanOperationType } from "@higma-primitives/path";
+import type { FigGuid, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { NodeSpec } from "@higma-document-io/fig/types";
+import { useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
+import { translateTransform } from "../context/fig-editor/matrix";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
-import { createFigFamilyRenderOptions, useFigSceneGraphFromResources } from "@higma-figma-runtime/react-renderer";
-import { useFigTextFontResolver } from "./rendering/use-fig-text-font-resolver";
-import { resolveViewportRenderWindow } from "./layout/viewport-render-plan";
-import { computeAbsoluteTransform, flattenAllNodeBounds } from "./interaction/bounds";
-import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
-import { resolveInteractionTargetNodeId, resolveSelectableMarqueeIds } from "./interaction/selection-resolution";
-import { exceedsThreshold } from "./interaction/drag-threshold";
-import { computeCanvasBoundsFromNodes } from "./layout/canvas-bounds";
+import { flattenAllNodeBounds } from "./interaction/bounds";
 import {
-  getVectorPathHandleCursor,
-  orderVectorPathHandlesForHitTesting,
-  screenPxToPagePx,
-  VECTOR_PATH_OVERLAY_STYLE,
-} from "../vector-path/overlay-style";
+  canvasIdsFromGuids,
+  resolveNodeGuidFromCanvasId,
+  resolveSelectableMarqueeGuids,
+} from "./interaction/selection-resolution";
+import { resolveInteractionTargetGuid } from "./interaction/target-resolution";
+import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
+import { exceedsThreshold } from "./interaction/drag-threshold";
 import { useFigKeyboard } from "./interaction/use-fig-keyboard";
+import { computeCanvasBoundsFromNodeBounds } from "./layout/canvas-bounds";
+import { resolveViewportRenderWindow } from "./layout/viewport-render-window";
 import { FigTextEditOverlay } from "../text-edit/FigTextEditOverlay";
-import { computeAbsoluteNodeBounds } from "./interaction/bounds";
 import {
   addVectorPathPoint,
-  canEnterVectorPathEdit,
   collectEditableVectorPathOverlays,
   collectVectorPathControlLines,
   collectVectorPathHandles,
   getVectorHandleAriaLabel,
-  pageToDrawingLocalPoint,
-  resolveContextVectorHandle,
   resolveEditableVectorPaths,
-  resolvePathDrawingParent,
-  updateVectorPathCommands,
-  updateVectorPathEndpoint,
-  worldToLocalPoint,
-  type VectorPathDragState,
+  updateVectorPathWithOperation,
   type VectorPathHandle,
 } from "../vector-path/editor-model";
 import {
@@ -80,1645 +52,1186 @@ import {
   getVectorPathDraftHandles,
   resolveVectorPathDraftHandleIntent,
   vectorPathDraftToPreviewPath,
-  type VectorPathDraft,
   type VectorPathDraftHandle,
   type VectorPathDraftOperationResult,
+  type VectorPathDraftParent,
   type VectorPathDraftSession,
 } from "../vector-path/draft";
 import { getVectorPathDraftHandleLabel } from "../vector-path/draft-labels";
-import type { MenuEntry } from "@higma-editor-kernel/ui/context-menu";
-import { ContextMenu } from "@higma-editor-kernel/ui/context-menu";
-import type { CachingFontLoader } from "@higma-document-models/fig/font";
-import { resolveFigUserIntent } from "../context/fig-editor/user-intent";
-import { allowsFigUserOperation, resolveFigUserOperationDomain } from "../context/fig-editor/user-operation";
+import {
+  getVectorPathHandleCursor,
+  orderVectorPathHandlesForHitTesting,
+  screenPxToPagePx,
+  VECTOR_PATH_OVERLAY_STYLE,
+} from "../vector-path/overlay-style";
 
-// =============================================================================
-// Canvas bounds computation
-// =============================================================================
-
-const VECTOR_PATH_CLOSE_TOLERANCE_PX = 8;
-const VECTOR_PATH_HANDLE_DRAG_THRESHOLD_PX = 3;
-const MIN_RENDER_WINDOW_SIZE = 1;
-
-/** Identity clamp — infinite canvas has no viewport boundaries */
-const NO_CLAMP = (vp: { translateX: number; translateY: number; scale: number }) => vp;
-
-// =============================================================================
-// Context menu state
-// =============================================================================
-
-type ContextMenuState = {
+export type FigEditorViewport = {
   readonly x: number;
   readonly y: number;
-  readonly pageX: number;
-  readonly pageY: number;
-  readonly targetId: FigNodeId;
-  readonly vectorHandle?: VectorPathHandle;
-} | null;
+  readonly width: number;
+  readonly height: number;
+};
 
-// =============================================================================
-// Component
-// =============================================================================
-
-/**
- * Fig editor canvas.
- *
- * Provides the interactive editing surface with:
- * - Rendering of the active page's nodes
- * - Direct selection of any node at any depth (deepest-first hit testing)
- * - Multi-select via Shift/Cmd+click and marquee drag
- * - Drag to move, resize, rotate
- * - Right-click context menu
- * - Zoom and pan (unclamped — infinite canvas)
- *
- * @param canvasOverlay Optional React node rendered inside the canvas
- * page coordinate space, above the page content and below selection
- * chrome. Intended for inspection overlays (e.g. FigInspectorOverlay).
- * Toggling the overlay is the caller's responsibility.
- */
-type FigEditorCanvasProps = {
-  readonly canvasOverlay?: ReactNode;
+export type FigEditorCanvasProps = {
+  readonly canvasWidth?: number;
+  readonly canvasHeight?: number;
+  readonly viewport?: FigEditorViewport;
   readonly renderer?: FigEditorRendererKind;
-  readonly fontLoader?: CachingFontLoader;
+  readonly textFontResolver?: TextFontResolver;
+  readonly children?: ReactNode;
+  readonly style?: CSSProperties;
   readonly webglInitializationDelayMs?: number;
 };
 
-/** Render the interactive fig editor canvas with selectable renderer backends. */
-export function FigEditorCanvas({ canvasOverlay, renderer = "svg", fontLoader, webglInitializationDelayMs }: FigEditorCanvasProps = {}) {
+type MoveSession = {
+  readonly guid: FigGuid;
+  readonly startX: number;
+  readonly startY: number;
+};
+
+type CreationDragSession = {
+  readonly startX: number;
+  readonly startY: number;
+};
+
+type VectorPathDraftHandleDrag = {
+  readonly handle: VectorPathDraftHandle;
+  readonly startClientX: number;
+  readonly startClientY: number;
+  readonly moved: boolean;
+};
+
+type ContextMenuState = {
+  readonly kind: "boolean";
+  readonly x: number;
+  readonly y: number;
+} | {
+  readonly kind: "vector";
+  readonly x: number;
+  readonly y: number;
+  readonly handle: VectorPathHandle;
+} | null;
+
+const INITIAL_ZOOM_MODE: ZoomMode = "fit";
+const INITIAL_VIEWPORT_MARGIN = 48;
+const VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX = 3;
+const VECTOR_PATH_CLOSE_TOLERANCE_PX = 8;
+const ACTIVE_PAGE_VECTOR_PATH_DRAFT_PARENT: VectorPathDraftParent = {
+  parentId: null,
+  parentTransform: undefined,
+};
+const SOLID_BLUE: FigPaint = {
+  type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+  color: { r: 0.16, g: 0.36, b: 0.88, a: 1 },
+  opacity: 1,
+  visible: true,
+};
+const SOLID_WHITE: FigPaint = {
+  type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+  color: { r: 1, g: 1, b: 1, a: 1 },
+  opacity: 1,
+  visible: true,
+};
+const TEXT_FILL: FigPaint = {
+  type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+  color: { r: 0.1, g: 0.1, b: 0.12, a: 1 },
+  opacity: 1,
+  visible: true,
+};
+const canvasHostStyle: CSSProperties = {
+  position: "relative",
+  flex: 1,
+  width: "100%",
+  height: "100%",
+  minWidth: 0,
+  minHeight: 0,
+  overflow: "hidden",
+};
+
+const BOOLEAN_CONTEXT_MENU_ITEMS: readonly MenuEntry[] = [
+  { id: "boolean-union", label: "Union Selection" },
+  { id: "boolean-subtract", label: "Subtract Selection" },
+  { id: "boolean-intersect", label: "Intersect Selection" },
+  { id: "boolean-exclude", label: "Exclude Selection" },
+];
+
+const VECTOR_CONTEXT_MENU_ITEMS: readonly MenuEntry[] = [
+  { id: "convert-vector-point-curve", label: "Convert Segment to Curve" },
+  { id: "convert-vector-point-line", label: "Convert Segment to Line" },
+  { id: "delete-vector-point", label: "Delete Vector Point", danger: true },
+  { id: "open-vector-path", label: "Open Vector Path" },
+  { id: "close-vector-path", label: "Close Vector Path" },
+];
+
+function worldPoint(coords: CanvasPageCoords): { readonly x: number; readonly y: number } {
+  return {
+    x: coords.pageX,
+    y: coords.pageY,
+  };
+}
+
+function dragRect(
+  start: { readonly x: number; readonly y: number },
+  end: { readonly x: number; readonly y: number },
+): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
+  return {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.abs(end.x - start.x),
+    height: Math.abs(end.y - start.y),
+  };
+}
+
+function nodeSpecForCreation(
+  mode: FigCreationMode,
+  rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): NodeSpec {
+  if (rect.width <= 0 || (mode !== "line" && rect.height <= 0)) {
+    throw new Error("nodeSpecForCreation requires a non-zero drag rectangle");
+  }
+  switch (mode) {
+    case "frame":
+      return {
+        type: "FRAME",
+        name: "Frame",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        fills: [SOLID_WHITE],
+        clipsContent: true,
+      };
+    case "rectangle":
+      return {
+        type: "ROUNDED_RECTANGLE",
+        name: "Rectangle",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        fills: [SOLID_BLUE],
+      };
+    case "ellipse":
+      return {
+        type: "ELLIPSE",
+        name: "Ellipse",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        fills: [SOLID_BLUE],
+      };
+    case "line":
+      return {
+        type: "LINE",
+        name: "Line",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: 0,
+        strokes: [SOLID_BLUE],
+        strokeWeight: 2,
+      };
+    case "star":
+      return {
+        type: "STAR",
+        name: "Star",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        pointCount: 5,
+        fills: [SOLID_BLUE],
+      };
+    case "polygon":
+      return {
+        type: "REGULAR_POLYGON",
+        name: "Polygon",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        pointCount: 6,
+        fills: [SOLID_BLUE],
+      };
+    case "text":
+      return {
+        type: "TEXT",
+        name: "Text",
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+        characters: "Text",
+        fontFamily: "Inter",
+        fontStyle: "Regular",
+        fontSize: 16,
+        lineHeight: 24,
+        fills: [TEXT_FILL],
+      };
+    default:
+      throw new Error(`Unsupported Fig creation mode ${mode}`);
+  }
+}
+
+function createItemLabel(contextNodes: ReadonlyMap<string, FigNode>, id: string): string {
+  const node = contextNodes.get(id);
+  if (node === undefined) {
+    throw new Error(`FigEditorCanvas: item ${id} is not present in the Kiwi document`);
+  }
+  return `Canvas node ${id}`;
+}
+
+function svgElementPoint(
+  element: SVGGraphicsElement,
+  clientX: number,
+  clientY: number,
+): { readonly x: number; readonly y: number } {
+  const svg = element.ownerSVGElement;
+  if (svg === null) {
+    throw new Error("FigEditorCanvas vector overlay requires an owner SVG element");
+  }
+  const matrix = element.getScreenCTM();
+  if (matrix === null) {
+    throw new Error("FigEditorCanvas vector overlay requires a screen CTM");
+  }
+  const point = svg.createSVGPoint();
+  point.x = clientX;
+  point.y = clientY;
+  const local = point.matrixTransform(matrix.inverse());
+  return { x: local.x, y: local.y };
+}
+
+function requirePagePointFromScreen(
+  canvas: EditorCanvasHandle | null,
+  event: Pick<PointerEvent, "clientX" | "clientY">,
+): { readonly x: number; readonly y: number } {
+  if (canvas === null) {
+    throw new Error("FigEditorCanvas vector path draft requires an editor canvas ref");
+  }
+  const page = canvas.screenToPage(event.clientX, event.clientY);
+  if (page === undefined) {
+    throw new Error("FigEditorCanvas vector path draft requires page coordinates");
+  }
+  return { x: page.pageX, y: page.pageY };
+}
+
+function canEditKiwiNodePath(node: FigNode | undefined): boolean {
+  if (node === undefined) {
+    return false;
+  }
+  return resolveEditableVectorPaths(node) !== undefined;
+}
+
+/**
+ * Render the active Kiwi CANVAS page through the shared editor canvas.
+ */
+export function FigEditorCanvas({
+  canvasWidth,
+  canvasHeight,
+  renderer = "svg",
+  textFontResolver,
+  children,
+  style,
+  webglInitializationDelayMs,
+}: FigEditorCanvasProps) {
   const {
-    dispatch,
-    document,
+    context,
+    resources,
     activePage,
-    nodeSelection,
-    canUndo,
-    canRedo,
+    selectedGuids,
     creationMode,
     textEdit,
+    canUndo,
+    canRedo,
+    selectNodeGuid,
+    setSelectedGuids,
+    clearSelection,
+    setCreationMode,
+    enterTextEdit,
+    exitTextEdit,
+    beginCanvasTransform,
+    endCanvasTransform,
+    updateNode,
+    addNodeToActivePage,
+    createBooleanOperationFromSelection,
+    deleteSelectedNodes,
+    undo,
+    redo,
   } = useFigEditor();
-  // SoT: every renderer-facing resource (`symbolMap` / `styleRegistry` /
-  // `blobs` / `images`) flows through this single bundle reference, so the
-  // memoization keys below cover all four maps with one dep entry.
-  const resources = useFigDocumentResources();
+  if (activePage === undefined) {
+    throw new Error("FigEditorCanvas requires a CANVAS node in the Kiwi document");
+  }
 
-  // Drag state is in a separate context so that high-frequency preview
-  // updates (PREVIEW_MOVE/RESIZE/ROTATE at 40-60Hz) only re-render this
-  // canvas component, not PropertyPanel/LayerPanel/Toolbar etc.
-  const { drag } = useFigDrag();
-
-  // Keep a ref to the latest drag state so that useCallback handlers
-  // can read it without listing `drag` as a dependency. This prevents
-  // callback identity from changing on every mouse move, which would
-  // cascade re-renders into EditorCanvas's global listener useEffect.
-  const dragRef = useRef<DragState<FigNodeId>>(drag);
-  dragRef.current = drag;
-
-  const canvasRef = useRef<EditorCanvasHandle>(null);
-  const [zoomMode, setZoomMode] = useState<ZoomMode>("fit");
-  // SoT: viewport scale and the full render context are derived from the
-  // same EditorCanvas onViewportChange payload. Keeping the scale as a
-  // separate piece of state used to mean two `useState` values could drift
-  // if either was set without the other; the single render-context state
-  // makes that impossible.
-  const [viewportRenderContext, setViewportRenderContext] = useState<EditorCanvasViewportContentContext | null>(null);
-  const viewportScale = viewportRenderContext?.viewport.scale ?? 1;
-  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
-  const vectorPathDragRef = useRef<VectorPathDragState | null>(null);
-  const vectorPathDraftSessionRef = useRef<VectorPathDraftSession | null>(null);
-  const [vectorPathDrawPreview, setVectorPathDrawPreview] = useState<VectorPathDraft | null>(null);
-  const previousPathEditingEnabledRef = useRef(false);
-
-  // =========================================================================
-  // Item bounds — flattened tree with absolute coordinates
-  // =========================================================================
-
-  /**
-   * Flatten the entire node tree into absolute-coordinate bounds.
-   *
-   * Every visible node (containers and leaves alike) gets a hit area.
-   * The array is in pre-order (parent before children), so children's
-   * hit-area rects are rendered AFTER (and thus ON TOP OF) their parents
-   * in the SVG z-stack. Clicking at a position covered by a leaf will
-   * hit the leaf's rect, not the ancestor frame's rect — matching
-   * Figma's "click-through to deepest element" behavior.
-   *
-   * Clicking empty space inside a frame (not covered by any child) will
-   * hit the frame's own rect, selecting the frame itself.
-   */
-  const itemBounds = useMemo(() => {
-    if (!activePage) {
-      return [];
-    }
-    return flattenAllNodeBounds(activePage.children);
-  }, [activePage]);
-
-  // Compute canvas size from actual content bounds (always from top-level)
-  const canvasSize = useMemo(
-    () => computeCanvasBoundsFromNodes(activePage?.children ?? []),
-    [activePage],
+  const pageChildren = useMemo(() => resources.childrenOf(activePage), [activePage, resources]);
+  const worldBounds = useMemo(
+    () => flattenAllNodeBounds(context.document, pageChildren),
+    [context.document, pageChildren],
   );
+  const extents = useMemo(() => {
+    const computed = computeCanvasBoundsFromNodeBounds(worldBounds);
+    return {
+      ...computed,
+      width: canvasWidth ?? computed.width,
+      height: canvasHeight ?? computed.height,
+    };
+  }, [canvasHeight, canvasWidth, worldBounds]);
+  const itemBounds = worldBounds;
+  const selectedIds = useMemo(() => canvasIdsFromGuids(selectedGuids), [selectedGuids]);
+  const primaryId = selectedIds[0];
+  const [zoomMode, setZoomMode] = useState<ZoomMode>(INITIAL_ZOOM_MODE);
+  const [viewportRenderContext, setViewportRenderContext] = useState<EditorCanvasViewportContentContext | null>(null);
+  const [viewportRevision, setViewportRevision] = useState(0);
+  const viewportScale = viewportRenderContext?.viewport.scale ?? 1;
   const renderWindow = useMemo(
     () => resolveViewportRenderWindow({ context: viewportRenderContext }),
     [viewportRenderContext],
   );
-  const textFontResolver = useFigTextFontResolver({ page: activePage, fontLoader });
-  const primaryNode = useMemo(
-    () => activePage && nodeSelection.primaryId ? findNodeById(activePage.children, nodeSelection.primaryId) : undefined,
-    [activePage, nodeSelection.primaryId],
-  );
-  const userIntent = useMemo(
-    () => resolveFigUserIntent({ creationMode, textEdit, drag }),
-    [creationMode, drag, textEdit],
-  );
-  const interactionPolicy = useMemo(
-    () => resolveCanvasInteractionPolicy(userIntent),
-    [userIntent],
-  );
-  const operationDomain = useMemo(
-    () => resolveFigUserOperationDomain(userIntent),
-    [userIntent],
-  );
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [vectorPathDraftSession, setVectorPathDraftSession] = useState<VectorPathDraftSession | null>(null);
+  const canvasRef = useRef<EditorCanvasHandle>(null);
+  const moveSessionRef = useRef<MoveSession | null>(null);
+  const creationDragSessionRef = useRef<CreationDragSession | null>(null);
+  const vectorPathDragRef = useRef<VectorPathHandle | null>(null);
+  const vectorPathDraftSessionRef = useRef<VectorPathDraftSession | null>(null);
+  const vectorPathDraftHandleDragRef = useRef<VectorPathDraftHandleDrag | null>(null);
+  const previousPathEditingEnabledRef = useRef(false);
+  const policy = useMemo(() => resolveCanvasInteractionPolicy(creationMode), [creationMode]);
+  const primaryNode = useMemo(() => {
+    if (primaryId === undefined) {
+      return undefined;
+    }
+    return context.document.nodesByGuid.get(primaryId);
+  }, [context.document.nodesByGuid, primaryId]);
+  const primaryBounds = useMemo(() => {
+    if (primaryId === undefined) {
+      return undefined;
+    }
+    return itemBounds.find((item) => item.id === primaryId);
+  }, [itemBounds, primaryId]);
   const primaryEditableVectorPaths = useMemo(
-    () => interactionPolicy.pathEditingEnabled ? resolveEditableVectorPaths(primaryNode, document.blobs) : undefined,
-    [document.blobs, interactionPolicy.pathEditingEnabled, primaryNode],
+    () => policy.canEditPath ? resolveEditableVectorPaths(primaryNode) : undefined,
+    [policy.canEditPath, primaryNode],
   );
-  useFigKeyboard({
-    dispatch,
-    hasSelection: nodeSelection.selectedIds.length > 0,
-    selectedIds: nodeSelection.selectedIds,
-    canUndo,
-    canRedo,
-    operationDomain,
-    isTextEditing: textEdit.type === "active",
-  });
   const vectorPathHandles = useMemo(
-    () => {
-      if (!interactionPolicy.pathEditingEnabled) {
-        return [];
-      }
-      return collectVectorPathHandles(primaryNode, activePage, primaryEditableVectorPaths);
-    },
-    [activePage, interactionPolicy.pathEditingEnabled, primaryEditableVectorPaths, primaryNode],
+    () => collectVectorPathHandles(primaryNode, activePage, primaryEditableVectorPaths),
+    [activePage, primaryEditableVectorPaths, primaryNode],
   );
   const vectorPathControlLines = useMemo(
-    () => {
-      if (!interactionPolicy.pathEditingEnabled) {
-        return [];
-      }
-      return collectVectorPathControlLines(primaryNode, activePage, primaryEditableVectorPaths);
-    },
-    [activePage, interactionPolicy.pathEditingEnabled, primaryEditableVectorPaths, primaryNode],
+    () => collectVectorPathControlLines(primaryNode, activePage, primaryEditableVectorPaths),
+    [activePage, primaryEditableVectorPaths, primaryNode],
   );
   const editableVectorPathOverlays = useMemo(
-    () => {
-      if (!interactionPolicy.pathEditingEnabled) {
-        return [];
-      }
-      return collectEditableVectorPathOverlays(primaryNode, activePage, primaryEditableVectorPaths);
-    },
-    [activePage, interactionPolicy.pathEditingEnabled, primaryEditableVectorPaths, primaryNode],
+    () => collectEditableVectorPathOverlays(primaryNode, activePage, primaryEditableVectorPaths),
+    [activePage, primaryEditableVectorPaths, primaryNode],
   );
+  const contextMenuItems = useMemo(() => {
+    if (contextMenu?.kind === "vector") {
+      return VECTOR_CONTEXT_MENU_ITEMS;
+    }
+    const disabled = selectedGuids.length < 2;
+    return BOOLEAN_CONTEXT_MENU_ITEMS.map((item) => {
+      if (item.type === "separator") {
+        return item;
+      }
+      return { ...item, disabled };
+    });
+  }, [contextMenu?.kind, selectedGuids.length]);
 
-  const addVectorPointAtPagePoint = useCallback(
-    (nodeId: FigNodeId, pagePoint: { readonly x: number; readonly y: number }): boolean => {
-      if (!activePage) {
-        return false;
-      }
-      const targetNode = findNodeById(activePage.children, nodeId);
-      if (!canEnterVectorPathEdit(targetNode)) {
-        return false;
-      }
-      const editableVectorPaths = resolveEditableVectorPaths(targetNode, document.blobs);
-      if (!editableVectorPaths) {
-        return false;
-      }
-      const transform = computeAbsoluteTransform(activePage.children, nodeId);
-      if (!transform) {
-        return false;
-      }
-      const point = worldToLocalPoint(transform, pagePoint);
-      dispatch({
-        type: "UPDATE_NODE",
-        source: "path-edit",
-        nodeId,
-        updater: (node) => addVectorPathPoint({ node, pathIndex: 0, point, editableVectorPaths }),
-      });
-      return true;
-    },
-    [activePage, dispatch, document.blobs],
-  );
-
-  const sceneGraph = useFigSceneGraphFromResources({
-    page: renderWindow ? activePage : null,
-    canvasWidth: renderWindow?.surfaceWidth ?? MIN_RENDER_WINDOW_SIZE,
-    canvasHeight: renderWindow?.surfaceHeight ?? MIN_RENDER_WINDOW_SIZE,
-    viewportX: renderWindow?.x ?? 0,
-    viewportY: renderWindow?.y ?? 0,
-    viewportWidth: renderWindow?.width ?? MIN_RENDER_WINDOW_SIZE,
-    viewportHeight: renderWindow?.height ?? MIN_RENDER_WINDOW_SIZE,
-    resources,
-    textFontResolver,
-  });
-  const renderOptions = useMemo(() => createFigFamilyRenderOptions(document), [document]);
-
-  const applyVectorPathDraftResult = useCallback((result: VectorPathDraftOperationResult) => {
+  const publishVectorPathDraftResult = useCallback((
+    result: VectorPathDraftOperationResult,
+    nextModeAfterCommit: FigCreationMode | undefined,
+  ): void => {
     vectorPathDraftSessionRef.current = result.session;
-    setVectorPathDrawPreview(result.session?.draft ?? null);
-    if (result.committedDraft) {
-      dispatch({
-        type: "ADD_NODE",
-        parentId: result.committedDraft.parentId ?? undefined,
-        spec: commitVectorPathDraftToNodeSpec(result.committedDraft),
-      });
+    setVectorPathDraftSession(result.session);
+    if (result.committedDraft === undefined) {
+      return;
     }
-  }, [dispatch]);
+    const spec = commitVectorPathDraftToNodeSpec(result.committedDraft);
+    addNodeToActivePage(spec, result.committedDraft.parentId, "canvas");
+    if (nextModeAfterCommit !== undefined) {
+      setCreationMode(nextModeAfterCommit);
+    }
+  }, [addNodeToActivePage, setCreationMode]);
 
-  const addVectorPathDraftPointAt = useCallback(
-    (
-      point: { readonly x: number; readonly y: number },
-      parent: { readonly parentId: FigNodeId | null; readonly parentTransform: FigMatrix | undefined },
-      clientPoint: { readonly clientX: number; readonly clientY: number },
-    ) => {
-      const currentSession = vectorPathDraftSessionRef.current;
-      const localPoint = pageToDrawingLocalPoint(currentSession?.draft ?? parent, point);
-      applyVectorPathDraftResult(applyVectorPathDraftOperation(currentSession, {
+  const commitVectorPathDraft = useCallback((nextMode: FigCreationMode): void => {
+    publishVectorPathDraftResult(
+      applyVectorPathDraftOperation(vectorPathDraftSessionRef.current, { type: "commit" }),
+      nextMode,
+    );
+  }, [publishVectorPathDraftResult]);
+
+  const placeVectorPathDraftPoint = useCallback((
+    coords: CanvasPageCoords,
+    event: Pick<PointerEvent, "clientX" | "clientY">,
+  ): void => {
+    const point = worldPoint(coords);
+    publishVectorPathDraftResult(
+      applyVectorPathDraftOperation(vectorPathDraftSessionRef.current, {
         type: "place-point",
-        parent,
-        localPoint,
+        parent: ACTIVE_PAGE_VECTOR_PATH_DRAFT_PARENT,
+        localPoint: point,
         pagePoint: point,
-        pointerStart: clientPoint,
+        pointerStart: { clientX: event.clientX, clientY: event.clientY },
         closeTolerance: screenPxToPagePx(VECTOR_PATH_CLOSE_TOLERANCE_PX, viewportScale),
-      }));
-    },
-    [applyVectorPathDraftResult, viewportScale],
-  );
+      }),
+      "pen",
+    );
+  }, [publishVectorPathDraftResult, viewportScale]);
 
-  const commitVectorPathDraft = useCallback(() => {
-    applyVectorPathDraftResult(applyVectorPathDraftOperation(vectorPathDraftSessionRef.current, { type: "commit" }));
-  }, [applyVectorPathDraftResult]);
+  const pointFromPointerEvent = useCallback((event: Pick<PointerEvent, "clientX" | "clientY">) => {
+    return requirePagePointFromScreen(canvasRef.current, event);
+  }, []);
 
-  useEffect(() => {
-    const wasPathEditing = previousPathEditingEnabledRef.current;
-    previousPathEditingEnabledRef.current = interactionPolicy.pathEditingEnabled;
-    if (wasPathEditing && !interactionPolicy.pathEditingEnabled) {
-      commitVectorPathDraft();
-    }
-  }, [commitVectorPathDraft, interactionPolicy.pathEditingEnabled]);
+  useFigKeyboard({
+    hasSelection: selectedGuids.length > 0,
+    setCreationMode,
+    clearSelection,
+    deleteSelection: () => deleteSelectedNodes("canvas"),
+    vectorPathDraftActive: vectorPathDraftSession !== null,
+    commitVectorPathDraft,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    isTextEditing: textEdit.type === "active",
+    exitTextEdit,
+  });
 
-  // =========================================================================
-  // Item events
-  // =========================================================================
-
-  const handleItemPointerDown = useCallback(
-    (id: string, coords: CanvasPageCoords, e: React.PointerEvent) => {
-      // If text editing is active, clicking any node exits text edit first.
-      // This prevents the invalid state of "text editing + other node selected".
-      if (textEdit.type === "active") {
-        if (allowsFigUserOperation(operationDomain, "exit-text-edit")) {
-          dispatch({ type: "EXIT_TEXT_EDIT" });
-        }
-        return;
+  const handleViewportChange = useCallback((
+    _viewport: EditorCanvasViewportContentContext["viewport"],
+    nextContext: EditorCanvasViewportContentContext,
+  ): void => {
+    setViewportRenderContext((previous) => {
+      if (
+        previous !== null
+        && previous.rulerThickness === nextContext.rulerThickness
+        && previous.viewportSize.width === nextContext.viewportSize.width
+        && previous.viewportSize.height === nextContext.viewportSize.height
+        && previous.viewport.translateX === nextContext.viewport.translateX
+        && previous.viewport.translateY === nextContext.viewport.translateY
+        && previous.viewport.scale === nextContext.viewport.scale
+      ) {
+        return previous;
       }
-
-      if (e.button !== 0) {
-        return;
-      }
-
-      if (allowsFigUserOperation(operationDomain, "resolve-path-target")) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (vectorPathDraftSessionRef.current) {
-          addVectorPathDraftPointAt(
-            { x: coords.pageX, y: coords.pageY },
-            { parentId: null, parentTransform: undefined },
-            { clientX: coords.clientX, clientY: coords.clientY },
-          );
-          return;
-        }
-        const hitNodeId = id as FigNodeId;
-        const nodeId = resolveInteractionTargetNodeId({
-          activePage,
-          itemBounds,
-          hitNodeId,
-          targetMode: interactionPolicy.targetMode,
-          point: { x: coords.pageX, y: coords.pageY },
-        });
-        const targetNode = activePage ? findNodeById(activePage.children, nodeId) : undefined;
-        if (!canEnterVectorPathEdit(targetNode)) {
-          const parent = resolvePathDrawingParent({
-            activePage,
-            itemBounds,
-            point: { x: coords.pageX, y: coords.pageY },
-          });
-          addVectorPathDraftPointAt(
-            { x: coords.pageX, y: coords.pageY },
-            parent,
-            { clientX: coords.clientX, clientY: coords.clientY },
-          );
-          return;
-        }
-        if (!nodeSelection.selectedIds.includes(nodeId) || nodeSelection.primaryId !== nodeId) {
-          if (allowsFigUserOperation(operationDomain, "select-node")) {
-            dispatch({
-              type: "SELECT_NODE",
-              nodeId,
-              addToSelection: false,
-            });
-          }
-          return;
-        }
-        return;
-      }
-
-      if (allowsFigUserOperation(operationDomain, "start-create")) {
-        e.preventDefault();
-        e.stopPropagation();
-        creationDragRef.current = {
-          startPageX: coords.pageX,
-          startPageY: coords.pageY,
-          currentPageX: coords.pageX,
-          currentPageY: coords.pageY,
-        };
-        return;
-      }
-
-      if (allowsFigUserOperation(operationDomain, "select-node")) {
-        dispatch({
-          type: "SELECT_NODE",
-          nodeId: id as FigNodeId,
-          addToSelection: coords.addToSelection,
-          toggle: coords.toggle,
-        });
-      }
-
-      if (allowsFigUserOperation(operationDomain, "start-move")) {
-        dispatch({
-          type: "START_PENDING_MOVE",
-          startX: coords.pageX,
-          startY: coords.pageY,
-          startClientX: coords.clientX,
-          startClientY: coords.clientY,
-        });
-      }
-    },
-    [activePage, addVectorPathDraftPointAt, dispatch, interactionPolicy, itemBounds, nodeSelection.primaryId, nodeSelection.selectedIds, operationDomain, textEdit],
-  );
-
-  const handleItemClick = useCallback(
-    (id: string, coords: CanvasPageCoords, _e: React.MouseEvent) => {
-      if (allowsFigUserOperation(operationDomain, "resolve-path-target")) {
-        return;
-      }
-      if (!allowsFigUserOperation(operationDomain, "select-node")) {
-        return;
-      }
-      dispatch({
-        type: "SELECT_NODE",
-        nodeId: id as FigNodeId,
-        addToSelection: coords.addToSelection,
-        toggle: coords.toggle,
-      });
-    },
-    [dispatch, operationDomain],
-  );
-
-  /**
-   * Double-click handler: enter text editing for TEXT nodes.
-   *
-   * Since clicking already selects the deepest node at the cursor,
-   * double-click's purpose is limited to entering text edit mode.
-   */
-  const handleDoubleClick = useCallback(
-    (id: string, _coords: CanvasPageCoords, _e: React.MouseEvent) => {
-      if (allowsFigUserOperation(operationDomain, "resolve-path-target")) {
-        commitVectorPathDraft();
-        return;
-      }
-      if (!activePage) {
-        return;
-      }
-
-      const node = findNodeById(activePage.children, id as FigNodeId);
-      if (node?.type === "TEXT" && allowsFigUserOperation(operationDomain, "enter-text-edit")) {
-        dispatch({ type: "ENTER_TEXT_EDIT", nodeId: id as FigNodeId });
-      }
-    },
-    [activePage, commitVectorPathDraft, dispatch, operationDomain],
-  );
-
-  // =========================================================================
-  // Canvas (background) events
-  // =========================================================================
-
-  /**
-   * Creation drag state — tracked via ref to avoid re-renders during drag.
-   * When the user is in a creation mode and drags on the canvas background,
-   * we track the start/current page coordinates. On pointer up, we compute
-   * the final rectangle and dispatch COMMIT_CREATION.
-   */
-  const creationDragRef = useRef<{
-    startPageX: number;
-    startPageY: number;
-    currentPageX: number;
-    currentPageY: number;
-  } | null>(null);
-  const [creationPreview, setCreationPreview] = useState<{
-    x: number; y: number; width: number; height: number;
-  } | null>(null);
-
-  const handleCanvasPointerDown = useCallback(
-    (coords: CanvasPageCoords, e: React.PointerEvent) => {
-      // Exit text editing on any canvas background click
-      if (textEdit.type === "active") {
-        if (allowsFigUserOperation(operationDomain, "exit-text-edit")) {
-          dispatch({ type: "EXIT_TEXT_EDIT" });
-        }
-        return;
-      }
-
-      if (allowsFigUserOperation(operationDomain, "resolve-path-target")) {
-        e.preventDefault();
-        addVectorPathDraftPointAt(
-          { x: coords.pageX, y: coords.pageY },
-          { parentId: null, parentTransform: undefined },
-          { clientX: coords.clientX, clientY: coords.clientY },
-        );
-        return;
-      }
-
-      if (!allowsFigUserOperation(operationDomain, "clear-selection") && !allowsFigUserOperation(operationDomain, "start-create")) {
-        return;
-      }
-
-      if (allowsFigUserOperation(operationDomain, "start-create")) {
-        // Start creation drag
-        e.preventDefault(); // Suppress marquee in EditorCanvas
-        creationDragRef.current = {
-          startPageX: coords.pageX,
-          startPageY: coords.pageY,
-          currentPageX: coords.pageX,
-          currentPageY: coords.pageY,
-        };
-        return;
-      }
-      if (allowsFigUserOperation(operationDomain, "clear-selection")) {
-        dispatch({ type: "CLEAR_NODE_SELECTION" });
-      }
-    },
-    [addVectorPathDraftPointAt, dispatch, operationDomain, textEdit],
-  );
-
-  const handleCanvasClick = useCallback(
-    (coords: CanvasPageCoords, _e: React.MouseEvent) => {
-      if (!allowsFigUserOperation(operationDomain, "clear-selection") && !allowsFigUserOperation(operationDomain, "commit-create")) {
-        return;
-      }
-
-      if (allowsFigUserOperation(operationDomain, "commit-create")) {
-        // Single click in creation mode: create shape at click position with default size
-        dispatch({
-          type: "COMMIT_CREATION",
-          x: coords.pageX,
-          y: coords.pageY,
-          width: 0,
-          height: 0,
-        });
-        return;
-      }
-      if (allowsFigUserOperation(operationDomain, "clear-selection")) {
-        dispatch({ type: "CLEAR_NODE_SELECTION" });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  // Global pointer listeners for creation drag
-  useEffect(() => {
-    if (!interactionPolicy.shapeCreationEnabled) {
-      return;
-    }
-
-    const handlePointerMove = (e: PointerEvent) => {
-      const drag = creationDragRef.current;
-      if (!drag) {
-        return;
-      }
-
-      const pageCoords = canvasRef.current?.screenToPage(e.clientX, e.clientY);
-      if (!pageCoords) {
-        return;
-      }
-
-      drag.currentPageX = pageCoords.pageX;
-      drag.currentPageY = pageCoords.pageY;
-
-      // Update preview rectangle
-      const x = Math.min(drag.startPageX, drag.currentPageX);
-      const y = Math.min(drag.startPageY, drag.currentPageY);
-      const width = Math.abs(drag.currentPageX - drag.startPageX);
-      const height = Math.abs(drag.currentPageY - drag.startPageY);
-      setCreationPreview({ x, y, width, height });
-    };
-
-    const handlePointerUp = () => {
-      const drag = creationDragRef.current;
-      if (!drag) {
-        return;
-      }
-
-      const x = Math.min(drag.startPageX, drag.currentPageX);
-      const y = Math.min(drag.startPageY, drag.currentPageY);
-      const width = Math.abs(drag.currentPageX - drag.startPageX);
-      const height = Math.abs(drag.currentPageY - drag.startPageY);
-
-      creationDragRef.current = null;
-      setCreationPreview(null);
-
-      dispatch({
-        type: "COMMIT_CREATION",
-        x,
-        y,
-        width,
-        height,
-      });
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [dispatch, interactionPolicy.shapeCreationEnabled]);
-
-  // =========================================================================
-  // Context menu
-  // =========================================================================
-
-  const handleItemContextMenu = useCallback(
-    (id: string, coords: CanvasPageCoords, e: React.MouseEvent) => {
-      if (!allowsFigUserOperation(operationDomain, "open-context-menu")) {
-        return;
-      }
-      // Select the right-clicked item if not already selected
-      if (!nodeSelection.selectedIds.includes(id as FigNodeId) && allowsFigUserOperation(operationDomain, "select-node")) {
-        dispatch({
-          type: "SELECT_NODE",
-          nodeId: id as FigNodeId,
-          addToSelection: false,
-        });
-      }
-
-      setContextMenu({
-        x: e.clientX,
-        y: e.clientY,
-        pageX: coords.pageX,
-        pageY: coords.pageY,
-        targetId: id as FigNodeId,
-      });
-    },
-    [dispatch, nodeSelection.selectedIds, operationDomain],
-  );
-
-  const handleCanvasContextMenu = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      // Canvas-level context menu (no item selected) — for now just prevent default
-      setContextMenu(null);
-    },
-    [],
-  );
-
-  const handleVectorPathHandlePointerDown = useCallback(
-    (handle: VectorPathHandle, e: React.PointerEvent) => {
-      if (!primaryNode || !allowsFigUserOperation(operationDomain, "edit-vector-path")) {
-        return;
-      }
-      if (e.button !== 0) {
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      vectorPathDragRef.current = {
-        nodeId: primaryNode.id,
-        pathIndex: handle.pathIndex,
-        commandIndex: handle.commandIndex,
-        valueIndex: handle.valueIndex,
-        editableVectorPaths: primaryEditableVectorPaths,
-      };
-    },
-    [operationDomain, primaryEditableVectorPaths, primaryNode],
-  );
-
-  const handleVectorPathHandleContextMenu = useCallback(
-    (handle: VectorPathHandle, e: React.MouseEvent) => {
-      if (!primaryNode || !allowsFigUserOperation(operationDomain, "open-context-menu")) {
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      setContextMenu({
-        x: e.clientX,
-        y: e.clientY,
-        pageX: handle.x,
-        pageY: handle.y,
-        targetId: primaryNode.id,
-        vectorHandle: handle,
-      });
-    },
-    [operationDomain, primaryNode],
-  );
-
-  const handleEditablePathPointerDown = useCallback(
-    (pathIndex: number, e: React.PointerEvent) => {
-      if (!primaryNode || !allowsFigUserOperation(operationDomain, "edit-vector-path") || e.button !== 0) {
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      if (!primaryEditableVectorPaths) {
-        return;
-      }
-      if (!nodeSelection.selectedIds.includes(primaryNode.id)) {
-        if (allowsFigUserOperation(operationDomain, "select-node")) {
-          dispatch({ type: "SELECT_NODE", nodeId: primaryNode.id, addToSelection: false });
-        }
-        return;
-      }
-      if (!activePage) {
-        return;
-      }
-      const coords = canvasRef.current?.screenToPage(e.clientX, e.clientY);
-      if (!coords) {
-        return;
-      }
-      const transform = computeAbsoluteTransform(activePage.children, primaryNode.id);
-      if (!transform) {
-        return;
-      }
-      const point = worldToLocalPoint(transform, { x: coords.pageX, y: coords.pageY });
-      dispatch({
-        type: "UPDATE_NODE",
-        source: "path-edit",
-        nodeId: primaryNode.id,
-        updater: (node) => addVectorPathPoint({ node, pathIndex, point, editableVectorPaths: primaryEditableVectorPaths }),
-      });
-    },
-    [activePage, dispatch, nodeSelection.selectedIds, operationDomain, primaryEditableVectorPaths, primaryNode],
-  );
+      setViewportRevision((previousRevision) => previousRevision + 1);
+      return nextContext;
+    });
+  }, []);
 
   useEffect(() => {
-    const handlePointerMove = (event: PointerEvent) => {
-      const currentDrag = vectorPathDragRef.current;
-      if (!currentDrag || !activePage) {
-        return;
-      }
-      const pageCoords = canvasRef.current?.screenToPage(event.clientX, event.clientY);
-      const transform = computeAbsoluteTransform(activePage.children, currentDrag.nodeId);
-      if (!pageCoords || !transform) {
-        return;
-      }
-      if (!allowsFigUserOperation(operationDomain, "edit-vector-path")) {
-        return;
-      }
-      const point = worldToLocalPoint(transform, { x: pageCoords.pageX, y: pageCoords.pageY });
-      dispatch({
-        type: "UPDATE_NODE",
-        source: "path-edit",
-        nodeId: currentDrag.nodeId,
-        updater: (node) => updateVectorPathEndpoint({
-          node,
-          pathIndex: currentDrag.pathIndex,
-          commandIndex: currentDrag.commandIndex,
-          valueIndex: currentDrag.valueIndex,
-          point,
-          editableVectorPaths: currentDrag.editableVectorPaths,
-        }),
-      });
-    };
-    const handlePointerUp = () => {
-      vectorPathDragRef.current = null;
-    };
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [activePage, dispatch, operationDomain]);
-
-  useEffect(() => {
-    if (!interactionPolicy.pathEditingEnabled) {
-      return;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const session = vectorPathDraftSessionRef.current;
-      if (!session) {
-        return;
-      }
-      const pageCoords = canvasRef.current?.screenToPage(event.clientX, event.clientY);
-      if (!pageCoords) {
-        return;
-      }
-      const start = session.pointerStart;
-      if (start) {
-        const exceededThreshold = exceedsThreshold({
-          startClientX: start.clientX,
-          startClientY: start.clientY,
-          clientX: event.clientX,
-          clientY: event.clientY,
-        });
-        const pagePoint = { x: pageCoords.pageX, y: pageCoords.pageY };
-        applyVectorPathDraftResult(applyVectorPathDraftOperation(session, {
-          type: "anchor-drag-preview",
-          localPoint: pageToDrawingLocalPoint(session.draft, pagePoint),
-          pagePoint,
-          exceededThreshold,
-        }));
-        return;
-      }
-      applyVectorPathDraftResult(applyVectorPathDraftOperation(session, {
-        type: "preview",
-        pagePoint: { x: pageCoords.pageX, y: pageCoords.pageY },
-      }));
-    };
-
-    const handlePointerUp = (event: PointerEvent) => {
-      const session = vectorPathDraftSessionRef.current;
-      const start = session?.pointerStart;
-      if (!session || !start) {
-        return;
-      }
-      const exceededThreshold = exceedsThreshold({
-        startClientX: start.clientX,
-        startClientY: start.clientY,
-        clientX: event.clientX,
-        clientY: event.clientY,
-      });
-      const pageCoords = canvasRef.current?.screenToPage(event.clientX, event.clientY);
-      if (!pageCoords) {
-        applyVectorPathDraftResult(applyVectorPathDraftOperation(session, {
-          type: "anchor-drag-end",
-          localPoint: { x: 0, y: 0 },
-          pagePoint: { x: 0, y: 0 },
-          exceededThreshold: false,
-        }));
-        return;
-      }
-      const pagePoint = { x: pageCoords.pageX, y: pageCoords.pageY };
-      const localPoint = pageToDrawingLocalPoint(session.draft, pagePoint);
-      applyVectorPathDraftResult(applyVectorPathDraftOperation(session, {
-        type: "anchor-drag-end",
-        localPoint,
-        pagePoint,
-        exceededThreshold,
-      }));
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        commitVectorPathDraft();
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        commitVectorPathDraft();
-      }
-    };
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [applyVectorPathDraftResult, commitVectorPathDraft, interactionPolicy.pathEditingEnabled]);
-
-  const handleVectorPathDraftHandlePointerDown = useCallback((handle: VectorPathDraftHandle, event: React.PointerEvent) => {
-    const session = vectorPathDraftSessionRef.current;
-    if (!session) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const startClientX = event.clientX;
-    const startClientY = event.clientY;
-    const dragState = { moved: false };
-    const moveHandleToPointer = (pointerEvent: PointerEvent, current: VectorPathDraftSession) => {
-      const pageCoords = canvasRef.current?.screenToPage(pointerEvent.clientX, pointerEvent.clientY);
-      if (!pageCoords) {
-        return;
-      }
-      const pagePoint = { x: pageCoords.pageX, y: pageCoords.pageY };
-      const localPoint = pageToDrawingLocalPoint(current.draft, pagePoint);
-      applyVectorPathDraftResult(applyVectorPathDraftOperation(current, {
-        type: "move-handle",
-        handle,
-        localPoint,
-        pagePoint,
-      }));
-    };
-    const handlePointerMove = (moveEvent: PointerEvent) => {
+    const handlePointerMove = (event: PointerEvent): void => {
       const current = vectorPathDraftSessionRef.current;
-      if (!current) {
+      if (current === null) {
+        return;
+      }
+      const handleDrag = vectorPathDraftHandleDragRef.current;
+      const point = pointFromPointerEvent(event);
+      const start = current.pointerStart;
+      if (handleDrag === null && start !== undefined) {
+        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+          type: "anchor-drag-preview",
+          localPoint: point,
+          pagePoint: point,
+          exceededThreshold: exceedsThreshold({
+            startClientX: start.clientX,
+            startClientY: start.clientY,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            thresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
+          }),
+        }), undefined);
+        return;
+      }
+      if (handleDrag === null) {
+        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+          type: "preview",
+          pagePoint: point,
+        }), undefined);
         return;
       }
       const intent = resolveVectorPathDraftHandleIntent({
         draft: current.draft,
-        handle,
-        startClientX,
-        startClientY,
-        clientX: moveEvent.clientX,
-        clientY: moveEvent.clientY,
-        dragThresholdPx: VECTOR_PATH_HANDLE_DRAG_THRESHOLD_PX,
+        handle: handleDrag.handle,
+        startClientX: handleDrag.startClientX,
+        startClientY: handleDrag.startClientY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        dragThresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
       });
       if (intent !== "move-handle") {
         return;
       }
-      dragState.moved = true;
-      moveHandleToPointer(moveEvent, current);
+      vectorPathDraftHandleDragRef.current = { ...handleDrag, moved: true };
+      publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+        type: "move-handle",
+        handle: handleDrag.handle,
+        localPoint: point,
+        pagePoint: point,
+      }), undefined);
     };
-    const handlePointerUp = (upEvent: PointerEvent) => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+
+    const handlePointerUp = (event: PointerEvent): void => {
       const current = vectorPathDraftSessionRef.current;
-      if (!current) {
+      const handleDrag = vectorPathDraftHandleDragRef.current;
+      vectorPathDraftHandleDragRef.current = null;
+      if (current === null) {
+        return;
+      }
+      const start = current.pointerStart;
+      if (handleDrag === null && start !== undefined) {
+        const point = pointFromPointerEvent(event);
+        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+          type: "anchor-drag-end",
+          localPoint: point,
+          pagePoint: point,
+          exceededThreshold: exceedsThreshold({
+            startClientX: start.clientX,
+            startClientY: start.clientY,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            thresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
+          }),
+        }), undefined);
+        return;
+      }
+      if (handleDrag === null) {
         return;
       }
       const intent = resolveVectorPathDraftHandleIntent({
         draft: current.draft,
-        handle,
-        startClientX,
-        startClientY,
-        clientX: upEvent.clientX,
-        clientY: upEvent.clientY,
-        dragThresholdPx: VECTOR_PATH_HANDLE_DRAG_THRESHOLD_PX,
+        handle: handleDrag.handle,
+        startClientX: handleDrag.startClientX,
+        startClientY: handleDrag.startClientY,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        dragThresholdPx: VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX,
       });
-      if (intent === "close-start-anchor" && !dragState.moved) {
-        applyVectorPathDraftResult(applyVectorPathDraftOperation(current, { type: "close-from-start-handle" }));
+      if (intent === "close-start-anchor" && !handleDrag.moved) {
+        publishVectorPathDraftResult(applyVectorPathDraftOperation(current, { type: "close-from-start-handle" }), "pen");
         return;
       }
-      if (!dragState.moved && intent === "move-handle") {
-        moveHandleToPointer(upEvent, current);
-      }
+      const point = pointFromPointerEvent(event);
+      publishVectorPathDraftResult(applyVectorPathDraftOperation(current, {
+        type: "move-handle",
+        handle: handleDrag.handle,
+        localPoint: point,
+        pagePoint: point,
+      }), undefined);
     };
+
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
-  }, [applyVectorPathDraftResult]);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, [pointFromPointerEvent, publishVectorPathDraftResult]);
 
-  const handleVectorPathDraftSegmentPointerDown = useCallback((event: React.PointerEvent) => {
-    const session = vectorPathDraftSessionRef.current;
-    const pageCoords = canvasRef.current?.screenToPage(event.clientX, event.clientY);
-    if (!session || !pageCoords) {
+  useEffect(() => {
+    const wasPathEditingEnabled = previousPathEditingEnabledRef.current;
+    previousPathEditingEnabledRef.current = policy.canEditPath;
+    if (!wasPathEditingEnabled || policy.canEditPath || vectorPathDraftSessionRef.current === null) {
+      return;
+    }
+    commitVectorPathDraft("select");
+  }, [commitVectorPathDraft, policy.canEditPath]);
+
+  const handleItemPointerDown = useCallback((id: string, coords: CanvasPageCoords, event: ReactPointerEvent): void => {
+    if (textEdit.type === "active") {
+      exitTextEdit();
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    const point = worldPoint(coords);
+    if (policy.canCreate) {
+      creationDragSessionRef.current = { startX: point.x, startY: point.y };
+      return;
+    }
+    const guid = resolveInteractionTargetGuid({
+      document: context.document,
+      itemBounds: worldBounds,
+      hitId: id,
+      point,
+    });
+    const node = context.document.nodesByGuid.get(guidToString(guid));
+    const startsPathEdit = policy.canEditPath && vectorPathDraftSessionRef.current === null && canEditKiwiNodePath(node);
+    if (startsPathEdit) {
+      selectNodeGuid(guid, {
+        additive: coords.addToSelection,
+        toggle: coords.toggle,
+      });
+      return;
+    }
+    if (policy.canEditPath) {
+      placeVectorPathDraftPoint(coords, event.nativeEvent);
+      return;
+    }
+    if (!policy.canSelect && !policy.canMove) {
+      return;
+    }
+    selectNodeGuid(guid, {
+      additive: coords.addToSelection,
+      toggle: coords.toggle,
+    });
+    if (policy.canMove) {
+      moveSessionRef.current = { guid, startX: point.x, startY: point.y };
+      beginCanvasTransform();
+    }
+  }, [
+    beginCanvasTransform,
+    context.document,
+    exitTextEdit,
+    policy.canCreate,
+    policy.canMove,
+    policy.canEditPath,
+    policy.canSelect,
+    placeVectorPathDraftPoint,
+    selectNodeGuid,
+    textEdit.type,
+    worldBounds,
+  ]);
+
+  const handleItemClick = useCallback((id: string, coords: CanvasPageCoords): void => {
+    if (!policy.canSelect) {
+      return;
+    }
+    if (policy.canEditPath) {
+      return;
+    }
+    if (coords.addToSelection || coords.toggle) {
+      return;
+    }
+    selectNodeGuid(resolveNodeGuidFromCanvasId(context.document, id));
+  }, [context.document, policy.canEditPath, policy.canSelect, selectNodeGuid]);
+
+  const handleItemDoubleClick = useCallback((id: string, _coords: CanvasPageCoords): void => {
+    if (!policy.canSelect || policy.canEditPath) {
+      return;
+    }
+    const guid = resolveNodeGuidFromCanvasId(context.document, id);
+    const node = context.document.nodesByGuid.get(guidToString(guid));
+    if (node === undefined) {
+      throw new Error(`FigEditorCanvas: node ${id} is not present for double-click`);
+    }
+    if (getNodeType(node) !== "TEXT") {
+      return;
+    }
+    enterTextEdit(guid);
+  }, [context.document, enterTextEdit, policy.canEditPath, policy.canSelect]);
+
+  const handleItemContextMenu = useCallback((id: string, coords: CanvasPageCoords): void => {
+    if (!policy.canSelect) {
+      return;
+    }
+    const point = worldPoint(coords);
+    const guid = resolveInteractionTargetGuid({
+      document: context.document,
+      itemBounds: worldBounds,
+      hitId: id,
+      point,
+    });
+    if (!selectedGuids.some((selected) => guidToString(selected) === guidToString(guid))) {
+      selectNodeGuid(guid);
+    }
+    setContextMenu({ kind: "boolean", x: coords.clientX, y: coords.clientY });
+  }, [context.document, policy.canSelect, selectNodeGuid, selectedGuids, worldBounds]);
+
+  const closeContextMenu = useCallback((): void => {
+    setContextMenu(null);
+  }, []);
+
+  const runContextMenuAction = useCallback((actionId: string): void => {
+    if (contextMenu?.kind === "vector") {
+      const handle = contextMenu.handle;
+      switch (actionId) {
+        case "convert-vector-point-curve":
+          updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
+            node,
+            pathIndex: handle.pathIndex,
+            operation: { type: "convert-segment-to-curve", commandIndex: handle.commandIndex },
+          }), "canvas");
+          return;
+        case "convert-vector-point-line":
+          updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
+            node,
+            pathIndex: handle.pathIndex,
+            operation: { type: "convert-segment-to-line", commandIndex: handle.commandIndex },
+          }), "canvas");
+          return;
+        case "delete-vector-point":
+          updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
+            node,
+            pathIndex: handle.pathIndex,
+            operation: { type: "delete-anchor", commandIndex: handle.commandIndex },
+          }), "canvas");
+          return;
+        case "open-vector-path":
+          updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
+            node,
+            pathIndex: handle.pathIndex,
+            operation: { type: "set-closed", closed: false },
+          }), "canvas");
+          return;
+        case "close-vector-path":
+          updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
+            node,
+            pathIndex: handle.pathIndex,
+            operation: { type: "set-closed", closed: true },
+          }), "canvas");
+          return;
+        default:
+          throw new Error(`FigEditorCanvas received unsupported vector context menu action ${actionId}`);
+      }
+    }
+    const operationByAction: Record<string, BooleanOperationType> = {
+      "boolean-union": "UNION",
+      "boolean-subtract": "SUBTRACT",
+      "boolean-intersect": "INTERSECT",
+      "boolean-exclude": "EXCLUDE",
+    };
+    const operation = operationByAction[actionId];
+    if (operation === undefined) {
+      throw new Error(`FigEditorCanvas received unsupported context menu action ${actionId}`);
+    }
+    createBooleanOperationFromSelection(operation, "canvas");
+  }, [contextMenu, createBooleanOperationFromSelection, updateNode]);
+
+  const handleVectorPathHandlePointerDown = useCallback((
+    handle: VectorPathHandle,
+    event: ReactPointerEvent<SVGCircleElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    vectorPathDragRef.current = handle;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const handleVectorPathHandlePointerMove = useCallback((event: ReactPointerEvent<SVGCircleElement>): void => {
+    const handle = vectorPathDragRef.current;
+    if (handle === null) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
-    addVectorPathDraftPointAt(
-      { x: pageCoords.pageX, y: pageCoords.pageY },
-      { parentId: session.draft.parentId, parentTransform: session.draft.parentTransform },
-      { clientX: event.clientX, clientY: event.clientY },
-    );
-  }, [addVectorPathDraftPointAt]);
+    const point = svgElementPoint(event.currentTarget, event.clientX, event.clientY);
+    updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
+      node,
+      pathIndex: handle.pathIndex,
+      operation: {
+        type: "move-command-point",
+        commandIndex: handle.commandIndex,
+        valueIndex: handle.valueIndex,
+        point,
+      },
+    }), "canvas");
+  }, [updateNode]);
 
-  const contextMenuItems = useMemo((): readonly MenuEntry[] => {
-    const hasSelection = nodeSelection.selectedIds.length > 0;
-    const primaryNode = activePage && nodeSelection.primaryId ? findNodeById(activePage.children, nodeSelection.primaryId) : undefined;
-    const canEditVectorPath = canEnterVectorPathEdit(primaryNode);
-    const hasExplicitVectorPaths = Boolean(primaryNode?.vectorPaths && primaryNode.vectorPaths.length > 0);
-    const canAddVectorPoint = hasExplicitVectorPaths && interactionPolicy.pathEditingEnabled;
-    const vectorHandle = resolveContextVectorHandle(contextMenu, vectorPathHandles);
-    const isAnchorHandle = vectorHandle?.role === "anchor";
-    const canConvertToCurve = Boolean(hasExplicitVectorPaths && isAnchorHandle && vectorHandle.commandIndex > 0);
-    const canConvertToLine = Boolean(hasExplicitVectorPaths && isAnchorHandle && vectorHandle.commandIndex > 0);
-    const canDeleteVectorPoint = Boolean(hasExplicitVectorPaths && isAnchorHandle && vectorPathHandles.filter((handle) => handle.role === "anchor").length > 2);
-    return [
-      { id: "duplicate", label: "Duplicate", shortcut: "Cmd+D", disabled: !hasSelection || !allowsFigUserOperation(operationDomain, "duplicate-selection") },
-      { id: "copy", label: "Copy", shortcut: "Cmd+C", disabled: !hasSelection || !allowsFigUserOperation(operationDomain, "copy-selection") },
-      { id: "paste", label: "Paste", shortcut: "Cmd+V", disabled: !allowsFigUserOperation(operationDomain, "paste") },
-      { type: "separator" },
-      { id: "group", label: "Group Selection", shortcut: "Cmd+G", disabled: nodeSelection.selectedIds.length === 0 || !allowsFigUserOperation(operationDomain, "group-selection") },
-      { id: "make-component", label: "Create Component", disabled: nodeSelection.selectedIds.length === 0 || !allowsFigUserOperation(operationDomain, "make-component") },
-      { id: "make-symbol", label: "Create Symbol", disabled: nodeSelection.selectedIds.length === 0 || !allowsFigUserOperation(operationDomain, "make-symbol") },
-      { id: "outline", label: "Outline Selection", disabled: nodeSelection.selectedIds.length === 0 || !allowsFigUserOperation(operationDomain, "outline-selection") },
-      { type: "separator" },
-      { id: "boolean-union", label: "Union Selection", disabled: nodeSelection.selectedIds.length < 2 || !allowsFigUserOperation(operationDomain, "boolean-operation") },
-      { id: "boolean-subtract", label: "Subtract Selection", disabled: nodeSelection.selectedIds.length < 2 || !allowsFigUserOperation(operationDomain, "boolean-operation") },
-      { id: "boolean-intersect", label: "Intersect Selection", disabled: nodeSelection.selectedIds.length < 2 || !allowsFigUserOperation(operationDomain, "boolean-operation") },
-      { id: "boolean-exclude", label: "Exclude Selection", disabled: nodeSelection.selectedIds.length < 2 || !allowsFigUserOperation(operationDomain, "boolean-operation") },
-      { type: "separator" },
-      { id: "edit-vector-path", label: "Edit Vector Path", disabled: !canEditVectorPath || !allowsFigUserOperation(operationDomain, "set-tool") },
-      { id: "add-vector-point", label: "Add Vector Point", disabled: !canAddVectorPoint },
-      { id: "convert-vector-point-curve", label: "Convert Segment to Curve", disabled: !canConvertToCurve },
-      { id: "convert-vector-point-line", label: "Convert Segment to Line", disabled: !canConvertToLine },
-      { id: "delete-vector-point", label: "Delete Vector Point", disabled: !canDeleteVectorPoint, danger: true },
-      { id: "close-vector-path", label: "Close Vector Path", disabled: !canEditVectorPath },
-      { id: "open-vector-path", label: "Open Vector Path", disabled: !canEditVectorPath },
-      { type: "separator" },
-      { id: "bring-to-front", label: "Bring to Front", disabled: !hasSelection },
-      { id: "bring-forward", label: "Bring Forward", disabled: !hasSelection },
-      { id: "send-backward", label: "Send Backward", disabled: !hasSelection },
-      { id: "send-to-back", label: "Send to Back", disabled: !hasSelection },
-      { type: "separator" },
-      { id: "delete", label: "Delete", shortcut: "Del", disabled: !hasSelection || !allowsFigUserOperation(operationDomain, "delete-selection"), danger: true },
-    ];
-  }, [activePage, contextMenu?.vectorHandle, interactionPolicy.pathEditingEnabled, nodeSelection.primaryId, nodeSelection.selectedIds.length, operationDomain, vectorPathHandles]);
-
-  const handleContextMenuAction = useCallback(
-    (actionId: string) => {
-      const selectedIds = nodeSelection.selectedIds;
-      const vectorHandle = resolveContextVectorHandle(contextMenu, vectorPathHandles);
-
-      switch (actionId) {
-        case "duplicate":
-          if (selectedIds.length > 0 && allowsFigUserOperation(operationDomain, "duplicate-selection")) {
-            dispatch({ type: "DUPLICATE_NODES", nodeIds: selectedIds });
-          }
-          break;
-        case "copy":
-          if (allowsFigUserOperation(operationDomain, "copy-selection")) {
-            dispatch({ type: "COPY" });
-          }
-          break;
-        case "paste":
-          if (allowsFigUserOperation(operationDomain, "paste")) {
-            dispatch({ type: "PASTE" });
-          }
-          break;
-        case "delete":
-          if (selectedIds.length > 0 && allowsFigUserOperation(operationDomain, "delete-selection")) {
-            dispatch({ type: "DELETE_NODES", nodeIds: selectedIds });
-          }
-          break;
-        case "group":
-          if (allowsFigUserOperation(operationDomain, "group-selection")) { dispatch({ type: "GROUP_SELECTION" }); }
-          break;
-        case "make-component":
-          if (allowsFigUserOperation(operationDomain, "make-component")) { dispatch({ type: "MAKE_COMPONENT_FROM_SELECTION" }); }
-          break;
-        case "make-symbol":
-          if (allowsFigUserOperation(operationDomain, "make-symbol")) { dispatch({ type: "MAKE_SYMBOL_FROM_SELECTION" }); }
-          break;
-        case "outline":
-          if (allowsFigUserOperation(operationDomain, "outline-selection")) { dispatch({ type: "OUTLINE_SELECTION" }); }
-          break;
-        case "boolean-union":
-          if (allowsFigUserOperation(operationDomain, "boolean-operation")) { dispatch({ type: "BOOLEAN_OPERATION_SELECTION", operation: "UNION" }); }
-          break;
-        case "boolean-subtract":
-          if (allowsFigUserOperation(operationDomain, "boolean-operation")) { dispatch({ type: "BOOLEAN_OPERATION_SELECTION", operation: "SUBTRACT" }); }
-          break;
-        case "boolean-intersect":
-          if (allowsFigUserOperation(operationDomain, "boolean-operation")) { dispatch({ type: "BOOLEAN_OPERATION_SELECTION", operation: "INTERSECT" }); }
-          break;
-        case "boolean-exclude":
-          if (allowsFigUserOperation(operationDomain, "boolean-operation")) { dispatch({ type: "BOOLEAN_OPERATION_SELECTION", operation: "EXCLUDE" }); }
-          break;
-        case "edit-vector-path":
-          if (allowsFigUserOperation(operationDomain, "set-tool")) { dispatch({ type: "SET_CREATION_MODE", mode: { type: "pen" } }); }
-          break;
-        case "add-vector-point":
-          if (selectedIds.length === 1 && contextMenu) {
-            addVectorPointAtPagePoint(selectedIds[0], { x: contextMenu.pageX, y: contextMenu.pageY });
-          }
-          break;
-        case "convert-vector-point-curve":
-          if (selectedIds.length === 1 && vectorHandle) {
-            const handle = vectorHandle;
-            dispatch({
-              type: "UPDATE_NODE",
-              source: "path-edit",
-              nodeId: selectedIds[0],
-              updater: (node) => updateVectorPathCommands({
-                node,
-                pathIndex: handle.pathIndex,
-                operation: { type: "convert-segment-to-curve", commandIndex: handle.commandIndex },
-                editableVectorPaths: primaryEditableVectorPaths,
-              }),
-            });
-          }
-          break;
-        case "convert-vector-point-line":
-          if (selectedIds.length === 1 && vectorHandle) {
-            const handle = vectorHandle;
-            dispatch({
-              type: "UPDATE_NODE",
-              source: "path-edit",
-              nodeId: selectedIds[0],
-              updater: (node) => updateVectorPathCommands({
-                node,
-                pathIndex: handle.pathIndex,
-                operation: { type: "convert-segment-to-line", commandIndex: handle.commandIndex },
-                editableVectorPaths: primaryEditableVectorPaths,
-              }),
-            });
-          }
-          break;
-        case "delete-vector-point":
-          if (selectedIds.length === 1 && vectorHandle) {
-            const handle = vectorHandle;
-            dispatch({
-              type: "UPDATE_NODE",
-              source: "path-edit",
-              nodeId: selectedIds[0],
-              updater: (node) => updateVectorPathCommands({
-                node,
-                pathIndex: handle.pathIndex,
-                operation: { type: "delete-anchor", commandIndex: handle.commandIndex },
-                editableVectorPaths: primaryEditableVectorPaths,
-              }),
-            });
-          }
-          break;
-        case "close-vector-path":
-          if (selectedIds.length === 1) {
-            dispatch({
-              type: "UPDATE_NODE",
-              source: "path-edit",
-              nodeId: selectedIds[0],
-              updater: (node) => updateVectorPathCommands({
-                node,
-                pathIndex: vectorHandle?.pathIndex ?? 0,
-                operation: { type: "set-closed", closed: true },
-                editableVectorPaths: primaryEditableVectorPaths,
-              }),
-            });
-          }
-          break;
-        case "open-vector-path":
-          if (selectedIds.length === 1) {
-            dispatch({
-              type: "UPDATE_NODE",
-              source: "path-edit",
-              nodeId: selectedIds[0],
-              updater: (node) => updateVectorPathCommands({
-                node,
-                pathIndex: vectorHandle?.pathIndex ?? 0,
-                operation: { type: "set-closed", closed: false },
-                editableVectorPaths: primaryEditableVectorPaths,
-              }),
-            });
-          }
-          break;
-        case "bring-to-front":
-          if (selectedIds.length === 1) {
-            dispatch({ type: "REORDER_NODE", nodeId: selectedIds[0], direction: "front" });
-          }
-          break;
-        case "bring-forward":
-          if (selectedIds.length === 1) {
-            dispatch({ type: "REORDER_NODE", nodeId: selectedIds[0], direction: "forward" });
-          }
-          break;
-        case "send-backward":
-          if (selectedIds.length === 1) {
-            dispatch({ type: "REORDER_NODE", nodeId: selectedIds[0], direction: "backward" });
-          }
-          break;
-        case "send-to-back":
-          if (selectedIds.length === 1) {
-            dispatch({ type: "REORDER_NODE", nodeId: selectedIds[0], direction: "back" });
-          }
-          break;
-      }
-      setContextMenu(null);
-    },
-    [addVectorPointAtPagePoint, contextMenu, dispatch, nodeSelection.selectedIds, operationDomain, primaryEditableVectorPaths, vectorPathHandles],
-  );
-
-  const handleContextMenuClose = useCallback(() => {
-    setContextMenu(null);
+  const handleVectorPathHandlePointerUp = useCallback((event: ReactPointerEvent<SVGCircleElement>): void => {
+    vectorPathDragRef.current = null;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
 
-  // =========================================================================
-  // Marquee selection
-  // =========================================================================
+  const handleVectorPathSegmentClick = useCallback((
+    pathIndex: number,
+    event: ReactMouseEvent<SVGPathElement>,
+  ): void => {
+    if (primaryNode?.guid === undefined) {
+      throw new Error("FigEditorCanvas vector path segment click requires a selected Kiwi node guid");
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const point = svgElementPoint(event.currentTarget, event.clientX, event.clientY);
+    updateNode(primaryNode.guid, (node) => addVectorPathPoint({ node, pathIndex, point }), "canvas");
+  }, [primaryNode, updateNode]);
 
-  const handleMarqueeSelect = useCallback(
-    (
-      result: {
-        readonly itemIds: readonly string[];
-        readonly rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
-      },
-      additive: boolean,
-    ) => {
-      if (!allowsFigUserOperation(operationDomain, "marquee-select")) {
-        return;
-      }
-      const selectableIds = resolveSelectableMarqueeIds({
-        activePage,
-        itemIds: result.itemIds,
-      });
+  const handleVectorPathHandleContextMenu = useCallback((
+    handle: VectorPathHandle,
+    event: ReactMouseEvent<SVGCircleElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ kind: "vector", x: event.clientX, y: event.clientY, handle });
+  }, []);
 
-      if (selectableIds.length > 0) {
-        if (additive) {
-          // Add to existing selection
-          const existingIds = new Set(nodeSelection.selectedIds);
-          const newIds = selectableIds.filter((id) => !existingIds.has(id as FigNodeId));
-          if (newIds.length > 0) {
-            dispatch({
-              type: "SELECT_MULTIPLE_NODES",
-              nodeIds: [
-                ...nodeSelection.selectedIds,
-                ...newIds as FigNodeId[],
-              ],
-            });
-          }
-        } else {
-          dispatch({
-            type: "SELECT_MULTIPLE_NODES",
-            nodeIds: selectableIds as FigNodeId[],
-            primaryId: selectableIds[0] as FigNodeId,
-          });
-        }
-      } else if (!additive) {
-        dispatch({ type: "CLEAR_NODE_SELECTION" });
-      }
+  const handleVectorPathDraftHandlePointerDown = useCallback((
+    handle: VectorPathDraftHandle,
+    event: ReactPointerEvent<SVGCircleElement>,
+  ): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    vectorPathDraftHandleDragRef.current = {
+      handle,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+  }, []);
+
+  const vectorPathOverlay = useMemo(() => {
+    if (!policy.canEditPath || primaryEditableVectorPaths === undefined) {
+      return undefined;
+    }
+    if (primaryBounds === undefined) {
+      throw new Error("FigEditorCanvas vector path overlay requires selected node bounds");
+    }
+    const orderedHandles = orderVectorPathHandlesForHitTesting(vectorPathHandles);
+    return (
+      <g transform={`translate(${primaryBounds.x} ${primaryBounds.y})`}>
+        {editableVectorPathOverlays.map((overlay) => (
+          <g key={overlay.key}>
+            <path
+              d={overlay.data}
+              fill="none"
+              stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+              pointerEvents="none"
+            />
+            <path
+              d={overlay.data}
+              fill="none"
+              stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+              strokeOpacity={0.001}
+              strokeWidth={VECTOR_PATH_OVERLAY_STYLE.segmentHitStrokeWidthPx}
+              vectorEffect="non-scaling-stroke"
+              role="button"
+              aria-label={`Editable vector path segment ${overlay.pathIndex + 1}`}
+              pointerEvents="stroke"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => handleVectorPathSegmentClick(overlay.pathIndex, event)}
+            />
+          </g>
+        ))}
+        {vectorPathControlLines.map((line) => (
+          <line
+            key={line.key}
+            x1={line.from.x}
+            y1={line.from.y}
+            x2={line.to.x}
+            y2={line.to.y}
+            stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.controlLineStrokeWidthPx}
+            strokeDasharray={VECTOR_PATH_OVERLAY_STYLE.controlLineDashPx.join(" ")}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        ))}
+        {orderedHandles.map((handle) => (
+          <circle
+            key={handle.key}
+            role="button"
+            aria-label={getVectorHandleAriaLabel(handle)}
+            cx={handle.x}
+            cy={handle.y}
+            r={handle.role === "anchor" ? VECTOR_PATH_OVERLAY_STYLE.anchorRadiusPx : VECTOR_PATH_OVERLAY_STYLE.controlRadiusPx}
+            fill={handle.role === "anchor" ? VECTOR_PATH_OVERLAY_STYLE.anchorFill : VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+            stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.handleStrokeWidthPx}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="all"
+            style={{ cursor: getVectorPathHandleCursor(handle) }}
+            onPointerDown={(event) => handleVectorPathHandlePointerDown(handle, event)}
+            onPointerMove={handleVectorPathHandlePointerMove}
+            onPointerUp={handleVectorPathHandlePointerUp}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onContextMenu={(event) => handleVectorPathHandleContextMenu(handle, event)}
+          />
+        ))}
+      </g>
+    );
+  }, [
+    editableVectorPathOverlays,
+    handleVectorPathHandleContextMenu,
+    handleVectorPathHandlePointerDown,
+    handleVectorPathHandlePointerMove,
+    handleVectorPathHandlePointerUp,
+    handleVectorPathSegmentClick,
+    policy.canEditPath,
+    primaryBounds,
+    primaryEditableVectorPaths,
+    vectorPathControlLines,
+    vectorPathHandles,
+  ]);
+
+  const vectorPathDraftOverlay = useMemo(() => {
+    if (!policy.canEditPath || vectorPathDraftSession === null) {
+      return undefined;
+    }
+    const draft = vectorPathDraftSession.draft;
+    const orderedHandles = orderVectorPathHandlesForHitTesting(getVectorPathDraftHandles(draft));
+    return (
+      <g>
+        <path
+          aria-label="Draft vector path preview"
+          d={vectorPathDraftToPreviewPath(draft)}
+          fill="none"
+          stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+        <path
+          role="button"
+          aria-label="Draft vector path segment"
+          d={vectorPathDraftToPreviewPath(draft)}
+          fill="none"
+          stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+          strokeOpacity={0.001}
+          strokeWidth={VECTOR_PATH_OVERLAY_STYLE.segmentHitStrokeWidthPx}
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+        {getVectorPathDraftControlLines(draft).map((line) => (
+          <line
+            key={line.key}
+            aria-label="Draft vector path control line"
+            x1={line.from.x}
+            y1={line.from.y}
+            x2={line.to.x}
+            y2={line.to.y}
+            stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.controlLineStrokeWidthPx}
+            strokeDasharray={VECTOR_PATH_OVERLAY_STYLE.controlLineDashPx.join(" ")}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        ))}
+        {orderedHandles.map((handle) => (
+          <circle
+            key={handle.key}
+            role="button"
+            aria-label={getVectorPathDraftHandleLabel(handle)}
+            cx={handle.x}
+            cy={handle.y}
+            r={handle.role === "anchor" ? VECTOR_PATH_OVERLAY_STYLE.anchorRadiusPx : VECTOR_PATH_OVERLAY_STYLE.controlRadiusPx}
+            fill={handle.role === "anchor" ? VECTOR_PATH_OVERLAY_STYLE.anchorFill : VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+            stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
+            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.handleStrokeWidthPx}
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="all"
+            style={{ cursor: getVectorPathDraftHandleCursor(draft, handle) }}
+            onPointerDown={(event) => handleVectorPathDraftHandlePointerDown(handle, event)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+          />
+        ))}
+      </g>
+    );
+  }, [handleVectorPathDraftHandlePointerDown, policy.canEditPath, vectorPathDraftSession]);
+
+  const interactionOverlay = useMemo(() => {
+    if (vectorPathOverlay === undefined && vectorPathDraftOverlay === undefined) {
+      return undefined;
+    }
+    return (
+      <>
+        {vectorPathOverlay}
+        {vectorPathDraftOverlay}
+      </>
+    );
+  }, [vectorPathDraftOverlay, vectorPathOverlay]);
+
+  const handleItemDragMove = useCallback((coords: CanvasPageCoords): void => {
+    const session = moveSessionRef.current;
+    if (session === null) {
+      return;
+    }
+    const point = worldPoint(coords);
+    updateNode(session.guid, (node) => ({
+      ...node,
+      transform: translateTransform(node.transform, point.x - session.startX, point.y - session.startY),
+    }), "canvas");
+    moveSessionRef.current = { ...session, startX: point.x, startY: point.y };
+  }, [updateNode]);
+
+  const handleItemDragEnd = useCallback((coords: CanvasPageCoords): void => {
+    const creationSession = creationDragSessionRef.current;
+    creationDragSessionRef.current = null;
+    if (creationSession !== null) {
+      const end = worldPoint(coords);
+      const rect = dragRect({ x: creationSession.startX, y: creationSession.startY }, end);
+      const spec = nodeSpecForCreation(creationMode, rect);
+      addNodeToActivePage(spec, null, "canvas");
+      return;
+    }
+    moveSessionRef.current = null;
+    endCanvasTransform();
+  }, [addNodeToActivePage, creationMode, endCanvasTransform]);
+
+  const handleCanvasPointerDown = useCallback((coords: CanvasPageCoords, event: ReactPointerEvent): void => {
+    if (!policy.canEditPath) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    placeVectorPathDraftPoint(coords, event.nativeEvent);
+  }, [placeVectorPathDraftPoint, policy.canEditPath]);
+
+  const handleCanvasClick = useCallback((): void => {
+    if (textEdit.type === "active") {
+      exitTextEdit();
+      return;
+    }
+    if (policy.canEditPath) {
+      return;
+    }
+    if (policy.canCreate) {
+      return;
+    }
+    clearSelection();
+  }, [clearSelection, exitTextEdit, policy.canCreate, policy.canEditPath, textEdit.type]);
+
+  const handleMarqueeSelect = useCallback((
+    result: {
+      readonly itemIds: readonly string[];
+      readonly rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
     },
-    [activePage, dispatch, nodeSelection.selectedIds, operationDomain],
-  );
-
-  // =========================================================================
-  // Resize & rotate handle start
-  // =========================================================================
-
-  const handleResizeStart = useCallback(
-    (handle: ResizeHandlePosition, coords: CanvasPageCoords, _e: React.PointerEvent) => {
-      if (!allowsFigUserOperation(operationDomain, "start-resize")) {
-        return;
-      }
-      dispatch({
-        type: "START_PENDING_RESIZE",
-        handle,
-        startX: coords.pageX,
-        startY: coords.pageY,
-        startClientX: coords.clientX,
-        startClientY: coords.clientY,
-        aspectLocked: false,
-      });
-    },
-    [dispatch, operationDomain],
-  );
-
-  const handleRotateStart = useCallback(
-    (coords: CanvasPageCoords, _e: React.PointerEvent) => {
-      if (!allowsFigUserOperation(operationDomain, "start-rotate")) {
-        return;
-      }
-      dispatch({
-        type: "START_PENDING_ROTATE",
-        startX: coords.pageX,
-        startY: coords.pageY,
-        startClientX: coords.clientX,
-        startClientY: coords.clientY,
-      });
-    },
-    [dispatch, operationDomain],
-  );
-
-  // =========================================================================
-  // Global drag tracking (item move)
-  // =========================================================================
-
-  const handleItemDragMove = useCallback(
-    (coords: CanvasPageCoords) => {
-      if (!allowsFigUserOperation(operationDomain, "preview-move")) {
-        return;
-      }
-      const d = dragRef.current;
-      if (d.type === "pending-move") {
-        if (exceedsThreshold({ startClientX: d.startClientX, startClientY: d.startClientY, clientX: coords.clientX, clientY: coords.clientY })) {
-          dispatch({ type: "CONFIRM_MOVE" });
-          dispatch({
-            type: "PREVIEW_MOVE",
-            dx: coords.pageX - d.startX,
-            dy: coords.pageY - d.startY,
-          });
-        }
-        return;
-      }
-      if (d.type === "move") {
-        dispatch({
-          type: "PREVIEW_MOVE",
-          dx: coords.pageX - d.startX,
-          dy: coords.pageY - d.startY,
-        });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  const handleItemDragEnd = useCallback(
-    (_coords: CanvasPageCoords) => {
-      const d = dragRef.current;
-      if (d.type === "move" && allowsFigUserOperation(operationDomain, "commit-transform")) {
-        dispatch({ type: "COMMIT_DRAG" });
-      } else {
-        dispatch({ type: "END_DRAG" });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  // =========================================================================
-  // Global drag tracking (resize)
-  // =========================================================================
-
-  const handleResizeDragMove = useCallback(
-    (_handle: ResizeHandlePosition, coords: CanvasPageCoords) => {
-      if (!allowsFigUserOperation(operationDomain, "preview-resize")) {
-        return;
-      }
-      const d = dragRef.current;
-      if (d.type === "pending-resize") {
-        if (exceedsThreshold({ startClientX: d.startClientX, startClientY: d.startClientY, clientX: coords.clientX, clientY: coords.clientY })) {
-          dispatch({ type: "CONFIRM_RESIZE" });
-          dispatch({
-            type: "PREVIEW_RESIZE",
-            dx: coords.pageX - d.startX,
-            dy: coords.pageY - d.startY,
-          });
-        }
-        return;
-      }
-      if (d.type === "resize") {
-        dispatch({
-          type: "PREVIEW_RESIZE",
-          dx: coords.pageX - d.startX,
-          dy: coords.pageY - d.startY,
-        });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  const handleResizeDragEnd = useCallback(
-    (_handle: ResizeHandlePosition, _coords: CanvasPageCoords) => {
-      const d = dragRef.current;
-      if (d.type === "resize" && allowsFigUserOperation(operationDomain, "commit-transform")) {
-        dispatch({ type: "COMMIT_DRAG" });
-      } else {
-        dispatch({ type: "END_DRAG" });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  // =========================================================================
-  // Global drag tracking (rotate)
-  // =========================================================================
-
-  const handleRotateDragMove = useCallback(
-    (coords: CanvasPageCoords) => {
-      if (!allowsFigUserOperation(operationDomain, "preview-rotate")) {
-        return;
-      }
-      const d = dragRef.current;
-      if (d.type === "pending-rotate") {
-        if (exceedsThreshold({ startClientX: d.startClientX, startClientY: d.startClientY, clientX: coords.clientX, clientY: coords.clientY })) {
-          dispatch({ type: "CONFIRM_ROTATE" });
-          // Compute angle from center to pointer
-          const centerX = (d as { centerX?: number }).centerX ?? 0;
-          const centerY = (d as { centerY?: number }).centerY ?? 0;
-          const angle = Math.atan2(coords.pageY - centerY, coords.pageX - centerX) * (180 / Math.PI);
-          dispatch({ type: "PREVIEW_ROTATE", currentAngle: angle });
-        }
-        return;
-      }
-      if (d.type === "rotate") {
-        const centerX = (d as { centerX?: number }).centerX ?? 0;
-        const centerY = (d as { centerY?: number }).centerY ?? 0;
-        const angle = Math.atan2(coords.pageY - centerY, coords.pageX - centerX) * (180 / Math.PI);
-        dispatch({ type: "PREVIEW_ROTATE", currentAngle: angle });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  const handleRotateDragEnd = useCallback(
-    (_coords: CanvasPageCoords) => {
-      const d = dragRef.current;
-      if (d.type === "rotate" && allowsFigUserOperation(operationDomain, "commit-transform")) {
-        dispatch({ type: "COMMIT_DRAG" });
-      } else {
-        dispatch({ type: "END_DRAG" });
-      }
-    },
-    [dispatch, operationDomain],
-  );
-
-  // =========================================================================
-  // Determine if rotate handle should show
-  // =========================================================================
-
-  // =========================================================================
-  // Text edit overlay
-  // =========================================================================
+    additive: boolean,
+  ): void => {
+    if (policy.canCreate) {
+      const spec = nodeSpecForCreation(creationMode, result.rect);
+      addNodeToActivePage(spec, null, "canvas");
+      return;
+    }
+    const guids = resolveSelectableMarqueeGuids(context.document, result.itemIds);
+    if (additive) {
+      setSelectedGuids([...selectedGuids, ...guids]);
+      return;
+    }
+    setSelectedGuids(guids);
+  }, [addNodeToActivePage, context.document, creationMode, policy.canCreate, selectedGuids, setSelectedGuids]);
 
   const textEditOverlay = useMemo(() => {
-    if (textEdit.type !== "active" || !activePage) {
+    if (textEdit.type !== "active") {
       return undefined;
     }
-
-    const editingNodeId = textEdit.nodeId;
-    const editingNode = findNodeById(activePage.children, editingNodeId);
-    if (!editingNode || editingNode.type !== "TEXT") {
-      return undefined;
+    const key = guidToString(textEdit.guid);
+    const node = context.document.nodesByGuid.get(key);
+    if (node === undefined) {
+      throw new Error(`FigEditorCanvas: active text edit node ${key} is not present`);
     }
-
-    const bounds = computeAbsoluteNodeBounds(activePage.children, editingNodeId);
-    if (!bounds) {
-      return undefined;
+    if (getNodeType(node) !== "TEXT") {
+      throw new Error(`FigEditorCanvas: active text edit node ${key} is not TEXT`);
     }
-    if (!textFontResolver) {
-      return undefined;
+    const bounds = itemBounds.find((item) => item.id === key);
+    if (bounds === undefined) {
+      throw new Error(`FigEditorCanvas: active text edit node ${key} has no canvas bounds`);
     }
-
     return (
       <FigTextEditOverlay
-        key="text-edit"
-        node={editingNode}
-        bounds={bounds}
-        canvasWidth={canvasSize.width}
-        canvasHeight={canvasSize.height}
+        node={node}
+        bounds={{
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+          rotation: bounds.rotation ?? 0,
+        }}
+        canvasWidth={extents.width}
+        canvasHeight={extents.height}
         textFontResolver={textFontResolver}
-        dispatch={dispatch}
+        onExit={exitTextEdit}
       />
     );
-  }, [textEdit, activePage, canvasSize, textFontResolver, dispatch]);
+  }, [context.document.nodesByGuid, exitTextEdit, extents.height, extents.width, itemBounds, textEdit, textFontResolver]);
 
-  // =========================================================================
-  // Determine if rotate handle should show
-  // =========================================================================
-
-  // In Figma, frames cannot be rotated. Show rotate handle only for non-frame nodes.
-  const showRotateHandle = useMemo(() => {
-    if (nodeSelection.selectedIds.length === 0) {return false;}
-    if (!activePage) {return false;}
-    // If any selected node is a frame-like container, hide rotate.
-    // SYMBOL is the on-disk encoding of the Figma UI concept "Component";
-    // the canonical schema has no COMPONENT or COMPONENT_SET NodeType
-    // (a Variant Set is a FRAME). See
-    // `docs/refactor/component-type-cleanup.md`.
-    const frameTypes = new Set(["FRAME", "SYMBOL"]);
-    return !nodeSelection.selectedIds.some((id) => {
-      const node = findNodeById(activePage.children, id);
-      return node && frameTypes.has(node.type);
-    });
-  }, [nodeSelection.selectedIds, activePage]);
-
-  const screenViewportContent = useMemo(() => {
-    if (!activePage || !sceneGraph || !renderWindow) {
+  const rendererNode = useMemo(() => {
+    if (renderWindow === null) {
       return undefined;
     }
     return (
       <FigPageRenderer
         page={activePage}
+        nodes={pageChildren}
         canvasWidth={renderWindow.surfaceWidth}
         canvasHeight={renderWindow.surfaceHeight}
-        resources={resources}
-        renderer={renderer}
-        renderOptions={renderOptions}
-        sceneGraph={sceneGraph}
         viewportX={renderWindow.x}
         viewportY={renderWindow.y}
         viewportWidth={renderWindow.width}
         viewportHeight={renderWindow.height}
         viewportScale={viewportScale}
-        viewportPlacement="screen"
-        webglPlacement="screen"
-        webglInitializationDelayMs={webglInitializationDelayMs}
+        viewportRevision={viewportRevision}
+        resources={resources}
+        renderOptions={createFigFamilyRenderOptions(context)}
+        renderer={renderer}
+        host="html"
         textFontResolver={textFontResolver}
+        webglInitializationDelayMs={webglInitializationDelayMs}
       />
     );
-  }, [activePage, sceneGraph, renderer, renderOptions, renderWindow, resources, viewportScale, webglInitializationDelayMs, textFontResolver]);
-
-  const handleViewportChange = useCallback((_viewport: EditorCanvasViewportContentContext["viewport"], context: EditorCanvasViewportContentContext) => {
-    setViewportRenderContext((previous) => {
-      if (
-        previous
-        && previous.rulerThickness === context.rulerThickness
-        && previous.viewportSize.width === context.viewportSize.width
-        && previous.viewportSize.height === context.viewportSize.height
-        && previous.viewport.translateX === context.viewport.translateX
-        && previous.viewport.translateY === context.viewport.translateY
-        && previous.viewport.scale === context.viewport.scale
-      ) {
-        return previous;
-      }
-      return context;
-    });
-  }, []);
-
-  const pathInteractionOverlay = useMemo(() => (
-    <>
-      {editableVectorPathOverlays.length > 0 && (
-        <g>
-          {editableVectorPathOverlays.map((path) => (
-            <path
-              key={path.key}
-              role="button"
-              aria-label={`Editable vector path segment ${path.pathIndex + 1}`}
-              d={path.data}
-              transform={path.transform}
-              fill="none"
-              stroke={VECTOR_PATH_OVERLAY_STYLE.segmentHitStroke}
-              strokeWidth={VECTOR_PATH_OVERLAY_STYLE.segmentHitStrokeWidthPx}
-              vectorEffect="non-scaling-stroke"
-              pointerEvents="stroke"
-              style={{ cursor: "crosshair" }}
-              onPointerDown={(event) => handleEditablePathPointerDown(path.pathIndex, event)}
-            />
-          ))}
-        </g>
-      )}
-
-      {vectorPathControlLines.length > 0 && (
-        <g pointerEvents="none">
-          {vectorPathControlLines.map((line) => (
-            <line
-              key={line.key}
-              x1={line.from.x}
-              y1={line.from.y}
-              x2={line.to.x}
-              y2={line.to.y}
-              stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
-              strokeWidth={VECTOR_PATH_OVERLAY_STYLE.controlLineStrokeWidthPx}
-              strokeDasharray={VECTOR_PATH_OVERLAY_STYLE.controlLineDashPx.join(" ")}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-        </g>
-      )}
-
-      {vectorPathHandles.length > 0 && (
-        <g>
-          {orderVectorPathHandlesForHitTesting(vectorPathHandles).map((handle) => (
-            <circle
-              key={handle.key}
-              role="button"
-              aria-label={getVectorHandleAriaLabel(handle)}
-              tabIndex={0}
-              cx={handle.x}
-              cy={handle.y}
-              r={screenPxToPagePx(handle.role === "control" ? VECTOR_PATH_OVERLAY_STYLE.controlRadiusPx : VECTOR_PATH_OVERLAY_STYLE.anchorRadiusPx, viewportScale)}
-              fill={handle.role === "control" ? VECTOR_PATH_OVERLAY_STYLE.selectionColor : VECTOR_PATH_OVERLAY_STYLE.anchorFill}
-              stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
-              strokeWidth={VECTOR_PATH_OVERLAY_STYLE.handleStrokeWidthPx}
-              vectorEffect="non-scaling-stroke"
-              pointerEvents="all"
-              style={{ cursor: getVectorPathHandleCursor(handle) }}
-              onPointerDown={(event) => handleVectorPathHandlePointerDown(handle, event)}
-              onContextMenu={(event) => handleVectorPathHandleContextMenu(handle, event)}
-            />
-          ))}
-        </g>
-      )}
-
-      {vectorPathDrawPreview && (
-        <g>
-          <path
-            role="button"
-            aria-label="Draft vector path segment"
-            d={vectorPathDraftToPreviewPath(vectorPathDrawPreview)}
-            fill="none"
-            stroke={VECTOR_PATH_OVERLAY_STYLE.segmentHitStroke}
-            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.segmentHitStrokeWidthPx}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="stroke"
-            onPointerDown={handleVectorPathDraftSegmentPointerDown}
-          />
-          {getVectorPathDraftControlLines(vectorPathDrawPreview).map((line) => (
-            <line
-              key={line.key}
-              aria-label="Draft vector path control line"
-              x1={line.from.x}
-              y1={line.from.y}
-              x2={line.to.x}
-              y2={line.to.y}
-              stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
-              strokeWidth={VECTOR_PATH_OVERLAY_STYLE.controlLineStrokeWidthPx}
-              strokeDasharray={VECTOR_PATH_OVERLAY_STYLE.controlLineDashPx.join(" ")}
-              vectorEffect="non-scaling-stroke"
-              pointerEvents="none"
-            />
-          ))}
-          {orderVectorPathHandlesForHitTesting(getVectorPathDraftHandles(vectorPathDrawPreview)).map((handle) => (
-            <circle
-              key={handle.key}
-              role="button"
-              aria-label={getVectorPathDraftHandleLabel(handle)}
-              tabIndex={0}
-              cx={handle.x}
-              cy={handle.y}
-              r={screenPxToPagePx(handle.role === "control" ? VECTOR_PATH_OVERLAY_STYLE.controlRadiusPx : VECTOR_PATH_OVERLAY_STYLE.anchorRadiusPx, viewportScale)}
-              fill={handle.role === "control" ? VECTOR_PATH_OVERLAY_STYLE.selectionColor : VECTOR_PATH_OVERLAY_STYLE.anchorFill}
-              stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
-              strokeWidth={VECTOR_PATH_OVERLAY_STYLE.handleStrokeWidthPx}
-              vectorEffect="non-scaling-stroke"
-              pointerEvents="all"
-              style={{ cursor: getVectorPathDraftHandleCursor(vectorPathDrawPreview, handle) }}
-              onPointerDown={(event) => handleVectorPathDraftHandlePointerDown(handle, event)}
-            />
-          ))}
-        </g>
-      )}
-    </>
-  ), [
-    editableVectorPathOverlays,
-    handleEditablePathPointerDown,
-    handleVectorPathHandleContextMenu,
-    handleVectorPathHandlePointerDown,
-    handleVectorPathDraftHandlePointerDown,
-    handleVectorPathDraftSegmentPointerDown,
-    vectorPathDrawPreview,
-    vectorPathControlLines,
-    vectorPathHandles,
+  }, [
+    activePage,
+    context,
+    pageChildren,
+    renderWindow,
+    renderer,
+    resources,
+    textFontResolver,
+    viewportRevision,
     viewportScale,
+    webglInitializationDelayMs,
   ]);
 
   return (
-    <>
+    <div data-fig-editor-canvas="" style={{ ...canvasHostStyle, ...style }}>
       <EditorCanvas
         ref={canvasRef}
-        canvasWidth={canvasSize.width}
-        canvasHeight={canvasSize.height}
-        clampFn={NO_CLAMP}
-        rulerCoordinateMode="unbounded"
+        canvasWidth={extents.width}
+        canvasHeight={extents.height}
         zoomMode={zoomMode}
         onZoomModeChange={setZoomMode}
         onViewportChange={handleViewportChange}
+        initialViewportPlacement="top"
+        initialViewportMargin={INITIAL_VIEWPORT_MARGIN}
+        showRulers
+        rulerCoordinateMode="unbounded"
+        rulerCoordinateOffset={{ x: 0, y: 0 }}
+        clampFn={(viewportValue) => viewportValue}
         itemBounds={itemBounds}
-        selectedIds={nodeSelection.selectedIds}
-        primaryId={nodeSelection.primaryId}
-        drag={drag}
-        isInteracting={drag.type !== "idle"}
-        isTextEditing={textEdit.type === "active"}
-        selectionInteractionEnabled={interactionPolicy.selectionChromeInteractive}
-        showRotateHandle={showRotateHandle}
+        getItemAriaLabel={(id) => createItemLabel(context.document.nodesByGuid, id)}
+        selectedIds={selectedIds}
+        primaryId={primaryId}
         onItemPointerDown={handleItemPointerDown}
         onItemClick={handleItemClick}
-        onItemDoubleClick={handleDoubleClick}
-        onCanvasPointerDown={handleCanvasPointerDown}
-        onCanvasClick={handleCanvasClick}
+        onItemDoubleClick={handleItemDoubleClick}
         onItemContextMenu={handleItemContextMenu}
-        onContextMenu={handleCanvasContextMenu}
-        onResizeStart={handleResizeStart}
-        onRotateStart={handleRotateStart}
         onItemDragMove={handleItemDragMove}
         onItemDragEnd={handleItemDragEnd}
-        onResizeDragMove={handleResizeDragMove}
-        onResizeDragEnd={handleResizeDragEnd}
-        onRotateDragMove={handleRotateDragMove}
-        onRotateDragEnd={handleRotateDragEnd}
-        enableMarquee={interactionPolicy.marqueeEnabled}
+        onCanvasPointerDown={handleCanvasPointerDown}
+        onCanvasClick={handleCanvasClick}
+        onContextMenu={(event) => event.preventDefault()}
+        interactionOverlay={interactionOverlay}
+        enableMarquee={policy.marqueeEnabled || policy.canCreate}
         onMarqueeSelect={handleMarqueeSelect}
+        selectionInteractionEnabled={policy.canMove}
+        isTextEditing={textEdit.type === "active"}
+        svgAriaHidden={textEdit.type === "active"}
+        screenViewportContent={rendererNode}
         viewportOverlay={textEditOverlay}
-        screenViewportContent={screenViewportContent}
-        interactionOverlay={pathInteractionOverlay}
       >
-        {/* Inspector / custom canvas overlay (page-coord space) */}
-        {canvasOverlay}
-
-        {/* Creation drag preview rectangle */}
-        {creationPreview && creationPreview.width > 0 && creationPreview.height > 0 && (
-          <rect
-            x={creationPreview.x}
-            y={creationPreview.y}
-            width={creationPreview.width}
-            height={creationPreview.height}
-            fill={VECTOR_PATH_OVERLAY_STYLE.previewFill}
-            stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
-            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.controlLineStrokeWidthPx}
-            strokeDasharray={VECTOR_PATH_OVERLAY_STYLE.creationPreviewDashPx.join(" ")}
-            pointerEvents="none"
-          />
-        )}
-        {vectorPathDrawPreview && (
-          <path
-            d={vectorPathDraftToPreviewPath(vectorPathDrawPreview)}
-            fill="none"
-            stroke={VECTOR_PATH_OVERLAY_STYLE.selectionColor}
-            strokeWidth={VECTOR_PATH_OVERLAY_STYLE.controlLineStrokeWidthPx}
-            strokeDasharray={VECTOR_PATH_OVERLAY_STYLE.creationPreviewDashPx.join(" ")}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        )}
+        {children}
       </EditorCanvas>
-
-      {contextMenu && (
+      {contextMenu !== null && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           items={contextMenuItems}
-          onAction={handleContextMenuAction}
-          onClose={handleContextMenuClose}
+          onAction={runContextMenuAction}
+          onClose={closeContextMenu}
         />
       )}
-    </>
+    </div>
   );
 }

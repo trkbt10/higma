@@ -1,37 +1,23 @@
-/**
- * @file Inline text editing overlay for the fig editor canvas.
- *
- * Uses the shared TextEditInputFrame component (hidden textarea + overlay
- * container) from editor-controls, combined with fig's own text layout
- * computation for cursor/selection positioning.
- *
- * Key invariant: the cursor/selection overlay MUST use the same layout
- * computation as the SVG text renderer. Both go through:
- *   extractTextProps() → computeTextLayout() → line positions
- *
- * For cursor positioning, the SVG text-anchor coordinates are converted to
- * left-edge coordinates via textLayoutToCursorLayout() — a function provided
- * by the text layout SoT (compute-layout.ts), NOT computed independently here.
- *
- * Architecture (same pattern as pptx-editor's TextEditController):
- * 1. Hidden textarea captures keyboard and IME input
- * 2. Text change → UPDATE_NODE → textData.characters update → active backend re-render
- * 3. Custom SVG children render only cursor/selection using fig's layout result
- * 4. Click-outside detection via CanvasViewportContext
- */
-
-import { useCallback, useRef, useState, useEffect, useMemo, type CSSProperties } from "react";
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigEditorAction } from "../context/fig-editor/types";
-import { TextEditInputFrame } from "@higma-editor-surfaces/controls/text-edit";
-import { useTextComposition } from "@higma-editor-surfaces/controls/text-edit";
-import { useCanvasViewportRequired } from "@higma-editor-surfaces/controls/canvas";
+/** @file Inline text editing overlay for Kiwi TEXT nodes. */
 import {
-  createInitialCompositionState,
-  offsetToCursorPosition,
-  cursorPositionToCoordinates,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type PointerEvent,
+} from "react";
+import { useCanvasViewportRequired } from "@higma-editor-surfaces/controls/canvas";
+import { TextEditInputFrame, useTextComposition } from "@higma-editor-surfaces/controls/text-edit";
+import {
   coordinatesToCursorPosition,
+  createInitialCompositionState,
+  cursorPositionToCoordinates,
   cursorPositionToOffset,
+  offsetToCursorPosition,
   selectionToRects,
   type CompositionState,
   type CursorCalculationContext,
@@ -39,120 +25,21 @@ import {
   type TextBodyLike,
   type TextSelection,
 } from "@higma-editor-kernel/core/text-edit";
+import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
+import type { FigNode } from "@higma-document-models/fig/types";
+import { derivedTextDataHasVisualPayload } from "@higma-document-models/fig/domain";
 import {
-  extractTextProps,
   computeTextLayout,
-  textLayoutToCursorLayout,
+  extractTextProps,
   resolveTextAscenderRatio,
+  resolveTextDescenderRatio,
+  textLayoutToCursorLayout,
   type TextFontResolver,
 } from "@higma-document-renderers/fig/text";
-import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
+import { useFigEditor } from "../context/FigEditorContext";
 
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Caret blink animation CSS. Injected as <style> within the SVG overlay.
- */
-const CARET_BLINK_KEYFRAMES = `
-@keyframes _fig-caret-blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}`;
-
-// =============================================================================
-// TextBody construction
-// =============================================================================
-
-/**
- * Build a TextBodyLike from fig's text characters.
- *
- * The text is split by newlines into paragraphs, each containing one run.
- * This structure maps to editor-core's offset ↔ CursorPosition conversion.
- */
-function buildTextBodyFromCharacters(characters: string): TextBodyLike {
-  const paragraphs = characters.split("\n").map((line) => ({
-    runs: [{ type: "regular" as const, text: line }],
-  }));
-  return { paragraphs };
-}
-
-// =============================================================================
-// Canvas text measurement
-// =============================================================================
-
-/**
- * Create a text width measurement function using canvas 2d context.
- *
- * Returns a function that measures the actual rendered width of a text string.
- * Used by textLayoutToCursorLayout() for accurate cursor positioning in the browser.
- *
- * The canvas measurement is the authoritative width for cursor calculation —
- * it matches what the browser renders for SVG <text> elements.
- */
-function createCanvasTextMeasurer(fontStr: string): (text: string) => number {
-  const canvasCtx = createRequiredCanvasContext();
-
-  return (text: string): number => {
-    if (text.length === 0) {return 0;}
-    canvasCtx.font = fontStr;
-    return canvasCtx.measureText(text).width;
-  };
-}
-
-function createRequiredCanvasContext(): CanvasRenderingContext2D {
-  if (typeof document === "undefined") {
-    throw new Error("FigTextEditOverlay requires a browser document for canvas text measurement");
-  }
-  const canvasCtx = document.createElement("canvas").getContext("2d");
-  if (!canvasCtx) {
-    throw new Error("FigTextEditOverlay requires CanvasRenderingContext2D for cursor measurement");
-  }
-  return canvasCtx;
-}
-
-/**
- * Build a CursorCalculationContext using canvas measureText.
- *
- * The measurement is scaled to match the span's width (from layout) so that
- * cursor positions are proportionally correct even if canvas and SVG measure
- * slightly differently.
- */
-function buildFigCursorContext(
-  fontStr: string,
-  fontSize: number,
-  ascenderRatio: number,
-): CursorCalculationContext {
-  const canvasCtx = createRequiredCanvasContext();
-
-  const measureSpanTextWidth = (span: LayoutSpanLike, substring: string): number => {
-    if (span.text.length === 0 || substring.length === 0) {
-      return 0;
-    }
-    canvasCtx.font = fontStr;
-    const fullWidth = canvasCtx.measureText(span.text).width;
-    if (fullWidth <= 0) {
-      throw new Error("Canvas text measurement returned zero width for a non-empty text span");
-    }
-    // Scale canvas measurement to match span.width (from layout)
-    return (canvasCtx.measureText(substring).width / fullWidth) * span.width;
-  };
-
-  return {
-    measureSpanTextWidth,
-    getAscenderRatio: () => ascenderRatio,
-    ptToPx: 1, // fig uses pixels directly
-    emptyLineFontSizePt: fontSize,
-  };
-}
-
-// =============================================================================
-// Types
-// =============================================================================
-
-type FigTextEditOverlayProps = {
-  readonly node: FigDesignNode;
+export type FigTextEditOverlayProps = {
+  readonly node: FigNode;
   readonly bounds: {
     readonly x: number;
     readonly y: number;
@@ -162,185 +49,249 @@ type FigTextEditOverlayProps = {
   };
   readonly canvasWidth: number;
   readonly canvasHeight: number;
-  readonly textFontResolver: TextFontResolver;
-  readonly dispatch: (action: FigEditorAction) => void;
+  readonly textFontResolver?: TextFontResolver;
+  readonly onExit: () => void;
 };
 
-// =============================================================================
-// Component
-// =============================================================================
+const CARET_BLINK_KEYFRAMES = `
+@keyframes _fig-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}`;
 
+const overlayStyle: CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  pointerEvents: "auto",
+};
 
+const svgOverlayStyle: CSSProperties = {
+  position: "absolute",
+  left: 0,
+  top: 0,
+  width: "100%",
+  height: "100%",
+  pointerEvents: "auto",
+  overflow: "visible",
+  zIndex: 2,
+};
 
+function readTextCharacters(node: FigNode): string {
+  if (typeof node.textData?.characters === "string") {
+    return node.textData.characters;
+  }
+  if (typeof node.characters === "string") {
+    return node.characters;
+  }
+  throw new Error("FigTextEditOverlay requires Kiwi TEXT characters");
+}
 
+function derivedTextDataAfterCharacterEdit(node: FigNode): FigNode["derivedTextData"] {
+  if (derivedTextDataHasVisualPayload(node.derivedTextData)) {
+    return undefined;
+  }
+  return node.derivedTextData;
+}
 
+function writeTextCharacters(node: FigNode, characters: string): FigNode {
+  const hasTextData = node.textData !== undefined;
+  const hasRootCharacters = typeof node.characters === "string";
+  if (!hasTextData && !hasRootCharacters) {
+    throw new Error("FigTextEditOverlay cannot update a TEXT node without characters storage");
+  }
+  return {
+    ...node,
+    characters: hasRootCharacters ? characters : node.characters,
+    textData: hasTextData ? { ...node.textData, characters } : node.textData,
+    derivedTextData: derivedTextDataAfterCharacterEdit(node),
+  };
+}
 
-/** Overlay component for in-canvas text editing of a Figma node. */
+function buildTextBodyFromCharacters(characters: string): TextBodyLike {
+  return {
+    paragraphs: characters.split("\n").map((line) => ({
+      runs: [{ type: "regular", text: line }],
+    })),
+  };
+}
+
+function createRequiredCanvasContext(): CanvasRenderingContext2D {
+  if (typeof document === "undefined") {
+    throw new Error("FigTextEditOverlay requires a browser document for canvas text measurement");
+  }
+  const canvasContext = document.createElement("canvas").getContext("2d");
+  if (canvasContext === null) {
+    throw new Error("FigTextEditOverlay requires CanvasRenderingContext2D for cursor measurement");
+  }
+  return canvasContext;
+}
+
+function createCanvasTextMeasurer(font: string): (text: string) => number {
+  const canvasContext = createRequiredCanvasContext();
+  return (text: string): number => {
+    if (text.length === 0) {
+      return 0;
+    }
+    canvasContext.font = font;
+    return canvasContext.measureText(text).width;
+  };
+}
+
+function buildFigCursorContext(
+  font: string,
+  fontSize: number,
+  ascenderRatio: number,
+): CursorCalculationContext {
+  const canvasContext = createRequiredCanvasContext();
+  return {
+    measureSpanTextWidth: (span: LayoutSpanLike, substring: string): number => {
+      if (span.text.length === 0 || substring.length === 0) {
+        return 0;
+      }
+      canvasContext.font = font;
+      const fullWidth = canvasContext.measureText(span.text).width;
+      if (fullWidth <= 0) {
+        throw new Error("FigTextEditOverlay text measurement returned zero width for a non-empty span");
+      }
+      return (canvasContext.measureText(substring).width / fullWidth) * span.width;
+    },
+    getAscenderRatio: () => ascenderRatio,
+    ptToPx: 1,
+    emptyLineFontSizePt: fontSize,
+  };
+}
+
+function isInsideBounds(
+  point: { readonly pageX: number; readonly pageY: number },
+  bounds: FigTextEditOverlayProps["bounds"],
+): boolean {
+  return point.pageX >= bounds.x
+    && point.pageX <= bounds.x + bounds.width
+    && point.pageY >= bounds.y
+    && point.pageY <= bounds.y + bounds.height;
+}
+
+/** Render a hidden textarea and cursor chrome over the active Kiwi TEXT node. */
 export function FigTextEditOverlay({
   node,
   bounds,
   canvasWidth,
   canvasHeight,
   textFontResolver,
-  dispatch,
+  onExit,
 }: FigTextEditOverlayProps) {
+  const { updateNode } = useFigEditor();
+  const { screenToPage } = useCanvasViewportRequired();
+  if (node.guid === undefined) {
+    throw new Error("FigTextEditOverlay requires a Kiwi node guid");
+  }
+  const guid = node.guid;
+  const currentText = readTextCharacters(node);
+  const initialTextLengthRef = useRef(currentText.length);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const { screenToPage } = useCanvasViewportRequired();
-  const textData = node.textData;
-  const currentText = textData?.characters ?? "";
 
-  // --- Extract text props using the SAME function as SVG renderer ---
   const textProps = useMemo(() => extractTextProps(node), [node]);
-
-  // --- CSS font string (single source — used for both measurement and cursor context) ---
-  // Unpack the canonical FontQuery into CSS shorthand. ExtractedTextProps
-  // carries `font: FontQuery` rather than flat fontFamily/Weight/Style
-  // fields so cache keys, override fonts, and resolver lookups all use
-  // one normalisation. The CSS shorthand still wants the legacy form.
-  const fontStr = useMemo(
+  const font = useMemo(
     () => `${textProps.font.style} ${textProps.font.weight} ${textProps.fontSize}px ${textProps.font.family}`,
-    [textProps.font.family, textProps.fontSize, textProps.font.weight, textProps.font.style],
+    [textProps.font.family, textProps.font.style, textProps.font.weight, textProps.fontSize],
   );
-
-  // --- Compute layout using the SAME function as SVG renderer ---
   const ascenderRatio = useMemo(
     () => resolveTextAscenderRatio(node, textProps, { fontResolver: textFontResolver }),
-    [node, textProps, textFontResolver],
+    [node, textFontResolver, textProps],
+  );
+  const descenderRatio = useMemo(
+    () => resolveTextDescenderRatio(node, textProps, { fontResolver: textFontResolver }),
+    [node, textFontResolver, textProps],
   );
   const textLayout = useMemo(
-    () => computeTextLayout({ props: textProps, ascenderRatio }),
-    [textProps, ascenderRatio],
+    () => computeTextLayout({ props: textProps, ascenderRatio, descenderRatio }),
+    [ascenderRatio, descenderRatio, textProps],
   );
-
-  // --- Convert to cursor layout via SoT function ---
-  // textLayoutToCursorLayout() handles the SVG textAnchor → left-edge coordinate
-  // conversion. We provide a canvas-based text measurer for accurate widths.
-  const canvasMeasurer = useMemo(
-    () => createCanvasTextMeasurer(fontStr),
-    [fontStr],
-  );
+  const textMeasurer = useMemo(() => createCanvasTextMeasurer(font), [font]);
   const cursorLayout = useMemo(
-    () => textLayoutToCursorLayout(textLayout, canvasMeasurer),
-    [textLayout, canvasMeasurer],
+    () => textLayoutToCursorLayout(textLayout, textMeasurer),
+    [textLayout, textMeasurer],
   );
-
-  // --- Build TextBodyLike for cursor offset mapping ---
-  const textBody = useMemo(
-    () => buildTextBodyFromCharacters(currentText),
-    [currentText],
+  const textBody = useMemo(() => buildTextBodyFromCharacters(currentText), [currentText]);
+  const cursorContext = useMemo(
+    () => buildFigCursorContext(font, textProps.fontSize, textLayout.ascenderRatio),
+    [font, textLayout.ascenderRatio, textProps.fontSize],
   );
+  const [selectionRange, setSelectionRange] = useState({ start: currentText.length, end: currentText.length });
 
-  // --- Cursor calculation context ---
-  const cursorCtx = useMemo(
-    () => buildFigCursorContext(fontStr, textProps.fontSize, textLayout.ascenderRatio),
-    [fontStr, textProps.fontSize, textLayout.ascenderRatio],
-  );
-
-  // --- Cursor/selection state ---
-  const [selectionRange, setSelectionRange] = useState<{ start: number; end: number }>({
-    start: currentText.length,
-    end: currentText.length,
-  });
-
-  const updateSelection = useCallback(() => {
-    const ta = textareaRef.current;
-    if (ta) {
-      setSelectionRange({ start: ta.selectionStart, end: ta.selectionEnd });
+  const updateSelection = useCallback((): void => {
+    const textarea = textareaRef.current;
+    if (textarea === null) {
+      return;
     }
+    setSelectionRange({ start: textarea.selectionStart, end: textarea.selectionEnd });
   }, []);
 
-  // Focus textarea on mount
   useEffect(() => {
-    const ta = textareaRef.current;
-    if (ta) {
-      ta.focus();
-      ta.setSelectionRange(currentText.length, currentText.length);
+    const textarea = textareaRef.current;
+    if (textarea === null) {
+      throw new Error("FigTextEditOverlay mounted without a textarea");
     }
+    const end = initialTextLengthRef.current;
+    textarea.focus();
+    textarea.setSelectionRange(end, end);
   }, []);
 
-  // Focus guard: if the hidden textarea loses focus to a user-initiated
-  // interaction (click on another input, tab navigation), exit text editing.
-  //
-  // A requestAnimationFrame delay distinguishes intentional focus loss
-  // (user clicked elsewhere) from transient focus loss (React re-render).
   useEffect(() => {
-    const ta = textareaRef.current;
-    if (!ta) {return;}
-
-    const rafIdRef = { value: null as number | null };
-
-    const handleBlur = () => {
-      rafIdRef.value = requestAnimationFrame(() => {
-        if (document.activeElement !== ta) {
-          dispatch({ type: "EXIT_TEXT_EDIT" });
+    const textarea = textareaRef.current;
+    if (textarea === null) {
+      throw new Error("FigTextEditOverlay blur guard mounted without a textarea");
+    }
+    const frame = { id: null as number | null };
+    const handleBlur = (): void => {
+      frame.id = requestAnimationFrame(() => {
+        if (document.activeElement !== textarea) {
+          onExit();
         }
-        rafIdRef.value = null;
+        frame.id = null;
       });
     };
-
-    ta.addEventListener("blur", handleBlur);
+    textarea.addEventListener("blur", handleBlur);
     return () => {
-      ta.removeEventListener("blur", handleBlur);
-      if (rafIdRef.value !== null) {cancelAnimationFrame(rafIdRef.value);}
+      textarea.removeEventListener("blur", handleBlur);
+      if (frame.id !== null) {
+        cancelAnimationFrame(frame.id);
+      }
     };
-  }, [dispatch]);
+  }, [onExit]);
 
-  // --- Cursor visual position ---
-  const caretPos = useMemo(() => {
-    const pos = offsetToCursorPosition(textBody, selectionRange.end);
-    return cursorPositionToCoordinates(pos, cursorLayout, cursorCtx);
-  }, [textBody, selectionRange.end, cursorLayout, cursorCtx]);
+  const caretPosition = useMemo(() => {
+    const position = offsetToCursorPosition(textBody, selectionRange.end);
+    return cursorPositionToCoordinates(position, cursorLayout, cursorContext);
+  }, [cursorContext, cursorLayout, selectionRange.end, textBody]);
 
-  const selRects = useMemo(() => {
+  const selectionRects = useMemo(() => {
     if (selectionRange.start === selectionRange.end) {
       return [];
     }
-    const startPos = offsetToCursorPosition(textBody, selectionRange.start);
-    const endPos = offsetToCursorPosition(textBody, selectionRange.end);
-    const selection: TextSelection = { start: startPos, end: endPos };
-    return selectionToRects(selection, cursorLayout, cursorCtx);
-  }, [textBody, selectionRange, cursorLayout, cursorCtx]);
+    const startPosition = offsetToCursorPosition(textBody, selectionRange.start);
+    const endPosition = offsetToCursorPosition(textBody, selectionRange.end);
+    const selection: TextSelection = { start: startPosition, end: endPosition };
+    return selectionToRects(selection, cursorLayout, cursorContext);
+  }, [cursorContext, cursorLayout, selectionRange, textBody]);
 
-  // --- Text change handler ---
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const newText = e.target.value;
-      dispatch({
-        type: "UPDATE_NODE",
-        source: "text-edit",
-        nodeId: node.id,
-        updater: (n) => {
-          if (!n.textData) {return n;}
-          return { ...n, textData: { ...n.textData, characters: newText }, derivedTextData: undefined };
-        },
-      });
-      // Defer selection update to after React re-render
-      requestAnimationFrame(updateSelection);
-    },
-    [dispatch, node.id, updateSelection],
-  );
+  const handleChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>): void => {
+    const nextText = event.currentTarget.value;
+    updateNode(guid, (current) => writeTextCharacters(current, nextText), "text-edit");
+    requestAnimationFrame(updateSelection);
+  }, [guid, updateNode, updateSelection]);
 
-  // --- Key handler ---
-  // Only Escape needs special handling (exit text edit).
-  // All other keys (including Delete, Backspace, Cmd+C/V/X, arrow keys)
-  // pass through to the textarea naturally. The global keyboard handler
-  // (use-fig-keyboard.ts) has both isInputTarget() and isTextEditing guards.
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        dispatch({ type: "EXIT_TEXT_EDIT" });
-        return;
-      }
-      // Defer selection update for arrow keys, etc.
-      requestAnimationFrame(updateSelection);
-    },
-    [dispatch, updateSelection],
-  );
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onExit();
+      return;
+    }
+    requestAnimationFrame(updateSelection);
+  }, [onExit, updateSelection]);
 
-  // --- IME composition ---
-  const initialComposition = createInitialCompositionState();
+  const initialComposition = useMemo(() => createInitialCompositionState(), []);
   const [, setComposition] = useState<CompositionState>(initialComposition);
   const {
     handleCompositionStart,
@@ -348,126 +299,87 @@ export function FigTextEditOverlay({
     handleCompositionEnd,
   } = useTextComposition({ setComposition, initialCompositionState: initialComposition });
 
-  // --- Click-outside detection ---
-  const handleOverlayPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      const page = screenToPage(e.clientX, e.clientY);
-      if (!page) {return;}
-      const b = bounds;
-      const inside =
-        page.pageX >= b.x && page.pageX <= b.x + b.width &&
-        page.pageY >= b.y && page.pageY <= b.y + b.height;
-      if (!inside) {
-        dispatch({ type: "EXIT_TEXT_EDIT" });
-      }
-    },
-    [screenToPage, bounds, dispatch],
-  );
+  const handleOverlayPointerDown = useCallback((event: PointerEvent<HTMLDivElement>): void => {
+    const page = screenToPage(event.clientX, event.clientY);
+    if (page === undefined) {
+      return;
+    }
+    if (!isInsideBounds(page, bounds)) {
+      onExit();
+    }
+  }, [bounds, onExit, screenToPage]);
 
-  // --- Drag selection anchor ---
-  //
-  // Tracks the character offset where the user pressed down. During drag,
-  // the selection extends from this anchor to the current pointer position.
+  const screenToCharOffset = useCallback((clientX: number, clientY: number): number | null => {
+    const svg = svgRef.current;
+    if (svg === null) {
+      return null;
+    }
+    const point = svg.createSVGPoint();
+    point.x = clientX;
+    point.y = clientY;
+    const matrix = svg.getScreenCTM();
+    if (matrix === null) {
+      return null;
+    }
+    const svgPoint = point.matrixTransform(matrix.inverse());
+    const cursorPosition = coordinatesToCursorPosition({
+      layoutResult: cursorLayout,
+      x: svgPoint.x,
+      y: svgPoint.y,
+      ctx: cursorContext,
+    });
+    return cursorPositionToOffset(textBody, cursorPosition);
+  }, [cursorContext, cursorLayout, textBody]);
+
   const dragAnchorRef = useRef<number | null>(null);
 
-  /**
-   * Convert screen coordinates to a flat character offset within the text.
-   * Uses SVG's getScreenCTM() for accurate mapping regardless of zoom/transform.
-   */
-  const screenToCharOffset = useCallback(
-    (clientX: number, clientY: number): number | null => {
-      const svg = svgRef.current;
-      if (!svg) {return null;}
+  const handleSvgPointerDown = useCallback((event: PointerEvent<SVGSVGElement>): void => {
+    event.stopPropagation();
+    event.preventDefault();
+    const textarea = textareaRef.current;
+    if (textarea === null) {
+      return;
+    }
+    const offset = screenToCharOffset(event.clientX, event.clientY);
+    if (offset !== null) {
+      dragAnchorRef.current = offset;
+      textarea.setSelectionRange(offset, offset);
+      setSelectionRange({ start: offset, end: offset });
+    }
+    textarea.focus();
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [screenToCharOffset]);
 
-      const pt = svg.createSVGPoint();
-      pt.x = clientX;
-      pt.y = clientY;
-      const ctm = svg.getScreenCTM();
-      if (!ctm) {return null;}
+  const handleSvgPointerMove = useCallback((event: PointerEvent<SVGSVGElement>): void => {
+    const anchor = dragAnchorRef.current;
+    if (anchor === null) {
+      return;
+    }
+    event.preventDefault();
+    const textarea = textareaRef.current;
+    if (textarea === null) {
+      return;
+    }
+    const offset = screenToCharOffset(event.clientX, event.clientY);
+    if (offset === null) {
+      return;
+    }
+    const start = Math.min(anchor, offset);
+    const end = Math.max(anchor, offset);
+    textarea.setSelectionRange(start, end);
+    setSelectionRange({ start, end });
+  }, [screenToCharOffset]);
 
-      const svgPoint = pt.matrixTransform(ctm.inverse());
-      const cursorPos = coordinatesToCursorPosition({
-        layoutResult: cursorLayout,
-        x: svgPoint.x,
-        y: svgPoint.y,
-        ctx: cursorCtx,
-      });
-      return cursorPositionToOffset(textBody, cursorPos);
-    },
-    [cursorLayout, cursorCtx, textBody],
-  );
-
-  // --- SVG pointer events → textarea selection sync ---
-  //
-  // pointerdown: set cursor position (anchor), capture pointer for drag tracking
-  // pointermove: extend selection from anchor to current position
-  // pointerup:   release capture, finalize selection
-  const handleSvgPointerDown = useCallback(
-    (e: React.PointerEvent<SVGSVGElement>) => {
-      e.stopPropagation();
-      // preventDefault() is critical: without it, the browser's default mousedown
-      // behavior moves focus away from the hidden textarea to the SVG element,
-      // triggering the textarea's blur handler → EXIT_TEXT_EDIT. This matches
-      // the pptx editor's TextEditController pattern.
-      e.preventDefault();
-
-      const ta = textareaRef.current;
-      if (!ta) {return;}
-
-      const offset = screenToCharOffset(e.clientX, e.clientY);
-      if (offset !== null) {
-        dragAnchorRef.current = offset;
-        ta.setSelectionRange(offset, offset);
-        setSelectionRange({ start: offset, end: offset });
-      }
-
-      ta.focus();
-
-      // Capture pointer so pointermove/pointerup fire on this element
-      // even when the pointer moves outside the SVG bounds.
-      e.currentTarget.setPointerCapture(e.pointerId);
-    },
-    [screenToCharOffset],
-  );
-
-  const handleSvgPointerMove = useCallback(
-    (e: React.PointerEvent<SVGSVGElement>) => {
-      const anchor = dragAnchorRef.current;
-      if (anchor === null) {return;}
-      e.preventDefault();
-
-      const ta = textareaRef.current;
-      if (!ta) {return;}
-
-      const offset = screenToCharOffset(e.clientX, e.clientY);
-      if (offset === null) {return;}
-
-      const start = Math.min(anchor, offset);
-      const end = Math.max(anchor, offset);
-      ta.setSelectionRange(start, end);
-      setSelectionRange({ start, end });
-    },
-    [screenToCharOffset],
-  );
-
-  const handleSvgPointerUp = useCallback(
-    (e: React.PointerEvent<SVGSVGElement>) => {
-      dragAnchorRef.current = null;
-      e.preventDefault();
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    },
-    [],
-  );
+  const handleSvgPointerUp = useCallback((event: PointerEvent<SVGSVGElement>): void => {
+    dragAnchorRef.current = null;
+    event.preventDefault();
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   const hasRange = selectionRange.start !== selectionRange.end;
-  const boundsWidth = bounds.width;
-  const boundsHeight = bounds.height;
 
   return (
-    <div
-      style={{ position: "absolute", inset: 0 } as CSSProperties}
-      onPointerDown={handleOverlayPointerDown}
-    >
+    <div style={overlayStyle} onPointerDown={handleOverlayPointerDown}>
       <TextEditInputFrame
         bounds={bounds}
         canvasWidth={canvasWidth}
@@ -483,31 +395,19 @@ export function FigTextEditOverlay({
         showFrameOutline
         showTextSelection={false}
       >
-        {/* Custom SVG overlay using fig's layout computation */}
         <svg
           ref={svgRef}
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            width: "100%",
-            height: "100%",
-            pointerEvents: "auto",
-            overflow: "visible",
-            zIndex: 2,
-          }}
-          viewBox={`0 0 ${boundsWidth} ${boundsHeight}`}
+          style={svgOverlayStyle}
+          viewBox={`0 0 ${bounds.width} ${bounds.height}`}
           preserveAspectRatio="xMinYMin meet"
           onPointerDown={handleSvgPointerDown}
           onPointerMove={handleSvgPointerMove}
           onPointerUp={handleSvgPointerUp}
         >
           <style>{CARET_BLINK_KEYFRAMES}</style>
-
-          {/* Selection highlights */}
-          {selRects.map((rect, i) => (
+          {selectionRects.map((rect) => (
             <rect
-              key={`sel-${i}`}
+              key={`${rect.x}:${rect.y}:${rect.width}:${rect.height}`}
               x={rect.x}
               y={rect.y}
               width={rect.width}
@@ -516,19 +416,15 @@ export function FigTextEditOverlay({
               fillOpacity={0.3}
             />
           ))}
-
-          {/* Cursor caret */}
-          {caretPos && (
+          {caretPosition && (
             <line
-              x1={caretPos.x}
-              y1={caretPos.y}
-              x2={caretPos.x}
-              y2={caretPos.y + caretPos.height}
+              x1={caretPosition.x}
+              y1={caretPosition.y}
+              x2={caretPosition.x}
+              y2={caretPosition.y + caretPosition.height}
               stroke={colorTokens.selection.primary}
               strokeWidth={2}
-              style={{
-                animation: hasRange ? "none" : "_fig-caret-blink 1s step-end infinite",
-              }}
+              style={{ animation: hasRange ? "none" : "_fig-caret-blink 1s step-end infinite" }}
             />
           )}
         </svg>

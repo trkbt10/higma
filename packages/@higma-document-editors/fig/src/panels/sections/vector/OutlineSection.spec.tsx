@@ -1,37 +1,19 @@
-/** @file Outline conversion property section tests. */
+/** @file Outline section tests. */
 
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
+import { renderSection, sectionNode } from "../section-specimen";
 import { OutlineSection } from "./OutlineSection";
 
-function makeNode(type: FigDesignNode["type"]): FigDesignNode {
-  return {
-    id: "node" as FigNodeId,
-    type,
-    name: "Node",
-    visible: true,
-    opacity: 1,
-    transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-    size: { x: 100, y: 80 },
-    fills: [],
-    strokes: [],
-    strokeWeight: 0,
-    effects: [],
-  };
-}
-
 describe("OutlineSection", () => {
-  it("renders an outline action for supported shape nodes", () => {
-    const html = renderToStaticMarkup(createElement(OutlineSection, { node: makeNode("RECTANGLE"), dispatch: () => undefined }));
+  it("renders outline controls for supported Kiwi nodes", () => {
+    const node = sectionNode("ROUNDED_RECTANGLE");
 
-    expect(html).toContain("Outline selection");
-    expect(html).not.toContain("disabled");
+    expect(renderSection(createElement(OutlineSection, { node }), [node])).toContain("Outline selection");
   });
 
-  it("renders text glyph data note for text nodes", () => {
-    const html = renderToStaticMarkup(createElement(OutlineSection, { node: makeNode("TEXT"), dispatch: () => undefined }));
+  it("does not render controls for unsupported Kiwi nodes", () => {
+    const node = sectionNode("CANVAS");
 
-    expect(html).toContain("glyph path data");
+    expect(renderSection(createElement(OutlineSection, { node }), [node])).toBe("");
   });
 });

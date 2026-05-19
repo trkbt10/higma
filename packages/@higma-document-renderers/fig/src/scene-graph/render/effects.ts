@@ -7,7 +7,7 @@
  * or React elements. Each consumer formats them for its own output.
  */
 
-import type { Effect, Color, BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { Effect, Color, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 import type { IdGenerator } from "./fill";
 
 // =============================================================================
@@ -92,9 +92,7 @@ export type ResolvedFilter = {
 
 /**
  * Convert a BlendMode to SVG feBlend mode string.
- * Returns "normal" when no blend mode is specified. Unsupported values
- * (SVG feBlend only supports a subset of CSS blend modes) fall back to
- * "normal" so renderers never emit an illegal attribute value.
+ * Returns "normal" when no blend mode is specified.
  */
 function effectBlendModeToSvg(bm: BlendMode | undefined): FeBlendMode {
   if (!bm) { return "normal"; }
@@ -116,7 +114,7 @@ function effectBlendModeToSvg(bm: BlendMode | undefined): FeBlendMode {
     case "luminosity":
       return bm;
     default:
-      return "normal";
+      throw new Error(`Unsupported SVG feBlend mode "${bm}"`);
   }
 }
 
@@ -366,7 +364,7 @@ export function resolveEffects(
         //      offset of (+2, +2) (light from bottom-right), the
         //      band lands on the TOP-LEFT inner edge; for (-1, -1)
         //      it lands on the BOTTOM-RIGHT inner edge. This is the
-        //      classic Win98 bevel direction the source data assumes.
+        //      classic Win98 bevel direction encoded by the source data.
         //   5. Flood the filter region with the shadow colour and
         //      composite IN with the band → coloured inner band.
         //   6. Accumulate the result; the terminal feMerge at the

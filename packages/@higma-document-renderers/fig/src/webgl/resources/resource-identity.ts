@@ -1,6 +1,6 @@
 /** @file WebGL scene resource identity for viewport-only rerenders. */
 
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 
 export type WebGLSceneResourceKey = {
   readonly root: SceneGraph["root"];

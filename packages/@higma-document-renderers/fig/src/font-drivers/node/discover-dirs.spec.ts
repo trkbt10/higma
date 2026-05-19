@@ -7,7 +7,7 @@
  */
 
 import { classifyFontFile, scanFontDirectories } from "./discover-dirs";
-import { createFakeFs } from "./test-helpers";
+import { createFakeFs } from "./font-driver-test-fixtures";
 
 describe("classifyFontFile", () => {
   it("recognises the four extensions opentype.js can parse directly", () => {

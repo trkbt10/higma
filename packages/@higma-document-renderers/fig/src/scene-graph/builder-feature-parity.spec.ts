@@ -8,7 +8,7 @@
  * to verify the scene-graph builder also supports it.
  */
 
-import type { SceneNodeBase, GroupNode } from "@higma-document-models/fig/scene-graph";
+import type { SceneNodeBase, GroupNode } from "@higma-document-renderers/fig/scene-graph";
 
 // =============================================================================
 // 1. Node Type Coverage
@@ -139,18 +139,18 @@ describe("SceneNodeBase feature coverage", () => {
 });
 
 // =============================================================================
-// 3. FigNode Property Audit (mechanically extracted from old renderer)
+// 3. Kiwi FigNode Property Audit
 // =============================================================================
 
-describe("FigNode property audit: old SVG renderer → new builder", () => {
+describe("FigNode property audit: SVG renderer inputs → scene-graph builder", () => {
   /**
    * Every FigNode property the old SVG renderer reads, extracted by:
    *   grep -rnoE '(node|paint|effect)\.[a-zA-Z_]+' svg/nodes/ svg/fill.ts svg/stroke.ts svg/effects.ts
    *
    * Status categories:
-   *   "domain"    → Read from FigDesignNode top-level domain field
-   *   "raw"       → Read from FigDesignNode-domain field whose value is
-   *                 binary blob data (geometry decoded against blob array)
+   *   "domain"    → Read from Kiwi FigNode field
+   *   "raw"       → Read from Kiwi FigNode field whose value is binary
+   *                 blob data (geometry decoded against blob array)
    *   "converted" → Processed during convert/ stage (paint → Fill, effect → Effect)
    *   "ignored"   → Not applicable to scene-graph (SVG-only concern)
    */
@@ -162,8 +162,8 @@ describe("FigNode property audit: old SVG renderer → new builder", () => {
     "node.size": "domain",
 
     // Paint
-    "node.fillPaints": "domain",       // → FigDesignNode.fills
-    "node.strokePaints": "domain",     // → FigDesignNode.strokes
+    "node.fillPaints": "domain",
+    "node.strokePaints": "domain",
     "node.strokeWeight": "domain",
     "node.strokeCap": "domain",
     "node.strokeJoin": "domain",
@@ -179,8 +179,8 @@ describe("FigNode property audit: old SVG renderer → new builder", () => {
     "node.vectorData": "raw",          // Per-path style override table
 
     // Frame/container
-    "node.clipsContent": "domain",     // Pre-resolved from frameMaskDisabled
-    "node.frameMaskDisabled": "domain", // Normalized to clipsContent at domain level
+    "node.clipsContent": "domain",     // Explicit Kiwi/domain clip flag
+    "node.frameMaskDisabled": "domain", // Kiwi inverted clip flag read by resolveClipsContent
 
     // Effects
     "node.effects": "domain",

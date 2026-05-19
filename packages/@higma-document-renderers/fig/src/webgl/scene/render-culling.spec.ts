@@ -1,7 +1,7 @@
 /** @file WebGL render culling tests. */
 
-import type { RenderPathNode, RenderRectNode } from "../../scene-graph/render-tree";
-import type { PathNode, RectNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
+import type { RenderPathNode, RenderRectNode } from "../../scene-graph";
+import type { PathNode, RectNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
 import { shouldRenderVisualNode } from "./render-culling";
 
 function makeRect(overrides: Partial<RenderRectNode> = {}): RenderRectNode {

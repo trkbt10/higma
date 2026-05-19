@@ -1,8 +1,11 @@
 /** @file SVG renderer font-loader integration tests. */
 
 import type { FigNode } from "@higma-document-models/fig/types";
+import { EMPTY_FIG_STYLE_REGISTRY, indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 import type { AbstractFont, FontLoader, FontQuery, FontPath, LoadedFont } from "@higma-document-models/fig/font";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { renderFigToSvg } from "./renderer";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 const RECT_PATH: FontPath = {
   commands: [
@@ -55,7 +58,7 @@ function createTextNode(): FigNode {
     opacity: 1,
     transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     size: { x: 120, y: 32 },
-    fillPaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1, visible: true }],
+    fillPaints: [{ type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1, visible: true }],
     characters: "Hello",
     fontSize: 20,
     fontName: { family: "Unit Test Sans", style: "Regular" },
@@ -86,9 +89,12 @@ describe("renderFigToSvg fontLoader", () => {
     const result = await renderFigToSvg([createTextNode()], {
       width: 120,
       height: 32,
+      viewport: { x: 0, y: 0, width: 120, height: 32 },
       blobs: [],
       images: new Map(),
-      symbolMap: new Map(),
+      childrenOf: () => [],
+      symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       backgroundColor: "#ffffff",
       fontLoader: createFontLoader(),
     });

@@ -10,27 +10,37 @@
  */
 
 
-import { buildRoundedRectPathD } from "@higma-primitives/path";
+import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD } from "@higma-primitives/path";
 import type { CornerRadius } from "@higma-primitives/path";
 
 type RectShapeProps = {
   readonly width: number;
   readonly height: number;
   readonly cornerRadius?: CornerRadius;
+  readonly cornerSmoothing?: number;
   readonly fill?: string;
   readonly fillOpacity?: number;
   readonly [key: string]: unknown;
 };
 
-export function RectShape({ width, height, cornerRadius, ...rest }: RectShapeProps) {
-  if (cornerRadius !== undefined && typeof cornerRadius !== "number") {
-    const d = buildRoundedRectPathD(width, height, cornerRadius);
-    return <path d={d} {...rest} />;
+function cornerRadiusTuple(cornerRadius: CornerRadius): readonly [number, number, number, number] {
+  if (typeof cornerRadius !== "number") {
+    return cornerRadius;
   }
+  return [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
+}
 
-  if (cornerRadius !== undefined && cornerRadius > 0) {
-    const d = buildRoundedRectPathD(width, height, [cornerRadius, cornerRadius, cornerRadius, cornerRadius]);
-    return <path d={d} {...rest} />;
+function roundedRectPathD(width: number, height: number, cornerRadius: CornerRadius, cornerSmoothing: number | undefined): string {
+  const radii = cornerRadiusTuple(cornerRadius);
+  if (cornerSmoothing !== undefined && cornerSmoothing > 0) {
+    return buildSmoothedRoundedRectPathD(width, height, radii, cornerSmoothing);
+  }
+  return buildRoundedRectPathD(width, height, radii);
+}
+
+export function RectShape({ width, height, cornerRadius, cornerSmoothing, ...rest }: RectShapeProps) {
+  if (cornerRadius !== undefined && (typeof cornerRadius !== "number" || cornerRadius > 0)) {
+    return <path d={roundedRectPathD(width, height, cornerRadius, cornerSmoothing)} {...rest} />;
   }
 
   return (

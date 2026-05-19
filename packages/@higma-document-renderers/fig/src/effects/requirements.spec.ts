@@ -12,7 +12,6 @@ describe("effect rendering requirements", () => {
       "DROP_SHADOW",
       "INNER_SHADOW",
       "FOREGROUND_BLUR",
-      "LAYER_BLUR",
       "BACKGROUND_BLUR",
     ]);
   });

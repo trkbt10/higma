@@ -6,7 +6,7 @@ import { computeTextLayout, textLayoutToCursorLayout, type ComputeLayoutOptions 
 import type { ExtractedTextProps } from "./types";
 
 // =============================================================================
-// Helpers
+// Local Routines
 // =============================================================================
 
 function makeProps(overrides: Partial<ExtractedTextProps> = {}): ExtractedTextProps {
@@ -39,9 +39,16 @@ function createEstimatedWidthMeasurer(layout: ReturnType<typeof computeTextLayou
 }
 
 const TEST_ASCENDER_RATIO = 0.96875;
+const TEST_DESCENDER_RATIO = 0.24121;
 
-function computeTextLayoutForTest(options: Omit<ComputeLayoutOptions, "ascenderRatio">): ReturnType<typeof computeTextLayout> {
-  return computeTextLayout({ ...options, ascenderRatio: TEST_ASCENDER_RATIO });
+function computeTextLayoutForTest(
+  options: Omit<ComputeLayoutOptions, "ascenderRatio" | "descenderRatio">,
+): ReturnType<typeof computeTextLayout> {
+  return computeTextLayout({
+    ...options,
+    ascenderRatio: TEST_ASCENDER_RATIO,
+    descenderRatio: TEST_DESCENDER_RATIO,
+  });
 }
 
 // =============================================================================

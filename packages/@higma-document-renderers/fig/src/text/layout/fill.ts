@@ -4,7 +4,7 @@
 
 import type { FigPaint } from "@higma-document-models/fig/types";
 import { figColorToHex, asSolidPaint } from "@higma-document-models/fig/color";
-import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 import type { FillColorResult } from "./types";
 
 /**
@@ -53,11 +53,11 @@ export function getFillColorAndOpacity(paints: readonly FigPaint[] | undefined):
  * text in the final raster.
  *
  * `getFillColorAndOpacity` (single-fill) is preserved for callers that
- * still want a flat colour answer; this helper is for renderers that
+ * still want a flat colour answer; this function is for renderers that
  * must mirror the stack semantically.
  *
  * Returns an empty array when no visible solid fill exists; callers
- * decide whether to fall back to `DEFAULT_FILL` or emit nothing.
+ * decide explicitly whether to emit a fill.
  */
 export function getAllVisibleSolidFills(
   paints: readonly FigPaint[] | undefined,

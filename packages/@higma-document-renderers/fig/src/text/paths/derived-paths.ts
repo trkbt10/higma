@@ -14,7 +14,7 @@ import type { PathCommand } from "@higma-primitives/path";
 // Aliased re-import for the parameter type that originally
 // distinguished blob-decoded paths (domain PathCommand) from
 // already-transformed paths (font PathCommand). With the SoT
-// consolidation in `@higma-primitives/path` both shapes are now the
+// consolidation in `@higma-primitives/path` both command sources now share the
 // same canonical union; the alias is preserved so the function
 // signature stays readable.
 type DomainPathCommand = PathCommand;

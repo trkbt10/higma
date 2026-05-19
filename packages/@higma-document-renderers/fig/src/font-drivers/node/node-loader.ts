@@ -165,7 +165,7 @@ export type NodeFontLoaderEnv = {
   readonly xdgDataHome: string | undefined;
   /** `$XDG_CONFIG_HOME` — reserved for future fontconfig user-config parsing. */
   readonly xdgConfigHome: string | undefined;
-  /** `process.cwd()` — used by the `@fontsource` discovery helper. */
+  /** `process.cwd()` — used by the `@fontsource` discovery routine. */
   readonly cwd: string;
 };
 
@@ -491,6 +491,34 @@ function resolveVariants(
 }
 
 /**
+ * Score a font path for subset-coverage preference. Distributed font
+ * bundles (notably `@fontsource/*`) ship the same family carved into
+ * per-script subset files: `inter-latin-400-normal.woff`,
+ * `inter-cyrillic-400-normal.woff`, … all advertise the same `family`
+ * + `weight` + `subfamily` in the `name` table, so the indexer puts
+ * every subset into the same bucket. Without a coverage-aware
+ * tiebreaker, plain alphabetical sort picks `inter-cyrillic-…` first
+ * and the glyph extractor falls through every Latin character into
+ * the .notdef box.
+ *
+ * Lower scores rank earlier. Subset names that include the Latin
+ * block (`latin`, `latin-ext`) win; pure non-Latin subsets
+ * (`cyrillic`, `greek`, `vietnamese`, `arabic`, `khmer`, `tibetan`,
+ * `thai`, `hebrew`, `bengali`, `tamil`, …) are pushed past them.
+ * Files without a recognisable subset token score in between so
+ * they stay at the head when no Latin-subset file exists.
+ */
+function subsetPreferenceScore(fontPath: string): number {
+  const base = fontPath.toLowerCase();
+  if (/[-_]latin-ext\b/.test(base)) {return 0;}
+  if (/[-_]latin\b/.test(base)) {return 0;}
+  if (/[-_](cyrillic|greek|vietnamese|arabic|hebrew|thai|khmer|tibetan|bengali|tamil|telugu|kannada|gurmukhi|gujarati|oriya|sinhala|myanmar|lao|georgian|armenian|ethiopic|cherokee|canadian-aboriginal|mongolian|tifinagh|nko|adlam|osage)\b/.test(base)) {
+    return 2;
+  }
+  return 1;
+}
+
+/**
  * Rank candidate variants for a query.
  *
  * Order of priority:
@@ -498,7 +526,11 @@ function resolveVariants(
  *      visually disruptive than a near-miss weight.
  *   2. weight distance — minimal absolute delta from the requested
  *      numeric weight.
- *   3. postscriptName / path lex order — deterministic tiebreaker so
+ *   3. subset preference — Latin-bearing subsets rank ahead of
+ *      pure non-Latin subsets so distributed bundles that split a
+ *      family by script don't accidentally return a non-Latin file
+ *      for a Latin-only renderer query. See `subsetPreferenceScore`.
+ *   4. postscriptName / path lex order — deterministic tiebreaker so
  *      two equally-good faces in the same family always resolve to
  *      the same one.
  */
@@ -514,6 +546,12 @@ function rankVariants(variants: readonly FontFileInfo[], query: FontQuery): read
     const bWeight = weightDistance(query.weight, b.query.weight);
     if (aWeight !== bWeight) {
       return aWeight - bWeight;
+    }
+
+    const aSubset = subsetPreferenceScore(a.path);
+    const bSubset = subsetPreferenceScore(b.path);
+    if (aSubset !== bSubset) {
+      return aSubset - bSubset;
     }
 
     const aPs = a.postscriptName ?? a.path;
@@ -559,7 +597,7 @@ function applyVariationWrapping(
 }
 
 /**
- * Public helper exposed for unit tests — internal callers should use
+ * Public routine exposed for unit tests — internal callers should use
  * `createNodeFontLoader`. Tests inject a fake `NodeFontLoaderEnv` so
  * per-platform discovery can be exercised without touching the host
  * filesystem.
@@ -570,59 +608,127 @@ export function createNodeFontLoaderWithEnv(
 ): NodeFontLoaderInstance {
   const customFontDirs = options?.fontDirs ?? [];
   const includeSystemFontDirs = options?.includeSystemFontDirs ?? true;
-  const stateRef = {
+  // Two indexes, built independently:
+  //   - custom: scans the caller-supplied dirs (typically `@fontsource/*`).
+  //     Cheap (~1s for the fontsource set) and authoritative when the
+  //     caller ships a deterministic bundle.
+  //   - os: scans the host's font directories + parses every face.
+  //     Expensive (~8-10s on macOS where /System/Library/Fonts holds
+  //     ~200 files). Built lazily — `loadFont` only triggers it when
+  //     the requested family is missing from `custom`. This preserves
+  //     the "user-supplied dirs win" contract without paying the OS
+  //     cost for callers whose families are already in the bundle
+  //     (e.g. test specs that only render `Inter` via fontsource).
+  const customStateRef = {
+    value: null as { readonly index: Map<string, FontFileInfo[]> } | null,
+  };
+  const customPromiseRef = { value: null as Promise<void> | null };
+  const osStateRef = {
     value: null as { readonly index: Map<string, FontFileInfo[]>; readonly source: DiscoverySource } | null,
   };
-  const buildPromiseRef = { value: null as Promise<void> | null };
+  const osPromiseRef = { value: null as Promise<void> | null };
 
-  async function buildIndex(): Promise<void> {
+  async function buildCustomIndex(): Promise<void> {
     const customFiles = scanFontDirectories(env.fs, customFontDirs);
-
-    if (!includeSystemFontDirs) {
-      const index = await indexDiscoveredFiles(env.fs, customFiles);
-      stateRef.value = {
-        index,
-        source: customFontDirs.length > 0 ? "custom-dirs" : "empty",
-      };
-      return;
-    }
-
-    const osDiscovery = await discoverForPlatform(env);
-    // OS files first so user-supplied custom dirs win on duplicate
-    // family names — callers shipping a bundled "Inter" expect their
-    // copy to take precedence over an older system install.
-    const merged = mergeDiscovered([...osDiscovery.files], customFiles);
-    const index = await indexDiscoveredFiles(env.fs, merged);
-
-    const source: DiscoverySource = customFiles.length > 0 ? "custom-dirs" : osDiscovery.source;
-    stateRef.value = { index, source };
+    const index = await indexDiscoveredFiles(env.fs, customFiles);
+    customStateRef.value = { index };
   }
 
-  async function ensureIndex(): Promise<Map<string, FontFileInfo[]>> {
-    if (stateRef.value) {
-      return stateRef.value.index;
+  async function ensureCustomIndex(): Promise<Map<string, FontFileInfo[]>> {
+    if (customStateRef.value) {
+      return customStateRef.value.index;
     }
-    if (!buildPromiseRef.value) {
-      buildPromiseRef.value = buildIndex();
+    if (!customPromiseRef.value) {
+      customPromiseRef.value = buildCustomIndex();
     }
-    await buildPromiseRef.value;
-    return stateRef.value!.index;
+    await customPromiseRef.value;
+    return customStateRef.value!.index;
+  }
+
+  async function buildOsIndex(): Promise<void> {
+    const osDiscovery = await discoverForPlatform(env);
+    const index = await indexDiscoveredFiles(env.fs, osDiscovery.files);
+    osStateRef.value = { index, source: osDiscovery.source };
+  }
+
+  async function ensureOsIndex(): Promise<Map<string, FontFileInfo[]> | undefined> {
+    if (!includeSystemFontDirs) {
+      return undefined;
+    }
+    if (osStateRef.value) {
+      return osStateRef.value.index;
+    }
+    if (!osPromiseRef.value) {
+      osPromiseRef.value = buildOsIndex();
+    }
+    await osPromiseRef.value;
+    return osStateRef.value!.index;
+  }
+
+  /**
+   * Build the same merged index the legacy code exposed. Forces the
+   * OS scan when `includeSystemFontDirs` is true so listing /
+   * availability surface every face. Kept for callers that genuinely
+   * need the full catalogue (`listFontFamilies`, `isFontAvailable`,
+   * `catalogueSource`). The hot path (`loadFont`) does NOT go through
+   * this — it consults the two indexes lazily.
+   */
+  async function ensureMergedIndex(): Promise<{
+    index: Map<string, FontFileInfo[]>;
+    source: DiscoverySource;
+  }> {
+    const customIndex = await ensureCustomIndex();
+    if (!includeSystemFontDirs) {
+      const source: DiscoverySource = customFontDirs.length > 0 ? "custom-dirs" : "empty";
+      return { index: customIndex, source };
+    }
+    await ensureOsIndex();
+    const osState = osStateRef.value!;
+    // Custom entries overlay OS entries — callers shipping a bundled
+    // copy of a family expect their faces alongside (and ahead of)
+    // the OS install. Build a fresh map; mutations stay local.
+    const merged = new Map<string, FontFileInfo[]>();
+    for (const [k, v] of osState.index) {
+      merged.set(k, [...v]);
+    }
+    for (const [k, v] of customIndex) {
+      const existing = merged.get(k) ?? [];
+      merged.set(k, [...v, ...existing]);
+    }
+    const source: DiscoverySource = customFontDirs.length > 0 ? "custom-dirs" : osState.source;
+    return { index: merged, source };
   }
 
   async function loadFont(query: FontQuery): Promise<LoadedFont | undefined> {
-    const index = await ensureIndex();
-    const variants = resolveVariants(index, query.family, env.platform);
-
-    if (!variants || variants.length === 0) {
-      return undefined;
+    // Custom first: cheap, deterministic, and usually the caller's
+    // intent ("render with the bundled Inter, not the OS one").
+    const customIndex = await ensureCustomIndex();
+    const customVariants = resolveVariants(customIndex, query.family, env.platform);
+    if (customVariants && customVariants.length > 0) {
+      return finalizeLoadedFont(rankVariants(customVariants, query)[0], query);
     }
 
-    const sorted = rankVariants(variants, query);
-    const bestMatch = sorted[0];
+    // Lazy OS fallback: paid only when the caller's family is not in
+    // the custom bundle. Callers shipping a complete bundle never
+    // touch the OS catalogue.
+    const osIndex = await ensureOsIndex();
+    if (!osIndex) {
+      return undefined;
+    }
+    const osVariants = resolveVariants(osIndex, query.family, env.platform);
+    if (!osVariants || osVariants.length === 0) {
+      return undefined;
+    }
+    return finalizeLoadedFont(rankVariants(osVariants, query)[0], query);
+  }
+
+  function finalizeLoadedFont(
+    bestMatch: FontFileInfo | undefined,
+    query: FontQuery,
+  ): LoadedFont | undefined {
     if (!bestMatch) {
       return undefined;
     }
-
     const rawFont = toLoadedFontType(parseFaceAt(env.fs, bestMatch.path, bestMatch.faceIndex));
 
     // Variable fonts (SF Pro / SFNS, Roboto Flex, system Inter
@@ -653,15 +759,26 @@ export function createNodeFontLoaderWithEnv(
     loadFont,
 
     async isFontAvailable(family: string): Promise<boolean> {
-      const index = await ensureIndex();
-      return resolveVariants(index, family, env.platform) !== undefined;
+      // Check the cheap index first; only consult the OS catalogue
+      // when the family is missing from the custom bundle.
+      const customIndex = await ensureCustomIndex();
+      if (resolveVariants(customIndex, family, env.platform) !== undefined) {
+        return true;
+      }
+      const osIndex = await ensureOsIndex();
+      if (!osIndex) {
+        return false;
+      }
+      return resolveVariants(osIndex, family, env.platform) !== undefined;
     },
 
     async listFontFamilies(): Promise<readonly string[]> {
-      const index = await ensureIndex();
+      // Listing inherently needs the full catalogue. This is the
+      // single caller that always pays the OS scan cost.
+      const merged = await ensureMergedIndex();
       const seen = new Set<string>();
       const out: string[] = [];
-      for (const variants of index.values()) {
+      for (const variants of merged.index.values()) {
         const name = variants[0]?.query.family;
         if (!name) {
           continue;
@@ -692,18 +809,21 @@ export function createNodeFontLoaderWithEnv(
       if (kind === "unknown") {
         throw new Error(`addFontFile: unsupported font extension: ${fontPath}`);
       }
-      const index = await ensureIndex();
+      // Add to the custom index so the new face wins on `loadFont`
+      // (custom is consulted before the OS catalogue). Mutations are
+      // local to this loader; the OS index is untouched.
+      const customIndex = await ensureCustomIndex();
       const infos = await getFontInfos(env.fs, { path: fontPath });
       for (const info of infos) {
         const familyLower = info.query.family.toLowerCase();
-        const existing = index.get(familyLower) ?? [];
-        index.set(familyLower, [...existing, info]);
+        const existing = customIndex.get(familyLower) ?? [];
+        customIndex.set(familyLower, [...existing, info]);
       }
     },
 
     async catalogueSource(): Promise<DiscoverySource> {
-      await ensureIndex();
-      return stateRef.value!.source;
+      const merged = await ensureMergedIndex();
+      return merged.source;
     },
   };
 }
@@ -742,7 +862,7 @@ export function createNodeFontLoader(
  * `@fontsource` packages installed under `node_modules`.
  *
  * `@fontsource` is NOT an OS resolver — it is a JavaScript-package-
- * distributed bundle of web fonts. This helper exists so tools that
+ * distributed bundle of web fonts. This routine exists so tools that
  * want to render with a specific bundled-font version (web roundtrip
  * comparisons, deterministic snapshot generation) can opt in. It is
  * not the right entry point for general OS-correct rendering; use

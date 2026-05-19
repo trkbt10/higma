@@ -11,6 +11,7 @@ import { MultiFillRectLayers } from "../primitives/multi-fill";
 import { BackgroundBlurElement } from "../primitives/background-blur";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
 import { RenderNodeComponent } from "./RenderNodeComponent";
+import type { StrokeRendering } from "../../scene-graph";
 
 type Props = { readonly node: RenderFrameNode };
 
@@ -23,20 +24,33 @@ function renderFrameChildren(node: RenderFrameNode): ReactNode {
   return <>{childElements}</>;
 }
 
+function renderFrameBackgroundRect(
+  node: RenderFrameNode,
+  uniformStroke: ReturnType<typeof getUniformStrokeAttrs>,
+): ReactNode {
+  if (!node.background) {
+    return null;
+  }
+  if (node.background.fillLayers) {
+    return <MultiFillRectLayers layers={node.background.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} stroke={uniformStroke} />;
+  }
+  const { fill } = node.background;
+  return <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+}
+
+function renderFrameBackgroundSurface(node: RenderFrameNode, content: ReactNode): ReactNode {
+  const filterAttr = node.background?.filterAttr;
+  if (filterAttr === undefined) {
+    return content;
+  }
+  return <g filter={filterAttr}>{content}</g>;
+}
+
 function RenderFrameNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
-  const sr = node.background?.strokeRendering;
+  const sr: StrokeRendering | undefined = node.background?.strokeRendering;
   const uniformStroke = getUniformStrokeAttrs(sr);
-
-  let bgRect: ReactNode = null;
-  if (node.background) {
-    if (node.background.fillLayers) {
-      bgRect = <MultiFillRectLayers layers={node.background.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} stroke={uniformStroke} />;
-    } else {
-      const { fill } = node.background;
-      bgRect = <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
-    }
-  }
+  const bgRect = renderFrameBackgroundSurface(node, renderFrameBackgroundRect(node, uniformStroke));
 
   const childrenContent = renderFrameChildren(node);
 

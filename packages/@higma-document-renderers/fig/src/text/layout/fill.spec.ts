@@ -1,5 +1,5 @@
 /**
- * @file Unit spec for the fill helpers in `fill.ts`.
+ * @file Unit spec for the fill functions in `fill.ts`.
  *
  * `getFillColorAndOpacity` returns the first visible SOLID paint as a
  * single flat colour. `getAllVisibleSolidFills` returns the entire
@@ -13,10 +13,11 @@
 import { describe, it, expect } from "vitest";
 import type { FigPaint } from "@higma-document-models/fig/types";
 import { getFillColorAndOpacity, getAllVisibleSolidFills } from "./fill";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 function solid(rgba: { r: number; g: number; b: number; a?: number }, opacity?: number, visible?: boolean): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color: { r: rgba.r, g: rgba.g, b: rgba.b, a: rgba.a ?? 1 },
     opacity,
     visible,

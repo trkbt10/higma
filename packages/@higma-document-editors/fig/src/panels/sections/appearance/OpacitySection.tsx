@@ -1,34 +1,44 @@
-/**
- * @file Opacity property section adapter
- *
- * Thin adapter: derives a 0-100 percent from FigDesignNode.opacity, renders
- * the kernel-level view, and converts changes back to fig editor actions.
- */
+/** @file Opacity and visibility property section. */
+import type { FigNode } from "@higma-document-models/fig/types";
+import { useFigEditor } from "../../../context/FigEditorContext";
+import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import { OpacitySectionView } from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-
-type OpacitySectionProps = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
-
-/** Panel section for editing the opacity of a Figma node. */
-export function OpacitySection({ node, target, dispatch }: OpacitySectionProps) {
-  const percent = Math.round(node.opacity * 100);
-
+/** Render opacity and visibility controls for a Kiwi node. */
+export function OpacitySection({ node }: { readonly node: FigNode }) {
+  const { updateNode } = useFigEditor();
+  if (node.guid === undefined) {
+    throw new Error("OpacitySection requires a Kiwi node guid");
+  }
+  const guid = node.guid;
   return (
-    <OpacitySectionView
-      percent={percent}
-      onPercentChange={(value) => {
-        dispatch(createPropertyTargetUpdateAction({
-          target,
-          updater: (n) => ({ ...n, opacity: Math.max(0, Math.min(1, value / 100)) }),
-        }));
-      }}
-    />
+    <section style={sectionStyle}>
+      <div style={sectionTitleStyle}>Appearance</div>
+      <div style={fieldGridStyle}>
+        <PropertyField label="Opacity">
+          <input
+            style={inputStyle}
+            type="number"
+            min={0}
+            max={1}
+            step={0.01}
+            value={node.opacity ?? 1}
+            onChange={(event) => updateNode(guid, (current) => ({
+              ...current,
+              opacity: Number(event.currentTarget.value),
+            }), "property-panel")}
+          />
+        </PropertyField>
+        <PropertyField label="Visible">
+          <input
+            type="checkbox"
+            checked={node.visible !== false}
+            onChange={(event) => updateNode(guid, (current) => ({
+              ...current,
+              visible: event.currentTarget.checked,
+            }), "property-panel")}
+          />
+        </PropertyField>
+      </div>
+    </section>
   );
 }

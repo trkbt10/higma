@@ -145,6 +145,8 @@ export type EditorCanvasProps = {
   readonly isInteracting?: boolean;
   /** Whether text editing is active (hides selection handles). */
   readonly isTextEditing?: boolean;
+  /** Hide the root SVG from accessibility queries while an HTML text editor owns input. */
+  readonly svgAriaHidden?: boolean;
   /** Whether selection chrome may receive pointer interactions. */
   readonly selectionInteractionEnabled?: boolean;
   /** Whether to show rotate handles on selection boxes (default: false). */
@@ -338,6 +340,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     drag,
     isInteracting = false,
     isTextEditing = false,
+    svgAriaHidden = false,
     selectionInteractionEnabled = true,
     showRotateHandle = false,
     onItemPointerDown,
@@ -839,6 +842,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       <svg
         ref={svgRef}
         style={svgStyle}
+        aria-hidden={svgAriaHidden ? "true" : undefined}
         onClick={handleSvgClick}
         onPointerDown={handleSvgPointerDown}
         onDragOver={onDragOver}

@@ -1,7 +1,7 @@
 /** @file WebGL geometry cache memoisation tests. */
 
-import type { Fill, PathNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
-import type { RenderPathNode } from "../../scene-graph/render-tree";
+import type { Fill, PathNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
+import type { RenderPathNode } from "../../scene-graph";
 import { createWebGLGeometryCache } from "./geometry-cache";
 
 function makeRenderPathNode(): RenderPathNode {
@@ -62,5 +62,17 @@ describe("createWebGLGeometryCache — viewport-only rerender memoisation", () =
     const node = makeRenderPathNode();
     const { elementSize } = cache.getPathGeometry(node);
     expect(elementSize).toEqual({ width: 100, height: 100 });
+  });
+
+  it("keys rect vertices by corner smoothing as part of the geometry identity", () => {
+    const cache = createWebGLGeometryCache();
+    const radii = [24, 4, 16, 8] as const;
+    const standard = cache.getRectVertices(100, 80, radii);
+    const smoothed = cache.getRectVertices(100, 80, radii, 0.6);
+    const smoothedAgain = cache.getRectVertices(100, 80, radii, 0.6);
+
+    expect(smoothed).toBe(smoothedAgain);
+    expect(smoothed).not.toBe(standard);
+    expect(smoothed.length).toBeGreaterThan(0);
   });
 });

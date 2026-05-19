@@ -1,7 +1,7 @@
 /** @file WebGL geometry cache keyed by RenderTree node identity. */
 
-import type { Fill, PathContour } from "@higma-document-models/fig/scene-graph";
-import type { RenderPathNode, RenderTextNode } from "../../scene-graph/render-tree";
+import type { Fill, PathContour } from "@higma-document-renderers/fig/scene-graph";
+import type { RenderPathNode, RenderTextNode } from "../../scene-graph";
 import {
   generateEllipseVertices,
   generateRectVertices,
@@ -87,7 +87,7 @@ type TextGlyphGeometry = {
 };
 
 export type WebGLGeometryCache = {
-  readonly getRectVertices: (width: number, height: number, cornerRadius?: CornerRadius) => Float32Array;
+  readonly getRectVertices: (width: number, height: number, cornerRadius?: CornerRadius, cornerSmoothing?: number) => Float32Array;
   readonly getEllipseVertices: (params: { readonly cx: number; readonly cy: number; readonly rx: number; readonly ry: number }) => Float32Array;
   readonly getPathGeometry: (node: RenderPathNode) => PathGeometry;
   readonly getPathFillPlanGeometry: (node: RenderPathNode) => PathFillPlanGeometry;
@@ -110,13 +110,18 @@ function getCachedGeometry<T>(cache: Map<string, T>, key: string, create: () => 
   }
   const value = create();
   if (cache.size >= MAX_GEOMETRY_CACHE_ENTRIES) {
-    const firstKey = cache.keys().next().value;
-    if (typeof firstKey === "string") {
-      cache.delete(firstKey);
-    }
+    deleteOldestGeometryCacheEntry(cache);
   }
   cache.set(key, value);
   return value;
+}
+
+function deleteOldestGeometryCacheEntry<T>(cache: Map<string, T>): void {
+  const firstKey = cache.keys().next().value;
+  if (typeof firstKey !== "string") {
+    return;
+  }
+  cache.delete(firstKey);
 }
 
 function cornerRadiusCacheKey(cornerRadius: CornerRadius | undefined): string {
@@ -180,11 +185,11 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
   const textGlyphGeometry = new WeakMap<RenderTextNode, TextGlyphGeometry>();
 
   return {
-    getRectVertices(widthValue, heightValue, cornerRadius) {
+    getRectVertices(widthValue, heightValue, cornerRadius, cornerSmoothing) {
       return getCachedGeometry(
         rectVertices,
-        `${widthValue}:${heightValue}:${cornerRadiusCacheKey(cornerRadius)}`,
-        () => generateRectVertices(widthValue, heightValue, cornerRadius),
+        `${widthValue}:${heightValue}:${cornerRadiusCacheKey(cornerRadius)}:${cornerSmoothing ?? ""}`,
+        () => generateRectVertices(widthValue, heightValue, cornerRadius, cornerSmoothing),
       );
     },
 

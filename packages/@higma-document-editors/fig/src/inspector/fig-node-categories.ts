@@ -1,96 +1,66 @@
-/**
- * @file Fig-specific NodeCategoryRegistry implementation.
- *
- * Maps Figma node types (FRAME, RECTANGLE, TEXT, etc.) to visual categories
- * for the inspector overlay and tree panel.
- */
-
+/** @file Kiwi node category labels for inspector UI. */
+import { getNodeType } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 import type { NodeCategoryRegistry } from "@higma-editor-kernel/core/inspector-types";
 
-// =============================================================================
-// Category definitions
-// =============================================================================
+export type FigNodeCategory = "page" | "component" | "instance" | "text" | "shape" | "container";
 
-const FIG_CATEGORIES = {
-  container: { color: "#3b82f6", label: "Container" },
-  instance: { color: "#8b5cf6", label: "Instance" },
-  shape: { color: "#22c55e", label: "Shape" },
-  text: { color: "#f97316", label: "Text" },
-  structural: { color: "#6b7280", label: "Structural" },
-  special: { color: "#eab308", label: "Special" },
-} as const;
-
-// =============================================================================
-// Node type → category mapping
-// =============================================================================
-
-// SYMBOL is the on-disk encoding of the Figma UI concept "Component"
-// and a "Component Set" / "Variant Set" is a FRAME with variant
-// metadata (already covered by FRAME). The canonical schema has no
-// COMPONENT or COMPONENT_SET NodeType — see
-// `docs/refactor/component-type-cleanup.md`.
-const NODE_TYPE_TO_CATEGORY: Record<string, string> = {
-  // Container
-  FRAME: "container",
-  GROUP: "container",
-  SECTION: "container",
-  SYMBOL: "container",
-  // Instance
-  INSTANCE: "instance",
-  // Shape
-  RECTANGLE: "shape",
-  ROUNDED_RECTANGLE: "shape",
-  ELLIPSE: "shape",
-  VECTOR: "shape",
-  LINE: "shape",
-  STAR: "shape",
-  REGULAR_POLYGON: "shape",
-  BOOLEAN_OPERATION: "shape",
-  // Text
-  TEXT: "text",
-  // Structural
-  DOCUMENT: "structural",
-  CANVAS: "structural",
-  // Special
-  STICKY: "special",
-  CONNECTOR: "special",
-  SHAPE_WITH_TEXT: "special",
-  CODE_BLOCK: "special",
-  STAMP: "special",
-  WIDGET: "special",
-  EMBED: "special",
-  LINK_UNFURL: "special",
-  MEDIA: "special",
-  TABLE: "special",
-  TABLE_CELL: "special",
-  SLICE: "special",
-};
-
-// =============================================================================
-// Registry
-// =============================================================================
-
-/**
- * Fig-specific node category registry.
- *
- * Provides color and label mappings for all known Figma node types.
- * Inject this into editor-controls inspector components.
- */
-export const FIG_NODE_CATEGORY_REGISTRY: NodeCategoryRegistry = {
-  categories: FIG_CATEGORIES,
-  getCategory: (nodeType: string) => NODE_TYPE_TO_CATEGORY[nodeType] ?? "unknown",
-  fallback: { color: "#94a3b8", label: "Unknown" },
-};
-
-/**
- * Legend display order for Fig categories.
- * Excludes "unknown" since it's a fallback, not a meaningful category.
- */
-export const FIG_LEGEND_ORDER: readonly string[] = [
+export const FIG_LEGEND_ORDER: readonly FigNodeCategory[] = [
+  "page",
   "container",
+  "component",
   "instance",
-  "shape",
   "text",
-  "structural",
-  "special",
+  "shape",
 ];
+
+export const FIG_NODE_CATEGORY_REGISTRY: NodeCategoryRegistry = {
+  categories: {
+    page: { color: "#0ea5e9", label: "Page" },
+    container: { color: "#2563eb", label: "Container" },
+    component: { color: "#8b5cf6", label: "Component" },
+    instance: { color: "#a855f7", label: "Instance" },
+    text: { color: "#16a34a", label: "Text" },
+    shape: { color: "#f97316", label: "Shape" },
+  },
+  getCategory(nodeType) {
+    switch (nodeType) {
+      case "CANVAS":
+        return "page";
+      case "SYMBOL":
+        return "component";
+      case "INSTANCE":
+        return "instance";
+      case "TEXT":
+        return "text";
+      case "FRAME":
+      case "GROUP":
+      case "SECTION":
+        return "container";
+      default:
+        return "shape";
+    }
+  },
+  fallback: { color: "#64748b", label: "Unknown" },
+};
+
+/** Classify a Kiwi node into the inspector's compact category set. */
+export function classifyFigNode(node: FigNode): FigNodeCategory {
+  const type = getNodeType(node);
+  if (type === "CANVAS") {
+    return "page";
+  }
+  if (type === "SYMBOL") {
+    return "component";
+  }
+  if (type === "INSTANCE") {
+    return "instance";
+  }
+  if (type === "TEXT") {
+    return "text";
+  }
+  if (type === "FRAME" || type === "GROUP" || type === "SECTION") {
+    return "container";
+  }
+  return "shape";
+}

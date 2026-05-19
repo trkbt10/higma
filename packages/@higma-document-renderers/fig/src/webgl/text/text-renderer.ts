@@ -7,7 +7,7 @@
  * 2. OpenType.js font outlines - high quality
  */
 
-import type { TextNode, Color, PathContour, BlendMode } from "@higma-document-models/fig/scene-graph";
+import type { TextNode, Color, PathContour, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 import { tessellateContours } from "../tessellation/tessellation";
 import { splitPathCommandsIntoContours } from "../tessellation/path-contours";
 

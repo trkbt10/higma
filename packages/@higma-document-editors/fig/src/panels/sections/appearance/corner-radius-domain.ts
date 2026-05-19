@@ -1,85 +1,18 @@
-/** @file Corner radius editing domain for parametric rectangular nodes. */
+/** @file Corner radius operations for Kiwi shape nodes. */
+import type { FigNode } from "@higma-document-models/fig/types";
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-
-// SYMBOL is the on-disk encoding of the Figma UI concept "Component"
-// (the canonical schema has no COMPONENT NodeType — see
-// `docs/refactor/component-type-cleanup.md`).
-const CORNER_RADIUS_TYPES = new Set([
-  "RECTANGLE",
-  "ROUNDED_RECTANGLE",
-  "FRAME",
-  "SYMBOL",
-]);
-
-export type CornerRadiusIndex = 0 | 1 | 2 | 3;
-
-/** Return whether a node owns editable rectangular corner-radius fields. */
-export function isCornerRadiusEditableNode(node: FigDesignNode): boolean {
-  return CORNER_RADIUS_TYPES.has(node.type);
-}
-
-/** Return whether the node currently stores independent TL/TR/BR/BL radii. */
-export function hasIndividualCornerRadii(node: FigDesignNode): boolean {
-  return node.rectangleCornerRadii !== undefined && node.rectangleCornerRadii.length === 4;
-}
-
-/** Resolve the uniform radius used by the property panel when corners are linked. */
-export function resolveUniformCornerRadius(node: FigDesignNode): number {
-  return node.cornerRadius ?? 0;
-}
-
-/** Resolve TL/TR/BR/BL radii from either explicit individual radii or the uniform radius. */
-export function resolveIndividualCornerRadii(node: FigDesignNode): readonly [number, number, number, number] {
-  const radii = node.rectangleCornerRadii;
-  if (radii !== undefined && radii.length === 4) {
-    return [
-      radii[0] ?? 0,
-      radii[1] ?? 0,
-      radii[2] ?? 0,
-      radii[3] ?? 0,
-    ];
+/** Return the editable uniform corner radius when the selected node carries one. */
+export function readUniformCornerRadius(node: FigNode): number | undefined {
+  if (typeof node.cornerRadius === "number") {
+    return node.cornerRadius;
   }
-  const radius = resolveUniformCornerRadius(node);
-  return [radius, radius, radius, radius];
-}
-
-/** Store a uniform non-negative radius and clear independent radii. */
-export function setUniformCornerRadius(node: FigDesignNode, radius: number): FigDesignNode {
-  return {
-    ...node,
-    cornerRadius: Math.max(0, radius),
-    rectangleCornerRadii: undefined,
-  };
-}
-
-/** Expand the current uniform radius into explicit TL/TR/BR/BL radii. */
-export function expandToIndividualCornerRadii(node: FigDesignNode): FigDesignNode {
-  const radius = resolveUniformCornerRadius(node);
-  return {
-    ...node,
-    cornerRadius: undefined,
-    rectangleCornerRadii: [radius, radius, radius, radius],
-  };
-}
-
-/** Collapse independent radii back to one uniform radius using the top-left value. */
-export function collapseToUniformCornerRadius(node: FigDesignNode): FigDesignNode {
-  const radii = resolveIndividualCornerRadii(node);
-  return setUniformCornerRadius(node, radii[0]);
-}
-
-/** Set one independent corner radius while clearing the competing uniform source. */
-export function setIndividualCornerRadius(
-  node: FigDesignNode,
-  index: CornerRadiusIndex,
-  radius: number,
-): FigDesignNode {
-  const radii = [...resolveIndividualCornerRadii(node)] as [number, number, number, number];
-  radii[index] = Math.max(0, radius);
-  return {
-    ...node,
-    cornerRadius: undefined,
-    rectangleCornerRadii: radii,
-  };
+  const radii = node.rectangleCornerRadii;
+  if (radii === undefined || radii.length !== 4) {
+    return undefined;
+  }
+  const [topLeft, topRight, bottomRight, bottomLeft] = radii;
+  if (topLeft === topRight && topRight === bottomRight && bottomRight === bottomLeft) {
+    return topLeft;
+  }
+  return undefined;
 }

@@ -55,11 +55,6 @@ export type SvgRadialGradientAttrs = {
   readonly gradientTransform: string;
 };
 
-export type ElementSize = {
-  readonly width: number;
-  readonly height: number;
-};
-
 /**
  * Bounds for a paint-bearing element in user space. `(x, y)` is the
  * top-left of the element's bbox; `(width, height)` is its extent.
@@ -69,11 +64,6 @@ export type ElementSize = {
  * top-left there. For VECTOR (paths whose first command is offset
  * inside the node) the bbox is anchored at the path's bbox top-left,
  * which Figma's gradient transform also uses as the gradient origin.
- *
- * The default `width`/`height` constructors below treat callers that
- * pass only `{ width, height }` as `(0, 0, w, h)` for backward
- * compatibility — every existing call site implicitly assumes a
- * (0, 0)-anchored element.
  */
 export type ElementBounds = {
   readonly x: number;
@@ -134,17 +124,12 @@ function m(t: FigGradientTransform | undefined, field: keyof FigGradientTransfor
  */
 export function linearGradientAttrs(
   transform: FigGradientTransform | undefined,
-  elementBounds: ElementSize | ElementBounds,
+  elementBounds: ElementBounds,
 ): SvgLinearGradientAttrs | undefined {
   const t = transform;
   if (!t) return undefined;
-  // Accept the legacy `{width, height}` form (origin (0, 0)) and the
-  // bounds form `{x, y, width, height}` (origin (x, y) — required for
-  // VECTOR paths whose contour bbox is offset inside the node's
-  // coordinate system; gradient origin then sits at the bbox top-left,
-  // not at path-local (0, 0)).
-  const bx = "x" in elementBounds ? elementBounds.x : 0;
-  const by = "y" in elementBounds ? elementBounds.y : 0;
+  const bx = elementBounds.x;
+  const by = elementBounds.y;
   const w = elementBounds.width;
   const h = elementBounds.height;
 
@@ -246,12 +231,12 @@ export function linearGradientAttrs(
  */
 export function radialGradientAttrs(
   transform: FigGradientTransform | undefined,
-  elementBounds: ElementSize | ElementBounds,
+  elementBounds: ElementBounds,
 ): SvgRadialGradientAttrs | undefined {
   const t = transform;
   if (!t) return undefined;
-  const bx = "x" in elementBounds ? elementBounds.x : 0;
-  const by = "y" in elementBounds ? elementBounds.y : 0;
+  const bx = elementBounds.x;
+  const by = elementBounds.y;
   const w = elementBounds.width;
   const h = elementBounds.height;
 

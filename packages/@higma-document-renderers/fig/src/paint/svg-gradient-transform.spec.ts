@@ -11,14 +11,15 @@
 
 import type { FigGradientPaint } from "@higma-document-models/fig/types";
 import { linearGradientAttrs, radialGradientAttrs } from "./svg-gradient-transform";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 function paintWith(transform: FigGradientPaint["transform"]): FigGradientPaint {
   // Minimal FigGradientPaint — only transform matters for these tests.
   return {
-    type: "GRADIENT_LINEAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops: [],
     transform,
   };
@@ -64,7 +65,7 @@ describe("linearGradientAttrs (SSoT vs Figma export)", () => {
       m11: 6.123234262925839e-17,
       m12: 1,
     });
-    const attrs = linearGradientAttrs(paint.transform, { width: 370, height: 124.4 });
+    const attrs = linearGradientAttrs(paint.transform, { x: 0, y: 0, width: 370, height: 124.4 });
     expect(attrs).toBeDefined();
     // 0% stop (mint/top): grad(0,0) → (m02, m12) = (0, 1) → pixel (0, 124.4)?
     // No — grad_x = obj_y here, so grad_x=0 means obj_y=0, which is top.
@@ -109,7 +110,7 @@ describe("linearGradientAttrs (SSoT vs Figma export)", () => {
       m11: 0.006601562723517418,
       m12: 0.49661457538604736,
     });
-    const attrs = linearGradientAttrs(paint.transform, { width: 346, height: 18 });
+    const attrs = linearGradientAttrs(paint.transform, { x: 0, y: 0, width: 346, height: 18 });
     expect(attrs).toBeDefined();
     // 0% stop (blue/left): grad_x=0 line is obj_x ≈ 0 (left edge).
     expect(attrs!.x1).toBeCloseTo(0, 4);
@@ -123,7 +124,7 @@ describe("linearGradientAttrs (SSoT vs Figma export)", () => {
   // which land on the top corners in object space.
   it("identity transform — horizontal left-to-right gradient", () => {
     const paint = paintWith({ m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 });
-    const attrs = linearGradientAttrs(paint.transform, { width: 200, height: 100 });
+    const attrs = linearGradientAttrs(paint.transform, { x: 0, y: 0, width: 200, height: 100 });
     expect(attrs!.x1).toBeCloseTo(0, 4);
     expect(attrs!.y1).toBeCloseTo(0, 4);
     expect(attrs!.x2).toBeCloseTo(200, 4);
@@ -133,7 +134,7 @@ describe("linearGradientAttrs (SSoT vs Figma export)", () => {
 
   it("undefined transform returns undefined", () => {
     const paint = paintWith(undefined);
-    expect(linearGradientAttrs(paint.transform, { width: 100, height: 100 })).toBeUndefined();
+    expect(linearGradientAttrs(paint.transform, { x: 0, y: 0, width: 100, height: 100 })).toBeUndefined();
   });
 });
 
@@ -163,7 +164,7 @@ describe("radialGradientAttrs (SSoT vs Figma export)", () => {
       m11: 6.123234262925839e-17,
       m12: 1,
     });
-    const attrs = radialGradientAttrs(paint.transform, { width: 390, height: 342 });
+    const attrs = radialGradientAttrs(paint.transform, { x: 0, y: 0, width: 390, height: 342 });
     expect(attrs).toBeDefined();
     expect(attrs!.cx).toBe("0");
     expect(attrs!.cy).toBe("0");
@@ -188,7 +189,7 @@ describe("radialGradientAttrs (SSoT vs Figma export)", () => {
 
   it("identity transform — circle centred and sized to element", () => {
     const paint = paintWith({ m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 });
-    const attrs = radialGradientAttrs(paint.transform, { width: 200, height: 100 });
+    const attrs = radialGradientAttrs(paint.transform, { x: 0, y: 0, width: 200, height: 100 });
     expect(attrs).toBeDefined();
     const match = attrs!.gradientTransform.match(
       /^translate\(([-\d.e+]+)\s+([-\d.e+]+)\)\s+rotate\(([-\d.e+]+)\)\s+scale\(([-\d.e+]+)\s+([-\d.e+]+)\)$/,
@@ -203,6 +204,6 @@ describe("radialGradientAttrs (SSoT vs Figma export)", () => {
 
   it("undefined transform returns undefined", () => {
     const paint = paintWith(undefined);
-    expect(radialGradientAttrs(paint.transform, { width: 100, height: 100 })).toBeUndefined();
+    expect(radialGradientAttrs(paint.transform, { x: 0, y: 0, width: 100, height: 100 })).toBeUndefined();
   });
 });

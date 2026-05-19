@@ -1,49 +1,67 @@
-/** @file Variant property metadata controls adapter. */
-
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
+/** @file Variant property controls over Kiwi variantPropSpecs. */
+import { guidToString } from "@higma-document-models/fig/domain";
+import type { FigGuid, FigNode, FigVariantPropSpec } from "@higma-document-models/fig/types";
 import {
   VariantPropertiesSectionView,
   type VariantPropertyView,
 } from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { createPropertyPrimaryUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-import { updateVariantSpec } from "./variant-domain";
+import { useFigEditor } from "../../../context/FigEditorContext";
+import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
-type VariantPropertiesSectionProps = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
+function requirePropDefId(spec: FigVariantPropSpec): FigGuid {
+  if (spec.propDefId === undefined) {
+    throw new Error("Variant property spec is missing propDefId");
+  }
+  return spec.propDefId;
+}
 
-/** Edit SYMBOL variant values backed by Kiwi `variantPropSpecs`. */
-export function VariantPropertiesSection({ node, target, dispatch }: VariantPropertiesSectionProps) {
+function requireSpecValue(spec: FigVariantPropSpec): string {
+  if (spec.value === undefined) {
+    throw new Error(`Variant property spec ${guidToString(requirePropDefId(spec))} is missing value`);
+  }
+  return spec.value;
+}
+
+function variantSpecViews(specs: readonly FigVariantPropSpec[]): readonly VariantPropertyView[] {
+  return specs.map((spec) => ({
+    id: guidToString(requirePropDefId(spec)),
+    value: requireSpecValue(spec),
+  }));
+}
+
+function writeVariantSpecValue(node: FigNode, propDefKey: string, value: string): FigNode {
   const specs = node.variantPropSpecs ?? [];
+  const hasSpec = specs.some((spec) => guidToString(requirePropDefId(spec)) === propDefKey);
+  if (!hasSpec) {
+    throw new Error(`Variant property spec ${propDefKey} is not present on ${guidToString(node.guid)}`);
+  }
+  return {
+    ...node,
+    variantPropSpecs: specs.map((spec) => {
+      if (guidToString(requirePropDefId(spec)) !== propDefKey) {
+        return spec;
+      }
+      return { ...spec, value };
+    }),
+  };
+}
 
+/** Render and edit SYMBOL variant values carried by Kiwi variantPropSpecs. */
+export function VariantPropertiesSection({ node }: { readonly node: FigNode }) {
+  const { updateNode } = useFigEditor();
+  const specs = node.variantPropSpecs ?? [];
   if (specs.length === 0) {
     return null;
   }
-
-  const views: readonly VariantPropertyView[] = specs.map((spec) => ({
-    id: spec.propDefId,
-    value: spec.value,
-  }));
-
   return (
-    <VariantPropertiesSectionView
-      specs={views}
-      onChange={(id, value) => {
-        dispatch(createPropertyPrimaryUpdateAction({
-          target,
-          updater: (current) => ({
-            ...current,
-            variantPropSpecs: updateVariantSpec(
-              current.variantPropSpecs ?? [],
-              id as FigNodeId,
-              value,
-            ),
-          }),
-        }));
-      }}
-    />
+    <section style={sectionStyle}>
+      <div style={sectionTitleStyle}>Variant</div>
+      <VariantPropertiesSectionView
+        specs={variantSpecViews(specs)}
+        onChange={(id, value) => {
+          updateNode(node.guid, (current) => writeVariantSpecValue(current, id, value), "property-panel");
+        }}
+      />
+    </section>
   );
 }

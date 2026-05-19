@@ -1,4 +1,4 @@
-/** @file Fig export download helper tests. */
+/** @file Fig export download operation tests. */
 
 import type { FigPackageMetadata } from "@higma-figma-containers/package";
 import {

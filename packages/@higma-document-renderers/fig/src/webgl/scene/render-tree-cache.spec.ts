@@ -1,8 +1,8 @@
 /** @file WebGL RenderTree cache tests. */
 
-import { resolveRenderTreeIncremental, type RenderTree, type RenderTreeResolutionCache } from "../../scene-graph/render-tree";
-import type { GroupNode, SceneGraph, SceneNodeId } from "@higma-document-models/fig/scene-graph";
-import type { FigmaRenderExportSettings, SceneGraphRenderOptions } from "../../scene-graph/render";
+import { resolveRenderTreeIncremental, type RenderTree, type RenderTreeResolutionCache } from "../../scene-graph";
+import type { GroupNode, SceneGraph, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
+import type { FigmaRenderExportSettings, SceneGraphRenderOptions } from "../../scene-graph";
 import { createWebGLRenderTreeCache, type WebGLRenderTreeIncrementalResolver } from "./render-tree-cache";
 
 function makeRoot(): GroupNode {

@@ -28,12 +28,11 @@
  * ```
  */
 
-import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, ClipShape } from "@higma-document-models/fig/scene-graph";
-import { normalizeFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type NormalizedFigmaRenderExportSettings, } from "../../scene-graph/render";
+import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, ClipShape } from "@higma-document-renderers/fig/scene-graph";
+import { buildEffectStack, renderShapeEffectStack, resolveFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type ResolvedFigmaRenderExportSettings, type ResolvedFillDef, } from "../../scene-graph";
 
 import {
-  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type StrokeRendering, type StrokeShape, type RenderClipPathDef, } from "../../scene-graph/render-tree";
-import type { ResolvedFillDef } from "../../scene-graph/render/fill";
+  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type StrokeRendering, type StrokeShape, type RenderClipPathDef, } from "../../scene-graph";
 
 import {
   generateRectVertices, tessellateContours, } from "../tessellation/tessellation";
@@ -46,7 +45,6 @@ import { createGLStateCache } from "../state/gl-state-cache";
 import {
   tessellateRectStroke, tessellateRectAlignedStroke, tessellateEllipseStroke, } from "../tessellation/stroke-tessellation";
 import { createEffectsRenderer } from "../effects/effects-renderer";
-import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { createWebGLEffectRendering } from "../effects/effect-rendering";
 import { resolveEffectBackingScale } from "../effects/effect-scale";
 import { shouldRenderVisualNode, type ViewportRect } from "../scene/render-culling";
@@ -100,7 +98,7 @@ export type WebGLFigmaRendererMetrics = {
 
 function configureWebGLColorProfile(
   gl: WebGLRenderingContext,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): void {
   if (exportSettings.imageColorManagement.kind === "unmanaged") {
     return;
@@ -110,10 +108,13 @@ function configureWebGLColorProfile(
     drawingBufferColorSpace?: "srgb" | "display-p3";
     unpackColorSpace?: "srgb" | "display-p3";
   };
+  if (
+    profile === "DISPLAY_P3_V4" &&
+    (colorManagedGl.drawingBufferColorSpace === undefined || colorManagedGl.unpackColorSpace === undefined)
+  ) {
+    throw new Error("Display P3 WebGL rendering requires drawingBufferColorSpace and unpackColorSpace support");
+  }
   if (profile === "DISPLAY_P3_V4") {
-    if (colorManagedGl.drawingBufferColorSpace === undefined || colorManagedGl.unpackColorSpace === undefined) {
-      throw new Error("Display P3 WebGL rendering requires drawingBufferColorSpace and unpackColorSpace support");
-    }
     colorManagedGl.drawingBufferColorSpace = "display-p3";
     colorManagedGl.unpackColorSpace = "display-p3";
     return;
@@ -153,7 +154,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
   // Reassign after null guard so TypeScript narrows correctly in closures
   const gl: WebGLRenderingContext = glOrNull;
-  const exportSettings = normalizeFigmaRenderExportSettings(options.exportSettings);
+  const exportSettings = resolveFigmaRenderExportSettings(options.exportSettings);
   configureWebGLColorProfile(gl, exportSettings);
 
   const pixelRatioRef = { value: options.pixelRatio ?? (typeof window !== "undefined" ? window.devicePixelRatio : 1) };
@@ -242,7 +243,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
   function resolveClipVertices(clip: ClipShape): Float32Array {
     if (clip.type === "rect") {
-      return geometryCache.getRectVertices(clip.width, clip.height, clip.cornerRadius);
+      return geometryCache.getRectVertices(clip.width, clip.height, clip.cornerRadius, clip.cornerSmoothing);
     }
     return getCachedClipPathVertices(clip.contours);
   }
@@ -369,7 +370,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     if (node.type === "image" && visible) {
       const colorManagement = colorManagementForImageNode(node);
       await textureCache.prepare(
-        imageTextureResource(node.sourceImageRef, colorManagement),
+        imageTextureResource(node.sourceImageHash, colorManagement),
         node.sourceData,
         node.sourceMimeType,
         { colorManagement },
@@ -388,7 +389,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         if (fill.type === "image") {
           const colorManagement = colorManagementForImagePaint(fill);
           await textureCache.prepare(
-            imageTextureResource(fill.imageRef, colorManagement),
+            imageTextureResource(fill.imageHash, colorManagement),
             fill.data,
             fill.mimeType,
             { colorManagement },
@@ -406,7 +407,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   // =========================================================================
-  // Effect helpers — use source effects for GPU-native rendering
+  // Effect routines — use source effects for GPU-native rendering
   // =========================================================================
 
   /**
@@ -441,7 +442,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         break;
 
       case "image": {
-        const entry = textureCache.getIfCached(imageTextureResource(fill.imageRef, colorManagementForImagePaint(fill)));
+        const entry = textureCache.getIfCached(imageTextureResource(fill.imageHash, colorManagementForImagePaint(fill)));
         if (entry) {
           drawImageFill({
             ctx, vertices, texture: entry.texture, transform,
@@ -564,7 +565,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
   /**
    * Parse a hex color string (#RRGGBB or #RRGGBBAA) to a Color object.
-   * Used to convert resolved stroke colors back to GPU-compatible Color.
+   * Used to convert resolved stroke colors back to a GPU Color value.
    */
   function hexToColor(hex: string): Color {
     if (hex === "none") { return { r: 0, g: 0, b: 0, a: 0 }; }
@@ -930,7 +931,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   ): Float32Array {
     switch (shape.kind) {
       case "rect": {
-        return geometryCache.getRectVertices(shape.width, shape.height, shape.cornerRadius);
+        return geometryCache.getRectVertices(shape.width, shape.height, shape.cornerRadius, shape.cornerSmoothing);
       }
       case "ellipse":
         return geometryCache.getEllipseVertices({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
@@ -1214,6 +1215,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         width: node.width,
         height: node.height,
         cornerRadius: node.cornerRadius,
+        cornerSmoothing: node.cornerSmoothing,
       },
       transform,
     };
@@ -1229,7 +1231,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // Use RenderTree fields for dimensions and corner radius
     const elementSize = { width: node.width, height: node.height };
     const uniformCR = uniformRadiusForGL(node.cornerRadius);
-    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius);
+    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
     const effects = getSourceEffects(node);
 
     // Check if node has visible content — SVG filters operate on rendered content,
@@ -1253,37 +1255,37 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         renderStroke: () => {
           if (!node.background?.strokeRendering) { return; }
           const sr = node.background.strokeRendering;
-          if (sr.mode === "uniform") {
-            const sourceStroke = node.sourceStroke;
-            if (sourceStroke && sourceStroke.width > 0) {
-              renderUniformStroke({
-                sr,
-                sourceStroke,
-                shapeVerticesFactory: (sw, dashPattern) => tessellateRectStroke({
-                  w: node.width,
-                  h: node.height,
-                  cornerRadius: uniformCR ?? 0,
-                  strokeWidth: sw,
-                  dashPattern,
-                }),
-                transform,
-                opacity,
-              });
-            }
+          if (sr.mode !== "uniform") {
+            renderStrokeRendering(sr, transform, opacity);
             return;
           }
-          renderStrokeRendering(sr, transform, opacity);
+          const sourceStroke = node.sourceStroke;
+          if (!sourceStroke || sourceStroke.width <= 0) { return; }
+          renderUniformStroke({
+            sr,
+            sourceStroke,
+            shapeVerticesFactory: (sw, dashPattern) => tessellateRectStroke({
+              w: node.width,
+              h: node.height,
+              cornerRadius: uniformCR ?? 0,
+              strokeWidth: sw,
+              dashPattern,
+            }),
+            transform,
+            opacity,
+          });
         },
       });
     }
 
     // Children with clip — use RenderTree's clip-path def (which may be expanded
     // by child stroke overhang to prevent stroke clipping at frame edges)
-    if (node.childClipId) {
+    const childClipId = node.omitChildClip ? undefined : node.childClipId;
+    if (childClipId) {
       // Find the clip-path def for this child clip
       const clipDef = node.defs.find(
         (d): d is RenderClipPathDef =>
-          d.type === "clip-path" && d.id === node.childClipId
+          d.type === "clip-path" && d.id === childClipId
       );
       const clipData = getFrameClipData({ clipDef, node, transform });
       // Resolve clip vertices once per push instead of on every
@@ -1312,7 +1314,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       renderRenderNode(child, transform, opacity);
     }
 
-    if (node.childClipId) {
+    if (childClipId) {
       clipStack.pop();
       markClipStencilDirty();
     }
@@ -1323,7 +1325,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // Use RenderTree fields for dimensions
     const elementSize = { width: node.width, height: node.height };
     const uniformCR = uniformRadiusForGL(node.cornerRadius);
-    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius);
+    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
     const effects = getSourceEffects(node);
 
     // Skip effects when node has no visible content (fill=none + no stroke → empty silhouette)
@@ -1408,6 +1410,135 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     });
   }
 
+  function maskedStrokeStencilTest(isInside: boolean): { readonly ref: number; readonly mask: number } {
+    if (isInside && clipActive.value) {
+      return { ref: CLIP_STENCIL_BIT | FILL_STENCIL_MASK, mask: 0xff };
+    }
+    if (isInside) {
+      return { ref: FILL_STENCIL_MASK, mask: FILL_STENCIL_MASK };
+    }
+    if (clipActive.value) {
+      return { ref: CLIP_STENCIL_BIT, mask: 0xff };
+    }
+    return { ref: 0, mask: FILL_STENCIL_MASK };
+  }
+
+  function renderPathUniformStroke(
+    { node, contours, transform, opacity }: {
+      readonly node: RenderPathNode;
+      readonly contours: readonly PathContour[];
+      readonly transform: AffineMatrix;
+      readonly opacity: number;
+    },
+  ): void {
+    const sourceStroke = node.sourceStroke;
+    if (!sourceStroke || sourceStroke.width <= 0) { return; }
+    const strokeVerts = geometryCache.getPathStrokeVertices({
+      node,
+      contours,
+      strokeWidth: sourceStroke.width,
+      dashPattern: sourceStroke.dashPattern,
+    });
+    if (strokeVerts.length === 0) { return; }
+    drawSolidFill({
+      ctx: getGlContext(), vertices: strokeVerts,
+      color: sourceStroke.color, transform,
+      opacity: opacity * sourceStroke.opacity,
+    });
+  }
+
+  function renderPathStrokeLayers(
+    { sr, node, contours, elementSize, transform, opacity }: {
+      readonly sr: Extract<StrokeRendering, { readonly mode: "layers" }>;
+      readonly node: RenderPathNode;
+      readonly contours: readonly PathContour[];
+      readonly elementSize: { readonly width: number; readonly height: number };
+      readonly transform: AffineMatrix;
+      readonly opacity: number;
+    },
+  ): void {
+    for (const layer of sr.layers) {
+      const strokeWidth = layer.attrs.strokeWidth ?? 1;
+      if (strokeWidth <= 0) { continue; }
+      const strokeVerts = geometryCache.getPathStrokeVertices({
+        node,
+        contours,
+        strokeWidth,
+        dashPattern: parseStrokeDasharray(layer.attrs.strokeDasharray),
+      });
+      if (strokeVerts.length === 0) { continue; }
+      drawStrokePaintLayer({
+        vertices: strokeVerts,
+        layer,
+        attrs: layer.attrs,
+        transform,
+        opacity,
+        elementSize,
+      });
+    }
+  }
+
+  function renderPathMaskedStroke(
+    { sr, node, contours, fillVerts, elementSize, transform, opacity }: {
+      readonly sr: Extract<StrokeRendering, { readonly mode: "masked" }>;
+      readonly node: RenderPathNode;
+      readonly contours: readonly PathContour[];
+      readonly fillVerts: Float32Array;
+      readonly elementSize: { readonly width: number; readonly height: number };
+      readonly transform: AffineMatrix;
+      readonly opacity: number;
+    },
+  ): void {
+    const strokeWidth = sr.attrs.strokeWidth ?? 1;
+    if (strokeWidth <= 0) { return; }
+    const strokeVerts = geometryCache.getPathStrokeVertices({
+      node,
+      contours,
+      strokeWidth,
+      dashPattern: parseStrokeDasharray(sr.attrs.strokeDasharray),
+    });
+    if (strokeVerts.length === 0 || fillVerts.length === 0) { return; }
+
+    const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+    const wasStencilEnabled = glState.isStencilTestEnabled();
+    const stencil = maskedStrokeStencilTest(sr.attrs.strokeAlign === "INSIDE");
+
+    glState.setEnabled(gl.STENCIL_TEST, true);
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
+
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0x00);
+    glState.setStencilFunc(gl.EQUAL, stencil.ref, stencil.mask);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    drawStrokePaintLayer({
+      vertices: strokeVerts,
+      layer: sr.layer,
+      attrs: sr.attrs,
+      transform,
+      opacity,
+      elementSize,
+    });
+
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
+
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0xff);
+    if (!wasStencilEnabled) {
+      glState.setEnabled(gl.STENCIL_TEST, false);
+      return;
+    }
+    glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+  }
+
   function renderPathStrokeFromTree(
     { node, contours, transform, opacity }: {
       node: RenderPathNode; contours: readonly PathContour[]; transform: AffineMatrix; opacity: number;
@@ -1415,20 +1546,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   ): void {
     if (!node.strokeRendering) { return; }
     const sr = node.strokeRendering;
-    if (sr.mode === "uniform" && node.sourceStroke && node.sourceStroke.width > 0) {
-      const strokeVerts = geometryCache.getPathStrokeVertices({
-        node,
-        contours,
-        strokeWidth: node.sourceStroke.width,
-        dashPattern: node.sourceStroke.dashPattern,
-      });
-      if (strokeVerts.length > 0) {
-        drawSolidFill({
-          ctx: getGlContext(), vertices: strokeVerts,
-          color: node.sourceStroke.color, transform,
-          opacity: opacity * node.sourceStroke.opacity,
-        });
-      }
+    if (sr.mode === "uniform") {
+      renderPathUniformStroke({ node, contours, transform, opacity });
       return;
     }
     // Stroke paint layers and the masked-stroke fill mask both need the
@@ -1438,86 +1557,19 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // them from the contour stream on every frame.
     const pathGeometry = geometryCache.getPathGeometry(node);
     if (sr.mode === "layers") {
-      for (const layer of sr.layers) {
-        const strokeWidth = layer.attrs.strokeWidth ?? 1;
-        if (strokeWidth <= 0) { continue; }
-        const strokeVerts = geometryCache.getPathStrokeVertices({
-          node,
-          contours,
-          strokeWidth,
-          dashPattern: parseStrokeDasharray(layer.attrs.strokeDasharray),
-        });
-        if (strokeVerts.length > 0) {
-          drawStrokePaintLayer({
-            vertices: strokeVerts,
-            layer,
-            attrs: layer.attrs,
-            transform,
-            opacity,
-            elementSize: pathGeometry.elementSize,
-          });
-        }
-      }
+      renderPathStrokeLayers({ sr, node, contours, elementSize: pathGeometry.elementSize, transform, opacity });
       return;
     }
     if (sr.mode === "masked") {
-      const strokeWidth = sr.attrs.strokeWidth ?? 1;
-      if (strokeWidth <= 0) { return; }
-      const strokeVerts = geometryCache.getPathStrokeVertices({
+      renderPathMaskedStroke({
+        sr,
         node,
         contours,
-        strokeWidth,
-        dashPattern: parseStrokeDasharray(sr.attrs.strokeDasharray),
+        fillVerts: pathGeometry.backgroundMaskVertices,
+        elementSize: pathGeometry.elementSize,
+        transform,
+        opacity,
       });
-      const fillVerts = pathGeometry.backgroundMaskVertices;
-      if (strokeVerts.length > 0 && fillVerts.length > 0) {
-        const white: Color = { r: 1, g: 1, b: 1, a: 1 };
-        const wasStencilEnabled = glState.isStencilTestEnabled();
-        const isInside = sr.attrs.strokeAlign === "INSIDE";
-
-        glState.setEnabled(gl.STENCIL_TEST, true);
-        glState.setColorMask(false, false, false, false);
-        glState.setStencilMask(FILL_STENCIL_MASK);
-        glState.setStencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
-        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-        drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
-
-        glState.setColorMask(true, true, true, true);
-        glState.setStencilMask(0x00);
-        if (isInside) {
-          const ref = clipActive.value ? (CLIP_STENCIL_BIT | FILL_STENCIL_MASK) : FILL_STENCIL_MASK;
-          const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
-          glState.setStencilFunc(gl.EQUAL, ref, mask);
-        } else {
-          const ref = clipActive.value ? CLIP_STENCIL_BIT : 0;
-          const mask = clipActive.value ? 0xff : FILL_STENCIL_MASK;
-          glState.setStencilFunc(gl.EQUAL, ref, mask);
-        }
-        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-        drawStrokePaintLayer({
-          vertices: strokeVerts,
-          layer: sr.layer,
-          attrs: sr.attrs,
-          transform,
-          opacity,
-          elementSize: pathGeometry.elementSize,
-        });
-
-        glState.setColorMask(false, false, false, false);
-        glState.setStencilMask(FILL_STENCIL_MASK);
-        glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
-        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
-        drawSolidFill({ ctx: getGlContext(), vertices: fillVerts, color: white, transform, opacity: 1 });
-
-        glState.setColorMask(true, true, true, true);
-        glState.setStencilMask(0xff);
-        if (!wasStencilEnabled) {
-          glState.setEnabled(gl.STENCIL_TEST, false);
-          return;
-        }
-        glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
-        glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-      }
     }
   }
 
@@ -1590,9 +1642,41 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     });
   }
 
+  function renderGlyphTextFromTree(node: RenderTextNode, transform: AffineMatrix, opacity: number): void {
+    const fillOpacity = node.sourceFillOpacity;
+    if (node.content.mode !== "glyphs") { return; }
+    if (node.content.runs.length === 0) { return; }
+
+    const { runs } = geometryCache.getTextGlyphGeometry(node);
+    for (const runGeo of runs) {
+      if (runGeo.vertices.length === 0) { continue; }
+      const runColor = hexToColor(runGeo.fillColor);
+      // Text glyphs paint via earcut-tessellated triangles, NOT the
+      // INVERT-mode stencil fill we use for general SVG paths. The
+      // stencil-fill path fans triangles from a shared anchor (or per
+      // contour anchor) and relies on parity flips along the swept
+      // edges to colour the interior. For glyph outlines with closed
+      // counters (a, b, d, e, g, o, p, q…) this produces single-pixel
+      // notches inside the bowl whenever an edge crosses exactly on a
+      // pixel boundary the top-left rasterisation rule excludes — the
+      // adjacent triangles "agree" that the pixel is outside even
+      // though it is structurally inside the closed outline. earcut
+      // emits a proper triangulation that covers every interior pixel
+      // exactly once, so no notches; outer/hole detection in
+      // `tessellateContours` handles glyph counters (autoDetectWinding
+      // is the third arg, true → respect Figma's CFF winding).
+      drawSolidFill({
+        ctx: getGlContext(),
+        vertices: runGeo.vertices,
+        color: runColor,
+        transform,
+        opacity: opacity * fillOpacity * runGeo.fillOpacity,
+      });
+    }
+  }
+
   function renderTextFromTree(node: RenderTextNode, transform: AffineMatrix, opacity: number): void {
     flushClipStencilIfDirty();
-    const fillOpacity = node.sourceFillOpacity;
 
     // Use RenderTree content as the single source of truth.
     // Both SVG and WebGL consume the same content representation.
@@ -1602,45 +1686,16 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       // pre-tessellated triangles per run keyed off the same node, so
       // re-rendering the same TEXT node only re-issues draws — it does
       // not re-tessellate.
-      if (node.content.runs.length === 0) { return; }
-
-      const { runs } = geometryCache.getTextGlyphGeometry(node);
-      for (const runGeo of runs) {
-        if (runGeo.vertices.length === 0) { continue; }
-        const runColor = hexToColor(runGeo.fillColor);
-        // Text glyphs paint via earcut-tessellated triangles, NOT the
-        // INVERT-mode stencil fill we use for general SVG paths. The
-        // stencil-fill path fans triangles from a shared anchor (or per
-        // contour anchor) and relies on parity flips along the swept
-        // edges to colour the interior. For glyph outlines with closed
-        // counters (a, b, d, e, g, o, p, q…) this produces single-pixel
-        // notches inside the bowl whenever an edge crosses exactly on a
-        // pixel boundary the top-left rasterisation rule excludes — the
-        // adjacent triangles "agree" that the pixel is outside even
-        // though it is structurally inside the closed outline. earcut
-        // emits a proper triangulation that covers every interior pixel
-        // exactly once, so no notches; outer/hole detection in
-        // `tessellateContours` handles glyph counters (autoDetectWinding
-        // is the third arg, true → respect Figma's CFF winding).
-        drawSolidFill({
-          ctx: getGlContext(),
-          vertices: runGeo.vertices,
-          color: runColor,
-          transform,
-          opacity: opacity * fillOpacity * runGeo.fillOpacity,
-        });
-      }
+      renderGlyphTextFromTree(node, transform, opacity);
       return;
     }
 
-    if (node.content.mode === "lines") {
-      if (!hasVisibleLineText(node.content)) { return; }
-      throw new Error(`WebGL text renderer requires glyph contours for text node ${node.id}`);
-    }
+    if (!hasVisibleLineText(node.content)) { return; }
+    throw new Error(`WebGL text renderer requires glyph contours for text node ${node.id}`);
   }
 
   function renderImageFromTree(node: RenderImageNode, transform: AffineMatrix, opacity: number): void {
-    const entry = textureCache.getIfCached(imageTextureResource(node.sourceImageRef, colorManagementForImageNode(node)));
+    const entry = textureCache.getIfCached(imageTextureResource(node.sourceImageHash, colorManagementForImageNode(node)));
     if (!entry) { return; }
     flushClipStencilIfDirty();
 
@@ -1744,4 +1799,3 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     },
   };
 }
-

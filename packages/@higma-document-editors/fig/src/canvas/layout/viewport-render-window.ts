@@ -1,8 +1,6 @@
-/** @file Shared viewport layout planning for fig editor renderer backends. */
+/** @file Renderer viewport window derived from EditorCanvas viewport state. */
 
 import type { ViewportSize, ViewportTransform } from "@higma-editor-kernel/core/viewport";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
-
 const MIN_RENDER_WINDOW_SIZE = 1;
 
 export type ViewportRenderContext = {
@@ -20,16 +18,7 @@ export type ViewportRenderWindow = {
   readonly surfaceHeight: number;
 };
 
-export type ViewportLayerPlacement = "screen" | "world";
-
-export type ViewportLayerFrame = {
-  readonly left: number;
-  readonly top: number;
-  readonly width: number;
-  readonly height: number;
-};
-
-/** Resolve the world-space window and pixel surface consumed by renderer backends. */
+/** Resolve the world-space window and screen-pixel surface consumed by renderer backends. */
 export function resolveViewportRenderWindow({
   context,
 }: {
@@ -49,37 +38,5 @@ export function resolveViewportRenderWindow({
     height: surfaceHeight / context.viewport.scale,
     surfaceWidth,
     surfaceHeight,
-  };
-}
-
-/** Resolve backend DOM placement from the same scene graph viewport contract. */
-export function resolveViewportLayerFrame({
-  sceneGraph,
-  placement,
-}: {
-  readonly sceneGraph: SceneGraph;
-  readonly placement: ViewportLayerPlacement;
-}): ViewportLayerFrame {
-  if (placement === "screen") {
-    return {
-      left: 0,
-      top: 0,
-      width: sceneGraph.width,
-      height: sceneGraph.height,
-    };
-  }
-
-  const viewport = sceneGraph.viewport ?? {
-    x: 0,
-    y: 0,
-    width: sceneGraph.width,
-    height: sceneGraph.height,
-  };
-
-  return {
-    left: viewport.x,
-    top: viewport.y,
-    width: viewport.width,
-    height: viewport.height,
   };
 }

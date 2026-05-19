@@ -7,8 +7,10 @@ export {
   createFigDocumentContextFromLoaded,
   createFigDocumentContextFromKiwiCanvas,
   createFigDocumentContextFromNodeChanges,
+  replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
   type CreateFigDocumentContextFromNodeChangesOptions,
+  type ReplaceFigDocumentContextNodeChangesOptions,
 } from "./document-context";
 
 export { findCanvas, findInternalCanvas } from "./canvas-lookup";

@@ -3,15 +3,13 @@
  *
  * Given a Figma TEXT node and a minimal rendering context, this resolves the
  * full, backend-agnostic `TextRendering` shape. Every text-capable renderer
- * (SVG, React, WebGL) goes through this function, eliminating the duplicated
- * "check derivedTextData? fall back to font? extract props?" ladder that
- * previously lived in each renderer.
+ * (SVG, React, WebGL) goes through this function, eliminating duplicated
+ * text-resolution decisions in backend code.
  */
 
-import type { FigBlob, FigStyleRegistry, TextStyleOverride } from "@higma-document-models/fig/domain";
+import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigGuid } from "@higma-document-models/fig/types";
-import { defensiveMark } from "@higma-document-models/fig/diagnostics/defensive";
+import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigGuid, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { extractTextProps } from "../layout/extract-props";
 import type { TextNodeInput } from "../layout/extract-props";
@@ -22,7 +20,7 @@ import { extractDerivedTextPathData, hasDerivedGlyphs } from "../paths/derived-p
 import { extractTextPathData } from "../paths/opentype-paths";
 import type { PathContour } from "../paths/types";
 import { resolveTextRuns } from "../runs/resolve";
-import type { TextRun } from "@higma-document-models/fig/scene-graph";
+import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
 import type {
   TextRendering,
   TextRenderingGlyphs,
@@ -38,14 +36,14 @@ const ELLIPSIS_CHAR = "\u2026";
 /**
  * Build a `measureCharWidths(text)` callback backed by the resolved
  * font. Used by the line-mode layout to pick wrap break points that
- * match the actual rendered glyph metrics \u2014 falling back to the
- * `AVERAGE_CHAR_WIDTH_RATIO` heuristic produces visible breaks that
+ * match the actual rendered glyph metrics \u2014 using the
+ * `AVERAGE_CHAR_WIDTH_RATIO` estimate produces visible breaks that
  * disagree with the captured screenshot (e.g. `example-com-fullpage`
  * mid-paragraph break).
  *
  * Returns `undefined` when no resolver is registered or when the
  * resolver returns no font for the paragraph's base font, so the
- * layout falls back to the per-fontSize estimate.
+ * layout uses the per-fontSize estimate.
  */
 function buildLineMeasurer(
   props: ExtractedTextProps,
@@ -184,8 +182,7 @@ function resolveTruncation(
  * Figma's text layout engine stores each resolved line's source text in
  * `derivedLines[i].characters`. When this is available, we trust it as the
  * canonical breakdown — it already reflects BIDI reordering, whitespace
- * collapse, and wrap points that our heuristic splitter would only
- * approximate.
+ * collapse, and wrap points from Figma's text engine.
  */
 function derivedLineStrings(dtd: FigDerivedTextData | undefined): readonly string[] | undefined {
   const lines = dtd?.derivedLines;
@@ -202,11 +199,19 @@ function derivedLineStrings(dtd: FigDerivedTextData | undefined): readonly strin
     return undefined;
   }
   if (linesWithCharacters.length !== lines.length) {
-    // A single missing line invalidates the set — don't mix derived & guessed lines.
-    defensiveMark("text-resolve:derived-lines:partial-set-invalidated", {
-      lineCount: lines.length,
-      linesWithCharacters: linesWithCharacters.length,
-    });
+    // A single missing line invalidates the whole set: returning the
+    // partial set here would let the downstream layout mix Figma's
+    // resolved characters with locally split lines that do not share
+    // BIDI / whitespace-collapse / wrap semantics with Figma's
+    // resolver. Fail-fast: an input that mixes
+    // present and absent `characters` on `derivedLines` violates the
+    // SoT contract — either ALL lines must carry characters or NONE
+    // should.
+    throw new Error(
+      `text-resolve:derived-lines:partial-set-invalidated: ${linesWithCharacters.length} of ${lines.length} ` +
+      `derivedLines carry characters. Either every line must declare its characters or none should — mixing the two ` +
+      `would silently feed locally split lines to a layout the renderer expects to be authoritative.`,
+    );
   }
   return linesWithCharacters;
 }
@@ -263,11 +268,7 @@ export function resolveTextAscenderRatio(
 }
 
 /**
- * Resolve the descender ratio (|descender| / unitsPerEm). Returns
- * `undefined` when neither derived metadata nor a font resolver
- * supplies a descender — the layout code path then falls back to the
- * legacy "baseline = top + ascent" placement without the half-leading
- * term. Production paths always have one of the two sources.
+ * Resolve the descender ratio (|descender| / unitsPerEm).
  *
  * Like `resolveTextAscenderRatio` this prefers `OS/2.sTypoDescender`
  * over the legacy `hhea` value so the content-area height matches what
@@ -277,7 +278,7 @@ export function resolveTextDescenderRatio(
   node: TextNodeInput,
   props: ExtractedTextProps,
   ctx: ResolveTextContext,
-): number | undefined {
+): number {
   const dtd = node.derivedTextData as FigDerivedTextData | undefined;
   const baseline = dtd?.baselines?.[0];
   if (
@@ -306,13 +307,13 @@ export function resolveTextDescenderRatio(
     // provider exposes through `FontMetrics.descender`.
     return Math.abs(typoDescenderUnits(font)) / font.unitsPerEm;
   }
-  return undefined;
+  throw new Error(`Text layout requires descender metrics for font "${props.font.family}"`);
 }
 
 /**
  * Read the typographic ascender from an `AbstractFont`. Prefers
  * `OS/2.sTypoAscender` (CSS Inline L3 convention) with the legacy
- * `font.ascender` (= `hhea.ascender`) as fallback for fonts without
+ * `font.ascender` (= `hhea.ascender`) as alternative for fonts without
  * an OS/2 table.
  */
 function typoAscenderUnits(font: { readonly ascender: number; readonly tables?: { readonly os2?: { readonly sTypoAscender?: number } } }): number {
@@ -364,8 +365,7 @@ function readPositiveFontLineHeight(fontLineHeight: unknown): number | undefined
 /**
  * Minimal context needed to resolve a TEXT node.
  *
- * `blobs` is required to decode glyph path commands. When absent, the resolver
- * falls back to the lines strategy even if derivedTextData is present.
+ * `blobs` is required to decode glyph path commands.
  */
 export type ResolveTextContext = {
   readonly blobs?: readonly FigBlob[];
@@ -375,46 +375,39 @@ export type ResolveTextContext = {
    * `styleIdForFill` references in `textData.styleOverrideTable`. When
    * absent, runs collapse to a single base-fill run; a node carrying
    * `characterStyleIDs` plus override `styleIdForFill` then trips the
-   * registry's no-fallback policy.
+   * registry's no-substitution policy.
    */
   readonly styleRegistry?: FigStyleRegistry;
 };
 
 /**
- * Read per-character style metadata from a TEXT node, accepting both the
- * domain shape (`FigDesignNode.textData.{characterStyleIDs,styleOverrideTable}`)
- * and the raw Kiwi shape (`FigNode.textData.*`). Returns `undefined` for
- * each field when the node carries no character-level styling.
+ * Read per-character style metadata from a raw TEXT node. Returns
+ * `undefined` for each field when the node carries no character-level
+ * styling.
  */
 function readPerCharStyleData(node: TruncatableTextNode): {
   characterStyleIDs: readonly number[] | undefined;
-  styleOverrideTable: readonly TextStyleOverride[] | undefined;
+  styleOverrideTable: readonly FigTextStyleOverrideEntry[] | undefined;
 } {
-  // Both FigDesignNode and FigNode put the data under `textData`. The shape
-  // matches our domain `TextStyleOverride[]` for FigDesignNode and the raw
-  // FigKiwiTextData for FigNode — the structural overlap (styleID, fillPaints,
-  // styleIdForFill) is sufficient for `resolveTextRuns`.
   const textData = (node as { textData?: { characterStyleIDs?: readonly number[]; styleOverrideTable?: readonly unknown[] } }).textData;
   return {
     characterStyleIDs: textData?.characterStyleIDs,
-    styleOverrideTable: textData?.styleOverrideTable as readonly TextStyleOverride[] | undefined,
+    styleOverrideTable: textData?.styleOverrideTable as readonly FigTextStyleOverrideEntry[] | undefined,
   };
 }
 
 /**
  * Diagnostic label for unresolved style references during run resolution.
  *
- * Accepts both FigNode (`.guid`) and FigDesignNode (`.id`) shapes so the
- * locator works at any layer of the conversion pipeline.
+ * Uses the Kiwi node GUID for diagnostics.
  */
-function pickGuidString(shaped: { guid?: FigGuid; id?: string }): string {
+function pickGuidString(shaped: { guid?: FigGuid }): string {
   if (shaped.guid) { return guidToString(shaped.guid); }
-  if (typeof shaped.id === "string" && shaped.id.length > 0) { return shaped.id; }
   return "<no-guid>";
 }
 
 function formatTextNodeLocator(node: TruncatableTextNode): string {
-  const shaped = node as { guid?: FigGuid; id?: string; name?: string };
+  const shaped = node as { guid?: FigGuid; name?: string };
   const guidStr = pickGuidString(shaped);
   const name = shaped.name ?? "?";
   return `text node ${guidStr} (${name})`;
@@ -528,8 +521,7 @@ function paragraphStartOffsets(characters: string): readonly number[] {
 }
 
 /**
- * Narrow TextNodeInput to the shape that carries textTruncation.
- * Both FigNode and FigDesignNode expose it structurally.
+ * Narrow TextNodeInput to the raw shape that carries textTruncation.
  */
 type TruncatableTextNode = TextNodeInput & {
   readonly derivedTextData?: FigDerivedTextData;
@@ -577,9 +569,7 @@ export function resolveTextRendering(
     locator: () => formatTextNodeLocator(node),
   });
 
-  // Resolve truncation from the node and its derivedTextData. Both FigNode
-  // and FigDesignNode may expose `textTruncation` at the top or inside
-  // `textData`; either is acceptable.
+  // Resolve truncation from the node and its derivedTextData.
   const dtd = node.derivedTextData;
   const truncation = resolveTruncation(
     node.textTruncation ?? node.textData?.textTruncation,
@@ -594,7 +584,10 @@ export function resolveTextRendering(
   // Glyph-mode when pre-outlined paths are available and we can decode them.
   // Figma has already applied truncation to the glyph positions, so we pass
   // the truncation metadata through unchanged.
-  if (ctx.blobs && hasDerivedGlyphs(dtd)) {
+  if (hasDerivedGlyphs(dtd) && ctx.blobs === undefined) {
+    throw new Error("Text glyph rendering requires blobs when derived glyphs are present");
+  }
+  if (ctx.blobs !== undefined && hasDerivedGlyphs(dtd)) {
     const alignmentOffset = computeDerivedAlignmentOffset(
       dtd?.layoutSize,
       props.size,
@@ -625,13 +618,12 @@ export function resolveTextRendering(
   // layout so renderers emit the cut-and-ellipsized string directly.
   const displayProps = resolveDisplayProps(props, truncation);
 
-  // Prefer Figma's own per-line breakdown when available — more accurate
-  // than the heuristic splitter in compute-layout. Skip when truncation
-  // applied because we already rewrote characters.
+  // Prefer Figma's own per-line breakdown when available. Skip when
+  // truncation applied because we already rewrote characters.
   const explicitLines = truncation ? undefined : derivedLineStrings(dtd);
   // Build a per-character width function from the resolved font when
   // present. Wrap decisions made from `glyph.advanceWidth` match what
-  // the path renderer paints; the fallback `AVERAGE_CHAR_WIDTH_RATIO`
+  // the path renderer paints; the alternative `AVERAGE_CHAR_WIDTH_RATIO`
   // approximation produced `Avoid use ↵ in operations.` mid-paragraph
   // breaks in `example-com-fullpage`.
   const measureCharWidths = explicitLines ? undefined : buildLineMeasurer(displayProps, ctx);

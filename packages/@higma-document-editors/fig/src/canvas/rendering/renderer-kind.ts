@@ -1,3 +1,3 @@
-/** @file Fig editor renderer selection types. */
+/** @file Fig editor renderer backend selection. */
 
 export type FigEditorRendererKind = "svg" | "webgl";

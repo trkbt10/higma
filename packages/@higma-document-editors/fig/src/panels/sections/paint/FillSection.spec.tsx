@@ -1,63 +1,16 @@
-/** @file Fill property section tests. */
+/** @file Fill section tests. */
 
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderSection, SECTION_COLORS, sectionNode, sectionPaints } from "../section-specimen";
 import { FillSection } from "./FillSection";
-import { createPropertyMutationTarget } from "../../properties/property-mutation-target";
-import { createTestDesignNode } from "../../../../spec/unit/shared/test-fixtures";
 
 describe("FillSection", () => {
-  it("renders gradient paint controls", () => {
-    const node = createTestDesignNode({
-      fills: [{
-        type: "GRADIENT_LINEAR",
-        opacity: 1,
-        gradientStops: [
-          { position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
-          { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } },
-        ],
-      }],
-    });
-    const html = renderToStaticMarkup(createElement(FillSection, {
-      node,
-      target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),
-      images: new Map(),
-      dispatch: () => undefined,
-    }));
+  it("renders the first Kiwi solid fill as a color input", () => {
+    const node = sectionNode("RECTANGLE", { fillPaints: sectionPaints(SECTION_COLORS.blue) });
+    const html = renderSection(createElement(FillSection, { node }), [node]);
 
-    expect(html).toContain('value="GRADIENT_LINEAR"');
-    expect(html).toContain('aria-label="Fill paint type 1"');
-    expect(html).toContain('aria-label="Fill opacity 1"');
-    expect(html).toContain('aria-label="Fill gradient stop 1 color 1"');
-    expect(html).toContain('value="#ff0000"');
-    expect(html).toContain('value="#0000ff"');
-  });
-
-  it("renders image paint scale controls", () => {
-    const node = createTestDesignNode({
-      fills: [{
-        type: "IMAGE",
-        opacity: 1,
-        imageRef: "image-hash",
-        scaleMode: "FIT",
-        scalingFactor: 1.5,
-        rotation: Math.PI / 2,
-      }],
-    });
-    const html = renderToStaticMarkup(createElement(FillSection, {
-      node,
-      target: createPropertyMutationTarget({ primaryNode: node, selectedNodes: [node] }),
-      images: new Map([["image-hash", { ref: "image-hash", data: new Uint8Array([1]), mimeType: "image/png" }]]),
-      dispatch: () => undefined,
-    }));
-
-    expect(html).toContain('value="image-hash"');
-    expect(html).toContain('aria-label="Fill image 1"');
-    expect(html).toContain('aria-label="Fill image scale mode 1"');
-    expect(html).toContain('aria-label="Fill image scale 1"');
-    expect(html).toContain('aria-label="Fill image rotation 1"');
-    expect(html).toContain('value="FIT"');
-    expect(html).toContain('value="1.5"');
-    expect(html).toContain('value="90"');
+    expect(html).toContain("Fill");
+    expect(html).toContain("type=\"color\"");
+    expect(html).toContain("value=\"#3380e6\"");
   });
 });

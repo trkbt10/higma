@@ -23,9 +23,9 @@ import {
 import { decodeRasterImage, pngMetadataFromDecodedRaster } from "./image-raster-decode";
 import { uint8ArrayToBase64 } from "./color";
 import {
-  normalizeFigmaRenderExportSettings,
+  resolveFigmaRenderExportSettings,
   type FigmaRenderExportSettings,
-  type NormalizedFigmaRenderExportSettings,
+  type ResolvedFigmaRenderExportSettings,
 } from "./export-settings";
 import { writePng } from "@higma-codecs/png";
 import type { AffineMatrix } from "@higma-primitives/path";
@@ -55,14 +55,14 @@ export function finalizeImagePatternDefs(
   elementSize: ElementSize,
   exportSettings?: FigmaRenderExportSettings,
 ): void {
-  finalizeImagePatternDefsWithRenderSettings(defs, elementSize, normalizeFigmaRenderExportSettings(exportSettings));
+  finalizeImagePatternDefsWithRenderSettings(defs, elementSize, resolveFigmaRenderExportSettings(exportSettings));
 }
 
-/** Finalize image patterns with normalized render settings. */
+/** Finalize image patterns with resolved render settings. */
 export function finalizeImagePatternDefsWithRenderSettings(
   defs: RenderDef[],
   elementSize: ElementSize,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): void {
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
@@ -183,7 +183,7 @@ function finalizePatternDataUri(
   dataUri: string,
   scaleMode: string,
   elementSize: ElementSize,
-  exportSettings: NormalizedFigmaRenderExportSettings,
+  exportSettings: ResolvedFigmaRenderExportSettings,
 ): FinalizedPatternDataUri {
   const resampling = exportSettings.imageResampling;
   if (resampling.kind === "source") {

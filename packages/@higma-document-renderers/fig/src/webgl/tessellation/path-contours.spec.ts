@@ -1,4 +1,4 @@
-/** @file SVG path contour helper tests */
+/** @file SVG path contour routine tests */
 
 import { tessellateContours } from "./tessellation";
 import { svgPathDToContours } from "./path-contours";

@@ -6,7 +6,7 @@
  */
 
 import type { PathCommand } from "@higma-primitives/path";
-import type { GlyphCharacterIndex } from "@higma-document-models/fig/scene-graph";
+import type { GlyphCharacterIndex } from "@higma-document-renderers/fig/scene-graph";
 
 /**
  * A single glyph's outline path data

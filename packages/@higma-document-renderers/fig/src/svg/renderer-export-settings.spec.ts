@@ -15,6 +15,8 @@
  */
 
 import type { FigNode } from "@higma-document-models/fig/types";
+import { EMPTY_FIG_STYLE_REGISTRY, indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { renderFigToSvg } from "./renderer";
 
 function createEmptyFrame(): FigNode {
@@ -35,9 +37,12 @@ describe("renderFigToSvg exportSettings plumbing", () => {
     const result = await renderFigToSvg([createEmptyFrame()], {
       width: 10,
       height: 10,
+      viewport: { x: 0, y: 0, width: 10, height: 10 },
       blobs: [],
       images: new Map(),
-      symbolMap: new Map(),
+      childrenOf: () => [],
+      symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       exportSettings: { colorProfile: "SRGB" },
     });
     expect(String(result.svg)).toContain("<svg");
@@ -45,16 +50,19 @@ describe("renderFigToSvg exportSettings plumbing", () => {
 
   it("throws fail-fast when an unsupported `displayP3IccProfile` is requested without bytes", async () => {
     // Routing the option through the resolver is what surfaces
-    // `normalizeImageColorManagement`'s P3-without-ICC fail-fast guard
+    // the P3-without-ICC fail-fast guard
     // for callers that omit the ICC bytes. Reaching this throw confirms
     // `exportSettings` is consumed by the render-tree resolver, not
     // silently dropped.
     await expect(renderFigToSvg([createEmptyFrame()], {
       width: 10,
       height: 10,
+      viewport: { x: 0, y: 0, width: 10, height: 10 },
       blobs: [],
       images: new Map(),
-      symbolMap: new Map(),
+      childrenOf: () => [],
+      symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       exportSettings: { colorProfile: "DISPLAY_P3_V4" },
     })).rejects.toThrow("Display P3 image export requires explicit exportSettings.displayP3IccProfile");
   });

@@ -1307,6 +1307,8 @@ export type FigNode = {
   readonly fillPaints?: readonly FigPaint[];
   /** Frame background paints used by real Figma exports. */
   readonly backgroundPaints?: readonly FigPaint[];
+  /** Fill-style GUID for `backgroundPaints` (Kiwi schema field 194). */
+  readonly inheritFillStyleIDForBackground?: FigGuid;
   readonly strokePaints?: readonly FigPaint[];
   readonly strokeWeight?: FigStrokeWeight;
   readonly individualStrokeWeights?: {

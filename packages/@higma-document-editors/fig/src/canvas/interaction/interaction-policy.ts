@@ -1,45 +1,39 @@
-/** @file Resolve editor interaction policy from the active tool. */
+/** @file Interaction policy derived from the active editor tool. */
+import type { FigCreationMode } from "../../context/FigEditorContext";
 
-import { isCreationIntent, isSelectionTransformIntent, type FigUserIntent } from "../../context/fig-editor/user-intent";
-import type { CanvasTargetMode } from "./target-resolution";
-
-export type CanvasInteractionPolicy = {
-  readonly targetMode: CanvasTargetMode;
-  readonly pathEditingEnabled: boolean;
-  readonly shapeCreationEnabled: boolean;
+export type FigCanvasInteractionPolicy = {
+  readonly canSelect: boolean;
+  readonly canMove: boolean;
+  readonly canCreate: boolean;
+  readonly canEditPath: boolean;
   readonly marqueeEnabled: boolean;
-  readonly selectionChromeInteractive: boolean;
 };
 
-/** Returns the single interaction policy consumed by canvas hit testing and selection chrome. */
-export function resolveCanvasInteractionPolicy(intent: FigUserIntent): CanvasInteractionPolicy {
-  if (intent.kind === "path-edit") {
+/** Resolve canvas interaction affordances from the active Fig creation mode. */
+export function resolveCanvasInteractionPolicy(mode: FigCreationMode): FigCanvasInteractionPolicy {
+  if (mode === "select") {
     return {
-      targetMode: "path-edit",
-      pathEditingEnabled: true,
-      shapeCreationEnabled: false,
-      marqueeEnabled: false,
-      selectionChromeInteractive: false,
+      canSelect: true,
+      canMove: true,
+      canCreate: false,
+      canEditPath: false,
+      marqueeEnabled: true,
     };
   }
-
-  if (intent.kind === "text-edit") {
+  if (mode === "pen") {
     return {
-      targetMode: "select",
-      pathEditingEnabled: false,
-      shapeCreationEnabled: false,
+      canSelect: true,
+      canMove: false,
+      canCreate: false,
+      canEditPath: true,
       marqueeEnabled: false,
-      selectionChromeInteractive: false,
     };
   }
-
-  const shapeCreationEnabled = isCreationIntent(intent) || intent.kind === "create-drag";
-  const marqueeEnabled = intent.kind === "select" || intent.kind === "marquee";
   return {
-    targetMode: "select",
-    pathEditingEnabled: false,
-    shapeCreationEnabled,
-    marqueeEnabled,
-    selectionChromeInteractive: !shapeCreationEnabled && !isSelectionTransformIntent(intent),
+    canSelect: false,
+    canMove: false,
+    canCreate: true,
+    canEditPath: false,
+    marqueeEnabled: false,
   };
 }

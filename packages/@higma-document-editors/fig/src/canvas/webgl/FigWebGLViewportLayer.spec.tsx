@@ -2,7 +2,7 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { FigWebGLViewportLayer } from "./FigWebGLViewportLayer";
 
 const sceneGraph: SceneGraph = {

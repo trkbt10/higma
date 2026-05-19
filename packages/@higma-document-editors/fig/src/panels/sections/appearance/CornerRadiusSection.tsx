@@ -1,70 +1,36 @@
-/**
- * @file Corner radius property section adapter
- *
- * Bridges the kernel CornerRadiusSectionView to FigDesignNode corner radius
- * storage (cornerRadius vs rectangleCornerRadii).
- */
+/** @file Corner radius property section. */
+import type { FigNode } from "@higma-document-models/fig/types";
+import { useFigEditor } from "../../../context/FigEditorContext";
+import { inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
+import { readUniformCornerRadius } from "./corner-radius-domain";
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import { CornerRadiusSectionView } from "@higma-editor-kernel/ui/property-sections";
-import type { FigEditorAction } from "../../../context/fig-editor/types";
-import { createPropertyTargetUpdateAction, type PropertyMutationTarget } from "../../properties/property-mutation-target";
-import {
-  collapseToUniformCornerRadius,
-  expandToIndividualCornerRadii,
-  hasIndividualCornerRadii,
-  isCornerRadiusEditableNode,
-  resolveIndividualCornerRadii,
-  resolveUniformCornerRadius,
-  setIndividualCornerRadius,
-  setUniformCornerRadius,
-} from "./corner-radius-domain";
-
-type CornerRadiusSectionProps = {
-  readonly node: FigDesignNode;
-  readonly target: PropertyMutationTarget;
-  readonly dispatch: (action: FigEditorAction) => void;
-};
-
-/** Panel section for editing corner radius properties of a Figma node. */
-export function CornerRadiusSection({ node, target, dispatch }: CornerRadiusSectionProps) {
-  if (!isCornerRadiusEditableNode(node)) {
+/** Render the editable uniform corner radius field. */
+export function CornerRadiusSection({ node }: { readonly node: FigNode }) {
+  const { updateNode } = useFigEditor();
+  if (node.guid === undefined) {
+    throw new Error("CornerRadiusSection requires a Kiwi node guid");
+  }
+  const radius = readUniformCornerRadius(node);
+  if (radius === undefined) {
     return null;
   }
-
-  const mode = hasIndividualCornerRadii(node) ? "individual" : "uniform";
-  const uniformRadius = resolveUniformCornerRadius(node);
-  const individualRadii = resolveIndividualCornerRadii(node);
-
+  const guid = node.guid;
   return (
-    <CornerRadiusSectionView
-      mode={mode}
-      uniformRadius={uniformRadius}
-      individualRadii={individualRadii}
-      onUniformChange={(value) => {
-        dispatch(createPropertyTargetUpdateAction({
-          target,
-          updater: (n) => setUniformCornerRadius(n, value),
-        }));
-      }}
-      onIndividualChange={(index, value) => {
-        dispatch(createPropertyTargetUpdateAction({
-          target,
-          updater: (n) => setIndividualCornerRadius(n, index, value),
-        }));
-      }}
-      onSwitchToIndividual={() => {
-        dispatch(createPropertyTargetUpdateAction({
-          target,
-          updater: expandToIndividualCornerRadii,
-        }));
-      }}
-      onSwitchToUniform={() => {
-        dispatch(createPropertyTargetUpdateAction({
-          target,
-          updater: collapseToUniformCornerRadius,
-        }));
-      }}
-    />
+    <section style={sectionStyle}>
+      <div style={sectionTitleStyle}>Corners</div>
+      <PropertyField label="Radius">
+        <input
+          style={inputStyle}
+          type="number"
+          min={0}
+          value={radius}
+          onChange={(event) => updateNode(guid, (current) => ({
+            ...current,
+            cornerRadius: Number(event.currentTarget.value),
+            rectangleCornerRadii: undefined,
+          }), "property-panel")}
+        />
+      </PropertyField>
+    </section>
   );
 }

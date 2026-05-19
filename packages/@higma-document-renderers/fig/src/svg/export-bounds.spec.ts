@@ -3,7 +3,7 @@
  *
  * Each case is calibrated against fixtures observable in Figma's own
  * SVG export — the App Store Template (Community) file has been the
- * primary reference. The point of these tests is to keep the helper
+ * primary reference. The point of these tests is to keep the function
  * faithful to Figma's exporter even as later changes refactor the
  * underlying tree-walk.
  */

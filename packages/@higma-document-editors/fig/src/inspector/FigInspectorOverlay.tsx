@@ -1,94 +1,55 @@
-/**
- * @file Fig-specific inspector overlay for the editor canvas.
- *
- * Reads the active page from FigEditorContext, collects inspector box
- * geometry, and renders `InspectorCanvasOverlay` in the host EditorCanvas
- * page coordinate system. No pan/zoom of its own — the host canvas owns
- * the viewport.
- *
- * Hover highlight is synchronized through FigInspectorContext when
- * present, falling back to local state otherwise so the component can
- * be used independently.
- *
- * The category registry is injectable so non-default Fig category maps
- * can be supplied without forking the overlay.
- */
+/** @file Inspector overlay for Kiwi canvas nodes. */
+
 import { useMemo, useState } from "react";
 import type { NodeCategoryRegistry } from "@higma-editor-kernel/core/inspector-types";
 import { InspectorCanvasOverlay } from "@higma-editor-surfaces/controls/inspector";
-import type { FigDesignNode, FigNodeId } from "@higma-document-models/fig/domain";
+import { guidToString } from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
 import { useFigEditor } from "../context/FigEditorContext";
 import { FIG_NODE_CATEGORY_REGISTRY } from "./fig-node-categories";
-import { collectDesignBoxes } from "./fig-inspector-adapter";
-import { useFigInspectorContextOptional } from "./FigInspectorContext";
+import { collectFigInspectorBoxes } from "./fig-inspector-projection";
 
 export type FigInspectorOverlayProps = {
-  /**
-   * Category registry. Defaults to the shipped Fig registry.
-   * Provide a custom registry to recolor/relabel categories without
-   * forking this component.
-   */
   readonly registry?: NodeCategoryRegistry;
-  /** Include nodes with `visible === false`. Default: false. */
   readonly showHiddenNodes?: boolean;
-  /**
-   * Whether the overlay intercepts pointer events. Default: false so
-   * the editor's own hit areas remain clickable beneath the overlay.
-   * Set to true for an "inspect-only" mode.
-   */
   readonly interactive?: boolean;
-  /**
-   * Called on overlay rect click. Only fires when `interactive` is true.
-   */
-  readonly onNodeClick?: (nodeId: FigNodeId) => void;
+  readonly onNodeClick?: (guid: FigGuid) => void;
 };
 
-/**
- * Drop-in overlay for FigEditor's canvas children.
- *
- * @example
- * ```tsx
- * const [inspect, setInspect] = useState(false);
- * <FigEditor
- *   initialDocument={doc}
- *   canvasOverlay={inspect ? <FigInspectorOverlay /> : null}
- * />
- * ```
- */
+/** Render bounding boxes for the active Kiwi CANVAS subtree. */
 export function FigInspectorOverlay({
   registry = FIG_NODE_CATEGORY_REGISTRY,
   showHiddenNodes = false,
   interactive = false,
   onNodeClick,
 }: FigInspectorOverlayProps) {
-  const { activePage, nodeSelection } = useFigEditor();
-  const inspectorCtx = useFigInspectorContextOptional();
-  const [localHoveredId, setLocalHoveredId] = useState<FigNodeId | null>(null);
-
-  const hoveredId = inspectorCtx ? inspectorCtx.hoveredId : localHoveredId;
-  const setHoveredId = inspectorCtx ? inspectorCtx.setHoveredId : setLocalHoveredId;
-
+  const { activePage, resources, selectedGuids, context } = useFigEditor();
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const boxes = useMemo(() => {
-    const children: readonly FigDesignNode[] = activePage?.children ?? [];
-    return collectDesignBoxes(children, showHiddenNodes);
-  }, [activePage, showHiddenNodes]);
-
-  const handleHover = (id: string | null) => {
-    setHoveredId((id as FigNodeId | null) ?? null);
-  };
-
-  const handleClick = (id: string) => {
-    onNodeClick?.(id as FigNodeId);
-  };
-
+    if (activePage === undefined) {
+      return [];
+    }
+    return resources.childrenOf(activePage).flatMap((node) => collectFigInspectorBoxes({
+      root: node,
+      childrenOf: resources.childrenOf,
+      showHiddenNodes,
+    }));
+  }, [activePage, resources, showHiddenNodes]);
+  const highlightedNodeId = selectedGuids[0] === undefined ? null : guidToString(selectedGuids[0]);
   return (
     <InspectorCanvasOverlay
       boxes={boxes}
       registry={registry}
-      highlightedNodeId={nodeSelection.primaryId ?? null}
+      highlightedNodeId={highlightedNodeId}
       hoveredNodeId={hoveredId}
-      onNodeHover={handleHover}
-      onNodeClick={handleClick}
+      onNodeHover={setHoveredId}
+      onNodeClick={(nodeId) => {
+        const node = context.document.nodesByGuid.get(nodeId);
+        if (node?.guid === undefined) {
+          throw new Error(`FigInspectorOverlay: node ${nodeId} is not present in the Kiwi document`);
+        }
+        onNodeClick?.(node.guid);
+      }}
       interactive={interactive}
     />
   );

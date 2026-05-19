@@ -5,6 +5,7 @@
 import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
 import { resolveTextRendering } from "./resolve";
 import type { TextFontResolver } from "./types";
+import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 const RECT_FONT_PATH: FontPath = {
   commands: [
@@ -46,7 +47,7 @@ const BASE_TEXT_NODE = {
   },
   fills: [
     {
-      type: "SOLID",
+      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
       color: { r: 0, g: 0, b: 0, a: 1 },
       opacity: 1,
       visible: true,

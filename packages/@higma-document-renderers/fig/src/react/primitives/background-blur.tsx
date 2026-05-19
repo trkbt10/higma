@@ -6,7 +6,7 @@
  * Figma's SVG export and the SVG string renderer's formatBackgroundBlur.
  */
 
-import type { RenderBackgroundBlur } from "../../scene-graph/render-tree";
+import type { RenderBackgroundBlur } from "../../scene-graph";
 
 type Props = {
   readonly blur: RenderBackgroundBlur;

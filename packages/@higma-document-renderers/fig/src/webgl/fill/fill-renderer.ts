@@ -4,7 +4,7 @@
  * Handles solid, linear gradient, radial gradient, and image fills.
  */
 
-import type { Fill, Color } from "@higma-document-models/fig/scene-graph";
+import type { Fill, Color } from "@higma-document-renderers/fig/scene-graph";
 import type { ImagePaintFilter } from "@higma-codecs/raster";
 import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "@higma-codecs/raster";
 import type { ShaderCache } from "../shaders";
@@ -185,6 +185,41 @@ export type DiamondGradientFillParams = {
   elementSize: { width: number; height: number; x?: number; y?: number };
 };
 
+/**
+ * Compute the effective gradient (center, radius) in object-bbox space
+ * by applying the gradient's `transform` matrix to the unit-gradient
+ * (cx=0.5, cy=0.5, r=0.5) shape. Mirrors `radialGradientAttrs` in
+ * `paint/svg-gradient-transform.ts` (the SVG SoT), but expressed in
+ * normalised [0..1] coordinates because the WebGL shader treats
+ * `localPos` as bbox-normalised.
+ *
+ * For circular gradients with rotation+uniform-scale the result is
+ * exact. For elliptical gradients (m00 ≠ m11 or non-zero off-diagonals
+ * with unequal magnitudes) the shader still treats the gradient as a
+ * single-radius circle — the major-axis radius is used. The SVG SoT
+ * already handles full ellipses via its `translate.rotate.scale`
+ * gradientTransform composition; matching that on the WebGL side would
+ * require passing a 2×3 matrix uniform and computing the inverse in
+ * the shader. That's left for a follow-up; the current fixtures only
+ * exercise circular gradients with translate+uniform-scale.
+ */
+function bakedRadialCenterRadius(
+  fill: Extract<Fill, { type: "radial-gradient" }>,
+): { readonly cx: number; readonly cy: number; readonly r: number } {
+  const t = fill.gradientTransform;
+  if (!t) {
+    return { cx: fill.center.x, cy: fill.center.y, r: fill.radius };
+  }
+  // Unit gradient: cx=0.5, cy=0.5, r=0.5. After applying T:
+  //   center_obj = T * (0.5, 0.5)
+  //   primary-axis end = T * (1.0, 0.5) → axis vector (m00, m10) × 0.5
+  //   radius = |axis| = 0.5 * sqrt(m00² + m10²)
+  const cx = t.m00 * 0.5 + t.m01 * 0.5 + t.m02;
+  const cy = t.m10 * 0.5 + t.m11 * 0.5 + t.m12;
+  const r = 0.5 * Math.hypot(t.m00, t.m10);
+  return { cx, cy, r };
+}
+
 /** Draw a radial gradient fill using WebGL */
 export function drawRadialGradientFill(
   { ctx, vertices, fill, transform, opacity, elementSize }: RadialGradientFillParams
@@ -195,9 +230,10 @@ export function drawRadialGradientFill(
   const programName = "radialGradient";
   shaders.useProgram(programName);
 
+  const { cx, cy, r } = bakedRadialCenterRadius(fill);
   bindGradientGeometry({ ctx, programName, vertices, transform });
-  shaders.setUniform2f(programName, "u_center", fill.center.x, fill.center.y);
-  shaders.setUniform1f(programName, "u_radius", fill.radius);
+  shaders.setUniform2f(programName, "u_center", cx, cy);
+  shaders.setUniform1f(programName, "u_radius", r);
   shaders.setUniform2f(programName, "u_elementSize", elementSize.width, elementSize.height);
   shaders.setUniform2f(programName, "u_elementOrigin", elementSize.x ?? 0, elementSize.y ?? 0);
   shaders.setUniform1f(programName, "u_opacity", opacity * fill.opacity);

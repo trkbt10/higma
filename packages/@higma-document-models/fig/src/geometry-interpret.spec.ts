@@ -79,7 +79,7 @@ describe("resolveClipsContent", () => {
     expect(resolveClipsContent(false, undefined, "FRAME")).toBe(false);
   });
 
-  it("falls back to inverted frameMaskDisabled", () => {
+  it("uses inverted frameMaskDisabled when clipsContent is absent", () => {
     expect(resolveClipsContent(undefined, false, "GROUP")).toBe(true);
     expect(resolveClipsContent(undefined, true, "FRAME")).toBe(false);
   });

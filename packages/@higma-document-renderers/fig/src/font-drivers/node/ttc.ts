@@ -21,7 +21,7 @@
  *     https://learn.microsoft.com/en-us/typography/opentype/spec/otff#font-collections
  *   - The `name` table is identical between TTC-embedded and
  *     standalone faces, so post-extraction `parse()` can read family
- *     / subfamily / postScriptName via the existing helpers.
+ *     / subfamily / postScriptName via the existing routines.
  */
 
 const TTC_MAGIC = 0x74746366; // 'ttcf'

@@ -8,8 +8,7 @@
  * `@higma-document-models/fig/geometry-interpret`), so these tests
  * confirm the wiring is correct and outputs agree.
  *
- * Test data uses the SSoT domain shape (FigPaintType strings, FigStroke*
- * strings) as emitted by the parser after kiwi→domain normalisation.
+ * Test data uses decoded Kiwi enum payloads.
  */
 
 import type { FigPackageImage } from "@higma-figma-containers/package";
@@ -18,6 +17,13 @@ import type {
   FigSolidPaint,
   FigEffect,
 } from "@higma-document-models/fig/types";
+import {
+  BLEND_MODE_VALUES,
+  EFFECT_TYPE_VALUES,
+  PAINT_TYPE_VALUES,
+  STROKE_CAP_VALUES,
+  STROKE_JOIN_VALUES,
+} from "@higma-document-models/fig/constants";
 
 // Shared SoT
 import { getGradientDirection, getGradientStops, getRadialGradientCenterAndRadius } from "./paint";
@@ -34,16 +40,16 @@ import {
   convertPaintToFill,
   convertEffectsToScene,
   convertStrokeToSceneStroke,
-} from "./scene-graph/convert";
+} from "./scene-graph";
 
 const NO_IMAGES: ReadonlyMap<string, FigPackageImage> = new Map();
 
 describe("Paint parity", () => {
   const linearGradient: FigGradientPaint = {
-    type: "GRADIENT_LINEAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
     opacity: 0.9,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops: [
       { color: { r: 0.24, g: 0.47, b: 0.85, a: 1 }, position: 0 },
       { color: { r: 0.55, g: 0.30, b: 0.85, a: 1 }, position: 1 },
@@ -77,7 +83,7 @@ describe("Paint parity", () => {
   });
 
   const radialGradient: FigGradientPaint = {
-    type: "GRADIENT_RADIAL",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
     opacity: 1,
     visible: true,
     stops: [
@@ -102,7 +108,7 @@ describe("Paint parity", () => {
 describe("Stroke parity", () => {
   it("SceneGraph stroke uses shared weight/cap/join interpretation", () => {
     const solidPaint: FigSolidPaint = {
-      type: "SOLID",
+      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
       color: { r: 1, g: 0, b: 0, a: 1 },
       opacity: 0.8,
       visible: true,
@@ -110,27 +116,27 @@ describe("Stroke parity", () => {
     const paints = [solidPaint];
     const weight = { top: 1, right: 3, bottom: 2, left: 0 };
     const stroke = convertStrokeToSceneStroke(paints, weight, {
-      strokeCap: "ROUND",
-      strokeJoin: "BEVEL",
+      strokeCap: { value: STROKE_CAP_VALUES.ROUND, name: "ROUND" },
+      strokeJoin: { value: STROKE_JOIN_VALUES.BEVEL, name: "BEVEL" },
     });
     expect(stroke).toBeDefined();
     expect(stroke!.width).toBe(resolveStrokeWeight(weight));
-    expect(stroke!.linecap).toBe(mapStrokeCap("ROUND"));
-    expect(stroke!.linejoin).toBe(mapStrokeJoin("BEVEL"));
+    expect(stroke!.linecap).toBe(mapStrokeCap({ value: STROKE_CAP_VALUES.ROUND, name: "ROUND" }));
+    expect(stroke!.linejoin).toBe(mapStrokeJoin({ value: STROKE_JOIN_VALUES.BEVEL, name: "BEVEL" }));
   });
 });
 
 describe("Effects parity", () => {
   it("SceneGraph effects use shared type detection and shadow extraction", () => {
     const dropShadow: FigEffect = {
-      type: "DROP_SHADOW",
+      type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
       visible: true,
       offset: { x: 2, y: 4 },
       radius: 8,
       color: { r: 0, g: 0, b: 0, a: 0.3 },
     };
     const innerShadow: FigEffect = {
-      type: "INNER_SHADOW",
+      type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
       visible: true,
       offset: { x: 0, y: 2 },
       radius: 4,

@@ -31,7 +31,7 @@ describe("vector path draft", () => {
     expect(vectorPathDraftToPreviewPath(preview)).toBe("M 110 120 L 140 150 L 180 190");
   });
 
-  it("normalizes committed path units to the vector local bounding box", () => {
+  it("writes committed path units relative to the vector local bounding box", () => {
     const draft = appendVectorPathDraftPoint(
       appendVectorPathDraftPoint(
         startVectorPathDraft({

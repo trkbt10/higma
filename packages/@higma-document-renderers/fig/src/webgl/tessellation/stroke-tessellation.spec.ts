@@ -5,7 +5,7 @@ import {
   tessellateEllipseStroke,
   tessellatePathStroke,
 } from "./stroke-tessellation";
-import type { PathContour } from "@higma-document-models/fig/scene-graph";
+import type { PathContour } from "@higma-document-renderers/fig/scene-graph";
 
 describe("tessellateRectStroke", () => {
   it("produces triangles for a simple rectangle", () => {

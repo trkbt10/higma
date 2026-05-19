@@ -1,7 +1,7 @@
-/** @file SVG path contour helpers for WebGL tessellation */
+/** @file SVG path contour routines for WebGL tessellation */
 
 import { parseSvgPathD, type PathCommand } from "@higma-primitives/path";
-import type { PathContour } from "@higma-document-models/fig/scene-graph";
+import type { PathContour } from "@higma-document-renderers/fig/scene-graph";
 
 export type SvgPathContoursParams = {
   readonly d: string;

@@ -1,118 +1,102 @@
-/**
- * @file Fig page renderer component
- *
- * Selects the concrete fig renderer backend consumed by the React editor
- * shell. React owns mounting and editor chrome; node pixels come from the
- * SVG or WebGL backend.
- */
-
-import type { FigPage } from "@higma-document-models/fig/domain";
-import type { FigDocumentResources } from "@higma-document-io/fig/context";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
-import { useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+/** @file Renderer switch for the Fig editor canvas. */
+import {
+  FigFamilyPageRendererFromResources,
+  useFigSceneGraph,
+} from "@higma-figma-runtime/react-renderer";
+import type { FigDocumentResources } from "@higma-document-io/fig";
+import type { FigNode } from "@higma-document-models/fig/types";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
-import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
-import { FigSvgViewportScene } from "./FigSvgViewportScene";
-import type { FigEditorRendererKind } from "./renderer-kind";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
-import type { ViewportLayerPlacement } from "../layout/viewport-render-plan";
+import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
+import type { FigEditorRendererKind } from "./renderer-kind";
 
-// =============================================================================
-// Types
-// =============================================================================
-
-type FigPageRendererProps = {
-  readonly page: FigPage;
+export type FigPageRendererProps = {
+  readonly page: FigNode;
+  readonly nodes?: readonly FigNode[];
   readonly canvasWidth: number;
   readonly canvasHeight: number;
-  /**
-   * Renderer-facing resource bundle (`symbolMap` / `styleRegistry` /
-   * `blobs` / `images`).
-   *
-   * SoT: obtain via `useFigDocumentResources()` (or
-   * `figDocumentResources(document)`) — never destructure a
-   * `FigDesignDocument` inline. Keeping every consumer on the bundle
-   * means the four maps cannot drift relative to each other on a future
-   * document refactor.
-   */
+  readonly viewportX: number;
+  readonly viewportY: number;
+  readonly viewportWidth: number;
+  readonly viewportHeight: number;
+  readonly viewportScale: number;
+  readonly viewportRevision?: number;
   readonly resources: FigDocumentResources;
-  readonly renderer?: FigEditorRendererKind;
   readonly renderOptions?: SceneGraphRenderOptions;
-  readonly sceneGraph?: SceneGraph | null;
-  readonly viewportX?: number;
-  readonly viewportY?: number;
-  readonly viewportWidth?: number;
-  readonly viewportHeight?: number;
-  readonly viewportScale?: number;
-  readonly viewportPlacement?: ViewportLayerPlacement;
-  readonly webglPlacement?: ViewportLayerPlacement;
-  readonly webglInitializationDelayMs?: number;
+  readonly renderer?: FigEditorRendererKind;
+  readonly host?: "html" | "svg";
   readonly textFontResolver?: TextFontResolver;
+  readonly webglInitializationDelayMs?: number;
 };
 
-// =============================================================================
-// Component
-// =============================================================================
-
-/**
- * Renders a fig page through the selected renderer backend.
- *
- * Builds a scene graph from the page's FigDesignNode tree (domain objects)
- * and hands that scene graph to either the SVG or WebGL backend layer.
- *
- * The scene graph is memoized and only recomputed when the page content,
- * dimensions, or resources change.
- */
+/** Render a page through the requested backend while sharing the same scene graph inputs. */
 export function FigPageRenderer({
   page,
+  nodes,
   canvasWidth,
   canvasHeight,
-  resources,
-  renderer = "svg",
-  renderOptions,
-  sceneGraph: sceneGraphProp,
-  viewportX = 0,
-  viewportY = 0,
+  viewportX,
+  viewportY,
   viewportWidth,
   viewportHeight,
-  viewportScale = 1,
-  viewportPlacement,
-  webglPlacement = "world",
-  webglInitializationDelayMs,
+  viewportScale,
+  viewportRevision,
+  resources,
+  renderOptions,
+  renderer = "svg",
+  host = "svg",
   textFontResolver,
+  webglInitializationDelayMs,
 }: FigPageRendererProps) {
-  const builtSceneGraph = useFigSceneGraph({
+  const sceneGraph = useFigSceneGraph({
     page,
+    nodes,
     canvasWidth,
     canvasHeight,
     viewportX,
     viewportY,
     viewportWidth,
     viewportHeight,
-    images: resources.images,
-    blobs: resources.blobs,
-    symbolMap: resources.symbolMap,
-    styleRegistry: resources.styleRegistry,
+    resources,
     textFontResolver,
   });
-  const sceneGraph = sceneGraphProp ?? builtSceneGraph;
 
-  if (!sceneGraph) {
-    return <g />;
+  if (renderer !== "webgl") {
+    return (
+      <FigFamilyPageRendererFromResources
+        page={page}
+        nodes={nodes}
+        canvasWidth={canvasWidth}
+        canvasHeight={canvasHeight}
+        viewportX={viewportX}
+        viewportY={viewportY}
+        viewportWidth={viewportWidth}
+        viewportHeight={viewportHeight}
+        resources={resources}
+        textFontResolver={textFontResolver}
+        sceneGraph={sceneGraph}
+        renderOptions={renderOptions}
+      />
+    );
   }
 
-  switch (renderer) {
-    case "svg":
-      return <FigSvgViewportScene sceneGraph={sceneGraph} renderOptions={renderOptions} placement={viewportPlacement ?? "world"} />;
-    case "webgl":
-      return (
-        <FigWebGLViewportLayer
-          sceneGraph={sceneGraph}
-          renderOptions={renderOptions}
-          viewportScale={viewportScale}
-          placement={viewportPlacement ?? webglPlacement}
-          initializationDelayMs={webglInitializationDelayMs}
-        />
-      );
+  const webglLayer = (
+    <FigWebGLViewportLayer
+      sceneGraph={sceneGraph}
+      renderOptions={renderOptions}
+      viewportScale={viewportScale}
+      viewportRevision={viewportRevision}
+      initializationDelayMs={webglInitializationDelayMs}
+    />
+  );
+
+  if (host === "html") {
+    return webglLayer;
   }
+
+  return (
+    <foreignObject x={0} y={0} width={canvasWidth} height={canvasHeight} pointerEvents="none">
+      {webglLayer}
+    </foreignObject>
+  );
 }

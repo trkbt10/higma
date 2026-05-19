@@ -113,7 +113,7 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
     // `OS/2.sTypoAscender` / `OS/2.sTypoDescender` regardless of the
     // `USE_TYPO_METRICS` (`fsSelection` bit 7) flag — every modern
     // browser follows this. The `hhea` ascender (which opentype.js
-    // exposes as `font.ascender`) is the historical fallback for
+    // exposes as `font.ascender`) is the historical alternative for
     // fonts that don't carry an OS/2 table at all. Reading the typo
     // metrics here closes a noticeable baseline-position gap on faces
     // whose `hhea` and `OS/2.sTypo` differ — notably CJK fonts like
@@ -235,7 +235,7 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
 }
 
 /**
- * Async measurement helpers
+ * Async measurement functions
  */
 export async function measureTextAsync(
   provider: OpentypeMeasurementProviderInstance,

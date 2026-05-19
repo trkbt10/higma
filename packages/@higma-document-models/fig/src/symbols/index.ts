@@ -1,4 +1,4 @@
-/** @file Symbol resolution utilities */
+/** @file Symbol resolution entry point. */
 
 export { resolveConstraintAxis } from "./constraint-axis";
 

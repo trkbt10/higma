@@ -1,5 +1,5 @@
 /**
- * @file Font caching utilities.
+ * @file Font caching operations.
  *
  * Cache keys come from the SoT `fontQueryKey`. Every cache and dedup site
  * in the codebase must use it — no ad-hoc separators or default-handling.

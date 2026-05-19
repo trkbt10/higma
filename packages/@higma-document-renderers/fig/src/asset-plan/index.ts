@@ -7,7 +7,7 @@
  * subtree as code or as a flattened asset (PNG, SVG file). The
  * decision is the same; the asset format differs by target.
  *
- * `complexityScore` is the shared numerical signal. Per-tool helpers
+ * `complexityScore` is the shared numerical signal. Per-tool routines
  * (`fig-to-swiftui/emit/rasterize.ts`, the upcoming
  * `fig-to-web` icon-externalisation path) build naming / output rules
  * on top of it.

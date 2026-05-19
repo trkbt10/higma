@@ -12,7 +12,7 @@
  * 4. New types added to SceneGraph unions cause compile errors if unhandled
  */
 
-import type { Fill, SolidFill, LinearGradientFill, RadialGradientFill, ImageFill, Effect, Stroke, Color, PathContour } from "@higma-document-models/fig/scene-graph";
+import type { Fill, SolidFill, LinearGradientFill, RadialGradientFill, ImageFill, Effect, Stroke, Color, PathContour } from "@higma-document-renderers/fig/scene-graph";
 import { readPng } from "@higma-codecs/png";
 import { encode as encodeJpeg } from "jpeg-js";
 import {
@@ -27,7 +27,7 @@ import { matrixToSvgTransform, contourToSvgD } from "@higma-primitives/path";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
-// Test Helpers
+// Test Fixtures
 // =============================================================================
 
 function createIdGenerator(): IdGenerator {
@@ -47,7 +47,7 @@ const BLACK_50: Color = { r: 0, g: 0, b: 0, a: 0.5 };
 const DATA_URI_PREFIX = "data:image/png;base64,";
 
 // =============================================================================
-// Test Helpers
+// Test Fixtures
 // =============================================================================
 
 function buildFillForType(type: Fill["type"]): Fill {
@@ -59,7 +59,7 @@ function buildFillForType(type: Fill["type"]): Fill {
     case "radial-gradient":
       return { type: "radial-gradient", center: { x: 0.5, y: 0.5 }, radius: 0.5, stops: [], opacity: 1 };
     case "image":
-      return { type: "image", imageRef: "", data: new Uint8Array(0), mimeType: "image/png", scaleMode: "FILL", opacity: 1 };
+      return { type: "image", imageHash: "", data: new Uint8Array(0), mimeType: "image/png", scaleMode: "FILL", opacity: 1 };
     case "angular-gradient":
       return { type: "angular-gradient", center: { x: 0.5, y: 0.5 }, rotation: 0, stops: [], opacity: 1 };
     case "diamond-gradient":
@@ -167,7 +167,7 @@ describe("Fill resolution (shared SoT)", () => {
   it("handles image fill", () => {
     const fill: ImageFill = {
       type: "image",
-      imageRef: "test-ref",
+      imageHash: "test-ref",
       data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
       mimeType: "image/png",
       scaleMode: "FILL",
@@ -183,7 +183,7 @@ describe("Fill resolution (shared SoT)", () => {
   it("bakes paintFilter into JPEG image fills as PNG data", () => {
     const fill: ImageFill = {
       type: "image",
-      imageRef: "jpeg-ref",
+      imageHash: "jpeg-ref",
       data: createJpegData(),
       mimeType: "image/jpeg",
       scaleMode: "FILL",
@@ -207,7 +207,7 @@ describe("Fill resolution (shared SoT)", () => {
   it("requires an explicit export color profile for managed image fills", () => {
     const fill: ImageFill = {
       type: "image",
-      imageRef: "color-managed-jpeg-ref",
+      imageHash: "color-managed-jpeg-ref",
       data: createJpegData(),
       mimeType: "image/jpeg",
       scaleMode: "FILL",
@@ -222,7 +222,7 @@ describe("Fill resolution (shared SoT)", () => {
   it("preserves no-op color-managed JPEG image fills without paintFilter", () => {
     const fill: ImageFill = {
       type: "image",
-      imageRef: "color-managed-jpeg-ref",
+      imageHash: "color-managed-jpeg-ref",
       data: createJpegData(),
       mimeType: "image/jpeg",
       scaleMode: "FILL",

@@ -11,8 +11,8 @@
  */
 
 import type { ReactNode } from "react";
-import type { StrokeRendering, StrokeShape } from "../../scene-graph/render-tree";
-import type { ResolvedStrokeAttrs } from "../../scene-graph/render";
+import type { StrokeRendering, StrokeShape } from "../../scene-graph";
+import type { ResolvedStrokeAttrs } from "../../scene-graph";
 import { RectShape } from "./rect-shape";
 
 /** SVG-DOM-safe subset of ResolvedStrokeAttrs — excludes `strokeAlign`,
@@ -57,7 +57,7 @@ function StrokedShape({ shape, stroke }: { shape: StrokeShape; stroke: ResolvedS
 
   switch (shape.kind) {
     case "rect":
-      return <RectShape width={shape.width} height={shape.height} cornerRadius={shape.cornerRadius} fill="none" {...sAttrs} />;
+      return <RectShape width={shape.width} height={shape.height} cornerRadius={shape.cornerRadius} cornerSmoothing={shape.cornerSmoothing} fill="none" {...sAttrs} />;
     case "ellipse":
       if (shape.rx === shape.ry) {
         return <circle cx={shape.cx} cy={shape.cy} r={shape.rx} fill="none" {...sAttrs} />;

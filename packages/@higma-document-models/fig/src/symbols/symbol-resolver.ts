@@ -6,12 +6,14 @@ import type {
   FigComponentPropAssignment,
   FigDerivedTextData,
   FigGuid,
+  FigKiwiTextData,
   FigKiwiSymbolData,
   FigKiwiSymbolOverride,
   FigNode,
   MutableFigNode,
 } from "@higma-document-models/fig/types";
 import {
+  derivedTextDataHasVisualPayload,
   findNodeByGuid,
   getNodeType,
   guidToString,
@@ -96,6 +98,11 @@ const SELF_OVERRIDE_PAYLOAD_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = n
   "visible",
   "cornerRadius",
   "rectangleCornerRadii",
+  "rectangleTopLeftCornerRadius",
+  "rectangleTopRightCornerRadius",
+  "rectangleBottomRightCornerRadius",
+  "rectangleBottomLeftCornerRadius",
+  "rectangleCornerRadiiIndependent",
   "blendMode",
   "clipsContent",
   "frameMaskDisabled",
@@ -319,7 +326,7 @@ export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver
     return resolveSymbolTarget(targetSymbolID, document);
   };
   const resolveReferences = (node: FigNode): InstanceResolution => resolveReferencesForNode(node, document);
-  const resolveInstance = (node: FigNode): ResolvedInstanceNode => resolveInstanceNodeWithResolver(node, {
+  const resolveInstance = (node: FigNode): ResolvedInstanceNode => resolveInstanceNode(node, {
     document,
     resolveReferences,
     styleRegistry: input.styleRegistry,
@@ -468,7 +475,7 @@ export function cloneSymbolChildren(symbolNode: FigNode, options: CloneSymbolChi
 
   // Apply symbol overrides (property overrides)
   if (options?.symbolOverrides && options.symbolOverrides.length > 0) {
-    applyOverrides(cloned, options.symbolOverrides, registry);
+    applyOverrides(cloned, options.symbolOverrides, registry, "require-materialized-target");
   }
 
   // Resolve component property assignments (text overrides — deletes stale derivedTextData)
@@ -485,7 +492,7 @@ export function cloneSymbolChildren(symbolNode: FigNode, options: CloneSymbolChi
   // characters, not the SYMBOL's default text. After CPA clears the SYMBOL's
   // stale derivedTextData, the DSD re-adds the correct pre-rasterized glyphs.
   if (options?.derivedSymbolData && options.derivedSymbolData.length > 0) {
-    applyOverrides(cloned, options.derivedSymbolData, registry);
+    applyOverrides(cloned, options.derivedSymbolData, registry, "document-local-targets-only");
   }
 
   // Clean up stale derivedTextData:
@@ -607,13 +614,13 @@ function applyTextDataAssignment(
   const existingTextData = node.textData;
   const existingChars = existingTextData?.characters ?? node.characters ?? "";
   const isNoOp = existingChars === textValue.characters;
-  node.textData = {
-    ...(existingTextData ?? { characters: "" }),
-    characters: textValue.characters,
-    lines: textValue.lines ?? existingTextData?.lines,
-  };
+  const hasVisualDerivedTextData = derivedTextDataHasVisualPayload(node.derivedTextData);
+  node.textData = resolveAssignedTextData(existingTextData, textValue);
   node.characters = textValue.characters;
   if (isNoOp) {
+    return;
+  }
+  if (!hasVisualDerivedTextData) {
     return;
   }
   delete node.derivedTextData;
@@ -622,6 +629,40 @@ function applyTextDataAssignment(
   }
   textOverrideGuids.add(guidToString(node.guid));
 }
+
+function resolveAssignedTextData(
+  existingTextData: FigKiwiTextData | undefined,
+  textValue: NonNullable<FigComponentPropAssignment["value"]["textValue"]>,
+): FigKiwiTextData {
+  const next: MutableFigKiwiTextData = {
+    ...(existingTextData ?? { characters: "" }),
+    characters: textValue.characters,
+    lines: textValue.lines ?? existingTextData?.lines,
+  };
+  const characterStyleIDs = next.characterStyleIDs;
+  if (!textDataStyleIDsMatchAssignedText(characterStyleIDs, textValue.characters)) {
+    delete next.characterStyleIDs;
+    delete next.styleOverrideTable;
+  }
+  return next;
+}
+
+function textDataStyleIDsMatchAssignedText(
+  characterStyleIDs: readonly number[] | undefined,
+  characters: string,
+): boolean {
+  if (characterStyleIDs === undefined || characterStyleIDs.length === 0) {
+    return true;
+  }
+  if (characterStyleIDs.length === characters.length) {
+    return true;
+  }
+  return characterStyleIDs.length === [...characters].length;
+}
+
+type MutableFigKiwiTextData = {
+  -readonly [K in keyof FigKiwiTextData]: FigKiwiTextData[K];
+};
 
 function applyVisibleAssignment(
   node: MutableFigNode,
@@ -743,6 +784,7 @@ function cleanupStaleDerivedTextData(
 
   visitMutableNodes(nodes, (node) => {
     if (!node.guid || !node.derivedTextData) { return; }
+    if (!derivedTextDataHasVisualPayload(node.derivedTextData)) { return; }
     const key = guidToString(node.guid);
     const cpaTarget = cpaGuids.has(key);
     const chars = node.characters ?? node.textData?.characters;
@@ -892,11 +934,17 @@ function applyOverrides(
   nodes: MutableFigNode[],
   overrides: readonly FigKiwiSymbolOverride[],
   styleRegistry?: FigStyleRegistry,
+  targetPolicy: OverrideTargetPolicy = "require-target",
 ): void {
   for (const override of overrides) {
-    applyOverrideAtPath(nodes, override, styleRegistry);
+    applyOverrideAtPath(nodes, override, styleRegistry, targetPolicy);
   }
 }
+
+type OverrideTargetPolicy =
+  | "require-target"
+  | "require-materialized-target"
+  | "document-local-targets-only";
 
 /**
  * Walk `override.guidPath` through `nodes`, applying the override at
@@ -910,6 +958,7 @@ function applyOverrideAtPath(
   nodes: readonly MutableFigNode[],
   override: FigKiwiSymbolOverride,
   styleRegistry?: FigStyleRegistry,
+  targetPolicy: OverrideTargetPolicy = "require-target",
 ): void {
   const guids = override.guidPath?.guids;
   if (!guids || guids.length === 0) {
@@ -922,7 +971,8 @@ function applyOverrideAtPath(
   const targetGuid = guids[0];
   const child = findDescendantByGuid(nodes, targetGuid);
   if (!child) {
-    throw new Error(`SymbolResolver: override target ${guidToString(targetGuid)} is not present in the cloned SYMBOL descendants`);
+    handleMissingOverrideTarget(nodes, override, targetPolicy, targetGuid);
+    return;
   }
   if (guids.length === 1) {
     applyDirectOverride(child, override, styleRegistry);
@@ -941,7 +991,110 @@ function applyOverrideAtPath(
     return;
   }
   // Non-INSTANCE container: descend with the tail untouched.
-  applyOverrideAtPath(mutableChildren(child), tail, styleRegistry);
+  applyOverrideAtPath(mutableChildren(child), tail, styleRegistry, targetPolicy);
+}
+
+function handleMissingOverrideTarget(
+  nodes: readonly MutableFigNode[],
+  override: FigKiwiSymbolOverride,
+  targetPolicy: OverrideTargetPolicy,
+  targetGuid: FigGuid,
+): void {
+  if (targetPolicy === "document-local-targets-only") {
+    return;
+  }
+  if (isMaterializedOverrideTargetAllowed(nodes, override, targetPolicy)) {
+    return;
+  }
+  throw new Error(`SymbolResolver: override target ${guidToString(targetGuid)} is not present in the cloned SYMBOL descendants`);
+}
+
+function isMaterializedOverrideTargetAllowed(
+  nodes: readonly MutableFigNode[],
+  override: FigKiwiSymbolOverride,
+  targetPolicy: OverrideTargetPolicy,
+): boolean {
+  if (targetPolicy !== "require-materialized-target") {
+    return false;
+  }
+  return isOverrideAlreadyMaterialized(nodes, override);
+}
+
+function isOverrideAlreadyMaterialized(
+  nodes: readonly MutableFigNode[],
+  override: FigKiwiSymbolOverride,
+): boolean {
+  const name = override.name;
+  if (typeof name !== "string") {
+    return false;
+  }
+  const candidates = findDescendantsByName(nodes, name);
+  return candidates.some((candidate) => materializedOverridePayloadMatches(candidate, override));
+}
+
+function findDescendantsByName(
+  nodes: readonly MutableFigNode[],
+  name: string,
+): readonly MutableFigNode[] {
+  const matches: MutableFigNode[] = [];
+  for (const node of nodes) {
+    if (node.name === name) {
+      matches.push(node);
+    }
+    matches.push(...findDescendantsByName(mutableChildren(node), name));
+  }
+  return matches;
+}
+
+function materializedOverridePayloadMatches(
+  node: MutableFigNode,
+  override: FigKiwiSymbolOverride,
+): boolean {
+  const nodeRecord = node as Record<string, unknown>;
+  const overrideRecord = override as Record<string, unknown>;
+  for (const key of Object.keys(overrideRecord)) {
+    if (key === "guidPath" || key === "overrideLevel") {
+      continue;
+    }
+    const incoming = overrideRecord[key];
+    if (incoming === undefined) {
+      continue;
+    }
+    if (!kiwiPayloadValueEquals(nodeRecord[key], incoming)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function kiwiPayloadValueEquals(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return kiwiArrayPayloadValueEquals(left, right);
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => key in rightRecord && kiwiPayloadValueEquals(leftRecord[key], rightRecord[key]));
+}
+
+function kiwiArrayPayloadValueEquals(left: unknown, right: unknown): boolean {
+  if (!Array.isArray(left) || !Array.isArray(right)) {
+    return false;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => kiwiPayloadValueEquals(value, right[index]));
 }
 
 /**
@@ -1032,6 +1185,11 @@ export function mergeSymbolProperties(instanceNode: FigNode, symbolNode: FigNode
   if (symbolNode.strokeWeight !== undefined) { merged.strokeWeight = symbolNode.strokeWeight; }
   if (symbolNode.cornerRadius !== undefined) { merged.cornerRadius = symbolNode.cornerRadius; }
   if (symbolNode.rectangleCornerRadii) { merged.rectangleCornerRadii = symbolNode.rectangleCornerRadii; }
+  if (symbolNode.rectangleTopLeftCornerRadius !== undefined) { merged.rectangleTopLeftCornerRadius = symbolNode.rectangleTopLeftCornerRadius; }
+  if (symbolNode.rectangleTopRightCornerRadius !== undefined) { merged.rectangleTopRightCornerRadius = symbolNode.rectangleTopRightCornerRadius; }
+  if (symbolNode.rectangleBottomRightCornerRadius !== undefined) { merged.rectangleBottomRightCornerRadius = symbolNode.rectangleBottomRightCornerRadius; }
+  if (symbolNode.rectangleBottomLeftCornerRadius !== undefined) { merged.rectangleBottomLeftCornerRadius = symbolNode.rectangleBottomLeftCornerRadius; }
+  if (symbolNode.rectangleCornerRadiiIndependent !== undefined) { merged.rectangleCornerRadiiIndependent = symbolNode.rectangleCornerRadiiIndependent; }
 
   // fillGeometry / strokeGeometry: only copy from SYMBOL if sizes match.
   const instSize = instanceNode.size;
@@ -1269,14 +1427,14 @@ function bindOverridesToResolvedSlots(
  * The renderer calls this function and renders the result — it does NOT
  * implement any resolution logic itself.
  */
-function resolveInstanceNodeWithResolver(
+function resolveInstanceNode(
   node: FigNode,
   ctx: InstanceResolveRuntime,
 ): ResolvedInstanceNode {
   // 1. Resolve INSTANCE → SYMBOL
   const resolution = ctx.resolveReferences(node);
   if (!resolution.effectiveSymbol) {
-    throw new Error(`SymbolResolver: INSTANCE ${guidToString(node.guid)} does not resolve to a SYMBOL`);
+    return resolveDocumentExternalInstanceOrThrow(node);
   }
 
   const { node: symNode } = resolution.effectiveSymbol;
@@ -1344,6 +1502,22 @@ function resolveInstanceNodeWithResolver(
   }
 
   return { node: mergedNode, children };
+}
+
+function resolveDocumentExternalInstanceOrThrow(node: FigNode): ResolvedInstanceNode {
+  const documentExternal = resolveDocumentExternalInstanceNode(node);
+  if (documentExternal !== undefined) {
+    return documentExternal;
+  }
+  throw new Error(`SymbolResolver: INSTANCE ${guidToString(node.guid)} does not resolve to a SYMBOL`);
+}
+
+function resolveDocumentExternalInstanceNode(node: FigNode): ResolvedInstanceNode | undefined {
+  const derivedSymbolData = node.derivedSymbolData;
+  if (derivedSymbolData === undefined || derivedSymbolData.length === 0) {
+    return undefined;
+  }
+  return { node, children: EMPTY_RESOLVED_CHILDREN };
 }
 
 function applyResolvedInstanceSize(

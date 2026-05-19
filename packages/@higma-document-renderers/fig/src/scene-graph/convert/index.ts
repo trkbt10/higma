@@ -3,5 +3,5 @@
 export { figColorToSceneColor, convertPaintToFill, convertPaintsToFills } from "./fill";
 export { convertStrokeToSceneStroke } from "./stroke";
 export { convertEffectsToScene } from "./effects";
-export { decodeGeometryToContours, convertVectorPathsToContours } from "./path";
+export { decodeGeometryToContours, convertVectorPathsToContours, type DecodedContour } from "./path";
 export { convertTextNode, type TextConversionResult } from "./text";

@@ -56,6 +56,7 @@ export type {
 export {
   resolveTextRendering,
   resolveTextAscenderRatio,
+  resolveTextDescenderRatio,
   createCachedTextFontResolver,
   type CachedTextFontSource,
 } from "./rendering";

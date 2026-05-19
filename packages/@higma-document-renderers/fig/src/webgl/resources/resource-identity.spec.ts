@@ -1,7 +1,7 @@
 /** @file WebGL scene resource identity tests. */
 
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
-import type { GroupNode, SceneNodeId } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { GroupNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
 import { createWebGLSceneResourceIdentityStore } from "./resource-identity";
 
 function makeRoot(id: string): GroupNode {

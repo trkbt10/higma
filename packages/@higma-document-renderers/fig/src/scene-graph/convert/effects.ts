@@ -6,8 +6,8 @@
 
 import type { FigEffect } from "@higma-document-models/fig/types";
 import { getEffectTypeName, isEffectVisible, extractShadowParams } from "../../effects";
-import type { Effect } from "@higma-document-models/fig/scene-graph";
-import { convertFigmaBlendMode } from "@higma-document-models/fig/scene-graph/blend-mode";
+import type { Effect } from "@higma-document-renderers/fig/scene-graph";
+import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 /**
  * Convert Figma effects array to scene graph Effects.
@@ -55,7 +55,6 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
       }
 
       case "FOREGROUND_BLUR":
-      case "LAYER_BLUR":
         result.push({ type: "layer-blur", radius: effect.radius ?? 0 });
         break;
 

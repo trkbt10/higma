@@ -23,14 +23,14 @@ describe("editable vector path command reducer", () => {
     const commands = parseEditablePathData("M 0 0 L 10 20 C 1 2 3 4 5 6 Z");
 
     expect(commands).toBeDefined();
-    const updated = replaceEditableCommandEndpoint(commands ?? [], 2, { x: 50, y: 60 });
+    const updated = replaceEditableCommandEndpoint(commands, 2, { x: 50, y: 60 });
 
     expect(getEditableCommandEndpoint(updated[2]!)).toEqual({ x: 50, y: 60 });
     expect(serializeEditablePathData(updated)).toBe("M 0 0 L 10 20 C 1 2 48 58 50 60 Z");
   });
 
   it("updates bezier control points and inserts points before close", () => {
-    const commands = parseEditablePathData("M 0 0 C 1 2 3 4 5 6 Z") ?? [];
+    const commands = parseEditablePathData("M 0 0 C 1 2 3 4 5 6 Z");
     const movedControl = replaceEditableCommandPoint({
       commands,
       commandIndex: 1,
@@ -45,7 +45,7 @@ describe("editable vector path command reducer", () => {
   });
 
   it("moves committed path anchors with their attached bezier controls", () => {
-    const commands = parseEditablePathData("M 0 0 C 10 0 30 40 50 50 C 70 60 90 80 100 90") ?? [];
+    const commands = parseEditablePathData("M 0 0 C 10 0 30 40 50 50 C 70 60 90 80 100 90");
     const movedMiddleAnchor = applyEditableVectorPathOperation(commands, {
       type: "move-command-point",
       commandIndex: 1,
@@ -66,21 +66,21 @@ describe("editable vector path command reducer", () => {
   });
 
   it("inserts a point after the nearest segment instead of appending blindly", () => {
-    const commands = parseEditablePathData("M 0 0 L 100 0 L 100 100 L 0 100 Z") ?? [];
+    const commands = parseEditablePathData("M 0 0 L 100 0 L 100 100 L 0 100 Z");
     const inserted = insertEditableLineAtNearestSegment(commands, { x: 52, y: 2 });
 
     expect(serializeEditablePathData(inserted)).toBe("M 0 0 L 52 0 L 100 0 L 100 100 L 0 100 Z");
   });
 
   it("splits the clicked curve segment instead of inserting after the curve endpoint", () => {
-    const commands = parseEditablePathData("M 0 0 C 0 100 100 100 100 0 L 160 0") ?? [];
+    const commands = parseEditablePathData("M 0 0 C 0 100 100 100 100 0 L 160 0");
     const inserted = insertEditableLineAtNearestSegment(commands, { x: 50, y: 76 });
 
     expect(serializeEditablePathData(inserted)).toBe("M 0 0 C 0 50 25 75 50 75 C 75 75 100 50 100 0 L 160 0");
   });
 
   it("converts straight and curved segments without changing the endpoint", () => {
-    const commands = parseEditablePathData("M 0 0 L 90 0 Z") ?? [];
+    const commands = parseEditablePathData("M 0 0 L 90 0 Z");
     const curved = convertEditableSegmentToCurve(commands, 1);
     const lined = convertEditableSegmentToLine(curved, 1);
 
@@ -93,8 +93,14 @@ describe("editable vector path command reducer", () => {
       .toBe("M 0 0 C 20 10 60 20 100 30 L 200 40 Z");
   });
 
+  it("rejects incomplete editable path commands instead of padding coordinates", () => {
+    expect(() => parseEditablePathData("M 0 0 C 10 20 30 40")).toThrow(
+      "Editable vector path data must use complete absolute M/L/Q/C/Z commands",
+    );
+  });
+
   it("deletes anchors while keeping at least two editable anchors", () => {
-    const commands = parseEditablePathData("M 0 0 L 100 0 L 100 100 Z") ?? [];
+    const commands = parseEditablePathData("M 0 0 L 100 0 L 100 100 Z");
     const deleted = deleteEditableAnchorCommand(commands, 1);
     const rejected = deleteEditableAnchorCommand(deleted, 1);
 
@@ -103,7 +109,7 @@ describe("editable vector path command reducer", () => {
   });
 
   it("toggles closed paths and reports cubic control lines", () => {
-    const commands = parseEditablePathData("M 0 0 C 30 0 60 50 90 50") ?? [];
+    const commands = parseEditablePathData("M 0 0 C 30 0 60 50 90 50");
     const closed = setEditablePathClosed(commands, true);
     const opened = setEditablePathClosed(closed, false);
 
@@ -116,7 +122,7 @@ describe("editable vector path command reducer", () => {
   });
 
   it("applies committed path editing operations through one operation reducer", () => {
-    const commands = parseEditablePathData("M 0 0 L 90 0 L 90 60 Z") ?? [];
+    const commands = parseEditablePathData("M 0 0 L 90 0 L 90 60 Z");
     const inserted = applyEditableVectorPathOperation(commands, {
       type: "insert-point-at-nearest-segment",
       point: { x: 45, y: 2 },

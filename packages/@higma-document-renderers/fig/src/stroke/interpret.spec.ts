@@ -5,6 +5,7 @@
  */
 
 import { resolveStrokeWeight, mapStrokeCap, mapStrokeJoin } from "./interpret";
+import { STROKE_CAP_VALUES, STROKE_JOIN_VALUES } from "@higma-document-models/fig/constants";
 
 describe("resolveStrokeWeight", () => {
   it("returns 0 for undefined", () => {
@@ -22,19 +23,19 @@ describe("resolveStrokeWeight", () => {
 
 describe("mapStrokeCap", () => {
   it("maps NONE to butt", () => {
-    expect(mapStrokeCap("NONE")).toBe("butt");
+    expect(mapStrokeCap({ value: STROKE_CAP_VALUES.NONE, name: "NONE" })).toBe("butt");
   });
 
   it("maps ROUND to round", () => {
-    expect(mapStrokeCap("ROUND")).toBe("round");
+    expect(mapStrokeCap({ value: STROKE_CAP_VALUES.ROUND, name: "ROUND" })).toBe("round");
   });
 
   it("maps SQUARE to square", () => {
-    expect(mapStrokeCap("SQUARE")).toBe("square");
+    expect(mapStrokeCap({ value: STROKE_CAP_VALUES.SQUARE, name: "SQUARE" })).toBe("square");
   });
 
   it("maps ARROW_LINES to butt (arrows need markers)", () => {
-    expect(mapStrokeCap("ARROW_LINES")).toBe("butt");
+    expect(mapStrokeCap({ value: STROKE_CAP_VALUES.ARROW_LINES, name: "ARROW_LINES" })).toBe("butt");
   });
 
   it("defaults to butt for unknown", () => {
@@ -45,15 +46,15 @@ describe("mapStrokeCap", () => {
 
 describe("mapStrokeJoin", () => {
   it("maps MITER to miter", () => {
-    expect(mapStrokeJoin("MITER")).toBe("miter");
+    expect(mapStrokeJoin({ value: STROKE_JOIN_VALUES.MITER, name: "MITER" })).toBe("miter");
   });
 
   it("maps ROUND to round", () => {
-    expect(mapStrokeJoin("ROUND")).toBe("round");
+    expect(mapStrokeJoin({ value: STROKE_JOIN_VALUES.ROUND, name: "ROUND" })).toBe("round");
   });
 
   it("maps BEVEL to bevel", () => {
-    expect(mapStrokeJoin("BEVEL")).toBe("bevel");
+    expect(mapStrokeJoin({ value: STROKE_JOIN_VALUES.BEVEL, name: "BEVEL" })).toBe("bevel");
   });
 
   it("defaults to miter for unknown", () => {

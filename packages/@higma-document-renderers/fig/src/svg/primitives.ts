@@ -26,7 +26,7 @@ export function unsafeSvg(svg: string): SvgString {
 export const EMPTY_SVG: SvgString = "" as SvgString;
 
 // =============================================================================
-// Attribute Helpers
+// Attribute Routines
 // =============================================================================
 
 /**

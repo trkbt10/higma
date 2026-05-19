@@ -1,49 +1,63 @@
 /**
- * @file Export hook for fig files
- *
- * Wraps the export pipeline with React state management.
+ * @file React hook for exporting the current Kiwi document context.
  */
-
-import { useState, useCallback } from "react";
-import { exportFig } from "@higma-document-io/fig/export";
-import type { FigExportOptions, FigExportResult } from "@higma-document-io/fig/export";
+import { useCallback, useState } from "react";
+import { exportFig, type FigExportOptions, type FigExportResult } from "@higma-document-io/fig";
 import { useFigEditor } from "../context/FigEditorContext";
+import {
+  downloadFigExport,
+  resolveFigExportFilename,
+  type DownloadEnvironment,
+} from "./fig-export-download";
 
-type UseExportFigResult = {
-  readonly exportDocument: (options?: FigExportOptions) => Promise<FigExportResult>;
+export type UseExportFigResult = {
+  readonly exportContext: (options?: FigExportOptions) => Promise<FigExportResult>;
+  readonly downloadContext: (environment: DownloadEnvironment, options?: FigExportOptions) => Promise<FigExportResult>;
   readonly isExporting: boolean;
-  readonly lastResult: FigExportResult | undefined;
-  readonly error: Error | undefined;
+  readonly lastResult: FigExportResult | null;
+  readonly error: Error | null;
 };
 
+function errorFromUnknown(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+  return new Error(String(error));
+}
+
 /**
- * Hook for exporting the current fig document.
+ * Export the current editor context without introducing a view-model layer.
  */
 export function useExportFig(): UseExportFigResult {
-  const { document } = useFigEditor();
+  const { context } = useFigEditor();
   const [isExporting, setIsExporting] = useState(false);
-  const [lastResult, setLastResult] = useState<FigExportResult | undefined>();
-  const [error, setError] = useState<Error | undefined>();
+  const [lastResult, setLastResult] = useState<FigExportResult | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
-  const exportDocument = useCallback(
-    async (options?: FigExportOptions): Promise<FigExportResult> => {
-      setIsExporting(true);
-      setError(undefined);
+  const exportContext = useCallback(async (options?: FigExportOptions): Promise<FigExportResult> => {
+    setIsExporting(true);
+    setError(null);
+    try {
+      const result = await exportFig(context, options);
+      setLastResult(result);
+      return result;
+    } catch (caught: unknown) {
+      const nextError = errorFromUnknown(caught);
+      setError(nextError);
+      throw nextError;
+    } finally {
+      setIsExporting(false);
+    }
+  }, [context]);
 
-      try {
-        const result = await exportFig(document, options);
-        setLastResult(result);
-        return result;
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
-        throw err;
-      } finally {
-        setIsExporting(false);
-      }
-    },
-    [document],
-  );
+  const downloadContext = useCallback(async (
+    environment: DownloadEnvironment,
+    options?: FigExportOptions,
+  ): Promise<FigExportResult> => {
+    const result = await exportContext(options);
+    downloadFigExport(result, resolveFigExportFilename(context.metadata), environment);
+    return result;
+  }, [context.metadata, exportContext]);
 
-  return { exportDocument, isExporting, lastResult, error };
+  return { exportContext, downloadContext, isExporting, lastResult, error };
 }

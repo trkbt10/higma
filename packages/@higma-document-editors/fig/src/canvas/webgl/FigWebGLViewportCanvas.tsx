@@ -1,40 +1,17 @@
-/** @file Presentational WebGL viewport canvas element. */
+/** @file WebGL viewport canvas entry for editor surfaces. */
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
+import { FigWebGLViewportLayer } from "./FigWebGLViewportLayer";
 
-import type { RefObject } from "react";
-import type { ViewportLayerFrame } from "../layout/viewport-render-plan";
-
-type FigWebGLViewportCanvasProps = {
-  readonly canvasRef: RefObject<HTMLCanvasElement | null>;
-  readonly frame: ViewportLayerFrame;
-  readonly width: number;
-  readonly height: number;
-  readonly pixelRatio: number;
-  readonly isReady: boolean;
+export type FigWebGLViewportCanvasProps = {
+  readonly sceneGraph: SceneGraph | null;
+  readonly renderOptions?: SceneGraphRenderOptions;
+  readonly viewportScale: number;
+  readonly viewportRevision?: number;
+  readonly initializationDelayMs?: number;
 };
 
-/** Render only the WebGL canvas DOM element for a viewport layer. */
-export function FigWebGLViewportCanvas({
-  canvasRef,
-  frame,
-  width,
-  height,
-  pixelRatio,
-  isReady,
-}: FigWebGLViewportCanvasProps) {
-  return (
-    <canvas
-      ref={canvasRef}
-      width={Math.ceil(width * pixelRatio)}
-      height={Math.ceil(height * pixelRatio)}
-      data-webgl-ready={isReady ? "true" : "false"}
-      style={{
-        position: "absolute",
-        left: frame.left,
-        top: frame.top,
-        display: "block",
-        width: frame.width,
-        height: frame.height,
-      }}
-    />
-  );
+/** Render a WebGL viewport canvas. */
+export function FigWebGLViewportCanvas(props: FigWebGLViewportCanvasProps) {
+  return <FigWebGLViewportLayer {...props} />;
 }

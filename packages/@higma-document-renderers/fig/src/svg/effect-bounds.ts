@@ -3,22 +3,21 @@
  * outward-extending effects.
  *
  * Figma's SVG exporter expands the exported viewBox so that DROP_SHADOW
- * blur/offset, LAYER_BLUR (a.k.a. FOREGROUND_BLUR) and any spread reach
+ * blur/offset, FOREGROUND_BLUR and any spread reach
  * fully inside the document. The Event Card SYMBOL (362×296, DROP_SHADOW
  * radius=12 offset=(0,4)) exports as `viewBox="0 0 386 320"` with the
  * card BG positioned at `(12, 8)` — 12 px on the left/right, 8 px on
  * top, 16 px on the bottom. INNER_SHADOW and BACKGROUND_BLUR live
  * inside the node's bounds and contribute nothing to outward expansion.
  *
- * This module exposes a single helper, `computeRootEffectExpansion`,
+ * This module exposes a single function, `computeRootEffectExpansion`,
  * which returns the per-side padding a caller must add around a root
  * node's intrinsic bounds to mirror that behaviour. Callers can then
  * size the SVG viewBox and shift the root content inside it.
  *
- * The helper operates on raw `FigNode` data (i.e. before the design-node
- * conversion runs) so the SVG renderer entry point can call it before
- * setting up the scene graph. The same SoT is used by the WebGL and
- * React backends through their respective entry points.
+ * This code reads raw `FigNode` data before the scene graph is built.
+ * The same Kiwi document SoT is used by the WebGL and React backends
+ * through their respective entry points.
  *
  * Notes on the per-effect semantics:
  *
@@ -30,7 +29,7 @@
  *   that interval OUTSIDE the original bounds — capped at 0 (we never
  *   "shrink" the export when an effect lies entirely inside).
  *
- * - LAYER_BLUR / FOREGROUND_BLUR: the blur is applied to the node
+ * - FOREGROUND_BLUR: the blur is applied to the node
  *   itself, expanding its visual silhouette by `radius` in every
  *   direction. No offset/spread.
  *
@@ -106,7 +105,6 @@ function expansionForEffect(effect: FigEffect): EffectExpansion {
         bottom: Math.max(0, halo + offsetY),
       };
     }
-    case "LAYER_BLUR":
     case "FOREGROUND_BLUR": {
       // Blur expands the node's silhouette equally on every side. No
       // offset/spread parameters apply.

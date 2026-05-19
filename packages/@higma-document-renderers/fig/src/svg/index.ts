@@ -36,6 +36,11 @@ export {
 } from "./renderer";
 
 export {
+  type FigNodeViewport,
+  requireFigNodeViewport,
+} from "./node-viewport";
+
+export {
   renderSceneGraphToSvg,
   formatRenderTreeToSvg,
 } from "./scene-renderer";

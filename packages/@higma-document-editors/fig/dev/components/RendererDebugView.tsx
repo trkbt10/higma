@@ -1,55 +1,42 @@
-/**
- * @file Renderer debug view.
- *
- * SVG/WebGL renderer switching with inspector overlay.
- * Uses ParsedFigFile (low-level) for direct renderer access.
- */
+/** @file Renderer debug view backed directly by the Kiwi document context. */
 
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
-  useCallback,
   type CSSProperties,
-  type ReactNode } from "react";
+  type ReactNode,
+} from "react";
 import {
-  createFigDesignDocumentFromLoaded,
-  createFigSymbolContext,
+  createFigDocumentContext,
   figDocumentResources,
-  figRawResources,
-  type FigSymbolContext,
-} from "@higma-document-io/fig/context";
-import { findNodesByType, type FigDesignDocument, type FigDesignNode } from "@higma-document-models/fig/domain";
+  type FigDocumentContext,
+  type FigDocumentResources,
+} from "@higma-document-io/fig";
+import { findNodesByType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { renderCanvas } from "@higma-document-renderers/fig/svg";
-import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
+import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
-import { buildSceneGraph } from "@higma-document-renderers/fig/scene-graph";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
+import { createCachedTextFontResolver, type TextFontResolver } from "@higma-document-renderers/fig/text";
 import { Button, Select, Tabs, Toggle, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import {
+  CategoryLegend,
   InspectorCanvasOverlay,
   InspectorTreePanel,
-  CategoryLegend,
 } from "@higma-editor-surfaces/controls/inspector";
+import type { InspectorBoxInfo } from "@higma-editor-kernel/core/inspector-types";
+import { FigPageRenderer } from "../../src/canvas/rendering/FigPageRenderer";
+import type { FigEditorRendererKind } from "../../src/canvas/rendering/renderer-kind";
+import { readKiwiTransform } from "../../src/context/fig-editor/matrix";
 import {
-  collectFigBoxes,
-  figNodeToInspectorTree,
-  getRootNormalizationTransform,
-} from "../../src/inspector/fig-inspector-adapter";
-import {
-  FIG_NODE_CATEGORY_REGISTRY,
   FIG_LEGEND_ORDER,
-} from "../../src/inspector/fig-node-categories";
-import { useFigTextFontResolver } from "../../src/canvas/rendering/use-fig-text-font-resolver";
+  FIG_NODE_CATEGORY_REGISTRY,
+  collectFigInspectorBoxes,
+  figNodeToInspectorTree,
+} from "../../src/inspector";
 import { isUserVisibleCanvasNode } from "./visible-canvas";
-import { WebGLCanvas } from "./WebGLCanvas";
-
-// =============================================================================
-// Types
-// =============================================================================
-
-type RendererMode = "svg" | "webgl";
 
 type Props = {
   readonly raw: Uint8Array;
@@ -62,15 +49,16 @@ type CanvasInfo = {
 };
 
 type FrameInfo = {
-  node: FigNode;
-  name: string;
-  width: number;
-  height: number;
+  readonly node: FigNode;
+  readonly name: string;
+  readonly width: number;
+  readonly height: number;
+  readonly viewportX: number;
+  readonly viewportY: number;
 };
 
-// =============================================================================
-// Styles (layout only — visual via design tokens)
-// =============================================================================
+const browserFontLoader = createBrowserFontLoader();
+const fontLoader = createCachingFontLoader(browserFontLoader);
 
 const containerStyle: CSSProperties = {
   flex: 1,
@@ -78,6 +66,7 @@ const containerStyle: CSSProperties = {
   flexDirection: "column",
   gap: spacingTokens.md,
   padding: spacingTokens.md,
+  minHeight: 0,
 };
 
 const toolbarStyle: CSSProperties = {
@@ -98,122 +87,98 @@ const statStyle: CSSProperties = {
   backgroundColor: colorTokens.background.tertiary,
   borderRadius: radiusTokens.sm,
   fontSize: fontTokens.size.xs,
-  color: colorTokens.text.secondary,
 };
 
 const contentStyle: CSSProperties = {
   flex: 1,
+  minHeight: 0,
   display: "flex",
   gap: spacingTokens.md,
-  minHeight: 0,
 };
 
 const previewStyle: CSSProperties = {
   flex: 1,
+  minWidth: 0,
+  overflow: "auto",
   backgroundColor: colorTokens.background.primary,
   borderRadius: radiusTokens.md,
-  overflow: "auto",
+  border: `1px solid ${colorTokens.border.subtle}`,
   padding: spacingTokens.md,
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "flex-start",
 };
 
-const svgContainerStyle: CSSProperties = {
-  maxWidth: "100%",
-  overflow: "auto",
+const stageStyle: CSSProperties = {
+  position: "relative",
+  display: "inline-block",
+};
+
+const overlaySvgStyle: CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  pointerEvents: "none",
 };
 
 const sidebarStyle: CSSProperties = {
-  width: "260px",
+  width: 320,
   flexShrink: 0,
   display: "flex",
   flexDirection: "column",
-  gap: spacingTokens.sm,
+  gap: spacingTokens.md,
+  minHeight: 0,
 };
 
 const frameListStyle: CSSProperties = {
-  backgroundColor: colorTokens.background.tertiary,
+  backgroundColor: colorTokens.background.secondary,
+  border: `1px solid ${colorTokens.border.subtle}`,
   borderRadius: radiusTokens.md,
-  padding: spacingTokens.sm,
-  maxHeight: "400px",
-  overflowY: "auto",
+  overflow: "hidden",
 };
 
 const frameListTitleStyle: CSSProperties = {
+  padding: spacingTokens.sm,
   fontSize: fontTokens.size.sm,
   fontWeight: fontTokens.weight.semibold,
-  marginBottom: spacingTokens.sm,
-  color: colorTokens.text.secondary,
+  borderBottom: `1px solid ${colorTokens.border.subtle}`,
 };
 
 const frameItemStyle: CSSProperties = {
-  padding: `${spacingTokens.xs} ${spacingTokens.sm}`,
-  marginBottom: "2px",
-  backgroundColor: "transparent",
-  borderRadius: radiusTokens.xs,
-  fontSize: fontTokens.size.sm,
+  padding: spacingTokens.sm,
   cursor: "pointer",
-  border: `1px solid transparent`,
-  transition: "all 0.15s ease",
+  borderBottom: `1px solid ${colorTokens.border.subtle}`,
 };
 
 const frameItemActiveStyle: CSSProperties = {
-  backgroundColor: `color-mix(in srgb, ${colorTokens.accent.primary} 15%, transparent)`,
-  borderColor: colorTokens.accent.primary,
+  backgroundColor: colorTokens.background.tertiary,
 };
 
 const frameNameStyle: CSSProperties = {
-  color: colorTokens.text.primary,
-  marginBottom: "2px",
+  fontSize: fontTokens.size.sm,
+  fontWeight: fontTokens.weight.medium,
 };
 
 const frameSizeStyle: CSSProperties = {
-  color: colorTokens.text.tertiary,
   fontSize: fontTokens.size.xs,
+  color: colorTokens.text.secondary,
 };
 
-const warningsStyle: CSSProperties = {
-  backgroundColor: "rgba(251, 191, 36, 0.1)",
+const treeStyle: CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflow: "hidden",
+  backgroundColor: colorTokens.background.secondary,
   borderRadius: radiusTokens.md,
-  padding: spacingTokens.sm,
-  maxHeight: "200px",
-  overflowY: "auto",
-};
-
-const warningsTitleStyle: CSSProperties = {
-  fontSize: fontTokens.size.sm,
-  fontWeight: fontTokens.weight.semibold,
-  marginBottom: spacingTokens.sm,
-  color: "#fbbf24",
-};
-
-const warningStyle: CSSProperties = {
-  padding: `${spacingTokens.xs} ${spacingTokens.sm}`,
-  marginBottom: "2px",
-  backgroundColor: "rgba(251, 191, 36, 0.05)",
-  borderRadius: radiusTokens.xs,
-  fontSize: fontTokens.size.xs,
-  color: "#fbbf24",
+  border: `1px solid ${colorTokens.border.subtle}`,
 };
 
 const emptyStateStyle: CSSProperties = {
-  padding: spacingTokens.xl,
-  textAlign: "center",
-  color: colorTokens.text.tertiary,
-};
-
-const loadingStyle: CSSProperties = {
-  flex: 1,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
+  display: "grid",
+  placeItems: "center",
+  height: "100%",
   color: colorTokens.text.secondary,
   fontSize: fontTokens.size.md,
 };
 
 const labelStyle: CSSProperties = {
-  fontSize: fontTokens.size.xs,
+  fontSize: fontTokens.size.sm,
   color: colorTokens.text.secondary,
 };
 
@@ -222,44 +187,36 @@ const fontEnabledStyle: CSSProperties = {
   color: colorTokens.accent.success,
 };
 
-function isFigNode(node: FigNode | null | undefined): node is FigNode {
-  return node !== null && node !== undefined;
+function requireNodeSize(node: FigNode): NonNullable<FigNode["size"]> {
+  if (node.size === undefined) {
+    throw new Error(`RendererDebugView requires size for "${node.name ?? "(unnamed)"}"`);
+  }
+  return node.size;
 }
 
-function collectFrameInfos(children: readonly (FigNode | null | undefined)[]): readonly FrameInfo[] {
-  return children.filter(isFigNode).map((child) => {
-    const size = child.size;
+function collectFrameInfos(resources: FigDocumentResources, canvas: FigNode): readonly FrameInfo[] {
+  return resources.childrenOf(canvas).map((child) => {
+    const size = requireNodeSize(child);
+    const transform = readKiwiTransform(child.transform);
     return {
       node: child,
       name: child.name ?? "Unnamed Frame",
-      width: size?.x ?? 100,
-      height: size?.y ?? 100,
+      width: size.x,
+      height: size.y,
+      viewportX: transform.m02,
+      viewportY: transform.m12,
     };
   });
 }
 
-function findDesignNodeForFrame({
-  designDoc,
-  currentCanvas,
-  currentFrame,
-}: {
-  readonly designDoc: FigDesignDocument;
-  readonly currentCanvas: CanvasInfo | undefined;
-  readonly currentFrame: FrameInfo;
-}): FigDesignNode | undefined {
-  const canvasName = currentCanvas?.name;
-  return designDoc.pages
-    .filter((page) => !canvasName || page.name === canvasName)
-    .flatMap((page) => page.children)
-    .find((candidate) => candidate.name === currentFrame.name);
-}
-
-function normalizeDesignNodeForFrameRender(designNode: FigDesignNode): FigDesignNode {
-  const transform = designNode.transform;
-  if (!transform) {
-    return designNode;
-  }
-  return { ...designNode, transform: { ...transform, m02: 0, m12: 0 } };
+function collectCanvases(context: FigDocumentContext, resources: FigDocumentResources): readonly CanvasInfo[] {
+  return findNodesByType(context.document, "CANVAS")
+    .filter(isUserVisibleCanvasNode)
+    .map((canvas) => ({
+      node: canvas,
+      name: canvas.name ?? "Unnamed Page",
+      frames: collectFrameInfos(resources, canvas),
+    }));
 }
 
 function renderFontAccessControl({
@@ -280,316 +237,188 @@ function renderFontAccessControl({
   return <Button variant="outline" size="sm" onClick={onRequestFontAccess}>Enable Fonts</Button>;
 }
 
-function renderPreviewContent({
-  rendererMode,
-  currentFrame,
-  sceneGraph,
-  isRendering,
-  svgHtml,
-}: {
-  readonly rendererMode: RendererMode;
-  readonly currentFrame: FrameInfo | undefined;
-  readonly sceneGraph: SceneGraph | null;
-  readonly isRendering: boolean;
-  readonly svgHtml: string;
-}): ReactNode {
-  if (rendererMode === "webgl") {
-    if (!currentFrame) {
-      return <div style={emptyStateStyle}>No frames</div>;
-    }
-    return <WebGLCanvas sceneGraph={sceneGraph} width={currentFrame.width} height={currentFrame.height} />;
-  }
-  if (isRendering) {
-    return <div style={emptyStateStyle}>Rendering...</div>;
-  }
-  if (!currentFrame) {
-    return <div style={emptyStateStyle}>No frames</div>;
-  }
-  return <div style={svgContainerStyle} dangerouslySetInnerHTML={{ __html: svgHtml }} />;
+function shiftInspectorBoxes(
+  boxes: readonly InspectorBoxInfo[],
+  origin: { readonly x: number; readonly y: number },
+): readonly InspectorBoxInfo[] {
+  return boxes.map((box) => ({
+    ...box,
+    transform: [
+      box.transform[0],
+      box.transform[1],
+      box.transform[2],
+      box.transform[3],
+      box.transform[4] - origin.x,
+      box.transform[5] - origin.y,
+    ],
+  }));
 }
 
-function renderInspectorSvgContent({ isRendering, svgHtml }: { readonly isRendering: boolean; readonly svgHtml: string }): ReactNode {
-  if (isRendering) {
-    return <div style={emptyStateStyle}>Rendering...</div>;
-  }
-  return <div dangerouslySetInnerHTML={{ __html: svgHtml }} />;
-}
-
-function renderDebugMainContent({
-  inspectorEnabled,
-  rendererMode,
-  currentFrame,
-  showHiddenNodes,
-  svgHtml,
-  isRendering,
-  sceneGraph,
+function renderFramePreview({
+  context,
+  resources,
   currentCanvas,
-  selectedFrameIndex,
-  onSelectFrame,
-  combinedWarnings,
+  currentFrame,
+  rendererMode,
+  showHiddenNodes,
+  inspectorEnabled,
+  textFontResolver,
+  highlightedId,
+  hoveredId,
+  onHover,
+  onClick,
 }: {
-  readonly inspectorEnabled: boolean;
-  readonly rendererMode: RendererMode;
-  readonly currentFrame: FrameInfo | undefined;
+  readonly context: FigDocumentContext;
+  readonly resources: FigDocumentResources;
+  readonly currentCanvas: CanvasInfo;
+  readonly currentFrame: FrameInfo;
+  readonly rendererMode: FigEditorRendererKind;
   readonly showHiddenNodes: boolean;
-  readonly svgHtml: string;
-  readonly isRendering: boolean;
-  readonly sceneGraph: SceneGraph | null;
-  readonly currentCanvas: CanvasInfo | undefined;
-  readonly selectedFrameIndex: number;
-  readonly onSelectFrame: (index: number) => void;
-  readonly combinedWarnings: readonly string[];
+  readonly inspectorEnabled: boolean;
+  readonly textFontResolver: TextFontResolver | undefined;
+  readonly highlightedId: string | null;
+  readonly hoveredId: string | null;
+  readonly onHover: (nodeId: string | null) => void;
+  readonly onClick: (nodeId: string) => void;
 }): ReactNode {
-  if (inspectorEnabled && rendererMode === "svg" && currentFrame) {
-    return (
-      <InspectorDebugComposition
-        frameNode={currentFrame.node}
-        frameWidth={currentFrame.width}
-        frameHeight={currentFrame.height}
-        showHiddenNodes={showHiddenNodes}
-        svgHtml={svgHtml}
-        isRendering={isRendering}
-      />
-    );
-  }
+  const boxes = shiftInspectorBoxes(
+    collectFigInspectorBoxes({
+      root: currentFrame.node,
+      childrenOf: resources.childrenOf,
+      showHiddenNodes,
+    }),
+    { x: currentFrame.viewportX, y: currentFrame.viewportY },
+  );
+
   return (
-    <>
-      <div style={previewStyle}>
-        {renderPreviewContent({
-          rendererMode,
-          currentFrame,
-          sceneGraph,
-          isRendering,
-          svgHtml,
-        })}
-      </div>
-      <div style={sidebarStyle}>
-        {currentCanvas && currentCanvas.frames.length > 0 && (
-          <div style={frameListStyle}>
-            <div style={frameListTitleStyle}>Frames</div>
-            {currentCanvas.frames.map((frame, index) => (
-              <div
-                key={index}
-                style={{ ...frameItemStyle, ...(index === selectedFrameIndex ? frameItemActiveStyle : {}) }}
-                onClick={() => onSelectFrame(index)}
-              >
-                <div style={frameNameStyle}>{frame.name}</div>
-                <div style={frameSizeStyle}>{frame.width} x {frame.height}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {combinedWarnings.length > 0 && (
-          <div style={warningsStyle}>
-            <div style={warningsTitleStyle}>Warnings</div>
-            {combinedWarnings.slice(0, 10).map((warning, index) => <div key={index} style={warningStyle}>{warning}</div>)}
-            {combinedWarnings.length > 10 && <div style={warningStyle}>...and {combinedWarnings.length - 10} more</div>}
-          </div>
-        )}
-      </div>
-    </>
+    <div style={stageStyle}>
+      <svg
+        width={currentFrame.width}
+        height={currentFrame.height}
+        viewBox={`0 0 ${currentFrame.width} ${currentFrame.height}`}
+      >
+        <FigPageRenderer
+          page={currentCanvas.node}
+          nodes={[currentFrame.node]}
+          canvasWidth={currentFrame.width}
+          canvasHeight={currentFrame.height}
+          viewportX={currentFrame.viewportX}
+          viewportY={currentFrame.viewportY}
+          viewportWidth={currentFrame.width}
+          viewportHeight={currentFrame.height}
+          viewportScale={1}
+          resources={resources}
+          renderOptions={createFigFamilyRenderOptions(context)}
+          renderer={rendererMode}
+          textFontResolver={textFontResolver}
+        />
+      </svg>
+      {inspectorEnabled && rendererMode === "svg" && (
+        <svg
+          style={overlaySvgStyle}
+          width={currentFrame.width}
+          height={currentFrame.height}
+          viewBox={`0 0 ${currentFrame.width} ${currentFrame.height}`}
+        >
+          <InspectorCanvasOverlay
+            boxes={boxes}
+            registry={FIG_NODE_CATEGORY_REGISTRY}
+            highlightedNodeId={highlightedId}
+            hoveredNodeId={hoveredId}
+            onNodeHover={onHover}
+            onNodeClick={onClick}
+            interactive
+          />
+        </svg>
+      )}
+    </div>
   );
 }
 
-// Singleton font loader
-const browserFontLoader = createBrowserFontLoader();
-const fontLoader = createCachingFontLoader(browserFontLoader);
-
-// =============================================================================
-// Component
-// =============================================================================
-
-
-
-
-
-
-/** Render SVG/WebGL debug output for one loaded fig file. */
-export function RendererDebugView({ raw }: Props) {
-  // SoT: drive every renderer (SVG, WebGL, scene-graph) from the same
-  // `FigSymbolContext`. The IO context layer owns the single
-  // `loadFigFile → buildNodeTree → resolveStyles` orchestration; deriving
-  // a separate `parseFigFile` view here used to give the SVG renderer a
-  // raw `nodeMap` while WebGL got a style-resolved one — same file, two
-  // shapes, drift on style overrides. The context yields one resolved
-  // tree consumed by both backends.
-  const [ctx, setCtx] = useState<FigSymbolContext | null>(null);
-  const [designDoc, setDesignDoc] = useState<FigDesignDocument | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (raw.length === 0) {
-      setCtx(null);
-      setDesignDoc(null);
-      return;
-    }
-    const cancelled = { value: false };
-    createFigSymbolContext(raw).then(
-      (loadedCtx) => {
-        if (cancelled.value) {
-          return;
-        }
-        // Reuse the same context for the FigDesignDocument so the two
-        // views share one resolved tree and one styleRegistry — the
-        // renderer-debug toggle never sees two different versions of
-        // "the same file".
-        const doc = createFigDesignDocumentFromLoaded(loadedCtx.loaded);
-        setCtx(loadedCtx);
-        setDesignDoc(doc);
-      },
-      (err) => {
-        if (!cancelled.value) {
-          setParseError(err instanceof Error ? err.message : String(err));
-        }
-      },
-    );
-    return () => { cancelled.value = true; };
-  }, [raw]);
-
-  if (parseError) {return <div style={loadingStyle}>Parse error: {parseError}</div>;}
-  if (!ctx || !designDoc) {return <div style={loadingStyle}>Parsing .fig for renderer debug...</div>;}
-  return <RendererDebugContent ctx={ctx} designDoc={designDoc} />;
-}
-
-function RendererDebugContent({ ctx, designDoc }: { ctx: FigSymbolContext; designDoc: FigDesignDocument }) {
+function RendererDebugContent({ context }: { readonly context: FigDocumentContext }) {
+  const resources = useMemo(() => figDocumentResources(context), [context]);
+  const canvases = useMemo(() => collectCanvases(context, resources), [context, resources]);
   const [selectedCanvasIndex, setSelectedCanvasIndex] = useState(0);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const [showHiddenNodes, setShowHiddenNodes] = useState(false);
+  const [inspectorEnabled, setInspectorEnabled] = useState(false);
+  const [rendererMode, setRendererMode] = useState<FigEditorRendererKind>("svg");
   const [fontAccessGranted, setFontAccessGranted] = useState(false);
   const [fontAccessSupported] = useState(() => isBrowserFontLoaderSupported());
-  const [renderResult, setRenderResult] = useState<{ svg: string; warnings: readonly string[] }>({ svg: "", warnings: [] });
-  const [isRendering, setIsRendering] = useState(false);
-  const [inspectorEnabled, setInspectorEnabled] = useState(false);
-  const [rendererMode, setRendererMode] = useState<RendererMode>("svg");
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
-  // SoT: every map a downstream consumer needs (raw symbolMap for SVG,
-  // styleRegistry, blobs, images) flows through `figRawResources(ctx)`.
-  // The IO context already pre-resolves style references during build,
-  // so an extra `preResolveSymbols` pass would either re-do the same
-  // work or silently diverge from the canonical resolver — neither is
-  // acceptable.
-  const rawResources = useMemo(() => figRawResources(ctx), [ctx]);
-  const designResources = useMemo(() => figDocumentResources(designDoc), [designDoc]);
-  const { canvases, nodeCount } = useMemo(() => {
-    const canvasNodes = findNodesByType(ctx.roots, "CANVAS").filter(isUserVisibleCanvasNode);
-    const canvasInfos: CanvasInfo[] = canvasNodes.map((canvas) => {
-      const frames = collectFrameInfos(canvas.children ?? []);
-      return { node: canvas, name: canvas.name ?? "Unnamed Page", frames };
-    });
-    return { canvases: canvasInfos, nodeCount: ctx.loaded.nodeChanges.length };
-  }, [ctx]);
-  const symbolResolveWarnings: readonly string[] = useMemo(() => [], []);
-
-  const combinedWarnings = useMemo(() => [...symbolResolveWarnings, ...renderResult.warnings], [symbolResolveWarnings, renderResult.warnings]);
   const currentCanvas = canvases[selectedCanvasIndex];
   const currentFrame = currentCanvas?.frames[selectedFrameIndex];
-  const currentDesignPage = useMemo(
-    () => designDoc.pages.find((page) => !currentCanvas || page.name === currentCanvas.name),
-    [designDoc.pages, currentCanvas],
-  );
-  const textFontResolver = useFigTextFontResolver({
-    page: currentDesignPage,
-    fontLoader: fontAccessGranted ? fontLoader : undefined,
-  });
-
-  // Page select options
   const pageOptions = useMemo(
-    () => canvases.map((c, i) => ({ value: String(i), label: `${c.name} (${c.frames.length})` })),
+    () => canvases.map((canvas, index) => ({ value: String(index), label: `${canvas.name} (${canvas.frames.length})` })),
     [canvases],
   );
-
-  // Frame select options
   const frameOptions = useMemo(
-    () => (currentCanvas?.frames ?? []).map((f, i) => ({ value: String(i), label: `${f.name} (${f.width}x${f.height})` })),
+    () => (currentCanvas?.frames ?? []).map((frame, index) => ({ value: String(index), label: `${frame.name} (${frame.width}x${frame.height})` })),
     [currentCanvas],
   );
+  const textFontResolver = useMemo<TextFontResolver | undefined>(() => {
+    if (!fontAccessGranted) {
+      return undefined;
+    }
+    return createCachedTextFontResolver(fontLoader);
+  }, [fontAccessGranted]);
+  const treeRoot = useMemo(() => {
+    if (currentFrame === undefined) {
+      return undefined;
+    }
+    return figNodeToInspectorTree({
+      root: currentFrame.node,
+      childrenOf: resources.childrenOf,
+      showHiddenNodes,
+    });
+  }, [currentFrame, resources.childrenOf, showHiddenNodes]);
 
-  // Build SceneGraph for WebGL from the domain document (FigDesignNode).
-  // The domain pipeline (loadFigFile → treeToDocument → FigDesignDocument) ensures
-  // fills, strokes, effects, and other properties are correctly resolved.
-  const sceneGraph = useMemo(() => {
-    if (rendererMode !== "webgl" || !currentFrame) {return null;}
-    try {
-      const designNode = findDesignNodeForFrame({ designDoc, currentCanvas, currentFrame });
-      if (!designNode) {
-        console.warn(`Design node not found for frame "${currentFrame.name}"`);
+  const handleCanvasChange = useCallback((value: string): void => {
+    setSelectedCanvasIndex(Number(value));
+    setSelectedFrameIndex(0);
+    setHighlightedId(null);
+    setHoveredId(null);
+  }, []);
+  const handleFrameChange = useCallback((value: string): void => {
+    setSelectedFrameIndex(Number(value));
+    setHighlightedId(null);
+    setHoveredId(null);
+  }, []);
+  const handleNodeClick = useCallback((id: string): void => {
+    setHighlightedId((previous) => {
+      if (previous === id) {
         return null;
       }
-      const normalizedNode = normalizeDesignNodeForFrameRender(designNode);
-      return buildSceneGraph([normalizedNode], {
-        blobs: designResources.blobs,
-        images: designResources.images,
-        canvasSize: { width: currentFrame.width, height: currentFrame.height },
-        viewport: { x: 0, y: 0, width: currentFrame.width, height: currentFrame.height },
-        symbolMap: designResources.symbolMap,
-        styleRegistry: designResources.styleRegistry,
-        showHiddenNodes,
-        warnings: [],
-        textFontResolver,
-      });
-    } catch (e) {
-      console.error("Failed to build scene graph:", e);
-      return null;
-    }
-  }, [rendererMode, currentFrame, currentCanvas, designDoc, designResources, showHiddenNodes, textFontResolver]);
-
-  useEffect(() => {
-    if (!currentFrame) {
-      setRenderResult({ svg: "", warnings: [] });
-      return;
-    }
-    const cancelRef = { value: false };
-    setIsRendering(true);
-    renderCanvas(
-      { children: [currentFrame.node] },
-      {
-        width: currentFrame.width,
-        height: currentFrame.height,
-        blobs: rawResources.blobs,
-        images: rawResources.images,
-        symbolMap: rawResources.symbolMap,
-        styleRegistry: rawResources.styleRegistry,
-        showHiddenNodes,
-        fontLoader: fontAccessGranted ? fontLoader : undefined,
-      },
-    ).then((result) => { if (!cancelRef.value) { setRenderResult(result); setIsRendering(false); } });
-    return () => { cancelRef.value = true; };
-  }, [currentFrame, rawResources, showHiddenNodes, fontAccessGranted]);
-
-  const handleRequestFontAccess = async () => {
-    try {
-      await fontLoader.isFontAvailable("Arial");
+      return id;
+    });
+  }, []);
+  const handleRequestFontAccess = useCallback((): void => {
+    fontLoader.isFontAvailable("Arial").then(() => {
       setFontAccessGranted(browserFontLoader.hasPermission());
-    } catch (error) {
-      console.debug("Font access request failed:", error);
-      setFontAccessGranted(false);
-    }
-  };
+    });
+  }, []);
 
-  const handleCanvasChange = (value: string) => { setSelectedCanvasIndex(Number(value)); setSelectedFrameIndex(0); };
+  if (currentCanvas === undefined || currentFrame === undefined || treeRoot === undefined) {
+    return <div style={emptyStateStyle}>No frames</div>;
+  }
 
   return (
     <div style={containerStyle}>
-      {/* Toolbar */}
       <div style={toolbarStyle}>
         <div style={statStyle}><strong>{canvases.length}</strong> pages</div>
-        <div style={statStyle}><strong>{currentCanvas?.frames.length ?? 0}</strong> frames</div>
-        <div style={statStyle}><strong>{nodeCount}</strong> nodes</div>
-        {combinedWarnings.length > 0 && <div style={statStyle}><strong>{combinedWarnings.length}</strong> warnings</div>}
-
+        <div style={statStyle}><strong>{currentCanvas.frames.length}</strong> frames</div>
+        <div style={statStyle}><strong>{context.document.nodeChanges.length}</strong> nodes</div>
         <div style={toolbarGroupStyle}>
           <span style={labelStyle}>Page:</span>
           <Select value={String(selectedCanvasIndex)} onChange={handleCanvasChange} options={pageOptions} />
         </div>
-
-        {currentCanvas && currentCanvas.frames.length > 0 && (
-          <div style={toolbarGroupStyle}>
-            <span style={labelStyle}>Frame:</span>
-            <Select value={String(selectedFrameIndex)} onChange={(v) => setSelectedFrameIndex(Number(v))} options={frameOptions} />
-          </div>
-        )}
-
-        <Tabs<RendererMode>
+        <div style={toolbarGroupStyle}>
+          <span style={labelStyle}>Frame:</span>
+          <Select value={String(selectedFrameIndex)} onChange={handleFrameChange} options={frameOptions} />
+        </div>
+        <Tabs<FigEditorRendererKind>
           items={[
             { id: "svg", label: "SVG", content: null },
             { id: "webgl", label: "WebGL", content: null },
@@ -599,175 +428,106 @@ function RendererDebugContent({ ctx, designDoc }: { ctx: FigSymbolContext; desig
           size="sm"
           style={{ flex: "none" }}
         />
-
         <Toggle
           checked={inspectorEnabled}
           onChange={setInspectorEnabled}
           label="Inspector"
           disabled={rendererMode === "webgl"}
         />
-
         <Toggle
           checked={showHiddenNodes}
           onChange={setShowHiddenNodes}
           label="Show hidden"
         />
-
         {renderFontAccessControl({ fontAccessSupported, fontAccessGranted, onRequestFontAccess: handleRequestFontAccess })}
       </div>
-
-      {/* Content */}
       <div style={contentStyle}>
-        {renderDebugMainContent({
-          inspectorEnabled,
-          rendererMode,
-          currentFrame,
-          showHiddenNodes,
-          svgHtml: renderResult.svg,
-          isRendering,
-          sceneGraph,
-          currentCanvas,
-          selectedFrameIndex,
-          onSelectFrame: setSelectedFrameIndex,
-          combinedWarnings,
-        })}
+        <div style={previewStyle}>
+          {renderFramePreview({
+            context,
+            resources,
+            currentCanvas,
+            currentFrame,
+            rendererMode,
+            showHiddenNodes,
+            inspectorEnabled,
+            textFontResolver,
+            highlightedId,
+            hoveredId,
+            onHover: setHoveredId,
+            onClick: handleNodeClick,
+          })}
+        </div>
+        <div style={sidebarStyle}>
+          <CategoryLegend registry={FIG_NODE_CATEGORY_REGISTRY} order={FIG_LEGEND_ORDER} />
+          <div style={frameListStyle}>
+            <div style={frameListTitleStyle}>Frames</div>
+            {currentCanvas.frames.map((frame, index) => (
+              <div
+                key={`${frame.name}-${index}`}
+                style={{ ...frameItemStyle, ...(index === selectedFrameIndex ? frameItemActiveStyle : {}) }}
+                onClick={() => handleFrameChange(String(index))}
+              >
+                <div style={frameNameStyle}>{frame.name}</div>
+                <div style={frameSizeStyle}>{frame.width} x {frame.height}</div>
+              </div>
+            ))}
+          </div>
+          <div style={treeStyle}>
+            <InspectorTreePanel
+              rootNode={treeRoot}
+              registry={FIG_NODE_CATEGORY_REGISTRY}
+              highlightedNodeId={highlightedId}
+              hoveredNodeId={hoveredId}
+              onNodeHover={setHoveredId}
+              onNodeClick={handleNodeClick}
+              showHiddenNodes={showHiddenNodes}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-// =============================================================================
-// InspectorDebugComposition
-// =============================================================================
+/** Render SVG/WebGL debug output for one loaded fig file. */
+export function RendererDebugView({ raw }: Props) {
+  const [context, setContext] = useState<FigDocumentContext | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
 
-type InspectorDebugCompositionProps = {
-  readonly frameNode: FigNode;
-  readonly frameWidth: number;
-  readonly frameHeight: number;
-  readonly showHiddenNodes: boolean;
-  readonly svgHtml: string;
-  readonly isRendering: boolean;
-};
+  useEffect(() => {
+    if (raw.length === 0) {
+      setContext(null);
+      setParseError(null);
+      return;
+    }
+    const cancelled = { value: false };
+    createFigDocumentContext(raw).then(
+      (loadedContext) => {
+        if (cancelled.value) {
+          return;
+        }
+        setContext(loadedContext);
+        setParseError(null);
+      },
+      (error: unknown) => {
+        if (cancelled.value) {
+          return;
+        }
+        setContext(null);
+        setParseError(error instanceof Error ? error.message : String(error));
+      },
+    );
+    return () => {
+      cancelled.value = true;
+    };
+  }, [raw]);
 
-const inspectorLayoutStyle: CSSProperties = {
-  flex: 1,
-  display: "flex",
-  gap: spacingTokens.md,
-  minHeight: 0,
-};
-
-const inspectorMainStyle: CSSProperties = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  gap: spacingTokens.sm,
-  minHeight: 0,
-};
-
-const inspectorCanvasStyle: CSSProperties = {
-  position: "relative",
-  flex: 1,
-  overflow: "auto",
-  backgroundColor: colorTokens.background.primary,
-  borderRadius: radiusTokens.md,
-  border: `1px solid ${colorTokens.border.subtle}`,
-  padding: spacingTokens.md,
-};
-
-const inspectorStageStyle: CSSProperties = {
-  position: "relative",
-  display: "inline-block",
-};
-
-const inspectorOverlaySvgStyle: CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  pointerEvents: "none",
-};
-
-const inspectorTreeStyle: CSSProperties = {
-  width: 320,
-  flexShrink: 0,
-  overflow: "hidden",
-  backgroundColor: colorTokens.background.secondary,
-  borderRadius: radiusTokens.md,
-  border: `1px solid ${colorTokens.border.subtle}`,
-};
-
-/**
- * Composes the shared inspector parts (overlay + tree + legend) around
- * the SVG produced by renderCanvas. Lives in the dev app only — the
- * real editor uses FigInspectorOverlay inside FigEditorCanvas instead.
- */
-function InspectorDebugComposition({
-  frameNode,
-  frameWidth,
-  frameHeight,
-  showHiddenNodes,
-  svgHtml,
-  isRendering,
-}: InspectorDebugCompositionProps) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [highlightedId, setHighlightedId] = useState<string | null>(null);
-
-  const initialTransform = useMemo(
-    () => getRootNormalizationTransform(frameNode),
-    [frameNode],
-  );
-
-  const boxes = useMemo(
-    () => collectFigBoxes(frameNode, initialTransform, showHiddenNodes),
-    [frameNode, initialTransform, showHiddenNodes],
-  );
-
-  const treeRoot = useMemo(() => figNodeToInspectorTree(frameNode), [frameNode]);
-
-  const handleNodeClick = useCallback((id: string) => {
-    setHighlightedId((prev) => (prev === id ? null : id));
-  }, []);
-
-  const handleHover = useCallback((id: string | null) => {
-    setHoveredId(id);
-  }, []);
-
-  return (
-    <div style={inspectorLayoutStyle}>
-      <div style={inspectorMainStyle}>
-        <CategoryLegend registry={FIG_NODE_CATEGORY_REGISTRY} order={FIG_LEGEND_ORDER} />
-        <div style={inspectorCanvasStyle}>
-          <div style={inspectorStageStyle}>
-            {renderInspectorSvgContent({ isRendering, svgHtml })}
-            <svg
-              style={inspectorOverlaySvgStyle}
-              viewBox={`0 0 ${frameWidth} ${frameHeight}`}
-              width={frameWidth}
-              height={frameHeight}
-              preserveAspectRatio="xMinYMin meet"
-            >
-              <InspectorCanvasOverlay
-                boxes={boxes}
-                registry={FIG_NODE_CATEGORY_REGISTRY}
-                highlightedNodeId={highlightedId}
-                hoveredNodeId={hoveredId}
-                onNodeHover={handleHover}
-                onNodeClick={handleNodeClick}
-                interactive
-              />
-            </svg>
-          </div>
-        </div>
-      </div>
-      <div style={inspectorTreeStyle}>
-        <InspectorTreePanel
-          rootNode={treeRoot}
-          registry={FIG_NODE_CATEGORY_REGISTRY}
-          highlightedNodeId={highlightedId}
-          hoveredNodeId={hoveredId}
-          onNodeHover={handleHover}
-          onNodeClick={handleNodeClick}
-          showHiddenNodes={showHiddenNodes}
-        />
-      </div>
-    </div>
-  );
+  if (parseError !== null) {
+    return <div style={emptyStateStyle}>Parse error: {parseError}</div>;
+  }
+  if (context === null) {
+    return <div style={emptyStateStyle}>Parsing .fig for renderer debug...</div>;
+  }
+  return <RendererDebugContent context={context} />;
 }

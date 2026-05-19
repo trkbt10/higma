@@ -1,24 +1,12 @@
-/** @file Variant property editing domain shared by component property sections. */
+/** @file Variant metadata readers for Kiwi component fields. */
+import type { FigNode } from "@higma-document-models/fig/types";
 
-import type { FigNodeId, VariantPropSpec } from "@higma-document-models/fig/domain";
-
-export function updateVariantSpec(
-  specs: readonly VariantPropSpec[],
-  propDefId: FigNodeId,
-  value: string,
-): readonly VariantPropSpec[] {
-  const exists = specs.some((spec) => spec.propDefId === propDefId);
-  if (!exists) {
-    return [...specs, { propDefId, value }];
-  }
-  return specs.map((spec) => (
-    spec.propDefId === propDefId ? { ...spec, value } : spec
-  ));
-}
-
-export function findVariantSpec(
-  specs: readonly VariantPropSpec[],
-  propDefId: FigNodeId,
-): VariantPropSpec | undefined {
-  return specs.find((spec) => spec.propDefId === propDefId);
+/** Return variant property labels carried by a component node. */
+export function readVariantLabels(node: FigNode): readonly string[] {
+  return (node.variantPropSpecs ?? []).map((entry) => {
+    if (entry.propDefId === undefined) {
+      throw new Error("readVariantLabels: variantPropSpecs entry is missing propDefId");
+    }
+    return `${entry.propDefId.sessionID}:${entry.propDefId.localID}=${entry.value}`;
+  });
 }

@@ -7,6 +7,7 @@ import { nextPageGuid } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import {
   createFigDocumentContextFromNodeChanges,
+  replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
 } from "../context";
 
@@ -45,12 +46,7 @@ function canvasNode(
 }
 
 function contextWithNodes(context: FigDocumentContext, nodeChanges: readonly FigNode[]): FigDocumentContext {
-  return createFigDocumentContextFromNodeChanges({
-    nodeChanges,
-    blobs: context.blobs,
-    images: context.images,
-    metadata: context.metadata,
-  });
+  return replaceFigDocumentContextNodeChanges({ context, nodeChanges });
 }
 
 function assertNonEmptyString(value: string, name: string): void {

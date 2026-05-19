@@ -1,51 +1,78 @@
-/** @file WebGL viewport layer composition for the fig editor. */
-
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+/** @file WebGL viewport layer for Fig editor rendering. */
+import type { CSSProperties } from "react";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigWebGLViewportLoadingOverlay } from "../status/FigWebGLViewportLoadingOverlay";
-import { resolveViewportLayerFrame, type ViewportLayerPlacement } from "../layout/viewport-render-plan";
-import { FigWebGLViewportCanvas } from "./FigWebGLViewportCanvas";
-import { useWebGLViewportRenderer } from "./use-webgl-viewport-renderer";
+import { useFigWebGLViewportRenderer } from "./use-webgl-viewport-renderer";
 
-type FigWebGLViewportLayerProps = {
-  readonly sceneGraph: SceneGraph;
+export type FigWebGLViewportLayerProps = {
+  readonly sceneGraph: SceneGraph | null;
   readonly renderOptions?: SceneGraphRenderOptions;
   readonly viewportScale: number;
-  readonly placement?: ViewportLayerPlacement;
+  readonly viewportRevision?: number;
   readonly initializationDelayMs?: number;
 };
 
-/** Compose the WebGL viewport canvas with lifecycle state and loading UI. */
+type WebGLViewportMetrics = {
+  readonly prepareCount: number;
+  readonly renderCount: number;
+  readonly lastPrepareMs: number;
+  readonly lastRenderMs: number;
+};
+
+const hostStyle: CSSProperties = {
+  position: "relative",
+  width: "100%",
+  height: "100%",
+  overflow: "hidden",
+  pointerEvents: "none",
+};
+
+const canvasStyle: CSSProperties = {
+  width: "100%",
+  height: "100%",
+  display: "block",
+};
+
+function writeWebGLViewportMetrics(canvas: HTMLCanvasElement, metrics: WebGLViewportMetrics): void {
+  canvas.setAttribute("data-webgl-prepare-count", String(metrics.prepareCount));
+  canvas.setAttribute("data-webgl-render-count", String(metrics.renderCount));
+  canvas.setAttribute("data-webgl-last-prepare-ms", String(metrics.lastPrepareMs));
+  canvas.setAttribute("data-webgl-last-render-ms", String(metrics.lastRenderMs));
+}
+
+/** Render a scene graph through WebGL. */
 export function FigWebGLViewportLayer({
   sceneGraph,
   renderOptions,
   viewportScale,
-  placement = "world",
+  viewportRevision,
   initializationDelayMs,
 }: FigWebGLViewportLayerProps) {
-  const frame = resolveViewportLayerFrame({ sceneGraph, placement });
-  const renderer = useWebGLViewportRenderer({ sceneGraph, renderOptions, viewportScale, initializationDelayMs });
-  const loadingOverlay = renderer.isReady ? null : <FigWebGLViewportLoadingOverlay frame={frame} status={renderer.status} />;
-
-  if (sceneGraph.width <= 0 || sceneGraph.height <= 0) {
-    return null;
-  }
-
-  if (!sceneGraph.viewport) {
-    throw new Error("FigWebGLViewportLayer requires sceneGraph.viewport");
-  }
+  const state = useFigWebGLViewportRenderer({
+    sceneGraph,
+    renderOptions,
+    viewportScale,
+    viewportRevision,
+    initializationDelayMs,
+    onMetrics: writeWebGLViewportMetrics,
+  });
 
   return (
-    <>
-      <FigWebGLViewportCanvas
-        canvasRef={renderer.canvasRef}
-        frame={frame}
-        width={sceneGraph.width}
-        height={sceneGraph.height}
-        pixelRatio={renderer.pixelRatio}
-        isReady={renderer.isReady}
+    <div style={hostStyle} data-fig-editor-webgl-layer="">
+      <canvas
+        ref={state.canvasRef}
+        width={sceneGraph?.width ?? 1}
+        height={sceneGraph?.height ?? 1}
+        style={canvasStyle}
+        data-webgl-ready={state.isReady ? "true" : "false"}
+        data-webgl-pixel-ratio={state.pixelRatio}
+        data-webgl-prepare-count={0}
+        data-webgl-render-count={0}
+        data-webgl-last-prepare-ms={0}
+        data-webgl-last-render-ms={0}
       />
-      {loadingOverlay}
-    </>
+      <FigWebGLViewportLoadingOverlay status={state.status} />
+    </div>
   );
 }

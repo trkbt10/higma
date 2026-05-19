@@ -3,7 +3,8 @@
  */
 
 import { FIG_NODE_TYPE, type FigGuid, type FigNode, type FigNodeType } from "@higma-document-models/fig/types";
-import { cloneSymbolChildren } from "./symbol-resolver";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
+import { cloneSymbolChildren, createSymbolResolver } from "./symbol-resolver";
 
 type TestFigNodeInput = Omit<Partial<FigNode>, "children" | "type" | "guid" | "phase"> & {
   readonly type?: string | FigNode["type"];
@@ -335,5 +336,84 @@ describe("cloneSymbolChildren", () => {
     expect(textData.characters).toBe("Overridden Text");
     // derivedTextData should be deleted (stale glyph paths)
     expect(resultNode.derivedTextData).toBeUndefined();
+  });
+
+  it("preserves TEXT_DATA style ids that use Figma logical character length", () => {
+    const characters = "A\u{100bfb}B";
+    const textChild = {
+      type: "TEXT",
+      name: "LogicalStyleLabel",
+      guid: { sessionID: 1, localID: 61 },
+      componentPropRefs: [
+        {
+          defID: { sessionID: 1, localID: 301 },
+          componentPropNodeField: { value: 0, name: "TEXT_DATA" },
+        },
+      ],
+      textData: {
+        characters,
+        characterStyleIDs: [0, 1, 1],
+        styleOverrideTable: [{ styleID: 1, fontSize: 18 }],
+      },
+      characters,
+    };
+
+    const symbolNode = createTestNode({
+      type: "SYMBOL",
+      name: "TestSymbol",
+      children: [textChild],
+    });
+
+    const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
+      componentPropAssignments: [
+        {
+          defID: { sessionID: 1, localID: 301 },
+          value: {
+            textValue: { characters },
+          },
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.textData?.characterStyleIDs).toEqual([0, 1, 1]);
+    expect(result[0]!.textData?.styleOverrideTable).toEqual([{ styleID: 1, fontSize: 18 }]);
+  });
+});
+
+describe("createSymbolResolver", () => {
+  it("keeps document-external INSTANCE nodes renderable when Kiwi carries derivedSymbolData", () => {
+    const instance = createTestNode({
+      type: "INSTANCE",
+      name: "External library instance",
+      guid: { sessionID: 1, localID: 1 },
+      symbolData: { symbolID: { sessionID: 99, localID: 100 } },
+      derivedSymbolData: [
+        {
+          guidPath: { guids: [{ sessionID: 99, localID: 101 }] },
+          size: { x: 100, y: 80 },
+        },
+      ],
+    });
+    const document = indexFigKiwiDocument([instance]);
+    const resolver = createSymbolResolver({ document });
+    const resolved = resolver.resolveInstance(instance);
+
+    expect(resolved.node).toBe(instance);
+    expect(resolved.children).toEqual([]);
+  });
+
+  it("still fails fast when an INSTANCE has neither a local SYMBOL nor derivedSymbolData", () => {
+    const instance = createTestNode({
+      type: "INSTANCE",
+      name: "Broken instance",
+      guid: { sessionID: 1, localID: 2 },
+      symbolData: { symbolID: { sessionID: 99, localID: 200 } },
+    });
+    const document = indexFigKiwiDocument([instance]);
+    const resolver = createSymbolResolver({ document });
+
+    expect(() => resolver.resolveInstance(instance)).toThrow(/does not resolve to a SYMBOL/);
   });
 });

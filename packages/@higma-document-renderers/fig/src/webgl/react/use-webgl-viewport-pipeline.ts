@@ -32,7 +32,7 @@
  */
 
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import {
   createWebGLFigmaRenderer,
   resolveWebGLViewportPixelRatio,
@@ -51,6 +51,8 @@ export type WebGLViewportPipelineParams = {
   };
   /** CSS-pixel scale (1 == 100%). Combines with devicePixelRatio. */
   readonly viewportScale: number;
+  /** Monotonic viewport transform revision supplied by the embedding surface. */
+  readonly viewportRevision?: number;
   /**
    * Defer renderer creation by this many ms after mount. Lets React
    * commit the loading overlay before the synchronous program-compile
@@ -92,6 +94,7 @@ export function useWebGLViewportPipeline({
   sceneGraph,
   renderOptions,
   viewportScale,
+  viewportRevision,
   initializationDelayMs,
   onMetrics,
   errorContext,
@@ -191,12 +194,17 @@ export function useWebGLViewportPipeline({
       renderer: WebGLFigmaRendererInstance,
       scene: SceneGraph,
       nextPixelRatio: number,
+      exposeCachedGeometryFrame: boolean,
     ) => {
       renderFrameRef.current = null;
       setPhase("rendering");
       renderer.setPixelRatio(nextPixelRatio);
       renderer.render(scene);
       writeMetrics(renderer);
+      if (exposeCachedGeometryFrame) {
+        renderer.render(scene);
+        writeMetrics(renderer);
+      }
       setPhase("ready");
     };
 
@@ -209,7 +217,7 @@ export function useWebGLViewportPipeline({
         window.cancelAnimationFrame(renderFrameRef.current);
       }
       renderFrameRef.current = window.requestAnimationFrame(() => {
-        renderScene(renderer, scene, nextPixelRatio);
+        renderScene(renderer, scene, nextPixelRatio, false);
       });
     };
 
@@ -231,10 +239,7 @@ export function useWebGLViewportPipeline({
           const latest = latestRenderRef.current;
           if (latest?.scene === next.scene && latest.pixelRatio === next.pixelRatio) {
             renderer.setPixelRatio(next.pixelRatio);
-            setPhase("rendering");
-            renderer.render(next.scene);
-            writeMetrics(renderer);
-            setPhase("ready");
+            renderScene(renderer, next.scene, next.pixelRatio, true);
           }
           runPrepareQueue(renderer);
         },
@@ -292,7 +297,7 @@ export function useWebGLViewportPipeline({
         renderFrameRef.current = null;
       }
     };
-  }, [sceneGraph, renderOptions, pixelRatio, initializationDelayMs, onMetrics, errorContext]);
+  }, [sceneGraph, renderOptions, pixelRatio, viewportRevision, initializationDelayMs, onMetrics, errorContext]);
 
   useEffect(() => {
     return () => {
