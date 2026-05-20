@@ -6,6 +6,7 @@ import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
 import { resolveTextLayout, resolveTextRendering } from "./resolve";
 import type { TextFontResolver } from "./types";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { textLayoutToCursorLayout } from "../layout";
 
 const RECT_FONT_PATH: FontPath = {
   commands: [
@@ -240,7 +241,7 @@ describe("resolveTextRendering font outlines", () => {
     expect(rendering.kind).toBe("glyphs");
   });
 
-  it("does not estimate character widths when only Kiwi line metrics remain", () => {
+  it("uses Kiwi line metrics without inventing cursor character widths", () => {
     const node = {
       ...BASE_TEXT_NODE,
       textData: {
@@ -265,8 +266,15 @@ describe("resolveTextRendering font outlines", () => {
       },
     };
 
-    expect(() => resolveTextLayout(node, { blobs: [] }))
-      .toThrow("text-resolve:derived-line-metrics:requires-font-or-glyph-advances");
+    const resolution = resolveTextLayout(node, { blobs: [] });
+
+    expect(resolution.layout.lines[0]?.text).toBe("Edited");
+    expect(resolution.layout.lines[0]?.x).toBe(0);
+    expect(resolution.layout.lines[0]?.y).toBe(19);
+    expect(resolution.layout.lines[0]?.width).toBe(60);
+    expect(resolution.layout.lines[0]?.charWidths).toBeUndefined();
+    expect(() => textLayoutToCursorLayout(resolution.layout))
+      .toThrow('Text layout cursor conversion requires per-character widths for "Edited"');
   });
 
   it("threads resolved character widths into cursor-facing layout", () => {

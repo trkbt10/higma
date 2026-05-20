@@ -50,8 +50,16 @@ export type LayoutLine = {
   readonly sourceEnd: number;
   /** Resolved pixel width of this visual line. */
   readonly width: number;
-  /** Per-character advance widths for this visual line. */
-  readonly charWidths: readonly number[];
+  /**
+   * Per-character advance widths for cursor math.
+   *
+   * Undefined when Kiwi only provides line-level metrics
+   * (`derivedTextData.baselines[].width/position`) and no glyph advances
+   * or preloaded font resolver is available. Renderers may still consume
+   * line-level x/y/width; cursor conversion must fail-fast instead of
+   * inventing per-character advances.
+   */
+  readonly charWidths?: readonly number[];
 };
 
 export type TextLayoutSourceLine = {
@@ -60,7 +68,9 @@ export type TextLayoutSourceLine = {
   readonly sourceStart: number;
   readonly sourceEnd: number;
   readonly width: number;
-  readonly charWidths: readonly number[];
+  readonly charWidths?: readonly number[];
+  readonly baselineX?: number;
+  readonly baselineY?: number;
 };
 
 /**
@@ -171,7 +181,9 @@ type LineWithParagraph = {
   readonly sourceStart: number;
   readonly sourceEnd: number;
   readonly width: number;
-  readonly charWidths: readonly number[];
+  readonly charWidths?: readonly number[];
+  readonly baselineX?: number;
+  readonly baselineY?: number;
 };
 
 type SourceLine = {
@@ -258,9 +270,30 @@ function resolveLinesWithParagraph(
       sourceEnd: line.sourceEnd,
       width: line.width,
       charWidths: line.charWidths,
+      baselineX: line.baselineX,
+      baselineY: line.baselineY,
     }));
   }
   return splitTextIntoLines(props, measureCharWidths);
+}
+
+function resolveLineAnchorX(line: LineWithParagraph, defaultX: number, alignH: string): number {
+  const leftX = line.baselineX;
+  if (leftX === undefined) {
+    return defaultX;
+  }
+  switch (alignH) {
+    case "CENTER":
+      return leftX + line.width / 2;
+    case "RIGHT":
+      return leftX + line.width;
+    default:
+      return leftX;
+  }
+}
+
+function resolveLineBaselineY(line: LineWithParagraph, defaultY: number): number {
+  return line.baselineY ?? defaultY;
 }
 
 /**
@@ -308,8 +341,8 @@ export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
   // Build laid-out lines
   const lines: LayoutLine[] = linesWithParagraph.map((lwp, index) => ({
     text: lwp.text,
-    x,
-    y: baseY + index * lineHeight,
+    x: resolveLineAnchorX(lwp, x, props.textAlignHorizontal),
+    y: resolveLineBaselineY(lwp, baseY + index * lineHeight),
     index,
     paragraphIndex: lwp.paragraphIndex,
     sourceStart: lwp.sourceStart,
@@ -419,6 +452,9 @@ function computeCursorLayout(layout: TextLayout): CursorLayoutResult {
     const textWidth = line.width;
     if (!Number.isFinite(textWidth) || textWidth < 0) {
       throw new Error(`Text layout cursor measurement returned invalid width for "${line.text}"`);
+    }
+    if (line.charWidths === undefined) {
+      throw new Error(`Text layout cursor conversion requires per-character widths for "${line.text}"`);
     }
 
     // Convert SVG text-anchor x to left-edge x

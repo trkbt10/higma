@@ -42,6 +42,7 @@ export {
 
 export {
   findVariableConsumptionExpression,
+  mergeVariableModeBySetMap,
   resolveVariantOverride,
   type ResolveVariantResult,
 } from "./variable-resolution";

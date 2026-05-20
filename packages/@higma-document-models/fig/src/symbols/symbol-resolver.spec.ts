@@ -2,7 +2,15 @@
  * @file Unit tests for symbol resolver
  */
 
-import { FIG_NODE_TYPE, type FigGuid, type FigNode, type FigNodeType, type FigPaint } from "@higma-document-models/fig/types";
+import {
+  FIG_NODE_TYPE,
+  type FigGuid,
+  type FigKiwiVariableData,
+  type FigKiwiVariableDataMap,
+  type FigNode,
+  type FigNodeType,
+  type FigPaint,
+} from "@higma-document-models/fig/types";
 import { indexFigKiwiDocument, type FigBlob } from "@higma-document-models/fig/domain";
 import { resolveAutoLayoutFrame } from "./autolayout-solver";
 import { cloneSymbolChildren, createSymbolResolver } from "./symbol-resolver";
@@ -95,6 +103,53 @@ function rectPathBlob(width: number, height: number): FigBlob {
       0x02, ...float32Bytes(width), ...float32Bytes(height),
       0x02, ...float32Bytes(0), ...float32Bytes(height),
       0x06,
+    ],
+  };
+}
+
+function variantVariableConsumptionMap(propName: string, variableKey: string): FigKiwiVariableDataMap {
+  return {
+    entries: [
+      {
+        variableData: {
+          value: {
+            expressionValue: {
+              expressionFunction: { value: 2, name: "RESOLVE_VARIANT" },
+              expressionArguments: [
+                {
+                  value: {
+                    mapValue: {
+                      values: [
+                        {
+                          key: propName,
+                          value: {
+                            value: {
+                              alias: {
+                                assetRef: { key: variableKey },
+                              },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                } as FigKiwiVariableData,
+              ],
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
+function variableModeBySetMap(setKey: string, modeID: FigGuid): NonNullable<FigNode["variableModeBySetMap"]> {
+  return {
+    entries: [
+      {
+        variableSetID: { assetRef: { key: setKey } },
+        variableModeID: modeID,
+      },
     ],
   };
 }
@@ -537,6 +592,239 @@ describe("cloneSymbolChildren", () => {
 });
 
 describe("createSymbolResolver", () => {
+  it("uses inherited variable modes and INSTANCE self VCM overrides for variant target selection", () => {
+    const variantFrameGuid = { sessionID: 1, localID: 1 };
+    const propDefGuid = { sessionID: 1, localID: 2 };
+    const lightSymbolGuid = { sessionID: 1, localID: 10 };
+    const darkSymbolGuid = { sessionID: 1, localID: 11 };
+    const lightChildGuid = { sessionID: 1, localID: 20 };
+    const darkChildGuid = { sessionID: 1, localID: 21 };
+    const instanceGuid = { sessionID: 2, localID: 1 };
+    const ghostSelfGuid = { sessionID: 9, localID: 9 };
+    const lightMode = { sessionID: 404, localID: 0 };
+    const darkMode = { sessionID: 404, localID: 1 };
+    const variableSetKey = "colors-set";
+    const variableKey = "mode-variable";
+    const variantFrame = createTestNode({
+      type: "FRAME",
+      guid: variantFrameGuid,
+      isStateGroup: true,
+      componentPropDefs: [
+        {
+          id: propDefGuid,
+          name: "Mode",
+          type: { value: 4, name: "VARIANT" },
+        },
+      ],
+    });
+    const lightChild = createTestNode({
+      type: "RECTANGLE",
+      guid: lightChildGuid,
+      name: "Light child",
+      parentIndex: { guid: lightSymbolGuid, position: "!" },
+    });
+    const darkChild = createTestNode({
+      type: "RECTANGLE",
+      guid: darkChildGuid,
+      name: "Dark child",
+      parentIndex: { guid: darkSymbolGuid, position: "!" },
+    });
+    const lightSymbol = createTestNode({
+      type: "SYMBOL",
+      guid: lightSymbolGuid,
+      parentIndex: { guid: variantFrameGuid, position: "!" },
+      variantPropSpecs: [{ propDefId: propDefGuid, value: "Light" }],
+      children: [lightChild],
+    });
+    const darkSymbol = createTestNode({
+      type: "SYMBOL",
+      guid: darkSymbolGuid,
+      parentIndex: { guid: variantFrameGuid, position: "\"" },
+      variantPropSpecs: [{ propDefId: propDefGuid, value: "Dark" }],
+      children: [darkChild],
+    });
+    const variableSet = createTestNode({
+      type: "VARIABLE_SET",
+      guid: { sessionID: 3, localID: 1 },
+      key: variableSetKey,
+      variableSetModes: [
+        { id: lightMode, name: "Light" },
+        { id: darkMode, name: "Dark" },
+      ],
+    });
+    const modeVariable = createTestNode({
+      type: "VARIABLE",
+      guid: { sessionID: 3, localID: 2 },
+      key: variableKey,
+      variableSetID: { assetRef: { key: variableSetKey } },
+      variableDataValues: {
+        entries: [
+          { modeID: lightMode, variableData: { value: { textValue: "Light" } } },
+          { modeID: darkMode, variableData: { value: { textValue: "Dark" } } },
+        ],
+      },
+    });
+    const instance = createTestNode({
+      type: "INSTANCE",
+      guid: instanceGuid,
+      symbolData: {
+        symbolID: lightSymbolGuid,
+        symbolOverrides: [
+          {
+            guidPath: { guids: [ghostSelfGuid] },
+            variableConsumptionMap: variantVariableConsumptionMap("Mode", variableKey),
+          },
+        ],
+      },
+    });
+    const document = indexFigKiwiDocument([
+      variantFrame,
+      lightSymbol,
+      lightChild,
+      darkSymbol,
+      darkChild,
+      variableSet,
+      modeVariable,
+      instance,
+    ]);
+    const resolver = createSymbolResolver({ document });
+    const scope = { variableModeBySetMap: variableModeBySetMap(variableSetKey, darkMode) };
+
+    const references = resolver.resolveReferences(instance, scope);
+    const resolved = resolver.resolveInstance(instance, scope);
+
+    expect(references.effectiveSymbol?.guid).toEqual(darkSymbolGuid);
+    expect(resolved.children[0]!.guid).toEqual(darkChildGuid);
+    expect(resolved.node.variableModeBySetMap).toEqual(scope.variableModeBySetMap);
+  });
+
+  it("drops overrides addressed to inactive sibling variants in the same Variant Set", () => {
+    const variantFrameGuid = { sessionID: 10, localID: 1 };
+    const modeDefGuid = { sessionID: 10, localID: 2 };
+    const selectedDefGuid = { sessionID: 10, localID: 3 };
+    const lightSelectedGuid = { sessionID: 10, localID: 10 };
+    const darkSelectedGuid = { sessionID: 10, localID: 11 };
+    const darkUnselectedGuid = { sessionID: 10, localID: 12 };
+    const darkSelectedChildGuid = { sessionID: 10, localID: 21 };
+    const darkUnselectedChildGuid = { sessionID: 10, localID: 22 };
+    const inactiveOverrideKey = { sessionID: 5568, localID: 3935 };
+    const lightMode = { sessionID: 404, localID: 0 };
+    const darkMode = { sessionID: 404, localID: 1 };
+    const variableSetKey = "colors-set";
+    const variableKey = "mode-variable";
+    const variantFrame = createTestNode({
+      type: "FRAME",
+      guid: variantFrameGuid,
+      isStateGroup: true,
+      componentPropDefs: [
+        { id: modeDefGuid, name: "Mode", type: { value: 4, name: "VARIANT" } },
+        { id: selectedDefGuid, name: "Selected", type: { value: 4, name: "VARIANT" } },
+      ],
+    });
+    const lightSelected = createTestNode({
+      type: "SYMBOL",
+      guid: lightSelectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "!" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Light" },
+        { propDefId: selectedDefGuid, value: "True" },
+      ],
+    });
+    const darkSelectedChild = createTestNode({
+      type: "TEXT",
+      guid: darkSelectedChildGuid,
+      parentIndex: { guid: darkSelectedGuid, position: "!" },
+      overrideKey: { sessionID: 5568, localID: 3932 },
+      characters: "selected",
+    });
+    const darkSelected = createTestNode({
+      type: "SYMBOL",
+      guid: darkSelectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "\"" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Dark" },
+        { propDefId: selectedDefGuid, value: "True" },
+      ],
+      children: [darkSelectedChild],
+    });
+    const darkUnselectedChild = createTestNode({
+      type: "TEXT",
+      guid: darkUnselectedChildGuid,
+      parentIndex: { guid: darkUnselectedGuid, position: "!" },
+      overrideKey: inactiveOverrideKey,
+      characters: "inactive",
+    });
+    const darkUnselected = createTestNode({
+      type: "SYMBOL",
+      guid: darkUnselectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "#" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Dark" },
+        { propDefId: selectedDefGuid, value: "False" },
+      ],
+      children: [darkUnselectedChild],
+    });
+    const variableSet = createTestNode({
+      type: "VARIABLE_SET",
+      guid: { sessionID: 11, localID: 1 },
+      key: variableSetKey,
+      variableSetModes: [
+        { id: lightMode, name: "Light" },
+        { id: darkMode, name: "Dark" },
+      ],
+    });
+    const modeVariable = createTestNode({
+      type: "VARIABLE",
+      guid: { sessionID: 11, localID: 2 },
+      key: variableKey,
+      variableSetID: { assetRef: { key: variableSetKey } },
+      variableDataValues: {
+        entries: [
+          { modeID: lightMode, variableData: { value: { textValue: "Light" } } },
+          { modeID: darkMode, variableData: { value: { textValue: "Dark" } } },
+        ],
+      },
+    });
+    const instance = createTestNode({
+      type: "INSTANCE",
+      guid: { sessionID: 12, localID: 1 },
+      symbolData: {
+        symbolID: lightSelectedGuid,
+        symbolOverrides: [
+          {
+            guidPath: { guids: [{ sessionID: 12, localID: 99 }] },
+            variableConsumptionMap: variantVariableConsumptionMap("Mode", variableKey),
+          },
+        ],
+      },
+      derivedSymbolData: [
+        {
+          guidPath: { guids: [inactiveOverrideKey] },
+          size: { x: 10, y: 10 },
+        },
+      ],
+    });
+    const document = indexFigKiwiDocument([
+      variantFrame,
+      lightSelected,
+      darkSelected,
+      darkSelectedChild,
+      darkUnselected,
+      darkUnselectedChild,
+      variableSet,
+      modeVariable,
+      instance,
+    ]);
+    const resolver = createSymbolResolver({ document });
+
+    const resolved = resolver.resolveInstance(instance, {
+      variableModeBySetMap: variableModeBySetMap(variableSetKey, darkMode),
+    });
+
+    expect(resolved.children[0]!.guid).toEqual(darkSelectedChildGuid);
+    expect(resolved.children[0]!.size).toBeUndefined();
+  });
+
   it("scales derived text payload when derivedSymbolData uniformly resizes a TEXT slot", () => {
     const symbolGuid = { sessionID: 1, localID: 1 };
     const textGuid = { sessionID: 1, localID: 2 };

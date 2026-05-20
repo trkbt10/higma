@@ -11,6 +11,7 @@
 
 import {
   findVariableConsumptionExpression,
+  mergeVariableModeBySetMap,
   resolveVariantOverride,
 } from "./variable-resolution";
 import { projectVariableAnyValue } from "../variables";
@@ -19,6 +20,7 @@ import type {
   FigKiwiVariableAnyValue,
   FigKiwiVariableData,
   FigKiwiVariableDataMap,
+  FigKiwiVariableModeBySetMap,
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
@@ -111,6 +113,64 @@ function instanceNode(g: FigGuid, symbolID: FigGuid, vcm: FigKiwiVariableDataMap
   };
 }
 
+function variableSetNode(
+  g: FigGuid,
+  key: string,
+  modes: readonly { readonly id: FigGuid; readonly name: string }[],
+): FigNode {
+  return {
+    guid: g,
+    phase: { value: 0, name: "INITIAL" },
+    type: { value: 0, name: FIG_NODE_TYPE.VARIABLE_SET },
+    name: "Colors",
+    key,
+    variableSetModes: modes.map((mode) => ({
+      id: mode.id,
+      name: mode.name,
+    })),
+    children: [],
+  };
+}
+
+function variableNode(
+  g: FigGuid,
+  key: string,
+  setKey: string,
+  values: readonly { readonly modeID: FigGuid; readonly value: string }[],
+): FigNode {
+  return {
+    guid: g,
+    phase: { value: 0, name: "INITIAL" },
+    type: { value: 0, name: FIG_NODE_TYPE.VARIABLE },
+    name: "Mode",
+    key,
+    variableSetID: { assetRef: { key: setKey } },
+    variableDataValues: {
+      entries: values.map((entry) => ({
+        modeID: entry.modeID,
+        variableData: {
+          value: { textValue: entry.value },
+          dataType: { value: 2, name: "STRING" },
+          resolvedDataType: { value: 2, name: "STRING" },
+        },
+      })),
+    },
+    variableResolvedType: { value: 2, name: "STRING" },
+    children: [],
+  };
+}
+
+function modeMap(setKey: string, modeID: FigGuid): FigKiwiVariableModeBySetMap {
+  return {
+    entries: [
+      {
+        variableSetID: { assetRef: { key: setKey } },
+        variableModeID: modeID,
+      },
+    ],
+  };
+}
+
 function buildVariantContext(nodes: readonly FigNode[]): {
   readonly document: FigKiwiDocumentIndex;
   readonly childrenOf: (node: FigNode) => readonly FigNode[];
@@ -192,6 +252,21 @@ describe("findVariableConsumptionExpression", () => {
   });
 });
 
+describe("mergeVariableModeBySetMap", () => {
+  it("treats an empty local mode map as no contribution", () => {
+    const inherited = modeMap("colors", guid(404, 1));
+
+    expect(mergeVariableModeBySetMap(inherited, { entries: [] })).toBe(inherited);
+  });
+
+  it("lets the nearest node override the inherited mode for the same variable set", () => {
+    const inherited = modeMap("colors", guid(404, 0));
+    const local = modeMap("colors", guid(404, 1));
+
+    expect(mergeVariableModeBySetMap(inherited, local)).toEqual(local);
+  });
+});
+
 describe("resolveVariantOverride", () => {
   function makeVcmFromTextLiteral(propName: string, value: string): FigKiwiVariableDataMap {
     return {
@@ -209,6 +284,42 @@ describe("resolveVariantOverride", () => {
                           {
                             key: propName,
                             value: { value: { textValue: value } },
+                          },
+                        ],
+                      },
+                    },
+                  } as FigKiwiVariableData,
+                ],
+              },
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  function makeVcmFromAlias(propName: string, variableKey: string): FigKiwiVariableDataMap {
+    return {
+      entries: [
+        {
+          variableData: {
+            value: {
+              expressionValue: {
+                expressionFunction: { value: 2, name: "RESOLVE_VARIANT" },
+                expressionArguments: [
+                  {
+                    value: {
+                      mapValue: {
+                        values: [
+                          {
+                            key: propName,
+                            value: {
+                              value: {
+                                alias: {
+                                  assetRef: { key: variableKey },
+                                },
+                              },
+                            },
                           },
                         ],
                       },
@@ -251,6 +362,46 @@ describe("resolveVariantOverride", () => {
     expect(out.resolvedSymbolID).toEqual(guid(1, 100));
   });
 
+  it("preserves the current SYMBOL's unmentioned variant properties", () => {
+    const modeDefId = guid(1, 10);
+    const stateDefId = guid(1, 11);
+    const containerGuid = guid(1, 1);
+    const lightDefault = {
+      ...variantSymbol(guid(1, 100), "Mode=Light, State=Default", containerGuid, modeDefId, "Light"),
+      variantPropSpecs: [
+        { propDefId: modeDefId, value: "Light" },
+        { propDefId: stateDefId, value: "Default" },
+      ],
+    };
+    const darkPrimary = {
+      ...variantSymbol(guid(1, 101), "Mode=Dark, State=Primary", containerGuid, modeDefId, "Dark"),
+      variantPropSpecs: [
+        { propDefId: modeDefId, value: "Dark" },
+        { propDefId: stateDefId, value: "Primary" },
+      ],
+    };
+    const darkDefault = {
+      ...variantSymbol(guid(1, 102), "Mode=Dark, State=Default", containerGuid, modeDefId, "Dark"),
+      variantPropSpecs: [
+        { propDefId: modeDefId, value: "Dark" },
+        { propDefId: stateDefId, value: "Default" },
+      ],
+    };
+    const container = {
+      ...variantSetFrame(containerGuid, "_Variants", "Mode", modeDefId, [lightDefault, darkPrimary, darkDefault]),
+      componentPropDefs: [
+        { id: modeDefId, name: "Mode", type: { value: 4, name: "VARIANT" } },
+        { id: stateDefId, name: "State", type: { value: 4, name: "VARIANT" } },
+      ],
+    };
+    const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromTextLiteral("Mode", "Dark"));
+    const variantContext = buildVariantContext([container, lightDefault, darkPrimary, darkDefault]);
+
+    const out = resolveVariantOverride(inst, lightDefault, variantContext);
+
+    expect(out.resolvedSymbolID).toEqual(guid(1, 102));
+  });
+
   it("reports `unresolved-aliases` when the property value is a library alias", () => {
     const propDefId = guid(1, 10);
     const defaultSym = variantSymbol(guid(1, 100), "Type=Default", guid(1, 1), propDefId, "Default");
@@ -291,6 +442,59 @@ describe("resolveVariantOverride", () => {
     const out = resolveVariantOverride(inst, defaultSym, variantContext);
     expect(out.resolvedSymbolID).toBeUndefined();
     expect(out.unresolvedReason).toBe("unresolved-aliases");
+  });
+
+  it("resolves a RESOLVE_VARIANT alias from local VARIABLE values and the active variable mode", () => {
+    const propDefId = guid(1, 10);
+    const lightMode = guid(404, 0);
+    const darkMode = guid(404, 1);
+    const setKey = "colors-set";
+    const variableKey = "mode-variable";
+    const lightSym = variantSymbol(guid(1, 100), "Mode=Light", guid(1, 1), propDefId, "Light");
+    const darkSym = variantSymbol(guid(1, 101), "Mode=Dark", guid(1, 1), propDefId, "Dark");
+    const container = variantSetFrame(guid(1, 1), "_Variants", "Mode", propDefId, [lightSym, darkSym]);
+    const set = variableSetNode(guid(9, 1), setKey, [
+      { id: lightMode, name: "Light" },
+      { id: darkMode, name: "Dark" },
+    ]);
+    const mode = variableNode(guid(9, 2), variableKey, setKey, [
+      { modeID: lightMode, value: "Light" },
+      { modeID: darkMode, value: "Dark" },
+    ]);
+    const inst = instanceNode(guid(1, 200), guid(1, 100), makeVcmFromAlias("Mode", variableKey));
+    const variantContext = buildVariantContext([container, lightSym, darkSym, set, mode]);
+
+    const out = resolveVariantOverride(inst, lightSym, {
+      ...variantContext,
+      variableModeBySetMap: modeMap(setKey, darkMode),
+    });
+
+    expect(out.resolvedSymbolID).toEqual(guid(1, 101));
+  });
+
+  it("uses the VARIABLE_SET's first mode when no active mode is pinned", () => {
+    const propDefId = guid(1, 10);
+    const lightMode = guid(404, 0);
+    const darkMode = guid(404, 1);
+    const setKey = "colors-set";
+    const variableKey = "mode-variable";
+    const lightSym = variantSymbol(guid(1, 100), "Mode=Light", guid(1, 1), propDefId, "Light");
+    const darkSym = variantSymbol(guid(1, 101), "Mode=Dark", guid(1, 1), propDefId, "Dark");
+    const container = variantSetFrame(guid(1, 1), "_Variants", "Mode", propDefId, [lightSym, darkSym]);
+    const set = variableSetNode(guid(9, 1), setKey, [
+      { id: lightMode, name: "Light" },
+      { id: darkMode, name: "Dark" },
+    ]);
+    const mode = variableNode(guid(9, 2), variableKey, setKey, [
+      { modeID: lightMode, value: "Light" },
+      { modeID: darkMode, value: "Dark" },
+    ]);
+    const inst = instanceNode(guid(1, 200), guid(1, 101), makeVcmFromAlias("Mode", variableKey));
+    const variantContext = buildVariantContext([container, lightSym, darkSym, set, mode]);
+
+    const out = resolveVariantOverride(inst, darkSym, variantContext);
+
+    expect(out.resolvedSymbolID).toEqual(guid(1, 100));
   });
 
   it("reports `no-variant-container` when the SYMBOL has no variant siblings", () => {

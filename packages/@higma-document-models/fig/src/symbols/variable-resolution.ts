@@ -17,24 +17,20 @@
  *       (a) the INSTANCE has no RESOLVE_VARIANT VCM,
  *       (b) the referenced SYMBOL is standalone (not in a variant set),
  *       (c) the variant properties cannot be resolved (e.g. the alias
- *           target is a library variable that this fig file doesn't
- *           include — Figma's exporter pre-bakes those references but
- *           when we render from the .fig directly we have no value).
- *
- * The `(c)` case is the dominant outcome on real-world .fig corpora:
- * every RESOLVE_VARIANT we observe references library `assetRef`
- * aliases whose values aren't carried in the .fig. Returning
- * `undefined` reports that this evaluator cannot derive a local
- * override; SymbolResolver remains the single unit that chooses the
- * effective symbol target from the authored Kiwi fields.
+ *           target is a library variable that this fig file does not
+ *           include).
  */
 
 import type {
   FigGuid,
+  FigGuidOrAssetRefId,
   FigKiwiVariableData,
   FigVariableExpression,
+  FigVariableID,
   FigVariableMapEntry,
   FigKiwiVariableDataMap,
+  FigKiwiVariableModeBySetMap,
+  FigKiwiVariableModeBySetMapEntry,
   FigNode,
 } from "../types";
 import { FIG_NODE_TYPE } from "../types";
@@ -65,6 +61,49 @@ export function findVariableConsumptionExpression(
     }
   }
   return undefined;
+}
+
+function findVariantConsumptionExpression(
+  instance: FigNode,
+): { readonly expression: FigVariableExpression; readonly nodeField?: number } | undefined {
+  return (
+    findVariableConsumptionExpression(instance.variableConsumptionMap) ??
+    findVariableConsumptionExpression(instance.parameterConsumptionMap)
+  );
+}
+
+// =============================================================================
+// Variable mode context
+// =============================================================================
+
+/**
+ * Merge variable-mode selections inherited from the render/instance
+ * ancestry with the selections authored on the current Kiwi node.
+ *
+ * A map with zero entries contributes no selected modes; it does not
+ * reset inherited modes. Concrete entries override inherited entries
+ * for the same variable set because the nearest node owns the active
+ * Figma mode for that set.
+ */
+export function mergeVariableModeBySetMap(
+  inherited: FigKiwiVariableModeBySetMap | undefined,
+  local: FigKiwiVariableModeBySetMap | undefined,
+): FigKiwiVariableModeBySetMap | undefined {
+  const localEntries = local?.entries ?? [];
+  if (localEntries.length === 0) {
+    return inherited;
+  }
+  if (inherited === undefined || inherited.entries.length === 0) {
+    return { entries: localEntries };
+  }
+  const entries = new Map<string, FigKiwiVariableModeBySetMapEntry>();
+  for (const entry of inherited.entries) {
+    entries.set(variableModeEntrySetKey(entry), entry);
+  }
+  for (const entry of localEntries) {
+    entries.set(variableModeEntrySetKey(entry), entry);
+  }
+  return { entries: Array.from(entries.values()) };
 }
 
 // =============================================================================
@@ -177,16 +216,21 @@ function extractMapEntries(expr: FigVariableExpression): readonly FigVariableMap
 }
 
 /**
- * Try to resolve a `VariableData` to its concrete property-value
- * string. Returns `undefined` when the value is an alias to a
- * library-only variable whose value is not carried by this .fig.
+ * Try to resolve a `VariableData` to its concrete property-value string.
  *
- * (Local-variable aliasing — `alias` pointing at a `FigGuid` whose
- * variable definition lives in the same .fig — would also need a
- * variable resolver wired in here. Until that arrives we stay
- * conservative: only literal `text` and `bool` values resolve.)
+ * Local aliases are resolved against Kiwi VARIABLE nodes in the same
+ * document, including the active `variableModeBySetMap`. Library-only
+ * aliases whose VARIABLE node is not carried by this .fig remain
+ * unresolved so target selection fails visibly instead of substituting.
  */
-function resolveVariableLiteral(data: FigKiwiVariableData | undefined): string | undefined {
+function resolveVariableLiteral(
+  data: FigKiwiVariableData | undefined,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  },
+  seenVariableKeys: ReadonlySet<string> = new Set(),
+): string | undefined {
   const projected = projectVariableAnyValue(data?.value);
   if (!projected) {
     return undefined;
@@ -200,8 +244,225 @@ function resolveVariableLiteral(data: FigKiwiVariableData | undefined): string |
   if (projected.kind === "float") {
     return String(projected.value);
   }
-  // alias / color / expression / map — not directly a property literal.
+  if (projected.kind === "alias") {
+    return resolveVariableAliasLiteral(projected.value, input, seenVariableKeys);
+  }
+  // color / expression / map — not directly a property literal.
   return undefined;
+}
+
+function resolveVariableAliasLiteral(
+  id: FigVariableID,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  },
+  seenVariableKeys: ReadonlySet<string>,
+): string | undefined {
+  const aliased = resolveLocalVariableAliasData(id, input, seenVariableKeys);
+  if (aliased === undefined) {
+    return undefined;
+  }
+  const nextSeen = new Set([...seenVariableKeys, variableIdKey(id)]);
+  return resolveVariableLiteral(aliased, input, nextSeen);
+}
+
+function resolveLocalVariableAliasData(
+  id: FigVariableID,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  },
+  seenVariableKeys: ReadonlySet<string>,
+): FigKiwiVariableData | undefined {
+  const key = variableIdKey(id);
+  if (seenVariableKeys.has(key)) {
+    throw new Error(`VariableResolver: cyclic variable alias ${key}`);
+  }
+  const variable = resolveLocalVariableNode(id, input.document);
+  if (variable === undefined) {
+    return undefined;
+  }
+  const modeID = resolveVariableModeID(variable, input);
+  return requireVariableDataForMode(variable, modeID);
+}
+
+function resolveLocalVariableNode(id: FigVariableID, document: FigKiwiDocumentIndex): FigNode | undefined {
+  if ("assetRef" in id && id.assetRef !== undefined) {
+    return findVariableNodeByAssetKey(document, id.assetRef.key);
+  }
+  if (!("sessionID" in id) || !("localID" in id)) {
+    throw new Error("VariableResolver: VariableID must carry either assetRef or guid");
+  }
+  const node = findNodeByGuid(document, id);
+  if (node === undefined) {
+    throw new Error(`VariableResolver: local variable guid ${guidToString(id)} is missing from the Kiwi document`);
+  }
+  if (getNodeType(node) !== FIG_NODE_TYPE.VARIABLE) {
+    throw new Error(`VariableResolver: local variable guid ${guidToString(id)} points to ${getNodeType(node)}`);
+  }
+  return node;
+}
+
+function findVariableNodeByAssetKey(document: FigKiwiDocumentIndex, key: string): FigNode | undefined {
+  const matches = document.nodeChanges.filter((node) => getNodeType(node) === FIG_NODE_TYPE.VARIABLE && node.key === key);
+  if (matches.length > 1) {
+    throw new Error(`VariableResolver: assetRef ${key} resolves to multiple local VARIABLE nodes`);
+  }
+  return matches[0];
+}
+
+function resolveVariableModeID(
+  variable: FigNode,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  },
+): FigGuid {
+  const variableSetID = variable.variableSetID;
+  if (variableSetID === undefined) {
+    throw new Error(`VariableResolver: VARIABLE ${guidToString(variable.guid)} is missing variableSetID`);
+  }
+  const selected = selectedVariableModeID(variableSetID, input.variableModeBySetMap);
+  if (selected !== undefined) {
+    return selected;
+  }
+  const valueEntries = variable.variableDataValues?.entries ?? [];
+  if (valueEntries.length === 1) {
+    return requireVariableDataValueModeID(variable, valueEntries[0]!);
+  }
+  return requireVariableSetDefaultModeID(variable, variableSetID, input.document);
+}
+
+function selectedVariableModeID(
+  variableSetID: FigGuidOrAssetRefId,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigGuid | undefined {
+  const entries = modeMap?.entries ?? [];
+  if (entries.length === 0) {
+    return undefined;
+  }
+  const setKey = variableSetRefKey(variableSetID);
+  const matches = entries.filter((entry) => variableModeEntrySetKey(entry) === setKey);
+  if (matches.length > 1) {
+    throw new Error(`VariableResolver: variableModeBySetMap contains multiple entries for ${setKey}`);
+  }
+  const match = matches[0];
+  if (match === undefined) {
+    return undefined;
+  }
+  if (match.variableModeID === undefined) {
+    throw new Error(`VariableResolver: variableModeBySetMap entry for ${setKey} is missing variableModeID`);
+  }
+  return match.variableModeID;
+}
+
+function requireVariableSetDefaultModeID(
+  variable: FigNode,
+  variableSetID: FigGuidOrAssetRefId,
+  document: FigKiwiDocumentIndex,
+): FigGuid {
+  const set = resolveLocalVariableSetNode(variableSetID, document);
+  if (set === undefined) {
+    throw new Error(`VariableResolver: VARIABLE ${guidToString(variable.guid)} has multiple values but its VARIABLE_SET is missing`);
+  }
+  const first = set.variableSetModes?.[0];
+  if (first === undefined) {
+    throw new Error(`VariableResolver: VARIABLE_SET ${guidToString(set.guid)} has no variableSetModes`);
+  }
+  if (first.id === undefined) {
+    throw new Error(`VariableResolver: VARIABLE_SET ${guidToString(set.guid)} has a mode without id`);
+  }
+  return first.id;
+}
+
+function resolveLocalVariableSetNode(id: FigGuidOrAssetRefId, document: FigKiwiDocumentIndex): FigNode | undefined {
+  if (id.guid !== undefined) {
+    return requireVariableSetNodeByGuid(document, id.guid);
+  }
+  if (id.assetRef !== undefined) {
+    return findVariableSetNodeByAssetKey(document, id.assetRef.key);
+  }
+  throw new Error("VariableResolver: variableSetID must carry either guid or assetRef");
+}
+
+function requireVariableSetNodeByGuid(document: FigKiwiDocumentIndex, guid: FigGuid): FigNode {
+  const node = findNodeByGuid(document, guid);
+  if (node === undefined) {
+    throw new Error(`VariableResolver: local VARIABLE_SET guid ${guidToString(guid)} is missing from the Kiwi document`);
+  }
+  if (getNodeType(node) !== FIG_NODE_TYPE.VARIABLE_SET) {
+    throw new Error(`VariableResolver: local VARIABLE_SET guid ${guidToString(guid)} points to ${getNodeType(node)}`);
+  }
+  return node;
+}
+
+function findVariableSetNodeByAssetKey(document: FigKiwiDocumentIndex, key: string): FigNode | undefined {
+  const matches = document.nodeChanges.filter((node) => getNodeType(node) === FIG_NODE_TYPE.VARIABLE_SET && node.key === key);
+  if (matches.length > 1) {
+    throw new Error(`VariableResolver: assetRef ${key} resolves to multiple local VARIABLE_SET nodes`);
+  }
+  return matches[0];
+}
+
+function requireVariableDataForMode(variable: FigNode, modeID: FigGuid): FigKiwiVariableData {
+  const valueEntries = variable.variableDataValues?.entries;
+  if (valueEntries === undefined || valueEntries.length === 0) {
+    throw new Error(`VariableResolver: VARIABLE ${guidToString(variable.guid)} has no variableDataValues`);
+  }
+  const matches = valueEntries.filter((entry) => figGuidEquals(entry.modeID, modeID));
+  if (matches.length !== 1) {
+    throw new Error(
+      `VariableResolver: VARIABLE ${guidToString(variable.guid)} has ${matches.length} values for mode ${guidToString(modeID)}`,
+    );
+  }
+  const data = matches[0]!.variableData;
+  if (data === undefined) {
+    throw new Error(`VariableResolver: VARIABLE ${guidToString(variable.guid)} mode ${guidToString(modeID)} is missing variableData`);
+  }
+  return data;
+}
+
+function requireVariableDataValueModeID(
+  variable: FigNode,
+  entry: NonNullable<FigNode["variableDataValues"]>["entries"][number],
+): FigGuid {
+  if (entry.modeID === undefined) {
+    throw new Error(`VariableResolver: VARIABLE ${guidToString(variable.guid)} has a variableDataValues entry without modeID`);
+  }
+  return entry.modeID;
+}
+
+function variableIdKey(id: FigVariableID): string {
+  if ("assetRef" in id && id.assetRef !== undefined) {
+    return `asset:${id.assetRef.key}`;
+  }
+  if (!("sessionID" in id) || !("localID" in id)) {
+    throw new Error("VariableResolver: VariableID must carry either assetRef or guid");
+  }
+  return `guid:${guidToString(id)}`;
+}
+
+function variableModeEntrySetKey(entry: FigKiwiVariableModeBySetMapEntry): string {
+  const variableSetID = entry.variableSetID;
+  if (variableSetID === undefined) {
+    throw new Error("VariableResolver: variableModeBySetMap entry is missing variableSetID");
+  }
+  return variableSetRefKey(variableSetID);
+}
+
+function variableSetRefKey(id: FigGuidOrAssetRefId): string {
+  if (id.guid !== undefined) {
+    return `guid:${guidToString(id.guid)}`;
+  }
+  if (id.assetRef !== undefined) {
+    return `asset:${id.assetRef.key}`;
+  }
+  throw new Error("VariableResolver: variableSetID must carry either guid or assetRef");
+}
+
+function figGuidEquals(left: FigGuid | undefined, right: FigGuid): boolean {
+  return left !== undefined && left.sessionID === right.sessionID && left.localID === right.localID;
 }
 
 /**
@@ -269,9 +530,10 @@ export function resolveVariantOverride(
   input: {
     readonly document: FigKiwiDocumentIndex;
     readonly childrenOf: (node: FigNode) => readonly FigNode[];
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
   },
 ): ResolveVariantResult {
-  const located = findVariableConsumptionExpression(instance.variableConsumptionMap);
+  const located = findVariantConsumptionExpression(instance);
   if (!located) {
     return { resolvedSymbolID: undefined, unresolvedReason: "no-vcm-expression" };
   }
@@ -291,9 +553,9 @@ export function resolveVariantOverride(
   // any entry is a library alias, there is no local Kiwi value to
   // compare. A partial resolution would silently pick a different
   // variant, so SymbolResolver must keep the authored target instead.
-  const requestedProps = new Map<string, string>();
+  const requestedProps = parseVariantPropertiesFromSpecs(symbolNode, container);
   for (const entry of mapEntries) {
-    const literal = resolveVariableLiteral(entry.value);
+    const literal = resolveVariableLiteral(entry.value, input);
     if (literal === undefined) {
       return { resolvedSymbolID: undefined, unresolvedReason: "unresolved-aliases" };
     }

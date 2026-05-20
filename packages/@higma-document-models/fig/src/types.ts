@@ -1084,13 +1084,28 @@ export type FigKiwiVariableDataMap = {
   readonly entries: readonly FigKiwiVariableDataMapEntry[];
 };
 
+export type FigKiwiVariableDataValueEntry = {
+  readonly modeID?: FigGuid;
+  readonly variableData?: FigKiwiVariableData;
+};
+
+export type FigKiwiVariableDataValues = {
+  readonly entries: readonly FigKiwiVariableDataValueEntry[];
+};
+
+export type FigKiwiVariableSetMode = {
+  readonly id?: FigGuid;
+  readonly name?: string;
+  readonly sortPosition?: string;
+};
+
 /**
  * `variableModeBySetMap` lists which mode a variable-set is currently
  * pinned to — e.g. "Mode=Light" for the iOS color set. Each entry
  * names a `variableSetID` and a `variableModeID`.
  */
 export type FigKiwiVariableModeBySetMapEntry = {
-  readonly variableSetID?: { readonly assetRef?: { readonly key: string; readonly version?: string } };
+  readonly variableSetID?: FigGuidOrAssetRefId;
   readonly variableModeID?: FigGuid;
 };
 
@@ -1552,6 +1567,16 @@ export type FigNode = {
   readonly parameterConsumptionMap?: FigKiwiVariableDataMap;
   /** Active mode per variable-set referenced by this INSTANCE / its ancestors. */
   readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  /** Variable-set modes on VARIABLE_SET nodes. */
+  readonly variableSetModes?: readonly FigKiwiVariableSetMode[];
+  /** Owning variable set on VARIABLE nodes. */
+  readonly variableSetID?: FigGuidOrAssetRefId;
+  /** Concrete per-mode values on VARIABLE nodes. */
+  readonly variableDataValues?: FigKiwiVariableDataValues;
+  /** Resolved primitive type on VARIABLE nodes. */
+  readonly variableResolvedType?: KiwiEnumValue;
+  /** Human-readable token path on VARIABLE nodes. */
+  readonly variableTokenName?: string;
 
   // ---- Style-definition fields (shared-style proxy nodes) ----
   /**

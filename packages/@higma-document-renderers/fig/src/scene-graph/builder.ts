@@ -9,10 +9,16 @@
  */
 
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigFillGeometry, FigNode, FigPaint, FigStyleId } from "@higma-document-models/fig/types";
+import type { FigFillGeometry, FigKiwiVariableModeBySetMap, FigNode, FigPaint, FigStyleId } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
-import { formatNodeLocator, resolveStyledEffects, resolveStyledPaint, type SymbolResolver } from "@higma-document-models/fig/symbols";
+import {
+  formatNodeLocator,
+  mergeVariableModeBySetMap,
+  resolveStyledEffects,
+  resolveStyledPaint,
+  type SymbolResolver,
+} from "@higma-document-models/fig/symbols";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import { resolveAutoLayoutFrame } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type {
@@ -320,6 +326,7 @@ type BuildContext = {
   readonly showHiddenNodes: boolean;
   readonly warnings: string[];
   readonly textFontResolver: TextFontResolver | undefined;
+  readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
   readonly previousCache?: SceneGraphBuildCache;
   readonly nextNodesBySource: WeakMap<FigNode, SceneNode>;
   /**
@@ -984,6 +991,14 @@ function withChildrenOf(ctx: BuildContext, childrenOf: (node: FigNode) => readon
   return { ...ctx, childrenOf };
 }
 
+function withNodeVariableModeBySetMap(ctx: BuildContext, node: FigNode): BuildContext {
+  const variableModeBySetMap = mergeVariableModeBySetMap(ctx.variableModeBySetMap, node.variableModeBySetMap);
+  if (variableModeBySetMap === ctx.variableModeBySetMap) {
+    return ctx;
+  }
+  return { ...ctx, variableModeBySetMap };
+}
+
 // =============================================================================
 // Recursive Builder
 // =============================================================================
@@ -1000,14 +1015,15 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
     return null;
   }
 
+  const nodeCtx = withNodeVariableModeBySetMap(ctx, node);
   const typeName = getNodeType(node);
-  const children = ctx.childrenOf(node);
+  const children = nodeCtx.childrenOf(node);
 
   switch (typeName) {
     case "DOCUMENT":
     case "CANVAS": {
-      const childNodes = buildChildren(children, ctx);
-      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
+      const childNodes = buildChildren(children, nodeCtx);
+      return cacheBuiltNode(node, buildGroupNode(node, nodeCtx, childNodes), ctx);
     }
 
     case "FRAME":
@@ -1015,21 +1031,23 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
     case "SLIDE":
     case "SYMBOL": {
       const resolved = resolveAutoLayoutFrame(node, children);
-      const childNodes = buildChildren(resolved.children, ctx);
-      return cacheBuiltNode(node, buildFrameNode(resolved.parent, ctx, childNodes), ctx);
+      const childNodes = buildChildren(resolved.children, nodeCtx);
+      return cacheBuiltNode(node, buildFrameNode(resolved.parent, nodeCtx, childNodes), ctx);
     }
 
     case "INSTANCE": {
-      const resolved = ctx.symbolResolver.resolveInstance(node);
+      const resolved = nodeCtx.symbolResolver.resolveInstance(node, {
+        variableModeBySetMap: nodeCtx.variableModeBySetMap,
+      });
       const layoutResolved = resolveAutoLayoutFrame(resolved.node, resolved.children);
-      const resolvedCtx = withChildrenOf(ctx, ctx.symbolResolver.childrenOfResolvedNode);
+      const resolvedCtx = withChildrenOf(nodeCtx, nodeCtx.symbolResolver.childrenOfResolvedNode);
       const childNodes = buildChildren(layoutResolved.children, resolvedCtx);
-      return cacheBuiltNode(node, buildFrameNode(layoutResolved.parent, ctx, childNodes), ctx);
+      return cacheBuiltNode(node, buildFrameNode(layoutResolved.parent, nodeCtx, childNodes), ctx);
     }
 
     case "GROUP": {
-      const childNodes = buildChildren(children, ctx);
-      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
+      const childNodes = buildChildren(children, nodeCtx);
+      return cacheBuiltNode(node, buildGroupNode(node, nodeCtx, childNodes), ctx);
     }
 
     case "BOOLEAN_OPERATION": {
@@ -1038,12 +1056,12 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
         (node.fillGeometry !== undefined && node.fillGeometry.length > 0) ||
         (node.strokeGeometry !== undefined && node.strokeGeometry.length > 0);
       if (hasMergedGeometry) {
-        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+        return cacheBuiltNode(node, buildVectorNode(node, nodeCtx), ctx);
       }
       // 2. Compute boolean operation from child geometries using path-bool
-      const resultPaths = computeBooleanResultFromNode(node, ctx);
+      const resultPaths = computeBooleanResultFromNode(node, nodeCtx);
       if (resultPaths && resultPaths.length > 0) {
-        return cacheBuiltNode(node, buildBooleanOperationNode(node, ctx, resultPaths), ctx);
+        return cacheBuiltNode(node, buildBooleanOperationNode(node, nodeCtx, resultPaths), ctx);
       }
       throw new Error(`Boolean operation  has neither merged geometry nor computable child paths`);
     }
@@ -1051,27 +1069,27 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
       if (hasKiwiVectorPaths(node) || hasKiwiShapeGeometry(node)) {
-        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+        return cacheBuiltNode(node, buildVectorNode(node, nodeCtx), ctx);
       }
-      return cacheBuiltNode(node, buildRectNode(node, ctx), ctx);
+      return cacheBuiltNode(node, buildRectNode(node, nodeCtx), ctx);
 
     case "ELLIPSE":
       if (hasKiwiVectorPaths(node) || hasKiwiShapeGeometry(node)) {
-        return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+        return cacheBuiltNode(node, buildVectorNode(node, nodeCtx), ctx);
       }
-      return cacheBuiltNode(node, buildEllipseNode(node, ctx), ctx);
+      return cacheBuiltNode(node, buildEllipseNode(node, nodeCtx), ctx);
 
     case "VECTOR":
     case "LINE":
     case "STAR":
     case "REGULAR_POLYGON":
-      return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
+      return cacheBuiltNode(node, buildVectorNode(node, nodeCtx), ctx);
 
     case "TEXT":
-      return cacheBuiltNode(node, buildTextNode(node, ctx), ctx);
+      return cacheBuiltNode(node, buildTextNode(node, nodeCtx), ctx);
 
     default:
-      return buildUnknownNodeTypeGroup(node, children, ctx);
+      return buildUnknownNodeTypeGroup(node, children, nodeCtx);
   }
 }
 

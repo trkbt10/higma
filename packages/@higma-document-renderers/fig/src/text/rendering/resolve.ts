@@ -220,15 +220,139 @@ function baselineLineStrings(
     return undefined;
   }
   return baselines.map((baseline) => {
-    if (typeof baseline.firstCharacter !== "number" || typeof baseline.endCharacter !== "number") {
-      throw new Error("text-resolve:baseline-line-metrics:invalid-character-range");
-    }
-    return characters.slice(baseline.firstCharacter, baseline.endCharacter);
+    const range = readBaselineCharacterRange(baseline);
+    return characters.slice(range.firstCharacter, range.endCharacter);
   });
 }
 
 function sumWidths(widths: readonly number[]): number {
   return widths.reduce((sum, width) => sum + width, 0);
+}
+
+type BaselineCharacterRange = {
+  readonly firstCharacter: number;
+  readonly endCharacter: number;
+};
+
+type SourceCharacterRange = {
+  readonly paragraphIndex: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
+};
+
+type BaselineSourceLineBase = {
+  readonly text: string;
+  readonly paragraphIndex: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
+  readonly width: number;
+  readonly baselineX: number;
+  readonly baselineY: number;
+};
+
+function readBaselineCharacterRange(
+  baseline: NonNullable<FigDerivedTextData["baselines"]>[number],
+): BaselineCharacterRange {
+  if (typeof baseline.firstCharacter !== "number" || typeof baseline.endCharacter !== "number") {
+    throw new Error("text-resolve:baseline-line-metrics:invalid-character-range");
+  }
+  if (baseline.firstCharacter < 0 || baseline.endCharacter < baseline.firstCharacter) {
+    throw new Error("text-resolve:baseline-line-metrics:invalid-character-range");
+  }
+  return {
+    firstCharacter: baseline.firstCharacter,
+    endCharacter: baseline.endCharacter,
+  };
+}
+
+function paragraphEndForStart(
+  characters: string,
+  paragraphStarts: readonly number[],
+  paragraphIndex: number,
+): number {
+  const nextStart = paragraphStarts[paragraphIndex + 1];
+  if (nextStart === undefined) {
+    return characters.length;
+  }
+  return nextStart - 1;
+}
+
+function paragraphIndexForCharacter(
+  paragraphStarts: readonly number[],
+  firstCharacter: number,
+): number {
+  const followingIndex = paragraphStarts.findIndex((start) => start > firstCharacter);
+  if (followingIndex === -1) {
+    return paragraphStarts.length - 1;
+  }
+  return followingIndex - 1;
+}
+
+function sourceRangeForCharacterRange(
+  characters: string,
+  range: BaselineCharacterRange,
+): SourceCharacterRange {
+  const paragraphStarts = paragraphStartOffsets(characters);
+  const paragraphIndex = paragraphIndexForCharacter(paragraphStarts, range.firstCharacter);
+  const paragraphStart = paragraphStarts[paragraphIndex];
+  if (paragraphStart === undefined) {
+    throw new Error("text-resolve:baseline-line-metrics:missing-paragraph-start");
+  }
+  const paragraphEnd = paragraphEndForStart(characters, paragraphStarts, paragraphIndex);
+  if (range.endCharacter > paragraphEnd) {
+    throw new Error("text-resolve:baseline-line-metrics:range-crosses-paragraph");
+  }
+  return {
+    paragraphIndex,
+    sourceStart: range.firstCharacter - paragraphStart,
+    sourceEnd: range.endCharacter - paragraphStart,
+  };
+}
+
+function requireFiniteBaselineMetric(value: number | undefined, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`text-resolve:baseline-line-metrics:invalid-${field}`);
+  }
+  return value;
+}
+
+function resolveBaselineLineWidth(
+  dtd: FigDerivedTextData,
+  baseline: NonNullable<FigDerivedTextData["baselines"]>[number],
+  index: number,
+): number {
+  const derivedWidth = dtd.derivedLines?.[index]?.width;
+  if (derivedWidth !== undefined) {
+    return requireFiniteBaselineMetric(derivedWidth, "derived-width");
+  }
+  return requireFiniteBaselineMetric(baseline.width, "width");
+}
+
+function baselineSourceLineBase(params: {
+  readonly dtd: FigDerivedTextData;
+  readonly characters: string;
+  readonly text: string;
+  readonly index: number;
+}): BaselineSourceLineBase | undefined {
+  const baselines = params.dtd.baselines;
+  if (!Array.isArray(baselines) || baselines.length === 0) {
+    return undefined;
+  }
+  const baseline = baselines[params.index];
+  if (baseline === undefined) {
+    throw new Error("text-resolve:derived-line-metrics:missing-baseline");
+  }
+  const range = readBaselineCharacterRange(baseline);
+  const sourceRange = sourceRangeForCharacterRange(params.characters, range);
+  return {
+    text: params.text,
+    paragraphIndex: sourceRange.paragraphIndex,
+    sourceStart: sourceRange.sourceStart,
+    sourceEnd: sourceRange.sourceEnd,
+    width: resolveBaselineLineWidth(params.dtd, baseline, params.index),
+    baselineX: requireFiniteBaselineMetric(baseline.position?.x, "position-x"),
+    baselineY: requireFiniteBaselineMetric(baseline.position?.y, "position-y"),
+  };
 }
 
 function measuredSourceLine(params: {
@@ -238,6 +362,8 @@ function measuredSourceLine(params: {
   readonly sourceEnd: number;
   readonly charWidths: readonly number[];
   readonly width?: number;
+  readonly baselineX?: number;
+  readonly baselineY?: number;
 }): TextLayoutSourceLine {
   if (params.charWidths.length !== params.text.length) {
     throw new Error("text-resolve:line-metrics:character-width-length-mismatch");
@@ -254,6 +380,8 @@ function measuredSourceLine(params: {
     sourceEnd: params.sourceEnd,
     width: params.width ?? sumWidths(params.charWidths),
     charWidths: params.charWidths,
+    baselineX: params.baselineX,
+    baselineY: params.baselineY,
   };
 }
 
@@ -282,6 +410,7 @@ function derivedGlyphPositionBySourceIndex(dtd: FigDerivedTextData): ReadonlyMap
 
 function derivedLineWidthsFromGlyphs(
   dtd: FigDerivedTextData,
+  characters: string,
   lineTexts: readonly string[],
 ): readonly TextLayoutSourceLine[] | undefined {
   const glyphsBySourceIndex = derivedGlyphPositionBySourceIndex(dtd);
@@ -293,22 +422,33 @@ function derivedLineWidthsFromGlyphs(
     if (baseline === undefined) {
       throw new Error("text-resolve:derived-line-metrics:missing-baseline");
     }
+    const base = baselineSourceLineBase({
+      dtd,
+      characters,
+      text,
+      index,
+    });
+    if (base === undefined) {
+      throw new Error("text-resolve:derived-line-metrics:missing-baseline");
+    }
     const charWidths: number[] = [];
     for (let offset = 0; offset < text.length; offset += 1) {
       const sourceIndex = baseline.firstCharacter + offset;
       charWidths.push(derivedGlyphWidthForSourceIndex({
         glyphsBySourceIndex,
         sourceIndex,
-        lineEndX: baseline.position.x + baseline.width,
+        lineEndX: base.baselineX + base.width,
       }));
     }
     return measuredSourceLine({
       text,
-      paragraphIndex: index,
-      sourceStart: 0,
-      sourceEnd: text.length,
+      paragraphIndex: base.paragraphIndex,
+      sourceStart: base.sourceStart,
+      sourceEnd: base.sourceEnd,
       charWidths,
-      width: dtd.derivedLines?.[index]?.width ?? baseline.width,
+      width: base.width,
+      baselineX: base.baselineX,
+      baselineY: base.baselineY,
     });
   });
 }
@@ -331,16 +471,51 @@ function derivedGlyphWidthForSourceIndex(input: {
 }
 
 function lineMetricsFromMeasurer(
+  dtd: FigDerivedTextData,
+  characters: string,
   lineTexts: readonly string[],
   measureCharWidths: (text: string) => readonly number[],
 ): readonly TextLayoutSourceLine[] {
-  return lineTexts.map((text, index) => measuredSourceLine({
-    text,
-    paragraphIndex: index,
-    sourceStart: 0,
-    sourceEnd: text.length,
-    charWidths: measureCharWidths(text),
-  }));
+  return lineTexts.map((text, index) => {
+    const base = baselineSourceLineBase({ dtd, characters, text, index });
+    if (base !== undefined) {
+      return measuredSourceLine({
+        text,
+        paragraphIndex: base.paragraphIndex,
+        sourceStart: base.sourceStart,
+        sourceEnd: base.sourceEnd,
+        charWidths: measureCharWidths(text),
+        width: base.width,
+        baselineX: base.baselineX,
+        baselineY: base.baselineY,
+      });
+    }
+    return measuredSourceLine({
+      text,
+      paragraphIndex: index,
+      sourceStart: 0,
+      sourceEnd: text.length,
+      charWidths: measureCharWidths(text),
+    });
+  });
+}
+
+function lineMetricsFromBaselines(
+  dtd: FigDerivedTextData,
+  characters: string,
+  lineTexts: readonly string[],
+): readonly TextLayoutSourceLine[] | undefined {
+  const baselines = dtd.baselines;
+  if (!Array.isArray(baselines) || baselines.length === 0) {
+    return undefined;
+  }
+  return lineTexts.map((text, index) => {
+    const base = baselineSourceLineBase({ dtd, characters, text, index });
+    if (base === undefined) {
+      throw new Error("text-resolve:derived-line-metrics:missing-baseline");
+    }
+    return base;
+  });
 }
 
 function resolveDerivedLayoutLines(
@@ -355,12 +530,16 @@ function resolveDerivedLayoutLines(
   if (dtd === undefined) {
     return undefined;
   }
-  const derivedLines = derivedLineWidthsFromGlyphs(dtd, lineTexts);
+  const derivedLines = derivedLineWidthsFromGlyphs(dtd, props.characters, lineTexts);
   if (derivedLines !== undefined) {
     return derivedLines;
   }
   if (measureCharWidths !== undefined) {
-    return lineMetricsFromMeasurer(lineTexts, measureCharWidths);
+    return lineMetricsFromMeasurer(dtd, props.characters, lineTexts, measureCharWidths);
+  }
+  const baselineLines = lineMetricsFromBaselines(dtd, props.characters, lineTexts);
+  if (baselineLines !== undefined) {
+    return baselineLines;
   }
   throw new Error("text-resolve:derived-line-metrics:requires-font-or-glyph-advances");
 }
@@ -753,7 +932,8 @@ export function resolveTextLayout(
  *      with tail-ellipsis truncation applied to the source characters
  *      when Figma's layout engine has pre-computed a truncationStartIndex.
  *
- * The resolver never fails: an empty-text node returns `{ kind: "empty" }`.
+ * Missing required sources still fail-fast: an empty-text node is the only
+ * case that returns `{ kind: "empty" }` without resolving metrics.
  */
 export function resolveTextRendering(
   node: TruncatableTextNode,

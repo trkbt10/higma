@@ -11,9 +11,9 @@
  */
 
 import { figmaFontToQuery, fontQueryKey, type FontQuery } from "../query";
-import type { FigFontName, FigNode } from "../../types";
+import type { FigFontName, FigKiwiVariableModeBySetMap, FigNode } from "../../types";
 import { getNodeType, guidToString } from "../../domain";
-import type { SymbolResolver } from "../../symbols";
+import { mergeVariableModeBySetMap, type SymbolResolver } from "../../symbols";
 
 /**
  * Minimal TEXT-bearing subset read by this module. It is intentionally
@@ -83,29 +83,38 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     }
   }
 
-  function walk(node: FigNode | undefined | null, childrenOf: (node: FigNode) => readonly FigNode[]): void {
+  function walk(
+    node: FigNode | undefined | null,
+    childrenOf: (node: FigNode) => readonly FigNode[],
+    inheritedVariableModeBySetMap: FigKiwiVariableModeBySetMap | undefined,
+  ): void {
     if (!node) {
       return;
     }
+    const variableModeBySetMap = mergeVariableModeBySetMap(inheritedVariableModeBySetMap, node.variableModeBySetMap);
     const typed = node as FontBearingNode;
     if (getNodeType(node) === "TEXT") {
       collectTextNodeFonts(typed);
     }
     if (getNodeType(node) === "INSTANCE") {
-      walkResolvedInstance(node);
+      walkResolvedInstance(node, variableModeBySetMap);
       return;
     }
     for (const child of childrenOf(node)) {
-      walk(child, childrenOf);
+      walk(child, childrenOf, variableModeBySetMap);
     }
   }
 
-  function walkResolvedInstance(node: FigNode): void {
-    const reference = input.symbolResolver.resolveReferences(node).effectiveSymbol;
+  function walkResolvedInstance(
+    node: FigNode,
+    variableModeBySetMap: FigKiwiVariableModeBySetMap | undefined,
+  ): void {
+    const scope = { variableModeBySetMap };
+    const reference = input.symbolResolver.resolveReferences(node, scope).effectiveSymbol;
     if (reference === undefined) {
-      const resolved = input.symbolResolver.resolveInstance(node);
+      const resolved = input.symbolResolver.resolveInstance(node, scope);
       for (const child of resolved.children) {
-        walk(child, input.symbolResolver.childrenOfResolvedNode);
+        walk(child, input.symbolResolver.childrenOfResolvedNode, variableModeBySetMap);
       }
       return;
     }
@@ -118,9 +127,9 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     }
     activeSymbols.add(key);
     try {
-      const resolved = input.symbolResolver.resolveInstance(node);
+      const resolved = input.symbolResolver.resolveInstance(node, scope);
       for (const child of resolved.children) {
-        walk(child, input.symbolResolver.childrenOfResolvedNode);
+        walk(child, input.symbolResolver.childrenOfResolvedNode, variableModeBySetMap);
       }
     } finally {
       activeSymbols.delete(key);
@@ -128,7 +137,7 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
   }
 
   for (const root of input.roots) {
-    walk(root, input.childrenOf);
+    walk(root, input.childrenOf, undefined);
   }
 
   return { queries };

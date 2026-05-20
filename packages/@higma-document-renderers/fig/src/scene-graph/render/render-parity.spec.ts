@@ -401,6 +401,25 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
+  it("keeps LINEAR_DODGE effect blend as plus-lighter", () => {
+    const effects: Effect[] = [{
+      type: "drop-shadow",
+      offset: { x: 0, y: 2 },
+      radius: 8,
+      color: WHITE,
+      blendMode: "plus-lighter",
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+
+    expect(result).toBeDefined();
+    const blend = result!.primitives.find((primitive) => primitive.type === "feBlend");
+    expect(blend?.type).toBe("feBlend");
+    if (blend?.type === "feBlend") {
+      expect(blend.mode).toBe("plus-lighter");
+    }
+  });
+
   it("resolves SHARP drop shadow (radius=0) using Figma's hardAlpha-out recipe", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",

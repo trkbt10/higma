@@ -7,7 +7,7 @@
  * or React elements. Each consumer formats them for its own output.
  */
 
-import type { Effect, Color, BlendMode } from "@higma-document-renderers/fig/scene-graph";
+import type { Effect, Color, BlendMode, DropShadowEffect, InnerShadowEffect, LayerBlurEffect } from "@higma-document-renderers/fig/scene-graph";
 import type { IdGenerator } from "./fill";
 
 // =============================================================================
@@ -34,6 +34,8 @@ export type FeBlendMode =
   | "soft-light"
   | "difference"
   | "exclusion"
+  | "plus-darker"
+  | "plus-lighter"
   | "hue"
   | "saturation"
   | "color"
@@ -112,6 +114,8 @@ function effectBlendModeToSvg(bm: BlendMode | undefined): FeBlendMode {
     case "soft-light":
     case "difference":
     case "exclusion":
+    case "plus-darker":
+    case "plus-lighter":
     case "hue":
     case "saturation":
     case "color":
@@ -138,6 +142,27 @@ function resolvePositiveDirectionExpansion(isNormalBlend: boolean, totalExpansio
   if (isNormalBlend) { return Math.max(0, totalExpansion + offset); }
   if (offset < 0) { return 0; }
   return totalExpansion + offset;
+}
+
+function appendBlendPrimitive(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly mode: FeBlendMode;
+  readonly input: string;
+  readonly resultPrefix: string;
+}): string {
+  if (params.mode === "normal") {
+    return params.input;
+  }
+  const result = params.ids.getNextId(params.resultPrefix);
+  params.primitives.push({
+    type: "feBlend",
+    mode: params.mode,
+    in: params.input,
+    in2: "SourceGraphic",
+    result,
+  });
+  return result;
 }
 
 /**
@@ -237,19 +262,13 @@ export function resolveEffects(
             { type: "feFlood", floodColor: colorToRgb(c), floodOpacity: c.a, result: floodResult },
             { type: "feComposite", in: floodResult, in2: compositedResult, operator: "in", result: tintedResult },
           );
-          if (blendMode !== "normal") {
-            const blendedResult = ids.getNextId("drop-blended");
-            primitives.push({
-              type: "feBlend",
-              mode: blendMode,
-              in: tintedResult,
-              in2: "SourceGraphic",
-              result: blendedResult,
-            });
-            dropShadowResults.push(blendedResult);
-          } else {
-            dropShadowResults.push(tintedResult);
-          }
+          dropShadowResults.push(appendBlendPrimitive({
+            primitives,
+            ids,
+            mode: blendMode,
+            input: tintedResult,
+            resultPrefix: "drop-blended",
+          }));
           break;
         }
 
@@ -320,22 +339,13 @@ export function resolveEffects(
             { type: "feComposite", in2: hardAlphaResult, operator: "out", result: compositedResult },
             { type: "feColorMatrix", in: compositedResult, matrixType: "matrix", values: buildColorMatrix(c), result: tintedResult },
           );
-          if (blendMode !== "normal") {
-            primitives.push({
-              type: "feBlend",
-              mode: blendMode,
-              in: tintedResult,
-              in2: "SourceGraphic",
-              result: ids.getNextId("drop-blended"),
-            });
-            // The blended result is the last-pushed primitive's result.
-            const last = primitives[primitives.length - 1];
-            if (last.type === "feBlend" && last.result) {
-              dropShadowResults.push(last.result);
-            }
-          } else {
-            dropShadowResults.push(tintedResult);
-          }
+          dropShadowResults.push(appendBlendPrimitive({
+            primitives,
+            ids,
+            mode: blendMode,
+            input: tintedResult,
+            resultPrefix: "drop-blended",
+          }));
         } else {
           // NORMAL blend: blurred-hardAlpha is tinted directly with no
           // composite-out. The resulting tinted shadow includes both
@@ -496,6 +506,105 @@ export function resolveEffects(
   };
 }
 
+type FilterBounds = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+
+type FilterExtents = {
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+};
+
+function initialFilterExtents(bounds: FilterBounds): FilterExtents {
+  return {
+    minX: bounds.x,
+    minY: bounds.y,
+    maxX: bounds.x + bounds.width,
+    maxY: bounds.y + bounds.height,
+  };
+}
+
+function filterExtentsToBounds(extents: FilterExtents): FilterBounds {
+  return {
+    x: extents.minX,
+    y: extents.minY,
+    width: extents.maxX - extents.minX,
+    height: extents.maxY - extents.minY,
+  };
+}
+
+function expandFilterExtentsForShadow(
+  extents: FilterExtents,
+  bounds: FilterBounds,
+  effect: DropShadowEffect | InnerShadowEffect,
+): FilterExtents {
+  const offsetX = effect.offset.x;
+  const offsetY = effect.offset.y;
+  const blurExpansion = effect.radius; // 2 × stdDeviation = 2 × (radius/2) = radius
+  const spreadExpansion = effect.spread ?? 0;
+  const totalExpansion = blurExpansion + Math.abs(spreadExpansion);
+
+  // Filter region expansion mirrors Figma's SVG exporter. There are
+  // two regimes depending on blend mode:
+  //
+  // NORMAL blend (Thumbnail's drop-shadow, Avatar shadow, etc.):
+  //   The shadow blur kernel reaches the full radius on EACH side,
+  //   shifted by the offset. Expansion per side = radius ± offset.
+  //   Negative expansion clamps to 0. This produces actual's filter
+  //   region for Thumbnail (offset 0,2 radius 16): top=14, bottom=18,
+  //   left=16, right=16. Verified against actual filter0_d_15_1188:
+  //   x=0 y=0 width=96 height=96 around a rect at (16,14)+64×64.
+  //
+  // Non-NORMAL blend (OVERLAY-blended pink-band):
+  //   The shadow paints colour through compositing. A radius-equal
+  //   expansion in the opposite-of-offset direction (the "ghost"
+  //   side of the shadow) bleeds the tint into pixels outside the
+  //   rounded corner. For these effects we collapse the opposite-
+  //   direction expansion to 0: a downward shadow (offsetY > 0)
+  //   gets upExpand = 0.
+  const isNormalBlend = effect.blendMode === undefined;
+  const upExpand = resolveNegativeDirectionExpansion(isNormalBlend, totalExpansion, offsetY);
+  const downExpand = resolvePositiveDirectionExpansion(isNormalBlend, totalExpansion, offsetY);
+  const leftExpand = resolveNegativeDirectionExpansion(isNormalBlend, totalExpansion, offsetX);
+  const rightExpand = resolvePositiveDirectionExpansion(isNormalBlend, totalExpansion, offsetX);
+
+  return {
+    minX: Math.min(extents.minX, bounds.x - leftExpand),
+    minY: Math.min(extents.minY, bounds.y - upExpand),
+    maxX: Math.max(extents.maxX, bounds.x + bounds.width + rightExpand),
+    maxY: Math.max(extents.maxY, bounds.y + bounds.height + downExpand),
+  };
+}
+
+function expandFilterExtentsForLayerBlur(
+  extents: FilterExtents,
+  effect: LayerBlurEffect,
+): FilterExtents {
+  const expand = effect.radius;
+  return {
+    minX: extents.minX - expand,
+    minY: extents.minY - expand,
+    maxX: extents.maxX + expand,
+    maxY: extents.maxY + expand,
+  };
+}
+
+function expandFilterExtentsForEffect(
+  extents: FilterExtents,
+  bounds: FilterBounds,
+  effect: Effect,
+): FilterExtents {
+  switch (effect.type) {
+    case "drop-shadow":
+    case "inner-shadow":
+      return expandFilterExtentsForShadow(extents, bounds, effect);
+    case "layer-blur":
+      return expandFilterExtentsForLayerBlur(extents, effect);
+    case "background-blur":
+      return extents;
+  }
+}
+
 /**
  * Compute filter region as the union of element bounds and all shadow regions.
  *
@@ -504,57 +613,10 @@ export function resolveEffects(
  */
 function computeFilterBounds(
   effects: readonly Effect[],
-  bounds: { x: number; y: number; width: number; height: number },
-): { x: number; y: number; width: number; height: number } {
-  let minX = bounds.x;
-  let minY = bounds.y;
-  let maxX = bounds.x + bounds.width;
-  let maxY = bounds.y + bounds.height;
-
-  for (const effect of effects) {
-    if (effect.type === "drop-shadow" || effect.type === "inner-shadow") {
-      const offsetX = effect.offset.x;
-      const offsetY = effect.offset.y;
-      const blurExpansion = effect.radius; // 2 × stdDeviation = 2 × (radius/2) = radius
-      const spreadExpansion = effect.spread ?? 0;
-      const totalExpansion = blurExpansion + Math.abs(spreadExpansion);
-
-      // Filter region expansion mirrors Figma's SVG exporter. There are
-      // two regimes depending on blend mode:
-      //
-      // NORMAL blend (Thumbnail's drop-shadow, Avatar shadow, etc.):
-      //   The shadow blur kernel reaches the full radius on EACH side,
-      //   shifted by the offset. Expansion per side = radius ± offset.
-      //   Negative expansion clamps to 0. This produces actual's filter
-      //   region for Thumbnail (offset 0,2 radius 16): top=14, bottom=18,
-      //   left=16, right=16. Verified against actual filter0_d_15_1188:
-      //   x=0 y=0 width=96 height=96 around a rect at (16,14)+64×64.
-      //
-      // Non-NORMAL blend (OVERLAY-blended pink-band):
-      //   The shadow paints colour through compositing. A radius-equal
-      //   expansion in the opposite-of-offset direction (the "ghost"
-      //   side of the shadow) bleeds the tint into pixels outside the
-      //   rounded corner. For these effects we collapse the opposite-
-      //   direction expansion to 0: a downward shadow (offsetY > 0)
-      //   gets upExpand = 0.
-      const isNormalBlend = effect.blendMode === undefined;
-      const upExpand = resolveNegativeDirectionExpansion(isNormalBlend, totalExpansion, offsetY);
-      const downExpand = resolvePositiveDirectionExpansion(isNormalBlend, totalExpansion, offsetY);
-      const leftExpand = resolveNegativeDirectionExpansion(isNormalBlend, totalExpansion, offsetX);
-      const rightExpand = resolvePositiveDirectionExpansion(isNormalBlend, totalExpansion, offsetX);
-
-      minX = Math.min(minX, bounds.x - leftExpand);
-      minY = Math.min(minY, bounds.y - upExpand);
-      maxX = Math.max(maxX, bounds.x + bounds.width + rightExpand);
-      maxY = Math.max(maxY, bounds.y + bounds.height + downExpand);
-    } else if (effect.type === "layer-blur") {
-      const expand = effect.radius;
-      minX -= expand;
-      minY -= expand;
-      maxX += expand;
-      maxY += expand;
-    }
-  }
-
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  bounds: FilterBounds,
+): FilterBounds {
+  return filterExtentsToBounds(effects.reduce(
+    (extents, effect) => expandFilterExtentsForEffect(extents, bounds, effect),
+    initialFilterExtents(bounds),
+  ));
 }
