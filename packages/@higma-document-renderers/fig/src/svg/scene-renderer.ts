@@ -788,6 +788,54 @@ function formatMultiFillPathLayers(
   return result;
 }
 
+function formatFrameSurfaceShape(
+  node: RenderFrameNode,
+  fillAttrs: SvgPaintAttrs,
+  strokeAttrs: StrokeSvgAttrs | undefined,
+): SvgString[] {
+  const attrs = { ...fillAttrs, ...(strokeAttrs ?? {}) };
+  switch (node.surfaceShape.kind) {
+    case "rect":
+      return [formatRectShape(
+        node.surfaceShape.width,
+        node.surfaceShape.height,
+        node.surfaceShape.cornerRadius,
+        attrs,
+        {},
+        node.surfaceShape.cornerSmoothing,
+      )];
+    case "path":
+      return node.surfaceShape.paths.map((p) => path({
+        d: p.d,
+        "fill-rule": p.fillRule,
+        ...attrs,
+      }));
+  }
+}
+
+function formatMultiFillFrameSurfaceLayers(
+  node: RenderFrameNode,
+  strokeAttrs: StrokeSvgAttrs | undefined,
+): SvgString[] {
+  const layers = node.background?.fillLayers;
+  if (layers === undefined) {
+    return [];
+  }
+  switch (node.surfaceShape.kind) {
+    case "rect":
+      return formatMultiFillRectLayers(
+        layers,
+        node.surfaceShape.width,
+        node.surfaceShape.height,
+        node.surfaceShape.cornerRadius,
+        strokeAttrs ?? {},
+        node.surfaceShape.cornerSmoothing,
+      );
+    case "path":
+      return formatMultiFillPathLayers(layers, node.surfaceShape.paths, strokeAttrs ?? {});
+  }
+}
+
 // =============================================================================
 // Multi-stroke Layer Routines
 // =============================================================================
@@ -1006,10 +1054,15 @@ function adjustCornerRadiusForAlignedStroke(
 ): CornerRadius | undefined {
   if (cr === undefined) { return undefined; }
   if (typeof cr === "number") {
-    const adjusted = cr - delta;
-    return adjusted > 0 ? adjusted : 0;
+    return adjustAlignedCornerRadiusValue(cr, delta);
   }
-  return cr.map((r) => (r - delta > 0 ? r - delta : 0)) as unknown as CornerRadius;
+  return cr.map((r) => adjustAlignedCornerRadiusValue(r, delta)) as unknown as CornerRadius;
+}
+
+function adjustAlignedCornerRadiusValue(radius: number, delta: number): number {
+  if (radius <= 0) { return 0; }
+  const adjusted = radius - delta;
+  return adjusted > 0 ? adjusted : 0;
 }
 
 /**
@@ -1100,15 +1153,16 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
       // Clip the band to the rounded perimeter only for INSIDE alignment;
       // OUTSIDE strokes lie outside the rect by definition and clipping
       // them to the inner rect would erase the entire band.
-      if (cornerRadius && cornerRadius > 0 && strokeAlign !== "OUTSIDE") {
+      if (hasNonZeroCornerRadius(cornerRadius) && strokeAlign !== "OUTSIDE") {
         // Clip to the rounded rect so per-side strokes don't bleed past
         // the rounded corners. Without this, an 8-px top stroke on a
         // r=24 rounded frame paints a horizontal band from y=0 to y=8
         // straight across the corner curve, producing a square-cornered
         // band visibly mismatched with Figma's exporter (which emits a
         // path-based inside-stroke that follows the rounded perimeter).
-        const clipId = `inside-stroke-clip-${w}-${h}-${cornerRadius}`.replace(/\./g, "_");
-        const clipDef = unsafeSvg(`<clipPath id="${clipId}"><rect x="0" y="0" width="${w}" height="${h}" rx="${cornerRadius}" ry="${cornerRadius}"/></clipPath>`);
+        const clipId = insideStrokeClipId(w, h, cornerRadius);
+        const clipShape = formatRectShape(w, h, cornerRadius, { fill: "white" }, {});
+        const clipDef = clipPath({ id: clipId }, clipShape);
         return [g({ "clip-path": `url(#${clipId})` }, clipDef, ...lines)];
       }
       return lines;
@@ -1159,6 +1213,16 @@ function hasNonZeroCornerRadius(cr: CornerRadius | undefined): boolean {
   return cr.some((r: number) => r > 0);
 }
 
+function insideStrokeClipId(w: number, h: number, cr: CornerRadius | undefined): string {
+  return `inside-stroke-clip-${w}-${h}-${cornerRadiusKey(cr)}`.replace(/[^\w-]/g, "_");
+}
+
+function cornerRadiusKey(cr: CornerRadius | undefined): string {
+  if (cr === undefined) { return "0"; }
+  if (typeof cr === "number") { return `${cr}`; }
+  return cr.join("_");
+}
+
 /**
  * Returns true if the children subtree contains a `mix-blend-mode` whose
  * backdrop *requires* the current frame's bg to render correctly.
@@ -1206,18 +1270,26 @@ function subtreeHasBlendModeRequiringThisBackdrop(nodes: readonly RenderNode[]):
 
 function formatGroupNode(node: RenderGroupNode): SvgString {
   const children = node.children.map(formatNode);
+  const clippedChildren = formatGroupChildren(node, children);
   const defsStr = formatDefs(node.defs);
 
   // Optimization: unwrap single child if no wrapper attrs needed
-  if (node.canUnwrapSingleChild && children.length === 1 && node.defs.length === 0) {
-    return children[0];
+  if (node.canUnwrapSingleChild && clippedChildren.length === 1 && node.defs.length === 0) {
+    return clippedChildren[0];
   }
 
   const parts: SvgString[] = [];
   if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
-  parts.push(...children);
+  parts.push(...clippedChildren);
 
   return g(wrapperAttrs(node), ...parts);
+}
+
+function formatGroupChildren(node: RenderGroupNode, children: readonly SvgString[]): readonly SvgString[] {
+  if (node.childClipId === undefined) {
+    return children;
+  }
+  return [g({ "clip-path": `url(#${node.childClipId})` }, ...children)];
 }
 
 function formatFrameNode(node: RenderFrameNode): SvgString {
@@ -1250,12 +1322,10 @@ function formatFrameNode(node: RenderFrameNode): SvgString {
     const fillStrokeAttrs = getUniformStrokeAttrs(sr);
 
     if (node.background.fillLayers) {
-      bgFillParts.push(...formatMultiFillRectLayers(
-        node.background.fillLayers, node.width, node.height, node.cornerRadius, fillStrokeAttrs, node.cornerSmoothing,
-      ));
+      bgFillParts.push(...formatMultiFillFrameSurfaceLayers(node, fillStrokeAttrs));
     } else {
       const fillAttrs = fillToSvgAttrs(node.background.fill);
-      bgFillParts.push(formatRectShape(node.width, node.height, node.cornerRadius, fillAttrs, fillStrokeAttrs, node.cornerSmoothing));
+      bgFillParts.push(...formatFrameSurfaceShape(node, fillAttrs, fillStrokeAttrs));
     }
 
     if (sr) {
@@ -1317,7 +1387,7 @@ function formatRectNodeContent(node: RenderRectNode, fillStrokeAttrs: StrokeSvgA
 }
 
 function formatEllipseElement(node: RenderEllipseNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString {
-  const fillAttrs = fillToSvgAttrs(node.fill);
+  const fillAttrs = effectSourceFillAttrs(node, fillToSvgAttrs(node.fill));
   const strokeAttrs = fillStrokeAttrs ?? {};
   if (node.rx === node.ry) {
     return circle({ cx: node.cx, cy: node.cy, r: node.rx, ...fillAttrs, ...strokeAttrs });
@@ -1334,12 +1404,22 @@ function formatEllipseNodeContent(node: RenderEllipseNode, fillStrokeAttrs: Stro
 }
 
 function formatPathElements(node: RenderPathNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString[] {
-  const defaultFillAttrs = fillToSvgAttrs(node.fill);
+  const defaultFillAttrs = effectSourceFillAttrs(node, fillToSvgAttrs(node.fill));
   const strokeAttrs = fillStrokeAttrs ?? {};
   return node.paths.map((p) => {
     const fa = fillAttrsForPath(p.fillOverride, defaultFillAttrs);
     return path({ d: p.d, "fill-rule": p.fillRule, ...fa, ...strokeAttrs });
   });
+}
+
+function effectSourceFillAttrs<T extends { readonly filterSource?: "effect-shape" }>(
+  node: T,
+  attrs: ReturnType<typeof fillToSvgAttrs>,
+): ReturnType<typeof fillToSvgAttrs> {
+  if (node.filterSource !== "effect-shape") {
+    return attrs;
+  }
+  return { fill: "#000000" };
 }
 
 function fillAttrsForPath(
@@ -1393,7 +1473,7 @@ function formatRectNode(node: RenderRectNode): SvgString {
     return assembleShapeNode(node, content);
   }
 
-  const rectEl = formatRectShape(node.width, node.height, node.cornerRadius, fillToSvgAttrs(node.fill), fillStrokeAttrs, node.cornerSmoothing);
+  const rectEl = formatRectShape(node.width, node.height, node.cornerRadius, effectSourceFillAttrs(node, fillToSvgAttrs(node.fill)), fillStrokeAttrs, node.cornerSmoothing);
 
   if (node.needsWrapper) {
     return assembleShapeNode(node, [rectEl]);
@@ -1434,7 +1514,7 @@ function formatPathNode(node: RenderPathNode): SvgString {
     return assembleShapeNode(node, content);
   }
 
-  const defaultFillAttrs = fillToSvgAttrs(node.fill);
+  const defaultFillAttrs = effectSourceFillAttrs(node, fillToSvgAttrs(node.fill));
   const pathElements: SvgString[] = node.paths.map((p) => {
     const fa = fillAttrsForPath(p.fillOverride, defaultFillAttrs);
     return path({ d: p.d, "fill-rule": p.fillRule, ...fa, ...fillStrokeAttrs });

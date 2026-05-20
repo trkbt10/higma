@@ -28,7 +28,6 @@
     "test": "bun run --filter '*' test",
     "build": "bun run --filter '*' build",
     "dev": "bun run --filter '*' dev",
-    "snapshot:fig": "bun run --filter @higma-document-renderers/fig snapshot:generate",
     "fig-to-web": "bun run packages/@higma-tools/fig-to-web/src/cli/bin.ts",
     "refine-fig": "bun run packages/@higma-tools/refine-fig/src/cli/bin.ts"
   },

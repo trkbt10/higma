@@ -181,6 +181,85 @@ describe("collectFontQueries", () => {
     expect(result.queries.map((q) => q.family)).toContain("Source Sans Pro");
   });
 
+  it("walks each INSTANCE's resolved body because overrides are instance-specific", () => {
+    const symbolGuid = guid(1, 10);
+    const textGuid = guid(1, 11);
+    const symbolText = {
+      ...textNode(textGuid, "Inter", "Regular"),
+      parentIndex: { guid: symbolGuid, position: "0" },
+    };
+    const symbol = {
+      ...frameNode(symbolGuid, [symbolText]),
+      type: { value: 3, name: "SYMBOL" },
+      size: { x: 100, y: 100 },
+    } satisfies FigNode;
+    const baseInstance: FigNode = {
+      guid: guid(1, 20),
+      phase: { value: 0, name: "CREATED" },
+      type: { value: 6, name: "INSTANCE" },
+      symbolData: { symbolID: symbol.guid },
+      size: { x: 100, y: 100 },
+    };
+    const overriddenInstance: FigNode = {
+      guid: guid(1, 21),
+      phase: { value: 0, name: "CREATED" },
+      type: { value: 6, name: "INSTANCE" },
+      symbolData: {
+        symbolID: symbol.guid,
+        symbolOverrides: [{
+          guidPath: { guids: [textGuid] },
+          textData: {
+            characters: "",
+            fontName: { family: "SF Pro", style: "Semibold" },
+          },
+        }],
+      },
+      size: { x: 100, y: 100 },
+    };
+    const result = collectFontQueries({
+      roots: [baseInstance, overriddenInstance],
+      symbolResolver: resolverFor([symbol, symbolText, baseInstance, overriddenInstance]),
+      childrenOf: () => [],
+    });
+    expect(result.queries).toEqual([
+      { family: "Inter", weight: 400, style: "normal" },
+      { family: "SF Pro", weight: 600, style: "normal" },
+    ]);
+  });
+
+  it("walks document-external INSTANCE materialized children through SymbolResolver", () => {
+    const externalInstance: FigNode = {
+      guid: guid(1, 20),
+      phase: { value: 0, name: "CREATED" },
+      type: { value: 6, name: "INSTANCE" },
+      derivedSymbolData: [{
+        guidPath: { guids: [guid(7, 1)] },
+        derivedTextData: {
+          glyphs: [{
+            commandsBlob: 0,
+            position: { x: 0, y: 0 },
+            fontSize: 16,
+            firstCharacter: 0,
+            advance: 10,
+          }],
+          fontMetaData: [{
+            key: { family: "SF Pro", style: "Semibold" },
+            fontLineHeight: 1,
+          }],
+        },
+      }],
+      size: { x: 100, y: 100 },
+    };
+    const result = collectFontQueries({
+      roots: [externalInstance],
+      symbolResolver: resolverFor([externalInstance]),
+      childrenOf: () => [],
+    });
+    expect(result.queries).toEqual([
+      { family: "SF Pro", weight: 600, style: "normal" },
+    ]);
+  });
+
   it("does not revisit a recursive SYMBOL body", () => {
     const symbolGuid = guid(1, 10);
     const childText = {

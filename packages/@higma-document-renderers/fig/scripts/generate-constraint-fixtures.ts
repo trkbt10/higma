@@ -24,15 +24,15 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
+  type KiwiChildLayoutFields,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  LayoutConstraints,
-} from "@higma-document-models/fig/domain";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { CONSTRAINT_TYPE_VALUES, type ConstraintType } from "@higma-document-models/fig/constants";
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
@@ -58,10 +58,10 @@ const INST_W = 160;
 const INST_H = 100;
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
-function constraintsFor(h: ConstraintType, v: ConstraintType): LayoutConstraints {
+function constraintsFor(h: ConstraintType, v: ConstraintType): KiwiChildLayoutFields {
   return {
     horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES[h], name: h },
     verticalConstraint: { value: CONSTRAINT_TYPE_VALUES[v], name: v },
@@ -74,17 +74,17 @@ async function generate(): Promise<void> {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const empty = createEmptyFigDesignDocument("Single Constraints");
+  const empty = createEmptyFigDocument("Single Constraints");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId1 = empty.pages[0]!.id;
-  const r1 = addPage({ state, doc: empty, name: "Nested Instance" });
-  const pageId2 = r1.pageId;
-  const r2 = addPage({ state, doc: r1.doc, name: "Multi-child" });
-  const pageId3 = r2.pageId;
-  const r3 = addPage({ state, doc: r2.doc, name: "Internal Only Canvas", internalOnly: true });
+  const pageGuid1 = requireCanvas(empty.document, "Single Constraints").guid;
+  const r1 = addPage({ state, context: empty, name: "Nested Instance" });
+  const pageGuid2 = r1.pageGuid;
+  const r2 = addPage({ state, context: r1.context, name: "Multi-child" });
+  const pageGuid3 = r2.pageGuid;
+  const r3 = addPage({ state, context: r2.context, name: "Internal Only Canvas", internalOnly: true });
 
   // =========================================================================
   // Canvas 1: Single Constraints (25 frames, 5×5 grid)
@@ -97,12 +97,12 @@ async function generate(): Promise<void> {
     (_, hi) => CONSTRAINTS.map((__, vi) => ({ hi, vi })),
   );
 
-  const afterCanvas1 = cells.reduce<FigDesignDocument>((acc, { hi, vi }) => {
+  const afterCanvas1 = cells.reduce<FigDocumentContext>((acc, { hi, vi }) => {
     const h = CONSTRAINTS[hi];
     const v = CONSTRAINTS[vi];
 
     const sym = addNode({
-      state, doc: acc, pageId: pageId1, parentId: null,
+      state, context: acc, pageGuid: pageGuid1, parentGuid: null,
       spec: {
         type: "SYMBOL",
         name: `Sym-${h}-${v}`,
@@ -112,18 +112,18 @@ async function generate(): Promise<void> {
       },
     });
     const child = addNode({
-      state, doc: sym.doc, pageId: pageId1, parentId: sym.nodeId,
+      state, context: sym.context, pageGuid: pageGuid1, parentGuid: sym.nodeGuid,
       spec: {
         type: "ROUNDED_RECTANGLE",
         name: "child",
         x: CHILD_X, y: CHILD_Y, width: CHILD_W, height: CHILD_H,
         fills: [solidPaint(BLUE)],
         cornerRadius: 4,
-        layoutConstraints: constraintsFor(h, v),
+        ...constraintsFor(h, v),
       },
     });
     const frame = addNode({
-      state, doc: child.doc, pageId: pageId1, parentId: null,
+      state, context: child.context, pageGuid: pageGuid1, parentGuid: null,
       spec: {
         type: "FRAME",
         name: `${h}-${v}`,
@@ -133,16 +133,16 @@ async function generate(): Promise<void> {
       },
     });
     const inst = addNode({
-      state, doc: frame.doc, pageId: pageId1, parentId: frame.nodeId,
+      state, context: frame.context, pageGuid: pageGuid1, parentGuid: frame.nodeGuid,
       spec: {
         type: "INSTANCE",
         name: `inst-${h}-${v}`,
-        symbolId: sym.nodeId,
+        symbolId: sym.nodeGuid,
         x: 10, y: 10, width: INST_W, height: INST_H,
       },
     });
-    return inst.doc;
-  }, r3.doc);
+    return inst.context;
+  }, r3.context);
 
   // =========================================================================
   // Canvas 2: Nested Instance
@@ -150,7 +150,7 @@ async function generate(): Promise<void> {
 
   // --- CircleBG SYMBOL (48x48, cr=1000 → circle) ---
   const circleBg = addNode({
-    state, doc: afterCanvas1, pageId: pageId2, parentId: null,
+    state, context: afterCanvas1, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "CircleBG",
@@ -159,27 +159,27 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const circleBgId = circleBg.nodeId;
+  const circleBgId = circleBg.nodeGuid;
   // SYMBOL specs don't carry cornerRadius — we set it via updateNode.
   const docCBG1 = updateNode({
-    doc: circleBg.doc, pageId: pageId2, nodeId: circleBgId,
-    updater: (n) => ({ ...n, cornerRadius: 1000 }),
+    context: circleBg.context, nodeGuid: circleBgId,
+    update: (n) => ({ ...n, cornerRadius: 1000 }),
   });
   const circleBgInner = addNode({
-    state, doc: docCBG1, pageId: pageId2, parentId: circleBgId,
+    state, context: docCBG1, pageGuid: pageGuid2, parentGuid: circleBgId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "inner-fill",
       x: 0, y: 0, width: 48, height: 48,
       fills: [solidPaint(BLUE)],
       cornerRadius: 1000,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   // --- WindowControl SYMBOL (44x22, uses CircleBG) ---
   const windowControl = addNode({
-    state, doc: circleBgInner.doc, pageId: pageId2, parentId: null,
+    state, context: circleBgInner.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "WindowControl",
@@ -187,19 +187,19 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const windowControlId = windowControl.nodeId;
+  const windowControlId = windowControl.nodeGuid;
   const wcInstBg = addNode({
-    state, doc: windowControl.doc, pageId: pageId2, parentId: windowControlId,
+    state, context: windowControl.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
       type: "INSTANCE",
       name: "BG",
       symbolId: circleBgId,
       x: 0, y: 0, width: 44, height: 22,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
   const wcDot1 = addNode({
-    state, doc: wcInstBg.doc, pageId: pageId2, parentId: windowControlId,
+    state, context: wcInstBg.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
       type: "ELLIPSE",
       name: "dot1",
@@ -208,7 +208,7 @@ async function generate(): Promise<void> {
     },
   });
   const wcDot2 = addNode({
-    state, doc: wcDot1.doc, pageId: pageId2, parentId: windowControlId,
+    state, context: wcDot1.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
       type: "ELLIPSE",
       name: "dot2",
@@ -217,7 +217,7 @@ async function generate(): Promise<void> {
     },
   });
   const wcDot3 = addNode({
-    state, doc: wcDot2.doc, pageId: pageId2, parentId: windowControlId,
+    state, context: wcDot2.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
       type: "ELLIPSE",
       name: "dot3",
@@ -228,7 +228,7 @@ async function generate(): Promise<void> {
 
   // --- Test Frame: circle-to-pill (44x22) ---
   const fPill = addNode({
-    state, doc: wcDot3.doc, pageId: pageId2, parentId: null,
+    state, context: wcDot3.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "FRAME",
       name: "circle-to-pill",
@@ -237,7 +237,7 @@ async function generate(): Promise<void> {
     },
   });
   const fPillInst = addNode({
-    state, doc: fPill.doc, pageId: pageId2, parentId: fPill.nodeId,
+    state, context: fPill.context, pageGuid: pageGuid2, parentGuid: fPill.nodeGuid,
     spec: {
       type: "INSTANCE",
       name: "control-pill",
@@ -248,7 +248,7 @@ async function generate(): Promise<void> {
 
   // --- Test Frame: circle-to-wide-pill (80x22) ---
   const fWidePill = addNode({
-    state, doc: fPillInst.doc, pageId: pageId2, parentId: null,
+    state, context: fPillInst.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "FRAME",
       name: "circle-to-wide-pill",
@@ -257,7 +257,7 @@ async function generate(): Promise<void> {
     },
   });
   const fWidePillInst = addNode({
-    state, doc: fWidePill.doc, pageId: pageId2, parentId: fWidePill.nodeId,
+    state, context: fWidePill.context, pageGuid: pageGuid2, parentGuid: fWidePill.nodeGuid,
     spec: {
       type: "INSTANCE",
       name: "control-wide",
@@ -268,7 +268,7 @@ async function generate(): Promise<void> {
 
   // --- RoundedBox SYMBOL (40x40, cr=10) ---
   const roundedBox = addNode({
-    state, doc: fWidePillInst.doc, pageId: pageId2, parentId: null,
+    state, context: fWidePillInst.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "RoundedBox",
@@ -277,26 +277,26 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const roundedBoxId = roundedBox.nodeId;
+  const roundedBoxId = roundedBox.nodeGuid;
   const rbWithRadius = updateNode({
-    doc: roundedBox.doc, pageId: pageId2, nodeId: roundedBoxId,
-    updater: (n) => ({ ...n, cornerRadius: 10 }),
+    context: roundedBox.context, nodeGuid: roundedBoxId,
+    update: (n) => ({ ...n, cornerRadius: 10 }),
   });
   const rbFill = addNode({
-    state, doc: rbWithRadius, pageId: pageId2, parentId: roundedBoxId,
+    state, context: rbWithRadius, pageGuid: pageGuid2, parentGuid: roundedBoxId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "bg-fill",
       x: 0, y: 0, width: 40, height: 40,
       fills: [solidPaint(GREEN)],
       cornerRadius: 10,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   // --- Test Frame: rounded-grow-h ---
   const fGrowH = addNode({
-    state, doc: rbFill.doc, pageId: pageId2, parentId: null,
+    state, context: rbFill.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "FRAME",
       name: "rounded-grow-h",
@@ -305,7 +305,7 @@ async function generate(): Promise<void> {
     },
   });
   const fGrowHInst = addNode({
-    state, doc: fGrowH.doc, pageId: pageId2, parentId: fGrowH.nodeId,
+    state, context: fGrowH.context, pageGuid: pageGuid2, parentGuid: fGrowH.nodeGuid,
     spec: {
       type: "INSTANCE", name: "box-wide", symbolId: roundedBoxId,
       x: 20, y: 20, width: 100, height: 40,
@@ -314,7 +314,7 @@ async function generate(): Promise<void> {
 
   // --- Test Frame: rounded-grow-both ---
   const fGrowBoth = addNode({
-    state, doc: fGrowHInst.doc, pageId: pageId2, parentId: null,
+    state, context: fGrowHInst.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "FRAME",
       name: "rounded-grow-both",
@@ -323,7 +323,7 @@ async function generate(): Promise<void> {
     },
   });
   const fGrowBothInst = addNode({
-    state, doc: fGrowBoth.doc, pageId: pageId2, parentId: fGrowBoth.nodeId,
+    state, context: fGrowBoth.context, pageGuid: pageGuid2, parentGuid: fGrowBoth.nodeGuid,
     spec: {
       type: "INSTANCE", name: "box-larger", symbolId: roundedBoxId,
       x: 20, y: 20, width: 100, height: 60,
@@ -334,7 +334,7 @@ async function generate(): Promise<void> {
   // Canvas 3: Multi-child
   // =========================================================================
   const multiSym = addNode({
-    state, doc: fGrowBothInst.doc, pageId: pageId3, parentId: null,
+    state, context: fGrowBothInst.context, pageGuid: pageGuid3, parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "MultiChild",
@@ -342,46 +342,46 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const multiSymId = multiSym.nodeId;
+  const multiSymId = multiSym.nodeGuid;
   // Child 1: STRETCH × STRETCH (background fill)
   const multiC1 = addNode({
-    state, doc: multiSym.doc, pageId: pageId3, parentId: multiSymId,
+    state, context: multiSym.context, pageGuid: pageGuid3, parentGuid: multiSymId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "bg",
       x: 0, y: 0, width: 200, height: 100,
       fills: [solidPaint({ r: 0.9, g: 0.9, b: 0.95, a: 1 })],
       cornerRadius: 0,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
   // Child 2: CENTER × CENTER
   const multiC2 = addNode({
-    state, doc: multiC1.doc, pageId: pageId3, parentId: multiSymId,
+    state, context: multiC1.context, pageGuid: pageGuid3, parentGuid: multiSymId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "center-box",
       x: 70, y: 35, width: 60, height: 30,
       fills: [solidPaint(BLUE)],
       cornerRadius: 8,
-      layoutConstraints: constraintsFor("CENTER", "CENTER"),
+      ...constraintsFor("CENTER", "CENTER"),
     },
   });
   // Child 3: MAX × MAX
   const multiC3 = addNode({
-    state, doc: multiC2.doc, pageId: pageId3, parentId: multiSymId,
+    state, context: multiC2.context, pageGuid: pageGuid3, parentGuid: multiSymId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "corner-badge",
       x: 170, y: 70, width: 20, height: 20,
       fills: [solidPaint(RED)],
       cornerRadius: 10,
-      layoutConstraints: constraintsFor("MAX", "MAX"),
+      ...constraintsFor("MAX", "MAX"),
     },
   });
   // Test frame
   const multiF = addNode({
-    state, doc: multiC3.doc, pageId: pageId3, parentId: null,
+    state, context: multiC3.context, pageGuid: pageGuid3, parentGuid: null,
     spec: {
       type: "FRAME",
       name: "multi-child-grow",
@@ -389,17 +389,17 @@ async function generate(): Promise<void> {
       fills: [solidPaint(WHITE)],
     },
   });
-  const finalDoc = addNode({
-    state, doc: multiF.doc, pageId: pageId3, parentId: multiF.nodeId,
+  const finalContext = addNode({
+    state, context: multiF.context, pageGuid: pageGuid3, parentGuid: multiF.nodeGuid,
     spec: {
       type: "INSTANCE",
       name: "multi-inst",
       symbolId: multiSymId,
       x: 10, y: 10, width: 300, height: 160,
     },
-  }).doc;
+  }).context;
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`Written: ${OUTPUT_FILE}`);
   console.log(`Size: ${(exported.data.byteLength / 1024).toFixed(1)} KB`);

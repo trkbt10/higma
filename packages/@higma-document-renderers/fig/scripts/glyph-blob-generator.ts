@@ -4,7 +4,7 @@
  * Extracts glyph outlines and encodes them as normalized blobs
  * compatible with Figma's on-disk `derivedTextData` format
  * (the `FigDerivedGlyph.commandsBlob` slot consumed by
- * `documentToTree`).
+ * renderers).
  *
  * Coordinate system:
  *   Blob space: normalized (0-1 range), y-up from baseline
@@ -125,6 +125,28 @@ function encodeGlyphBlob(glyph: Glyph, unitsPerEm: number): FigBlob | null {
   return { bytes: data };
 }
 
+function registerGlyphBlob(
+  glyph: Glyph,
+  unitsPerEm: number,
+  blobs: FigBlob[],
+  blobCache: Map<number, number>,
+): number | undefined {
+  const cachedIndex = blobCache.get(glyph.index);
+  if (cachedIndex !== undefined) {
+    return cachedIndex;
+  }
+
+  const blob = encodeGlyphBlob(glyph, unitsPerEm);
+  if (blob === null || blob.bytes.length <= 1) {
+    return undefined;
+  }
+
+  const blobIndex = blobs.length;
+  blobs.push(blob);
+  blobCache.set(glyph.index, blobIndex);
+  return blobIndex;
+}
+
 /**
  * Generate derived text glyph data for a single-line text string.
  *
@@ -160,28 +182,15 @@ export function generateTextGlyphs(params: {
     const glyph = font.charToGlyph(char);
     const advanceWidth = (glyph.advanceWidth ?? 0) / unitsPerEm;
 
-    // Skip whitespace glyphs (no outline) but still advance position
-    const blobIndexRef = { value: undefined as number | undefined };
-    const cachedIndex = blobCache.get(glyph.index);
-
-    if (cachedIndex !== undefined) {
-      blobIndexRef.value = cachedIndex;
-    } else {
-      const blob = encodeGlyphBlob(glyph, unitsPerEm);
-      if (blob && blob.bytes.length > 1) {
-        // Has actual path data (more than just the 0x00 terminator)
-        blobIndexRef.value = blobs.length;
-        blobs.push(blob);
-        blobCache.set(glyph.index, blobIndexRef.value);
-      } else {
-        // Space or empty glyph - advance but no blob
-        curXRef.value += advanceWidth * fontSize + (i < text.length - 1 ? letterSpacing : 0);
-        continue;
-      }
+    const blobIndex = registerGlyphBlob(glyph, unitsPerEm, blobs, blobCache);
+    if (blobIndex === undefined) {
+      // Space or empty glyph - advance but no blob
+      curXRef.value += advanceWidth * fontSize + (i < text.length - 1 ? letterSpacing : 0);
+      continue;
     }
 
     glyphs.push({
-      commandsBlob: blobIndexRef.value,
+      commandsBlob: blobIndex,
       position: { x: curXRef.value, y: baselineY },
       styleID: 0,
       fontSize,

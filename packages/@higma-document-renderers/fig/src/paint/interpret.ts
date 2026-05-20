@@ -6,8 +6,10 @@
  * re-derive these values from FigPaint.
  */
 
-import type { FigGradientPaint, FigGradientStop, FigGradientTransform, FigImagePaint, FigImagePaintFilter, FigImageScaleMode } from "@higma-document-models/fig/types";
+import type { FigColorStopVar, FigGradientPaint, FigGradientStop, FigGradientTransform, FigImagePaint, FigImagePaintFilter, FigImageScaleMode } from "@higma-document-models/fig/types";
+import { figImageHashBytesToHex } from "@higma-document-models/fig/domain";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import { requireVariableColor, resolveConcreteVariableColor } from "@higma-document-models/fig/variables";
 
 export type GradientDirection = {
   readonly start: { readonly x: number; readonly y: number };
@@ -26,11 +28,48 @@ export type RadialGradientParams = {
 /**
  * Extract gradient stops from a Kiwi paint.
  */
-export function getGradientStops(paint: FigGradientPaint): readonly FigGradientStop[] {
+export function getGradientStops(paint: FigGradientPaint, subject = "Gradient paint"): readonly FigGradientStop[] {
+  if (paint.stopsVar !== undefined && paint.stopsVar.length > 0) {
+    return paint.stopsVar.map((stop, index) => resolveGradientStopVar(stop, `${subject}.stopsVar[${index}]`));
+  }
   if (paint.stops && paint.stops.length > 0) {
     return paint.stops;
   }
   throw new Error("Gradient paint requires non-empty stops");
+}
+
+function resolveGradientStopVar(
+  stop: FigColorStopVar,
+  subject: string,
+): FigGradientStop {
+  if (stop.position === undefined) {
+    throw new Error(`${subject} requires position`);
+  }
+  if (stop.colorVar !== undefined) {
+    return {
+      color: resolveGradientStopColorVar(stop, subject, stop.colorVar),
+      position: stop.position,
+    };
+  }
+  if (stop.color === undefined) {
+    throw new Error(`${subject} requires color or colorVar`);
+  }
+  return { color: stop.color, position: stop.position };
+}
+
+function resolveGradientStopColorVar(
+  stop: FigColorStopVar,
+  subject: string,
+  colorVar: NonNullable<FigColorStopVar["colorVar"]>,
+): FigGradientStop["color"] {
+  const color = resolveConcreteVariableColor(colorVar, `${subject}.colorVar`);
+  if (color !== undefined) {
+    return color;
+  }
+  if (stop.color !== undefined) {
+    return stop.color;
+  }
+  return requireVariableColor(colorVar, `${subject}.colorVar`);
 }
 
 // =============================================================================
@@ -224,18 +263,11 @@ export function getDiamondGradientParams(paint: FigGradientPaint): DiamondGradie
 // =============================================================================
 
 /**
- * Convert a hash array (from Kiwi image.hash) to a hex string reference.
- */
-function hashArrayToHex(hash: readonly number[]): string {
-  return hash.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-/**
  * Extract the package image hash from a Kiwi image paint.
  */
 export function getImageHash(paint: FigImagePaint): string {
   if (paint.image?.hash && Array.isArray(paint.image.hash) && paint.image.hash.length > 0) {
-    return hashArrayToHex(paint.image.hash);
+    return figImageHashBytesToHex(paint.image.hash);
   }
   throw new Error("IMAGE paint requires image.hash");
 }

@@ -23,16 +23,16 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -45,23 +45,23 @@ const VECTOR_FILL: FigColor = { r: 0.85, g: 0.4, b: 0.2, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 type AddedFrame = {
-  readonly doc: FigDesignDocument;
-  readonly frameId: FigNodeId;
+  readonly context: FigDocumentContext;
+  readonly frameId: FigGuid;
 };
 
 function addFrame(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   state: ReturnType<typeof createFigBuilderState>,
-  pageId: FigPageId,
+  pageGuid: FigGuid,
   name: string,
   x: number,
   y: number,
@@ -70,9 +70,9 @@ function addFrame(
 ): AddedFrame {
   const result = addNode({
     state,
-    doc,
-    pageId,
-    parentId: null,
+    context,
+    pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name,
@@ -84,39 +84,39 @@ function addFrame(
       clipsContent: true,
     },
   });
-  return { doc: result.doc, frameId: result.nodeId };
+  return { context: result.context, frameId: result.nodeGuid };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating mask-and-vector fixture...");
 
-  const empty = createEmptyFigDesignDocument("Mask & Vector");
+  const empty = createEmptyFigDocument("Mask & Vector");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const docWithInternal = addPage({
+  const pageGuid = requireCanvas(empty.document, "Mask & Vector").guid;
+  const contextWithInternal = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   // Mask demo — a circular mask clipping a rectangle (the
   // canonical "avatar" pattern). The mask sibling has `mask: true`
   // and lives directly above its target in the parent's child
   // order so Figma's `applyMaskToSubsequent` semantics resolve.
-  const maskFrame = addFrame(docWithInternal, state, pageId, "mask-circle", 80, 80, 200, 200);
+  const maskFrame = addFrame(contextWithInternal, state, pageGuid, "mask-circle", 80, 80, 200, 200);
 
   // The mask itself: a circle. Add it FIRST so it sits at the
   // bottom of the child stack — Figma applies the mask to siblings
   // that come after it.
   const maskShape = addNode({
     state,
-    doc: maskFrame.doc,
-    pageId,
-    parentId: maskFrame.frameId,
+    context: maskFrame.context,
+    pageGuid,
+    parentGuid: maskFrame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "mask-shape",
@@ -128,19 +128,18 @@ async function generate(): Promise<void> {
     },
   });
   const maskApplied = updateNode({
-    doc: maskShape.doc,
-    pageId,
-    nodeId: maskShape.nodeId,
-    updater: (n) => ({ ...n, mask: true }),
+    context: maskShape.context,
+    nodeGuid: maskShape.nodeGuid,
+    update: (n) => ({ ...n, mask: true }),
   });
 
   // The masked content: a coloured rectangle that should appear
   // clipped to the circle.
   const photo = addNode({
     state,
-    doc: maskApplied,
-    pageId,
-    parentId: maskFrame.frameId,
+    context: maskApplied,
+    pageGuid,
+    parentGuid: maskFrame.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "masked-photo",
@@ -154,12 +153,12 @@ async function generate(): Promise<void> {
   });
 
   // Vector demo — VECTOR node carrying two SVG path strings.
-  const vectorFrame = addFrame(photo.doc, state, pageId, "vector-paths", 320, 80, 200, 200);
+  const vectorFrame = addFrame(photo.context, state, pageGuid, "vector-paths", 320, 80, 200, 200);
   const vec = addNode({
     state,
-    doc: vectorFrame.doc,
-    pageId,
-    parentId: vectorFrame.frameId,
+    context: vectorFrame.context,
+    pageGuid,
+    parentGuid: vectorFrame.frameId,
     spec: {
       type: "VECTOR",
       name: "vector-arrow",
@@ -179,7 +178,7 @@ async function generate(): Promise<void> {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const exported = await exportFig(vec.doc);
+  const exported = await exportFig(vec.context);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Size: ${(exported.data.length / 1024).toFixed(1)} KB`);

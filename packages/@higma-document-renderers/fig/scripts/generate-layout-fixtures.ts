@@ -27,17 +27,17 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
+  type KiwiStackLayoutFields,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  AutoLayoutProps,
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 import {
   STACK_ALIGN_VALUES,
@@ -52,7 +52,7 @@ const OUTPUT_DIR = path.join(__dirname, "../fixtures/layouts");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "layouts.fig");
 
 // =============================================================================
-// Color helpers
+// Colors
 // =============================================================================
 
 /**
@@ -72,11 +72,11 @@ function hexColor(hex: string, alpha: number = 1): FigColor {
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -292,12 +292,12 @@ const GRID_OFFSET_X = 100;
 const GRID_OFFSET_Y = 100;
 
 // =============================================================================
-// Builder helpers
+// Fixture construction
 // =============================================================================
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 /**
@@ -328,7 +328,7 @@ function counterAlignEnum(
 }
 
 /**
- * Build the `AutoLayoutProps` object for a frame. AutoLayout is
+ * Build the `KiwiStackLayoutFields` object for a frame. AutoLayout is
  * optional per test case — only frames that actually exercise an
  * auto-layout mode set this; the others render as plain
  * absolute-positioned containers.
@@ -338,7 +338,7 @@ function buildAutoLayout(
   spacing: number | undefined,
   primary: StackJustify | undefined,
   counter: CounterAlign | undefined,
-): AutoLayoutProps {
+): KiwiStackLayoutFields {
   return {
     stackMode: { value: STACK_MODE_VALUES[mode], name: mode },
     stackSpacing: spacing,
@@ -353,7 +353,7 @@ function buildAutoLayout(
  * `addTestCase` so the call site uses a plain assignment rather than
  * a multi-line ternary (forbidden by `custom/ternary-length`).
  */
-function autoLayoutFor(testCase: FrameData): AutoLayoutProps | undefined {
+function autoLayoutFor(testCase: FrameData): KiwiStackLayoutFields | undefined {
   if (!testCase.stackMode) {
     return undefined;
   }
@@ -366,13 +366,13 @@ function autoLayoutFor(testCase: FrameData): AutoLayoutProps | undefined {
 }
 
 function addTestCase(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
   testCase: FrameData,
   index: number,
   maxWidth: number,
   maxHeight: number,
-): FigDesignDocument {
+): FigDocumentContext {
   const col = index % GRID_COLS;
   const row = Math.floor(index / GRID_COLS);
   const x = GRID_OFFSET_X + col * (maxWidth + GRID_GAP);
@@ -382,9 +382,9 @@ function addTestCase(
 
   const frame = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId: null,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: testCase.name,
@@ -393,16 +393,16 @@ function addTestCase(
       width: testCase.width,
       height: testCase.height,
       fills: [solidPaint(hexColor(testCase.background))],
-      autoLayout,
+      ...autoLayout,
     },
   });
 
-  return testCase.children.reduce<FigDesignDocument>((acc, child) => {
+  return testCase.children.reduce<FigDocumentContext>((acc, child) => {
     const result = addNode({
       state: ctx.state,
-      doc: acc,
-      pageId: ctx.pageId,
-      parentId: frame.nodeId as FigNodeId,
+      context: acc,
+      pageGuid: ctx.pageGuid,
+      parentGuid: frame.nodeGuid as FigGuid,
       spec: {
         type: "ROUNDED_RECTANGLE",
         name: child.name,
@@ -414,8 +414,8 @@ function addTestCase(
         cornerRadius: child.cornerRadius ?? 0,
       },
     });
-    return result.doc;
-  }, frame.doc);
+    return result.context;
+  }, frame.context);
 }
 
 // =============================================================================
@@ -425,13 +425,13 @@ function addTestCase(
 async function generate(): Promise<void> {
   console.log("Generating layout fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("Layout Tests");
+  const empty = createEmptyFigDocument("Layout Tests");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "Layout Tests").guid;
+  const ctx: Ctx = { state, pageGuid };
 
   // Figma's importer requires an Internal Only Canvas (see
   // packages/@higma-document-renderers/fig/CLAUDE.md → "Figma
@@ -440,17 +440,17 @@ async function generate(): Promise<void> {
   // Figma export.
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   console.log(`Creating ${TEST_CASES.length} test cases...\n`);
 
   const maxWidth = Math.max(...TEST_CASES.map((tc) => tc.width));
   const maxHeight = Math.max(...TEST_CASES.map((tc) => tc.height));
 
-  const finalDoc = TEST_CASES.reduce<FigDesignDocument>((acc, testCase, index) => {
+  const finalContext = TEST_CASES.reduce<FigDocumentContext>((acc, testCase, index) => {
     console.log(
       `  [${index + 1}/${TEST_CASES.length}] ${testCase.name} (${testCase.width}x${testCase.height})`,
     );
@@ -461,7 +461,7 @@ async function generate(): Promise<void> {
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`\nSaved: ${OUTPUT_FILE}`);

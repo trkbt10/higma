@@ -32,6 +32,7 @@ type Props = {
   readonly initializationDelayMs?: number;
 };
 
+/** Render the WebGL scene graph viewport and its preparation overlay. */
 export function WebGLViewport({
   sceneGraph,
   renderOptions,

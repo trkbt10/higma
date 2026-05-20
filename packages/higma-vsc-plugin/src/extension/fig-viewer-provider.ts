@@ -34,8 +34,8 @@ function createFigDocument(uri: vscode.Uri): FigDocument {
  * Encodes a byte buffer to a base64 string without exceeding the V8
  * argument list limit on large inputs.
  *
- * `Buffer.from(uint8).toString('base64')` is fine in Node, but we wrap
- * it in a helper so the call site stays explicit about the encoding.
+ * `Buffer.from(uint8).toString('base64')` is fine in Node, but the named
+ * operation keeps the call site explicit about the encoding.
  */
 function encodeBytesAsBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64");
@@ -260,15 +260,24 @@ function parseWebviewMessage(raw: unknown): WebviewToExtensionMessage | undefine
     return { type: "webview/ready" };
   }
   if (candidate.type === "webview/log") {
-    const log = raw as { level?: unknown; message?: unknown };
-    if (
-      (log.level === "info" || log.level === "warn" || log.level === "error") &&
-      typeof log.message === "string"
-    ) {
-      return { type: "webview/log", level: log.level, message: log.message };
-    }
+    return parseWebviewLogMessage(raw);
   }
   return undefined;
+}
+
+function parseWebviewLogMessage(raw: unknown): WebviewToExtensionMessage | undefined {
+  const log = raw as { level?: unknown; message?: unknown };
+  if (
+    log.level !== "info" &&
+    log.level !== "warn" &&
+    log.level !== "error"
+  ) {
+    return undefined;
+  }
+  if (typeof log.message !== "string") {
+    return undefined;
+  }
+  return { type: "webview/log", level: log.level, message: log.message };
 }
 
 function forwardLog(level: "info" | "warn" | "error", message: string): void {

@@ -66,6 +66,32 @@ export type FigParentIndex = {
   readonly position: string;
 };
 
+/** Kiwi schema `GridTrackSizingType` enum. */
+export type FigGridTrackSizingType = "FLEX" | "FIXED" | "HUG";
+
+/** Kiwi schema `GridTrackSizingFunction` message. */
+export type FigGridTrackSizingFunction = {
+  readonly type?: KiwiEnumValue<FigGridTrackSizingType>;
+  readonly value?: number;
+};
+
+/** Kiwi schema `GridTrackSize` message. */
+export type FigGridTrackSizeValue = {
+  readonly minSizing?: FigGridTrackSizingFunction;
+  readonly maxSizing?: FigGridTrackSizingFunction;
+};
+
+/** Kiwi schema `GUIDGridTrackSizeMapEntry` message. */
+export type FigGridTrackPositionEntry = {
+  readonly id: FigGuid;
+  readonly trackSize?: FigGridTrackSizeValue;
+};
+
+/** Kiwi schema `GUIDGridTrackSizeMap` message. */
+export type FigGridTrackPositions = {
+  readonly entries: readonly FigGridTrackPositionEntry[];
+};
+
 /**
  * Style override entry within a Kiwi TextData.styleOverrideTable.
  *
@@ -1002,7 +1028,7 @@ export type FigVariableMap = {
  * matching the schema's "oneof" semantics expressed via field
  * presence. Consumers should not branch on this type directly —
  * project it through `projectVariableAnyValue` (see
- * `@higma-document-models/fig/symbols`) into the `FigVariableAnyValue` discriminated
+ * `@higma-document-models/fig/variables`) into the `FigVariableAnyValue` discriminated
  * union and then `switch (kind)`.
  */
 export type FigKiwiVariableAnyValue = {
@@ -1091,6 +1117,8 @@ export type FigKiwiSymbolOverridePayload = {
   readonly opacity?: number;
   readonly blendMode?: KiwiEnumValue<BlendMode>;
   readonly mask?: boolean;
+  readonly maskIsOutline?: boolean;
+  readonly maskType?: KiwiEnumValue<FigMaskType>;
   readonly clipsContent?: boolean;
   readonly frameMaskDisabled?: boolean;
   readonly transform?: FigMatrix;
@@ -1388,6 +1416,8 @@ export type FigNode = {
    */
   readonly useAbsoluteBounds?: boolean;
   readonly mask?: boolean;
+  readonly maskIsOutline?: boolean;
+  readonly maskType?: KiwiEnumValue<FigMaskType>;
   readonly clipsContent?: boolean;
   readonly frameMaskDisabled?: boolean;
   readonly backgroundColor?: FigColor;
@@ -1428,6 +1458,14 @@ export type FigNode = {
   readonly stackCounterSpacing?: number;
   /** Reverse z-order of children */
   readonly stackReverseZIndex?: boolean;
+  /** CSS-grid column track map, Kiwi field `gridColumns`. */
+  readonly gridColumns?: FigGridTrackPositions;
+  /** CSS-grid row track map, Kiwi field `gridRows`. */
+  readonly gridRows?: FigGridTrackPositions;
+  /** CSS-grid column sizing map, Kiwi field `gridColumnsSizing`. */
+  readonly gridColumnsSizing?: FigGridTrackPositions;
+  /** CSS-grid row sizing map, Kiwi field `gridRowsSizing`. */
+  readonly gridRowsSizing?: FigGridTrackPositions;
 
   // ---- AutoLayout (child-level) ----
   /** How this child is positioned in the parent stack (AUTO or ABSOLUTE) */
@@ -1781,6 +1819,12 @@ export type FigGradientStop = {
   readonly color: FigColor;
 };
 
+export type FigColorStopVar = {
+  readonly color?: FigColor;
+  readonly colorVar?: FigKiwiVariableData;
+  readonly position?: number;
+};
+
 /**
  * Base paint interface.
  *
@@ -1791,6 +1835,8 @@ export type FigPaintBase = {
   readonly type: KiwiEnumValue<FigPaintType>;
   readonly visible?: boolean;
   readonly opacity?: number;
+  readonly opacityVar?: FigKiwiVariableData;
+  readonly colorVar?: FigKiwiVariableData;
   readonly blendMode?: KiwiEnumValue<BlendMode>;
 };
 
@@ -1839,6 +1885,8 @@ export type FigGradientPaint = FigPaintBase & {
   readonly transform?: FigGradientTransform;
   /** Gradient color stops. */
   readonly stops?: readonly FigGradientStop[];
+  /** Variable-backed gradient stops from Kiwi `Paint.stopsVar`. */
+  readonly stopsVar?: readonly FigColorStopVar[];
 };
 
 /**
@@ -1891,6 +1939,7 @@ export type FigImagePaint = FigPaintBase & {
   readonly rotation?: number;
   /** Image data reference. */
   readonly image?: { readonly hash?: readonly number[] };
+  readonly imageVar?: FigKiwiVariableData;
 };
 
 /** Union of all supported Kiwi paint payloads. */
@@ -1941,6 +1990,9 @@ export type BlendMode =
   | "SATURATION"
   | "COLOR"
   | "LUMINOSITY";
+
+/** Mask interpretation mode from Kiwi `MaskType`. */
+export type FigMaskType = "ALPHA" | "OUTLINE" | "LUMINANCE";
 
 /**
  * Stroke cap type — names match the Kiwi schema (`StrokeCap` enum).
@@ -2039,9 +2091,14 @@ export type FigEffect = {
   readonly type: KiwiEnumValue<FigEffectType>;
   readonly visible?: boolean;
   readonly color?: FigColor;
+  readonly colorVar?: FigKiwiVariableData;
   readonly offset?: FigVector;
+  readonly xVar?: FigKiwiVariableData;
+  readonly yVar?: FigKiwiVariableData;
   readonly radius?: number;
+  readonly radiusVar?: FigKiwiVariableData;
   readonly spread?: number;
+  readonly spreadVar?: FigKiwiVariableData;
   readonly blendMode?: KiwiEnumValue<BlendMode>;
   readonly showShadowBehindNode?: boolean;
 };

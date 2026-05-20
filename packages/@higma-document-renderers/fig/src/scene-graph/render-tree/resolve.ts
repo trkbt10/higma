@@ -20,10 +20,10 @@ import type {
   Fill,
   Stroke,
   Effect,
+  ClipShape,
 } from "@higma-document-renderers/fig/scene-graph";
 
 import {
-  colorToHex,
   uint8ArrayToBase64,
   resolveFillWithRenderSettings,
   resolveTopFillWithRenderSettings,
@@ -85,6 +85,7 @@ import type {
   ResolvedFillResult,
   ResolvedFillLayer,
   RenderFrameBackground,
+  RenderFrameSurfaceShape,
   RenderPathContour,
   RenderBackgroundBlur,
   RenderMask,
@@ -117,15 +118,17 @@ function resolveOptionalBackgroundBlur(
 
 function resolveFrameStrokeRendering(
   node: FrameNode,
-  clampedRadius: ReturnType<typeof clampCornerRadius>,
+  surfaceShape: RenderFrameSurfaceShape,
   ids: IdGenerator,
   defs: RenderDef[],
   maskShape: ClipPathShape,
 ): StrokeRendering | undefined {
   if (node.individualStrokeWeights && node.stroke) {
+    if (surfaceShape.kind !== "rect") {
+      throw new Error(`resolveRenderTree: frame ${node.id} has individual stroke weights on a non-rectangular Kiwi surface`);
+    }
     const result = resolveStrokeResult(node.stroke, ids);
     collectStrokeLayerGradientDefs(result.layers, defs);
-    const cornerScalar = cornerRadiusScalar(clampedRadius);
     return {
       mode: "individual",
       sides: node.individualStrokeWeights,
@@ -133,15 +136,30 @@ function resolveFrameStrokeRendering(
       opacity: result.attrs.strokeOpacity,
       width: node.width,
       height: node.height,
-      cornerRadius: cornerScalar > 0 ? cornerScalar : undefined,
+      cornerRadius: surfaceShape.cornerRadius,
       strokeAlign: result.attrs.strokeAlign,
     };
   }
   if (node.stroke) {
-    const strokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius, cornerSmoothing: node.cornerSmoothing };
+    const strokeShape = frameSurfaceToStrokeShape(surfaceShape);
     return resolveStrokeRendering(node.stroke, ids, defs, strokeShape, maskShape);
   }
   return undefined;
+}
+
+function frameSurfaceToStrokeShape(surfaceShape: RenderFrameSurfaceShape): StrokeShape {
+  switch (surfaceShape.kind) {
+    case "rect":
+      return {
+        kind: "rect",
+        width: surfaceShape.width,
+        height: surfaceShape.height,
+        cornerRadius: surfaceShape.cornerRadius,
+        cornerSmoothing: surfaceShape.cornerSmoothing,
+      };
+    case "path":
+      return { kind: "path", paths: surfaceShape.paths };
+  }
 }
 
 function collectStrokeLayerGradientDefs(
@@ -367,16 +385,72 @@ function resolveFrameChildClipId(
   // the area the rounded clip eats. Without the clip-path, the rounded
   // shape never gets cut and the rectangle paints square. Force the
   // clip-path whenever the frame has any rounded-corner geometry.
-  if (!frameClipUsesRoundedBoundary(clampedRadius) && frameChildrenFitWithinBounds(node)) {
+  if (!frameClipRequiresClipPath(node, clampedRadius) && frameChildrenFitWithinBounds(node)) {
     return undefined;
   }
   const childClipId = ids.getNextId("clip");
   defs.push({
     type: "clip-path",
     id: childClipId,
-    shape: buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing),
+    shape: resolveFrameClipPathShape(node, clampedRadius),
   });
   return childClipId;
+}
+
+function resolveFrameClipPathShape(
+  node: FrameNode,
+  clampedRadius: ReturnType<typeof clampCornerRadius>,
+): ClipPathShape {
+  if (node.clip !== undefined) {
+    return sceneClipToClipPathShape(node.clip);
+  }
+  return buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing);
+}
+
+function sceneClipToClipPathShape(clip: ClipShape): ClipPathShape {
+  switch (clip.type) {
+    case "rect":
+      return buildClipShape(clip.width, clip.height, clip.cornerRadius, clip.cornerSmoothing);
+    case "path":
+      return {
+        kind: "path",
+        d: clip.contours.map((contour) => contourToSvgD(contour, RENDER_PATH_PRECISION)).join(" "),
+      };
+  }
+}
+
+function sceneClipToFrameSurfaceShape(clip: ClipShape): RenderFrameSurfaceShape {
+  switch (clip.type) {
+    case "rect":
+      return {
+        kind: "rect",
+        width: clip.width,
+        height: clip.height,
+        cornerRadius: clip.cornerRadius,
+        cornerSmoothing: clip.cornerSmoothing,
+      };
+    case "path":
+      return {
+        kind: "path",
+        paths: clip.contours.map((contour) => ({
+          d: contourToSvgD(contour, RENDER_PATH_PRECISION),
+          fillRule: contour.windingRule !== "nonzero" ? contour.windingRule as "evenodd" : undefined,
+        })),
+      };
+  }
+}
+
+function frameClipRequiresClipPath(
+  node: FrameNode,
+  clampedRadius: ReturnType<typeof clampCornerRadius>,
+): boolean {
+  if (node.clip?.type === "path") {
+    return true;
+  }
+  if (node.clip?.type === "rect") {
+    return frameClipUsesRoundedBoundary(node.clip.cornerRadius);
+  }
+  return frameClipUsesRoundedBoundary(clampedRadius);
 }
 
 function frameClipUsesRoundedBoundary(
@@ -406,6 +480,19 @@ function resolveTextClipId(node: TextNode, ids: IdGenerator, defs: RenderDef[]):
     },
   });
   return textClipId;
+}
+
+function resolveGroupChildClipId(node: GroupNode, ids: IdGenerator, defs: RenderDef[]): string | undefined {
+  if (node.clip === undefined) {
+    return undefined;
+  }
+  const childClipId = ids.getNextId("group-clip");
+  defs.push({
+    type: "clip-path",
+    id: childClipId,
+    shape: sceneClipToClipPathShape(node.clip),
+  });
+  return childClipId;
 }
 
 function resolveTextContent(node: TextNode): RenderTextNode["content"] {
@@ -533,6 +620,20 @@ function colorToCssHex(color: { readonly r: number; readonly g: number; readonly
   return `#${toByte(color.r)}${toByte(color.g)}${toByte(color.b)}`;
 }
 
+function hexToSceneColor(hex: string): { readonly r: number; readonly g: number; readonly b: number; readonly a: number } {
+  const match = /^#([0-9a-f]{6})$/iu.exec(hex);
+  if (match === null) {
+    throw new Error(`resolveRenderTree: text run fillColor must be a six-digit hex color, got ${hex}`);
+  }
+  const value = match[1];
+  return {
+    r: parseInt(value.slice(0, 2), 16) / 255,
+    g: parseInt(value.slice(2, 4), 16) / 255,
+    b: parseInt(value.slice(4, 6), 16) / 255,
+    a: 1,
+  };
+}
+
 function resolveImageDataUri(node: ImageNode): string | undefined {
   if (!node.data || node.data.length === 0) {
     return undefined;
@@ -580,11 +681,17 @@ function resolveWrapper(
   node: SceneNode,
   ids: IdGenerator,
   defs: RenderDef[],
-): { wrapper: ResolvedWrapperAttrs; effectStack: ResolvedEffectStack; filter?: ResolvedFilter } {
+): { wrapper: ResolvedWrapperAttrs; effectStack: ResolvedEffectStack; filter?: ResolvedFilter; filterSource?: "effect-shape" } {
   const elementBounds = getNodeBounds(node);
   const transformStr = matrixToSvgTransform(node.transform);
   const effectStack = buildEffectStack(node.effects);
-  const filterResult = resolveEffects(effectStack.foregroundEffects, ids, elementBounds);
+  const filterSource = resolveFilterSource(node, effectStack.foregroundEffects);
+  const filterResult = resolveEffects(
+    effectStack.foregroundEffects,
+    ids,
+    elementBounds,
+    filterSource === "effect-shape" ? { sourceGraphic: "omit" } : undefined,
+  );
 
   if (filterResult) {
     defs.push({ type: "filter", filter: filterResult });
@@ -599,7 +706,40 @@ function resolveWrapper(
     },
     effectStack,
     filter: filterResult ?? undefined,
+    filterSource,
   };
+}
+
+function resolveFilterSource(
+  node: SceneNode,
+  effects: readonly Effect[],
+): "effect-shape" | undefined {
+  if (!effects.some((effect) => effect.type === "drop-shadow" || effect.type === "inner-shadow")) {
+    return undefined;
+  }
+  if (nodeHasVisibleEffectSource(node)) {
+    return undefined;
+  }
+  return "effect-shape";
+}
+
+function nodeHasVisibleEffectSource(node: SceneNode): boolean {
+  switch (node.type) {
+    case "rect":
+    case "ellipse":
+      return node.fills.length > 0 || node.stroke !== undefined;
+    case "path":
+      return (
+        node.fills.length > 0 ||
+        node.stroke !== undefined ||
+        node.contours.some((contour) => contour.fillOverride !== undefined)
+      );
+    case "frame":
+    case "group":
+    case "image":
+    case "text":
+      return true;
+  }
 }
 
 function resolveFrameWrapper(
@@ -962,6 +1102,7 @@ function resolveGroupNode(
 
   const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
   const mask = resolveMask(node, ids, defs, exportSettings);
+  const childClipId = resolveGroupChildClipId(node, ids, defs);
 
   return {
     type: "group",
@@ -970,9 +1111,10 @@ function resolveGroupNode(
     defs,
     source: node,
     children,
+    childClipId,
     mask,
     canUnwrapSingleChild:
-      !wrapper.transform && (node.opacity >= 1) && !wrapper.filterAttr && !mask && !wrapper.blendMode,
+      !wrapper.transform && (node.opacity >= 1) && !wrapper.filterAttr && !mask && !wrapper.blendMode && !childClipId,
   };
 }
 
@@ -987,12 +1129,13 @@ function resolveFrameNode(
   const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
   const elementBounds = { x: 0, y: 0, width: node.width, height: node.height };
   const surfaceFilterAttr = resolveFrameSurfaceFilterAttr(effectStack.foregroundEffects, ids, defs, elementBounds);
+  const surfaceShape = sceneClipToFrameSurfaceShape(node.surfaceShape);
+  const surfaceClipShape = sceneClipToClipPathShape(node.surfaceShape);
 
   // Background fill and stroke — resolved independently.
   const hasFills = node.fills.length > 0;
-  const maskShape = buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing);
 
-  const strokeRendering = resolveFrameStrokeRendering(node, clampedRadius, ids, defs, maskShape);
+  const strokeRendering = resolveFrameStrokeRendering(node, surfaceShape, ids, defs, surfaceClipShape);
   const background = resolveFrameBackground(node, hasFills, strokeRendering, surfaceFilterAttr, ids, defs, exportSettings);
   const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
   const childClipId = resolveFrameChildClipId(node, children, ids, defs, clampedRadius);
@@ -1006,7 +1149,7 @@ function resolveFrameNode(
   // would show a square blur area bleeding past the rounded corners).
   const backgroundBlur = resolveBackgroundBlur(
     effectStack, elementBounds, ids, defs,
-    maskShape,
+    surfaceClipShape,
   );
 
   const mask = resolveMask(node, ids, defs, exportSettings);
@@ -1022,6 +1165,7 @@ function resolveFrameNode(
     childClipId,
     width: node.width,
     height: node.height,
+    surfaceShape,
     cornerRadius: clampedRadius,
     cornerSmoothing: node.cornerSmoothing,
     backgroundBlur,
@@ -1031,12 +1175,13 @@ function resolveFrameNode(
     // RenderRectNode / RenderEllipseNode.
     sourceFills: node.fills,
     sourceStroke: node.stroke,
+    sourceSurfaceShape: node.surfaceShape,
   };
 }
 
 function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderRectNode {
   const defs: RenderDef[] = [];
-  const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
+  const { wrapper, effectStack, filterSource } = resolveWrapper(node, ids, defs);
   const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
   const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
@@ -1058,6 +1203,7 @@ function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: Resol
     type: "rect",
     id: node.id,
     wrapper,
+    filterSource,
     defs,
     source: node,
     width: node.width,
@@ -1077,7 +1223,7 @@ function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: Resol
 
 function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderEllipseNode | RenderPathNode {
   const defs: RenderDef[] = [];
-  const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
+  const { wrapper, effectStack, filterSource } = resolveWrapper(node, ids, defs);
   const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
   const ellipseStrokeShape: StrokeShape = { kind: "ellipse", cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry };
@@ -1115,6 +1261,7 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings:
       type: "path",
       id: node.id,
       wrapper,
+      filterSource,
       defs,
       source: node,
       paths,
@@ -1137,6 +1284,7 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings:
     type: "ellipse",
     id: node.id,
     wrapper,
+    filterSource,
     defs,
     source: node,
     cx: node.cx,
@@ -1156,7 +1304,7 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings:
 
 function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderPathNode {
   const defs: RenderDef[] = [];
-  const { wrapper, effectStack } = resolveWrapper(node, ids, defs);
+  const { wrapper, effectStack, filterSource } = resolveWrapper(node, ids, defs);
   const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
 
@@ -1220,6 +1368,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
     type: "path",
     id: node.id,
     wrapper,
+    filterSource,
     defs,
     source: node,
     paths,
@@ -1251,15 +1400,9 @@ function resolvePathStrokeShape(node: PathNode, paths: readonly RenderPathContou
 function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderTextNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
-  // The "primary" fill for the line-mode renderer and for decoration
-  // strokes is the first stacked SOLID paint. `fills[]` is the SoT
-  // shape (matches Figma's `fillPaints: Paint[]`); we extract slot 0
-  // here for the consumers that historically used the single-fill API.
-  // An empty `fills` array means the node has no visible SOLID paint —
-  // line-mode produces no fill color and decorations skip.
-  const primary = node.fills[0];
-  const fillColor = primary ? colorToHex(primary.color) : "#000000";
-  const fillOpacity = primary && primary.opacity < 1 ? primary.opacity : undefined;
+  const baseRun = node.runs[0];
+  const fillColor = baseRun?.fillColor ?? "#000000";
+  const fillOpacity = baseRun !== undefined && baseRun.fillOpacity < 1 ? baseRun.fillOpacity : undefined;
 
   const textClipId = resolveTextClipId(node, ids, defs);
   const content = resolveTextContent(node);
@@ -1283,8 +1426,8 @@ function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: Resol
     content,
     sourceGlyphContours: node.glyphContours,
     sourceDecorationContours: node.decorationContours,
-    sourceFillColor: primary?.color ?? { r: 0, g: 0, b: 0, a: 1 },
-    sourceFillOpacity: primary?.opacity ?? 0,
+    sourceFillColor: hexToSceneColor(fillColor),
+    sourceFillOpacity: baseRun?.fillOpacity ?? 0,
     sourceTextLineLayout: node.textLineLayout,
     sourceTextAutoResize: node.textAutoResize,
     mask,

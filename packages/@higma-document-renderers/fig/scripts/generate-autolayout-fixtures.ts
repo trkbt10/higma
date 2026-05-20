@@ -13,20 +13,19 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
+  type KiwiStackLayoutFields,
+  type KiwiChildLayoutFields,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  AutoLayoutProps,
-  FigDesignDocument,
-  FigGridTrackPositions,
-  FigNodeId,
-  FigPageId,
-  LayoutConstraints,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+import type { FigGridTrackPositions } from "@higma-document-models/fig/types";
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 import {
   STACK_ALIGN_VALUES,
@@ -35,6 +34,7 @@ import {
   STACK_MODE_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
+  STACK_WRAP_VALUES,
   type StackAlign,
   type StackJustify,
 } from "@higma-document-models/fig/constants";
@@ -52,7 +52,7 @@ const ORANGE: FigColor = { r: 1, g: 0.584, b: 0, a: 1 };
 const PURPLE: FigColor = { r: 0.56, g: 0.33, b: 0.86, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 // =============================================================================
@@ -273,12 +273,12 @@ const EXISTING_CASES: readonly ExistingCase[] = [
 ];
 
 // =============================================================================
-// Builder helpers
+// Fixture construction
 // =============================================================================
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 /** Build a uniform padding box `{top, right, bottom, left}`. */
@@ -303,35 +303,38 @@ type AutoLayoutInput = {
 function buildPrimaryAlignItems(
   name: AutoLayoutInput["primaryAlign"],
 ): { value: number; name: NonNullable<AutoLayoutInput["primaryAlign"]> } | undefined {
-  if (!name) return undefined;
+  if (!name) {return undefined;}
   return { value: STACK_JUSTIFY_VALUES[name], name };
 }
 
 function buildCounterAlignItems(
   name: AutoLayoutInput["counterAlign"],
 ): { value: number; name: NonNullable<AutoLayoutInput["counterAlign"]> } | undefined {
-  if (!name) return undefined;
+  if (!name) {return undefined;}
   return { value: STACK_ALIGN_VALUES[name], name };
 }
 
 function buildPrimaryAlignContent(
   name: AutoLayoutInput["contentAlign"],
 ): { value: number; name: NonNullable<AutoLayoutInput["contentAlign"]> } | undefined {
-  if (!name) return undefined;
+  if (!name) {return undefined;}
   return { value: STACK_ALIGN_VALUES[name], name };
 }
 
-function buildAutoLayout(input: AutoLayoutInput): AutoLayoutProps {
+function buildAutoLayout(input: AutoLayoutInput): KiwiStackLayoutFields {
   const padding = typeof input.padding === "number" ? uniformPadding(input.padding) : input.padding;
   return {
     stackMode: { value: STACK_MODE_VALUES[input.mode], name: input.mode },
     stackSpacing: input.gap,
     stackCounterSpacing: input.counterGap,
-    stackPadding: padding,
+    stackVerticalPadding: padding?.top,
+    stackHorizontalPadding: padding?.left,
+    stackPaddingRight: padding?.right,
+    stackPaddingBottom: padding?.bottom,
     stackPrimaryAlignItems: buildPrimaryAlignItems(input.primaryAlign),
     stackCounterAlignItems: buildCounterAlignItems(input.counterAlign),
     stackPrimaryAlignContent: buildPrimaryAlignContent(input.contentAlign),
-    stackWrap: input.wrap,
+    stackWrap: input.wrap === true ? { value: STACK_WRAP_VALUES.WRAP, name: "WRAP" } : undefined,
     stackReverseZIndex: input.reverseZIndex,
   };
 }
@@ -352,19 +355,19 @@ type FrameOpts = {
   readonly strokeWeight?: number;
 };
 
-type AddedFrame = { readonly doc: FigDesignDocument; readonly frameId: FigNodeId };
+type AddedFrame = { readonly context: FigDocumentContext; readonly frameId: FigGuid };
 
 function addFrame(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
-  parentId: FigNodeId | null,
+  parentGuid: FigGuid | null,
   opts: FrameOpts,
 ): AddedFrame {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -375,37 +378,37 @@ function addFrame(
       fills: [solidPaint(opts.background)],
       strokes: opts.stroke ? [solidPaint(opts.stroke)] : undefined,
       strokeWeight: opts.strokeWeight,
-      autoLayout: opts.autoLayout ? buildAutoLayout(opts.autoLayout) : undefined,
+      ...(opts.autoLayout ? buildAutoLayout(opts.autoLayout) : {}),
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
-function buildPositioningPatch(positioning: RectSpec["positioning"]): Partial<LayoutConstraints> {
-  if (positioning === undefined) return {};
+function buildPositioningPatch(positioning: RectSpec["positioning"]): Partial<KiwiChildLayoutFields> {
+  if (positioning === undefined) {return {};}
   return {
     stackPositioning: { value: STACK_POSITIONING_VALUES[positioning], name: positioning },
   };
 }
 
 function addRect(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
-  parentId: FigNodeId,
+  parentGuid: FigGuid,
   spec: RectSpec,
-): FigDesignDocument {
-  const layoutConstraints: LayoutConstraints = {};
+): FigDocumentContext {
+  const layoutConstraints: KiwiChildLayoutFields = {};
   const positioningPatch = buildPositioningPatch(spec.positioning);
-  const constraints: LayoutConstraints = {
+  const constraints: KiwiChildLayoutFields = {
     ...layoutConstraints,
     ...(spec.primaryGrow !== undefined ? { stackChildPrimaryGrow: spec.primaryGrow } : {}),
     ...positioningPatch,
   };
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: spec.name,
@@ -415,14 +418,14 @@ function addRect(
       height: spec.height,
       fills: [solidPaint(spec.fill)],
       cornerRadius: spec.radius ?? 0,
-      ...(Object.keys(constraints).length > 0 ? { layoutConstraints: constraints } : {}),
+      ...(Object.keys(constraints).length > 0 ? constraints : {}),
     },
   });
-  return r.doc;
+  return r.context;
 }
 
 function autoLayoutFromExistingCase(item: ExistingCase): AutoLayoutInput | undefined {
-  if (!item.autoLayout) return undefined;
+  if (!item.autoLayout) {return undefined;}
   return {
     mode: item.autoLayout,
     gap: item.gap,
@@ -432,19 +435,19 @@ function autoLayoutFromExistingCase(item: ExistingCase): AutoLayoutInput | undef
   };
 }
 
-function addExistingCase(doc: FigDesignDocument, ctx: Ctx, item: ExistingCase): FigDesignDocument {
-  const frame = addFrame(doc, ctx, null, {
+function addExistingCase(context: FigDocumentContext, ctx: Ctx, item: ExistingCase): FigDocumentContext {
+  const frame = addFrame(context, ctx, null, {
     name: item.name,
     x: item.x,
     y: item.y,
     width: item.width,
     height: item.height,
     background: BG,
-    autoLayout: autoLayoutFromExistingCase(item),
+    ...autoLayoutFromExistingCase(item),
   });
-  return item.children.reduce<FigDesignDocument>(
+  return item.children.reduce<FigDocumentContext>(
     (acc, child) => addRect(acc, ctx, frame.frameId, child),
-    frame.doc,
+    frame.context,
   );
 }
 
@@ -469,7 +472,7 @@ function gridTrackEntries(count: number): FigGridTrackPositions {
 // Phase B fixtures
 // =============================================================================
 
-function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument {
+function addPhaseBFixtures(context: FigDocumentContext, ctx: Ctx): FigDocumentContext {
   const startY = 520;
 
   // ── 1. auto-grid-2x3 ─────────────────────────────────────────────────────
@@ -479,7 +482,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
   // authored 124×138 sticks. The right gap (124 − 92 = 32) is unused
   // empty space and is intentional to keep the frame aligned with
   // surrounding fixtures.
-  const grid = addFrame(doc, ctx, null, {
+  const grid = addFrame(context, ctx, null, {
     name: "auto-grid-2x3",
     x: 0,
     y: startY,
@@ -493,10 +496,9 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     },
   });
   const gridWithTracks = updateNode({
-    doc: grid.doc,
-    pageId: ctx.pageId,
-    nodeId: grid.frameId,
-    updater: (n) => ({
+    context: grid.context,
+    nodeGuid: grid.frameId,
+    update: (n) => ({
       ...n,
       // The Kiwi schema models gridColumns / gridRows as single
       // `GridTrackPositions` messages (one struct, not an array). The
@@ -510,7 +512,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
       gridRowGap: 8,
     }),
   });
-  const gridFilled = [0, 1, 2, 3, 4, 5].reduce<FigDesignDocument>((acc, index) => {
+  const gridFilled = [0, 1, 2, 3, 4, 5].reduce<FigDocumentContext>((acc, index) => {
     const colors = [RED, GREEN, BLUE, ORANGE, PURPLE, BLUE];
     return addRect(acc, ctx, grid.frameId, {
       name: `cell-${index + 1}`,
@@ -546,7 +548,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
       counterAlign: "CENTER",
     },
   });
-  const wrapFilled = [0, 1, 2, 3, 4].reduce<FigDesignDocument>((acc, index) => {
+  const wrapFilled = [0, 1, 2, 3, 4].reduce<FigDocumentContext>((acc, index) => {
     const colors = [RED, GREEN, BLUE, ORANGE, PURPLE];
     return addRect(acc, ctx, wrap.frameId, {
       name: `wrap-${index + 1}`,
@@ -557,7 +559,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
       fill: colors[index],
       radius: 4,
     });
-  }, wrap.doc);
+  }, wrap.context);
 
   // ── 3. auto-hug-h ────────────────────────────────────────────────────────
   // Primary axis hugs to 0+30+10+50+10+20+0 = 120. Counter axis uses
@@ -573,12 +575,11 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "HORIZONTAL", gap: 10 },
   });
   const hugHSized = updateNode({
-    doc: hugH.doc,
-    pageId: ctx.pageId,
-    nodeId: hugH.frameId,
-    updater: (n) => ({
+    context: hugH.context,
+    nodeGuid: hugH.frameId,
+    update: (n) => ({
       ...n,
-      layoutConstraints: {
+      ...{
         ...(n.layoutConstraints ?? {}),
         stackPrimarySizing: sizingConstraint("RESIZE_TO_FIT"),
         stackCounterSizing: sizingConstraint("RESIZE_TO_FIT_WITH_IMPLICIT_SIZE"),
@@ -594,7 +595,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     { name: "a", fill: RED, w: 30, h: 20 },
     { name: "b", fill: GREEN, w: 50, h: 30 },
     { name: "c", fill: BLUE, w: 20, h: 30 },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) => addRect(acc, ctx, hugH.frameId, { name: c.name, x: 0, y: 0, width: c.w, height: c.h, fill: c.fill, radius: 4 }),
     hugHSized,
   );
@@ -613,12 +614,11 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "VERTICAL", gap: 10 },
   });
   const hugVSized = updateNode({
-    doc: hugV.doc,
-    pageId: ctx.pageId,
-    nodeId: hugV.frameId,
-    updater: (n) => ({
+    context: hugV.context,
+    nodeGuid: hugV.frameId,
+    update: (n) => ({
       ...n,
-      layoutConstraints: {
+      ...{
         ...(n.layoutConstraints ?? {}),
         stackPrimarySizing: sizingConstraint("RESIZE_TO_FIT_WITH_IMPLICIT_SIZE"),
         stackCounterSizing: sizingConstraint("RESIZE_TO_FIT"),
@@ -629,7 +629,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     { name: "a", fill: RED, w: 30, h: 20 },
     { name: "b", fill: GREEN, w: 50, h: 30 },
     { name: "c", fill: BLUE, w: 20, h: 25 },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) => addRect(acc, ctx, hugV.frameId, { name: c.name, x: 0, y: 0, width: c.w, height: c.h, fill: c.fill, radius: 4 }),
     hugVSized,
   );
@@ -652,7 +652,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     { name: "fixed-a", fill: RED, w: 40, h: 30 },
     { name: "grow", fill: GREEN, w: 10, h: 30, primaryGrow: 1 },
     { name: "fixed-b", fill: BLUE, w: 50, h: 30 },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) =>
       addRect(acc, ctx, grow.frameId, {
         name: c.name,
@@ -664,7 +664,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
         radius: 4,
         primaryGrow: "primaryGrow" in c ? c.primaryGrow : undefined,
       }),
-    grow.doc,
+    grow.context,
   );
 
   // ── 6. auto-min-clamp ───────────────────────────────────────────────────
@@ -681,13 +681,12 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "VERTICAL", gap: 4 },
   });
   const minFPatched = updateNode({
-    doc: minF.doc,
-    pageId: ctx.pageId,
-    nodeId: minF.frameId,
-    updater: (n) => ({
+    context: minF.context,
+    nodeGuid: minF.frameId,
+    update: (n) => ({
       ...n,
       minSize: { x: 200, y: 120 },
-      layoutConstraints: {
+      ...{
         ...(n.layoutConstraints ?? {}),
         stackPrimarySizing: sizingConstraint("RESIZE_TO_FIT"),
         stackCounterSizing: sizingConstraint("RESIZE_TO_FIT"),
@@ -697,7 +696,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
   const minFFilled = ([
     { name: "short-a", fill: RED, w: 60, h: 30 },
     { name: "short-b", fill: GREEN, w: 60, h: 20 },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) => addRect(acc, ctx, minF.frameId, { name: c.name, x: 0, y: 0, width: c.w, height: c.h, fill: c.fill, radius: 4 }),
     minFPatched,
   );
@@ -717,20 +716,19 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "VERTICAL", gap: 8 },
   });
   const maxFPatched = updateNode({
-    doc: maxF.doc,
-    pageId: ctx.pageId,
-    nodeId: maxF.frameId,
-    updater: (n) => ({
+    context: maxF.context,
+    nodeGuid: maxF.frameId,
+    update: (n) => ({
       ...n,
       maxSize: { x: 200, y: 240 },
-      layoutConstraints: {
+      ...{
         ...(n.layoutConstraints ?? {}),
         stackPrimarySizing: sizingConstraint("RESIZE_TO_FIT"),
         stackCounterSizing: sizingConstraint("RESIZE_TO_FIT"),
       },
     }),
   });
-  const maxFFilled = [0, 1, 2].reduce<FigDesignDocument>((acc, index) => {
+  const maxFFilled = [0, 1, 2].reduce<FigDocumentContext>((acc, index) => {
     const colors = [RED, GREEN, BLUE];
     return addRect(acc, ctx, maxF.frameId, {
       name: `tall-${index + 1}`,
@@ -759,10 +757,9 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "HORIZONTAL" },
   });
   const aspectPatched = updateNode({
-    doc: aspect.doc,
-    pageId: ctx.pageId,
-    nodeId: aspect.frameId,
-    updater: (n) => ({
+    context: aspect.context,
+    nodeGuid: aspect.frameId,
+    update: (n) => ({
       ...n,
       proportionsConstrained: true,
     }),
@@ -787,7 +784,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
   //                                          painted at half-weight).
   // Both frames have RESIZE_TO_FIT primary axis so the width is
   // recomputed from the child plus border inset.
-  const strokesDoc = [true, false].reduce<FigDesignDocument>((acc, takeSpace, index) => {
+  const strokesDoc = [true, false].reduce<FigDocumentContext>((acc, takeSpace, index) => {
     const frame = addFrame(acc, ctx, null, {
       name: takeSpace ? "auto-strokes-on" : "auto-strokes-off",
       x: 360 + index * 180,
@@ -800,13 +797,12 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
       autoLayout: { mode: "HORIZONTAL" },
     });
     const patched = updateNode({
-      doc: frame.doc,
-      pageId: ctx.pageId,
-      nodeId: frame.frameId,
-      updater: (n) => ({
+      context: frame.context,
+      nodeGuid: frame.frameId,
+      update: (n) => ({
         ...n,
         bordersTakeSpace: takeSpace,
-        layoutConstraints: {
+        ...{
           ...(n.layoutConstraints ?? {}),
           stackPrimarySizing: sizingConstraint("RESIZE_TO_FIT"),
         },
@@ -837,9 +833,9 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     { name: "bottom-authored-first", fill: RED },
     { name: "middle", fill: GREEN },
     { name: "top-authored-last", fill: BLUE },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) => addRect(acc, ctx, reverse.frameId, { name: c.name, x: 0, y: 0, width: 60, height: 50, fill: c.fill, radius: 4 }),
-    reverse.doc,
+    reverse.context,
   );
 
   // ── 11. auto-absolute-mix ───────────────────────────────────────────────
@@ -860,9 +856,9 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     { name: "flow-a", x: 0, y: 0, fill: RED },
     { name: "flow-b", x: 0, y: 0, fill: GREEN },
     { name: "flow-c", x: 0, y: 0, fill: BLUE },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) => addRect(acc, ctx, abs.frameId, { name: c.name, x: c.x, y: c.y, width: 40, height: 30, fill: c.fill, radius: 4 }),
-    abs.doc,
+    abs.context,
   );
   const absFinal = addRect(absFilled, ctx, abs.frameId, {
     name: "absolute",
@@ -894,12 +890,11 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     },
   });
   const asymPatched = updateNode({
-    doc: asym.doc,
-    pageId: ctx.pageId,
-    nodeId: asym.frameId,
-    updater: (n) => ({
+    context: asym.context,
+    nodeGuid: asym.frameId,
+    update: (n) => ({
       ...n,
-      layoutConstraints: {
+      ...{
         ...(n.layoutConstraints ?? {}),
         stackCounterSizing: sizingConstraint("RESIZE_TO_FIT"),
       },
@@ -931,7 +926,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     background: WHITE,
     autoLayout: { mode: "HORIZONTAL", gap: 16 },
   });
-  const leftHug = addFrame(nested.doc, ctx, nested.frameId, {
+  const leftHug = addFrame(nested.context, ctx, nested.frameId, {
     name: "left-hug",
     x: 0,
     y: 0,
@@ -941,12 +936,11 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "VERTICAL", gap: 8 },
   });
   const leftHugSized = updateNode({
-    doc: leftHug.doc,
-    pageId: ctx.pageId,
-    nodeId: leftHug.frameId,
-    updater: (n) => ({
+    context: leftHug.context,
+    nodeGuid: leftHug.frameId,
+    update: (n) => ({
       ...n,
-      layoutConstraints: {
+      ...{
         ...(n.layoutConstraints ?? {}),
         stackPrimarySizing: sizingConstraint("RESIZE_TO_FIT"),
         stackCounterSizing: sizingConstraint("RESIZE_TO_FIT"),
@@ -956,7 +950,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
   const leftHugFilled = ([
     { name: "left-a", w: 50, h: 24, fill: RED },
     { name: "left-b", w: 30, h: 28, fill: GREEN },
-  ] as const).reduce<FigDesignDocument>(
+  ] as const).reduce<FigDocumentContext>(
     (acc, c) => addRect(acc, ctx, leftHug.frameId, { name: c.name, x: 0, y: 0, width: c.w, height: c.h, fill: c.fill, radius: 4 }),
     leftHugSized,
   );
@@ -971,16 +965,15 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
     autoLayout: { mode: "GRID", gap: 0, counterGap: 0 },
   });
   const rightGridWithTracks = updateNode({
-    doc: rightGrid.doc,
-    pageId: ctx.pageId,
-    nodeId: rightGrid.frameId,
-    updater: (n) => ({
+    context: rightGrid.context,
+    nodeGuid: rightGrid.frameId,
+    update: (n) => ({
       ...n,
       gridColumns: gridTrackEntries(2),
       gridRows: gridTrackEntries(2),
     }),
   });
-  const rightGridFilled = [0, 1, 2, 3].reduce<FigDesignDocument>((acc, index) => {
+  const rightGridFilled = [0, 1, 2, 3].reduce<FigDocumentContext>((acc, index) => {
     const colors = [BLUE, ORANGE, PURPLE, GREEN];
     return addRect(acc, ctx, rightGrid.frameId, {
       name: `right-${index + 1}`,
@@ -1008,9 +1001,9 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
   });
   const stretchChild = addNode({
     state: ctx.state,
-    doc: stretch.doc,
-    pageId: ctx.pageId,
-    parentId: stretch.frameId,
+    context: stretch.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: stretch.frameId,
     spec: {
       type: "FRAME",
       name: "stretch-child",
@@ -1019,7 +1012,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
       width: 40,
       height: 20,
       fills: [solidPaint(PURPLE)],
-      layoutConstraints: {
+      ...{
         stackChildAlignSelf: {
           value: STACK_COUNTER_ALIGN_VALUES.STRETCH,
           name: "STRETCH",
@@ -1027,7 +1020,7 @@ function addPhaseBFixtures(doc: FigDesignDocument, ctx: Ctx): FigDesignDocument 
       },
     },
   });
-  return addRect(stretchChild.doc, ctx, stretch.frameId, {
+  return addRect(stretchChild.context, ctx, stretch.frameId, {
     name: "fixed-child",
     x: 0,
     y: 0,
@@ -1043,27 +1036,27 @@ async function generate(): Promise<void> {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const empty = createEmptyFigDesignDocument("AutoLayout");
+  const empty = createEmptyFigDocument("AutoLayout");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "AutoLayout").guid;
+  const ctx: Ctx = { state, pageGuid };
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
-  const afterExisting = EXISTING_CASES.reduce<FigDesignDocument>(
+  const afterExisting = EXISTING_CASES.reduce<FigDocumentContext>(
     (acc, item) => addExistingCase(acc, ctx, item),
     doc0,
   );
-  const finalDoc = addPhaseBFixtures(afterExisting, ctx);
+  const finalContext = addPhaseBFixtures(afterExisting, ctx);
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`Written: ${OUTPUT_FILE}`);
   console.log(`Size: ${(exported.data.byteLength / 1024).toFixed(1)} KB`);

@@ -49,7 +49,7 @@ export function usePaintEditorState(initial: readonly PaintItemView[]): PaintEdi
             type,
             hex: paint.hex,
             opacity: paint.opacity,
-            image: { imageRef: "", scaleMode: "FILL", scale: 1, rotationDeg: 0 },
+            image: { imageHashHex: "", scaleMode: "FILL", scale: 1, rotationDeg: 0 },
           };
         }
         if (type.startsWith("GRADIENT_")) {
@@ -75,7 +75,7 @@ export function usePaintEditorState(initial: readonly PaintItemView[]): PaintEdi
     },
     onOpacityChange: (index, opacity) => updatePaint(index, (paint) => ({ ...paint, opacity })),
     onColorChange: (index, hex) => updatePaint(index, (paint) => ({ ...paint, hex })),
-    onImageRefChange: (index, imageRef) => updatePaint(index, (paint) => paint.image ? ({ ...paint, image: { ...paint.image, imageRef } }) : paint),
+    onImageHashHexChange: (index, imageHashHex) => updatePaint(index, (paint) => paint.image ? ({ ...paint, image: { ...paint.image, imageHashHex } }) : paint),
     onImageScaleModeChange: (index, scaleMode) => updatePaint(index, (paint) => paint.image ? ({ ...paint, image: { ...paint.image, scaleMode } }) : paint),
     onImageScaleChange: (index, scale) => updatePaint(index, (paint) => paint.image ? ({ ...paint, image: { ...paint.image, scale } }) : paint),
     onImageRotationChange: (index, rotationDeg) => updatePaint(index, (paint) => paint.image ? ({ ...paint, image: { ...paint.image, rotationDeg } }) : paint),

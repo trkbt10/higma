@@ -14,9 +14,8 @@
  * React JSX, WebGL tessellation) happens in the thin render layers on top.
  */
 
-import type { GlyphContour, PathContour } from "../paths/types";
-import type { ExtractedTextProps } from "../layout/types";
-import type { TextLayout } from "../layout/compute-layout";
+import type { GlyphContour, PathContour } from "../paths";
+import type { ExtractedTextProps, TextLayout } from "../layout";
 import type { FigMatrix } from "@higma-document-models/fig/types";
 import type { AbstractFont } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";

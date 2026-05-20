@@ -8,6 +8,7 @@
 // Types
 export type {
   GlyphOutline,
+  GlyphContour,
   PathContour,
   DecorationRect,
   TextPathResult,

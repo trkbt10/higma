@@ -8,9 +8,7 @@
  * adopts the active VS Code theme without per-icon assets.
  */
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-
-type FigNodeType = FigDesignNode["type"];
+import type { FigNodeType } from "@higma-document-models/fig/types";
 
 /**
  * Single-character glyphs picked to be visually distinct at 12-13px
@@ -46,6 +44,7 @@ const GLYPHS: Partial<Record<FigNodeType, string>> = {
 
 
 
+/** Return the sidebar glyph for a Kiwi node type. */
 export function nodeTypeGlyph(type: FigNodeType): string {
   return GLYPHS[type] ?? "·";
 }
@@ -55,6 +54,7 @@ export function nodeTypeGlyph(type: FigNodeType): string {
 
 
 
+/** Return the inspect/sidebar label for a Kiwi node type. */
 export function nodeTypeLabel(type: FigNodeType): string {
   // Lowercase the enum value for display ("RECTANGLE" → "rectangle"),
   // mirroring Figma's casing in the inspect panel ("Rectangle 1" /

@@ -411,6 +411,14 @@ export type FrameNode = SceneNodeBase & {
   readonly type: "frame";
   readonly width: number;
   readonly height: number;
+  /**
+   * The frame's authored surface geometry. Kiwi `fillGeometry` is the
+   * SoT when present; otherwise the surface is the node size plus corner
+   * metadata. Background fills, surface effects, strokes, and child
+   * clipping all consume this field instead of rebuilding a separate
+   * rectangle interpretation.
+   */
+  readonly surfaceShape: ClipShape;
   readonly cornerRadius?: CornerRadius;
   /** See `RectClip.cornerSmoothing`. */
   readonly cornerSmoothing?: number;

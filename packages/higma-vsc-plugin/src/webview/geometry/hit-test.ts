@@ -10,7 +10,6 @@
  * bbox-first; sub-pixel transparency hits are an explicit non-goal.
  */
 
-import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { NodeBounds } from "./node-bounds";
 
 
@@ -18,6 +17,7 @@ import type { NodeBounds } from "./node-bounds";
 
 
 
+/** Return the topmost visible bounds entry containing a page-space point. */
 export function findNodeAtPoint(
   bounds: readonly NodeBounds[],
   point: { readonly x: number; readonly y: number },
@@ -44,9 +44,10 @@ export function findNodeAtPoint(
 
 
 
+/** Return the bounds entry for a Kiwi GUID string, or null when absent. */
 export function findNodeById(
   bounds: readonly NodeBounds[],
-  id: FigNodeId | null,
+  id: string | null,
 ): NodeBounds | null {
   if (id === null) {
     return null;

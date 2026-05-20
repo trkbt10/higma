@@ -33,17 +33,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  FigDesignDocument,
-  FigDesignNode,
-  FigNodeId,
-  FigPage,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
-import { toPageId } from "@higma-document-models/fig/domain";
-import { dfsById } from "@higma-primitives/tree";
-import { useFigSceneGraph, createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
-import { createCanvasMetricsTextFontResolver } from "@higma-document-renderers/fig/font-drivers/browser";
+import {
+  figDocumentResources,
+  findCanvases,
+  type FigDocumentContext,
+  type FigDocumentResources,
+} from "@higma-document-io/fig";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
+import { createFigFamilyRenderOptions, useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
 import { computePageBounds, type PageBounds } from "./page-bounds";
 import { computeNodeBounds, indexBoundsById, type NodeBounds } from "./geometry/node-bounds";
 import { findNodeAtPoint } from "./geometry/hit-test";
@@ -68,10 +66,12 @@ const ZOOM_LEVELS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8] as const;
 const MIN_ZOOM = ZOOM_LEVELS[0];
 const MAX_ZOOM = ZOOM_LEVELS[ZOOM_LEVELS.length - 1];
 const FIT_PADDING = 48;
+const JPEG_ALPHA_FLATTEN_BACKGROUND = "#ffffff";
 // Tuned so that a single notch of a typical mouse wheel (deltaY≈100,
 // deltaMode=0) produces ~1.16× / ~0.86× — close to Figma's per-notch
 // zoom step but smooth for trackpad pinch which streams small deltas.
 const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+const WHEEL_LINE_HEIGHT = 16;
 // Distance the pointer must travel (in CSS px) before a press counts as
 // a pan rather than a click. Smaller than this and the click handler
 // still fires so a quick middle-click does not feel like dead input.
@@ -79,7 +79,7 @@ const PAN_MOVE_THRESHOLD = 3;
 
 type FigViewerProps = {
   readonly fileName: string;
-  readonly document: FigDesignDocument;
+  readonly context: FigDocumentContext;
 };
 
 export type ViewportTransform = {
@@ -130,12 +130,33 @@ function rescaleAround(
   };
 }
 
+function wheelDeltaFactor(deltaMode: number, pageHeight: number): number {
+  if (deltaMode === 1) {return WHEEL_LINE_HEIGHT;}
+  if (deltaMode === 2) {return pageHeight;}
+  return 1;
+}
+
+function normaliseWheelDelta(event: WheelEvent, pageHeight: number): { readonly dx: number; readonly dy: number } {
+  const factor = wheelDeltaFactor(event.deltaMode, pageHeight);
+  return { dx: event.deltaX * factor, dy: event.deltaY * factor };
+}
+
+function shouldClearCanvasClick(modifiers: SelectionModifiers): boolean {
+  return !modifiers.meta && !modifiers.shift;
+}
+
+function clearSelectionForCanvasMiss(modifiers: SelectionModifiers, clearSelection: () => void): void {
+  if (shouldClearCanvasClick(modifiers)) {
+    clearSelection();
+  }
+}
+
 /**
  * Build the viewport that places `pageBounds` centred inside a stage of
  * `surface` size, scaled to fit with `padding` margin on each side.
  *
  * Differs from `getCenteredViewport` in `@higma-editor-kernel`: that one
- * assumes the slide's world origin is (0, 0). A fig page's content can
+ * is defined for a slide world origin at (0, 0). A fig page's content can
  * start at any `(bounds.x, bounds.y)`, so the centring math has to bake
  * in that offset — otherwise an artboard placed at world (10000, 10000)
  * would render entirely off-screen on first paint.
@@ -153,50 +174,60 @@ function fitViewport(
   return { translateX, translateY, scale };
 }
 
-export function FigViewer({ fileName, document }: FigViewerProps) {
+/** Render the VS Code fig viewer against a Kiwi document context. */
+export function FigViewer({ fileName, context }: FigViewerProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const resources = useMemo<FigDocumentResources>(() => figDocumentResources(context), [context]);
+  const pages = useMemo<readonly FigNode[]>(
+    () => findCanvases(context.document),
+    [context],
+  );
 
-  const initialPageId = useMemo<FigPageId | null>(() => {
-    const withChildren = document.pages.find((page) => page.children.length > 0);
-    const target = withChildren ?? document.pages[0];
-    return target ? target.id : null;
-  }, [document]);
+  const initialPageId = useMemo<string | null>(() => {
+    const withChildren = pages.find((page) => resources.childrenOf(page).length > 0);
+    const target = withChildren ?? pages[0];
+    return target ? guidToString(target.guid) : null;
+  }, [pages, resources]);
 
-  const [activePageId, setActivePageId] = useState<FigPageId | null>(initialPageId);
+  const [activePageId, setActivePageId] = useState<string | null>(initialPageId);
   useEffect(() => {
     setActivePageId(initialPageId);
   }, [initialPageId]);
 
-  const activePage = useMemo<FigPage | null>(() => {
+  const activePage = useMemo<FigNode | null>(() => {
     if (!activePageId) {return null;}
-    return document.pages.find((page) => page.id === activePageId) ?? null;
-  }, [activePageId, document]);
+    return pages.find((page) => guidToString(page.guid) === activePageId) ?? null;
+  }, [activePageId, pages]);
+
+  const activePageChildren = useMemo<readonly FigNode[]>(() => {
+    if (!activePage) {return [];}
+    return resources.childrenOf(activePage);
+  }, [activePage, resources]);
 
   const pageBounds = useMemo<PageBounds | null>(() => {
     if (!activePage) {return null;}
-    return computePageBounds(activePage.children);
-  }, [activePage]);
+    return computePageBounds(activePageChildren);
+  }, [activePage, activePageChildren]);
 
   const nodeBounds = useMemo<readonly NodeBounds[]>(() => {
     if (!activePage) {return [];}
-    return computeNodeBounds(activePage);
-  }, [activePage]);
+    return computeNodeBounds(activePage, resources.childrenOf);
+  }, [activePage, resources]);
 
   const boundsById = useMemo(() => indexBoundsById(nodeBounds), [nodeBounds]);
-  const orderedIds = useMemo<readonly FigNodeId[]>(
+  const orderedIds = useMemo<readonly string[]>(
     () => nodeBounds.map((entry) => entry.id),
     [nodeBounds],
   );
-  const validIdSet = useMemo<ReadonlySet<FigNodeId>>(
+  const validIdSet = useMemo<ReadonlySet<string>>(
     () => new Set(orderedIds),
     [orderedIds],
   );
 
-  const renderOptions = useMemo(() => createFigFamilyRenderOptions(document), [document]);
-  const textFontResolver = useMemo(() => createCanvasMetricsTextFontResolver(), []);
+  const renderOptions = useMemo(() => createFigFamilyRenderOptions(context), [context]);
 
-  const [hoveredId, setHoveredId] = useState<FigNodeId | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
   const [cursor, setCursor] = useState<Cursor | null>(null);
 
@@ -226,18 +257,18 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
     return out;
   }, [selection, boundsById]);
 
-  const selectedFigNodes = useMemo<readonly FigDesignNode[]>(() => {
-    if (!activePage || selection.ids.length === 0) {return [];}
-    const out: FigDesignNode[] = [];
+  const selectedFigNodes = useMemo<readonly FigNode[]>(() => {
+    if (selection.ids.length === 0) {return [];}
+    const out: FigNode[] = [];
     for (const id of selection.ids) {
-      const node = findNodeInPage(activePage.children, id);
+      const node = context.document.nodesByGuid.get(id);
       if (node) {out.push(node);}
     }
     return out;
-  }, [selection, activePage]);
+  }, [selection, context]);
 
   const handleSelectId = useCallback(
-    (id: FigNodeId, modifiers: SelectionModifiers) => {
+    (id: string, modifiers: SelectionModifiers) => {
       setSelection((prev) => applyClickSelection(prev, id, modifiers, orderedIds));
     },
     [orderedIds],
@@ -327,14 +358,14 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
     commitViewport(rescaleAround(current, 1, stageNow.width / 2, stageNow.height / 2));
   }, [commitViewport]);
 
-  const handlePageChange = useCallback((id: FigPageId) => {
+  const handlePageChange = useCallback((id: string) => {
     setActivePageId(id);
     // Page change clears selection too — ids from the previous page
     // cannot be evaluated against the new tree.
     setSelection(EMPTY_SELECTION);
   }, []);
   const handlePageSelectChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
-    setActivePageId(toPageId(event.target.value));
+    setActivePageId(event.target.value);
     setSelection(EMPTY_SELECTION);
   }, []);
 
@@ -368,33 +399,27 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
       const rect = canvas.getBoundingClientRect();
       // Normalise deltaMode so line- and page-mode wheels still produce
       // sensible step sizes. deltaMode 0 (pixels) is the common case.
-      const lineHeight = 16;
       const pageHeight = rect.height || 1;
-      let dx = event.deltaX;
-      let dy = event.deltaY;
-      if (event.deltaMode === 1) {dx *= lineHeight; dy *= lineHeight;}
-      else if (event.deltaMode === 2) {dx *= pageHeight; dy *= pageHeight;}
+      const { dx, dy } = normaliseWheelDelta(event, pageHeight);
 
-      if (event.ctrlKey || event.metaKey) {
-        event.preventDefault();
-        const current = viewportRef.current;
-        const factor = Math.exp(-dy * WHEEL_ZOOM_SENSITIVITY);
-        const next = clampZoom(current.scale * factor);
-        if (next === current.scale) {return;}
-        const cx = event.clientX - rect.left;
-        const cy = event.clientY - rect.top;
-        commitViewport(rescaleAround(current, next, cx, cy));
-        return;
-      }
-      // Plain wheel = pan. preventDefault stops the surrounding page
-      // from scrolling (the stage container itself has no scrollbars).
       event.preventDefault();
       const current = viewportRef.current;
-      commitViewport({
-        ...current,
-        translateX: current.translateX - dx,
-        translateY: current.translateY - dy,
-      });
+      if (!event.ctrlKey && !event.metaKey) {
+        // Plain wheel = pan. preventDefault stops the surrounding page
+        // from scrolling (the stage container itself has no scrollbars).
+        commitViewport({
+          ...current,
+          translateX: current.translateX - dx,
+          translateY: current.translateY - dy,
+        });
+        return;
+      }
+      const factor = Math.exp(-dy * WHEEL_ZOOM_SENSITIVITY);
+      const next = clampZoom(current.scale * factor);
+      if (next === current.scale) {return;}
+      const cx = event.clientX - rect.left;
+      const cy = event.clientY - rect.top;
+      commitViewport(rescaleAround(current, next, cx, cy));
     };
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
@@ -479,9 +504,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
       if (pan && pan.pointerId === event.pointerId) {
         const dx = event.clientX - pan.startClientX;
         const dy = event.clientY - pan.startClientY;
-        if (!pan.moved && Math.hypot(dx, dy) > PAN_MOVE_THRESHOLD) {
-          pan.moved = true;
-        }
+        pan.moved = pan.moved || Math.hypot(dx, dy) > PAN_MOVE_THRESHOLD;
         commitViewport({
           scale: pan.startScale,
           translateX: pan.startTranslateX + dx,
@@ -547,9 +570,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         shift: event.shiftKey,
       };
       if (!point) {
-        if (!modifiers.meta && !modifiers.shift) {
-          setSelection(EMPTY_SELECTION);
-        }
+        clearSelectionForCanvasMiss(modifiers, handleClearSelection);
         return;
       }
       const hit = findNodeAtPoint(nodeBounds, point);
@@ -558,14 +579,12 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         // A modifier-augmented click on empty space leaves the
         // selection alone — matches Figma, where Cmd-click on empty
         // canvas is a no-op rather than a deselect.
-        if (!modifiers.meta && !modifiers.shift) {
-          setSelection(EMPTY_SELECTION);
-        }
+        clearSelectionForCanvasMiss(modifiers, handleClearSelection);
         return;
       }
       setSelection((prev) => applyClickSelection(prev, hit.id, modifiers, orderedIds));
     },
-    [cursorToPagePoint, nodeBounds, orderedIds, spacePan],
+    [cursorToPagePoint, handleClearSelection, nodeBounds, orderedIds, spacePan],
   );
 
   // ----------------------------------------------------------------------
@@ -602,9 +621,8 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         const rollup = await runExportRollup({
           nodes: selectedFigNodes,
           page: activePage,
-          document,
+          context,
           renderOptions,
-          textFontResolver,
           request,
           onProgress: (completed) => {
             setExportStatus({ kind: "running", completed, total });
@@ -616,7 +634,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         setExporting(false);
       }
     },
-    [activePage, document, renderOptions, selectedFigNodes, textFontResolver],
+    [activePage, context, renderOptions, selectedFigNodes],
   );
 
   return (
@@ -625,7 +643,7 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         <span className="higma-fig-toolbar__filename" title={fileName}>
           {fileName}
         </span>
-        {document.pages.length > 1 && (
+        {pages.length > 1 && (
           <div className="higma-fig-toolbar__group">
             <label className="higma-fig-toolbar__label" htmlFor="higma-fig-page-select">
               Page
@@ -636,11 +654,14 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
               value={activePageId ?? ""}
               onChange={handlePageSelectChange}
             >
-              {document.pages.map((page) => (
-                <option key={page.id} value={page.id}>
-                  {page.name}
-                </option>
-              ))}
+              {pages.map((page) => {
+                const pageId = guidToString(page.guid);
+                return (
+                  <option key={pageId} value={pageId}>
+                    {page.name ?? "Page"}
+                  </option>
+                );
+              })}
             </select>
           </div>
         )}
@@ -687,10 +708,12 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
       </div>
       <div className="higma-fig-workspace">
         <LayersPanel
-          document={document}
+          document={context.document}
+          pages={pages}
           activePage={activePage}
           activePageId={activePageId}
           onPageChange={handlePageChange}
+          childrenOf={resources.childrenOf}
           hoveredId={hoveredId}
           selectedIds={selectedIds}
           primaryId={selection.primaryId}
@@ -712,15 +735,11 @@ export function FigViewer({ fileName, document }: FigViewerProps) {
         >
           <FigStageContent
             page={activePage}
-            hasContent={pageBounds !== null}
+            hasContent={activePageChildren.length > 0}
             viewport={viewport}
             surface={stageSize}
-            images={document.images}
-            blobs={document.blobs}
-            symbolMap={document.components}
-            styleRegistry={document.styleRegistry}
+            resources={resources}
             renderOptions={renderOptions}
-            textFontResolver={textFontResolver}
             hoveredNode={hoveredNode}
             selectedBounds={selectedBounds}
             primaryId={selection.primaryId}
@@ -747,11 +766,10 @@ type RolloupResult = {
 };
 
 type RolloupArgs = {
-  readonly nodes: readonly FigDesignNode[];
-  readonly page: FigPage;
-  readonly document: FigDesignDocument;
+  readonly nodes: readonly FigNode[];
+  readonly page: FigNode;
+  readonly context: FigDocumentContext;
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
-  readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
   readonly request: ExportRequest;
   readonly onProgress: (completed: number) => void;
 };
@@ -776,9 +794,8 @@ async function runExportRollup(args: RolloupArgs): Promise<RolloupResult> {
     await runOneNode({
       node,
       page: args.page,
-      document: args.document,
+      context: args.context,
       renderOptions: args.renderOptions,
-      textFontResolver: args.textFontResolver,
       request: args.request,
       usedNames,
       failed,
@@ -803,16 +820,15 @@ async function runOneNode(args: RunOneNodeArgs): Promise<void> {
     await exportSingleNode({
       node: args.node,
       page: args.page,
-      document: args.document,
+      context: args.context,
       renderOptions: args.renderOptions,
-      textFontResolver: args.textFontResolver,
       request: args.request,
       usedNames: args.usedNames,
     });
     args.accumulator.succeeded += 1;
   } catch (error: unknown) {
     args.failed.push({
-      name: args.node.name || args.node.type,
+      name: args.node.name ?? getNodeType(args.node),
       message: describeError(error),
     });
   }
@@ -826,28 +842,28 @@ function buildRollupErrorMessage(result: RolloupResult): string | null {
   if (result.succeeded > 0 || result.failed.length === 0) {
     return null;
   }
-  if (result.failed.length === 1) {
-    const first = result.failed[0];
-    if (first) {
-      return `${first.name}: ${first.message}`;
-    }
+  if (result.failed.length !== 1) {
+    return `Failed to export ${result.failed.length} layers.`;
+  }
+  const first = result.failed[0];
+  if (first) {
+    return `${first.name}: ${first.message}`;
   }
   return `Failed to export ${result.failed.length} layers.`;
 }
 
 type ExportSingleArgs = {
-  readonly node: FigDesignNode;
-  readonly page: FigPage;
-  readonly document: FigDesignDocument;
+  readonly node: FigNode;
+  readonly page: FigNode;
+  readonly context: FigDocumentContext;
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
-  readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
   readonly request: ExportRequest;
   readonly usedNames: Map<string, number>;
 };
 
 async function exportSingleNode(args: ExportSingleArgs): Promise<void> {
-  const { node, page, document, renderOptions, textFontResolver, request, usedNames } = args;
-  const baseName = node.name || node.type;
+  const { node, page, context, renderOptions, request, usedNames } = args;
+  const baseName = node.name ?? getNodeType(node);
   const extension = extensionForFormat(request.format);
   const proposedName = buildExportFileName({
     baseName,
@@ -857,11 +873,10 @@ async function exportSingleNode(args: ExportSingleArgs): Promise<void> {
   const fileName = dedupeFileName(proposedName, usedNames);
 
   const rendered = await renderNodeToSvg({
-    document,
+    context,
     page,
     node,
     renderOptions,
-    textFontResolver,
   });
   if (request.format === "SVG") {
     const blob = new Blob([rendered.svgString], { type: "image/svg+xml;charset=utf-8" });
@@ -874,6 +889,7 @@ async function exportSingleNode(args: ExportSingleArgs): Promise<void> {
     height: rendered.height,
     scale: request.scale,
     format: request.format,
+    jpegBackground: JPEG_ALPHA_FLATTEN_BACKGROUND,
   });
   triggerBlobDownload(blob, fileName);
 }
@@ -913,21 +929,17 @@ function dedupeFileName(name: string, used: Map<string, number>): string {
 }
 
 type FigStageContentProps = {
-  readonly page: FigPage | null;
+  readonly page: FigNode | null;
   /** True when the page has at least one renderable child. */
   readonly hasContent: boolean;
   readonly viewport: ViewportTransform;
   /** CSS-pixel size of the visible stage. Drives surface + render-window sizing. */
   readonly surface: Size;
-  readonly images: FigDesignDocument["images"];
-  readonly blobs: FigDesignDocument["blobs"];
-  readonly symbolMap: FigDesignDocument["components"];
-  readonly styleRegistry: FigDesignDocument["styleRegistry"];
+  readonly resources: FigDocumentResources;
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
-  readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
   readonly hoveredNode: NodeBounds | null;
   readonly selectedBounds: readonly NodeBounds[];
-  readonly primaryId: FigNodeId | null;
+  readonly primaryId: string | null;
   readonly canvasRef: React.RefObject<HTMLDivElement | null>;
 };
 
@@ -938,12 +950,8 @@ function FigStageContent({
   hasContent,
   viewport,
   surface,
-  images,
-  blobs,
-  symbolMap,
-  styleRegistry,
+  resources,
   renderOptions,
-  textFontResolver,
   hoveredNode,
   selectedBounds,
   primaryId,
@@ -973,11 +981,7 @@ function FigStageContent({
     viewportY: worldY,
     viewportWidth: Math.max(MIN_RENDER_DIM, worldW),
     viewportHeight: Math.max(MIN_RENDER_DIM, worldH),
-    images,
-    blobs,
-    symbolMap,
-    styleRegistry,
-    textFontResolver,
+    resources,
   });
 
   if (!page || !hasContent) {
@@ -998,13 +1002,4 @@ function FigStageContent({
       />
     </div>
   );
-}
-
-const DESIGN_NODE_DFS_OPTIONS = {
-  getId: (node: FigDesignNode) => node.id as string,
-  getChildren: (node: FigDesignNode): readonly FigDesignNode[] => node.children ?? [],
-} as const;
-
-function findNodeInPage(nodes: readonly FigDesignNode[], id: FigNodeId): FigDesignNode | null {
-  return dfsById(nodes, id as string, DESIGN_NODE_DFS_OPTIONS) ?? null;
 }

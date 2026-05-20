@@ -6,6 +6,41 @@ import type {
   WordSegment,
   LineBreakMode,
 } from "./types";
+
+function pushTextSegment(
+  segments: WordSegment[],
+  text: string,
+  startIndex: number,
+  endIndex: number,
+  width: number,
+  isWhitespace: boolean,
+): void {
+  if (endIndex <= startIndex) {
+    return;
+  }
+  segments.push({
+    text: text.slice(startIndex, endIndex),
+    width,
+    startIndex,
+    endIndex,
+    isWhitespace,
+  });
+}
+
+function pushNewlineSegment(segments: WordSegment[], char: string, index: number): void {
+  segments.push({
+    text: char,
+    width: 0,
+    startIndex: index,
+    endIndex: index + 1,
+    isWhitespace: true,
+  });
+}
+
+function isLineBreakChar(char: string): boolean {
+  return char === "\n" || char === "\r";
+}
+
 /**
  * Segment text into words and whitespace
  */
@@ -20,60 +55,159 @@ export function segmentText(
   for (let i = 0; i < text.length; i++) {
     const char = text[i];
     const isSpace = char === " " || char === "\t";
-    const isNewline = char === "\n" || char === "\r";
-    if (isNewline) {
+    if (isLineBreakChar(char)) {
       // Flush current segment
-      if (i > currentStartRef.value) {
-        segments.push({
-          text: text.slice(currentStartRef.value, i),
-          width: currentWidthRef2.value,
-          startIndex: currentStartRef.value,
-          endIndex: i,
-          isWhitespace: inWhitespaceRef.value,
-        });
-      }
+      pushTextSegment(segments, text, currentStartRef.value, i, currentWidthRef2.value, inWhitespaceRef.value);
       // Add newline as separate segment
-      segments.push({
-        text: char,
-        width: 0, // Newlines have no width
-        startIndex: i,
-        endIndex: i + 1,
-        isWhitespace: true,
-      });
+      pushNewlineSegment(segments, char, i);
       currentStartRef.value = i + 1;
       currentWidthRef2.value = 0;
       inWhitespaceRef.value = false;
-    } else if (isSpace !== inWhitespaceRef.value && i > currentStartRef.value) {
+      continue;
+    }
+    if (isSpace !== inWhitespaceRef.value && i > currentStartRef.value) {
       // Transition between word and whitespace
-      segments.push({
-        text: text.slice(currentStartRef.value, i),
-        width: currentWidthRef2.value,
-        startIndex: currentStartRef.value,
-        endIndex: i,
-        isWhitespace: inWhitespaceRef.value,
-      });
+      pushTextSegment(segments, text, currentStartRef.value, i, currentWidthRef2.value, inWhitespaceRef.value);
       currentStartRef.value = i;
       currentWidthRef2.value = charWidths[i];
       inWhitespaceRef.value = isSpace;
-    } else {
-      currentWidthRef2.value += charWidths[i];
-      if (i === currentStartRef.value) {
-        inWhitespaceRef.value = isSpace;
-      }
+      continue;
     }
+    currentWidthRef2.value += charWidths[i];
+    if (i !== currentStartRef.value) {
+      continue;
+    }
+    inWhitespaceRef.value = isSpace;
   }
   // Flush final segment
-  if (currentStartRef.value < text.length) {
-    segments.push({
-      text: text.slice(currentStartRef.value),
-      width: currentWidthRef2.value,
-      startIndex: currentStartRef.value,
-      endIndex: text.length,
-      isWhitespace: inWhitespaceRef.value,
-    });
-  }
+  pushTextSegment(segments, text, currentStartRef.value, text.length, currentWidthRef2.value, inWhitespaceRef.value);
   return segments;
 }
+
+function trimTrailingWhitespaceSegments(
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+): void {
+  while (
+    currentLineRef.value.length > 0 &&
+    currentLineRef.value[currentLineRef.value.length - 1].isWhitespace
+  ) {
+    const removed = currentLineRef.value.pop()!;
+    currentWidthRef.value -= removed.width;
+  }
+}
+
+function pushCurrentWordLine(
+  lines: LineMeasurement[],
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+): void {
+  trimTrailingWhitespaceSegments(currentLineRef, currentWidthRef);
+  if (currentLineRef.value.length === 0) {
+    return;
+  }
+  const lineText = currentLineRef.value.map((s) => s.text).join("");
+  lines.push({
+    text: lineText,
+    width: currentWidthRef.value,
+    startIndex: currentLineRef.value[0].startIndex,
+    endIndex: currentLineRef.value[currentLineRef.value.length - 1].endIndex,
+  });
+}
+
+function pushExplicitWordBreakLine(
+  lines: LineMeasurement[],
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+  segment: WordSegment,
+): void {
+  const lineText = currentLineRef.value.map((s) => s.text).join("");
+  if (currentLineRef.value.length > 0) {
+    lines.push({
+      text: lineText,
+      width: currentWidthRef.value,
+      startIndex: currentLineRef.value[0].startIndex,
+      endIndex: segment.startIndex,
+    });
+    return;
+  }
+  if (lines.length > 0) {
+    return;
+  }
+  lines.push({
+    text: lineText,
+    width: currentWidthRef.value,
+    startIndex: segment.startIndex,
+    endIndex: segment.startIndex,
+  });
+}
+
+function startWordLineFromSegment(
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+  segment: WordSegment,
+): void {
+  if (segment.isWhitespace) {
+    currentLineRef.value = [];
+    currentWidthRef.value = 0;
+    return;
+  }
+  currentLineRef.value = [segment];
+  currentWidthRef.value = segment.width;
+}
+
+function maxLinesReached(lines: readonly LineMeasurement[], maxLines: number): boolean {
+  return maxLines > 0 && lines.length >= maxLines;
+}
+
+type LineBreakLoopAction = "continue" | "break";
+
+function appendFittingWordSegment(
+  segment: WordSegment,
+  lines: readonly LineMeasurement[],
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+  maxLines: number,
+): boolean {
+  currentLineRef.value.push(segment);
+  currentWidthRef.value += segment.width;
+  return maxLinesReached(lines, maxLines);
+}
+
+function startOverflowWordSegment(
+  segment: WordSegment,
+  lines: LineMeasurement[],
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+  maxLines: number,
+): boolean {
+  if (currentLineRef.value.length > 0) {
+    pushCurrentWordLine(lines, currentLineRef, currentWidthRef);
+  }
+  startWordLineFromSegment(currentLineRef, currentWidthRef, segment);
+  return maxLinesReached(lines, maxLines);
+}
+
+function processWordSegment(
+  segment: WordSegment,
+  lines: LineMeasurement[],
+  currentLineRef: { value: WordSegment[] },
+  currentWidthRef: { value: number },
+  maxWidth: number,
+  maxLines: number,
+): LineBreakLoopAction {
+  if (isLineBreakChar(segment.text)) {
+    pushExplicitWordBreakLine(lines, currentLineRef, currentWidthRef, segment);
+    currentLineRef.value = [];
+    currentWidthRef.value = 0;
+    return "continue";
+  }
+  if (currentWidthRef.value + segment.width <= maxWidth) {
+    return appendFittingWordSegment(segment, lines, currentLineRef, currentWidthRef, maxLines) ? "break" : "continue";
+  }
+  return startOverflowWordSegment(segment, lines, currentLineRef, currentWidthRef, maxLines) ? "break" : "continue";
+}
+
 /**
  * Break text into lines based on word boundaries
  */
@@ -84,78 +218,19 @@ export function breakLinesWord(
   const lines: LineMeasurement[] = [];
   const currentLineRef = { value: [] as WordSegment[] };
   const currentWidthRef = { value: 0 };
+  wordLoop:
   for (const segment of segments) {
-    // Handle explicit line breaks
-    if (segment.text === "\n" || segment.text === "\r") {
-      const lineText = currentLineRef.value.map((s) => s.text).join("");
-      if (currentLineRef.value.length > 0 || lines.length === 0) {
-        lines.push({
-          text: lineText,
-          width: currentWidthRef.value,
-          startIndex: currentLineRef.value.length > 0 ? currentLineRef.value[0].startIndex : segment.startIndex,
-          endIndex: segment.startIndex,
-        });
-      }
-      currentLineRef.value = [];
-      currentWidthRef.value = 0;
-      continue;
-    }
-    // Check if segment fits on current line
-    if (currentWidthRef.value + segment.width <= maxWidth) {
-      currentLineRef.value.push(segment);
-      currentWidthRef.value += segment.width;
-    } else {
-      // Doesn't fit - start new line
-      if (currentLineRef.value.length > 0) {
-        // Remove trailing whitespace from current line
-        while (
-          currentLineRef.value.length > 0 &&
-          currentLineRef.value[currentLineRef.value.length - 1].isWhitespace
-        ) {
-          const removed = currentLineRef.value.pop()!;
-          currentWidthRef.value -= removed.width;
-        }
-        const lineText = currentLineRef.value.map((s) => s.text).join("");
-        lines.push({
-          text: lineText,
-          width: currentWidthRef.value,
-          startIndex: currentLineRef.value[0].startIndex,
-          endIndex: currentLineRef.value[currentLineRef.value.length - 1].endIndex,
-        });
-      }
-      // Start new line with current segment (skip leading whitespace)
-      if (!segment.isWhitespace) {
-        currentLineRef.value = [segment];
-        currentWidthRef.value = segment.width;
-      } else {
-        currentLineRef.value = [];
-        currentWidthRef.value = 0;
-      }
-    }
-    // Check max lines limit
-    if (maxLines > 0 && lines.length >= maxLines) {
-      break;
+    const action = processWordSegment(segment, lines, currentLineRef, currentWidthRef, maxWidth, maxLines);
+    switch (action) {
+      case "continue":
+        continue wordLoop;
+      case "break":
+        break wordLoop;
     }
   }
   // Flush remaining content
   if (currentLineRef.value.length > 0 && (maxLines === 0 || lines.length < maxLines)) {
-    // Remove trailing whitespace
-    while (
-      currentLineRef.value.length > 0 &&
-      currentLineRef.value[currentLineRef.value.length - 1].isWhitespace
-    ) {
-      const removed = currentLineRef.value.pop()!;
-      currentWidthRef.value -= removed.width;
-    }
-    if (currentLineRef.value.length > 0) {
-      const lineText = currentLineRef.value.map((s) => s.text).join("");
-      lines.push({
-        text: lineText,
-        width: currentWidthRef.value,
-        startIndex: currentLineRef.value[0].startIndex,
-        endIndex: currentLineRef.value[currentLineRef.value.length - 1].endIndex,
-      });
-    }
+    pushCurrentWordLine(lines, currentLineRef, currentWidthRef);
   }
   // Handle empty text
   if (lines.length === 0) {
@@ -168,6 +243,80 @@ export function breakLinesWord(
   }
   return lines;
 }
+
+function pushCharacterLine(
+  lines: LineMeasurement[],
+  text: string,
+  width: number,
+  startIndex: number,
+  endIndex: number,
+): void {
+  lines.push({
+    text: text.slice(startIndex, endIndex),
+    width,
+    startIndex,
+    endIndex,
+  });
+}
+
+function resetCharacterLineAfterBreak(
+  lineStartRef: { value: number },
+  lineWidthRef: { value: number },
+  index: number,
+): void {
+  lineStartRef.value = index + 1;
+  lineWidthRef.value = 0;
+}
+
+function pushExplicitCharacterBreakLine(
+  lines: LineMeasurement[],
+  text: string,
+  lineStartRef: { value: number },
+  lineWidthRef: { value: number },
+  index: number,
+  maxLines: number,
+): boolean {
+  pushCharacterLine(lines, text, lineWidthRef.value, lineStartRef.value, index);
+  resetCharacterLineAfterBreak(lineStartRef, lineWidthRef, index);
+  return maxLinesReached(lines, maxLines);
+}
+
+function pushOverflowCharacterLine(
+  lines: LineMeasurement[],
+  text: string,
+  lineStartRef: { value: number },
+  lineWidthRef: { value: number },
+  index: number,
+  charWidth: number,
+  maxLines: number,
+): boolean {
+  pushCharacterLine(lines, text, lineWidthRef.value, lineStartRef.value, index);
+  lineStartRef.value = index;
+  lineWidthRef.value = charWidth;
+  return maxLinesReached(lines, maxLines);
+}
+
+function processCharacter(
+  text: string,
+  char: string,
+  charWidth: number,
+  index: number,
+  lines: LineMeasurement[],
+  lineStartRef: { value: number },
+  lineWidthRef: { value: number },
+  maxWidth: number,
+  maxLines: number,
+): LineBreakLoopAction {
+  if (isLineBreakChar(char)) {
+    return pushExplicitCharacterBreakLine(lines, text, lineStartRef, lineWidthRef, index, maxLines) ? "break" : "continue";
+  }
+  if (lineWidthRef.value + charWidth > maxWidth && lineWidthRef.value > 0) {
+    return pushOverflowCharacterLine(lines, text, lineStartRef, lineWidthRef, index, charWidth, maxLines) ? "break" : "continue";
+  }
+  lineWidthRef.value += charWidth;
+  return "continue";
+}
+
 /**
  * Break text into lines based on character boundaries
  */
@@ -177,52 +326,19 @@ export function breakLinesChar(
   const lines: LineMeasurement[] = [];
   const lineStartRef = { value: 0 };
   const lineWidthRef = { value: 0 };
+  charLoop:
   for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const charWidth = charWidths[i];
-    // Handle explicit line breaks
-    if (char === "\n" || char === "\r") {
-      lines.push({
-        text: text.slice(lineStartRef.value, i),
-        width: lineWidthRef.value,
-        startIndex: lineStartRef.value,
-        endIndex: i,
-      });
-      lineStartRef.value = i + 1;
-      lineWidthRef.value = 0;
-      // Check max lines
-      if (maxLines > 0 && lines.length >= maxLines) {
-        break;
-      }
-      continue;
-    }
-    // Check if character fits
-    if (lineWidthRef.value + charWidth > maxWidth && lineWidthRef.value > 0) {
-      // Line is full, start new line
-      lines.push({
-        text: text.slice(lineStartRef.value, i),
-        width: lineWidthRef.value,
-        startIndex: lineStartRef.value,
-        endIndex: i,
-      });
-      lineStartRef.value = i;
-      lineWidthRef.value = charWidth;
-      // Check max lines
-      if (maxLines > 0 && lines.length >= maxLines) {
-        break;
-      }
-    } else {
-      lineWidthRef.value += charWidth;
+    const action = processCharacter(text, text[i], charWidths[i], i, lines, lineStartRef, lineWidthRef, maxWidth, maxLines);
+    switch (action) {
+      case "continue":
+        continue charLoop;
+      case "break":
+        break charLoop;
     }
   }
   // Flush remaining content
   if (lineStartRef.value < text.length && (maxLines === 0 || lines.length < maxLines)) {
-    lines.push({
-      text: text.slice(lineStartRef.value),
-      width: lineWidthRef.value,
-      startIndex: lineStartRef.value,
-      endIndex: text.length,
-    });
+    pushCharacterLine(lines, text, lineWidthRef.value, lineStartRef.value, text.length);
   }
   // Handle empty text
   if (lines.length === 0) {
@@ -235,6 +351,7 @@ export function breakLinesChar(
   }
   return lines;
 }
+
 /**
  * Break text into lines using auto mode (word first, then char)
  */

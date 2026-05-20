@@ -2,7 +2,11 @@
 
 import type { FigmaKiwiCanvas } from "@higma-figma-runtime/kiwi-canvas";
 import { guidToString } from "@higma-document-models/fig/domain";
-import { createFigDocumentContextFromKiwiCanvas } from "./document-context";
+import {
+  addBlobToFigDocumentContext,
+  addImageToFigDocumentContext,
+  createFigDocumentContextFromKiwiCanvas,
+} from "./document-context";
 
 function createCanvas(): FigmaKiwiCanvas {
   return {
@@ -67,5 +71,32 @@ describe("createFigDocumentContextFromKiwiCanvas", () => {
     });
     const root = context.document.nodesByGuid.get(guidToString({ sessionID: 0, localID: 0 }));
     expect(root?.documentColorProfile).toEqual({ value: 1, name: "SRGB" });
+  });
+
+  it("appends blobs without creating a second document shape", () => {
+    const base = createFigDocumentContextFromKiwiCanvas(createCanvas());
+    const result = addBlobToFigDocumentContext({
+      context: base,
+      blob: { bytes: [1, 2, 3] },
+    });
+
+    expect(result.blobIndex).toBe(0);
+    expect(result.context.blobs).toEqual([{ bytes: [1, 2, 3] }]);
+    expect(result.context.document.nodeChanges).toEqual(base.document.nodeChanges);
+  });
+
+  it("adds images without creating a second document shape", () => {
+    const base = createFigDocumentContextFromKiwiCanvas(createCanvas());
+    const context = addImageToFigDocumentContext({
+      context: base,
+      image: {
+        ref: "image-ref",
+        data: new Uint8Array([1, 2, 3]),
+        mimeType: "image/png",
+      },
+    });
+
+    expect(context.images.get("image-ref")?.mimeType).toBe("image/png");
+    expect(context.document.nodeChanges).toEqual(base.document.nodeChanges);
   });
 });

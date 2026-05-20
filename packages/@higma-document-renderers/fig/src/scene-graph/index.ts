@@ -80,6 +80,7 @@ export {
   type RenderGroupNode,
   type RenderFrameNode,
   type RenderFrameBackground,
+  type RenderFrameSurfaceShape,
   type RenderRectNode,
   type RenderEllipseNode,
   type RenderPathNode,

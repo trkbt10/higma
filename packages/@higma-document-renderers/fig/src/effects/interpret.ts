@@ -8,6 +8,7 @@
 
 import type { FigEffect, FigEffectType } from "@higma-document-models/fig/types";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
+import { requireVariableColor, requireVariableFloat, resolveConcreteVariableColor } from "@higma-document-models/fig/variables";
 
 // =============================================================================
 // Effect Type
@@ -48,28 +49,70 @@ export type ShadowParams = {
 };
 
 /**
- * Default shadow color (used when effect.color is undefined).
- */
-const DEFAULT_SHADOW_COLOR = { r: 0, g: 0, b: 0, a: 0.25 };
-
-/**
  * Extract shadow parameters from a DROP_SHADOW or INNER_SHADOW effect.
  *
  * Returns offset, radius, and color in a normalized form usable by
  * both SVG filter construction and SceneGraph effect objects.
  */
-function resolveShadowColor(color: FigEffect["color"]): ShadowParams["color"] {
-  return color ? { r: color.r, g: color.g, b: color.b, a: color.a } : DEFAULT_SHADOW_COLOR;
+function resolveShadowColor(effect: FigEffect): ShadowParams["color"] {
+  if (effect.colorVar !== undefined) {
+    const color = resolveConcreteVariableColor(effect.colorVar, "Effect.colorVar")
+      ?? effect.color
+      ?? requireVariableColor(effect.colorVar, "Effect.colorVar");
+    return { r: color.r, g: color.g, b: color.b, a: color.a };
+  }
+  if (effect.color !== undefined) {
+    return { r: effect.color.r, g: effect.color.g, b: effect.color.b, a: effect.color.a };
+  }
+  throw new Error("Effect.color is required when Effect.colorVar is absent");
+}
+
+function resolveEffectFloat(
+  variableData: FigEffect["radiusVar"],
+  embedded: number | undefined,
+  subject: string,
+): number | undefined {
+  if (variableData !== undefined) {
+    return requireVariableFloat(variableData, subject);
+  }
+  return embedded;
+}
+
+/** Resolve an effect radius from its concrete variable value or embedded Kiwi field. */
+export function resolveEffectRadius(effect: FigEffect): number {
+  const radius = resolveEffectFloat(effect.radiusVar, effect.radius, "Effect.radiusVar");
+  if (radius === undefined) {
+    throw new Error("Effect.radius is required when Effect.radiusVar is absent");
+  }
+  return radius;
+}
+
+/** Resolve an optional shadow spread from its concrete variable value or embedded Kiwi field. */
+export function resolveEffectSpread(effect: FigEffect): number | undefined {
+  return resolveEffectFloat(effect.spreadVar, effect.spread, "Effect.spreadVar");
 }
 
 /** Extracts shadow rendering parameters from a Figma effect definition. */
 export function extractShadowParams(effect: FigEffect): ShadowParams {
   return {
-    offsetX: effect.offset?.x ?? 0,
-    offsetY: effect.offset?.y ?? 0,
-    radius: effect.radius ?? 0,
-    color: resolveShadowColor(effect.color),
+    offsetX: resolveShadowOffset(effect.xVar, effect.offset?.x, "Effect.offset.x", "Effect.xVar"),
+    offsetY: resolveShadowOffset(effect.yVar, effect.offset?.y, "Effect.offset.y", "Effect.yVar"),
+    radius: resolveEffectRadius(effect),
+    color: resolveShadowColor(effect),
   };
+}
+
+function resolveShadowOffset(
+  variableData: FigEffect["xVar"],
+  embedded: number | undefined,
+  embeddedSubject: string,
+  variableSubject: string,
+): number {
+  const resolved = resolveEffectFloat(variableData, embedded, variableSubject);
+  if (resolved === undefined) {
+    throw new Error(`${embeddedSubject} is required when ${variableSubject} is absent`);
+  }
+  return resolved;
 }
 
 // =============================================================================

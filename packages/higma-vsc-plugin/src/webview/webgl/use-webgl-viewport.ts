@@ -28,6 +28,7 @@ type UseWebGLViewportParams = {
   readonly initializationDelayMs?: number;
 };
 
+/** Drive the shared WebGL viewport pipeline for the VS Code viewer. */
 export function useWebGLViewport(params: UseWebGLViewportParams): WebGLViewportPipelineState {
   return useWebGLViewportPipeline({
     ...params,

@@ -133,7 +133,7 @@ describe("styleRefKey / styleRefKeys / styleRefHasKey", () => {
   it("styleRefHasKey treats Figma's 0xffffffff:0xffffffff sentinel as no reference", () => {
     // Figma's Kiwi schema uses both-uint32-max as a "no guid" sentinel
     // inside an otherwise-present FigStyleId slot. Treat it as absent so
-    // resolution falls through cleanly to inline paints / base style.
+    // resolution cleanly uses inline paints / base style as the local SoT.
     const sentinel = { guid: { sessionID: 0xffffffff, localID: 0xffffffff } };
     expect(styleRefHasKey(sentinel)).toBe(false);
     // Mixed: sentinel guid + real assetRef.key still has the key.
@@ -299,8 +299,8 @@ describe("resolvePaintRef", () => {
     // Real-world case: Figma Community exports include team-library
     // refs whose proxy nodes are stripped, and intra-file guids may
     // point at non-style nodes (a stale FRAME guid). The lookup
-    // primitive must yield undefined so callers fall through to the
-    // consumer's embedded paint cache — what Figma itself does.
+    // primitive must yield undefined so callers use the consumer's
+    // embedded paint cache as the local SoT — what Figma itself does.
     expect(resolvePaintRef(
       { guid: { sessionID: 99, localID: 99 } },
       EMPTY_FIG_STYLE_REGISTRY,

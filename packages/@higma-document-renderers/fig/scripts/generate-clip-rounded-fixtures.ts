@@ -19,16 +19,16 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigGradientStop, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,11 +43,11 @@ const GREEN: FigColor = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -72,10 +72,10 @@ function linearGradientPaint(
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: "GRADIENT_LINEAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops,
     transform: {
       m00: dx,
@@ -90,13 +90,13 @@ function linearGradientPaint(
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 function addFrame(
   ctx: Ctx,
-  doc: FigDesignDocument,
-  parentId: FigNodeId | null,
+  context: FigDocumentContext,
+  parentGuid: FigGuid | null,
   name: string,
   x: number,
   y: number,
@@ -104,12 +104,12 @@ function addFrame(
   h: number,
   bg: FigColor | null,
   cornerRadius?: number,
-): { doc: FigDesignDocument; frameId: FigNodeId } {
+): { context: FigDocumentContext; frameId: FigGuid } {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "FRAME",
       name,
@@ -122,25 +122,25 @@ function addFrame(
       cornerRadius,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 function addRect(
   ctx: Ctx,
-  doc: FigDesignDocument,
-  parentId: FigNodeId,
+  context: FigDocumentContext,
+  parentGuid: FigGuid,
   name: string,
   x: number,
   y: number,
   w: number,
   h: number,
   fill: FigPaint,
-): FigDesignDocument {
+): FigDocumentContext {
   return addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "RECTANGLE",
       name,
@@ -150,25 +150,25 @@ function addRect(
       height: h,
       fills: [fill],
     },
-  }).doc;
+  }).context;
 }
 
 function addEllipse(
   ctx: Ctx,
-  doc: FigDesignDocument,
-  parentId: FigNodeId,
+  context: FigDocumentContext,
+  parentGuid: FigGuid,
   name: string,
   x: number,
   y: number,
   w: number,
   h: number,
   fill: FigColor,
-): FigDesignDocument {
+): FigDocumentContext {
   return addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "ELLIPSE",
       name,
@@ -178,75 +178,75 @@ function addEllipse(
       height: h,
       fills: [solidPaint(fill)],
     },
-  }).doc;
+  }).context;
 }
 
 type Args = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly ctx: Ctx;
   readonly frameX: number;
   readonly frameY: number;
 };
 
-type Result = { readonly doc: FigDesignDocument };
+type Result = { readonly context: FigDocumentContext };
 
-function addRoundedClipBasic({ doc, ctx, frameX, frameY }: Args): Result {
-  const f = addFrame(ctx, doc, null, "clip-rounded-basic", frameX, frameY, 160, 120, WHITE);
-  const inner = addFrame(ctx, f.doc, f.frameId, "rounded-frame", 20, 20, 120, 80, LIGHT_GRAY, 20);
-  const final = addRect(ctx, inner.doc, inner.frameId, "overflow", -20, -20, 160, 120, solidPaint(BLUE));
-  return { doc: final };
+function addRoundedClipBasic({ context, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, context, null, "clip-rounded-basic", frameX, frameY, 160, 120, WHITE);
+  const inner = addFrame(ctx, f.context, f.frameId, "rounded-frame", 20, 20, 120, 80, LIGHT_GRAY, 20);
+  const final = addRect(ctx, inner.context, inner.frameId, "overflow", -20, -20, 160, 120, solidPaint(BLUE));
+  return { context: final };
 }
 
-function addRoundedClipPill({ doc, ctx, frameX, frameY }: Args): Result {
-  const f = addFrame(ctx, doc, null, "clip-rounded-pill", frameX, frameY, 200, 80, WHITE);
-  const inner = addFrame(ctx, f.doc, f.frameId, "pill-frame", 20, 20, 160, 40, null, 20);
-  const final = addRect(ctx, inner.doc, inner.frameId, "content", 0, 0, 160, 40, solidPaint(RED));
-  return { doc: final };
+function addRoundedClipPill({ context, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, context, null, "clip-rounded-pill", frameX, frameY, 200, 80, WHITE);
+  const inner = addFrame(ctx, f.context, f.frameId, "pill-frame", 20, 20, 160, 40, null, 20);
+  const final = addRect(ctx, inner.context, inner.frameId, "content", 0, 0, 160, 40, solidPaint(RED));
+  return { context: final };
 }
 
-function addRoundedClipNested({ doc, ctx, frameX, frameY }: Args): Result {
-  const f = addFrame(ctx, doc, null, "clip-rounded-nested", frameX, frameY, 180, 140, LIGHT_GRAY);
-  const outer = addFrame(ctx, f.doc, f.frameId, "outer-rounded", 20, 20, 140, 100, WHITE, 24);
-  const inner = addFrame(ctx, outer.doc, outer.frameId, "inner-rounded", 20, 20, 100, 60, null, 12);
-  const final = addRect(ctx, inner.doc, inner.frameId, "content", -20, -20, 140, 100, solidPaint(GREEN));
-  return { doc: final };
+function addRoundedClipNested({ context, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, context, null, "clip-rounded-nested", frameX, frameY, 180, 140, LIGHT_GRAY);
+  const outer = addFrame(ctx, f.context, f.frameId, "outer-rounded", 20, 20, 140, 100, WHITE, 24);
+  const inner = addFrame(ctx, outer.context, outer.frameId, "inner-rounded", 20, 20, 100, 60, null, 12);
+  const final = addRect(ctx, inner.context, inner.frameId, "content", -20, -20, 140, 100, solidPaint(GREEN));
+  return { context: final };
 }
 
-function addRoundedClipGradient({ doc, ctx, frameX, frameY }: Args): Result {
-  const f = addFrame(ctx, doc, null, "clip-rounded-gradient", frameX, frameY, 160, 120, WHITE);
-  const inner = addFrame(ctx, f.doc, f.frameId, "rounded-frame", 20, 20, 120, 80, null, 16);
+function addRoundedClipGradient({ context, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, context, null, "clip-rounded-gradient", frameX, frameY, 160, 120, WHITE);
+  const inner = addFrame(ctx, f.context, f.frameId, "rounded-frame", 20, 20, 120, 80, null, 16);
   const gradient = linearGradientPaint(135, [
     { position: 0, color: { r: 1, g: 0.3, b: 0.3, a: 1 } },
     { position: 1, color: { r: 0.3, g: 0.3, b: 1, a: 1 } },
   ]);
-  const final = addRect(ctx, inner.doc, inner.frameId, "gradient-content", -20, -20, 160, 120, gradient);
-  return { doc: final };
+  const final = addRect(ctx, inner.context, inner.frameId, "gradient-content", -20, -20, 160, 120, gradient);
+  return { context: final };
 }
 
-function addRoundedClipCircle({ doc, ctx, frameX, frameY }: Args): Result {
-  const f = addFrame(ctx, doc, null, "clip-rounded-circle", frameX, frameY, 120, 120, LIGHT_GRAY);
-  const inner = addFrame(ctx, f.doc, f.frameId, "circle-frame", 20, 20, 80, 80, null, 40);
-  const d1 = addRect(ctx, inner.doc, inner.frameId, "content", 0, 0, 80, 80, solidPaint(BLUE));
+function addRoundedClipCircle({ context, ctx, frameX, frameY }: Args): Result {
+  const f = addFrame(ctx, context, null, "clip-rounded-circle", frameX, frameY, 120, 120, LIGHT_GRAY);
+  const inner = addFrame(ctx, f.context, f.frameId, "circle-frame", 20, 20, 80, 80, null, 40);
+  const d1 = addRect(ctx, inner.context, inner.frameId, "content", 0, 0, 80, 80, solidPaint(BLUE));
   const d2 = addEllipse(ctx, d1, inner.frameId, "overlap", 30, 30, 40, 40, RED);
-  return { doc: d2 };
+  return { context: d2 };
 }
 
 async function main(): Promise<void> {
   console.log("Generating clip-rounded fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("ClipRounded");
+  const empty = createEmptyFigDocument("ClipRounded");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "ClipRounded").guid;
+  const ctx: Ctx = { state, pageGuid };
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 3;
   const COL_WIDTH = 230;
@@ -263,15 +263,15 @@ async function main(): Promise<void> {
     { name: "Rounded clip circle", fn: addRoundedClipCircle },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
+  const finalContext = builders.reduce<FigDocumentContext>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     return b.fn({
-      doc: acc,
+      context: acc,
       ctx,
       frameX: MARGIN + col * COL_WIDTH,
       frameY: MARGIN + row * ROW_HEIGHT,
-    }).doc;
+    }).context;
   }, doc0);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
@@ -280,7 +280,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

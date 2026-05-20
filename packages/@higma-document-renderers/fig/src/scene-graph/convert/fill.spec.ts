@@ -44,6 +44,40 @@ describe("convertPaintToFill", () => {
         opacity: 0.8,
       });
     });
+
+    it("uses Paint.colorVar when Kiwi carries a concrete color value", () => {
+      const paint: FigSolidPaint = {
+        type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+        color: { r: 1, g: 1, b: 1, a: 1 },
+        colorVar: { value: { colorValue: { r: 0, g: 0, b: 0, a: 1 } } },
+      };
+
+      const fill = convertPaintToFill(paint, NO_IMAGES);
+
+      expect(fill).toMatchObject({
+        type: "solid",
+        color: { r: 0, g: 0, b: 0, a: 1 },
+      });
+    });
+
+    it("uses Paint.color when Paint.colorVar is a library alias with an embedded resolved color", () => {
+      const paint: FigSolidPaint = {
+        type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+        color: { r: 1, g: 1, b: 1, a: 1 },
+        colorVar: {
+          value: {
+            alias: {
+              assetRef: { key: "library-color" },
+            },
+          },
+        },
+      };
+
+      expect(convertPaintToFill(paint, NO_IMAGES)).toMatchObject({
+        type: "solid",
+        color: { r: 1, g: 1, b: 1, a: 1 },
+      });
+    });
   });
 
   describe("linear gradient", () => {
@@ -70,6 +104,57 @@ describe("convertPaintToFill", () => {
         expect(typeof fill!.start.x).toBe("number");
         expect(typeof fill!.end.x).toBe("number");
       }
+    });
+
+    it("uses Paint.stopsVar color variables as the gradient stop SoT", () => {
+      const paint: FigGradientPaint = {
+        type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+        opacity: 1,
+        visible: true,
+        stops: [
+          { color: { r: 1, g: 1, b: 1, a: 1 }, position: 0 },
+          { color: { r: 1, g: 1, b: 1, a: 1 }, position: 1 },
+        ],
+        stopsVar: [
+          { colorVar: { value: { colorValue: { r: 0, g: 0, b: 0, a: 1 } } }, position: 0 },
+          { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 }, position: 1 },
+        ],
+        transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 1, m12: 0 },
+      };
+
+      const fill = convertPaintToFill(paint, NO_IMAGES);
+
+      expect(fill).toMatchObject({
+        type: "linear-gradient",
+        stops: [
+          { color: { r: 0, g: 0, b: 0, a: 1 }, position: 0 },
+          { color: { r: 0.5, g: 0.5, b: 0.5, a: 1 }, position: 1 },
+        ],
+      });
+    });
+
+    it("does not let an empty Paint.stopsVar shadow concrete Kiwi stops", () => {
+      const paint: FigGradientPaint = {
+        type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+        opacity: 1,
+        visible: true,
+        stops: [
+          { color: { r: 0.11372549086809158, g: 0.43529412150382996, b: 0.9490196108818054, a: 1 }, position: 0 },
+          { color: { r: 0.10196078568696976, g: 0.7843137383460999, b: 0.9882352948188782, a: 1 }, position: 1 },
+        ],
+        stopsVar: [],
+        transform: { m00: 1.1102230246251565e-16, m01: -1, m02: 1, m10: 1, m11: 1.1102230246251565e-16, m12: -0.5 },
+      };
+
+      const fill = convertPaintToFill(paint, NO_IMAGES);
+
+      expect(fill).toMatchObject({
+        type: "linear-gradient",
+        stops: [
+          { color: { r: 0.11372549086809158, g: 0.43529412150382996, b: 0.9490196108818054, a: 1 }, position: 0 },
+          { color: { r: 0.10196078568696976, g: 0.7843137383460999, b: 0.9882352948188782, a: 1 }, position: 1 },
+        ],
+      });
     });
   });
 

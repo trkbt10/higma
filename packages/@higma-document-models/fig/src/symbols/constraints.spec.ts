@@ -164,6 +164,40 @@ describe("resolveInstanceLayout", () => {
     expect(result.children[0]).toBe(children[0]);
   });
 
+  it("keeps derivedSymbolData-authored geometry for resized children", () => {
+    const child = makeChild({ guid: { sessionID: 1, localID: 10 }, x: 0, y: 0, w: 100, h: 50 });
+    const authoredGeometry = [{ windingRule: { value: 0, name: "NONZERO" }, commandsBlob: 2, styleID: 0 }];
+    (child as Record<string, unknown>).fillGeometry = authoredGeometry;
+    const derived = [
+      {
+        guidPath: { guids: [{ sessionID: 1, localID: 10 }] },
+        size: { x: 200, y: 100 },
+        fillGeometry: authoredGeometry,
+      },
+    ];
+
+    const result = resolveInstanceLayout({ children: [child], symbolSize: { x: 100, y: 50 }, instanceSize: { x: 200, y: 100 }, derivedSymbolData: derived });
+
+    expect(result.sizeApplied).toBe(true);
+    expect((result.children[0] as Record<string, unknown>).fillGeometry).toBe(authoredGeometry);
+  });
+
+  it("clears stale geometry for resized derivedSymbolData targets without replacement geometry", () => {
+    const child = makeChild({ guid: { sessionID: 1, localID: 10 }, x: 0, y: 0, w: 100, h: 50 });
+    (child as Record<string, unknown>).fillGeometry = [{ windingRule: { value: 0, name: "NONZERO" }, commandsBlob: 1, styleID: 0 }];
+    const derived = [
+      {
+        guidPath: { guids: [{ sessionID: 1, localID: 10 }] },
+        size: { x: 200, y: 100 },
+      },
+    ];
+
+    const result = resolveInstanceLayout({ children: [child], symbolSize: { x: 100, y: 50 }, instanceSize: { x: 200, y: 100 }, derivedSymbolData: derived });
+
+    expect(result.sizeApplied).toBe(true);
+    expect((result.children[0] as Record<string, unknown>).fillGeometry).toBeUndefined();
+  });
+
   it("falls back to constraints when derivedSymbolData GUIDs do not match", () => {
     const children = [
       makeChild({

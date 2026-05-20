@@ -8,8 +8,6 @@
  * evaluator belongs alongside the rest of the symbol resolver.
  *
  * Scope:
- *   - `projectVariableAnyValue` — Kiwi presence-based union →
- *     discriminated union (`FigVariableAnyValue`).
  *   - `findVariableConsumptionExpression` — locate an INSTANCE's VCM
  *     entry that wraps an expression we can evaluate.
  *   - `resolveVariantOverride` — given an INSTANCE and the SYMBOL it
@@ -26,16 +24,14 @@
  * The `(c)` case is the dominant outcome on real-world .fig corpora:
  * every RESOLVE_VARIANT we observe references library `assetRef`
  * aliases whose values aren't carried in the .fig. Returning
- * `undefined` keeps the existing `symbolID` (the variant Figma's
- * exporter saw at export time), which is also what every observed
- * pixel-parity baseline already locked in at 0.00–0.25%.
+ * `undefined` reports that this evaluator cannot derive a local
+ * override; SymbolResolver remains the single unit that chooses the
+ * effective symbol target from the authored Kiwi fields.
  */
 
 import type {
   FigGuid,
-  FigKiwiVariableAnyValue,
   FigKiwiVariableData,
-  FigVariableAnyValue,
   FigVariableExpression,
   FigVariableMapEntry,
   FigKiwiVariableDataMap,
@@ -44,48 +40,7 @@ import type {
 import { FIG_NODE_TYPE } from "../types";
 import { findNodeByGuid, getNodeType, guidToString, type FigKiwiDocumentIndex } from "../domain";
 import { isVariantSetFrame } from "./variant-set-kiwi";
-
-// =============================================================================
-// Kiwi → discriminated union projection
-// =============================================================================
-
-/**
- * Project the Kiwi `VariableAnyValue` (oneof-by-field-presence) to the
- * discriminated `FigVariableAnyValue` union. Returns `undefined` when
- * no recognised field is set.
- *
- * Field precedence matches the Kiwi schema declaration order; in
- * practice exactly one is ever set so the order doesn't matter for
- * well-formed inputs. The order is fixed for determinism if a future
- * exporter ever sets multiple.
- */
-export function projectVariableAnyValue(raw: FigKiwiVariableAnyValue | undefined): FigVariableAnyValue | undefined {
-  if (!raw) {
-    return undefined;
-  }
-  if (raw.boolValue !== undefined) {
-    return { kind: "bool", value: raw.boolValue };
-  }
-  if (raw.textValue !== undefined) {
-    return { kind: "text", value: raw.textValue };
-  }
-  if (raw.floatValue !== undefined) {
-    return { kind: "float", value: raw.floatValue };
-  }
-  if (raw.alias !== undefined) {
-    return { kind: "alias", value: raw.alias };
-  }
-  if (raw.colorValue !== undefined) {
-    return { kind: "color", value: raw.colorValue };
-  }
-  if (raw.expressionValue !== undefined) {
-    return { kind: "expression", value: raw.expressionValue };
-  }
-  if (raw.mapValue !== undefined) {
-    return { kind: "map", value: raw.mapValue };
-  }
-  return undefined;
-}
+import { projectVariableAnyValue } from "../variables";
 
 // =============================================================================
 // Expression locating
@@ -262,20 +217,21 @@ function scoreVariant(
   requestedProps: ReadonlyMap<string, string>,
 ): number {
   const variantProps = parseVariantPropertiesFromSpecs(variant, container);
-  let score = 0;
-  for (const [k, v] of requestedProps) {
+  const scores: number[] = Array.from(requestedProps, ([k, v]) => {
     const variantValue = variantProps.get(k);
     if (variantValue === undefined) {
       // Property not present on this variant — neutral.
-      continue;
+      return 0;
     }
     if (variantValue === v) {
-      score += 1;
-    } else {
-      return -1;
+      return 1;
     }
+    return -1;
+  });
+  if (scores.includes(-1)) {
+    return -1;
   }
-  return score;
+  return scores.reduce((total, score) => total + score, 0);
 }
 
 /**
@@ -292,7 +248,7 @@ export type ResolveVariantResult = {
    * can log/inspect why a variant couldn't be resolved without
    * having to re-derive the diagnostic.
    */
-  readonly bailReason?:
+  readonly unresolvedReason?:
     | "no-vcm-expression"
     | "not-resolve-variant"
     | "no-map-arg"
@@ -302,9 +258,10 @@ export type ResolveVariantResult = {
 
 /**
  * Evaluate RESOLVE_VARIANT for an INSTANCE. Returns the variant's
- * symbol GUID if a clear match was found, otherwise an explanatory
- * `bailReason`. Callers should treat `undefined` as "keep the
- * INSTANCE's existing symbolID".
+ * symbol GUID only when Kiwi carries enough local data for a clear
+ * variant match. `undefined` means the expression is not a local
+ * variant-selection SoT; SymbolResolver still owns the final target
+ * choice and may use the INSTANCE's authored `symbolID`.
  */
 export function resolveVariantOverride(
   instance: FigNode,
@@ -316,45 +273,44 @@ export function resolveVariantOverride(
 ): ResolveVariantResult {
   const located = findVariableConsumptionExpression(instance.variableConsumptionMap);
   if (!located) {
-    return { resolvedSymbolID: undefined, bailReason: "no-vcm-expression" };
+    return { resolvedSymbolID: undefined, unresolvedReason: "no-vcm-expression" };
   }
   if (!isResolveVariant(located.expression)) {
-    return { resolvedSymbolID: undefined, bailReason: "not-resolve-variant" };
+    return { resolvedSymbolID: undefined, unresolvedReason: "not-resolve-variant" };
   }
   const mapEntries = extractMapEntries(located.expression);
   if (!mapEntries || mapEntries.length === 0) {
-    return { resolvedSymbolID: undefined, bailReason: "no-map-arg" };
+    return { resolvedSymbolID: undefined, unresolvedReason: "no-map-arg" };
   }
   const container = findVariantContainer(symbolNode, input.document);
   if (!container) {
-    return { resolvedSymbolID: undefined, bailReason: "no-variant-container" };
+    return { resolvedSymbolID: undefined, unresolvedReason: "no-variant-container" };
   }
 
   // Resolve each map entry to a literal property-value string. When
-  // any entry resolves to undefined (library alias), bail out — a
-  // partial resolution would silently pick a different variant.
+  // any entry is a library alias, there is no local Kiwi value to
+  // compare. A partial resolution would silently pick a different
+  // variant, so SymbolResolver must keep the authored target instead.
   const requestedProps = new Map<string, string>();
   for (const entry of mapEntries) {
     const literal = resolveVariableLiteral(entry.value);
     if (literal === undefined) {
-      return { resolvedSymbolID: undefined, bailReason: "unresolved-aliases" };
+      return { resolvedSymbolID: undefined, unresolvedReason: "unresolved-aliases" };
     }
     requestedProps.set(entry.key, literal);
   }
 
   // Score each variant; pick the highest. Authored order breaks ties.
   const variants = input.childrenOf(container).filter((c): c is FigNode => getNodeType(c) === FIG_NODE_TYPE.SYMBOL);
-  let best: FigNode | undefined;
-  let bestScore = -1;
-  for (const v of variants) {
-    const s = scoreVariant(v, container, requestedProps);
-    if (s > bestScore) {
-      bestScore = s;
-      best = v;
+  const best = variants.reduce<{ readonly node: FigNode; readonly score: number } | undefined>((current, variant) => {
+    const score = scoreVariant(variant, container, requestedProps);
+    if (current === undefined || score > current.score) {
+      return { node: variant, score };
     }
+    return current;
+  }, undefined);
+  if (best === undefined || best.score < 0) {
+    return { resolvedSymbolID: undefined, unresolvedReason: "no-variant-container" };
   }
-  if (!best || bestScore < 0) {
-    return { resolvedSymbolID: undefined, bailReason: "no-variant-container" };
-  }
-  return { resolvedSymbolID: best.guid };
+  return { resolvedSymbolID: best.node.guid };
 }

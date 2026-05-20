@@ -8,11 +8,8 @@
 
 import type { FigNode, FigPaint } from "@higma-document-models/fig/types";
 import { asImagePaint } from "@higma-document-models/fig/color";
+import { figImageHashBytesToHex } from "@higma-document-models/fig/domain";
 import type { LintRule } from "../types";
-
-function bytesToHex(bytes: readonly number[]): string {
-  return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 function imageHash(paint: FigPaint): string | null {
   const imagePaint = asImagePaint(paint);
@@ -20,7 +17,7 @@ function imageHash(paint: FigPaint): string | null {
     return null;
   }
   const hash = imagePaint.image?.hash;
-  return hash && hash.length > 0 ? bytesToHex(hash) : null;
+  return hash && hash.length > 0 ? figImageHashBytesToHex(hash) : null;
 }
 
 function collectImagePaints(nodes: readonly FigNode[]): readonly { ref: string; nodeIndex: number; paintIndex: number }[] {

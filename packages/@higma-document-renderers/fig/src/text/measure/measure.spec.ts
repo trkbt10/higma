@@ -112,6 +112,22 @@ describe("word-based line breaking", () => {
     expect(lines[0].text).toBe("Hello");
     expect(lines[0].text.endsWith(" ")).toBe(false);
   });
+
+  it("does not emit an empty wrapped line when a leading space is trimmed before an overflowing word", () => {
+    const text = " A";
+    const charWidths = [10, 10];
+
+    const lines = breakLinesWord({ text, charWidths, maxWidth: 10 });
+
+    expect(lines).toEqual([
+      {
+        text: "A",
+        width: 10,
+        startIndex: 1,
+        endIndex: 2,
+      },
+    ]);
+  });
 });
 
 describe("character-based line breaking", () => {
@@ -247,6 +263,14 @@ describe("TextMeasurer", () => {
       measureCharWidths(text: string) {
         return Array(text.length).fill(10);
       },
+      getFontMetrics() {
+        return {
+          unitsPerEm: 1000,
+          ascender: 800,
+          descender: -200,
+          lineGap: 0,
+        };
+      },
     };
     measurerRef.value = createTextMeasurer({ provider: mockProviderRef.value! });
   });
@@ -322,6 +346,12 @@ describe("createTextMeasurer", () => {
     const measurer = createTextMeasurer({
       provider: {
         measureText: () => ({ width: 1, height: 1, ascent: 1, descent: 0 }),
+        getFontMetrics: () => ({
+          unitsPerEm: 1000,
+          ascender: 800,
+          descender: -200,
+          lineGap: 0,
+        }),
       },
     });
 
@@ -334,6 +364,12 @@ describe("createTextMeasurer", () => {
       defaultLineBreakMode: "word",
       provider: {
         measureText: () => ({ width: 1, height: 1, ascent: 1, descent: 0 }),
+        getFontMetrics: () => ({
+          unitsPerEm: 1000,
+          ascender: 800,
+          descender: -200,
+          lineGap: 0,
+        }),
       },
     });
 

@@ -18,18 +18,18 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_CAP_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
-import type { FigColor, FigPaint, FigStrokeCap } from "@higma-document-models/fig/types";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
+import type { FigColor, FigNode, FigPaint, FigStrokeCap } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/vector-winding");
@@ -43,32 +43,52 @@ const GREEN: FigColor = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
+function fullEllipseArcData(innerRadius: number): NonNullable<FigNode["arcData"]> {
+  return {
+    startingAngle: 0,
+    endingAngle: Math.PI * 2,
+    innerRadius,
+  };
+}
+
+function arcData(
+  startingAngle: number,
+  endingAngle: number,
+  innerRadius: number,
+): NonNullable<FigNode["arcData"]> {
+  return { startingAngle, endingAngle, innerRadius };
+}
+
+function strokeCapValue(name: FigStrokeCap): NonNullable<FigNode["strokeCap"]> {
+  return { value: STROKE_CAP_VALUES[name], name };
+}
+
 type Args = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
   readonly frameX: number;
   readonly frameY: number;
 };
 
-type Result = { readonly doc: FigDesignDocument };
+type Result = { readonly context: FigDocumentContext };
 
 function addFrame(
   args: Args & { name: string; bg: FigColor },
-): { doc: FigDesignDocument; frameId: FigNodeId } {
+): { context: FigDocumentContext; frameId: FigGuid } {
   const r = addNode({
     state: args.state,
-    doc: args.doc,
-    pageId: args.pageId,
-    parentId: null,
+    context: args.context,
+    pageGuid: args.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: args.name,
@@ -80,7 +100,7 @@ function addFrame(
       clipsContent: true,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 /** Donut shape via ellipse innerRadius. */
@@ -88,9 +108,9 @@ function addEvenoddDonut(args: Args): Result {
   const frame = addFrame({ ...args, name: "winding-evenodd-donut", bg: LIGHT_GRAY });
   const shape = addNode({
     state: args.state,
-    doc: frame.doc,
-    pageId: args.pageId,
-    parentId: frame.frameId,
+    context: frame.context,
+    pageGuid: args.pageGuid,
+    parentGuid: frame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "donut",
@@ -101,13 +121,12 @@ function addEvenoddDonut(args: Args): Result {
       fills: [solidPaint(BLUE)],
     },
   });
-  const docFinal = updateNode({
-    doc: shape.doc,
-    pageId: args.pageId,
-    nodeId: shape.nodeId,
-    updater: (n) => ({ ...n, arcData: { innerRadius: 0.5 } }),
+  const finalContext = updateNode({
+    context: shape.context,
+    nodeGuid: shape.nodeGuid,
+    update: (n) => ({ ...n, arcData: fullEllipseArcData(0.5) }),
   });
-  return { doc: docFinal };
+  return { context: finalContext };
 }
 
 /** Full ring — tests evenodd produces ring, not filled circle. */
@@ -115,9 +134,9 @@ function addEvenoddFullRing(args: Args): Result {
   const frame = addFrame({ ...args, name: "winding-evenodd-ring", bg: WHITE });
   const shape = addNode({
     state: args.state,
-    doc: frame.doc,
-    pageId: args.pageId,
-    parentId: frame.frameId,
+    context: frame.context,
+    pageGuid: args.pageGuid,
+    parentGuid: frame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "ring",
@@ -128,13 +147,12 @@ function addEvenoddFullRing(args: Args): Result {
       fills: [solidPaint(RED)],
     },
   });
-  const docFinal = updateNode({
-    doc: shape.doc,
-    pageId: args.pageId,
-    nodeId: shape.nodeId,
-    updater: (n) => ({ ...n, arcData: { innerRadius: 0.7 } }),
+  const finalContext = updateNode({
+    context: shape.context,
+    nodeGuid: shape.nodeGuid,
+    update: (n) => ({ ...n, arcData: fullEllipseArcData(0.7) }),
   });
-  return { doc: docFinal };
+  return { context: finalContext };
 }
 
 /** Donut with stroke. */
@@ -142,9 +160,9 @@ function addDonutWithStroke(args: Args): Result {
   const frame = addFrame({ ...args, name: "winding-donut-stroke", bg: WHITE });
   const shape = addNode({
     state: args.state,
-    doc: frame.doc,
-    pageId: args.pageId,
-    parentId: frame.frameId,
+    context: frame.context,
+    pageGuid: args.pageGuid,
+    parentGuid: frame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "donut-stroked",
@@ -157,13 +175,12 @@ function addDonutWithStroke(args: Args): Result {
       strokeWeight: 2,
     },
   });
-  const docFinal = updateNode({
-    doc: shape.doc,
-    pageId: args.pageId,
-    nodeId: shape.nodeId,
-    updater: (n) => ({ ...n, arcData: { innerRadius: 0.4 } }),
+  const finalContext = updateNode({
+    context: shape.context,
+    nodeGuid: shape.nodeGuid,
+    update: (n) => ({ ...n, arcData: fullEllipseArcData(0.4) }),
   });
-  return { doc: docFinal };
+  return { context: finalContext };
 }
 
 /** Semicircle arc (0–180°). */
@@ -171,9 +188,9 @@ function addArcSemicircle(args: Args): Result {
   const frame = addFrame({ ...args, name: "winding-arc-semi", bg: WHITE });
   const shape = addNode({
     state: args.state,
-    doc: frame.doc,
-    pageId: args.pageId,
-    parentId: frame.frameId,
+    context: frame.context,
+    pageGuid: args.pageGuid,
+    parentGuid: frame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "semicircle",
@@ -184,19 +201,15 @@ function addArcSemicircle(args: Args): Result {
       fills: [solidPaint(BLUE)],
     },
   });
-  const docFinal = updateNode({
-    doc: shape.doc,
-    pageId: args.pageId,
-    nodeId: shape.nodeId,
-    updater: (n) => ({
+  const finalContext = updateNode({
+    context: shape.context,
+    nodeGuid: shape.nodeGuid,
+    update: (n) => ({
       ...n,
-      arcData: {
-        startingAngle: 0,
-        endingAngle: Math.PI, // 180deg in radians (Figma stores angles in radians)
-      },
+      arcData: arcData(0, Math.PI, 0), // 180deg in radians (Figma stores angles in radians)
     }),
   });
-  return { doc: docFinal };
+  return { context: finalContext };
 }
 
 /** Arc donut segment — 0..270° with inner radius. */
@@ -204,9 +217,9 @@ function addArcDonutSegment(args: Args): Result {
   const frame = addFrame({ ...args, name: "winding-arc-donut", bg: LIGHT_GRAY });
   const shape = addNode({
     state: args.state,
-    doc: frame.doc,
-    pageId: args.pageId,
-    parentId: frame.frameId,
+    context: frame.context,
+    pageGuid: args.pageGuid,
+    parentGuid: frame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "ring-segment",
@@ -217,20 +230,15 @@ function addArcDonutSegment(args: Args): Result {
       fills: [solidPaint(RED)],
     },
   });
-  const docFinal = updateNode({
-    doc: shape.doc,
-    pageId: args.pageId,
-    nodeId: shape.nodeId,
-    updater: (n) => ({
+  const finalContext = updateNode({
+    context: shape.context,
+    nodeGuid: shape.nodeGuid,
+    update: (n) => ({
       ...n,
-      arcData: {
-        startingAngle: 0,
-        endingAngle: (270 * Math.PI) / 180,
-        innerRadius: 0.6,
-      },
+      arcData: arcData(0, (270 * Math.PI) / 180, 0.6),
     }),
   });
-  return { doc: docFinal };
+  return { context: finalContext };
 }
 
 /** Stroke-only arc (progress ring). */
@@ -238,9 +246,9 @@ function addStrokeOnlyArc(args: Args): Result {
   const frame = addFrame({ ...args, name: "winding-stroke-arc", bg: WHITE });
   const shape = addNode({
     state: args.state,
-    doc: frame.doc,
-    pageId: args.pageId,
-    parentId: frame.frameId,
+    context: frame.context,
+    pageGuid: args.pageGuid,
+    parentGuid: frame.frameId,
     spec: {
       type: "ELLIPSE",
       name: "progress-ring",
@@ -253,38 +261,33 @@ function addStrokeOnlyArc(args: Args): Result {
       strokeWeight: 6,
     },
   });
-  const docFinal = updateNode({
-    doc: shape.doc,
-    pageId: args.pageId,
-    nodeId: shape.nodeId,
-    updater: (n) => ({
+  const finalContext = updateNode({
+    context: shape.context,
+    nodeGuid: shape.nodeGuid,
+    update: (n) => ({
       ...n,
-      strokeCap: "ROUND" as FigStrokeCap,
-      arcData: {
-        startingAngle: (270 * Math.PI) / 180,
-        endingAngle: (630 * Math.PI) / 180,
-        innerRadius: 1,
-      },
+      strokeCap: strokeCapValue("ROUND"),
+      arcData: arcData((270 * Math.PI) / 180, (630 * Math.PI) / 180, 1),
     }),
   });
-  return { doc: docFinal };
+  return { context: finalContext };
 }
 
 async function generateVectorWindingFixtures(): Promise<void> {
   console.log("Generating vector winding rule fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("VectorWinding");
+  const empty = createEmptyFigDocument("VectorWinding");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "VectorWinding").guid;
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 3;
   const COL_WIDTH = 160;
@@ -302,12 +305,12 @@ async function generateVectorWindingFixtures(): Promise<void> {
     { name: "Stroke-only arc (progress)", fn: addStrokeOnlyArc },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
+  const finalContext = builders.reduce<FigDocumentContext>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const frameX = MARGIN + col * COL_WIDTH;
     const frameY = MARGIN + row * ROW_HEIGHT;
-    return b.fn({ doc: acc, state, pageId, frameX, frameY }).doc;
+    return b.fn({ context: acc, state, pageGuid, frameX, frameY }).context;
   }, doc0);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
@@ -316,7 +319,7 @@ async function generateVectorWindingFixtures(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

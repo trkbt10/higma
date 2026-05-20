@@ -57,7 +57,7 @@ export type CollectFontQueriesResult = {
 export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQueriesResult {
   const seen = new Set<string>();
   const queries: FontQuery[] = [];
-  const visitedSymbols = new Set<string>();
+  const activeSymbols = new Set<string>();
 
   function pushQuery(q: FontQuery): void {
     if (q.family.length === 0) {
@@ -83,12 +83,6 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     }
   }
 
-  function walkResolvedChildren(children: readonly FigNode[]): void {
-    for (const child of children) {
-      walk(child, input.symbolResolver.childrenOfResolvedNode);
-    }
-  }
-
   function walk(node: FigNode | undefined | null, childrenOf: (node: FigNode) => readonly FigNode[]): void {
     if (!node) {
       return;
@@ -98,8 +92,7 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
       collectTextNodeFonts(typed);
     }
     if (getNodeType(node) === "INSTANCE") {
-      const reference = input.symbolResolver.resolveReferences(node).effectiveSymbol;
-      walkInstanceReference(node, reference);
+      walkResolvedInstance(node);
       return;
     }
     for (const child of childrenOf(node)) {
@@ -107,23 +100,31 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     }
   }
 
-  function walkInstanceReference(
-    node: FigNode,
-    reference: ReturnType<SymbolResolver["resolveReferences"]>["effectiveSymbol"],
-  ): void {
+  function walkResolvedInstance(node: FigNode): void {
+    const reference = input.symbolResolver.resolveReferences(node).effectiveSymbol;
     if (reference === undefined) {
+      const resolved = input.symbolResolver.resolveInstance(node);
+      for (const child of resolved.children) {
+        walk(child, input.symbolResolver.childrenOfResolvedNode);
+      }
       return;
     }
     if (reference.node.guid === undefined) {
       throw new Error("collectFontQueries: resolved SYMBOL node has no Kiwi guid.");
     }
     const key = guidToString(reference.node.guid);
-    if (visitedSymbols.has(key)) {
+    if (activeSymbols.has(key)) {
       return;
     }
-    visitedSymbols.add(key);
-    const resolved = input.symbolResolver.resolveInstance(node);
-    walkResolvedChildren(resolved.children);
+    activeSymbols.add(key);
+    try {
+      const resolved = input.symbolResolver.resolveInstance(node);
+      for (const child of resolved.children) {
+        walk(child, input.symbolResolver.childrenOfResolvedNode);
+      }
+    } finally {
+      activeSymbols.delete(key);
+    }
   }
 
   for (const root of input.roots) {

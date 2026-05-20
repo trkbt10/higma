@@ -17,7 +17,7 @@ export type {
 } from "./types";
 
 // Property extraction
-export { extractTextProps, getValueWithUnits } from "./extract-props";
+export { extractTextProps, getValueWithUnits, type TextNodeInput } from "./extract-props";
 
 // Alignment
 export {
@@ -40,6 +40,7 @@ export {
   textLayoutToCursorLayout,
   type TextLayout,
   type LayoutLine,
+  type TextLayoutSourceLine,
   type ComputeLayoutOptions,
   type CursorLayoutResult,
   type CursorLayoutLine,

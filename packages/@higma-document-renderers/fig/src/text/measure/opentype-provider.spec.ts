@@ -139,4 +139,20 @@ describe("OpentypeMeasurementProvider", () => {
     expect(widths).toHaveLength(3);
     widths.forEach((w) => expect(w).toBeGreaterThan(0));
   });
+
+  it("fails when measuring before the requested font is preloaded", () => {
+    const provider = createOpentypeMeasurementProvider({
+      async loadFont(): Promise<LoadedFont | undefined> {
+        return undefined;
+      },
+      async isFontAvailable(): Promise<boolean> {
+        return false;
+      },
+    });
+
+    expect(() => provider.measureText("Hello", {
+      font: { family: "Missing", weight: 400, style: "normal" },
+      fontSize: 16,
+    })).toThrow('OpenType text measurement requires preloaded font "Missing"');
+  });
 });

@@ -137,6 +137,10 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode 
         stackWrap: spec.stackWrap,
         stackCounterSpacing: spec.stackCounterSpacing,
         stackReverseZIndex: spec.stackReverseZIndex,
+        gridColumns: spec.gridColumns,
+        gridRows: spec.gridRows,
+        gridColumnsSizing: spec.gridColumnsSizing,
+        gridRowsSizing: spec.gridRowsSizing,
         cornerRadius: spec.type === "FRAME" ? spec.cornerRadius : undefined,
         rectangleCornerRadii: spec.type === "FRAME" ? spec.rectangleCornerRadii : undefined,
       };

@@ -85,6 +85,10 @@ export type ResolvedFilter = {
   };
 };
 
+export type ResolveEffectsOptions = {
+  readonly sourceGraphic?: "include" | "omit";
+};
+
 
 // =============================================================================
 // Resolution
@@ -159,6 +163,7 @@ export function resolveEffects(
   effects: readonly Effect[],
   ids: IdGenerator,
   elementBounds?: { x: number; y: number; width: number; height: number },
+  options: ResolveEffectsOptions = {},
 ): ResolvedFilter | undefined {
   if (effects.length === 0) {
     return undefined;
@@ -467,9 +472,10 @@ export function resolveEffects(
   // borders); the mixed case stacks both correctly without orphaning
   // any shadow's intermediate result.
   if (dropShadowResults.length > 0 || innerShadowResults.length > 0) {
+    const sourceGraphicNodes = options.sourceGraphic === "omit" ? [] : ["SourceGraphic"];
     primitives.push({
       type: "feMerge",
-      nodes: [...dropShadowResults, "SourceGraphic", ...innerShadowResults],
+      nodes: [...dropShadowResults, ...sourceGraphicNodes, ...innerShadowResults],
     });
   }
 

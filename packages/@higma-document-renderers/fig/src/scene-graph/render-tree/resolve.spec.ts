@@ -7,9 +7,9 @@
 
 import { resolveRenderTree } from "./resolve";
 import type {
-  RenderRectNode, RenderEllipseNode, RenderPathNode, RenderFrameNode, } from "./types";
+  RenderRectNode, RenderEllipseNode, RenderPathNode, RenderFrameNode, RenderGroupNode, RenderTextNode, } from "./types";
 import type {
-  SceneGraph, GroupNode, RectNode, EllipseNode, PathNode, FrameNode, Fill, Stroke } from "@higma-document-renderers/fig/scene-graph";
+  SceneGraph, GroupNode, RectNode, EllipseNode, PathNode, FrameNode, TextNode, Fill, Stroke } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 
@@ -63,9 +63,61 @@ function makeRect(id: string, transform: AffineMatrix = IDENTITY): RectNode {
   };
 }
 
+function makeFrameSurface(width: number, height: number, cornerRadius?: FrameNode["cornerRadius"]): FrameNode["surfaceShape"] {
+  return { type: "rect", width, height, cornerRadius };
+}
+
+function makeGlyphText(id: string, fills: TextNode["fills"] = []): TextNode {
+  return {
+    type: "text",
+    id: createNodeId(id),
+    transform: IDENTITY,
+    opacity: 1,
+    visible: true,
+    effects: [],
+    width: 10,
+    height: 10,
+    textAutoResize: "NONE",
+    glyphContours: [{
+      commands: [
+        { type: "M", x: 0, y: 0 },
+        { type: "L", x: 10, y: 0 },
+        { type: "L", x: 10, y: 10 },
+        { type: "L", x: 0, y: 10 },
+        { type: "Z" },
+      ],
+      firstCharacter: 0,
+      windingRule: "nonzero",
+    }],
+    runs: [{ start: 0, end: 1, fillColor: "#112233", fillOpacity: 0.75 }],
+    fills,
+  };
+}
+
 // =============================================================================
 // Multi-paint fill tests
 // =============================================================================
+
+describe("resolveRenderTree — text fill SoT", () => {
+  it("uses text runs as the base fill when Kiwi carries no fillPaints", () => {
+    const sg = makeSceneGraph([makeGlyphText("text-without-fills")]);
+    const tree = resolveRenderTree(sg);
+    const node = tree.children[0] as RenderTextNode;
+
+    expect(node.type).toBe("text");
+    expect(node.fillColor).toBe("#112233");
+    expect(node.fillOpacity).toBe(0.75);
+    expect(node.sourceFillOpacity).toBe(0.75);
+    expect(node.content.mode).toBe("glyphs");
+    if (node.content.mode !== "glyphs") {
+      return;
+    }
+    expect(node.content.runs[0]).toMatchObject({
+      fillColor: "#112233",
+      fillOpacity: 0.75,
+    });
+  });
+});
 
 describe("resolveRenderTree — multi-paint fills", () => {
   it("resolves single fill without fillLayers", () => {
@@ -126,6 +178,7 @@ describe("resolveRenderTree — multi-paint fills", () => {
       effects: [],
       width: 100,
       height: 80,
+      surfaceShape: makeFrameSurface(100, 80),
       fills: [RED_SOLID, GREEN_SOLID],
       clipsContent: false,
       children: [],
@@ -137,6 +190,43 @@ describe("resolveRenderTree — multi-paint fills", () => {
     expect(node.background).toBeDefined();
     expect(node.background!.fillLayers).toBeDefined();
     expect(node.background!.fillLayers).toHaveLength(2);
+  });
+
+  it("resolves frame background against the Kiwi surface shape", () => {
+    const surfaceShape: FrameNode["surfaceShape"] = {
+      type: "path",
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 40, y: 0 },
+          { type: "L", x: 40, y: 20 },
+          { type: "L", x: 0, y: 20 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+    };
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("frame-path-surface"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 80,
+      surfaceShape,
+      fills: [RED_SOLID],
+      clipsContent: false,
+      children: [],
+    };
+    const sg = makeSceneGraph([frame]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderFrameNode;
+    expect(node.surfaceShape.kind).toBe("path");
+    expect(node.background?.fill.attrs.fill).toBe("#ff0000");
+    expect(node.sourceSurfaceShape).toBe(surfaceShape);
   });
 });
 
@@ -151,6 +241,7 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
       effects: [],
       width: 100,
       height: 100,
+      surfaceShape: makeFrameSurface(100, 100),
       fills: [],
       clipsContent: true,
       children: [makeRect("overflowing-child", { ...IDENTITY, m02: 120 })],
@@ -173,6 +264,7 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
       width: 100,
       height: 100,
       cornerRadius: 12,
+      surfaceShape: makeFrameSurface(100, 100, 12),
       fills: [],
       clipsContent: true,
       children: [makeRect("contained-child")],
@@ -182,6 +274,75 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
 
     expect(node.childClipId).toBeDefined();
     expect(node.omitChildClip).toBeUndefined();
+  });
+
+  it("emits path clips carried by the FrameNode surface SoT", () => {
+    const surfaceShape: FrameNode["surfaceShape"] = {
+      type: "path",
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 80, y: 0 },
+          { type: "L", x: 80, y: 80 },
+          { type: "L", x: 0, y: 80 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+    };
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("path-clipped-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      surfaceShape,
+      fills: [],
+      clipsContent: true,
+      clip: surfaceShape,
+      children: [makeRect("contained-child")],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+    const clipDef = node.defs.find((def) => def.type === "clip-path");
+
+    expect(node.childClipId).toBeDefined();
+    expect(clipDef?.shape.kind).toBe("path");
+  });
+
+  it("emits path clips carried by GROUP geometry", () => {
+    const group: GroupNode = {
+      type: "group",
+      id: createNodeId("geometry-clipped-group"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      clip: {
+        type: "path",
+        contours: [{
+          commands: [
+            { type: "M", x: 0, y: 0 },
+            { type: "L", x: 80, y: 0 },
+            { type: "L", x: 80, y: 80 },
+            { type: "L", x: 0, y: 80 },
+            { type: "Z" },
+          ],
+          windingRule: "nonzero",
+        }],
+      },
+      children: [makeRect("contained-child")],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([group]));
+    const node = tree.children[0] as RenderGroupNode;
+    const clipDef = node.defs.find((def) => def.type === "clip-path");
+
+    expect(node.childClipId).toBeDefined();
+    expect(node.canUnwrapSingleChild).toBe(false);
+    expect(clipDef?.shape.kind).toBe("path");
   });
 });
 
@@ -523,6 +684,7 @@ describe("resolveRenderTree — drop shadow z-order", () => {
       }],
       width: 50,
       height: 30,
+      surfaceShape: makeFrameSurface(50, 30),
       fills: [RED_SOLID],
       clipsContent: false,
       children: [makeRect("frame-child")],
@@ -584,5 +746,46 @@ describe("resolveRenderTree — drop shadow z-order", () => {
     }
     expect(last.nodes.length).toBe(2);
     expect(last.nodes[1]).toBe("SourceGraphic");
+  });
+
+  it("omits SourceGraphic for shadow-only geometry with no paint source", () => {
+    const pathNode: PathNode = {
+      type: "path",
+      id: createNodeId("effect-only-path"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [{
+        type: "drop-shadow",
+        offset: { x: 0, y: 0 },
+        radius: 4,
+        color: { r: 0.5, g: 0.5, b: 0.5, a: 1 },
+      }],
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 20, y: 0 },
+          { type: "L", x: 20, y: 20 },
+          { type: "L", x: 0, y: 20 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [],
+    };
+    const sg = makeSceneGraph([pathNode]);
+    const tree = resolveRenderTree(sg);
+    const node = tree.children[0] as RenderPathNode;
+    const filterDef = node.defs.find((d) => d.type === "filter");
+    if (filterDef?.type !== "filter") {
+      throw new Error("Expected a filter def");
+    }
+    const last = filterDef.filter.primitives[filterDef.filter.primitives.length - 1];
+    if (last.type !== "feMerge") {
+      throw new Error("Expected the final filter primitive to be feMerge");
+    }
+
+    expect(node.filterSource).toBe("effect-shape");
+    expect(last.nodes).not.toContain("SourceGraphic");
   });
 });

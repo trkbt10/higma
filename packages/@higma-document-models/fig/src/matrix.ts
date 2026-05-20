@@ -23,6 +23,23 @@ export const IDENTITY_MATRIX: FigMatrix = {
   m12: 0,
 };
 
+/**
+ * Read a Kiwi transform, applying the schema identity values for omitted fields.
+ */
+export function readKiwiTransform(transform: FigMatrix | undefined): FigMatrix {
+  if (transform === undefined) {
+    return IDENTITY_MATRIX;
+  }
+  return {
+    m00: transform.m00 ?? IDENTITY_MATRIX.m00,
+    m01: transform.m01 ?? IDENTITY_MATRIX.m01,
+    m02: transform.m02 ?? IDENTITY_MATRIX.m02,
+    m10: transform.m10 ?? IDENTITY_MATRIX.m10,
+    m11: transform.m11 ?? IDENTITY_MATRIX.m11,
+    m12: transform.m12 ?? IDENTITY_MATRIX.m12,
+  };
+}
+
 // =============================================================================
 // Matrix Predicates
 // =============================================================================

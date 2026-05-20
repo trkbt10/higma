@@ -8,8 +8,7 @@
 
 import { Component, StrictMode, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createFigDesignDocument } from "@higma-document-io/fig";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
+import { createFigDocumentContext, type FigDocumentContext } from "@higma-document-io/fig";
 import type { ExtensionToWebviewMessage } from "../shared/protocol";
 import { FigViewer } from "./FigViewer";
 import { postToExtension } from "./vscode-api";
@@ -27,7 +26,7 @@ markModuleRan();
 type LoadState =
   | { readonly status: "idle" }
   | { readonly status: "loading"; readonly fileName: string }
-  | { readonly status: "ready"; readonly fileName: string; readonly document: FigDesignDocument }
+  | { readonly status: "ready"; readonly fileName: string; readonly context: FigDocumentContext }
   | { readonly status: "error"; readonly fileName: string; readonly message: string };
 
 /**
@@ -168,31 +167,41 @@ function parseExtensionMessage(raw: unknown): ExtensionToWebviewMessage | undefi
   }
   const candidate = raw as { type?: unknown };
   if (candidate.type === "fig/loaded") {
-    const message = raw as {
-      uri?: unknown;
-      fileName?: unknown;
-      bytesBase64?: unknown;
-    };
-    if (
-      typeof message.uri === "string" &&
-      typeof message.fileName === "string" &&
-      typeof message.bytesBase64 === "string"
-    ) {
-      return {
-        type: "fig/loaded",
-        uri: message.uri,
-        fileName: message.fileName,
-        bytesBase64: message.bytesBase64,
-      };
-    }
+    return parseLoadedMessage(raw);
   }
   if (candidate.type === "fig/error") {
-    const message = raw as { uri?: unknown; message?: unknown };
-    if (typeof message.uri === "string" && typeof message.message === "string") {
-      return { type: "fig/error", uri: message.uri, message: message.message };
-    }
+    return parseFigErrorMessage(raw);
   }
   return undefined;
+}
+
+function parseLoadedMessage(raw: unknown): ExtensionToWebviewMessage | undefined {
+  const message = raw as {
+    uri?: unknown;
+    fileName?: unknown;
+    bytesBase64?: unknown;
+  };
+  if (
+    typeof message.uri !== "string" ||
+    typeof message.fileName !== "string" ||
+    typeof message.bytesBase64 !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    type: "fig/loaded",
+    uri: message.uri,
+    fileName: message.fileName,
+    bytesBase64: message.bytesBase64,
+  };
+}
+
+function parseFigErrorMessage(raw: unknown): ExtensionToWebviewMessage | undefined {
+  const message = raw as { uri?: unknown; message?: unknown };
+  if (typeof message.uri !== "string" || typeof message.message !== "string") {
+    return undefined;
+  }
+  return { type: "fig/error", uri: message.uri, message: message.message };
 }
 
 async function loadFigDocument(params: {
@@ -203,8 +212,8 @@ async function loadFigDocument(params: {
   const { fileName, bytesBase64, setState } = params;
   try {
     const bytes = decodeBase64(bytesBase64);
-    const document = await createFigDesignDocument(bytes);
-    setState({ status: "ready", fileName, document });
+    const context = await createFigDocumentContext(bytes);
+    setState({ status: "ready", fileName, context });
   } catch (error: unknown) {
     const detail = error instanceof Error ? error.message : String(error);
     postToExtension({
@@ -274,7 +283,7 @@ function App() {
       </div>
     );
   }
-  return <FigViewer fileName={state.fileName} document={state.document} />;
+  return <FigViewer fileName={state.fileName} context={state.context} />;
 }
 
 const container = document.getElementById("higma-fig-root");

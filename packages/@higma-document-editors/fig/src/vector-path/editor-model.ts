@@ -1,6 +1,7 @@
 /** @file Kiwi vector path editor model. */
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { FigBlob } from "@higma-document-models/fig/domain";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { FigGuid, FigMatrix, FigNode, FigVectorPath } from "@higma-document-models/fig/types";
 import {
   applyEditableVectorPathOperation,
@@ -13,7 +14,6 @@ import {
   type EditableVectorPathOperation,
 } from "./commands";
 import type { VectorPathPoint } from "./geometry";
-import { readKiwiTransform } from "../context/fig-editor/matrix";
 
 export type VectorPathHandle = {
   readonly key: string;

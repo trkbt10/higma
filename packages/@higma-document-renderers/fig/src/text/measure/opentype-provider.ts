@@ -29,6 +29,52 @@ function kerningBetween(
   return font.getKerningValue(leftGlyph, rightGlyph);
 }
 
+function glyphsForText(font: AbstractFont, text: string): readonly AbstractGlyph[] {
+  return Array.from({ length: text.length }, (_, index) => font.charToGlyph(text[index]));
+}
+
+function kerningPxAt(
+  font: AbstractFont,
+  glyphs: readonly AbstractGlyph[],
+  index: number,
+  scale: number,
+): number {
+  if (index === 0) {
+    return 0;
+  }
+  const leftGlyph = glyphs[index - 1];
+  const rightGlyph = glyphs[index];
+  if (leftGlyph === undefined || rightGlyph === undefined) {
+    throw new Error("OpenType text measurement received an invalid glyph index");
+  }
+  return kerningBetween(font, leftGlyph, rightGlyph) * scale;
+}
+
+function letterSpacingPxAt(index: number, length: number, letterSpacing: number): number {
+  if (index < length - 1) {
+    return letterSpacing;
+  }
+  return 0;
+}
+
+function glyphAdvancePxAt(
+  font: AbstractFont,
+  glyphs: readonly AbstractGlyph[],
+  index: number,
+  scale: number,
+  letterSpacing: number,
+): number {
+  const glyph = glyphs[index];
+  if (glyph === undefined) {
+    throw new Error("OpenType text measurement received an invalid glyph index");
+  }
+  return (
+    kerningPxAt(font, glyphs, index, scale) +
+    (glyph.advanceWidth ?? 0) * scale +
+    letterSpacingPxAt(index, glyphs.length, letterSpacing)
+  );
+}
+
 /** OpenType.js based measurement provider instance */
 export type OpentypeMeasurementProviderInstance = MeasurementProvider & {
   /** Preload fonts for later synchronous use */
@@ -70,44 +116,17 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
     return fontCache.get(key)?.font;
   }
 
-  function estimateMeasurement(text: string, font: FontSpec): TextMeasurement {
-    const avgWidth = font.fontSize * 0.5;
-    const letterSpacing = font.letterSpacing ?? 0;
-    const width = text.length * avgWidth + (text.length - 1) * letterSpacing;
-    const ascent = font.fontSize * 0.8;
-    const descent = font.fontSize * 0.2;
-
-    return {
-      width,
-      height: ascent + descent,
-      ascent,
-      descent,
-    };
-  }
-
-  function estimateCharWidths(text: string, font: FontSpec): readonly number[] {
-    const avgWidth = font.fontSize * 0.5;
-    const letterSpacing = font.letterSpacing ?? 0;
-    return Array.from(text).map((_, i) =>
-      i < text.length - 1 ? avgWidth + letterSpacing : avgWidth
-    );
-  }
-
-  function estimateFontMetrics(_font: FontSpec): FontMetrics {
-    return {
-      unitsPerEm: 1000,
-      ascender: 800,
-      descender: -200,
-      lineGap: 0,
-    };
+  function requireCachedFont(spec: FontSpec): AbstractFont {
+    const font = getCachedFont(spec);
+    if (font) {
+      return font;
+    }
+    throw new Error(`OpenType text measurement requires preloaded font "${spec.font.family}"`);
   }
 
   function getFontMetrics(font: FontSpec): FontMetrics {
     const opentypeFont = getCachedFont(font);
-
-    if (!opentypeFont) {
-      return estimateFontMetrics(font);
-    }
+    if (!opentypeFont) { throw new Error(`OpenType text measurement requires preloaded font "${font.font.family}"`); }
 
     // CSS Inline L3 derives the line box's ascent / descent from
     // `OS/2.sTypoAscender` / `OS/2.sTypoDescender` regardless of the
@@ -143,11 +162,7 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
     },
 
     measureText(text: string, font: FontSpec): TextMeasurement {
-      const opentypeFont = getCachedFont(font);
-
-      if (!opentypeFont) {
-        return estimateMeasurement(text, font);
-      }
+      const opentypeFont = requireCachedFont(font);
 
       // Optical-size axis tracks the rendered font-size — sync it
       // before reading advance widths or the measurement diverges
@@ -155,32 +170,22 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
       opentypeFont.setOpticalSize?.(font.fontSize);
       const scale = font.fontSize / opentypeFont.unitsPerEm;
       const letterSpacing = font.letterSpacing ?? 0;
-
-      const widthRef = { value: 0 };
+      const glyphs = glyphsForText(opentypeFont, text);
       // Track the previous glyph so we can add the font's pair-adjust
       // value before stamping the next glyph's advance. The browser
       // does this implicitly (`font-kerning: auto` is the default) so
       // not folding it in here leaves the rendered line systematically
       // wider than the captured screenshot wherever the font ships a
       // GPOS pair (most modern proportional fonts).
-      let previousGlyph: AbstractGlyph | undefined;
-      for (let i = 0; i < text.length; i++) {
-        const glyph = opentypeFont.charToGlyph(text[i]);
-        if (previousGlyph !== undefined) {
-          widthRef.value += kerningBetween(opentypeFont, previousGlyph, glyph) * scale;
-        }
-        widthRef.value += (glyph.advanceWidth ?? 0) * scale;
-        if (i < text.length - 1) {
-          widthRef.value += letterSpacing;
-        }
-        previousGlyph = glyph;
-      }
+      const width = glyphs.reduce((sum, _glyph, index) => (
+        sum + glyphAdvancePxAt(opentypeFont, glyphs, index, scale, letterSpacing)
+      ), 0);
 
       const ascent = opentypeFont.ascender * scale;
       const descent = Math.abs(opentypeFont.descender * scale);
 
       return {
-        width: widthRef.value,
+        width,
         height: ascent + descent,
         ascent,
         descent,
@@ -188,11 +193,7 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
     },
 
     measureCharWidths(text: string, font: FontSpec): readonly number[] {
-      const opentypeFont = getCachedFont(font);
-
-      if (!opentypeFont) {
-        return estimateCharWidths(text, font);
-      }
+      const opentypeFont = requireCachedFont(font);
 
       // Tune the variable-font `opsz` axis to the rendered font-size
       // before reading advance widths, otherwise the wrap measurement
@@ -201,28 +202,16 @@ export function createOpentypeMeasurementProvider(fontLoader: FontLoader): Opent
       opentypeFont.setOpticalSize?.(font.fontSize);
       const scale = font.fontSize / opentypeFont.unitsPerEm;
       const letterSpacing = font.letterSpacing ?? 0;
-      const widths: number[] = [];
+      const glyphs = glyphsForText(opentypeFont, text);
       // Fold the pair-adjustment between char[i-1] and char[i] into
       // char[i]'s reported width. The renderer's wrap planner sums
       // these widths to test "does it fit?" and the wrap-break point
       // has to agree with the eventual painted width — keeping the
       // kerning out of measure but in paint produces shifted break
       // points and the diff regresses.
-      let previousGlyph: AbstractGlyph | undefined;
-      for (let i = 0; i < text.length; i++) {
-        const glyph = opentypeFont.charToGlyph(text[i]);
-        const charWidthRef = { value: (glyph.advanceWidth ?? 0) * scale };
-        if (previousGlyph !== undefined) {
-          charWidthRef.value += kerningBetween(opentypeFont, previousGlyph, glyph) * scale;
-        }
-        if (i < text.length - 1) {
-          charWidthRef.value += letterSpacing;
-        }
-        widths.push(charWidthRef.value);
-        previousGlyph = glyph;
-      }
-
-      return widths;
+      return glyphs.map((_glyph, index) => (
+        glyphAdvancePxAt(opentypeFont, glyphs, index, scale, letterSpacing)
+      ));
     },
 
     getFontMetrics,

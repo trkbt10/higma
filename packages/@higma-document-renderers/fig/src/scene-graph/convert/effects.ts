@@ -5,7 +5,7 @@
  */
 
 import type { FigEffect } from "@higma-document-models/fig/types";
-import { getEffectTypeName, isEffectVisible, extractShadowParams } from "../../effects";
+import { getEffectTypeName, isEffectVisible, extractShadowParams, resolveEffectRadius, resolveEffectSpread } from "../../effects";
 import type { Effect } from "@higma-document-renderers/fig/scene-graph";
 import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 
@@ -34,7 +34,7 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
           offset: { x: p.offsetX, y: p.offsetY },
           radius: p.radius,
           color: p.color,
-          spread: effect.spread ?? undefined,
+          spread: resolveEffectSpread(effect),
           blendMode,
           showShadowBehindNode: effect.showShadowBehindNode,
         });
@@ -48,18 +48,18 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
           offset: { x: p.offsetX, y: p.offsetY },
           radius: p.radius,
           color: p.color,
-          spread: effect.spread ?? undefined,
+          spread: resolveEffectSpread(effect),
           blendMode,
         });
         break;
       }
 
       case "FOREGROUND_BLUR":
-        result.push({ type: "layer-blur", radius: effect.radius ?? 0 });
+        result.push({ type: "layer-blur", radius: resolveEffectRadius(effect) });
         break;
 
       case "BACKGROUND_BLUR":
-        result.push({ type: "background-blur", radius: effect.radius ?? 0 });
+        result.push({ type: "background-blur", radius: resolveEffectRadius(effect) });
         break;
     }
   }

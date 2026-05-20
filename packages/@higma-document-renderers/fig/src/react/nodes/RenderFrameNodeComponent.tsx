@@ -7,7 +7,7 @@ import type { RenderFrameNode } from "../../scene-graph";
 import { formatRenderDefs } from "../primitives/render-defs";
 import { RenderWrapper } from "../primitives/wrapper";
 import { RectShape } from "../primitives/rect-shape";
-import { MultiFillRectLayers } from "../primitives/multi-fill";
+import { MultiFillPathLayers, MultiFillRectLayers } from "../primitives/multi-fill";
 import { BackgroundBlurElement } from "../primitives/background-blur";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
 import { RenderNodeComponent } from "./RenderNodeComponent";
@@ -24,7 +24,7 @@ function renderFrameChildren(node: RenderFrameNode): ReactNode {
   return <>{childElements}</>;
 }
 
-function renderFrameBackgroundRect(
+function renderFrameBackgroundShape(
   node: RenderFrameNode,
   uniformStroke: ReturnType<typeof getUniformStrokeAttrs>,
 ): ReactNode {
@@ -32,10 +32,22 @@ function renderFrameBackgroundRect(
     return null;
   }
   if (node.background.fillLayers) {
-    return <MultiFillRectLayers layers={node.background.fillLayers} width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} stroke={uniformStroke} />;
+    if (node.surfaceShape.kind === "path") {
+      return <MultiFillPathLayers layers={node.background.fillLayers} paths={node.surfaceShape.paths} stroke={uniformStroke} />;
+    }
+    return <MultiFillRectLayers layers={node.background.fillLayers} width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} stroke={uniformStroke} />;
   }
   const { fill } = node.background;
-  return <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+  if (node.surfaceShape.kind === "path") {
+    return (
+      <>
+        {node.surfaceShape.paths.map((p, index) => (
+          <path key={index} d={p.d} fillRule={p.fillRule} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />
+        ))}
+      </>
+    );
+  }
+  return <RectShape width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
 }
 
 function renderFrameBackgroundSurface(node: RenderFrameNode, content: ReactNode): ReactNode {
@@ -50,14 +62,14 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
   const sr: StrokeRendering | undefined = node.background?.strokeRendering;
   const uniformStroke = getUniformStrokeAttrs(sr);
-  const bgRect = renderFrameBackgroundSurface(node, renderFrameBackgroundRect(node, uniformStroke));
+  const bgShape = renderFrameBackgroundSurface(node, renderFrameBackgroundShape(node, uniformStroke));
 
   const childrenContent = renderFrameChildren(node);
 
   return (
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
       {defsEl}
-      {bgRect}
+      {bgShape}
       {sr && <StrokeRenderingElements sr={sr} />}
       {node.backgroundBlur && <BackgroundBlurElement blur={node.backgroundBlur} />}
       {childrenContent}

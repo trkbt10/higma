@@ -23,12 +23,10 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import type {
-  FigDesignNode,
-} from "@higma-document-models/fig/domain";
-import type { FigPaint, FigColor } from "@higma-document-models/fig/types";
-
-type FigNodeType = FigDesignNode["type"];
+import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
+import type { FigPaint, FigColor, FigGradientPaint, FigNode, FigVector } from "@higma-document-models/fig/types";
 import type { NodeBounds } from "../geometry/node-bounds";
 import { nodeTypeLabel } from "./node-icon";
 import {
@@ -39,7 +37,7 @@ import {
 import type { ExportFormat, ExportRequest, ExportRollupStatus } from "../export/types";
 
 type Props = {
-  readonly selectedNodes: readonly FigDesignNode[];
+  readonly selectedNodes: readonly FigNode[];
   readonly selectedBounds: readonly NodeBounds[];
   readonly onExport: (request: ExportRequest) => void;
   readonly exporting: boolean;
@@ -47,6 +45,7 @@ type Props = {
   readonly exportStatus: ExportRollupStatus;
 };
 
+/** Render the right-hand inspector for the current Kiwi node selection. */
 export function InspectPanel(props: Props) {
   const { selectedNodes, selectedBounds } = props;
 
@@ -63,19 +62,15 @@ export function InspectPanel(props: Props) {
   }
 
   if (selectedNodes.length === 1) {
-    const node = selectedNodes[0];
-    const bounds = selectedBounds[0];
-    if (!node || !bounds) {
-      return null;
-    }
+    const { node, bounds } = requireSingleSelection(selectedNodes, selectedBounds);
     return (
       <aside className="higma-fig-sidebar higma-fig-sidebar--right" aria-label="Inspect">
         <SingleHeader node={node} />
         <SingleLayoutSection node={node} bounds={bounds} />
-        <SingleColorsSection fills={node.fills} />
+        <SingleColorsSection fills={node.fillPaints ?? []} />
         <ExportSection
           nodeCount={1}
-          primaryName={node.name || nodeTypeLabel(node.type)}
+          primaryName={node.name ?? nodeTypeLabel(getNodeType(node))}
           onExport={props.onExport}
           exporting={props.exporting}
           exportError={props.exportError}
@@ -99,44 +94,62 @@ export function InspectPanel(props: Props) {
   );
 }
 
+function requireSingleSelection(
+  selectedNodes: readonly FigNode[],
+  selectedBounds: readonly NodeBounds[],
+): { readonly node: FigNode; readonly bounds: NodeBounds } {
+  const node = selectedNodes[0];
+  if (node === undefined) {
+    throw new Error("VSC fig inspector single selection requires one node");
+  }
+  const bounds = selectedBounds[0];
+  if (bounds === undefined) {
+    throw new Error("VSC fig inspector single selection requires matching bounds");
+  }
+  return { node, bounds };
+}
+
 // ----------------------------------------------------------------------
 // Single-node view
 // ----------------------------------------------------------------------
 
-type SingleHeaderProps = { readonly node: FigDesignNode };
+type SingleHeaderProps = { readonly node: FigNode };
 
 function SingleHeader({ node }: SingleHeaderProps) {
+  const type = getNodeType(node);
   return (
     <header className="higma-fig-inspect__header">
       <h2 className="higma-fig-inspect__name" title={node.name}>
-        {node.name || nodeTypeLabel(node.type)}
+        {node.name ?? nodeTypeLabel(type)}
       </h2>
-      <p className="higma-fig-inspect__type">{nodeTypeLabel(node.type)}</p>
+      <p className="higma-fig-inspect__type">{nodeTypeLabel(type)}</p>
     </header>
   );
 }
 
 type SingleLayoutSectionProps = {
-  readonly node: FigDesignNode;
+  readonly node: FigNode;
   readonly bounds: NodeBounds;
 };
 
 function SingleLayoutSection({ node, bounds }: SingleLayoutSectionProps) {
-  const rotationDeg = computeRotationDegrees(node.transform.m00, node.transform.m10);
+  const size = requireSize(node);
+  const transform = readKiwiTransform(node.transform);
+  const rotationDeg = computeRotationDegrees(transform.m00, transform.m10);
   return (
     <section className="higma-fig-inspect__section" aria-labelledby="higma-inspect-layout">
       <h3 id="higma-inspect-layout" className="higma-fig-inspect__section-title">
         Layout
       </h3>
       <dl className="higma-fig-inspect__metrics">
-        <Metric label="Width" value={`${formatDimension(node.size.x)}px`} />
-        <Metric label="Height" value={`${formatDimension(node.size.y)}px`} />
+        <Metric label="Width" value={`${formatDimension(size.x)}px`} />
+        <Metric label="Height" value={`${formatDimension(size.y)}px`} />
         <Metric label="Top" value={`${formatDimension(bounds.y)}px`} />
         <Metric label="Left" value={`${formatDimension(bounds.x)}px`} />
         {Math.abs(rotationDeg) > 0.01 && (
           <Metric label="Rotation" value={`${formatDimension(rotationDeg)}°`} />
         )}
-        {node.opacity < 1 && (
+        {node.opacity !== undefined && node.opacity < 1 && (
           <Metric label="Opacity" value={`${Math.round(node.opacity * 100)}%`} />
         )}
       </dl>
@@ -170,15 +183,16 @@ function SingleColorsSection({ fills }: SingleColorsSectionProps) {
 }
 
 function PaintRow({ paint }: { readonly paint: FigPaint }) {
-  if (paint.type === "SOLID") {
-    const { color } = paint;
+  const solidPaint = asSolidPaint(paint);
+  if (solidPaint) {
+    const { color } = solidPaint;
     const hex = colorToHex(color);
-    const alpha = combineOpacity(color.a, paint.opacity);
+    const alpha = combineOpacity(color.a, solidPaint.opacity);
     return (
       <li className="higma-fig-inspect__color-row">
         <span
           className="higma-fig-inspect__swatch"
-          style={{ background: rgbaCss(color, paint.opacity) }}
+          style={{ background: rgbaCss(color, solidPaint.opacity) }}
           aria-hidden="true"
         />
         <span className="higma-fig-inspect__color-hex">{hex}</span>
@@ -188,7 +202,7 @@ function PaintRow({ paint }: { readonly paint: FigPaint }) {
       </li>
     );
   }
-  if (paint.type === "IMAGE") {
+  if (asImagePaint(paint)) {
     return (
       <li className="higma-fig-inspect__color-row">
         <span className="higma-fig-inspect__swatch higma-fig-inspect__swatch--image" aria-hidden="true" />
@@ -197,11 +211,15 @@ function PaintRow({ paint }: { readonly paint: FigPaint }) {
     );
   }
   // Gradient (linear/radial/angular/diamond) — show first/last stops.
-  const swatchBg = gradientSwatchBackground(paint);
+  const gradientPaint = asGradientPaint(paint);
+  if (!gradientPaint) {
+    throw new Error(`Unsupported paint type in VSC fig inspector: ${getPaintType(paint)}`);
+  }
+  const swatchBg = gradientSwatchBackground(gradientPaint);
   return (
     <li className="higma-fig-inspect__color-row">
       <span className="higma-fig-inspect__swatch" style={{ background: swatchBg }} aria-hidden="true" />
-      <span className="higma-fig-inspect__color-hex">{gradientLabel(paint.type)}</span>
+      <span className="higma-fig-inspect__color-hex">{gradientLabel(getPaintType(gradientPaint))}</span>
     </li>
   );
 }
@@ -217,12 +235,15 @@ function gradientLabel(type: string): string {
   return GRADIENT_LABELS[type] ?? "Gradient";
 }
 
-function gradientSwatchBackground(paint: Extract<FigPaint, { stops?: unknown }>): string {
-  const stops = paint.stops ?? paint.gradientStops ?? [];
+function gradientSwatchBackground(paint: FigGradientPaint): string {
+  const stops = paint.stops;
+  if (stops === undefined || stops.length === 0) {
+    throw new Error(`Gradient paint ${getPaintType(paint)} requires stops for VSC fig inspector swatch`);
+  }
   const first = stops[0]?.color;
   const last = stops[stops.length - 1]?.color;
   if (!first || !last) {
-    return "var(--vscode-editorWidget-background)";
+    throw new Error(`Gradient paint ${getPaintType(paint)} contains a stop without color`);
   }
   return `linear-gradient(90deg, ${rgbaCss(first, paint.opacity)}, ${rgbaCss(last, paint.opacity)})`;
 }
@@ -232,7 +253,7 @@ function gradientSwatchBackground(paint: Extract<FigPaint, { stops?: unknown }>)
 // ----------------------------------------------------------------------
 
 type MixedViewProps = {
-  readonly nodes: readonly FigDesignNode[];
+  readonly nodes: readonly FigNode[];
   readonly bounds: readonly NodeBounds[];
   readonly onExport: (request: ExportRequest) => void;
   readonly exporting: boolean;
@@ -289,7 +310,7 @@ function MixedTypesSection({ summary }: { readonly summary: MixedSelectionSummar
       <ul className="higma-fig-inspect__chips">
         {summary.typeCounts.map((entry) => (
           <li key={entry.type} className="higma-fig-inspect__chip">
-            <span className="higma-fig-inspect__chip-label">{nodeTypeLabel(entry.type as FigNodeType)}</span>
+            <span className="higma-fig-inspect__chip-label">{nodeTypeLabel(entry.type)}</span>
             <span className="higma-fig-inspect__chip-count">×{entry.count}</span>
           </li>
         ))}
@@ -410,8 +431,43 @@ type ExportSectionProps = {
   readonly exportStatus: ExportRollupStatus;
 };
 
+type ExportButtonLabelArgs = {
+  readonly exporting: boolean;
+  readonly exportStatus: ExportRollupStatus;
+  readonly nodeCount: number;
+  readonly primaryName: string | null;
+};
+
 const SCALE_OPTIONS = [0.5, 1, 2, 3, 4] as const;
 const FORMAT_OPTIONS: readonly ExportFormat[] = ["PNG", "JPEG", "SVG"];
+
+function formatExportButtonLabel({
+  exporting,
+  exportStatus,
+  nodeCount,
+  primaryName,
+}: ExportButtonLabelArgs): string {
+  if (exporting && exportStatus.kind === "running") {
+    return `Exporting ${exportStatus.completed}/${exportStatus.total}…`;
+  }
+  if (exporting) {
+    return "Exporting…";
+  }
+  if (nodeCount > 1) {
+    return `Export ${nodeCount} layers`;
+  }
+  if (primaryName) {
+    return `Export ${truncateExportName(primaryName)}`;
+  }
+  return "Export";
+}
+
+function truncateExportName(name: string): string {
+  if (name.length <= 20) {
+    return name;
+  }
+  return `${name.slice(0, 17)}…`;
+}
 
 function ExportSection({
   nodeCount,
@@ -425,22 +481,10 @@ function ExportSection({
   const [format, setFormat] = useState<ExportFormat>("PNG");
   const [suffix, setSuffix] = useState<string>("");
 
-  const buttonLabel = useMemo(() => {
-    if (exporting) {
-      if (exportStatus.kind === "running") {
-        return `Exporting ${exportStatus.completed}/${exportStatus.total}…`;
-      }
-      return "Exporting…";
-    }
-    if (nodeCount > 1) {
-      return `Export ${nodeCount} layers`;
-    }
-    if (primaryName) {
-      const truncated = primaryName.length > 20 ? `${primaryName.slice(0, 17)}…` : primaryName;
-      return `Export ${truncated}`;
-    }
-    return "Export";
-  }, [exporting, exportStatus, nodeCount, primaryName]);
+  const buttonLabel = useMemo(
+    () => formatExportButtonLabel({ exporting, exportStatus, nodeCount, primaryName }),
+    [exporting, exportStatus, nodeCount, primaryName],
+  );
 
   const handleExport = useCallback(() => {
     onExport({ format, scale, suffix: suffix.trim() });
@@ -539,7 +583,7 @@ function ExportStatusReadout({ status }: { readonly status: ExportRollupStatus }
 }
 
 // ----------------------------------------------------------------------
-// Shared helpers
+// Formatting and validation operations
 // ----------------------------------------------------------------------
 
 type MetricProps = {
@@ -554,6 +598,13 @@ function Metric({ label, value }: MetricProps) {
       <dd className="higma-fig-inspect__metric-value">{value}</dd>
     </>
   );
+}
+
+function requireSize(node: FigNode): FigVector {
+  if (node.size === undefined) {
+    throw new Error(`VSC fig inspector requires size for Kiwi node ${guidToString(node.guid)}`);
+  }
+  return node.size;
 }
 
 function colorToHex(color: FigColor): string {
@@ -582,7 +633,10 @@ function hexAlphaToCss(hex: string, alpha: number): string {
 }
 
 function combineOpacity(colorAlpha: number, paintOpacity: number | undefined): number {
-  const base = Number.isFinite(colorAlpha) ? colorAlpha : 1;
+  if (!Number.isFinite(colorAlpha)) {
+    throw new Error(`Paint color alpha must be finite, got ${colorAlpha}`);
+  }
+  const base = colorAlpha;
   const factor = paintOpacity === undefined ? 1 : paintOpacity;
   return Math.max(0, Math.min(1, base * factor));
 }

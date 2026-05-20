@@ -20,16 +20,16 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigEffect, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,43 +38,43 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, "frame-properties.fig");
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function solidPaintWithOpacity(color: FigColor, opacity: number): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function dropShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): FigEffect {
   return {
-    type: "DROP_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
     visible: true,
     color,
     offset: { x: offsetX, y: offsetY },
     radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function innerShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): FigEffect {
   return {
-    type: "INNER_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
     visible: true,
     color,
     offset: { x: offsetX, y: offsetY },
     radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -89,22 +89,32 @@ type AddFrameOptions = {
 };
 
 type FrameBuildFn = (args: {
-  doc: FigDesignDocument;
+  context: FigDocumentContext;
   state: FigBuilderState;
-  pageId: FigPageId;
-  parentId: FigNodeId;
-}) => FigDesignDocument;
+  pageGuid: FigGuid;
+  parentGuid: FigGuid;
+}) => FigDocumentContext;
 
 type AddedFrame = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly frameX: number;
 };
 
+function frameFills(opts: AddFrameOptions | undefined): FigPaint[] {
+  if (opts?.fillPaint) {
+    return [opts.fillPaint];
+  }
+  if (opts?.fill) {
+    return [solidPaint({ ...opts.fill, a: 1 })];
+  }
+  return [];
+}
+
 function addFrame(
   args: {
-    doc: FigDesignDocument;
+    context: FigDocumentContext;
     state: FigBuilderState;
-    pageId: FigPageId;
+    pageGuid: FigGuid;
     name: string;
     width: number;
     height: number;
@@ -113,20 +123,15 @@ function addFrame(
     opts?: AddFrameOptions;
   },
 ): AddedFrame {
-  const { doc, state, pageId, name, width, height, frameX, buildFn, opts } = args;
-  const fills: FigPaint[] = [];
-  if (opts?.fillPaint) {
-    fills.push(opts.fillPaint);
-  } else if (opts?.fill) {
-    fills.push(solidPaint({ ...opts.fill, a: 1 }));
-  }
+  const { context, state, pageGuid, name, width, height, frameX, buildFn, opts } = args;
+  const fills = frameFills(opts);
   const strokes: FigPaint[] = opts?.stroke ? [solidPaint(opts.stroke)] : [];
 
   const added = addNode({
     state,
-    doc,
-    pageId,
-    parentId: null,
+    context,
+    pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name,
@@ -144,49 +149,49 @@ function addFrame(
     },
   });
 
-  const docAfterChildren = buildFn({
-    doc: added.doc,
+  const contextAfterChildren = buildFn({
+    context: added.context,
     state,
-    pageId,
-    parentId: added.nodeId,
+    pageGuid,
+    parentGuid: added.nodeGuid,
   });
-  return { doc: docAfterChildren, frameX: frameX + width + 20 };
+  return { context: contextAfterChildren, frameX: frameX + width + 20 };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating frame-properties fixtures...");
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-  const empty = createEmptyFigDesignDocument("Frame Properties");
+  const empty = createEmptyFigDocument("Frame Properties");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "Frame Properties").guid;
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const startX = 0;
 
   // 1. FRAME with solid background fill
   const f1 = addFrame({
-    doc: doc0,
+    context: doc0,
     state,
-    pageId,
+    pageGuid,
     name: "frame-bg-fill",
     width: 150,
     height: 100,
     frameX: startX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       return addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "inner",
@@ -196,26 +201,26 @@ async function generate(): Promise<void> {
           height: 60,
           fills: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 0.2, g: 0.5, b: 0.9 } },
   });
 
   // 2. FRAME with corner radius + clip (card)
   const f2 = addFrame({
-    doc: f1.doc,
+    context: f1.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-corner-clip",
     width: 150,
     height: 100,
     frameX: f1.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       const r1 = addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "overflow",
@@ -228,9 +233,9 @@ async function generate(): Promise<void> {
       });
       return addNode({
         state,
-        doc: r1.doc,
-        pageId,
-        parentId,
+        context: r1.context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "content",
@@ -240,26 +245,26 @@ async function generate(): Promise<void> {
           height: 30,
           fills: [solidPaint({ r: 0.3, g: 0.3, b: 0.3, a: 1 })],
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 1, g: 1, b: 1 }, cornerRadius: 16 },
   });
 
   // 3. Nested FRAMEs with different backgrounds
   const f3 = addFrame({
-    doc: f2.doc,
+    context: f2.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-nested",
     width: 200,
     height: 150,
     frameX: f2.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       const inner = addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "FRAME",
           name: "inner-frame",
@@ -273,9 +278,9 @@ async function generate(): Promise<void> {
       });
       return addNode({
         state,
-        doc: inner.doc,
-        pageId,
-        parentId: inner.nodeId,
+        context: inner.context,
+        pageGuid,
+        parentGuid: inner.nodeGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "deep-rect",
@@ -285,26 +290,26 @@ async function generate(): Promise<void> {
           height: 60,
           fills: [solidPaint({ r: 0.2, g: 0.2, b: 0.9, a: 1 })],
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 0.95, g: 0.95, b: 0.95 } },
   });
 
   // 6. Children with drop shadow inside FRAME
   const f6 = addFrame({
-    doc: f3.doc,
+    context: f3.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-child-effects",
     width: 200,
     height: 120,
     frameX: f3.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       const r1 = addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "shadow-rect",
@@ -318,9 +323,9 @@ async function generate(): Promise<void> {
       });
       return addNode({
         state,
-        doc: r1.doc,
-        pageId,
-        parentId,
+        context: r1.context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "plain-rect",
@@ -330,26 +335,26 @@ async function generate(): Promise<void> {
           height: 40,
           fills: [solidPaint({ r: 0.9, g: 0.2, b: 0.3, a: 1 })],
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 1, g: 1, b: 1 } },
   });
 
   // 7. FRAME opacity with children
   const f7 = addFrame({
-    doc: f6.doc,
+    context: f6.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-opacity",
     width: 150,
     height: 100,
     frameX: f6.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       const r1 = addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "opacity-child-a",
@@ -363,9 +368,9 @@ async function generate(): Promise<void> {
       });
       return addNode({
         state,
-        doc: r1.doc,
-        pageId,
-        parentId,
+        context: r1.context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "opacity-child-b",
@@ -376,26 +381,26 @@ async function generate(): Promise<void> {
           fills: [solidPaint({ r: 0.95, g: 0.2, b: 0.25, a: 1 })],
           cornerRadius: 6,
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 1, g: 0.9, b: 0.2 }, opacity: 0.5 },
   });
 
   // 8. FRAME drop shadow effect
   const f8 = addFrame({
-    doc: f7.doc,
+    context: f7.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-drop-shadow",
     width: 150,
     height: 100,
     frameX: f7.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       return addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "drop-shadow-child",
@@ -406,7 +411,7 @@ async function generate(): Promise<void> {
           fills: [solidPaint({ r: 1, g: 1, b: 1, a: 1 })],
           cornerRadius: 4,
         },
-      }).doc;
+      }).context;
     },
     opts: {
       fillPaint: solidPaintWithOpacity({ r: 0.2, g: 0.45, b: 0.9, a: 1 }, 0.7),
@@ -417,19 +422,19 @@ async function generate(): Promise<void> {
 
   // 9. FRAME inner shadow effect
   const f9 = addFrame({
-    doc: f8.doc,
+    context: f8.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-inner-shadow",
     width: 150,
     height: 100,
     frameX: f8.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       return addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "inner-shadow-child",
@@ -440,7 +445,7 @@ async function generate(): Promise<void> {
           fills: [solidPaintWithOpacity({ r: 1, g: 1, b: 1, a: 1 }, 0.85)],
           cornerRadius: 6,
         },
-      }).doc;
+      }).context;
     },
     opts: {
       fill: { r: 0.9, g: 0.95, b: 1 },
@@ -451,19 +456,19 @@ async function generate(): Promise<void> {
 
   // 10. FRAME stroke border
   const f10 = addFrame({
-    doc: f9.doc,
+    context: f9.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-stroke",
     width: 150,
     height: 100,
     frameX: f9.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       return addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "stroke-child",
@@ -474,7 +479,7 @@ async function generate(): Promise<void> {
           fills: [solidPaint({ r: 0.2, g: 0.7, b: 0.4, a: 1 })],
           cornerRadius: 6,
         },
-      }).doc;
+      }).context;
     },
     opts: {
       fill: { r: 1, g: 1, b: 1 },
@@ -486,19 +491,19 @@ async function generate(): Promise<void> {
 
   // 11. Multiple overlapping children (opacity compositing)
   const f11 = addFrame({
-    doc: f10.doc,
+    context: f10.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-overlap",
     width: 150,
     height: 100,
     frameX: f10.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       const r1 = addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "rect-a",
@@ -511,9 +516,9 @@ async function generate(): Promise<void> {
       });
       return addNode({
         state,
-        doc: r1.doc,
-        pageId,
-        parentId,
+        context: r1.context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "rect-b",
@@ -524,26 +529,26 @@ async function generate(): Promise<void> {
           fills: [solidPaint({ r: 0.2, g: 0.2, b: 0.9, a: 1 })],
           opacity: 0.5,
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 1, g: 1, b: 1 } },
   });
 
   // 12. Deep nested clip chain
   const f12 = addFrame({
-    doc: f11.doc,
+    context: f11.context,
     state,
-    pageId,
+    pageGuid,
     name: "frame-deep-clip",
     width: 200,
     height: 150,
     frameX: f11.frameX,
-    buildFn: ({ doc, parentId }) => {
+    buildFn: ({ context, parentGuid }) => {
       const level1 = addNode({
         state,
-        doc,
-        pageId,
-        parentId,
+        context,
+        pageGuid,
+        parentGuid,
         spec: {
           type: "FRAME",
           name: "level-1",
@@ -558,9 +563,9 @@ async function generate(): Promise<void> {
       });
       const level2 = addNode({
         state,
-        doc: level1.doc,
-        pageId,
-        parentId: level1.nodeId,
+        context: level1.context,
+        pageGuid,
+        parentGuid: level1.nodeGuid,
         spec: {
           type: "FRAME",
           name: "level-2",
@@ -575,9 +580,9 @@ async function generate(): Promise<void> {
       });
       return addNode({
         state,
-        doc: level2.doc,
-        pageId,
-        parentId: level2.nodeId,
+        context: level2.context,
+        pageGuid,
+        parentGuid: level2.nodeGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: "deep-overflow",
@@ -587,12 +592,12 @@ async function generate(): Promise<void> {
           height: 50,
           fills: [solidPaint({ r: 0.2, g: 0.7, b: 0.4, a: 1 })],
         },
-      }).doc;
+      }).context;
     },
     opts: { fill: { r: 1, g: 1, b: 1 } },
   });
 
-  const exported = await exportFig(f12.doc);
+  const exported = await exportFig(f12.context);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`Written: ${OUTPUT_FILE} (${exported.data.length} bytes)`);
   console.log("Done!");

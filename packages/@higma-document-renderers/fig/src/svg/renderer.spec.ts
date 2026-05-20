@@ -93,7 +93,9 @@ describe("renderFigToSvg fontLoader", () => {
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
-      symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+      symbolResolver: createSymbolResolver({
+        document: indexFigKiwiDocument([]),
+      }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       backgroundColor: "#ffffff",
       fontLoader: createFontLoader(),

@@ -14,18 +14,20 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   addNode,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_ALIGN_VALUES, STROKE_CAP_VALUES, STROKE_JOIN_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type {
   FigColor,
   FigGradientStop,
+  FigNode,
   FigPaint,
 } from "@higma-document-models/fig/types";
 
@@ -35,11 +37,11 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, "fills.fig");
 
 function solidPaint(color: FigColor, opacity = 1): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -59,10 +61,10 @@ function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: "GRADIENT_LINEAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops,
     transform: { m00: dx, m01: -dy, m02: endX, m10: dy, m11: dx, m12: endY },
   };
@@ -79,10 +81,10 @@ function radialGradientPaint(
   stops: readonly FigGradientStop[],
 ): FigPaint {
   return {
-    type: "GRADIENT_RADIAL",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops,
     transform: { m00: radius, m01: 0, m02: centerX, m10: 0, m11: radius, m12: centerY },
   };
@@ -114,6 +116,8 @@ type FillFrameData = {
   background: string;
   children: FillChild[];
 };
+
+type FillStrokeData = NonNullable<FillChild["strokeData"]>;
 
 const SOLID_RED: FigPaint = solidPaint({ r: 0.9, g: 0.2, b: 0.2, a: 1 });
 const SOLID_GREEN: FigPaint = solidPaint({ r: 0.2, g: 0.8, b: 0.3, a: 1 });
@@ -326,23 +330,23 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 }
 
 function buildStrokeList(strokeData: FillChild["strokeData"]): FigPaint[] {
-  if (!strokeData) return [];
+  if (!strokeData) {return [];}
   return [solidPaint({ ...strokeData.color, a: 1 })];
 }
 
 function addFillChild(
   state: FigBuilderState,
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  parentId: ReturnType<typeof addNode>["nodeId"],
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
+  parentGuid: ReturnType<typeof addNode>["nodeGuid"],
   child: FillChild,
-): FigDesignDocument {
+): FigDocumentContext {
   const fills: FigPaint[] = child.fill ? [child.fill] : [];
   const strokes: FigPaint[] = buildStrokeList(child.strokeData);
 
   const type = child.shape === "rect" ? "ROUNDED_RECTANGLE" : "ELLIPSE";
   const r = addNode({
-    state, doc, pageId, parentId,
+    state, context, pageGuid, parentGuid,
     spec: {
       type,
       name: child.name,
@@ -351,25 +355,46 @@ function addFillChild(
       fills,
       strokes,
       strokeWeight: child.strokeData?.weight,
-      strokeCap: child.strokeData?.cap,
-      strokeJoin: child.strokeData?.join,
-      strokeAlign: child.strokeData?.align,
+      strokeCap: strokeCapValue(child.strokeData?.cap),
+      strokeJoin: strokeJoinValue(child.strokeData?.join),
+      strokeAlign: strokeAlignValue(child.strokeData?.align),
       strokeDashes: child.strokeData?.dash,
       cornerRadius: child.shape === "rect" ? child.cornerRadius : undefined,
     },
   });
-  return r.doc;
+  return r.context;
+}
+
+function strokeCapValue(name: FillStrokeData["cap"]): FigNode["strokeCap"] {
+  if (name === undefined) {
+    return undefined;
+  }
+  return { value: STROKE_CAP_VALUES[name], name };
+}
+
+function strokeJoinValue(name: FillStrokeData["join"]): FigNode["strokeJoin"] {
+  if (name === undefined) {
+    return undefined;
+  }
+  return { value: STROKE_JOIN_VALUES[name], name };
+}
+
+function strokeAlignValue(name: FillStrokeData["align"]): FigNode["strokeAlign"] {
+  if (name === undefined) {
+    return undefined;
+  }
+  return { value: STROKE_ALIGN_VALUES[name], name };
 }
 
 async function generateFillFixtures(): Promise<void> {
   console.log("Generating fill fixtures...");
 
-  const empty = createEmptyFigDesignDocument("Fills");
+  const empty = createEmptyFigDocument("Fills");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "Fills").guid;
   // The original script omitted the Internal Only Canvas. Keep the
   // same omission to match the original artifact layout; Figma
   // accepts the file regardless.
@@ -379,7 +404,7 @@ async function generateFillFixtures(): Promise<void> {
   const GRID_GAP = 30;
   const MARGIN = 50;
 
-  const finalDoc = FILL_FRAMES.reduce<FigDesignDocument>((acc, frameData, index) => {
+  const finalContext = FILL_FRAMES.reduce<FigDocumentContext>((acc, frameData, index) => {
     const col = index % GRID_COLS;
     const row = Math.floor(index / GRID_COLS);
     const maxFrameWidth = 260;
@@ -389,7 +414,7 @@ async function generateFillFixtures(): Promise<void> {
     const bgColor = hexToRgb(frameData.background);
 
     const frameResult = addNode({
-      state, doc: acc, pageId, parentId: null,
+      state, context: acc, pageGuid, parentGuid: null,
       spec: {
         type: "FRAME",
         name: frameData.name,
@@ -400,9 +425,9 @@ async function generateFillFixtures(): Promise<void> {
       },
     });
 
-    return frameData.children.reduce<FigDesignDocument>(
-      (innerAcc, child) => addFillChild(state, innerAcc, pageId, frameResult.nodeId, child),
-      frameResult.doc,
+    return frameData.children.reduce<FigDocumentContext>(
+      (innerAcc, child) => addFillChild(state, innerAcc, pageGuid, frameResult.nodeGuid, child),
+      frameResult.context,
     );
   }, doc0);
 
@@ -414,7 +439,7 @@ async function generateFillFixtures(): Promise<void> {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

@@ -23,7 +23,6 @@ import type {
   FontPath,
 } from "@higma-document-models/fig/font";
 import { collectFontQueries, createCachingFontLoader, preloadFonts } from "@higma-document-models/fig/font";
-import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import type {
   FigEffect,
   FigFontName,
@@ -933,7 +932,7 @@ function collectHarnessFontQueries(context: FigDocumentContext) {
   const resources = figDocumentResources(context);
   return collectFontQueries({
     roots: context.document.nodeChanges,
-    symbolResolver: createSymbolResolver({ document: context.document }),
+    symbolResolver: context.symbolResolver,
     childrenOf: resources.childrenOf,
   }).queries;
 }

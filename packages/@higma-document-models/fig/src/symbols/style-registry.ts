@@ -40,8 +40,8 @@
  * non-style nodes (e.g. a stale guid pointing at a now-FRAME node).
  * Figma itself renders such cases using the consumer's own embedded
  * `fillPaints` / `strokePaints` fields. The resolution functions therefore
- * return `undefined` for dangling refs so callers fall through to the
- * embedded paint, matching Figma's actual behaviour. A successful
+ * return `undefined` for dangling refs so the caller uses the embedded
+ * paint as the only local SoT, matching Figma's actual behaviour. A successful
  * registry lookup still wins over the embedded cache (the registry is
  * authoritative when it has an entry).
  */
@@ -100,8 +100,8 @@ export function styleRefKeys(ref: FigStyleId | undefined): readonly string[] {
  *   GRID    → `layoutGrids`    (layout-grid array, opaque to us)
  *
  * Returns `undefined` for non-style-definition nodes and for definitions
- * whose implied field is missing (treated as "this style contributes
- * nothing"; consumers fall through to their embedded cache).
+ * whose implied field is missing (treated as "this style has no local
+ * payload"; consumers use their embedded cache as the only local SoT).
  *
  * The dispatch is type-driven, never consumer-intent-driven: a FILL
  * style stores its paint in `fillPaints` regardless of whether the

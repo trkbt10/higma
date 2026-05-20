@@ -35,11 +35,17 @@ export {
 } from "./fig-guid";
 
 export {
+  figImageHashBytesToHex,
+  figImageHashHexToBytes,
+} from "./image-hash";
+
+export {
   getNodeType,
 } from "./kiwi-node";
 
 export {
   derivedTextDataHasVisualPayload,
+  derivedTextDataWithoutVisualPayload,
 } from "./derived-text-data";
 
 export {

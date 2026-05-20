@@ -5,9 +5,8 @@
  * (numbers, strings, kernel-defined enums, callbacks) and renders the
  * controls a document editor would put inside a property panel section.
  *
- * Document editors (e.g. fig) provide an adapter that:
- *   1. derives view props from their domain model (FigDesignNode, etc.),
- *   2. dispatches updates back through their editor action stream.
+ * Document editors (e.g. fig) project their document state into view props
+ * and dispatch updates back through their editor action stream.
  */
 
 // Appearance

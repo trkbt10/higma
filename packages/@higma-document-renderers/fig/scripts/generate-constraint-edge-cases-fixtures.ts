@@ -19,18 +19,18 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
+  type KiwiChildLayoutFields,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-  LayoutConstraints,
-} from "@higma-document-models/fig/domain";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { CONSTRAINT_TYPE_VALUES, type ConstraintType } from "@higma-document-models/fig/constants";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,10 +50,10 @@ const IOS_PURPLE: FigColor = { r: 0.686, g: 0.322, b: 0.871, a: 1 };
 const IOS_GRAY_BG: FigColor = { r: 0.949, g: 0.949, b: 0.969, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
-function constraintsFor(h: ConstraintType, v: ConstraintType): LayoutConstraints {
+function constraintsFor(h: ConstraintType, v: ConstraintType): KiwiChildLayoutFields {
   return {
     horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES[h], name: h },
     verticalConstraint: { value: CONSTRAINT_TYPE_VALUES[v], name: v },
@@ -64,7 +64,7 @@ type State = ReturnType<typeof createFigBuilderState>;
 
 type Ctx = {
   readonly state: State;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 type FrameOpts = {
@@ -77,10 +77,10 @@ type FrameOpts = {
 };
 
 function addTestFrame(
-  ctx: Ctx, doc: FigDesignDocument, opts: FrameOpts,
-): { readonly doc: FigDesignDocument; readonly frameId: FigNodeId } {
+  ctx: Ctx, context: FigDocumentContext, opts: FrameOpts,
+): { readonly context: FigDocumentContext; readonly frameId: FigGuid } {
   const r = addNode({
-    state: ctx.state, doc, pageId: ctx.pageId, parentId: null,
+    state: ctx.state, context, pageGuid: ctx.pageGuid, parentGuid: null,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -89,30 +89,30 @@ function addTestFrame(
       clipsContent: true,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating constraint-edge-cases fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("Nested Constraints");
+  const empty = createEmptyFigDocument("Nested Constraints");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId1 = empty.pages[0]!.id;
-  const r1 = addPage({ state, doc: empty, name: "Variant + Resize" });
-  const pageId2 = r1.pageId;
-  const r2 = addPage({ state, doc: r1.doc, name: "Ellipse Constraints" });
-  const pageId3 = r2.pageId;
-  const r3 = addPage({ state, doc: r2.doc, name: "Asymmetric STRETCH" });
-  const pageId4 = r3.pageId;
-  const r4 = addPage({ state, doc: r3.doc, name: "Internal Only Canvas", internalOnly: true });
+  const pageGuid1 = requireCanvas(empty.document, "Nested Constraints").guid;
+  const r1 = addPage({ state, context: empty, name: "Variant + Resize" });
+  const pageGuid2 = r1.pageGuid;
+  const r2 = addPage({ state, context: r1.context, name: "Ellipse Constraints" });
+  const pageGuid3 = r2.pageGuid;
+  const r3 = addPage({ state, context: r2.context, name: "Asymmetric STRETCH" });
+  const pageGuid4 = r3.pageGuid;
+  const r4 = addPage({ state, context: r3.context, name: "Internal Only Canvas", internalOnly: true });
 
-  const ctx1: Ctx = { state, pageId: pageId1 };
-  const ctx2: Ctx = { state, pageId: pageId2 };
-  const ctx3: Ctx = { state, pageId: pageId3 };
-  const ctx4: Ctx = { state, pageId: pageId4 };
+  const ctx1: Ctx = { state, pageGuid: pageGuid1 };
+  const ctx2: Ctx = { state, pageGuid: pageGuid2 };
+  const ctx3: Ctx = { state, pageGuid: pageGuid3 };
+  const ctx4: Ctx = { state, pageGuid: pageGuid4 };
 
   // =========================================================================
   // Canvas 1: Nested Constraints
@@ -120,7 +120,7 @@ async function generate(): Promise<void> {
 
   // NestInner SYMBOL
   const nestInner = addNode({
-    state, doc: r4.doc, pageId: pageId1, parentId: null,
+    state, context: r4.context, pageGuid: pageGuid1, parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "NestInner",
@@ -129,26 +129,26 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const nestInnerId = nestInner.nodeId;
+  const nestInnerId = nestInner.nodeGuid;
   const d_nestInner = updateNode({
-    doc: nestInner.doc, pageId: pageId1, nodeId: nestInnerId,
-    updater: (n) => ({ ...n, cornerRadius: 8 }),
+    context: nestInner.context, nodeGuid: nestInnerId,
+    update: (n) => ({ ...n, cornerRadius: 8 }),
   });
   const niChild = addNode({
-    state, doc: d_nestInner, pageId: pageId1, parentId: nestInnerId,
+    state, context: d_nestInner, pageGuid: pageGuid1, parentGuid: nestInnerId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "inner-rect",
       x: 20, y: 20, width: 120, height: 40,
       fills: [solidPaint(IOS_BLUE)],
       cornerRadius: 6,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   // NestOuter SYMBOL
   const nestOuter = addNode({
-    state, doc: niChild.doc, pageId: pageId1, parentId: null,
+    state, context: niChild.context, pageGuid: pageGuid1, parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "NestOuter",
@@ -157,61 +157,61 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const nestOuterId = nestOuter.nodeId;
+  const nestOuterId = nestOuter.nodeGuid;
   const d_nestOuter = updateNode({
-    doc: nestOuter.doc, pageId: pageId1, nodeId: nestOuterId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: nestOuter.context, nodeGuid: nestOuterId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const noInst = addNode({
-    state, doc: d_nestOuter, pageId: pageId1, parentId: nestOuterId,
+    state, context: d_nestOuter, pageGuid: pageGuid1, parentGuid: nestOuterId,
     spec: {
       type: "INSTANCE",
       name: "inner-instance",
       symbolId: nestInnerId,
       x: 70, y: 60, width: 160, height: 80,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   // Test frames for Canvas 1
-  const c1_f1 = addTestFrame(ctx1, noInst.doc, {
+  const c1_f1 = addTestFrame(ctx1, noInst.context, {
     name: "nested-stretch-grow", x: 50, y: 50, width: 420, height: 300, bg: WHITE,
   });
   const c1_f1_inst = addNode({
-    state, doc: c1_f1.doc, pageId: pageId1, parentId: c1_f1.frameId,
+    state, context: c1_f1.context, pageGuid: pageGuid1, parentGuid: c1_f1.frameId,
     spec: {
       type: "INSTANCE", name: "NestOuter-large", symbolId: nestOuterId,
       x: 10, y: 10, width: 400, height: 280,
     },
   });
 
-  const c1_f2 = addTestFrame(ctx1, c1_f1_inst.doc, {
+  const c1_f2 = addTestFrame(ctx1, c1_f1_inst.context, {
     name: "nested-stretch-shrink", x: 500, y: 50, width: 220, height: 160, bg: WHITE,
   });
   const c1_f2_inst = addNode({
-    state, doc: c1_f2.doc, pageId: pageId1, parentId: c1_f2.frameId,
+    state, context: c1_f2.context, pageGuid: pageGuid1, parentGuid: c1_f2.frameId,
     spec: {
       type: "INSTANCE", name: "NestOuter-small", symbolId: nestOuterId,
       x: 10, y: 10, width: 200, height: 140,
     },
   });
 
-  const c1_f3 = addTestFrame(ctx1, c1_f2_inst.doc, {
+  const c1_f3 = addTestFrame(ctx1, c1_f2_inst.context, {
     name: "nested-same-size", x: 50, y: 380, width: 320, height: 220, bg: WHITE,
   });
-  const docAfterC1 = addNode({
-    state, doc: c1_f3.doc, pageId: pageId1, parentId: c1_f3.frameId,
+  const contextAfterC1 = addNode({
+    state, context: c1_f3.context, pageGuid: pageGuid1, parentGuid: c1_f3.frameId,
     spec: {
       type: "INSTANCE", name: "NestOuter-same", symbolId: nestOuterId,
       x: 10, y: 10, width: 300, height: 200,
     },
-  }).doc;
+  }).context;
 
   // =========================================================================
   // Canvas 2: Variant + Resize
   // =========================================================================
   const varBtnDefault = addNode({
-    state, doc: docAfterC1, pageId: pageId2, parentId: null,
+    state, context: contextAfterC1, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "VarBtnDefault",
       x: 0, y: -600, width: 120, height: 48,
@@ -219,25 +219,25 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const varBtnDefaultId = varBtnDefault.nodeId;
+  const varBtnDefaultId = varBtnDefault.nodeGuid;
   const d_vbd = updateNode({
-    doc: varBtnDefault.doc, pageId: pageId2, nodeId: varBtnDefaultId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: varBtnDefault.context, nodeGuid: varBtnDefaultId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const vbdLabel = addNode({
-    state, doc: d_vbd, pageId: pageId2, parentId: varBtnDefaultId,
+    state, context: d_vbd, pageGuid: pageGuid2, parentGuid: varBtnDefaultId,
     spec: {
       type: "ROUNDED_RECTANGLE", name: "label",
       x: 20, y: 12, width: 80, height: 24,
       fills: [solidPaint(WHITE)],
       opacity: 0.2,
       cornerRadius: 4,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   const varBtnActive = addNode({
-    state, doc: vbdLabel.doc, pageId: pageId2, parentId: null,
+    state, context: vbdLabel.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "VarBtnActive",
       x: 200, y: -600, width: 120, height: 48,
@@ -245,29 +245,29 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const varBtnActiveId = varBtnActive.nodeId;
+  const varBtnActiveId = varBtnActive.nodeGuid;
   const d_vba = updateNode({
-    doc: varBtnActive.doc, pageId: pageId2, nodeId: varBtnActiveId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: varBtnActive.context, nodeGuid: varBtnActiveId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const vbaLabel = addNode({
-    state, doc: d_vba, pageId: pageId2, parentId: varBtnActiveId,
+    state, context: d_vba, pageGuid: pageGuid2, parentGuid: varBtnActiveId,
     spec: {
       type: "ROUNDED_RECTANGLE", name: "label",
       x: 20, y: 12, width: 80, height: 24,
       fills: [solidPaint(WHITE)],
       opacity: 0.3,
       cornerRadius: 4,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   // Test frames
-  const c2_f1 = addTestFrame(ctx2, vbaLabel.doc, {
+  const c2_f1 = addTestFrame(ctx2, vbaLabel.context, {
     name: "variant-resize-default", x: 50, y: 50, width: 220, height: 80, bg: WHITE,
   });
   const c2_f1_inst = addNode({
-    state, doc: c2_f1.doc, pageId: pageId2, parentId: c2_f1.frameId,
+    state, context: c2_f1.context, pageGuid: pageGuid2, parentGuid: c2_f1.frameId,
     spec: {
       type: "INSTANCE", name: "VarBtnDefault-wide", symbolId: varBtnDefaultId,
       x: 10, y: 10, width: 200, height: 60,
@@ -275,19 +275,19 @@ async function generate(): Promise<void> {
   });
 
   // Variant resize override — overriddenSymbolID via updateNode
-  const c2_f2 = addTestFrame(ctx2, c2_f1_inst.doc, {
+  const c2_f2 = addTestFrame(ctx2, c2_f1_inst.context, {
     name: "variant-resize-override", x: 300, y: 50, width: 220, height: 80, bg: WHITE,
   });
   const c2_f2_inst = addNode({
-    state, doc: c2_f2.doc, pageId: pageId2, parentId: c2_f2.frameId,
+    state, context: c2_f2.context, pageGuid: pageGuid2, parentGuid: c2_f2.frameId,
     spec: {
       type: "INSTANCE", name: "VarBtnActive-wide", symbolId: varBtnDefaultId,
       x: 10, y: 10, width: 200, height: 60,
     },
   });
   const d_c2_f2_inst = updateNode({
-    doc: c2_f2_inst.doc, pageId: pageId2, nodeId: c2_f2_inst.nodeId,
-    updater: (n) => ({ ...n, overriddenSymbolID: varBtnActiveId }),
+    context: c2_f2_inst.context, nodeGuid: c2_f2_inst.nodeGuid,
+    update: (n) => ({ ...n, overriddenSymbolID: varBtnActiveId }),
   });
 
   // Side by side both
@@ -295,29 +295,29 @@ async function generate(): Promise<void> {
     name: "variant-resize-both", x: 50, y: 160, width: 440, height: 80, bg: IOS_GRAY_BG,
   });
   const c2_f3_def = addNode({
-    state, doc: c2_f3.doc, pageId: pageId2, parentId: c2_f3.frameId,
+    state, context: c2_f3.context, pageGuid: pageGuid2, parentGuid: c2_f3.frameId,
     spec: {
       type: "INSTANCE", name: "default-wide", symbolId: varBtnDefaultId,
       x: 10, y: 10, width: 200, height: 60,
     },
   });
   const c2_f3_active = addNode({
-    state, doc: c2_f3_def.doc, pageId: pageId2, parentId: c2_f3.frameId,
+    state, context: c2_f3_def.context, pageGuid: pageGuid2, parentGuid: c2_f3.frameId,
     spec: {
       type: "INSTANCE", name: "active-wide", symbolId: varBtnDefaultId,
       x: 230, y: 10, width: 200, height: 60,
     },
   });
-  const docAfterC2 = updateNode({
-    doc: c2_f3_active.doc, pageId: pageId2, nodeId: c2_f3_active.nodeId,
-    updater: (n) => ({ ...n, overriddenSymbolID: varBtnActiveId }),
+  const contextAfterC2 = updateNode({
+    context: c2_f3_active.context, nodeGuid: c2_f3_active.nodeGuid,
+    update: (n) => ({ ...n, overriddenSymbolID: varBtnActiveId }),
   });
 
   // =========================================================================
   // Canvas 3: Ellipse Constraints
   // =========================================================================
   const ellipseBox = addNode({
-    state, doc: docAfterC2, pageId: pageId3, parentId: null,
+    state, context: contextAfterC2, pageGuid: pageGuid3, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "EllipseBox",
       x: 0, y: -600, width: 200, height: 120,
@@ -325,33 +325,33 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const ellipseBoxId = ellipseBox.nodeId;
+  const ellipseBoxId = ellipseBox.nodeGuid;
   const d_eb = updateNode({
-    doc: ellipseBox.doc, pageId: pageId3, nodeId: ellipseBoxId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: ellipseBox.context, nodeGuid: ellipseBoxId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const ebCenter = addNode({
-    state, doc: d_eb, pageId: pageId3, parentId: ellipseBoxId,
+    state, context: d_eb, pageGuid: pageGuid3, parentGuid: ellipseBoxId,
     spec: {
       type: "ELLIPSE", name: "center-ellipse",
       x: 70, y: 40, width: 60, height: 40,
       fills: [solidPaint(IOS_PURPLE)],
-      layoutConstraints: constraintsFor("CENTER", "CENTER"),
+      ...constraintsFor("CENTER", "CENTER"),
     },
   });
   const ebStretch = addNode({
-    state, doc: ebCenter.doc, pageId: pageId3, parentId: ellipseBoxId,
+    state, context: ebCenter.context, pageGuid: pageGuid3, parentGuid: ellipseBoxId,
     spec: {
       type: "ELLIPSE", name: "stretch-ellipse",
       x: 20, y: 20, width: 160, height: 80,
       fills: [solidPaint(IOS_ORANGE)],
       opacity: 0.5,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   const ellipseScaleBox = addNode({
-    state, doc: ebStretch.doc, pageId: pageId3, parentId: null,
+    state, context: ebStretch.context, pageGuid: pageGuid3, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "EllipseScaleBox",
       x: 300, y: -600, width: 200, height: 120,
@@ -359,67 +359,67 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const ellipseScaleBoxId = ellipseScaleBox.nodeId;
+  const ellipseScaleBoxId = ellipseScaleBox.nodeGuid;
   const d_esb = updateNode({
-    doc: ellipseScaleBox.doc, pageId: pageId3, nodeId: ellipseScaleBoxId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: ellipseScaleBox.context, nodeGuid: ellipseScaleBoxId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const esChild = addNode({
-    state, doc: d_esb, pageId: pageId3, parentId: ellipseScaleBoxId,
+    state, context: d_esb, pageGuid: pageGuid3, parentGuid: ellipseScaleBoxId,
     spec: {
       type: "ELLIPSE", name: "scaled-ellipse",
       x: 50, y: 30, width: 100, height: 60,
       fills: [solidPaint(IOS_RED)],
-      layoutConstraints: constraintsFor("SCALE", "SCALE"),
+      ...constraintsFor("SCALE", "SCALE"),
     },
   });
 
-  const c3_f1 = addTestFrame(ctx3, esChild.doc, {
+  const c3_f1 = addTestFrame(ctx3, esChild.context, {
     name: "ellipse-center-stretch-grow", x: 50, y: 50, width: 320, height: 200, bg: IOS_GRAY_BG,
   });
   const c3_f1_inst = addNode({
-    state, doc: c3_f1.doc, pageId: pageId3, parentId: c3_f1.frameId,
+    state, context: c3_f1.context, pageGuid: pageGuid3, parentGuid: c3_f1.frameId,
     spec: {
       type: "INSTANCE", name: "EllipseBox-large", symbolId: ellipseBoxId,
       x: 10, y: 10, width: 300, height: 180,
     },
   });
-  const c3_f2 = addTestFrame(ctx3, c3_f1_inst.doc, {
+  const c3_f2 = addTestFrame(ctx3, c3_f1_inst.context, {
     name: "ellipse-center-stretch-shrink", x: 400, y: 50, width: 180, height: 120, bg: IOS_GRAY_BG,
   });
   const c3_f2_inst = addNode({
-    state, doc: c3_f2.doc, pageId: pageId3, parentId: c3_f2.frameId,
+    state, context: c3_f2.context, pageGuid: pageGuid3, parentGuid: c3_f2.frameId,
     spec: {
       type: "INSTANCE", name: "EllipseBox-small", symbolId: ellipseBoxId,
       x: 10, y: 10, width: 160, height: 100,
     },
   });
-  const c3_f3 = addTestFrame(ctx3, c3_f2_inst.doc, {
+  const c3_f3 = addTestFrame(ctx3, c3_f2_inst.context, {
     name: "ellipse-scale", x: 50, y: 280, width: 320, height: 200, bg: WHITE,
   });
   const c3_f3_inst = addNode({
-    state, doc: c3_f3.doc, pageId: pageId3, parentId: c3_f3.frameId,
+    state, context: c3_f3.context, pageGuid: pageGuid3, parentGuid: c3_f3.frameId,
     spec: {
       type: "INSTANCE", name: "EllipseScale-large", symbolId: ellipseScaleBoxId,
       x: 10, y: 10, width: 300, height: 180,
     },
   });
-  const c3_f4 = addTestFrame(ctx3, c3_f3_inst.doc, {
+  const c3_f4 = addTestFrame(ctx3, c3_f3_inst.context, {
     name: "ellipse-same-size", x: 400, y: 280, width: 220, height: 140, bg: WHITE,
   });
-  const docAfterC3 = addNode({
-    state, doc: c3_f4.doc, pageId: pageId3, parentId: c3_f4.frameId,
+  const contextAfterC3 = addNode({
+    state, context: c3_f4.context, pageGuid: pageGuid3, parentGuid: c3_f4.frameId,
     spec: {
       type: "INSTANCE", name: "EllipseBox-same", symbolId: ellipseBoxId,
       x: 10, y: 10, width: 200, height: 120,
     },
-  }).doc;
+  }).context;
 
   // =========================================================================
   // Canvas 4: Asymmetric STRETCH
   // =========================================================================
   const asymBox = addNode({
-    state, doc: docAfterC3, pageId: pageId4, parentId: null,
+    state, context: contextAfterC3, pageGuid: pageGuid4, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "AsymBox",
       x: 0, y: -600, width: 200, height: 120,
@@ -427,24 +427,24 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const asymBoxId = asymBox.nodeId;
+  const asymBoxId = asymBox.nodeGuid;
   const d_ab = updateNode({
-    doc: asymBox.doc, pageId: pageId4, nodeId: asymBoxId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: asymBox.context, nodeGuid: asymBoxId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const abChild = addNode({
-    state, doc: d_ab, pageId: pageId4, parentId: asymBoxId,
+    state, context: d_ab, pageGuid: pageGuid4, parentGuid: asymBoxId,
     spec: {
       type: "ROUNDED_RECTANGLE", name: "asym-rect",
       x: 10, y: 15, width: 140, height: 70,
       fills: [solidPaint(IOS_RED)],
       cornerRadius: 6,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   const asymBoxWide = addNode({
-    state, doc: abChild.doc, pageId: pageId4, parentId: null,
+    state, context: abChild.context, pageGuid: pageGuid4, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "AsymBoxWide",
       x: 300, y: -600, width: 300, height: 100,
@@ -452,24 +452,24 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const asymBoxWideId = asymBoxWide.nodeId;
+  const asymBoxWideId = asymBoxWide.nodeGuid;
   const d_abw = updateNode({
-    doc: asymBoxWide.doc, pageId: pageId4, nodeId: asymBoxWideId,
-    updater: (n) => ({ ...n, cornerRadius: 8 }),
+    context: asymBoxWide.context, nodeGuid: asymBoxWideId,
+    update: (n) => ({ ...n, cornerRadius: 8 }),
   });
   const abwChild = addNode({
-    state, doc: d_abw, pageId: pageId4, parentId: asymBoxWideId,
+    state, context: d_abw, pageGuid: pageGuid4, parentGuid: asymBoxWideId,
     spec: {
       type: "ROUNDED_RECTANGLE", name: "wide-rect",
       x: 30, y: 10, width: 200, height: 50,
       fills: [solidPaint(IOS_GREEN)],
       cornerRadius: 4,
-      layoutConstraints: constraintsFor("STRETCH", "STRETCH"),
+      ...constraintsFor("STRETCH", "STRETCH"),
     },
   });
 
   const asymMulti = addNode({
-    state, doc: abwChild.doc, pageId: pageId4, parentId: null,
+    state, context: abwChild.context, pageGuid: pageGuid4, parentGuid: null,
     spec: {
       type: "SYMBOL", name: "AsymMultiChild",
       x: 600, y: -600, width: 240, height: 120,
@@ -477,82 +477,82 @@ async function generate(): Promise<void> {
       clipsContent: true,
     },
   });
-  const asymMultiId = asymMulti.nodeId;
+  const asymMultiId = asymMulti.nodeGuid;
   const d_am = updateNode({
-    doc: asymMulti.doc, pageId: pageId4, nodeId: asymMultiId,
-    updater: (n) => ({ ...n, cornerRadius: 10 }),
+    context: asymMulti.context, nodeGuid: asymMultiId,
+    update: (n) => ({ ...n, cornerRadius: 10 }),
   });
   const amcChild1 = addNode({
-    state, doc: d_am, pageId: pageId4, parentId: asymMultiId,
+    state, context: d_am, pageGuid: pageGuid4, parentGuid: asymMultiId,
     spec: {
       type: "ROUNDED_RECTANGLE", name: "left-rect",
       x: 10, y: 10, width: 100, height: 40,
       fills: [solidPaint(IOS_BLUE)],
       cornerRadius: 4,
-      layoutConstraints: constraintsFor("STRETCH", "MIN"),
+      ...constraintsFor("STRETCH", "MIN"),
     },
   });
   const amcChild2 = addNode({
-    state, doc: amcChild1.doc, pageId: pageId4, parentId: asymMultiId,
+    state, context: amcChild1.context, pageGuid: pageGuid4, parentGuid: asymMultiId,
     spec: {
       type: "ROUNDED_RECTANGLE", name: "right-rect",
       x: 130, y: 70, width: 100, height: 40,
       fills: [solidPaint(IOS_ORANGE)],
       cornerRadius: 4,
-      layoutConstraints: constraintsFor("STRETCH", "MAX"),
+      ...constraintsFor("STRETCH", "MAX"),
     },
   });
 
   // Test frames
-  const c4_f1 = addTestFrame(ctx4, amcChild2.doc, {
+  const c4_f1 = addTestFrame(ctx4, amcChild2.context, {
     name: "asym-stretch-grow", x: 50, y: 50, width: 340, height: 220, bg: IOS_GRAY_BG,
   });
   const c4_f1_inst = addNode({
-    state, doc: c4_f1.doc, pageId: pageId4, parentId: c4_f1.frameId,
+    state, context: c4_f1.context, pageGuid: pageGuid4, parentGuid: c4_f1.frameId,
     spec: { type: "INSTANCE", name: "AsymBox-large", symbolId: asymBoxId, x: 10, y: 10, width: 320, height: 200 },
   });
-  const c4_f2 = addTestFrame(ctx4, c4_f1_inst.doc, {
+  const c4_f2 = addTestFrame(ctx4, c4_f1_inst.context, {
     name: "asym-stretch-shrink", x: 420, y: 50, width: 140, height: 100, bg: IOS_GRAY_BG,
   });
   const c4_f2_inst = addNode({
-    state, doc: c4_f2.doc, pageId: pageId4, parentId: c4_f2.frameId,
+    state, context: c4_f2.context, pageGuid: pageGuid4, parentGuid: c4_f2.frameId,
     spec: { type: "INSTANCE", name: "AsymBox-small", symbolId: asymBoxId, x: 10, y: 10, width: 120, height: 80 },
   });
-  const c4_f3 = addTestFrame(ctx4, c4_f2_inst.doc, {
+  const c4_f3 = addTestFrame(ctx4, c4_f2_inst.context, {
     name: "asym-wide-grow", x: 50, y: 300, width: 420, height: 160, bg: WHITE,
   });
   const c4_f3_inst = addNode({
-    state, doc: c4_f3.doc, pageId: pageId4, parentId: c4_f3.frameId,
+    state, context: c4_f3.context, pageGuid: pageGuid4, parentGuid: c4_f3.frameId,
     spec: { type: "INSTANCE", name: "AsymBoxWide-large", symbolId: asymBoxWideId, x: 10, y: 10, width: 400, height: 140 },
   });
-  const c4_f4 = addTestFrame(ctx4, c4_f3_inst.doc, {
+  const c4_f4 = addTestFrame(ctx4, c4_f3_inst.context, {
     name: "asym-wide-shrink", x: 500, y: 300, width: 220, height: 80, bg: WHITE,
   });
   const c4_f4_inst = addNode({
-    state, doc: c4_f4.doc, pageId: pageId4, parentId: c4_f4.frameId,
+    state, context: c4_f4.context, pageGuid: pageGuid4, parentGuid: c4_f4.frameId,
     spec: { type: "INSTANCE", name: "AsymBoxWide-small", symbolId: asymBoxWideId, x: 10, y: 10, width: 200, height: 60 },
   });
-  const c4_f5 = addTestFrame(ctx4, c4_f4_inst.doc, {
+  const c4_f5 = addTestFrame(ctx4, c4_f4_inst.context, {
     name: "asym-multi-grow", x: 50, y: 490, width: 380, height: 200, bg: IOS_GRAY_BG,
   });
   const c4_f5_inst = addNode({
-    state, doc: c4_f5.doc, pageId: pageId4, parentId: c4_f5.frameId,
+    state, context: c4_f5.context, pageGuid: pageGuid4, parentGuid: c4_f5.frameId,
     spec: { type: "INSTANCE", name: "AsymMulti-large", symbolId: asymMultiId, x: 10, y: 10, width: 360, height: 180 },
   });
-  const c4_f6 = addTestFrame(ctx4, c4_f5_inst.doc, {
+  const c4_f6 = addTestFrame(ctx4, c4_f5_inst.context, {
     name: "asym-multi-shrink", x: 460, y: 490, width: 200, height: 120, bg: IOS_GRAY_BG,
   });
   const c4_f6_inst = addNode({
-    state, doc: c4_f6.doc, pageId: pageId4, parentId: c4_f6.frameId,
+    state, context: c4_f6.context, pageGuid: pageGuid4, parentGuid: c4_f6.frameId,
     spec: { type: "INSTANCE", name: "AsymMulti-small", symbolId: asymMultiId, x: 10, y: 10, width: 180, height: 100 },
   });
-  const c4_f7 = addTestFrame(ctx4, c4_f6_inst.doc, {
+  const c4_f7 = addTestFrame(ctx4, c4_f6_inst.context, {
     name: "asym-same-size", x: 50, y: 720, width: 220, height: 140, bg: WHITE,
   });
-  const finalDoc = addNode({
-    state, doc: c4_f7.doc, pageId: pageId4, parentId: c4_f7.frameId,
+  const finalContext = addNode({
+    state, context: c4_f7.context, pageGuid: pageGuid4, parentGuid: c4_f7.frameId,
     spec: { type: "INSTANCE", name: "AsymBox-same", symbolId: asymBoxId, x: 10, y: 10, width: 200, height: 120 },
-  }).doc;
+  }).context;
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -564,7 +564,7 @@ async function generate(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

@@ -20,22 +20,23 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
+  type KiwiStackLayoutFields,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  AutoLayoutProps,
-  FigDesignDocument,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
 import {
   STACK_ALIGN_VALUES,
   STACK_JUSTIFY_VALUES,
   STACK_MODE_VALUES,
 } from "@higma-document-models/fig/constants";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,7 +44,7 @@ const OUTPUT_DIR = path.join(__dirname, "../fixtures/components");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "components.fig");
 
 // =============================================================================
-// Helpers
+// Shared construction
 // =============================================================================
 
 function rgb(r: number, g: number, b: number): FigColor {
@@ -51,7 +52,7 @@ function rgb(r: number, g: number, b: number): FigColor {
 }
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 type StackMode = "HORIZONTAL" | "VERTICAL";
@@ -59,21 +60,21 @@ type PrimaryAlign = "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN";
 
 type CounterAlign = "MIN" | "CENTER" | "MAX";
 
-function primaryAlignValue(align: PrimaryAlign | undefined): AutoLayoutProps["stackPrimaryAlignItems"] {
+function primaryAlignValue(align: PrimaryAlign | undefined): KiwiStackLayoutFields["stackPrimaryAlignItems"] {
   if (align === undefined) {
     return undefined;
   }
   return { value: STACK_JUSTIFY_VALUES[align], name: align };
 }
 
-function counterAlignValue(align: CounterAlign | undefined): AutoLayoutProps["stackCounterAlignItems"] {
+function counterAlignValue(align: CounterAlign | undefined): KiwiStackLayoutFields["stackCounterAlignItems"] {
   if (align === undefined) {
     return undefined;
   }
   return { value: STACK_ALIGN_VALUES[align], name: align };
 }
 
-// Build an AutoLayoutProps payload. `primaryAlign` uses StackJustify
+// Build an KiwiStackLayoutFields payload. `primaryAlign` uses StackJustify
 // (`MIN`/`CENTER`/`MAX`/`SPACE_BETWEEN`) and `counterAlign` uses
 // PrimaryAlign (`MIN`/`CENTER`/`MAX`).
 function autoLayout(opts: {
@@ -82,11 +83,14 @@ function autoLayout(opts: {
   readonly padding?: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number };
   readonly primaryAlign?: PrimaryAlign;
   readonly counterAlign?: CounterAlign;
-}): AutoLayoutProps {
+}): KiwiStackLayoutFields {
   return {
     stackMode: { value: STACK_MODE_VALUES[opts.mode], name: opts.mode },
     stackSpacing: opts.gap,
-    stackPadding: opts.padding,
+    stackVerticalPadding: opts.padding?.top,
+    stackHorizontalPadding: opts.padding?.left,
+    stackPaddingRight: opts.padding?.right,
+    stackPaddingBottom: opts.padding?.bottom,
     stackPrimaryAlignItems: primaryAlignValue(opts.primaryAlign),
     stackCounterAlignItems: counterAlignValue(opts.counterAlign),
   };
@@ -102,34 +106,34 @@ function uniformPadding(p: number): { readonly top: number; readonly right: numb
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 async function generateComponentFixtures(): Promise<void> {
   console.log("Generating component fixtures...");
 
-  const empty = createEmptyFigDesignDocument("Components");
+  const empty = createEmptyFigDocument("Components");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  // The single CANVAS embedded in `createEmptyFigDesignDocument` is the
+  const pageGuid = requireCanvas(empty.document, "Components").guid;
+  // The single CANVAS embedded in `createEmptyFigDocument` is the
   // Components canvas. Add the Internal Only Canvas after — Figma's
   // importer expects exactly one (see CLAUDE.md).
   const doc0 = addPage({
-    state, doc: empty, name: "Internal Only Canvas", internalOnly: true,
-  }).doc;
-  const ctx: Ctx = { state, pageId };
+    state, context: empty, name: "Internal Only Canvas", internalOnly: true,
+  }).context;
+  const ctx: Ctx = { state, pageGuid };
 
   // ==========================================================================
   // Symbol 1: Basic Button Component
   // ==========================================================================
   const buttonSymbol = addNode({
     state: ctx.state,
-    doc: doc0,
-    pageId: ctx.pageId,
-    parentId: null,
+    context: doc0,
+    pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "Button",
@@ -139,7 +143,7 @@ async function generateComponentFixtures(): Promise<void> {
       height: 40,
       fills: [solidPaint(rgb(0.2, 0.5, 0.9))],
       clipsContent: true,
-      autoLayout: autoLayout({
+      ...autoLayout({
         mode: "HORIZONTAL",
         gap: 8,
         padding: { top: 8, right: 16, bottom: 8, left: 16 },
@@ -148,12 +152,12 @@ async function generateComponentFixtures(): Promise<void> {
       }),
     },
   });
-  const buttonSymbolId = buttonSymbol.nodeId;
+  const buttonSymbolId = buttonSymbol.nodeGuid;
 
   // Button background rect
   const buttonBg = addNode({
-    state: ctx.state, doc: buttonSymbol.doc, pageId: ctx.pageId,
-    parentId: buttonSymbolId,
+    state: ctx.state, context: buttonSymbol.context, pageGuid: ctx.pageGuid,
+    parentGuid: buttonSymbolId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "bg",
@@ -165,8 +169,8 @@ async function generateComponentFixtures(): Promise<void> {
 
   // Button text
   const buttonText = addNode({
-    state: ctx.state, doc: buttonBg.doc, pageId: ctx.pageId,
-    parentId: buttonSymbolId,
+    state: ctx.state, context: buttonBg.context, pageGuid: ctx.pageGuid,
+    parentGuid: buttonSymbolId,
     spec: {
       type: "TEXT",
       name: "label",
@@ -183,8 +187,8 @@ async function generateComponentFixtures(): Promise<void> {
   // Frame 1: Single Instance
   // ==========================================================================
   const frame1 = addNode({
-    state: ctx.state, doc: buttonText.doc, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: buttonText.context, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "instance-single",
@@ -194,8 +198,8 @@ async function generateComponentFixtures(): Promise<void> {
     },
   });
   const instance1 = addNode({
-    state: ctx.state, doc: frame1.doc, pageId: ctx.pageId,
-    parentId: frame1.nodeId,
+    state: ctx.state, context: frame1.context, pageGuid: ctx.pageGuid,
+    parentGuid: frame1.nodeGuid,
     spec: {
       type: "INSTANCE", name: "Button Instance", symbolId: buttonSymbolId,
       x: 20, y: 20, width: 120, height: 40,
@@ -206,50 +210,50 @@ async function generateComponentFixtures(): Promise<void> {
   // Frame 2: Multiple Instances
   // ==========================================================================
   const frame2 = addNode({
-    state: ctx.state, doc: instance1.doc, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: instance1.context, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "instance-multi",
       x: 50, y: 250, width: 160, height: 160,
       fills: [solidPaint(rgb(0.95, 0.95, 0.95))],
-      autoLayout: autoLayout({ mode: "VERTICAL", gap: 10, padding: uniformPadding(20) }),
+      ...autoLayout({ mode: "VERTICAL", gap: 10, padding: uniformPadding(20) }),
       clipsContent: true,
     },
   });
 
-  const frame2Filled = [0, 1, 2].reduce<FigDesignDocument>((acc, i) => {
+  const frame2Filled = [0, 1, 2].reduce<FigDocumentContext>((acc, i) => {
     const r = addNode({
-      state: ctx.state, doc: acc, pageId: ctx.pageId,
-      parentId: frame2.nodeId,
+      state: ctx.state, context: acc, pageGuid: ctx.pageGuid,
+      parentGuid: frame2.nodeGuid,
       spec: {
         type: "INSTANCE", name: `Button ${i + 1}`, symbolId: buttonSymbolId,
         x: 20, y: 20 + i * 50, width: 120, height: 40,
       },
     });
-    return r.doc;
-  }, frame2.doc);
+    return r.context;
+  }, frame2.context);
 
   // ==========================================================================
   // Frame 3: Instance with Override
   // ==========================================================================
   const frame3 = addNode({
-    state: ctx.state, doc: frame2Filled, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: frame2Filled, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "instance-override-fill",
       x: 50, y: 430, width: 300, height: 80,
       fills: [solidPaint(rgb(0.95, 0.95, 0.95))],
-      autoLayout: autoLayout({ mode: "HORIZONTAL", gap: 20, padding: uniformPadding(20) }),
+      ...autoLayout({ mode: "HORIZONTAL", gap: 20, padding: uniformPadding(20) }),
       clipsContent: true,
     },
   });
 
   // Original color instance
   const f3Inst1 = addNode({
-    state: ctx.state, doc: frame3.doc, pageId: ctx.pageId,
-    parentId: frame3.nodeId,
+    state: ctx.state, context: frame3.context, pageGuid: ctx.pageGuid,
+    parentGuid: frame3.nodeGuid,
     spec: {
       type: "INSTANCE", name: "Original", symbolId: buttonSymbolId,
       x: 20, y: 20, width: 120, height: 40,
@@ -259,8 +263,8 @@ async function generateComponentFixtures(): Promise<void> {
   // the INSTANCE itself, which Figma applies on top of the SYMBOL's own
   // fills when resolving the instance.
   const f3Inst2 = addNode({
-    state: ctx.state, doc: f3Inst1.doc, pageId: ctx.pageId,
-    parentId: frame3.nodeId,
+    state: ctx.state, context: f3Inst1.context, pageGuid: ctx.pageGuid,
+    parentGuid: frame3.nodeGuid,
     spec: {
       type: "INSTANCE", name: "Red Override", symbolId: buttonSymbolId,
       x: 160, y: 20, width: 120, height: 40,
@@ -272,30 +276,29 @@ async function generateComponentFixtures(): Promise<void> {
   // Symbol 2: Card Component (for nesting)
   // ==========================================================================
   const cardSymbol = addNode({
-    state: ctx.state, doc: f3Inst2.doc, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: f3Inst2.context, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "Card",
       x: 250, y: 50, width: 180, height: 100,
       fills: [solidPaint(rgb(1, 1, 1))],
       clipsContent: true,
-      autoLayout: autoLayout({ mode: "VERTICAL", gap: 8, padding: uniformPadding(16) }),
+      ...autoLayout({ mode: "VERTICAL", gap: 8, padding: uniformPadding(16) }),
     },
   });
-  const cardSymbolId = cardSymbol.nodeId;
+  const cardSymbolId = cardSymbol.nodeGuid;
   // RoundedRect specs are reserved for actual rounded rects on disk;
-  // FRAME/SYMBOL use a separate `cornerRadius` field at FigDesignNode
-  // level rather than a RoundedRect-style spec. Set it via updateNode.
+  // FRAME/SYMBOL carry `cornerRadius` directly on the Kiwi node.
   const cardSymbolRounded = updateNode({
-    doc: cardSymbol.doc, pageId: ctx.pageId, nodeId: cardSymbolId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: cardSymbol.context, nodeGuid: cardSymbolId,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
 
   // Card title
   const cardTitle = addNode({
-    state: ctx.state, doc: cardSymbolRounded, pageId: ctx.pageId,
-    parentId: cardSymbolId,
+    state: ctx.state, context: cardSymbolRounded, pageGuid: ctx.pageGuid,
+    parentGuid: cardSymbolId,
     spec: {
       type: "TEXT",
       name: "title",
@@ -310,8 +313,8 @@ async function generateComponentFixtures(): Promise<void> {
 
   // Nested button instance inside card symbol
   const nestedButton = addNode({
-    state: ctx.state, doc: cardTitle.doc, pageId: ctx.pageId,
-    parentId: cardSymbolId,
+    state: ctx.state, context: cardTitle.context, pageGuid: ctx.pageGuid,
+    parentGuid: cardSymbolId,
     spec: {
       type: "INSTANCE", name: "action", symbolId: buttonSymbolId,
       x: 16, y: 44, width: 120, height: 40,
@@ -322,8 +325,8 @@ async function generateComponentFixtures(): Promise<void> {
   // Frame 4: Nested Components
   // ==========================================================================
   const frame4 = addNode({
-    state: ctx.state, doc: nestedButton.doc, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: nestedButton.context, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "instance-nested",
@@ -333,8 +336,8 @@ async function generateComponentFixtures(): Promise<void> {
     },
   });
   const cardInst = addNode({
-    state: ctx.state, doc: frame4.doc, pageId: ctx.pageId,
-    parentId: frame4.nodeId,
+    state: ctx.state, context: frame4.context, pageGuid: ctx.pageGuid,
+    parentGuid: frame4.nodeGuid,
     spec: {
       type: "INSTANCE", name: "Card Instance", symbolId: cardSymbolId,
       x: 20, y: 20, width: 180, height: 100,
@@ -345,14 +348,14 @@ async function generateComponentFixtures(): Promise<void> {
   // Frame 5: Instances in Auto-Layout
   // ==========================================================================
   const frame5 = addNode({
-    state: ctx.state, doc: cardInst.doc, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: cardInst.context, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "instance-in-autolayout",
       x: 250, y: 310, width: 400, height: 80,
       fills: [solidPaint(rgb(0.95, 0.95, 0.95))],
-      autoLayout: autoLayout({
+      ...autoLayout({
         mode: "HORIZONTAL", gap: 16, padding: uniformPadding(20),
         primaryAlign: "SPACE_BETWEEN", counterAlign: "CENTER",
       }),
@@ -360,25 +363,25 @@ async function generateComponentFixtures(): Promise<void> {
     },
   });
 
-  const frame5Filled = [0, 1, 2].reduce<FigDesignDocument>((acc, i) => {
+  const frame5Filled = [0, 1, 2].reduce<FigDocumentContext>((acc, i) => {
     const r = addNode({
-      state: ctx.state, doc: acc, pageId: ctx.pageId,
-      parentId: frame5.nodeId,
+      state: ctx.state, context: acc, pageGuid: ctx.pageGuid,
+      parentGuid: frame5.nodeGuid,
       spec: {
         type: "INSTANCE", name: `Action ${i + 1}`, symbolId: buttonSymbolId,
         x: 20 + i * 130, y: 20, width: 100, height: 40,
-        layoutConstraints: { stackChildPrimaryGrow: 1 },
+        ...{ stackChildPrimaryGrow: 1 },
       },
     });
-    return r.doc;
-  }, frame5.doc);
+    return r.context;
+  }, frame5.context);
 
   // ==========================================================================
   // Symbol 3: Simple Icon Component
   // ==========================================================================
   const iconSymbol = addNode({
-    state: ctx.state, doc: frame5Filled, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: frame5Filled, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "Icon",
@@ -387,24 +390,24 @@ async function generateComponentFixtures(): Promise<void> {
       clipsContent: true,
     },
   });
-  const iconSymbolId = iconSymbol.nodeId;
+  const iconSymbolId = iconSymbol.nodeGuid;
   const iconSymbolRounded = updateNode({
-    doc: iconSymbol.doc, pageId: ctx.pageId, nodeId: iconSymbolId,
-    updater: (n) => ({ ...n, cornerRadius: 4 }),
+    context: iconSymbol.context, nodeGuid: iconSymbolId,
+    update: (n) => ({ ...n, cornerRadius: 4 }),
   });
 
   // ==========================================================================
   // Frame 6: Multiple Icon Instances
   // ==========================================================================
   const frame6 = addNode({
-    state: ctx.state, doc: iconSymbolRounded, pageId: ctx.pageId,
-    parentId: null,
+    state: ctx.state, context: iconSymbolRounded, pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: "instance-icons",
       x: 250, y: 410, width: 200, height: 60,
       fills: [solidPaint(rgb(0.95, 0.95, 0.95))],
-      autoLayout: autoLayout({
+      ...autoLayout({
         mode: "HORIZONTAL", gap: 8, padding: uniformPadding(18),
         primaryAlign: "MIN", counterAlign: "CENTER",
       }),
@@ -412,17 +415,17 @@ async function generateComponentFixtures(): Promise<void> {
     },
   });
 
-  const finalDoc = [0, 1, 2, 3, 4].reduce<FigDesignDocument>((acc, i) => {
+  const finalContext = [0, 1, 2, 3, 4].reduce<FigDocumentContext>((acc, i) => {
     const r = addNode({
-      state: ctx.state, doc: acc, pageId: ctx.pageId,
-      parentId: frame6.nodeId,
+      state: ctx.state, context: acc, pageGuid: ctx.pageGuid,
+      parentGuid: frame6.nodeGuid,
       spec: {
         type: "INSTANCE", name: `icon-${i + 1}`, symbolId: iconSymbolId,
         x: 18 + i * 32, y: 18, width: 24, height: 24,
       },
     });
-    return r.doc;
-  }, frame6.doc);
+    return r.context;
+  }, frame6.context);
 
   // Ensure output directory exists
   if (!fs.existsSync(OUTPUT_DIR)) {
@@ -436,7 +439,7 @@ async function generateComponentFixtures(): Promise<void> {
   }
 
   // Build and write the .fig file
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

@@ -10,21 +10,40 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import { getNodeType } from "@higma-document-models/fig/domain";
 
 /**
- * Locate the user-visible CANVAS with the given name (typically "Design")
- * within the indexed Kiwi document.
+ * List user-visible CANVAS nodes directly owned by the DOCUMENT node.
  */
-export function findCanvas(document: FigKiwiDocumentIndex, canvasName: string): FigNode | undefined {
+export function findCanvases(document: FigKiwiDocumentIndex): readonly FigNode[] {
+  const canvases: FigNode[] = [];
   for (const root of document.roots) {
     if (getNodeType(root) !== "DOCUMENT") {
       continue;
     }
     for (const canvas of document.childrenOf(root)) {
-      if (canvas.name === canvasName && canvas.internalOnly !== true) {
-        return canvas;
+      if (getNodeType(canvas) === "CANVAS" && canvas.internalOnly !== true && canvas.visible !== false) {
+        canvases.push(canvas);
       }
     }
   }
-  return undefined;
+  return canvases;
+}
+
+/**
+ * Locate the user-visible CANVAS with the given name (typically "Design")
+ * within the indexed Kiwi document.
+ */
+export function findCanvas(document: FigKiwiDocumentIndex, canvasName: string): FigNode | undefined {
+  return findCanvases(document).find((canvas) => canvas.name === canvasName);
+}
+
+/**
+ * Locate a user-visible CANVAS by name or fail at the construction boundary.
+ */
+export function requireCanvas(document: FigKiwiDocumentIndex, canvasName: string): FigNode {
+  const canvas = findCanvas(document, canvasName);
+  if (canvas === undefined) {
+    throw new Error(`requireCanvas: CANVAS "${canvasName}" does not exist`);
+  }
+  return canvas;
 }
 
 /** Locate the (single) Internal-Only Canvas — Figma's holder for shared style proxies. */
@@ -40,4 +59,15 @@ export function findInternalCanvas(document: FigKiwiDocumentIndex): FigNode | un
     }
   }
   return undefined;
+}
+
+/**
+ * Locate the Internal-Only Canvas or fail at the construction boundary.
+ */
+export function requireInternalCanvas(document: FigKiwiDocumentIndex): FigNode {
+  const canvas = findInternalCanvas(document);
+  if (canvas === undefined) {
+    throw new Error("requireInternalCanvas: internal CANVAS does not exist");
+  }
+  return canvas;
 }

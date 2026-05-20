@@ -8,12 +8,10 @@
  * `createRoot` per export and a transient hidden DOM node, both
  * cleaned up before the function resolves.
  *
- * Rotation handling: the node's own `transform` is preserved so the
- * exported asset matches what the canvas paints. We compute the
- * rotated AABB of the node's local rectangle, translate so the AABB
- * sits at (0, 0), and feed that translated transform into a
- * synthetic single-child page. The renderer's viewport is sized to
- * the AABB, producing an SVG that exactly contains the node.
+ * Rotation handling: the node's own `transform` is preserved. We
+ * compute the node's world-space AABB and make that rectangle the
+ * renderer viewport, so export consumes the original Kiwi node rather
+ * than a translated clone.
  *
  * Async caveat: `FigFamilyPageRenderer` may load fonts or images
  * after first commit. We poll for two animation frames, which covers
@@ -29,14 +27,10 @@ import {
   FigFamilyPageRendererFromResources,
   createFigFamilyRenderOptions,
 } from "@higma-figma-runtime/react-renderer";
-import { figDocumentResources } from "@higma-document-io/fig/context";
-import { createCanvasMetricsTextFontResolver } from "@higma-document-renderers/fig/font-drivers/browser";
-import type {
-  FigDesignDocument,
-  FigDesignNode,
-  FigPage,
-} from "@higma-document-models/fig/domain";
-import type { FigMatrix } from "@higma-document-models/fig/types";
+import { figDocumentResources, type FigDocumentContext } from "@higma-document-io/fig";
+import { guidToString } from "@higma-document-models/fig/domain";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
+import type { FigNode, FigVector } from "@higma-document-models/fig/types";
 
 export type RenderedNodeSvg = {
   /** Serialised standalone `<svg>` document. */
@@ -48,11 +42,10 @@ export type RenderedNodeSvg = {
 };
 
 export type RenderNodeSvgArgs = {
-  readonly document: FigDesignDocument;
-  readonly page: FigPage;
-  readonly node: FigDesignNode;
+  readonly context: FigDocumentContext;
+  readonly page: FigNode;
+  readonly node: FigNode;
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
-  readonly textFontResolver: ReturnType<typeof createCanvasMetricsTextFontResolver>;
 };
 
 
@@ -60,22 +53,14 @@ export type RenderNodeSvgArgs = {
 
 
 
+/** Render one Kiwi node through the shared fig renderer and return a standalone SVG. */
 export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<RenderedNodeSvg> {
   const { node, page } = args;
-  const localAabb = aabbOfTransformedRect(node.transform, node.size.x, node.size.y);
+  const transform = readKiwiTransform(node.transform);
+  const size = requireSize(node);
+  const localAabb = aabbOfTransformedRect(transform, size.x, size.y);
   const width = Math.max(1, localAabb.width);
   const height = Math.max(1, localAabb.height);
-
-  const adjustedTransform: FigMatrix = {
-    ...node.transform,
-    m02: node.transform.m02 - localAabb.x,
-    m12: node.transform.m12 - localAabb.y,
-  };
-
-  const syntheticPage: FigPage = {
-    ...page,
-    children: [{ ...node, transform: adjustedTransform } satisfies FigDesignNode],
-  };
 
   const host = window.document.createElement("div");
   host.style.position = "fixed";
@@ -92,16 +77,16 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
     flushSync(() => {
       root.render(
         <FigFamilyPageRendererFromResources
-          page={syntheticPage}
+          page={page}
+          nodes={[node]}
           canvasWidth={width}
           canvasHeight={height}
-          viewportX={0}
-          viewportY={0}
+          viewportX={localAabb.x}
+          viewportY={localAabb.y}
           viewportWidth={width}
           viewportHeight={height}
-          resources={figDocumentResources(args.document)}
+          resources={figDocumentResources(args.context)}
           renderOptions={args.renderOptions}
-          textFontResolver={args.textFontResolver}
         />,
       );
     });
@@ -116,6 +101,13 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
     root.unmount();
     host.remove();
   }
+}
+
+function requireSize(node: FigNode): FigVector {
+  if (node.size === undefined) {
+    throw new Error(`VSC fig SVG export requires size for Kiwi node ${guidToString(node.guid)}`);
+  }
+  return node.size;
 }
 
 function waitTwoFrames(): Promise<void> {

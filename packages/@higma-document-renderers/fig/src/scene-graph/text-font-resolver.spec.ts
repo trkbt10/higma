@@ -32,6 +32,22 @@ const FONT: AbstractFont = {
   getPath: () => RECT_PATH,
 };
 
+const WIDTH_ONLY_FONT: AbstractFont = {
+  ...FONT,
+  charToGlyph: () => ({
+    index: 1,
+    advanceWidth: 500,
+    getPath: () => ({
+      commands: [],
+      toPathData: () => "",
+    }),
+  }),
+  getPath: () => ({
+    commands: [],
+    toPathData: () => "",
+  }),
+};
+
 function makeTextNode(): FigNode {
   const lineHeight = 24;
   return {
@@ -82,22 +98,7 @@ function makeWrappingTextNode(): FigNode {
     fontSize: 16,
     lineHeight: { value: lineHeight, units: { name: "PIXELS", value: 0 } },
     textAutoResize: { name: "NONE", value: 2 },
-    derivedTextData: {
-      baselines: [{
-        position: { x: 0, y: 0 },
-        width: 60,
-        lineY: 0,
-        lineHeight,
-        lineAscent: 15,
-        firstCharacter: 0,
-        endCharacter: 16,
-      }],
-      fontMetaData: [{
-        key: { family: "Unit Test Sans", style: "Regular" },
-        fontLineHeight: lineHeight / 16,
-        fontWeight: 400,
-      }],
-    },
+    derivedTextData: undefined,
   };
 }
 
@@ -107,7 +108,9 @@ function buildOptions(textFontResolver: BuildSceneGraphOptions["textFontResolver
     images: new Map(),
     canvasSize: { width: 300, height: 200 },
     viewport: { x: 0, y: 0, width: 300, height: 200 },
-    symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+    symbolResolver: createSymbolResolver({
+      document: indexFigKiwiDocument([]),
+    }),
     childrenOf: () => [],
     styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
     showHiddenNodes: false,
@@ -133,7 +136,7 @@ describe("buildSceneGraph text font resolver", () => {
   });
 
   it("keeps wrapped line layout as the shared SceneGraph/RenderTree source for SVG and WebGL", () => {
-    const sceneGraph = buildSceneGraph([makeWrappingTextNode()], buildOptions(undefined));
+    const sceneGraph = buildSceneGraph([makeWrappingTextNode()], buildOptions(() => WIDTH_ONLY_FONT));
     const text = sceneGraph.root.children[0] as TextNode;
     const renderTree = resolveRenderTree(sceneGraph);
     const renderText = renderTree.children[0];

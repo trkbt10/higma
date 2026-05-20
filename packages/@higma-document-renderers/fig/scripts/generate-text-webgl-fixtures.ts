@@ -17,18 +17,18 @@ import opentype from "opentype.js";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  addBlobToFigDocumentContext,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { addBlob } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type {
   FigColor,
   FigDerivedGlyph,
@@ -52,7 +52,7 @@ const INTER_REGULAR = path.join(FONT_DIR, "inter-latin-400-normal.woff");
 const INTER_BOLD = path.join(FONT_DIR, "inter-latin-700-normal.woff");
 
 // =============================================================================
-// Helpers
+// Shared construction
 // =============================================================================
 
 const white: FigColor = { r: 1, g: 1, b: 1, a: 1 };
@@ -64,7 +64,7 @@ function rgb(r: number, g: number, b: number): FigColor {
 }
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 type Ctx = {
@@ -72,7 +72,7 @@ type Ctx = {
 };
 
 type TextOpts = {
-  readonly parentId: FigNodeId;
+  readonly parentGuid: FigGuid;
   readonly name: string;
   readonly text: string;
   readonly font: { readonly family: string; readonly style: string };
@@ -89,38 +89,37 @@ type TextOpts = {
 /**
  * Add a TEXT node with glyph outline blobs (derivedTextData).
  *
- * The new builder API doesn't surface `derivedTextData` through
- * NodeSpec, so we drop it onto the FigDesignNode via `updateNode` —
- * the same pattern used for other non-spec text fields.
+ * NodeSpec does not cover `derivedTextData`, so this script writes the
+ * Kiwi TEXT node field through `updateNode` after node creation.
  *
  * Blob handling: each blob is registered on the document via
- * `addBlob`; the returned global index is patched into every glyph
+ * `addBlobToFigDocumentContext`; the returned global index is patched into every glyph
  * record's `commandsBlob` field so the eventual on-disk
  * `derivedTextData.glyphs[i].commandsBlob` points at the correct
- * `doc.blobs[]` entry.
+ * `context.blobs[]` entry.
  */
 type TextAlignHName = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
 
 function buildTextAlignHorizontal(
   alignH: TextAlignHName | undefined,
 ): { value: number; name: TextAlignHName } | undefined {
-  if (!alignH) return undefined;
+  if (!alignH) {return undefined;}
   return { value: TEXT_ALIGN_H_VALUES[alignH], name: alignH };
 }
 
 function addTextWithGlyphs(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
   ctx: Ctx,
   opts: TextOpts,
-): FigDesignDocument {
+): FigDocumentContext {
   // Add each glyph blob to the document and capture the remapped index.
-  const blobAddResult = opts.glyphs.blobs.reduce<{ readonly doc: FigDesignDocument; readonly indices: readonly number[] }>(
+  const blobAddResult = opts.glyphs.blobs.reduce<{ readonly context: FigDocumentContext; readonly indices: readonly number[] }>(
     (acc, b) => {
-      const result = addBlob(acc.doc, b);
-      return { doc: result.doc, indices: [...acc.indices, result.blobIndex] };
+      const result = addBlobToFigDocumentContext({ context: acc.context, blob: b });
+      return { context: result.context, indices: [...acc.indices, result.blobIndex] };
     },
-    { doc, indices: [] },
+    { context, indices: [] },
   );
   const remappedGlyphs: readonly FigDerivedGlyph[] = opts.glyphs.glyphs.map((g) => ({
     ...g,
@@ -129,9 +128,9 @@ function addTextWithGlyphs(
 
   const r = addNode({
     state: ctx.state,
-    doc: blobAddResult.doc,
-    pageId,
-    parentId: opts.parentId,
+    context: blobAddResult.context,
+    pageGuid,
+    parentGuid: opts.parentGuid,
     spec: {
       type: "TEXT",
       name: opts.name,
@@ -148,10 +147,9 @@ function addTextWithGlyphs(
     },
   });
   return updateNode({
-    doc: r.doc,
-    pageId,
-    nodeId: r.nodeId,
-    updater: (n) => ({
+    context: r.context,
+    nodeGuid: r.nodeGuid,
+    update: (n) => ({
       ...n,
       derivedTextData: {
         layoutSize: opts.glyphs.layoutSize,
@@ -177,17 +175,17 @@ type FrameOpts = {
 };
 
 function addFrame(
-  doc: FigDesignDocument,
-  pageId: FigPageId,
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
   ctx: Ctx,
-  parentId: FigNodeId | null,
+  parentGuid: FigGuid | null,
   opts: FrameOpts,
-): { readonly doc: FigDesignDocument; readonly id: FigNodeId } {
+): { readonly context: FigDocumentContext; readonly id: FigGuid } {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId,
-    parentId,
+    context,
+    pageGuid,
+    parentGuid,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -199,7 +197,7 @@ function addFrame(
       clipsContent: opts.clipsContent ?? true,
     },
   });
-  return { doc: r.doc, id: r.id };
+  return { context: r.context, id: r.nodeGuid };
 }
 
 async function generate(): Promise<void> {
@@ -219,19 +217,19 @@ async function generate(): Promise<void> {
   console.log(`  Inter Regular: unitsPerEm=${interRegular.unitsPerEm}`);
   console.log(`  Inter Bold: unitsPerEm=${interBold.unitsPerEm}`);
 
-  const empty = createEmptyFigDesignDocument("Text WebGL");
+  const empty = createEmptyFigDocument("Text WebGL");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
   const ctx: Ctx = { state };
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "Text WebGL").guid;
   const docInit = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   // Grid layout — frame index tracked via a ref object so the
   // surrounding builders stay closure-free and `let`-free.
@@ -246,14 +244,14 @@ async function generate(): Promise<void> {
     return { x: MARGIN + col * COL_WIDTH, y: MARGIN + row * ROW_HEIGHT };
   }
 
-  // Each builder produces an updated document. We thread the doc
+  // Each builder produces an updated document. We thread the context
   // through `reduce` so no top-level `let` rebinds are needed.
-  type Builder = (acc: FigDesignDocument, pos: { x: number; y: number }) => FigDesignDocument;
+  type Builder = (acc: FigDocumentContext, pos: { x: number; y: number }) => FigDocumentContext;
 
   const builders: readonly Builder[] = [
     // text-basic
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-basic", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-basic", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 16;
       const glyphs = generateTextGlyphs({
         text: "Hello World",
@@ -262,15 +260,15 @@ async function generate(): Promise<void> {
         baselineX: 0,
         baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "hello", text: "Hello World",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "hello", text: "Hello World",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         x: 10, y: 15, width: 180, height: 30, glyphs,
       });
     },
     // text-bold
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-bold", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-bold", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 16;
       const glyphs = generateTextGlyphs({
         text: "Bold Text",
@@ -279,15 +277,15 @@ async function generate(): Promise<void> {
         baselineX: 0,
         baselineY: computeBaselineY(interBold, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "bold-text", text: "Bold Text",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "bold-text", text: "Bold Text",
         font: { family: "Inter", style: "Bold" }, fontSize, color: black,
         x: 10, y: 15, width: 180, height: 30, glyphs,
       });
     },
     // text-small
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-small", x: pos.x, y: pos.y, width: 200, height: 40 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-small", x: pos.x, y: pos.y, width: 200, height: 40 });
       const fontSize = 10;
       const glyphs = generateTextGlyphs({
         text: "Small text at 10px",
@@ -296,15 +294,15 @@ async function generate(): Promise<void> {
         baselineX: 0,
         baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "small-text", text: "Small text at 10px",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "small-text", text: "Small text at 10px",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         x: 10, y: 10, width: 180, height: 20, glyphs,
       });
     },
     // text-large
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-large", x: pos.x, y: pos.y, width: 200, height: 80 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-large", x: pos.x, y: pos.y, width: 200, height: 80 });
       const fontSize = 48;
       const glyphs = generateTextGlyphs({
         text: "Big",
@@ -313,15 +311,15 @@ async function generate(): Promise<void> {
         baselineX: 0,
         baselineY: computeBaselineY(interBold, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "large-text", text: "Big",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "large-text", text: "Big",
         font: { family: "Inter", style: "Bold" }, fontSize, color: black,
         x: 10, y: 10, width: 180, height: 60, glyphs,
       });
     },
     // text-multiline
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-multiline", x: pos.x, y: pos.y, width: 200, height: 100 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-multiline", x: pos.x, y: pos.y, width: 200, height: 100 });
       const fontSize = 14;
       const text = "Line one\nLine two\nLine three";
       const lines = text.split("\n");
@@ -333,15 +331,15 @@ async function generate(): Promise<void> {
         firstBaselineY: computeBaselineY(interRegular, fontSize),
         lineHeight: computeAutoLineHeight(interRegular, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "multiline", text,
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "multiline", text,
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         x: 10, y: 10, width: 180, height: 80, glyphs,
       });
     },
     // text-colors — three colored words side by side
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-colors", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-colors", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 14;
       const baselineY = computeBaselineY(interBold, fontSize);
       const entries: readonly { text: string; color: FigColor; posX: number }[] = [
@@ -349,27 +347,27 @@ async function generate(): Promise<void> {
         { text: "Green", color: rgb(0.1, 0.7, 0.1), posX: 70 },
         { text: "Blue", color: rgb(0.1, 0.1, 0.9), posX: 130 },
       ];
-      return entries.reduce<FigDesignDocument>((innerAcc, entry) => {
+      return entries.reduce<FigDocumentContext>((innerAcc, entry) => {
         const g = generateTextGlyphs({
           text: entry.text, font: interBold, fontSize, baselineX: 0, baselineY,
         });
-        return addTextWithGlyphs(innerAcc, pageId, ctx, {
-          parentId: f.id, name: entry.text.toLowerCase(), text: entry.text,
+        return addTextWithGlyphs(innerAcc, pageGuid, ctx, {
+          parentGuid: f.id, name: entry.text.toLowerCase(), text: entry.text,
           font: { family: "Inter", style: "Bold" }, fontSize, color: entry.color,
           x: entry.posX, y: 15, width: 50, height: 30, glyphs: g,
         });
-      }, f.doc);
+      }, f.context);
     },
     // text-align-left
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-align-left", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-align-left", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 14;
       const glyphs = generateTextGlyphs({
         text: "Left aligned", font: interRegular, fontSize,
         baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "left-aligned", text: "Left aligned",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "left-aligned", text: "Left aligned",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         alignH: "LEFT",
         x: 10, y: 15, width: 180, height: 30, glyphs,
@@ -377,14 +375,14 @@ async function generate(): Promise<void> {
     },
     // text-align-center
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-align-center", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-align-center", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 14;
       const glyphs = generateTextGlyphs({
         text: "Center aligned", font: interRegular, fontSize,
         baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "center-aligned", text: "Center aligned",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "center-aligned", text: "Center aligned",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         alignH: "CENTER",
         x: 10, y: 15, width: 180, height: 30, glyphs,
@@ -392,14 +390,14 @@ async function generate(): Promise<void> {
     },
     // text-align-right
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-align-right", x: pos.x, y: pos.y, width: 200, height: 60 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-align-right", x: pos.x, y: pos.y, width: 200, height: 60 });
       const fontSize = 14;
       const glyphs = generateTextGlyphs({
         text: "Right aligned", font: interRegular, fontSize,
         baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(f.doc, pageId, ctx, {
-        parentId: f.id, name: "right-aligned", text: "Right aligned",
+      return addTextWithGlyphs(f.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "right-aligned", text: "Right aligned",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         alignH: "RIGHT",
         x: 10, y: 15, width: 180, height: 30, glyphs,
@@ -407,8 +405,8 @@ async function generate(): Promise<void> {
     },
     // text-in-clip
     (acc, pos) => {
-      const outer = addFrame(acc, pageId, ctx, null, { name: "text-in-clip", x: pos.x, y: pos.y, width: 200, height: 80 });
-      const clip = addFrame(outer.doc, pageId, ctx, outer.id, {
+      const outer = addFrame(acc, pageGuid, ctx, null, { name: "text-in-clip", x: pos.x, y: pos.y, width: 200, height: 80 });
+      const clip = addFrame(outer.context, pageGuid, ctx, outer.id, {
         name: "clip", x: 20, y: 15, width: 160, height: 50, background: lightGray, clipsContent: true,
       });
       const fontSize = 14;
@@ -416,19 +414,19 @@ async function generate(): Promise<void> {
         text: "Clipped text content here", font: interRegular, fontSize,
         baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(clip.doc, pageId, ctx, {
-        parentId: clip.id, name: "clipped-text", text: "Clipped text content here",
+      return addTextWithGlyphs(clip.context, pageGuid, ctx, {
+        parentGuid: clip.id, name: "clipped-text", text: "Clipped text content here",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         x: 5, y: 10, width: 200, height: 30, glyphs,
       });
     },
     // text-in-nested-clip
     (acc, pos) => {
-      const outer = addFrame(acc, pageId, ctx, null, { name: "text-in-nested-clip", x: pos.x, y: pos.y, width: 200, height: 100 });
-      const inner = addFrame(outer.doc, pageId, ctx, outer.id, {
+      const outer = addFrame(acc, pageGuid, ctx, null, { name: "text-in-nested-clip", x: pos.x, y: pos.y, width: 200, height: 100 });
+      const inner = addFrame(outer.context, pageGuid, ctx, outer.id, {
         name: "inner-clip", x: 20, y: 15, width: 160, height: 70, background: lightGray, clipsContent: true,
       });
-      const deep = addFrame(inner.doc, pageId, ctx, inner.id, {
+      const deep = addFrame(inner.context, pageGuid, ctx, inner.id, {
         name: "deep-clip", x: 15, y: 15, width: 130, height: 40, clipsContent: true,
       });
       const fontSize = 14;
@@ -436,20 +434,20 @@ async function generate(): Promise<void> {
         text: "Nested clip text", font: interRegular, fontSize,
         baselineX: 0, baselineY: computeBaselineY(interRegular, fontSize),
       });
-      return addTextWithGlyphs(deep.doc, pageId, ctx, {
-        parentId: deep.id, name: "nested-text", text: "Nested clip text",
+      return addTextWithGlyphs(deep.context, pageGuid, ctx, {
+        parentGuid: deep.id, name: "nested-text", text: "Nested clip text",
         font: { family: "Inter", style: "Regular" }, fontSize, color: black,
         x: 5, y: 5, width: 120, height: 30, glyphs,
       });
     },
     // text-with-shape — card title + subtitle with background rect and avatar circle
     (acc, pos) => {
-      const f = addFrame(acc, pageId, ctx, null, { name: "text-with-shape", x: pos.x, y: pos.y, width: 200, height: 100 });
+      const f = addFrame(acc, pageGuid, ctx, null, { name: "text-with-shape", x: pos.x, y: pos.y, width: 200, height: 100 });
       const bg = addNode({
         state: ctx.state,
-        doc: f.doc,
-        pageId,
-        parentId: f.id,
+        context: f.context,
+        pageGuid,
+        parentGuid: f.id,
         spec: {
           type: "ROUNDED_RECTANGLE", name: "bg-card",
           x: 10, y: 10, width: 180, height: 80,
@@ -459,9 +457,9 @@ async function generate(): Promise<void> {
       });
       const avatar = addNode({
         state: ctx.state,
-        doc: bg.doc,
-        pageId,
-        parentId: f.id,
+        context: bg.context,
+        pageGuid,
+        parentGuid: f.id,
         spec: {
           type: "ELLIPSE", name: "avatar",
           x: 20, y: 30, width: 40, height: 40,
@@ -473,8 +471,8 @@ async function generate(): Promise<void> {
         text: "Card Title", font: interBold, fontSize: titleFontSize,
         baselineX: 0, baselineY: computeBaselineY(interBold, titleFontSize),
       });
-      const docWithTitle = addTextWithGlyphs(avatar.doc, pageId, ctx, {
-        parentId: f.id, name: "title", text: "Card Title",
+      const contextWithTitle = addTextWithGlyphs(avatar.context, pageGuid, ctx, {
+        parentGuid: f.id, name: "title", text: "Card Title",
         font: { family: "Inter", style: "Bold" }, fontSize: titleFontSize, color: black,
         x: 75, y: 25, width: 110, height: 24, glyphs: titleGlyphs,
       });
@@ -483,15 +481,15 @@ async function generate(): Promise<void> {
         text: "Description text", font: interRegular, fontSize: subFontSize,
         baselineX: 0, baselineY: computeBaselineY(interRegular, subFontSize),
       });
-      return addTextWithGlyphs(docWithTitle, pageId, ctx, {
-        parentId: f.id, name: "subtitle", text: "Description text",
+      return addTextWithGlyphs(contextWithTitle, pageGuid, ctx, {
+        parentGuid: f.id, name: "subtitle", text: "Description text",
         font: { family: "Inter", style: "Regular" }, fontSize: subFontSize, color: rgb(0.4, 0.4, 0.4),
         x: 75, y: 55, width: 110, height: 20, glyphs: subGlyphs,
       });
     },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>(
+  const finalContext = builders.reduce<FigDocumentContext>(
     (acc, fn, index) => fn(acc, gridPos(index)),
     docInit,
   );
@@ -504,7 +502,7 @@ async function generate(): Promise<void> {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

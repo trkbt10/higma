@@ -12,6 +12,7 @@
 
 
 
+/** Trigger a browser download for a generated asset blob. */
 export function triggerBlobDownload(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -31,6 +32,7 @@ export function triggerBlobDownload(blob: Blob, fileName: string): void {
 
 
 
+/** Build a filesystem-safe export filename from layer name, suffix, and extension. */
 export function buildExportFileName(params: {
   readonly baseName: string;
   readonly suffix: string;

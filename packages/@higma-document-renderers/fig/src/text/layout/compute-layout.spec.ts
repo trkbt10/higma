@@ -28,23 +28,18 @@ function makeProps(overrides: Partial<ExtractedTextProps> = {}): ExtractedTextPr
   };
 }
 
-function createEstimatedWidthMeasurer(layout: ReturnType<typeof computeTextLayout>): (text: string) => number {
-  return (text) => {
-    const line = layout.lines.find((candidate) => candidate.text === text);
-    if (!line) {
-      throw new Error(`Missing test line width for "${text}"`);
-    }
-    return line.estimatedWidth;
-  };
-}
-
 const TEST_ASCENDER_RATIO = 0.96875;
 const TEST_DESCENDER_RATIO = 0.24121;
+
+function measureTenPxChars(text: string): readonly number[] {
+  return Array.from({ length: text.length }, () => 10);
+}
 
 function computeTextLayoutForTest(
   options: Omit<ComputeLayoutOptions, "ascenderRatio" | "descenderRatio">,
 ): ReturnType<typeof computeTextLayout> {
   return computeTextLayout({
+    measureCharWidths: measureTenPxChars,
     ...options,
     ascenderRatio: TEST_ASCENDER_RATIO,
     descenderRatio: TEST_DESCENDER_RATIO,
@@ -56,17 +51,18 @@ function computeTextLayoutForTest(
 // =============================================================================
 
 describe("computeTextLayout", () => {
-  it("produces lines with estimatedWidth", () => {
+  it("produces lines with resolved width and character widths", () => {
     const layout = computeTextLayoutForTest({ props: makeProps() });
     expect(layout.lines).toHaveLength(1);
     expect(layout.lines[0].text).toBe("Hello World");
-    expect(layout.lines[0].estimatedWidth).toBeGreaterThan(0);
+    expect(layout.lines[0].width).toBeGreaterThan(0);
+    expect(layout.lines[0].charWidths).toHaveLength("Hello World".length);
   });
 
-  it("estimatedWidth scales with character count", () => {
+  it("resolved width scales with character count", () => {
     const short = computeTextLayoutForTest({ props: makeProps({ characters: "Hi" }) });
     const long = computeTextLayoutForTest({ props: makeProps({ characters: "Hello World Long Text" }) });
-    expect(long.lines[0].estimatedWidth).toBeGreaterThan(short.lines[0].estimatedWidth);
+    expect(long.lines[0].width).toBeGreaterThan(short.lines[0].width);
   });
 
   it("multiline text produces multiple lines", () => {
@@ -101,23 +97,24 @@ describe("computeTextLayout", () => {
 describe("textLayoutToCursorLayout", () => {
   it("LEFT alignment: leftX equals line.x", () => {
     const layout = computeTextLayoutForTest({ props: makeProps() });
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
 
     expect(cursor.paragraphs).toHaveLength(1);
     const line = cursor.paragraphs[0].lines[0];
     expect(line.x).toBe(layout.lines[0].x);
-    expect(line.spans[0].width).toBe(layout.lines[0].estimatedWidth);
+    expect(line.spans[0].width).toBe(layout.lines[0].width);
+    expect(line.spans[0].charWidths).toEqual(layout.lines[0].charWidths);
   });
 
   it("CENTER alignment: leftX = anchorX - width/2", () => {
     const layout = computeTextLayoutForTest({
       props: makeProps({ textAlignHorizontal: "CENTER" }),
     });
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
 
     const line = cursor.paragraphs[0].lines[0];
     const anchorX = layout.lines[0].x; // 100 (width/2)
-    const textWidth = layout.lines[0].estimatedWidth;
+    const textWidth = layout.lines[0].width;
     expect(line.x).toBeCloseTo(anchorX - textWidth / 2, 5);
   });
 
@@ -125,42 +122,44 @@ describe("textLayoutToCursorLayout", () => {
     const layout = computeTextLayoutForTest({
       props: makeProps({ textAlignHorizontal: "RIGHT" }),
     });
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
 
     const line = cursor.paragraphs[0].lines[0];
     const anchorX = layout.lines[0].x; // 200 (width)
-    const textWidth = layout.lines[0].estimatedWidth;
+    const textWidth = layout.lines[0].width;
     expect(line.x).toBeCloseTo(anchorX - textWidth, 5);
   });
 
-  it("uses provided getLineTextWidth for accurate measurement", () => {
-    const layout = computeTextLayoutForTest({ props: makeProps() });
-    const measuredWidth = 78.5; // fake precise measurement
-    const cursor = textLayoutToCursorLayout(layout, () => measuredWidth);
+  it("uses resolved character widths as the cursor width SoT", () => {
+    const layout = computeTextLayoutForTest({
+      props: makeProps({ characters: "ABC" }),
+      measureCharWidths: () => [5, 7, 11],
+    });
+    const cursor = textLayoutToCursorLayout(layout);
 
     const span = cursor.paragraphs[0].lines[0].spans[0];
-    expect(span.width).toBe(measuredWidth);
+    expect(span.width).toBe(23);
+    expect(span.charWidths).toEqual([5, 7, 11]);
   });
 
   it("newline-separated text: each \\n segment becomes a separate paragraph", () => {
     const layout = computeTextLayoutForTest({
       props: makeProps({ characters: "AA\nBBBB" }),
     });
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
 
     expect(cursor.paragraphs).toHaveLength(2);
     expect(cursor.paragraphs[0].lines[0].spans[0].text).toBe("AA");
     expect(cursor.paragraphs[1].lines[0].spans[0].text).toBe("BBBB");
-    // Line 2 has more characters → wider estimated width
+    // Line 2 has more characters → wider resolved width
     expect(cursor.paragraphs[1].lines[0].spans[0].width).toBeGreaterThan(
       cursor.paragraphs[0].lines[0].spans[0].width,
     );
   });
 
   it("word-wrapped text: wrapped lines stay within the same paragraph", () => {
-    // Use a narrow box (60px) with fontSize 16 to force wrapping.
-    // "Hello World" at ~0.55 * 16 = 8.8px/char → "Hello " = 6 chars = 52.8px fits,
-    // "World" wraps to second line. Both belong to paragraph 0.
+    // Use a narrow box (60px) with 10px test character widths to force wrapping.
+    // "Hello" fits, the boundary space is trimmed, and "World" wraps to line 2.
     const layout = computeTextLayoutForTest({
       props: makeProps({
         characters: "Hello World",
@@ -176,7 +175,7 @@ describe("textLayoutToCursorLayout", () => {
       expect(line.paragraphIndex).toBe(0);
     }
 
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
     // Single paragraph with multiple lines
     expect(cursor.paragraphs).toHaveLength(1);
     expect(cursor.paragraphs[0].lines.length).toBeGreaterThan(1);
@@ -200,7 +199,7 @@ describe("textLayoutToCursorLayout", () => {
       { text: "World", sourceStart: 6, sourceEnd: 11 },
     ]);
 
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
     expect(cursor.paragraphs[0].lines.map((line) => ({
       text: line.spans[0].text,
       sourceStart: line.sourceStart,
@@ -222,7 +221,7 @@ describe("textLayoutToCursorLayout", () => {
       }),
     });
 
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
     // Exactly 2 paragraphs (matching the 2 \n-delimited segments)
     expect(cursor.paragraphs).toHaveLength(2);
     // First paragraph has multiple lines due to wrapping
@@ -234,14 +233,14 @@ describe("textLayoutToCursorLayout", () => {
 
   it("span.height equals layout.lineHeight", () => {
     const layout = computeTextLayoutForTest({ props: makeProps() });
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
 
     expect(cursor.paragraphs[0].lines[0].height).toBe(layout.lineHeight);
   });
 
   it("span.fontSize equals layout.fontSize", () => {
     const layout = computeTextLayoutForTest({ props: makeProps({ fontSize: 24 }) });
-    const cursor = textLayoutToCursorLayout(layout, createEstimatedWidthMeasurer(layout));
+    const cursor = textLayoutToCursorLayout(layout);
 
     expect(cursor.paragraphs[0].lines[0].spans[0].fontSize).toBe(24);
   });

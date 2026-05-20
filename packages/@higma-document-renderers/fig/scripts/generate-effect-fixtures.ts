@@ -19,15 +19,16 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigEffect, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,11 +37,11 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, "effects.fig");
 
 function solidPaint(color: FigColor, opacity = 1): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -49,12 +50,12 @@ function dropShadow(
   r = 0, g = 0, b = 0, a = 0.25,
 ): FigEffect {
   return {
-    type: "DROP_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
     visible: true,
     color: { r, g, b, a },
     offset: { x: ox, y: oy },
     radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -63,18 +64,18 @@ function innerShadow(
   r = 0, g = 0, b = 0, a = 0.25,
 ): FigEffect {
   return {
-    type: "INNER_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
     visible: true,
     color: { r, g, b, a },
     offset: { x: ox, y: oy },
     radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function layerBlur(radius: number): FigEffect {
   return {
-    type: "LAYER_BLUR",
+    type: { value: EFFECT_TYPE_VALUES.FOREGROUND_BLUR, name: "FOREGROUND_BLUR" },
     visible: true,
     radius,
   };
@@ -279,18 +280,18 @@ function hexToColor(hex: string): FigColor {
 
 function addChild(
   state: FigBuilderState,
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  parentId: ReturnType<typeof addNode>["nodeId"],
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
+  parentGuid: ReturnType<typeof addNode>["nodeGuid"],
   child: EffectChild,
-): FigDesignDocument {
+): FigDocumentContext {
   const fill = solidPaint({ ...child.fill, a: 1 });
   if (child.shape === "rect") {
     return addNode({
       state,
-      doc,
-      pageId,
-      parentId,
+      context,
+      pageGuid,
+      parentGuid,
       spec: {
         type: "ROUNDED_RECTANGLE",
         name: child.name,
@@ -303,13 +304,13 @@ function addChild(
         opacity: child.opacity,
         effects: child.effects,
       },
-    }).doc;
+    }).context;
   }
   return addNode({
     state,
-    doc,
-    pageId,
-    parentId,
+    context,
+    pageGuid,
+    parentGuid,
     spec: {
       type: "ELLIPSE",
       name: child.name,
@@ -321,30 +322,30 @@ function addChild(
       opacity: child.opacity,
       effects: child.effects,
     },
-  }).doc;
+  }).context;
 }
 
 async function generateEffectFixtures(): Promise<void> {
   console.log("Generating effect fixtures...");
 
-  const empty = createEmptyFigDesignDocument("Document");
+  const empty = createEmptyFigDocument("Document");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "Document").guid;
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 4;
   const GRID_GAP = 30;
   const MARGIN = 50;
 
-  const finalDoc = EFFECT_FRAMES.reduce<FigDesignDocument>((acc, frameData, index) => {
+  const finalContext = EFFECT_FRAMES.reduce<FigDocumentContext>((acc, frameData, index) => {
     const col = index % GRID_COLS;
     const row = Math.floor(index / GRID_COLS);
     const maxFrameWidth = 280;
@@ -355,9 +356,9 @@ async function generateEffectFixtures(): Promise<void> {
 
     const frameResult = addNode({
       state,
-      doc: acc,
-      pageId,
-      parentId: null,
+      context: acc,
+      pageGuid,
+      parentGuid: null,
       spec: {
         type: "FRAME",
         name: frameData.name,
@@ -370,9 +371,9 @@ async function generateEffectFixtures(): Promise<void> {
       },
     });
 
-    return frameData.children.reduce<FigDesignDocument>(
-      (innerAcc, child) => addChild(state, innerAcc, pageId, frameResult.nodeId, child),
-      frameResult.doc,
+    return frameData.children.reduce<FigDocumentContext>(
+      (innerAcc, child) => addChild(state, innerAcc, pageGuid, frameResult.nodeGuid, child),
+      frameResult.context,
     );
   }, doc0);
 
@@ -384,7 +385,7 @@ async function generateEffectFixtures(): Promise<void> {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

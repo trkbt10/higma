@@ -30,17 +30,18 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  addImageToFigDocumentContext,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { addImage } from "@higma-document-models/fig/builder";
+import { figImageHashHexToBytes } from "@higma-document-models/fig/domain";
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES, SCALE_MODE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type {
   FigColor,
   FigEffect,
@@ -58,24 +59,22 @@ const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 
 function solidPaint(color: FigColor, opacity = 1): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function imagePaint(imageRef: string, opacity = 1): FigPaint {
+function imagePaint(imageHashHex: string, opacity = 1): FigPaint {
   return {
-    type: "IMAGE",
-    imageRef,
-    imageHash: imageRef,
-    imageScaleMode: "FILL",
-    scaleMode: "FILL",
+    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    image: { hash: figImageHashHexToBytes(imageHashHex) },
+    imageScaleMode: { value: SCALE_MODE_VALUES.FILL, name: "FILL" },
     opacity,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -92,33 +91,30 @@ function imagePaint(imageRef: string, opacity = 1): FigPaint {
  * `computeImageUV` CROP branch consumes.
  */
 function imagePaintWithTransform(
-  imageRef: string,
+  imageHashHex: string,
   scaleMode: FigImageScaleMode,
   imageTransform: FigImageTransform,
   opacity = 1,
 ): FigPaint {
   return {
-    type: "IMAGE",
-    imageRef,
-    imageHash: imageRef,
-    imageScaleMode: scaleMode,
-    scaleMode,
-    imageTransform,
+    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    image: { hash: figImageHashHexToBytes(imageHashHex) },
+    imageScaleMode: { value: SCALE_MODE_VALUES[scaleMode], name: scaleMode },
     transform: imageTransform,
     opacity,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function dropShadow(ox: number, oy: number, radius: number, color: FigColor): FigEffect {
   return {
-    type: "DROP_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
     visible: true,
     color,
     offset: { x: ox, y: oy },
     radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -145,25 +141,25 @@ async function computeSha1Hex(data: Uint8Array): Promise<string> {
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
-  readonly imageRef: string;
+  readonly pageGuid: FigGuid;
+  readonly imageHashHex: string;
 };
 
 function addFrame(
   ctx: Ctx,
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   name: string,
   x: number,
   y: number,
   w: number,
   h: number,
   bg: FigColor,
-): { doc: FigDesignDocument; frameId: FigNodeId } {
+): { context: FigDocumentContext; frameId: FigGuid } {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId: null,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name,
@@ -175,74 +171,74 @@ function addFrame(
       clipsContent: true,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 type Args = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly ctx: Ctx;
   readonly frameX: number;
   readonly frameY: number;
 };
 
-function addImageFillBasic({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-basic", frameX, frameY, 160, 120, WHITE);
+function addImageFillBasic({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-basic", frameX, frameY, 160, 120, WHITE);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "image-rect",
       x: 20, y: 20, width: 120, height: 80,
       cornerRadius: 8,
-      fills: [imagePaint(ctx.imageRef)],
+      fills: [imagePaint(ctx.imageHashHex)],
     },
-  }).doc;
+  }).context;
 }
 
-function addImageFillWithShadow({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-shadow", frameX, frameY, 180, 140, LIGHT_GRAY);
+function addImageFillWithShadow({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-shadow", frameX, frameY, 180, 140, LIGHT_GRAY);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "image-shadowed",
       x: 30, y: 30, width: 120, height: 80,
       cornerRadius: 12,
-      fills: [imagePaint(ctx.imageRef)],
+      fills: [imagePaint(ctx.imageHashHex)],
       effects: [dropShadow(0, 4, 8, { r: 0, g: 0, b: 0, a: 0.25 })],
     },
-  }).doc;
+  }).context;
 }
 
-function addImageFillCircle({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-circle", frameX, frameY, 120, 120, WHITE);
+function addImageFillCircle({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-circle", frameX, frameY, 120, 120, WHITE);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ELLIPSE",
       name: "image-avatar",
       x: 20, y: 20, width: 80, height: 80,
-      fills: [imagePaint(ctx.imageRef)],
+      fills: [imagePaint(ctx.imageHashHex)],
     },
-  }).doc;
+  }).context;
 }
 
-function addImageFillMulti({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-multi", frameX, frameY, 160, 120, LIGHT_GRAY);
+function addImageFillMulti({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-multi", frameX, frameY, 160, 120, LIGHT_GRAY);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "solid-plus-image",
@@ -250,10 +246,10 @@ function addImageFillMulti({ doc, ctx, frameX, frameY }: Args): FigDesignDocumen
       cornerRadius: 8,
       fills: [
         solidPaint({ r: 0.2, g: 0.3, b: 0.8, a: 1 }),
-        imagePaint(ctx.imageRef, 0.6),
+        imagePaint(ctx.imageHashHex, 0.6),
       ],
     },
-  }).doc;
+  }).context;
 }
 
 /**
@@ -267,26 +263,26 @@ function addImageFillMulti({ doc, ctx, frameX, frameY }: Args): FigDesignDocumen
  * the regression honest — flipping the predicate would still pass any
  * test that only sees one of the two cases.
  */
-function addImageFillStretch({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-stretch", frameX, frameY, 160, 120, WHITE);
+function addImageFillStretch({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-stretch", frameX, frameY, 160, 120, WHITE);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "image-stretch",
       x: 20, y: 20, width: 120, height: 80,
       cornerRadius: 8,
       fills: [
-        imagePaintWithTransform(ctx.imageRef, "STRETCH", {
+        imagePaintWithTransform(ctx.imageHashHex, "STRETCH", {
           m00: 1, m01: 0, m02: 0,
           m10: 0, m11: 1, m12: 0,
         }),
       ],
     },
-  }).doc;
+  }).context;
 }
 
 /**
@@ -299,26 +295,26 @@ function addImageFillStretch({ doc, ctx, frameX, frameY }: Args): FigDesignDocum
  * outside the image, so this is the "covered" CROP case (no backdrop
  * bleed-through).
  */
-function addImageFillCrop({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-crop", frameX, frameY, 160, 120, WHITE);
+function addImageFillCrop({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-crop", frameX, frameY, 160, 120, WHITE);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "image-crop",
       x: 20, y: 20, width: 120, height: 80,
       cornerRadius: 8,
       fills: [
-        imagePaintWithTransform(ctx.imageRef, "STRETCH", {
+        imagePaintWithTransform(ctx.imageHashHex, "STRETCH", {
           m00: 0.5, m01: 0, m02: 0.25,
           m10: 0, m11: 0.5, m12: 0.25,
         }),
       ],
     },
-  }).doc;
+  }).context;
 }
 
 /**
@@ -331,13 +327,13 @@ function addImageFillCrop({ doc, ctx, frameX, frameY }: Args): FigDesignDocument
  * of the CROP branch) so the solid paint stacked underneath shows
  * through — visually a portrait-on-coloured-card pattern.
  */
-function addImageFillCropOffset({ doc, ctx, frameX, frameY }: Args): FigDesignDocument {
-  const f = addFrame(ctx, doc, "image-fill-crop-offset", frameX, frameY, 160, 120, LIGHT_GRAY);
+function addImageFillCropOffset({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-crop-offset", frameX, frameY, 160, 120, LIGHT_GRAY);
   return addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "solid-plus-crop",
@@ -345,47 +341,50 @@ function addImageFillCropOffset({ doc, ctx, frameX, frameY }: Args): FigDesignDo
       cornerRadius: 8,
       fills: [
         solidPaint({ r: 0.2, g: 0.3, b: 0.8, a: 1 }),
-        imagePaintWithTransform(ctx.imageRef, "STRETCH", {
+        imagePaintWithTransform(ctx.imageHashHex, "STRETCH", {
           m00: 2, m01: 0, m02: -0.5,
           m10: 0, m11: 2, m12: -0.5,
         }),
       ],
     },
-  }).doc;
+  }).context;
 }
 
 async function generateImageFillFixtures(): Promise<void> {
   console.log("Generating image fill fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("ImageFill");
+  const empty = createEmptyFigDocument("ImageFill");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const docWithInternal = addPage({
+  const pageGuid = requireCanvas(empty.document, "ImageFill").guid;
+  const contextWithInternal = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const pngBytes = createCheckerboardPng();
-  const imageRef = await computeSha1Hex(pngBytes);
-  const docWithImage = addImage(docWithInternal, imageRef, {
-    ref: imageRef,
+  const imageHashHex = await computeSha1Hex(pngBytes);
+  const contextWithImage = addImageToFigDocumentContext({
+    context: contextWithInternal,
+    image: {
+    ref: imageHashHex,
     data: pngBytes,
     mimeType: "image/png",
+    },
   });
 
-  const ctx: Ctx = { state, pageId, imageRef };
+  const ctx: Ctx = { state, pageGuid, imageHashHex };
 
   const GRID_COLS = 4;
   const COL_WIDTH = 220;
   const ROW_HEIGHT = 180;
   const MARGIN = 50;
 
-  type Builder = (args: Args) => FigDesignDocument;
+  type Builder = (args: Args) => FigDocumentContext;
 
   const builders: { name: string; fn: Builder }[] = [
     { name: "Image fill basic", fn: addImageFillBasic },
@@ -397,13 +396,13 @@ async function generateImageFillFixtures(): Promise<void> {
     { name: "Image fill crop with backdrop bleed-through", fn: addImageFillCropOffset },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
+  const finalContext = builders.reduce<FigDocumentContext>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const x = MARGIN + col * COL_WIDTH;
     const y = MARGIN + row * ROW_HEIGHT;
-    return b.fn({ doc: acc, ctx, frameX: x, frameY: y });
-  }, docWithImage);
+    return b.fn({ context: acc, ctx, frameX: x, frameY: y });
+  }, contextWithImage);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
     if (!fs.existsSync(dir)) {
@@ -411,7 +410,7 @@ async function generateImageFillFixtures(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

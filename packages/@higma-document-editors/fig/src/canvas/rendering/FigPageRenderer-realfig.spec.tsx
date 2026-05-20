@@ -5,8 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createFigDocumentContext, figDocumentResources } from "@higma-document-io/fig";
-import { findNodesByType } from "@higma-document-models/fig/domain";
+import { createFigDocumentContext, figDocumentResources, findCanvases } from "@higma-document-io/fig";
 import { FigPageRenderer } from "./FigPageRenderer";
 
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -18,7 +17,7 @@ const FIG_FILE = resolve(
 describe("FigPageRenderer real fig fixture", () => {
   it("renders FRAME decoration data from Kiwi document context", async () => {
     const context = await createFigDocumentContext(readFileSync(FIG_FILE));
-    const page = findNodesByType(context.document, "CANVAS")[0];
+    const page = findCanvases(context.document)[0];
     if (page === undefined) {
       throw new Error("FigPageRenderer realfig spec requires a CANVAS node");
     }

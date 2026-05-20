@@ -5,25 +5,33 @@
 import type {
   FigComponentPropAssignment,
   FigDerivedTextData,
+  FigFontMetaData,
+  FigFillGeometry,
   FigGuid,
   FigKiwiTextData,
   FigKiwiSymbolData,
   FigKiwiSymbolOverride,
   FigNode,
+  FigNodeType,
+  FigValueWithUnits,
+  KiwiEnumValue,
   MutableFigNode,
 } from "@higma-document-models/fig/types";
 import {
+  decodePathCommands,
   derivedTextDataHasVisualPayload,
+  derivedTextDataWithoutVisualPayload,
   findNodeByGuid,
+  type FigBlob,
   getNodeType,
   guidToString,
   isFigGuid,
   type FigKiwiDocumentIndex,
 } from "../domain";
 import { resolveInstanceLayout } from "./constraints";
-import type { FigStyleRegistry } from "../domain";
-import { resolveStyleIdOnMutableNode } from "./style-registry";
+import { kiwiSymbolOverrideCarriesGeometry } from "./kiwi-override-geometry";
 import { resolveVariantOverride } from "./variable-resolution";
+import { pathCommandsBoundingBox } from "@higma-primitives/path";
 
 // =============================================================================
 // Types
@@ -107,11 +115,12 @@ const SELF_OVERRIDE_PAYLOAD_FIELDS: ReadonlySet<keyof FigKiwiSymbolOverride> = n
   "clipsContent",
   "frameMaskDisabled",
   "mask",
+  "maskIsOutline",
+  "maskType",
   // Style-id slots — the `{guid: 0xFFFFFFFF:0xFFFFFFFF}` sentinel
   // detaches a style binding; concrete style ids re-bind. The
-  // applier writes the field onto the merged node; style-id-for-fill /
-  // style-id-for-stroke trigger a `resolveStyleIdOnMutableNode`
-  // pass to expand style bindings into concrete paint arrays.
+  // applier writes the field onto the merged node. Paint/style
+  // interpretation stays in the renderer's style registry path.
   "styleIdForFill",
   "styleIdForStrokeFill",
   "styleIdForText",
@@ -253,7 +262,7 @@ export type SymbolResolver = {
 
 export type SymbolResolverInput = {
   readonly document: FigKiwiDocumentIndex;
-  readonly styleRegistry?: FigStyleRegistry;
+  readonly blobs?: readonly FigBlob[];
 };
 
 type SymbolIDPair = {
@@ -319,6 +328,7 @@ function childrenOfResolvedNode(node: FigNode): readonly FigNode[] {
  */
 export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver {
   const document = input.document;
+  const blobs = input.blobs;
   const resolveInstanceTarget = (node: FigNode, overrideSymbolID?: FigGuid): ResolvedSymbolTarget | undefined => {
     const pair = extractSymbolIDPair(node);
     if (!pair) { return undefined; }
@@ -328,8 +338,7 @@ export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver
   const resolveReferences = (node: FigNode): InstanceResolution => resolveReferencesForNode(node, document);
   const resolveInstance = (node: FigNode): ResolvedInstanceNode => resolveInstanceNode(node, {
     document,
-    resolveReferences,
-    styleRegistry: input.styleRegistry,
+    blobs,
   });
 
   return {
@@ -354,9 +363,9 @@ export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver
  * (a FRAME with `isStateGroup` + VARIANT-typed `componentPropDefs`).
  * The canonical schema has no COMPONENT_SET NodeType — see
  * `docs/refactor/component-type-cleanup.md`. Most fixtures have all
- * properties resolving to library-only aliases, in which case the
- * evaluator bails and we fall through to step 3 — this is the same
- * behaviour the renderer had before this evaluator landed.
+ * properties resolving to library-only aliases; those aliases are not
+ * local Kiwi values, so SymbolResolver keeps the authored `symbolID`
+ * instead of deriving a partial variant match.
  */
 function resolveReferencesForNode(
   node: FigNode,
@@ -451,8 +460,6 @@ export type CloneSymbolChildrenOptions = {
   readonly derivedSymbolData?: FigDerivedSymbolData;
   /** Component property assignments from the INSTANCE node and its overrides */
   readonly componentPropAssignments?: readonly FigComponentPropAssignment[];
-  /** Style registry for resolving styleIdForFill overrides to fillPaints */
-  readonly styleRegistry?: FigStyleRegistry;
 };
 
 /**
@@ -470,13 +477,24 @@ export function cloneSymbolChildren(symbolNode: FigNode, options: CloneSymbolChi
 
   // Deep clone children
   const cloned = children.map((child) => deepCloneNode(child, options.childrenOf));
-
-  const registry = options?.styleRegistry;
+  const childSourceSymbolOverrides = excludeSymbolRootAddressedOverrides(options?.symbolOverrides, symbolNode.guid);
+  const childSourceDerivedData = excludeSymbolRootAddressedOverrides(options?.derivedSymbolData, symbolNode.guid);
+  const materializedSlotResolution = resolveMaterializedOverrideSlotAddresses(
+    cloned,
+    childSourceSymbolOverrides,
+    childSourceDerivedData,
+  );
+  const symbolOverrides = bindMaterializedOverridesToResolvedSlots(cloned, materializedSlotResolution, childSourceSymbolOverrides);
+  const derivedSymbolData = bindMaterializedOverridesToResolvedSlots(cloned, materializedSlotResolution, childSourceDerivedData);
 
   // Apply symbol overrides (property overrides)
-  if (options?.symbolOverrides && options.symbolOverrides.length > 0) {
-    applyOverrides(cloned, options.symbolOverrides, registry, "require-materialized-target");
+  if (symbolOverrides && symbolOverrides.length > 0) {
+    applyOverrides(cloned, symbolOverrides, REQUIRE_MATERIALIZED_TARGET_POLICY);
   }
+  const materializedOverrideTargetKeys = mergeMaterializedOverrideTargetKeys(
+    collectMaterializedOverrideTargetKeys(cloned, symbolOverrides),
+    materializedSlotResolution,
+  );
 
   // Resolve component property assignments (text overrides — deletes stale derivedTextData)
   const textOverrideGuids = new Set<string>();
@@ -491,15 +509,18 @@ export function cloneSymbolChildren(symbolNode: FigNode, options: CloneSymbolChi
   // export time — so the derivedTextData here corresponds to the CPA-overridden
   // characters, not the SYMBOL's default text. After CPA clears the SYMBOL's
   // stale derivedTextData, the DSD re-adds the correct pre-rasterized glyphs.
-  if (options?.derivedSymbolData && options.derivedSymbolData.length > 0) {
-    applyOverrides(cloned, options.derivedSymbolData, registry, "document-local-targets-only");
+  if (derivedSymbolData && derivedSymbolData.length > 0) {
+    applyOverrides(cloned, derivedSymbolData, {
+      kind: "require-target-or-materialized-parent",
+      materializedTargetKeys: materializedOverrideTargetKeys,
+    });
   }
 
   // Clean up stale derivedTextData:
   //  1. CPA-overridden TEXT nodes whose glyphs weren't re-supplied by DSD.
   //  2. Any TEXT node whose derivedTextData glyph count grossly mismatches
   //     its final characters.
-  cleanupStaleDerivedTextData(cloned, textOverrideGuids, options?.derivedSymbolData);
+  cleanupStaleDerivedTextData(cloned, textOverrideGuids, derivedSymbolData);
 
   return cloned;
 }
@@ -623,7 +644,7 @@ function applyTextDataAssignment(
   if (!hasVisualDerivedTextData) {
     return;
   }
-  delete node.derivedTextData;
+  discardDerivedTextVisualPayload(node);
   if (textOverrideGuids === undefined || node.guid === undefined) {
     return;
   }
@@ -807,9 +828,18 @@ function cleanupStaleDerivedTextData(
     const mismatchByLength = typeof chars === "string" && !matches && !truncated;
     const riskyCpaKeep = cpaTarget && matches && !hasPUA && !truncated;
     if (mismatchByLength || riskyCpaKeep) {
-      delete node.derivedTextData;
+      discardDerivedTextVisualPayload(node);
     }
   });
+}
+
+function discardDerivedTextVisualPayload(node: MutableFigNode): void {
+  const metricsOnly = derivedTextDataWithoutVisualPayload(node.derivedTextData);
+  if (metricsOnly === undefined) {
+    delete node.derivedTextData;
+    return;
+  }
+  node.derivedTextData = metricsOnly;
 }
 
 // =============================================================================
@@ -868,6 +898,8 @@ function visitMutableNodes(
  * keys are exactly the FigNode fields that overrides may target).
  */
 function applyKiwiOverrideToNode(node: MutableFigNode, override: FigKiwiSymbolOverride): void {
+  applyOverriddenSymbolIDOverride(node, override);
+  applyDerivedTextScaleForSizeOverride(node, override);
   // The kiwi→FigNode field-name correspondence: `FigKiwiSymbolOverridePayload`
   // is a strict subset of FigNode's override-eligible fields, so every
   // payload key from `kiwiOverridePayloadKeys` (which already filters
@@ -883,6 +915,176 @@ function applyKiwiOverrideToNode(node: MutableFigNode, override: FigKiwiSymbolOv
     }
     nodeRecord[key] = override[key];
   }
+  alignDerivedTextScaleAfterSizeOverride(node, override);
+}
+
+function applyDerivedTextScaleForSizeOverride(
+  node: MutableFigNode,
+  override: FigKiwiSymbolOverride,
+): void {
+  const nextSize = override.size;
+  if (nextSize === undefined || override.derivedTextData !== undefined || getNodeType(node) !== "TEXT") {
+    return;
+  }
+  const currentSize = node.size;
+  const scale = resolveUniformScale(currentSize, nextSize);
+  if (scale === undefined || scale === 1) {
+    return;
+  }
+  const derivedTextData = node.derivedTextData;
+  if (derivedTextData !== undefined) {
+    node.derivedTextData = scaleDerivedTextData(derivedTextData, scale, nextSize);
+  }
+  if (node.textData !== undefined) {
+    node.textData = scaleTextData(node.textData, scale);
+  }
+  scaleFlatTextFields(node, scale);
+}
+
+function alignDerivedTextScaleAfterSizeOverride(
+  node: MutableFigNode,
+  override: FigKiwiSymbolOverride,
+): void {
+  if (override.size === undefined || override.derivedTextData !== undefined || getNodeType(node) !== "TEXT") {
+    return;
+  }
+  const derivedTextData = node.derivedTextData;
+  if (derivedTextData === undefined) {
+    return;
+  }
+  const layoutSize = derivedTextData.layoutSize;
+  const nodeSize = node.size;
+  if (layoutSize === undefined || nodeSize === undefined) {
+    return;
+  }
+  const scale = resolveUniformScale(layoutSize, nodeSize);
+  if (scale === undefined || scale === 1) {
+    return;
+  }
+  node.derivedTextData = scaleDerivedTextData(derivedTextData, scale, nodeSize);
+  if (node.textData !== undefined) {
+    node.textData = scaleTextData(node.textData, scale);
+  }
+  scaleFlatTextFields(node, scale);
+}
+
+function resolveUniformScale(
+  currentSize: FigNode["size"],
+  nextSize: NonNullable<FigKiwiSymbolOverride["size"]>,
+): number | undefined {
+  if (currentSize === undefined || currentSize.x <= 0 || currentSize.y <= 0) {
+    return undefined;
+  }
+  const scaleX = nextSize.x / currentSize.x;
+  const scaleY = nextSize.y / currentSize.y;
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) {
+    return undefined;
+  }
+  if (Math.abs(scaleX - scaleY) > 1e-3) {
+    return undefined;
+  }
+  return (scaleX + scaleY) / 2;
+}
+
+function scaleDerivedTextData(
+  data: FigDerivedTextData,
+  scale: number,
+  layoutSize: NonNullable<FigKiwiSymbolOverride["size"]>,
+): FigDerivedTextData {
+  return {
+    ...data,
+    layoutSize,
+    baselines: data.baselines?.map((baseline) => ({
+      ...baseline,
+      position: scaleVector(baseline.position, scale),
+      width: baseline.width * scale,
+      lineY: baseline.lineY * scale,
+      lineHeight: baseline.lineHeight * scale,
+      lineAscent: baseline.lineAscent * scale,
+    })),
+    glyphs: data.glyphs?.map((glyph) => ({
+      ...glyph,
+      position: scaleVector(glyph.position, scale),
+      fontSize: glyph.fontSize * scale,
+      advance: glyph.advance * scale,
+    })),
+    decorations: data.decorations?.map((decoration) => ({
+      ...decoration,
+      rects: decoration.rects.map((rect) => ({
+        x: rect.x * scale,
+        y: rect.y * scale,
+        w: rect.w * scale,
+        h: rect.h * scale,
+      })),
+    })),
+    derivedLines: data.derivedLines?.map((line) => ({
+      ...line,
+      baselinePosition: line.baselinePosition === undefined ? undefined : scaleVector(line.baselinePosition, scale),
+      width: line.width === undefined ? undefined : line.width * scale,
+    })),
+    truncatedHeight: data.truncatedHeight === undefined ? undefined : data.truncatedHeight * scale,
+  };
+}
+
+function scaleVector<T extends { readonly x: number; readonly y: number }>(
+  value: T,
+  scale: number,
+): T {
+  return {
+    ...value,
+    x: value.x * scale,
+    y: value.y * scale,
+  };
+}
+
+function scaleTextData(
+  textData: NonNullable<FigNode["textData"]>,
+  scale: number,
+): NonNullable<FigNode["textData"]> {
+  return {
+    ...textData,
+    fontSize: scaleOptionalNumber(textData.fontSize, scale),
+    lineHeight: scaleValueWithUnits(textData.lineHeight, scale),
+    letterSpacing: scaleValueWithUnits(textData.letterSpacing, scale),
+  };
+}
+
+function scaleFlatTextFields(node: MutableFigNode, scale: number): void {
+  node.fontSize = scaleOptionalNumber(node.fontSize, scale);
+  node.lineHeight = scaleValueWithUnits(node.lineHeight, scale);
+  node.letterSpacing = scaleValueWithUnits(node.letterSpacing, scale);
+}
+
+function scaleOptionalNumber(value: number | undefined, scale: number): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value * scale;
+}
+
+function scaleValueWithUnits(
+  value: FigValueWithUnits | undefined,
+  scale: number,
+): FigValueWithUnits | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value.units?.name !== "PIXELS") {
+    return value;
+  }
+  return { ...value, value: value.value * scale };
+}
+
+function applyOverriddenSymbolIDOverride(node: MutableFigNode, override: FigKiwiSymbolOverride): void {
+  const targetSymbolID = override.overriddenSymbolID;
+  if (targetSymbolID === undefined) {
+    return;
+  }
+  const nodeType = getNodeType(node);
+  if (nodeType !== "INSTANCE") {
+    throw new Error(`SymbolResolver: overriddenSymbolID override targets ${nodeType} node ${guidToString(node.guid)}`);
+  }
+  node.overriddenSymbolID = targetSymbolID;
 }
 
 function applyComponentPropAssignmentOverride(
@@ -933,18 +1135,20 @@ function applyComponentPropAssignmentOverride(
 function applyOverrides(
   nodes: MutableFigNode[],
   overrides: readonly FigKiwiSymbolOverride[],
-  styleRegistry?: FigStyleRegistry,
-  targetPolicy: OverrideTargetPolicy = "require-target",
+  targetPolicy: OverrideTargetPolicy = REQUIRE_TARGET_POLICY,
 ): void {
   for (const override of overrides) {
-    applyOverrideAtPath(nodes, override, styleRegistry, targetPolicy);
+    applyOverrideAtPath(nodes, override, targetPolicy);
   }
 }
 
 type OverrideTargetPolicy =
-  | "require-target"
-  | "require-materialized-target"
-  | "document-local-targets-only";
+  | { readonly kind: "require-target" }
+  | { readonly kind: "require-materialized-target" }
+  | { readonly kind: "require-target-or-materialized-parent"; readonly materializedTargetKeys: ReadonlySet<string> };
+
+const REQUIRE_TARGET_POLICY: OverrideTargetPolicy = { kind: "require-target" };
+const REQUIRE_MATERIALIZED_TARGET_POLICY: OverrideTargetPolicy = { kind: "require-materialized-target" };
 
 /**
  * Walk `override.guidPath` through `nodes`, applying the override at
@@ -957,8 +1161,7 @@ type OverrideTargetPolicy =
 function applyOverrideAtPath(
   nodes: readonly MutableFigNode[],
   override: FigKiwiSymbolOverride,
-  styleRegistry?: FigStyleRegistry,
-  targetPolicy: OverrideTargetPolicy = "require-target",
+  targetPolicy: OverrideTargetPolicy = REQUIRE_TARGET_POLICY,
 ): void {
   const guids = override.guidPath?.guids;
   if (!guids || guids.length === 0) {
@@ -975,7 +1178,7 @@ function applyOverrideAtPath(
     return;
   }
   if (guids.length === 1) {
-    applyDirectOverride(child, override, styleRegistry);
+    applyDirectOverride(child, override);
     return;
   }
   // Multi-guid: forward the tail to the INSTANCE that owns it.
@@ -991,7 +1194,7 @@ function applyOverrideAtPath(
     return;
   }
   // Non-INSTANCE container: descend with the tail untouched.
-  applyOverrideAtPath(mutableChildren(child), tail, styleRegistry, targetPolicy);
+  applyOverrideAtPath(mutableChildren(child), tail, targetPolicy);
 }
 
 function handleMissingOverrideTarget(
@@ -1000,7 +1203,7 @@ function handleMissingOverrideTarget(
   targetPolicy: OverrideTargetPolicy,
   targetGuid: FigGuid,
 ): void {
-  if (targetPolicy === "document-local-targets-only") {
+  if (isMaterializedParentTargetAllowed(targetGuid, targetPolicy)) {
     return;
   }
   if (isMaterializedOverrideTargetAllowed(nodes, override, targetPolicy)) {
@@ -1014,10 +1217,306 @@ function isMaterializedOverrideTargetAllowed(
   override: FigKiwiSymbolOverride,
   targetPolicy: OverrideTargetPolicy,
 ): boolean {
-  if (targetPolicy !== "require-materialized-target") {
+  if (targetPolicy.kind !== "require-materialized-target") {
     return false;
   }
   return isOverrideAlreadyMaterialized(nodes, override);
+}
+
+function isMaterializedParentTargetAllowed(
+  targetGuid: FigGuid,
+  targetPolicy: OverrideTargetPolicy,
+): boolean {
+  if (targetPolicy.kind !== "require-target-or-materialized-parent") {
+    return false;
+  }
+  return targetPolicy.materializedTargetKeys.has(guidToString(targetGuid));
+}
+
+function collectMaterializedOverrideTargetKeys(
+  nodes: readonly MutableFigNode[],
+  overrides: readonly FigKiwiSymbolOverride[] | undefined,
+): ReadonlySet<string> {
+  if (overrides === undefined || overrides.length === 0) {
+    return new Set();
+  }
+  const keys = new Set<string>();
+  for (const override of overrides) {
+    const targetGuid = override.guidPath?.guids?.[0];
+    if (targetGuid === undefined) {
+      continue;
+    }
+    if (findDescendantByGuid(nodes, targetGuid) !== undefined) {
+      continue;
+    }
+    if (!isOverrideAlreadyMaterialized(nodes, override)) {
+      continue;
+    }
+    keys.add(guidToString(targetGuid));
+  }
+  return keys;
+}
+
+function mergeMaterializedOverrideTargetKeys(
+  keys: ReadonlySet<string>,
+  slotResolution: SymbolOverrideSlotResolution,
+): ReadonlySet<string> {
+  if (slotResolution.size === 0) {
+    return keys;
+  }
+  return new Set([...keys, ...slotResolution.keys()]);
+}
+
+function resolveSymbolMaterializedOverrideSlotAddresses(
+  symbolNode: FigNode,
+  childrenOf: KiwiChildrenOf,
+  symbolOverrides: readonly FigKiwiSymbolOverride[] | undefined,
+  derivedSymbolData: readonly FigKiwiSymbolOverride[] | undefined,
+): SymbolOverrideSlotResolution {
+  const children = childrenOf(symbolNode);
+  if (children.length === 0) {
+    return new Map();
+  }
+  const cloned = children.map((child) => deepCloneNode(child, childrenOf));
+  return resolveMaterializedOverrideSlotAddresses(
+    cloned,
+    excludeSymbolRootAddressedOverrides(symbolOverrides, symbolNode.guid),
+    excludeSymbolRootAddressedOverrides(derivedSymbolData, symbolNode.guid),
+  );
+}
+
+function excludeSymbolRootAddressedOverrides<T extends FigKiwiSymbolOverride>(
+  entries: readonly T[] | undefined,
+  symbolGuid: FigGuid,
+): readonly T[] | undefined {
+  if (entries === undefined) {
+    return entries;
+  }
+  const symbolKey = guidToString(symbolGuid);
+  const filtered = entries.filter((entry) => {
+    const first = entry.guidPath?.guids[0];
+    return first === undefined || guidToString(first) !== symbolKey;
+  });
+  return filtered.length === entries.length ? entries : filtered;
+}
+
+function resolveMaterializedOverrideSlotAddresses(
+  nodes: readonly MutableFigNode[],
+  symbolOverrides: readonly FigKiwiSymbolOverride[] | undefined,
+  derivedSymbolData: readonly FigKiwiSymbolOverride[] | undefined,
+): SymbolOverrideSlotResolution {
+  const entries = [...(symbolOverrides ?? []), ...(derivedSymbolData ?? [])];
+  if (entries.length === 0) {
+    return new Map();
+  }
+  const slots = new Map<string, FigGuid>();
+  resolveMaterializedOverrideSlotAddressesPass(nodes, entries, slots, entries.length + 1);
+  return slots;
+}
+
+function resolveMaterializedOverrideSlotAddressesPass(
+  nodes: readonly MutableFigNode[],
+  entries: readonly FigKiwiSymbolOverride[],
+  slots: Map<string, FigGuid>,
+  remainingPasses: number,
+): void {
+  if (remainingPasses <= 0) {
+    return;
+  }
+  const changed = entries.reduce((wasChanged, entry) => {
+    const entryChanged = resolveMaterializedEntrySlotAddresses(nodes, entry, slots);
+    return wasChanged || entryChanged;
+  }, false);
+  if (!changed) {
+    return;
+  }
+  resolveMaterializedOverrideSlotAddressesPass(nodes, entries, slots, remainingPasses - 1);
+}
+
+function resolveMaterializedEntrySlotAddresses(
+  nodes: readonly MutableFigNode[],
+  entry: FigKiwiSymbolOverride,
+  slots: Map<string, FigGuid>,
+): boolean {
+  const guids = entry.guidPath?.guids;
+  if (guids === undefined || guids.length === 0) {
+    return false;
+  }
+  return resolveMaterializedGuidPath(nodes, entry, guids, slots);
+}
+
+function resolveMaterializedGuidPath(
+  nodes: readonly MutableFigNode[],
+  entry: FigKiwiSymbolOverride,
+  guids: readonly FigGuid[],
+  slots: Map<string, FigGuid>,
+): boolean {
+  const targetGuid = guids[0];
+  if (targetGuid === undefined) {
+    return false;
+  }
+  const targetKey = guidToString(targetGuid);
+  const mappedGuid = slots.get(targetKey) ?? targetGuid;
+  const child = findDescendantByGuid(nodes, mappedGuid);
+  const tail = guids.slice(1);
+  if (child === undefined) {
+    return resolveMissingMaterializedGuidPath(nodes, entry, targetKey, tail, slots);
+  }
+  if (tail.length === 0) {
+    return false;
+  }
+  return resolveMaterializedGuidPath(mutableChildren(child), entry, tail, slots);
+}
+
+function resolveMissingMaterializedGuidPath(
+  nodes: readonly MutableFigNode[],
+  entry: FigKiwiSymbolOverride,
+  targetKey: string,
+  tail: readonly FigGuid[],
+  slots: Map<string, FigGuid>,
+): boolean {
+  const materialized = findMaterializedSlotCandidate(nodes, entry, tail, slots);
+  if (materialized === undefined) {
+    return false;
+  }
+  slots.set(targetKey, materialized.guid);
+  if (tail.length === 0) {
+    return true;
+  }
+  resolveMaterializedGuidPath(mutableChildren(materialized), entry, tail, slots);
+  return true;
+}
+
+function findMaterializedSlotCandidate(
+  nodes: readonly MutableFigNode[],
+  entry: FigKiwiSymbolOverride,
+  tail: readonly FigGuid[],
+  slots: ReadonlyMap<string, FigGuid>,
+): MutableFigNode | undefined {
+  if (tail.length > 0) {
+    return findSingleMaterializedSlotCandidate(
+      collectMutableDescendants(nodes),
+      (node) => localInstanceAcceptsOverrideTail(node, tail),
+      `tail ${formatGuidPath(tail)} for ${formatGuidPath(entry.guidPath?.guids ?? [])}`,
+    );
+  }
+  const descendants = collectMutableDescendants(nodes);
+  const exact = findSingleMaterializedSlotCandidate(
+    descendants,
+    (node) => materializedOverridePayloadMatches(node, entry),
+    `payload for ${formatGuidPath(entry.guidPath?.guids ?? [])}`,
+  );
+  if (exact !== undefined) {
+    return exact;
+  }
+  return findMaterializedDerivedTextSlotCandidate(descendants, entry, slots);
+}
+
+function collectMutableDescendants(nodes: readonly MutableFigNode[]): readonly MutableFigNode[] {
+  return nodes.flatMap((node) => [node, ...collectMutableDescendants(mutableChildren(node))]);
+}
+
+function findSingleMaterializedSlotCandidate(
+  nodes: readonly MutableFigNode[],
+  matches: (node: MutableFigNode) => boolean,
+  _subject: string,
+): MutableFigNode | undefined {
+  const candidates = nodes.filter(matches);
+  if (candidates.length > 1) {
+    return undefined;
+  }
+  return candidates[0];
+}
+
+function localInstanceAcceptsOverrideTail(node: MutableFigNode, tail: readonly FigGuid[]): boolean {
+  if (getNodeType(node) !== "INSTANCE") {
+    return false;
+  }
+  const nextGuid = tail[0];
+  if (nextGuid === undefined) {
+    return false;
+  }
+  return localInstanceHasOverrideAddress(node, nextGuid);
+}
+
+function localInstanceHasOverrideAddress(node: FigNode, targetGuid: FigGuid): boolean {
+  const targetKey = guidToString(targetGuid);
+  return (
+    overrideSetHasAddress(node.symbolData?.symbolOverrides, targetKey) ||
+    overrideSetHasAddress(node.derivedSymbolData as readonly FigKiwiSymbolOverride[] | undefined, targetKey)
+  );
+}
+
+function overrideSetHasAddress(
+  entries: readonly FigKiwiSymbolOverride[] | undefined,
+  targetKey: string,
+): boolean {
+  if (entries === undefined) {
+    return false;
+  }
+  return entries.some((entry) => entry.guidPath?.guids.some((guid) => guidToString(guid) === targetKey) === true);
+}
+
+function findMaterializedDerivedTextSlotCandidate(
+  nodes: readonly MutableFigNode[],
+  entry: FigKiwiSymbolOverride,
+  slots: ReadonlyMap<string, FigGuid>,
+): MutableFigNode | undefined {
+  if (entry.derivedTextData === undefined) {
+    return undefined;
+  }
+  const layout = findSingleMaterializedSlotCandidate(
+    nodes,
+    (node) => materializedDerivedTextLayoutMatches(node, entry),
+    `derived text layout for ${formatGuidPath(entry.guidPath?.guids ?? [])}`,
+  );
+  if (layout !== undefined) {
+    return layout;
+  }
+  const alreadyResolved = new Set(Array.from(slots.values()).map((guid) => guidToString(guid)));
+  return findSingleMaterializedSlotCandidate(
+    nodes,
+    (node) => getNodeType(node) === "TEXT" && !alreadyResolved.has(guidToString(node.guid)),
+    `remaining derived text for ${formatGuidPath(entry.guidPath?.guids ?? [])}`,
+  );
+}
+
+function materializedDerivedTextLayoutMatches(
+  node: MutableFigNode,
+  entry: FigKiwiSymbolOverride,
+): boolean {
+  if (getNodeType(node) !== "TEXT") {
+    return false;
+  }
+  if (entry.size !== undefined && !figVectorEquals(node.size, entry.size)) {
+    return false;
+  }
+  if (entry.transform !== undefined && !figTransformEquals(node.transform, entry.transform)) {
+    return false;
+  }
+  return entry.size !== undefined || entry.transform !== undefined;
+}
+
+function figVectorEquals(
+  left: FigNode["size"],
+  right: NonNullable<FigKiwiSymbolOverride["size"]>,
+): boolean {
+  return left !== undefined && left.x === right.x && left.y === right.y;
+}
+
+function figTransformEquals(
+  left: FigNode["transform"],
+  right: NonNullable<FigKiwiSymbolOverride["transform"]>,
+): boolean {
+  return (
+    left !== undefined &&
+    left.m00 === right.m00 &&
+    left.m01 === right.m01 &&
+    left.m02 === right.m02 &&
+    left.m10 === right.m10 &&
+    left.m11 === right.m11 &&
+    left.m12 === right.m12
+  );
 }
 
 function isOverrideAlreadyMaterialized(
@@ -1097,19 +1596,8 @@ function kiwiArrayPayloadValueEquals(left: unknown, right: unknown): boolean {
   return left.every((value, index) => kiwiPayloadValueEquals(value, right[index]));
 }
 
-/**
- * Apply a depth-1 override's payload to its target node, and resolve
- * any styleId references it set into concrete paint arrays.
- */
-function applyDirectOverride(
-  node: MutableFigNode,
-  override: FigKiwiSymbolOverride,
-  styleRegistry: FigStyleRegistry | undefined,
-): void {
+function applyDirectOverride(node: MutableFigNode, override: FigKiwiSymbolOverride): void {
   applyKiwiOverrideToNode(node, override);
-  if (styleRegistry && (override.styleIdForFill !== undefined || override.styleIdForStrokeFill !== undefined)) {
-    resolveStyleIdOnMutableNode(node, styleRegistry);
-  }
 }
 
 /**
@@ -1162,8 +1650,7 @@ export type ResolvedInstanceNode = {
  */
 type InstanceResolveRuntime = {
   readonly document: FigKiwiDocumentIndex;
-  readonly resolveReferences: (node: FigNode) => InstanceResolution;
-  readonly styleRegistry?: FigStyleRegistry;
+  readonly blobs?: readonly FigBlob[];
 };
 
 /**
@@ -1249,11 +1736,9 @@ export function applySelfOverridesToMergedNode(
   mergedNode: MutableFigNode,
   overrides: readonly FigKiwiSymbolOverride[],
   symbolGuidStr: string,
-  styleRegistry?: FigStyleRegistry,
 ): void {
-  const hasStyleIdOverride = overrides.some((override) => applySelfOverrideEntry(mergedNode, override, symbolGuidStr));
-  if (hasStyleIdOverride && styleRegistry) {
-    resolveStyleIdOnMutableNode(mergedNode, styleRegistry);
+  for (const override of overrides) {
+    applySelfOverrideEntry(mergedNode, override, symbolGuidStr);
   }
 }
 
@@ -1261,33 +1746,32 @@ function applySelfOverrideEntry(
   mergedNode: MutableFigNode,
   override: FigKiwiSymbolOverride,
   symbolGuidStr: string,
-): boolean {
+): void {
   const guids = override.guidPath?.guids;
   if (!guids || guids.length !== 1) {
-    return false;
+    return;
   }
   if (guidToString(guids[0]) !== symbolGuidStr) {
-    return false;
+    return;
   }
-  const styleKeys = (Object.keys(override) as (keyof FigKiwiSymbolOverride)[])
-    .map((key) => applySelfOverrideField(mergedNode, override, key));
-  return styleKeys.includes(true);
+  for (const key of Object.keys(override) as (keyof FigKiwiSymbolOverride)[]) {
+    applySelfOverrideField(mergedNode, override, key);
+  }
 }
 
 function applySelfOverrideField(
   mergedNode: MutableFigNode,
   override: FigKiwiSymbolOverride,
   key: keyof FigKiwiSymbolOverride,
-): boolean {
+): void {
   if (key === "guidPath" || !SELF_OVERRIDE_PAYLOAD_FIELDS.has(key)) {
-    return false;
+    return;
   }
   const value = override[key];
   if (value === undefined) {
-    return false;
+    return;
   }
   (mergedNode as Record<string, unknown>)[key] = value;
-  return key === "styleIdForFill" || key === "styleIdForStrokeFill";
 }
 
 type SymbolOverrideSlotResolution = ReadonlyMap<string, FigGuid>;
@@ -1319,14 +1803,14 @@ function buildSymbolSlotIndex(symbolRoot: FigNode, childrenOf: KiwiChildrenOf): 
   const guidToSlot = new Map<string, { readonly guid: FigGuid }>();
   const exactSlotMap = new Map<string, string>();
 
-  function visit(nodes: readonly FigNode[]): void {
-    for (const node of nodes) {
-      registerSymbolSlot(node, guidToSlot, exactSlotMap);
-      visit(childrenOf(node));
+  function visit(node: FigNode): void {
+    registerSymbolSlot(node, guidToSlot, exactSlotMap);
+    for (const child of childrenOf(node)) {
+      visit(child);
     }
   }
 
-  visit(childrenOf(symbolRoot));
+  visit(symbolRoot);
   return { guidToSlot, exactSlotMap };
 }
 
@@ -1356,18 +1840,15 @@ function registerSymbolSlot(
 
 function resolveOverrideSlotAddresses(
   {
-    symbolRoot,
+    slotIndex,
     derivedSymbolData,
     symbolOverrides,
-    childrenOf,
   }: {
-    readonly symbolRoot: FigNode;
+    readonly slotIndex: SymbolSlotIndex;
     readonly derivedSymbolData?: readonly FigKiwiSymbolOverride[];
     readonly symbolOverrides?: readonly FigKiwiSymbolOverride[];
-    readonly childrenOf: KiwiChildrenOf;
   },
 ): SymbolOverrideSlotResolution {
-  const slotIndex = buildSymbolSlotIndex(symbolRoot, childrenOf);
   const keys = firstOverrideGuidKeys(derivedSymbolData, symbolOverrides);
   if (keys.size === 0) {
     return new Map();
@@ -1400,17 +1881,67 @@ function bindOverridesToResolvedSlots(
     if (guids === undefined || guids.length === 0) {
       return entry;
     }
-    const mapped = slotResolution.get(guidToString(guids[0]));
-    if (mapped === undefined) {
+    const mappedGuids = guids.map((guid) => slotResolution.get(guidToString(guid)) ?? guid);
+    const changed = mappedGuids.some((guid, index) => guid !== guids[index]);
+    if (!changed) {
       return entry;
     }
     return {
       ...entry,
       guidPath: {
-        guids: [mapped, ...guids.slice(1)],
+        guids: mappedGuids,
       },
     };
   });
+}
+
+function bindMaterializedOverridesToResolvedSlots(
+  nodes: readonly MutableFigNode[],
+  slotResolution: SymbolOverrideSlotResolution,
+  overrides: readonly FigKiwiSymbolOverride[] | undefined,
+): readonly FigKiwiSymbolOverride[] | undefined {
+  if (overrides === undefined || slotResolution.size === 0) {
+    return overrides;
+  }
+  return overrides.map((entry) => {
+    const guids = entry.guidPath?.guids;
+    if (guids === undefined || guids.length === 0) {
+      return entry;
+    }
+    const mappedGuids = guids.map((guid) => slotResolution.get(guidToString(guid)) ?? guid);
+    const changed = mappedGuids.some((guid, index) => guid !== guids[index]);
+    if (!changed || !resolvedOverridePathReachesTarget(nodes, mappedGuids)) {
+      return entry;
+    }
+    return {
+      ...entry,
+      guidPath: {
+        guids: mappedGuids,
+      },
+    };
+  });
+}
+
+function resolvedOverridePathReachesTarget(
+  nodes: readonly MutableFigNode[],
+  guids: readonly FigGuid[],
+): boolean {
+  const targetGuid = guids[0];
+  if (targetGuid === undefined) {
+    return false;
+  }
+  const target = findDescendantByGuid(nodes, targetGuid);
+  if (target === undefined) {
+    return false;
+  }
+  const tail = guids.slice(1);
+  if (tail.length === 0) {
+    return true;
+  }
+  if (getNodeType(target) === "INSTANCE") {
+    return true;
+  }
+  return resolvedOverridePathReachesTarget(mutableChildren(target), tail);
 }
 
 /**
@@ -1432,9 +1963,9 @@ function resolveInstanceNode(
   ctx: InstanceResolveRuntime,
 ): ResolvedInstanceNode {
   // 1. Resolve INSTANCE → SYMBOL
-  const resolution = ctx.resolveReferences(node);
+  const resolution = resolveReferencesForNode(node, ctx.document);
   if (!resolution.effectiveSymbol) {
-    return resolveDocumentExternalInstanceOrThrow(node);
+    return resolveDocumentExternalInstanceOrThrow(node, ctx);
   }
 
   const { node: symNode } = resolution.effectiveSymbol;
@@ -1446,15 +1977,36 @@ function resolveInstanceNode(
   // 3. Resolve overrideKey addresses to descendant GUIDs.
   const componentPropAssignments = collectComponentPropAssignments(node);
   const sourceSymbolOverrides = node.symbolData?.symbolOverrides;
+  const slotIndex = buildSymbolSlotIndex(originalSymNode, ctx.document.childrenOf);
+  const supersededSlotIndex = buildSupersededSymbolSlotIndex(node, resolution.effectiveSymbol, ctx.document);
+  const activeSourceSymbolOverrides = selectOverridesForEffectiveSymbol(sourceSymbolOverrides, slotIndex, supersededSlotIndex);
+  const activeSourceDerivedData = selectOverridesForEffectiveSymbol(
+    node.derivedSymbolData as FigDerivedSymbolData | undefined,
+    slotIndex,
+    supersededSlotIndex,
+  );
+  const materializedSlotResolution = resolveSymbolMaterializedOverrideSlotAddresses(
+    originalSymNode,
+    ctx.document.childrenOf,
+    activeSourceSymbolOverrides,
+    activeSourceDerivedData,
+  );
   // Move self-override entries (single-guid path carrying only
   // INSTANCE-only fields like name/size/variableConsumptionMap/
   // parameterConsumptionMap) onto the SYMBOL root before the
   // descendant-slot address resolution runs.
   const symRootGuid = symNode.guid;
-  const symbolRootBoundOverrides = bindSelfOverridesToSymbolRoot(sourceSymbolOverrides, symRootGuid);
-  const symbolRootBoundDerivedData = bindSelfOverridesToSymbolRoot(
-    node.derivedSymbolData as FigDerivedSymbolData | undefined,
+  const symbolRootBoundOverrides = bindSelfOverridesToSymbolRoot(
+    activeSourceSymbolOverrides,
     symRootGuid,
+    slotIndex.exactSlotMap,
+    materializedSlotResolution,
+  );
+  const symbolRootBoundDerivedData = bindSelfOverridesToSymbolRoot(
+    activeSourceDerivedData,
+    symRootGuid,
+    slotIndex.exactSlotMap,
+    materializedSlotResolution,
   );
   // Strip self-override entries (path = SYMBOL root) before descendant
   // address resolution. Self-overrides apply only to the INSTANCE's merged node.
@@ -1462,10 +2014,9 @@ function resolveInstanceNode(
   const ovPart = partitionSymbolRootOverrides(symbolRootBoundOverrides, symRootGuidStr);
   const dsdPart = partitionSymbolRootOverrides(symbolRootBoundDerivedData, symRootGuidStr);
   const slotResolution = resolveOverrideSlotAddresses({
-    symbolRoot: originalSymNode,
+    slotIndex,
     derivedSymbolData: dsdPart.rest,
     symbolOverrides: ovPart.rest,
-    childrenOf: ctx.document.childrenOf,
   });
   const symbolOverrides = bindOverridesToResolvedSlots(slotResolution, ovPart.rest);
   const derivedSymbolData = bindOverridesToResolvedSlots(slotResolution, dsdPart.rest);
@@ -1475,7 +2026,7 @@ function resolveInstanceNode(
   // partitioned out above (path = SYMBOL root). They never went
   // through descendant address resolution so they keep their INSTANCE-only fields.
   if (symbolSelfOverrides.length > 0) {
-    applySelfOverridesToMergedNode(mergedNode, symbolSelfOverrides, guidToString(symNode.guid), ctx.styleRegistry);
+    applySelfOverridesToMergedNode(mergedNode, symbolSelfOverrides, guidToString(symNode.guid));
   }
 
   // 5. Clone SYMBOL children with overrides
@@ -1484,7 +2035,6 @@ function resolveInstanceNode(
     symbolOverrides,
     derivedSymbolData,
     componentPropAssignments: componentPropAssignments.length > 0 ? componentPropAssignments : undefined,
-    styleRegistry: ctx.styleRegistry,
   });
 
   // 6. Layout resolution for resized instances
@@ -1504,20 +2054,1213 @@ function resolveInstanceNode(
   return { node: mergedNode, children };
 }
 
-function resolveDocumentExternalInstanceOrThrow(node: FigNode): ResolvedInstanceNode {
-  const documentExternal = resolveDocumentExternalInstanceNode(node);
+function resolveDocumentExternalInstanceOrThrow(node: FigNode, ctx: InstanceResolveRuntime): ResolvedInstanceNode {
+  const documentExternal = resolveDocumentExternalInstanceNode(node, ctx);
   if (documentExternal !== undefined) {
     return documentExternal;
   }
   throw new Error(`SymbolResolver: INSTANCE ${guidToString(node.guid)} does not resolve to a SYMBOL`);
 }
 
-function resolveDocumentExternalInstanceNode(node: FigNode): ResolvedInstanceNode | undefined {
+function resolveDocumentExternalInstanceNode(node: FigNode, ctx: InstanceResolveRuntime): ResolvedInstanceNode | undefined {
   const derivedSymbolData = node.derivedSymbolData;
   if (derivedSymbolData === undefined || derivedSymbolData.length === 0) {
     return undefined;
   }
-  return { node, children: EMPTY_RESOLVED_CHILDREN };
+  const root = resolveDocumentExternalInstanceRoot(node);
+  return {
+    node: root,
+    children: materializeDocumentExternalDerivedChildren(node, {
+      document: ctx.document,
+      blobs: ctx.blobs,
+      visualContext: externalDerivedVisualContextFromNode(root, undefined),
+    }),
+  };
+}
+
+function resolveDocumentExternalInstanceRoot(node: FigNode): FigNode {
+  const root: MutableFigNode = { ...node };
+  delete root.stackMode;
+  delete root.stackSpacing;
+  delete root.stackPadding;
+  delete root.stackVerticalPadding;
+  delete root.stackHorizontalPadding;
+  delete root.stackPaddingRight;
+  delete root.stackPaddingBottom;
+  delete root.stackPrimaryAlignItems;
+  delete root.stackCounterAlignItems;
+  delete root.stackPrimaryAlignContent;
+  delete root.stackCounterAlignContent;
+  delete root.stackWrap;
+  delete root.stackCounterSpacing;
+  delete root.stackReverseZIndex;
+  delete root.gridRows;
+  delete root.gridColumns;
+  delete root.gridRowsSizing;
+  delete root.gridColumnsSizing;
+  return root;
+}
+
+type ExternalDerivedSlot = {
+  readonly guid: FigGuid;
+  readonly path: readonly FigGuid[];
+  readonly derivedPayloads: ExternalDerivedPayloadEntry[];
+  readonly overridePayloads: ExternalDerivedPayloadEntry[];
+  readonly children: Map<string, ExternalDerivedSlot>;
+};
+
+type ExternalDerivedEntrySource = "derived" | "symbolOverride";
+type ExternalDerivedAddressScope = "prefixed" | "local";
+type ExternalDerivedPayloadEntry = {
+  readonly payload: FigKiwiSymbolOverride;
+  readonly scope: ExternalDerivedAddressScope;
+};
+
+function externalDerivedPayloads(slot: ExternalDerivedSlot): readonly FigKiwiSymbolOverride[] {
+  return externalDerivedPayloadEntries(slot).map((entry) => entry.payload);
+}
+
+function externalDerivedPayloadEntries(slot: ExternalDerivedSlot): readonly ExternalDerivedPayloadEntry[] {
+  return [...slot.overridePayloads, ...slot.derivedPayloads];
+}
+
+type ExternalDerivedVisualContext = {
+  readonly fillPaints?: FigNode["fillPaints"];
+  readonly strokePaints?: FigNode["strokePaints"];
+  readonly styleIdForFill?: FigNode["styleIdForFill"];
+  readonly styleIdForStrokeFill?: FigNode["styleIdForStrokeFill"];
+  readonly styleIdForEffect?: FigNode["styleIdForEffect"];
+};
+
+type ExternalDerivedMaterializeContext = {
+  readonly document: FigKiwiDocumentIndex;
+  readonly blobs?: readonly FigBlob[];
+  readonly visualContext?: ExternalDerivedVisualContext;
+};
+
+type ExternalDerivedText = {
+  readonly derivedTextData: FigDerivedTextData;
+  readonly textValue?: NonNullable<FigComponentPropAssignment["value"]["textValue"]>;
+  readonly absorbsChildSlots: boolean;
+};
+
+const EXTERNAL_DERIVED_PHASE: KiwiEnumValue = { value: 1, name: "CREATED" };
+const RAW_NUMBER_UNITS: KiwiEnumValue<"RAW"> = { value: 0, name: "RAW" };
+const PIXELS_NUMBER_UNITS: KiwiEnumValue<"PIXELS"> = { value: 1, name: "PIXELS" };
+
+function materializeDocumentExternalDerivedChildren(
+  node: FigNode,
+  ctx: ExternalDerivedMaterializeContext,
+): readonly FigNode[] {
+  const slots = buildExternalDerivedSlots({
+    derivedSymbolData: node.derivedSymbolData ?? [],
+    symbolOverrides: node.symbolData?.symbolOverrides ?? [],
+  });
+  const children = markDocumentExternalLeadingMaskSource(materializeExternalDerivedSlots(slots, ctx));
+  return alignDocumentExternalDerivedChildren(node, children, ctx.blobs);
+}
+
+function buildExternalDerivedSlots(
+  entries: {
+    readonly derivedSymbolData: readonly FigKiwiSymbolOverride[];
+    readonly symbolOverrides: readonly FigKiwiSymbolOverride[];
+  },
+): readonly ExternalDerivedSlot[] {
+  const slots = new Map<string, ExternalDerivedSlot>();
+  addExternalDerivedEntriesToSlots(slots, entries.derivedSymbolData, "derived", "prefixed");
+  addExternalDerivedEntriesToSlots(slots, entries.symbolOverrides, "symbolOverride", "prefixed");
+  return Array.from(slots.values());
+}
+
+type ExternalDerivedBounds = {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+};
+
+type ExternalDerivedOffset = {
+  readonly x: number;
+  readonly y: number;
+};
+
+function alignDocumentExternalDerivedChildren(
+  node: FigNode,
+  children: readonly FigNode[],
+  blobs: readonly FigBlob[] | undefined,
+): readonly FigNode[] {
+  if (node.size === undefined || blobs === undefined || children.length === 0) {
+    return children;
+  }
+  const offset = resolveDocumentExternalRootMaskOffset(node, children[0]!, blobs);
+  if (offset === undefined) {
+    return children;
+  }
+  return children.map((child) => translateExternalDerivedTopLevelNode(child, offset));
+}
+
+function resolveDocumentExternalRootMaskOffset(
+  node: FigNode,
+  firstChild: FigNode,
+  blobs: readonly FigBlob[],
+): ExternalDerivedOffset | undefined {
+  const size = node.size;
+  if (size === undefined) {
+    return undefined;
+  }
+  if (!isDocumentExternalRootMaskSource(firstChild)) {
+    return undefined;
+  }
+  const bounds = geometryBoundsFromKiwi(firstChild.fillGeometry, blobs);
+  if (bounds === undefined || bounds.w === 0 || bounds.h === 0) {
+    return undefined;
+  }
+  const offset = {
+    x: (size.x - bounds.w) / 2 - bounds.x,
+    y: (size.y - bounds.h) / 2 - bounds.y,
+  };
+  if (offset.x === 0 && offset.y === 0) {
+    return undefined;
+  }
+  return offset;
+}
+
+function isDocumentExternalRootMaskSource(node: FigNode): boolean {
+  if (node.transform !== undefined || node.size !== undefined) {
+    return false;
+  }
+  if (node.children !== undefined && node.children.length > 0) {
+    return false;
+  }
+  if (node.strokeGeometry === undefined || node.strokeGeometry.length === 0) {
+    return false;
+  }
+  if (node.fillGeometry === undefined || node.fillGeometry.length === 0) {
+    return false;
+  }
+  if (hasVisiblePaintOrExternalEffect(node) || hasTextPayload(node)) {
+    return false;
+  }
+  return true;
+}
+
+function hasVisiblePaintOrExternalEffect(node: FigNode): boolean {
+  if (node.styleIdForFill !== undefined || node.styleIdForStrokeFill !== undefined || node.styleIdForEffect !== undefined) {
+    return true;
+  }
+  if (visibleExternalDerivedPaints(node.fillPaints) !== undefined) {
+    return true;
+  }
+  if (visibleExternalDerivedPaints(node.strokePaints) !== undefined) {
+    return true;
+  }
+  return node.effects !== undefined && node.effects.some((effect) => effect.visible !== false);
+}
+
+function geometryBoundsFromKiwi(
+  geometry: readonly FigFillGeometry[] | undefined,
+  blobs: readonly FigBlob[],
+): ExternalDerivedBounds | undefined {
+  if (geometry === undefined || geometry.length === 0) {
+    return undefined;
+  }
+  return geometry
+    .map((entry) => geometryEntryBoundsFromKiwi(entry, blobs))
+    .reduce<ExternalDerivedBounds | undefined>((acc, bounds) => unionExternalDerivedBounds(acc, bounds), undefined);
+}
+
+function geometryEntryBoundsFromKiwi(entry: FigFillGeometry, blobs: readonly FigBlob[]): ExternalDerivedBounds {
+  const blobIndex = entry.commandsBlob;
+  if (blobIndex === undefined) {
+    throw new Error("SymbolResolver: document-external root mask geometry is missing commandsBlob");
+  }
+  const blob = blobs[blobIndex];
+  if (blob === undefined) {
+    throw new Error(`SymbolResolver: document-external root mask geometry references missing blob ${blobIndex}`);
+  }
+  return pathCommandsBoundingBox(decodePathCommands(blob));
+}
+
+function unionExternalDerivedBounds(
+  left: ExternalDerivedBounds | undefined,
+  right: ExternalDerivedBounds,
+): ExternalDerivedBounds {
+  if (left === undefined) {
+    return right;
+  }
+  const x = Math.min(left.x, right.x);
+  const y = Math.min(left.y, right.y);
+  const maxX = Math.max(left.x + left.w, right.x + right.w);
+  const maxY = Math.max(left.y + left.h, right.y + right.h);
+  return { x, y, w: maxX - x, h: maxY - y };
+}
+
+function translateExternalDerivedTopLevelNode(node: FigNode, offset: ExternalDerivedOffset): FigNode {
+  return {
+    ...node,
+    transform: translateExternalDerivedTransform(node.transform, offset),
+  };
+}
+
+function translateExternalDerivedTransform(
+  transform: FigNode["transform"],
+  offset: ExternalDerivedOffset,
+): NonNullable<FigNode["transform"]> {
+  if (transform === undefined) {
+    return { m00: 1, m01: 0, m02: offset.x, m10: 0, m11: 1, m12: offset.y };
+  }
+  return {
+    ...transform,
+    m02: transform.m02 + offset.x,
+    m12: transform.m12 + offset.y,
+  };
+}
+
+function ensureExternalDerivedSlotPath(
+  slots: Map<string, ExternalDerivedSlot>,
+  path: readonly FigGuid[],
+  scope: ExternalDerivedAddressScope = "prefixed",
+  prefix: readonly FigGuid[] = [],
+): ExternalDerivedSlot {
+  const guid = path[0];
+  if (guid === undefined) {
+    throw new Error("SymbolResolver: document-external derived slot path is empty");
+  }
+  const slotPath = [...prefix, guid];
+  const slot = ensureExternalDerivedSlot(slots, guid, slotPath, scope);
+  const tail = path.slice(1);
+  if (tail.length === 0) {
+    return slot;
+  }
+  return ensureExternalDerivedSlotPath(slot.children, tail, scope, slotPath);
+}
+
+function ensureExternalDerivedSlot(
+  slots: Map<string, ExternalDerivedSlot>,
+  guid: FigGuid,
+  path: readonly FigGuid[],
+  scope: ExternalDerivedAddressScope,
+): ExternalDerivedSlot {
+  const key = guidToString(guid);
+  const existing = slots.get(key);
+  if (existing === undefined) {
+    const slot: ExternalDerivedSlot = { guid, path, derivedPayloads: [], overridePayloads: [], children: new Map() };
+    slots.set(key, slot);
+    return slot;
+  }
+  if (scope === "prefixed") {
+    requireSameFigGuidPath(existing.path, path);
+  }
+  return existing;
+}
+
+function materializeExternalDerivedSlots(
+  slots: readonly ExternalDerivedSlot[],
+  ctx: ExternalDerivedMaterializeContext,
+): readonly FigNode[] {
+  const nodes: FigNode[] = [];
+  for (const slot of slots) {
+    const node = materializeExternalDerivedSlot(slot, ctx);
+    if (node !== undefined) {
+      nodes.push(node);
+    }
+  }
+  return nodes;
+}
+
+function materializeExternalDerivedSlot(
+  slot: ExternalDerivedSlot,
+  ctx: ExternalDerivedMaterializeContext,
+): FigNode | undefined {
+  const localNode = findNodeByGuid(ctx.document, slot.guid);
+  const resolvedLocalInstance = materializeResolvedLocalInstanceSlot(slot, localNode, ctx);
+  if (resolvedLocalInstance !== undefined) {
+    return resolvedLocalInstance;
+  }
+  const childSlots = externalDerivedChildSlots(slot, localNode);
+  const text = resolveExternalDerivedText(slot);
+  const nodeType = resolveExternalDerivedNodeType(slot, text, childSlots, localNode);
+  const node: MutableFigNode = {
+    guid: slot.guid,
+    phase: EXTERNAL_DERIVED_PHASE,
+    type: externalDerivedNodeType(nodeType),
+    name: `Document external slot ${guidToString(slot.guid)}`,
+    visible: true,
+    opacity: 1,
+  };
+  applyExternalDerivedLocalNodeFields(node, localNode, ctx.document);
+  applyExternalDerivedSlotPayloadsToNode(node, slot);
+  applyExternalDerivedText(node, text);
+  applyExternalDerivedVisualContext(node, ctx.visualContext);
+  const childCtx: ExternalDerivedMaterializeContext = {
+    document: ctx.document,
+    blobs: ctx.blobs,
+    visualContext: externalDerivedVisualContextFromNode(node, ctx.visualContext),
+  };
+  const children = materializeExternalDerivedSlotChildren(childSlots, text, childCtx);
+  if (!externalDerivedSlotContributesNode(slot, text, children, localNode)) {
+    return undefined;
+  }
+  if (children.length > 0) {
+    node.children = children;
+  }
+  return node;
+}
+
+function materializeResolvedLocalInstanceSlot(
+  slot: ExternalDerivedSlot,
+  localNode: FigNode | undefined,
+  ctx: ExternalDerivedMaterializeContext,
+): FigNode | undefined {
+  if (localNode === undefined || getNodeType(localNode) !== "INSTANCE") {
+    return undefined;
+  }
+  const resolution = resolveReferencesForNode(localNode, ctx.document);
+  if (resolution.effectiveSymbol === undefined) {
+    return undefined;
+  }
+  const scopedLocalNode = scopedLocalInstanceForExternalDerivedSlot(localNode, slot);
+  const resolved = resolveInstanceNode(scopedLocalNode, {
+    document: ctx.document,
+    blobs: ctx.blobs,
+  });
+  const node: MutableFigNode = {
+    ...resolved.node,
+    type: externalDerivedNodeType("FRAME"),
+  };
+  applyExternalDerivedSlotPayloadsToNode(node, slot);
+  applyExternalDerivedVisualContext(node, ctx.visualContext);
+  if (resolved.children.length > 0) {
+    node.children = resolved.children;
+  }
+  return node;
+}
+
+function scopedLocalInstanceForExternalDerivedSlot(
+  localNode: FigNode,
+  slot: ExternalDerivedSlot,
+): FigNode {
+  const node: MutableFigNode = { ...localNode };
+  applyExternalDerivedSlotPayloadsToNode(node, slot);
+  applyScopedExternalDerivedSymbolOverrides(node, slot);
+  applyScopedExternalDerivedData(node, slot);
+  return node;
+}
+
+function applyScopedExternalDerivedSymbolOverrides(
+  node: MutableFigNode,
+  slot: ExternalDerivedSlot,
+): void {
+  const overrides = rebaseExternalDerivedDescendantPayloads(slot, "symbolOverride");
+  if (overrides.length === 0) {
+    return;
+  }
+  const symbolData = node.symbolData;
+  if (symbolData === undefined) {
+    throw new Error(`SymbolResolver: local INSTANCE slot ${guidToString(slot.guid)} has no symbolData for scoped symbol overrides`);
+  }
+  node.symbolData = {
+    ...symbolData,
+    symbolOverrides: [...(symbolData.symbolOverrides ?? []), ...overrides],
+  };
+}
+
+function applyScopedExternalDerivedData(
+  node: MutableFigNode,
+  slot: ExternalDerivedSlot,
+): void {
+  const derived = rebaseExternalDerivedDescendantPayloads(slot, "derived");
+  if (derived.length === 0) {
+    return;
+  }
+  node.derivedSymbolData = [...(node.derivedSymbolData ?? []), ...derived];
+}
+
+function rebaseExternalDerivedDescendantPayloads(
+  slot: ExternalDerivedSlot,
+  source: ExternalDerivedEntrySource,
+): readonly FigKiwiSymbolOverride[] {
+  const scoped: FigKiwiSymbolOverride[] = [];
+  for (const child of slot.children.values()) {
+    collectRebasedExternalDerivedPayloads(slot.path, child, source, scoped);
+  }
+  return scoped;
+}
+
+function collectRebasedExternalDerivedPayloads(
+  rootPath: readonly FigGuid[],
+  slot: ExternalDerivedSlot,
+  source: ExternalDerivedEntrySource,
+  scoped: FigKiwiSymbolOverride[],
+): void {
+  for (const entry of externalDerivedPayloadEntriesForSource(slot, source)) {
+    scoped.push(rebaseExternalDerivedPayload(rootPath, entry));
+  }
+  for (const child of slot.children.values()) {
+    collectRebasedExternalDerivedPayloads(rootPath, child, source, scoped);
+  }
+}
+
+function externalDerivedPayloadEntriesForSource(
+  slot: ExternalDerivedSlot,
+  source: ExternalDerivedEntrySource,
+): readonly ExternalDerivedPayloadEntry[] {
+  if (source === "derived") {
+    return slot.derivedPayloads;
+  }
+  return slot.overridePayloads;
+}
+
+function rebaseExternalDerivedPayload(
+  rootPath: readonly FigGuid[],
+  entry: ExternalDerivedPayloadEntry,
+): FigKiwiSymbolOverride {
+  const payload = entry.payload;
+  if (entry.scope === "local") {
+    return payload;
+  }
+  const guids = payload.guidPath?.guids;
+  if (guids === undefined || guids.length <= rootPath.length) {
+    throw new Error(`SymbolResolver: document-external descendant entry under ${formatGuidPath(rootPath)} is missing a descendant guidPath`);
+  }
+  if (!figGuidPathStartsWith(guids, rootPath)) {
+    throw new Error(
+      `SymbolResolver: document-external descendant entry ${formatGuidPath(guids)} is not scoped under ${formatGuidPath(rootPath)}`,
+    );
+  }
+  return {
+    ...payload,
+    guidPath: { guids: guids.slice(rootPath.length) },
+  };
+}
+
+function figGuidEquals(left: FigGuid, right: FigGuid): boolean {
+  return left.sessionID === right.sessionID && left.localID === right.localID;
+}
+
+function figGuidPathStartsWith(path: readonly FigGuid[], prefix: readonly FigGuid[]): boolean {
+  if (path.length < prefix.length) {
+    return false;
+  }
+  return prefix.every((guid, index) => figGuidEquals(path[index]!, guid));
+}
+
+function requireSameFigGuidPath(left: readonly FigGuid[], right: readonly FigGuid[]): void {
+  if (left.length === right.length && figGuidPathStartsWith(left, right)) {
+    return;
+  }
+  throw new Error(`SymbolResolver: document-external slot path mismatch ${formatGuidPath(left)} vs ${formatGuidPath(right)}`);
+}
+
+function formatGuidPath(path: readonly FigGuid[]): string {
+  return path.map((guid) => guidToString(guid)).join("/");
+}
+
+function materializeExternalDerivedSlotChildren(
+  slots: readonly ExternalDerivedSlot[],
+  text: ExternalDerivedText | undefined,
+  ctx: ExternalDerivedMaterializeContext,
+): readonly FigNode[] {
+  if (text?.absorbsChildSlots === true) {
+    return [];
+  }
+  return markDocumentExternalLeadingMaskSource(materializeExternalDerivedSlots(slots, ctx));
+}
+
+function markDocumentExternalLeadingMaskSource(children: readonly FigNode[]): readonly FigNode[] {
+  const firstChild = children[0];
+  if (firstChild === undefined || !isDocumentExternalRootMaskSource(firstChild)) {
+    return children;
+  }
+  if (firstChild.mask === true) {
+    return children;
+  }
+  return [{ ...firstChild, mask: true }, ...children.slice(1)];
+}
+
+function applyExternalDerivedSlotPayloadsToNode(node: MutableFigNode, slot: ExternalDerivedSlot): void {
+  for (const payload of slot.overridePayloads) {
+    applyExternalDerivedPayloadToNode(node, payload.payload);
+  }
+  for (const payload of slot.derivedPayloads) {
+    applyExternalDerivedPayloadToNode(node, payload.payload);
+  }
+}
+
+function applyExternalDerivedPayloadToNode(node: MutableFigNode, payload: FigKiwiSymbolOverride): void {
+  if (payload.overriddenSymbolID !== undefined && getNodeType(node) !== "INSTANCE") {
+    applyKiwiOverrideToNode(node, { ...payload, overriddenSymbolID: undefined });
+    return;
+  }
+  applyKiwiOverrideToNode(node, payload);
+}
+
+function externalDerivedChildSlots(
+  slot: ExternalDerivedSlot,
+  localNode: FigNode | undefined,
+): readonly ExternalDerivedSlot[] {
+  if (localNode !== undefined) {
+    const slots = new Map<string, ExternalDerivedSlot>();
+    addExternalDerivedEntriesToSlots(slots, localNode.derivedSymbolData ?? [], "derived", "local");
+    addExternalDerivedEntriesToSlots(slots, localNode.symbolData?.symbolOverrides ?? [], "symbolOverride", "local");
+    mergeExternalDerivedSlotMap(slots, slot.children);
+    return Array.from(slots.values());
+  }
+  const slots = cloneExternalDerivedSlotMap(slot.children);
+  return Array.from(slots.values());
+}
+
+function cloneExternalDerivedSlotMap(
+  source: ReadonlyMap<string, ExternalDerivedSlot>,
+): Map<string, ExternalDerivedSlot> {
+  const slots = new Map<string, ExternalDerivedSlot>();
+  for (const [key, slot] of source) {
+    slots.set(key, {
+      guid: slot.guid,
+      path: slot.path,
+      derivedPayloads: [...slot.derivedPayloads],
+      overridePayloads: [...slot.overridePayloads],
+      children: cloneExternalDerivedSlotMap(slot.children),
+    });
+  }
+  return slots;
+}
+
+function mergeExternalDerivedSlotMap(
+  target: Map<string, ExternalDerivedSlot>,
+  source: ReadonlyMap<string, ExternalDerivedSlot>,
+): void {
+  for (const slot of source.values()) {
+    mergeExternalDerivedSlot(target, slot);
+  }
+}
+
+function mergeExternalDerivedSlot(
+  target: Map<string, ExternalDerivedSlot>,
+  incoming: ExternalDerivedSlot,
+): void {
+  const key = guidToString(incoming.guid);
+  const existing = target.get(key);
+  if (existing === undefined) {
+    target.set(key, cloneExternalDerivedSlot(incoming));
+    return;
+  }
+  target.set(key, {
+    guid: existing.guid,
+    path: resolveMergedExternalDerivedSlotPath(existing, incoming),
+    derivedPayloads: [...existing.derivedPayloads, ...incoming.derivedPayloads],
+    overridePayloads: [...existing.overridePayloads, ...incoming.overridePayloads],
+    children: mergeExternalDerivedChildSlotMaps(existing.children, incoming.children),
+  });
+}
+
+function cloneExternalDerivedSlot(slot: ExternalDerivedSlot): ExternalDerivedSlot {
+  return {
+    guid: slot.guid,
+    path: slot.path,
+    derivedPayloads: [...slot.derivedPayloads],
+    overridePayloads: [...slot.overridePayloads],
+    children: cloneExternalDerivedSlotMap(slot.children),
+  };
+}
+
+function mergeExternalDerivedChildSlotMaps(
+  existing: ReadonlyMap<string, ExternalDerivedSlot>,
+  incoming: ReadonlyMap<string, ExternalDerivedSlot>,
+): Map<string, ExternalDerivedSlot> {
+  const children = cloneExternalDerivedSlotMap(existing);
+  mergeExternalDerivedSlotMap(children, incoming);
+  return children;
+}
+
+function resolveMergedExternalDerivedSlotPath(
+  existing: ExternalDerivedSlot,
+  incoming: ExternalDerivedSlot,
+): readonly FigGuid[] {
+  if (figGuidPathStartsWith(existing.path, incoming.path) && existing.path.length === incoming.path.length) {
+    return existing.path;
+  }
+  if (figGuidPathEndsWith(incoming.path, existing.path)) {
+    return incoming.path;
+  }
+  if (figGuidPathEndsWith(existing.path, incoming.path)) {
+    return existing.path;
+  }
+  throw new Error(
+    `SymbolResolver: document-external child slot path mismatch ${formatGuidPath(existing.path)} vs ${formatGuidPath(incoming.path)}`,
+  );
+}
+
+function figGuidPathEndsWith(path: readonly FigGuid[], suffix: readonly FigGuid[]): boolean {
+  if (path.length < suffix.length) {
+    return false;
+  }
+  const offset = path.length - suffix.length;
+  return suffix.every((guid, index) => figGuidEquals(path[offset + index]!, guid));
+}
+
+function addExternalDerivedEntriesToSlots(
+  slots: Map<string, ExternalDerivedSlot>,
+  entries: readonly FigKiwiSymbolOverride[],
+  source: ExternalDerivedEntrySource,
+  scope: ExternalDerivedAddressScope,
+): void {
+  for (const entry of entries) {
+    const path = entry.guidPath?.guids;
+    if (path === undefined || path.length === 0) {
+      throw new Error("SymbolResolver: document-external local derived entry is missing guidPath");
+    }
+    addExternalDerivedEntryToSlot(ensureExternalDerivedSlotPath(slots, path, scope), entry, source, scope);
+  }
+}
+
+function addExternalDerivedEntryToSlot(
+  slot: ExternalDerivedSlot,
+  entry: FigKiwiSymbolOverride,
+  source: ExternalDerivedEntrySource,
+  scope: ExternalDerivedAddressScope,
+): void {
+  const payloadEntry = { payload: entry, scope };
+  if (source === "derived") {
+    slot.derivedPayloads.push(payloadEntry);
+    return;
+  }
+  slot.overridePayloads.push(payloadEntry);
+}
+
+const EXTERNAL_DERIVED_LOCAL_NODE_FIELDS = [
+  "name",
+  "visible",
+  "opacity",
+  "blendMode",
+  "mask",
+  "maskIsOutline",
+  "maskType",
+  "clipsContent",
+  "frameMaskDisabled",
+  "transform",
+  "size",
+  "fillPaints",
+  "backgroundPaints",
+  "strokePaints",
+  "strokeWeight",
+  "individualStrokeWeights",
+  "strokeJoin",
+  "strokeCap",
+  "strokeAlign",
+  "strokeDashes",
+  "borderTopWeight",
+  "borderRightWeight",
+  "borderBottomWeight",
+  "borderLeftWeight",
+  "borderStrokeWeightsIndependent",
+  "borderTopHidden",
+  "borderRightHidden",
+  "borderBottomHidden",
+  "borderLeftHidden",
+  "cornerRadius",
+  "rectangleCornerRadii",
+  "rectangleTopLeftCornerRadius",
+  "rectangleTopRightCornerRadius",
+  "rectangleBottomRightCornerRadius",
+  "rectangleBottomLeftCornerRadius",
+  "rectangleCornerRadiiIndependent",
+  "cornerSmoothing",
+  "fillGeometry",
+  "strokeGeometry",
+  "vectorPaths",
+  "vectorData",
+  "effects",
+  "styleIdForFill",
+  "styleIdForStrokeFill",
+  "styleIdForText",
+  "styleIdForEffect",
+  "styleIdForGrid",
+  "characters",
+  "fontSize",
+  "fontName",
+  "textAlignHorizontal",
+  "textAlignVertical",
+  "textAutoResize",
+  "textDecoration",
+  "textCase",
+  "lineHeight",
+  "letterSpacing",
+  "textTruncation",
+  "leadingTrim",
+  "fontVariations",
+  "textTracking",
+  "textData",
+  "derivedTextData",
+  "componentPropAssignments",
+  "variableConsumptionMap",
+  "parameterConsumptionMap",
+  "variableModeBySetMap",
+  "stackMode",
+  "stackSpacing",
+  "stackPadding",
+  "stackVerticalPadding",
+  "stackHorizontalPadding",
+  "stackPaddingRight",
+  "stackPaddingBottom",
+  "stackPrimaryAlignItems",
+  "stackCounterAlignItems",
+  "stackPrimaryAlignContent",
+  "stackCounterAlignContent",
+  "stackCounterSpacing",
+  "stackCounterSizing",
+  "stackPrimarySizing",
+  "stackWrap",
+  "stackReverseZIndex",
+  "stackChildAlignSelf",
+  "stackChildPrimaryGrow",
+  "stackPositioning",
+  "overriddenSymbolID",
+] as const satisfies readonly (keyof FigNode)[];
+
+const EXTERNAL_DERIVED_LOCAL_STACK_LAYOUT_FIELDS: ReadonlySet<keyof FigNode> = new Set<keyof FigNode>([
+  "stackMode",
+  "stackSpacing",
+  "stackPadding",
+  "stackVerticalPadding",
+  "stackHorizontalPadding",
+  "stackPaddingRight",
+  "stackPaddingBottom",
+  "stackPrimaryAlignItems",
+  "stackCounterAlignItems",
+  "stackPrimaryAlignContent",
+  "stackCounterAlignContent",
+  "stackCounterSpacing",
+  "stackCounterSizing",
+  "stackPrimarySizing",
+  "stackWrap",
+  "stackReverseZIndex",
+  "stackChildAlignSelf",
+  "stackChildPrimaryGrow",
+  "stackPositioning",
+]);
+
+const EXTERNAL_DERIVED_LOCAL_NODE_FIELDS_WITHOUT_STACK_LAYOUT = EXTERNAL_DERIVED_LOCAL_NODE_FIELDS.filter(
+  (field) => !EXTERNAL_DERIVED_LOCAL_STACK_LAYOUT_FIELDS.has(field),
+);
+
+function applyExternalDerivedLocalNodeFields(
+  node: MutableFigNode,
+  localNode: FigNode | undefined,
+  document: FigKiwiDocumentIndex,
+): void {
+  if (localNode === undefined) {
+    return;
+  }
+  const fields = externalDerivedLocalNodeFields(localNode, document);
+  const target = node as Record<string, unknown>;
+  const source = localNode as Record<string, unknown>;
+  for (const field of fields) {
+    const value = source[field];
+    if (value !== undefined) {
+      target[field] = value;
+    }
+  }
+}
+
+function externalDerivedLocalNodeFields(
+  localNode: FigNode,
+  document: FigKiwiDocumentIndex,
+): readonly (keyof FigNode)[] {
+  if (!isUnresolvedExternalInstanceLocalNode(localNode, document)) {
+    return EXTERNAL_DERIVED_LOCAL_NODE_FIELDS;
+  }
+  return EXTERNAL_DERIVED_LOCAL_NODE_FIELDS_WITHOUT_STACK_LAYOUT;
+}
+
+function isUnresolvedExternalInstanceLocalNode(
+  localNode: FigNode,
+  document: FigKiwiDocumentIndex,
+): boolean {
+  if (getNodeType(localNode) !== "INSTANCE") {
+    return false;
+  }
+  if (localNode.symbolData?.symbolID === undefined) {
+    return false;
+  }
+  return resolveReferencesForNode(localNode, document).effectiveSymbol === undefined;
+}
+
+function externalDerivedVisualContextFromNode(
+  node: FigNode,
+  inherited: ExternalDerivedVisualContext | undefined,
+): ExternalDerivedVisualContext | undefined {
+  const fillPaints = visibleExternalDerivedPaints(node.fillPaints) ?? inherited?.fillPaints;
+  const strokePaints = visibleExternalDerivedPaints(node.strokePaints) ?? inherited?.strokePaints;
+  const styleIdForFill = node.styleIdForFill ?? inherited?.styleIdForFill;
+  const styleIdForStrokeFill = node.styleIdForStrokeFill ?? inherited?.styleIdForStrokeFill;
+  const styleIdForEffect = node.styleIdForEffect ?? inherited?.styleIdForEffect;
+  if (
+    fillPaints === undefined &&
+    strokePaints === undefined &&
+    styleIdForFill === undefined &&
+    styleIdForStrokeFill === undefined &&
+    styleIdForEffect === undefined
+  ) {
+    return undefined;
+  }
+  return { fillPaints, strokePaints, styleIdForFill, styleIdForStrokeFill, styleIdForEffect };
+}
+
+function visibleExternalDerivedPaints(paints: FigNode["fillPaints"]): FigNode["fillPaints"] | undefined {
+  if (paints === undefined || paints.length === 0) {
+    return undefined;
+  }
+  return paints.some((paint) => paint.visible !== false) ? paints : undefined;
+}
+
+function applyExternalDerivedVisualContext(
+  node: MutableFigNode,
+  context: ExternalDerivedVisualContext | undefined,
+): void {
+  if (context === undefined) {
+    return;
+  }
+  applyExternalDerivedFillContext(node, context);
+  applyExternalDerivedStrokeContext(node, context);
+  applyExternalDerivedEffectContext(node, context);
+}
+
+function applyExternalDerivedFillContext(
+  node: MutableFigNode,
+  context: ExternalDerivedVisualContext,
+): void {
+  if (!externalDerivedNeedsFillContext(node)) {
+    return;
+  }
+  if (context.fillPaints !== undefined) {
+    node.fillPaints = context.fillPaints;
+  }
+  if (context.styleIdForFill !== undefined) {
+    node.styleIdForFill = context.styleIdForFill;
+  }
+}
+
+function applyExternalDerivedStrokeContext(
+  node: MutableFigNode,
+  context: ExternalDerivedVisualContext,
+): void {
+  if (!externalDerivedNeedsStrokeContext(node)) {
+    return;
+  }
+  if (context.strokePaints !== undefined) {
+    node.strokePaints = context.strokePaints;
+  }
+  if (context.styleIdForStrokeFill !== undefined) {
+    node.styleIdForStrokeFill = context.styleIdForStrokeFill;
+  }
+}
+
+function applyExternalDerivedEffectContext(
+  node: MutableFigNode,
+  context: ExternalDerivedVisualContext,
+): void {
+  if (node.effects === undefined || node.styleIdForEffect !== undefined || context.styleIdForEffect === undefined) {
+    return;
+  }
+  node.styleIdForEffect = context.styleIdForEffect;
+}
+
+function externalDerivedNeedsFillContext(node: FigNode): boolean {
+  if (node.fillPaints !== undefined || node.styleIdForFill !== undefined) {
+    return false;
+  }
+  return hasGeometry(node.fillGeometry) || hasVectorPaths(node) || hasTextPayload(node);
+}
+
+function externalDerivedNeedsStrokeContext(node: FigNode): boolean {
+  if (node.strokePaints !== undefined || node.styleIdForStrokeFill !== undefined) {
+    return false;
+  }
+  return hasGeometry(node.strokeGeometry);
+}
+
+function localNodeContributesExternalDerivedNode(node: FigNode): boolean {
+  if (node.visible === false) {
+    return false;
+  }
+  if (hasGeometry(node.fillGeometry) || hasGeometry(node.strokeGeometry) || hasVectorPaths(node)) {
+    return true;
+  }
+  if (visibleExternalDerivedPaints(node.fillPaints) !== undefined) {
+    return true;
+  }
+  if (visibleExternalDerivedPaints(node.strokePaints) !== undefined) {
+    return true;
+  }
+  if (node.effects !== undefined && node.effects.length > 0) {
+    return true;
+  }
+  if (node.characters !== undefined || node.textData !== undefined || node.derivedTextData !== undefined) {
+    return true;
+  }
+  return node.size !== undefined;
+}
+
+function externalDerivedSlotContributesNode(
+  slot: ExternalDerivedSlot,
+  text: ExternalDerivedText | undefined,
+  children: readonly FigNode[],
+  localNode: FigNode | undefined,
+): boolean {
+  if (text !== undefined || children.length > 0) {
+    return true;
+  }
+  if (localNode !== undefined && localNodeContributesExternalDerivedNode(localNode)) {
+    return true;
+  }
+  return externalDerivedPayloads(slot).some((payload) => {
+    if (payload.overriddenSymbolID !== undefined) {
+      return true;
+    }
+    if (kiwiSymbolOverrideCarriesGeometry(payload)) {
+      return true;
+    }
+    if (payload.fillPaints !== undefined && payload.fillPaints.length > 0) {
+      return true;
+    }
+    if (payload.strokePaints !== undefined && payload.strokePaints.length > 0) {
+      return true;
+    }
+    if (payload.effects !== undefined && payload.effects.length > 0) {
+      return true;
+    }
+    return (
+      payload.styleIdForFill !== undefined ||
+      payload.styleIdForStrokeFill !== undefined ||
+      payload.styleIdForEffect !== undefined
+    );
+  });
+}
+
+function externalDerivedNodeType(type: FigNodeType): FigNode["type"] {
+  return { value: -1, name: type };
+}
+
+function resolveExternalDerivedNodeType(
+  slot: ExternalDerivedSlot,
+  text: ExternalDerivedText | undefined,
+  childSlots: readonly ExternalDerivedSlot[],
+  localNode: FigNode | undefined,
+): FigNodeType {
+  if (text !== undefined) {
+    return "TEXT";
+  }
+  if (childSlots.length > 0) {
+    return resolveExternalDerivedContainerNodeType(slot, localNode);
+  }
+  if (externalDerivedPayloads(slot).some((payload) => kiwiSymbolOverrideCarriesGeometry(payload))) {
+    return "VECTOR";
+  }
+  if (externalDerivedPayloads(slot).some((payload) => payload.overriddenSymbolID !== undefined)) {
+    return "INSTANCE";
+  }
+  if (externalDerivedPayloads(slot).some((payload) => payload.size !== undefined)) {
+    return "FRAME";
+  }
+  return "GROUP";
+}
+
+function resolveExternalDerivedContainerNodeType(
+  slot: ExternalDerivedSlot,
+  localNode: FigNode | undefined,
+): FigNodeType {
+  if (localNode !== undefined) {
+    return resolveExternalDerivedLocalContainerNodeType(slot, localNode);
+  }
+  if (externalDerivedSlotHasSize(slot)) {
+    return "FRAME";
+  }
+  return "GROUP";
+}
+
+function resolveExternalDerivedLocalContainerNodeType(
+  slot: ExternalDerivedSlot,
+  localNode: FigNode,
+): FigNodeType {
+  const typeName = getNodeType(localNode);
+  switch (typeName) {
+    case "INSTANCE":
+      requireExternalDerivedContainerSize(slot, localNode);
+      return "FRAME";
+    case "FRAME":
+    case "SECTION":
+    case "SLIDE":
+    case "SYMBOL":
+      requireExternalDerivedContainerSize(slot, localNode);
+      return typeName;
+    default:
+      if (externalDerivedSlotHasSize(slot)) {
+        return "FRAME";
+      }
+      return "GROUP";
+  }
+}
+
+function requireExternalDerivedContainerSize(
+  slot: ExternalDerivedSlot,
+  localNode: FigNode,
+): void {
+  if (localNode.size !== undefined) {
+    return;
+  }
+  if (externalDerivedSlotHasSize(slot)) {
+    return;
+  }
+  throw new Error(
+    `SymbolResolver: document-external local ${getNodeType(localNode)} slot ${guidToString(slot.guid)} has materialized children but no Kiwi size`,
+  );
+}
+
+function externalDerivedSlotHasSize(slot: ExternalDerivedSlot): boolean {
+  return externalDerivedPayloads(slot).some((payload) => payload.size !== undefined);
+}
+
+function hasGeometry(geometry: FigNode["fillGeometry"]): boolean {
+  return geometry !== undefined && geometry.length > 0;
+}
+
+function hasVectorPaths(node: FigNode): boolean {
+  return node.vectorPaths !== undefined && node.vectorPaths.length > 0;
+}
+
+function hasTextPayload(node: FigNode): boolean {
+  return node.characters !== undefined || node.textData !== undefined || node.derivedTextData !== undefined;
+}
+
+function resolveExternalDerivedText(slot: ExternalDerivedSlot): ExternalDerivedText | undefined {
+  const payloads = externalDerivedPayloads(slot);
+  const direct = findDirectDerivedTextData(payloads);
+  const textValue = findTextAssignmentValue(payloads);
+  if (direct !== undefined) {
+    return { derivedTextData: direct, textValue, absorbsChildSlots: false };
+  }
+  const nested = findNestedDerivedTextData(slot.children);
+  if (textValue === undefined || nested.length !== 1) {
+    return undefined;
+  }
+  return { derivedTextData: nested[0], textValue, absorbsChildSlots: true };
+}
+
+function findDirectDerivedTextData(payloads: readonly FigKiwiSymbolOverride[]): FigDerivedTextData | undefined {
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const derivedTextData = payloads[index]!.derivedTextData;
+    if (derivedTextData !== undefined) {
+      return derivedTextData;
+    }
+  }
+  return undefined;
+}
+
+function findNestedDerivedTextData(slots: ReadonlyMap<string, ExternalDerivedSlot>): readonly FigDerivedTextData[] {
+  return Array.from(slots.values()).flatMap((slot) => {
+    const direct = findDirectDerivedTextData(externalDerivedPayloads(slot));
+    const nested = findNestedDerivedTextData(slot.children);
+    if (direct === undefined) {
+      return nested;
+    }
+    return [direct, ...nested];
+  });
+}
+
+function findTextAssignmentValue(
+  payloads: readonly FigKiwiSymbolOverride[],
+): NonNullable<FigComponentPropAssignment["value"]["textValue"]> | undefined {
+  for (let payloadIndex = payloads.length - 1; payloadIndex >= 0; payloadIndex -= 1) {
+    const assignments = payloads[payloadIndex]!.componentPropAssignments ?? [];
+    for (let assignmentIndex = assignments.length - 1; assignmentIndex >= 0; assignmentIndex -= 1) {
+      const assignment = assignments[assignmentIndex]!;
+      const textValue = assignment.value.textValue;
+      if (textValue !== undefined) {
+        return textValue;
+      }
+    }
+  }
+  return undefined;
+}
+
+function applyExternalDerivedText(node: MutableFigNode, text: ExternalDerivedText | undefined): void {
+  if (text === undefined) {
+    return;
+  }
+  const characters = text.textValue?.characters ?? derivedGlyphCharacters(text.derivedTextData);
+  node.derivedTextData = text.derivedTextData;
+  node.characters = characters;
+  node.textData = buildExternalDerivedTextData(text.derivedTextData, characters, text.textValue);
+  if (node.size === undefined) {
+    node.size = text.derivedTextData.layoutSize;
+  }
+}
+
+function buildExternalDerivedTextData(
+  derivedTextData: FigDerivedTextData,
+  characters: string,
+  textValue: NonNullable<FigComponentPropAssignment["value"]["textValue"]> | undefined,
+): FigKiwiTextData {
+  const fontSize = requireExternalDerivedFontSize(derivedTextData);
+  return {
+    ...(textValue ?? { characters }),
+    characters,
+    fontName: requireExternalDerivedFontName(derivedTextData),
+    fontSize,
+    lineHeight: requireExternalDerivedLineHeight(derivedTextData, fontSize),
+  };
+}
+
+function derivedGlyphCharacters(derivedTextData: FigDerivedTextData): string {
+  const glyphs = derivedTextData.glyphs;
+  if (glyphs === undefined || glyphs.length === 0) {
+    return "";
+  }
+  const length = glyphs.reduce((max, glyph, index) => Math.max(max, (glyph.firstCharacter ?? index) + 1), 0);
+  return "\uFFFC".repeat(length);
+}
+
+function firstExternalDerivedFontMetaData(derivedTextData: FigDerivedTextData): FigFontMetaData | undefined {
+  return derivedTextData.fontMetaData?.[0];
+}
+
+function requireExternalDerivedFontName(derivedTextData: FigDerivedTextData): NonNullable<FigKiwiTextData["fontName"]> {
+  const key = firstExternalDerivedFontMetaData(derivedTextData)?.key;
+  if (typeof key?.family !== "string" || typeof key.style !== "string") {
+    throw new Error("SymbolResolver: document-external derived text data is missing font metadata");
+  }
+  return {
+    family: key.family,
+    style: key.style,
+    ...(typeof key.postscript === "string" ? { postscript: key.postscript } : {}),
+  };
+}
+
+function requireExternalDerivedFontSize(derivedTextData: FigDerivedTextData): number {
+  const fontSize = derivedTextData.glyphs?.find((glyph) => typeof glyph.fontSize === "number")?.fontSize;
+  if (typeof fontSize !== "number") {
+    throw new Error("SymbolResolver: document-external derived text data is missing glyph fontSize");
+  }
+  return fontSize;
+}
+
+function requireExternalDerivedLineHeight(
+  derivedTextData: FigDerivedTextData,
+  fontSize: number,
+): FigValueWithUnits {
+  const lineHeightRatio = firstExternalDerivedFontMetaData(derivedTextData)?.fontLineHeight;
+  if (typeof lineHeightRatio === "number") {
+    return { value: lineHeightRatio, units: RAW_NUMBER_UNITS };
+  }
+  const lineHeight = derivedTextData.baselines?.find((baseline) => typeof baseline.lineHeight === "number")?.lineHeight;
+  if (typeof lineHeight === "number") {
+    return { value: lineHeight, units: PIXELS_NUMBER_UNITS };
+  }
+  if (fontSize > 0) {
+    throw new Error("SymbolResolver: document-external derived text data is missing line height");
+  }
+  throw new Error("SymbolResolver: document-external derived text data has invalid fontSize");
 }
 
 function applyResolvedInstanceSize(
@@ -1553,21 +3296,97 @@ function resolveResizedInstanceChildren(
   return { children: layout.children, sizeApplied: layout.sizeApplied, instanceSize: input.instanceSize };
 }
 
+function buildSupersededSymbolSlotIndex(
+  node: FigNode,
+  effectiveSymbol: ResolvedSymbolTarget,
+  document: FigKiwiDocumentIndex,
+): SymbolSlotIndex | undefined {
+  const pair = extractSymbolIDPair(node);
+  if (pair === undefined) {
+    return undefined;
+  }
+  if (guidToString(pair.symbolID) === guidToString(effectiveSymbol.guid)) {
+    return undefined;
+  }
+  const primarySymbol = resolveSymbolTarget(pair.symbolID, document);
+  if (primarySymbol === undefined) {
+    return undefined;
+  }
+  return buildSymbolSlotIndex(primarySymbol.node, document.childrenOf);
+}
+
+function selectOverridesForEffectiveSymbol<T extends FigKiwiSymbolOverride>(
+  entries: readonly T[] | undefined,
+  effectiveSlotIndex: SymbolSlotIndex,
+  supersededSlotIndex: SymbolSlotIndex | undefined,
+): readonly T[] | undefined {
+  if (entries === undefined || supersededSlotIndex === undefined) {
+    return entries;
+  }
+  const selected = entries.filter((entry) => overrideTargetsEffectiveSymbol(entry, effectiveSlotIndex, supersededSlotIndex));
+  if (selected.length === entries.length) {
+    return entries;
+  }
+  return selected;
+}
+
+function overrideTargetsEffectiveSymbol(
+  entry: FigKiwiSymbolOverride,
+  effectiveSlotIndex: SymbolSlotIndex,
+  supersededSlotIndex: SymbolSlotIndex,
+): boolean {
+  const firstGuid = entry.guidPath?.guids?.[0];
+  if (firstGuid === undefined) {
+    return true;
+  }
+  const firstKey = guidToString(firstGuid);
+  if (effectiveSlotIndex.exactSlotMap.has(firstKey)) {
+    return true;
+  }
+  return !supersededSlotIndex.exactSlotMap.has(firstKey);
+}
+
 function bindSelfOverridesToSymbolRoot<T extends FigKiwiSymbolOverride>(
   entries: readonly T[] | undefined,
   symRootGuid: FigGuid,
+  exactSlotMap: ReadonlyMap<string, string>,
+  materializedSlotResolution: SymbolOverrideSlotResolution,
 ): readonly T[] | undefined {
   if (entries === undefined) {
     return entries;
   }
   const bound = entries.map((entry) => {
-    if (!isInstanceSelfOverride(entry)) {
+    if (!shouldBindInstanceSelfOverrideToRoot(entry, symRootGuid, exactSlotMap, materializedSlotResolution)) {
       return entry;
     }
     return { ...entry, guidPath: { guids: [symRootGuid] } } as T;
   });
   const changed = bound.some((entry, index) => entry !== entries[index]);
   return changed ? bound : entries;
+}
+
+function shouldBindInstanceSelfOverrideToRoot(
+  entry: FigKiwiSymbolOverride,
+  symRootGuid: FigGuid,
+  exactSlotMap: ReadonlyMap<string, string>,
+  materializedSlotResolution: SymbolOverrideSlotResolution,
+): boolean {
+  if (!isInstanceSelfOverride(entry)) {
+    return false;
+  }
+  const firstGuid = entry.guidPath?.guids?.[0];
+  if (firstGuid === undefined) {
+    return false;
+  }
+  if (materializedSlotResolution.has(guidToString(firstGuid))) {
+    return false;
+  }
+  const rootKey = guidToString(symRootGuid);
+  const addressedSlot = exactSlotMap.get(guidToString(firstGuid));
+  if (addressedSlot === undefined) {
+    return true;
+  }
+  return addressedSlot === rootKey;
 }
 
 function partitionSymbolRootOverrides<T extends FigKiwiSymbolOverride>(

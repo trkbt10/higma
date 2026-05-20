@@ -27,7 +27,6 @@ export type {
 // Measurement provider
 export {
   createCanvasMeasurementProvider,
-  createMeasurementProvider,
 } from "./provider";
 
 // Line breaking

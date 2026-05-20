@@ -15,6 +15,8 @@ import type { StrokeRendering, StrokeShape } from "../../scene-graph";
 import type { ResolvedStrokeAttrs } from "../../scene-graph";
 import { RectShape } from "./rect-shape";
 
+type IndividualCornerRadius = Extract<StrokeRendering, { readonly mode: "individual" }>["cornerRadius"];
+
 /** SVG-DOM-safe subset of ResolvedStrokeAttrs — excludes `strokeAlign`,
  * which is scene-graph metadata (INSIDE/OUTSIDE) not an SVG attribute.
  * Spreading the full ResolvedStrokeAttrs to a DOM element causes React
@@ -132,13 +134,13 @@ export function StrokeRenderingElements({ sr }: { sr: StrokeRendering }): ReactN
           {sr.sides.left > 0 && <line x1={leftX} y1={0} x2={leftX} y2={sr.height} stroke={sr.color} strokeOpacity={sr.opacity} strokeWidth={sr.sides.left} />}
         </>
       );
-      if (sr.cornerRadius && sr.cornerRadius > 0 && sr.strokeAlign !== "OUTSIDE") {
-        const clipId = `inside-stroke-clip-${sr.width}-${sr.height}-${sr.cornerRadius}`.replace(/\./g, "_");
+      if (hasNonZeroCornerRadius(sr.cornerRadius) && sr.strokeAlign !== "OUTSIDE") {
+        const clipId = insideStrokeClipId(sr.width, sr.height, sr.cornerRadius);
         return (
           <g clipPath={`url(#${clipId})`}>
             <defs>
               <clipPath id={clipId}>
-                <rect x={0} y={0} width={sr.width} height={sr.height} rx={sr.cornerRadius} ry={sr.cornerRadius} />
+                <RectShape width={sr.width} height={sr.height} cornerRadius={sr.cornerRadius} fill="white" />
               </clipPath>
             </defs>
             {lines}
@@ -148,4 +150,20 @@ export function StrokeRenderingElements({ sr }: { sr: StrokeRendering }): ReactN
       return lines;
     }
   }
+}
+
+function hasNonZeroCornerRadius(cr: IndividualCornerRadius): boolean {
+  if (cr === undefined) { return false; }
+  if (typeof cr === "number") { return cr > 0; }
+  return cr.some((radius) => radius > 0);
+}
+
+function insideStrokeClipId(width: number, height: number, cr: IndividualCornerRadius): string {
+  return `inside-stroke-clip-${width}-${height}-${cornerRadiusKey(cr)}`.replace(/[^\w-]/g, "_");
+}
+
+function cornerRadiusKey(cr: IndividualCornerRadius): string {
+  if (cr === undefined) { return "0"; }
+  if (typeof cr === "number") { return `${cr}`; }
+  return cr.join("_");
 }

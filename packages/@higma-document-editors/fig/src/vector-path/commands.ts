@@ -1,4 +1,4 @@
-/** @file Editable SVG path data helpers for fig vector path tools. */
+/** @file Editable SVG path data operations for fig vector path tools. */
 
 import { sampleCubicBezier, type VectorPathPoint, type VectorPathSegmentLine } from "./geometry";
 

@@ -90,6 +90,9 @@ function auditFrame(node: Extract<RenderNode, { type: "frame" }>, stats: Mutable
   if (node.sourceStroke !== node.source.stroke) {
     addIssue(stats, node, "frame sourceStroke must mirror source.stroke");
   }
+  if (node.sourceSurfaceShape !== node.source.surfaceShape) {
+    addIssue(stats, node, "frame sourceSurfaceShape must mirror source.surfaceShape");
+  }
   countStrokeRendering(stats, node.background?.strokeRendering);
   if (node.childClipId) {
     stats.clippedFrames += 1;

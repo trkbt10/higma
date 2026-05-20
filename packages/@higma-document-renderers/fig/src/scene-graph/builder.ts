@@ -12,11 +12,11 @@ import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 import type { FigFillGeometry, FigNode, FigPaint, FigStyleId } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
-import { resolveStyledPaint, type SymbolResolver } from "@higma-document-models/fig/symbols";
+import { formatNodeLocator, resolveStyledEffects, resolveStyledPaint, type SymbolResolver } from "@higma-document-models/fig/symbols";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
 import { resolveAutoLayoutFrame } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type {
-  SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
+  SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId, ClipShape } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
 import {
   convertEffectsToScene,
@@ -127,6 +127,30 @@ function resolveKiwiClipsContent(node: FigNode): boolean {
   return resolveGeometryClipsContent(undefined, node.frameMaskDisabled, getNodeType(node));
 }
 
+function resolveFrameSurfaceShape(
+  node: FigNode,
+  ctx: BuildContext,
+  size: NonNullable<FigNode["size"]>,
+  cornerRadius: CornerRadius | undefined,
+  cornerSmoothing: number | undefined,
+): ClipShape {
+  const contours = decodeGeometryToContours(node.fillGeometry, ctx.blobs);
+  if (contours.length > 0) {
+    return { type: "path", contours };
+  }
+  return { type: "rect", width: size.x, height: size.y, cornerRadius, cornerSmoothing };
+}
+
+function resolveFrameClipShape(
+  surfaceShape: ClipShape,
+  clipsContent: boolean,
+): ClipShape | undefined {
+  if (!clipsContent) {
+    return undefined;
+  }
+  return surfaceShape;
+}
+
 type FramePaintSource = {
   readonly paints: readonly FigPaint[] | undefined;
   readonly styleRef: FigStyleId | undefined;
@@ -156,10 +180,7 @@ function resolveFramePaintSource(node: FigNode): FramePaintSource {
 // Mask Detection
 // =============================================================================
 
-/**
- * Check if a FigNode acts as a mask for subsequent siblings.
- * Figma's mask property is stored on the Kiwi node.
- */
+/** Check if a FigNode acts as a mask for subsequent siblings. */
 function isMaskNode(node: FigNode): boolean {
   return node.mask === true;
 }
@@ -168,10 +189,11 @@ function isMaskNode(node: FigNode): boolean {
 function selectPaintsForFills(
   isStrokeGeometry: boolean,
   paints: { strokePaints: readonly FigPaint[] | undefined; fillPaints: readonly FigPaint[] | undefined },
-  images: ReadonlyMap<string, FigPackageImage>
+  images: ReadonlyMap<string, FigPackageImage>,
+  subject: string,
 ): Fill[] {
   const source = isStrokeGeometry ? paints.strokePaints : paints.fillPaints;
-  return convertPaintsToFills(source, images);
+  return convertPaintsToFills(source, images, subject);
 }
 
 function resolveScalarStrokeWeight(strokeWeight: FigNode["strokeWeight"] | undefined): number {
@@ -190,9 +212,10 @@ function resolveVectorFills(
   strokePaints: readonly FigPaint[] | undefined,
   fillPaints: readonly FigPaint[] | undefined,
   images: ReadonlyMap<string, FigPackageImage>,
+  subject: string,
 ): Fill[] {
   if (reconstructed) { return []; }
-  return selectPaintsForFills(treatAsFill, { strokePaints, fillPaints }, images);
+  return selectPaintsForFills(treatAsFill, { strokePaints, fillPaints }, images, subject);
 }
 
 function resolveVectorStroke(
@@ -219,6 +242,18 @@ function resolveNodeStrokePaints(node: FigNode, strokePaints: readonly FigPaint[
 function resolveFrameFillPaints(node: FigNode, ctx: BuildContext): readonly FigPaint[] | undefined {
   const source = resolveFramePaintSource(node);
   return resolveStyledPaint(source.styleRef, source.paints, ctx.styleRegistry);
+}
+
+function resolveNodeEffects(node: FigNode, ctx: BuildContext): FigNode["effects"] {
+  return resolveStyledEffects(node.styleIdForEffect, node.effects, ctx.styleRegistry);
+}
+
+function paintSubject(node: FigNode, field: "fillPaints" | "strokePaints" | "backgroundPaints" | "vectorData.styleOverrideTable"): string {
+  return `${formatNodeLocator(node)}.${field}`;
+}
+
+function framePaintField(node: FigNode): "fillPaints" | "backgroundPaints" {
+  return node.backgroundPaints !== undefined ? "backgroundPaints" : "fillPaints";
 }
 
 // =============================================================================
@@ -342,7 +377,15 @@ function requireNodeSize(node: FigNode, operationName: string): NonNullable<FigN
 // Node Builders
 // =============================================================================
 
-function buildGroupNode(node: FigNode, children: readonly SceneNode[]): GroupNode {
+function resolveGroupClipShape(node: FigNode, ctx: BuildContext): ClipShape | undefined {
+  const contours = decodeGeometryToContours(node.fillGeometry, ctx.blobs);
+  if (contours.length === 0) {
+    return undefined;
+  }
+  return { type: "path", contours };
+}
+
+function buildGroupNode(node: FigNode, ctx: BuildContext, children: readonly SceneNode[]): GroupNode {
   return {
     type: "group",
     id: getNodeId(node),
@@ -350,8 +393,9 @@ function buildGroupNode(node: FigNode, children: readonly SceneNode[]): GroupNod
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
+    clip: resolveGroupClipShape(node, ctx),
     children,
   };
 }
@@ -361,6 +405,7 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
   const cornerRadius = extractKiwiCornerRadius(node);
   const cornerSmoothing = resolveCornerSmoothing(node, ctx);
   const clipsContent = resolveKiwiClipsContent(node);
+  const surfaceShape = resolveFrameSurfaceShape(node, ctx, size, cornerRadius, cornerSmoothing);
 
   return {
     type: "frame",
@@ -369,13 +414,14 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
     width: size.x,
     height: size.y,
+    surfaceShape,
     cornerRadius,
     cornerSmoothing,
-    fills: convertPaintsToFills(resolveFrameFillPaints(node, ctx), ctx.images),
+    fills: convertPaintsToFills(resolveFrameFillPaints(node, ctx), ctx.images, paintSubject(node, framePaintField(node))),
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
@@ -385,7 +431,7 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
     individualStrokeWeights: node.individualStrokeWeights,
     clipsContent,
     children,
-    clip: clipsContent ? { type: "rect", width: size.x, height: size.y, cornerRadius, cornerSmoothing } : undefined,
+    clip: resolveFrameClipShape(surfaceShape, clipsContent),
   };
 }
 
@@ -401,13 +447,13 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
     width: size.x,
     height: size.y,
     cornerRadius,
     cornerSmoothing,
-    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images),
+    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints")),
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
@@ -472,13 +518,13 @@ function buildEllipseNode(node: FigNode, ctx: BuildContext): EllipseNode {
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
     cx: size.x / 2,
     cy: size.y / 2,
     rx: size.x / 2,
     ry: size.y / 2,
-    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images),
+    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints")),
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
@@ -537,6 +583,17 @@ function synthesizeContours(node: FigNode): DecodedContour[] {
   }
 }
 
+function hasKiwiShapeGeometry(node: FigNode): boolean {
+  return (
+    (node.fillGeometry !== undefined && node.fillGeometry.length > 0) ||
+    (node.strokeGeometry !== undefined && node.strokeGeometry.length > 0)
+  );
+}
+
+function hasKiwiVectorPaths(node: FigNode): boolean {
+  return node.vectorPaths !== undefined && node.vectorPaths.length > 0;
+}
+
 /**
  * Resolve the effective fill paints for a vector per-path style override entry.
  *
@@ -584,7 +641,7 @@ function applyStyleOverrides(
     if (paints === undefined) {
       continue;
     }
-    const fills = convertPaintsToFills(paints, ctx.images);
+    const fills = convertPaintsToFills(paints, ctx.images, paintSubject(node, "vectorData.styleOverrideTable"));
     if (fills.length === 0) {
       continue;
     }
@@ -654,10 +711,17 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
   const treatAsFill = isStrokeGeometryRef.value && !reconstructedRef.value;
   const resolvedFillPaints = resolveNodeFillPaints(node, node.fillPaints, ctx);
   const resolvedStrokePaints = resolveNodeStrokePaints(node, node.strokePaints, ctx);
-  const fills = resolveVectorFills(reconstructedRef.value, treatAsFill, resolvedStrokePaints, resolvedFillPaints, ctx.images);
+  const fills = resolveVectorFills(
+    reconstructedRef.value,
+    treatAsFill,
+    resolvedStrokePaints,
+    resolvedFillPaints,
+    ctx.images,
+    paintSubject(node, treatAsFill ? "strokePaints" : "fillPaints"),
+  );
   const stroke = resolveVectorStroke(treatAsFill, resolvedStrokePaints, node.strokeWeight, node.strokeCap, node.strokeJoin, node.strokeDashes ?? node.dashPattern, node.strokeAlign);
 
-  const size = requireNodeSize(node, "buildVectorNode");
+  const size = node.size;
   // Carry source rect-shape parameters through to PathNode so the
   // stroke resolver can route INSIDE/OUTSIDE-aligned smoothed strokes
   // through `kind: "rect"` strokeShape. See PathNode docs in
@@ -673,13 +737,13 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
     contours: resolvedContours,
     fills,
     stroke,
-    width: size.x > 0 ? size.x : undefined,
-    height: size.y > 0 ? size.y : undefined,
+    width: size !== undefined && size.x > 0 ? size.x : undefined,
+    height: size !== undefined && size.y > 0 ? size.y : undefined,
     cornerRadius,
     cornerSmoothing,
   };
@@ -723,7 +787,7 @@ function buildTextNode(node: FigNode, ctx: BuildContext): TextNode {
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
     width: node.size?.x ?? 0,
     height: node.size?.y ?? 0,
@@ -891,10 +955,10 @@ function buildBooleanOperationNode(
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(node.effects),
+    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
     blendMode: convertBlendMode(node),
     contours,
-    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images),
+    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints")),
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
@@ -943,7 +1007,7 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
     case "DOCUMENT":
     case "CANVAS": {
       const childNodes = buildChildren(children, ctx);
-      return cacheBuiltNode(node, buildGroupNode(node, childNodes), ctx);
+      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
     }
 
     case "FRAME":
@@ -965,7 +1029,7 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
 
     case "GROUP": {
       const childNodes = buildChildren(children, ctx);
-      return cacheBuiltNode(node, buildGroupNode(node, childNodes), ctx);
+      return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
     }
 
     case "BOOLEAN_OPERATION": {
@@ -986,13 +1050,13 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
 
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
-      if (node.vectorPaths !== undefined && node.vectorPaths.length > 0) {
+      if (hasKiwiVectorPaths(node) || hasKiwiShapeGeometry(node)) {
         return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
       }
       return cacheBuiltNode(node, buildRectNode(node, ctx), ctx);
 
     case "ELLIPSE":
-      if (node.vectorPaths !== undefined && node.vectorPaths.length > 0) {
+      if (hasKiwiVectorPaths(node) || hasKiwiShapeGeometry(node)) {
         return cacheBuiltNode(node, buildVectorNode(node, ctx), ctx);
       }
       return cacheBuiltNode(node, buildEllipseNode(node, ctx), ctx);
@@ -1016,7 +1080,7 @@ function buildUnknownNodeTypeGroup(node: FigNode, children: readonly FigNode[], 
     return null;
   }
   const childNodes = buildChildren(children, ctx);
-  return cacheBuiltNode(node, buildGroupNode(node, childNodes), ctx);
+  return cacheBuiltNode(node, buildGroupNode(node, ctx, childNodes), ctx);
 }
 
 type MaskBuildState = {

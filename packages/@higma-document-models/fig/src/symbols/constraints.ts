@@ -1,19 +1,20 @@
 /**
- * @file Constraint resolution for INSTANCE nodes
+ * @file Constraint resolution for INSTANCE nodes.
  *
  * When an INSTANCE is resized relative to its SYMBOL, child positions
  * and sizes must be adjusted according to their constraint settings.
  *
- * Per-child constraint math lives in @higma-document-models/fig/symbols (shared with builder).
- * This module provides the higher-level orchestration:
- * - applyConstraintsToChildren: depth-1 constraint application
- * - resolveInstanceLayout: strategy selection (derived vs constraint)
+ * Per-child constraint math lives in `resolve-child-constraints`.
+ * This module keeps the INSTANCE-level decision in SymbolResolver's domain:
+ * derivedSymbolData, when applicable to local children, is authoritative;
+ * otherwise the Kiwi constraint fields are authoritative.
  */
 
-import type { FigNode, FigMatrix, MutableFigNode } from "@higma-document-models/fig/types";
+import type { FigNode, MutableFigNode } from "@higma-document-models/fig/types";
 import { CONSTRAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { getConstraintValue, resolveChildConstraints } from "@higma-document-models/fig/symbols";
+import { kiwiSymbolOverrideCarriesGeometry } from "./kiwi-override-geometry";
 import type { FigDerivedSymbolData } from "./symbol-resolver";
 
 // =============================================================================
@@ -38,35 +39,10 @@ export function applyConstraintsToChildren(
   instanceSize: { x: number; y: number },
 ): readonly FigNode[] {
   return children.map((child) => {
+    if (!hasNonMinConstraint(child)) {return child;}
     const resolution = resolveChildConstraints(child, symbolSize, instanceSize);
 
-    // No transform/size — skip
-    if (!resolution) {return child;}
-
-    // Nothing changed — skip
-    if (!resolution.posChanged && !resolution.sizeChanged) {return child;}
-
-    const result: MutableFigNode = {
-      ...child,
-      transform: {
-        ...(child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } satisfies FigMatrix),
-        m02: resolution.posX,
-        m12: resolution.posY,
-      },
-      size: {
-        x: resolution.dimX,
-        y: resolution.dimY,
-      },
-    };
-
-    // When size changes, clear pre-baked geometry so the renderer
-    // falls back to size-based shape rendering (rect, ellipse, etc.)
-    if (resolution.sizeChanged) {
-      result.fillGeometry = undefined;
-      result.strokeGeometry = undefined;
-    }
-
-    return result;
+    return applyConstraintResolution(child, resolution);
   });
 }
 
@@ -91,30 +67,95 @@ function isDerivedDataApplicable(derivedSymbolData: FigDerivedSymbolData, childr
   });
 }
 
+function childGuidKey(child: FigNode): string | undefined {
+  if (child.guid === undefined) {
+    return undefined;
+  }
+  return guidToString(child.guid);
+}
+
+function hasNonMinConstraint(child: FigNode): boolean {
+  return (
+    getConstraintValue(child.horizontalConstraint) !== CONSTRAINT_TYPE_VALUES.MIN ||
+    getConstraintValue(child.verticalConstraint) !== CONSTRAINT_TYPE_VALUES.MIN
+  );
+}
+
+function requireChildTransform(child: FigNode): NonNullable<FigNode["transform"]> {
+  if (child.transform === undefined) {
+    throw new Error("Constraint resolution requires child.transform");
+  }
+  return child.transform;
+}
+
+function applyConstraintResolution(
+  child: FigNode,
+  resolution: ReturnType<typeof resolveChildConstraints>,
+): FigNode {
+  if (!resolution.posChanged && !resolution.sizeChanged) {return child;}
+  const result: MutableFigNode = {
+    ...child,
+    transform: {
+      ...requireChildTransform(child),
+      m02: resolution.posX,
+      m12: resolution.posY,
+    },
+    size: {
+      x: resolution.dimX,
+      y: resolution.dimY,
+    },
+  };
+
+  if (resolution.sizeChanged) {
+    result.fillGeometry = undefined;
+    result.strokeGeometry = undefined;
+  }
+
+  return result;
+}
+
 /**
  * Clear fillGeometry/strokeGeometry on children whose size was changed by
- * derivedSymbolData, so the renderer falls back to size-based shape rendering.
- *
- * Returns the set of child GUID strings that were matched by dsd entries,
- * so callers can identify children NOT covered by dsd.
+ * derivedSymbolData. Once size changes, the stale baked geometry no longer
+ * matches the Kiwi node rectangle.
  */
-function clearDerivedGeometry(derivedSymbolData: FigDerivedSymbolData, children: readonly FigNode[]): Set<string> {
+function clearDerivedGeometry(
+  derivedSymbolData: FigDerivedSymbolData,
+  children: readonly FigNode[],
+): { readonly children: readonly FigNode[]; readonly matched: ReadonlySet<string> } {
   const matched = new Set<string>();
+  const geometryAuthored = new Set<string>();
   for (const entry of derivedSymbolData) {
-    if (!entry.size) {continue;}
     const targetGuid = entry.guidPath?.guids?.[entry.guidPath.guids.length - 1];
     if (!targetGuid) {continue;}
     const targetKey = guidToString(targetGuid);
-    for (const child of children) {
-      if (child.guid && guidToString(child.guid) === targetKey) {
-        // Children are MutableFigNode clones from cloneSymbolChildren
-        (child as MutableFigNode).fillGeometry = undefined;
-        (child as MutableFigNode).strokeGeometry = undefined;
-        matched.add(targetKey);
-      }
+    if (entry.size) {
+      matched.add(targetKey);
+    }
+    if (kiwiSymbolOverrideCarriesGeometry(entry)) {
+      geometryAuthored.add(targetKey);
     }
   }
-  return matched;
+  return {
+    children: children.map((child) => {
+      const key = childGuidKey(child);
+      if (key === undefined || !matched.has(key)) {
+        return child;
+      }
+      if (geometryAuthored.has(key)) {
+        return child;
+      }
+      if (child.fillGeometry === undefined && child.strokeGeometry === undefined) {
+        return child;
+      }
+      return {
+        ...child,
+        fillGeometry: undefined,
+        strokeGeometry: undefined,
+      };
+    }),
+    matched,
+  };
 }
 
 /**
@@ -130,12 +171,11 @@ export type InstanceLayoutResult = {
 /**
  * Resolve layout for a resized INSTANCE's children.
  *
- * Strategy:
+ * Resolution order:
  * 1. If derivedSymbolData exists and its GUIDs match actual children,
- *    Figma has pre-computed the layout — use it as-is.
- *    When dsd only partially covers children,
- *    supplement with constraint-based resolution for uncovered children.
- * 2. Otherwise, run constraint-based resolution.
+ *    Figma has pre-computed the layout; preserve those children and apply
+ *    Kiwi constraints only to uncovered children.
+ * 2. If no local derivedSymbolData applies, use Kiwi constraint fields.
  *
  * @param children           Cloned children (overrides already applied)
  * @param symbolSize         Original SYMBOL size
@@ -145,77 +185,37 @@ export type InstanceLayoutResult = {
 export function resolveInstanceLayout(
   { children, symbolSize, instanceSize, derivedSymbolData }: { children: readonly FigNode[]; symbolSize: { x: number; y: number }; instanceSize: { x: number; y: number }; derivedSymbolData: FigDerivedSymbolData | undefined; }
 ): InstanceLayoutResult {
-  // Strategy 1: derivedSymbolData with valid GUIDs
   if (derivedSymbolData && derivedSymbolData.length > 0 && isDerivedDataApplicable(derivedSymbolData, children)) {
-    const coveredGuids = clearDerivedGeometry(derivedSymbolData, children);
-    const supplemented = supplementConstraints({ children, symbolSize, instanceSize, coveredGuids });
+    const cleared = clearDerivedGeometry(derivedSymbolData, children);
+    const supplemented = supplementConstraints({ children: cleared.children, symbolSize, instanceSize, coveredGuids: cleared.matched });
     return { children: supplemented, sizeApplied: true };
   }
 
-  // Strategy 2: constraint-based resolution
-  const hasConstraints = children.some((child) => {
-    return (
-      getConstraintValue(child.horizontalConstraint) !== CONSTRAINT_TYPE_VALUES.MIN ||
-      getConstraintValue(child.verticalConstraint) !== CONSTRAINT_TYPE_VALUES.MIN
-    );
-  });
-
-  if (hasConstraints) {
+  if (children.some(hasNonMinConstraint)) {
     return {
       children: applyConstraintsToChildren(children, symbolSize, instanceSize),
       sizeApplied: true,
     };
   }
 
-  // No derived data and no constraints: keep original layout
   return { children, sizeApplied: false };
 }
 
 /**
- * Apply constraint-based resolution to children that weren't covered
- * by derivedSymbolData (their GUIDs weren't in the dsd entries).
- * Children already covered by dsd are left as-is to preserve Figma's
- * pre-computed layout values.
+ * Apply Kiwi constraint resolution to children not covered by
+ * derivedSymbolData. Covered children keep Figma's pre-computed values.
  */
 function supplementConstraints(
-  { children, symbolSize, instanceSize, coveredGuids }: { children: readonly FigNode[]; symbolSize: { x: number; y: number }; instanceSize: { x: number; y: number }; coveredGuids: Set<string>; }
+  { children, symbolSize, instanceSize, coveredGuids }: { children: readonly FigNode[]; symbolSize: { x: number; y: number }; instanceSize: { x: number; y: number }; coveredGuids: ReadonlySet<string>; }
 ): readonly FigNode[] {
   return children.map((child) => {
-    const guidKey = child.guid ? guidToString(child.guid) : undefined;
+    const guidKey = childGuidKey(child);
 
-    // Skip children already handled by dsd
     if (guidKey && coveredGuids.has(guidKey)) {return child;}
 
-    // Skip children without constraints
-    if (
-      getConstraintValue(child.horizontalConstraint) === CONSTRAINT_TYPE_VALUES.MIN &&
-      getConstraintValue(child.verticalConstraint) === CONSTRAINT_TYPE_VALUES.MIN
-    ) {
-      return child;
-    }
+    if (!hasNonMinConstraint(child)) {return child;}
 
     const resolution = resolveChildConstraints(child, symbolSize, instanceSize);
-    if (!resolution) {return child;}
-    if (!resolution.posChanged && !resolution.sizeChanged) {return child;}
-
-    const result: MutableFigNode = {
-      ...child,
-      transform: {
-        ...(child.transform ?? { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } satisfies FigMatrix),
-        m02: resolution.posX,
-        m12: resolution.posY,
-      },
-      size: {
-        x: resolution.dimX,
-        y: resolution.dimY,
-      },
-    };
-
-    if (resolution.sizeChanged) {
-      result.fillGeometry = undefined;
-      result.strokeGeometry = undefined;
-    }
-
-    return result;
+    return applyConstraintResolution(child, resolution);
   });
 }

@@ -8,18 +8,19 @@
  * surfaced as histograms — counts deduped by canonical key — so the
  * panel stays useful even when the selection is heterogeneous.
  *
- * The input is the *parallel* arrays of `FigDesignNode` and
+ * The input is the *parallel* arrays of Kiwi `FigNode` and
  * `NodeBounds` already maintained by the viewer. They are kept aligned
- * (same length, same order) by `FigViewer`; this module assumes that
- * invariant rather than rebuilding the lookup itself.
+ * (same length, same order) by `FigViewer`; this module requires that
+ * invariant and fails fast when it is violated.
  *
  * Hidden paints (`visible === false`) are excluded from color counts so
  * the summary mirrors what the canvas actually paints, matching the
  * single-node inspector's behaviour.
  */
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
-import type { FigColor } from "@higma-document-models/fig/types";
+import { asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigColor, FigNode, FigNodeType, FigVector } from "@higma-document-models/fig/types";
 import type { NodeBounds } from "../geometry/node-bounds";
 
 export type SelectionUnionRect = {
@@ -34,7 +35,7 @@ export type MixedDimension =
   | { readonly kind: "mixed"; readonly min: number; readonly max: number };
 
 export type MixedTypeCount = {
-  readonly type: FigDesignNode["type"];
+  readonly type: FigNodeType;
   readonly count: number;
 };
 
@@ -61,8 +62,9 @@ export type MixedSelectionSummary = {
   readonly hasImageFill: boolean;
 };
 
+/** Aggregate inspector metrics for a multi-node Kiwi selection. */
 export function summarizeMixedSelection(
-  nodes: readonly FigDesignNode[],
+  nodes: readonly FigNode[],
   bounds: readonly NodeBounds[],
 ): MixedSelectionSummary {
   if (nodes.length !== bounds.length) {
@@ -70,11 +72,12 @@ export function summarizeMixedSelection(
       `summarizeMixedSelection: expected nodes.length === bounds.length but got ${nodes.length} vs ${bounds.length}`,
     );
   }
-  const widths = nodes.map((node) => node.size.x);
-  const heights = nodes.map((node) => node.size.y);
-  const opacities = nodes.map((node) => node.opacity);
+  const sizes = nodes.map(requireSize);
+  const widths = sizes.map((size) => size.x);
+  const heights = sizes.map((size) => size.y);
+  const opacities = nodes.map((node) => node.opacity ?? 1);
 
-  const visibleCount = nodes.filter((n) => n.visible).length;
+  const visibleCount = nodes.filter((n) => n.visible !== false).length;
 
   const typeCounts = histogramTypes(nodes);
   const { union, hasUnion } = unionBounds(bounds);
@@ -117,15 +120,25 @@ function foldNumeric(values: readonly number[]): MixedDimension {
   return { kind: "mixed", min: range.min, max: range.max };
 }
 
-function histogramTypes(nodes: readonly FigDesignNode[]): readonly MixedTypeCount[] {
-  const counts = new Map<FigDesignNode["type"], number>();
+function requireSize(node: FigNode): FigVector {
+  if (node.size === undefined) {
+    throw new Error(`summarizeMixedSelection requires size for Kiwi node ${guidToString(node.guid)}`);
+  }
+  return node.size;
+}
+
+function histogramTypes(nodes: readonly FigNode[]): readonly MixedTypeCount[] {
+  const counts = new Map<FigNodeType, number>();
   for (const node of nodes) {
-    counts.set(node.type, (counts.get(node.type) ?? 0) + 1);
+    const type = getNodeType(node);
+    counts.set(type, (counts.get(type) ?? 0) + 1);
   }
   const entries: MixedTypeCount[] = Array.from(counts, ([type, count]) => ({ type, count }));
   entries.sort((a, b) => {
     if (a.count !== b.count) {return b.count - a.count;}
-    return a.type < b.type ? -1 : a.type > b.type ? 1 : 0;
+    if (a.type < b.type) {return -1;}
+    if (a.type > b.type) {return 1;}
+    return 0;
   });
   return entries;
 }
@@ -158,7 +171,7 @@ function unionBounds(bounds: readonly NodeBounds[]): {
   };
 }
 
-function aggregateFills(nodes: readonly FigDesignNode[]): {
+function aggregateFills(nodes: readonly FigNode[]): {
   readonly colors: readonly MixedColorCount[];
   readonly hasGradient: boolean;
   readonly hasImage: boolean;
@@ -166,15 +179,16 @@ function aggregateFills(nodes: readonly FigDesignNode[]): {
   const buckets = new Map<string, { hex: string; alpha: number; count: number }>();
   const flags = { hasGradient: false, hasImage: false };
   for (const node of nodes) {
-    for (const paint of node.fills) {
+    for (const paint of node.fillPaints ?? []) {
       if (paint.visible === false) {continue;}
-      if (paint.type === "SOLID") {
-        const hex = colorToHex(paint.color);
-        const alpha = combineOpacity(paint.color.a, paint.opacity);
+      const solidPaint = asSolidPaint(paint);
+      if (solidPaint) {
+        const hex = colorToHex(solidPaint.color);
+        const alpha = combineOpacity(solidPaint.color.a, solidPaint.opacity);
         bumpBucket(buckets, hex, alpha);
         continue;
       }
-      if (paint.type === "IMAGE") {
+      if (getPaintType(paint) === "IMAGE") {
         flags.hasImage = true;
         continue;
       }
@@ -216,8 +230,10 @@ function colorToHex(color: FigColor): string {
 }
 
 function combineOpacity(colorAlpha: number, paintOpacity: number | undefined): number {
-  const base = Number.isFinite(colorAlpha) ? colorAlpha : 1;
+  if (!Number.isFinite(colorAlpha)) {
+    throw new Error(`Paint color alpha must be finite, got ${colorAlpha}`);
+  }
+  const base = colorAlpha;
   const factor = paintOpacity === undefined ? 1 : paintOpacity;
   return Math.max(0, Math.min(1, base * factor));
 }
-

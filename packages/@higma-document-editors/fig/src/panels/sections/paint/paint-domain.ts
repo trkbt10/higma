@@ -1,5 +1,6 @@
 /** @file Paint operations over Kiwi paint arrays. */
 import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
+import { figImageHashHexToBytes } from "@higma-document-models/fig/domain";
 import {
   BLEND_MODE_VALUES,
   PAINT_TYPE_VALUES,
@@ -239,7 +240,7 @@ export function paintToView(paint: FigPaint): PaintItemView {
       hex: figColorToHex(color),
       opacity: paintOpacity(paint),
       image: {
-        imageRef: getImageHash(image),
+        imageHashHex: getImageHash(image),
         scaleMode: imageScaleModeToView(image),
         scale: image.scale ?? 1,
         rotationDeg: ((image.rotation ?? 0) * 180) / Math.PI,
@@ -346,13 +347,6 @@ function affineFromHandles(handles: readonly GradientHandleView[]): FigGradientT
   };
 }
 
-function hexToHashBytes(value: string): readonly number[] {
-  if (!/^[0-9a-f]+$/i.test(value) || value.length % 2 !== 0) {
-    throw new Error(`Image ref must be an even-length hex Kiwi hash, got ${value}`);
-  }
-  return Array.from({ length: value.length / 2 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16));
-}
-
 function updateGradientPaint(paint: FigPaint, updater: (paint: FigGradientPaint) => FigGradientPaint): FigPaint {
   const gradient = asGradientPaint(paint);
   if (gradient === undefined) {
@@ -448,10 +442,10 @@ export function setPaintColor(paint: FigPaint, hex: string): FigPaint {
 }
 
 /** Set the Kiwi image hash for an image paint. */
-export function setImageRef(paint: FigPaint, imageRef: string): FigPaint {
+export function setImageHashHex(paint: FigPaint, imageHashHex: string): FigPaint {
   return updateImagePaint(paint, (image) => ({
     ...image,
-    image: { hash: hexToHashBytes(imageRef) },
+    image: { hash: figImageHashHexToBytes(imageHashHex) },
   }));
 }
 

@@ -1,8 +1,7 @@
 /**
- * @file Unit specs for selection-state helpers.
+ * @file Unit specs for selection-state operations.
  */
 
-import { toNodeId } from "@higma-document-models/fig/domain";
 import {
   EMPTY_SELECTION,
   applyClickSelection,
@@ -10,10 +9,10 @@ import {
   replaceSelection,
 } from "./selection";
 
-const A = toNodeId("a");
-const B = toNodeId("b");
-const C = toNodeId("c");
-const D = toNodeId("d");
+const A = "a";
+const B = "b";
+const C = "c";
+const D = "d";
 const ORDER = [A, B, C, D];
 
 describe("applyClickSelection", () => {

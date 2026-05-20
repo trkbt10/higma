@@ -19,8 +19,8 @@ export type InstanceOverridesSectionViewProps = {
 
 /**
  * Parses a percentage-shaped input value to a number, or returns undefined
- * when the input cannot be interpreted. Callers may use this to mirror the
- * adapter's "ignore garbage" behaviour without coupling to the view.
+ * when the input cannot be interpreted. Callers decide whether the value is
+ * acceptable before committing it to their document state.
  */
 export function parsePercentInput(value: string | number): number | undefined {
   const raw = String(value).trim();

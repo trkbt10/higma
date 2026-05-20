@@ -27,12 +27,9 @@ import {
 } from "@higma-editor-kernel/core/text-edit";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { derivedTextDataHasVisualPayload } from "@higma-document-models/fig/domain";
+import { derivedTextDataWithoutVisualPayload } from "@higma-document-models/fig/domain";
 import {
-  computeTextLayout,
-  extractTextProps,
-  resolveTextAscenderRatio,
-  resolveTextDescenderRatio,
+  resolveTextLayout,
   textLayoutToCursorLayout,
   type TextFontResolver,
 } from "@higma-document-renderers/fig/text";
@@ -86,13 +83,6 @@ function readTextCharacters(node: FigNode): string {
   throw new Error("FigTextEditOverlay requires Kiwi TEXT characters");
 }
 
-function derivedTextDataAfterCharacterEdit(node: FigNode): FigNode["derivedTextData"] {
-  if (derivedTextDataHasVisualPayload(node.derivedTextData)) {
-    return undefined;
-  }
-  return node.derivedTextData;
-}
-
 function writeTextCharacters(node: FigNode, characters: string): FigNode {
   const hasTextData = node.textData !== undefined;
   const hasRootCharacters = typeof node.characters === "string";
@@ -103,7 +93,7 @@ function writeTextCharacters(node: FigNode, characters: string): FigNode {
     ...node,
     characters: hasRootCharacters ? characters : node.characters,
     textData: hasTextData ? { ...node.textData, characters } : node.textData,
-    derivedTextData: derivedTextDataAfterCharacterEdit(node),
+    derivedTextData: derivedTextDataWithoutVisualPayload(node.derivedTextData),
   };
 }
 
@@ -115,50 +105,40 @@ function buildTextBodyFromCharacters(characters: string): TextBodyLike {
   };
 }
 
-function createRequiredCanvasContext(): CanvasRenderingContext2D {
-  if (typeof document === "undefined") {
-    throw new Error("FigTextEditOverlay requires a browser document for canvas text measurement");
-  }
-  const canvasContext = document.createElement("canvas").getContext("2d");
-  if (canvasContext === null) {
-    throw new Error("FigTextEditOverlay requires CanvasRenderingContext2D for cursor measurement");
-  }
-  return canvasContext;
-}
-
-function createCanvasTextMeasurer(font: string): (text: string) => number {
-  const canvasContext = createRequiredCanvasContext();
-  return (text: string): number => {
-    if (text.length === 0) {
-      return 0;
-    }
-    canvasContext.font = font;
-    return canvasContext.measureText(text).width;
-  };
-}
-
 function buildFigCursorContext(
-  font: string,
   fontSize: number,
   ascenderRatio: number,
 ): CursorCalculationContext {
-  const canvasContext = createRequiredCanvasContext();
   return {
     measureSpanTextWidth: (span: LayoutSpanLike, substring: string): number => {
       if (span.text.length === 0 || substring.length === 0) {
         return 0;
       }
-      canvasContext.font = font;
-      const fullWidth = canvasContext.measureText(span.text).width;
-      if (fullWidth <= 0) {
-        throw new Error("FigTextEditOverlay text measurement returned zero width for a non-empty span");
-      }
-      return (canvasContext.measureText(substring).width / fullWidth) * span.width;
+      return measureResolvedSpanPrefixWidth(span, substring.length);
     },
     getAscenderRatio: () => ascenderRatio,
     ptToPx: 1,
     emptyLineFontSizePt: fontSize,
   };
+}
+
+function measureResolvedSpanPrefixWidth(span: LayoutSpanLike, charCount: number): number {
+  if (charCount >= span.text.length) {
+    return span.width;
+  }
+  const charWidths = readResolvedSpanCharWidths(span);
+  return charWidths.slice(0, charCount).reduce((sum, width) => sum + width, 0);
+}
+
+function readResolvedSpanCharWidths(span: LayoutSpanLike): readonly number[] {
+  if (!("charWidths" in span) || !isNumberArray(span.charWidths)) {
+    throw new Error("FigTextEditOverlay requires renderer-resolved character widths for cursor measurement");
+  }
+  return span.charWidths;
+}
+
+function isNumberArray(value: unknown): value is readonly number[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "number" && Number.isFinite(entry));
 }
 
 function isInsideBounds(
@@ -191,32 +171,19 @@ export function FigTextEditOverlay({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  const textProps = useMemo(() => extractTextProps(node), [node]);
-  const font = useMemo(
-    () => `${textProps.font.style} ${textProps.font.weight} ${textProps.fontSize}px ${textProps.font.family}`,
-    [textProps.font.family, textProps.font.style, textProps.font.weight, textProps.fontSize],
+  const textLayoutResolution = useMemo(
+    () => resolveTextLayout(node, { fontResolver: textFontResolver }),
+    [node, textFontResolver],
   );
-  const ascenderRatio = useMemo(
-    () => resolveTextAscenderRatio(node, textProps, { fontResolver: textFontResolver }),
-    [node, textFontResolver, textProps],
-  );
-  const descenderRatio = useMemo(
-    () => resolveTextDescenderRatio(node, textProps, { fontResolver: textFontResolver }),
-    [node, textFontResolver, textProps],
-  );
-  const textLayout = useMemo(
-    () => computeTextLayout({ props: textProps, ascenderRatio, descenderRatio }),
-    [ascenderRatio, descenderRatio, textProps],
-  );
-  const textMeasurer = useMemo(() => createCanvasTextMeasurer(font), [font]);
+  const textLayout = textLayoutResolution.layout;
   const cursorLayout = useMemo(
-    () => textLayoutToCursorLayout(textLayout, textMeasurer),
-    [textLayout, textMeasurer],
+    () => textLayoutToCursorLayout(textLayout),
+    [textLayout],
   );
   const textBody = useMemo(() => buildTextBodyFromCharacters(currentText), [currentText]);
   const cursorContext = useMemo(
-    () => buildFigCursorContext(font, textProps.fontSize, textLayout.ascenderRatio),
-    [font, textLayout.ascenderRatio, textProps.fontSize],
+    () => buildFigCursorContext(textLayoutResolution.displayProps.fontSize, textLayout.ascenderRatio),
+    [textLayout.ascenderRatio, textLayoutResolution.displayProps.fontSize],
   );
   const [selectionRange, setSelectionRange] = useState({ start: currentText.length, end: currentText.length });
 

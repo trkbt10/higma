@@ -2,8 +2,8 @@
 
 import type { InspectorBoxInfo, InspectorTreeNode } from "@higma-editor-kernel/core/inspector-types";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import { IDENTITY_MATRIX, multiplyMatrices, readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { FigMatrix, FigNode } from "@higma-document-models/fig/types";
-import { composeTransforms, readKiwiTransform } from "../context/fig-editor/matrix";
 
 export type FigInspectorProjectionOptions = {
   readonly root: FigNode;
@@ -52,7 +52,7 @@ function collectBoxesRecursive({
   if (node.visible === false && !showHiddenNodes) {
     return;
   }
-  const transform = composeTransforms(parentTransform, readKiwiTransform(node.transform));
+  const transform = multiplyMatrices(parentTransform, readKiwiTransform(node.transform));
   const size = requireSize(node);
   boxes.push({
     nodeId: requireGuid(node),
@@ -80,7 +80,7 @@ export function collectFigInspectorBoxes(options: FigInspectorProjectionOptions)
     node: options.root,
     childrenOf: options.childrenOf,
     showHiddenNodes: options.showHiddenNodes,
-    parentTransform: readKiwiTransform(undefined),
+    parentTransform: IDENTITY_MATRIX,
     boxes,
   });
   return boxes;

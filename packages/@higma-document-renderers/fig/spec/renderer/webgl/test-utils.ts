@@ -5,8 +5,8 @@
  * and comparing output images via pixelmatch.
  *
  * Uses the SoT entry point:
- *   createFigDesignDocument → FigDesignDocument
- *   → buildSceneGraph (FigDesignNode[]) → RenderTree → SVG/WebGL
+ *   createFigDocumentContext → Kiwi FigDocumentContext
+ *   → buildSceneGraph (FigNode[]) → RenderTree → SVG/WebGL
  */
 import * as fs from "node:fs";
 import { Resvg } from "@resvg/resvg-js";
@@ -14,10 +14,17 @@ import pixelmatch from "pixelmatch";
 import { readPng, writePng, createPngImage } from "@higma-codecs/png";
 import { createServer, type ViteDevServer } from "vite";
 import puppeteer, { type Browser, type Page } from "puppeteer";
-import { createFigDesignDocument, figDocumentResources } from "@higma-document-io/fig/context";
-import type { FigDesignNode, FigDesignDocument } from "@higma-document-models/fig/domain";
+import {
+  createFigDocumentContext,
+  figDocumentResources,
+  findCanvases,
+  requireCanvas,
+  type FigDocumentContext,
+} from "@higma-document-io/fig/context";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
+import type { FigNode, FigVector } from "@higma-document-models/fig/types";
 import { buildSceneGraph } from "../../../src/scene-graph/builder";
-import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
+import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 
 // =============================================================================
 // Types
@@ -25,7 +32,7 @@ import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 
 export type FrameInfo = {
   name: string;
-  node: FigDesignNode;
+  node: FigNode;
   width: number;
   height: number;
 };
@@ -39,7 +46,7 @@ export type CompareResult = {
 
 export type FixtureData = {
   frames: Map<string, FrameInfo>;
-  document: FigDesignDocument;
+  context: FigDocumentContext;
 };
 
 export type WebGLHarness = {
@@ -145,81 +152,73 @@ export function comparePngs({ actual, rendered, frameName, diffPath }: ComparePn
   };
 }
 
-function selectFixturePages({
-  document,
+function selectFixtureCanvases({
+  context,
   canvasFilter,
 }: {
-  document: FigDesignDocument;
+  context: FigDocumentContext;
   canvasFilter?: string;
-}): readonly FigDesignDocument["pages"][number][] {
-  if (!canvasFilter) {
-    return document.pages;
+}): readonly FigNode[] {
+  if (canvasFilter !== undefined) {
+    return [requireCanvas(context.document, canvasFilter)];
   }
-  return document.pages.filter((page) => page.name === canvasFilter);
+  return findCanvases(context.document);
+}
+
+function requireFrameSize(node: FigNode): FigVector {
+  if (node.size === undefined) {
+    throw new Error(`loadFigFixture: frame "${node.name ?? "(unnamed)"}" is missing Kiwi size`);
+  }
+  return node.size;
 }
 
 // =============================================================================
-// Fixture Loading — correct pipeline via FigDesignDocument
+// Fixture Loading — correct pipeline via FigDocumentContext
 // =============================================================================
 
 /**
  * Load and parse a .fig fixture file into frames via the SoT entry point.
  *
- * `createFigDesignDocument` owns the
- * `loadFigFile → buildNodeTree → treeToDocument` orchestration; consumers
- * never re-orchestrate the steps.
+ * `createFigDocumentContext` owns the `.fig` package decoding and the
+ * indexed Kiwi document view; tests consume FigNode values directly.
  *
  * @param figPath - Absolute path to the .fig file
  * @param canvasFilter - Optional canvas name to filter (e.g. "Twitter")
  */
 export async function loadFigFixture(figPath: string, canvasFilter?: string): Promise<FixtureData> {
   const data = fs.readFileSync(figPath);
-  const document = await createFigDesignDocument(new Uint8Array(data));
+  const context = await createFigDocumentContext(new Uint8Array(data));
 
   const frames = new Map<string, FrameInfo>();
-  const targetPages = selectFixturePages({ document, canvasFilter });
+  const targetCanvases = selectFixtureCanvases({ context, canvasFilter });
 
-  for (const page of targetPages) {
-    for (const child of page.children) {
+  for (const canvas of targetCanvases) {
+    for (const child of context.document.childrenOf(canvas)) {
       const name = child.name ?? "unnamed";
-      const size = child.size;
+      const size = requireFrameSize(child);
       frames.set(name, {
         name,
         node: child,
-        width: size?.x ?? 100,
-        height: size?.y ?? 100,
+        width: size.x,
+        height: size.y,
       });
     }
   }
 
-  return { frames, document };
+  return { frames, context };
 }
 
 /**
- * Normalize a root frame's transform to (0,0) for consistent rendering.
- */
-function normalizeRootNode(node: FigDesignNode): FigDesignNode {
-  if (!node.transform) {
-    return node;
-  }
-  return {
-    ...node,
-    transform: { ...node.transform, m02: 0, m12: 0 },
-  };
-}
-
-/**
- * Build a SceneGraph from a single frame (FigDesignNode).
- *
- * Uses the correct domain pipeline — FigDesignNode carries properly
- * resolved fills, strokes, effects, etc.
+ * Build a SceneGraph from one Kiwi frame without cloning or normalising
+ * the source node. The output viewport points at the frame's world-space
+ * transform, matching the renderer's canvas contract.
  */
 export function buildFrameSceneGraph(frame: FrameInfo, data: FixtureData): SceneGraph {
-  const normalizedNode = normalizeRootNode(frame.node);
-  return buildSceneGraph([normalizedNode], {
-    ...figDocumentResources(data.document),
+  const transform = readKiwiTransform(frame.node.transform);
+  return buildSceneGraph([frame.node], {
+    ...figDocumentResources(data.context),
     canvasSize: { width: frame.width, height: frame.height },
-    viewport: { x: 0, y: 0, width: frame.width, height: frame.height },
+    viewport: { x: transform.m02, y: transform.m12, width: frame.width, height: frame.height },
     showHiddenNodes: false,
     warnings: [],
     textFontResolver: undefined,

@@ -25,6 +25,149 @@ function readFirstImageDataUriPng(svg: string): PngImage {
 }
 
 describe("renderSceneGraphToSvg viewport", () => {
+  it("formats shadow-only paths with an opaque filter source shape", () => {
+    const sceneGraph: SceneGraph = {
+      width: 40,
+      height: 40,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "path",
+          id: createNodeId("effect-only-path"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [{
+            type: "drop-shadow",
+            offset: { x: 0, y: 0 },
+            radius: 4,
+            color: { r: 0.5, g: 0.5, b: 0.5, a: 1 },
+          }],
+          contours: [{
+            commands: [
+              { type: "M", x: 0, y: 0 },
+              { type: "L", x: 20, y: 0 },
+              { type: "L", x: 20, y: 20 },
+              { type: "L", x: 0, y: 20 },
+              { type: "Z" },
+            ],
+            windingRule: "nonzero",
+          }],
+          fills: [],
+        }],
+      },
+      version: 1,
+    };
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('fill="#000000"');
+    expect(svg).not.toContain('<feMergeNode in="SourceGraphic"');
+  });
+
+  it("renders FRAME background fills with the frame surface path", () => {
+    const sceneGraph: SceneGraph = {
+      width: 100,
+      height: 80,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "frame",
+          id: createNodeId("path-surface-frame"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          width: 100,
+          height: 80,
+          surfaceShape: {
+            type: "path",
+            contours: [{
+              commands: [
+                { type: "M", x: 0, y: 0 },
+                { type: "L", x: 40, y: 0 },
+                { type: "L", x: 40, y: 20 },
+                { type: "L", x: 0, y: 20 },
+                { type: "Z" },
+              ],
+              windingRule: "nonzero",
+            }],
+          },
+          fills: [{ type: "solid", color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1 }],
+          clipsContent: false,
+          children: [],
+        }],
+      },
+      version: 1,
+    };
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('<path d="M0 0L40 0L40 20L0 20Z" fill="#ff0000"');
+    expect(svg).not.toContain('<rect x="0" y="0" width="100" height="80" fill="#ff0000"');
+  });
+
+  it("renders GROUP geometry as a child clip path", () => {
+    const sceneGraph: SceneGraph = {
+      width: 100,
+      height: 80,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "group",
+          id: createNodeId("screen-group"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          clip: {
+            type: "path",
+            contours: [{
+              commands: [
+                { type: "M", x: 0, y: 0 },
+                { type: "L", x: 40, y: 0 },
+                { type: "L", x: 40, y: 20 },
+                { type: "L", x: 0, y: 20 },
+                { type: "Z" },
+              ],
+              windingRule: "nonzero",
+            }],
+          },
+          children: [{
+            type: "rect",
+            id: createNodeId("oversized-child"),
+            transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+            opacity: 1,
+            visible: true,
+            effects: [],
+            width: 100,
+            height: 80,
+            fills: [{ type: "solid", color: { r: 1, g: 0, b: 0, a: 1 }, opacity: 1 }],
+          }],
+        }],
+      },
+      version: 1,
+    };
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toMatch(/<clipPath[^>]*id="group-clip-/);
+    expect(svg).toMatch(/<g clip-path="url\(#group-clip-/);
+    expect(svg).toContain('<path d="M0 0L40 0L40 20L0 20Z"');
+  });
+
   it("uses the SceneGraph viewport as the SVG viewBox", () => {
     const sceneGraph: SceneGraph = {
       width: 300,
@@ -114,6 +257,7 @@ describe("renderSceneGraphToSvg viewport", () => {
           effects: [],
           width: 100,
           height: 100,
+          surfaceShape: { type: "rect", width: 100, height: 100 },
           fills: [],
           clipsContent: true,
           children: [{
@@ -298,6 +442,52 @@ describe("renderSceneGraphToSvg viewport", () => {
     // both express the same masked region.
     expect(svg).toMatch(/<mask[^>]*style="mask-type:alpha"[^>]*>[^<]*<(rect|path)[^>]*fill="#D9D9D9"/);
     expect(svg).not.toMatch(/<mask[^>]*style="mask-type:luminance"/);
+  });
+
+  it("keeps per-corner frame radii on individual stroke clips", () => {
+    const sceneGraph: SceneGraph = {
+      width: 120,
+      height: 80,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "frame",
+          id: createNodeId("frame"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          width: 120,
+          height: 80,
+          cornerRadius: [0, 24, 0, 0],
+          surfaceShape: { type: "rect", width: 120, height: 80, cornerRadius: [0, 24, 0, 0] },
+          fills: [],
+          stroke: {
+            width: 6,
+            linecap: "butt",
+            linejoin: "miter",
+            align: "INSIDE",
+            color: { r: 0, g: 0, b: 0, a: 1 },
+            opacity: 1,
+          },
+          individualStrokeWeights: { top: 6, right: 0, bottom: 0, left: 0 },
+          clipsContent: false,
+          children: [],
+        }],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain("<clipPath");
+    expect(svg).toMatch(/<clipPath[^>]*>[^<]*<path[^>]*d="/);
+    expect(svg).not.toContain('rx="24"');
   });
 
   it("prepends Figma's empty-frame purple dashed indicator when requested", () => {

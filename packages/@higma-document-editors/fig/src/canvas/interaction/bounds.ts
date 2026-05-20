@@ -1,10 +1,9 @@
 /** @file Bounds calculation over Kiwi FigNode values. */
 import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
-import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
+import { IDENTITY_MATRIX, multiplyMatrices, readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
 import { computePreRotationTopLeft, extractRotationDeg } from "../../context/fig-editor/rotation";
-import { composeTransforms, readKiwiTransform } from "../../context/fig-editor/matrix";
 
 export type NodeBounds = {
   readonly id: string;
@@ -97,7 +96,7 @@ function flattenRecursive(
     if (node.visible === false) {
       continue;
     }
-    const transform = composeTransforms(parentTransform, readKiwiTransform(node.transform));
+    const transform = multiplyMatrices(parentTransform, readKiwiTransform(node.transform));
     out.push(boundsForNode(node, transform));
     flattenRecursive(document, document.childrenOf(node), transform, out);
   }
@@ -119,7 +118,7 @@ function computeAbsoluteTransformInner(
   parentTransform: FigMatrix,
 ): FigMatrix | undefined {
   for (const node of nodes) {
-    const transform = composeTransforms(parentTransform, readKiwiTransform(node.transform));
+    const transform = multiplyMatrices(parentTransform, readKiwiTransform(node.transform));
     if (guidToString(requireGuid(node)) === guidToString(target)) {
       return transform;
     }

@@ -7,7 +7,7 @@
 
 import type { ExtractedTextProps, TextAlignHorizontal, TextAlignVertical } from "./types";
 import { getAlignedX, getAlignedYWithMetrics } from "./alignment";
-import { breakLines } from "../measure/line-break";
+import { breakLines } from "../measure";
 
 /**
  * A single line of laid-out text
@@ -48,15 +48,19 @@ export type LayoutLine = {
   readonly sourceStart: number;
   /** End offset in the source paragraph for this visual line. */
   readonly sourceEnd: number;
-  /**
-   * Estimated pixel width of the line's text content.
-   *
-   * Computed from character count × estimated character width. This is an
-   * approximation suitable for cursor positioning when precise font metrics
-   * are unavailable. Callers with access to canvas.measureText (browser) or
-   * font metrics can override this value for higher accuracy.
-   */
-  readonly estimatedWidth: number;
+  /** Resolved pixel width of this visual line. */
+  readonly width: number;
+  /** Per-character advance widths for this visual line. */
+  readonly charWidths: readonly number[];
+};
+
+export type TextLayoutSourceLine = {
+  readonly text: string;
+  readonly paragraphIndex: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
+  readonly width: number;
+  readonly charWidths: readonly number[];
 };
 
 /**
@@ -83,8 +87,8 @@ export type TextLayout = {
 export type ComputeLayoutOptions = {
   /** Extracted text properties */
   readonly props: ExtractedTextProps;
-  /** Explicit line array (from text wrapping). If not provided, splits by \n */
-  readonly lines?: readonly string[];
+  /** Explicit line metrics from the text SoT. If not provided, text is split from props.characters. */
+  readonly lines?: readonly TextLayoutSourceLine[];
   /** Ascender ratio from font metrics (for accurate baseline positioning) */
   readonly ascenderRatio: number;
   /**
@@ -101,27 +105,14 @@ export type ComputeLayoutOptions = {
   /**
    * Precise per-character widths in CSS pixels for the rendered font
    * + size. When supplied, wrapping uses these for line-break
-   * decisions instead of the `AVERAGE_CHAR_WIDTH_RATIO` estimate.
+   * decisions.
    *
-   * The caller computes this from a `measureProvider.measureCharWidths`
-   * call against the same Font the path renderer paints with — that's
-   * the only way the wrap break the layout chooses matches the actual
-   * glyph metrics. Skipping it forces the renderer to wrap at an
-   * approximate column count, which is what produces the
-   * `example-com-fullpage` "Avoid use ↵ in operations." regression.
+   * The caller computes this from the same Font the path renderer
+   * paints with, or from Kiwi-derived glyph advances. Those are the
+   * only accepted width sources.
    */
   readonly measureCharWidths?: (text: string) => readonly number[];
 };
-
-/**
- * Average character width as a fraction of font size.
- *
- * For proportional fonts like Inter, Helvetica, Arial, the average
- * character width is approximately 0.5–0.6 × fontSize. We use 0.55
- * as a balance between narrow (i, l, t) and wide (m, w) characters.
- * This is used only when precise font measurement is not available.
- */
-const AVERAGE_CHAR_WIDTH_RATIO = 0.55;
 
 /**
  * Whether the text auto-resize mode implies a fixed width (wrapping enabled).
@@ -135,52 +126,40 @@ function isFixedWidth(textAutoResize: string): boolean {
   return textAutoResize !== "WIDTH_AND_HEIGHT";
 }
 
-/**
- * Estimate character width for a given font size and letter spacing.
- * Used when precise font measurement is not available.
- */
-function estimateCharWidth(fontSize: number, letterSpacing: number | undefined): number {
-  return fontSize * AVERAGE_CHAR_WIDTH_RATIO + (letterSpacing ?? 0);
-}
-
-/**
- * Simple word-wrap algorithm using estimated character widths.
- *
- * Breaks text into lines that fit within maxWidth, preferring word
- * boundaries. Falls back to character-level breaks for words wider
- * than maxWidth.
- *
- * @param text - Single paragraph text (no newlines)
- * @param maxWidth - Maximum line width in pixels
- * @param charWidth - Estimated width per character
- * @returns Array of source-ranged line strings
- */
 function resolveCharWidths(
   text: string,
-  charWidth: number,
-  measureCharWidths?: (text: string) => readonly number[],
+  measureCharWidths: ((text: string) => readonly number[]) | undefined,
+  family: string,
 ): readonly number[] {
-  if (measureCharWidths) { return measureCharWidths(text); }
-  return Array.from({ length: text.length }, () => charWidth);
+  if (measureCharWidths === undefined) {
+    throw new Error(`Text layout requires character metrics for font "${family}"`);
+  }
+  const widths = measureCharWidths(text);
+  if (widths.length !== text.length) {
+    throw new Error(`Text layout character metrics length mismatch for font "${family}"`);
+  }
+  for (const width of widths) {
+    if (!Number.isFinite(width) || width < 0) {
+      throw new Error(`Text layout received invalid character metrics for font "${family}"`);
+    }
+  }
+  return widths;
+}
+
+function sumCharWidths(widths: readonly number[]): number {
+  return widths.reduce((sum, width) => sum + width, 0);
 }
 
 function wrapParagraph(
   text: string,
   maxWidth: number,
-  charWidth: number,
   measureCharWidths?: (text: string) => readonly number[],
+  family = "",
 ): readonly SourceLine[] {
-  // Prefer the caller-supplied measurement when present — per-character
-  // advance widths from the actual rendered font produce break points
-  // identical to what the path renderer paints. Falling back to a
-  // uniform `charWidth` is an approximation kept for callsites that
-  // don't have a font measurer wired in.
-  const charWidths = resolveCharWidths(text, charWidth, measureCharWidths);
-  return breakLines({ text, charWidths, maxWidth, mode: "auto" }).map((line) => ({
-    text: line.text,
-    sourceStart: line.startIndex,
-    sourceEnd: line.endIndex,
-  }));
+  const charWidths = resolveCharWidths(text, measureCharWidths, family);
+  return breakLines({ text, charWidths, maxWidth, mode: "auto" }).map((line) => (
+    sourceLineFromRange(line.text, line.startIndex, line.endIndex, charWidths)
+  ));
 }
 
 /**
@@ -191,16 +170,41 @@ type LineWithParagraph = {
   readonly paragraphIndex: number;
   readonly sourceStart: number;
   readonly sourceEnd: number;
+  readonly width: number;
+  readonly charWidths: readonly number[];
 };
 
 type SourceLine = {
   readonly text: string;
   readonly sourceStart: number;
   readonly sourceEnd: number;
+  readonly width: number;
+  readonly charWidths: readonly number[];
 };
 
-function paragraphToSourceLine(text: string): SourceLine {
-  return { text, sourceStart: 0, sourceEnd: text.length };
+function sourceLineFromRange(
+  text: string,
+  sourceStart: number,
+  sourceEnd: number,
+  paragraphCharWidths: readonly number[],
+): SourceLine {
+  const charWidths = paragraphCharWidths.slice(sourceStart, sourceEnd);
+  return {
+    text,
+    sourceStart,
+    sourceEnd,
+    width: sumCharWidths(charWidths),
+    charWidths,
+  };
+}
+
+function paragraphToSourceLine(
+  text: string,
+  measureCharWidths?: (text: string) => readonly number[],
+  family = "",
+): SourceLine {
+  const charWidths = resolveCharWidths(text, measureCharWidths, family);
+  return sourceLineFromRange(text, 0, text.length, charWidths);
 }
 
 /**
@@ -212,7 +216,7 @@ function paragraphToSourceLine(text: string): SourceLine {
  * TextBodyLike treats each \n-delimited segment as one paragraph.
  *
  * When props.textAutoResize is HEIGHT/NONE/TRUNCATE (fixed width),
- * wraps text at word boundaries using estimated character widths.
+ * wraps text at word boundaries using supplied character widths.
  * Otherwise (WIDTH_AND_HEIGHT), only splits at explicit newlines.
  */
 function splitTextIntoLines(
@@ -220,24 +224,20 @@ function splitTextIntoLines(
   measureCharWidths?: (text: string) => readonly number[],
 ): LineWithParagraph[] {
   const paragraphs = props.characters.split("\n");
+  const family = props.font.family;
 
   if (!isFixedWidth(props.textAutoResize) || !props.size) {
-    return paragraphs.map((text, i) => ({ ...paragraphToSourceLine(text), paragraphIndex: i }));
+    return paragraphs.map((text, i) => ({ ...paragraphToSourceLine(text, measureCharWidths, family), paragraphIndex: i }));
   }
 
   const maxWidth = props.size.width;
   if (maxWidth <= 0) {
-    return paragraphs.map((text, i) => ({ ...paragraphToSourceLine(text), paragraphIndex: i }));
-  }
-
-  const charWidth = estimateCharWidth(props.fontSize, props.letterSpacing);
-  if (charWidth <= 0) {
-    return paragraphs.map((text, i) => ({ ...paragraphToSourceLine(text), paragraphIndex: i }));
+    return paragraphs.map((text, i) => ({ ...paragraphToSourceLine(text, measureCharWidths, family), paragraphIndex: i }));
   }
 
   const allLines: LineWithParagraph[] = [];
   for (let i = 0; i < paragraphs.length; i++) {
-    const wrapped = wrapParagraph(paragraphs[i], maxWidth, charWidth, measureCharWidths);
+    const wrapped = wrapParagraph(paragraphs[i], maxWidth, measureCharWidths, family);
     for (const line of wrapped) {
       allLines.push({ ...line, paragraphIndex: i });
     }
@@ -246,12 +246,19 @@ function splitTextIntoLines(
 }
 
 function resolveLinesWithParagraph(
-  explicitLines: readonly string[] | undefined,
+  explicitLines: readonly TextLayoutSourceLine[] | undefined,
   props: ExtractedTextProps,
   measureCharWidths?: (text: string) => readonly number[],
 ): LineWithParagraph[] {
   if (explicitLines) {
-    return explicitLines.map((text, i) => ({ ...paragraphToSourceLine(text), paragraphIndex: i }));
+    return explicitLines.map((line) => ({
+      text: line.text,
+      paragraphIndex: line.paragraphIndex,
+      sourceStart: line.sourceStart,
+      sourceEnd: line.sourceEnd,
+      width: line.width,
+      charWidths: line.charWidths,
+    }));
   }
   return splitTextIntoLines(props, measureCharWidths);
 }
@@ -298,9 +305,6 @@ export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
     descenderRatio,
   });
 
-  // Estimate character width for approximate line width calculation
-  const charWidth = estimateCharWidth(props.fontSize, props.letterSpacing);
-
   // Build laid-out lines
   const lines: LayoutLine[] = linesWithParagraph.map((lwp, index) => ({
     text: lwp.text,
@@ -310,7 +314,8 @@ export function computeTextLayout(options: ComputeLayoutOptions): TextLayout {
     paragraphIndex: lwp.paragraphIndex,
     sourceStart: lwp.sourceStart,
     sourceEnd: lwp.sourceEnd,
-    estimatedWidth: lwp.text.length * charWidth,
+    width: lwp.width,
+    charWidths: lwp.charWidths,
   }));
 
   return {
@@ -336,6 +341,8 @@ export type CursorLayoutSpan = {
   readonly width: number;
   readonly dx: number;
   readonly fontSize: number;
+  readonly charWidths: readonly number[];
+  readonly fontFamily?: string;
 };
 
 /**
@@ -378,15 +385,10 @@ export type CursorLayoutResult = {
  * coordinate arithmetic.
  *
  * @param layout - Result of computeTextLayout()
- * @param getLineTextWidth - Function to measure actual text width per line
- *   (e.g., via canvas.measureText).
  * @returns Cursor layout result suitable for editor-core's coordinate-to-cursor functions
  */
-export function textLayoutToCursorLayout(
-  layout: TextLayout,
-  getLineTextWidth: (text: string) => number,
-): CursorLayoutResult {
-  return computeCursorLayout(layout, getLineTextWidth);
+export function textLayoutToCursorLayout(layout: TextLayout): CursorLayoutResult {
+  return computeCursorLayout(layout);
 }
 
 function computeLeftX(anchorX: number, textWidth: number, alignH: string): number {
@@ -400,10 +402,7 @@ function computeLeftX(anchorX: number, textWidth: number, alignH: string): numbe
   }
 }
 
-function computeCursorLayout(
-  layout: TextLayout,
-  getLineTextWidth: (text: string) => number,
-): CursorLayoutResult {
+function computeCursorLayout(layout: TextLayout): CursorLayoutResult {
   // Group layout lines by paragraphIndex.
   // A single source paragraph (\n-delimited) may produce multiple visual lines
   // when word-wrapping is active. editor-core's TextBodyLike uses \n-delimited
@@ -417,7 +416,7 @@ function computeCursorLayout(
   const grouped = new Map<number, CursorLayoutLine[]>();
 
   for (const line of layout.lines) {
-    const textWidth = getLineTextWidth(line.text);
+    const textWidth = line.width;
     if (!Number.isFinite(textWidth) || textWidth < 0) {
       throw new Error(`Text layout cursor measurement returned invalid width for "${line.text}"`);
     }
@@ -431,6 +430,7 @@ function computeCursorLayout(
         width: textWidth,
         dx: 0,
         fontSize: layout.fontSize,
+        charWidths: line.charWidths,
       }],
       x: leftX,
       y: line.y,

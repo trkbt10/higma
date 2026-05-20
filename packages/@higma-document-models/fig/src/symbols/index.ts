@@ -41,7 +41,6 @@ export {
 } from "./style-registry";
 
 export {
-  projectVariableAnyValue,
   findVariableConsumptionExpression,
   resolveVariantOverride,
   type ResolveVariantResult,

@@ -23,16 +23,16 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,35 +48,35 @@ function rgb(r: number, g: number, b: number): FigColor {
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 function addFrame(
   ctx: Ctx,
-  doc: FigDesignDocument,
-  parentId: FigNodeId | null,
+  context: FigDocumentContext,
+  parentGuid: FigGuid | null,
   name: string,
   x: number,
   y: number,
   w: number,
   h: number,
   bg: FigColor | null,
-): { doc: FigDesignDocument; frameId: FigNodeId } {
+): { context: FigDocumentContext; frameId: FigGuid } {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "FRAME",
       name,
@@ -88,13 +88,13 @@ function addFrame(
       clipsContent: true,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 function addRect(
   ctx: Ctx,
-  doc: FigDesignDocument,
-  parentId: FigNodeId,
+  context: FigDocumentContext,
+  parentGuid: FigGuid,
   name: string,
   x: number,
   y: number,
@@ -102,12 +102,12 @@ function addRect(
   h: number,
   fill: FigColor,
   cornerRadius?: number,
-): FigDesignDocument {
+): FigDocumentContext {
   return addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name,
@@ -118,25 +118,25 @@ function addRect(
       fills: [solidPaint(fill)],
       cornerRadius,
     },
-  }).doc;
+  }).context;
 }
 
 function addEllipse(
   ctx: Ctx,
-  doc: FigDesignDocument,
-  parentId: FigNodeId,
+  context: FigDocumentContext,
+  parentGuid: FigGuid,
   name: string,
   x: number,
   y: number,
   w: number,
   h: number,
   fill: FigColor,
-): FigDesignDocument {
+): FigDocumentContext {
   return addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "ELLIPSE",
       name,
@@ -146,26 +146,26 @@ function addEllipse(
       height: h,
       fills: [solidPaint(fill)],
     },
-  }).doc;
+  }).context;
 }
 
 async function generateClipFixtures(): Promise<void> {
   console.log("Generating clip fixtures...");
 
-  const empty = createEmptyFigDesignDocument("Clips");
+  const empty = createEmptyFigDocument("Clips");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "Clips").guid;
+  const ctx: Ctx = { state, pageGuid };
 
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 4;
   const GRID_GAP = 30;
@@ -186,49 +186,49 @@ async function generateClipFixtures(): Promise<void> {
   // clip-1level
   const p1 = gridPos();
   const f1 = addFrame(ctx, doc0, null, "clip-1level", p1.x, p1.y, 200, 200, white);
-  const d1a = addRect(ctx, f1.doc, f1.frameId, "rect", 20, 20, 80, 80, rgb(0.3, 0.5, 0.9), 8);
+  const d1a = addRect(ctx, f1.context, f1.frameId, "rect", 20, 20, 80, 80, rgb(0.3, 0.5, 0.9), 8);
   const d1b = addEllipse(ctx, d1a, f1.frameId, "circle", 100, 100, 60, 60, rgb(0.9, 0.3, 0.3));
 
   // clip-2level
   const p2 = gridPos();
   const f2 = addFrame(ctx, d1b, null, "clip-2level", p2.x, p2.y, 200, 200, white);
-  const inner2 = addFrame(ctx, f2.doc, f2.frameId, "inner", 20, 20, 160, 160, lightGray);
-  const d2a = addEllipse(ctx, inner2.doc, inner2.frameId, "circle", 40, 40, 80, 80, rgb(1, 0.8, 0));
+  const inner2 = addFrame(ctx, f2.context, f2.frameId, "inner", 20, 20, 160, 160, lightGray);
+  const d2a = addEllipse(ctx, inner2.context, inner2.frameId, "circle", 40, 40, 80, 80, rgb(1, 0.8, 0));
   const d2b = addRect(ctx, d2a, inner2.frameId, "rect", 10, 90, 60, 60, rgb(0.3, 0.7, 0.3), 6);
 
   // clip-3level
   const p3 = gridPos();
   const f3 = addFrame(ctx, d2b, null, "clip-3level", p3.x, p3.y, 200, 200, white);
-  const level2 = addFrame(ctx, f3.doc, f3.frameId, "level-2", 10, 10, 180, 180, lightGray);
-  const level3 = addFrame(ctx, level2.doc, level2.frameId, "level-3", 10, 10, 160, 160, null);
-  const d3a = addEllipse(ctx, level3.doc, level3.frameId, "circle", 40, 40, 80, 80, rgb(0.4, 0.7, 0.4));
+  const level2 = addFrame(ctx, f3.context, f3.frameId, "level-2", 10, 10, 180, 180, lightGray);
+  const level3 = addFrame(ctx, level2.context, level2.frameId, "level-3", 10, 10, 160, 160, null);
+  const d3a = addEllipse(ctx, level3.context, level3.frameId, "circle", 40, 40, 80, 80, rgb(0.4, 0.7, 0.4));
   const d3b = addRect(ctx, d3a, level3.frameId, "rect", 10, 10, 50, 50, rgb(0.9, 0.3, 0.6), 8);
 
   // clip-overflow
   const p4 = gridPos();
   const f4 = addFrame(ctx, d3b, null, "clip-overflow", p4.x, p4.y, 200, 200, white);
-  const d4a = addRect(ctx, f4.doc, f4.frameId, "overflow-rect", 100, 100, 150, 150, rgb(0.2, 0.6, 0.9), 12);
+  const d4a = addRect(ctx, f4.context, f4.frameId, "overflow-rect", 100, 100, 150, 150, rgb(0.2, 0.6, 0.9), 12);
   const d4b = addEllipse(ctx, d4a, f4.frameId, "overflow-circle", -30, -30, 120, 120, rgb(0.9, 0.5, 0.2));
 
   // clip-nested-shapes
   const p5 = gridPos();
   const f5 = addFrame(ctx, d4b, null, "clip-nested-shapes", p5.x, p5.y, 200, 200, white);
-  const inner5 = addFrame(ctx, f5.doc, f5.frameId, "inner", 20, 20, 160, 160, null);
-  const d5a = addRect(ctx, inner5.doc, inner5.frameId, "rect-large", 30, 30, 100, 100, rgb(0.3, 0.3, 0.9), 10);
+  const inner5 = addFrame(ctx, f5.context, f5.frameId, "inner", 20, 20, 160, 160, null);
+  const d5a = addRect(ctx, inner5.context, inner5.frameId, "rect-large", 30, 30, 100, 100, rgb(0.3, 0.3, 0.9), 10);
   const d5b = addEllipse(ctx, d5a, inner5.frameId, "circle-small", 10, 10, 60, 60, rgb(0.9, 0.7, 0));
 
   // clip-mixed
   const p6 = gridPos();
   const f6 = addFrame(ctx, d5b, null, "clip-mixed", p6.x, p6.y, 200, 200, white);
-  const d6a = addRect(ctx, f6.doc, f6.frameId, "outer-rect", 10, 10, 60, 60, rgb(0.9, 0.3, 0.3), 6);
+  const d6a = addRect(ctx, f6.context, f6.frameId, "outer-rect", 10, 10, 60, 60, rgb(0.9, 0.3, 0.3), 6);
   const inner6 = addFrame(ctx, d6a, f6.frameId, "inner", 70, 70, 120, 120, lightGray);
-  const d6b = addRect(ctx, inner6.doc, inner6.frameId, "inner-rect", 20, 20, 80, 80, rgb(0.3, 0.7, 0.3), 8);
+  const d6b = addRect(ctx, inner6.context, inner6.frameId, "inner-rect", 20, 20, 80, 80, rgb(0.3, 0.7, 0.3), 8);
   const d6c = addEllipse(ctx, d6b, inner6.frameId, "inner-ellipse", 60, 60, 50, 50, rgb(0.3, 0.5, 0.9));
 
   // clip-shapes-overlap
   const p7 = gridPos();
   const f7 = addFrame(ctx, d6c, null, "clip-shapes-overlap", p7.x, p7.y, 200, 200, white);
-  const d7a = addRect(ctx, f7.doc, f7.frameId, "bg-rect", 40, 40, 120, 120, rgb(0.2, 0.5, 0.8), 10);
+  const d7a = addRect(ctx, f7.context, f7.frameId, "bg-rect", 40, 40, 120, 120, rgb(0.2, 0.5, 0.8), 10);
   const d7b = addEllipse(ctx, d7a, f7.frameId, "overlap-circle", 60, 60, 100, 100, rgb(0.9, 0.3, 0.3));
   const d7c = addRect(ctx, d7b, f7.frameId, "top-rect", 20, 20, 80, 80, rgb(1, 0.8, 0), 8);
 

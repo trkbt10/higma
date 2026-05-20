@@ -225,7 +225,7 @@ describe("resolveTextRuns", () => {
     })).toThrow(/styleID=7 which has no entry in styleOverrideTable on node 1:2/);
   });
 
-  it("falls through to override.fillPaints when override.styleIdForFill is dangling", () => {
+  it("uses override.fillPaints as the local SoT when override.styleIdForFill is dangling", () => {
     // A run whose override carries a styleId that the registry can't
     // resolve must use the override's own embedded fillPaints (when
     // present). Figma Community exports routinely emit dangling refs

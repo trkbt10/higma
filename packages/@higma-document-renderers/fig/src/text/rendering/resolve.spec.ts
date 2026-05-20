@@ -3,7 +3,7 @@
  */
 
 import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
-import { resolveTextRendering } from "./resolve";
+import { resolveTextLayout, resolveTextRendering } from "./resolve";
 import type { TextFontResolver } from "./types";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
@@ -112,5 +112,187 @@ describe("resolveTextRendering font outlines", () => {
       blobs: [],
       fontResolver: RECT_FONT_RESOLVER,
     })).toThrow("text-resolve:derived-lines:partial-set-invalidated");
+  });
+
+  it("does not render synthetic derived-glyph placeholders as line text", () => {
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "\uFFFC",
+      },
+      derivedTextData: {
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 0, y: 10 },
+          fontSize: 20,
+          firstCharacter: 0,
+          advance: 0,
+        }],
+        baselines: [{
+          position: { x: 0, y: 10 },
+          width: 0,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 1,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [{ bytes: [] }],
+      fontResolver: undefined,
+    });
+
+    expect(rendering.kind).toBe("empty");
+  });
+
+  it("uses Kiwi glyph positions for placeholder text line metrics before font measurement", () => {
+    const minimalBlob = {
+      bytes: [0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "\uFFFC\uFFFC",
+      },
+      derivedTextData: {
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 3, y: 10 },
+          fontSize: 20,
+          firstCharacter: 0,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 11, y: 10 },
+          fontSize: 20,
+          firstCharacter: 1,
+          advance: 0,
+        }],
+        baselines: [{
+          position: { x: 3, y: 10 },
+          width: 15,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 2,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [minimalBlob],
+      fontResolver: () => ({
+        ...RECT_FONT,
+        charToGlyph: () => ({
+          index: 1,
+          advanceWidth: Number.NaN,
+          getPath: () => RECT_FONT_PATH,
+        }),
+      }),
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.charWidths).toEqual([8, 7]);
+  });
+
+  it("uses Kiwi font metrics for baseline layout and explicit font resolver for character widths", () => {
+    const node = {
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "Edited",
+        fontName: { family: "Poppins", style: "Regular" },
+      },
+      derivedTextData: {
+        baselines: [{
+          position: { x: 0, y: 19 },
+          width: 60,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 18,
+          firstCharacter: 0,
+          endCharacter: 6,
+        }],
+        fontMetaData: [{
+          key: { family: "Poppins", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    };
+    const layout = resolveTextLayout(node, { blobs: [], fontResolver: RECT_FONT_RESOLVER });
+    const rendering = resolveTextRendering(node, { blobs: [], fontResolver: RECT_FONT_RESOLVER });
+
+    expect(layout.layout.ascenderRatio).toBeCloseTo(0.9, 5);
+    expect(layout.layout.lines[0]?.text).toBe("Edited");
+    expect(rendering.kind).toBe("glyphs");
+  });
+
+  it("does not estimate character widths when only Kiwi line metrics remain", () => {
+    const node = {
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "Edited",
+        fontName: { family: "Poppins", style: "Regular" },
+      },
+      derivedTextData: {
+        baselines: [{
+          position: { x: 0, y: 19 },
+          width: 60,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 18,
+          firstCharacter: 0,
+          endCharacter: 6,
+        }],
+        fontMetaData: [{
+          key: { family: "Poppins", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    };
+
+    expect(() => resolveTextLayout(node, { blobs: [] }))
+      .toThrow("text-resolve:derived-line-metrics:requires-font-or-glyph-advances");
+  });
+
+  it("threads resolved character widths into cursor-facing layout", () => {
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "ABC",
+      },
+    }, {
+      blobs: [],
+      fontResolver: () => ({
+        ...RECT_FONT,
+        charToGlyph: (char) => ({
+          index: char.codePointAt(0) ?? 0,
+          advanceWidth: char === "A" ? 100 : 200,
+          getPath: () => RECT_FONT_PATH,
+        }),
+      }),
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.charWidths).toEqual([2, 4, 4]);
+    expect(rendering.layout.lines[0]?.width).toBe(10);
   });
 });

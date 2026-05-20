@@ -28,6 +28,10 @@ export type KiwiStackLayoutFields = Pick<
   | "stackWrap"
   | "stackCounterSpacing"
   | "stackReverseZIndex"
+  | "gridColumns"
+  | "gridRows"
+  | "gridColumnsSizing"
+  | "gridRowsSizing"
 >;
 
 export type KiwiChildLayoutFields = Pick<

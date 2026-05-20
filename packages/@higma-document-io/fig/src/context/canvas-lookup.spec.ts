@@ -8,7 +8,7 @@
  */
 import type { FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
 import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
-import { findCanvas, findInternalCanvas } from "./canvas-lookup";
+import { findCanvas, findCanvases, findInternalCanvas, requireCanvas, requireInternalCanvas } from "./canvas-lookup";
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {
   return { value: 0, name };
@@ -52,6 +52,17 @@ describe("findCanvas", () => {
   });
 });
 
+describe("findCanvases", () => {
+  it("returns only user-visible document CANVAS nodes in Kiwi order", () => {
+    const design = canvas(1, { name: "Design" });
+    const internal = canvas(2, { name: "Internal Only", internalOnly: true });
+    const prototype = canvas(3, { name: "Prototype" });
+    const hidden = canvas(4, { name: "Hidden", visible: false });
+
+    expect(findCanvases(kiwiDocument([design, internal, prototype, hidden]))).toEqual([design, prototype]);
+  });
+});
+
 describe("findInternalCanvas", () => {
   it("returns the (single) internal-only canvas", () => {
     const internal = canvas(2, { name: "Internal Only", internalOnly: true });
@@ -60,5 +71,24 @@ describe("findInternalCanvas", () => {
 
   it("returns undefined when there is no internal canvas", () => {
     expect(findInternalCanvas(kiwiDocument([canvas(1, { name: "Design" })]))).toBeUndefined();
+  });
+});
+
+describe("required canvas lookup", () => {
+  it("returns the user-visible canvas matching the requested name", () => {
+    const design = canvas(1, { name: "Design" });
+    expect(requireCanvas(kiwiDocument([design]), "Design")).toBe(design);
+  });
+
+  it("fails when no canvas matches", () => {
+    expect(() => requireCanvas(kiwiDocument([]), "Design")).toThrow(
+      'requireCanvas: CANVAS "Design" does not exist',
+    );
+  });
+
+  it("fails when there is no internal canvas", () => {
+    expect(() => requireInternalCanvas(kiwiDocument([]))).toThrow(
+      "requireInternalCanvas: internal CANVAS does not exist",
+    );
   });
 });

@@ -41,7 +41,9 @@ describe("renderFigToSvg exportSettings plumbing", () => {
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
-      symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+      symbolResolver: createSymbolResolver({
+        document: indexFigKiwiDocument([]),
+      }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       exportSettings: { colorProfile: "SRGB" },
     });
@@ -61,7 +63,9 @@ describe("renderFigToSvg exportSettings plumbing", () => {
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
-      symbolResolver: createSymbolResolver({ document: indexFigKiwiDocument([]) }),
+      symbolResolver: createSymbolResolver({
+        document: indexFigKiwiDocument([]),
+      }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       exportSettings: { colorProfile: "DISPLAY_P3_V4" },
     })).rejects.toThrow("Display P3 image export requires explicit exportSettings.displayP3IccProfile");

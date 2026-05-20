@@ -7,21 +7,45 @@
  *   bun packages/@higma-document-renderers/fig/scripts/generate-snapshots.ts text-comprehensive
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createFigDocumentContextFromNodeChanges, figDocumentResources } from "@higma-document-io/fig";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, findNodesByType, getNodeType } from "@higma-document-models/fig/domain";
-import type { FigNode, FigGuid } from "@higma-document-models/fig/types";
-import { renderCanvas } from "../src/svg/renderer";
+import { findNodesByType, getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
+import { renderCanvas, renderFigToSvg } from "../src/svg/renderer";
 
-const FIXTURES_DIR = path.join(import.meta.dir, "../fixtures");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURES_DIR = path.join(__dirname, "../fixtures");
 
 function getNodeSize(node: FigNode): { width: number; height: number } {
-  return { width: node.size?.x ?? 800, height: node.size?.y ?? 600 };
+  const size = node.size;
+  if (size === undefined || size.x === undefined || size.y === undefined) {
+    throw new Error(`Snapshot generation requires size for node "${node.name ?? "<unnamed>"}"`);
+  }
+  return { width: size.x, height: size.y };
 }
 
-function getNodeGuid(node: FigNode): FigGuid | undefined {
-  return node.guid;
+function getNodeViewport(node: FigNode, width: number, height: number): { x: number; y: number; width: number; height: number } {
+  const transform = node.transform;
+  if (transform === undefined) {
+    throw new Error(`Snapshot generation requires transform for node "${node.name ?? "<unnamed>"}"`);
+  }
+  return {
+    x: transform.m02 ?? 0,
+    y: transform.m12 ?? 0,
+    width,
+    height,
+  };
+}
+
+function getNodeGuidKey(node: FigNode): string {
+  const guid = node.guid;
+  if (guid === undefined) {
+    throw new Error(`Snapshot generation requires GUID for node "${node.name ?? "<unnamed>"}"`);
+  }
+  return guidToString(guid);
 }
 
 function sanitizeFilename(name: string): string {
@@ -75,14 +99,19 @@ async function generateSnapshots(scope: string) {
   console.log(`Loading ${path.basename(figPath)}...`);
   const data = fs.readFileSync(figPath);
   const parsed = await parseFigFile(new Uint8Array(data));
+  const context = createFigDocumentContextFromNodeChanges({
+    nodeChanges: parsed.nodeChanges,
+    blobs: parsed.blobs,
+    images: parsed.images,
+    metadata: null,
+  });
+  const resources = figDocumentResources(context);
 
-  console.log(`Building node tree (${parsed.nodeChanges.length} nodes)...`);
-  const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
-  const blobs = parsed.blobs;
+  console.log(`Indexing Kiwi document (${parsed.nodeChanges.length} nodes)...`);
 
   // Find all CANVAS (page) nodes
-  const canvases = findNodesByType(roots, "CANVAS");
-  console.log(`Found ${canvases.length} pages, ${blobs.length} blobs\n`);
+  const canvases = findNodesByType(resources.document, "CANVAS");
+  console.log(`Found ${canvases.length} pages, ${resources.blobs.length} blobs\n`);
 
   // Output directory is fixtures/[scope]/snapshots/
   const outDir = path.join(scopeDir, "snapshots");
@@ -116,34 +145,40 @@ async function generateSnapshots(scope: string) {
     };
 
     // Render full page
-    const pageResult = await renderCanvas(canvas, { width: 1200, height: 800, blobs, symbolMap: nodeMap });
+    const pageResult = await renderCanvas(canvas, {
+      width: 1200,
+      height: 800,
+      blobs: resources.blobs,
+      images: resources.images,
+      childrenOf: resources.childrenOf,
+      symbolResolver: resources.symbolResolver,
+      styleRegistry: resources.styleRegistry,
+    });
     const pageSvgPath = path.join(outDir, `${pageFilename}.svg`);
     fs.writeFileSync(pageSvgPath, pageResult.svg);
     console.log(`  -> ${pageFilename}.svg (${pageResult.warnings.length} warnings)`);
 
     // Render individual top-level elements
-    const children = canvas.children ?? [];
+    const children = resources.childrenOf(canvas);
     for (const child of children) {
       const elemName = child.name ?? "unnamed";
       const elemType = getNodeType(child);
       const size = getNodeSize(child);
-      const guid = getNodeGuid(child);
-      const guidStr = guid ? `${guid.sessionID}-${guid.localID}` : "unknown";
+      const guidStr = sanitizeFilename(getNodeGuidKey(child));
 
       const elemFilename = `${pageFilename}--${sanitizeFilename(elemName)}--${guidStr}`;
 
-      // Create a wrapper canvas for single element rendering
-      const wrapperCanvas: FigNode = {
-        type: "CANVAS",
-        name: elemName,
-        children: [child],
-      };
-
-      const elemResult = await renderCanvas(wrapperCanvas, {
-        width: Math.max(size.width, 100),
-        height: Math.max(size.height, 100),
-        blobs,
-        symbolMap: nodeMap,
+      const width = Math.max(size.width, 100);
+      const height = Math.max(size.height, 100);
+      const elemResult = await renderFigToSvg([child], {
+        width,
+        height,
+        viewport: getNodeViewport(child, width, height),
+        blobs: resources.blobs,
+        images: resources.images,
+        childrenOf: resources.childrenOf,
+        symbolResolver: resources.symbolResolver,
+        styleRegistry: resources.styleRegistry,
       });
 
       const elemSvgPath = path.join(outDir, `${elemFilename}.svg`);

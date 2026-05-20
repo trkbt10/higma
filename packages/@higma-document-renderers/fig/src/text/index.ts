@@ -13,6 +13,7 @@ export type {
   TextDecoration,
   TextBoxSize,
   FigTextData,
+  TextNodeInput,
 } from "./layout";
 
 export {
@@ -28,6 +29,7 @@ export {
   textLayoutToCursorLayout,
   type TextLayout,
   type LayoutLine,
+  type TextLayoutSourceLine,
   type ComputeLayoutOptions,
   type CursorLayoutResult,
   type CursorLayoutLine,
@@ -55,8 +57,7 @@ export type {
 // Unified text rendering SoT
 export {
   resolveTextRendering,
-  resolveTextAscenderRatio,
-  resolveTextDescenderRatio,
+  resolveTextLayout,
   createCachedTextFontResolver,
   type CachedTextFontSource,
 } from "./rendering";
@@ -67,5 +68,6 @@ export type {
   TextRenderingGlyphs,
   TextRenderingLines,
   ResolveTextContext,
+  TextLayoutResolution,
   TextFontResolver,
 } from "./rendering";

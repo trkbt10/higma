@@ -3,7 +3,7 @@
  * extension does and probe both the happy path and the error-forwarding
  * path. A blank webview in production (which leaves no trace in the
  * extension host terminal) should now surface here as a captured
- * `webview/log` error and a render-time fallback UI.
+ * `webview/log` error and a render-time error UI.
  */
 
 import { test, expect, type ConsoleMessage, type Page } from "@playwright/test";
@@ -92,7 +92,7 @@ test("large real-world fixture renders the fig content", async ({ page }) => {
   });
 
   // The fig viewer must surface the toolbar with the real filename
-  // (i.e. it actually progressed past `createFigDesignDocument`).
+  // (i.e. it actually progressed past `createFigDocumentContext`).
   await expect(page.locator(".higma-fig-toolbar__filename"))
     .toHaveText("sample-file.fig", { timeout: 30_000 });
 

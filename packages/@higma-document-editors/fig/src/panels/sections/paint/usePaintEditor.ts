@@ -18,7 +18,7 @@ import {
   replacePaint,
   setGradientHandle,
   setGradientStop,
-  setImageRef,
+  setImageHashHex,
   setImageRotationDeg,
   setImageScale,
   setImageScaleMode,
@@ -90,7 +90,7 @@ export function usePaintEditor(kind: PaintListKind): PaintEditor {
         (node) => writePaintList(
           node,
           kind,
-          replacePaint(paintList(node, kind), paintIndex, (paint) => setImageRef(paint, image.ref)),
+          replacePaint(paintList(node, kind), paintIndex, (paint) => setImageHashHex(paint, image.ref)),
         ),
         "property-panel",
       );
@@ -101,7 +101,7 @@ export function usePaintEditor(kind: PaintListKind): PaintEditor {
     onTypeChange: (index: number, type: PaintTypeId) => updatePaint(index, (paint) => setPaintType(paint, type)),
     onOpacityChange: (index: number, opacity: number) => updatePaint(index, (paint) => setPaintOpacity(paint, opacity)),
     onColorChange: (index: number, hex: string) => updatePaint(index, (paint) => setPaintColor(paint, hex)),
-    onImageRefChange: (index: number, imageRef: string) => updatePaint(index, (paint) => setImageRef(paint, imageRef)),
+    onImageHashHexChange: (index: number, imageHashHex: string) => updatePaint(index, (paint) => setImageHashHex(paint, imageHashHex)),
     onImageScaleModeChange: (index: number, scaleMode: ImageScaleModeId) => updatePaint(index, (paint) => setImageScaleMode(paint, scaleMode)),
     onImageScaleChange: (index: number, scale: number) => updatePaint(index, (paint) => setImageScale(paint, scale)),
     onImageRotationChange: (index: number, rotationDeg: number) => updatePaint(index, (paint) => setImageRotationDeg(paint, rotationDeg)),

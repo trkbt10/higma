@@ -18,7 +18,9 @@ import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 import { planRasterization } from "./rasterize";
 
-const FIXTURE_SYMBOL_RESOLVER = createSymbolResolver({ document: indexFigKiwiDocument([]) });
+const FIXTURE_SYMBOL_RESOLVER = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+});
 const childrenOfFixtureNode = FIXTURE_SYMBOL_RESOLVER.childrenOfResolvedNode;
 
 function enumName<T extends string>(name: T): KiwiEnumValue<T> {

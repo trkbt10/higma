@@ -28,18 +28,17 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-  TextStyleOverride,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+import type { FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 import {
   TEXT_AUTO_RESIZE_VALUES,
@@ -60,7 +59,7 @@ const RED: FigColor = { r: 0.85, g: 0.15, b: 0.15, a: 1 };
 const BLUE: FigColor = { r: 0.15, g: 0.3, b: 0.85, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 type CaseSpec = { readonly name: string; readonly value: TextCase; readonly text: string };
@@ -88,9 +87,7 @@ const AUTO_RESIZE: readonly AutoResizeSpec[] = [
 ];
 
 /**
- * Per-run override descriptor. Mirrors the shape the legacy
- * `textNode().styleRuns([...])` builder accepted, but kept local to
- * this script — the canonical FigDesignNode carries this data via
+ * Per-run override descriptor. The Kiwi TEXT node carries this data via
  * `textData.characterStyleIDs` + `textData.styleOverrideTable`.
  */
 type StyleRunSpec = {
@@ -114,32 +111,32 @@ type AddTextOpts = {
 
 function pickTextDecoration<T>(
   name: TextDecoration | undefined,
-  fallback: T,
+  currentValue: T,
 ): T | { value: number; name: TextDecoration } {
-  if (!name) return fallback;
+  if (!name) {return currentValue;}
   return { value: TEXT_DECORATION_VALUES[name], name };
 }
 
 function pickTextAutoResize<T>(
   name: TextAutoResize | undefined,
-  fallback: T,
+  currentValue: T,
 ): T | { value: number; name: TextAutoResize } {
-  if (!name) return fallback;
+  if (!name) {return currentValue;}
   return { value: TEXT_AUTO_RESIZE_VALUES[name], name };
 }
 
 function addStyledText(
   state: FigBuilderState,
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  parentId: FigNodeId,
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
+  parentGuid: FigGuid,
   opts: AddTextOpts,
-): FigDesignDocument {
+): FigDocumentContext {
   const added = addNode({
     state,
-    doc,
-    pageId,
-    parentId,
+    context,
+    pageGuid,
+    parentGuid,
     spec: {
       type: "TEXT",
       name: opts.name,
@@ -161,14 +158,13 @@ function addStyledText(
     opts.autoResize !== undefined ||
     opts.styleRuns !== undefined;
   if (!needsTextDataPatch) {
-    return added.doc;
+    return added.context;
   }
 
   return updateNode({
-    doc: added.doc,
-    pageId,
-    nodeId: added.nodeId,
-    updater: (n) => {
+    context: added.context,
+    nodeGuid: added.nodeGuid,
+    update: (n) => {
       const td = n.textData;
       if (!td) {
         return n;
@@ -211,10 +207,10 @@ function buildCharacterStyleIDs(text: string, runs: readonly StyleRunSpec[]): re
   });
 }
 
-function buildStyleOverrideTable(runs: readonly StyleRunSpec[]): readonly TextStyleOverride[] {
+function buildStyleOverrideTable(runs: readonly StyleRunSpec[]): readonly FigTextStyleOverrideEntry[] {
   return runs.map((run, index) => {
     const fontName = run.fontName ? { family: run.fontName.family, style: run.fontName.style } : undefined;
-    const entry: TextStyleOverride = {
+    const entry: FigTextStyleOverrideEntry = {
       styleID: index + 1,
       fillPaints: [solidPaint(run.fillColor)],
       ...(fontName ? { fontName } : {}),
@@ -225,15 +221,15 @@ function buildStyleOverrideTable(runs: readonly StyleRunSpec[]): readonly TextSt
 
 function addRowFrame(
   state: FigBuilderState,
-  doc: FigDesignDocument,
-  pageId: FigPageId,
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
   opts: { readonly name: string; readonly y: number; readonly height: number },
-): { readonly doc: FigDesignDocument; readonly frameId: FigNodeId } {
+): { readonly context: FigDocumentContext; readonly frameId: FigGuid } {
   const r = addNode({
     state,
-    doc,
-    pageId,
-    parentId: null,
+    context,
+    pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -245,67 +241,67 @@ function addRowFrame(
       clipsContent: true,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating text-styling fixture...");
 
-  const empty = createEmptyFigDesignDocument("Text Styling");
+  const empty = createEmptyFigDocument("Text Styling");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const docWithInternal = addPage({
+  const pageGuid = requireCanvas(empty.document, "Text Styling").guid;
+  const contextWithInternal = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
-  const caseFrame = addRowFrame(state, docWithInternal, pageId, {
+  const caseFrame = addRowFrame(state, contextWithInternal, pageGuid, {
     name: "text-case",
     y: 80,
     height: TEXT_CASES.length * 36 + 32,
   });
-  const docAfterCases = TEXT_CASES.reduce<FigDesignDocument>(
+  const contextAfterCases = TEXT_CASES.reduce<FigDocumentContext>(
     (acc, c, index) =>
-      addStyledText(state, acc, pageId, caseFrame.frameId, {
+      addStyledText(state, acc, pageGuid, caseFrame.frameId, {
         name: c.name,
         text: c.text,
         x: 24,
         y: 16 + index * 36,
         textCase: c.value,
       }),
-    caseFrame.doc,
+    caseFrame.context,
   );
 
-  const decoFrame = addRowFrame(state, docAfterCases, pageId, {
+  const decoFrame = addRowFrame(state, contextAfterCases, pageGuid, {
     name: "text-decoration",
     y: 80 + TEXT_CASES.length * 36 + 64,
     height: TEXT_DECORATIONS.length * 36 + 32,
   });
-  const docAfterDecorations = TEXT_DECORATIONS.reduce<FigDesignDocument>(
+  const contextAfterDecorations = TEXT_DECORATIONS.reduce<FigDocumentContext>(
     (acc, d, index) =>
-      addStyledText(state, acc, pageId, decoFrame.frameId, {
+      addStyledText(state, acc, pageGuid, decoFrame.frameId, {
         name: d.name,
         text: d.text,
         x: 24,
         y: 16 + index * 36,
         decoration: d.value,
       }),
-    decoFrame.doc,
+    decoFrame.context,
   );
 
-  const resizeFrame = addRowFrame(state, docAfterDecorations, pageId, {
+  const resizeFrame = addRowFrame(state, contextAfterDecorations, pageGuid, {
     name: "auto-resize",
     y: 80 + TEXT_CASES.length * 36 + 64 + TEXT_DECORATIONS.length * 36 + 64,
     height: AUTO_RESIZE.length * 60 + 32,
   });
-  const docAfterResize = AUTO_RESIZE.reduce<FigDesignDocument>(
+  const contextAfterResize = AUTO_RESIZE.reduce<FigDocumentContext>(
     (acc, a, index) =>
-      addStyledText(state, acc, pageId, resizeFrame.frameId, {
+      addStyledText(state, acc, pageGuid, resizeFrame.frameId, {
         name: a.name,
         text: a.text,
         x: 24,
@@ -313,12 +309,12 @@ async function generate(): Promise<void> {
         width: 280,
         autoResize: a.value,
       }),
-    resizeFrame.doc,
+    resizeFrame.context,
   );
 
   // Mixed-style runs: a single TEXT node carrying three contiguous
   // overrides so per-character style data round-trips.
-  const runsFrame = addRowFrame(state, docAfterResize, pageId, {
+  const runsFrame = addRowFrame(state, contextAfterResize, pageGuid, {
     name: "style-runs",
     y: 80 + TEXT_CASES.length * 36 + 64 + TEXT_DECORATIONS.length * 36 + 64 + AUTO_RESIZE.length * 60 + 64,
     height: 80,
@@ -329,7 +325,7 @@ async function generate(): Promise<void> {
     { start: 4, end: 9, fillColor: { r: 0.15, g: 0.7, b: 0.15, a: 1 } },
     { start: 10, end: 14, fillColor: BLUE },
   ];
-  const finalDoc = addStyledText(state, runsFrame.doc, pageId, runsFrame.frameId, {
+  const finalContext = addStyledText(state, runsFrame.context, pageGuid, runsFrame.frameId, {
     name: "mixed-runs",
     text: characters,
     x: 24,
@@ -341,7 +337,7 @@ async function generate(): Promise<void> {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Size: ${(exported.data.length / 1024).toFixed(1)} KB`);

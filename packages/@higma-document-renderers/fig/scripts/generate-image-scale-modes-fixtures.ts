@@ -21,12 +21,15 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  addImageToFigDocumentContext,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { addImage } from "@higma-document-models/fig/builder";
-import type { FigDesignDocument } from "@higma-document-models/fig/domain";
+import { figImageHashHexToBytes } from "@higma-document-models/fig/domain";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, SCALE_MODE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigColor, FigImageScaleMode, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,69 +69,68 @@ async function computeSha1Hex(data: Uint8Array): Promise<string> {
 
 const SCALE_MODES = ["STRETCH", "FIT", "FILL", "TILE"] as const;
 
-function imagePaint(imageRef: string, mode: FigImageScaleMode, scalingFactor?: number): FigPaint {
+function imagePaint(imageHashHex: string, mode: FigImageScaleMode, scalingFactor?: number): FigPaint {
   return {
-    type: "IMAGE",
-    imageRef,
-    imageHash: imageRef,
-    image: undefined,
-    imageScaleMode: mode,
-    scaleMode: mode,
-    scalingFactor,
+    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    image: { hash: figImageHashHexToBytes(imageHashHex) },
+    imageScaleMode: { value: SCALE_MODE_VALUES[mode], name: mode },
     scale: scalingFactor,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating image-scale-modes fixture...");
 
-  const empty = createEmptyFigDesignDocument("Image Scale Modes");
+  const empty = createEmptyFigDocument("Image Scale Modes");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const docWithInternal = addPage({
+  const pageGuid = requireCanvas(empty.document, "Image Scale Modes").guid;
+  const contextWithInternal = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const pngBytes = createCheckerboardPng();
-  const imageRef = await computeSha1Hex(pngBytes);
-  const docWithImage = addImage(docWithInternal, imageRef, {
-    ref: imageRef,
+  const imageHashHex = await computeSha1Hex(pngBytes);
+  const contextWithImage = addImageToFigDocumentContext({
+    context: contextWithInternal,
+    image: {
+    ref: imageHashHex,
     data: pngBytes,
     mimeType: "image/png",
+    },
   });
 
   const FRAME_W = 160;
   const FRAME_H = 120;
   const GAP = 40;
 
-  const finalDoc = SCALE_MODES.reduce<FigDesignDocument>((acc, mode, index) => {
+  const finalContext = SCALE_MODES.reduce<FigDocumentContext>((acc, mode, index) => {
     const x = 100 + index * (FRAME_W + GAP);
     const y = 100;
 
     const frameResult = addNode({
       state,
-      doc: acc,
-      pageId,
-      parentId: null,
+      context: acc,
+      pageGuid,
+      parentGuid: null,
       spec: {
         type: "FRAME",
         name: `scale-${mode.toLowerCase()}`,
@@ -143,13 +145,13 @@ async function generate(): Promise<void> {
 
     // TILE requires an explicit factor — half-size tiles are visually
     // distinct from FIT/FILL/STRETCH.
-    const paint = imagePaint(imageRef, mode, mode === "TILE" ? 0.5 : undefined);
+    const paint = imagePaint(imageHashHex, mode, mode === "TILE" ? 0.5 : undefined);
 
     const shapeResult = addNode({
       state,
-      doc: frameResult.doc,
-      pageId,
-      parentId: frameResult.nodeId,
+      context: frameResult.context,
+      pageGuid,
+      parentGuid: frameResult.nodeGuid,
       spec: {
         type: "ROUNDED_RECTANGLE",
         name: `image-${mode.toLowerCase()}`,
@@ -162,14 +164,14 @@ async function generate(): Promise<void> {
       },
     });
     console.log(`  ${index + 1}/${SCALE_MODES.length} ${mode}`);
-    return shapeResult.doc;
-  }, docWithImage);
+    return shapeResult.context;
+  }, contextWithImage);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`\nGenerated: ${OUTPUT_FILE}`);
   console.log(`Size: ${(exported.data.length / 1024).toFixed(1)} KB`);

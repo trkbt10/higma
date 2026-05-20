@@ -9,7 +9,7 @@
  *
  * Anchor values are kernel-defined string ids ("MIN"|"CENTER"|"MAX"|
  * "STRETCH"|"SCALE") matching the LayoutConstraintsSection enums; consumers
- * map these to their domain (e.g. fig Kiwi enums) in an adapter.
+ * project these to their domain values (e.g. fig Kiwi enums) at the boundary.
  */
 
 import type { CSSProperties } from "react";
@@ -135,6 +135,22 @@ function nodeIndicatorPosition(anchor: ConstraintAxisAnchor): "start" | "center"
   return "center";
 }
 
+function nodeAxisOffset(
+  placement: "start" | "center" | "end",
+  stretch: boolean,
+): number {
+  if (stretch) {
+    return CELL_PADDING;
+  }
+  if (placement === "start") {
+    return CELL_PADDING;
+  }
+  if (placement === "end") {
+    return GRID_SIZE - CELL_PADDING - NODE_SIZE;
+  }
+  return (GRID_SIZE - NODE_SIZE) / 2;
+}
+
 function nodePositionStyle(
   horizontal: ConstraintAxisAnchor,
   vertical: ConstraintAxisAnchor,
@@ -146,32 +162,8 @@ function nodePositionStyle(
 
   const width = horizontalStretch ? GRID_SIZE - CELL_PADDING * 2 : NODE_SIZE;
   const height = verticalStretch ? GRID_SIZE - CELL_PADDING * 2 : NODE_SIZE;
-
-  const horizontalOffset = (() => {
-    if (horizontalStretch) {
-      return CELL_PADDING;
-    }
-    if (horizontalPlacement === "start") {
-      return CELL_PADDING;
-    }
-    if (horizontalPlacement === "end") {
-      return GRID_SIZE - CELL_PADDING - NODE_SIZE;
-    }
-    return (GRID_SIZE - NODE_SIZE) / 2;
-  })();
-
-  const verticalOffset = (() => {
-    if (verticalStretch) {
-      return CELL_PADDING;
-    }
-    if (verticalPlacement === "start") {
-      return CELL_PADDING;
-    }
-    if (verticalPlacement === "end") {
-      return GRID_SIZE - CELL_PADDING - NODE_SIZE;
-    }
-    return (GRID_SIZE - NODE_SIZE) / 2;
-  })();
+  const horizontalOffset = nodeAxisOffset(horizontalPlacement, horizontalStretch);
+  const verticalOffset = nodeAxisOffset(verticalPlacement, verticalStretch);
 
   return {
     position: "absolute",

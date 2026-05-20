@@ -36,6 +36,12 @@ type AddNodeOptions = {
   readonly spec: NodeSpec;
 };
 
+type UpdateNodeOptions = {
+  readonly context: FigDocumentContext;
+  readonly nodeGuid: FigGuid;
+  readonly update: (node: FigNode) => FigNode;
+};
+
 /**
  * Append a new Kiwi node under an explicit page/parent GUID.
  */
@@ -54,4 +60,25 @@ export function addNode(
     context: contextWithNodes(context, [...context.document.nodeChanges, node]),
     nodeGuid: node.guid,
   };
+}
+
+/**
+ * Replace one Kiwi node by GUID and re-index the same document context.
+ */
+export function updateNode(
+  { context, nodeGuid, update }: UpdateNodeOptions,
+): FigDocumentContext {
+  const key = guidToString(nodeGuid);
+  const node = context.document.nodesByGuid.get(key);
+  if (node === undefined) {
+    throw new Error(`updateNode: node ${key} does not exist`);
+  }
+  const updated = update(node);
+  if (guidToString(updated.guid) !== key) {
+    throw new Error(`updateNode: update changed node guid ${key} to ${guidToString(updated.guid)}`);
+  }
+  return contextWithNodes(
+    context,
+    context.document.nodeChanges.map((current) => (guidToString(current.guid) === key ? updated : current)),
+  );
 }

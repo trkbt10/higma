@@ -12,7 +12,9 @@
  * even when an artboard is currently invisible.
  */
 
-import type { FigDesignNode } from "@higma-document-models/fig/domain";
+import { guidToString } from "@higma-document-models/fig/domain";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
+import type { FigMatrix, FigNode, FigVector } from "@higma-document-models/fig/types";
 
 export type PageBounds = {
   readonly x: number;
@@ -21,12 +23,17 @@ export type PageBounds = {
   readonly height: number;
 };
 
-const DEFAULT_FALLBACK_SIZE = 1024;
-
 type Matrix = readonly [number, number, number, number, number, number];
 
-function readMatrix(node: FigDesignNode): Matrix {
-  const t = node.transform;
+function requireSize(node: FigNode): FigVector {
+  if (node.size === undefined) {
+    throw new Error(`VSC fig viewer page bounds require size for Kiwi node ${guidToString(node.guid)}`);
+  }
+  return node.size;
+}
+
+function matrixTuple(transform: FigMatrix | undefined): Matrix {
+  const t = readKiwiTransform(transform);
   return [t.m00, t.m01, t.m02, t.m10, t.m11, t.m12];
 }
 
@@ -42,20 +49,19 @@ function applyMatrix(m: Matrix, x: number, y: number): { readonly x: number; rea
  * Computes the union AABB of every child of a fig page in canvas
  * (page-local) coordinates.
  *
- * Returns a `DEFAULT_FALLBACK_SIZE`-square bounds anchored at the origin
- * when the page has no children — the viewer renders an empty canvas
- * surface rather than degenerating to a 0×0 viewBox that browsers treat
- * as invalid.
+ * Returns `null` when the page has no children; the viewer renders the
+ * explicit empty state instead of inventing a canvas extent.
  */
-export function computePageBounds(children: readonly FigDesignNode[]): PageBounds {
+export function computePageBounds(children: readonly FigNode[]): PageBounds | null {
   if (children.length === 0) {
-    return { x: 0, y: 0, width: DEFAULT_FALLBACK_SIZE, height: DEFAULT_FALLBACK_SIZE };
+    return null;
   }
 
   const corners = children.flatMap((child) => {
-    const matrix = readMatrix(child);
-    const w = child.size.x;
-    const h = child.size.y;
+    const matrix = matrixTuple(child.transform);
+    const size = requireSize(child);
+    const w = size.x;
+    const h = size.y;
     return [
       applyMatrix(matrix, 0, 0),
       applyMatrix(matrix, w, 0),

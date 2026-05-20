@@ -21,17 +21,17 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type {
   FigColor,
   FigEffect,
@@ -47,11 +47,11 @@ const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
 const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 
 // =============================================================================
-// Paint helpers
+// Paint construction
 // =============================================================================
 
 function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return { type: "SOLID", color, opacity, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 /**
@@ -71,23 +71,23 @@ function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: "GRADIENT_LINEAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
     stops,
     transform: { m00: dx, m01: -dy, m02: endX, m10: dy, m11: dx, m12: endY },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function radialGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
   return {
-    type: "GRADIENT_RADIAL",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
     stops,
     transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -100,7 +100,7 @@ function angularGradientPaint(stops: readonly FigGradientStop[], rotationDeg = 0
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
   return {
-    type: "GRADIENT_ANGULAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_ANGULAR, name: "GRADIENT_ANGULAR" },
     stops,
     transform: {
       m00: 0.5 * cos,
@@ -112,18 +112,18 @@ function angularGradientPaint(stops: readonly FigGradientStop[], rotationDeg = 0
     },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function diamondGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
   return {
-    type: "GRADIENT_DIAMOND",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_DIAMOND, name: "GRADIENT_DIAMOND" },
     stops,
     transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -134,12 +134,12 @@ function dropShadowEffect(opts: {
   readonly color: FigColor;
 }): FigEffect {
   return {
-    type: "DROP_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
     visible: true,
     color: opts.color,
     offset: { x: opts.offsetX, y: opts.offsetY },
     radius: opts.radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -149,16 +149,16 @@ function dropShadowEffect(opts: {
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
-type AddedFrame = { readonly doc: FigDesignDocument; readonly frameId: FigNodeId };
+type AddedFrame = { readonly context: FigDocumentContext; readonly frameId: FigGuid };
 
 function addFrame(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
   opts: {
-    readonly parentId: FigNodeId | null;
+    readonly parentGuid: FigGuid | null;
     readonly name: string;
     readonly x: number;
     readonly y: number;
@@ -170,9 +170,9 @@ function addFrame(
 ): AddedFrame {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId: opts.parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: opts.parentGuid,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -184,7 +184,7 @@ function addFrame(
       clipsContent: opts.clipsContent ?? true,
     },
   });
-  return { doc: r.doc, frameId: r.nodeId };
+  return { context: r.context, frameId: r.nodeGuid };
 }
 
 // =============================================================================
@@ -192,20 +192,20 @@ function addFrame(
 // =============================================================================
 
 type Args = {
-  readonly doc: FigDesignDocument;
+  readonly context: FigDocumentContext;
   readonly ctx: Ctx;
   readonly x: number;
   readonly y: number;
 };
-type Result = { readonly doc: FigDesignDocument };
+type Result = { readonly context: FigDocumentContext };
 
-function addAngularGradientBasic({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "angular-gradient-basic", x, y, width: 160, height: 160, background: WHITE });
+function addAngularGradientBasic({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "angular-gradient-basic", x, y, width: 160, height: 160, background: WHITE });
   const shape = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ELLIPSE",
       name: "angular-circle",
@@ -221,16 +221,16 @@ function addAngularGradientBasic({ doc, ctx, x, y }: Args): Result {
       ])],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
-function addAngularGradientRect({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "angular-gradient-rect", x, y, width: 200, height: 140, background: WHITE });
+function addAngularGradientRect({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "angular-gradient-rect", x, y, width: 200, height: 140, background: WHITE });
   const shape = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "angular-rounded",
@@ -249,16 +249,16 @@ function addAngularGradientRect({ doc, ctx, x, y }: Args): Result {
       )],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
-function addDiamondGradient({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "diamond-gradient", x, y, width: 160, height: 160, background: WHITE });
+function addDiamondGradient({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "diamond-gradient", x, y, width: 160, height: 160, background: WHITE });
   const shape = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "diamond-rect",
@@ -273,18 +273,18 @@ function addDiamondGradient({ doc, ctx, x, y }: Args): Result {
       ])],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
-function addMultiFillSolid({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "multi-fill-solid", x, y, width: 160, height: 120, background: WHITE });
+function addMultiFillSolid({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "multi-fill-solid", x, y, width: 160, height: 120, background: WHITE });
   // Two-layer fill — Figma stacks paints bottom-to-top in the fills
   // array; the upper paint with reduced opacity tints the lower one.
   const shape = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "multi-solid",
@@ -299,16 +299,16 @@ function addMultiFillSolid({ doc, ctx, x, y }: Args): Result {
       ],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
-function addMultiFillGradient({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "multi-fill-gradient", x, y, width: 200, height: 140, background: LIGHT_GRAY });
+function addMultiFillGradient({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "multi-fill-gradient", x, y, width: 200, height: 140, background: LIGHT_GRAY });
   const shape = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "multi-gradient",
@@ -326,13 +326,13 @@ function addMultiFillGradient({ doc, ctx, x, y }: Args): Result {
       ],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
-function addMaskBasic({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "mask-basic", x, y, width: 160, height: 160, background: WHITE });
-  const inner = addFrame(f.doc, ctx, {
-    parentId: f.frameId,
+function addMaskBasic({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "mask-basic", x, y, width: 160, height: 160, background: WHITE });
+  const inner = addFrame(f.context, ctx, {
+    parentGuid: f.frameId,
     name: "mask-group",
     x: 20,
     y: 20,
@@ -341,14 +341,12 @@ function addMaskBasic({ doc, ctx, x, y }: Args): Result {
     background: WHITE,
     clipsContent: false,
   });
-  // The mask shape clips the next sibling. `mask: true` is the
-  // FigDesignNode-level flag that document-to-tree projects onto
-  // the Kiwi `mask` field.
+  // The mask shape clips the next sibling through the Kiwi `mask` field.
   const maskShape = addNode({
     state: ctx.state,
-    doc: inner.doc,
-    pageId: ctx.pageId,
-    parentId: inner.frameId,
+    context: inner.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: inner.frameId,
     spec: {
       type: "ELLIPSE",
       name: "mask-circle",
@@ -360,16 +358,15 @@ function addMaskBasic({ doc, ctx, x, y }: Args): Result {
     },
   });
   const masked = updateNode({
-    doc: maskShape.doc,
-    pageId: ctx.pageId,
-    nodeId: maskShape.nodeId,
-    updater: (n) => ({ ...n, mask: true }),
+    context: maskShape.context,
+    nodeGuid: maskShape.nodeGuid,
+    update: (n) => ({ ...n, mask: true }),
   });
   const content = addNode({
     state: ctx.state,
-    doc: masked,
-    pageId: ctx.pageId,
-    parentId: inner.frameId,
+    context: masked,
+    pageGuid: ctx.pageGuid,
+    parentGuid: inner.frameId,
     spec: {
       type: "RECTANGLE",
       name: "masked-content",
@@ -383,13 +380,13 @@ function addMaskBasic({ doc, ctx, x, y }: Args): Result {
       ])],
     },
   });
-  return { doc: content.doc };
+  return { context: content.context };
 }
 
-function addMaskRounded({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "mask-rounded", x, y, width: 200, height: 140, background: LIGHT_GRAY });
-  const inner = addFrame(f.doc, ctx, {
-    parentId: f.frameId,
+function addMaskRounded({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "mask-rounded", x, y, width: 200, height: 140, background: LIGHT_GRAY });
+  const inner = addFrame(f.context, ctx, {
+    parentGuid: f.frameId,
     name: "mask-group",
     x: 20,
     y: 20,
@@ -400,9 +397,9 @@ function addMaskRounded({ doc, ctx, x, y }: Args): Result {
   });
   const maskShape = addNode({
     state: ctx.state,
-    doc: inner.doc,
-    pageId: ctx.pageId,
-    parentId: inner.frameId,
+    context: inner.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: inner.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "mask-shape",
@@ -415,16 +412,15 @@ function addMaskRounded({ doc, ctx, x, y }: Args): Result {
     },
   });
   const masked = updateNode({
-    doc: maskShape.doc,
-    pageId: ctx.pageId,
-    nodeId: maskShape.nodeId,
-    updater: (n) => ({ ...n, mask: true }),
+    context: maskShape.context,
+    nodeGuid: maskShape.nodeGuid,
+    update: (n) => ({ ...n, mask: true }),
   });
   const content = addNode({
     state: ctx.state,
-    doc: masked,
-    pageId: ctx.pageId,
-    parentId: inner.frameId,
+    context: masked,
+    pageGuid: ctx.pageGuid,
+    parentGuid: inner.frameId,
     spec: {
       type: "RECTANGLE",
       name: "masked-gradient",
@@ -438,16 +434,16 @@ function addMaskRounded({ doc, ctx, x, y }: Args): Result {
       ])],
     },
   });
-  return { doc: content.doc };
+  return { context: content.context };
 }
 
-function addAngularGradientWithEffect({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, { parentId: null, name: "angular-gradient-effect", x, y, width: 180, height: 180, background: WHITE });
+function addAngularGradientWithEffect({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, { parentGuid: null, name: "angular-gradient-effect", x, y, width: 180, height: 180, background: WHITE });
   const shape = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.frameId,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "angular-shadowed",
@@ -466,7 +462,7 @@ function addAngularGradientWithEffect({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 4, radius: 12, color: { r: 0, g: 0, b: 0, a: 0.2 } })],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
 // =============================================================================
@@ -476,19 +472,19 @@ function addAngularGradientWithEffect({ doc, ctx, x, y }: Args): Result {
 async function generate(): Promise<void> {
   console.log("Generating advanced paint fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("PaintAdvanced");
+  const empty = createEmptyFigDocument("PaintAdvanced");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "PaintAdvanced").guid;
+  const ctx: Ctx = { state, pageGuid };
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 4;
   const COL_WIDTH = 240;
@@ -507,12 +503,12 @@ async function generate(): Promise<void> {
     { name: "Angular gradient + effect", fn: addAngularGradientWithEffect },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
+  const finalContext = builders.reduce<FigDocumentContext>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const x = MARGIN + col * COL_WIDTH;
     const y = MARGIN + row * ROW_HEIGHT;
-    return b.fn({ doc: acc, ctx, x, y }).doc;
+    return b.fn({ context: acc, ctx, x, y }).context;
   }, doc0);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
@@ -521,7 +517,7 @@ async function generate(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

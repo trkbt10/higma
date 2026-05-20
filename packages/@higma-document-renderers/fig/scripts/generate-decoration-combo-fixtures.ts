@@ -23,17 +23,17 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type {
   FigColor,
   FigEffect,
@@ -56,11 +56,11 @@ const RED: FigColor = { r: 0.9, g: 0.2, b: 0.2, a: 1 };
 const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 
 // =============================================================================
-// Paint helpers
+// Paint construction
 // =============================================================================
 
 function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return { type: "SOLID", color, opacity, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): FigPaint {
@@ -74,23 +74,23 @@ function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: "GRADIENT_LINEAR",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
     stops,
     transform: { m00: dx, m01: -dy, m02: endX, m10: dy, m11: dx, m12: endY },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function radialGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
   return {
-    type: "GRADIENT_RADIAL",
+    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
     stops,
     transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -124,7 +124,7 @@ function gradientVertical(): FigPaint {
 }
 
 // =============================================================================
-// Effect helpers
+// Effect construction
 // =============================================================================
 
 function dropShadowEffect(opts: {
@@ -134,12 +134,12 @@ function dropShadowEffect(opts: {
   readonly color: FigColor;
 }): FigEffect {
   return {
-    type: "DROP_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
     visible: true,
     color: opts.color,
     offset: { x: opts.offsetX, y: opts.offsetY },
     radius: opts.radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -150,17 +150,17 @@ function innerShadowEffect(opts: {
   readonly color: FigColor;
 }): FigEffect {
   return {
-    type: "INNER_SHADOW",
+    type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
     visible: true,
     color: opts.color,
     offset: { x: opts.offsetX, y: opts.offsetY },
     radius: opts.radius,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function layerBlurEffect(radius: number): FigEffect {
-  return { type: "LAYER_BLUR", visible: true, radius };
+  return { type: { value: EFFECT_TYPE_VALUES.FOREGROUND_BLUR, name: "FOREGROUND_BLUR" }, visible: true, radius };
 }
 
 // =============================================================================
@@ -181,18 +181,18 @@ function booleanOperationEnum(op: BooleanOp): { value: number; name: BooleanOp }
 }
 
 // =============================================================================
-// Frame / boolean helpers
+// Frame and boolean construction
 // =============================================================================
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
 function addFrame(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
-  parentId: FigNodeId | null,
+  parentGuid: FigGuid | null,
   opts: {
     readonly name: string;
     readonly x: number;
@@ -203,12 +203,12 @@ function addFrame(
     readonly clipsContent?: boolean;
     readonly cornerRadius?: number;
   },
-): { readonly doc: FigDesignDocument; readonly id: FigNodeId } {
+): { readonly context: FigDocumentContext; readonly id: FigGuid } {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -221,23 +221,23 @@ function addFrame(
       cornerRadius: opts.cornerRadius,
     },
   });
-  return { doc: r.doc, id: r.nodeId };
+  return { context: r.context, id: r.nodeGuid };
 }
 
 // =============================================================================
 // Fixture builders
 // =============================================================================
 
-type Args = { readonly doc: FigDesignDocument; readonly ctx: Ctx; readonly x: number; readonly y: number };
-type Result = { readonly doc: FigDesignDocument };
+type Args = { readonly context: FigDocumentContext; readonly ctx: Ctx; readonly x: number; readonly y: number };
+type Result = { readonly context: FigDocumentContext };
 
-function addGradientRadius({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-radius-linear", x, y, width: 180, height: 120, background: WHITE });
+function addGradientRadius({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-radius-linear", x, y, width: 180, height: 120, background: WHITE });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "rounded-gradient",
@@ -249,16 +249,16 @@ function addGradientRadius({ doc, ctx, x, y }: Args): Result {
       fills: [gradientBlueToGreen()],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientRadiusPill({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-radius-pill", x, y, width: 200, height: 80, background: WHITE });
+function addGradientRadiusPill({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-radius-pill", x, y, width: 200, height: 80, background: WHITE });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "pill-gradient",
@@ -270,16 +270,16 @@ function addGradientRadiusPill({ doc, ctx, x, y }: Args): Result {
       fills: [gradientRadialGlow()],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientRadiusCard({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-radius-card", x, y, width: 200, height: 140, background: LIGHT_GRAY });
+function addGradientRadiusCard({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-radius-card", x, y, width: 200, height: 140, background: LIGHT_GRAY });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "card-gradient",
@@ -291,16 +291,16 @@ function addGradientRadiusCard({ doc, ctx, x, y }: Args): Result {
       fills: [gradientSunset()],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientDropShadow({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-shadow-drop", x, y, width: 180, height: 140, background: WHITE });
+function addGradientDropShadow({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-shadow-drop", x, y, width: 180, height: 140, background: WHITE });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "gradient-shadowed",
@@ -313,16 +313,16 @@ function addGradientDropShadow({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 6, radius: 12, color: { r: 0, g: 0, b: 0, a: 0.25 } })],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientInnerShadow({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-shadow-inner", x, y, width: 180, height: 140, background: WHITE });
+function addGradientInnerShadow({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-shadow-inner", x, y, width: 180, height: 140, background: WHITE });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "gradient-inner-shadow",
@@ -335,16 +335,16 @@ function addGradientInnerShadow({ doc, ctx, x, y }: Args): Result {
       effects: [innerShadowEffect({ offsetX: 0, offsetY: 2, radius: 6, color: { r: 0, g: 0, b: 0, a: 0.15 } })],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientMultiEffect({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-multi-effect", x, y, width: 200, height: 160, background: LIGHT_GRAY });
+function addGradientMultiEffect({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-multi-effect", x, y, width: 200, height: 160, background: LIGHT_GRAY });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "gradient-multi-fx",
@@ -361,16 +361,16 @@ function addGradientMultiEffect({ doc, ctx, x, y }: Args): Result {
       ],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientBlur({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-blur", x, y, width: 160, height: 120, background: WHITE });
+function addGradientBlur({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-blur", x, y, width: 160, height: 120, background: WHITE });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ELLIPSE",
       name: "gradient-blur",
@@ -382,16 +382,16 @@ function addGradientBlur({ doc, ctx, x, y }: Args): Result {
       effects: [layerBlurEffect(4)],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addGradientStrokeRadius({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-stroke-radius", x, y, width: 180, height: 120, background: WHITE });
+function addGradientStrokeRadius({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-stroke-radius", x, y, width: 180, height: 120, background: WHITE });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "grad-stroke-rounded",
@@ -405,16 +405,16 @@ function addGradientStrokeRadius({ doc, ctx, x, y }: Args): Result {
       strokeWeight: 2,
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addSolidStrokeRadiusShadow({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "solid-stroke-radius-shadow", x, y, width: 180, height: 140, background: LIGHT_GRAY });
+function addSolidStrokeRadiusShadow({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "solid-stroke-radius-shadow", x, y, width: 180, height: 140, background: LIGHT_GRAY });
   const r = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "bordered-shadowed",
@@ -429,16 +429,16 @@ function addSolidStrokeRadiusShadow({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 4, radius: 10, color: { r: 0, g: 0, b: 0, a: 0.15 } })],
     },
   });
-  return { doc: r.doc };
+  return { context: r.context };
 }
 
-function addBooleanGradient({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "bool-gradient-union", x, y, width: 200, height: 150, background: WHITE });
+function addBooleanGradient({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "bool-gradient-union", x, y, width: 200, height: 150, background: WHITE });
   const bo = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "BOOLEAN_OPERATION",
       name: "gradient-union",
@@ -452,28 +452,28 @@ function addBooleanGradient({ doc, ctx, x, y }: Args): Result {
   });
   const child1 = addNode({
     state: ctx.state,
-    doc: bo.doc,
-    pageId: ctx.pageId,
-    parentId: bo.nodeId,
+    context: bo.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: bo.nodeGuid,
     spec: { type: "ROUNDED_RECTANGLE", name: "base", x: 0, y: 15, width: 100, height: 70, cornerRadius: 10 },
   });
   const child2 = addNode({
     state: ctx.state,
-    doc: child1.doc,
-    pageId: ctx.pageId,
-    parentId: bo.nodeId,
+    context: child1.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: bo.nodeGuid,
     spec: { type: "ELLIPSE", name: "circle", x: 60, y: 0, width: 70, height: 70 },
   });
-  return { doc: child2.doc };
+  return { context: child2.context };
 }
 
-function addBooleanGradientShadow({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "bool-gradient-subtract-shadow", x, y, width: 200, height: 160, background: LIGHT_GRAY });
+function addBooleanGradientShadow({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "bool-gradient-subtract-shadow", x, y, width: 200, height: 160, background: LIGHT_GRAY });
   const bo = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "BOOLEAN_OPERATION",
       name: "gradient-subtract",
@@ -487,28 +487,28 @@ function addBooleanGradientShadow({ doc, ctx, x, y }: Args): Result {
   });
   const child1 = addNode({
     state: ctx.state,
-    doc: bo.doc,
-    pageId: ctx.pageId,
-    parentId: bo.nodeId,
+    context: bo.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: bo.nodeGuid,
     spec: { type: "ROUNDED_RECTANGLE", name: "outer", x: 0, y: 0, width: 120, height: 90, cornerRadius: 12 },
   });
   const child2 = addNode({
     state: ctx.state,
-    doc: child1.doc,
-    pageId: ctx.pageId,
-    parentId: bo.nodeId,
+    context: child1.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: bo.nodeGuid,
     spec: { type: "ELLIPSE", name: "hole", x: 40, y: 25, width: 40, height: 40 },
   });
-  return { doc: child2.doc };
+  return { context: child2.context };
 }
 
-function addBooleanRoundedOperands({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "bool-rounded-operands", x, y, width: 200, height: 150, background: WHITE });
+function addBooleanRoundedOperands({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "bool-rounded-operands", x, y, width: 200, height: 150, background: WHITE });
   const bo = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "BOOLEAN_OPERATION",
       name: "rounded-subtract",
@@ -522,28 +522,28 @@ function addBooleanRoundedOperands({ doc, ctx, x, y }: Args): Result {
   });
   const child1 = addNode({
     state: ctx.state,
-    doc: bo.doc,
-    pageId: ctx.pageId,
-    parentId: bo.nodeId,
+    context: bo.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: bo.nodeGuid,
     spec: { type: "ROUNDED_RECTANGLE", name: "outer-rounded", x: 0, y: 0, width: 140, height: 100, cornerRadius: 20 },
   });
   const child2 = addNode({
     state: ctx.state,
-    doc: child1.doc,
-    pageId: ctx.pageId,
-    parentId: bo.nodeId,
+    context: child1.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: bo.nodeGuid,
     spec: { type: "ROUNDED_RECTANGLE", name: "inner-rounded", x: 20, y: 20, width: 100, height: 60, cornerRadius: 10 },
   });
-  return { doc: child2.doc };
+  return { context: child2.context };
 }
 
-function addInstanceDecorationInherit({ doc, ctx, x, y }: Args): Result {
+function addInstanceDecorationInherit({ context, ctx, x, y }: Args): Result {
   // Symbol with gradient + radius + shadow, then instances inheriting.
   const sym = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId: null,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "CardSymbol",
@@ -555,16 +555,15 @@ function addInstanceDecorationInherit({ doc, ctx, x, y }: Args): Result {
     },
   });
   const symWithRadius = updateNode({
-    doc: sym.doc,
-    pageId: ctx.pageId,
-    nodeId: sym.nodeId,
-    updater: (n) => ({ ...n, cornerRadius: 12 }),
+    context: sym.context,
+    nodeGuid: sym.nodeGuid,
+    update: (n) => ({ ...n, cornerRadius: 12 }),
   });
   const symChild = addNode({
     state: ctx.state,
-    doc: symWithRadius,
-    pageId: ctx.pageId,
-    parentId: sym.nodeId,
+    context: symWithRadius,
+    pageGuid: ctx.pageGuid,
+    parentGuid: sym.nodeGuid,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "bg",
@@ -577,7 +576,7 @@ function addInstanceDecorationInherit({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 4, radius: 8, color: { r: 0, g: 0, b: 0, a: 0.2 } })],
     },
   });
-  const frame = addFrame(symChild.doc, ctx, null, {
+  const frame = addFrame(symChild.context, ctx, null, {
     name: "instance-inherit-decoration",
     x,
     y,
@@ -587,27 +586,27 @@ function addInstanceDecorationInherit({ doc, ctx, x, y }: Args): Result {
   });
   const inst1 = addNode({
     state: ctx.state,
-    doc: frame.doc,
-    pageId: ctx.pageId,
-    parentId: frame.id,
-    spec: { type: "INSTANCE", name: "inherited", symbolId: sym.nodeId, x: 10, y: 20, width: 140, height: 80 },
+    context: frame.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: frame.id,
+    spec: { type: "INSTANCE", name: "inherited", symbolId: sym.nodeGuid, x: 10, y: 20, width: 140, height: 80 },
   });
   const inst2 = addNode({
     state: ctx.state,
-    doc: inst1.doc,
-    pageId: ctx.pageId,
-    parentId: frame.id,
-    spec: { type: "INSTANCE", name: "inherited-2", symbolId: sym.nodeId, x: 170, y: 20, width: 140, height: 80 },
+    context: inst1.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: frame.id,
+    spec: { type: "INSTANCE", name: "inherited-2", symbolId: sym.nodeGuid, x: 170, y: 20, width: 140, height: 80 },
   });
-  return { doc: inst2.doc };
+  return { context: inst2.context };
 }
 
-function addInstanceGradientOverride({ doc, ctx, x, y }: Args): Result {
+function addInstanceGradientOverride({ context, ctx, x, y }: Args): Result {
   const sym = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId: null,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: null,
     spec: {
       type: "SYMBOL",
       name: "ButtonSymbol",
@@ -619,19 +618,18 @@ function addInstanceGradientOverride({ doc, ctx, x, y }: Args): Result {
     },
   });
   const symWithRadius = updateNode({
-    doc: sym.doc,
-    pageId: ctx.pageId,
-    nodeId: sym.nodeId,
-    updater: (n) => ({ ...n, cornerRadius: 8 }),
+    context: sym.context,
+    nodeGuid: sym.nodeGuid,
+    update: (n) => ({ ...n, cornerRadius: 8 }),
   });
   const symChild = addNode({
     state: ctx.state,
-    doc: symWithRadius,
-    pageId: ctx.pageId,
-    parentId: sym.nodeId,
+    context: symWithRadius,
+    pageGuid: ctx.pageGuid,
+    parentGuid: sym.nodeGuid,
     spec: { type: "ROUNDED_RECTANGLE", name: "btn-bg", x: 0, y: 0, width: 120, height: 44, cornerRadius: 8, fills: [solidPaint(BLUE)] },
   });
-  const frame = addFrame(symChild.doc, ctx, null, {
+  const frame = addFrame(symChild.context, ctx, null, {
     name: "instance-gradient-override",
     x,
     y,
@@ -641,24 +639,24 @@ function addInstanceGradientOverride({ doc, ctx, x, y }: Args): Result {
   });
   const inst1 = addNode({
     state: ctx.state,
-    doc: frame.doc,
-    pageId: ctx.pageId,
-    parentId: frame.id,
-    spec: { type: "INSTANCE", name: "solid-default", symbolId: sym.nodeId, x: 15, y: 28, width: 120, height: 44 },
+    context: frame.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: frame.id,
+    spec: { type: "INSTANCE", name: "solid-default", symbolId: sym.nodeGuid, x: 15, y: 28, width: 120, height: 44 },
   });
   const inst2 = addNode({
     state: ctx.state,
-    doc: inst1.doc,
-    pageId: ctx.pageId,
-    parentId: frame.id,
-    spec: { type: "INSTANCE", name: "gradient-override", symbolId: sym.nodeId, x: 160, y: 28, width: 120, height: 44 },
+    context: inst1.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: frame.id,
+    spec: { type: "INSTANCE", name: "gradient-override", symbolId: sym.nodeGuid, x: 160, y: 28, width: 120, height: 44 },
   });
-  return { doc: inst2.doc };
+  return { context: inst2.context };
 }
 
-function addClipGradient({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "clip-gradient-rounded", x, y, width: 160, height: 120, background: WHITE });
-  const clip = addFrame(f.doc, ctx, f.id, {
+function addClipGradient({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "clip-gradient-rounded", x, y, width: 160, height: 120, background: WHITE });
+  const clip = addFrame(f.context, ctx, f.id, {
     name: "clip-frame",
     x: 20,
     y: 20,
@@ -669,9 +667,9 @@ function addClipGradient({ doc, ctx, x, y }: Args): Result {
   });
   const grad = addNode({
     state: ctx.state,
-    doc: clip.doc,
-    pageId: ctx.pageId,
-    parentId: clip.id,
+    context: clip.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: clip.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "overflow-gradient",
@@ -682,12 +680,12 @@ function addClipGradient({ doc, ctx, x, y }: Args): Result {
       fills: [gradientSunset()],
     },
   });
-  return { doc: grad.doc };
+  return { context: grad.context };
 }
 
-function addClipShadow({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "clip-shadow", x, y, width: 160, height: 140, background: LIGHT_GRAY });
-  const clip = addFrame(f.doc, ctx, f.id, {
+function addClipShadow({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "clip-shadow", x, y, width: 160, height: 140, background: LIGHT_GRAY });
+  const clip = addFrame(f.context, ctx, f.id, {
     name: "clip-boundary",
     x: 20,
     y: 20,
@@ -697,9 +695,9 @@ function addClipShadow({ doc, ctx, x, y }: Args): Result {
   });
   const shape = addNode({
     state: ctx.state,
-    doc: clip.doc,
-    pageId: ctx.pageId,
-    parentId: clip.id,
+    context: clip.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: clip.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "near-edge",
@@ -712,16 +710,16 @@ function addClipShadow({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 8, radius: 16, color: { r: 0, g: 0, b: 0, a: 0.3 } })],
     },
   });
-  return { doc: shape.doc };
+  return { context: shape.context };
 }
 
-function addRealisticCard({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "realistic-card", x, y, width: 240, height: 180, background: LIGHT_GRAY });
+function addRealisticCard({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "realistic-card", x, y, width: 240, height: 180, background: LIGHT_GRAY });
   const card = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "card-body",
@@ -742,16 +740,16 @@ function addRealisticCard({ doc, ctx, x, y }: Args): Result {
       ],
     },
   });
-  return { doc: card.doc };
+  return { context: card.context };
 }
 
-function addRealisticBadge({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "realistic-badge", x, y, width: 140, height: 60, background: WHITE });
+function addRealisticBadge({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "realistic-badge", x, y, width: 140, height: 60, background: WHITE });
   const badge = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "badge",
@@ -767,16 +765,16 @@ function addRealisticBadge({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 2, radius: 4, color: { r: 0.2, g: 0.4, b: 0.8, a: 0.3 } })],
     },
   });
-  return { doc: badge.doc };
+  return { context: badge.context };
 }
 
-function addRealisticAvatar({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "realistic-avatar", x, y, width: 120, height: 120, background: LIGHT_GRAY });
+function addRealisticAvatar({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "realistic-avatar", x, y, width: 120, height: 120, background: LIGHT_GRAY });
   const avatar = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ELLIPSE",
       name: "avatar",
@@ -793,16 +791,16 @@ function addRealisticAvatar({ doc, ctx, x, y }: Args): Result {
       effects: [dropShadowEffect({ offsetX: 0, offsetY: 2, radius: 6, color: { r: 0, g: 0, b: 0, a: 0.2 } })],
     },
   });
-  return { doc: avatar.doc };
+  return { context: avatar.context };
 }
 
-function addGradientOpacity({ doc, ctx, x, y }: Args): Result {
-  const f = addFrame(doc, ctx, null, { name: "grad-opacity", x, y, width: 160, height: 120, background: LIGHT_GRAY });
+function addGradientOpacity({ context, ctx, x, y }: Args): Result {
+  const f = addFrame(context, ctx, null, { name: "grad-opacity", x, y, width: 160, height: 120, background: LIGHT_GRAY });
   const bg = addNode({
     state: ctx.state,
-    doc: f.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "bg-solid",
@@ -815,9 +813,9 @@ function addGradientOpacity({ doc, ctx, x, y }: Args): Result {
   });
   const overlay = addNode({
     state: ctx.state,
-    doc: bg.doc,
-    pageId: ctx.pageId,
-    parentId: f.id,
+    context: bg.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.id,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "gradient-overlay",
@@ -830,7 +828,7 @@ function addGradientOpacity({ doc, ctx, x, y }: Args): Result {
       opacity: 0.6,
     },
   });
-  return { doc: overlay.doc };
+  return { context: overlay.context };
 }
 
 // =============================================================================
@@ -840,19 +838,19 @@ function addGradientOpacity({ doc, ctx, x, y }: Args): Result {
 async function generate(): Promise<void> {
   console.log("Generating decoration combination fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("DecorationCombo");
+  const empty = createEmptyFigDocument("DecorationCombo");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "DecorationCombo").guid;
+  const ctx: Ctx = { state, pageGuid };
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 4;
   const COL_WIDTH = 280;
@@ -890,12 +888,12 @@ async function generate(): Promise<void> {
     { name: "Gradient + Opacity", fn: addGradientOpacity },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
+  const finalContext = builders.reduce<FigDocumentContext>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const x = MARGIN + col * COL_WIDTH;
     const y = MARGIN + row * ROW_HEIGHT;
-    return b.fn({ doc: acc, ctx, x, y }).doc;
+    return b.fn({ context: acc, ctx, x, y }).context;
   }, doc0);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
@@ -904,7 +902,7 @@ async function generate(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

@@ -20,7 +20,9 @@ const MIN_PNG = Uint8Array.from([
   0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 ]);
 
-const EMPTY_SYMBOL_RESOLVER = createSymbolResolver({ document: indexFigKiwiDocument([]) });
+const EMPTY_SYMBOL_RESOLVER = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+});
 
 function makeNode(overrides: Partial<FigNode>): FigNode {
   return {

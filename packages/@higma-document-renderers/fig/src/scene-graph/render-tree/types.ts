@@ -235,6 +235,21 @@ export type ClipPathEllipseShape = {
 
 export type ClipPathShape = ClipPathRectShape | ClipPathPathShape | ClipPathEllipseShape;
 
+export type RenderFrameSurfaceRectShape = {
+  readonly kind: "rect";
+  readonly width: number;
+  readonly height: number;
+  readonly cornerRadius?: CornerRadius;
+  readonly cornerSmoothing?: number;
+};
+
+export type RenderFrameSurfacePathShape = {
+  readonly kind: "path";
+  readonly paths: readonly RenderPathContour[];
+};
+
+export type RenderFrameSurfaceShape = RenderFrameSurfaceRectShape | RenderFrameSurfacePathShape;
+
 // =============================================================================
 // RenderNode — discriminated union of all renderable instructions
 // =============================================================================
@@ -272,6 +287,12 @@ export type RenderNodeBase<TSource extends SceneNode = SceneNode> = {
   readonly id: SceneNodeId;
   /** Resolved wrapper attributes (transform, opacity, filter, blendMode) */
   readonly wrapper: ResolvedWrapperAttrs;
+  /**
+   * The node has shadow effects but no visible fill/stroke source. SVG filters
+   * still need an opaque geometry source for SourceAlpha, while the terminal
+   * filter output omits SourceGraphic so the geometry itself does not paint.
+   */
+  readonly filterSource?: "effect-shape";
   /** Inline defs needed by this node (gradients, filters, clip-paths) */
   readonly defs: readonly RenderDef[];
   /**
@@ -296,6 +317,8 @@ export type RenderNodeBase<TSource extends SceneNode = SceneNode> = {
 export type RenderGroupNode = RenderNodeBase<GroupNode> & {
   readonly type: "group";
   readonly children: readonly RenderNode[];
+  /** Clip path ID for children when the source GROUP carries Kiwi geometry. */
+  readonly childClipId?: string;
   /**
    * When true, the group wrapper <g> can be elided if there's only one child
    * and no wrapper attrs. (Optimization hint from original renderer.)
@@ -318,6 +341,7 @@ export type RenderFrameNode = RenderNodeBase<FrameNode> & {
   /** Frame dimensions (needed for background rect and clip) */
   readonly width: number;
   readonly height: number;
+  readonly surfaceShape: RenderFrameSurfaceShape;
   /** Clamped corner radius */
   readonly cornerRadius?: CornerRadius;
   /**
@@ -335,6 +359,8 @@ export type RenderFrameNode = RenderNodeBase<FrameNode> & {
   readonly sourceFills: readonly Fill[];
   /** Source stroke for backend-specific draw data. */
   readonly sourceStroke?: Stroke;
+  /** Kiwi-authored surface geometry for backend tessellation. */
+  readonly sourceSurfaceShape: FrameNode["surfaceShape"];
 };
 
 /**
@@ -379,7 +405,7 @@ export type StrokeRendering =
        * clipped to the rounded perimeter; otherwise a thick top stroke
        * (e.g. an 8-px gradient band on a rounded card) bleeds straight across the
        * corner and paints pixels outside the rounded rect. */
-      readonly cornerRadius?: number;
+      readonly cornerRadius?: CornerRadius;
       /** Stroke alignment relative to each side's edge. Determines where
        * the stroke band paints relative to the geometric edge:
        *   INSIDE  → band lies inside  the rect (each line offset inward  by t/2)
@@ -493,7 +519,9 @@ export type RenderTextNode = RenderNodeBase<TextNode> & {
   // Source data for WebGL
   readonly sourceGlyphContours?: readonly PathContour[];
   readonly sourceDecorationContours?: readonly PathContour[];
+  /** Base text run fill, retained for diagnostics and legacy WebGL state mirrors. */
   readonly sourceFillColor: Color;
+  /** Base text run opacity. Glyph rendering consumes `content.runs[].fillOpacity` directly. */
   readonly sourceFillOpacity: number;
   readonly sourceTextLineLayout?: TextLineLayout;
   readonly sourceTextAutoResize: TextAutoResize;

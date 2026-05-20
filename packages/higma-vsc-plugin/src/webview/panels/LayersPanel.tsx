@@ -16,39 +16,28 @@
  *   - The "primary" row paints a stronger highlight so subsequent
  *     shift-clicks have a visible anchor.
  *
- * Component selection is implemented by locating the page that
- * contains the component node and switching to it before selecting.
- * The components map on a `FigDesignDocument` is page-agnostic, so
- * this lookup happens lazily on click rather than during render.
+ * Component selection is implemented by locating the Kiwi CANVAS root
+ * that contains the SYMBOL node and switching to it before selecting.
  */
 
 import { useCallback, useMemo, useState } from "react";
-import type {
-  FigDesignDocument,
-  FigDesignNode,
-  FigNodeId,
-  FigPage,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
-import { dfsById } from "@higma-primitives/tree";
+import { getNodeType, guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
+import { FIG_NODE_TYPE, type FigNode } from "@higma-document-models/fig/types";
 import { nodeTypeGlyph, nodeTypeLabel } from "./node-icon";
 import type { SelectionModifiers } from "../selection";
 
-const DESIGN_NODE_DFS_OPTIONS = {
-  getId: (node: FigDesignNode) => node.id as string,
-  getChildren: (node: FigDesignNode): readonly FigDesignNode[] => node.children ?? [],
-} as const;
-
 type Props = {
-  readonly document: FigDesignDocument;
-  readonly activePage: FigPage | null;
-  readonly activePageId: FigPageId | null;
-  readonly onPageChange: (id: FigPageId) => void;
-  readonly hoveredId: FigNodeId | null;
-  readonly selectedIds: ReadonlySet<FigNodeId>;
-  readonly primaryId: FigNodeId | null;
-  readonly onHover: (id: FigNodeId | null) => void;
-  readonly onSelect: (id: FigNodeId, modifiers: SelectionModifiers) => void;
+  readonly document: FigKiwiDocumentIndex;
+  readonly pages: readonly FigNode[];
+  readonly activePage: FigNode | null;
+  readonly activePageId: string | null;
+  readonly onPageChange: (id: string) => void;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
+  readonly hoveredId: string | null;
+  readonly selectedIds: ReadonlySet<string>;
+  readonly primaryId: string | null;
+  readonly onHover: (id: string | null) => void;
+  readonly onSelect: (id: string, modifiers: SelectionModifiers) => void;
   readonly onClearSelection: () => void;
 };
 
@@ -61,6 +50,7 @@ function modifiersFromMouse(event: React.MouseEvent): SelectionModifiers {
   };
 }
 
+/** Render pages, active-page layers, and SYMBOL nodes from the Kiwi document. */
 export function LayersPanel(props: Props) {
   const [collapsed, setCollapsed] = useState<Record<Section, boolean>>({
     pages: false,
@@ -72,20 +62,21 @@ export function LayersPanel(props: Props) {
   }, []);
 
   const components = useMemo(() => {
-    return Array.from(props.document.components.values());
+    return props.document.nodeChanges.filter((node) => getNodeType(node) === FIG_NODE_TYPE.SYMBOL);
   }, [props.document]);
 
   const handleComponentClick = useCallback(
-    (componentId: FigNodeId, modifiers: SelectionModifiers) => {
-      const owner = findPageContaining(props.document, componentId);
+    (componentId: string, modifiers: SelectionModifiers) => {
+      const owner = findPageContaining(props.document, props.pages, componentId);
       if (!owner) {
         return;
       }
-      if (owner.id !== props.activePageId) {
+      const ownerId = guidToString(owner.guid);
+      if (ownerId !== props.activePageId) {
         // Switching pages clears selection in the viewer; honour that
         // by sending an unmodified click so the new page starts with
         // the component as the lone selection.
-        props.onPageChange(owner.id);
+        props.onPageChange(ownerId);
         props.onSelect(componentId, { meta: false, shift: false });
         return;
       }
@@ -101,27 +92,30 @@ export function LayersPanel(props: Props) {
   return (
     <aside className="higma-fig-sidebar higma-fig-sidebar--left" aria-label="Layers">
       <SectionHeader
-        title={`Pages (${props.document.pages.length})`}
+        title={`Pages (${props.pages.length})`}
         collapsed={collapsed.pages}
         onToggle={() => toggleSection("pages")}
       />
       {!collapsed.pages && (
         <ul className="higma-fig-tree higma-fig-tree--flat">
-          {props.document.pages.map((page) => (
-            <li key={page.id}>
-              <button
-                type="button"
-                className="higma-fig-tree__row"
-                aria-pressed={page.id === props.activePageId}
-                onClick={() => props.onPageChange(page.id)}
-              >
-                <span className="higma-fig-tree__glyph" aria-hidden="true">
-                  ▤
-                </span>
-                <span className="higma-fig-tree__label">{page.name}</span>
-              </button>
-            </li>
-          ))}
+          {props.pages.map((page) => {
+            const pageId = guidToString(page.guid);
+            return (
+              <li key={pageId}>
+                <button
+                  type="button"
+                  className="higma-fig-tree__row"
+                  aria-pressed={pageId === props.activePageId}
+                  onClick={() => props.onPageChange(pageId)}
+                >
+                  <span className="higma-fig-tree__glyph" aria-hidden="true">
+                    ▤
+                  </span>
+                  <span className="higma-fig-tree__label">{page.name ?? "Page"}</span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -133,11 +127,12 @@ export function LayersPanel(props: Props) {
       />
       {!collapsed.layers && props.activePage && (
         <ul className="higma-fig-tree" role="tree">
-          {props.activePage.children.map((child) => (
+          {props.childrenOf(props.activePage).map((child) => (
             <LayerNode
-              key={child.id}
+              key={guidToString(child.guid)}
               node={child}
               depth={0}
+              childrenOf={props.childrenOf}
               hoveredId={props.hoveredId}
               selectedIds={props.selectedIds}
               primaryId={props.primaryId}
@@ -159,20 +154,20 @@ export function LayersPanel(props: Props) {
             <li className="higma-fig-tree__empty">No components defined.</li>
           )}
           {components.map((component) => (
-            <li key={component.id}>
+            <li key={guidToString(component.guid)}>
               <button
                 type="button"
                 className="higma-fig-tree__row"
-                aria-pressed={props.selectedIds.has(component.id)}
-                onClick={(event) => handleComponentClick(component.id, modifiersFromMouse(event))}
-                onMouseEnter={() => props.onHover(component.id)}
+                aria-pressed={props.selectedIds.has(guidToString(component.guid))}
+                onClick={(event) => handleComponentClick(guidToString(component.guid), modifiersFromMouse(event))}
+                onMouseEnter={() => props.onHover(guidToString(component.guid))}
                 onMouseLeave={() => props.onHover(null)}
               >
                 <span className="higma-fig-tree__glyph" aria-hidden="true">
-                  {nodeTypeGlyph(component.type)}
+                  {nodeTypeGlyph(getNodeType(component))}
                 </span>
                 <span className="higma-fig-tree__label" title={component.name}>
-                  {component.name}
+                  {component.name ?? nodeTypeLabel(getNodeType(component))}
                 </span>
               </button>
             </li>
@@ -223,18 +218,20 @@ function SectionHeader({ title, collapsed, onToggle, action }: SectionHeaderProp
 }
 
 type LayerNodeProps = {
-  readonly node: FigDesignNode;
+  readonly node: FigNode;
   readonly depth: number;
-  readonly hoveredId: FigNodeId | null;
-  readonly selectedIds: ReadonlySet<FigNodeId>;
-  readonly primaryId: FigNodeId | null;
-  readonly onHover: (id: FigNodeId | null) => void;
-  readonly onSelect: (id: FigNodeId, modifiers: SelectionModifiers) => void;
+  readonly childrenOf: (node: FigNode) => readonly FigNode[];
+  readonly hoveredId: string | null;
+  readonly selectedIds: ReadonlySet<string>;
+  readonly primaryId: string | null;
+  readonly onHover: (id: string | null) => void;
+  readonly onSelect: (id: string, modifiers: SelectionModifiers) => void;
 };
 
 function LayerNode({
   node,
   depth,
+  childrenOf,
   hoveredId,
   selectedIds,
   primaryId,
@@ -245,11 +242,15 @@ function LayerNode({
   // explicitly; auto-expanding the entire tree on a real-world Figma
   // export produces hundreds of rows on first paint.
   const [expanded, setExpanded] = useState<boolean>(depth < 1);
-  const hasChildren = !!node.children && node.children.length > 0;
-  const isSelected = selectedIds.has(node.id);
-  const isPrimary = primaryId === node.id;
-  const isHovered = node.id === hoveredId && !isSelected;
-  const labelTitle = `${node.name} (${nodeTypeLabel(node.type)})`;
+  const children = childrenOf(node);
+  const id = guidToString(node.guid);
+  const type = getNodeType(node);
+  const hasChildren = children.length > 0;
+  const isSelected = selectedIds.has(id);
+  const isPrimary = primaryId === id;
+  const isHovered = id === hoveredId && !isSelected;
+  const label = node.name ?? nodeTypeLabel(type);
+  const labelTitle = `${label} (${nodeTypeLabel(type)})`;
   const handleToggle = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -259,9 +260,9 @@ function LayerNode({
   );
   const handleRowClick = useCallback(
     (event: React.MouseEvent) => {
-      onSelect(node.id, modifiersFromMouse(event));
+      onSelect(id, modifiersFromMouse(event));
     },
-    [node.id, onSelect],
+    [id, onSelect],
   );
 
   return (
@@ -274,7 +275,7 @@ function LayerNode({
         data-primary={isPrimary ? "true" : undefined}
         data-hovered={isHovered ? "true" : undefined}
         onClick={handleRowClick}
-        onMouseEnter={() => onHover(node.id)}
+        onMouseEnter={() => onHover(id)}
         onMouseLeave={() => onHover(null)}
       >
         <span className="higma-fig-tree__chevron" aria-hidden="true">
@@ -289,19 +290,20 @@ function LayerNode({
           )}
         </span>
         <span className="higma-fig-tree__glyph" aria-hidden="true">
-          {nodeTypeGlyph(node.type)}
+          {nodeTypeGlyph(type)}
         </span>
         <span className="higma-fig-tree__label" title={labelTitle}>
-          {node.name || nodeTypeLabel(node.type)}
+          {label}
         </span>
       </button>
       {hasChildren && expanded && (
         <ul role="group">
-          {node.children?.map((child) => (
+          {children.map((child) => (
             <LayerNode
-              key={child.id}
+              key={guidToString(child.guid)}
               node={child}
               depth={depth + 1}
+              childrenOf={childrenOf}
               hoveredId={hoveredId}
               selectedIds={selectedIds}
               primaryId={primaryId}
@@ -315,12 +317,12 @@ function LayerNode({
   );
 }
 
-function formatLayersTitle(activePage: FigPage | null, selectionCount: number): string {
+function formatLayersTitle(activePage: FigNode | null, selectionCount: number): string {
   if (!activePage) {return "Layers";}
   if (selectionCount > 1) {
-    return `Layers — ${activePage.name} (${selectionCount} selected)`;
+    return `Layers — ${activePage.name ?? "Page"} (${selectionCount} selected)`;
   }
-  return `Layers — ${activePage.name}`;
+  return `Layers — ${activePage.name ?? "Page"}`;
 }
 
 // Right-side action slot: clear selection when something is selected
@@ -334,13 +336,29 @@ function buildLayersAction(
 }
 
 function findPageContaining(
-  document: FigDesignDocument,
-  nodeId: FigNodeId,
-): FigPage | null {
-  for (const page of document.pages) {
-    if (dfsById(page.children, nodeId as string, DESIGN_NODE_DFS_OPTIONS) !== undefined) {
-      return page;
-    }
+  document: FigKiwiDocumentIndex,
+  pages: readonly FigNode[],
+  nodeId: string,
+): FigNode | null {
+  const pageIds = new Set(pages.map((page) => guidToString(page.guid)));
+  return findAncestorPage(document, pageIds, nodeId);
+}
+
+function findAncestorPage(
+  document: FigKiwiDocumentIndex,
+  pageIds: ReadonlySet<string>,
+  nodeId: string,
+): FigNode | null {
+  const node = document.nodesByGuid.get(nodeId);
+  if (node === undefined) {
+    return null;
   }
-  return null;
+  if (pageIds.has(nodeId)) {
+    return node;
+  }
+  const parentGuid = node.parentIndex?.guid;
+  if (parentGuid === undefined) {
+    return null;
+  }
+  return findAncestorPage(document, pageIds, guidToString(parentGuid));
 }

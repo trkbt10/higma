@@ -10,6 +10,7 @@ export type {
   RenderGroupNode,
   RenderFrameNode,
   RenderFrameBackground,
+  RenderFrameSurfaceShape,
   RenderRectNode,
   RenderEllipseNode,
   RenderPathNode,
@@ -50,4 +51,3 @@ export {
   type RenderTreeResolutionCache,
   type RenderTreeResolutionResult,
 } from "./resolve";
-

@@ -52,6 +52,7 @@ function viewportFrame(child: SceneNode): FrameNode {
     effects: [],
     width: 100,
     height: 100,
+    surfaceShape: { type: "rect", width: 100, height: 100 },
     fills: [],
     clipsContent: true,
     children: [child],

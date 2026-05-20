@@ -32,7 +32,7 @@ import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, Cli
 import { buildEffectStack, renderShapeEffectStack, resolveFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type ResolvedFigmaRenderExportSettings, type ResolvedFillDef, } from "../../scene-graph";
 
 import {
-  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type StrokeRendering, type StrokeShape, type RenderClipPathDef, } from "../../scene-graph";
+  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type RenderDef, type StrokeRendering, type StrokeShape, type RenderClipPathDef, } from "../../scene-graph";
 
 import {
   generateRectVertices, tessellateContours, } from "../tessellation/tessellation";
@@ -43,7 +43,7 @@ import { IDENTITY_MATRIX, multiplyMatrices, createTranslationMatrix } from "@hig
 import { rebuildStencilClipStack, type StencilClipEntry } from "../effects/clip-mask";
 import { createGLStateCache } from "../state/gl-state-cache";
 import {
-  tessellateRectStroke, tessellateRectAlignedStroke, tessellateEllipseStroke, } from "../tessellation/stroke-tessellation";
+  tessellateRectStroke, tessellateRectAlignedStroke, tessellateEllipseStroke, tessellatePathStroke, } from "../tessellation/stroke-tessellation";
 import { createEffectsRenderer } from "../effects/effects-renderer";
 import { createWebGLEffectRendering } from "../effects/effect-rendering";
 import { resolveEffectBackingScale } from "../effects/effect-scale";
@@ -57,14 +57,6 @@ import { syncWebGLCanvasRenderSurface } from "../scene/render-surface";
 import type { WebGLPathFillRule } from "../fill/render-path-fill-plan";
 import { hasVisibleLineText } from "../text/text-visibility";
 import { createWebGLGeometryCache } from "../resources/geometry-cache";
-
-/** Extract uniform radius from CornerRadius (per-corner → average for WebGL) */
-function uniformRadiusForGL(cr: CornerRadius | undefined): number | undefined {
-  if (cr === undefined) { return undefined; }
-  if (typeof cr === "number") { return cr; }
-  const avg = (cr[0] + cr[1] + cr[2] + cr[3]) / 4;
-  return avg || undefined;
-}
 import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
 // =============================================================================
@@ -741,7 +733,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
           const alignedStrokeVerts = tessellateRectAlignedStroke({
             w: sr.shape.width,
             h: sr.shape.height,
-            cornerRadius: uniformRadiusForGL(sr.shape.cornerRadius) ?? 0,
+            cornerRadius: sr.shape.cornerRadius,
             strokeWidth: doubledWidth / 2,
             align: isInside ? "INSIDE" : "OUTSIDE",
           });
@@ -865,60 +857,119 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       }
 
       case "individual": {
-        // Per-side stroke weights with strokeAlign-aware band placement.
-        //
-        // INSIDE  (sign=+1): bands stack inside the rect (top   y=0..top,
-        //                                                 bottom y=h-bottom..h, ...)
-        // OUTSIDE (sign=-1): bands stack outside     (top y=-top..0, bottom y=h..h+bottom, ...)
-        // CENTER  (sign= 0): bands straddle the edge (top y=-top/2..+top/2, ...)
-        //
-        // Mirrors svg/scene-renderer.ts and react/primitives/stroke-rendering.tsx.
-        const color = hexToColor(sr.color);
-        const strokeOpacity = sr.opacity ?? 1;
-        const { top, right, bottom, left } = sr.sides;
-        const w = sr.width;
-        const h = sr.height;
-        const sign = sr.strokeAlign === "OUTSIDE" ? -1 : sr.strokeAlign === "INSIDE" ? 1 : 0;
-        // Top-left of each side's band, in local node coords.
-        const topY = sign === 1 ? 0 : sign === -1 ? -top : -top / 2;
-        const bottomY = sign === 1 ? h - bottom : sign === -1 ? h : h - bottom / 2;
-        const leftX = sign === 1 ? 0 : sign === -1 ? -left : -left / 2;
-        const rightX = sign === 1 ? w - right : sign === -1 ? w : w - right / 2;
-
-        // Per-side band offsets are in node-local coordinates. `transform`
-        // already carries the world composition (incl. viewport scale on
-        // m00/m11), so adding the offset to m02/m12 directly would treat
-        // it as a post-transform screen offset — at viewport scale != 1
-        // the band would land at the wrong distance from the rect.
-        // Compose the local translation through `multiplyMatrices` so it
-        // is scaled/rotated with the rest of the world transform.
-        // Top border
-        if (top > 0) {
-          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(0, topY));
-          const verts = generateRectVertices(w, top);
-          drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
-        }
-        // Bottom border
-        if (bottom > 0) {
-          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(0, bottomY));
-          const verts = generateRectVertices(w, bottom);
-          drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
-        }
-        // Left border
-        if (left > 0) {
-          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(leftX, 0));
-          const verts = generateRectVertices(left, h);
-          drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
-        }
-        // Right border
-        if (right > 0) {
-          const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(rightX, 0));
-          const verts = generateRectVertices(right, h);
-          drawSolidFill({ ctx: getGlContext(), vertices: verts, color, transform: offsetTransform, opacity: opacity * strokeOpacity });
-        }
+        renderIndividualStroke(sr, transform, opacity);
         break;
       }
     }
+  }
+
+  type IndividualStrokeRendering = Extract<StrokeRendering, { readonly mode: "individual" }>;
+
+  function renderIndividualStroke(
+    sr: IndividualStrokeRendering,
+    transform: AffineMatrix,
+    opacity: number,
+  ): void {
+    if (!requiresIndividualStrokeInteriorClip(sr.cornerRadius, sr.strokeAlign)) {
+      drawIndividualStrokeBands(sr, transform, opacity);
+      return;
+    }
+
+    const clipVertices = geometryCache.getRectVertices(sr.width, sr.height, sr.cornerRadius);
+    const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+    const wasStencilEnabled = glState.isStencilTestEnabled();
+
+    glState.setEnabled(gl.STENCIL_TEST, true);
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    drawSolidFill({ ctx: getGlContext(), vertices: clipVertices, color: white, transform, opacity: 1 });
+
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0x00);
+    if (clipActive.value) {
+      glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT | FILL_STENCIL_MASK, 0xff);
+    } else {
+      glState.setStencilFunc(gl.EQUAL, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+    }
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    drawIndividualStrokeBands(sr, transform, opacity);
+
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    drawSolidFill({ ctx: getGlContext(), vertices: clipVertices, color: white, transform, opacity: 1 });
+
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0xff);
+    if (!wasStencilEnabled) {
+      glState.setEnabled(gl.STENCIL_TEST, false);
+      return;
+    }
+    if (clipActive.value) {
+      glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+      glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    }
+  }
+
+  function drawIndividualStrokeBands(
+    sr: IndividualStrokeRendering,
+    transform: AffineMatrix,
+    opacity: number,
+  ): void {
+    const color = hexToColor(sr.color);
+    const strokeOpacity = sr.opacity ?? 1;
+    const { top, right, bottom, left } = sr.sides;
+    const w = sr.width;
+    const h = sr.height;
+    const sign = sr.strokeAlign === "OUTSIDE" ? -1 : sr.strokeAlign === "INSIDE" ? 1 : 0;
+    const topY = sign === 1 ? 0 : sign === -1 ? -top : -top / 2;
+    const bottomY = sign === 1 ? h - bottom : sign === -1 ? h : h - bottom / 2;
+    const leftX = sign === 1 ? 0 : sign === -1 ? -left : -left / 2;
+    const rightX = sign === 1 ? w - right : sign === -1 ? w : w - right / 2;
+    const resolvedOpacity = opacity * strokeOpacity;
+
+    drawIndividualStrokeBand({ width: w, height: top, x: 0, y: topY, color, transform, opacity: resolvedOpacity });
+    drawIndividualStrokeBand({ width: w, height: bottom, x: 0, y: bottomY, color, transform, opacity: resolvedOpacity });
+    drawIndividualStrokeBand({ width: left, height: h, x: leftX, y: 0, color, transform, opacity: resolvedOpacity });
+    drawIndividualStrokeBand({ width: right, height: h, x: rightX, y: 0, color, transform, opacity: resolvedOpacity });
+  }
+
+  function drawIndividualStrokeBand(
+    { width: bandWidth, height: bandHeight, x, y, color, transform, opacity }: {
+      readonly width: number;
+      readonly height: number;
+      readonly x: number;
+      readonly y: number;
+      readonly color: Color;
+      readonly transform: AffineMatrix;
+      readonly opacity: number;
+    },
+  ): void {
+    if (bandWidth <= 0 || bandHeight <= 0) {
+      return;
+    }
+    const offsetTransform = multiplyMatrices(transform, createTranslationMatrix(x, y));
+    const vertices = generateRectVertices(bandWidth, bandHeight);
+    drawSolidFill({ ctx: getGlContext(), vertices, color, transform: offsetTransform, opacity });
+  }
+
+  function requiresIndividualStrokeInteriorClip(
+    cornerRadius: CornerRadius | undefined,
+    strokeAlign: IndividualStrokeRendering["strokeAlign"],
+  ): boolean {
+    if (strokeAlign === "OUTSIDE") {
+      return false;
+    }
+    if (cornerRadius === undefined) {
+      return false;
+    }
+    if (typeof cornerRadius === "number") {
+      return cornerRadius > 0;
+    }
+    return cornerRadius.some((radius) => radius > 0);
   }
 
   /**
@@ -952,8 +1003,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   ): Float32Array {
     switch (shape.kind) {
       case "rect": {
-        const cr = uniformRadiusForGL(shape.cornerRadius);
-        return tessellateRectStroke({ w: shape.width, h: shape.height, cornerRadius: cr ?? 0, strokeWidth, dashPattern });
+        return tessellateRectStroke({ w: shape.width, h: shape.height, cornerRadius: shape.cornerRadius, strokeWidth, dashPattern });
       }
       case "ellipse":
         return tessellateEllipseStroke({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry, strokeWidth, dashPattern });
@@ -1168,19 +1218,43 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   // =========================================================================
 
   function renderGroupFromTree(node: RenderGroupNode, transform: AffineMatrix, opacity: number): void {
+    const childClipId = node.childClipId;
+    if (childClipId) {
+      pushRenderTreeClip({ defs: node.defs, clipId: childClipId, nodeId: node.id, transform });
+    }
+
     for (const child of node.children) {
       renderRenderNode(child, transform, opacity);
     }
+
+    if (childClipId) {
+      clipStack.pop();
+      markClipStencilDirty();
+    }
   }
 
-  function getFrameClipData(
-    { clipDef, node, transform }: {
-      clipDef: RenderClipPathDef | undefined;
-      node: RenderFrameNode;
+  function findRequiredClipPathDef(
+    defs: readonly RenderDef[],
+    clipId: string,
+    nodeId: string,
+  ): RenderClipPathDef {
+    const clipDef = defs.find(
+      (d): d is RenderClipPathDef =>
+        d.type === "clip-path" && d.id === clipId
+    );
+    if (clipDef === undefined) {
+      throw new Error(`RenderTree node ${nodeId} references missing clip-path ${clipId}`);
+    }
+    return clipDef;
+  }
+
+  function resolveClipPathDefData(
+    { clipDef, transform }: {
+      clipDef: RenderClipPathDef;
       transform: AffineMatrix;
     },
   ): { clip: ClipShape; transform: AffineMatrix } {
-    if (clipDef?.shape.kind === "path") {
+    if (clipDef.shape.kind === "path") {
       // `clipDef.shape` belongs to the cached `node.defs` entry, so its
       // identity stays stable across viewport-only renders. Caching the
       // parsed contours on the shape object keeps pan/zoom from
@@ -1191,7 +1265,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       };
     }
 
-    if (clipDef?.shape.kind === "rect") {
+    if (clipDef.shape.kind === "rect") {
       // `clipDef.shape.x/y` is in node-local space; `transform` is the
       // composed world transform (incl. viewport scale on m00/m11). The
       // local translation must compose through `multiplyMatrices`, not
@@ -1208,17 +1282,53 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         transform: clipTransform,
       };
     }
+    throw new Error(`Unsupported clip-path shape ${clipDef.shape.kind}`);
+  }
 
-    return {
-      clip: {
-        type: "rect",
-        width: node.width,
-        height: node.height,
-        cornerRadius: node.cornerRadius,
-        cornerSmoothing: node.cornerSmoothing,
+  function pushRenderTreeClip(
+    { defs, clipId, nodeId, transform }: {
+      defs: readonly RenderDef[];
+      clipId: string;
+      nodeId: string;
+      transform: AffineMatrix;
+    },
+  ): void {
+    const clipDef = findRequiredClipPathDef(defs, clipId, nodeId);
+    const clipData = resolveClipPathDefData({ clipDef, transform });
+    const clipVertices = resolveClipVertices(clipData.clip);
+    const clipTransform = clipData.transform;
+    const entry: StencilClipEntry = {
+      drawClipShape: () => {
+        drawSolidFill({
+          ctx: getGlContext(),
+          vertices: clipVertices,
+          color: BLACK,
+          transform: clipTransform,
+          opacity: 1,
+        });
       },
-      transform,
     };
+    clipStack.push(entry);
+    markClipStencilDirty();
+  }
+
+  function resolveFrameUniformStrokeVertices(
+    surfaceShape: ClipShape,
+    strokeWidth: number,
+    dashPattern: readonly number[] | undefined,
+  ): Float32Array {
+    switch (surfaceShape.type) {
+      case "rect":
+        return tessellateRectStroke({
+          w: surfaceShape.width,
+          h: surfaceShape.height,
+          cornerRadius: surfaceShape.cornerRadius,
+          strokeWidth,
+          dashPattern,
+        });
+      case "path":
+        return tessellatePathStroke(surfaceShape.contours, strokeWidth, { dashPattern });
+    }
   }
 
   function renderFrameFromTree(node: RenderFrameNode, transform: AffineMatrix, opacity: number): void {
@@ -1230,8 +1340,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     // Use RenderTree fields for dimensions and corner radius
     const elementSize = { width: node.width, height: node.height };
-    const uniformCR = uniformRadiusForGL(node.cornerRadius);
-    const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
+    const vertices = resolveClipVertices(node.sourceSurfaceShape);
     const effects = getSourceEffects(node);
 
     // Check if node has visible content — SVG filters operate on rendered content,
@@ -1264,13 +1373,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
           renderUniformStroke({
             sr,
             sourceStroke,
-            shapeVerticesFactory: (sw, dashPattern) => tessellateRectStroke({
-              w: node.width,
-              h: node.height,
-              cornerRadius: uniformCR ?? 0,
-              strokeWidth: sw,
-              dashPattern,
-            }),
+            shapeVerticesFactory: (sw, dashPattern) => resolveFrameUniformStrokeVertices(node.sourceSurfaceShape, sw, dashPattern),
             transform,
             opacity,
           });
@@ -1282,32 +1385,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // by child stroke overhang to prevent stroke clipping at frame edges)
     const childClipId = node.omitChildClip ? undefined : node.childClipId;
     if (childClipId) {
-      // Find the clip-path def for this child clip
-      const clipDef = node.defs.find(
-        (d): d is RenderClipPathDef =>
-          d.type === "clip-path" && d.id === childClipId
-      );
-      const clipData = getFrameClipData({ clipDef, node, transform });
-      // Resolve clip vertices once per push instead of on every
-      // `rebuildStencilClipStack` rebuild. Inner frames typically
-      // sit inside one or more clipped ancestors, so the parent
-      // clip's geometry would otherwise be re-tessellated every time
-      // a descendant pushes/pops its own clip.
-      const clipVertices = resolveClipVertices(clipData.clip);
-      const clipTransform = clipData.transform;
-      const entry: StencilClipEntry = {
-        drawClipShape: () => {
-          drawSolidFill({
-            ctx: getGlContext(),
-            vertices: clipVertices,
-            color: BLACK,
-            transform: clipTransform,
-            opacity: 1,
-          });
-        },
-      };
-      clipStack.push(entry);
-      markClipStencilDirty();
+      pushRenderTreeClip({ defs: node.defs, clipId: childClipId, nodeId: node.id, transform });
     }
 
     for (const child of node.children) {
@@ -1324,7 +1402,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     flushClipStencilIfDirty();
     // Use RenderTree fields for dimensions
     const elementSize = { width: node.width, height: node.height };
-    const uniformCR = uniformRadiusForGL(node.cornerRadius);
     const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
     const effects = getSourceEffects(node);
 
@@ -1352,7 +1429,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
             shapeVerticesFactory: (sw, dashPattern) => tessellateRectStroke({
               w: node.width,
               h: node.height,
-              cornerRadius: uniformCR ?? 0,
+              cornerRadius: node.cornerRadius,
               strokeWidth: sw,
               dashPattern,
             }),
@@ -1643,7 +1720,6 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   function renderGlyphTextFromTree(node: RenderTextNode, transform: AffineMatrix, opacity: number): void {
-    const fillOpacity = node.sourceFillOpacity;
     if (node.content.mode !== "glyphs") { return; }
     if (node.content.runs.length === 0) { return; }
 
@@ -1670,7 +1746,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         vertices: runGeo.vertices,
         color: runColor,
         transform,
-        opacity: opacity * fillOpacity * runGeo.fillOpacity,
+        opacity: opacity * runGeo.fillOpacity,
       });
     }
   }

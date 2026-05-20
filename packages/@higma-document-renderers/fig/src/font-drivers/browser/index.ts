@@ -8,7 +8,3 @@
 
 export { createBrowserFontLoader, isBrowserFontLoaderSupported } from "./browser-loader";
 export { createCssFontLoader, isCssFontLoaderSupported } from "./css-font-loader";
-export {
-  createCanvasMetricsTextFontResolver,
-  isCanvasMetricsResolverSupported,
-} from "./canvas-metrics-resolver";

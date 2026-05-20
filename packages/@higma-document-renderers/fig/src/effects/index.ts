@@ -5,6 +5,8 @@ export {
   getEffectTypeName,
   isEffectVisible,
   extractShadowParams,
+  resolveEffectRadius,
+  resolveEffectSpread,
   hasEffectOfType,
   getEffectsOfType,
   type ShadowParams,

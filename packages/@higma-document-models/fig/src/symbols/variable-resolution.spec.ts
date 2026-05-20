@@ -10,10 +10,10 @@
  */
 
 import {
-  projectVariableAnyValue,
   findVariableConsumptionExpression,
   resolveVariantOverride,
 } from "./variable-resolution";
+import { projectVariableAnyValue } from "../variables";
 import type {
   FigGuid,
   FigKiwiVariableAnyValue,
@@ -251,7 +251,7 @@ describe("resolveVariantOverride", () => {
     expect(out.resolvedSymbolID).toEqual(guid(1, 100));
   });
 
-  it("bails out with `unresolved-aliases` when the property value is a library alias", () => {
+  it("reports `unresolved-aliases` when the property value is a library alias", () => {
     const propDefId = guid(1, 10);
     const defaultSym = variantSymbol(guid(1, 100), "Type=Default", guid(1, 1), propDefId, "Default");
     const compactSym = variantSymbol(guid(1, 101), "Type=Compact", guid(1, 1), propDefId, "Compact");
@@ -290,10 +290,10 @@ describe("resolveVariantOverride", () => {
 
     const out = resolveVariantOverride(inst, defaultSym, variantContext);
     expect(out.resolvedSymbolID).toBeUndefined();
-    expect(out.bailReason).toBe("unresolved-aliases");
+    expect(out.unresolvedReason).toBe("unresolved-aliases");
   });
 
-  it("bails out with `no-variant-container` when the SYMBOL has no variant siblings", () => {
+  it("reports `no-variant-container` when the SYMBOL has no variant siblings", () => {
     // Standalone SYMBOL — parent is just a generic FRAME with one child.
     const sym = symbolNode(guid(1, 100), "Solo", guid(1, 1));
     const parent = frameNode(guid(1, 1), "Misc", [sym]);
@@ -302,10 +302,10 @@ describe("resolveVariantOverride", () => {
 
     const out = resolveVariantOverride(inst, sym, variantContext);
     expect(out.resolvedSymbolID).toBeUndefined();
-    expect(out.bailReason).toBe("no-variant-container");
+    expect(out.unresolvedReason).toBe("no-variant-container");
   });
 
-  it("bails out with `no-vcm-expression` when the INSTANCE has no expression VCM", () => {
+  it("reports `no-vcm-expression` when the INSTANCE has no expression VCM", () => {
     const sym = symbolNode(guid(1, 100), "Type=Default", guid(1, 1));
     const inst: FigNode = {
       guid: guid(1, 200),
@@ -316,6 +316,6 @@ describe("resolveVariantOverride", () => {
     const variantContext = buildVariantContext([sym]);
 
     const out = resolveVariantOverride(inst, sym, variantContext);
-    expect(out.bailReason).toBe("no-vcm-expression");
+    expect(out.unresolvedReason).toBe("no-vcm-expression");
   });
 });

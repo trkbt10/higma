@@ -16,6 +16,7 @@ import {
   createFigDocumentContextFromLoaded,
   createFigDocumentContextFromNodeChanges,
   figDocumentResources,
+  findCanvases,
   replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
   type FigDocumentResources,
@@ -29,12 +30,12 @@ import {
 } from "@higma-document-models/fig/builder";
 import { createBooleanOperationEnum } from "@higma-document-models/fig/boolean-operation";
 import {
-  findNodesByType,
   getNodeType,
   guidToString,
 } from "@higma-document-models/fig/domain";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
-import { readKiwiTransform, translateTransform } from "./fig-editor/matrix";
+import { translateTransform } from "./fig-editor/matrix";
 
 export type FigCreationMode =
   | "select"
@@ -313,7 +314,7 @@ export function FigEditorProvider({ context, children, onContextChange }: FigEdi
   const builderStateRef = useRef(createBuilderState(context));
   const [currentContext, setCurrentContext] = useState(context);
   const [contextHistory, setContextHistory] = useState<FigContextHistory>({ past: [], future: [] });
-  const pages = useMemo(() => findNodesByType(currentContext.document, "CANVAS"), [currentContext]);
+  const pages = useMemo(() => findCanvases(currentContext.document), [currentContext]);
   const resources = useMemo(() => figDocumentResources(currentContext), [currentContext]);
   const [activePageGuid, setActivePageGuidState] = useState<FigGuid | undefined>(() => firstPageGuid(pages));
   const [selectedGuids, setSelectedGuidsState] = useState<readonly FigGuid[]>([]);
@@ -616,7 +617,7 @@ export function FigEditorProvider({ context, children, onContextChange }: FigEdi
     }
     const nodeChanges = removeDescendants(currentContext, new Set([key]));
     const next = replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges });
-    const remainingPages = findNodesByType(next.document, "CANVAS");
+    const remainingPages = findCanvases(next.document);
     const nextActivePage = remainingPages[0];
     if (nextActivePage === undefined) {
       throw new Error("deletePage removed every CANVAS from the Kiwi document");

@@ -3,7 +3,7 @@
  */
 
 import type { FontMetrics } from "@higma-document-models/fig/font";
-import { FONT_WEIGHTS, buildCssFontShorthand } from "@higma-document-models/fig/font";
+import { buildCssFontShorthand } from "@higma-document-models/fig/font";
 import type { MeasurementProvider, FontSpec, TextMeasurement } from "./types";
 
 /** Compute cap height from actual bounding box ascent, or undefined if not available */
@@ -17,6 +17,29 @@ function computeCapHeight(
   return undefined;
 }
 
+function requireCanvasMetric(value: number | undefined, metric: string, family: string): number {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  throw new Error(`Canvas text measurement requires ${metric} metrics for font "${family}"`);
+}
+
+function requireCanvasAscent(metrics: TextMetrics, family: string): number {
+  return requireCanvasMetric(
+    metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent,
+    "ascent",
+    family,
+  );
+}
+
+function requireCanvasDescent(metrics: TextMetrics, family: string): number {
+  return requireCanvasMetric(
+    metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent,
+    "descent",
+    family,
+  );
+}
+
 /**
  * Minimal interface for canvas context text measurement
  */
@@ -25,15 +48,26 @@ type TextMeasureContext = {
   measureText(text: string): TextMetrics;
 };
 
+function createTextMeasureContext(): TextMeasureContext | null {
+  if (typeof document !== "undefined") {
+    const canvas = document.createElement("canvas");
+    return canvas.getContext("2d");
+  }
+  if (typeof OffscreenCanvas !== "undefined") {
+    const canvas = new OffscreenCanvas(1, 1);
+    return canvas.getContext("2d");
+  }
+  return null;
+}
+
 /**
  * Build CSS font string from font spec.
  *
  * Routes through the canonical `buildCssFontShorthand` SoT so the
- * shorthand format here matches the canvas-metrics-resolver and any
- * other call site exactly. Re-implementing the format locally would
- * silently disagree on family quoting (Canvas 2D rejects unquoted
- * names with spaces) and break measurement caching keyed by the
- * shorthand itself.
+ * shorthand format matches every Canvas measurement call site exactly.
+ * Re-implementing the format locally would silently disagree on
+ * family quoting (Canvas 2D rejects unquoted names with spaces) and
+ * break measurement caching keyed by the shorthand itself.
  */
 function buildFontString(spec: FontSpec): string {
   return buildCssFontShorthand({
@@ -73,15 +107,7 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
       return contextRef.value;
     }
 
-    if (typeof document !== "undefined") {
-      // Browser environment
-      const canvas = document.createElement("canvas");
-      contextRef.value = canvas.getContext("2d");
-    } else if (typeof OffscreenCanvas !== "undefined") {
-      // Web Worker or modern environment with OffscreenCanvas
-      const canvas = new OffscreenCanvas(1, 1);
-      contextRef.value = canvas.getContext("2d");
-    }
+    contextRef.value = createTextMeasureContext();
 
     if (!contextRef.value) {
       throw new Error(
@@ -105,14 +131,8 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
         text.length,
         spec.letterSpacing
       );
-      const ascent =
-        metrics.fontBoundingBoxAscent ??
-        metrics.actualBoundingBoxAscent ??
-        spec.fontSize * 0.8;
-      const descent =
-        metrics.fontBoundingBoxDescent ??
-        metrics.actualBoundingBoxDescent ??
-        spec.fontSize * 0.2;
+      const ascent = requireCanvasAscent(metrics, spec.font.family);
+      const descent = requireCanvasDescent(metrics, spec.font.family);
 
       return {
         width,
@@ -144,14 +164,8 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
 
       const metrics = ctx.measureText("Xg");
 
-      const ascender =
-        metrics.fontBoundingBoxAscent ??
-        metrics.actualBoundingBoxAscent ??
-        spec.fontSize * 0.8;
-      const descender =
-        metrics.fontBoundingBoxDescent ??
-        metrics.actualBoundingBoxDescent ??
-        spec.fontSize * 0.2;
+      const ascender = requireCanvasAscent(metrics, spec.font.family);
+      const descender = requireCanvasDescent(metrics, spec.font.family);
 
       return {
         unitsPerEm: 1000,
@@ -162,26 +176,4 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
       };
     },
   };
-}
-
-/**
- * Create appropriate measurement provider for the current environment
- */
-export function createMeasurementProvider(): MeasurementProvider {
-  // Try Canvas-based provider first
-  if (
-    typeof document !== "undefined" ||
-    typeof OffscreenCanvas !== "undefined"
-  ) {
-    const provider = createCanvasMeasurementProvider();
-    // Probe with a minimal `FontQuery`-shaped spec so the canonical
-    // descriptor is exercised end-to-end before returning the provider.
-    provider.measureText("test", {
-      font: { family: "sans-serif", weight: FONT_WEIGHTS.REGULAR, style: "normal" },
-      fontSize: 12,
-    });
-    return provider;
-  }
-
-  throw new Error("Canvas measurement provider is unavailable; pass an explicit measurement provider");
 }

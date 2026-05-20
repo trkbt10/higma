@@ -5,7 +5,7 @@
  * into thick polylines.
  */
 
-import { flattenPathCommands } from "@higma-primitives/path";
+import { flattenPathCommands, type CornerRadius } from "@higma-primitives/path";
 import type { PathContour } from "@higma-document-renderers/fig/scene-graph";
 import { triangulate } from "./tessellation";
 
@@ -35,42 +35,44 @@ function thickenPolyline(points: readonly number[], halfWidth: number): Float32A
     const nyRef = { value: 0 };
     const countRef = { value: 0 };
 
-    // Previous segment normal
     if (i > 0) {
-      const dx = points[i * 2] - points[(i - 1) * 2];
-      const dy = points[i * 2 + 1] - points[(i - 1) * 2 + 1];
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len > 0) {
-        nxRef.value += -dy / len;
-        nyRef.value += dx / len;
-        countRef.value++;
-      }
+      appendSegmentNormal({
+        nxRef,
+        nyRef,
+        countRef,
+        fromX: points[(i - 1) * 2],
+        fromY: points[(i - 1) * 2 + 1],
+        toX: points[i * 2],
+        toY: points[i * 2 + 1],
+      });
     }
 
-    // Next segment normal
     if (i < n - 1) {
-      const dx = points[(i + 1) * 2] - points[i * 2];
-      const dy = points[(i + 1) * 2 + 1] - points[i * 2 + 1];
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len > 0) {
-        nxRef.value += -dy / len;
-        nyRef.value += dx / len;
-        countRef.value++;
-      }
+      appendSegmentNormal({
+        nxRef,
+        nyRef,
+        countRef,
+        fromX: points[i * 2],
+        fromY: points[i * 2 + 1],
+        toX: points[(i + 1) * 2],
+        toY: points[(i + 1) * 2 + 1],
+      });
     }
 
-    if (countRef.value > 0) {
-      nxRef.value /= countRef.value;
-      nyRef.value /= countRef.value;
-      // Normalize the averaged normal
-      const nlen = Math.sqrt(nxRef.value * nxRef.value + nyRef.value * nyRef.value);
-      if (nlen > 0) {
-        nxRef.value /= nlen;
-        nyRef.value /= nlen;
-      }
+    if (countRef.value <= 0) {
+      normals.push(0, 0);
+      continue;
     }
 
-    normals.push(nxRef.value, nyRef.value);
+    const nx = nxRef.value / countRef.value;
+    const ny = nyRef.value / countRef.value;
+    const nlen = Math.sqrt(nx * nx + ny * ny);
+    if (nlen <= 0) {
+      normals.push(0, 0);
+      continue;
+    }
+
+    normals.push(nx / nlen, ny / nlen);
   }
 
   // Generate quads (2 triangles each)
@@ -193,12 +195,7 @@ function splitPolylineByDashPattern(
       remainingRef.value -= step;
 
       if (remainingRef.value <= 0.001) {
-        if (drawRef.value) {
-          pushCompletedDashSegment({ segments, current });
-        }
-        dashIndexRef.value = (dashIndexRef.value + 1) % pattern.length;
-        remainingRef.value = pattern[dashIndexRef.value];
-        drawRef.value = dashIndexRef.value % 2 === 0;
+        advanceDashPattern({ segments, current, pattern, dashIndexRef, remainingRef, drawRef });
       }
     }
   }
@@ -222,11 +219,54 @@ function thickenDashedPolyline(
   return result;
 }
 
+function appendSegmentNormal(
+  { nxRef, nyRef, countRef, fromX, fromY, toX, toY }: {
+    readonly nxRef: { value: number };
+    readonly nyRef: { value: number };
+    readonly countRef: { value: number };
+    readonly fromX: number;
+    readonly fromY: number;
+    readonly toX: number;
+    readonly toY: number;
+  },
+): void {
+  const dx = toX - fromX;
+  const dy = toY - fromY;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len <= 0) {
+    return;
+  }
+
+  nxRef.value += -dy / len;
+  nyRef.value += dx / len;
+  countRef.value++;
+}
+
+function advanceDashPattern(
+  { segments, current, pattern, dashIndexRef, remainingRef, drawRef }: {
+    readonly segments: number[][];
+    readonly current: number[];
+    readonly pattern: readonly number[];
+    readonly dashIndexRef: { value: number };
+    readonly remainingRef: { value: number };
+    readonly drawRef: { value: boolean };
+  },
+): void {
+  if (drawRef.value) {
+    pushCompletedDashSegment({ segments, current });
+  }
+
+  dashIndexRef.value = (dashIndexRef.value + 1) % pattern.length;
+  remainingRef.value = pattern[dashIndexRef.value];
+  drawRef.value = dashIndexRef.value % 2 === 0;
+}
+
 // =============================================================================
 // Rectangle Stroke
 // =============================================================================
 
 type RectStrokeAlign = "INSIDE" | "OUTSIDE";
+type RectCornerRadii = readonly [number, number, number, number];
 
 /**
  * Tessellate a rectangle stroke as outer ring minus inner ring.
@@ -241,7 +281,7 @@ export function tessellateRectStroke(
   { w, h, cornerRadius, strokeWidth, dashPattern }: {
     w: number;
     h: number;
-    cornerRadius: number;
+    cornerRadius: CornerRadius | undefined;
     strokeWidth: number;
     dashPattern?: readonly number[];
   }
@@ -252,8 +292,9 @@ export function tessellateRectStroke(
   }
 
   const hw = strokeWidth / 2;
+  const radii = clampRectCornerRadii({ w, h, cornerRadius });
 
-  if (!cornerRadius || cornerRadius <= 0) {
+  if (!hasRoundedCorner(radii)) {
     // Simple rectangle: generate outer and inner rect, triangulate the ring
     return tessellateRing(
       rectPoints({ w: w + hw * 2, h: h + hw * 2, offX: -hw, offY: -hw }),
@@ -263,22 +304,22 @@ export function tessellateRectStroke(
 
   // Rounded rectangle stroke
   const segments = 8;
-  const outerR = Math.min(cornerRadius + hw, (w + hw * 2) / 2, (h + hw * 2) / 2);
-  const innerR = Math.max(cornerRadius - hw, 0);
   const outerW = w + hw * 2;
   const outerH = h + hw * 2;
   const innerW = w - hw * 2;
   const innerH = h - hw * 2;
+  const outerRadii = clampRectCornerRadii({ w: outerW, h: outerH, cornerRadius: offsetRectCornerRadii(radii, hw) });
+  const innerRadii = clampRectCornerRadii({ w: innerW, h: innerH, cornerRadius: offsetRectCornerRadii(radii, -hw) });
 
   if (innerW <= 0 || innerH <= 0) {
     // Stroke is thicker than the shape, just fill the outer
-    const outer = roundedRectPoints({ w: outerW, h: outerH, r: outerR, offX: -hw, offY: -hw, segments });
+    const outer = roundedRectPoints({ w: outerW, h: outerH, radii: outerRadii, offX: -hw, offY: -hw, segments });
     const indices = triangulate(outer);
     return indicesToVertices(outer, indices);
   }
 
-  const outer = roundedRectPoints({ w: outerW, h: outerH, r: outerR, offX: -hw, offY: -hw, segments });
-  const inner = roundedRectPoints({ w: innerW, h: innerH, r: innerR, offX: hw, offY: hw, segments });
+  const outer = roundedRectPoints({ w: outerW, h: outerH, radii: outerRadii, offX: -hw, offY: -hw, segments });
+  const inner = roundedRectPoints({ w: innerW, h: innerH, radii: innerRadii, offX: hw, offY: hw, segments });
   return tessellateRing(outer, inner);
 }
 
@@ -286,15 +327,16 @@ export function tessellateRectStroke(
  * Tessellate an aligned rectangle stroke as direct ring geometry.
  */
 export function tessellateRectAlignedStroke(
-  { w, h, cornerRadius, strokeWidth, align }: { w: number; h: number; cornerRadius: number; strokeWidth: number; align: RectStrokeAlign; }
+  { w, h, cornerRadius, strokeWidth, align }: { w: number; h: number; cornerRadius: CornerRadius | undefined; strokeWidth: number; align: RectStrokeAlign; }
 ): Float32Array {
   if (strokeWidth <= 0) { return new Float32Array(0); }
 
-  if (!cornerRadius || cornerRadius <= 0) {
+  const radii = clampRectCornerRadii({ w, h, cornerRadius });
+  if (!hasRoundedCorner(radii)) {
     return tessellateSharpRectAlignedStroke({ w, h, strokeWidth, align });
   }
 
-  return tessellateRoundedRectAlignedStroke({ w, h, cornerRadius, strokeWidth, align });
+  return tessellateRoundedRectAlignedStroke({ w, h, radii, strokeWidth, align });
 }
 
 // =============================================================================
@@ -382,13 +424,13 @@ export function tessellatePathStroke(
 }
 
 function rectCenterlinePoints(
-  { w, h, cornerRadius }: { w: number; h: number; cornerRadius: number },
+  { w, h, cornerRadius }: { w: number; h: number; cornerRadius: CornerRadius | undefined },
 ): number[] {
-  if (!cornerRadius || cornerRadius <= 0) {
+  const radii = clampRectCornerRadii({ w, h, cornerRadius });
+  if (!hasRoundedCorner(radii)) {
     return [0, 0, w, 0, w, h, 0, h, 0, 0];
   }
-  const r = Math.min(cornerRadius, w / 2, h / 2);
-  const points = roundedRectPoints({ w, h, r, offX: 0, offY: 0, segments: 8 });
+  const points = roundedRectPoints({ w, h, radii, offX: 0, offY: 0, segments: 8 });
   points.push(points[0], points[1]);
   return points;
 }
@@ -397,7 +439,7 @@ function tessellateDashedRectStroke(
   { w, h, cornerRadius, strokeWidth, dashPattern }: {
     w: number;
     h: number;
-    cornerRadius: number;
+    cornerRadius: CornerRadius | undefined;
     strokeWidth: number;
     dashPattern: readonly number[];
   },
@@ -449,37 +491,41 @@ function tessellateSharpRectAlignedStroke(
 }
 
 function tessellateRoundedRectAlignedStroke(
-  { w, h, cornerRadius, strokeWidth, align }: { w: number; h: number; cornerRadius: number; strokeWidth: number; align: RectStrokeAlign; }
+  { w, h, radii, strokeWidth, align }: { w: number; h: number; radii: RectCornerRadii; strokeWidth: number; align: RectStrokeAlign; }
 ): Float32Array {
   const segments = 8;
   if (align === "OUTSIDE") {
+    const outerW = w + strokeWidth * 2;
+    const outerH = h + strokeWidth * 2;
+    const outerRadii = clampRectCornerRadii({ w: outerW, h: outerH, cornerRadius: offsetRectCornerRadii(radii, strokeWidth) });
     return tessellateRing(
       roundedRectPoints({
-        w: w + strokeWidth * 2,
-        h: h + strokeWidth * 2,
-        r: cornerRadius + strokeWidth,
+        w: outerW,
+        h: outerH,
+        radii: outerRadii,
         offX: -strokeWidth,
         offY: -strokeWidth,
         segments,
       }),
-      roundedRectPoints({ w, h, r: cornerRadius, offX: 0, offY: 0, segments })
+      roundedRectPoints({ w, h, radii, offX: 0, offY: 0, segments })
     );
   }
 
   const innerW = w - strokeWidth * 2;
   const innerH = h - strokeWidth * 2;
-  const outer = roundedRectPoints({ w, h, r: cornerRadius, offX: 0, offY: 0, segments });
+  const outer = roundedRectPoints({ w, h, radii, offX: 0, offY: 0, segments });
   if (innerW <= 0 || innerH <= 0) {
     const indices = triangulate(outer);
     return indicesToVertices(outer, indices);
   }
 
+  const innerRadii = clampRectCornerRadii({ w: innerW, h: innerH, cornerRadius: offsetRectCornerRadii(radii, -strokeWidth) });
   return tessellateRing(
     outer,
     roundedRectPoints({
       w: innerW,
       h: innerH,
-      r: Math.max(cornerRadius - strokeWidth, 0),
+      radii: innerRadii,
       offX: strokeWidth,
       offY: strokeWidth,
       segments,
@@ -488,48 +534,87 @@ function tessellateRoundedRectAlignedStroke(
 }
 
 function roundedRectPoints(
-  { w, h, r, offX, offY, segments }: { w: number; h: number; r: number; offX: number; offY: number; segments: number; }
+  { w, h, radii, offX, offY, segments }: { w: number; h: number; radii: RectCornerRadii; offX: number; offY: number; segments: number; }
 ): number[] {
-  const cr = Math.min(r, w / 2, h / 2);
+  const [tl, tr, br, bl] = radii;
   const points: number[] = [];
 
   // Trace CW: each corner arc connects to the next via implicit straight edges.
   // Use polar arcs centered at each corner center.
 
   // Top-right corner: center (w-cr, cr), arc from -π/2 to 0
-  for (let i = 0; i <= segments; i++) {
-    const angle = -Math.PI / 2 + (Math.PI / 2) * (i / segments);
-    points.push(
-      offX + w - cr + cr * Math.cos(angle),
-      offY + cr + cr * Math.sin(angle)
-    );
-  }
+  pushRoundedCornerPoints({ points, cx: offX + w - tr, cy: offY + tr, radius: tr, startAngle: -Math.PI / 2, endAngle: 0, segments });
   // Bottom-right corner: center (w-cr, h-cr), arc from 0 to π/2
-  for (let i = 0; i <= segments; i++) {
-    const angle = (Math.PI / 2) * (i / segments);
-    points.push(
-      offX + w - cr + cr * Math.cos(angle),
-      offY + h - cr + cr * Math.sin(angle)
-    );
-  }
+  pushRoundedCornerPoints({ points, cx: offX + w - br, cy: offY + h - br, radius: br, startAngle: 0, endAngle: Math.PI / 2, segments });
   // Bottom-left corner: center (cr, h-cr), arc from π/2 to π
-  for (let i = 0; i <= segments; i++) {
-    const angle = Math.PI / 2 + (Math.PI / 2) * (i / segments);
-    points.push(
-      offX + cr + cr * Math.cos(angle),
-      offY + h - cr + cr * Math.sin(angle)
-    );
-  }
+  pushRoundedCornerPoints({ points, cx: offX + bl, cy: offY + h - bl, radius: bl, startAngle: Math.PI / 2, endAngle: Math.PI, segments });
   // Top-left corner: center (cr, cr), arc from π to 3π/2
-  for (let i = 0; i <= segments; i++) {
-    const angle = Math.PI + (Math.PI / 2) * (i / segments);
-    points.push(
-      offX + cr + cr * Math.cos(angle),
-      offY + cr + cr * Math.sin(angle)
-    );
-  }
+  pushRoundedCornerPoints({ points, cx: offX + tl, cy: offY + tl, radius: tl, startAngle: Math.PI, endAngle: Math.PI * 1.5, segments });
 
   return points;
+}
+
+function pushRoundedCornerPoints(
+  { points, cx, cy, radius, startAngle, endAngle, segments }: {
+    readonly points: number[];
+    readonly cx: number;
+    readonly cy: number;
+    readonly radius: number;
+    readonly startAngle: number;
+    readonly endAngle: number;
+    readonly segments: number;
+  },
+): void {
+  if (radius <= 0) {
+    points.push(cx, cy);
+    return;
+  }
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = startAngle + (endAngle - startAngle) * t;
+    points.push(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle));
+  }
+}
+
+function clampRectCornerRadii(
+  { w, h, cornerRadius }: { readonly w: number; readonly h: number; readonly cornerRadius: CornerRadius | undefined },
+): RectCornerRadii {
+  const maxRadius = Math.max(0, Math.min(w / 2, h / 2));
+  if (cornerRadius === undefined) {
+    return [0, 0, 0, 0];
+  }
+  if (typeof cornerRadius === "number") {
+    const radius = clampCornerRadiusValue(cornerRadius, maxRadius);
+    return [radius, radius, radius, radius];
+  }
+  return [
+    clampCornerRadiusValue(cornerRadius[0], maxRadius),
+    clampCornerRadiusValue(cornerRadius[1], maxRadius),
+    clampCornerRadiusValue(cornerRadius[2], maxRadius),
+    clampCornerRadiusValue(cornerRadius[3], maxRadius),
+  ];
+}
+
+function clampCornerRadiusValue(value: number, maxRadius: number): number {
+  return Math.max(0, Math.min(value, maxRadius));
+}
+
+function hasRoundedCorner(radii: RectCornerRadii): boolean {
+  return radii.some((radius) => radius > 0);
+}
+
+function offsetRectCornerRadii(radii: RectCornerRadii, delta: number): RectCornerRadii {
+  return [
+    offsetCornerRadius(radii[0], delta),
+    offsetCornerRadius(radii[1], delta),
+    offsetCornerRadius(radii[2], delta),
+    offsetCornerRadius(radii[3], delta),
+  ];
+}
+
+function offsetCornerRadius(radius: number, delta: number): number {
+  if (radius <= 0) { return 0; }
+  return Math.max(0, radius + delta);
 }
 
 function ellipsePoints(

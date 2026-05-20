@@ -9,20 +9,17 @@
 
 import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { KiwiEnumValue, FigDerivedTextData, FigFontMetaData, FigGuid, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
+import type { KiwiEnumValue, FigDerivedGlyph, FigDerivedTextData, FigFontMetaData, FigGuid, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
-import { extractTextProps } from "../layout/extract-props";
-import type { TextNodeInput } from "../layout/extract-props";
-import type { ExtractedTextProps } from "../layout/types";
-import { getFillColorAndOpacity } from "../layout/fill";
-import { computeTextLayout } from "../layout/compute-layout";
-import { extractDerivedTextPathData, hasDerivedGlyphs } from "../paths/derived-paths";
-import { extractTextPathData } from "../paths/opentype-paths";
-import type { PathContour } from "../paths/types";
+import { computeTextLayout, extractTextProps, getFillColorAndOpacity } from "../layout";
+import type { ExtractedTextProps, TextLayout, TextLayoutSourceLine, TextNodeInput } from "../layout";
+import { extractDerivedTextPathData, extractTextPathData, hasDerivedGlyphs } from "../paths";
+import type { PathContour } from "../paths";
 import { resolveTextRuns } from "../runs/resolve";
 import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
 import type {
   TextRendering,
+  TextRenderingEmpty,
   TextRenderingGlyphs,
   TextRenderingLines,
   TextTruncation,
@@ -36,14 +33,12 @@ const ELLIPSIS_CHAR = "\u2026";
 /**
  * Build a `measureCharWidths(text)` callback backed by the resolved
  * font. Used by the line-mode layout to pick wrap break points that
- * match the actual rendered glyph metrics \u2014 using the
- * `AVERAGE_CHAR_WIDTH_RATIO` estimate produces visible breaks that
- * disagree with the captured screenshot (e.g. `example-com-fullpage`
- * mid-paragraph break).
+ * match the actual rendered glyph metrics.
  *
  * Returns `undefined` when no resolver is registered or when the
- * resolver returns no font for the paragraph's base font, so the
- * layout uses the per-fontSize estimate.
+ * resolver returns no font for the paragraph's base font. Callers can
+ * still supply Kiwi-derived glyph advances; otherwise layout fails
+ * instead of estimating.
  */
 function buildLineMeasurer(
   props: ExtractedTextProps,
@@ -216,6 +211,160 @@ function derivedLineStrings(dtd: FigDerivedTextData | undefined): readonly strin
   return linesWithCharacters;
 }
 
+function baselineLineStrings(
+  dtd: FigDerivedTextData | undefined,
+  characters: string,
+): readonly string[] | undefined {
+  const baselines = dtd?.baselines;
+  if (!Array.isArray(baselines) || baselines.length === 0) {
+    return undefined;
+  }
+  return baselines.map((baseline) => {
+    if (typeof baseline.firstCharacter !== "number" || typeof baseline.endCharacter !== "number") {
+      throw new Error("text-resolve:baseline-line-metrics:invalid-character-range");
+    }
+    return characters.slice(baseline.firstCharacter, baseline.endCharacter);
+  });
+}
+
+function sumWidths(widths: readonly number[]): number {
+  return widths.reduce((sum, width) => sum + width, 0);
+}
+
+function measuredSourceLine(params: {
+  readonly text: string;
+  readonly paragraphIndex: number;
+  readonly sourceStart: number;
+  readonly sourceEnd: number;
+  readonly charWidths: readonly number[];
+  readonly width?: number;
+}): TextLayoutSourceLine {
+  if (params.charWidths.length !== params.text.length) {
+    throw new Error("text-resolve:line-metrics:character-width-length-mismatch");
+  }
+  for (const width of params.charWidths) {
+    if (!Number.isFinite(width) || width < 0) {
+      throw new Error("text-resolve:line-metrics:invalid-character-width");
+    }
+  }
+  return {
+    text: params.text,
+    paragraphIndex: params.paragraphIndex,
+    sourceStart: params.sourceStart,
+    sourceEnd: params.sourceEnd,
+    width: params.width ?? sumWidths(params.charWidths),
+    charWidths: params.charWidths,
+  };
+}
+
+function derivedGlyphPositionBySourceIndex(dtd: FigDerivedTextData): ReadonlyMap<number, FigDerivedGlyph> | undefined {
+  const glyphs = dtd.glyphs;
+  if (!Array.isArray(glyphs) || glyphs.length === 0) {
+    return undefined;
+  }
+  const positions = new Map<number, FigDerivedGlyph>();
+  for (const glyph of glyphs) {
+    if (typeof glyph.firstCharacter !== "number") {
+      continue;
+    }
+    if (
+      typeof glyph.position?.x !== "number" ||
+      !Number.isFinite(glyph.position.x) ||
+      typeof glyph.position.y !== "number" ||
+      !Number.isFinite(glyph.position.y)
+    ) {
+      throw new Error("text-resolve:derived-glyph:invalid-position");
+    }
+    positions.set(glyph.firstCharacter, glyph);
+  }
+  return positions;
+}
+
+function derivedLineWidthsFromGlyphs(
+  dtd: FigDerivedTextData,
+  lineTexts: readonly string[],
+): readonly TextLayoutSourceLine[] | undefined {
+  const glyphsBySourceIndex = derivedGlyphPositionBySourceIndex(dtd);
+  if (glyphsBySourceIndex === undefined) {
+    return undefined;
+  }
+  return lineTexts.map((text, index) => {
+    const baseline = dtd.baselines?.[index];
+    if (baseline === undefined) {
+      throw new Error("text-resolve:derived-line-metrics:missing-baseline");
+    }
+    const charWidths: number[] = [];
+    for (let offset = 0; offset < text.length; offset += 1) {
+      const sourceIndex = baseline.firstCharacter + offset;
+      charWidths.push(derivedGlyphWidthForSourceIndex({
+        glyphsBySourceIndex,
+        sourceIndex,
+        lineEndX: baseline.position.x + baseline.width,
+      }));
+    }
+    return measuredSourceLine({
+      text,
+      paragraphIndex: index,
+      sourceStart: 0,
+      sourceEnd: text.length,
+      charWidths,
+      width: dtd.derivedLines?.[index]?.width ?? baseline.width,
+    });
+  });
+}
+
+function derivedGlyphWidthForSourceIndex(input: {
+  readonly glyphsBySourceIndex: ReadonlyMap<number, FigDerivedGlyph>;
+  readonly sourceIndex: number;
+  readonly lineEndX: number;
+}): number {
+  const glyph = input.glyphsBySourceIndex.get(input.sourceIndex);
+  if (glyph === undefined) {
+    throw new Error("text-resolve:derived-line-metrics:missing-glyph-position");
+  }
+  const nextGlyph = input.glyphsBySourceIndex.get(input.sourceIndex + 1);
+  const width = (nextGlyph?.position.x ?? input.lineEndX) - glyph.position.x;
+  if (!Number.isFinite(width) || width < 0) {
+    throw new Error("text-resolve:derived-line-metrics:invalid-glyph-width");
+  }
+  return width;
+}
+
+function lineMetricsFromMeasurer(
+  lineTexts: readonly string[],
+  measureCharWidths: (text: string) => readonly number[],
+): readonly TextLayoutSourceLine[] {
+  return lineTexts.map((text, index) => measuredSourceLine({
+    text,
+    paragraphIndex: index,
+    sourceStart: 0,
+    sourceEnd: text.length,
+    charWidths: measureCharWidths(text),
+  }));
+}
+
+function resolveDerivedLayoutLines(
+  dtd: FigDerivedTextData | undefined,
+  props: ExtractedTextProps,
+  measureCharWidths: ((text: string) => readonly number[]) | undefined,
+): readonly TextLayoutSourceLine[] | undefined {
+  const lineTexts = derivedLineStrings(dtd) ?? baselineLineStrings(dtd, props.characters);
+  if (lineTexts === undefined) {
+    return undefined;
+  }
+  if (dtd === undefined) {
+    return undefined;
+  }
+  const derivedLines = derivedLineWidthsFromGlyphs(dtd, lineTexts);
+  if (derivedLines !== undefined) {
+    return derivedLines;
+  }
+  if (measureCharWidths !== undefined) {
+    return lineMetricsFromMeasurer(lineTexts, measureCharWidths);
+  }
+  throw new Error("text-resolve:derived-line-metrics:requires-font-or-glyph-advances");
+}
+
 /**
  * Resolve font metrics from Figma's fontMetaData.
  *
@@ -250,7 +399,7 @@ function resolveFontMetrics(dtd: FigDerivedTextData | undefined): ResolvedFontMe
 /**
  * Resolve the ascender ratio from derived metadata or an explicit font resolver.
  */
-export function resolveTextAscenderRatio(
+function resolveTextAscenderRatio(
   node: TextNodeInput,
   props: ExtractedTextProps,
   ctx: ResolveTextContext,
@@ -274,31 +423,15 @@ export function resolveTextAscenderRatio(
  * over the legacy `hhea` value so the content-area height matches what
  * modern browsers compute per CSS Inline L3.
  */
-export function resolveTextDescenderRatio(
+function resolveTextDescenderRatio(
   node: TextNodeInput,
   props: ExtractedTextProps,
   ctx: ResolveTextContext,
 ): number {
   const dtd = node.derivedTextData as FigDerivedTextData | undefined;
-  const baseline = dtd?.baselines?.[0];
-  if (
-    baseline &&
-    typeof baseline.lineAscent === "number" &&
-    typeof baseline.lineHeight === "number" &&
-    baseline.lineHeight > 0 &&
-    baseline.lineAscent >= 0
-  ) {
-    // `FigDerivedBaseline` carries `lineAscent` and `lineHeight` but
-    // not an explicit descender — Kiwi defines descender = lineHeight
-    // − lineAscent because Figma's line box wraps the baseline by
-    // exactly the descender below it.
-    const derivedDescent = baseline.lineHeight - baseline.lineAscent;
-    if (derivedDescent > 0) {
-      const lh = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
-      if (lh !== undefined) {
-        return derivedDescent / (baseline.lineHeight / lh);
-      }
-    }
+  const derivedDescenderRatio = resolveDerivedDescenderRatio(dtd);
+  if (derivedDescenderRatio !== undefined) {
+    return derivedDescenderRatio;
   }
   const font = ctx.fontResolver?.(props.font);
   if (font) {
@@ -308,6 +441,32 @@ export function resolveTextDescenderRatio(
     return Math.abs(typoDescenderUnits(font)) / font.unitsPerEm;
   }
   throw new Error(`Text layout requires descender metrics for font "${props.font.family}"`);
+}
+
+function resolveDerivedDescenderRatio(dtd: FigDerivedTextData | undefined): number | undefined {
+  const baseline = dtd?.baselines?.[0];
+  if (
+    baseline === undefined ||
+    typeof baseline.lineAscent !== "number" ||
+    typeof baseline.lineHeight !== "number" ||
+    baseline.lineHeight <= 0 ||
+    baseline.lineAscent < 0
+  ) {
+    return undefined;
+  }
+  // `FigDerivedBaseline` carries `lineAscent` and `lineHeight` but
+  // not an explicit descender — Kiwi defines descender = lineHeight
+  // − lineAscent because Figma's line box wraps the baseline by
+  // exactly the descender below it.
+  const derivedDescent = baseline.lineHeight - baseline.lineAscent;
+  if (derivedDescent <= 0) {
+    return undefined;
+  }
+  const lh = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
+  if (lh === undefined) {
+    return undefined;
+  }
+  return derivedDescent / (baseline.lineHeight / lh);
 }
 
 /**
@@ -378,6 +537,16 @@ export type ResolveTextContext = {
    * registry's no-substitution policy.
    */
   readonly styleRegistry?: FigStyleRegistry;
+};
+
+export type TextLayoutResolution = {
+  readonly props: ExtractedTextProps;
+  readonly displayProps: ExtractedTextProps;
+  readonly layout: TextLayout;
+  readonly truncation: TextTruncation | undefined;
+  readonly fontMetrics: ResolvedFontMetrics | undefined;
+  readonly ascenderRatio: number;
+  readonly descenderRatio: number;
 };
 
 /**
@@ -531,6 +700,49 @@ type TruncatableTextNode = TextNodeInput & {
   };
 };
 
+function resolveTextLayoutFromProps(
+  node: TruncatableTextNode,
+  props: ExtractedTextProps,
+  ctx: ResolveTextContext,
+): TextLayoutResolution {
+  const dtd = node.derivedTextData;
+  const truncation = resolveTruncation(
+    node.textTruncation ?? node.textData?.textTruncation,
+    dtd,
+  );
+  const fontMetrics = resolveFontMetrics(dtd);
+  const ascenderRatio = resolveTextAscenderRatio(node, props, ctx);
+  const descenderRatio = resolveTextDescenderRatio(node, props, ctx);
+  const displayProps = resolveDisplayProps(props, truncation);
+  const measureCharWidths = buildLineMeasurer(displayProps, ctx);
+  const explicitLines = truncation ? undefined : resolveDerivedLayoutLines(dtd, displayProps, measureCharWidths);
+  const layout = computeTextLayout({
+    props: displayProps,
+    lines: explicitLines,
+    ascenderRatio,
+    descenderRatio,
+    measureCharWidths,
+  });
+  return {
+    props,
+    displayProps,
+    layout,
+    truncation,
+    fontMetrics,
+    ascenderRatio,
+    descenderRatio,
+  };
+}
+
+/** Resolve the canonical text layout used by renderers and editor overlays. */
+export function resolveTextLayout(
+  node: TruncatableTextNode,
+  ctx: ResolveTextContext,
+): TextLayoutResolution {
+  const props = extractTextProps(node);
+  return resolveTextLayoutFromProps(node, props, ctx);
+}
+
 /**
  * Resolve a TEXT node to its final renderable form.
  *
@@ -569,17 +781,8 @@ export function resolveTextRendering(
     locator: () => formatTextNodeLocator(node),
   });
 
-  // Resolve truncation from the node and its derivedTextData.
   const dtd = node.derivedTextData;
-  const truncation = resolveTruncation(
-    node.textTruncation ?? node.textData?.textTruncation,
-    dtd,
-  );
-  // Font metrics from fontMetaData — used by line-mode to compute accurate
-  // baselines when a font loader is absent.
-  const fontMetrics = resolveFontMetrics(dtd);
-  const ascenderRatio = resolveTextAscenderRatio(node, props, ctx);
-  const descenderRatio = resolveTextDescenderRatio(node, props, ctx);
+  const layoutResolution = resolveTextLayoutFromProps(node, props, ctx);
 
   // Glyph-mode when pre-outlined paths are available and we can decode them.
   // Figma has already applied truncation to the glyph positions, so we pass
@@ -587,61 +790,27 @@ export function resolveTextRendering(
   if (hasDerivedGlyphs(dtd) && ctx.blobs === undefined) {
     throw new Error("Text glyph rendering requires blobs when derived glyphs are present");
   }
-  if (ctx.blobs !== undefined && hasDerivedGlyphs(dtd)) {
-    const alignmentOffset = computeDerivedAlignmentOffset(
-      dtd?.layoutSize,
-      props.size,
-      props.textAlignHorizontal,
-      props.textAlignVertical,
-    );
-    const pathData = extractDerivedTextPathData(dtd!, ctx.blobs, alignmentOffset);
-    if (pathData.glyphContours.length > 0 || pathData.decorations.length > 0) {
-      const layout = computeTextLayout({ props, ascenderRatio, descenderRatio });
-      const glyphs: TextRenderingGlyphs = {
-        kind: "glyphs",
-        glyphContours: pathData.glyphContours,
-        decorationContours: decorationsToContours(pathData.decorations),
-        runs,
-        fillColor,
-        fillOpacity,
-        transform: props.transform,
-        opacity: props.opacity,
-        props,
-        layout,
-        truncation,
-      };
-      return glyphs;
-    }
-  }
-
-  // Lines mode source: if truncation applies, rewrite characters before
-  // layout so renderers emit the cut-and-ellipsized string directly.
-  const displayProps = resolveDisplayProps(props, truncation);
-
-  // Prefer Figma's own per-line breakdown when available. Skip when
-  // truncation applied because we already rewrote characters.
-  const explicitLines = truncation ? undefined : derivedLineStrings(dtd);
-  // Build a per-character width function from the resolved font when
-  // present. Wrap decisions made from `glyph.advanceWidth` match what
-  // the path renderer paints; the alternative `AVERAGE_CHAR_WIDTH_RATIO`
-  // approximation produced `Avoid use ↵ in operations.` mid-paragraph
-  // breaks in `example-com-fullpage`.
-  const measureCharWidths = explicitLines ? undefined : buildLineMeasurer(displayProps, ctx);
-  const layout = computeTextLayout({
-    props: displayProps,
-    lines: explicitLines,
-    ascenderRatio,
-    descenderRatio,
-    measureCharWidths,
-  });
-
-  const fontGlyphs = resolveFontGlyphRendering({
-    displayProps,
-    layout,
+  const derivedGlyphRendering = resolveDerivedGlyphRendering({
+    dtd,
+    props,
+    ctx,
     runs,
     fillColor,
     fillOpacity,
-    truncation,
+    layout: layoutResolution.layout,
+    truncation: layoutResolution.truncation,
+  });
+  if (derivedGlyphRendering !== undefined) {
+    return derivedGlyphRendering;
+  }
+
+  const fontGlyphs = resolveFontGlyphRendering({
+    displayProps: layoutResolution.displayProps,
+    layout: layoutResolution.layout,
+    runs,
+    fillColor,
+    fillOpacity,
+    truncation: layoutResolution.truncation,
     fontResolver: ctx.fontResolver,
   });
   if (fontGlyphs) {
@@ -650,15 +819,67 @@ export function resolveTextRendering(
 
   const lines: TextRenderingLines = {
     kind: "lines",
-    layout,
+    layout: layoutResolution.layout,
     runs,
     fillColor,
     fillOpacity,
-    transform: displayProps.transform,
-    opacity: displayProps.opacity,
-    props: displayProps,
-    truncation,
-    fontMetrics,
+    transform: layoutResolution.displayProps.transform,
+    opacity: layoutResolution.displayProps.opacity,
+    props: layoutResolution.displayProps,
+    truncation: layoutResolution.truncation,
+    fontMetrics: layoutResolution.fontMetrics,
   };
   return lines;
+}
+
+type DerivedGlyphRenderingInput = {
+  readonly dtd: FigDerivedTextData | undefined;
+  readonly props: ExtractedTextProps;
+  readonly ctx: ResolveTextContext;
+  readonly runs: readonly TextRun[];
+  readonly fillColor: string;
+  readonly fillOpacity: number;
+  readonly layout: TextLayout;
+  readonly truncation: TextTruncation | undefined;
+};
+
+function resolveDerivedGlyphRendering(input: DerivedGlyphRenderingInput): TextRenderingGlyphs | TextRenderingEmpty | undefined {
+  const { dtd, props, ctx, runs, fillColor, fillOpacity, layout, truncation } = input;
+  if (dtd === undefined || !hasDerivedGlyphs(dtd) || ctx.blobs === undefined) {
+    return undefined;
+  }
+  const alignmentOffset = computeDerivedAlignmentOffset(
+    dtd?.layoutSize,
+    props.size,
+    props.textAlignHorizontal,
+    props.textAlignVertical,
+  );
+  const pathData = extractDerivedTextPathData(dtd, ctx.blobs, alignmentOffset);
+  if (pathData.glyphContours.length === 0 && pathData.decorations.length === 0) {
+    return isDerivedGlyphPlaceholderText(props.characters, dtd) ? { kind: "empty" } : undefined;
+  }
+  return {
+    kind: "glyphs",
+    glyphContours: pathData.glyphContours,
+    decorationContours: decorationsToContours(pathData.decorations),
+    runs,
+    fillColor,
+    fillOpacity,
+    transform: props.transform,
+    opacity: props.opacity,
+    props,
+    layout,
+    truncation,
+  };
+}
+
+function isDerivedGlyphPlaceholderText(characters: string, derivedTextData: FigDerivedTextData | undefined): boolean {
+  if (!hasDerivedGlyphs(derivedTextData)) {
+    return false;
+  }
+  const codepoints = Array.from(characters);
+  if (codepoints.length === 0) {
+    return false;
+  }
+  return codepoints.every((char) => char === "\uFFFC");
 }

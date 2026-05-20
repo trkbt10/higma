@@ -4,6 +4,7 @@
 
 export {
   addNode,
+  updateNode,
 } from "./node-manager";
 
 export {

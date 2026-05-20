@@ -11,7 +11,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree } from "@higma-document-models/fig/domain";
+import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 
 async function main(): Promise<void> {
   const figPath = process.argv[2];
@@ -27,10 +27,10 @@ async function main(): Promise<void> {
 
   const data = fs.readFileSync(absPath);
   const parsed = await parseFigFile(new Uint8Array(data));
-  const { nodeMap } = buildNodeTree(parsed.nodeChanges);
+  const document = indexFigKiwiDocument(parsed.nodeChanges);
 
   const counts = new Map<string, number>();
-  for (const [, node] of nodeMap) {
+  for (const node of document.nodesByGuid.values()) {
     for (const key of Object.keys(node)) {
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }

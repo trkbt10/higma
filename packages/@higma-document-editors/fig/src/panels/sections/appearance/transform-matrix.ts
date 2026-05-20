@@ -1,6 +1,6 @@
 /** @file Transform field operations for Kiwi nodes. */
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { FigMatrix } from "@higma-document-models/fig/types";
-import { readKiwiTransform } from "../../../context/fig-editor/matrix";
 import { extractRotationDeg } from "../../../context/fig-editor/rotation";
 
 /** Return transform translation X/Y with schema identity values applied. */

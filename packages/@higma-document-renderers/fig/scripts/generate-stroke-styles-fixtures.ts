@@ -24,17 +24,17 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_ALIGN_VALUES, STROKE_CAP_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
-import type { FigColor, FigPaint, FigStrokeCap } from "@higma-document-models/fig/types";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
+import type { FigColor, FigNode, FigPaint, FigStrokeCap } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/stroke-styles");
@@ -47,23 +47,27 @@ const LINE_COLOR: FigColor = { r: 0.85, g: 0.15, b: 0.15, a: 1 };
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
+function strokeCapValue(name: FigStrokeCap): NonNullable<FigNode["strokeCap"]> {
+  return { value: STROKE_CAP_VALUES[name], name };
+}
+
 type AddedFrame = {
-  readonly doc: FigDesignDocument;
-  readonly frameId: FigNodeId;
+  readonly context: FigDocumentContext;
+  readonly frameId: FigGuid;
 };
 
 function addStyledFrame(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   state: FigBuilderState,
-  pageId: FigPageId,
+  pageGuid: FigGuid,
   name: string,
   x: number,
   y: number,
@@ -72,9 +76,9 @@ function addStyledFrame(
 ): AddedFrame {
   const result = addNode({
     state,
-    doc,
-    pageId,
-    parentId: null,
+    context,
+    pageGuid,
+    parentGuid: null,
     spec: {
       type: "FRAME",
       name,
@@ -86,36 +90,36 @@ function addStyledFrame(
       clipsContent: true,
     },
   });
-  return { doc: result.doc, frameId: result.nodeId };
+  return { context: result.context, frameId: result.nodeGuid };
 }
 
 async function generate(): Promise<void> {
   console.log("Generating stroke-styles fixture...");
 
-  const empty = createEmptyFigDesignDocument("Stroke Styles");
+  const empty = createEmptyFigDocument("Stroke Styles");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "Stroke Styles").guid;
 
   // Internal Only Canvas is required by Figma's importer (see
   // packages/@higma-document-renderers/fig/CLAUDE.md). Add it up front
   // so the page ordering matches real Figma exports.
-  const docWithInternal = addPage({
+  const contextWithInternal = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   // Dashed strokes on rounded rectangles — three different patterns.
-  const f1 = addStyledFrame(docWithInternal, state, pageId, "dash-uniform", 100, 100, 200, 100);
+  const f1 = addStyledFrame(contextWithInternal, state, pageGuid, "dash-uniform", 100, 100, 200, 100);
   const r1 = addNode({
     state,
-    doc: f1.doc,
-    pageId,
-    parentId: f1.frameId,
+    context: f1.context,
+    pageGuid,
+    parentGuid: f1.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "dashed-uniform",
@@ -126,18 +130,18 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 3,
-      strokeAlign: "INSIDE",
+      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
       strokeDashes: [8, 4],
       cornerRadius: 8,
     },
   });
 
-  const f2 = addStyledFrame(r1.doc, state, pageId, "dash-asymmetric", 340, 100, 200, 100);
+  const f2 = addStyledFrame(r1.context, state, pageGuid, "dash-asymmetric", 340, 100, 200, 100);
   const r2 = addNode({
     state,
-    doc: f2.doc,
-    pageId,
-    parentId: f2.frameId,
+    context: f2.context,
+    pageGuid,
+    parentGuid: f2.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "dashed-asymmetric",
@@ -148,18 +152,18 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 3,
-      strokeAlign: "INSIDE",
+      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
       strokeDashes: [12, 6, 2, 6],
       cornerRadius: 8,
     },
   });
 
-  const f3 = addStyledFrame(r2.doc, state, pageId, "dash-tight", 580, 100, 200, 100);
+  const f3 = addStyledFrame(r2.context, state, pageGuid, "dash-tight", 580, 100, 200, 100);
   const r3 = addNode({
     state,
-    doc: f3.doc,
-    pageId,
-    parentId: f3.frameId,
+    context: f3.context,
+    pageGuid,
+    parentGuid: f3.frameId,
     spec: {
       type: "ROUNDED_RECTANGLE",
       name: "dashed-tight",
@@ -170,7 +174,7 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 2,
-      strokeAlign: "INSIDE",
+      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
       strokeDashes: [2, 2],
       cornerRadius: 8,
     },
@@ -185,14 +189,14 @@ async function generate(): Promise<void> {
     { name: "arrow-equilateral", cap: "ARROW_EQUILATERAL" },
   ];
 
-  const arrowDoc = ARROW_CASES.reduce<FigDesignDocument>((acc, c, index) => {
+  const arrowContext = ARROW_CASES.reduce<FigDocumentContext>((acc, c, index) => {
     const x = 100 + index * 240;
-    const frame = addStyledFrame(acc, state, pageId, c.name, x, 260, 200, 100);
+    const frame = addStyledFrame(acc, state, pageGuid, c.name, x, 260, 200, 100);
     const line = addNode({
       state,
-      doc: frame.doc,
-      pageId,
-      parentId: frame.frameId,
+      context: frame.context,
+      pageGuid,
+      parentGuid: frame.frameId,
       spec: {
         type: "LINE",
         name: `line-${c.name}`,
@@ -202,17 +206,17 @@ async function generate(): Promise<void> {
         height: 0,
         strokes: [solidPaint(LINE_COLOR)],
         strokeWeight: 4,
-        strokeCap: c.cap,
+        strokeCap: strokeCapValue(c.cap),
       },
     });
-    return line.doc;
-  }, r3.doc);
+    return line.context;
+  }, r3.context);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const exported = await exportFig(arrowDoc);
+  const exported = await exportFig(arrowContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
   console.log(`Generated: ${OUTPUT_FILE}`);
   console.log(`Size: ${(exported.data.length / 1024).toFixed(1)} KB`);

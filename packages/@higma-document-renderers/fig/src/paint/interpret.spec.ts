@@ -29,6 +29,24 @@ describe("getGradientStops", () => {
     expect(stops[1].position).toBe(1);
   });
 
+  it("treats empty Kiwi stopsVar as absent and keeps concrete stops", () => {
+    const paint: FigGradientPaint = {
+      type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+      stops: [
+        { color: { r: 0.11372549086809158, g: 0.43529412150382996, b: 0.9490196108818054, a: 1 }, position: 0 },
+        { color: { r: 0.10196078568696976, g: 0.7843137383460999, b: 0.9882352948188782, a: 1 }, position: 1 },
+      ],
+      stopsVar: [],
+      transform: { m00: 1.1102230246251565e-16, m01: -1, m02: 1, m10: 1, m11: 1.1102230246251565e-16, m12: -0.5 },
+    };
+
+    const stops = getGradientStops(paint, "App icon BG");
+
+    expect(stops).toHaveLength(2);
+    expect(stops[0].color).toEqual({ r: 0.11372549086809158, g: 0.43529412150382996, b: 0.9490196108818054, a: 1 });
+    expect(stops[1].color).toEqual({ r: 0.10196078568696976, g: 0.7843137383460999, b: 0.9882352948188782, a: 1 });
+  });
+
   it("throws when stops are missing", () => {
     const paint: FigGradientPaint = {
       type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },

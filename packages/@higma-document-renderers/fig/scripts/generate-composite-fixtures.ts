@@ -23,16 +23,16 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigNodeId,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
 import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,7 +57,7 @@ const COLORS = {
 } as const;
 
 function solidPaint(color: FigColor): FigPaint {
-  return { type: "SOLID", color, opacity: 1, visible: true, blendMode: "NORMAL" };
+  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
 }
 
 // =============================================================================
@@ -85,20 +85,20 @@ function booleanOperationEnum(op: BooleanOp): { value: number; name: BooleanOp }
 }
 
 // =============================================================================
-// Frame / boolean helpers
+// Frame and boolean construction
 // =============================================================================
 
 type Ctx = {
   readonly state: FigBuilderState;
-  readonly pageId: FigPageId;
+  readonly pageGuid: FigGuid;
 };
 
-type AddedFrame = { readonly doc: FigDesignDocument; readonly id: FigNodeId };
+type AddedFrame = { readonly context: FigDocumentContext; readonly id: FigGuid };
 
 function addFrame(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
-  parentId: FigNodeId | null,
+  parentGuid: FigGuid | null,
   opts: {
     readonly name: string;
     readonly x: number;
@@ -111,9 +111,9 @@ function addFrame(
 ): AddedFrame {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "FRAME",
       name: opts.name,
@@ -125,13 +125,13 @@ function addFrame(
       clipsContent: opts.clipsContent ?? true,
     },
   });
-  return { doc: r.doc, id: r.nodeId };
+  return { context: r.context, id: r.nodeGuid };
 }
 
 function addBoolean(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
-  parentId: FigNodeId,
+  parentGuid: FigGuid,
   opts: {
     readonly name: string;
     readonly operation: BooleanOp;
@@ -145,9 +145,9 @@ function addBoolean(
 ): AddedFrame {
   const r = addNode({
     state: ctx.state,
-    doc,
-    pageId: ctx.pageId,
-    parentId,
+    context,
+    pageGuid: ctx.pageGuid,
+    parentGuid,
     spec: {
       type: "BOOLEAN_OPERATION",
       name: opts.name,
@@ -160,7 +160,7 @@ function addBoolean(
       opacity: opts.opacity,
     },
   });
-  return { doc: r.doc, id: r.nodeId };
+  return { context: r.context, id: r.nodeGuid };
 }
 
 type ChildShape =
@@ -171,26 +171,26 @@ type ChildShape =
   | { readonly kind: "POLYGON"; readonly name: string; readonly x: number; readonly y: number; readonly w: number; readonly h: number; readonly sides?: number };
 
 function addChild(
-  doc: FigDesignDocument,
+  context: FigDocumentContext,
   ctx: Ctx,
-  parentId: FigNodeId,
+  parentGuid: FigGuid,
   child: ChildShape,
-): FigDesignDocument {
+): FigDocumentContext {
   switch (child.kind) {
     case "RECT":
       return addNode({
         state: ctx.state,
-        doc,
-        pageId: ctx.pageId,
-        parentId,
+        context,
+        pageGuid: ctx.pageGuid,
+        parentGuid,
         spec: { type: "RECTANGLE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
-      }).doc;
+      }).context;
     case "ROUNDED":
       return addNode({
         state: ctx.state,
-        doc,
-        pageId: ctx.pageId,
-        parentId,
+        context,
+        pageGuid: ctx.pageGuid,
+        parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: child.name,
@@ -200,21 +200,21 @@ function addChild(
           height: child.h,
           cornerRadius: child.cornerRadius,
         },
-      }).doc;
+      }).context;
     case "ELLIPSE":
       return addNode({
         state: ctx.state,
-        doc,
-        pageId: ctx.pageId,
-        parentId,
+        context,
+        pageGuid: ctx.pageGuid,
+        parentGuid,
         spec: { type: "ELLIPSE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
-      }).doc;
+      }).context;
     case "STAR":
       return addNode({
         state: ctx.state,
-        doc,
-        pageId: ctx.pageId,
-        parentId,
+        context,
+        pageGuid: ctx.pageGuid,
+        parentGuid,
         spec: {
           type: "STAR",
           name: child.name,
@@ -225,13 +225,13 @@ function addChild(
           pointCount: child.pointCount,
           starInnerRadius: child.innerRadius,
         },
-      }).doc;
+      }).context;
     case "POLYGON":
       return addNode({
         state: ctx.state,
-        doc,
-        pageId: ctx.pageId,
-        parentId,
+        context,
+        pageGuid: ctx.pageGuid,
+        parentGuid,
         spec: {
           type: "REGULAR_POLYGON",
           name: child.name,
@@ -241,7 +241,7 @@ function addChild(
           height: child.h,
           pointCount: child.sides,
         },
-      }).doc;
+      }).context;
   }
 }
 
@@ -249,8 +249,8 @@ function addChild(
 // Fixture builders
 // =============================================================================
 
-type Args = { readonly doc: FigDesignDocument; readonly ctx: Ctx; readonly x: number; readonly y: number };
-type Result = { readonly doc: FigDesignDocument };
+type Args = { readonly context: FigDocumentContext; readonly ctx: Ctx; readonly x: number; readonly y: number };
+type Result = { readonly context: FigDocumentContext };
 
 function buildWithChildren(
   args: Args,
@@ -268,7 +268,7 @@ function buildWithChildren(
   },
   children: readonly ChildShape[],
 ): Result {
-  const frame = addFrame(args.doc, args.ctx, null, {
+  const frame = addFrame(args.context, args.ctx, null, {
     name: frameName,
     x: args.x,
     y: args.y,
@@ -276,7 +276,7 @@ function buildWithChildren(
     height: frameSize.h,
     background: frameSize.background,
   });
-  const bo = addBoolean(frame.doc, args.ctx, frame.id, {
+  const bo = addBoolean(frame.context, args.ctx, frame.id, {
     name: bool.name,
     operation: bool.operation,
     x: bool.x,
@@ -286,11 +286,11 @@ function buildWithChildren(
     fill: bool.fill,
     opacity: bool.opacity,
   });
-  const filled = children.reduce<FigDesignDocument>(
+  const filled = children.reduce<FigDocumentContext>(
     (acc, child) => addChild(acc, args.ctx, bo.id, child),
-    bo.doc,
+    bo.context,
   );
-  return { doc: filled };
+  return { context: filled };
 }
 
 function addBasicUnion(args: Args): Result {
@@ -400,10 +400,10 @@ function addMultiOperandUnion(args: Args): Result {
   );
 }
 
-function addNestedBoolean({ doc, ctx, x, y }: Args): Result {
+function addNestedBoolean({ context, ctx, x, y }: Args): Result {
   // BOOLEAN inside BOOLEAN — outer subtract, inner union.
-  const frame = addFrame(doc, ctx, null, { name: "composite-nested", x, y, width: 200, height: 150, background: COLORS.white });
-  const outer = addBoolean(frame.doc, ctx, frame.id, {
+  const frame = addFrame(context, ctx, null, { name: "composite-nested", x, y, width: 200, height: 150, background: COLORS.white });
+  const outer = addBoolean(frame.context, ctx, frame.id, {
     name: "outer-subtract",
     operation: "SUBTRACT",
     x: 30,
@@ -412,7 +412,7 @@ function addNestedBoolean({ doc, ctx, x, y }: Args): Result {
     height: 100,
     fill: solidPaint(COLORS.purple),
   });
-  const inner = addBoolean(outer.doc, ctx, outer.id, {
+  const inner = addBoolean(outer.context, ctx, outer.id, {
     name: "inner-union",
     operation: "UNION",
     x: 0,
@@ -423,9 +423,9 @@ function addNestedBoolean({ doc, ctx, x, y }: Args): Result {
   const innerFilled = ([
     { kind: "RECT" as const, name: "rect", x: 0, y: 15, w: 100, h: 70 },
     { kind: "ELLIPSE" as const, name: "circle", x: 70, y: 0, w: 70, h: 70 },
-  ]).reduce<FigDesignDocument>(
+  ]).reduce<FigDocumentContext>(
     (acc, c) => addChild(acc, ctx, inner.id, c),
-    inner.doc,
+    inner.context,
   );
   const cutout = addChild(innerFilled, ctx, outer.id, {
     kind: "ELLIPSE",
@@ -435,7 +435,7 @@ function addNestedBoolean({ doc, ctx, x, y }: Args): Result {
     w: 40,
     h: 40,
   });
-  return { doc: cutout };
+  return { context: cutout };
 }
 
 function addNonOverlapping(args: Args): Result {
@@ -477,8 +477,8 @@ function addIconPlayButton(args: Args): Result {
   );
 }
 
-function addMultipleBooleans({ doc, ctx, x, y }: Args): Result {
-  const frame = addFrame(doc, ctx, null, { name: "composite-multiple", x, y, width: 300, height: 120, background: COLORS.white });
+function addMultipleBooleans({ context, ctx, x, y }: Args): Result {
+  const frame = addFrame(context, ctx, null, { name: "composite-multiple", x, y, width: 300, height: 120, background: COLORS.white });
 
   type Group = {
     name: string;
@@ -521,7 +521,7 @@ function addMultipleBooleans({ doc, ctx, x, y }: Args): Result {
   ];
 
   return {
-    doc: groups.reduce<FigDesignDocument>((acc, g) => {
+    context: groups.reduce<FigDocumentContext>((acc, g) => {
       const bo = addBoolean(acc, ctx, frame.id, {
         name: g.name,
         operation: g.op,
@@ -531,11 +531,11 @@ function addMultipleBooleans({ doc, ctx, x, y }: Args): Result {
         height: 80,
         fill: solidPaint(g.fill),
       });
-      return g.children.reduce<FigDesignDocument>(
+      return g.children.reduce<FigDocumentContext>(
         (innerAcc, c) => addChild(innerAcc, ctx, bo.id, c),
-        bo.doc,
+        bo.context,
       );
-    }, frame.doc),
+    }, frame.context),
   };
 }
 
@@ -582,19 +582,19 @@ function addIconBell(args: Args): Result {
 async function generate(): Promise<void> {
   console.log("Generating composite (boolean operation) fixtures...\n");
 
-  const empty = createEmptyFigDesignDocument("Composite");
+  const empty = createEmptyFigDocument("Composite");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
-  const ctx: Ctx = { state, pageId };
+  const pageGuid = requireCanvas(empty.document, "Composite").guid;
+  const ctx: Ctx = { state, pageGuid };
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 4;
   const COL_WIDTH = 320;
@@ -620,12 +620,12 @@ async function generate(): Promise<void> {
     { name: "Icon: Bell", fn: addIconBell },
   ];
 
-  const finalDoc = builders.reduce<FigDesignDocument>((acc, b, i) => {
+  const finalContext = builders.reduce<FigDocumentContext>((acc, b, i) => {
     const col = i % GRID_COLS;
     const row = Math.floor(i / GRID_COLS);
     const x = MARGIN + col * COL_WIDTH;
     const y = MARGIN + row * ROW_HEIGHT;
-    return b.fn({ doc: acc, ctx, x, y }).doc;
+    return b.fn({ context: acc, ctx, x, y }).context;
   }, doc0);
 
   for (const dir of [OUTPUT_DIR, path.join(OUTPUT_DIR, "actual"), path.join(OUTPUT_DIR, "snapshots")]) {
@@ -634,7 +634,7 @@ async function generate(): Promise<void> {
     }
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

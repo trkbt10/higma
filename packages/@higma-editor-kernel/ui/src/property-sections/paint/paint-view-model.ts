@@ -4,8 +4,8 @@
  * Decoupled paint shapes used by the paint section views. The shapes here
  * intentionally mirror common attributes of a Figma-style paint but are
  * defined at the kernel layer so views never reach into any document model
- * directly. Document editors translate their native paint type (e.g.
- * FigPaint) to/from these shapes in an adapter.
+ * directly. Document editors project their native paint type (e.g.
+ * FigPaint) to/from these shapes at the package boundary.
  */
 
 export type PaintTypeId =
@@ -19,7 +19,7 @@ export type PaintTypeId =
 export type ImageScaleModeId = "FILL" | "FIT" | "CROP" | "TILE";
 
 export type PaintImageView = {
-  readonly imageRef: string;
+  readonly imageHashHex: string;
   readonly scaleMode: ImageScaleModeId;
   readonly scale: number;
   /** Rotation in degrees. */

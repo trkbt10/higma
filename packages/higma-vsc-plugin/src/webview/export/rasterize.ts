@@ -25,11 +25,21 @@ export type RasterizeArgs = {
   readonly jpegBackground?: string;
 };
 
+function requireJpegBackground(args: RasterizeArgs): string {
+  if (args.format !== "JPEG") {
+    throw new Error("requireJpegBackground is only valid for JPEG rasterization");
+  }
+  if (args.jpegBackground === undefined) {
+    throw new Error("JPEG rasterization requires an explicit jpegBackground");
+  }
+  return args.jpegBackground;
+}
 
 
 
 
 
+/** Rasterize an SVG string into a PNG or JPEG blob. */
 export async function rasterizeSvg(args: RasterizeArgs): Promise<Blob> {
   const targetWidth = Math.max(1, Math.round(args.width * args.scale));
   const targetHeight = Math.max(1, Math.round(args.height * args.scale));
@@ -51,7 +61,7 @@ export async function rasterizeSvg(args: RasterizeArgs): Promise<Blob> {
       throw new Error("2D canvas context unavailable in this webview");
     }
     if (args.format === "JPEG") {
-      ctx.fillStyle = args.jpegBackground ?? "#ffffff";
+      ctx.fillStyle = requireJpegBackground(args);
       ctx.fillRect(0, 0, targetWidth, targetHeight);
     }
     ctx.drawImage(image, 0, 0, targetWidth, targetHeight);

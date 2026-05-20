@@ -9,13 +9,7 @@ import type {
   TextMeasurerConfig,
   LineBreakOptions,
 } from "./types";
-import { createMeasurementProvider } from "./provider";
 import { breakLines } from "./line-break";
-
-/**
- * Default line height multiplier (when not specified)
- */
-const DEFAULT_LINE_HEIGHT_MULTIPLIER = 1.2;
 
 /** Text measurer instance */
 export type TextMeasurerInstance = {
@@ -33,19 +27,19 @@ export type TextMeasurerInstance = {
  * Provides text measurement and line breaking capabilities.
  */
 export function createTextMeasurer(
-  config?: Partial<TextMeasurerConfig>
+  config: TextMeasurerConfig
 ): TextMeasurerInstance {
-  const provider = config?.provider ?? createMeasurementProvider();
-  const defaultLineBreakMode = config?.defaultLineBreakMode ?? "auto";
+  const provider = config.provider;
+  const defaultLineBreakMode = config.defaultLineBreakMode ?? "auto";
 
   function getCharWidths(text: string, font: FontSpec): readonly number[] {
     if (provider.measureCharWidths) {
       return provider.measureCharWidths(text, font);
     }
-    return estimateCharWidths(text, font);
+    return measureCharWidthsOneByOne(text, font);
   }
 
-  function estimateCharWidths(text: string, font: FontSpec): readonly number[] {
+  function measureCharWidthsOneByOne(text: string, font: FontSpec): readonly number[] {
     // Measure each character individually
     const widths: number[] = [];
     const letterSpacing = font.letterSpacing ?? 0;
@@ -62,17 +56,11 @@ export function createTextMeasurer(
   }
 
   function getLineHeight(font: FontSpec): number {
-    // If font metrics are available, use them
-    if (provider.getFontMetrics) {
-      const metrics = provider.getFontMetrics(font);
-      const emHeight =
-        (metrics.ascender - metrics.descender + metrics.lineGap) /
-        metrics.unitsPerEm;
-      return font.fontSize * emHeight;
-    }
-
-    // Use the explicit default multiplier when the provider has no metrics API.
-    return font.fontSize * DEFAULT_LINE_HEIGHT_MULTIPLIER;
+    const metrics = provider.getFontMetrics(font);
+    const emHeight =
+      (metrics.ascender - metrics.descender + metrics.lineGap) /
+      metrics.unitsPerEm;
+    return font.fontSize * emHeight;
   }
 
   return {

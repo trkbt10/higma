@@ -32,7 +32,7 @@ export type PaintItemEditorViewProps = {
   readonly onTypeChange: (index: number, type: PaintTypeId) => void;
   readonly onOpacityChange: (index: number, opacity: number) => void;
   readonly onColorChange: (index: number, hex: string) => void;
-  readonly onImageRefChange: (index: number, imageRef: string) => void;
+  readonly onImageHashHexChange: (index: number, imageHashHex: string) => void;
   readonly onImageScaleModeChange: (index: number, scaleMode: ImageScaleModeId) => void;
   readonly onImageScaleChange: (index: number, scale: number) => void;
   readonly onImageRotationChange: (index: number, rotationDeg: number) => void;
@@ -55,7 +55,7 @@ export function PaintItemEditorView({
   onTypeChange,
   onOpacityChange,
   onColorChange,
-  onImageRefChange,
+  onImageHashHexChange,
   onImageScaleModeChange,
   onImageScaleChange,
   onImageRotationChange,
@@ -127,8 +127,8 @@ export function PaintItemEditorView({
         <>
           <div style={paintInlineStyle}>
             <Select
-              value={paint.image.imageRef}
-              onChange={(value) => onImageRefChange(index, value)}
+              value={paint.image.imageHashHex}
+              onChange={(value) => onImageHashHexChange(index, value)}
               options={imageOptions}
               ariaLabel={`${labelPrefix} image ${ordinal}`}
             />

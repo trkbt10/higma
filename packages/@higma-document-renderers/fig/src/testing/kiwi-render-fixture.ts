@@ -53,6 +53,7 @@ type KiwiNodeSpecimen = {
   readonly strokePaints?: readonly FigPaint[];
   readonly strokeWeight?: FigNode["strokeWeight"];
   readonly cornerRadius?: number;
+  readonly mask?: boolean;
   readonly clipsContent?: boolean;
   readonly frameMaskDisabled?: boolean;
   readonly effects?: readonly FigEffect[];
@@ -145,6 +146,7 @@ export function kiwiNode(specimen: KiwiNodeSpecimen): FigNode {
     strokePaints: specimen.strokePaints,
     strokeWeight: specimen.strokeWeight,
     cornerRadius: specimen.cornerRadius,
+    mask: specimen.mask,
     clipsContent: specimen.clipsContent,
     frameMaskDisabled: specimen.frameMaskDisabled,
     effects: specimen.effects,
@@ -168,7 +170,7 @@ export function kiwiRenderResources(
   return {
     document,
     childrenOf: document.childrenOf,
-    symbolResolver: createSymbolResolver({ document, styleRegistry }),
+    symbolResolver: createSymbolResolver({ document }),
     styleRegistry,
     blobs,
     images,

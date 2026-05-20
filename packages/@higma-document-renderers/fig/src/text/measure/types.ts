@@ -106,7 +106,7 @@ export type MeasurementProvider = {
   /**
    * Get font metrics for a font specification
    */
-  getFontMetrics?(font: FontSpec): FontMetrics;
+  getFontMetrics(font: FontSpec): FontMetrics;
 
   /**
    * Measure individual character widths

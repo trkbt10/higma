@@ -20,7 +20,6 @@
  * styling that could clip or distort it.
  */
 
-import type { FigNodeId } from "@higma-document-models/fig/domain";
 import type { NodeBounds } from "../geometry/node-bounds";
 import type { ViewportTransform } from "../FigViewer";
 
@@ -28,7 +27,7 @@ type Props = {
   readonly viewport: ViewportTransform;
   readonly hovered: NodeBounds | null;
   readonly selected: readonly NodeBounds[];
-  readonly primaryId: FigNodeId | null;
+  readonly primaryId: string | null;
 };
 
 function selectionOverlayClassName(isPrimary: boolean): string {
@@ -54,6 +53,7 @@ function rectStyle(node: NodeBounds, viewport: ViewportTransform): React.CSSProp
   };
 }
 
+/** Render hover and selection boxes over the viewport. */
 export function HoverOverlay({ viewport, hovered, selected, primaryId }: Props) {
   const selectedIds = new Set(selected.map((node) => node.id));
   const showHover = hovered && !selectedIds.has(hovered.id);

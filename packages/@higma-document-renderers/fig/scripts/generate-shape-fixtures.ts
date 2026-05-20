@@ -19,17 +19,18 @@ import { fileURLToPath } from "node:url";
 import {
   addNode,
   addPage,
-  createEmptyFigDesignDocument,
+  createEmptyFigDocument,
   exportFig,
   updateNode,
+  requireCanvas,
+  type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_CAP_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
-import type {
-  FigDesignDocument,
-  FigPageId,
-} from "@higma-document-models/fig/domain";
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigGuid } from "@higma-document-models/fig/types";
+
+import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/shapes");
@@ -37,11 +38,11 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, "shapes.fig");
 
 function solidPaint(color: FigColor): FigPaint {
   return {
-    type: "SOLID",
+    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color,
     opacity: 1,
     visible: true,
-    blendMode: "NORMAL",
+    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -74,6 +75,23 @@ type ShapeFrameData = {
   background: string;
   children: ShapeChild[];
 };
+
+function ellipseArcData(child: ShapeChild): NonNullable<FigNode["arcData"]> {
+  return {
+    startingAngle: ((child.arcStart ?? 0) * Math.PI) / 180,
+    endingAngle: ((child.arcEnd ?? 360) * Math.PI) / 180,
+    innerRadius: child.innerRadius ?? 0,
+  };
+}
+
+function strokeCapValue(
+  name: ShapeChild["strokeCap"],
+): FigNode["strokeCap"] {
+  if (name === undefined) {
+    return undefined;
+  }
+  return { value: STROKE_CAP_VALUES[name], name };
+}
 
 const SHAPE_FRAMES: ShapeFrameData[] = [
   {
@@ -254,18 +272,18 @@ function rgbToColor(rgb: { r: number; g: number; b: number }): FigColor {
 
 function addShapeChild(
   state: FigBuilderState,
-  doc: FigDesignDocument,
-  pageId: FigPageId,
-  parentId: ReturnType<typeof addNode>["nodeId"],
+  context: FigDocumentContext,
+  pageGuid: FigGuid,
+  parentGuid: ReturnType<typeof addNode>["nodeGuid"],
   child: ShapeChild,
-): FigDesignDocument {
+): FigDocumentContext {
   const fillColor = rgbToColor(child.fill ?? { r: 0.8, g: 0.8, b: 0.8 });
   const fills = child.fill ? [solidPaint(fillColor)] : [];
 
   switch (child.type) {
     case "ellipse": {
       const r = addNode({
-        state, doc, pageId, parentId,
+        state, context, pageGuid, parentGuid,
         spec: {
           type: "ELLIPSE",
           name: child.name,
@@ -276,25 +294,20 @@ function addShapeChild(
       });
       if (child.arcStart !== undefined || child.arcEnd !== undefined || child.innerRadius !== undefined) {
         return updateNode({
-          doc: r.doc,
-          pageId,
-          nodeId: r.nodeId,
-          updater: (n) => ({
+          context: r.context,
+          nodeGuid: r.nodeGuid,
+          update: (n) => ({
             ...n,
-            arcData: {
-              ...(child.arcStart !== undefined ? { startingAngle: (child.arcStart * Math.PI) / 180 } : {}),
-              ...(child.arcEnd !== undefined ? { endingAngle: (child.arcEnd * Math.PI) / 180 } : {}),
-              ...(child.innerRadius !== undefined ? { innerRadius: child.innerRadius } : {}),
-            },
+            arcData: ellipseArcData(child),
           }),
         });
       }
-      return r.doc;
+      return r.context;
     }
     case "line": {
       const strokes = child.stroke ? [solidPaint(rgbToColor(child.stroke))] : [];
       const r = addNode({
-        state, doc, pageId, parentId,
+        state, context, pageGuid, parentGuid,
         spec: {
           type: "LINE",
           name: child.name,
@@ -302,16 +315,16 @@ function addShapeChild(
           width: child.width, height: 0,
           strokes,
           strokeWeight: child.strokeWeight,
-          strokeCap: child.strokeCap,
+          strokeCap: strokeCapValue(child.strokeCap),
           strokeDashes: child.dashPattern,
           rotation: child.rotation !== undefined ? (child.rotation * Math.PI) / 180 : undefined,
         },
       });
-      return r.doc;
+      return r.context;
     }
     case "star": {
       return addNode({
-        state, doc, pageId, parentId,
+        state, context, pageGuid, parentGuid,
         spec: {
           type: "STAR",
           name: child.name,
@@ -321,11 +334,11 @@ function addShapeChild(
           pointCount: child.points,
           starInnerRadius: child.starInnerRadius,
         },
-      }).doc;
+      }).context;
     }
     case "polygon": {
       return addNode({
-        state, doc, pageId, parentId,
+        state, context, pageGuid, parentGuid,
         spec: {
           type: "REGULAR_POLYGON",
           name: child.name,
@@ -334,11 +347,11 @@ function addShapeChild(
           fills,
           pointCount: child.sides,
         },
-      }).doc;
+      }).context;
     }
     case "rect": {
       return addNode({
-        state, doc, pageId, parentId,
+        state, context, pageGuid, parentGuid,
         spec: {
           type: "ROUNDED_RECTANGLE",
           name: child.name,
@@ -347,7 +360,7 @@ function addShapeChild(
           fills,
           cornerRadius: child.cornerRadius,
         },
-      }).doc;
+      }).context;
     }
   }
 }
@@ -355,24 +368,24 @@ function addShapeChild(
 async function generateShapeFixtures(): Promise<void> {
   console.log("Generating shape fixtures...");
 
-  const empty = createEmptyFigDesignDocument("Shapes");
+  const empty = createEmptyFigDocument("Shapes");
   const state = createFigBuilderState({
-    nodeIdCounter: { sessionID: 1, nextLocalID: 100 },
-    pageIdCounter: { sessionID: 0, nextLocalID: 2 },
+    nodeGuidCounter: { sessionID: 1, nextLocalID: 100 },
+    pageGuidCounter: { sessionID: 0, nextLocalID: 2 },
   });
-  const pageId = empty.pages[0]!.id;
+  const pageGuid = requireCanvas(empty.document, "Shapes").guid;
   const doc0 = addPage({
     state,
-    doc: empty,
+    context: empty,
     name: "Internal Only Canvas",
     internalOnly: true,
-  }).doc;
+  }).context;
 
   const GRID_COLS = 4;
   const GRID_GAP = 30;
   const MARGIN = 50;
 
-  const finalDoc = SHAPE_FRAMES.reduce<FigDesignDocument>((acc, frameData, index) => {
+  const finalContext = SHAPE_FRAMES.reduce<FigDocumentContext>((acc, frameData, index) => {
     const col = index % GRID_COLS;
     const row = Math.floor(index / GRID_COLS);
     const maxFrameWidth = 300;
@@ -382,7 +395,7 @@ async function generateShapeFixtures(): Promise<void> {
     const bgColor = hexToColor(frameData.background);
 
     const frameResult = addNode({
-      state, doc: acc, pageId, parentId: null,
+      state, context: acc, pageGuid, parentGuid: null,
       spec: {
         type: "FRAME",
         name: frameData.name,
@@ -393,9 +406,9 @@ async function generateShapeFixtures(): Promise<void> {
       },
     });
 
-    return frameData.children.reduce<FigDesignDocument>(
-      (innerAcc, child) => addShapeChild(state, innerAcc, pageId, frameResult.nodeId, child),
-      frameResult.doc,
+    return frameData.children.reduce<FigDocumentContext>(
+      (innerAcc, child) => addShapeChild(state, innerAcc, pageGuid, frameResult.nodeGuid, child),
+      frameResult.context,
     );
   }, doc0);
 
@@ -407,7 +420,7 @@ async function generateShapeFixtures(): Promise<void> {
     fs.mkdirSync(actualDir, { recursive: true });
   }
 
-  const exported = await exportFig(finalDoc);
+  const exported = await exportFig(finalContext);
   fs.writeFileSync(OUTPUT_FILE, exported.data);
 
   console.log(`Generated: ${OUTPUT_FILE}`);

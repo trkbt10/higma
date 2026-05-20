@@ -7,24 +7,15 @@ describe("getConstraintValue", () => {
     expect(getConstraintValue(undefined)).toBe(CONSTRAINT_TYPE_VALUES.MIN);
   });
 
-  it("returns MIN for null", () => {
-    expect(getConstraintValue(null)).toBe(CONSTRAINT_TYPE_VALUES.MIN);
-  });
-
-  it("returns MIN for non-object", () => {
-    expect(getConstraintValue("string")).toBe(CONSTRAINT_TYPE_VALUES.MIN);
-    expect(getConstraintValue(42)).toBe(CONSTRAINT_TYPE_VALUES.MIN);
-  });
-
-  it("returns MIN for object without value", () => {
-    expect(getConstraintValue({})).toBe(CONSTRAINT_TYPE_VALUES.MIN);
+  it("rejects malformed constraint values", () => {
+    expect(() => getConstraintValue({ value: "MIN", name: "MIN" })).toThrow("Constraint field must be a Kiwi enum value");
   });
 
   it("extracts value from constraint object", () => {
-    expect(getConstraintValue({ value: CONSTRAINT_TYPE_VALUES.STRETCH })).toBe(
+    expect(getConstraintValue({ value: CONSTRAINT_TYPE_VALUES.STRETCH, name: "STRETCH" })).toBe(
       CONSTRAINT_TYPE_VALUES.STRETCH,
     );
-    expect(getConstraintValue({ value: CONSTRAINT_TYPE_VALUES.SCALE })).toBe(
+    expect(getConstraintValue({ value: CONSTRAINT_TYPE_VALUES.SCALE, name: "SCALE" })).toBe(
       CONSTRAINT_TYPE_VALUES.SCALE,
     );
   });
@@ -42,14 +33,14 @@ describe("resolveChildConstraints", () => {
     };
   }
 
-  it("returns null when no transform", () => {
+  it("throws when no transform", () => {
     const child = makeChild({ transform: undefined });
-    expect(resolveChildConstraints(child, parentOrig, parentNew)).toBeNull();
+    expect(() => resolveChildConstraints(child, parentOrig, parentNew)).toThrow("Constraint resolution requires child.transform");
   });
 
-  it("returns null when no size", () => {
+  it("throws when no size", () => {
     const child = makeChild({ size: undefined });
-    expect(resolveChildConstraints(child, parentOrig, parentNew)).toBeNull();
+    expect(() => resolveChildConstraints(child, parentOrig, parentNew)).toThrow("Constraint resolution requires child.size");
   });
 
   it("MIN constraint — no change", () => {
@@ -67,10 +58,10 @@ describe("resolveChildConstraints", () => {
 
   it("CENTER constraint — shifts position", () => {
     const child = makeChild({
-      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.CENTER },
-      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.CENTER },
+      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.CENTER, name: "CENTER" },
+      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.CENTER, name: "CENTER" },
     });
-    const result = resolveChildConstraints(child, parentOrig, parentNew)!;
+    const result = resolveChildConstraints(child, parentOrig, parentNew);
     // hDelta=100, vDelta=200
     expect(result.posX).toBe(70); // 20 + 100/2
     expect(result.posY).toBe(130); // 30 + 200/2
@@ -82,10 +73,10 @@ describe("resolveChildConstraints", () => {
 
   it("STRETCH constraint — adjusts size, preserves margins", () => {
     const child = makeChild({
-      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.STRETCH },
-      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.STRETCH },
+      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.STRETCH, name: "STRETCH" },
+      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.STRETCH, name: "STRETCH" },
     });
-    const result = resolveChildConstraints(child, parentOrig, parentNew)!;
+    const result = resolveChildConstraints(child, parentOrig, parentNew);
     // H: leftMargin=20, rightMargin=200-(20+60)=120, newW=300-20-120=160
     // V: topMargin=30, bottomMargin=200-(30+80)=90, newH=400-30-90=280
     expect(result.posX).toBe(20);
@@ -98,10 +89,10 @@ describe("resolveChildConstraints", () => {
 
   it("SCALE constraint — scales proportionally", () => {
     const child = makeChild({
-      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.SCALE },
-      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.SCALE },
+      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.SCALE, name: "SCALE" },
+      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.SCALE, name: "SCALE" },
     });
-    const result = resolveChildConstraints(child, parentOrig, parentNew)!;
+    const result = resolveChildConstraints(child, parentOrig, parentNew);
     // H ratio=300/200=1.5, V ratio=400/200=2.0
     expect(result.posX).toBe(30); // 20*1.5
     expect(result.posY).toBe(60); // 30*2.0
@@ -113,10 +104,10 @@ describe("resolveChildConstraints", () => {
 
   it("MAX constraint — shifts position by full delta", () => {
     const child = makeChild({
-      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.MAX },
-      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.MIN },
+      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.MAX, name: "MAX" },
+      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.MIN, name: "MIN" },
     });
-    const result = resolveChildConstraints(child, parentOrig, parentNew)!;
+    const result = resolveChildConstraints(child, parentOrig, parentNew);
     expect(result.posX).toBe(120); // 20 + 100
     expect(result.posY).toBe(30); // unchanged (MIN)
     expect(result.dimX).toBe(60);
@@ -127,10 +118,10 @@ describe("resolveChildConstraints", () => {
 
   it("mixed constraints — H=STRETCH, V=CENTER", () => {
     const child = makeChild({
-      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.STRETCH },
-      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.CENTER },
+      horizontalConstraint: { value: CONSTRAINT_TYPE_VALUES.STRETCH, name: "STRETCH" },
+      verticalConstraint: { value: CONSTRAINT_TYPE_VALUES.CENTER, name: "CENTER" },
     });
-    const result = resolveChildConstraints(child, parentOrig, parentNew)!;
+    const result = resolveChildConstraints(child, parentOrig, parentNew);
     expect(result.posX).toBe(20); // STRETCH keeps pos
     expect(result.dimX).toBe(160); // STRETCH adjusts size
     expect(result.posY).toBe(130); // CENTER shifts pos

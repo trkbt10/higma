@@ -11,15 +11,13 @@ import {
 import {
   createFigDocumentContext,
   figDocumentResources,
+  findCanvases,
   type FigDocumentContext,
   type FigDocumentResources,
 } from "@higma-document-io/fig";
-import { findNodesByType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
-import { createCachingFontLoader } from "@higma-document-models/fig/font";
-import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
-import { createCachedTextFontResolver, type TextFontResolver } from "@higma-document-renderers/fig/text";
+import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import { Button, Select, Tabs, Toggle, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import {
   CategoryLegend,
@@ -36,7 +34,7 @@ import {
   collectFigInspectorBoxes,
   figNodeToInspectorTree,
 } from "../../src/inspector";
-import { isUserVisibleCanvasNode } from "./visible-canvas";
+import { useBrowserTextFontResolver } from "./browser-text-font-resolver";
 
 type Props = {
   readonly raw: Uint8Array;
@@ -56,9 +54,6 @@ type FrameInfo = {
   readonly viewportX: number;
   readonly viewportY: number;
 };
-
-const browserFontLoader = createBrowserFontLoader();
-const fontLoader = createCachingFontLoader(browserFontLoader);
 
 const containerStyle: CSSProperties = {
   flex: 1,
@@ -210,8 +205,7 @@ function collectFrameInfos(resources: FigDocumentResources, canvas: FigNode): re
 }
 
 function collectCanvases(context: FigDocumentContext, resources: FigDocumentResources): readonly CanvasInfo[] {
-  return findNodesByType(context.document, "CANVAS")
-    .filter(isUserVisibleCanvasNode)
+  return findCanvases(context.document)
     .map((canvas) => ({
       node: canvas,
       name: canvas.name ?? "Unnamed Page",
@@ -222,16 +216,21 @@ function collectCanvases(context: FigDocumentContext, resources: FigDocumentReso
 function renderFontAccessControl({
   fontAccessSupported,
   fontAccessGranted,
+  fontAccessReady,
   onRequestFontAccess,
 }: {
   readonly fontAccessSupported: boolean;
   readonly fontAccessGranted: boolean;
+  readonly fontAccessReady: boolean;
   readonly onRequestFontAccess: () => void;
 }): ReactNode {
   if (!fontAccessSupported) {
     return null;
   }
-  if (fontAccessGranted) {
+  if (fontAccessGranted && !fontAccessReady) {
+    return <span style={fontEnabledStyle}>Fonts loading</span>;
+  }
+  if (fontAccessReady) {
     return <span style={fontEnabledStyle}>Fonts enabled</span>;
   }
   return <Button variant="outline" size="sm" onClick={onRequestFontAccess}>Enable Fonts</Button>;
@@ -343,8 +342,7 @@ function RendererDebugContent({ context }: { readonly context: FigDocumentContex
   const [showHiddenNodes, setShowHiddenNodes] = useState(false);
   const [inspectorEnabled, setInspectorEnabled] = useState(false);
   const [rendererMode, setRendererMode] = useState<FigEditorRendererKind>("svg");
-  const [fontAccessGranted, setFontAccessGranted] = useState(false);
-  const [fontAccessSupported] = useState(() => isBrowserFontLoaderSupported());
+  const fontResolverState = useBrowserTextFontResolver(context);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
@@ -358,12 +356,7 @@ function RendererDebugContent({ context }: { readonly context: FigDocumentContex
     () => (currentCanvas?.frames ?? []).map((frame, index) => ({ value: String(index), label: `${frame.name} (${frame.width}x${frame.height})` })),
     [currentCanvas],
   );
-  const textFontResolver = useMemo<TextFontResolver | undefined>(() => {
-    if (!fontAccessGranted) {
-      return undefined;
-    }
-    return createCachedTextFontResolver(fontLoader);
-  }, [fontAccessGranted]);
+  const textFontResolver = fontResolverState.resolver;
   const treeRoot = useMemo(() => {
     if (currentFrame === undefined) {
       return undefined;
@@ -394,12 +387,6 @@ function RendererDebugContent({ context }: { readonly context: FigDocumentContex
       return id;
     });
   }, []);
-  const handleRequestFontAccess = useCallback((): void => {
-    fontLoader.isFontAvailable("Arial").then(() => {
-      setFontAccessGranted(browserFontLoader.hasPermission());
-    });
-  }, []);
-
   if (currentCanvas === undefined || currentFrame === undefined || treeRoot === undefined) {
     return <div style={emptyStateStyle}>No frames</div>;
   }
@@ -439,7 +426,12 @@ function RendererDebugContent({ context }: { readonly context: FigDocumentContex
           onChange={setShowHiddenNodes}
           label="Show hidden"
         />
-        {renderFontAccessControl({ fontAccessSupported, fontAccessGranted, onRequestFontAccess: handleRequestFontAccess })}
+        {renderFontAccessControl({
+          fontAccessSupported: fontResolverState.supported,
+          fontAccessGranted: fontResolverState.granted,
+          fontAccessReady: fontResolverState.ready,
+          onRequestFontAccess: fontResolverState.requestAccess,
+        })}
       </div>
       <div style={contentStyle}>
         <div style={previewStyle}>

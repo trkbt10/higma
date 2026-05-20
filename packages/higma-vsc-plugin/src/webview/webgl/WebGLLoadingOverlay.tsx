@@ -14,6 +14,7 @@ type Props = {
   readonly status: WebGLViewportPreparationStatus;
 };
 
+/** Render the WebGL preparation progress overlay. */
 export function WebGLLoadingOverlay({ status }: Props) {
   const progressPercent = (status.completedSteps / status.totalSteps) * 100;
   return (

@@ -27,6 +27,7 @@ import { FigInspectorDetailsPanel } from "../src/panels/inspector/FigInspectorDe
 import { FigInspectorOverlay, FigInspectorProvider } from "../src/inspector";
 import { FileDropZone } from "./components/FileDropZone";
 import { RendererDebugView } from "./components/RendererDebugView";
+import { useBrowserTextFontResolver } from "./components/browser-text-font-resolver";
 
 injectCSSVariables();
 
@@ -90,6 +91,11 @@ const headerRightStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   gap: spacingTokens.sm,
+};
+
+const fontEnabledStyle: CSSProperties = {
+  fontSize: fontTokens.size.xs,
+  color: colorTokens.accent.success,
 };
 
 const mainStyle: CSSProperties = {
@@ -248,6 +254,119 @@ function RightPanelContent() {
   );
 }
 
+function renderFontAccessControl({
+  fontAccessSupported,
+  fontAccessGranted,
+  fontAccessReady,
+  onRequestFontAccess,
+}: {
+  readonly fontAccessSupported: boolean;
+  readonly fontAccessGranted: boolean;
+  readonly fontAccessReady: boolean;
+  readonly onRequestFontAccess: () => void;
+}) {
+  if (!fontAccessSupported) {
+    return null;
+  }
+  if (fontAccessGranted && !fontAccessReady) {
+    return <span style={fontEnabledStyle}>Fonts loading</span>;
+  }
+  if (fontAccessReady) {
+    return <span style={fontEnabledStyle}>Fonts enabled</span>;
+  }
+  return <Button variant="outline" size="sm" onClick={onRequestFontAccess}>Enable Fonts</Button>;
+}
+
+function LoadedDevShell({
+  loadedFile,
+  mode,
+  setMode,
+  inspectorOverlayEnabled,
+  setInspectorOverlayEnabled,
+  editorRenderer,
+  setEditorRenderer,
+  editorPanels,
+  onClose,
+}: {
+  readonly loadedFile: LoadedFile;
+  readonly mode: DevMode;
+  readonly setMode: (mode: DevMode) => void;
+  readonly inspectorOverlayEnabled: boolean;
+  readonly setInspectorOverlayEnabled: (enabled: boolean) => void;
+  readonly editorRenderer: FigEditorRendererKind;
+  readonly setEditorRenderer: (renderer: FigEditorRendererKind) => void;
+  readonly editorPanels: EditorPanel[];
+  readonly onClose: () => void;
+}) {
+  const fontResolverState = useBrowserTextFontResolver(loadedFile.context);
+  return (
+    <div style={appStyle}>
+      <header style={headerStyle}>
+        <div style={headerLeftStyle}>
+          <h1 style={titleStyle}>Fig Editor Dev</h1>
+          <span style={fileNameStyle}>{loadedFile.fileName}</span>
+        </div>
+        <div style={headerRightStyle}>
+          {mode === "editor" && (
+            <>
+              <Select value={editorRenderer} onChange={setEditorRenderer} options={editorRendererOptions} style={{ width: 96 }} />
+              <Toggle
+                checked={inspectorOverlayEnabled}
+                onChange={setInspectorOverlayEnabled}
+                label="Inspect overlay"
+              />
+              {renderFontAccessControl({
+                fontAccessSupported: fontResolverState.supported,
+                fontAccessGranted: fontResolverState.granted,
+                fontAccessReady: fontResolverState.ready,
+                onRequestFontAccess: fontResolverState.requestAccess,
+              })}
+            </>
+          )}
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </header>
+      <Tabs<DevMode>
+        items={[
+          {
+            id: "editor",
+            label: "Editor",
+            content: (
+              <div style={mainStyle}>
+                <FigInspectorProvider>
+                  <FigEditor
+                    context={loadedFile.context}
+                    panels={editorPanels}
+                    renderer={editorRenderer}
+                    textFontResolver={fontResolverState.resolver}
+                  >
+                    {inspectorOverlayEnabled ? <FigInspectorOverlay /> : null}
+                  </FigEditor>
+                </FigInspectorProvider>
+              </div>
+            ),
+          },
+          {
+            id: "renderer-debug",
+            label: "Renderer Debug",
+            content: (
+              <div style={mainStyle}>
+                <RendererDebugView raw={loadedFile.raw} />
+              </div>
+            ),
+          },
+        ]}
+        value={mode}
+        onChange={setMode}
+        size="sm"
+        style={tabsContainerStyle}
+      />
+    </div>
+  );
+}
+
 // =============================================================================
 // App
 // =============================================================================
@@ -330,65 +449,18 @@ function App() {
     );
   }
 
-  // File loaded: Tabs for Editor / Renderer Debug
   return (
-    <div style={appStyle}>
-      <header style={headerStyle}>
-        <div style={headerLeftStyle}>
-          <h1 style={titleStyle}>Fig Editor Dev</h1>
-          <span style={fileNameStyle}>{loadedFile.fileName}</span>
-        </div>
-        <div style={headerRightStyle}>
-          {mode === "editor" && (
-            <>
-              <Select value={editorRenderer} onChange={setEditorRenderer} options={editorRendererOptions} style={{ width: 96 }} />
-              <Toggle
-                checked={inspectorOverlayEnabled}
-                onChange={setInspectorOverlayEnabled}
-                label="Inspect overlay"
-              />
-            </>
-          )}
-          <Button variant="ghost" size="sm" onClick={handleClose}>
-            Close
-          </Button>
-        </div>
-      </header>
-      <Tabs<DevMode>
-        items={[
-          {
-            id: "editor",
-            label: "Editor",
-            content: (
-              <div style={mainStyle}>
-                <FigInspectorProvider>
-                  <FigEditor
-                    context={loadedFile.context}
-                    panels={editorPanels}
-                    renderer={editorRenderer}
-                  >
-                    {inspectorOverlayEnabled ? <FigInspectorOverlay /> : null}
-                  </FigEditor>
-                </FigInspectorProvider>
-              </div>
-            ),
-          },
-          {
-            id: "renderer-debug",
-            label: "Renderer Debug",
-            content: (
-              <div style={mainStyle}>
-                <RendererDebugView raw={loadedFile.raw} />
-              </div>
-            ),
-          },
-        ]}
-        value={mode}
-        onChange={setMode}
-        size="sm"
-        style={tabsContainerStyle}
-      />
-    </div>
+    <LoadedDevShell
+      loadedFile={loadedFile}
+      mode={mode}
+      setMode={setMode}
+      inspectorOverlayEnabled={inspectorOverlayEnabled}
+      setInspectorOverlayEnabled={setInspectorOverlayEnabled}
+      editorRenderer={editorRenderer}
+      setEditorRenderer={setEditorRenderer}
+      editorPanels={editorPanels}
+      onClose={handleClose}
+    />
   );
 }
 

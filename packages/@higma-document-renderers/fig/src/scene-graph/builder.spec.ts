@@ -2,15 +2,18 @@
 
 import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg";
+import { encodeSvgPathBlob } from "@higma-document-models/fig/node-factory";
+import { STYLE_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type {
   EllipseNode,
   Fill,
   FrameNode,
+  GroupNode,
   PathNode,
   RectNode,
   SceneNode,
 } from "@higma-document-renderers/fig/scene-graph";
-import { createKiwiRenderFixture, kiwiRenderResources, kiwiNode, kiwiGuid, kiwiSolidPaint, KIWI_RENDER_COLORS } from "../testing/kiwi-render-fixture";
+import { createKiwiRenderFixture, kiwiRenderResources, kiwiNode, kiwiGuid, kiwiSolidPaint, kiwiInnerShadow, KIWI_RENDER_COLORS } from "../testing/kiwi-render-fixture";
 
 function findAllByType(nodes: readonly SceneNode[], type: SceneNode["type"]): SceneNode[] {
   return nodes.flatMap((node) => {
@@ -39,7 +42,7 @@ function buildFixturePage(pageNodes: readonly ReturnType<typeof kiwiNode>[]) {
 }
 
 describe("buildSceneGraph", () => {
-  it("builds shape nodes from Kiwi page children without a design-node layer", () => {
+  it("builds shape nodes directly from Kiwi page children", () => {
     const fixture = createKiwiRenderFixture();
     const sceneGraph = buildFixturePage(fixture.resources.childrenOf(fixture.pages.shapes));
     const rects = findAllByType(sceneGraph.root.children, "rect") as RectNode[];
@@ -124,6 +127,44 @@ describe("buildSceneGraph", () => {
     expect(built.cornerRadius).toEqual([20, 0, 0, 20]);
   });
 
+  it("uses Kiwi shape geometry instead of re-synthesizing rounded rectangles", () => {
+    const blob = encodeSvgPathBlob("M 4 0 L 96 0 L 80 80 L 0 64 Z");
+    const rect = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 22),
+        type: "ROUNDED_RECTANGLE",
+        name: "Geometry rounded rect",
+        width: 100,
+        height: 80,
+        fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.blue)],
+      }),
+      fillGeometry: [{ commandsBlob: 0, styleID: 0 }],
+    };
+    const resources = kiwiRenderResources([rect], [{ bytes: blob.bytes }]);
+    const sceneGraph = buildSceneGraph([rect], {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 1200, height: 800 },
+      viewport: { x: 0, y: 0, width: 1200, height: 800 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const built = sceneGraph.root.children[0] as PathNode;
+
+    expect(built.type).toBe("path");
+    expect(built.contours[0].commands).toEqual([
+      { type: "M", x: 4, y: 0 },
+      { type: "L", x: 96, y: 0 },
+      { type: "L", x: 80, y: 80 },
+      { type: "L", x: 0, y: 64 },
+      { type: "L", x: 4, y: 0 },
+    ]);
+  });
+
   it("resolves Kiwi backgroundPaints through inheritFillStyleIDForBackground", () => {
     const page = kiwiNode({
       guid: kiwiGuid(42, 10),
@@ -175,6 +216,49 @@ describe("buildSceneGraph", () => {
     });
   });
 
+  it("resolves Kiwi styleIdForEffect through the style registry for FRAME decorations", () => {
+    const effectStyle = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 13),
+        type: "RECTANGLE",
+        name: "Frame effect style",
+        effects: [{ ...kiwiInnerShadow(), radius: 12 }],
+      }),
+      styleType: { value: STYLE_TYPE_VALUES.EFFECT, name: "EFFECT" },
+    };
+    const frame = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 14),
+        type: "FRAME",
+        name: "Styled effect frame",
+        width: 100,
+        height: 80,
+        effects: [{ ...kiwiInnerShadow(), radius: 2 }],
+      }),
+      styleIdForEffect: { guid: effectStyle.guid },
+    };
+    const resources = kiwiRenderResources([effectStyle, frame]);
+    const sceneGraph = buildSceneGraph([frame], {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 240, height: 120 },
+      viewport: { x: 0, y: 0, width: 240, height: 120 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const built = sceneGraph.root.children[0] as FrameNode;
+
+    expect(built.type).toBe("frame");
+    expect(built.effects[0]).toMatchObject({
+      type: "inner-shadow",
+      radius: 12,
+    });
+  });
+
   it("interprets Kiwi frameMaskDisabled through the clip policy SoT", () => {
     const unclipped = kiwiNode({
       guid: kiwiGuid(42, 2),
@@ -199,6 +283,129 @@ describe("buildSceneGraph", () => {
     expect(frames[0].clip).toBeUndefined();
     expect(frames[1].clipsContent).toBe(true);
     expect(frames[1].clip).toBeDefined();
+  });
+
+  it("uses Kiwi FRAME fillGeometry as the frame surface shape", () => {
+    const clipBlob = encodeSvgPathBlob("M 0 0 L 96 0 L 96 72 L 0 72 Z");
+    const frame = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 31),
+        type: "FRAME",
+        name: "Geometry clipped frame",
+        width: 100,
+        height: 80,
+        frameMaskDisabled: false,
+      }),
+      fillGeometry: [{ commandsBlob: 0, styleID: 0 }],
+    };
+    const resources = kiwiRenderResources([frame], [{ bytes: clipBlob.bytes }]);
+    const sceneGraph = buildSceneGraph([frame], {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 1200, height: 800 },
+      viewport: { x: 0, y: 0, width: 1200, height: 800 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const built = sceneGraph.root.children[0] as FrameNode;
+
+    expect(built.surfaceShape.type).toBe("path");
+    expect(built.clip?.type).toBe("path");
+  });
+
+  it("uses Kiwi GROUP fillGeometry as the child clip shape", () => {
+    const clipBlob = encodeSvgPathBlob("M 0 0 L 80 0 L 80 60 L 0 60 Z");
+    const group = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 36),
+        type: "GROUP",
+        name: "Geometry clipped group",
+      }),
+      fillGeometry: [{ commandsBlob: 0, styleID: 0 }],
+    };
+    const child = kiwiNode({
+      guid: kiwiGuid(42, 37),
+      type: "RECTANGLE",
+      name: "Oversized child",
+      parentGuid: group.guid,
+      width: 100,
+      height: 100,
+      fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.blue)],
+    });
+    const resources = kiwiRenderResources([group, child], [{ bytes: clipBlob.bytes }]);
+    const sceneGraph = buildSceneGraph([group], {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 1200, height: 800 },
+      viewport: { x: 0, y: 0, width: 1200, height: 800 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const built = sceneGraph.root.children[0] as GroupNode;
+
+    expect(built.type).toBe("group");
+    expect(built.clip?.type).toBe("path");
+    if (built.clip?.type === "path") {
+      expect(built.clip.contours[0].commands).toEqual([
+        { type: "M", x: 0, y: 0 },
+        { type: "L", x: 80, y: 0 },
+        { type: "L", x: 80, y: 60 },
+        { type: "L", x: 0, y: 60 },
+        { type: "L", x: 0, y: 0 },
+      ]);
+    }
+  });
+
+  it("uses explicit Kiwi mask nodes as mask sources", () => {
+    const maskSource = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 32),
+        type: "VECTOR",
+        name: "Explicit mask contour",
+        width: 100,
+        height: 100,
+        mask: true,
+      }),
+      vectorPaths: [{
+        windingRule: { value: 0, name: "NONZERO" },
+        data: "M 0 0 L 100 0 L 100 100 L 0 100 Z M 20 20 L 80 20 L 80 80 L 20 80 Z M 40 40 L 60 40 L 60 60 L 40 60 Z",
+      }],
+    };
+    const maskedRect = kiwiNode({
+      guid: kiwiGuid(42, 33),
+      type: "RECTANGLE",
+      name: "Masked rect",
+      width: 100,
+      height: 100,
+      fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.blue)],
+    });
+    const resources = kiwiRenderResources([maskSource, maskedRect]);
+    const sceneGraph = buildSceneGraph([maskSource, maskedRect], {
+      blobs: resources.blobs,
+      images: resources.images,
+      canvasSize: { width: 1200, height: 800 },
+      viewport: { x: 0, y: 0, width: 1200, height: 800 },
+      symbolResolver: resources.symbolResolver,
+      childrenOf: resources.childrenOf,
+      styleRegistry: resources.styleRegistry,
+      showHiddenNodes: false,
+      warnings: [],
+      textFontResolver: undefined,
+    });
+    const maskedGroup = sceneGraph.root.children[0] as GroupNode;
+
+    expect(sceneGraph.root.children).toHaveLength(1);
+    expect(maskedGroup.type).toBe("group");
+    expect(maskedGroup.mask?.maskContent.id).toBe("42:32");
+    expect(maskedGroup.children.map((child) => child.id)).toEqual(["42:33"]);
   });
 
   it("renders geometry-backed interactive slide elements as paths", () => {
@@ -237,6 +444,28 @@ describe("buildSceneGraph", () => {
 
     expect(child.type).toBe("path");
     expect(child.contours[0].commands.length).toBeGreaterThan(0);
+  });
+
+  it("renders precomputed vector geometry even when Kiwi omits node size", () => {
+    const node = {
+      ...kiwiNode({
+        guid: kiwiGuid(40, 3),
+        type: "VECTOR",
+        name: "Size omitted vector",
+        width: 120,
+        height: 48,
+        vectorPaths: [{ windingRule: "NONZERO", data: "M 0 0 L 120 0 L 120 48 L 0 48 Z" }],
+        fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.white)],
+      }),
+      size: undefined,
+    };
+    const sceneGraph = buildFixturePage([node]);
+    const child = sceneGraph.root.children[0] as PathNode;
+
+    expect(child.type).toBe("path");
+    expect(child.contours[0].commands.length).toBeGreaterThan(0);
+    expect(child.width).toBeUndefined();
+    expect(child.height).toBeUndefined();
   });
 
   it("collects gradient fills when Kiwi paints author gradients", () => {

@@ -21,6 +21,15 @@ describe("tessellateRectStroke", () => {
     expect(verts.length % 6).toBe(0);
   });
 
+  it("preserves per-corner radii without averaging sharp corners", () => {
+    const verts = tessellateRectStroke({ w: 100, h: 80, cornerRadius: [0, 20, 0, 0], strokeWidth: 4 });
+    const averaged = tessellateRectStroke({ w: 100, h: 80, cornerRadius: 5, strokeWidth: 4 });
+
+    expect(verts.length).toBeGreaterThan(0);
+    expect(vertexContainsPoint({ verts, x: -2, y: -2 })).toBe(true);
+    expect(vertexContainsPoint({ verts: averaged, x: -2, y: -2 })).toBe(false);
+  });
+
   it("handles zero stroke width", () => {
     const verts = tessellateRectStroke({ w: 100, h: 80, cornerRadius: 0, strokeWidth: 0 });
     // Zero-width stroke should produce degenerate (empty or zero-area) geometry
@@ -75,6 +84,13 @@ describe("tessellateRectAlignedStroke", () => {
       expect(verts[i + 1]).toBeLessThanOrEqual(84.01);
     }
   });
+
+  it("keeps outside stroke sharp where only another corner is rounded", () => {
+    const verts = tessellateRectAlignedStroke({ w: 100, h: 80, cornerRadius: [0, 20, 0, 0], strokeWidth: 4, align: "OUTSIDE" });
+
+    expect(verts.length).toBeGreaterThan(0);
+    expect(vertexContainsPoint({ verts, x: -4, y: -4 })).toBe(true);
+  });
 });
 
 describe("tessellateEllipseStroke", () => {
@@ -95,6 +111,16 @@ describe("tessellateEllipseStroke", () => {
     expect(verts.length).toBeGreaterThan(0);
   });
 });
+
+function vertexContainsPoint(
+  { verts, x, y }: { readonly verts: Float32Array; readonly x: number; readonly y: number },
+): boolean {
+  return Array.from({ length: verts.length / 2 }).some((_, index) => {
+    const vx = verts[index * 2];
+    const vy = verts[index * 2 + 1];
+    return Math.abs(vx - x) < 0.001 && Math.abs(vy - y) < 0.001;
+  });
+}
 
 describe("tessellatePathStroke", () => {
   it("produces triangles for a simple path", () => {

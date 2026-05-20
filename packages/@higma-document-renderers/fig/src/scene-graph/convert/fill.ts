@@ -9,6 +9,7 @@ import type { FigPaint, FigColor, FigGradientPaint, FigImagePaint, FigImageScale
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
   getPaintType, asGradientPaint, asImagePaint, asSolidPaint, } from "@higma-document-models/fig/color";
+import { requireVariableFloat, resolveConcreteVariableColor } from "@higma-document-models/fig/variables";
 import {
   getGradientStops, getGradientDirection, getRadialGradientCenterAndRadius, getAngularGradientParams, getDiamondGradientParams, getImageHash, getImageTransform, getScaleMode, getScalingFactor, getPaintFilter, getImageShouldColorManage, } from "../../paint";
 import type { Fill, Color, GradientStop, BlendMode } from "@higma-document-renderers/fig/scene-graph";
@@ -30,6 +31,20 @@ function convertGradientStops(stops: readonly { color: FigColor; position: numbe
     position: s.position,
     color: figColorToSceneColor(s.color),
   }));
+}
+
+function resolvePaintOpacity(paint: FigPaint, subject: string): number {
+  if (paint.opacityVar !== undefined) {
+    return requireVariableFloat(paint.opacityVar, `${subject}.opacityVar`);
+  }
+  return paint.opacity ?? 1;
+}
+
+function resolvePaintColor(paint: FigPaint & { readonly color: FigColor }, subject: string): FigColor {
+  if (paint.colorVar !== undefined) {
+    return resolveConcreteVariableColor(paint.colorVar, `${subject}.colorVar`) ?? paint.color;
+  }
+  return paint.color;
 }
 
 /**
@@ -141,8 +156,12 @@ function resolveImageScaleMode(
  * @param images - Image lookup map
  * @returns Scene graph Fill, or null if unsupported
  */
-export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, FigPackageImage>): Fill | null {
-  const opacity = paint.opacity ?? 1;
+export function convertPaintToFill(
+  paint: FigPaint,
+  images: ReadonlyMap<string, FigPackageImage>,
+  subject = "Paint",
+): Fill | null {
+  const opacity = resolvePaintOpacity(paint, subject);
   const paintType = getPaintType(paint);
   const blendMode = extractPaintBlendMode(paint);
 
@@ -152,7 +171,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
       if (!solidPaint) { return null; }
       return {
         type: "solid",
-        color: figColorToSceneColor(solidPaint.color),
+        color: figColorToSceneColor(resolvePaintColor(solidPaint, subject)),
         opacity,
         blendMode,
       };
@@ -161,7 +180,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
     case "GRADIENT_LINEAR": {
       const gradientPaint = asGradientPaint(paint);
       if (!gradientPaint) { return null; }
-      const rawStops = getGradientStops(gradientPaint);
+      const rawStops = getGradientStops(gradientPaint, subject);
       if (isFullyTransparentGradient(rawStops)) { return null; }
       const { start, end } = getGradientDirection(gradientPaint);
       const stops = convertGradientStops(rawStops);
@@ -179,7 +198,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
     case "GRADIENT_RADIAL": {
       const gradientPaint = asGradientPaint(paint);
       if (!gradientPaint) { return null; }
-      const rawStops = getGradientStops(gradientPaint);
+      const rawStops = getGradientStops(gradientPaint, subject);
       if (isFullyTransparentGradient(rawStops)) { return null; }
       const { center, radius } = getRadialGradientCenterAndRadius(gradientPaint);
       const stops = convertGradientStops(rawStops);
@@ -197,7 +216,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
     case "GRADIENT_ANGULAR": {
       const gradientPaint = asGradientPaint(paint);
       if (!gradientPaint) { return null; }
-      const rawStops = getGradientStops(gradientPaint);
+      const rawStops = getGradientStops(gradientPaint, subject);
       if (isFullyTransparentGradient(rawStops)) { return null; }
       // The angular-gradient centre is NOT `(m02, m12)` of paint.transform:
       // the Kiwi matrix maps object→gradient space, and `(m02, m12) =
@@ -221,7 +240,7 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
     case "GRADIENT_DIAMOND": {
       const gradientPaint = asGradientPaint(paint);
       if (!gradientPaint) { return null; }
-      const rawStops = getGradientStops(gradientPaint);
+      const rawStops = getGradientStops(gradientPaint, subject);
       if (isFullyTransparentGradient(rawStops)) { return null; }
       // Diamond gradients, like angular, are centred on the object —
       // delegating to the dedicated function keeps the convention
@@ -240,6 +259,9 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
     case "IMAGE": {
       const imagePaint = asImagePaint(paint);
       if (!imagePaint) { return null; }
+      if (imagePaint.imageVar !== undefined) {
+        throw new Error(`${subject}.imageVar requires a concrete image variable resolver`);
+      }
       const imageHash = getImageHash(imagePaint);
 
       const figImage = images.get(imageHash);
@@ -279,19 +301,18 @@ export function convertPaintToFill(paint: FigPaint, images: ReadonlyMap<string, 
 export function convertPaintsToFills(
   paints: readonly FigPaint[] | undefined,
   images: ReadonlyMap<string, FigPackageImage>,
+  subject = "Paint",
 ): Fill[] {
   if (!paints || paints.length === 0) {
     return [];
   }
 
-  const visiblePaints = paints.filter((p) => p.visible !== false);
-  if (visiblePaints.length === 0) {
-    return [];
-  }
-
   const fills: Fill[] = [];
-  for (const paint of visiblePaints) {
-    const fill = convertPaintToFill(paint, images);
+  for (const [index, paint] of paints.entries()) {
+    if (paint.visible === false) {
+      continue;
+    }
+    const fill = convertPaintToFill(paint, images, `${subject}[${index}]`);
     if (fill) {
       fills.push(fill);
     }

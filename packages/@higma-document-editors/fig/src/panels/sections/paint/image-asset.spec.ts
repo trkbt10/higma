@@ -1,4 +1,4 @@
-/** @file Fig image asset helper tests. */
+/** @file Fig image asset operation tests. */
 
 import { createFigImageAsset } from "./image-asset";
 

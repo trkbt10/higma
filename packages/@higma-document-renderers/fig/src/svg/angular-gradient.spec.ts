@@ -27,6 +27,10 @@ function makeSceneGraph(children: readonly SceneNode[]): SceneGraph {
   };
 }
 
+function frameSurface(width: number, height: number, cornerRadius?: FrameNode["cornerRadius"]): FrameNode["surfaceShape"] {
+  return { type: "rect", width, height, cornerRadius };
+}
+
 describe("Angular gradient — sectored SVG rendering", () => {
   it("emits SVG-native <path> sectors inside a pattern (no foreignObject)", () => {
     const frame: FrameNode = {
@@ -41,6 +45,7 @@ describe("Angular gradient — sectored SVG rendering", () => {
       width: 38,
       height: 38,
       cornerRadius: 8,
+      surfaceShape: frameSurface(38, 38, 8),
       fills: [
         {
           type: "angular-gradient",
@@ -84,6 +89,7 @@ describe("Angular gradient — sectored SVG rendering", () => {
       blendMode: undefined,
       width: 100,
       height: 100,
+      surfaceShape: frameSurface(100, 100),
       fills: [
         {
           type: "angular-gradient",
@@ -130,6 +136,7 @@ describe("Diamond gradient — sectored rendering", () => {
       blendMode: undefined,
       width: 100,
       height: 100,
+      surfaceShape: frameSurface(100, 100),
       fills: [
         {
           type: "diamond-gradient",

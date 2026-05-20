@@ -75,6 +75,16 @@ export type ReplaceFigDocumentContextNodeChangesOptions = {
   readonly nodeChanges: LoadedFigFile["nodeChanges"];
 };
 
+export type AddFigDocumentBlobOptions = {
+  readonly context: FigDocumentContext;
+  readonly blob: FigBlob;
+};
+
+export type AddFigDocumentImageOptions = {
+  readonly context: FigDocumentContext;
+  readonly image: FigPackageImage;
+};
+
 /** Build a `FigDocumentContext` from a buffer of raw `.fig` bytes. */
 export async function createFigDocumentContext(buffer: Uint8Array): Promise<FigDocumentContext> {
   const loaded = await loadFigFile(buffer);
@@ -146,13 +156,78 @@ export function replaceFigDocumentContextNodeChanges({
   });
 }
 
+/**
+ * Append one binary blob to the Kiwi document resources and re-index the
+ * same nodeChanges with the new resource set.
+ */
+export function addBlobToFigDocumentContext({
+  context,
+  blob,
+}: AddFigDocumentBlobOptions): { readonly context: FigDocumentContext; readonly blobIndex: number } {
+  const blobIndex = context.blobs.length;
+  const blobs = [...context.blobs, blob];
+  if (context.loaded) {
+    return {
+      context: createFigDocumentContextFromLoaded({
+        ...context.loaded,
+        nodeChanges: context.document.nodeChanges,
+        blobs,
+        images: context.images,
+        metadata: context.metadata,
+      }),
+      blobIndex,
+    };
+  }
+  return {
+    context: createFigDocumentContextFromSource({
+      nodeChanges: context.document.nodeChanges,
+      blobs,
+      images: context.images,
+      metadata: context.metadata,
+    }),
+    blobIndex,
+  };
+}
+
+/**
+ * Add one package image by its own ref and re-index the same nodeChanges.
+ */
+export function addImageToFigDocumentContext({
+  context,
+  image,
+}: AddFigDocumentImageOptions): FigDocumentContext {
+  if (image.ref.length === 0) {
+    throw new Error("addImageToFigDocumentContext requires a non-empty image ref");
+  }
+  if (image.data.byteLength === 0) {
+    throw new Error(`addImageToFigDocumentContext requires bytes for image ${image.ref}`);
+  }
+  if (image.mimeType.length === 0) {
+    throw new Error(`addImageToFigDocumentContext requires a MIME type for image ${image.ref}`);
+  }
+  const images = new Map(context.images);
+  images.set(image.ref, image);
+  if (context.loaded) {
+    return createFigDocumentContextFromLoaded({
+      ...context.loaded,
+      nodeChanges: context.document.nodeChanges,
+      blobs: context.blobs,
+      images,
+      metadata: context.metadata,
+    });
+  }
+  return createFigDocumentContextFromSource({
+    nodeChanges: context.document.nodeChanges,
+    blobs: context.blobs,
+    images,
+    metadata: context.metadata,
+  });
+}
+
 function createFigDocumentContextFromSource(source: FigDocumentContextSource): FigDocumentContext {
   const document = indexFigKiwiDocument(source.nodeChanges);
   const styleRegistry = document.nodeChanges.length > 0 ? buildFigStyleRegistry(document) : EMPTY_FIG_STYLE_REGISTRY;
-  const symbolResolver = createSymbolResolver({
-    document,
-    styleRegistry,
-  });
+  const symbolResolver = createSymbolResolver({ document, blobs: source.blobs });
 
   return {
     ...(source.loaded ? { loaded: source.loaded } : {}),

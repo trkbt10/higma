@@ -9,7 +9,12 @@
 // NodeSpec discriminated union — declarative shape consumed by
 // `addNode` / `createNodeFromSpec`. Lives in this package because the
 // factory that materialises it lives here.
-export type { NodeSpec, BaseNodeSpec } from "./types";
+export type {
+  NodeSpec,
+  BaseNodeSpec,
+  KiwiStackLayoutFields,
+  KiwiChildLayoutFields,
+} from "./types";
 
 // Context
 export {
@@ -17,10 +22,18 @@ export {
   createFigDocumentContextFromLoaded,
   createFigDocumentContextFromKiwiCanvas,
   createFigDocumentContextFromNodeChanges,
+  addBlobToFigDocumentContext,
+  addImageToFigDocumentContext,
   replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
   type CreateFigDocumentContextFromNodeChangesOptions,
+  type AddFigDocumentBlobOptions,
+  type AddFigDocumentImageOptions,
   type ReplaceFigDocumentContextNodeChangesOptions,
+  findCanvas,
+  findCanvases,
+  requireCanvas,
+  requireInternalCanvas,
   figDocumentResources,
   type FigDocumentResources,
 } from "./context";
@@ -34,6 +47,7 @@ export {
 // Node operations
 export {
   addNode,
+  updateNode,
   createNodeFromSpec,
 } from "./node-ops";
 

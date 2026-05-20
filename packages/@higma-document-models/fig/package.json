@@ -38,6 +38,10 @@
       "types": "./src/geometry-interpret.ts",
       "default": "./src/geometry-interpret.ts"
     },
+    "./variables": {
+      "types": "./src/variables.ts",
+      "default": "./src/variables.ts"
+    },
     "./symbols": {
       "types": "./src/symbols/index.ts",
       "default": "./src/symbols/index.ts"

@@ -1,8 +1,7 @@
 /**
  * @file Per-child constraint resolution.
  *
- * Both the builder (computeDerivedRecursive) and the renderer
- * (applyConstraintsToChildren) need to resolve a single child's
+ * SymbolResolver needs to resolve a single child's
  * position and size when its parent INSTANCE is resized.
  *
  * This module centralises the common steps:
@@ -12,7 +11,7 @@
  *   4. Detect position / size changes
  */
 
-import type { KiwiEnumValue } from "../types";
+import type { FigMatrix, FigVector, KiwiEnumValue } from "../types";
 import { CONSTRAINT_TYPE_VALUES } from "../constants";
 import { resolveConstraintAxis } from "./constraint-axis";
 
@@ -35,16 +34,17 @@ export type ChildConstraintResolution = {
 // =============================================================================
 
 /**
- * Extract the numeric constraint value from a constraint field.
- * Returns `CONSTRAINT_TYPE_VALUES.MIN` (0) as default when the field is
- * absent, not an object, or has no `.value`.
+ * Extract the numeric constraint value from a Kiwi constraint field.
+ * An absent constraint is Kiwi's omitted-field encoding for MIN.
  */
-export function getConstraintValue(constraintField: unknown): number {
-  if (typeof constraintField !== "object" || constraintField === null) {
+export function getConstraintValue(constraintField: { readonly value?: unknown; readonly name?: unknown } | undefined): number {
+  if (constraintField === undefined) {
     return CONSTRAINT_TYPE_VALUES.MIN;
   }
-  const value = (constraintField as { readonly value?: unknown }).value;
-  return typeof value === "number" ? value : CONSTRAINT_TYPE_VALUES.MIN;
+  if (typeof constraintField.value !== "number") {
+    throw new Error("Constraint field must be a Kiwi enum value");
+  }
+  return constraintField.value;
 }
 
 // =============================================================================
@@ -54,38 +54,40 @@ export function getConstraintValue(constraintField: unknown): number {
 /**
  * Resolve constraints for a single child node when its parent is resized.
  *
- * Returns `null` when the child has no `transform` or `size` —
- * callers should skip such children.
- */
-/**
- * Minimal shape for constraint resolution.
- * Accepts both FigNode (production) and partial test objects.
+ * Requires transform and size because every non-MIN constraint needs a
+ * concrete source rectangle.
  */
 type ConstraintChild = {
   readonly horizontalConstraint?: KiwiEnumValue;
   readonly verticalConstraint?: KiwiEnumValue;
-  readonly transform?: { readonly m02?: number; readonly m12?: number };
-  readonly size?: { readonly x?: number; readonly y?: number };
+  readonly transform?: FigMatrix;
+  readonly size?: FigVector;
   readonly [key: string]: unknown;
 };
 
+/** Resolve one constrained child rectangle from Kiwi constraint fields. */
 export function resolveChildConstraints(
   child: ConstraintChild,
   parentOrigSize: { x: number; y: number },
   parentNewSize: { x: number; y: number },
-): ChildConstraintResolution | null {
+): ChildConstraintResolution {
   const hVal = getConstraintValue(child.horizontalConstraint);
   const vVal = getConstraintValue(child.verticalConstraint);
 
   const transform = child.transform;
   const size = child.size;
 
-  if (!transform || !size) {return null;}
+  if (transform === undefined) {
+    throw new Error("Constraint resolution requires child.transform");
+  }
+  if (size === undefined) {
+    throw new Error("Constraint resolution requires child.size");
+  }
 
   const origX = transform.m02 ?? 0;
   const origY = transform.m12 ?? 0;
-  const origW = size.x ?? 0;
-  const origH = size.y ?? 0;
+  const origW = size.x;
+  const origH = size.y;
 
   const hResult = resolveConstraintAxis({
     origPos: origX,

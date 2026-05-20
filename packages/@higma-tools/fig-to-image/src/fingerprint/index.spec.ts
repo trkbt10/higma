@@ -5,7 +5,9 @@ import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
 import { createSymbolResolver, type SymbolResolver } from "@higma-document-models/fig/symbols";
 import { fingerprintFigSubtree } from "./index";
 
-const EMPTY_SYMBOL_RESOLVER = createSymbolResolver({ document: indexFigKiwiDocument([]) });
+const EMPTY_SYMBOL_RESOLVER = createSymbolResolver({
+  document: indexFigKiwiDocument([]),
+});
 
 function guid(localID: number): FigGuid {
   return { sessionID: 1, localID };
@@ -47,7 +49,9 @@ function resolverFor(nodes: readonly FigNode[]): SymbolResolver {
       throw new Error("resolverFor requires every node to carry guid");
     }
   }
-  return createSymbolResolver({ document: indexFigKiwiDocument(nodes) });
+  return createSymbolResolver({
+    document: indexFigKiwiDocument(nodes),
+  });
 }
 
 describe("fingerprintFigSubtree", () => {

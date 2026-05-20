@@ -152,7 +152,9 @@ export function createSceneState(): SceneStateInstance {
         base.clipsContent = node.clipsContent;
         if (node.fills.length > 0) {
           base.fill = node.fills[node.fills.length - 1];
-          base.vertices = generateRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
+          base.vertices = node.surfaceShape.type === "path"
+            ? tessellateContoursOrNull(node.surfaceShape.contours)
+            : generateRectVertices(node.surfaceShape.width, node.surfaceShape.height, node.surfaceShape.cornerRadius, node.surfaceShape.cornerSmoothing);
         }
         break;
       case "rect":
@@ -290,6 +292,11 @@ export function createSceneState(): SceneStateInstance {
       case "frame": {
         const c = op.changes;
         applyGeometryRetessellation(state, c.width, c.height, c.cornerRadius, c.cornerSmoothing);
+        if (c.surfaceShape !== undefined) {
+          state.vertices = c.surfaceShape.type === "path"
+            ? tessellateContoursOrNull(c.surfaceShape.contours)
+            : generateRectVertices(c.surfaceShape.width, c.surfaceShape.height, c.surfaceShape.cornerRadius, c.surfaceShape.cornerSmoothing);
+        }
         applyFillsUpdate(state, c.fills);
         if (c.clipsContent !== undefined) {
           state.clipsContent = c.clipsContent;

@@ -17,7 +17,8 @@
  * selection from one canonical id list keeps the canvas and the tree
  * in agreement: a Shift-click on either surface selects the same run.
  *
- * `primaryId` is tracked separately from the membership set so that
+ * Keys stored here are `guidToString(node.guid)` values from the Kiwi
+ * document. `primaryId` is tracked separately from the membership set so that
  * subsequent Shift-clicks anchor on the *last* explicit pick — the
  * convention every vector tool (Figma, Sketch, Illustrator, Finder)
  * follows. Without that anchor the range would always grow from the
@@ -25,11 +26,9 @@
  * twice.
  */
 
-import type { FigNodeId } from "@higma-document-models/fig/domain";
-
 export type SelectionState = {
-  readonly ids: readonly FigNodeId[];
-  readonly primaryId: FigNodeId | null;
+  readonly ids: readonly string[];
+  readonly primaryId: string | null;
 };
 
 export type SelectionModifiers = {
@@ -39,27 +38,32 @@ export type SelectionModifiers = {
 
 export const EMPTY_SELECTION: SelectionState = { ids: [], primaryId: null };
 
-export function isIdSelected(state: SelectionState, id: FigNodeId): boolean {
+/** Return whether `id` is present in the current selection. */
+export function isIdSelected(state: SelectionState, id: string): boolean {
   return state.ids.includes(id);
 }
 
-export function selectionAsSet(state: SelectionState): ReadonlySet<FigNodeId> {
+/** Convert the ordered selection ids into a Set for membership checks. */
+export function selectionAsSet(state: SelectionState): ReadonlySet<string> {
   return new Set(state.ids);
 }
 
-export function replaceSelection(id: FigNodeId): SelectionState {
+/** Create a single-id selection with that id as the range anchor. */
+export function replaceSelection(id: string): SelectionState {
   return { ids: [id], primaryId: id };
 }
 
+/** Clear all selected ids and the range anchor. */
 export function clearSelection(): SelectionState {
   return EMPTY_SELECTION;
 }
 
+/** Apply a mouse click selection command to the current state. */
 export function applyClickSelection(
   state: SelectionState,
-  id: FigNodeId,
+  id: string,
   modifiers: SelectionModifiers,
-  orderedIds: readonly FigNodeId[],
+  orderedIds: readonly string[],
 ): SelectionState {
   if (modifiers.shift && state.primaryId !== null) {
     return computeRangeSelection(state, id, orderedIds);
@@ -70,9 +74,10 @@ export function applyClickSelection(
   return replaceSelection(id);
 }
 
+/** Drop selection ids that are not available in the current page. */
 export function clampSelectionToIds(
   state: SelectionState,
-  validIds: ReadonlySet<FigNodeId>,
+  validIds: ReadonlySet<string>,
 ): SelectionState {
   const ids = state.ids.filter((id) => validIds.has(id));
   if (ids.length === state.ids.length && (state.primaryId === null || validIds.has(state.primaryId))) {
@@ -85,10 +90,10 @@ export function clampSelectionToIds(
 }
 
 function pickClampedPrimary(
-  previous: FigNodeId | null,
-  remaining: readonly FigNodeId[],
-  validIds: ReadonlySet<FigNodeId>,
-): FigNodeId | null {
+  previous: string | null,
+  remaining: readonly string[],
+  validIds: ReadonlySet<string>,
+): string | null {
   if (previous !== null && validIds.has(previous)) {
     return previous;
   }
@@ -97,8 +102,8 @@ function pickClampedPrimary(
 
 function computeRangeSelection(
   state: SelectionState,
-  id: FigNodeId,
-  orderedIds: readonly FigNodeId[],
+  id: string,
+  orderedIds: readonly string[],
 ): SelectionState {
   const anchor = state.primaryId;
   if (anchor === null) {
@@ -119,7 +124,7 @@ function computeRangeSelection(
   return { ids, primaryId: id };
 }
 
-function computeToggleSelection(state: SelectionState, id: FigNodeId): SelectionState {
+function computeToggleSelection(state: SelectionState, id: string): SelectionState {
   const idx = state.ids.indexOf(id);
   if (idx < 0) {
     return { ids: [...state.ids, id], primaryId: id };
