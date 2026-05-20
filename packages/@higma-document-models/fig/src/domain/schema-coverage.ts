@@ -178,7 +178,7 @@ export const KIWI_NODECHANGE_HANDLING: Readonly<Record<string, KiwiFieldHandling
   // consumer.
   "nestedInstanceResizeEnabled": { kind: "mapped", to: "nestedInstanceResizeEnabled" },
   "overriddenSymbolID": { kind: "mapped", to: "overriddenSymbolID", note: "SymbolResolver owns effective INSTANCE target selection for both NodeChange fields and SymbolOverride payloads; the GUID remains FigGuid." },
-  "componentPropAssignments": { kind: "mapped", to: "componentPropAssignments", note: "SymbolResolver consumes Kiwi componentPropAssignments directly." },
+  "componentPropAssignments": { kind: "mapped", to: "componentPropAssignments", note: "SymbolResolver consumes Kiwi componentPropAssignments directly, including node-level guidValue INSTANCE_SWAP selections that bind document-external DSD slots to local SYMBOL roots." },
   "propsAreBubbled": { kind: "mapped", to: "propsAreBubbled" },
   "overrideStash": { kind: "mapped", to: "overrideStash" },
   "overrideStashV2": { kind: "mapped", to: "overrideStashV2" },

@@ -1183,6 +1183,99 @@ describe("createSymbolResolver", () => {
     expect(resolved.children[0]!.styleIdForFill).toBeUndefined();
   });
 
+  it("uses the selected local SYMBOL root as the visual source for a document-external instance-swap slot", () => {
+    const externalScreenSlot = { sessionID: 99, localID: 201 };
+    const selectedScreenSymbolGuid = { sessionID: 1, localID: 201 };
+    const selectedScreenChildGuid = { sessionID: 1, localID: 202 };
+    const instance = createTestNode({
+      type: "INSTANCE",
+      name: "External device",
+      guid: { sessionID: 1, localID: 200 },
+      symbolData: {
+        symbolID: { sessionID: 99, localID: 200 },
+      },
+      componentPropAssignments: [
+        {
+          defID: { sessionID: 99, localID: 1 },
+          value: { guidValue: selectedScreenSymbolGuid },
+        },
+      ],
+      derivedSymbolData: [
+        {
+          guidPath: { guids: [externalScreenSlot, selectedScreenChildGuid] },
+          fillGeometry: [{ commandsBlob: 1, styleID: 0 }],
+        },
+      ],
+    });
+    const selectedScreen = createTestNode({
+      type: "SYMBOL",
+      name: "Selected screen",
+      guid: selectedScreenSymbolGuid,
+      size: { x: 402, y: 874 },
+      fillPaints: [solidPaint(1, 0, 0)],
+    });
+    const selectedScreenChild = createTestNode({
+      type: "VECTOR",
+      name: "Selected screen child",
+      guid: selectedScreenChildGuid,
+      parentIndex: { guid: selectedScreenSymbolGuid, position: "a" },
+    });
+    const document = indexFigKiwiDocument([instance, selectedScreen, selectedScreenChild]);
+    const resolver = createSymbolResolver({ document });
+    const resolved = resolver.resolveInstance(instance);
+    const screen = resolved.children[0]!;
+    const child = screen.children![0]!;
+
+    expect(screen.guid).toEqual(externalScreenSlot);
+    expect(screen.type.name).toBe("FRAME");
+    expect(screen.size).toEqual({ x: 402, y: 874 });
+    expect(screen.fillPaints).toEqual([solidPaint(1, 0, 0)]);
+    expect(child.guid).toEqual(selectedScreenChildGuid);
+    expect(child.fillGeometry).toEqual([{ commandsBlob: 1, styleID: 0 }]);
+    expect(child.fillPaints).toBeUndefined();
+  });
+
+  it("rejects a selected local SYMBOL when document-external derivedSymbolData does not identify its slot", () => {
+    const externalOtherSlot = { sessionID: 99, localID: 211 };
+    const selectedScreenSymbolGuid = { sessionID: 1, localID: 211 };
+    const selectedScreenChildGuid = { sessionID: 1, localID: 212 };
+    const instance = createTestNode({
+      type: "INSTANCE",
+      name: "External device with stale swap",
+      guid: { sessionID: 1, localID: 210 },
+      symbolData: {
+        symbolID: { sessionID: 99, localID: 210 },
+      },
+      componentPropAssignments: [
+        {
+          defID: { sessionID: 99, localID: 1 },
+          value: { guidValue: selectedScreenSymbolGuid },
+        },
+      ],
+      derivedSymbolData: [
+        {
+          guidPath: { guids: [externalOtherSlot] },
+          size: { x: 402, y: 874 },
+        },
+      ],
+    });
+    const selectedScreen = createTestNode({
+      type: "SYMBOL",
+      name: "Selected screen",
+      guid: selectedScreenSymbolGuid,
+    });
+    const selectedScreenChild = createTestNode({
+      type: "VECTOR",
+      name: "Selected screen child",
+      guid: selectedScreenChildGuid,
+      parentIndex: { guid: selectedScreenSymbolGuid, position: "a" },
+    });
+    const document = indexFigKiwiDocument([instance, selectedScreen, selectedScreenChild]);
+    const resolver = createSymbolResolver({ document });
+
+    expect(() => resolver.resolveInstance(instance)).toThrow(/selects local SYMBOL 1:211 but derivedSymbolData carries no matching external slot/);
+  });
+
   it("uses the matching local Kiwi node as the visual source for a document-external slot", () => {
     const iconSlot = { sessionID: 99, localID: 101 };
     const instance = createTestNode({

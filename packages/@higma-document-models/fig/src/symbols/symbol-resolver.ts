@@ -2136,6 +2136,7 @@ type ExternalDerivedMaterializeContext = {
   readonly document: FigKiwiDocumentIndex;
   readonly blobs?: readonly FigBlob[];
   readonly visualContext?: ExternalDerivedVisualContext;
+  readonly documentExternalSlotSymbolRoots?: ReadonlyMap<string, FigNode>;
 };
 
 type ExternalDerivedText = {
@@ -2156,7 +2157,14 @@ function materializeDocumentExternalDerivedChildren(
     derivedSymbolData: node.derivedSymbolData ?? [],
     symbolOverrides: node.symbolData?.symbolOverrides ?? [],
   });
-  const children = markDocumentExternalLeadingMaskSource(materializeExternalDerivedSlots(slots, ctx));
+  const documentExternalSlotSymbolRoots = resolveDocumentExternalSlotSymbolRoots(node, slots, ctx.document);
+  const materializeContext: ExternalDerivedMaterializeContext = {
+    document: ctx.document,
+    blobs: ctx.blobs,
+    visualContext: ctx.visualContext,
+    documentExternalSlotSymbolRoots,
+  };
+  const children = markDocumentExternalLeadingMaskSource(materializeExternalDerivedSlots(slots, materializeContext));
   return alignDocumentExternalDerivedChildren(node, children, ctx.blobs);
 }
 
@@ -2170,6 +2178,106 @@ function buildExternalDerivedSlots(
   addExternalDerivedEntriesToSlots(slots, entries.derivedSymbolData, "derived", "prefixed");
   addExternalDerivedEntriesToSlots(slots, entries.symbolOverrides, "symbolOverride", "prefixed");
   return Array.from(slots.values());
+}
+
+function resolveDocumentExternalSlotSymbolRoots(
+  node: FigNode,
+  slots: readonly ExternalDerivedSlot[],
+  document: FigKiwiDocumentIndex,
+): ReadonlyMap<string, FigNode> | undefined {
+  const selectedSymbols = documentExternalSelectedLocalSymbolRoots(node, document);
+  if (selectedSymbols.length === 0) {
+    return undefined;
+  }
+  const roots = new Map<string, FigNode>();
+  for (const symbolRoot of selectedSymbols) {
+    const slot = requireDocumentExternalSlotForSelectedSymbol(node, symbolRoot, slots, document);
+    const slotKey = guidToString(slot.guid);
+    const existing = roots.get(slotKey);
+    if (existing !== undefined && !figGuidEquals(existing.guid, symbolRoot.guid)) {
+      throw new Error(
+        `SymbolResolver: INSTANCE ${guidToString(node.guid)} maps external slot ${slotKey} to both selected SYMBOL ${guidToString(existing.guid)} and ${guidToString(symbolRoot.guid)}`,
+      );
+    }
+    roots.set(slotKey, symbolRoot);
+  }
+  return roots;
+}
+
+function documentExternalSelectedLocalSymbolRoots(
+  node: FigNode,
+  document: FigKiwiDocumentIndex,
+): readonly FigNode[] {
+  const assignments = node.componentPropAssignments ?? [];
+  const symbols = new Map<string, FigNode>();
+  for (const assignment of assignments) {
+    const guidValue = assignment.value.guidValue;
+    if (guidValue === undefined) {
+      continue;
+    }
+    const target = findNodeByGuid(document, guidValue);
+    if (target === undefined || getNodeType(target) !== "SYMBOL") {
+      continue;
+    }
+    symbols.set(guidToString(target.guid), target);
+  }
+  return Array.from(symbols.values());
+}
+
+function requireDocumentExternalSlotForSelectedSymbol(
+  node: FigNode,
+  symbolRoot: FigNode,
+  slots: readonly ExternalDerivedSlot[],
+  document: FigKiwiDocumentIndex,
+): ExternalDerivedSlot {
+  const descendantKeys = selectedSymbolDescendantKeys(symbolRoot, document);
+  const matches = slots.filter((slot) => externalDerivedSlotContainsAnyGuid(slot, descendantKeys));
+  if (matches.length === 1) {
+    return matches[0]!;
+  }
+  if (matches.length === 0) {
+    throw new Error(
+      `SymbolResolver: INSTANCE ${guidToString(node.guid)} selects local SYMBOL ${guidToString(symbolRoot.guid)} but derivedSymbolData carries no matching external slot`,
+    );
+  }
+  throw new Error(
+    `SymbolResolver: INSTANCE ${guidToString(node.guid)} selects local SYMBOL ${guidToString(symbolRoot.guid)} but derivedSymbolData maps it to multiple external slots: ${matches.map((slot) => guidToString(slot.guid)).join(", ")}`,
+  );
+}
+
+function selectedSymbolDescendantKeys(
+  symbolRoot: FigNode,
+  document: FigKiwiDocumentIndex,
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  collectSelectedSymbolDescendantKeys(symbolRoot, document, keys);
+  return keys;
+}
+
+function collectSelectedSymbolDescendantKeys(
+  node: FigNode,
+  document: FigKiwiDocumentIndex,
+  keys: Set<string>,
+): void {
+  for (const child of document.childrenOf(node)) {
+    keys.add(guidToString(child.guid));
+    collectSelectedSymbolDescendantKeys(child, document, keys);
+  }
+}
+
+function externalDerivedSlotContainsAnyGuid(
+  slot: ExternalDerivedSlot,
+  keys: ReadonlySet<string>,
+): boolean {
+  if (keys.has(guidToString(slot.guid))) {
+    return true;
+  }
+  for (const child of slot.children.values()) {
+    if (externalDerivedSlotContainsAnyGuid(child, keys)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 type ExternalDerivedBounds = {
@@ -2379,7 +2487,8 @@ function materializeExternalDerivedSlot(
   }
   const childSlots = externalDerivedChildSlots(slot, localNode);
   const text = resolveExternalDerivedText(slot);
-  const nodeType = resolveExternalDerivedNodeType(slot, text, childSlots, localNode);
+  const selectedSymbolRoot = documentExternalSelectedSymbolRootForSlot(slot, ctx, localNode);
+  const nodeType = resolveExternalDerivedNodeType(slot, text, childSlots, localNode, selectedSymbolRoot);
   const node: MutableFigNode = {
     guid: slot.guid,
     phase: EXTERNAL_DERIVED_PHASE,
@@ -2396,8 +2505,10 @@ function materializeExternalDerivedSlot(
     document: ctx.document,
     blobs: ctx.blobs,
     visualContext: externalDerivedVisualContextFromNode(node, ctx.visualContext),
+    documentExternalSlotSymbolRoots: ctx.documentExternalSlotSymbolRoots,
   };
   const children = materializeExternalDerivedSlotChildren(childSlots, text, childCtx);
+  applyDocumentExternalSelectedSymbolRootSurfaceFields(node, selectedSymbolRoot);
   if (!externalDerivedSlotContributesNode(slot, text, children, localNode)) {
     return undefined;
   }
@@ -2844,6 +2955,46 @@ const EXTERNAL_DERIVED_LOCAL_NODE_FIELDS_WITHOUT_STACK_LAYOUT = EXTERNAL_DERIVED
   (field) => !EXTERNAL_DERIVED_LOCAL_STACK_LAYOUT_FIELDS.has(field),
 );
 
+const DOCUMENT_EXTERNAL_SELECTED_SYMBOL_ROOT_SURFACE_FIELDS = [
+  "size",
+  "visible",
+  "opacity",
+  "blendMode",
+  "clipsContent",
+  "frameMaskDisabled",
+  "fillPaints",
+  "backgroundPaints",
+  "strokePaints",
+  "strokeWeight",
+  "individualStrokeWeights",
+  "strokeJoin",
+  "strokeCap",
+  "strokeAlign",
+  "strokeDashes",
+  "borderTopWeight",
+  "borderRightWeight",
+  "borderBottomWeight",
+  "borderLeftWeight",
+  "borderStrokeWeightsIndependent",
+  "borderTopHidden",
+  "borderRightHidden",
+  "borderBottomHidden",
+  "borderLeftHidden",
+  "cornerRadius",
+  "rectangleCornerRadii",
+  "rectangleTopLeftCornerRadius",
+  "rectangleTopRightCornerRadius",
+  "rectangleBottomRightCornerRadius",
+  "rectangleBottomLeftCornerRadius",
+  "rectangleCornerRadiiIndependent",
+  "cornerSmoothing",
+  "effects",
+  "styleIdForFill",
+  "styleIdForStrokeFill",
+  "styleIdForEffect",
+  "styleIdForGrid",
+] as const satisfies readonly (keyof FigNode)[];
+
 function applyExternalDerivedLocalNodeFields(
   node: MutableFigNode,
   localNode: FigNode | undefined,
@@ -2856,6 +3007,37 @@ function applyExternalDerivedLocalNodeFields(
   const target = node as Record<string, unknown>;
   const source = localNode as Record<string, unknown>;
   for (const field of fields) {
+    const value = source[field];
+    if (value !== undefined) {
+      target[field] = value;
+    }
+  }
+}
+
+function documentExternalSelectedSymbolRootForSlot(
+  slot: ExternalDerivedSlot,
+  ctx: ExternalDerivedMaterializeContext,
+  localNode: FigNode | undefined,
+): FigNode | undefined {
+  if (localNode !== undefined || slot.path.length !== 1) {
+    return undefined;
+  }
+  return ctx.documentExternalSlotSymbolRoots?.get(guidToString(slot.guid));
+}
+
+function applyDocumentExternalSelectedSymbolRootSurfaceFields(
+  node: MutableFigNode,
+  symbolRoot: FigNode | undefined,
+): void {
+  if (symbolRoot === undefined) {
+    return;
+  }
+  const target = node as Record<string, unknown>;
+  const source = symbolRoot as Record<string, unknown>;
+  for (const field of DOCUMENT_EXTERNAL_SELECTED_SYMBOL_ROOT_SURFACE_FIELDS) {
+    if (target[field] !== undefined) {
+      continue;
+    }
     const value = source[field];
     if (value !== undefined) {
       target[field] = value;
@@ -3047,9 +3229,13 @@ function resolveExternalDerivedNodeType(
   text: ExternalDerivedText | undefined,
   childSlots: readonly ExternalDerivedSlot[],
   localNode: FigNode | undefined,
+  selectedSymbolRoot: FigNode | undefined,
 ): FigNodeType {
   if (text !== undefined) {
     return "TEXT";
+  }
+  if (selectedSymbolRoot !== undefined) {
+    return resolveExternalDerivedSelectedSymbolContainerNodeType(slot, selectedSymbolRoot);
   }
   if (childSlots.length > 0) {
     return resolveExternalDerivedContainerNodeType(slot, localNode);
@@ -3061,6 +3247,16 @@ function resolveExternalDerivedNodeType(
     return "INSTANCE";
   }
   if (externalDerivedPayloads(slot).some((payload) => payload.size !== undefined)) {
+    return "FRAME";
+  }
+  return "GROUP";
+}
+
+function resolveExternalDerivedSelectedSymbolContainerNodeType(
+  slot: ExternalDerivedSlot,
+  selectedSymbolRoot: FigNode,
+): FigNodeType {
+  if (selectedSymbolRoot.size !== undefined || externalDerivedSlotHasSize(slot)) {
     return "FRAME";
   }
   return "GROUP";
