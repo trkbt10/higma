@@ -270,8 +270,8 @@ export type RenderFrameSurfaceShape = RenderFrameSurfaceRectShape | RenderFrameS
  * from the filter pipeline so backends can render it appropriately.
  */
 export type RenderBackgroundBlur = {
-  /** Blur radius in pixels */
-  readonly radius: number;
+  /** CSS/SVG gaussian sigma in pixels, derived from Kiwi effect radius. */
+  readonly stdDeviation: number;
   /** Clip path ID that defines the node's shape (for clipping the foreignObject) */
   readonly clipId: string;
   /** Element bounds */

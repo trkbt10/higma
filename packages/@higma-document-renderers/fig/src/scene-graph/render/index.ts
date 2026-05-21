@@ -86,6 +86,8 @@ export {
 
 export {
   resolveEffects,
+  resolveEffectBounds,
+  resolveFigmaBlurStdDeviation,
   type ResolvedFilter,
   type ResolvedFilterPrimitive,
 } from "./effects";

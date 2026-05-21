@@ -59,14 +59,25 @@ describe("convertEffectsToScene", () => {
       radiusVar: { value: { floatValue: 12 } },
       spread: 2,
       spreadVar: { value: { floatValue: 6 } },
+      showShadowBehindNode: true,
     }])).toEqual([{
       type: "drop-shadow",
       color: { r: 0, g: 0, b: 0, a: 0.5 },
       offset: { x: 8, y: 9 },
       radius: 12,
       spread: 6,
-      showShadowBehindNode: undefined,
+      showShadowBehindNode: true,
     }]);
+  });
+
+  it("requires Kiwi showShadowBehindNode for drop shadows", () => {
+    expect(() => convertEffectsToScene([{
+      type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+      visible: true,
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      offset: { x: 0, y: 0 },
+      radius: 1,
+    }])).toThrow("DROP_SHADOW effect requires showShadowBehindNode from Kiwi");
   });
 
   it("throws when an effect variable is an unresolved alias", () => {

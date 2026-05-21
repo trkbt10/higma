@@ -13,7 +13,7 @@
  */
 
 
-import type { RenderDef } from "../render-tree/types";
+import type { RenderDef } from "../render-tree";
 import {
   getImageDimensions,
   resampleImage,
@@ -439,16 +439,26 @@ function fmt(n: number): string {
 function formatImageTransform(parts: ImageTransformParts): string {
   const { sa, sb, sc, sd, stx, sty } = parts;
   if (sb === 0 && sc === 0) {
-    const sax = fmt(sa);
-    const sdx = fmt(sd);
-    if (stx === 0 && sty === 0) {
-      if (sax === sdx) {
-        return `scale(${sax})`;
-      }
-      return `scale(${sax} ${sdx})`;
-    }
-    return `matrix(${sax} 0 0 ${sdx} ${fmt(stx)} ${fmt(sty)})`;
+    return formatAxisAlignedImageTransform({ sa, sd, stx, sty });
   }
 
   return `matrix(${fmt(sa)} ${fmt(sb)} ${fmt(sc)} ${fmt(sd)} ${fmt(stx)} ${fmt(sty)})`;
+}
+
+function formatAxisAlignedImageTransform(
+  parts: Pick<ImageTransformParts, "sa" | "sd" | "stx" | "sty">,
+): string {
+  const sax = fmt(parts.sa);
+  const sdx = fmt(parts.sd);
+  if (parts.stx === 0 && parts.sty === 0) {
+    return formatImageScaleTransform(sax, sdx);
+  }
+  return `matrix(${sax} 0 0 ${sdx} ${fmt(parts.stx)} ${fmt(parts.sty)})`;
+}
+
+function formatImageScaleTransform(sax: string, sdx: string): string {
+  if (sax === sdx) {
+    return `scale(${sax})`;
+  }
+  return `scale(${sax} ${sdx})`;
 }

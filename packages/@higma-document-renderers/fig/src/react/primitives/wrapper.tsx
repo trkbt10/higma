@@ -15,6 +15,12 @@ import type { ResolvedWrapperAttrs, RenderMask } from "../../scene-graph";
 type WrapperProps = {
   readonly wrapper: ResolvedWrapperAttrs;
   readonly mask?: RenderMask;
+  readonly includeFilter?: boolean;
+  readonly children: ReactNode;
+};
+
+type ForegroundFilterProps = {
+  readonly wrapper: ResolvedWrapperAttrs;
   readonly children: ReactNode;
 };
 
@@ -23,12 +29,11 @@ function buildBlendModeStyle(wrapper: ResolvedWrapperAttrs): React.CSSProperties
   return { mixBlendMode: wrapper.blendMode as React.CSSProperties["mixBlendMode"] };
 }
 
-function buildFinalStyle(wrapper: ResolvedWrapperAttrs): React.CSSProperties | undefined {
-  const style = buildBlendModeStyle(wrapper);
-  if (wrapper.filterAttr && !wrapper.blendMode) {
-    return { ...(style ?? {}), isolation: "isolate" as const };
+function resolveWrapperFilter(wrapper: ResolvedWrapperAttrs, includeFilter: boolean): string | undefined {
+  if (!includeFilter) {
+    return undefined;
   }
-  return style;
+  return wrapper.filterAttr;
 }
 
 /**
@@ -38,25 +43,37 @@ function buildFinalStyle(wrapper: ResolvedWrapperAttrs): React.CSSProperties | u
  * maps to SVG/React attributes. Both SVG string and React renderers
  * MUST express wrapper attributes through the same set of fields.
  */
-export function RenderWrapper({ wrapper, mask, children }: WrapperProps) {
-  // Stacking-context isolation matches the SVG renderer's behaviour
-  // (see `scene-renderer.ts:wrapperAttrs`). We isolate filter-only
-  // wrappers but NOT a wrapper that carries `mix-blend-mode` because
-  // the blend's backdrop must reach back to the parent's fill.
-  // Isolating the blend-moded node would constrain the backdrop to its
-  // own descendants and silently void the blend (a HUE-blended overlay
-  // rendered solid because the underlying pattern from the grandparent
-  // never reached the blend's backdrop).
-  const finalStyle = buildFinalStyle(wrapper);
+export function RenderWrapper({ wrapper, mask, includeFilter = true, children }: WrapperProps) {
+  // Figma's SVG exporter does not add CSS isolation to filtered groups.
+  // Blend isolation changes the backdrop that mix-blend-mode samples and
+  // is therefore never inferred here; filters already define their own SVG
+  // offscreen pipeline via <filter>.
+  const finalStyle = buildBlendModeStyle(wrapper);
 
   return (
     <g
       transform={wrapper.transform}
       opacity={wrapper.opacity}
-      filter={wrapper.filterAttr}
+      filter={resolveWrapperFilter(wrapper, includeFilter)}
       mask={mask?.maskAttr}
       style={finalStyle}
     >
+      {children}
+    </g>
+  );
+}
+
+
+
+
+
+
+export function RenderForegroundFilter({ wrapper, children }: ForegroundFilterProps) {
+  if (wrapper.filterAttr === undefined) {
+    return <>{children}</>;
+  }
+  return (
+    <g filter={wrapper.filterAttr}>
       {children}
     </g>
   );

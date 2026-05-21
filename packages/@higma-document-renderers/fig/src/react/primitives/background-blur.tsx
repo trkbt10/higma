@@ -13,8 +13,8 @@ type Props = {
 };
 
 /**
- * Background blur element — foreignObject with CSS backdrop-filter,
- * clipped to the node's shape via a clipPath.
+ * Background blur element — foreignObject with CSS backdrop-filter
+ * stdDeviation, clipped to the node's shape via a clipPath.
  */
 export function BackgroundBlurElement({ blur }: Props) {
   return (
@@ -30,7 +30,7 @@ export function BackgroundBlurElement({ blur }: Props) {
           // @ts-expect-error — React does not type xmlns on div, but it's valid in foreignObject
           xmlns="http://www.w3.org/1999/xhtml"
           style={{
-            backdropFilter: `blur(${blur.radius}px)`,
+            backdropFilter: `blur(${blur.stdDeviation}px)`,
             width: "100%",
             height: "100%",
           }}

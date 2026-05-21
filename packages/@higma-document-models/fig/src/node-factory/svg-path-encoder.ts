@@ -63,6 +63,11 @@ function reflectedQuadraticControlPoint(cursor: Cursor): { x: number; y: number 
   return { x: cursor.x, y: cursor.y };
 }
 
+
+
+
+
+
 export function encodeSvgPathBlob(d: string): SvgPathBlobResult {
   const tokens = tokenizePathD(d);
   const bytes: number[] = [];

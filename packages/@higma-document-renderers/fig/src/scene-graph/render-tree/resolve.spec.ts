@@ -318,7 +318,7 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     expect(node.omitChildClip).toBeUndefined();
   });
 
-  it("omits a rounded frame clip when children are fully inside the Kiwi clip shape", () => {
+  it("omits a rounded frame clip when every child is fully inside the Kiwi clip shape", () => {
     const frame: FrameNode = {
       type: "frame",
       id: createNodeId("rounded-contained-frame"),
@@ -340,7 +340,7 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     expect(node.childClipId).toBeUndefined();
   });
 
-  it("omits a decoded rounded-rect path clip when children are fully inside that path", () => {
+  it("omits a decoded rounded-rect path clip when every child is fully inside that path", () => {
     const surfaceShape: FrameNode["surfaceShape"] = {
       type: "path",
       contours: [{
@@ -378,6 +378,37 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     const node = tree.children[0] as RenderFrameNode;
 
     expect(node.childClipId).toBeUndefined();
+  });
+
+  it("keeps a frame clip when a child effect extends outside the Kiwi clip shape", () => {
+    const shadowedChild: RectNode = {
+      ...makeRect("shadowed-child", { ...IDENTITY, m02: 70, m12: 70 }),
+      effects: [{
+        type: "drop-shadow",
+        offset: { x: 20, y: 20 },
+        radius: 20,
+        color: { r: 0, g: 0, b: 0, a: 1 },
+        showShadowBehindNode: true,
+      }],
+    };
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("effect-cropped-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      surfaceShape: makeFrameSurface(100, 100),
+      fills: [],
+      clipsContent: true,
+      children: [shadowedChild],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeDefined();
   });
 
   it("resolves a decoded rounded-rect path stroke as a rect stroke shape", () => {
@@ -917,6 +948,22 @@ describe("resolveRenderTree — stroke layers", () => {
 // =============================================================================
 
 describe("resolveRenderTree — drop shadow z-order", () => {
+  it("materializes background blur as Figma blur stdDeviation", () => {
+    const rect: RectNode = {
+      ...makeRect("bg-blur-stddev"),
+      effects: [{ type: "background-blur", radius: 40 }],
+    };
+    const sg = makeSceneGraph([rect]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderRectNode;
+    expect(node.backgroundBlur).toBeDefined();
+    if (node.backgroundBlur === undefined) {
+      throw new Error("Expected background blur to be resolved");
+    }
+    expect(node.backgroundBlur.stdDeviation).toBe(20);
+  });
+
   it("puts frame surface shadows on the background instead of the child wrapper", () => {
     const frame: FrameNode = {
       type: "frame",
@@ -929,6 +976,7 @@ describe("resolveRenderTree — drop shadow z-order", () => {
         offset: { x: 0, y: 4 },
         radius: 8,
         color: { r: 0, g: 0, b: 0, a: 0.5 },
+        showShadowBehindNode: true,
       }],
       width: 50,
       height: 30,
@@ -964,6 +1012,7 @@ describe("resolveRenderTree — drop shadow z-order", () => {
         radius: 8,
         color: { r: 0, g: 0, b: 0, a: 0.5 },
         blendMode: "multiply",
+        showShadowBehindNode: false,
       }],
       width: 50,
       height: 30,
@@ -1002,6 +1051,7 @@ describe("resolveRenderTree — drop shadow z-order", () => {
         offset: { x: 0, y: 0 },
         radius: 4,
         color: { r: 0.5, g: 0.5, b: 0.5, a: 1 },
+        showShadowBehindNode: true,
       }],
       contours: [{
         commands: [

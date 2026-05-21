@@ -24,6 +24,8 @@
 import type {
   FigGuid,
   FigGuidOrAssetRefId,
+  FigAssetRef,
+  FigColor,
   FigKiwiVariableData,
   FigVariableExpression,
   FigVariableID,
@@ -36,7 +38,7 @@ import type {
 import { FIG_NODE_TYPE } from "../types";
 import { findNodeByGuid, getNodeType, guidToString, type FigKiwiDocumentIndex } from "../domain";
 import { isVariantSetFrame } from "./variant-set-kiwi";
-import { projectVariableAnyValue } from "../variables";
+import { projectVariableAnyValue, variableIdKey } from "../variables";
 
 // =============================================================================
 // Expression locating
@@ -83,7 +85,11 @@ function findVariantConsumptionExpression(
  * A map with zero entries contributes no selected modes; it does not
  * reset inherited modes. Concrete entries override inherited entries
  * for the same variable set because the nearest node owns the active
- * Figma mode for that set.
+ * Figma mode for that set. Kiwi also emits override entries that name
+ * a variable-set without `variableModeID`; those are not selected
+ * modes. They clear the inherited selection for that set so callers
+ * fall back to the variable-set default instead of carrying an invalid
+ * half-entry into paint / variant resolution.
  */
 export function mergeVariableModeBySetMap(
   inherited: FigKiwiVariableModeBySetMap | undefined,
@@ -93,17 +99,31 @@ export function mergeVariableModeBySetMap(
   if (localEntries.length === 0) {
     return inherited;
   }
-  if (inherited === undefined || inherited.entries.length === 0) {
-    return { entries: localEntries };
-  }
   const entries = new Map<string, FigKiwiVariableModeBySetMapEntry>();
-  for (const entry of inherited.entries) {
-    entries.set(variableModeEntrySetKey(entry), entry);
+  for (const entry of inherited?.entries ?? []) {
+    entries.set(variableModeEntrySetKey(entry), requireSelectedVariableModeEntry(entry));
   }
   for (const entry of localEntries) {
-    entries.set(variableModeEntrySetKey(entry), entry);
+    const setKey = variableModeEntrySetKey(entry);
+    if (entry.variableModeID === undefined) {
+      entries.delete(setKey);
+      continue;
+    }
+    entries.set(setKey, entry);
+  }
+  if (entries.size === 0) {
+    return undefined;
   }
   return { entries: Array.from(entries.values()) };
+}
+
+function requireSelectedVariableModeEntry(
+  entry: FigKiwiVariableModeBySetMapEntry,
+): FigKiwiVariableModeBySetMapEntry {
+  if (entry.variableModeID === undefined) {
+    throw new Error(`VariableResolver: inherited variableModeBySetMap entry for ${variableModeEntrySetKey(entry)} is missing variableModeID`);
+  }
+  return entry;
 }
 
 // =============================================================================
@@ -267,6 +287,49 @@ function resolveVariableAliasLiteral(
   return resolveVariableLiteral(aliased, input, nextSeen);
 }
 
+/**
+ * Resolve a VariableData payload to a concrete color when the Kiwi
+ * document carries the addressed VARIABLE node locally. Library-only
+ * aliases remain unresolved (`undefined`) so callers can use a
+ * document-observed materialized cache without inventing a value.
+ */
+export function resolveVariableColor(
+  data: FigKiwiVariableData | undefined,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  },
+  seenVariableKeys: ReadonlySet<string> = new Set(),
+): FigColor | undefined {
+  const projected = projectVariableAnyValue(data?.value);
+  if (projected === undefined) {
+    return undefined;
+  }
+  if (projected.kind === "color") {
+    return projected.value;
+  }
+  if (projected.kind === "alias") {
+    return resolveVariableAliasColor(projected.value, input, seenVariableKeys);
+  }
+  throw new Error(`VariableResolver: expected COLOR variable value, got ${projected.kind}`);
+}
+
+function resolveVariableAliasColor(
+  id: FigVariableID,
+  input: {
+    readonly document: FigKiwiDocumentIndex;
+    readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
+  },
+  seenVariableKeys: ReadonlySet<string>,
+): FigColor | undefined {
+  const aliased = resolveLocalVariableAliasData(id, input, seenVariableKeys);
+  if (aliased === undefined) {
+    return undefined;
+  }
+  const nextSeen = new Set([...seenVariableKeys, variableIdKey(id)]);
+  return resolveVariableColor(aliased, input, nextSeen);
+}
+
 function resolveLocalVariableAliasData(
   id: FigVariableID,
   input: {
@@ -289,7 +352,7 @@ function resolveLocalVariableAliasData(
 
 function resolveLocalVariableNode(id: FigVariableID, document: FigKiwiDocumentIndex): FigNode | undefined {
   if ("assetRef" in id && id.assetRef !== undefined) {
-    return findVariableNodeByAssetKey(document, id.assetRef.key);
+    return findVariableNodeByAssetRef(document, id.assetRef);
   }
   if (!("sessionID" in id) || !("localID" in id)) {
     throw new Error("VariableResolver: VariableID must carry either assetRef or guid");
@@ -304,10 +367,14 @@ function resolveLocalVariableNode(id: FigVariableID, document: FigKiwiDocumentIn
   return node;
 }
 
-function findVariableNodeByAssetKey(document: FigKiwiDocumentIndex, key: string): FigNode | undefined {
-  const matches = document.nodeChanges.filter((node) => getNodeType(node) === FIG_NODE_TYPE.VARIABLE && node.key === key);
+function findVariableNodeByAssetRef(document: FigKiwiDocumentIndex, ref: FigAssetRef): FigNode | undefined {
+  const matches = document.nodeChanges.filter((node) => (
+    getNodeType(node) === FIG_NODE_TYPE.VARIABLE &&
+    node.key === ref.key &&
+    (ref.version === undefined || node.version === ref.version)
+  ));
   if (matches.length > 1) {
-    throw new Error(`VariableResolver: assetRef ${key} resolves to multiple local VARIABLE nodes`);
+    throw new Error(`VariableResolver: assetRef ${variableIdKey({ assetRef: ref })} resolves to multiple local VARIABLE nodes`);
   }
   return matches[0];
 }
@@ -342,7 +409,7 @@ function selectedVariableModeID(
   if (entries.length === 0) {
     return undefined;
   }
-  const setKey = variableSetRefKey(variableSetID);
+  const setKey = variableIdKey(variableSetID);
   const matches = entries.filter((entry) => variableModeEntrySetKey(entry) === setKey);
   if (matches.length > 1) {
     throw new Error(`VariableResolver: variableModeBySetMap contains multiple entries for ${setKey}`);
@@ -381,7 +448,7 @@ function resolveLocalVariableSetNode(id: FigGuidOrAssetRefId, document: FigKiwiD
     return requireVariableSetNodeByGuid(document, id.guid);
   }
   if (id.assetRef !== undefined) {
-    return findVariableSetNodeByAssetKey(document, id.assetRef.key);
+    return findVariableSetNodeByAssetRef(document, id.assetRef);
   }
   throw new Error("VariableResolver: variableSetID must carry either guid or assetRef");
 }
@@ -397,10 +464,14 @@ function requireVariableSetNodeByGuid(document: FigKiwiDocumentIndex, guid: FigG
   return node;
 }
 
-function findVariableSetNodeByAssetKey(document: FigKiwiDocumentIndex, key: string): FigNode | undefined {
-  const matches = document.nodeChanges.filter((node) => getNodeType(node) === FIG_NODE_TYPE.VARIABLE_SET && node.key === key);
+function findVariableSetNodeByAssetRef(document: FigKiwiDocumentIndex, ref: FigAssetRef): FigNode | undefined {
+  const matches = document.nodeChanges.filter((node) => (
+    getNodeType(node) === FIG_NODE_TYPE.VARIABLE_SET &&
+    node.key === ref.key &&
+    (ref.version === undefined || node.version === ref.version)
+  ));
   if (matches.length > 1) {
-    throw new Error(`VariableResolver: assetRef ${key} resolves to multiple local VARIABLE_SET nodes`);
+    throw new Error(`VariableResolver: assetRef ${variableIdKey({ assetRef: ref })} resolves to multiple local VARIABLE_SET nodes`);
   }
   return matches[0];
 }
@@ -433,32 +504,12 @@ function requireVariableDataValueModeID(
   return entry.modeID;
 }
 
-function variableIdKey(id: FigVariableID): string {
-  if ("assetRef" in id && id.assetRef !== undefined) {
-    return `asset:${id.assetRef.key}`;
-  }
-  if (!("sessionID" in id) || !("localID" in id)) {
-    throw new Error("VariableResolver: VariableID must carry either assetRef or guid");
-  }
-  return `guid:${guidToString(id)}`;
-}
-
 function variableModeEntrySetKey(entry: FigKiwiVariableModeBySetMapEntry): string {
   const variableSetID = entry.variableSetID;
   if (variableSetID === undefined) {
     throw new Error("VariableResolver: variableModeBySetMap entry is missing variableSetID");
   }
-  return variableSetRefKey(variableSetID);
-}
-
-function variableSetRefKey(id: FigGuidOrAssetRefId): string {
-  if (id.guid !== undefined) {
-    return `guid:${guidToString(id.guid)}`;
-  }
-  if (id.assetRef !== undefined) {
-    return `asset:${id.assetRef.key}`;
-  }
-  throw new Error("VariableResolver: variableSetID must carry either guid or assetRef");
+  return variableIdKey(variableSetID);
 }
 
 function figGuidEquals(left: FigGuid | undefined, right: FigGuid): boolean {

@@ -265,6 +265,31 @@ describe("mergeVariableModeBySetMap", () => {
 
     expect(mergeVariableModeBySetMap(inherited, local)).toEqual(local);
   });
+
+  it("treats a set-only local entry as an explicit clear for that inherited set", () => {
+    const inherited = modeMap("colors", guid(404, 1));
+    const local: FigKiwiVariableModeBySetMap = {
+      entries: [{ variableSetID: { assetRef: { key: "colors" } } }],
+    };
+
+    expect(mergeVariableModeBySetMap(inherited, local)).toBeUndefined();
+  });
+
+  it("keeps unrelated inherited selections when a local set-only entry clears one set", () => {
+    const inherited: FigKiwiVariableModeBySetMap = {
+      entries: [
+        { variableSetID: { assetRef: { key: "colors" } }, variableModeID: guid(404, 1) },
+        { variableSetID: { assetRef: { key: "glass" } }, variableModeID: guid(5473, 1) },
+      ],
+    };
+    const local: FigKiwiVariableModeBySetMap = {
+      entries: [{ variableSetID: { assetRef: { key: "glass" } } }],
+    };
+
+    expect(mergeVariableModeBySetMap(inherited, local)).toEqual({
+      entries: [{ variableSetID: { assetRef: { key: "colors" } }, variableModeID: guid(404, 1) }],
+    });
+  });
 });
 
 describe("resolveVariantOverride", () => {

@@ -38,6 +38,11 @@ function roundedRectPathD(width: number, height: number, cornerRadius: CornerRad
   return buildRoundedRectPathD(width, height, radii);
 }
 
+
+
+
+
+
 export function RectShape({ width, height, cornerRadius, cornerSmoothing, ...rest }: RectShapeProps) {
   if (cornerRadius !== undefined && (typeof cornerRadius !== "number" || cornerRadius > 0)) {
     return <path d={roundedRectPathD(width, height, cornerRadius, cornerSmoothing)} {...rest} />;

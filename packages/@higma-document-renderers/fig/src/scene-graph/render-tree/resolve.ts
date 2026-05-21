@@ -30,9 +30,11 @@ import {
   resolveTopFillWithRenderSettings,
   resolveStrokeResult,
   resolveEffects,
+  resolveEffectBounds,
   finalizeGradientDefs,
   finalizeImagePatternDefsWithRenderSettings,
   resolveFigmaRenderExportSettings,
+  resolveFigmaBlurStdDeviation,
   renderExportSettingsCacheKey,
   buildEffectStack,
   type IdGenerator,
@@ -54,6 +56,7 @@ import {
   cornerRadiusScalar,
   buildEllipseArcPathD,
   buildStrokeAlignedClosedPathCommands,
+  type CornerRadius,
 } from "@higma-primitives/path";
 import { createRenderTreeIdGenerator } from "./id-generator";
 import { buildClipShape } from "./clip-shape";
@@ -273,52 +276,6 @@ function unionLocalBox(a: LocalBox, b: LocalBox): LocalBox {
   return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
 }
 
-function intrinsicLocalBox(node: SceneNode): LocalBox | undefined {
-  switch (node.type) {
-    case "frame":
-    case "rect":
-    case "image":
-    case "text":
-      return { x: 0, y: 0, w: node.width, h: node.height };
-    case "ellipse":
-      return { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
-    case "path":
-    case "group":
-      return undefined;
-  }
-}
-
-/**
- * Union bbox of a subtree in the supplied parent's local coordinate
- * frame. Returns `undefined` when the subtree has no measurable
- * footprint (e.g. an empty group, or only path/group nodes whose
- * geometry we can't introspect without re-parsing contours).
- *
- * Intentionally ignores effect halos and stroke weights — those can
- * extend past the intrinsic bbox, but Figma's own exporter omits
- * frame clip-paths whenever the child *geometry* fits, accepting the
- * (rare) effect overflow. Matching that semantic keeps our output
- * structurally aligned with Figma's exporter so blends inside don't
- * isolate against a transparent backdrop (see
- * `resolveFrameChildClipId`).
- */
-function subtreeLocalBoxRecursive(
-  node: SceneNode,
-  parentTransform: AffineMatrix2x3,
-): LocalBox | undefined {
-  if (node.visible === false) { return undefined; }
-  const world = composeAffine(parentTransform, node.transform);
-  const own = intrinsicLocalBox(node);
-  const ownBox = own === undefined ? undefined : transformLocalBox(own, world);
-  if (node.type !== "frame" && node.type !== "group") {
-    return ownBox;
-  }
-  const childBoxes = node.children
-    .map((child) => subtreeLocalBoxRecursive(child, world))
-    .filter(isLocalBox);
-  return mergeLocalBoxes([ownBox, ...childBoxes].filter(isLocalBox));
-}
-
 function isLocalBox(box: LocalBox | undefined): box is LocalBox {
   return box !== undefined;
 }
@@ -329,137 +286,6 @@ function mergeLocalBoxes(boxes: readonly LocalBox[]): LocalBox | undefined {
     return undefined;
   }
   return boxes.slice(1).reduce((acc, box) => unionLocalBox(acc, box), first);
-}
-
-/**
- * `true` when every child of this FRAME fits inside the FRAME's Kiwi
- * clip shape, so a `<clipPath>` wrapper is a structural no-op visually.
- * Figma's own SVG exporter behaves this way: Event metadata (385×206
- * FRAME with cornerRadius=5 and content well inside) ships without a
- * clip-path while Event Card (320 SYMBOL with overflowing
- * iPhone-screenshot content) ships with one.
- *
- * Omitting the redundant clip-path also avoids resvg's
- * `<g clip-path="url(#...)">` isolation quirk that breaks
- * `mix-blend-mode:overlay` paths inside the wrapper — see the
- * Event metadata Description / "Special event" Light-variant
- * regression where stacked `[{black @0.15 NORMAL}, {black @1
- * OVERLAY}]` text rendered solid black instead of the intended
- * mid-grey overlay composite.
- *
- * The epsilon is only for floating-point noise in affine compositions;
- * it is intentionally far below one device pixel and cannot turn visible
- * overflow into a contained child.
- */
-function frameChildrenFitWithinClipShape(
-  node: FrameNode,
-  clampedRadius: ReturnType<typeof clampCornerRadius>,
-): boolean {
-  if (node.children.length === 0) { return true; }
-  const childBoxes = node.children.map((child) => subtreeLocalBoxRecursive(child, IDENTITY_AFFINE));
-  if (childBoxes.some((childBox) => childBox === undefined)) {
-    // Unknown geometry (path / empty group) must keep clipping enabled
-    // so content we cannot measure is never allowed to leak.
-    return false;
-  }
-  const union = mergeLocalBoxes(childBoxes.filter(isLocalBox));
-  if (union === undefined) { return true; }
-  return localBoxFitsWithinFrameClipShape(union, node, clampedRadius);
-}
-
-function localBoxFitsWithinFrameClipShape(
-  box: LocalBox,
-  node: FrameNode,
-  clampedRadius: ReturnType<typeof clampCornerRadius>,
-): boolean {
-  if (!localBoxFitsWithinFrameBounds(box, node)) {
-    return false;
-  }
-  if (node.clip?.type === "path") {
-    return localBoxFitsWithinPathFrameClip(box, node);
-  }
-  const radius = node.clip?.type === "rect" ? node.clip.cornerRadius : clampedRadius;
-  return localBoxCornersFitWithinRoundedRect(box, node.width, node.height, cornerRadii(radius));
-}
-
-function localBoxFitsWithinPathFrameClip(box: LocalBox, node: FrameNode): boolean {
-  if (node.clip?.type !== "path") {
-    return false;
-  }
-  const radii = roundedRectRadiiFromPathClip(node.clip, node.width, node.height);
-  if (radii === undefined) {
-    return false;
-  }
-  return localBoxCornersFitWithinRoundedRect(box, node.width, node.height, radii);
-}
-
-function localBoxFitsWithinFrameBounds(box: LocalBox, node: FrameNode): boolean {
-  return (
-    box.x >= -GEOMETRY_FLOAT_EPSILON &&
-    box.y >= -GEOMETRY_FLOAT_EPSILON &&
-    box.x + box.w <= node.width + GEOMETRY_FLOAT_EPSILON &&
-    box.y + box.h <= node.height + GEOMETRY_FLOAT_EPSILON
-  );
-}
-
-function cornerRadii(radius: ReturnType<typeof clampCornerRadius>): readonly [number, number, number, number] {
-  if (radius === undefined) {
-    return [0, 0, 0, 0];
-  }
-  if (typeof radius === "number") {
-    return [radius, radius, radius, radius];
-  }
-  return radius;
-}
-
-function localBoxCornersFitWithinRoundedRect(
-  box: LocalBox,
-  width: number,
-  height: number,
-  radii: readonly [number, number, number, number],
-): boolean {
-  const points = [
-    { x: box.x, y: box.y },
-    { x: box.x + box.w, y: box.y },
-    { x: box.x + box.w, y: box.y + box.h },
-    { x: box.x, y: box.y + box.h },
-  ];
-  return points.every((point) => pointFitsWithinRoundedRect(point.x, point.y, width, height, radii));
-}
-
-function pointFitsWithinRoundedRect(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radii: readonly [number, number, number, number],
-): boolean {
-  const [topLeft, topRight, bottomRight, bottomLeft] = radii;
-  if (topLeft > 0 && x < topLeft && y < topLeft) {
-    return pointFitsCornerArc(x, y, topLeft, topLeft, topLeft);
-  }
-  if (topRight > 0 && x > width - topRight && y < topRight) {
-    return pointFitsCornerArc(x, y, width - topRight, topRight, topRight);
-  }
-  if (bottomRight > 0 && x > width - bottomRight && y > height - bottomRight) {
-    return pointFitsCornerArc(x, y, width - bottomRight, height - bottomRight, bottomRight);
-  }
-  if (bottomLeft > 0 && x < bottomLeft && y > height - bottomLeft) {
-    return pointFitsCornerArc(x, y, bottomLeft, height - bottomLeft, bottomLeft);
-  }
-  return true;
-}
-
-function pointFitsCornerArc(
-  x: number,
-  y: number,
-  centerX: number,
-  centerY: number,
-  radius: number,
-): boolean {
-  const dx = x - centerX;
-  const dy = y - centerY;
-  return dx * dx + dy * dy <= radius * radius + GEOMETRY_FLOAT_EPSILON;
 }
 
 function roundedRectRadiiFromPathClip(
@@ -528,6 +354,95 @@ function nearlyEqual(a: number, b: number): boolean {
   return Math.abs(a - b) <= GEOMETRY_FLOAT_EPSILON;
 }
 
+function frameClipCropsChildren(node: FrameNode): boolean {
+  return node.children
+    .map((child) => sceneNodeVisualLocalBoxRecursive(child, IDENTITY_AFFINE))
+    .filter(isLocalBox)
+    .some((box) => !frameClipContainsLocalBox(node, box));
+}
+
+function frameClipContainsLocalBox(node: FrameNode, box: LocalBox): boolean {
+  const clip = node.clip;
+  if (clip === undefined) {
+    return roundedFrameClipContainsLocalBox(node.width, node.height, node.cornerRadius, box);
+  }
+  switch (clip.type) {
+    case "rect":
+      return roundedFrameClipContainsLocalBox(clip.width, clip.height, clip.cornerRadius, box);
+    case "path": {
+      const radii = roundedRectRadiiFromPathClip(clip, node.width, node.height);
+      if (radii === undefined) {
+        return false;
+      }
+      return roundedFrameClipContainsLocalBox(node.width, node.height, radii, box);
+    }
+  }
+}
+
+function roundedFrameClipContainsLocalBox(
+  width: number,
+  height: number,
+  cornerRadius: CornerRadius | undefined,
+  box: LocalBox,
+): boolean {
+  const corners = [
+    { x: box.x, y: box.y },
+    { x: box.x + box.w, y: box.y },
+    { x: box.x, y: box.y + box.h },
+    { x: box.x + box.w, y: box.y + box.h },
+  ];
+  return corners.every((point) => roundedFrameClipContainsPoint(width, height, cornerRadius, point.x, point.y));
+}
+
+function roundedFrameClipContainsPoint(
+  width: number,
+  height: number,
+  cornerRadius: CornerRadius | undefined,
+  x: number,
+  y: number,
+): boolean {
+  if (x < -GEOMETRY_FLOAT_EPSILON || y < -GEOMETRY_FLOAT_EPSILON) {
+    return false;
+  }
+  if (x > width + GEOMETRY_FLOAT_EPSILON || y > height + GEOMETRY_FLOAT_EPSILON) {
+    return false;
+  }
+  const [topLeft, topRight, bottomRight, bottomLeft] = cornerRadiusTuple(cornerRadius);
+  if (topLeft > 0 && x < topLeft && y < topLeft) {
+    return pointInsideCornerRadius(x, y, topLeft, topLeft, topLeft);
+  }
+  if (topRight > 0 && x > width - topRight && y < topRight) {
+    return pointInsideCornerRadius(x, y, width - topRight, topRight, topRight);
+  }
+  if (bottomRight > 0 && x > width - bottomRight && y > height - bottomRight) {
+    return pointInsideCornerRadius(x, y, width - bottomRight, height - bottomRight, bottomRight);
+  }
+  if (bottomLeft > 0 && x < bottomLeft && y > height - bottomLeft) {
+    return pointInsideCornerRadius(x, y, bottomLeft, height - bottomLeft, bottomLeft);
+  }
+  return true;
+}
+
+function pointInsideCornerRadius(
+  x: number,
+  y: number,
+  centerX: number,
+  centerY: number,
+  radius: number,
+): boolean {
+  return ((x - centerX) ** 2) + ((y - centerY) ** 2) <= (radius ** 2) + GEOMETRY_FLOAT_EPSILON;
+}
+
+function cornerRadiusTuple(cornerRadius: CornerRadius | undefined): readonly [number, number, number, number] {
+  if (cornerRadius === undefined) {
+    return [0, 0, 0, 0];
+  }
+  if (typeof cornerRadius === "number") {
+    return [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
+  }
+  return cornerRadius;
+}
+
 function resolveFrameChildClipId(
   node: FrameNode,
   children: readonly RenderNode[],
@@ -548,16 +463,7 @@ function resolveFrameChildClipId(
   if (node.width <= 0 || node.height <= 0) {
     return undefined;
   }
-  // Omit the clipPath when every child's intrinsic geometry fits
-  // inside the FRAME's bounds. Matches Figma's exporter behaviour
-  // (e.g. Event metadata FRAME ships with no clip-path) and avoids
-  // resvg's isolation quirk on `<g clip-path>` with rounded clip
-  // shapes, which collapses inner `mix-blend-mode:overlay` paints
-  // (App Store template's Event metadata `[{black @0.15 NORMAL},
-  // {black @1 OVERLAY}]` text otherwise rasterises near-black instead
-  // of the intended mid-grey).
-  //
-  if (frameChildrenFitWithinClipShape(node, clampedRadius)) {
+  if (!frameClipCropsChildren(node)) {
     return undefined;
   }
   const childClipId = ids.getNextId("clip");
@@ -1037,31 +943,49 @@ function resolveMask(
 }
 
 function resolveMaskContentBounds(maskContent: SceneNode): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
-  const box = maskContentLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
+  const box = sceneNodeVisualLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
   if (box === undefined) {
     throw new Error(`Mask source ${maskContent.id} has no measurable geometry for its SVG mask region`);
   }
   return { x: box.x, y: box.y, width: box.w, height: box.h };
 }
 
-function maskContentLocalBoxRecursive(
+function sceneNodeVisualLocalBoxRecursive(
   node: SceneNode,
   parentTransform: AffineMatrix2x3,
 ): LocalBox | undefined {
   if (node.visible === false) { return undefined; }
-  const world = composeAffine(parentTransform, node.transform);
-  const own = maskContentIntrinsicLocalBox(node);
-  const ownBox = own === undefined ? undefined : transformLocalBox(own, world);
-  if (node.type !== "frame" && node.type !== "group") {
-    return ownBox;
+  const localBox = sceneNodeVisualLocalBox(node);
+  if (localBox === undefined) {
+    return undefined;
   }
-  const childBoxes = node.children
-    .map((child) => maskContentLocalBoxRecursive(child, world))
-    .filter(isLocalBox);
-  return mergeLocalBoxes([ownBox, ...childBoxes].filter(isLocalBox));
+  return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
 }
 
-function maskContentIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
+function sceneNodeVisualLocalBox(node: SceneNode): LocalBox | undefined {
+  const own = sceneNodeVisualIntrinsicLocalBox(node);
+  if (node.type !== "frame" && node.type !== "group") {
+    return own === undefined ? undefined : sceneNodeLocalBoxWithEffects(node, own);
+  }
+  const childBoxes = node.children
+    .map((child) => sceneNodeVisualLocalBoxRecursive(child, IDENTITY_AFFINE))
+    .filter(isLocalBox);
+  const merged = mergeLocalBoxes([own, ...childBoxes].filter(isLocalBox));
+  return merged === undefined ? undefined : sceneNodeLocalBoxWithEffects(node, merged);
+}
+
+function sceneNodeLocalBoxWithEffects(node: SceneNode, box: LocalBox): LocalBox {
+  const effectBounds = resolveEffectBounds(node.effects, { x: box.x, y: box.y, width: box.w, height: box.h });
+  return { x: effectBounds.x, y: effectBounds.y, w: effectBounds.width, h: effectBounds.height };
+}
+
+function sceneNodeVisualIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
+  const own = sceneNodeOwnIntrinsicLocalBox(node);
+  const stroke = sceneNodeStrokeLocalBox(node);
+  return mergeLocalBoxes([own, stroke].filter(isLocalBox));
+}
+
+function sceneNodeOwnIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
   switch (node.type) {
     case "frame":
     case "rect":
@@ -1083,6 +1007,85 @@ function maskContentIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
     case "group":
       return undefined;
   }
+}
+
+function sceneNodeStrokeLocalBox(node: SceneNode): LocalBox | undefined {
+  switch (node.type) {
+    case "frame":
+    case "rect": {
+      const own = { x: 0, y: 0, w: node.width, h: node.height };
+      return expandBoxForMaskStroke(own, node.stroke, node.individualStrokeWeights);
+    }
+    case "ellipse": {
+      const own = { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
+      return expandBoxForMaskStroke(own, node.stroke, undefined);
+    }
+    case "path": {
+      const strokeBox = node.strokeContours === undefined ? undefined : pathContoursBoundingBox(node.strokeContours);
+      if (strokeBox !== undefined) {
+        return { x: strokeBox.x, y: strokeBox.y, w: strokeBox.w, h: strokeBox.h };
+      }
+      const own = sceneNodeOwnIntrinsicLocalBox(node);
+      if (own === undefined) {
+        return undefined;
+      }
+      return expandBoxForMaskStroke(own, node.stroke, undefined);
+    }
+    case "image":
+    case "text":
+    case "group":
+      return undefined;
+  }
+}
+
+function expandBoxForMaskStroke(
+  box: LocalBox,
+  stroke: Stroke | undefined,
+  individualStrokeWeights: FrameNode["individualStrokeWeights"] | undefined,
+): LocalBox | undefined {
+  if (stroke === undefined) {
+    return undefined;
+  }
+  if (individualStrokeWeights !== undefined) {
+    return expandBoxByOutsets(box, {
+      top: strokeOutset(individualStrokeWeights.top, stroke.align),
+      right: strokeOutset(individualStrokeWeights.right, stroke.align),
+      bottom: strokeOutset(individualStrokeWeights.bottom, stroke.align),
+      left: strokeOutset(individualStrokeWeights.left, stroke.align),
+    });
+  }
+  const outset = strokeOutset(stroke.width, stroke.align);
+  return expandBoxByOutsets(box, { top: outset, right: outset, bottom: outset, left: outset });
+}
+
+function strokeOutset(width: number, align: Stroke["align"]): number {
+  if (width <= 0) {
+    return 0;
+  }
+  switch (align) {
+    case "INSIDE":
+      return 0;
+    case "OUTSIDE":
+      return width;
+    case "CENTER":
+    case undefined:
+      return width / 2;
+  }
+}
+
+function expandBoxByOutsets(
+  box: LocalBox,
+  outsets: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number },
+): LocalBox | undefined {
+  if (outsets.top === 0 && outsets.right === 0 && outsets.bottom === 0 && outsets.left === 0) {
+    return undefined;
+  }
+  return {
+    x: box.x - outsets.left,
+    y: box.y - outsets.top,
+    w: box.w + outsets.left + outsets.right,
+    h: box.h + outsets.top + outsets.bottom,
+  };
 }
 
 // =============================================================================
@@ -1120,7 +1123,7 @@ function resolveBackgroundBlur(
   });
 
   return {
-    radius: bgBlur.radius,
+    stdDeviation: resolveFigmaBlurStdDeviation(bgBlur.radius),
     clipId,
     bounds,
   };
@@ -1645,7 +1648,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
     d: sourcePaths.map((p) => p.d).join(" "),
     fillRule: resolveRenderPathContoursFillRule(sourcePaths),
   };
-  const strokePlacement = resolvePathStrokePlacement(strokeGeometryPaths, alignedPaths, pathMaskShape);
+  const strokePlacement = resolvePathStrokePlacement(strokeGeometryPaths, alignedPaths, pathMaskShape, pathStrokeShape);
   const strokeRendering = resolveStrokeRendering(node.stroke, ids, defs, pathStrokeShape, strokePlacement);
 
   // For VECTOR / boolean-op paths the contour origin in node-local
@@ -1746,14 +1749,26 @@ function resolvePathStrokePlacement(
   strokeGeometryPaths: readonly RenderPathContour[] | undefined,
   alignedPaths: readonly RenderPathContour[] | undefined,
   maskShape: ClipPathShape,
+  strokeShape: StrokeShape,
 ): StrokePlacement {
   if (strokeGeometryPaths !== undefined) {
-    return { kind: "precomputed-geometry", paths: strokeGeometryPaths, maskShape };
+    return resolveStrokeGeometryPlacement(strokeGeometryPaths, maskShape, strokeShape);
   }
   if (alignedPaths !== undefined) {
     return { kind: "figma-export-centerline" };
   }
   return { kind: "source-shape", maskShape };
+}
+
+function resolveStrokeGeometryPlacement(
+  strokeGeometryPaths: readonly RenderPathContour[],
+  maskShape: ClipPathShape,
+  strokeShape: StrokeShape,
+): StrokePlacement {
+  if (strokeShape.kind === "rect") {
+    return { kind: "source-shape", maskShape };
+  }
+  return { kind: "precomputed-geometry", paths: strokeGeometryPaths, maskShape };
 }
 
 function resolveOutsideStrokeAlignedPathContours(node: PathNode): readonly RenderPathContour[] | undefined {

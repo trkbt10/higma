@@ -57,17 +57,21 @@ export function locateGposTable(view: DataView): GposTableLocation | undefined {
     const recordOffset = 12 + i * 16;
     const tag = readTag(view, recordOffset);
     if (tag === "GPOS") {
-      const offset = view.getUint32(recordOffset + 8, false);
-      const length = view.getUint32(recordOffset + 12, false);
-      if (offset + length > view.byteLength) {
-        throw new Error(
-          `locateGposTable: GPOS record (offset=${offset}, length=${length}) overruns buffer (${view.byteLength} bytes)`,
-        );
-      }
-      return { offset, length };
+      return readGposRecord(view, recordOffset);
     }
   }
   return undefined;
+}
+
+function readGposRecord(view: DataView, recordOffset: number): GposTableLocation {
+  const offset = view.getUint32(recordOffset + 8, false);
+  const length = view.getUint32(recordOffset + 12, false);
+  if (offset + length > view.byteLength) {
+    throw new Error(
+      `locateGposTable: GPOS record (offset=${offset}, length=${length}) overruns buffer (${view.byteLength} bytes)`,
+    );
+  }
+  return { offset, length };
 }
 
 /**

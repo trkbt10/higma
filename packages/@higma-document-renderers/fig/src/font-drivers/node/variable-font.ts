@@ -189,6 +189,11 @@ function isVariationFontView(font: AbstractFont): font is AbstractFont & {
   return typeof view === "object" && view !== null && typeof (view as VariationFontView).setOpticalSize === "function";
 }
 
+
+
+
+
+
 export function setVariationOpticalSize(font: AbstractFont, fontSizePx: number): void {
   if (isVariationFontView(font)) {
     font[VARIATION_VIEW_MARKER].setOpticalSize(fontSizePx);

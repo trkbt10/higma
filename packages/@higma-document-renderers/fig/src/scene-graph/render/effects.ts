@@ -45,6 +45,25 @@ export type FeBlendMode =
 export type FeCompositeOperator = "over" | "in" | "out" | "atop" | "xor" | "arithmetic";
 
 /**
+ * Convert Figma/Kiwi blur radius into the SVG/CSS/WebGL gaussian sigma.
+ *
+ * Kiwi stores the authored Figma effect radius. Figma's own SVG export
+ * writes half of that value into `feGaussianBlur.stdDeviation` and CSS
+ * `backdrop-filter: blur(...)`; WebGL must feed the same sigma into its
+ * gaussian pass. Keeping the conversion here prevents each backend from
+ * independently deciding what a blur radius means.
+ */
+export function resolveFigmaBlurStdDeviation(radius: number): number {
+  if (!Number.isFinite(radius)) {
+    throw new Error(`Figma blur radius must be finite, got ${radius}`);
+  }
+  if (radius < 0) {
+    throw new Error(`Figma blur radius must be non-negative, got ${radius}`);
+  }
+  return radius / 2;
+}
+
+/**
  * A resolved SVG filter primitive.
  * Each variant corresponds to an SVG filter element with all attributes computed.
  */
@@ -150,27 +169,6 @@ function resolvePositiveDirectionExpansion(isNormalBlend: boolean, totalExpansio
   return totalExpansion + offset;
 }
 
-function appendBlendPrimitive(params: {
-  readonly primitives: ResolvedFilterPrimitive[];
-  readonly ids: IdGenerator;
-  readonly mode: FeBlendMode;
-  readonly input: string;
-  readonly resultPrefix: string;
-}): string {
-  if (params.mode === "normal") {
-    return params.input;
-  }
-  const result = params.ids.getNextId(params.resultPrefix);
-  params.primitives.push({
-    type: "feBlend",
-    mode: params.mode,
-    in: params.input,
-    in2: "SourceGraphic",
-    result,
-  });
-  return result;
-}
-
 function appendDropShadowBlend(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
@@ -263,13 +261,7 @@ function appendSourceGraphicOverShadow(params: {
   readonly sourceGraphic: ResolveEffectsOptions["sourceGraphic"];
 }): string | undefined {
   if (params.dropBackdrop === undefined) {
-    if (params.sourceGraphic === "omit") {
-      return undefined;
-    }
-    if (params.standaloneShape !== undefined) {
-      return params.standaloneShape;
-    }
-    return "SourceGraphic";
+    return resolveSourceGraphicWithoutDropShadow(params.sourceGraphic, params.standaloneShape);
   }
   if (params.sourceGraphic === "omit") {
     return params.dropBackdrop;
@@ -279,6 +271,19 @@ function appendSourceGraphicOverShadow(params: {
     ids: params.ids,
     backdrop: params.dropBackdrop,
   });
+}
+
+function resolveSourceGraphicWithoutDropShadow(
+  sourceGraphic: ResolveEffectsOptions["sourceGraphic"],
+  standaloneShape: string | undefined,
+): string | undefined {
+  if (sourceGraphic === "omit") {
+    return undefined;
+  }
+  if (standaloneShape !== undefined) {
+    return standaloneShape;
+  }
+  return "SourceGraphic";
 }
 
 function appendInnerShadowBlends(params: {
@@ -430,15 +435,11 @@ export function resolveEffects(
         //   feColorMatrix(... , [0..r 0..g 0..b 0..0..a])
         //                                   → tinted RGBA shadow
         //
-        // Recipe is mode-dependent because Figma's exporter is. For NORMAL
-        // blend the shadow is just blurred-offset hardAlpha tinted; the
-        // shadow shows through translucent sources (e.g. fill-opacity=0.7
-        // rounded rect over its own shadow — without inside-shadow alpha
-        // the rect appears too light). For non-NORMAL blends (OVERLAY etc.)
-        // the inside-shadow tint would mix into the rounded-corner AA edge
-        // pixels, producing the rounded-corner pink halo. The composite-
-        // out step removes the inside-shape tint so only the outside sliver
-        // remains for blend-mode mixing.
+        // Recipe is driven by Kiwi showShadowBehindNode. When true, Figma's
+        // exporter tints the blurred hardAlpha directly so the shadow also
+        // shows through translucent source pixels. When false, the exporter
+        // composites the source alpha out before tinting so only the outside
+        // sliver remains for blend-mode mixing.
         //
         // For tinting we use feColorMatrix (Figma's exporter form). The
         // matrix `[0..r 0..g 0..b 0..0..a]` writes RGB constants and scales
@@ -448,7 +449,7 @@ export function resolveEffects(
         //
         // Spread support: feMorphology dilate/erode is applied between the
         // hardAlpha→offset chain and the blur step.
-        const stdDev = effect.radius / 2;
+        const stdDev = resolveFigmaBlurStdDeviation(effect.radius);
         const c = effect.color;
         const hardAlphaResult = ids.getNextId("hardAlpha");
         const tintedResult = ids.getNextId("drop-tinted");
@@ -480,7 +481,7 @@ export function resolveEffects(
         }
         primitives.push({ type: "feGaussianBlur", stdDeviation: stdDev });
 
-        if (blendMode !== "normal" || effect.showShadowBehindNode === false) {
+        if (!effect.showShadowBehindNode) {
           const compositedResult = ids.getNextId("drop-composited");
           primitives.push(
             { type: "feComposite", in2: hardAlphaResult, operator: "out", result: compositedResult },
@@ -494,10 +495,9 @@ export function resolveEffects(
             currentBackdrop: dropBackdropResult,
           });
         } else {
-          // NORMAL blend: blurred-hardAlpha is tinted directly with no
-          // composite-out. The resulting tinted shadow includes both
-          // the outside sliver AND the blurred inside-shape alpha, the
-          // latter of which shows through translucent sources.
+          // showShadowBehindNode=true: blurred-hardAlpha is tinted directly
+          // with no composite-out. The resulting tinted shadow includes both
+          // the outside sliver and the blurred inside-shape alpha.
           primitives.push({
             type: "feColorMatrix",
             matrixType: "matrix",
@@ -526,7 +526,7 @@ export function resolveEffects(
         // spread erodes SourceAlpha before offset/blur, widening the
         // inner band after the arithmetic subtraction; negative spread
         // dilates SourceAlpha and narrows it.
-        const stdDev = effect.radius / 2;
+        const stdDev = resolveFigmaBlurStdDeviation(effect.radius);
         const hardAlphaResult = ids.getNextId("hardAlpha");
         const offsetResult = ids.getNextId("inner-offset");
         const spreadResult = ids.getNextId("inner-spread");
@@ -616,7 +616,7 @@ export function resolveEffects(
   });
 
   for (const effect of foregroundBlurEffects) {
-    const stdDev = effect.radius / 2;
+    const stdDev = resolveFigmaBlurStdDeviation(effect.radius);
     primitives.push({
       type: "feGaussianBlur",
       in: resolveForegroundBlurInput(foregroundResult),
@@ -631,7 +631,7 @@ export function resolveEffects(
   const id = ids.getNextId("filter");
 
   // Compute filter bounds from shadow offsets/radii to prevent clipping
-  const filterBounds = elementBounds ? computeFilterBounds(effects, elementBounds) : undefined;
+  const filterBounds = elementBounds ? resolveEffectBounds(effects, elementBounds) : undefined;
 
   return {
     id,
@@ -747,7 +747,7 @@ function expandFilterExtentsForEffect(
  * Each shadow extends the region by its offset + blur radius.
  * Without this, SVG's default 10% filter margin clips large shadows.
  */
-function computeFilterBounds(
+export function resolveEffectBounds(
   effects: readonly Effect[],
   bounds: FilterBounds,
 ): FilterBounds {

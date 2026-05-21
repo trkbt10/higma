@@ -293,16 +293,21 @@ function formatRadialGradientMatrix(matrix: SvgGradientMatrix): string {
   const rx = Math.hypot(matrix.a, matrix.b);
   const ry = Math.hypot(matrix.c, matrix.d);
   if (rx > 0 && ry > 0) {
-    const cos = matrix.a / rx;
-    const sin = matrix.b / rx;
-    const expectedC = -sin * ry;
-    const expectedD = cos * ry;
-    if (nearlyEqual(matrix.c, expectedC) && nearlyEqual(matrix.d, expectedD)) {
-      const angle = (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
-      return `translate(${matrix.e} ${matrix.f}) rotate(${angle}) scale(${rx} ${ry})`;
-    }
+    return formatPositiveRadialGradientMatrix(matrix, rx, ry);
   }
   return `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`;
+}
+
+function formatPositiveRadialGradientMatrix(matrix: SvgGradientMatrix, rx: number, ry: number): string {
+  const cos = matrix.a / rx;
+  const sin = matrix.b / rx;
+  const expectedC = -sin * ry;
+  const expectedD = cos * ry;
+  if (!nearlyEqual(matrix.c, expectedC) || !nearlyEqual(matrix.d, expectedD)) {
+    return `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`;
+  }
+  const angle = (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
+  return `translate(${matrix.e} ${matrix.f}) rotate(${angle}) scale(${rx} ${ry})`;
 }
 
 function nearlyEqual(a: number, b: number): boolean {

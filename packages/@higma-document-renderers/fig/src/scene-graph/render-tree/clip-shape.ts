@@ -24,18 +24,26 @@ export function buildClipShape(
 ): ClipPathShape {
   const smoothing = typeof cornerSmoothing === "number" && cornerSmoothing > 0 ? cornerSmoothing : 0;
   if (cornerRadius !== undefined && typeof cornerRadius !== "number") {
-    const d = smoothing > 0
-      ? buildSmoothedRoundedRectPathD(width, height, cornerRadius, smoothing)
-      : buildRoundedRectPathD(width, height, cornerRadius);
+    const d = buildClipPathD(width, height, cornerRadius, smoothing);
     return { kind: "path", d };
   }
   const radius = typeof cornerRadius === "number" ? cornerRadius : undefined;
   if (radius !== undefined && radius > 0) {
     const radii: readonly [number, number, number, number] = [radius, radius, radius, radius];
-    const d = smoothing > 0
-      ? buildSmoothedRoundedRectPathD(width, height, radii, smoothing)
-      : buildRoundedRectPathD(width, height, radii);
+    const d = buildClipPathD(width, height, radii, smoothing);
     return { kind: "path", d };
   }
   return { kind: "rect", x: 0, y: 0, width, height, rx: radius, ry: radius };
+}
+
+function buildClipPathD(
+  width: number,
+  height: number,
+  radii: readonly [number, number, number, number],
+  smoothing: number,
+): string {
+  if (smoothing > 0) {
+    return buildSmoothedRoundedRectPathD(width, height, radii, smoothing);
+  }
+  return buildRoundedRectPathD(width, height, radii);
 }

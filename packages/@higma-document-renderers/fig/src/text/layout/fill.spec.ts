@@ -10,7 +10,6 @@
  * as solid black after rasterisation).
  */
 
-import { describe, it, expect } from "vitest";
 import type { FigPaint } from "@higma-document-models/fig/types";
 import { getFillColorAndOpacity, getAllVisibleSolidFills } from "./fill";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
@@ -19,9 +18,9 @@ function solid(rgba: { r: number; g: number; b: number; a?: number }, opacity?: 
   return {
     type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
     color: { r: rgba.r, g: rgba.g, b: rgba.b, a: rgba.a ?? 1 },
-    opacity,
-    visible,
-  } as unknown as FigPaint;
+    ...(opacity === undefined ? {} : { opacity }),
+    ...(visible === undefined ? {} : { visible }),
+  };
 }
 
 describe("getFillColorAndOpacity", () => {

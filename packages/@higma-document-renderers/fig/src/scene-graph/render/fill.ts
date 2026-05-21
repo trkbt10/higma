@@ -333,11 +333,8 @@ function resolveImageRasterData(
     return { data, mimeType };
   }
   const targetProfile = colorManage === true ? requireManagedImageColorProfile(exportSettings.imageColorManagement) : undefined;
-  if (!hasFilter && targetProfile) {
-    const encodedSourceProfile = resolveEncodedRasterSourceProfile(data, mimeType);
-    if (encodedSourceProfile === targetProfile) {
-      return { data, mimeType };
-    }
+  if (!hasFilter && encodedRasterAlreadyMatchesTarget(data, mimeType, targetProfile)) {
+    return { data, mimeType };
   }
   const cacheKey = imageFilterCacheKey(mimeType, paintFilter, colorManage, exportSettings);
   const dataCache = filteredImageDataCache.get(data);
@@ -394,6 +391,17 @@ function resolveImageRasterData(
     filteredImageDataCache.set(data, new Map([[cacheKey, result]]));
   }
   return result;
+}
+
+function encodedRasterAlreadyMatchesTarget(
+  data: Uint8Array,
+  mimeType: string,
+  targetProfile: ReturnType<typeof requireManagedImageColorProfile> | undefined,
+): boolean {
+  if (targetProfile === undefined) {
+    return false;
+  }
+  return resolveEncodedRasterSourceProfile(data, mimeType) === targetProfile;
 }
 
 /**

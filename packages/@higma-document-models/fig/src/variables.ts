@@ -1,10 +1,12 @@
 /** @file Kiwi variable value projection and concrete value requirements. */
 
 import type {
+  FigAssetRef,
   FigColor,
   FigKiwiVariableAnyValue,
   FigKiwiVariableData,
   FigVariableAnyValue,
+  FigGuidOrAssetRefId,
   FigVariableID,
 } from "./types";
 import { guidToString } from "./domain";
@@ -93,11 +95,33 @@ function variableValueKindLabel(value: FigVariableAnyValue): string {
 }
 
 function variableIdLabel(id: FigVariableID): string {
+  return variableIdKey(id);
+}
+
+/**
+ * Stable key for Kiwi variable identifiers.
+ *
+ * Variable references may point to a local GUID or a library assetRef.
+ * Code that indexes variable-derived document facts must use the same
+ * discriminator for both shapes so local and library namespaces cannot
+ * collide.
+ */
+export function variableIdKey(id: FigVariableID | FigGuidOrAssetRefId): string {
+  if ("guid" in id && id.guid !== undefined) {
+    return `guid:${guidToString(id.guid)}`;
+  }
   if ("assetRef" in id && id.assetRef !== undefined) {
-    return `assetRef:${id.assetRef.key}`;
+    return variableAssetRefKey(id.assetRef);
   }
-  if (!("sessionID" in id) || !("localID" in id)) {
-    throw new Error("VariableID must carry either assetRef or guid");
+  if ("sessionID" in id && "localID" in id) {
+    return `guid:${guidToString(id)}`;
   }
-  return `guid:${guidToString(id)}`;
+  throw new Error("Variable identifier must carry either guid or assetRef");
+}
+
+function variableAssetRefKey(ref: FigAssetRef): string {
+  if (ref.version === undefined) {
+    return `assetRef:${ref.key}`;
+  }
+  return `assetRef:${ref.key}@${ref.version}`;
 }

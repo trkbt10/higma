@@ -1,11 +1,8 @@
 /** @file SceneGraph SVG renderer viewport tests. */
 import { renderSceneGraphToSvg, formatRenderTreeToSvg } from "./scene-renderer";
-import { resolveRenderTree } from "../scene-graph/render-tree/resolve";
-import type { PathNode, SceneGraph, RectNode } from "@higma-document-renderers/fig/scene-graph";
-import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
+import { resolveRenderTree, createNodeId, type FrameNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
 import { createPngImage, readPng, writePng, type PngImage } from "@higma-codecs/png";
 import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
-import type { RenderTree } from "../scene-graph/render-tree/types";
 
 function createPngBytes(size: { readonly width: number; readonly height: number }, rgb = 128): Uint8Array {
   const image = createPngImage(size);
@@ -27,6 +24,50 @@ function readFirstImageDataUriPng(svg: string): PngImage {
 }
 
 describe("renderSceneGraphToSvg viewport", () => {
+  it("keeps frame background blur outside foreground blur filters", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("liquid-glass-frame"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [
+        { type: "background-blur", radius: 40 },
+        { type: "layer-blur", radius: 40 },
+      ],
+      width: 48,
+      height: 48,
+      surfaceShape: { type: "rect", width: 48, height: 48, cornerRadius: 24 },
+      cornerRadius: 24,
+      fills: [{ type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 0.05, blendMode: "hard-light" }],
+      clipsContent: false,
+      children: [],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 80,
+      height: 80,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [frame],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+    const backgroundBlurIndex = svg.indexOf("<foreignObject");
+    const foregroundFilterIndex = svg.indexOf("<g filter=\"url(#filter-");
+
+    expect(svg).toContain("backdrop-filter:blur(20px)");
+    expect(svg).not.toContain("backdrop-filter:blur(40px)");
+    expect(backgroundBlurIndex).toBeGreaterThan(-1);
+    expect(foregroundFilterIndex).toBeGreaterThan(backgroundBlurIndex);
+  });
+
   it("formats Kiwi strokeGeometry as filled stroke outline instead of restroking it", () => {
     const strokedPath: PathNode = {
       type: "path",
@@ -84,6 +125,69 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).toContain('<path d="M-1 -1L11 -1L11 11L-1 11Z" fill="#000000"');
     expect(svg).toContain('fill-rule="evenodd" clip-rule="evenodd"');
     expect(svg).not.toContain('stroke-width="4"');
+  });
+
+  it("renders rect-metadata VECTOR strokeGeometry through the rect stroke SoT", () => {
+    const strokedRectPath: PathNode = {
+      type: "path",
+      id: createNodeId("rect-param-stroke-geometry"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 200,
+      cornerRadius: 20,
+      cornerSmoothing: 0.6,
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 20 },
+          { type: "L", x: 0, y: 180 },
+          { type: "L", x: 100, y: 180 },
+          { type: "L", x: 100, y: 20 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      strokeContours: [{
+        commands: [
+          { type: "M", x: 1, y: 20 },
+          { type: "L", x: 1, y: 180 },
+          { type: "L", x: 99, y: 180 },
+          { type: "L", x: 99, y: 20 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [],
+      stroke: {
+        width: 2,
+        color: { r: 0.55, g: 0.545, b: 0.529, a: 1 },
+        opacity: 1,
+        linecap: "butt",
+        linejoin: "miter",
+        align: "INSIDE",
+      },
+    };
+    const sceneGraph: SceneGraph = {
+      width: 120,
+      height: 220,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [strokedRectPath],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('fill="none" stroke="#8c8b87" stroke-width="2"');
+    expect(svg).not.toContain('fill="#8c8b87" mask=');
   });
 
   it("rounds wrapper opacity attributes through the Figma export number rule", () => {
@@ -146,6 +250,7 @@ describe("renderSceneGraphToSvg viewport", () => {
             offset: { x: 0, y: 0 },
             radius: 4,
             color: { r: 0.5, g: 0.5, b: 0.5, a: 1 },
+            showShadowBehindNode: true,
           }],
           contours: [{
             commands: [
@@ -190,6 +295,7 @@ describe("renderSceneGraphToSvg viewport", () => {
             offset: { x: 0, y: 4 },
             radius: 2,
             color: { r: 0, g: 0, b: 0, a: 0.08 },
+            showShadowBehindNode: true,
           }],
           cx: 14,
           cy: 14,
@@ -228,6 +334,7 @@ describe("renderSceneGraphToSvg viewport", () => {
             offset: { x: 0, y: 8 },
             radius: 12,
             color: { r: 0, g: 0, b: 0, a: 0.15 },
+            showShadowBehindNode: true,
           }],
           width: 100,
           height: 80,
@@ -356,6 +463,7 @@ describe("renderSceneGraphToSvg viewport", () => {
             offset: { x: 0, y: 0 },
             radius: 4,
             color: { r: 0, g: 0, b: 0, a: 0.5 },
+            showShadowBehindNode: true,
           }],
           width: 100,
           height: 80,
@@ -449,7 +557,7 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).toContain('<path d="M0 0L40 0L40 20L0 20Z"');
   });
 
-  it("uses the SceneGraph viewport as the SVG viewBox", () => {
+  it("exports a viewport-local SVG viewBox while preserving world-space content", () => {
     const sceneGraph: SceneGraph = {
       width: 300,
       height: 200,
@@ -470,7 +578,9 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     expect(svg).toContain('width="300"');
     expect(svg).toContain('height="200"');
-    expect(svg).toContain('viewBox="-120 -40 300 200"');
+    expect(svg).toContain('viewBox="0 0 300 200"');
+    expect(svg).toContain('transform="translate(120 40)"');
+    expect(svg).toContain('fill="none"');
   });
 
   it("rounds path coordinates by viewport-local magnitude", () => {
@@ -516,7 +626,8 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('viewBox="165 1047 402 388"');
+    expect(svg).toContain('viewBox="0 0 402 388"');
+    expect(svg).toContain('transform="translate(-165 -1047)"');
     expect(svg).toContain('d="M33.7754 172.125L86.7946 181.625Z"');
   });
 
@@ -781,11 +892,6 @@ describe("renderSceneGraphToSvg viewport", () => {
             opacity: 1,
             visible: true,
             effects: [],
-            // Child sits entirely inside the FRAME bounds — the
-            // overflow-aware optimization in `resolveFrameChildClipId`
-            // must omit the redundant `<clipPath>` here, matching
-            // Figma's exporter behaviour on no-overflow FRAMEs (e.g.
-            // App Store template's Event metadata 385×206 FRAME).
             width: 80,
             height: 80,
             fills: [],
@@ -797,19 +903,9 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    // The renderer no longer emits a root-level `<g clip-path>` wrapper —
-    // `pruneSceneGraphToViewport` strips off-viewport subtrees before the
-    // render tree is even built, and `<svg viewBox>` handles the residual
-    // visual clip. The wrapper used to isolate descendants for compositing
-    // (resvg quirk on `<g clip-path>`) which broke `mix-blend-mode`
-    // overlay paints — the App Store template's Event metadata Light-
-    // variant Description / "Special event" text relied on its absence.
-    //
-    // The per-FRAME clip is also omitted because every child fits within
-    // the FRAME's bounds (`frameChildrenFitWithinBounds` returns true),
-    // so a `<clipPath>` would be a structural no-op. Matches Figma's
-    // exporter: clip-path is emitted only when descendant geometry
-    // actually overflows the FRAME.
+    // The only omitted clip here is the viewport-sized root frame clip:
+    // the SVG viewBox already owns that rectangular boundary. Non-root
+    // frame clips remain driven by Kiwi `clipsContent`.
     expect(svg).not.toContain('id="root-viewport-clip"');
     expect(svg).not.toContain('clip-path="url(#clip-');
   });
@@ -888,6 +984,87 @@ describe("renderSceneGraphToSvg viewport", () => {
     // OUTLINE mask should be emitted as luminance + white.
     expect(svg).toMatch(/<mask[^>]*style="mask-type:luminance"[^>]*>[^<]*<path[^>]*fill="white"/);
     expect(svg).not.toMatch(/<mask[^>]*style="mask-type:alpha"[^>]*>[^<]*<path[^>]*fill="#D9D9D9"/);
+  });
+
+  it("includes Kiwi strokeGeometry in OUTLINE mask source bounds and shape", () => {
+    const maskSource: PathNode = {
+      type: "path",
+      id: createNodeId("mask-source"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      fills: [{ type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
+      stroke: {
+        width: 2,
+        color: { r: 0, g: 0, b: 0, a: 1 },
+        opacity: 1,
+        linecap: "butt",
+        linejoin: "miter",
+      },
+      contours: [{
+        windingRule: "nonzero",
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 100, y: 0 },
+          { type: "L", x: 100, y: 100 },
+          { type: "L", x: 0, y: 100 },
+          { type: "Z" },
+        ],
+      }],
+      strokeContours: [{
+        windingRule: "nonzero",
+        commands: [
+          { type: "M", x: -1, y: -1 },
+          { type: "L", x: 101, y: -1 },
+          { type: "L", x: 101, y: 101 },
+          { type: "L", x: -1, y: 101 },
+          { type: "Z" },
+        ],
+      }],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 120,
+      height: 120,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "group",
+          id: createNodeId("masked"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          mask: {
+            maskId: maskSource.id,
+            maskType: "OUTLINE",
+            maskContent: maskSource,
+          },
+          children: [{
+            type: "rect",
+            id: createNodeId("masked-rect"),
+            transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+            opacity: 1,
+            visible: true,
+            effects: [],
+            width: 100,
+            height: 100,
+            fills: [{ type: "solid", color: { r: 0.2, g: 0.2, b: 0.2, a: 1 }, opacity: 1 }],
+          }],
+        }],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toMatch(/<mask[^>]*x="-1"[^>]*y="-1"[^>]*width="102"[^>]*height="102"/);
+    expect(svg).toContain('d="M-1 -1L101 -1L101 101L-1 101Z"');
   });
 
   it("emits SVG mask regions from the authored mask source bounds", () => {

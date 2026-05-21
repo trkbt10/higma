@@ -1,14 +1,15 @@
 /** @file WebGL bridge for backend-neutral effect stacks. */
 
 import type { AffineMatrix } from "@higma-primitives/path";
-import type {
-  BackgroundBlurEffect,
-  Color,
-  Effect,
-  Fill,
+import {
+  buildEffectStack,
+  renderShapeEffectStack,
+  type BackgroundBlurEffect,
+  type Color,
+  type Effect,
+  type Fill,
 } from "@higma-document-renderers/fig/scene-graph";
 import { createTranslationMatrix, multiplyMatrices } from "@higma-document-models/fig/matrix";
-import { buildEffectStack, renderShapeEffectStack } from "../../scene-graph/render/effect-stack";
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
 import type { EffectsRendererInstance } from "./effects-renderer";
 import type { Bounds } from "../tessellation/stencil-fill";

@@ -11,6 +11,10 @@ export {
   type SceneGraphBuildCache,
 } from "./builder";
 
+export {
+  pruneSceneGraphToViewport,
+} from "./viewport-prune";
+
 // Diff
 export {
   diffSceneGraphs,
@@ -35,6 +39,7 @@ export {
   resolveStroke,
   resolveStrokeResult,
   resolveEffects,
+  resolveFigmaBlurStdDeviation,
   buildEffectStack,
   renderShapeEffectStack,
   finalizeGradientDefs,

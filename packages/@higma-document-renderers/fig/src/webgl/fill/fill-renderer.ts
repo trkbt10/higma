@@ -439,90 +439,17 @@ type ImageUVParams = {
 /** Compute UV scale and offset for image fills */
 export function computeImageUV(
   { elementW, elementH, imageW, imageH, scaleMode, scalingFactor, imageTransform }: ImageUVParams
-): {
-  texScale: { x: number; y: number };
-  texOffset: { x: number; y: number };
-  repeat: boolean;
-  clipTransparent: boolean;
-} {
+): ImageUVResult {
   if (scaleMode === "CROP") {
-    if (imageTransform === undefined) {
-      throw new Error("CROP imageScaleMode requires an explicit imageTransform");
-    }
-    // Figma's user-positioned crop: imageTransform maps element-uv (0..1)
-    // into image-uv (0..1) — image_uv = M · element_uv. The shader formula
-    // is `uv = v_texCoord * u_texScale + u_texOffset` with v_texCoord in
-    // element-pixel space (0..elementW, 0..elementH), so:
-    //   u = (m00 / elementW) * vx + (m01 / elementH) * vy + m02
-    //   v = (m10 / elementW) * vx + (m11 / elementH) * vy + m12
-    // The current shader stores texScale/texOffset per-component (no
-    // off-diagonal cross-coupling), so rotated/skewed crops are rejected
-    // here rather than rendered incorrectly. Sampling outside the image
-    // bounds is treated as transparent so the underlying fill (e.g. the
-    // solid layer beneath this image paint) shows through, matching the
-    // Figma editor's behaviour for cropped images that do not fully cover
-    // the element.
-    if (imageTransform.m01 !== 0 || imageTransform.m10 !== 0) {
-      throw new Error("CROP imageScaleMode with a rotated/skewed imageTransform is not yet supported by the WebGL renderer");
-    }
-    return {
-      texScale: { x: imageTransform.m00 / elementW, y: imageTransform.m11 / elementH },
-      texOffset: { x: imageTransform.m02, y: imageTransform.m12 },
-      repeat: false,
-      clipTransparent: true,
-    };
+    return computeCropImageUV({ elementW, elementH, imageTransform });
   }
 
   if (scaleMode === "FILL" && imageW > 0 && imageH > 0) {
-    const imageAR = imageW / imageH;
-    const elementAR = elementW / elementH;
-
-    if (imageAR > elementAR) {
-      // Image wider than element: full height, crop width
-      const uvWidth = elementAR / imageAR;
-      return {
-        texScale: { x: uvWidth / elementW, y: 1 / elementH },
-        texOffset: { x: (1 - uvWidth) / 2, y: 0 },
-        repeat: false,
-        clipTransparent: false,
-      };
-    } else {
-      // Image taller than element: full width, crop height
-      const uvHeight = imageAR / elementAR;
-      return {
-        texScale: { x: 1 / elementW, y: uvHeight / elementH },
-        texOffset: { x: 0, y: (1 - uvHeight) / 2 },
-        repeat: false,
-        clipTransparent: false,
-      };
-    }
+    return computeFillImageUV({ elementW, elementH, imageW, imageH });
   }
 
   if (scaleMode === "FIT" && imageW > 0 && imageH > 0) {
-    const imageAR = imageW / imageH;
-    const elementAR = elementW / elementH;
-
-    if (imageAR > elementAR) {
-      // Image wider: fit width, letterbox height
-      const visibleH = elementW / imageAR;
-      const padding = (elementH - visibleH) / 2;
-      return {
-        texScale: { x: 1 / elementW, y: 1 / visibleH },
-        texOffset: { x: 0, y: -padding / visibleH },
-        repeat: false,
-        clipTransparent: true,
-      };
-    } else {
-      // Image taller: fit height, pillarbox width
-      const visibleW = elementH * imageAR;
-      const padding = (elementW - visibleW) / 2;
-      return {
-        texScale: { x: 1 / visibleW, y: 1 / elementH },
-        texOffset: { x: -padding / visibleW, y: 0 },
-        repeat: false,
-        clipTransparent: true,
-      };
-    }
+    return computeFitImageUV({ elementW, elementH, imageW, imageH });
   }
 
   if (scaleMode === "TILE" && imageW > 0 && imageH > 0) {
@@ -541,5 +468,96 @@ export function computeImageUV(
     texOffset: { x: 0, y: 0 },
     repeat: false,
     clipTransparent: false,
+  };
+}
+
+type ImageUVResult = {
+  texScale: { x: number; y: number };
+  texOffset: { x: number; y: number };
+  repeat: boolean;
+  clipTransparent: boolean;
+};
+
+function computeCropImageUV(
+  { elementW, elementH, imageTransform }: Pick<ImageUVParams, "elementW" | "elementH" | "imageTransform">,
+): ImageUVResult {
+  if (imageTransform === undefined) {
+    throw new Error("CROP imageScaleMode requires an explicit imageTransform");
+  }
+  // Figma's user-positioned crop: imageTransform maps element-uv (0..1)
+  // into image-uv (0..1) — image_uv = M · element_uv. The shader formula
+  // is `uv = v_texCoord * u_texScale + u_texOffset` with v_texCoord in
+  // element-pixel space (0..elementW, 0..elementH), so:
+  //   u = (m00 / elementW) * vx + (m01 / elementH) * vy + m02
+  //   v = (m10 / elementW) * vx + (m11 / elementH) * vy + m12
+  // The current shader stores texScale/texOffset per-component (no
+  // off-diagonal cross-coupling), so rotated/skewed crops are rejected
+  // here rather than rendered incorrectly. Sampling outside the image
+  // bounds is treated as transparent so the underlying fill (e.g. the
+  // solid layer beneath this image paint) shows through, matching the
+  // Figma editor's behaviour for cropped images that do not fully cover
+  // the element.
+  if (imageTransform.m01 !== 0 || imageTransform.m10 !== 0) {
+    throw new Error("CROP imageScaleMode with a rotated/skewed imageTransform is not yet supported by the WebGL renderer");
+  }
+  return {
+    texScale: { x: imageTransform.m00 / elementW, y: imageTransform.m11 / elementH },
+    texOffset: { x: imageTransform.m02, y: imageTransform.m12 },
+    repeat: false,
+    clipTransparent: true,
+  };
+}
+
+function computeFillImageUV(
+  { elementW, elementH, imageW, imageH }: Pick<ImageUVParams, "elementW" | "elementH" | "imageW" | "imageH">,
+): ImageUVResult {
+  const imageAR = imageW / imageH;
+  const elementAR = elementW / elementH;
+
+  if (imageAR > elementAR) {
+    // Image wider than element: full height, crop width
+    const uvWidth = elementAR / imageAR;
+    return {
+      texScale: { x: uvWidth / elementW, y: 1 / elementH },
+      texOffset: { x: (1 - uvWidth) / 2, y: 0 },
+      repeat: false,
+      clipTransparent: false,
+    };
+  }
+  // Image taller than element: full width, crop height
+  const uvHeight = imageAR / elementAR;
+  return {
+    texScale: { x: 1 / elementW, y: uvHeight / elementH },
+    texOffset: { x: 0, y: (1 - uvHeight) / 2 },
+    repeat: false,
+    clipTransparent: false,
+  };
+}
+
+function computeFitImageUV(
+  { elementW, elementH, imageW, imageH }: Pick<ImageUVParams, "elementW" | "elementH" | "imageW" | "imageH">,
+): ImageUVResult {
+  const imageAR = imageW / imageH;
+  const elementAR = elementW / elementH;
+
+  if (imageAR > elementAR) {
+    // Image wider: fit width, letterbox height
+    const visibleH = elementW / imageAR;
+    const padding = (elementH - visibleH) / 2;
+    return {
+      texScale: { x: 1 / elementW, y: 1 / visibleH },
+      texOffset: { x: 0, y: -padding / visibleH },
+      repeat: false,
+      clipTransparent: true,
+    };
+  }
+  // Image taller: fit height, pillarbox width
+  const visibleW = elementH * imageAR;
+  const padding = (elementW - visibleW) / 2;
+  return {
+    texScale: { x: 1 / visibleW, y: 1 / elementH },
+    texOffset: { x: -padding / visibleW, y: 0 },
+    repeat: false,
+    clipTransparent: true,
   };
 }

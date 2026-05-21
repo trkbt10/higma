@@ -25,6 +25,8 @@ import {
   resolveRenderTree,
   type RenderTree,
   type RenderNode,
+  type BlendMode,
+  type StrokeShape,
   type RenderGroupNode,
   type RenderFrameNode,
   type RenderRectNode,
@@ -38,13 +40,15 @@ import {
   type ResolvedFillResult,
   type ResolvedWrapperAttrs,
   type ClipPathShape,
+  type StrokeRendering,
   type RenderBackgroundBlur,
   type RenderNodeBase,
 } from "../scene-graph";
 
-import type { ResolvedStrokeAttrs, ResolvedAngularGradient, ResolvedDiamondGradient } from "../scene-graph";
+import type { ResolvedStrokeAttrs, ResolvedAngularGradient, ResolvedDiamondGradient, ResolvedFillLayer, ResolvedStrokeLayer } from "../scene-graph";
 
 import type { ResolvedFilterPrimitive } from "../scene-graph";
+import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD, type CornerRadius } from "@higma-primitives/path";
 
 import {
   svg,
@@ -75,17 +79,19 @@ import {
   line,
   a as svgAnchor,
   foreignObject,
-  unsafeSvg,
-  type SvgString,
+  htmlDiv,
+  type SvgNode,
   type SvgPaintAttrs,
   EMPTY_SVG,
-} from "./primitives";
+} from "./element-primitives";
+import type { SvgString } from "./primitives";
+import { serializeFigmaExportSvg } from "./figma-export-precision";
 
 // =============================================================================
 // Def Formatting
 // =============================================================================
 
-function formatClipPathShape(shape: ClipPathShape): SvgString {
+function formatClipPathShape(shape: ClipPathShape): SvgNode {
   switch (shape.kind) {
     case "path":
       return path({ d: shape.d, "fill-rule": shape.fillRule, "clip-rule": shape.fillRule });
@@ -103,7 +109,7 @@ function formatClipPathShape(shape: ClipPathShape): SvgString {
   }
 }
 
-function formatFilterPrimitive(p: ResolvedFilterPrimitive): SvgString {
+function formatFilterPrimitive(p: ResolvedFilterPrimitive): SvgNode {
   switch (p.type) {
     case "feFlood":
       return feFlood({ "flood-color": p.floodColor, "flood-opacity": p.floodOpacity, result: p.result });
@@ -213,7 +219,7 @@ function sampleGradientAt(
  */
 const SECTORS = 256;
 
-function formatAngularGradientDef(d: ResolvedAngularGradient): SvgString {
+function formatAngularGradientDef(d: ResolvedAngularGradient): SvgNode {
   const w = d.elementWidth ?? 1;
   const h = d.elementHeight ?? 1;
   // cx/cy are fractional (0..1) unless explicitly overridden; resolve
@@ -227,7 +233,7 @@ function formatAngularGradientDef(d: ResolvedAngularGradient): SvgString {
   // mapping matches buildConicGradientCSS.
   const fromDeg = d.rotation - 90;
 
-  const parts: SvgString[] = [];
+  const parts: SvgNode[] = [];
   // Tiny overlap so adjacent sectors meet cleanly without bg bleed-
   // through, but small enough to avoid double-coverage artefacts that
   // shift colours at sector boundaries on angular-gradient fills.
@@ -279,14 +285,14 @@ function formatAngularGradientDef(d: ResolvedAngularGradient): SvgString {
  * fall back to a 4-triangle linear-gradient approximation (each
  * triangle gradient goes from centre to one corner of the fill box).
  */
-function formatDiamondGradientDef(d: ResolvedDiamondGradient): SvgString {
+function formatDiamondGradientDef(d: ResolvedDiamondGradient): SvgNode {
   const w = d.elementWidth ?? 1;
   const h = d.elementHeight ?? 1;
   const cx = parseFloat(d.cx) * (d.cx.endsWith("%") ? w / 100 : 1) || (w / 2);
   const cy = parseFloat(d.cy) * (d.cy.endsWith("%") ? h / 100 : 1) || (h / 2);
   // Sample 32 concentric polygons, each a diamond (rhombus) at decreasing
   // scale; inner polygon uses the first stop, outer the last.
-  const parts: SvgString[] = [];
+  const parts: SvgNode[] = [];
   const steps = 32;
   // Diamond vertices span from centre to the element corners along ±x/±y axes.
   const dx = Math.max(w - cx, cx);
@@ -340,7 +346,7 @@ function filterElementAttrs(f: RenderFilterDef["filter"]): Parameters<typeof fil
   return { id: f.id };
 }
 
-function formatDef(def: RenderDef): SvgString {
+function formatDef(def: RenderDef): SvgNode {
   switch (def.type) {
     case "linear-gradient": {
       const d = def.def;
@@ -428,9 +434,7 @@ function formatDef(def: RenderDef): SvgString {
           formatNode(def.maskContent),
         );
       }
-      const maskStroke = getMaskSourceStrokeWidth(def.maskContent);
-      const strokeAttrs = maskStroke === undefined ? undefined : { stroke: "white" as const, "stroke-width": maskStroke };
-      const maskContent = formatNodeAsMaskShape(def.maskContent, "white", strokeAttrs);
+      const maskContent = formatNodeAsMaskShape(def.maskContent, "white");
       return mask(
         maskElementAttrs(def, "luminance"),
         maskContent,
@@ -488,7 +492,7 @@ function maskElementAttrs(
   };
 }
 
-function formatDefs(renderDefs: readonly RenderDef[]): SvgString {
+function formatDefs(renderDefs: readonly RenderDef[]): SvgNode {
   if (renderDefs.length === 0) { return EMPTY_SVG; }
   const formatted = renderDefs.map(formatDef);
   return defs(...formatted);
@@ -542,43 +546,51 @@ type WrapperSvgAttrs = Pick<SvgPaintAttrs, "transform" | "opacity" | "style"> & 
 };
 
 function wrapperAttrs(node: { wrapper: ResolvedWrapperAttrs; mask?: { maskAttr: string } }): WrapperSvgAttrs {
+  return wrapperAttrsForFilterMode(node, true);
+}
+
+function wrapperAttrsWithoutFilter(node: { wrapper: ResolvedWrapperAttrs; mask?: { maskAttr: string } }): WrapperSvgAttrs {
+  return wrapperAttrsForFilterMode(node, false);
+}
+
+function wrapperAttrsForFilterMode(
+  node: { wrapper: ResolvedWrapperAttrs; mask?: { maskAttr: string } },
+  includeFilter: boolean,
+): WrapperSvgAttrs {
   const w = node.wrapper;
-  // Stacking-context isolation is added ONLY when a wrapper carries a
-  // filter without a blend mode. The Figma SVG export does not isolate
-  // a node that has `mix-blend-mode` set — the blend needs the parent's
-  // pre-rendered contents as its backdrop, and `isolation:isolate`
-  // would constrain the backdrop to the wrapper's own descendants and
-  // void the blend (a HUE-blended world-map-style overlay was the
-  // canary — the masked region rendered solid because the underlying
-  // pattern from the grandparent never reached the blend's backdrop).
-  //
-  // We still isolate filter-only wrappers because SVG filters compose
-  // their own rendering pass and historically benefit from a clean
-  // stacking context boundary when no blend is in play (FRAMEs whose
-  // SCREEN-blended descendants live on a different node are not
-  // affected by this branch).
+  // Figma's SVG exporter does not add CSS isolation to filtered groups.
+  // Blend isolation changes the backdrop that mix-blend-mode samples and
+  // is therefore never inferred here; filters already define their own SVG
+  // offscreen pipeline via <filter>.
   const parts: string[] = [];
   if (w.blendMode) {parts.push(`mix-blend-mode:${w.blendMode}`);}
-  if (w.filterAttr && !w.blendMode) {parts.push("isolation:isolate");}
   const style = parts.length > 0 ? parts.join(";") : undefined;
   return {
     transform: w.transform,
     opacity: w.opacity,
-    filter: w.filterAttr,
+    filter: wrapperFilterAttr(w, includeFilter),
     mask: node.mask?.maskAttr,
     style,
   };
 }
 
+function foregroundFilterAttrs(wrapper: ResolvedWrapperAttrs): WrapperSvgAttrs {
+  if (wrapper.filterAttr === undefined) {
+    return {};
+  }
+  return { filter: wrapper.filterAttr };
+}
+
+function wrapperFilterAttr(wrapper: ResolvedWrapperAttrs, includeFilter: boolean): string | undefined {
+  if (!includeFilter) {
+    return undefined;
+  }
+  return wrapper.filterAttr;
+}
+
 // =============================================================================
 // Corner Radius Routines
 // =============================================================================
-
-import type { BlendMode } from "@higma-document-renderers/fig/scene-graph";
-import type { ResolvedFillLayer } from "../scene-graph";
-import type { ResolvedStrokeLayer } from "../scene-graph";
-
-import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD, type CornerRadius } from "@higma-primitives/path";
 
 /**
  * Render a rectangle shape.
@@ -607,17 +619,10 @@ function formatRectShape(
   fillAttrs: SvgPaintAttrs,
   strokeAttrs: SvgPaintAttrs,
   cornerSmoothing?: number,
-): SvgString {
-  const smoothing = typeof cornerSmoothing === "number" && cornerSmoothing > 0 ? cornerSmoothing : 0;
-  if (smoothing > 0) {
-    const radii = cornerRadiusToTuple(cr);
-    if (radii) {
-      return path({
-        d: buildSmoothedRoundedRectPathD(w, h, radii, smoothing),
-        ...fillAttrs,
-        ...strokeAttrs,
-      });
-    }
+): SvgNode {
+  const smoothed = tryFormatSmoothedRectShape(w, h, cr, cornerSmoothing, fillAttrs, strokeAttrs);
+  if (smoothed !== undefined) {
+    return smoothed;
   }
   const uniform = uniformCornerRadius(cr);
   if (uniform === undefined && cr !== undefined && typeof cr !== "number") {
@@ -638,6 +643,29 @@ function formatRectShape(
   });
 }
 
+function tryFormatSmoothedRectShape(
+  w: number,
+  h: number,
+  cr: CornerRadius | undefined,
+  cornerSmoothing: number | undefined,
+  fillAttrs: SvgPaintAttrs,
+  strokeAttrs: SvgPaintAttrs,
+): SvgNode | undefined {
+  const smoothing = positiveCornerSmoothing(cornerSmoothing);
+  if (smoothing === 0) {
+    return undefined;
+  }
+  const radii = cornerRadiusToTuple(cr);
+  if (radii === undefined) {
+    return undefined;
+  }
+  return path({
+    d: buildSmoothedRoundedRectPathD(w, h, radii, smoothing),
+    ...fillAttrs,
+    ...strokeAttrs,
+  });
+}
+
 function clampSvgRectCornerRadius(w: number, h: number, radius: number): number {
   return Math.min(radius, w / 2, h / 2);
 }
@@ -653,12 +681,16 @@ function clampSvgRectCornerRadius(w: number, h: number, radius: number): number 
 function cornerRadiusToTuple(cr: CornerRadius | undefined): readonly [number, number, number, number] | undefined {
   if (cr === undefined) { return undefined; }
   if (typeof cr === "number") {
-    if (cr <= 0) { return undefined; }
-    return [cr, cr, cr, cr];
+    return positiveScalarCornerRadiusToTuple(cr);
   }
   const [tl, tr, br, bl] = cr;
   if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0) { return undefined; }
   return [tl, tr, br, bl];
+}
+
+function positiveScalarCornerRadiusToTuple(radius: number): readonly [number, number, number, number] | undefined {
+  if (radius <= 0) { return undefined; }
+  return [radius, radius, radius, radius];
 }
 
 /**
@@ -692,8 +724,8 @@ function formatMultiFillRectLayers(
   w: number, h: number, cr: CornerRadius | undefined,
   strokeAttrs: SvgPaintAttrs,
   cornerSmoothing?: number,
-): SvgString[] {
-  return layers.map((layer, i): SvgString => {
+): SvgNode[] {
+  return layers.map((layer, i): SvgNode => {
     const fillAttrs: SvgPaintAttrs = {
       fill: layer.attrs.fill,
       "fill-opacity": layer.attrs.fillOpacity,
@@ -712,7 +744,7 @@ function formatMultiFillEllipseLayers(
   layers: readonly ResolvedFillLayer[],
   cx: number, cy: number, rx: number, ry: number,
   strokeAttrs: StrokeSvgAttrs,
-): SvgString[] {
+): SvgNode[] {
   // Mirror `formatEllipseElement`: when rx === ry the shape is a true
   // circle and Figma's exporter emits `<circle>` rather than `<ellipse>`.
   // Keeping the byte pattern aligned matters for downstream comparisons
@@ -741,8 +773,8 @@ function formatMultiFillPathLayers(
   layers: readonly ResolvedFillLayer[],
   paths: readonly { d: string; fillRule?: "evenodd" }[],
   strokeAttrs: StrokeSvgAttrs,
-): SvgString[] {
-  const result: SvgString[] = [];
+): SvgNode[] {
+  const result: SvgNode[] = [];
   for (let li = 0; li < layers.length; li++) {
     const layer = layers[li];
     const fillAttrs = {
@@ -768,7 +800,7 @@ function formatFrameSurfaceShape(
   node: RenderFrameNode,
   fillAttrs: SvgPaintAttrs,
   strokeAttrs: StrokeSvgAttrs | undefined,
-): SvgString[] {
+): SvgNode[] {
   const attrs = { ...fillAttrs, ...(strokeAttrs ?? {}), ...frameBackgroundShapeRendering(node) };
   switch (node.surfaceShape.kind) {
     case "rect":
@@ -792,7 +824,7 @@ function formatFrameSurfaceShape(
 function formatMultiFillFrameSurfaceLayers(
   node: RenderFrameNode,
   strokeAttrs: StrokeSvgAttrs | undefined,
-): SvgString[] {
+): SvgNode[] {
   const layers = node.background?.fillLayers;
   if (layers === undefined) {
     return [];
@@ -823,7 +855,7 @@ function formatMultiFillFrameSurfaceLayers(
 function formatMultiStrokeRectLayers(
   layers: readonly ResolvedStrokeLayer[],
   w: number, h: number, cr: CornerRadius | undefined,
-): SvgString[] {
+): SvgNode[] {
   return layers.map((layer) => {
     const sAttrs = strokeToSvgAttrs(layer.attrs);
     const style = blendModeStyle(layer.blendMode);
@@ -850,7 +882,7 @@ function formatMultiStrokeRectLayers(
 function formatMultiStrokeEllipseLayers(
   layers: readonly ResolvedStrokeLayer[],
   cx: number, cy: number, rx: number, ry: number,
-): SvgString[] {
+): SvgNode[] {
   return layers.map((layer) => {
     const sAttrs = strokeToSvgAttrs(layer.attrs);
     const style = blendModeStyle(layer.blendMode);
@@ -869,8 +901,8 @@ function formatMultiStrokeEllipseLayers(
 function formatMultiStrokePathLayers(
   layers: readonly ResolvedStrokeLayer[],
   paths: readonly { d: string; fillRule?: "evenodd" }[],
-): SvgString[] {
-  const result: SvgString[] = [];
+): SvgNode[] {
+  const result: SvgNode[] = [];
   for (const layer of layers) {
     const sAttrs = strokeToSvgAttrs(layer.attrs);
     const style = blendModeStyle(layer.blendMode);
@@ -897,8 +929,8 @@ function strokeGeometryFillAttrs(attrs: ResolvedStrokeAttrs): SvgPaintAttrs {
 function formatStrokeGeometryLayers(
   sr: Extract<StrokeRendering, { readonly mode: "geometry" }>,
   maskId: string | undefined,
-): SvgString[] {
-  const result: SvgString[] = [];
+): SvgNode[] {
+  const result: SvgNode[] = [];
   for (const layer of sr.layers) {
     const fillAttrs = strokeGeometryFillAttrs(layer.attrs);
     const style = blendModeStyle(layer.blendMode);
@@ -923,13 +955,14 @@ function formatStrokeGeometryLayers(
  * Format a background blur effect as foreignObject + CSS backdrop-filter.
  *
  * SVG has no native background blur. Figma's SVG export uses a foreignObject
- * containing a div with `backdrop-filter: blur(Npx)`, clipped to the node's
- * shape via a clipPath.
+ * containing a div with `backdrop-filter: blur(stdDeviation px)`, clipped to
+ * the node's shape via a clipPath.
  */
-function formatBackgroundBlur(bgBlur: RenderBackgroundBlur): SvgString {
-  const foContent = unsafeSvg(
-    `<div xmlns="http://www.w3.org/1999/xhtml" style="backdrop-filter:blur(${bgBlur.radius}px);width:100%;height:100%"></div>`,
-  );
+function formatBackgroundBlur(bgBlur: RenderBackgroundBlur): SvgNode {
+  const foContent = htmlDiv({
+    xmlns: "http://www.w3.org/1999/xhtml",
+    style: `backdrop-filter:blur(${bgBlur.stdDeviation}px);width:100%;height:100%`,
+  });
   const fo = foreignObject(
     { x: bgBlur.bounds.x, y: bgBlur.bounds.y, width: bgBlur.bounds.width, height: bgBlur.bounds.height },
     foContent,
@@ -952,12 +985,10 @@ function getUniformStrokeAttrs(sr: StrokeRendering | undefined): StrokeSvgAttrs 
   return strokeToSvgAttrs(sr.attrs);
 }
 
-import type { StrokeRendering, StrokeShape } from "../scene-graph";
-
 /**
  * Format a stroked shape element from StrokeShape + stroke attrs.
  */
-function formatStrokedShape(shape: StrokeShape, sAttrs: StrokeSvgAttrs): SvgString {
+function formatStrokedShape(shape: StrokeShape, sAttrs: StrokeSvgAttrs): SvgNode {
   switch (shape.kind) {
     case "rect":
       return formatRectShape(shape.width, shape.height, shape.cornerRadius, { fill: "none" }, sAttrs, shape.cornerSmoothing);
@@ -998,7 +1029,7 @@ function formatStrokedShape(shape: StrokeShape, sAttrs: StrokeSvgAttrs): SvgStri
 function tryFormatAlignedRectStroke(
   shape: StrokeShape,
   attrs: ResolvedStrokeAttrs,
-): SvgString | undefined {
+): SvgNode | undefined {
   if (shape.kind !== "rect") { return undefined; }
   if (attrs.strokeAlign !== "INSIDE" && attrs.strokeAlign !== "OUTSIDE") { return undefined; }
   const doubledWidth = attrs.strokeWidth;
@@ -1010,9 +1041,7 @@ function tryFormatAlignedRectStroke(
   const w = shape.width - sign * actualWidth;
   const h = shape.height - sign * actualWidth;
   if (w <= 0 || h <= 0) { return undefined; }
-  const smoothing = shape.kind === "rect" && typeof shape.cornerSmoothing === "number" && shape.cornerSmoothing > 0
-    ? shape.cornerSmoothing
-    : 0;
+  const smoothing = positiveCornerSmoothing(shape.cornerSmoothing);
   const adjustedCornerRadius = adjustCornerRadiusForAlignedStroke(shape.cornerRadius, sign * half);
   const sAttrs: StrokeSvgAttrs = {
     stroke: attrs.stroke,
@@ -1023,20 +1052,9 @@ function tryFormatAlignedRectStroke(
     "stroke-dasharray": attrs.strokeDasharray,
   };
   const fillAttrs: SvgPaintAttrs = { fill: "none" };
-  if (smoothing > 0) {
-    // For smoothed corners, pass the SOURCE radii (not the inset
-    // ones) and the stroke half-width; `buildSmoothedRoundedRectPathD`
-    // applies Figma's hybrid inset formula internally so the smoothing
-    // extent `p` and arc curvature are reconciled correctly. Passing
-    // the already-inset radii via the no-inset path would tighten the
-    // arc but leave `p` un-adjusted, producing a corner that overshoots
-    // theirs's emission by ~0.4 unit on `p` (calibration: iPhone
-    // bezel Aluminum stroke at scale 0.2009).
-    const sourceRadii = cornerRadiusToTuple(shape.cornerRadius);
-    if (sourceRadii) {
-      const d = buildSmoothedRoundedRectPathD(w, h, sourceRadii, smoothing, { x, y }, sign * half);
-      return path({ d, ...fillAttrs, ...sAttrs });
-    }
+  const smoothed = formatSmoothedAlignedRectStroke(shape.cornerRadius, smoothing, w, h, x, y, sign * half, fillAttrs, sAttrs);
+  if (smoothed !== undefined) {
+    return smoothed;
   }
   const uniform = uniformCornerRadius(adjustedCornerRadius);
   if (uniform === undefined && adjustedCornerRadius !== undefined && typeof adjustedCornerRadius !== "number") {
@@ -1046,6 +1064,43 @@ function tryFormatAlignedRectStroke(
   const rxValue = uniform ?? (typeof adjustedCornerRadius === "number" ? adjustedCornerRadius : 0);
   const rxAttr = rxValue > 0 ? { rx: rxValue } : {};
   return rect({ x, y, width: w, height: h, ...rxAttr, ...fillAttrs, ...sAttrs });
+}
+
+function positiveCornerSmoothing(value: number | undefined): number {
+  if (typeof value === "number" && value > 0) {
+    return value;
+  }
+  return 0;
+}
+
+function formatSmoothedAlignedRectStroke(
+  cornerRadius: CornerRadius | undefined,
+  smoothing: number,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  strokeInset: number,
+  fillAttrs: SvgPaintAttrs,
+  strokeAttrs: StrokeSvgAttrs,
+): SvgNode | undefined {
+  if (smoothing === 0) {
+    return undefined;
+  }
+  // For smoothed corners, pass the SOURCE radii (not the inset
+  // ones) and the stroke half-width; `buildSmoothedRoundedRectPathD`
+  // applies Figma's hybrid inset formula internally so the smoothing
+  // extent `p` and arc curvature are reconciled correctly. Passing
+  // the already-inset radii via the no-inset path would tighten the
+  // arc but leave `p` un-adjusted, producing a corner that overshoots
+  // theirs's emission by ~0.4 unit on `p` (calibration: iPhone
+  // bezel Aluminum stroke at scale 0.2009).
+  const sourceRadii = cornerRadiusToTuple(cornerRadius);
+  if (sourceRadii === undefined) {
+    return undefined;
+  }
+  const d = buildSmoothedRoundedRectPathD(width, height, sourceRadii, smoothing, { x, y }, strokeInset);
+  return path({ d, ...fillAttrs, ...strokeAttrs });
 }
 
 /**
@@ -1060,7 +1115,13 @@ function adjustCornerRadiusForAlignedStroke(
   if (typeof cr === "number") {
     return adjustAlignedCornerRadiusValue(cr, delta);
   }
-  return cr.map((r) => adjustAlignedCornerRadiusValue(r, delta)) as unknown as CornerRadius;
+  const [tl, tr, br, bl] = cr;
+  return [
+    adjustAlignedCornerRadiusValue(tl, delta),
+    adjustAlignedCornerRadiusValue(tr, delta),
+    adjustAlignedCornerRadiusValue(br, delta),
+    adjustAlignedCornerRadiusValue(bl, delta),
+  ];
 }
 
 function adjustAlignedCornerRadiusValue(radius: number, delta: number): number {
@@ -1072,7 +1133,7 @@ function adjustAlignedCornerRadiusValue(radius: number, delta: number): number {
 /**
  * Format multi-paint stroke layers from StrokeShape.
  */
-function formatStrokeLayersForShape(layers: readonly ResolvedStrokeLayer[], shape: StrokeShape): SvgString[] {
+function formatStrokeLayersForShape(layers: readonly ResolvedStrokeLayer[], shape: StrokeShape): SvgNode[] {
   switch (shape.kind) {
     case "rect":
       return formatMultiStrokeRectLayers(layers, shape.width, shape.height, shape.cornerRadius);
@@ -1089,7 +1150,7 @@ function formatStrokeLayersForShape(layers: readonly ResolvedStrokeLayer[], shap
  * This is the SINGLE stroke rendering function for the SVG backend.
  * All node formatters delegate here — no stroke logic elsewhere.
  */
-function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
+function formatStrokeRendering(sr: StrokeRendering): SvgNode[] {
   switch (sr.mode) {
     case "uniform":
       return [];
@@ -1102,10 +1163,7 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
       // more involved.
       const aligned = tryFormatAlignedRectStroke(sr.shape, sr.attrs);
       if (aligned !== undefined) {
-        if (sr.blendMode) {
-          return [g({ style: blendModeStyle(sr.blendMode) }, aligned)];
-        }
-        return [aligned];
+        return [wrapOptionalBlendMode(aligned, sr.blendMode)];
       }
       const stroked = formatStrokedShape(sr.shape, strokeToSvgAttrs(sr.attrs));
       const wrapped = g({ mask: `url(#${sr.maskId})` }, stroked);
@@ -1128,7 +1186,7 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
 
     case "individual": {
       const { sides, color, opacity, width: w, height: h, cornerRadius, strokeAlign } = sr;
-      const lines: SvgString[] = [];
+      const lines: SvgNode[] = [];
       // SVG `<line>` strokes are centred on the line geometry. Per-side
       // stroke placement depends on Figma's strokeAlign, which determines
       // whether the band lies INSIDE, OUTSIDE, or CENTERED on the geometry:
@@ -1178,6 +1236,13 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
   }
 }
 
+function wrapOptionalBlendMode(node: SvgNode, blendMode: BlendMode | undefined): SvgNode {
+  if (blendMode === undefined) {
+    return node;
+  }
+  return g({ style: blendModeStyle(blendMode) }, node);
+}
+
 // =============================================================================
 // Shape Node Assembly
 // =============================================================================
@@ -1187,39 +1252,36 @@ function formatStrokeRendering(sr: StrokeRendering): SvgString[] {
  *
  * All shape nodes (rect, ellipse, path, frame) share the same final assembly:
  * 1. Prepend defs
- * 2. Append background blur (if present)
- * 3. Wrap in <g> with wrapper attrs
+ * 2. Emit background blur before the foreground pixels when present
+ * 3. Keep foreground filters off the background blur
+ * 4. Wrap in <g> with wrapper attrs
  *
  * This prevents scattered backgroundBlur/defs handling across every formatter.
  */
 function assembleShapeNode(
   node: { readonly defs: readonly RenderDef[]; readonly backgroundBlur?: RenderBackgroundBlur } & RenderNodeBase,
-  shapeContent: readonly SvgString[],
-): SvgString {
-  const parts: SvgString[] = [];
+  shapeContent: readonly SvgNode[],
+): SvgNode {
+  const parts: SvgNode[] = [];
   const defsStr = formatDefs(node.defs);
   if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
-  parts.push(...shapeContent);
-  if (node.backgroundBlur) { parts.push(formatBackgroundBlur(node.backgroundBlur)); }
-  return g(wrapperAttrs(node), ...parts);
+  if (node.backgroundBlur === undefined) {
+    parts.push(...shapeContent);
+    return g(wrapperAttrs(node), ...parts);
+  }
+
+  parts.push(formatBackgroundBlur(node.backgroundBlur));
+  if (node.wrapper.filterAttr === undefined) {
+    parts.push(...shapeContent);
+  } else {
+    parts.push(g(foregroundFilterAttrs(node.wrapper), ...shapeContent));
+  }
+  return g(wrapperAttrsWithoutFilter(node), ...parts);
 }
 
 // =============================================================================
 // Node Formatters
 // =============================================================================
-
-/**
- * True when a frame's clamped corner radius implies a non-rectangular
- * visible boundary. Square-cornered frames (radius 0 / undefined) have a
- * bg fill that fully covers the frame interior, so the bg-on-top trick
- * works for clip-elision; rounded frames have transparent corner-curve
- * regions that a child fill can paint into, so the clip MUST stay.
- */
-function hasNonZeroCornerRadius(cr: CornerRadius | undefined): boolean {
-  if (cr === undefined) { return false; }
-  if (typeof cr === "number") { return cr > 0; }
-  return cr.some((r: number) => r > 0);
-}
 
 function insideStrokeClipId(w: number, h: number, cr: CornerRadius | undefined): string {
   return `inside-stroke-clip-${w}-${h}-${cornerRadiusKey(cr)}`.replace(/[^\w-]/g, "_");
@@ -1231,52 +1293,13 @@ function cornerRadiusKey(cr: CornerRadius | undefined): string {
   return cr.join("_");
 }
 
-/**
- * Returns true if the children subtree contains a `mix-blend-mode` whose
- * backdrop *requires* the current frame's bg to render correctly.
- *
- * resvg-js's mix-blend-mode resolves the blend's backdrop by walking up
- * to the nearest stacking-context-introducing ancestor. Each `<g
- * clip-path="…">` along the chain creates a fresh stacking context, so
- * a blend node deep inside nested clipped frames samples the wrong
- * layer (it sees the inner clip's contents only, not the outer frame's
- * backdrop fill). When this returns true, we elide the current frame's
- * children-clip wrapper so the blend reaches the frame's bg directly.
- *
- * Heuristic: traverse children, but DON'T descend into a child frame
- * that already has its own `childClipId` — that frame owns its own
- * elision decision and its bg is the proper backdrop for any blend
- * inside it. Eliding a clip on behalf of such a deep blend would lose
- * visible clipping for unrelated siblings without helping the blend
- * (which is sampled relative to the deeper frame's bg, not ours).
- *
- * Both wrapper-level blend modes (CSS `mix-blend-mode` set on `<g>`
- * via `node.wrapper.blendMode`) and paint-level blend modes (set on a
- * single fill layer in `node.background.fillLayers[i].blendMode` or on
- * `node.fillLayers[i]` for shape nodes) trigger elision, since the
- * same backdrop-sampling rule applies regardless of which level the
- * blend mode lives at.
- */
-function subtreeHasBlendModeRequiringThisBackdrop(nodes: readonly RenderNode[]): boolean {
-  for (const n of nodes) {
-    if (n.wrapper.blendMode !== undefined) { return true; }
-    if (n.type === "frame") {
-      if (n.background?.fillLayers?.some((l) => l.blendMode !== undefined)) { return true; }
-      // Stop descending into a child frame that owns its own clip —
-      // its bg is the proper backdrop for any deeper blend.
-      if (n.childClipId === undefined) {
-        if (subtreeHasBlendModeRequiringThisBackdrop(n.children)) { return true; }
-      }
-    } else if (n.type === "group") {
-      if (subtreeHasBlendModeRequiringThisBackdrop(n.children)) { return true; }
-    } else if (n.type === "rect" || n.type === "ellipse" || n.type === "path") {
-      if (n.fillLayers?.some((l) => l.blendMode !== undefined)) { return true; }
-    }
-  }
-  return false;
+function hasNonZeroCornerRadius(cr: CornerRadius | undefined): boolean {
+  if (cr === undefined) { return false; }
+  if (typeof cr === "number") { return cr > 0; }
+  return cr.some((r: number) => r > 0);
 }
 
-function formatGroupNode(node: RenderGroupNode): SvgString {
+function formatGroupNode(node: RenderGroupNode): SvgNode {
   const children = node.children.map(formatNode);
   const clippedChildren = formatGroupChildren(node, children);
   const defsStr = formatDefs(node.defs);
@@ -1286,98 +1309,99 @@ function formatGroupNode(node: RenderGroupNode): SvgString {
     return clippedChildren[0];
   }
 
-  const parts: SvgString[] = [];
+  const parts: SvgNode[] = [];
   if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
   parts.push(...clippedChildren);
 
   return g(wrapperAttrs(node), ...parts);
 }
 
-function formatGroupChildren(node: RenderGroupNode, children: readonly SvgString[]): readonly SvgString[] {
+function formatGroupChildren(node: RenderGroupNode, children: readonly SvgNode[]): readonly SvgNode[] {
   if (node.childClipId === undefined) {
     return children;
   }
   return [g({ "clip-path": `url(#${node.childClipId})` }, ...children)];
 }
 
-function formatFrameNode(node: RenderFrameNode): SvgString {
-  const parts: SvgString[] = [];
+function formatFrameNode(node: RenderFrameNode): SvgNode {
+  const defsParts: SvgNode[] = [];
+  const foregroundParts: SvgNode[] = [];
   const defsStr = formatDefs(node.defs);
-  if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
+  if (defsStr !== EMPTY_SVG) { defsParts.push(defsStr); }
 
-  // Build background fragments separately so we can choose where to
-  // splice them: outside the clip wrapper for the standard case, or
-  // INSIDE it when a child has `mix-blend-mode`. resvg-js applies
-  // mix-blend-mode by sampling the immediate parent's backdrop — when
-  // the bg lives outside the clip group, the blend's backdrop becomes
-  // the SVG canvas behind the clip group instead of the frame's own
-  // background, and the blend silently degrades to source-over. Putting
-  // the bg inside the same clip group restores the correct backdrop and
-  // mirrors Figma's own SVG export structure (which always nests the
-  // frame's path-1-inside-1 / radial fills inside the clip wrapper).
-  //
-  // Strokes (especially OUTSIDE/CENTER align with `strokeRendering`)
-  // need to live OUTSIDE the clip wrapper so the half of the stroke
-  // that extends beyond the frame edge isn't clipped — Figma's exporter
-  // always emits the bg stroke as a sibling of the clip group, not as
-  // its child. Without this split, Flag's 1px white SOFT_LIGHT outline
-  // disappears at the rounded corners (Flag part diff was 9% before
-  // separating stroke out).
-  const bgFillParts: SvgString[] = [];
-  const bgStrokeParts: SvgString[] = [];
-  if (node.background) {
-    const sr = node.background.strokeRendering;
-    const fillStrokeAttrs = getUniformStrokeAttrs(sr);
+  // Keep the FRAME background and children inside the same clip group
+  // whenever Kiwi `clipsContent` resolved a child clip. That is the SVG
+  // export structure Figma uses for clipped frames, and it keeps the
+  // Kiwi clipping decision as the single source of truth. Strokes
+  // (especially OUTSIDE/CENTER align with `strokeRendering`) live
+  // outside the child clip so the part extending beyond the frame edge
+  // is not clipped.
+  const { fillParts: bgFillParts, strokeParts: bgStrokeParts } = formatFrameBackgroundParts(node);
 
-    if (node.background.fillLayers) {
-      bgFillParts.push(...formatMultiFillFrameSurfaceLayers(node, fillStrokeAttrs));
-    } else {
-      const fillAttrs = fillToSvgAttrs(node.background.fill);
-      bgFillParts.push(...formatFrameSurfaceShape(node, fillAttrs, fillStrokeAttrs));
-    }
-
-    if (sr) {
-      bgStrokeParts.push(...formatStrokeRendering(sr));
-    }
-  }
-
-  if (node.backgroundBlur) {
-    bgFillParts.push(formatBackgroundBlur(node.backgroundBlur));
-  }
+  const bgBlurPart = formatOptionalBackgroundBlur(node.backgroundBlur);
   const childElements = node.children.map(formatNode);
   const childClipId = node.omitChildClip ? undefined : node.childClipId;
   if (childClipId && childElements.length > 0) {
-    // Clip elision is only safe for SQUARE-CORNERED frames. When the
-    // frame has a non-zero corner radius, children that paint past the
-    // bg's rounded edge (e.g. an IMAGE/LIGHTEN-blended fill on a child
-    // frame whose own bbox is rectangular) bleed past the rounded
-    // corners — no amount of bg-on-top compensates because the bg is
-    // transparent in the corner-curve area. The clip MUST stay even
-    // when blend modes prefer it gone.
-    const hasRoundedCorners = hasNonZeroCornerRadius(node.cornerRadius);
-    if (!hasRoundedCorners && subtreeHasBlendModeRequiringThisBackdrop(node.children)) {
-      // Skip the inner clip wrapper — resvg-js's stacking context
-      // discipline breaks `mix-blend-mode` backdrop sampling for any
-      // descendant that sits inside a nested clip-path. The frame's
-      // own rect bg above already enforces the visible boundary
-      // exactly because the frame is square-cornered.
-      parts.push(...formatFrameSurfaceEffectGroup(node, [...bgFillParts, ...childElements]), ...bgStrokeParts);
-    } else {
-      const clippedFrameContent = g({ "clip-path": `url(#${childClipId})` }, ...bgFillParts, ...childElements);
-      parts.push(...formatFrameSurfaceEffectGroup(node, [clippedFrameContent]));
-      parts.push(...bgStrokeParts);
-    }
+    const clippedFrameContent = g({ "clip-path": `url(#${childClipId})` }, ...bgFillParts, ...childElements);
+    foregroundParts.push(...formatFrameSurfaceEffectGroup(node, [clippedFrameContent]));
+    foregroundParts.push(...bgStrokeParts);
   } else {
-    parts.push(...formatFrameSurfaceEffectGroup(node, [...bgFillParts, ...childElements]), ...bgStrokeParts);
+    foregroundParts.push(...formatFrameSurfaceEffectGroup(node, [...bgFillParts, ...childElements]), ...bgStrokeParts);
   }
 
-  return g(wrapperAttrs(node), ...parts);
+  return assembleFrameNode(node, defsParts, bgBlurPart, foregroundParts);
+}
+
+function formatFrameBackgroundParts(
+  node: RenderFrameNode,
+): { readonly fillParts: readonly SvgNode[]; readonly strokeParts: readonly SvgNode[] } {
+  const background = node.background;
+  if (background === null) {
+    return { fillParts: [], strokeParts: [] };
+  }
+  const sr = background.strokeRendering;
+  const fillStrokeAttrs = getUniformStrokeAttrs(sr);
+  const fillParts = formatFrameBackgroundFillParts(node, background, fillStrokeAttrs);
+  const strokeParts = sr === undefined ? [] : formatStrokeRendering(sr);
+  return { fillParts, strokeParts };
+}
+
+function formatFrameBackgroundFillParts(
+  node: RenderFrameNode,
+  background: NonNullable<RenderFrameNode["background"]>,
+  fillStrokeAttrs: SvgPaintAttrs,
+): readonly SvgNode[] {
+  if (background.fillLayers) {
+    return formatMultiFillFrameSurfaceLayers(node, fillStrokeAttrs);
+  }
+  const fillAttrs = fillToSvgAttrs(background.fill);
+  return formatFrameSurfaceShape(node, fillAttrs, fillStrokeAttrs);
+}
+
+function assembleFrameNode(
+  node: RenderFrameNode,
+  defsParts: readonly SvgNode[],
+  backgroundBlurPart: SvgNode | undefined,
+  foregroundParts: readonly SvgNode[],
+): SvgNode {
+  if (backgroundBlurPart === undefined) {
+    return g(wrapperAttrs(node), ...defsParts, ...foregroundParts);
+  }
+  if (node.wrapper.filterAttr === undefined) {
+    return g(wrapperAttrsWithoutFilter(node), ...defsParts, backgroundBlurPart, ...foregroundParts);
+  }
+  return g(
+    wrapperAttrsWithoutFilter(node),
+    ...defsParts,
+    backgroundBlurPart,
+    g(foregroundFilterAttrs(node.wrapper), ...foregroundParts),
+  );
 }
 
 function formatFrameSurfaceEffectGroup(
   node: RenderFrameNode,
-  surfaceParts: readonly SvgString[],
-): readonly SvgString[] {
+  surfaceParts: readonly SvgNode[],
+): readonly SvgNode[] {
   const filterAttr = node.background?.filterAttr;
   if (filterAttr === undefined || surfaceParts.length === 0) {
     return surfaceParts;
@@ -1385,7 +1409,14 @@ function formatFrameSurfaceEffectGroup(
   return [g({ filter: filterAttr }, ...surfaceParts)];
 }
 
-function formatRectNodeContent(node: RenderRectNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString[] {
+function formatOptionalBackgroundBlur(backgroundBlur: RenderBackgroundBlur | undefined): SvgNode | undefined {
+  if (backgroundBlur === undefined) {
+    return undefined;
+  }
+  return formatBackgroundBlur(backgroundBlur);
+}
+
+function formatRectNodeContent(node: RenderRectNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgNode[] {
   const strokeAttrs = fillStrokeAttrs ?? {};
   if (node.fillLayers) {
     return formatMultiFillRectLayers(node.fillLayers, node.width, node.height, node.cornerRadius, strokeAttrs, node.cornerSmoothing);
@@ -1400,7 +1431,7 @@ function formatRectNodeContent(node: RenderRectNode, fillStrokeAttrs: StrokeSvgA
   )];
 }
 
-function formatEllipseElement(node: RenderEllipseNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString {
+function formatEllipseElement(node: RenderEllipseNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgNode {
   const fillAttrs = {
     ...effectSourceFillAttrs(node, fillToSvgAttrs(node.fill)),
     ...nodeWrapperShapeRendering(node),
@@ -1412,7 +1443,7 @@ function formatEllipseElement(node: RenderEllipseNode, fillStrokeAttrs: StrokeSv
   return ellipse({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry, ...fillAttrs, ...strokeAttrs });
 }
 
-function formatEllipseNodeContent(node: RenderEllipseNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString[] {
+function formatEllipseNodeContent(node: RenderEllipseNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgNode[] {
   const strokeAttrs = fillStrokeAttrs ?? {};
   if (node.fillLayers) {
     return formatMultiFillEllipseLayers(node.fillLayers, node.cx, node.cy, node.rx, node.ry, strokeAttrs);
@@ -1420,7 +1451,7 @@ function formatEllipseNodeContent(node: RenderEllipseNode, fillStrokeAttrs: Stro
   return [formatEllipseElement(node, fillStrokeAttrs)];
 }
 
-function formatPathElements(node: RenderPathNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString[] {
+function formatPathElements(node: RenderPathNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgNode[] {
   const defaultFillAttrs = {
     ...effectSourceFillAttrs(node, fillToSvgAttrs(node.fill)),
     ...nodeWrapperShapeRendering(node),
@@ -1473,14 +1504,14 @@ function hasDropShadowEffect(effects: RenderNodeBase["source"]["effects"]): bool
   return effects.some((effect) => effect.type === "drop-shadow");
 }
 
-function formatPathNodeContent(node: RenderPathNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgString[] {
+function formatPathNodeContent(node: RenderPathNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgNode[] {
   if (node.fillLayers) {
     return formatMultiFillPathLayers(node.fillLayers, node.paths, fillStrokeAttrs ?? {});
   }
   return formatPathElements(node, fillStrokeAttrs);
 }
 
-function clipSvgContent(content: SvgString, clipId: string | undefined): SvgString {
+function clipSvgContent(content: SvgNode, clipId: string | undefined): SvgNode {
   if (!clipId) { return content; }
   return g({ "clip-path": `url(#${clipId})` }, content);
 }
@@ -1490,7 +1521,7 @@ function fontVariationStyle(fontVariationSettings: string | undefined): string |
   return `font-variation-settings:${fontVariationSettings}`;
 }
 
-function groupMultipleTextElements(textElements: readonly SvgString[]): SvgString {
+function groupMultipleTextElements(textElements: readonly SvgNode[]): SvgNode {
   if (textElements.length === 1) { return textElements[0]; }
   return g({}, ...textElements);
 }
@@ -1502,16 +1533,12 @@ function textAnchorValue(textAnchor: string): "middle" | "end" | undefined {
   return undefined;
 }
 
-function formatRectNode(node: RenderRectNode): SvgString {
+function formatRectNode(node: RenderRectNode): SvgNode {
   const sr = node.strokeRendering;
   const fillStrokeAttrs = getUniformStrokeAttrs(sr);
 
   if (node.fillLayers || sr) {
-    const content = formatRectNodeContent(node, fillStrokeAttrs);
-    if (sr) {
-      content.push(...formatStrokeRendering(sr));
-    }
-    return assembleShapeNode(node, content);
+    return assembleShapeNode(node, formatShapeContentWithStroke(formatRectNodeContent(node, fillStrokeAttrs), sr));
   }
 
   const rectEl = formatRectShape(node.width, node.height, node.cornerRadius, effectSourceFillAttrs(node, fillToSvgAttrs(node.fill)), fillStrokeAttrs, node.cornerSmoothing);
@@ -1522,16 +1549,12 @@ function formatRectNode(node: RenderRectNode): SvgString {
   return rectEl;
 }
 
-function formatEllipseNode(node: RenderEllipseNode): SvgString {
+function formatEllipseNode(node: RenderEllipseNode): SvgNode {
   const sr = node.strokeRendering;
   const fillStrokeAttrs = getUniformStrokeAttrs(sr);
 
   if (node.fillLayers || sr) {
-    const content = formatEllipseNodeContent(node, fillStrokeAttrs);
-    if (sr) {
-      content.push(...formatStrokeRendering(sr));
-    }
-    return assembleShapeNode(node, content);
+    return assembleShapeNode(node, formatShapeContentWithStroke(formatEllipseNodeContent(node, fillStrokeAttrs), sr));
   }
 
   const el = formatEllipseElement(node, fillStrokeAttrs);
@@ -1542,7 +1565,7 @@ function formatEllipseNode(node: RenderEllipseNode): SvgString {
   return el;
 }
 
-function formatPathNode(node: RenderPathNode): SvgString {
+function formatPathNode(node: RenderPathNode): SvgNode {
   if (node.paths.length === 0) {
     return EMPTY_SVG;
   }
@@ -1550,13 +1573,11 @@ function formatPathNode(node: RenderPathNode): SvgString {
   const sr = node.strokeRendering;
   const fillStrokeAttrs = getUniformStrokeAttrs(sr);
   if (node.fillLayers || sr) {
-    const content = formatPathNodeContent(node, fillStrokeAttrs);
-    if (sr) { content.push(...formatStrokeRendering(sr)); }
-    return assembleShapeNode(node, content);
+    return assembleShapeNode(node, formatShapeContentWithStroke(formatPathNodeContent(node, fillStrokeAttrs), sr));
   }
 
   const defaultFillAttrs = effectSourceFillAttrs(node, fillToSvgAttrs(node.fill));
-  const pathElements: SvgString[] = node.paths.map((p) => {
+  const pathElements: SvgNode[] = node.paths.map((p) => {
     const fa = fillAttrsForPath(p.fillOverride, defaultFillAttrs);
     return path({ d: p.d, "fill-rule": p.fillRule, ...fa, ...fillStrokeAttrs });
   });
@@ -1567,36 +1588,21 @@ function formatPathNode(node: RenderPathNode): SvgString {
   return pathElements[0];
 }
 
-function formatTextNode(node: RenderTextNode): SvgString {
+function formatShapeContentWithStroke(
+  fillContent: readonly SvgNode[],
+  strokeRendering: StrokeRendering | undefined,
+): readonly SvgNode[] {
+  if (strokeRendering === undefined) {
+    return fillContent;
+  }
+  return [...fillContent, ...formatStrokeRendering(strokeRendering)];
+}
+
+function formatTextNode(node: RenderTextNode): SvgNode {
   const defsStr = formatDefs(node.defs);
 
   if (node.content.mode === "glyphs") {
-    const runs = node.content.runs;
-    if (runs.length === 0) {
-      return EMPTY_SVG;
-    }
-    // One <path> per fill run. The render-tree resolver already grouped
-    // glyph contours by their TextRun and attached the resolved
-    // fillColor/fillOpacity/blendMode, so the formatter just emits
-    // each run as-is. `style="mix-blend-mode:…"` is applied when the
-    // source paint carries a non-NORMAL blend (Event metadata's
-    // `[{black @0.15 NORMAL}, {black @1 OVERLAY}]` stack relies on
-    // the OVERLAY pass to land at mid-grey instead of solid black).
-    const runPaths: SvgString[] = runs.map((run) => path({
-      d: run.d,
-      fill: run.fillColor,
-      "fill-opacity": run.fillOpacity < 1 ? run.fillOpacity : undefined,
-      style: blendModeStyle(run.blendMode),
-    }));
-    const glyphBody: SvgString = runPaths.length === 1 ? runPaths[0] : g({}, ...runPaths);
-    const glyphContent = node.hyperlink ? svgAnchor({ href: node.hyperlink }, glyphBody) : glyphBody;
-    const content = clipSvgContent(glyphContent, node.textClipId);
-
-    const parts: SvgString[] = [];
-    if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
-    parts.push(content);
-
-    return g(wrapperAttrs(node), ...parts);
+    return formatGlyphTextNode(node, defsStr);
   }
 
   // Text line layout: <text> elements
@@ -1608,7 +1614,7 @@ function formatTextNode(node: RenderTextNode): SvgString {
   const textAnchor = textAnchorValue(fb.textAnchor);
   const fontVarStyle = fontVariationStyle(fb.fontVariationSettings);
 
-  const textElements: SvgString[] = fb.lines.map((line) =>
+  const textElements: SvgNode[] = fb.lines.map((line) =>
     text(
       {
         x: line.x,
@@ -1632,14 +1638,44 @@ function formatTextNode(node: RenderTextNode): SvgString {
 
   const clippedContent = clipSvgContent(textContent, node.textClipId);
 
-  const parts: SvgString[] = [];
-  if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
-  parts.push(clippedContent);
-
-  return g(wrapperAttrs(node), ...parts);
+  return g(wrapperAttrs(node), ...formatDefsAndContent(defsStr, clippedContent));
 }
 
-function formatImageNode(node: RenderImageNode): SvgString {
+function formatGlyphTextNode(node: RenderTextNode, defsStr: SvgNode): SvgNode {
+  if (node.content.mode !== "glyphs") {
+    throw new Error("formatGlyphTextNode requires glyph text content");
+  }
+  const runs = node.content.runs;
+  if (runs.length === 0) {
+    return EMPTY_SVG;
+  }
+  // One <path> per fill run. The render-tree resolver already grouped
+  // glyph contours by their TextRun and attached the resolved
+  // fillColor/fillOpacity/blendMode, so the formatter just emits
+  // each run as-is. `style="mix-blend-mode:…"` is applied when the
+  // source paint carries a non-NORMAL blend (Event metadata's
+  // `[{black @0.15 NORMAL}, {black @1 OVERLAY}]` stack relies on
+  // the OVERLAY pass to land at mid-grey instead of solid black).
+  const runPaths = runs.map((run) => path({
+    d: run.d,
+    fill: run.fillColor,
+    "fill-opacity": run.fillOpacity < 1 ? run.fillOpacity : undefined,
+    style: blendModeStyle(run.blendMode),
+  }));
+  const glyphBody: SvgNode = runPaths.length === 1 ? runPaths[0] : g({}, ...runPaths);
+  const glyphContent = node.hyperlink ? svgAnchor({ href: node.hyperlink }, glyphBody) : glyphBody;
+  const content = clipSvgContent(glyphContent, node.textClipId);
+  return g(wrapperAttrs(node), ...formatDefsAndContent(defsStr, content));
+}
+
+function formatDefsAndContent(defsStr: SvgNode, content: SvgNode): readonly SvgNode[] {
+  if (defsStr === EMPTY_SVG) {
+    return [content];
+  }
+  return [defsStr, content];
+}
+
+function formatImageNode(node: RenderImageNode): SvgNode {
   if (!node.dataUri) {
     return EMPTY_SVG;
   }
@@ -1659,7 +1695,7 @@ function formatImageNode(node: RenderImageNode): SvgString {
   return imageEl;
 }
 
-function formatNode(node: RenderNode): SvgString {
+function formatNode(node: RenderNode): SvgNode {
   switch (node.type) {
     case "group":
       return formatGroupNode(node);
@@ -1688,12 +1724,12 @@ function formatNode(node: RenderNode): SvgString {
  */
 type MaskStrokeAttrs = { readonly stroke: "white"; readonly "stroke-width": number };
 
-function formatNodeAsMaskShape(node: RenderNode, fill: string, strokeAttrs?: MaskStrokeAttrs): SvgString {
+function formatNodeAsMaskShape(node: RenderNode, fill: string): SvgNode {
   const wrapper = node.wrapper;
   const wrapperAttrs: Record<string, string | number | undefined> = {
     transform: wrapper.transform,
   };
-  const body = formatNodeAsMaskShapeBody(node, fill, strokeAttrs);
+  const body = formatNodeAsMaskShapeBody(node, fill);
   // Wrap in <g transform=...> when the node carries a transform so child
   // coordinates stay local to the node's own frame, matching the way the
   // node would render in its non-mask path.
@@ -1703,47 +1739,76 @@ function formatNodeAsMaskShape(node: RenderNode, fill: string, strokeAttrs?: Mas
   return g(wrapperAttrs, body);
 }
 
-/**
- * Return the SVG `stroke-width` to emit when a mask source node carries
- * a stroke. Returns undefined when the source has no stroke (the normal
- * fill-only mask path). Figma's SVG exporter widens the visible mask
- * region by half the stroke width on each side via `stroke="white"
- * stroke-width="…"`, matching the source shape's painted bounds (fill
- * + stroke). Without this, the stroke-painted area outside the fill
- * rectangle would not be masked through, producing a too-tight mask
- * (the visible "wave bleeding into the iPhone screen interior" diff in
- * App page screenshots / AppStore Search Cell).
- */
-function getMaskSourceStrokeWidth(node: RenderNode): number | undefined {
+function maskStrokeAttrsForNode(node: RenderNode): MaskStrokeAttrs | undefined {
+  const strokeRendering = strokeRenderingForMaskNode(node);
+  const width = maskStrokeWidth(strokeRendering);
+  if (width === undefined) {
+    return undefined;
+  }
+  return { stroke: "white", "stroke-width": width };
+}
+
+function strokeRenderingForMaskNode(node: RenderNode): StrokeRendering | undefined {
   switch (node.type) {
     case "rect":
     case "ellipse":
-    case "path": {
-      const sr = node.strokeRendering;
-      if (!sr) { return undefined; }
-      const attrs = sr.mode === "uniform" || sr.mode === "masked"
-        ? sr.attrs
-        : sr.mode === "layers"
-          ? sr.layers[0]?.attrs
-          : undefined;
-      if (!attrs || !(attrs.strokeWidth > 0)) { return undefined; }
-      return attrs.strokeWidth;
-    }
-    case "group":
+    case "path":
+      return node.strokeRendering;
     case "frame":
+      return node.background?.strokeRendering;
+    case "group":
     case "text":
     case "image":
       return undefined;
   }
 }
 
-function formatNodeAsMaskShapeBody(node: RenderNode, fill: string, strokeAttrs?: MaskStrokeAttrs): SvgString {
+function maskStrokeWidth(strokeRendering: StrokeRendering | undefined): number | undefined {
+  if (strokeRendering === undefined) {
+    return undefined;
+  }
+  switch (strokeRendering.mode) {
+    case "uniform":
+    case "masked":
+      return positiveStrokeWidth(strokeRendering.attrs.strokeWidth);
+    case "layers": {
+      const first = strokeRendering.layers[0];
+      if (first === undefined) {
+        throw new Error("Resolved OUTLINE mask stroke layers were empty");
+      }
+      return positiveStrokeWidth(first.attrs.strokeWidth);
+    }
+    case "geometry":
+    case "individual":
+      return undefined;
+  }
+}
+
+function positiveStrokeWidth(width: number): number | undefined {
+  if (width <= 0) {
+    return undefined;
+  }
+  return width;
+}
+
+function formatMaskStrokeGeometry(strokeRendering: StrokeRendering | undefined, fill: string): SvgNode[] {
+  if (strokeRendering?.mode !== "geometry") {
+    return [];
+  }
+  return strokeRendering.paths.map((p) => path({ d: p.d, "fill-rule": p.fillRule, fill }));
+}
+
+function formatNodeAsMaskShapeBody(node: RenderNode, fill: string): SvgNode {
+  const strokeAttrs = maskStrokeAttrsForNode(node);
   const sa = strokeAttrs ?? {};
   switch (node.type) {
     case "path": {
-      const parts = node.paths.map((p) =>
-        path({ d: p.d, "fill-rule": p.fillRule, fill, ...sa }),
-      );
+      const parts = [
+        ...node.paths.map((p) =>
+          path({ d: p.d, "fill-rule": p.fillRule, fill, ...sa }),
+        ),
+        ...formatMaskStrokeGeometry(node.strokeRendering, fill),
+      ];
       if (parts.length === 1) {
         return parts[0];
       }
@@ -1764,9 +1829,9 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string, strokeAttrs?:
     }
     case "ellipse": {
       if (node.rx === node.ry) {
-        return circle({ cx: node.cx, cy: node.cy, r: node.rx, fill });
+        return circle({ cx: node.cx, cy: node.cy, r: node.rx, fill, ...sa });
       }
-      return ellipse({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry, fill });
+      return ellipse({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry, fill, ...sa });
     }
     case "group": {
       const children = node.children.map((c) => formatNodeAsMaskShape(c, fill));
@@ -1779,22 +1844,7 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string, strokeAttrs?:
       // Frame as a mask: emit its rounded-rect background as the shape.
       // Children of a frame-as-mask are unusual and would each need to
       // be treated as additive mask geometry — drop through to a group.
-      const uniform = uniformCornerRadius(node.cornerRadius);
-      const bgEl = (() => {
-        if (uniform === undefined && node.cornerRadius !== undefined && typeof node.cornerRadius !== "number") {
-          return path({
-            d: buildRoundedRectPathD(
-              node.width,
-              node.height,
-              coerceCornerRadius(node.cornerRadius),
-            ),
-            fill,
-          });
-        }
-        const rxValue = uniform ?? 0;
-        const rxAttr = rxValue > 0 ? { rx: rxValue } : {};
-        return rect({ x: 0, y: 0, width: node.width, height: node.height, ...rxAttr, fill });
-      })();
+      const bgEl = formatFrameMaskBackground(node, fill, strokeAttrs);
       if (node.children.length === 0) {
         return bgEl;
       }
@@ -1802,33 +1852,62 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string, strokeAttrs?:
       return g({}, bgEl, ...childEls);
     }
     case "text": {
-      // Text used as a mask emits its glyph contours with the requested
-      // mask fill — every mask shape body uses the same constant so the
-      // rasterised mask source matches Figma's exporter byte-for-byte.
-      if (node.content.mode === "glyphs") {
-        const parts = node.content.runs.map((run) => path({ d: run.d, fill }));
-        if (parts.length === 1) { return parts[0]; }
-        return g({}, ...parts);
-      }
-      // Line-mode text is not meaningfully usable as a mask shape (the
-      // glyph contours aren't resolved). Emit empty so the mask falls
-      // through to its background (black → invisible).
-      return EMPTY_SVG;
+      return formatTextMaskShape(node, fill);
     }
     case "image": {
-      // Image-as-mask uses the image's intrinsic alpha; Figma users
-      // would set this up via maskType=ALPHA on the bitmap. Emit the
-      // image so resvg can apply the alpha channel through luminance.
-      return image({
-        href: node.dataUri,
-        x: 0,
-        y: 0,
-        width: node.width,
-        height: node.height,
-        preserveAspectRatio: node.preserveAspectRatio,
-      });
+      return formatImageMaskShape(node);
     }
   }
+}
+
+function formatTextMaskShape(node: RenderTextNode, fill: string): SvgNode {
+  // Text used as a mask emits its glyph contours with the requested
+  // mask fill — every mask shape body uses the same constant so the
+  // rasterised mask source matches Figma's exporter byte-for-byte.
+  if (node.content.mode !== "glyphs") {
+    // Line-mode text is not meaningfully usable as a mask shape (the
+    // glyph contours aren't resolved). Emit empty so the mask falls
+    // through to its background (black → invisible).
+    return EMPTY_SVG;
+  }
+  const parts = node.content.runs.map((run) => path({ d: run.d, fill }));
+  if (parts.length === 1) { return parts[0]; }
+  return g({}, ...parts);
+}
+
+function formatFrameMaskBackground(node: RenderFrameNode, fill: string, strokeAttrs: MaskStrokeAttrs | undefined): SvgNode {
+  const uniform = uniformCornerRadius(node.cornerRadius);
+  if (uniform === undefined && node.cornerRadius !== undefined && typeof node.cornerRadius !== "number") {
+    return path({
+      d: buildRoundedRectPathD(
+        node.width,
+        node.height,
+        coerceCornerRadius(node.cornerRadius),
+      ),
+      fill,
+      ...strokeAttrs,
+    });
+  }
+  const rxValue = uniform ?? 0;
+  const rxAttr = rxValue > 0 ? { rx: rxValue } : {};
+  return rect({ x: 0, y: 0, width: node.width, height: node.height, ...rxAttr, fill, ...strokeAttrs });
+}
+
+function formatImageMaskShape(node: RenderImageNode): SvgNode {
+  // Image-as-mask uses the image's intrinsic alpha; Figma users
+  // would set this up via maskType=ALPHA on the bitmap. Emit the
+  // image so resvg can apply the alpha channel through luminance.
+  if (node.dataUri === undefined) {
+    throw new Error(`Image mask node ${node.id} is missing SVG image data`);
+  }
+  return image({
+    href: node.dataUri,
+    x: 0,
+    y: 0,
+    width: node.width,
+    height: node.height,
+    preserveAspectRatio: node.preserveAspectRatio,
+  });
 }
 
 function coerceCornerRadius(cr: CornerRadius | undefined): readonly [number, number, number, number] {
@@ -1875,7 +1954,7 @@ export function formatRenderTreeToSvg(
 ): SvgString {
   const children = renderTree.children.map(formatNode);
 
-  const body: SvgString[] = [];
+  const body: SvgNode[] = [];
   if (options?.backgroundColor) {
     body.push(
       rect({
@@ -1900,8 +1979,7 @@ export function formatRenderTreeToSvg(
     // `#9747FF` purple + `10 5` dashes are the Figma exporter's
     // canonical "internal-only frame" cue. The rect carries no fill
     // (we set it explicitly so the rect doesn't inherit a default
-    // black from a parent `<g fill>` — Figma relies on inheritance
-    // from `<svg fill="none">`, which we don't emit).
+    // black from any future wrapper that changes fill inheritance).
     body.push(
       rect({
         x: renderTree.viewport.x + 0.5,
@@ -1917,9 +1995,8 @@ export function formatRenderTreeToSvg(
   }
 
   // No root-level `<g clip-path>` wrapper. Figma's own SVG exporter
-  // emits content flat at the `<svg>` root and relies on (a) the
-  // `viewBox` attribute for visual clipping and (b) callers pruning
-  // off-canvas subtrees before render.
+  // relies on (a) the `viewBox` attribute for visual clipping and
+  // (b) callers pruning off-canvas subtrees before render.
   //
   // We mirror that here for two reasons:
   //
@@ -1941,379 +2018,36 @@ export function formatRenderTreeToSvg(
   //      mid-`#B3` overlay composite. Removing the root wrapper is
   //      what unblocks the blend.
 
+  const svgChildren = projectChildrenToSvgViewportSpace(renderTree.viewport, [...body, ...children]);
   const built = svg(
     {
       width: renderTree.width,
       height: renderTree.height,
-      viewBox: `${renderTree.viewport.x} ${renderTree.viewport.y} ${renderTree.viewport.width} ${renderTree.viewport.height}`,
+      viewBox: `0 0 ${formatSvgNumber(renderTree.viewport.width)} ${formatSvgNumber(renderTree.viewport.height)}`,
+      fill: "none",
     },
-    ...body,
-    ...children,
+    ...svgChildren,
   );
-  return unsafeSvg(applyFigmaPrecisionRule(built));
+  return serializeFigmaExportSvg(built);
 }
 
-/**
- * Walk the rendered SVG and rewrite every coordinate with the
- * precision Figma's SVG exporter uses for that point's exported
- * viewport-local position.
- *
- * Figma exports a selected frame/component with `viewBox="0 0 W H"`;
- * this renderer keeps the Kiwi world viewport in `viewBox` and leaves
- * the root transform in world coordinates. Those encodings are
- * visually equivalent, but precision must be keyed to the coordinate
- * after subtracting the exported viewport origin. The same source
- * glyph emits `M110.656 71.1113` in Metadata context and
- * `M94.6559 294.111` in Feature context because the decision is made
- * from the exported local coordinate, per coordinate, not per path.
- *
- * Implementation rewrites both kinds of coordinates:
- *
- * - `<g transform="matrix(1,0,0,1,tx,ty)">` and
- *   `<g transform="translate(tx, ty)">` - the translation values are
- *   themselves world-coord deltas (assuming a flat-or-nested
- *   integer-prefixed transform tree), so we apply the magnitude rule
- *   directly to each component.
- * - `<path d="...">` command points - convert local->world using the
- *   accumulated parent translation, apply the magnitude rule, then
- *   back-subtract the (already-rounded) parent translation to
- *   produce the local coord resvg will reconstruct.
- *
- * Non-translation transforms (scale/rotation/skew) leave the local
- * coords as-is because the RenderTree pre-bakes those into the path
- * commands and surfaces only translations at the wrapper level.
- *
- * Calibration: Metadata's "u" right stem at exported x=110.65586090
- * rasterised at 50% column-112 coverage where Figma's `110.656` gives
- * 75% - a 64-channel-diff stem pixel. The rule snaps our local
- * `37.6559` to `37.656` so the column-coverage estimate matches.
- */
-function applyFigmaPrecisionRule(svgText: string): string {
-  // Stack tracks BOTH the unrounded cumulative world translation
-  // (`txRaw`/`tyRaw`) and the rounded one that's actually emitted in
-  // the SVG (`tx`/`ty`). The unrounded value is needed to decide which
-  // 3-decimal bucket each child's world coord falls into - accumulating
-  // rounded values layer-by-layer loses fractional precision (e.g.
-  // 50.91916 -> 50.919, then +1.20548 -> 172.124 instead of 172.125).
-  // The rounded value is what the SVG parser will see, so the emitted
-  // delta = roundMag(parent_raw + dx) - parent_rounded.
-  type Trans = { readonly tx: number; readonly ty: number; readonly txRaw: number; readonly tyRaw: number };
-  const stack: Trans[] = [{ tx: 0, ty: 0, txRaw: 0, tyRaw: 0 }];
-  const top = () => stack[stack.length - 1];
-  const viewportOrigin = readSvgViewportOrigin(svgText);
-
-  function roundMag(v: number): number {
-    // Figma's SVG exporter uses 6 significant figures per coordinate
-    // (calibrated against App page screenshots / Search Cell / Framed
-    // exports):
-    //
-    //   |v| >= 1000     -> 2 decimals  ("2662.43")
-    //   |v| >= 100      -> 3 decimals  ("172.728")
-    //   10 <= |v| < 100 -> 4 decimals  ("96.1387")
-    //   1  <= |v| < 10  -> 5 decimals  ("1.20548")
-    //   |v| < 1         -> 6 decimals  ("0.401826")
-    //
-    // Earlier our rule used 3-or-4 decimals only, which truncated
-    // stroke-width and gradient stop values (e.g. 1.20548 -> "1.2055")
-    // and shifted resvg's AA coverage by <=2 sub-pixels at iPhone
-    // bezel corners on Search Cell and App page screenshots.
-    const precision = figmaSixSignificantDecimalPlaces(Math.abs(v));
-    const factor = 10 ** precision;
-    return Math.round(v * factor) / factor;
-  }
-
-  function roundExportPosition(worldCoord: number, axis: "x" | "y"): number {
-    const origin = axis === "x" ? viewportOrigin.x : viewportOrigin.y;
-    return origin + roundMag(worldCoord - origin);
-  }
-
-  // Rewrite a `<rect>` / `<circle>` / `<ellipse>` / `<linearGradient>`
-  // / `<radialGradient>` tag's numeric attributes. Position-like
-  // attributes (X-axis: x, cx, x1, x2, fx; Y-axis: y, cy, y1, y2, fy)
-  // get the magnitude rule applied on the WORLD coord (local +
-  // parent translation), then back-subtracted. Size/radius-like
-  // attributes (width, height, r, rx, ry) get the magnitude rule
-  // applied on the value itself.
-  function rewriteCoordAttrs(tag: string, cur: Trans): string {
-    const X_POS = new Set(["x", "cx", "x1", "x2", "fx"]);
-    const Y_POS = new Set(["y", "cy", "y1", "y2", "fy"]);
-    const SIZE = new Set(["width", "height", "r", "rx", "ry", "stroke-width", "fill-opacity", "stroke-opacity", "opacity"]);
-    return tag.replace(/\b([a-zA-Z][a-zA-Z0-9-]*)="(-?[\d.]+(?:[eE][-+]?\d+)?)"/g, (full, name, val) => {
-      const v = parseFloat(val);
-      if (!Number.isFinite(v)) return full;
-      if (X_POS.has(name)) {
-        const r = roundExportPosition(v + cur.tx, "x") - cur.tx;
-        return `${name}="${formatFigmaRoundedNumber(r)}"`;
-      }
-      if (Y_POS.has(name)) {
-        const r = roundExportPosition(v + cur.ty, "y") - cur.ty;
-        return `${name}="${formatFigmaRoundedNumber(r)}"`;
-      }
-      if (SIZE.has(name)) {
-        return `${name}="${formatFigmaRoundedNumber(roundMag(v))}"`;
-      }
-      return full;
-    });
-  }
-
-  let result = "";
-  let lastIndex = 0;
-  const tagRe = /<\/g>|<g([^>]*)>|<(?:path|rect|circle|ellipse|linearGradient|radialGradient|line|stop)([^>]*?)\/?>/g;
-  let m: RegExpExecArray | null;
-  while ((m = tagRe.exec(svgText)) !== null) {
-    result += svgText.slice(lastIndex, m.index);
-    lastIndex = m.index + m[0].length;
-
-    if (m[0] === "</g>") {
-      stack.pop();
-      result += m[0];
-      continue;
-    }
-    if (m[0].startsWith("<g")) {
-      const cur = top();
-      // Match translation-only transforms - these are the only
-      // wrappers whose translation can be rounded without changing
-      // the geometric meaning. Non-translation transforms
-      // (scale/rotation/skew) are pre-baked into the path d by the
-      // RenderTree resolver.
-      const matrixRe = /transform="matrix\(1,0,0,1,(-?[\d.]+),(-?[\d.]+)\)"/;
-      const translateRe = /transform="translate\((-?[\d.]+)[ ,]+(-?[\d.]+)\)"/;
-      const matrixMatch = matrixRe.exec(m[0]);
-      const translateMatch = translateRe.exec(m[0]);
-      let dxRaw = 0;
-      let dyRaw = 0;
-      let newDx = 0;
-      let newDy = 0;
-      let isTranslateLayer = false;
-      let rewrittenTag = m[0];
-      if (matrixMatch !== null) {
-        dxRaw = parseFloat(matrixMatch[1]);
-        dyRaw = parseFloat(matrixMatch[2]);
-        // Decide rounding against the UNROUNDED cumulative world
-        // coordinate, then back-subtract the ROUNDED parent so the
-        // emitted local delta lands at `roundMag(world_raw) - parent_rounded`.
-        // This preserves the right rounding bucket when nested
-        // translations accumulate (e.g. 50.91916 + 1.20549 -> 172.12465
-        // rounds to 172.125, where naive `cur.ty + dy` against the
-        // rounded parent 170.919 would have rounded down to 172.124).
-        newDx = roundExportPosition(cur.txRaw + dxRaw, "x") - cur.tx;
-        newDy = roundExportPosition(cur.tyRaw + dyRaw, "y") - cur.ty;
-        isTranslateLayer = true;
-        rewrittenTag = m[0].replace(matrixRe, `transform="matrix(1,0,0,1,${formatFigmaRoundedNumber(newDx)},${formatFigmaRoundedNumber(newDy)})"`);
-      } else if (translateMatch !== null) {
-        dxRaw = parseFloat(translateMatch[1]);
-        dyRaw = parseFloat(translateMatch[2]);
-        newDx = roundExportPosition(cur.txRaw + dxRaw, "x") - cur.tx;
-        newDy = roundExportPosition(cur.tyRaw + dyRaw, "y") - cur.ty;
-        isTranslateLayer = true;
-        rewrittenTag = m[0].replace(translateRe, `transform="translate(${formatFigmaRoundedNumber(newDx)} ${formatFigmaRoundedNumber(newDy)})"`);
-      }
-      if (isTranslateLayer) {
-        stack.push({
-          tx: cur.tx + newDx,
-          ty: cur.ty + newDy,
-          txRaw: cur.txRaw + dxRaw,
-          tyRaw: cur.tyRaw + dyRaw,
-        });
-      } else {
-        // Non-translation transform (or no transform at all) - both
-        // rounded and raw cumulative stay at the parent's values.
-        stack.push({ tx: cur.tx, ty: cur.ty, txRaw: cur.txRaw, tyRaw: cur.tyRaw });
-      }
-      result += rewriteCoordAttrs(rewrittenTag, cur);
-      continue;
-    }
-    // <path|rect|...>
-    const cur = top();
-    if (m[0].startsWith("<path")) {
-      const dMatch = /d="([^"]+)"/.exec(m[0]);
-      if (!dMatch) {
-        // Still apply attr rounding (stroke-width etc.) even when d is absent.
-        result += rewriteCoordAttrs(m[0], cur);
-        continue;
-      }
-      const rewrittenD = rewritePathDWithMagnitudeRule(dMatch[1], cur, viewportOrigin);
-      const withD = m[0].replace(/d="[^"]+"/, `d="${rewrittenD}"`);
-      // Path tags also carry stroke-width / fill-opacity / opacity etc.
-      // that the magnitude rule should round (theirs emits
-      // `stroke-width="1.20548"`, ours emits raw FP `1.2054784...`).
-      result += rewriteCoordAttrs(withD, cur);
-      continue;
-    }
-    // rect/circle/ellipse/gradient/line/stop
-    result += rewriteCoordAttrs(m[0], cur);
-  }
-  result += svgText.slice(lastIndex);
-  return result;
-}
-
-function readSvgViewportOrigin(svgText: string): { readonly x: number; readonly y: number } {
-  const match = /\bviewBox="(-?[\d.]+(?:[eE][-+]?\d+)?)\s+(-?[\d.]+(?:[eE][-+]?\d+)?)\s+(-?[\d.]+(?:[eE][-+]?\d+)?)\s+(-?[\d.]+(?:[eE][-+]?\d+)?)"/.exec(svgText);
-  if (match === null) {
-    throw new Error("applyFigmaPrecisionRule requires an SVG viewBox");
-  }
-  const x = parseFloat(match[1]);
-  const y = parseFloat(match[2]);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    throw new Error("applyFigmaPrecisionRule requires finite SVG viewBox origin");
-  }
-  return { x, y };
-}
-
-function formatFigmaRoundedNumber(value: number): string {
-  const cleaned = Number(value.toPrecision(12));
-  if (Object.is(cleaned, -0)) {
+function formatSvgNumber(value: number): string {
+  if (Object.is(value, -0)) {
     return "0";
   }
-  return cleaned.toString();
+  return String(value);
 }
 
-function figmaSixSignificantDecimalPlaces(absValue: number): number {
-  if (absValue < 1) {
-    return 6;
+function projectChildrenToSvgViewportSpace(
+  viewport: RenderTree["viewport"],
+  children: readonly SvgNode[],
+): readonly SvgNode[] {
+  if (viewport.x === 0 && viewport.y === 0) {
+    return children;
   }
-  const integerDigits = Math.floor(Math.log10(absValue)) + 1;
-  return Math.max(0, 6 - integerDigits);
-}
-
-// Figma's SVG exporter flattens path coordinates from the raw Kiwi
-// geometry, but normalizes sub-millipixel translation residue before
-// that flattening. Larger raw-vs-emitted deltas are serialized layout
-// fractions and must stay in the path coordinate basis.
-const SVG_EXPORT_TRANSLATION_RESIDUE_EPSILON = 0.001;
-
-function rewritePathDWithMagnitudeRule(
-  d: string,
-  parent: { readonly tx: number; readonly ty: number; readonly txRaw: number; readonly tyRaw: number },
-  viewportOrigin: { readonly x: number; readonly y: number },
-): string {
-  function precisionForMag(a: number): number {
-    return figmaSixSignificantDecimalPlaces(a);
-  }
-  function roundRelativeValue(value: number): string {
-    const factor = 10 ** precisionForMag(Math.abs(value));
-    return formatFigmaRoundedNumber(Math.round(value * factor) / factor);
-  }
-  function roundAbsoluteValue(local: number, isX: boolean): string {
-    const emittedOffset = isX ? parent.tx : parent.ty;
-    const geometryOffset = canonicalExportGeometryOffset(isX ? parent.txRaw : parent.tyRaw, emittedOffset);
-    const origin = isX ? viewportOrigin.x : viewportOrigin.y;
-    // `geometryOffset` follows Figma's flattened path basis, while
-    // `emittedOffset` remains the transform that this SVG will parse.
-    // The emitted local coordinate is therefore:
-    // round(raw exported geometry) - emitted transform.
-    const world = local + geometryOffset;
-    const localToExport = world - origin;
-    const factor = 10 ** precisionForMag(Math.abs(localToExport));
-    const roundedWorld = origin + Math.round(localToExport * factor) / factor;
-    return formatFigmaRoundedNumber(roundedWorld - emittedOffset);
-  }
-  const cmdRe = /([MLHVCSQTAZmlhvcsqtaz])([^MLHVCSQTAZmlhvcsqtaz]*)/g;
-  let out = "";
-  let cm: RegExpExecArray | null;
-  while ((cm = cmdRe.exec(d)) !== null) {
-    const cmd = cm[1];
-    const upper = cmd.toUpperCase();
-    if (upper === "Z") { out += cmd; continue; }
-    const args = (cm[2] || "").trim().split(/[\s,]+/).filter((s) => s.length > 0).map(parseFloat);
-    // Lowercase commands are RELATIVE - magnitude rule should apply
-    // to the relative offset itself (since the relative delta is what
-    // gets rasterised against the current point). Treat the same way
-    // but use a zero offset (relative deltas don't accumulate with
-    // parent translation).
-    const useParent = cmd === upper;
-    function emitPoint(x: number, y: number): string {
-      if (useParent) {
-        return `${roundAbsoluteValue(x, true)} ${roundAbsoluteValue(y, false)}`;
-      }
-      return `${roundRelativeValue(x)} ${roundRelativeValue(y)}`;
-    }
-    function emitValues(values: readonly number[], xMask: readonly (boolean | undefined)[]): string {
-      const parts = values.map((value, index) => {
-        if (xMask[index] === undefined) {
-          return roundRelativeValue(value);
-        }
-        if (useParent) {
-          return roundAbsoluteValue(value, xMask[index]);
-        }
-        return roundRelativeValue(value);
-      });
-      return parts.join(" ");
-    }
-    const segments: string[] = [];
-    switch (upper) {
-      case "M":
-      case "L":
-      case "T": {
-        for (let k = 0; k < args.length; k += 2) {
-          segments.push(emitPoint(args[k], args[k + 1]));
-        }
-        break;
-      }
-      case "C": {
-        for (let k = 0; k < args.length; k += 6) {
-          segments.push([
-            emitPoint(args[k], args[k + 1]),
-            emitPoint(args[k + 2], args[k + 3]),
-            emitPoint(args[k + 4], args[k + 5]),
-          ].join(" "));
-        }
-        break;
-      }
-      case "Q":
-      case "S": {
-        for (let k = 0; k < args.length; k += 4) {
-          segments.push([
-            emitPoint(args[k], args[k + 1]),
-            emitPoint(args[k + 2], args[k + 3]),
-          ].join(" "));
-        }
-        break;
-      }
-      case "H": {
-        segments.push(args.map((value) => {
-          if (useParent) {
-            return roundAbsoluteValue(value, true);
-          }
-          return roundRelativeValue(value);
-        }).join(" "));
-        break;
-      }
-      case "V": {
-        segments.push(args.map((value) => {
-          if (useParent) {
-            return roundAbsoluteValue(value, false);
-          }
-          return roundRelativeValue(value);
-        }).join(" "));
-        break;
-      }
-      case "A": {
-        // arc: rx ry x-axis-rotation large-arc-flag sweep-flag x y
-        // rx/ry/rotation are not positions; flags are 0/1; only x/y get rounded.
-        for (let k = 0; k < args.length; k += 7) {
-          const xMask = [undefined, undefined, undefined, undefined, undefined, true, false] as readonly (boolean | undefined)[];
-          segments.push(emitValues([args[k], args[k + 1], args[k + 2], args[k + 3], args[k + 4], args[k + 5], args[k + 6]], xMask));
-        }
-        break;
-      }
-      default: {
-        // Unknown - emit raw as-is.
-        out += cm[0];
-        continue;
-      }
-    }
-    out += cmd + segments.join(" ");
-  }
-  return out;
-}
-
-function canonicalExportGeometryOffset(rawOffset: number, emittedOffset: number): number {
-  const residue = rawOffset - emittedOffset;
-  if (Math.abs(residue) < SVG_EXPORT_TRANSLATION_RESIDUE_EPSILON) {
-    return emittedOffset;
-  }
-  return rawOffset;
+  const translateX = formatSvgNumber(-viewport.x);
+  const translateY = formatSvgNumber(-viewport.y);
+  return [g({ transform: `translate(${translateX} ${translateY})` }, ...children)];
 }
 
 // =============================================================================

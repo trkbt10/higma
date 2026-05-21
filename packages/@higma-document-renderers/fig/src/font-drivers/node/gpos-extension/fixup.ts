@@ -238,20 +238,12 @@ function resolveGposView(fontBytes: ArrayBuffer): GposView | undefined {
   const fullView = new DataView(fontBytes);
   if (hasSfntMagic(fullView)) {
     const location = locateGposTable(fullView);
-    if (!location) {
-      throw new Error(
-        "resolveGposView: font.tables.gpos exists but the supplied sfnt buffer has no GPOS table record — fontBytes likely does not match the parsed font",
-      );
-    }
+    assertGposLocation(location, "sfnt");
     return { view: fullView, location };
   }
   if (isWoff(fullView)) {
     const extracted = extractWoffGpos(fullView);
-    if (!extracted) {
-      throw new Error(
-        "resolveGposView: font.tables.gpos exists but the supplied WOFF has no GPOS table record — fontBytes likely does not match the parsed font",
-      );
-    }
+    assertWoffGpos(extracted);
     const gposView = new DataView(extracted.gposBytes);
     return {
       view: gposView,
@@ -259,6 +251,29 @@ function resolveGposView(fontBytes: ArrayBuffer): GposView | undefined {
     };
   }
   return undefined;
+}
+
+function assertGposLocation(
+  location: GposTableLocation | undefined,
+  source: "sfnt",
+): asserts location is GposTableLocation {
+  if (location !== undefined) {
+    return;
+  }
+  throw new Error(
+    `resolveGposView: font.tables.gpos exists but the supplied ${source} buffer has no GPOS table record — fontBytes likely does not match the parsed font`,
+  );
+}
+
+function assertWoffGpos(
+  extracted: { readonly gposBytes: ArrayBuffer } | undefined,
+): asserts extracted is { readonly gposBytes: ArrayBuffer } {
+  if (extracted !== undefined) {
+    return;
+  }
+  throw new Error(
+    "resolveGposView: font.tables.gpos exists but the supplied WOFF has no GPOS table record — fontBytes likely does not match the parsed font",
+  );
 }
 
 /**

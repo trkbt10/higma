@@ -4,7 +4,7 @@
  * Both SVG string and React renderers MUST consume this output.
  */
 
-import type { Stroke, BlendMode } from "@higma-document-renderers/fig/scene-graph";
+import type { Stroke, StrokeLayer, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 import { colorToHex } from "./color";
 import { resolveFigmaSvgOpacity } from "./figma-svg-opacity";
 import { resolveFill, type IdGenerator, type ResolvedFill } from "./fill";
@@ -105,80 +105,84 @@ export function resolveStroke(stroke: Stroke): ResolvedStrokeAttrs {
 export function resolveStrokeResult(stroke: Stroke, ids: IdGenerator): ResolvedStrokeResult {
   const attrs = resolveStroke(stroke);
 
-  if (!stroke.layers || stroke.layers.length < 2) {
-    // Check if single layer has gradient
-    if (stroke.layers && stroke.layers.length === 1) {
-      const layer = stroke.layers[0];
-      if (layer.gradientFill) {
-        const resolved = resolveFill(layer.gradientFill, ids);
-        const base = buildStrokeAttrsBase(stroke);
-        return {
-          attrs: {
-            ...base,
-            stroke: resolved.attrs.fill,
-            strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
-          },
-          layers: [{
-            attrs: {
-              ...base,
-              stroke: resolved.attrs.fill,
-              strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
-            },
-            gradientDef: resolved.def,
-            blendMode: layer.blendMode,
-          }],
-        };
-      }
-      // Single SOLID layer with a defined (non-default) paint blend mode:
-      // the uniform-stroke path emits stroke attrs without `mix-blend-mode`,
-      // which would silently drop Figma's per-paint stroke blend
-      // (a SOFT_LIGHT-blended white outline stroke). The BlendMode union
-      // does not include "normal" — convertFigmaBlendMode maps NORMAL to
-      // undefined, so a defined `layer.blendMode` is by construction a
-      // non-default blend. Emitting a single-layer result routes through
-      // the layered renderer, which wraps the stroke draw in a styled
-      // element and preserves the blend mode.
-      if (layer.blendMode) {
-        const base = buildStrokeAttrsBase(stroke);
-        return {
-          attrs,
-          layers: [{
-            attrs: {
-              ...base,
-              stroke: colorToHex(layer.color),
-              strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
-            },
-            blendMode: layer.blendMode,
-          }],
-        };
-      }
-    }
+  const singleLayerResult = resolveSingleStrokeLayerResult(stroke, attrs, ids);
+  if (singleLayerResult !== undefined) {
+    return singleLayerResult;
+  }
+
+  if (!hasMultipleStrokeLayers(stroke.layers)) {
     return { attrs };
   }
 
   const base = buildStrokeAttrsBase(stroke);
-  const layers: ResolvedStrokeLayer[] = stroke.layers.map((layer) => {
-    if (layer.gradientFill) {
-      const resolved = resolveFill(layer.gradientFill, ids);
-      return {
-        attrs: {
-          ...base,
-          stroke: resolved.attrs.fill,
-          strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
-        },
-        gradientDef: resolved.def,
-        blendMode: layer.blendMode,
-      };
-    }
-    return {
-      attrs: {
-        ...base,
-        stroke: colorToHex(layer.color),
-        strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
-      },
-      blendMode: layer.blendMode,
-    };
-  });
+  const layers = stroke.layers.map((layer) => resolveStrokeLayer(layer, base, ids));
 
   return { attrs, layers };
+}
+
+function hasMultipleStrokeLayers(layers: readonly StrokeLayer[] | undefined): layers is readonly [StrokeLayer, StrokeLayer, ...StrokeLayer[]] {
+  return layers !== undefined && layers.length >= 2;
+}
+
+function resolveSingleStrokeLayerResult(
+  stroke: Stroke,
+  fallbackAttrs: ResolvedStrokeAttrs,
+  ids: IdGenerator,
+): ResolvedStrokeResult | undefined {
+  const layer = stroke.layers?.[0];
+  if (layer === undefined) {
+    return undefined;
+  }
+  if (layer.gradientFill === undefined && layer.blendMode === undefined) {
+    return undefined;
+  }
+
+  const base = buildStrokeAttrsBase(stroke);
+  const resolvedLayer = resolveStrokeLayer(layer, base, ids);
+
+  if (layer.gradientFill !== undefined) {
+    return { attrs: resolvedLayer.attrs, layers: [resolvedLayer] };
+  }
+
+  // Single SOLID layer with a defined (non-default) paint blend mode:
+  // the uniform-stroke path emits stroke attrs without `mix-blend-mode`,
+  // which would silently drop Figma's per-paint stroke blend
+  // (a SOFT_LIGHT-blended white outline stroke). The BlendMode union
+  // does not include "normal" — convertFigmaBlendMode maps NORMAL to
+  // undefined, so a defined `layer.blendMode` is by construction a
+  // non-default blend. Emitting a single-layer result routes through
+  // the layered renderer, which wraps the stroke draw in a styled
+  // element and preserves the blend mode.
+  return { attrs: fallbackAttrs, layers: [resolvedLayer] };
+}
+
+function resolveStrokeLayer(
+  layer: StrokeLayer,
+  base: Omit<ResolvedStrokeAttrs, "stroke" | "strokeOpacity">,
+  ids: IdGenerator,
+): ResolvedStrokeLayer {
+  if (layer.gradientFill !== undefined) {
+    const resolved = resolveFill(layer.gradientFill, ids);
+    return {
+      attrs: buildStrokeLayerAttrs(base, resolved.attrs.fill, layer.opacity),
+      gradientDef: resolved.def,
+      blendMode: layer.blendMode,
+    };
+  }
+  return {
+    attrs: buildStrokeLayerAttrs(base, colorToHex(layer.color), layer.opacity),
+    blendMode: layer.blendMode,
+  };
+}
+
+function buildStrokeLayerAttrs(
+  base: Omit<ResolvedStrokeAttrs, "stroke" | "strokeOpacity">,
+  stroke: string,
+  opacity: number,
+): ResolvedStrokeAttrs {
+  return {
+    ...base,
+    stroke,
+    strokeOpacity: opacity < 1 ? resolveFigmaSvgOpacity(opacity) : undefined,
+  };
 }

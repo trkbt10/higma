@@ -3,7 +3,7 @@
  */
 
 import { finalizeImagePatternDefs } from "./image-pattern-finalize";
-import type { RenderDef } from "../render-tree/types";
+import type { RenderDef } from "../render-tree";
 import { createPngImage, readPng, writePng } from "@higma-codecs/png";
 
 function createPngDataUri(size: { readonly width: number; readonly height: number }): string {

@@ -107,13 +107,22 @@ function shallowEqual(a: unknown, b: unknown): boolean {
 
   if (typeof a !== "object") {return a === b;}
 
-  // For arrays, compare length and elements
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) {return false;}
-    return a.every((v, i) => v === b[i]);
+  if (Array.isArray(a)) {
+    return Array.isArray(b) && shallowArrayEqual(a, b);
+  }
+  if (Array.isArray(b)) {
+    return false;
   }
 
-  // For objects, compare own keys
+  return shallowObjectEqual(a, b);
+}
+
+function shallowArrayEqual(a: readonly unknown[], b: readonly unknown[]): boolean {
+  if (a.length !== b.length) {return false;}
+  return a.every((v, i) => v === b[i]);
+}
+
+function shallowObjectEqual(a: object, b: object): boolean {
   const aObj = asRecord(a);
   const bObj = asRecord(b);
   const aKeys = Object.keys(aObj);
@@ -135,6 +144,37 @@ function getChildren(node: SceneNode): readonly SceneNode[] | undefined {
   return undefined;
 }
 
+function isComparedPropertyKey(key: string): boolean {
+  return key !== "id" && key !== "type" && key !== "children";
+}
+
+function recordChangedProperty(
+  key: string,
+  prevObj: Record<string, unknown>,
+  nextObj: Record<string, unknown>,
+  changes: Record<string, unknown>,
+  hasChangesRef: { value: boolean },
+): void {
+  if (shallowEqual(prevObj[key], nextObj[key])) {
+    return;
+  }
+  changes[key] = nextObj[key];
+  hasChangesRef.value = true;
+}
+
+function recordRemovedProperty(
+  key: string,
+  nextObj: Record<string, unknown>,
+  changes: Record<string, unknown>,
+  hasChangesRef: { value: boolean },
+): void {
+  if (key in nextObj) {
+    return;
+  }
+  changes[key] = undefined;
+  hasChangesRef.value = true;
+}
+
 /**
  * Compare two nodes and return changes (ignoring children)
  */
@@ -152,21 +192,14 @@ function compareNodeProperties(prev: SceneNode, next: SceneNode): Partial<SceneN
   const prevObj = asRecord(prev);
 
   for (const key of Object.keys(nextObj)) {
-    if (key === "id" || key === "type" || key === "children") {continue;}
-
-    if (!shallowEqual(prevObj[key], nextObj[key])) {
-      changes[key] = nextObj[key];
-      hasChangesRef.value = true;
-    }
+    if (!isComparedPropertyKey(key)) {continue;}
+    recordChangedProperty(key, prevObj, nextObj, changes, hasChangesRef);
   }
 
   // Check for removed properties
   for (const key of Object.keys(prevObj)) {
-    if (key === "id" || key === "type" || key === "children") {continue;}
-    if (!(key in nextObj)) {
-      changes[key] = undefined;
-      hasChangesRef.value = true;
-    }
+    if (!isComparedPropertyKey(key)) {continue;}
+    recordRemovedProperty(key, nextObj, changes, hasChangesRef);
   }
 
   return hasChangesRef.value ? (changes as Partial<SceneNode>) : null;
@@ -217,35 +250,49 @@ function diffChildren(
         node: nextChild,
         index: i,
       });
-    } else {
-      // Existing node - check for property changes
-      const changes = compareNodeProperties(prevEntry.node, nextChild);
-      if (changes) {
-        // The op's `nodeType` discriminator carries the variant tag so
-        // consumers (e.g. WebGL state mutator) can narrow the changes
-        // payload to its matching `Partial<T>` without `as` casts.
-        ops.push(makeUpdateOp(nextChild, changes));
-      }
-
-      // Check for reorder
-      if (prevEntry.index !== i) {
-        ops.push({
-          type: "reorder",
-          parentId,
-          nodeId: nextChild.id,
-          newIndex: i,
-        });
-      }
-
-      // Recursively diff children
-      const prevChildChildren = getChildren(prevEntry.node);
-      const nextChildChildren = getChildren(nextChild);
-
-      if (prevChildChildren && nextChildChildren) {
-        diffChildren({ parentId: nextChild.id, prevChildren: prevChildChildren, nextChildren: nextChildChildren, ops });
-      }
+      continue;
     }
+    appendExistingChildDiff(parentId, prevEntry, nextChild, i, ops);
   }
+}
+
+function appendExistingChildDiff(
+  parentId: SceneNodeId,
+  prevEntry: { readonly node: SceneNode; readonly index: number },
+  nextChild: SceneNode,
+  nextIndex: number,
+  ops: DiffOp[],
+): void {
+  // Existing node - check for property changes
+  const changes = compareNodeProperties(prevEntry.node, nextChild);
+  if (changes) {
+    // The op's `nodeType` discriminator carries the variant tag so
+    // consumers (e.g. WebGL state mutator) can narrow the changes
+    // payload to its matching `Partial<T>` without `as` casts.
+    ops.push(makeUpdateOp(nextChild, changes));
+  }
+
+  // Check for reorder
+  if (prevEntry.index !== nextIndex) {
+    ops.push({
+      type: "reorder",
+      parentId,
+      nodeId: nextChild.id,
+      newIndex: nextIndex,
+    });
+  }
+
+  appendChildTreeDiff(prevEntry.node, nextChild, ops);
+}
+
+function appendChildTreeDiff(prevChild: SceneNode, nextChild: SceneNode, ops: DiffOp[]): void {
+  const prevChildChildren = getChildren(prevChild);
+  const nextChildChildren = getChildren(nextChild);
+
+  if (!prevChildChildren || !nextChildChildren) {
+    return;
+  }
+  diffChildren({ parentId: nextChild.id, prevChildren: prevChildChildren, nextChildren: nextChildChildren, ops });
 }
 
 // =============================================================================

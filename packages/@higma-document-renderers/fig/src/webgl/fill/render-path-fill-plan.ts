@@ -1,8 +1,7 @@
 /** @file WebGL path fill plan derived from RenderTree path contours. */
 
 import type { Fill, PathContour, Color } from "@higma-document-renderers/fig/scene-graph";
-import type { RenderPathContour, ResolvedFillResult } from "../../scene-graph";
-import type { ResolvedFillDef } from "../../scene-graph/render/fill";
+import type { RenderPathContour, ResolvedFillDef, ResolvedFillResult } from "../../scene-graph";
 import { svgPathDToContours } from "../tessellation/path-contours";
 
 export type WebGLPathFillRule = "evenodd" | "nonzero";

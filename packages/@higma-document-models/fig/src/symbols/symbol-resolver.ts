@@ -380,19 +380,20 @@ export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver
  * Resolve an INSTANCE node's SYMBOL references inside the SymbolResolver unit.
  *
  * Resolution order:
- *   1. `overriddenSymbolID` (explicit author-set variant override).
- *   2. `symbolID` + RESOLVE_VARIANT (variable-driven variant selection
- *      via `variableConsumptionMap`).
- *   3. `symbolID` (the static reference).
+ *   1. `symbolID` identifies the static reference.
+ *   2. `overriddenSymbolID` replaces that reference when the author
+ *      swaps the INSTANCE target.
+ *   3. RESOLVE_VARIANT evaluates against the active reference selected
+ *      by step 2, so an author swap can still keep its selected
+ *      variant property while variable mode changes another property.
  *
- * `RESOLVE_VARIANT` only fires when the INSTANCE has no
- * `overriddenSymbolID` AND its `symbolID`'s parent is a Variant Set
- * (a FRAME with `isStateGroup` + VARIANT-typed `componentPropDefs`).
- * The canonical schema has no COMPONENT_SET NodeType — see
- * `docs/refactor/component-type-cleanup.md`. Most fixtures have all
- * properties resolving to library-only aliases; those aliases are not
- * local Kiwi values, so SymbolResolver keeps the authored `symbolID`
- * instead of deriving a partial variant match.
+ * `RESOLVE_VARIANT` fires only when the active reference's parent is a
+ * Variant Set (a FRAME with `isStateGroup` + VARIANT-typed
+ * `componentPropDefs`). The canonical schema has no COMPONENT_SET
+ * NodeType — see `docs/refactor/component-type-cleanup.md`. Most
+ * fixtures have all properties resolving to library-only aliases;
+ * those aliases are not local Kiwi values, so SymbolResolver keeps the
+ * active reference instead of deriving a partial variant match.
  */
 function resolveReferencesForNode(
   node: FigNode,
@@ -424,7 +425,7 @@ function resolveReferencesForNode(
   }
 
   return {
-    effectiveSymbol: overrideResolved ?? variantResolved ?? primaryResolved,
+    effectiveSymbol: variantResolved ?? overrideResolved ?? primaryResolved,
     allDependencyGuids: allDeps,
   };
 }
@@ -470,10 +471,11 @@ function resolveVariantSymbolTarget(
   document: FigKiwiDocumentIndex,
   variableModeBySetMap: FigKiwiVariableModeBySetMap | undefined,
 ): ResolvedSymbolTarget | undefined {
-  if (overrideResolved !== undefined || primaryResolved === undefined) {
+  const activeReference = overrideResolved ?? primaryResolved;
+  if (activeReference === undefined) {
     return undefined;
   }
-  const variantOutcome = resolveVariantOverride(node, primaryResolved.node, {
+  const variantOutcome = resolveVariantOverride(node, activeReference.node, {
     document,
     childrenOf: document.childrenOf,
     variableModeBySetMap,

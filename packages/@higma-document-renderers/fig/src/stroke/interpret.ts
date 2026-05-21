@@ -51,6 +51,11 @@ function enumName<T extends string>(value: KiwiEnumValue<T> | undefined | null):
   return name;
 }
 
+
+
+
+
+
 export function mapStrokeCap(cap: KiwiEnumValue<FigStrokeCap> | undefined | null): SvgStrokeCap {
   switch (enumName(cap)) {
     case "ROUND":

@@ -5,12 +5,10 @@
  */
 
 import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigNode } from "@higma-document-models/fig/types";
-import { resolveTextRendering, type TextFontResolver, type TextRendering, type TextTruncation } from "../../text/rendering";
+import type { FigKiwiVariableModeBySetMap, FigNode } from "@higma-document-models/fig/types";
+import { resolveTextRendering, type ExtractedTextProps, type TextFontResolver, type TextRendering, type TextTruncation } from "../../text";
 import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
-import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
-import { textAlignHorizontalToAnchor, getAllVisibleSolidFills } from "../../text/layout";
-import type { ExtractedTextProps } from "../../text/layout/types";
+import { textAlignHorizontalToAnchor, getAllVisibleSolidFills, type GlyphContour as PathGlyphContour } from "../../text";
 import type { PathContour, GlyphContour, Color, TextLineLayout, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 /** Map Figma text decoration value to scene graph text decoration string */
@@ -93,6 +91,7 @@ export type TextConversionOptions = {
    * as empty and the no-substitution policy throws on unresolved references.
    */
   readonly styleRegistry?: FigStyleRegistry;
+  readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
 };
 
 /**
@@ -133,6 +132,7 @@ export function convertTextNode(node: FigNode, options: TextConversionOptions): 
     blobs: options.blobs,
     fontResolver: options.fontResolver,
     styleRegistry: options.styleRegistry,
+    variableModeBySetMap: options.variableModeBySetMap,
   });
   const fontVariationSettings = buildFontVariationSettings(node.fontVariations ?? node.textData?.fontVariations);
 

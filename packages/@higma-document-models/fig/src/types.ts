@@ -1595,6 +1595,8 @@ export type FigNode = {
    * another Figma file.
    */
   readonly key?: string;
+  /** Team-library asset version paired with `key` on imported style/component/variable metadata nodes. */
+  readonly version?: string;
   /** File asset id map stored on library/style/component metadata nodes. */
   readonly fileAssetIds?: FigAssetIdMap;
   /** Legacy style-definition marker stored as Kiwi uint field 49. */

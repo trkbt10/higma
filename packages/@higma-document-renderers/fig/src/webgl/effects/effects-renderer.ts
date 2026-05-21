@@ -5,7 +5,7 @@
  * and multi-pass rendering.
  */
 
-import type { BackgroundBlurEffect, BlendMode, DropShadowEffect, InnerShadowEffect, LayerBlurEffect } from "@higma-document-renderers/fig/scene-graph";
+import { resolveFigmaBlurStdDeviation, type BackgroundBlurEffect, type BlendMode, type DropShadowEffect, type InnerShadowEffect, type LayerBlurEffect } from "@higma-document-renderers/fig/scene-graph";
 import type { Framebuffer } from "../resources/framebuffer";
 import { createFramebuffer, createFramebufferWithStencil, deleteFramebuffer, bindFramebuffer } from "../resources/framebuffer";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
@@ -392,23 +392,13 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     }
 
     if (!fullscreenQuad.value) {
-      const buffer = gl.createBuffer();
-      if (!buffer) {
-        throw new Error("WebGL effects renderer failed to allocate fullscreen quad buffer");
-      }
-      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.bufferData(
-        gl.ARRAY_BUFFER,
-        new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
-        gl.STATIC_DRAW
-      );
-      fullscreenQuad.value = buffer;
+      fullscreenQuad.value = createFullscreenQuadBuffer();
     }
 
     // Recreate FBOs if size changed
     if (!tempFBO1.value || tempFBO1.value.width !== width || tempFBO1.value.height !== height) {
-      if (tempFBO1.value) {deleteFramebuffer(gl, tempFBO1.value);}
-      if (tempFBO2.value) {deleteFramebuffer(gl, tempFBO2.value);}
+      deleteFramebufferIfPresent(tempFBO1.value);
+      deleteFramebufferIfPresent(tempFBO2.value);
       tempFBO1.value = createFramebuffer(gl, width, height);
       tempFBO2.value = createFramebuffer(gl, width, height);
     }
@@ -416,7 +406,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
   function ensureShapeFBO(width: number, height: number): void {
     if (!shapeFBO.value || shapeFBO.value.width !== width || shapeFBO.value.height !== height) {
-      if (shapeFBO.value) {deleteFramebuffer(gl, shapeFBO.value);}
+      deleteFramebufferIfPresent(shapeFBO.value);
       shapeFBO.value = createFramebuffer(gl, width, height);
     }
   }
@@ -429,9 +419,30 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
   function ensureLayerFBO(width: number, height: number): void {
     if (!layerFBO.value || layerFBO.value.width !== width || layerFBO.value.height !== height) {
-      if (layerFBO.value) {deleteFramebuffer(gl, layerFBO.value);}
+      deleteFramebufferIfPresent(layerFBO.value);
       layerFBO.value = createFramebufferWithStencil(gl, width, height);
     }
+  }
+
+  function deleteFramebufferIfPresent(framebuffer: Framebuffer | null): void {
+    if (framebuffer === null) {
+      return;
+    }
+    deleteFramebuffer(gl, framebuffer);
+  }
+
+  function createFullscreenQuadBuffer(): WebGLBuffer {
+    const buffer = gl.createBuffer();
+    if (buffer === null) {
+      throw new Error("WebGL effects renderer failed to allocate fullscreen quad buffer");
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
+      gl.STATIC_DRAW
+    );
+    return buffer;
   }
 
   function copyDefaultFramebufferToLayer(canvasWidth: number, canvasHeight: number): Framebuffer {
@@ -499,7 +510,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
   function applyGaussianBlur(source: Framebuffer, radius: number): Framebuffer {
     ensureResources(source.width, source.height);
 
-    const sigmaTotal = radius / 2;
+    const sigmaTotal = resolveFigmaBlurStdDeviation(radius);
     const maxSigmaPerPass = 3;
     const numPasses = Math.max(1, Math.ceil(sigmaTotal / maxSigmaPerPass));
     const sigmaPerPass = sigmaTotal / Math.sqrt(numPasses);

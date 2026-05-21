@@ -29,3 +29,10 @@ export {
   type AngularGradientParams,
   type DiamondGradientParams,
 } from "./interpret";
+
+export {
+  linearGradientAttrs,
+  radialGradientAttrs,
+  type SvgLinearGradientAttrs,
+  type SvgRadialGradientAttrs,
+} from "./svg-gradient-transform";

@@ -9,7 +9,7 @@
 
 import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
-import type { KiwiEnumValue, FigDerivedGlyph, FigDerivedTextData, FigFontMetaData, FigGuid, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
+import type { KiwiEnumValue, FigDerivedGlyph, FigDerivedTextData, FigFontMetaData, FigGuid, FigKiwiVariableModeBySetMap, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { computeTextLayout, extractTextProps, getFillColorAndOpacity } from "../layout";
@@ -737,6 +737,7 @@ export type ResolveTextContext = {
    * registry is the file-level paint SoT.
    */
   readonly styleRegistry?: FigStyleRegistry;
+  readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
 };
 
 export type TextLayoutResolution = {
@@ -979,6 +980,7 @@ export function resolveTextRendering(
     characterStyleIDs,
     styleOverrideTable,
     styleRegistry: ctx.styleRegistry ?? EMPTY_FIG_STYLE_REGISTRY,
+    variableModeBySetMap: ctx.variableModeBySetMap,
     locator: () => formatTextNodeLocator(node),
   });
 
@@ -1038,7 +1040,9 @@ function resolveTextProps(
   ctx: ResolveTextContext,
 ): ExtractedTextProps {
   const styleRegistry = requireTextStyleRegistry(node, ctx);
-  const fillPaints = resolveStyledPaint(node.styleIdForFill, node.fillPaints, styleRegistry);
+  const fillPaints = resolveStyledPaint(node.styleIdForFill, node.fillPaints, styleRegistry, {
+    variableModeBySetMap: ctx.variableModeBySetMap,
+  });
   if (fillPaints === node.fillPaints) {
     return extractTextProps(node);
   }

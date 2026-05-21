@@ -1,9 +1,6 @@
 /** @file WebGL scene state tests */
 import { createSceneState } from "./scene-state";
-import { diffSceneGraphs } from "../../scene-graph/diff";
-import type {
-  SceneGraph, GroupNode, RectNode } from "@higma-document-renderers/fig/scene-graph";
-import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
+import { diffSceneGraphs, createNodeId, type SceneGraph, type GroupNode, type RectNode } from "@higma-document-renderers/fig/scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 // =============================================================================
 // Test Fixtures

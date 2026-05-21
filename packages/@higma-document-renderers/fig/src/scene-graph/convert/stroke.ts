@@ -105,30 +105,43 @@ function buildStrokeLayer(paint: FigPaint): StrokeLayer {
   const blendMode = convertFigmaBlendMode(paint.blendMode);
 
   if (paintType === "SOLID") {
-    const solidPaint = asSolidPaint(paint);
-    if (solidPaint) {
-      return {
-        color: figColorToSceneColor(solidPaint.color),
-        opacity: paint.opacity ?? 1,
-        blendMode,
-      };
-    }
+    return buildSolidStrokeLayer(paint, blendMode);
   }
 
   if (paintType === "GRADIENT_LINEAR" || paintType === "GRADIENT_RADIAL") {
-    const gradientPaint = asGradientPaint(paint);
-    if (gradientPaint) {
-      const gradientFill = convertStrokeGradient(gradientPaint);
-      return {
-        color: DEFAULT_COLOR,
-        opacity: paint.opacity ?? 1,
-        gradientFill,
-        blendMode,
-      };
-    }
+    return buildGradientStrokeLayer(paint, blendMode, DEFAULT_COLOR);
   }
 
   return { color: DEFAULT_COLOR, opacity: paint.opacity ?? 1, blendMode };
+}
+
+function buildSolidStrokeLayer(paint: FigPaint, blendMode: StrokeLayer["blendMode"]): StrokeLayer {
+  const solidPaint = asSolidPaint(paint);
+  if (solidPaint === undefined) {
+    throw new Error("buildStrokeLayer expected a SOLID paint payload");
+  }
+  return {
+    color: figColorToSceneColor(solidPaint.color),
+    opacity: paint.opacity ?? 1,
+    blendMode,
+  };
+}
+
+function buildGradientStrokeLayer(
+  paint: FigPaint,
+  blendMode: StrokeLayer["blendMode"],
+  defaultColor: StrokeLayer["color"],
+): StrokeLayer {
+  const gradientPaint = asGradientPaint(paint);
+  if (gradientPaint === undefined) {
+    throw new Error("buildStrokeLayer expected a gradient paint payload");
+  }
+  return {
+    color: defaultColor,
+    opacity: paint.opacity ?? 1,
+    gradientFill: convertStrokeGradient(gradientPaint),
+    blendMode,
+  };
 }
 
 function primaryStrokeColor(paint: FigPaint): Color {

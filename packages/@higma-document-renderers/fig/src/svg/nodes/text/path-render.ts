@@ -10,8 +10,7 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import type { FigSvgRenderContext } from "../../../types";
 import type { FontLoader, AbstractFont } from "@higma-document-models/fig/font";
 import { fontHasGlyph } from "@higma-document-models/fig/font";
-import { extractTextProps } from "../../../text/layout/extract-props";
-import { resolveTextRendering, type TextFontResolver } from "../../../text/rendering";
+import { extractTextProps, resolveTextRendering, type TextFontResolver } from "../../../text";
 import { formatTextRenderingToSvg } from "./format-rendering";
 import type { SvgString } from "../../primitives";
 

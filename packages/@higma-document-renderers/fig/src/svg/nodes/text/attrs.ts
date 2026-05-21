@@ -8,8 +8,7 @@
  */
 
 import type { text } from "../../primitives";
-import type { ExtractedTextProps } from "../../../text/layout/types";
-import { getAlignedX } from "../../../text/layout/alignment";
+import { getAlignedX, type ExtractedTextProps } from "../../../text";
 import { getTextAnchor } from "./alignment";
 
 /**

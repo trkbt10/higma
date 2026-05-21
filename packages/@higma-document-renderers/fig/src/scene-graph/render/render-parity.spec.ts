@@ -71,7 +71,7 @@ function buildFillForType(type: Fill["type"]): Fill {
 function buildEffectForType(type: Effect["type"]): Effect {
   switch (type) {
     case "drop-shadow":
-      return { type: "drop-shadow", offset: { x: 0, y: 0 }, radius: 0, color: BLACK_50 };
+      return { type: "drop-shadow", offset: { x: 0, y: 0 }, radius: 0, color: BLACK_50, showShadowBehindNode: true };
     case "inner-shadow":
       return { type: "inner-shadow", offset: { x: 0, y: 0 }, radius: 0, color: BLACK_50 };
     case "layer-blur":
@@ -361,6 +361,7 @@ describe("Effects resolution (shared SoT)", () => {
       offset: { x: 2, y: 4 },
       radius: 8,
       color: BLACK_50,
+      showShadowBehindNode: true,
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
@@ -392,13 +393,14 @@ describe("Effects resolution (shared SoT)", () => {
       radius: 24,
       color: BLACK_50,
       blendMode: "overlay",
+      showShadowBehindNode: false,
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    // Non-NORMAL recipe adds composite-out, then blends the shadow
-    // over the current drop-shadow backdrop with the authored mode.
+    // showShadowBehindNode=false adds composite-out, then blends the
+    // shadow over the current drop-shadow backdrop with the authored mode.
     expect(result!.primitives).toHaveLength(8);
     expect(result!.primitives[0].type).toBe("feFlood");
     expect(result!.primitives[1].type).toBe("feColorMatrix");
@@ -426,6 +428,7 @@ describe("Effects resolution (shared SoT)", () => {
       radius: 8,
       color: WHITE,
       blendMode: "plus-lighter",
+      showShadowBehindNode: true,
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
@@ -438,12 +441,35 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
+  it("does not composite-out a blended drop shadow when Kiwi keeps it behind the source", () => {
+    const effects: Effect[] = [{
+      type: "drop-shadow",
+      offset: { x: 0, y: 0 },
+      radius: 5,
+      color: WHITE,
+      blendMode: "plus-lighter",
+      showShadowBehindNode: true,
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+
+    expect(result).toBeDefined();
+    expect(result!.primitives).toHaveLength(7);
+    expect(result!.primitives[4].type).toBe("feColorMatrix");
+    expect(result!.primitives[5].type).toBe("feBlend");
+    const blend = result!.primitives[5];
+    if (blend.type === "feBlend") {
+      expect(blend.mode).toBe("plus-lighter");
+    }
+  });
+
   it("resolves SHARP drop shadow (radius=0) using Figma's hardAlpha-out recipe", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",
       offset: { x: -1, y: 0 },
       radius: 0,
       color: BLACK_50,
+      showShadowBehindNode: false,
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
@@ -561,6 +587,7 @@ describe("Effects resolution (shared SoT)", () => {
         offset: { x: 0, y: 1 },
         radius: 2,
         color: BLACK_50,
+        showShadowBehindNode: false,
       },
     ];
     const ids = createIdGenerator();

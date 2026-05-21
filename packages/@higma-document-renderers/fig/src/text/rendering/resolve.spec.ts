@@ -140,6 +140,7 @@ describe("resolveTextRendering font outlines", () => {
       effects: new Map(),
       textProperties: new Map(),
       layoutGrids: new Map(),
+      variableColorMaterializations: new Map(),
     };
     const rendering = resolveTextRendering({
       ...BASE_TEXT_NODE,

@@ -856,6 +856,159 @@ describe("createSymbolResolver", () => {
     expect(resolved.node.variableModeBySetMap).toEqual(scope.variableModeBySetMap);
   });
 
+  it("applies RESOLVE_VARIANT to the swapped symbol target for the same override slot", () => {
+    const variantFrameGuid = { sessionID: 20, localID: 1 };
+    const modeDefGuid = { sessionID: 20, localID: 2 };
+    const selectedDefGuid = { sessionID: 20, localID: 3 };
+    const lightSelectedGuid = { sessionID: 20, localID: 10 };
+    const lightUnselectedGuid = { sessionID: 20, localID: 11 };
+    const darkSelectedGuid = { sessionID: 20, localID: 12 };
+    const darkUnselectedGuid = { sessionID: 20, localID: 13 };
+    const lightSelectedChildGuid = { sessionID: 20, localID: 20 };
+    const darkSelectedChildGuid = { sessionID: 20, localID: 21 };
+    const parentSymbolGuid = { sessionID: 21, localID: 1 };
+    const searchTabSlotGuid = { sessionID: 21, localID: 2 };
+    const parentInstanceGuid = { sessionID: 21, localID: 3 };
+    const lightMode = { sessionID: 404, localID: 0 };
+    const darkMode = { sessionID: 404, localID: 1 };
+    const variableSetKey = "colors-set";
+    const variableKey = "mode-variable";
+    const variantFrame = createTestNode({
+      type: "FRAME",
+      guid: variantFrameGuid,
+      isStateGroup: true,
+      componentPropDefs: [
+        { id: modeDefGuid, name: "Mode", type: { value: 4, name: "VARIANT" } },
+        { id: selectedDefGuid, name: "Selected", type: { value: 4, name: "VARIANT" } },
+      ],
+    });
+    const lightSelectedChild = createTestNode({
+      type: "RECTANGLE",
+      guid: lightSelectedChildGuid,
+      name: "Light selected child",
+      parentIndex: { guid: lightSelectedGuid, position: "!" },
+    });
+    const darkSelectedChild = createTestNode({
+      type: "RECTANGLE",
+      guid: darkSelectedChildGuid,
+      name: "Dark selected child",
+      parentIndex: { guid: darkSelectedGuid, position: "!" },
+    });
+    const lightSelected = createTestNode({
+      type: "SYMBOL",
+      guid: lightSelectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "!" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Light" },
+        { propDefId: selectedDefGuid, value: "True" },
+      ],
+      children: [lightSelectedChild],
+    });
+    const lightUnselected = createTestNode({
+      type: "SYMBOL",
+      guid: lightUnselectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "\"" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Light" },
+        { propDefId: selectedDefGuid, value: "False" },
+      ],
+    });
+    const darkSelected = createTestNode({
+      type: "SYMBOL",
+      guid: darkSelectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "#" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Dark" },
+        { propDefId: selectedDefGuid, value: "True" },
+      ],
+      children: [darkSelectedChild],
+    });
+    const darkUnselected = createTestNode({
+      type: "SYMBOL",
+      guid: darkUnselectedGuid,
+      parentIndex: { guid: variantFrameGuid, position: "$" },
+      variantPropSpecs: [
+        { propDefId: modeDefGuid, value: "Dark" },
+        { propDefId: selectedDefGuid, value: "False" },
+      ],
+    });
+    const variableSet = createTestNode({
+      type: "VARIABLE_SET",
+      guid: { sessionID: 22, localID: 1 },
+      key: variableSetKey,
+      variableSetModes: [
+        { id: lightMode, name: "Light" },
+        { id: darkMode, name: "Dark" },
+      ],
+    });
+    const modeVariable = createTestNode({
+      type: "VARIABLE",
+      guid: { sessionID: 22, localID: 2 },
+      key: variableKey,
+      variableSetID: { assetRef: { key: variableSetKey } },
+      variableDataValues: {
+        entries: [
+          { modeID: lightMode, variableData: { value: { textValue: "Light" } } },
+          { modeID: darkMode, variableData: { value: { textValue: "Dark" } } },
+        ],
+      },
+    });
+    const searchTabSlot = createTestNode({
+      type: "INSTANCE",
+      guid: searchTabSlotGuid,
+      name: "Search Tab",
+      parentIndex: { guid: parentSymbolGuid, position: "!" },
+      symbolData: { symbolID: lightUnselectedGuid },
+    });
+    const parentSymbol = createTestNode({
+      type: "SYMBOL",
+      guid: parentSymbolGuid,
+      children: [searchTabSlot],
+    });
+    const parentInstance = createTestNode({
+      type: "INSTANCE",
+      guid: parentInstanceGuid,
+      symbolData: {
+        symbolID: parentSymbolGuid,
+        symbolOverrides: [
+          {
+            guidPath: { guids: [searchTabSlotGuid] },
+            overriddenSymbolID: lightSelectedGuid,
+          },
+          {
+            guidPath: { guids: [searchTabSlotGuid] },
+            variableConsumptionMap: variantVariableConsumptionMap("Mode", variableKey),
+          },
+        ],
+      },
+    });
+    const document = indexFigKiwiDocument([
+      variantFrame,
+      lightSelected,
+      lightSelectedChild,
+      lightUnselected,
+      darkSelected,
+      darkSelectedChild,
+      darkUnselected,
+      variableSet,
+      modeVariable,
+      parentSymbol,
+      searchTabSlot,
+      parentInstance,
+    ]);
+    const resolver = createSymbolResolver({ document });
+    const scope = { variableModeBySetMap: variableModeBySetMap(variableSetKey, darkMode) };
+
+    const resolvedParent = resolver.resolveInstance(parentInstance, scope);
+    const resolvedSlot = resolvedParent.children[0]!;
+    const references = resolver.resolveReferences(resolvedSlot, scope);
+    const resolvedSearchTab = resolver.resolveInstance(resolvedSlot, scope);
+
+    expect(resolvedSlot.overriddenSymbolID).toEqual(lightSelectedGuid);
+    expect(references.effectiveSymbol?.guid).toEqual(darkSelectedGuid);
+    expect(resolvedSearchTab.children[0]!.guid).toEqual(darkSelectedChildGuid);
+  });
+
   it("drops overrides addressed to inactive sibling variants in the same Variant Set", () => {
     const variantFrameGuid = { sessionID: 10, localID: 1 };
     const modeDefGuid = { sessionID: 10, localID: 2 };

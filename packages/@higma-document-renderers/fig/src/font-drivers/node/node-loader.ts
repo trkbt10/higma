@@ -295,11 +295,7 @@ function parseFaceAt(
 ): ReturnType<typeof parseFont> {
   const buffer = readFontFileBytes(fs, fontPath);
   if (isTtc(buffer)) {
-    const faces = extractTtcFaces(buffer);
-    const face = faces[faceIndex];
-    if (face === undefined) {
-      throw new Error(`parseFaceAt: TTC ${fontPath} has no face at index ${faceIndex}`);
-    }
+    const face = readTtcFace(buffer, fontPath, faceIndex);
     const font = parseFont(face);
     applyGposExtensionFixup(font, face);
     return font;
@@ -318,25 +314,49 @@ async function getFontInfos(
 ): Promise<readonly FontFileInfo[]> {
   const buffer = readFontFileBytes(fs, discovered.path);
   if (isTtc(buffer)) {
-    const faces = extractTtcFaces(buffer);
-    if (discovered.faceIndex !== undefined) {
-      const face = faces[discovered.faceIndex];
-      if (!face) {
-        return [];
-      }
-      const info = describeFace(parseFont(face), discovered.path, discovered.faceIndex);
-      return info ? [info] : [];
-    }
-    const out: FontFileInfo[] = [];
-    for (let i = 0; i < faces.length; i += 1) {
-      const info = describeFace(parseFont(faces[i]!), discovered.path, i);
-      if (info) {
-        out.push(info);
-      }
-    }
-    return out;
+    return getTtcFontInfos(buffer, discovered);
   }
   const info = describeFace(parseFont(buffer), discovered.path, 0);
+  return info ? [info] : [];
+}
+
+function readTtcFace(buffer: ArrayBuffer, fontPath: string, faceIndex: number): ArrayBuffer {
+  const faces = extractTtcFaces(buffer);
+  const face = faces[faceIndex];
+  if (face === undefined) {
+    throw new Error(`parseFaceAt: TTC ${fontPath} has no face at index ${faceIndex}`);
+  }
+  return face;
+}
+
+function getTtcFontInfos(buffer: ArrayBuffer, discovered: DiscoveredFontFile): readonly FontFileInfo[] {
+  const faces = extractTtcFaces(buffer);
+  if (discovered.faceIndex !== undefined) {
+    return getTtcFontInfoAtFace(faces, discovered);
+  }
+  const out: FontFileInfo[] = [];
+  for (let i = 0; i < faces.length; i += 1) {
+    const info = describeFace(parseFont(faces[i]!), discovered.path, i);
+    if (info) {
+      out.push(info);
+    }
+  }
+  return out;
+}
+
+function getTtcFontInfoAtFace(
+  faces: readonly ArrayBuffer[],
+  discovered: DiscoveredFontFile,
+): readonly FontFileInfo[] {
+  const faceIndex = discovered.faceIndex;
+  if (faceIndex === undefined) {
+    throw new Error("getTtcFontInfoAtFace requires a faceIndex");
+  }
+  const face = faces[faceIndex];
+  if (!face) {
+    return [];
+  }
+  const info = describeFace(parseFont(face), discovered.path, faceIndex);
   return info ? [info] : [];
 }
 
@@ -592,7 +612,7 @@ function applyVariationWrapping(
   variableAxes: ReturnType<typeof getVariableAxes>,
   weight: number,
 ): LoadedFont["font"] {
-  if (!variableAxes) return rawFont;
+  if (!variableAxes) {return rawFont;}
   return wrapFontWithVariation(rawFont, variationForWeight(variableAxes, weight), variableAxes);
 }
 
@@ -826,23 +846,6 @@ export function createNodeFontLoaderWithEnv(
       return merged.source;
     },
   };
-}
-
-function mergeDiscovered(
-  primary: DiscoveredFontFile[],
-  secondary: readonly DiscoveredFontFile[],
-): readonly DiscoveredFontFile[] {
-  const seen = new Set<string>();
-  const out: DiscoveredFontFile[] = [];
-  for (const file of [...primary, ...secondary]) {
-    const key = `${file.path}\t${file.faceIndex ?? -1}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    out.push(file);
-  }
-  return out;
 }
 
 /**

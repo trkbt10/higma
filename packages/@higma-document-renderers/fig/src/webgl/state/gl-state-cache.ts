@@ -119,6 +119,13 @@ type ColorMaskTuple = readonly [boolean, boolean, boolean, boolean];
 type StencilFuncTuple = readonly [number, number, number];
 type StencilOpTuple = readonly [number, number, number];
 
+function stencilOpTupleMatches(current: StencilOpTuple | null, next: StencilOpTuple): boolean {
+  if (current === null) {
+    return false;
+  }
+  return current[0] === next[0] && current[1] === next[1] && current[2] === next[2];
+}
+
 /**
  * Create a GL state cache backed by the given context.
  *
@@ -150,6 +157,35 @@ export function createGLStateCache(gl: GLStateSink): GLStateCache {
       gl.disable(capability);
     }
     enabledRef.value.set(capability, enabled);
+  }
+
+  function setStencilOpForBothFaces(tuple: StencilOpTuple): void {
+    if (stencilOpTupleMatches(stencilOpRef.value, tuple)) {
+      return;
+    }
+    gl.stencilOpSeparate(gl.FRONT_AND_BACK, tuple[0], tuple[1], tuple[2]);
+    stencilOpRef.value = tuple;
+    stencilOpFrontRef.value = tuple;
+    stencilOpBackRef.value = tuple;
+  }
+
+  function setStencilOpForFrontFace(tuple: StencilOpTuple): void {
+    if (stencilOpTupleMatches(stencilOpFrontRef.value, tuple)) {
+      return;
+    }
+    gl.stencilOpSeparate(gl.FRONT, tuple[0], tuple[1], tuple[2]);
+    stencilOpFrontRef.value = tuple;
+    // Unified `stencilOp` cache is no longer consistent across faces.
+    stencilOpRef.value = null;
+  }
+
+  function setStencilOpForBackFace(tuple: StencilOpTuple): void {
+    if (stencilOpTupleMatches(stencilOpBackRef.value, tuple)) {
+      return;
+    }
+    gl.stencilOpSeparate(gl.BACK, tuple[0], tuple[1], tuple[2]);
+    stencilOpBackRef.value = tuple;
+    stencilOpRef.value = null;
   }
 
   return {
@@ -198,35 +234,15 @@ export function createGLStateCache(gl: GLStateSink): GLStateCache {
     setStencilOpSeparate(face, fail, zfail, zpass) {
       const tuple: StencilOpTuple = [fail, zfail, zpass];
       if (face === gl.FRONT_AND_BACK) {
-        const cur = stencilOpRef.value;
-        if (cur !== null && cur[0] === fail && cur[1] === zfail && cur[2] === zpass) {
-          return;
-        }
-        gl.stencilOpSeparate(face, fail, zfail, zpass);
-        stencilOpRef.value = tuple;
-        stencilOpFrontRef.value = tuple;
-        stencilOpBackRef.value = tuple;
+        setStencilOpForBothFaces(tuple);
         return;
       }
       if (face === gl.FRONT) {
-        const cur = stencilOpFrontRef.value;
-        if (cur !== null && cur[0] === fail && cur[1] === zfail && cur[2] === zpass) {
-          return;
-        }
-        gl.stencilOpSeparate(face, fail, zfail, zpass);
-        stencilOpFrontRef.value = tuple;
-        // Unified `stencilOp` cache is no longer consistent across faces.
-        stencilOpRef.value = null;
+        setStencilOpForFrontFace(tuple);
         return;
       }
       if (face === gl.BACK) {
-        const cur = stencilOpBackRef.value;
-        if (cur !== null && cur[0] === fail && cur[1] === zfail && cur[2] === zpass) {
-          return;
-        }
-        gl.stencilOpSeparate(face, fail, zfail, zpass);
-        stencilOpBackRef.value = tuple;
-        stencilOpRef.value = null;
+        setStencilOpForBackFace(tuple);
         return;
       }
       // Unknown face enum — pass through without caching, fail safe.

@@ -91,11 +91,7 @@ export function createFakeFs(): FakeFs {
       const slash = rest.indexOf("/");
       const name = slash === -1 ? rest : rest.slice(0, slash);
       if (!children.has(name)) {
-        const childPath = `${prefix}${name}`;
-        const childEntry = entries.get(childPath);
-        if (childEntry) {
-          children.set(name, childEntry);
-        }
+        appendFakeChildEntry(children, name, entries.get(`${prefix}${name}`));
       }
     }
     if (!opts?.withFileTypes) {
@@ -141,6 +137,17 @@ export function createFakeFs(): FakeFs {
     readFileSync: readFileSync as DiscoveryFs["readFileSync"],
     lstatSync: lstatSync as DiscoveryFs["lstatSync"],
   };
+}
+
+function appendFakeChildEntry(
+  children: Map<string, FakeFsEntry>,
+  name: string,
+  entry: FakeFsEntry | undefined,
+): void {
+  if (entry === undefined) {
+    return;
+  }
+  children.set(name, entry);
 }
 
 function splitPath(p: string): readonly string[] {

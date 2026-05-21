@@ -247,16 +247,22 @@ function resolveVectorStroke(
 }
 
 function resolveNodeFillPaints(node: FigNode, fillPaints: readonly FigPaint[] | undefined, ctx: BuildContext): readonly FigPaint[] | undefined {
-  return resolveStyledPaint(node.styleIdForFill, fillPaints, ctx.styleRegistry);
+  return resolveStyledPaint(node.styleIdForFill, fillPaints, ctx.styleRegistry, {
+    variableModeBySetMap: ctx.variableModeBySetMap,
+  });
 }
 
 function resolveNodeStrokePaints(node: FigNode, strokePaints: readonly FigPaint[] | undefined, ctx: BuildContext): readonly FigPaint[] | undefined {
-  return resolveStyledPaint(node.styleIdForStrokeFill, strokePaints, ctx.styleRegistry);
+  return resolveStyledPaint(node.styleIdForStrokeFill, strokePaints, ctx.styleRegistry, {
+    variableModeBySetMap: ctx.variableModeBySetMap,
+  });
 }
 
 function resolveFrameFillPaints(node: FigNode, ctx: BuildContext): readonly FigPaint[] | undefined {
   const source = resolveFramePaintSource(node);
-  return resolveStyledPaint(source.styleRef, source.paints, ctx.styleRegistry);
+  return resolveStyledPaint(source.styleRef, source.paints, ctx.styleRegistry, {
+    variableModeBySetMap: ctx.variableModeBySetMap,
+  });
 }
 
 function resolveNodeEffects(node: FigNode, ctx: BuildContext): FigNode["effects"] {
@@ -634,9 +640,11 @@ function resolveOverrideEntryPaints(
       readonly assetRef?: { readonly key: string };
     };
   },
-  styleRegistry: FigStyleRegistry,
+  ctx: BuildContext,
 ): readonly FigPaint[] | undefined {
-  const resolved = resolveStyledPaint(entry.styleIdForFill, entry.fillPaints, styleRegistry);
+  const resolved = resolveStyledPaint(entry.styleIdForFill, entry.fillPaints, ctx.styleRegistry, {
+    variableModeBySetMap: ctx.variableModeBySetMap,
+  });
   if (resolved && resolved.length > 0) { return resolved; }
   return undefined;
 }
@@ -661,7 +669,7 @@ function applyStyleOverrides(
 
   const overrideMap = new Map<number, Fill>();
   for (const entry of overrideTable) {
-    const paints = resolveOverrideEntryPaints(entry, ctx.styleRegistry);
+    const paints = resolveOverrideEntryPaints(entry, ctx);
     if (paints === undefined) {
       continue;
     }
@@ -823,6 +831,7 @@ function buildTextNode(node: FigNode, ctx: BuildContext): TextNode {
     blobs: ctx.blobs,
     fontResolver: ctx.textFontResolver,
     styleRegistry: ctx.styleRegistry,
+    variableModeBySetMap: ctx.variableModeBySetMap,
   });
 
   // Resolve textAutoResize from domain textData

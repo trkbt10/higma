@@ -4,8 +4,7 @@
  * Shared alignment math (getAlignedX, getAlignedYWithMetrics) is in text/layout/alignment.ts.
  */
 
-import type { TextAlignHorizontal } from "../../../text/layout/types";
-import { textAlignHorizontalToAnchor } from "../../../text/layout/text-anchor";
+import { textAlignHorizontalToAnchor, type TextAlignHorizontal } from "../../../text";
 
 /**
  * SVG text-anchor values

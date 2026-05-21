@@ -23,6 +23,18 @@ function tessellateContoursOrNull(
   return null;
 }
 
+function surfaceShapeVertices(surfaceShape: ClipShape): Float32Array | null {
+  if (surfaceShape.type === "path") {
+    return tessellateContoursOrNull(surfaceShape.contours);
+  }
+  return generateRectVertices(
+    surfaceShape.width,
+    surfaceShape.height,
+    surfaceShape.cornerRadius,
+    surfaceShape.cornerSmoothing,
+  );
+}
+
 // =============================================================================
 // Node GPU State
 // =============================================================================
@@ -152,9 +164,7 @@ export function createSceneState(): SceneStateInstance {
         base.clipsContent = node.clipsContent;
         if (node.fills.length > 0) {
           base.fill = node.fills[node.fills.length - 1];
-          base.vertices = node.surfaceShape.type === "path"
-            ? tessellateContoursOrNull(node.surfaceShape.contours)
-            : generateRectVertices(node.surfaceShape.width, node.surfaceShape.height, node.surfaceShape.cornerRadius, node.surfaceShape.cornerSmoothing);
+          base.vertices = surfaceShapeVertices(node.surfaceShape);
         }
         break;
       case "rect":
@@ -293,9 +303,7 @@ export function createSceneState(): SceneStateInstance {
         const c = op.changes;
         applyGeometryRetessellation(state, c.width, c.height, c.cornerRadius, c.cornerSmoothing);
         if (c.surfaceShape !== undefined) {
-          state.vertices = c.surfaceShape.type === "path"
-            ? tessellateContoursOrNull(c.surfaceShape.contours)
-            : generateRectVertices(c.surfaceShape.width, c.surfaceShape.height, c.surfaceShape.cornerRadius, c.surfaceShape.cornerSmoothing);
+          state.vertices = surfaceShapeVertices(c.surfaceShape);
         }
         applyFillsUpdate(state, c.fills);
         if (c.clipsContent !== undefined) {

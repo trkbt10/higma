@@ -132,9 +132,14 @@ function fallbackDirs(env: DiscoveryEnv): readonly string[] {
   }
   if (env.xdgDataHome && env.xdgDataHome.length > 0) {
     const xdgFonts = path.join(env.xdgDataHome, "fonts");
-    if (!dirs.includes(xdgFonts)) {
-      dirs.push(xdgFonts);
-    }
+    appendUniqueDir(dirs, xdgFonts);
   }
   return dirs;
+}
+
+function appendUniqueDir(dirs: string[], dir: string): void {
+  if (dirs.includes(dir)) {
+    return;
+  }
+  dirs.push(dir);
 }

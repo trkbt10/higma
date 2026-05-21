@@ -25,6 +25,7 @@ export {
   textAlignHorizontalToAnchor,
   type TextAnchor,
   getFillColorAndOpacity,
+  getAllVisibleSolidFills,
   computeTextLayout,
   textLayoutToCursorLayout,
   type TextLayout,
@@ -51,6 +52,7 @@ export type {
 // forbidden by `no-cross-package-reexport`.
 
 export type {
+  GlyphContour,
   PathContour,
 } from "./paths";
 
@@ -67,6 +69,7 @@ export type {
   TextRenderingEmpty,
   TextRenderingGlyphs,
   TextRenderingLines,
+  TextTruncation,
   ResolveTextContext,
   TextLayoutResolution,
   TextFontResolver,

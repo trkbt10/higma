@@ -29,18 +29,17 @@
  *     right/bottom edge). This is also Figma exporter behaviour — an
  *     icon stored at 26.26×24.03 exports as `viewBox="0 0 27 25"`.
  *
- * Transforms are reduced to translation only — m02/m12 — which is
- * sufficient for the typical Figma layout where m00/m11=1 and m01/m10=0.
- * A node with a non-trivial 2D rotation/scale would need the full
- * transformed-corner-bbox computation; the simple model documented here
- * stays general enough that introducing that later does not change the
- * shape of the function.
+ * Child and root transforms use the full Kiwi affine matrix. This matters
+ * for mirrored component exports such as the App Store template's
+ * horizontally flipped `Feature Art` symbol: using only `m02/m12` places
+ * the rendered surface outside the world-space viewBox.
  */
 
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import { pathContoursBoundingBox } from "@higma-primitives/path";
-import { decodeGeometryToContours } from "../scene-graph/convert";
+import { decodeGeometryToContours } from "../scene-graph";
 import { computeNodeEffectExpansion } from "./effect-bounds";
 
 /**
@@ -94,6 +93,13 @@ export type ComputeFigExportBoundsOptions = {
 };
 
 const DEFAULT_CEIL_INTEGERS = true;
+/**
+ * Figma SVG export reserves 40 px around a root SECTION and draws the
+ * section surface at `(40, 40)`. The iOS App Store template's
+ * `Mockups` SECTION is 3401×1368 in Kiwi and exports as 3481×1448
+ * with its first surface path starting at `M40 42...`.
+ */
+const FIGMA_SECTION_EXPORT_PADDING = 40;
 
 type ResolvedComputeFigExportBoundsOptions = {
   readonly childrenOf: FigChildrenOf;
@@ -102,6 +108,12 @@ type ResolvedComputeFigExportBoundsOptions = {
 };
 
 type GeometryExpansionScope = "root-surface" | "unclipped-descendant";
+type FigExportExtents = {
+  readonly xMin: number;
+  readonly yMin: number;
+  readonly xMax: number;
+  readonly yMax: number;
+};
 
 function resolveOptions(options: ComputeFigExportBoundsOptions): ResolvedComputeFigExportBoundsOptions {
   return {
@@ -111,16 +123,6 @@ function resolveOptions(options: ComputeFigExportBoundsOptions): ResolvedCompute
   };
 }
 
-const IDENTITY_TRANSLATE = 0;
-
-function schemaTranslateX(node: FigNode): number {
-  return node.transform?.m02 ?? IDENTITY_TRANSLATE;
-}
-
-function schemaTranslateY(node: FigNode): number {
-  return node.transform?.m12 ?? IDENTITY_TRANSLATE;
-}
-
 /**
  * Negate while preserving `+0` instead of producing `-0`. The latter
  * survives object equality (`Object.is(-0, 0) === false`) and leaks
@@ -128,6 +130,27 @@ function schemaTranslateY(node: FigNode): number {
  */
 function negZeroSafe(value: number): number {
   return value === 0 ? 0 : -value;
+}
+
+function transformBox(box: FigExportBox, transform: FigNode["transform"]): FigExportBox {
+  const matrix = readKiwiTransform(transform);
+  const x0 = box.x;
+  const y0 = box.y;
+  const x1 = box.x + box.width;
+  const y1 = box.y + box.height;
+  const points = [
+    { x: matrix.m00 * x0 + matrix.m01 * y0 + matrix.m02, y: matrix.m10 * x0 + matrix.m11 * y0 + matrix.m12 },
+    { x: matrix.m00 * x1 + matrix.m01 * y0 + matrix.m02, y: matrix.m10 * x1 + matrix.m11 * y0 + matrix.m12 },
+    { x: matrix.m00 * x0 + matrix.m01 * y1 + matrix.m02, y: matrix.m10 * x0 + matrix.m11 * y1 + matrix.m12 },
+    { x: matrix.m00 * x1 + matrix.m01 * y1 + matrix.m02, y: matrix.m10 * x1 + matrix.m11 * y1 + matrix.m12 },
+  ];
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const xMin = Math.min(...xs);
+  const yMin = Math.min(...ys);
+  const xMax = Math.max(...xs);
+  const yMax = Math.max(...ys);
+  return { x: xMin, y: yMin, width: xMax - xMin, height: yMax - yMin };
 }
 
 /**
@@ -144,44 +167,85 @@ function unionLocalBox(
   geometryExpansionScope: GeometryExpansionScope,
 ): FigExportBox {
   const effect = computeNodeEffectExpansion(node);
+  const sectionPadding = rootSurfaceSectionPadding(node, geometryExpansionScope);
   const sizeX = node.size?.x ?? 0;
   const sizeY = node.size?.y ?? 0;
-
-  let xMin = negZeroSafe(effect.left);
-  let yMin = negZeroSafe(effect.top);
-  let xMax = sizeX + effect.right;
-  let yMax = sizeY + effect.bottom;
-
+  const surfaceExtents = {
+    xMin: negZeroSafe(effect.left + sectionPadding),
+    yMin: negZeroSafe(effect.top + sectionPadding),
+    xMax: sizeX + effect.right + sectionPadding,
+    yMax: sizeY + effect.bottom + sectionPadding,
+  };
   const geometry = descendantStrokeGeometryBox(node, options.blobs, geometryExpansionScope);
-  if (geometry !== undefined) {
-    const gxMax = geometry.x + geometry.width;
-    const gyMax = geometry.y + geometry.height;
-    if (geometry.x < xMin) { xMin = geometry.x; }
-    if (geometry.y < yMin) { yMin = geometry.y; }
-    if (gxMax > xMax) { xMax = gxMax; }
-    if (gyMax > yMax) { yMax = gyMax; }
-  }
+  const geometryExtents = expandExtentsWithOptionalBox(surfaceExtents, geometry);
+  const childExtents = expandExtentsWithUnclippedChildren(node, options, geometryExtents);
 
-  if (node.frameMaskDisabled === true) {
-    for (const child of options.childrenOf(node)) {
-      if (child.visible === false) {
-        continue;
-      }
-      const inner = unionLocalBox(child, options, "unclipped-descendant");
-      const tx = schemaTranslateX(child);
-      const ty = schemaTranslateY(child);
-      const cxMin = inner.x + tx;
-      const cyMin = inner.y + ty;
-      const cxMax = inner.x + inner.width + tx;
-      const cyMax = inner.y + inner.height + ty;
-      if (cxMin < xMin) { xMin = cxMin; }
-      if (cyMin < yMin) { yMin = cyMin; }
-      if (cxMax > xMax) { xMax = cxMax; }
-      if (cyMax > yMax) { yMax = cyMax; }
-    }
-  }
+  return extentsToBox(childExtents);
+}
 
-  return { x: xMin, y: yMin, width: xMax - xMin, height: yMax - yMin };
+function expandExtentsWithOptionalBox(extents: FigExportExtents, box: FigExportBox | undefined): FigExportExtents {
+  if (box === undefined) {
+    return extents;
+  }
+  return expandExtentsWithBox(extents, box);
+}
+
+function expandExtentsWithUnclippedChildren(
+  node: FigNode,
+  options: ResolvedComputeFigExportBoundsOptions,
+  extents: FigExportExtents,
+): FigExportExtents {
+  if (node.frameMaskDisabled !== true) {
+    return extents;
+  }
+  return options.childrenOf(node).reduce(
+    (acc, child) => expandExtentsWithChild(acc, child, options),
+    extents,
+  );
+}
+
+function expandExtentsWithChild(
+  extents: FigExportExtents,
+  child: FigNode,
+  options: ResolvedComputeFigExportBoundsOptions,
+): FigExportExtents {
+  if (child.visible === false) {
+    return extents;
+  }
+  const inner = unionLocalBox(child, options, "unclipped-descendant");
+  const childBox = transformBox(inner, child.transform);
+  return expandExtentsWithBox(extents, childBox);
+}
+
+function extentsToBox(extents: FigExportExtents): FigExportBox {
+  return {
+    x: extents.xMin,
+    y: extents.yMin,
+    width: extents.xMax - extents.xMin,
+    height: extents.yMax - extents.yMin,
+  };
+}
+
+function expandExtentsWithBox(extents: FigExportExtents, box: FigExportBox): FigExportExtents {
+  return {
+    xMin: Math.min(extents.xMin, box.x),
+    yMin: Math.min(extents.yMin, box.y),
+    xMax: Math.max(extents.xMax, box.x + box.width),
+    yMax: Math.max(extents.yMax, box.y + box.height),
+  };
+}
+
+function rootSurfaceSectionPadding(
+  node: FigNode,
+  geometryExpansionScope: GeometryExpansionScope,
+): number {
+  if (geometryExpansionScope !== "root-surface") {
+    return 0;
+  }
+  if (node.type?.name !== "SECTION") {
+    return 0;
+  }
+  return FIGMA_SECTION_EXPORT_PADDING;
 }
 
 function descendantStrokeGeometryBox(
@@ -239,10 +303,5 @@ export function computeFigExportViewport(
   options: ComputeFigExportBoundsOptions,
 ): FigExportBox {
   const box = computeFigExportBounds(node, options);
-  return {
-    x: schemaTranslateX(node) + box.x,
-    y: schemaTranslateY(node) + box.y,
-    width: box.width,
-    height: box.height,
-  };
+  return transformBox(box, node.transform);
 }

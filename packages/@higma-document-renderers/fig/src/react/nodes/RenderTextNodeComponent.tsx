@@ -23,33 +23,42 @@ function wrapTextClip(content: ReactNode, textClipId: string | undefined): React
   return <g clipPath={`url(#${textClipId})`}>{content}</g>;
 }
 
+function formatGlyphContent(node: RenderTextNode): ReactNode {
+  if (node.content.mode !== "glyphs") {
+    throw new Error("formatGlyphContent requires glyph text content");
+  }
+  const paths = node.content.runs.map((run, i) => (
+    <path
+      key={i}
+      d={run.d}
+      fill={run.fillColor}
+      fillOpacity={run.fillOpacity < 1 ? run.fillOpacity : undefined}
+    />
+  ));
+  const body: ReactNode = paths.length === 1 ? paths[0] : <>{paths}</>;
+  return wrapHyperlink(body, node.hyperlink);
+}
+
+function formatLineTextContent(node: RenderTextNode): ReactNode {
+  if (node.content.mode !== "lines") {
+    throw new Error("formatLineTextContent requires line text content");
+  }
+  const body = (
+    <FigTextLines
+      textLineLayout={node.content.layout}
+      fill={node.fillColor}
+      fillOpacity={node.fillOpacity}
+    />
+  );
+  return wrapHyperlink(body, node.hyperlink);
+}
+
 function RenderTextNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
 
   // Glyph contours (pre-outlined paths) — one <path> per fill run.
   if (node.content.mode === "glyphs") {
-    const runs = node.content.runs;
-    if (runs.length === 0) {
-      return null;
-    }
-
-    const paths = runs.map((run, i) => (
-      <path
-        key={i}
-        d={run.d}
-        fill={run.fillColor}
-        fillOpacity={run.fillOpacity < 1 ? run.fillOpacity : undefined}
-      />
-    ));
-    let glyphContent: ReactNode = paths.length === 1 ? paths[0] : <>{paths}</>;
-    glyphContent = wrapHyperlink(glyphContent, node.hyperlink);
-
-    return (
-      <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
-        {defsEl}
-        {wrapTextClip(glyphContent, node.textClipId)}
-      </RenderWrapper>
-    );
+    return renderGlyphTextNode(node, defsEl);
   }
 
   // Text line layout: <text> elements
@@ -57,19 +66,26 @@ function RenderTextNodeComponentImpl({ node }: Props) {
     return null;
   }
 
-  let textContent: ReactNode = (
-    <FigTextLines
-      textLineLayout={node.content.layout}
-      fill={node.fillColor}
-      fillOpacity={node.fillOpacity}
-    />
+  return (
+    <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
+      {defsEl}
+      {wrapTextClip(formatLineTextContent(node), node.textClipId)}
+    </RenderWrapper>
   );
-  textContent = wrapHyperlink(textContent, node.hyperlink);
+}
+
+function renderGlyphTextNode(node: RenderTextNode, defsEl: ReactNode): ReactNode {
+  if (node.content.mode !== "glyphs") {
+    throw new Error("renderGlyphTextNode requires glyph text content");
+  }
+  if (node.content.runs.length === 0) {
+    return null;
+  }
 
   return (
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
       {defsEl}
-      {wrapTextClip(textContent, node.textClipId)}
+      {wrapTextClip(formatGlyphContent(node), node.textClipId)}
     </RenderWrapper>
   );
 }

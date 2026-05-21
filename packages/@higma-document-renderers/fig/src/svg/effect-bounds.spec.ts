@@ -8,23 +8,28 @@
  * → viewBox 386×320 with content at (12, 8)).
  */
 
-import { describe, it, expect } from "vitest";
 import type { FigEffectType, FigNode } from "@higma-document-models/fig/types";
 import { computeNodeEffectExpansion, computeRootEffectExpansion } from "./effect-bounds";
 import { EFFECT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+
+const BASE_NODE: Pick<FigNode, "guid" | "phase" | "type"> = {
+  guid: { sessionID: 1, localID: 1 },
+  phase: { value: 0, name: "CANVAS" },
+  type: { value: 1, name: "FRAME" },
+};
 
 function effectType(type: FigEffectType): { readonly value: number; readonly name: FigEffectType } {
   return { value: EFFECT_TYPE_VALUES[type], name: type };
 }
 
-function makeNode(effects: NonNullable<FigNode["effects"]>): FigNode {
-  return { effects } as unknown as FigNode;
+function makeNode(effects: FigNode["effects"]): FigNode {
+  return { ...BASE_NODE, effects };
 }
 
 describe("computeNodeEffectExpansion", () => {
   it("returns zero expansion for a node without effects", () => {
-    expect(computeNodeEffectExpansion({ effects: undefined })).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
-    expect(computeNodeEffectExpansion({ effects: [] })).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
+    expect(computeNodeEffectExpansion(makeNode(undefined))).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
+    expect(computeNodeEffectExpansion(makeNode([]))).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
   });
 
   it("Event Card DROP_SHADOW(radius=12, offset=(0,4)) expands to (12, 12, 8, 16)", () => {

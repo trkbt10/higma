@@ -5,7 +5,7 @@
 import { memo, type ReactNode } from "react";
 import type { RenderFrameNode } from "../../scene-graph";
 import { formatRenderDefs } from "../primitives/render-defs";
-import { RenderWrapper } from "../primitives/wrapper";
+import { RenderForegroundFilter, RenderWrapper } from "../primitives/wrapper";
 import { RectShape } from "../primitives/rect-shape";
 import { MultiFillPathLayers, MultiFillRectLayers } from "../primitives/multi-fill";
 import { BackgroundBlurElement } from "../primitives/background-blur";
@@ -24,7 +24,6 @@ function renderFrameSurfaceContents(
   const content = (
     <>
       {renderFrameBackgroundShape(node, uniformStroke)}
-      {node.backgroundBlur === undefined ? null : <BackgroundBlurElement blur={node.backgroundBlur} />}
       {childElements}
     </>
   );
@@ -42,10 +41,7 @@ function renderFrameBackgroundShape(
     return null;
   }
   if (node.background.fillLayers) {
-    if (node.surfaceShape.kind === "path") {
-      return <MultiFillPathLayers layers={node.background.fillLayers} paths={node.surfaceShape.paths} stroke={uniformStroke} />;
-    }
-    return <MultiFillRectLayers layers={node.background.fillLayers} width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} stroke={uniformStroke} />;
+    return renderFrameMultiFillBackgroundShape(node, uniformStroke);
   }
   const { fill } = node.background;
   if (node.surfaceShape.kind === "path") {
@@ -58,6 +54,19 @@ function renderFrameBackgroundShape(
     );
   }
   return <RectShape width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+}
+
+function renderFrameMultiFillBackgroundShape(
+  node: RenderFrameNode,
+  uniformStroke: ReturnType<typeof getUniformStrokeAttrs>,
+): ReactNode {
+  if (!node.background?.fillLayers) {
+    return null;
+  }
+  if (node.surfaceShape.kind === "path") {
+    return <MultiFillPathLayers layers={node.background.fillLayers} paths={node.surfaceShape.paths} stroke={uniformStroke} />;
+  }
+  return <MultiFillRectLayers layers={node.background.fillLayers} width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} stroke={uniformStroke} />;
 }
 
 function renderFrameSurfaceEffectGroup(node: RenderFrameNode, content: ReactNode): ReactNode {
@@ -74,12 +83,26 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
   const uniformStroke = getUniformStrokeAttrs(sr);
   const surfaceContent = renderFrameSurfaceContents(node, uniformStroke);
   const surfaceEffectGroup = renderFrameSurfaceEffectGroup(node, surfaceContent);
+  const strokeContent = sr === undefined ? null : <StrokeRenderingElements sr={sr} />;
+
+  if (node.backgroundBlur !== undefined) {
+    return (
+      <RenderWrapper wrapper={node.wrapper} mask={node.mask} includeFilter={false}>
+        {defsEl}
+        <BackgroundBlurElement blur={node.backgroundBlur} />
+        <RenderForegroundFilter wrapper={node.wrapper}>
+          {surfaceEffectGroup}
+          {strokeContent}
+        </RenderForegroundFilter>
+      </RenderWrapper>
+    );
+  }
 
   return (
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
       {defsEl}
       {surfaceEffectGroup}
-      {sr === undefined ? null : <StrokeRenderingElements sr={sr} />}
+      {strokeContent}
     </RenderWrapper>
   );
 }

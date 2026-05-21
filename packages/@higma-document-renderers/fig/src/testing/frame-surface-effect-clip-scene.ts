@@ -4,6 +4,11 @@ import { createNodeId, type SceneGraph } from "../scene-graph";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as const;
 
+
+
+
+
+
 export function createFrameSurfaceEffectClipSceneGraph(): SceneGraph {
   return {
     width: 80,
@@ -26,6 +31,7 @@ export function createFrameSurfaceEffectClipSceneGraph(): SceneGraph {
           offset: { x: 0, y: 4 },
           radius: 8,
           color: { r: 0, g: 0, b: 0, a: 0.35 },
+          showShadowBehindNode: true,
         }],
         width: 50,
         height: 30,

@@ -6,8 +6,7 @@
  * paths both funnel through here.
  */
 
-import type { TextRendering, TextRenderingGlyphs } from "../../../text/rendering";
-import type { PathContour } from "../../../text/paths/types";
+import type { PathContour, TextRendering, TextRenderingGlyphs } from "../../../text";
 import type { RenderTextGlyphRun } from "../../../scene-graph";
 import { path as svgPath, text, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";
@@ -127,35 +126,13 @@ export function formatTextRenderingToSvg(rendering: TextRendering): SvgString {
   const transformStr = buildTransformAttr(rendering.transform);
 
   if (rendering.kind === "glyphs") {
-    // Group glyph contours by TextRun. Decorations always paint with the
-    // base run's fill (Figma applies them at the line level, not per
-    // character). Glyphs without `firstCharacter` (e.g. opentype synthesised
-    // line contours, Figma ellipsis glyph) are folded into the base run.
-    const runs = rendering.runs;
-    const runPaths = runs.length > 0 ? buildPerRunPathData(rendering, PATH_PRECISION) : [];
-    const totalCommands = runPaths.reduce((acc, r) => acc + r.d.length, 0);
-    if (totalCommands === 0) {
-      if (rendering.props.characters.trim().length > 0) {
-        throw new Error("SVG text renderer received glyph rendering with no visible contours for non-empty text");
-      }
-      return EMPTY_SVG;
-    }
-    const elements: SvgString[] = runPaths.map((r) => svgPath({
-      d: r.d,
-      fill: r.fillColor,
-      "fill-opacity": r.fillOpacity < 1 ? r.fillOpacity : undefined,
-    }));
-    const body: SvgString = elements.length === 1 ? elements[0] : g({}, ...elements);
-    return wrapGroup(body, transformStr, rendering.opacity);
+    return formatGlyphRenderingToSvg(rendering, transformStr);
   }
 
   // kind === "lines"
   const { layout, props, fillColor, fillOpacity } = rendering;
   if (layout.lines.length === 0) {
-    if (props.characters.trim().length > 0) {
-      throw new Error("SVG text renderer received line rendering with no lines for non-empty text");
-    }
-    return EMPTY_SVG;
+    return renderEmptyLineText(props.characters);
   }
 
   const textAttrs = buildTextAttrs({
@@ -174,4 +151,38 @@ export function formatTextRenderingToSvg(rendering: TextRendering): SvgString {
     text({ ...textAttrs, x: line.x, y: line.y }, line.text),
   );
   return wrapGroup(g({}, ...els), transformStr, rendering.opacity);
+}
+
+function formatGlyphRenderingToSvg(rendering: Extract<TextRendering, { readonly kind: "glyphs" }>, transformStr: string): SvgString {
+  // Group glyph contours by TextRun. Decorations always paint with the
+  // base run's fill (Figma applies them at the line level, not per
+  // character). Glyphs without `firstCharacter` (e.g. opentype synthesised
+  // line contours, Figma ellipsis glyph) are folded into the base run.
+  const runs = rendering.runs;
+  const runPaths = runs.length > 0 ? buildPerRunPathData(rendering, PATH_PRECISION) : [];
+  const totalCommands = runPaths.reduce((acc, r) => acc + r.d.length, 0);
+  if (totalCommands === 0) {
+    return renderEmptyGlyphText(rendering.props.characters);
+  }
+  const elements: SvgString[] = runPaths.map((r) => svgPath({
+    d: r.d,
+    fill: r.fillColor,
+    "fill-opacity": r.fillOpacity < 1 ? r.fillOpacity : undefined,
+  }));
+  const body: SvgString = elements.length === 1 ? elements[0] : g({}, ...elements);
+  return wrapGroup(body, transformStr, rendering.opacity);
+}
+
+function renderEmptyGlyphText(characters: string): SvgString {
+  if (characters.trim().length > 0) {
+    throw new Error("SVG text renderer received glyph rendering with no visible contours for non-empty text");
+  }
+  return EMPTY_SVG;
+}
+
+function renderEmptyLineText(characters: string): SvgString {
+  if (characters.trim().length > 0) {
+    throw new Error("SVG text renderer received line rendering with no lines for non-empty text");
+  }
+  return EMPTY_SVG;
 }

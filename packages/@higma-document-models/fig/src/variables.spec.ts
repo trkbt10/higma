@@ -5,6 +5,7 @@ import {
   requireVariableColor,
   requireVariableFloat,
   resolveConcreteVariableColor,
+  variableIdKey,
 } from "./variables";
 
 describe("projectVariableAnyValue", () => {
@@ -14,6 +15,15 @@ describe("projectVariableAnyValue", () => {
     expect(projectVariableAnyValue({ floatValue: 4 })).toEqual({ kind: "float", value: 4 });
     expect(projectVariableAnyValue({ colorValue: { r: 0, g: 0, b: 0, a: 1 } }))
       .toEqual({ kind: "color", value: { r: 0, g: 0, b: 0, a: 1 } });
+  });
+});
+
+describe("variableIdKey", () => {
+  it("keeps local GUID and assetRef variable namespaces disjoint", () => {
+    expect(variableIdKey({ sessionID: 1, localID: 2 })).toBe("guid:1:2");
+    expect(variableIdKey({ guid: { sessionID: 3, localID: 4 } })).toBe("guid:3:4");
+    expect(variableIdKey({ assetRef: { key: "external" } })).toBe("assetRef:external");
+    expect(variableIdKey({ assetRef: { key: "external", version: "10:1" } })).toBe("assetRef:external@10:1");
   });
 });
 

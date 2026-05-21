@@ -8,9 +8,9 @@
  * underlying tree-walk.
  */
 
-import { describe, it, expect } from "vitest";
-import type { FigNode } from "@higma-document-models/fig/types";
+import type { FigEffectType, FigNode } from "@higma-document-models/fig/types";
 import { encodeSvgPathBlob } from "@higma-document-models/fig/node-factory";
+import { EFFECT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import {
   computeFigExportBounds,
   computeFigExportViewport,
@@ -18,10 +18,20 @@ import {
   type FigExportBox,
 } from "./export-bounds";
 
+const BASE_FRAME: Pick<FigNode, "guid" | "phase" | "type"> = {
+  guid: { sessionID: 1, localID: 1 },
+  phase: { value: 0, name: "CANVAS" },
+  type: { value: 1, name: "FRAME" },
+};
+
+function effectType(type: FigEffectType): { readonly value: number; readonly name: FigEffectType } {
+  return { value: EFFECT_TYPE_VALUES[type], name: type };
+}
+
 function makeFrame(
   overrides: Partial<FigNode> & { readonly size: { readonly x: number; readonly y: number } },
 ): FigNode {
-  return overrides as unknown as FigNode;
+  return { ...BASE_FRAME, ...overrides };
 }
 
 function fixtureChildrenOf(node: FigNode): readonly FigNode[] {
@@ -65,8 +75,8 @@ describe("computeFigExportBounds", () => {
     const node = makeFrame({
       size: { x: 362, y: 296 },
       effects: [
-        { type: "DROP_SHADOW", radius: 12, offset: { x: 0, y: 4 }, visible: true },
-      ] as unknown as FigNode["effects"],
+        { type: effectType("DROP_SHADOW"), radius: 12, offset: { x: 0, y: 4 }, visible: true },
+      ],
     });
     expect(fixtureBounds(node)).toEqual({ x: -12, y: -8, width: 386, height: 320 });
   });
@@ -78,9 +88,9 @@ describe("computeFigExportBounds", () => {
       children: [
         makeFrame({
           size: { x: 500, y: 50 },
-          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
         }),
-      ] as unknown as FigNode["children"],
+      ],
     });
     expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
@@ -94,13 +104,13 @@ describe("computeFigExportBounds", () => {
       children: [
         makeFrame({
           size: { x: 402, y: 28 },
-          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 20 } as FigNode["transform"],
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 20 },
         }),
         makeFrame({
           size: { x: 772, y: 230 },
-          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 56 } as FigNode["transform"],
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 56 },
         }),
-      ] as unknown as FigNode["children"],
+      ],
     });
     expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 772, height: 306 });
   });
@@ -113,9 +123,9 @@ describe("computeFigExportBounds", () => {
         makeFrame({
           size: { x: 1000, y: 1000 },
           visible: false,
-          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
         }),
-      ] as unknown as FigNode["children"],
+      ],
     });
     expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
@@ -128,18 +138,18 @@ describe("computeFigExportBounds", () => {
     // ancestors are unclipped. Expected: union covers (0..200, 0..200).
     const leaf = makeFrame({
       size: { x: 200, y: 200 },
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     });
     const inner = makeFrame({
       size: { x: 50, y: 50 },
       frameMaskDisabled: true,
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
-      children: [leaf] as unknown as FigNode["children"],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      children: [leaf],
     });
     const root = makeFrame({
       size: { x: 100, y: 100 },
       frameMaskDisabled: true,
-      children: [inner] as unknown as FigNode["children"],
+      children: [inner],
     });
     expect(fixtureBounds(root)).toEqual({ x: 0, y: 0, width: 200, height: 200 });
   });
@@ -149,18 +159,18 @@ describe("computeFigExportBounds", () => {
     // (frameMaskDisabled=false). The leaf overflow must not bubble up.
     const leaf = makeFrame({
       size: { x: 200, y: 200 },
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     });
     const inner = makeFrame({
       size: { x: 50, y: 50 },
       frameMaskDisabled: false,
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
-      children: [leaf] as unknown as FigNode["children"],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      children: [leaf],
     });
     const root = makeFrame({
       size: { x: 100, y: 100 },
       frameMaskDisabled: true,
-      children: [inner] as unknown as FigNode["children"],
+      children: [inner],
     });
     expect(fixtureBounds(root)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
@@ -175,11 +185,25 @@ describe("computeFigExportBounds", () => {
       children: [
         makeFrame({
           size: { x: 30, y: 40 },
-          transform: { m00: 1, m01: 0, m02: -10, m10: 0, m11: 1, m12: -20 } as FigNode["transform"],
+          transform: { m00: 1, m01: 0, m02: -10, m10: 0, m11: 1, m12: -20 },
         }),
-      ] as unknown as FigNode["children"],
+      ],
     });
     expect(fixtureBounds(node)).toEqual({ x: -10, y: -20, width: 110, height: 120 });
+  });
+
+  it("unclipped descendant bounds use the full Kiwi affine transform", () => {
+    const node = makeFrame({
+      size: { x: 100, y: 100 },
+      frameMaskDisabled: true,
+      children: [
+        makeFrame({
+          size: { x: 30, y: 40 },
+          transform: { m00: -1, m01: 0, m02: -10, m10: 0, m11: 1, m12: 20 },
+        }),
+      ],
+    });
+    expect(fixtureBounds(node)).toEqual({ x: -40, y: 0, width: 140, height: 100 });
   });
 
   it("unclipped descendant stroke geometry expands the export bounds", () => {
@@ -187,12 +211,12 @@ describe("computeFigExportBounds", () => {
     const strokeChild = makeFrame({
       size: { x: 512, y: 512 },
       strokeGeometry: [{ commandsBlob: 0, styleID: 0 }],
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     });
     const node = makeFrame({
       size: { x: 512, y: 512 },
       frameMaskDisabled: true,
-      children: [strokeChild] as unknown as FigNode["children"],
+      children: [strokeChild],
     });
 
     const bounds = fixtureBounds(node, { blobs: [{ bytes: strokeBlob.bytes }] });
@@ -210,12 +234,12 @@ describe("computeFigExportBounds", () => {
     const fillChild = makeFrame({
       size: { x: 24.789762496948242, y: 23.739519119262695 },
       fillGeometry: [{ commandsBlob: 0, styleID: 0 }],
-      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
     });
     const node = makeFrame({
       size: { x: 24.789762496948242, y: 23.739519119262695 },
       frameMaskDisabled: true,
-      children: [fillChild] as unknown as FigNode["children"],
+      children: [fillChild],
     });
 
     expect(fixtureBounds(node, { blobs: [{ bytes: fillBlob.bytes }] })).toEqual({
@@ -242,19 +266,59 @@ describe("computeFigExportBounds", () => {
     });
   });
 
+  it("root SECTION export includes Figma's 40px section chrome padding", () => {
+    // The App Store template's `Mockups` SECTION is stored as 3401×1368
+    // and Figma exports a 3481×1448 SVG with the section surface shifted
+    // to (40, 40).
+    const node = makeFrame({
+      type: { value: 23, name: "SECTION" },
+      size: { x: 3401, y: 1368 },
+    });
+
+    expect(fixtureBounds(node)).toEqual({ x: -40, y: -40, width: 3481, height: 1448 });
+  });
+
   it("world viewport applies the root Kiwi translation exactly once", () => {
     const node = makeFrame({
       size: { x: 100, y: 100 },
-      transform: { m00: 1, m01: 0, m02: 300, m10: 0, m11: 1, m12: 40 } as FigNode["transform"],
+      transform: { m00: 1, m01: 0, m02: 300, m10: 0, m11: 1, m12: 40 },
       effects: [
-        { type: "DROP_SHADOW", radius: 10, offset: { x: 0, y: 4 }, visible: true },
-      ] as unknown as FigNode["effects"],
+        { type: effectType("DROP_SHADOW"), radius: 10, offset: { x: 0, y: 4 }, visible: true },
+      ],
     });
     expect(computeFigExportViewport(node, { childrenOf: fixtureChildrenOf, blobs: [] })).toEqual({
       x: 290,
       y: 34,
       width: 120,
       height: 120,
+    });
+  });
+
+  it("world viewport uses the full root Kiwi affine transform", () => {
+    const node = makeFrame({
+      size: { x: 2160, y: 540 },
+      transform: { m00: -1, m01: 0, m02: 12692, m10: 0, m11: 1, m12: -400 },
+    });
+    expect(computeFigExportViewport(node, { childrenOf: fixtureChildrenOf, blobs: [] })).toEqual({
+      x: 10532,
+      y: -400,
+      width: 2160,
+      height: 540,
+    });
+  });
+
+  it("world viewport shifts a root SECTION by the export chrome padding", () => {
+    const node = makeFrame({
+      type: { value: 23, name: "SECTION" },
+      size: { x: 3401, y: 1368 },
+      transform: { m00: 1, m01: 0, m02: 4207, m10: 0, m11: 1, m12: -1852 },
+    });
+
+    expect(computeFigExportViewport(node, { childrenOf: fixtureChildrenOf, blobs: [] })).toEqual({
+      x: 4167,
+      y: -1892,
+      width: 3481,
+      height: 1448,
     });
   });
 });

@@ -30,6 +30,11 @@ type MultiFillRectLayersProps = {
   readonly stroke?: UniformStrokeDomAttrs;
 };
 
+
+
+
+
+
 export function MultiFillRectLayers({ layers, width, height, cornerRadius, cornerSmoothing, stroke }: MultiFillRectLayersProps): ReactNode {
   return (
     <>
@@ -59,6 +64,11 @@ type MultiFillEllipseLayersProps = {
   readonly stroke?: UniformStrokeDomAttrs;
 };
 
+
+
+
+
+
 export function MultiFillEllipseLayers({ layers, cx, cy, rx, ry, stroke }: MultiFillEllipseLayersProps): ReactNode {
   return (
     <>
@@ -84,6 +94,11 @@ type MultiFillPathLayersProps = {
   readonly paths: readonly { d: string; fillRule?: "evenodd" }[];
   readonly stroke?: UniformStrokeDomAttrs;
 };
+
+
+
+
+
 
 export function MultiFillPathLayers({ layers, paths, stroke }: MultiFillPathLayersProps): ReactNode {
   const elements: ReactNode[] = [];
@@ -120,6 +135,11 @@ type MultiStrokeRectLayersProps = {
   readonly cornerSmoothing?: number;
 };
 
+
+
+
+
+
 export function MultiStrokeRectLayers({ layers, width, height, cornerRadius, cornerSmoothing }: MultiStrokeRectLayersProps): ReactNode {
   return (
     <>
@@ -147,6 +167,11 @@ type MultiStrokeEllipseLayersProps = {
   readonly ry: number;
 };
 
+
+
+
+
+
 export function MultiStrokeEllipseLayers({ layers, cx, cy, rx, ry }: MultiStrokeEllipseLayersProps): ReactNode {
   return (
     <>
@@ -170,6 +195,11 @@ type MultiStrokePathLayersProps = {
   readonly layers: readonly ResolvedStrokeLayer[];
   readonly paths: readonly { d: string; fillRule?: "evenodd" }[];
 };
+
+
+
+
+
 
 export function MultiStrokePathLayers({ layers, paths }: MultiStrokePathLayersProps): ReactNode {
   const elements: ReactNode[] = [];

@@ -8,10 +8,11 @@
 import type { AbstractFont, AbstractGlyph } from "@higma-document-models/fig/font";
 import { convertQuadraticsToCubic } from "@higma-primitives/path";
 import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "./types";
-import type { TextAlignHorizontal } from "../layout/types";
+import type { TextAlignHorizontal } from "../layout";
 import { figmaTextOutlineBaselineY } from "./text-outline-baseline";
 
 type FontForCharacter = (sourceIndex: number) => AbstractFont;
+type TextDecoration = "NONE" | "UNDERLINE" | "STRIKETHROUGH" | undefined;
 
 /**
  * Pair-adjustment lookup between two adjacent glyphs in the same
@@ -245,21 +246,39 @@ export function extractTextPathData(
 
     glyphContours.push(...contours);
 
-    if (textDecoration === "UNDERLINE") {
-      const rect = createUnderlineRect({
-        text: lineText,
-        font,
-        fontSize,
-        x,
-        y,
-        align,
-        letterSpacing,
-      });
-      if (rect) {
-        decorations.push(rect);
-      }
-    }
+    appendUnderlineDecoration({
+      decorations,
+      textDecoration,
+      text: lineText,
+      font,
+      fontSize,
+      x,
+      y,
+      align,
+      letterSpacing,
+    });
   }
 
   return { glyphContours, decorations };
+}
+
+function appendUnderlineDecoration(params: {
+  readonly decorations: DecorationRect[];
+  readonly textDecoration: TextDecoration;
+  readonly text: string;
+  readonly font: AbstractFont;
+  readonly fontSize: number;
+  readonly x: number;
+  readonly y: number;
+  readonly align: TextAlignHorizontal;
+  readonly letterSpacing?: number;
+}): void {
+  if (params.textDecoration !== "UNDERLINE") {
+    return;
+  }
+  const rect = createUnderlineRect(params);
+  if (rect === null) {
+    return;
+  }
+  params.decorations.push(rect);
 }

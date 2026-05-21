@@ -94,12 +94,17 @@ function auditFrame(node: Extract<RenderNode, { type: "frame" }>, stats: Mutable
     addIssue(stats, node, "frame sourceSurfaceShape must mirror source.surfaceShape");
   }
   countStrokeRendering(stats, node.background?.strokeRendering);
-  if (node.childClipId) {
-    stats.clippedFrames += 1;
-    const hasClipDef = node.defs.some((def) => def.type === "clip-path" && def.id === node.childClipId);
-    if (!hasClipDef) {
-      addIssue(stats, node, "childClipId must resolve to a local clip-path def");
-    }
+  auditFrameChildClip(node, stats);
+}
+
+function auditFrameChildClip(node: Extract<RenderNode, { type: "frame" }>, stats: MutableStats): void {
+  if (!node.childClipId) {
+    return;
+  }
+  stats.clippedFrames += 1;
+  const hasClipDef = node.defs.some((def) => def.type === "clip-path" && def.id === node.childClipId);
+  if (!hasClipDef) {
+    addIssue(stats, node, "childClipId must resolve to a local clip-path def");
   }
 }
 
@@ -165,14 +170,7 @@ function auditText(node: Extract<RenderNode, { type: "text" }>, stats: MutableSt
     addIssue(stats, node, "text height must be positive");
   }
   if (node.content.mode === "glyphs") {
-    stats.glyphTexts += 1;
-    const totalDLength = node.content.runs.reduce((acc, r) => acc + r.d.length, 0);
-    if (totalDLength > 0 && node.width <= 0) {
-      addIssue(stats, node, "glyph text with path data must have positive width");
-    }
-    if (totalDLength === 0 && node.sourceTextLineLayout === undefined) {
-      addIssue(stats, node, "glyph text must have path data or explicit line-layout resolution before WebGL rendering");
-    }
+    auditGlyphText(node, stats);
     return;
   }
   stats.lineTexts += 1;
@@ -183,6 +181,20 @@ function auditText(node: Extract<RenderNode, { type: "text" }>, stats: MutableSt
   const hasVisibleText = node.content.layout.lines.some((line) => line.text.trim().length > 0);
   if (hasVisibleText && node.width <= 0) {
     addIssue(stats, node, "line text with visible characters must have positive width");
+  }
+}
+
+function auditGlyphText(node: Extract<RenderNode, { type: "text" }>, stats: MutableStats): void {
+  if (node.content.mode !== "glyphs") {
+    throw new Error("auditGlyphText requires glyph text content");
+  }
+  stats.glyphTexts += 1;
+  const totalDLength = node.content.runs.reduce((acc, r) => acc + r.d.length, 0);
+  if (totalDLength > 0 && node.width <= 0) {
+    addIssue(stats, node, "glyph text with path data must have positive width");
+  }
+  if (totalDLength === 0 && node.sourceTextLineLayout === undefined) {
+    addIssue(stats, node, "glyph text must have path data or explicit line-layout resolution before WebGL rendering");
   }
 }
 

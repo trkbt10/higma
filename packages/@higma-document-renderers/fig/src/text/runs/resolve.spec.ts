@@ -147,6 +147,7 @@ describe("resolveTextRuns", () => {
       effects: new Map(),
       textProperties: new Map(),
       layoutGrids: new Map(),
+      variableColorMaterializations: new Map(),
     };
     const overrides: FigTextStyleOverrideEntry[] = [
       { styleID: 2, styleIdForFill: { guid: { sessionID: 7, localID: 81 } } },

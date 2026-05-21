@@ -28,7 +28,7 @@ import type {
 } from "@higma-document-io/fig/export";
 import type { FontLoader } from "@higma-document-models/fig/font";
 import type { FigmaRenderExportSettings } from "../scene-graph";
-import { renderFigToSvg } from "../svg/renderer";
+import { renderFigToSvg } from "../svg";
 
 // =============================================================================
 // Options

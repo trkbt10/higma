@@ -36,6 +36,11 @@ const FIGMA_BLEND_MODE_TO_SCENE: Partial<Record<FigBlendMode, BlendMode>> = {
   LUMINOSITY: "luminosity",
 };
 
+
+
+
+
+
 export function convertFigmaBlendMode(
   blendMode: FigBlendMode | KiwiEnumValue<FigBlendMode> | undefined,
 ): BlendMode | undefined {

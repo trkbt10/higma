@@ -30,7 +30,16 @@ export const EMPTY_SVG: SvgString = "" as SvgString;
 // =============================================================================
 
 /**
- * Build SVG attributes string
+ * Escape an SVG attribute value before serialization.
+ */
+export function escapeSvgAttributeValue(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Build SVG attributes string.
  */
 export function buildAttrs(attrs: Record<string, string | number | boolean | undefined>): string {
   const parts: string[] = [];
@@ -42,9 +51,7 @@ export function buildAttrs(attrs: Record<string, string | number | boolean | und
     if (value === true) {
       parts.push(key);
     } else {
-      const escaped = String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/"/g, "&quot;");
+      const escaped = escapeSvgAttributeValue(String(value));
       parts.push(`${key}="${escaped}"`);
     }
   }
@@ -66,6 +73,7 @@ export function svg(
     viewBox?: string;
     preserveAspectRatio?: string;
     overflow?: "visible" | "hidden" | "scroll" | "auto";
+    fill?: string;
     class?: string;
     style?: string;
     xmlns?: string;

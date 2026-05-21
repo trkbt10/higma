@@ -1,6 +1,7 @@
 /** @file Style registry types derived from Kiwi nodes. */
 
 import type {
+  FigColor,
   FigEffect,
   FigFontName,
   FigPaint,
@@ -23,6 +24,7 @@ export type FigStyleRegistry = {
   readonly effects: ReadonlyMap<string, readonly FigEffect[]>;
   readonly textProperties: ReadonlyMap<string, FigTextStyleProperties>;
   readonly layoutGrids: ReadonlyMap<string, readonly unknown[]>;
+  readonly variableColorMaterializations: ReadonlyMap<string, FigColor>;
 };
 
 export const EMPTY_FIG_STYLE_REGISTRY: FigStyleRegistry = {
@@ -30,4 +32,5 @@ export const EMPTY_FIG_STYLE_REGISTRY: FigStyleRegistry = {
   effects: new Map(),
   textProperties: new Map(),
   layoutGrids: new Map(),
+  variableColorMaterializations: new Map(),
 };

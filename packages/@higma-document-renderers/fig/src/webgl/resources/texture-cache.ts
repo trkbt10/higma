@@ -73,14 +73,20 @@ export function createTextureCache(gl: WebGLRenderingContext): TextureCache {
       unpackColorSpace?: "srgb" | "display-p3";
     };
     if (target === "DISPLAY_P3_V4") {
-      if (colorManagedGl.unpackColorSpace === undefined) {
-        throw new Error("Display P3 WebGL texture upload requires WebGLRenderingContext.unpackColorSpace support");
-      }
+      requireUnpackColorSpace(colorManagedGl);
       colorManagedGl.unpackColorSpace = "display-p3";
       return;
     }
     if (colorManagedGl.unpackColorSpace !== undefined) {
       colorManagedGl.unpackColorSpace = "srgb";
+    }
+  }
+
+  function requireUnpackColorSpace(
+    colorManagedGl: WebGLRenderingContext & { unpackColorSpace?: "srgb" | "display-p3" },
+  ): void {
+    if (colorManagedGl.unpackColorSpace === undefined) {
+      throw new Error("Display P3 WebGL texture upload requires WebGLRenderingContext.unpackColorSpace support");
     }
   }
 

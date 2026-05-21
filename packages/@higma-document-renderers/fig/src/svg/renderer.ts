@@ -31,50 +31,11 @@ import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
 import type { FontLoader, FontQuery } from "@higma-document-models/fig/font";
 import { collectFontQueries, preloadFonts, fontQueryKey } from "@higma-document-models/fig/font";
-import { createCachedTextFontResolver, type TextFontResolver } from "../text/rendering";
-import type { FigmaRenderExportSettings } from "../scene-graph";
+import { createCachedTextFontResolver, type TextFontResolver } from "../text";
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { SymbolResolver } from "@higma-document-models/fig/symbols";
-import { buildSceneGraph } from "../scene-graph/builder";
-import { pruneSceneGraphToViewport } from "../scene-graph/viewport-prune";
-import { resolveRenderTree } from "../scene-graph";
+import { buildSceneGraph, pruneSceneGraphToViewport, resolveRenderTree, type FigmaRenderExportSettings } from "../scene-graph";
 import { formatRenderTreeToSvg } from "./scene-renderer";
-
-// =============================================================================
-// Viewport Bounds
-// =============================================================================
-
-/**
- * Get the minimum (x, y) of all root node translations.
- *
- * `?? 0` on m02/m12 reflects the Kiwi binary schema: an omitted translation
- * field encodes the value 0 (the identity translation). This is a schema
- * invariant, not a runtime recovery path.
- */
-function getRootFrameOffset(nodes: readonly FigNode[]): { x: number; y: number } {
-  if (nodes.length === 0) {
-    return { x: 0, y: 0 };
-  }
-
-  const { minX, minY } = nodes.reduce(
-    (acc, node) => {
-      const transform = node.transform;
-      if (transform) {
-        return {
-          minX: Math.min(acc.minX, transform.m02 ?? 0),
-          minY: Math.min(acc.minY, transform.m12 ?? 0),
-        };
-      }
-      return acc;
-    },
-    { minX: Infinity, minY: Infinity },
-  );
-
-  return {
-    x: isFinite(minX) ? minX : 0,
-    y: isFinite(minY) ? minY : 0,
-  };
-}
 
 // =============================================================================
 // Render Options
@@ -267,6 +228,13 @@ export type FigCanvasRenderOptions = Omit<FigSvgRenderOptions, "width" | "height
   readonly height?: number;
 };
 
+type CanvasBounds = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+type ResolvedCanvasSize = {
+  readonly width: number;
+  readonly height: number;
+  readonly viewport: CanvasBounds;
+};
+
 /**
  * Compute canvas bounds from the extent of its children. Throws when no
  * child has a transform + size — an unmeasurable canvas has no default we
@@ -274,7 +242,7 @@ export type FigCanvasRenderOptions = Omit<FigSvgRenderOptions, "width" | "height
  */
 function calculateCanvasBounds(
   children: readonly FigNode[],
-): { x: number; y: number; width: number; height: number } {
+): CanvasBounds {
   const bounds = children.reduce(
     (acc, child) => {
       const { transform, size } = child;
@@ -311,6 +279,24 @@ function calculateCanvasBounds(
   };
 }
 
+function resolveCanvasSize(
+  children: readonly FigNode[],
+  explicitW: number | undefined,
+  explicitH: number | undefined,
+): ResolvedCanvasSize {
+  const bounds = calculateCanvasBounds(children);
+  if (explicitW !== undefined && explicitH !== undefined) {
+    return {
+      width: explicitW,
+      height: explicitH,
+      viewport: { x: bounds.x, y: bounds.y, width: explicitW, height: explicitH },
+    };
+  }
+  const width = explicitW ?? bounds.width;
+  const height = explicitH ?? bounds.height;
+  return { width, height, viewport: { x: bounds.x, y: bounds.y, width, height } };
+}
+
 /**
  * Render a single canvas (page) from Figma nodes. Width/height are derived
  * from the extent of the canvas children unless overridden. The viewport
@@ -326,19 +312,7 @@ export async function renderCanvas(
   const explicitW = options.width;
   const explicitH = options.height;
 
-  const canvasSize = (() => {
-    const bounds = calculateCanvasBounds(children);
-    if (explicitW !== undefined && explicitH !== undefined) {
-      return {
-        width: explicitW,
-        height: explicitH,
-        viewport: { x: bounds.x, y: bounds.y, width: explicitW, height: explicitH },
-      };
-    }
-    const width = explicitW ?? bounds.width;
-    const height = explicitH ?? bounds.height;
-    return { width, height, viewport: { x: bounds.x, y: bounds.y, width, height } };
-  })();
+  const canvasSize = resolveCanvasSize(children, explicitW, explicitH);
   const { width, height, viewport } = canvasSize;
 
   return renderFigToSvg(children, {

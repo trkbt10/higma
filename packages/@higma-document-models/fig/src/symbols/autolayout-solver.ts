@@ -424,9 +424,9 @@ function readGridColumns(parent: PrimaryAxisParent, childCount: number): number 
  */
 export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: PrimaryAxisParent, children: readonly C[]): readonly C[] {
   const modeName = parent.stackMode?.name;
-  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") return children;
+  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") {return children;}
   const pSize = parent.size;
-  if (!pSize) return children;
+  if (!pSize) {return children;}
 
   const horizontal = modeName === "HORIZONTAL";
   const insets = contentInsets(parent);
@@ -434,7 +434,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
   const padPrimaryEnd = horizontal ? insets.right : insets.bottom;
   const primaryParent = horizontal ? pSize.x : pSize.y;
   const contentSpan = primaryParent - padPrimaryStart - padPrimaryEnd;
-  if (contentSpan <= 0) return children;
+  if (contentSpan <= 0) {return children;}
 
   // Filter to layout-participating children (visible + non-absolute).
   // The primary-axis size we sum here is the AABB projection, not the
@@ -446,10 +446,10 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
   const flow: Idx[] = [];
   for (let i = 0; i < children.length; i++) {
     const c = children[i];
-    if (c.visible === false) continue;
+    if (c.visible === false) {continue;}
     const pos = c.stackPositioning?.name;
-    if (pos === "ABSOLUTE") continue;
-    if (!c.size) continue;
+    if (pos === "ABSOLUTE") {continue;}
+    if (!c.size) {continue;}
     const primarySize = projectedAxisSpan(c, horizontal ? "x" : "y");
     // `aabbOriginOffset` = (current local origin) − (current AABB
     // min) along the primary axis. For unrotated children this is 0
@@ -462,7 +462,7 @@ export function applyAutoLayoutPrimaryAxis<C extends PrimaryAxisChild>(parent: P
     const aabbMin = aabb ? (horizontal ? aabb.min.x : aabb.min.y) : originPos;
     flow.push({ idx: i, child: c, primarySize, aabbOriginOffset: originPos - aabbMin });
   }
-  if (flow.length === 0) return children;
+  if (flow.length === 0) {return children;}
 
   // Apply FILL grow first: any child with stackChildPrimaryGrow=1 takes
   // the leftover space after fixed children + spacing. We split the
@@ -1004,6 +1004,11 @@ function stretchCounterAxis<C extends PrimaryAxisChild>(
     return { ...child, size: resizeAxis(child.size, localAxis, span) } as C;
   });
 }
+
+
+
+
+
 
 export function resolveAutoLayoutFrame<P extends PrimaryAxisParent, C extends PrimaryAxisChild>(
   parent: P,

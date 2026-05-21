@@ -17,8 +17,7 @@ import type { PathCommand } from "@higma-primitives/path";
 import type { FigSvgRenderContext } from "../../../types";
 import { path, g, type SvgString, EMPTY_SVG } from "../../primitives";
 import { buildTransformAttr } from "../../transform";
-import { extractTextProps } from "../../../text/layout/extract-props";
-import { getAllVisibleSolidFills } from "../../../text/layout/fill";
+import { extractTextProps, getAllVisibleSolidFills } from "../../../text";
 
 /**
  * Render context with blobs for path decoding
@@ -167,10 +166,7 @@ export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRen
   const derivedTextData: FigDerivedTextData | undefined = node.derivedTextData;
 
   if (!derivedTextData?.glyphs || derivedTextData.glyphs.length === 0) {
-    if (props.characters.length > 0) {
-      throw new Error(`Derived text renderer requires glyph data for non-empty text node ${node.id}`);
-    }
-    return EMPTY_SVG;
+    return renderEmptyDerivedGlyphData(node, props.characters);
   }
 
   const transformStr = buildTransformAttr(props.transform);
@@ -190,10 +186,7 @@ export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRen
   const decorationPath = renderDecorationPaths(derivedTextData.decorations);
 
   if (glyphPaths.length === 0 && !decorationPath) {
-    if (props.characters.trim().length > 0) {
-      throw new Error(`Derived text renderer produced no visible paths for non-empty text node ${node.id}`);
-    }
-    return EMPTY_SVG;
+    return renderEmptyDerivedPathOutput(node, props.characters);
   }
 
   // Combine all glyph paths and decoration paths.
@@ -208,16 +201,7 @@ export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRen
   // fill falls back to a single black/opaque path so the glyph still
   // shows (matches `getFillColorAndOpacity`'s historical default).
   const fills = getAllVisibleSolidFills(props.fillPaints);
-  const pathElements: SvgString[] = (() => {
-    if (fills.length === 0) {
-      return [path({ d: combinedPath, fill: "#000000" })];
-    }
-    return fills.map((f) => path({
-      d: combinedPath,
-      fill: f.color,
-      "fill-opacity": f.opacity < 1 ? f.opacity : undefined,
-    }));
-  })();
+  const pathElements = buildDerivedTextPathElements(combinedPath, fills);
 
   // Wrap in group if transform, opacity, OR multiple paint layers need
   // a shared container.
@@ -233,6 +217,34 @@ export function renderTextNodeFromDerivedData(node: FigNode, ctx: DerivedPathRen
   }
 
   return pathElements[0];
+}
+
+function renderEmptyDerivedGlyphData(node: FigNode, characters: string): SvgString {
+  if (characters.length > 0) {
+    throw new Error(`Derived text renderer requires glyph data for non-empty text node ${node.id}`);
+  }
+  return EMPTY_SVG;
+}
+
+function renderEmptyDerivedPathOutput(node: FigNode, characters: string): SvgString {
+  if (characters.trim().length > 0) {
+    throw new Error(`Derived text renderer produced no visible paths for non-empty text node ${node.id}`);
+  }
+  return EMPTY_SVG;
+}
+
+function buildDerivedTextPathElements(
+  combinedPath: string,
+  fills: readonly { readonly color: string; readonly opacity: number }[],
+): readonly SvgString[] {
+  if (fills.length === 0) {
+    return [path({ d: combinedPath, fill: "#000000" })];
+  }
+  return fills.map((f) => path({
+    d: combinedPath,
+    fill: f.color,
+    "fill-opacity": f.opacity < 1 ? f.opacity : undefined,
+  }));
 }
 
 /**

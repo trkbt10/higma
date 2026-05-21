@@ -46,7 +46,7 @@
  *   - runs are non-empty (start < end) for every entry
  */
 
-import type { FigPaint, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
+import type { FigPaint, FigKiwiVariableModeBySetMap, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
 import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { figmaFontToQuery, type FontQuery } from "@higma-document-models/fig/font";
@@ -64,6 +64,7 @@ export type ResolveTextRunsInput = {
   readonly styleOverrideTable: readonly FigTextStyleOverrideEntry[] | undefined;
   /** Document-wide style registry — same SoT used for node-level fills. */
   readonly styleRegistry: FigStyleRegistry;
+  readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
   /**
    * Diagnostic locator used in thrown errors so unresolvable references
    * point at the offending TEXT node. Lazy because errors are off the
@@ -74,7 +75,7 @@ export type ResolveTextRunsInput = {
 
 /** Resolve a text node's per-character fill metadata into a `TextRun[]`. */
 export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[] {
-  const { characters, baseFillPaints, characterStyleIDs, styleOverrideTable, styleRegistry, locator } = input;
+  const { characters, baseFillPaints, characterStyleIDs, styleOverrideTable, styleRegistry, variableModeBySetMap, locator } = input;
   const length = resolveSourceIndexLength(characters, characterStyleIDs, locator);
   if (length === 0) { return []; }
 
@@ -112,7 +113,7 @@ export function resolveTextRuns(input: ResolveTextRunsInput): readonly TextRun[]
         `Text run resolver: characterStyleIDs references styleID=${styleId} which has no entry in styleOverrideTable on ${locator()}`,
       );
     }
-    const fill = resolveOverrideFill(override, baseFill, styleRegistry);
+    const fill = resolveOverrideFill(override, baseFill, styleRegistry, variableModeBySetMap);
     const font = resolveOverrideFont(override);
     const resolved: ResolvedRunStyle = font === undefined ? fill : { ...fill, font };
     fillByStyleId.set(styleId, resolved);
@@ -210,8 +211,9 @@ function resolveOverrideFill(
   override: FigTextStyleOverrideEntry,
   baseFill: { color: string; opacity: number },
   styleRegistry: FigStyleRegistry,
+  variableModeBySetMap: FigKiwiVariableModeBySetMap | undefined,
 ): { color: string; opacity: number } {
-  const resolved = resolveStyledPaint(override.styleIdForFill, override.fillPaints, styleRegistry);
+  const resolved = resolveStyledPaint(override.styleIdForFill, override.fillPaints, styleRegistry, { variableModeBySetMap });
   if (resolved && resolved.length > 0) { return paintsToFill(resolved); }
   return baseFill;
 }

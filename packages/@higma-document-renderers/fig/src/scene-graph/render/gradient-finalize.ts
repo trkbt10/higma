@@ -24,11 +24,11 @@
 
 
 import type { ResolvedLinearGradient, ResolvedRadialGradient } from "./fill";
-import type { RenderDef } from "../render-tree/types";
+import type { RenderDef } from "../render-tree";
 import {
   linearGradientAttrs as svgLinearGradientAttrs,
   radialGradientAttrs as svgRadialGradientAttrs,
-} from "../../paint/svg-gradient-transform";
+} from "../../paint";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 /**
@@ -72,19 +72,23 @@ export function finalizeGradientDefs(
   elementBounds: ElementBounds,
 ): void {
   for (let i = 0; i < defs.length; i++) {
-    const def = defs[i];
-    if (def.type === "linear-gradient") {
-      const finalized = finalizeLinearGradient(def.def, elementBounds);
-      if (finalized) {
-        defs[i] = { type: "linear-gradient", def: finalized };
-      }
-    } else if (def.type === "radial-gradient") {
-      const finalized = finalizeRadialGradient(def.def, elementBounds);
-      if (finalized) {
-        defs[i] = { type: "radial-gradient", def: finalized };
-      }
+    const finalized = finalizeGradientDef(defs[i], elementBounds);
+    if (finalized !== undefined) {
+      defs[i] = finalized;
     }
   }
+}
+
+function finalizeGradientDef(def: RenderDef, elementBounds: ElementBounds): RenderDef | undefined {
+  if (def.type === "linear-gradient") {
+    const finalized = finalizeLinearGradient(def.def, elementBounds);
+    return finalized === undefined ? undefined : { type: "linear-gradient", def: finalized };
+  }
+  if (def.type === "radial-gradient") {
+    const finalized = finalizeRadialGradient(def.def, elementBounds);
+    return finalized === undefined ? undefined : { type: "radial-gradient", def: finalized };
+  }
+  return undefined;
 }
 
 /**

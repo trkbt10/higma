@@ -222,7 +222,7 @@ export type DropShadowEffect = {
   /** Shadow spread (positive = dilate, negative = erode) */
   readonly spread?: number;
   readonly blendMode?: BlendMode;
-  readonly showShadowBehindNode?: boolean;
+  readonly showShadowBehindNode: boolean;
 };
 
 export type InnerShadowEffect = {

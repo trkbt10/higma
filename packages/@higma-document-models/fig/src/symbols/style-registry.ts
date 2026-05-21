@@ -42,17 +42,37 @@
  * `fillPaints` / `strokePaints` fields. The resolution functions therefore
  * return `undefined` for dangling refs so the caller uses the embedded
  * paint as the only local SoT, matching Figma's actual behaviour. A successful
- * registry lookup still wins over the embedded cache (the registry is
- * authoritative when it has an entry).
+ * registry lookup wins over the embedded cache for ordinary static styles.
+ * Variable-bound styles are not an exception to this ownership rule: the
+ * registry carries the style definition, and the registry also carries the
+ * document-wide variable materialization table used to evaluate that
+ * definition for a selected mode. Consumer paint arrays remain a cache; they
+ * are authoritative only when the style reference itself is absent or
+ * dangling.
  */
 
-import type { FigNode, MutableFigNode, FigPaint, FigEffect, FigStyleId } from "../types";
+import type {
+  FigColor,
+  FigColorStopVar,
+  FigKiwiVariableData,
+  FigKiwiVariableModeBySetMap,
+  FigGuidOrAssetRefId,
+  FigNode,
+  FigPaint,
+  FigStyleId,
+  FigEffect,
+  MutableFigNode,
+  FigVariableID,
+} from "../types";
 import {
+  getNodeType,
   guidToString,
   type FigKiwiDocumentIndex,
   type FigStyleRegistry,
   type FigTextStyleProperties,
 } from "../domain";
+import { projectVariableAnyValue, variableIdKey } from "../variables";
+import { mergeVariableModeBySetMap, resolveVariableColor } from "./variable-resolution";
 
 // =============================================================================
 // Construction
@@ -212,12 +232,174 @@ export function buildFigStyleRegistry(document: FigKiwiDocumentIndex): FigStyleR
   const effects = new Map<string, readonly FigEffect[]>();
   const textProperties = new Map<string, FigTextStyleProperties>();
   const layoutGrids = new Map<string, readonly unknown[]>();
+  const variableColorMaterializations = buildVariableColorMaterializations(document);
   for (const node of document.nodeChanges) {
     const entry = readStyleDefinition(node);
     if (!entry) { continue; }
     indexEntryUnderKeys(node, entry, { paints, effects, textProperties, layoutGrids });
   }
-  return { paints, effects, textProperties, layoutGrids };
+  return { paints, effects, textProperties, layoutGrids, variableColorMaterializations };
+}
+
+function buildVariableColorMaterializations(document: FigKiwiDocumentIndex): ReadonlyMap<string, FigColor> {
+  const colors = new Map<string, FigColor>();
+  indexLocalVariableColorMaterializations(document, colors);
+  for (const root of document.roots) {
+    indexVariableColorMaterializationsForSubtree(root, document.childrenOf, undefined, colors);
+  }
+  return colors;
+}
+
+function indexLocalVariableColorMaterializations(
+  document: FigKiwiDocumentIndex,
+  colors: Map<string, FigColor>,
+): void {
+  for (const node of document.nodeChanges) {
+    if (getNodeType(node) !== "VARIABLE") {
+      continue;
+    }
+    indexLocalVariableColorMaterializationsForNode(node, document, colors);
+  }
+}
+
+function indexLocalVariableColorMaterializationsForNode(
+  node: FigNode,
+  document: FigKiwiDocumentIndex,
+  colors: Map<string, FigColor>,
+): void {
+  if (node.variableResolvedType?.name !== "COLOR") {
+    return;
+  }
+  const variableSetID = node.variableSetID;
+  if (variableSetID === undefined) {
+    throw new Error(`StyleRegistry: VARIABLE ${formatNodeLocator(node)} is missing variableSetID`);
+  }
+  const valueEntries = node.variableDataValues?.entries;
+  if (valueEntries === undefined || valueEntries.length === 0) {
+    throw new Error(`StyleRegistry: VARIABLE ${formatNodeLocator(node)} has no variableDataValues`);
+  }
+  const variableIDs = variableNodeReferenceIDs(node);
+  for (const entry of valueEntries) {
+    if (entry.modeID === undefined) {
+      throw new Error(`StyleRegistry: VARIABLE ${formatNodeLocator(node)} has a variableDataValues entry without modeID`);
+    }
+    const color = resolveVariableColor(entry.variableData, {
+      document,
+      variableModeBySetMap: {
+        entries: [{ variableSetID, variableModeID: entry.modeID }],
+      },
+    });
+    if (color === undefined) {
+      continue;
+    }
+    for (const variableID of variableIDs) {
+      setVariableColorMaterialization(
+        colors,
+        localVariableColorMaterializationKey(variableID, variableSetID, entry.modeID),
+        color,
+        `${formatNodeLocator(node)}.variableDataValues[${guidToString(entry.modeID)}]`,
+      );
+    }
+  }
+}
+
+function variableNodeReferenceIDs(node: FigNode): readonly FigVariableID[] {
+  const ids: FigVariableID[] = [node.guid];
+  if (typeof node.key !== "string" || node.key.length === 0) {
+    return ids;
+  }
+  if (typeof node.version !== "string" || node.version.length === 0) {
+    return [...ids, { assetRef: { key: node.key } }];
+  }
+  return [...ids, { assetRef: { key: node.key, version: node.version } }];
+}
+
+function indexVariableColorMaterializationsForSubtree(
+  node: FigNode,
+  childrenOf: FigKiwiDocumentIndex["childrenOf"],
+  inheritedModeMap: FigKiwiVariableModeBySetMap | undefined,
+  colors: Map<string, FigColor>,
+): void {
+  const modeMap = mergeVariableModeBySetMap(inheritedModeMap, node.variableModeBySetMap);
+  indexVariableColorMaterializationsForNode(node, modeMap, colors);
+  for (const child of childrenOf(node)) {
+    indexVariableColorMaterializationsForSubtree(child, childrenOf, modeMap, colors);
+  }
+}
+
+function indexVariableColorMaterializationsForNode(
+  node: FigNode,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+  colors: Map<string, FigColor>,
+): void {
+  indexPaintListVariableColorMaterializations(node.fillPaints, modeMap, colors, `${formatNodeLocator(node)}.fillPaints`);
+  indexPaintListVariableColorMaterializations(node.strokePaints, modeMap, colors, `${formatNodeLocator(node)}.strokePaints`);
+  indexPaintListVariableColorMaterializations(node.backgroundPaints, modeMap, colors, `${formatNodeLocator(node)}.backgroundPaints`);
+}
+
+function indexPaintListVariableColorMaterializations(
+  paints: readonly FigPaint[] | undefined,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+  colors: Map<string, FigColor>,
+  subject: string,
+): void {
+  if (paints === undefined) {
+    return;
+  }
+  paints.forEach((paint, index) => {
+    indexPaintVariableColorMaterializations(paint, modeMap, colors, `${subject}[${index}]`);
+  });
+}
+
+function indexPaintVariableColorMaterializations(
+  paint: FigPaint,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+  colors: Map<string, FigColor>,
+  subject: string,
+): void {
+  if (paintHasColor(paint)) {
+    indexVariableDataColorMaterialization(paint.colorVar, paint.color, modeMap, colors, `${subject}.colorVar`);
+  }
+  if (!paintHasStopsVar(paint)) {
+    return;
+  }
+  paint.stopsVar.forEach((stop, index) => {
+    if (stop.color === undefined) {
+      return;
+    }
+    indexVariableDataColorMaterialization(stop.colorVar, stop.color, modeMap, colors, `${subject}.stopsVar[${index}].colorVar`);
+  });
+}
+
+function indexVariableDataColorMaterialization(
+  data: FigKiwiVariableData | undefined,
+  color: FigColor,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+  colors: Map<string, FigColor>,
+  subject: string,
+): void {
+  const key = observedVariableColorMaterializationKey(data, modeMap);
+  if (key === undefined) {
+    return;
+  }
+  setVariableColorMaterialization(colors, key, color, subject);
+}
+
+function setVariableColorMaterialization(
+  colors: Map<string, FigColor>,
+  key: string,
+  color: FigColor,
+  subject: string,
+): void {
+  const existing = colors.get(key);
+  if (existing === undefined) {
+    colors.set(key, color);
+    return;
+  }
+  if (figColorEquals(existing, color)) {
+    return;
+  }
+  throw new Error(`${subject} conflicts with an existing Kiwi variable color materialization for ${key}`);
 }
 
 function indexEntryUnderKeys(
@@ -393,25 +575,211 @@ export function resolveGridRef(
  * style reference and an embedded paint cache, which paints are
  * authoritative?". The answer is uniform:
  *
- *   1. If the registry resolves the reference, the registry value
- *      wins — it's the file-level SoT and is the right value even when
- *      the embedded cache is structurally identical.
+ *   1. If the registry resolves a static style reference, the registry
+ *      value wins — it's the file-level style definition SoT and is the
+ *      right value even when the embedded cache is structurally identical.
  *   2. Otherwise the embedded cache (the consumer's own
  *      `fillPaints` / `strokePaints` / override `fillPaints`) is the
  *      SoT. This matches Figma's rendering for dangling refs and is
  *      the only value present when the consumer carries no styleId.
  *
  * Returns `undefined` only when both the ref and the embedded cache
- * are absent — callers can chain `?? []` or `?? someBase` as their
- * own context dictates. Empty embedded arrays are preserved (they
+ * are absent. Empty embedded arrays are preserved (they
  * represent "explicitly no paint", not "no value").
  */
 export function resolveStyledPaint(
   ref: FigStyleId | undefined,
   embedded: readonly FigPaint[] | undefined,
   registry: FigStyleRegistry,
+  options?: { readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap },
 ): readonly FigPaint[] | undefined {
-  return resolvePaintRef(ref, registry) ?? embedded;
+  const registryPaints = resolvePaintRef(ref, registry);
+  if (registryPaints === undefined) {
+    return materializeVariablePaintColors(embedded, registry, options?.variableModeBySetMap);
+  }
+  return materializeVariablePaintColors(registryPaints, registry, options?.variableModeBySetMap);
+}
+
+function hasSelectedVariableMode(modeMap: FigKiwiVariableModeBySetMap | undefined): boolean {
+  return (modeMap?.entries ?? []).length > 0;
+}
+
+function materializeVariablePaintColors(
+  paints: readonly FigPaint[] | undefined,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): readonly FigPaint[] | undefined {
+  if (paints === undefined || !hasSelectedVariableMode(modeMap) || registry.variableColorMaterializations.size === 0) {
+    return paints;
+  }
+  const next = paints.map((paint) => materializeVariablePaintColor(paint, registry, modeMap));
+  if (next.every((paint, index) => paint === paints[index])) {
+    return paints;
+  }
+  return next;
+}
+
+function materializeVariablePaintColor(
+  paint: FigPaint,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigPaint {
+  const colorMaterialized = materializePaintColor(paint, registry, modeMap);
+  return materializePaintStopColors(colorMaterialized, registry, modeMap);
+}
+
+function materializePaintColor(
+  paint: FigPaint,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigPaint {
+  if (!paintHasColor(paint)) {
+    return paint;
+  }
+  const color = resolveVariableMaterializedColor(paint.colorVar, registry, modeMap);
+  if (color === undefined || figColorEquals(color, paint.color)) {
+    return paint;
+  }
+  return { ...paint, color };
+}
+
+function materializePaintStopColors(
+  paint: FigPaint,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigPaint {
+  if (!paintHasStopsVar(paint)) {
+    return paint;
+  }
+  const stopsVar = paint.stopsVar.map((stop) => materializeColorStopVar(stop, registry, modeMap));
+  if (stopsVar.every((stop, index) => stop === paint.stopsVar[index])) {
+    return paint;
+  }
+  return { ...paint, stopsVar };
+}
+
+function materializeColorStopVar(
+  stop: FigColorStopVar,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigColorStopVar {
+  const color = resolveVariableMaterializedColor(stop.colorVar, registry, modeMap);
+  if (color === undefined) {
+    return stop;
+  }
+  if (stop.color !== undefined && figColorEquals(color, stop.color)) {
+    return stop;
+  }
+  return { ...stop, color };
+}
+
+function resolveVariableMaterializedColor(
+  data: FigKiwiVariableData | undefined,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigColor | undefined {
+  const local = resolveLocalVariableMaterializedColor(data, registry, modeMap);
+  if (local !== undefined) {
+    return local;
+  }
+  const key = observedVariableColorMaterializationKey(data, modeMap);
+  if (key === undefined) {
+    return undefined;
+  }
+  return registry.variableColorMaterializations.get(key);
+}
+
+function resolveLocalVariableMaterializedColor(
+  data: FigKiwiVariableData | undefined,
+  registry: FigStyleRegistry,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): FigColor | undefined {
+  const value = projectVariableAnyValue(data?.value);
+  if (value?.kind !== "alias") {
+    return undefined;
+  }
+  const entries = modeMap?.entries ?? [];
+  const hits = entries
+    .map((entry) => registry.variableColorMaterializations.get(localVariableColorMaterializationKeyForModeEntry(value.value, entry)))
+    .filter((color): color is FigColor => color !== undefined);
+  if (hits.length === 0) {
+    return undefined;
+  }
+  const first = hits[0]!;
+  if (hits.every((color) => figColorEquals(color, first))) {
+    return first;
+  }
+  throw new Error(`StyleRegistry: local VARIABLE color ${variableIdKey(value.value)} resolves to conflicting selected modes`);
+}
+
+function observedVariableColorMaterializationKey(
+  data: FigKiwiVariableData | undefined,
+  modeMap: FigKiwiVariableModeBySetMap | undefined,
+): string | undefined {
+  const value = projectVariableAnyValue(data?.value);
+  if (value?.kind !== "alias") {
+    return undefined;
+  }
+  const modeKey = variableModeMapKey(modeMap);
+  if (modeKey === undefined) {
+    return undefined;
+  }
+  return `observed:${variableIdKey(value.value)}|${modeKey}`;
+}
+
+function localVariableColorMaterializationKeyForModeEntry(
+  variableID: FigVariableID,
+  entry: FigKiwiVariableModeBySetMap["entries"][number],
+): string {
+  const variableSetID = entry.variableSetID;
+  const modeID = entry.variableModeID;
+  if (variableSetID === undefined) {
+    throw new Error("StyleRegistry: variableModeBySetMap entry is missing variableSetID");
+  }
+  if (modeID === undefined) {
+    throw new Error("StyleRegistry: variableModeBySetMap entry is missing variableModeID");
+  }
+  return localVariableColorMaterializationKey(variableID, variableSetID, modeID);
+}
+
+function localVariableColorMaterializationKey(
+  variableID: FigVariableID,
+  variableSetID: FigGuidOrAssetRefId,
+  modeID: { readonly sessionID: number; readonly localID: number },
+): string {
+  return `local:${variableIdKey(variableID)}|${variableIdKey(variableSetID)}@${guidToString(modeID)}`;
+}
+
+function variableModeMapKey(modeMap: FigKiwiVariableModeBySetMap | undefined): string | undefined {
+  const entries = modeMap?.entries ?? [];
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return entries.map(variableModeEntryKey).sort().join(",");
+}
+
+function variableModeEntryKey(entry: FigKiwiVariableModeBySetMap["entries"][number]): string {
+  const setID = entry.variableSetID;
+  const modeID = entry.variableModeID;
+  if (setID === undefined) {
+    throw new Error("StyleRegistry: variableModeBySetMap entry is missing variableSetID");
+  }
+  if (modeID === undefined) {
+    throw new Error("StyleRegistry: variableModeBySetMap entry is missing variableModeID");
+  }
+  return `${variableIdKey(setID)}@${guidToString(modeID)}`;
+}
+
+function paintHasColor(paint: FigPaint): paint is FigPaint & { readonly color: FigColor } {
+  return "color" in paint && paint.color !== undefined;
+}
+
+function paintHasStopsVar(paint: FigPaint): paint is FigPaint & { readonly stopsVar: readonly FigColorStopVar[] } {
+  return "stopsVar" in paint && paint.stopsVar !== undefined;
+}
+
+function figColorEquals(left: FigColor, right: FigColor): boolean {
+  return left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a;
 }
 
 /**

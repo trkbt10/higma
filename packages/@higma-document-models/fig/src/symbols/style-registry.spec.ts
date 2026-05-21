@@ -17,9 +17,10 @@
  * - `resolveStyledPaint` is the higher-level SoT used by every
  *   consumer (node fill/stroke, instance merge, vector
  *   per-path style overrides, text run override entries). It picks
- *   the registry value when the ref resolves and otherwise yields the
- *   caller's embedded paint cache — matching Figma's actual rendering
- *   for dangling references.
+ *   the registry value when a style ref resolves, materializes that
+ *   registry definition for the selected variable mode, and otherwise
+ *   yields the caller's embedded paint cache — matching Figma's actual
+ *   rendering for dangling references.
  *
  * - `resolveNodeStyleIds` / `resolveStyleIdOnMutableNode` apply the
  *   resolved paints back onto a node — when the registry has the
@@ -48,7 +49,7 @@ import {
   styleRefKeys,
 } from "./style-registry";
 import { EMPTY_FIG_STYLE_REGISTRY, indexFigKiwiDocument } from "../domain";
-import type { FigNode, FigPaint, FigEffect } from "../types";
+import type { FigNode, FigPaint, FigEffect, FigKiwiVariableModeBySetMap, FigColor } from "../types";
 import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "../constants";
 
 function dropShadow(radius: number): FigEffect {
@@ -76,6 +77,61 @@ function solidPaint(r: number, g: number, b: number): FigPaint {
     opacity: 1,
     visible: true,
     blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
+  };
+}
+
+function variableSolidPaint(r: number, g: number, b: number, key: string, version?: string): FigPaint {
+  return {
+    ...solidPaint(r, g, b),
+    colorVar: {
+      value: {
+        alias: {
+          assetRef: version === undefined ? { key } : { key, version },
+        },
+      },
+      dataType: { value: 3, name: "ALIAS" },
+      resolvedDataType: { value: 4, name: "COLOR" },
+    },
+  };
+}
+
+function colorVariableNode(
+  guid: { readonly sessionID: number; readonly localID: number },
+  key: string,
+  light: FigColor,
+  dark: FigColor,
+  version?: string,
+): FigNode {
+  return node({
+    guid,
+    type: { value: -1, name: "VARIABLE" },
+    key,
+    version,
+    variableResolvedType: { value: 4, name: "COLOR" },
+    variableSetID: selectedModeMap().entries[0]!.variableSetID,
+    variableDataValues: {
+      entries: [
+        {
+          modeID: { sessionID: 404, localID: 0 },
+          variableData: { value: { colorValue: light } },
+        },
+        {
+          modeID: { sessionID: 404, localID: 1 },
+          variableData: { value: { colorValue: dark } },
+        },
+      ],
+    },
+  });
+}
+
+function selectedModeMap(): FigKiwiVariableModeBySetMap {
+  return {
+    entries: [
+      {
+        variableSetID: { assetRef: { key: "0f8f6921a9a4bfc5bade1f3d7d9f01bf5dd3f77f" } },
+        variableModeID: { sessionID: 404, localID: 1 },
+      },
+    ],
   };
 }
 
@@ -256,6 +312,50 @@ describe("buildFigStyleRegistry", () => {
     const registry = registryFrom([def]);
     expect(registry.layoutGrids.get("6:1")).toEqual([grid]);
   });
+
+  it("indexes variable color materializations through inherited Kiwi mode context", () => {
+    const variableKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const parent = node({
+      guid: { sessionID: 8, localID: 1 },
+      variableModeBySetMap: selectedModeMap(),
+    });
+    const child = node({
+      guid: { sessionID: 8, localID: 2 },
+      parentIndex: { guid: { sessionID: 8, localID: 1 }, position: "!" },
+      fillPaints: [variableSolidPaint(0, 0, 0, variableKey)],
+    });
+    const style = node({
+      guid: { sessionID: 8, localID: 3 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [variableSolidPaint(1, 1, 1, variableKey)],
+    });
+    const registry = registryFrom([parent, child, style]);
+
+    const got = resolveStyledPaint(
+      { guid: style.guid },
+      [variableSolidPaint(1, 1, 1, variableKey)],
+      registry,
+      { variableModeBySetMap: selectedModeMap() },
+    );
+
+    expect(got).toEqual([variableSolidPaint(0, 0, 0, variableKey)]);
+  });
+
+  it("rejects conflicting materialized colors for the same variable alias and mode", () => {
+    const variableKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const a = node({
+      guid: { sessionID: 9, localID: 1 },
+      variableModeBySetMap: selectedModeMap(),
+      fillPaints: [variableSolidPaint(0, 0, 0, variableKey)],
+    });
+    const b = node({
+      guid: { sessionID: 9, localID: 2 },
+      variableModeBySetMap: selectedModeMap(),
+      fillPaints: [variableSolidPaint(1, 1, 1, variableKey)],
+    });
+
+    expect(() => registryFrom([a, b])).toThrow(/conflicts with an existing Kiwi variable color materialization/);
+  });
 });
 
 describe("resolvePaintRef", () => {
@@ -325,6 +425,160 @@ describe("resolveStyledPaint (registry-vs-embedded SoT)", () => {
       registry,
     );
     expect(got).toEqual([registryPaint]);
+  });
+
+  it("returns the registry paint for variable-bound styles when no active variable mode is selected", () => {
+    const variableKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const registryVariablePaint = variableSolidPaint(1, 1, 1, variableKey);
+    const embeddedActivePaint = variableSolidPaint(0, 0, 0, variableKey);
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [registryVariablePaint],
+    });
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      [embeddedActivePaint],
+      registryFrom([variableStyleNode]),
+    );
+    expect(got).toEqual([registryVariablePaint]);
+  });
+
+  it("keeps the registry as SoT when a resolved style is variable-bound and a mode is selected", () => {
+    const variableKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const registryVariablePaint = variableSolidPaint(1, 1, 1, variableKey);
+    const embeddedActivePaint = variableSolidPaint(0, 0, 0, variableKey);
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [registryVariablePaint],
+    });
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      [embeddedActivePaint],
+      registryFrom([variableStyleNode]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+    expect(got).toEqual([registryVariablePaint]);
+  });
+
+  it("keeps the registry as SoT when a variable-bound style has a stale non-variable embedded cache", () => {
+    const variableKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const registryVariablePaint = variableSolidPaint(1, 1, 1, variableKey);
+    const staleEmbeddedPaint = solidPaint(1, 1, 1);
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [registryVariablePaint],
+    });
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      [staleEmbeddedPaint],
+      registryFrom([variableStyleNode]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+    expect(got).toEqual([registryVariablePaint]);
+  });
+
+  it("materializes embedded variable-bound paint from the document registry when the active mode has a Kiwi value", () => {
+    const variableKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [variableSolidPaint(1, 1, 1, variableKey)],
+    });
+    const materializedNode = node({
+      guid: { sessionID: 1, localID: 102 },
+      variableModeBySetMap: selectedModeMap(),
+      fillPaints: [variableSolidPaint(0, 0, 0, variableKey)],
+    });
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      [variableSolidPaint(1, 1, 1, variableKey)],
+      registryFrom([variableStyleNode, materializedNode]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+    expect(got).toEqual([variableSolidPaint(0, 0, 0, variableKey)]);
+  });
+
+  it("materializes variable-bound paint from local VARIABLE nodes before embedded paint caches", () => {
+    const variableKey = "be4259bb75a4279fc39e5100262719271f57a243";
+    const variableNode = colorVariableNode(
+      { sessionID: 1, localID: 200 },
+      variableKey,
+      { r: 0, g: 0, b: 0, a: 1 },
+      { r: 1, g: 1, b: 1, a: 1 },
+    );
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [variableSolidPaint(0, 0, 0, variableKey)],
+    });
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      [variableSolidPaint(0, 0, 0, variableKey)],
+      registryFrom([variableNode, variableStyleNode]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+    expect(got).toEqual([variableSolidPaint(1, 1, 1, variableKey)]);
+  });
+
+  it("does not let a consumer embedded variable cache replace a resolved style variable", () => {
+    const primaryKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
+    const secondaryKey = "dbc0e46f480e7c1ab174e77cef2c29dcc78cb403";
+    const primaryVariable = colorVariableNode(
+      { sessionID: 1, localID: 203 },
+      primaryKey,
+      { r: 1, g: 1, b: 1, a: 1 },
+      { r: 0, g: 0, b: 0, a: 1 },
+    );
+    const secondaryVariable = colorVariableNode(
+      { sessionID: 1, localID: 204 },
+      secondaryKey,
+      { r: 1, g: 1, b: 1, a: 1 },
+      { r: 0.10980392247438431, g: 0.10980392247438431, b: 0.11764705926179886, a: 1 },
+    );
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [variableSolidPaint(1, 1, 1, secondaryKey)],
+    });
+
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      [variableSolidPaint(0, 0, 0, primaryKey)],
+      registryFrom([primaryVariable, secondaryVariable, variableStyleNode]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+
+    expect(got).toEqual([
+      variableSolidPaint(0.10980392247438431, 0.10980392247438431, 0.11764705926179886, secondaryKey),
+    ]);
+  });
+
+  it("uses assetRef version when resolving local VARIABLE color values", () => {
+    const variableKey = "b87ce8bc21e4bc3cc84a77500967896b6e5776ff";
+    const oldVariable = colorVariableNode(
+      { sessionID: 1, localID: 201 },
+      variableKey,
+      { r: 0.25, g: 0.25, b: 0.25, a: 1 },
+      { r: 0.75, g: 0.75, b: 0.75, a: 1 },
+      "5806:28",
+    );
+    const newVariable = colorVariableNode(
+      { sessionID: 1, localID: 202 },
+      variableKey,
+      { r: 0.1, g: 0.1, b: 0.1, a: 1 },
+      { r: 0.96, g: 0.96, b: 0.96, a: 1 },
+      "8415:22",
+    );
+    const got = resolveStyledPaint(
+      undefined,
+      [variableSolidPaint(0, 0, 0, variableKey, "8415:22")],
+      registryFrom([oldVariable, newVariable]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+    expect(got).toEqual([variableSolidPaint(0.96, 0.96, 0.96, variableKey, "8415:22")]);
   });
 
   it("returns the embedded value when the ref is absent", () => {

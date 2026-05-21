@@ -36,7 +36,7 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
           color: p.color,
           spread: resolveEffectSpread(effect),
           blendMode,
-          showShadowBehindNode: effect.showShadowBehindNode,
+          showShadowBehindNode: requireShowShadowBehindNode(effect),
         });
         break;
       }
@@ -65,4 +65,11 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
   }
 
   return result;
+}
+
+function requireShowShadowBehindNode(effect: FigEffect): boolean {
+  if (effect.showShadowBehindNode === undefined) {
+    throw new Error("DROP_SHADOW effect requires showShadowBehindNode from Kiwi");
+  }
+  return effect.showShadowBehindNode;
 }

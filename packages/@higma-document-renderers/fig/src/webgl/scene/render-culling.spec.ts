@@ -75,7 +75,7 @@ describe("WebGL render culling", () => {
     const node = makeRect({
       source: {
         ...makeRect().source,
-        effects: [{ type: "drop-shadow", offset: { x: 200, y: 0 }, radius: 40, color: { r: 0, g: 0, b: 0, a: 1 } }],
+        effects: [{ type: "drop-shadow", offset: { x: 200, y: 0 }, radius: 40, color: { r: 0, g: 0, b: 0, a: 1 }, showShadowBehindNode: true }],
       },
     });
 
