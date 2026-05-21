@@ -4,6 +4,7 @@
 
 import type {
   FigComponentPropAssignment,
+  FigColor,
   FigDerivedTextData,
   FigFontMetaData,
   FigFillGeometry,
@@ -13,11 +14,13 @@ import type {
   FigKiwiSymbolOverride,
   FigKiwiVariableModeBySetMap,
   FigNode,
+  FigPaint,
   FigNodeType,
   FigValueWithUnits,
   KiwiEnumValue,
   MutableFigNode,
 } from "@higma-document-models/fig/types";
+import { asSolidPaint } from "../color";
 import {
   decodePathCommands,
   derivedTextDataHasVisualPayload,
@@ -34,6 +37,8 @@ import { kiwiSymbolOverrideCarriesGeometry } from "./kiwi-override-geometry";
 import { mergeVariableModeBySetMap, resolveVariantOverride } from "./variable-resolution";
 import { isVariantSetFrame } from "./variant-set-kiwi";
 import { pathCommandsBoundingBox } from "@higma-primitives/path";
+import { resolveAutoLayoutFrame } from "./autolayout-solver";
+import { projectVariableAnyValue } from "../variables";
 
 // =============================================================================
 // Types
@@ -865,6 +870,7 @@ function cleanupStaleDerivedTextData(
     if (!derivedTextDataHasVisualPayload(node.derivedTextData)) { return; }
     const key = guidToString(node.guid);
     const cpaTarget = cpaGuids.has(key);
+    const hasFreshDerived = freshDerivedGuids.has(key);
     const chars = node.characters ?? node.textData?.characters;
     const matches = derivedMatchesCharacters(node.derivedTextData, chars);
     const hasPUA = typeof chars === "string" && containsPrivateUseCodepoint(chars);
@@ -882,8 +888,8 @@ function cleanupStaleDerivedTextData(
     //     characters. Private-use codepoints (SF Symbols) and truncated
     //     text must keep the derivedTextData since no font can reconstruct
     //     them (PUA) or reproduce the exact truncation (ellipsis).
-    const mismatchByLength = typeof chars === "string" && !matches && !truncated;
-    const riskyCpaKeep = cpaTarget && matches && !hasPUA && !truncated;
+    const mismatchByLength = typeof chars === "string" && !matches && !truncated && !hasFreshDerived;
+    const riskyCpaKeep = cpaTarget && !hasFreshDerived && matches && !hasPUA && !truncated;
     if (mismatchByLength || riskyCpaKeep) {
       discardDerivedTextVisualPayload(node);
     }
@@ -2097,12 +2103,18 @@ function resolveInstanceNode(
   }
 
   // 5. Clone SYMBOL children with overrides
-  const children = applyVariableModeBySetMapToResolvedChildren(cloneSymbolChildren(symNode, {
+  const clonedChildren = cloneSymbolChildren(symNode, {
     childrenOf: ctx.document.childrenOf,
     symbolOverrides,
     derivedSymbolData,
     componentPropAssignments: componentPropAssignments.length > 0 ? componentPropAssignments : undefined,
-  }), variableModeBySetMap);
+  });
+  const externalVariableColoredChildren = materializeRootSelfFillColorForExternalVariablePaints(
+    clonedChildren,
+    rootSelfFillPaintsFromOverrides(symbolSelfOverrides),
+    guidToString(symNode.guid),
+  );
+  const children = applyVariableModeBySetMapToResolvedChildren(externalVariableColoredChildren, variableModeBySetMap);
 
   // 6. Layout resolution for resized instances
   const instanceSize = node.size;
@@ -2115,10 +2127,157 @@ function resolveInstanceNode(
   });
   if (resized !== undefined) {
     applyResolvedInstanceSize(mergedNode, resized);
-    return { node: mergedNode, children: resized.children };
+    const layoutResolved = resolveAutoLayoutFrame(mergedNode, resized.children);
+    return { node: layoutResolved.parent, children: layoutResolved.children };
   }
 
-  return { node: mergedNode, children };
+  const layoutResolved = resolveAutoLayoutFrame(mergedNode, children);
+  return { node: layoutResolved.parent, children: layoutResolved.children };
+}
+
+function rootSelfFillPaintsFromOverrides(overrides: readonly FigKiwiSymbolOverride[]): FigNode["fillPaints"] | undefined {
+  const fillEntries = overrides.filter((override) => override.fillPaints !== undefined);
+  return fillEntries[fillEntries.length - 1]?.fillPaints;
+}
+
+function materializeRootSelfFillColorForExternalVariablePaints(
+  nodes: readonly FigNode[],
+  rootFillPaints: FigNode["fillPaints"] | undefined,
+  symbolGuidStr: string,
+): readonly FigNode[] {
+  if (rootFillPaints === undefined) {
+    return nodes;
+  }
+  if (!nodesContainExternalVariablePaint(nodes)) {
+    return nodes;
+  }
+  const color = requireSingleVisibleSolidFillColor(
+    rootFillPaints,
+    `SymbolResolver: SYMBOL ${symbolGuidStr} root self fill override`,
+  );
+  if (color === undefined) {
+    return nodes;
+  }
+  return nodes.map((node) => materializeExternalVariablePaintsForNode(node, color));
+}
+
+function nodesContainExternalVariablePaint(nodes: readonly (FigNode | null | undefined)[]): boolean {
+  return nodes.some((node) => {
+    if (node === null || node === undefined) {
+      return false;
+    }
+    if (paintsContainExternalVariableColor(node.fillPaints)) {
+      return true;
+    }
+    if (paintsContainExternalVariableColor(node.strokePaints)) {
+      return true;
+    }
+    return nodesContainExternalVariablePaint(node.children ?? []);
+  });
+}
+
+function paintsContainExternalVariableColor(paints: readonly FigPaint[] | undefined): boolean {
+  if (paints === undefined) {
+    return false;
+  }
+  return paints.some((paint) => paintReferencesExternalColorVariable(paint));
+}
+
+function materializeExternalVariablePaintsForNode(node: FigNode, color: FigColor): FigNode {
+  const fillPaints = materializeExternalVariablePaintColors(node.fillPaints, color);
+  const strokePaints = materializeExternalVariablePaintColors(node.strokePaints, color);
+  const children = materializeExternalVariablePaintsForChildren(node.children, color);
+  if (fillPaints === node.fillPaints && strokePaints === node.strokePaints && children === node.children) {
+    return node;
+  }
+  return {
+    ...node,
+    fillPaints,
+    strokePaints,
+    children,
+  };
+}
+
+function materializeExternalVariablePaintsForChildren(
+  children: FigNode["children"],
+  color: FigColor,
+): FigNode["children"] {
+  if (children === undefined || children.length === 0) {
+    return children;
+  }
+  const next = children.map((child) => {
+    if (child === null || child === undefined) {
+      return child;
+    }
+    return materializeExternalVariablePaintsForNode(child, color);
+  });
+  if (next.every((child, index) => child === children[index])) {
+    return children;
+  }
+  return next;
+}
+
+function materializeExternalVariablePaintColors(
+  paints: readonly FigPaint[] | undefined,
+  color: FigColor,
+): readonly FigPaint[] | undefined {
+  if (paints === undefined || paints.length === 0) {
+    return paints;
+  }
+  const next = paints.map((paint) => materializeExternalVariablePaintColor(paint, color));
+  if (next.every((paint, index) => paint === paints[index])) {
+    return paints;
+  }
+  return next;
+}
+
+function materializeExternalVariablePaintColor(paint: FigPaint, color: FigColor): FigPaint {
+  const solid = asSolidPaint(paint);
+  if (solid === undefined || !paintReferencesExternalColorVariable(solid)) {
+    return paint;
+  }
+  if (figColorsEqual(solid.color, color)) {
+    return paint;
+  }
+  return {
+    ...solid,
+    color,
+  };
+}
+
+function paintReferencesExternalColorVariable(paint: FigPaint): boolean {
+  const value = projectVariableAnyValue(paint.colorVar?.value);
+  if (value?.kind !== "alias") {
+    return false;
+  }
+  return "assetRef" in value.value && value.value.assetRef !== undefined;
+}
+
+function requireSingleVisibleSolidFillColor(paints: readonly FigPaint[], subject: string): FigColor | undefined {
+  const visible = paints.filter((paint) => paint.visible !== false);
+  if (visible.length === 0) {
+    return undefined;
+  }
+  const colors = visible.map((paint) => {
+    const solid = asSolidPaint(paint);
+    if (solid === undefined) {
+      throw new Error(`${subject} must use SOLID paint to resolve external color variable paints`);
+    }
+    return solid.color;
+  });
+  const first = colors[0];
+  if (first === undefined) {
+    return undefined;
+  }
+  const mismatch = colors.find((color) => !figColorsEqual(color, first));
+  if (mismatch !== undefined) {
+    throw new Error(`${subject} has multiple visible SOLID colors for external color variable paints`);
+  }
+  return first;
+}
+
+function figColorsEqual(left: FigColor, right: FigColor): boolean {
+  return left.r === right.r && left.g === right.g && left.b === right.b && left.a === right.a;
 }
 
 function resolveDocumentExternalInstanceOrThrow(node: FigNode, ctx: InstanceResolveRuntime): ResolvedInstanceNode {

@@ -24,6 +24,7 @@ import type {
   FigDerivedDecoration,
   FigDerivedTextData,
 } from "@higma-document-models/fig/types";
+import { figmaTextOutlineBaselineY } from "./text-outline-baseline";
 
 /**
  * Transform normalized glyph path commands to screen coordinates
@@ -47,7 +48,7 @@ export function transformGlyphCommands(
   fontSize: number,
   alignmentOffset: { x: number; y: number } = { x: 0, y: 0 },
 ): PathCommand[] {
-  const baselineY = Math.round(position.y + alignmentOffset.y);
+  const baselineY = figmaTextOutlineBaselineY(position.y + alignmentOffset.y);
   const tx = (x: number) => position.x + alignmentOffset.x + x * fontSize;
   const ty = (y: number) => baselineY - y * fontSize;
 

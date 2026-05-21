@@ -10,7 +10,13 @@
 
 import { describe, it, expect } from "vitest";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { computeFigExportBounds } from "./export-bounds";
+import { encodeSvgPathBlob } from "@higma-document-models/fig/node-factory";
+import {
+  computeFigExportBounds,
+  computeFigExportViewport,
+  type ComputeFigExportBoundsOptions,
+  type FigExportBox,
+} from "./export-bounds";
 
 function makeFrame(
   overrides: Partial<FigNode> & { readonly size: { readonly x: number; readonly y: number } },
@@ -18,22 +24,33 @@ function makeFrame(
   return overrides as unknown as FigNode;
 }
 
+function fixtureChildrenOf(node: FigNode): readonly FigNode[] {
+  return Array.isArray(node.children) ? node.children : [];
+}
+
+function fixtureBounds(
+  node: FigNode,
+  options?: Partial<Omit<ComputeFigExportBoundsOptions, "childrenOf">>,
+): FigExportBox {
+  return computeFigExportBounds(node, { childrenOf: fixtureChildrenOf, blobs: [], ...options });
+}
+
 describe("computeFigExportBounds", () => {
   it("integer-sized leaf with no effects: width/height unchanged", () => {
     // `Icon/Today` (19×24) exports as viewBox="0 0 19 24"
     const node = makeFrame({ size: { x: 19, y: 24 } });
-    expect(computeFigExportBounds(node)).toEqual({ x: 0, y: 0, width: 19, height: 24 });
+    expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 19, height: 24 });
   });
 
   it("fractional-sized leaf: ceil to next integer on width and height", () => {
     // `Icons/Arcade` (26.26×24.03) exports as viewBox="0 0 27 25"
     const node = makeFrame({ size: { x: 26.26044273376465, y: 24.02845001220703 } });
-    expect(computeFigExportBounds(node)).toEqual({ x: 0, y: 0, width: 27, height: 25 });
+    expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 27, height: 25 });
   });
 
   it("ceilIntegers=false preserves sub-pixel width/height", () => {
     const node = makeFrame({ size: { x: 26.26044273376465, y: 24.02845001220703 } });
-    expect(computeFigExportBounds(node, { ceilIntegers: false })).toEqual({
+    expect(fixtureBounds(node, { ceilIntegers: false })).toEqual({
       x: 0,
       y: 0,
       width: 26.26044273376465,
@@ -51,7 +68,7 @@ describe("computeFigExportBounds", () => {
         { type: "DROP_SHADOW", radius: 12, offset: { x: 0, y: 4 }, visible: true },
       ] as unknown as FigNode["effects"],
     });
-    expect(computeFigExportBounds(node)).toEqual({ x: -12, y: -8, width: 386, height: 320 });
+    expect(fixtureBounds(node)).toEqual({ x: -12, y: -8, width: 386, height: 320 });
   });
 
   it("clipsContent=true (frameMaskDisabled=false) ignores overflowing children", () => {
@@ -65,7 +82,7 @@ describe("computeFigExportBounds", () => {
         }),
       ] as unknown as FigNode["children"],
     });
-    expect(computeFigExportBounds(node)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+    expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
 
   it("clipsContent=false (frameMaskDisabled=true) unions overflowing children into the box", () => {
@@ -85,7 +102,7 @@ describe("computeFigExportBounds", () => {
         }),
       ] as unknown as FigNode["children"],
     });
-    expect(computeFigExportBounds(node)).toEqual({ x: 0, y: 0, width: 772, height: 306 });
+    expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 772, height: 306 });
   });
 
   it("invisible children are excluded from the union", () => {
@@ -100,7 +117,7 @@ describe("computeFigExportBounds", () => {
         }),
       ] as unknown as FigNode["children"],
     });
-    expect(computeFigExportBounds(node)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+    expect(fixtureBounds(node)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
 
   it("recursively unions descendants when nested frames are also unclipped", () => {
@@ -124,7 +141,7 @@ describe("computeFigExportBounds", () => {
       frameMaskDisabled: true,
       children: [inner] as unknown as FigNode["children"],
     });
-    expect(computeFigExportBounds(root)).toEqual({ x: 0, y: 0, width: 200, height: 200 });
+    expect(fixtureBounds(root)).toEqual({ x: 0, y: 0, width: 200, height: 200 });
   });
 
   it("recursion STOPS at a clipsContent=true ancestor: deep overflow inside a clipped frame is hidden", () => {
@@ -145,7 +162,7 @@ describe("computeFigExportBounds", () => {
       frameMaskDisabled: true,
       children: [inner] as unknown as FigNode["children"],
     });
-    expect(computeFigExportBounds(root)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+    expect(fixtureBounds(root)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
 
   it("child translation pushes the union outward in both directions", () => {
@@ -162,6 +179,82 @@ describe("computeFigExportBounds", () => {
         }),
       ] as unknown as FigNode["children"],
     });
-    expect(computeFigExportBounds(node)).toEqual({ x: -10, y: -20, width: 110, height: 120 });
+    expect(fixtureBounds(node)).toEqual({ x: -10, y: -20, width: 110, height: 120 });
+  });
+
+  it("unclipped descendant stroke geometry expands the export bounds", () => {
+    const strokeBlob = encodeSvgPathBlob("M -0.265165 0 L 512.265137 0 L 512.265137 512.265137 L -0.265165 512.265137 Z");
+    const strokeChild = makeFrame({
+      size: { x: 512, y: 512 },
+      strokeGeometry: [{ commandsBlob: 0, styleID: 0 }],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+    });
+    const node = makeFrame({
+      size: { x: 512, y: 512 },
+      frameMaskDisabled: true,
+      children: [strokeChild] as unknown as FigNode["children"],
+    });
+
+    const bounds = fixtureBounds(node, { blobs: [{ bytes: strokeBlob.bytes }] });
+
+    expect(bounds.x).toBeCloseTo(-0.265165, 6);
+    expect(bounds).toMatchObject({
+      y: 0,
+      width: 513,
+      height: 513,
+    });
+  });
+
+  it("unclipped descendant fill geometry stays clipped to the node surface", () => {
+    const fillBlob = encodeSvgPathBlob("M -0.31371 -0.12855 L 24.78977 -0.12855 L 24.78977 23.73952 L -0.31371 23.73952 Z");
+    const fillChild = makeFrame({
+      size: { x: 24.789762496948242, y: 23.739519119262695 },
+      fillGeometry: [{ commandsBlob: 0, styleID: 0 }],
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as FigNode["transform"],
+    });
+    const node = makeFrame({
+      size: { x: 24.789762496948242, y: 23.739519119262695 },
+      frameMaskDisabled: true,
+      children: [fillChild] as unknown as FigNode["children"],
+    });
+
+    expect(fixtureBounds(node, { blobs: [{ bytes: fillBlob.bytes }] })).toEqual({
+      x: 0,
+      y: 0,
+      width: 25,
+      height: 24,
+    });
+  });
+
+  it("root-authored geometry does not replace the exported surface bounds", () => {
+    const strokeBlob = encodeSvgPathBlob("M -1 -1 L 101 -1 L 101 101 L -1 101 Z");
+    const node = makeFrame({
+      size: { x: 100, y: 100 },
+      frameMaskDisabled: false,
+      strokeGeometry: [{ commandsBlob: 0, styleID: 0 }],
+    });
+
+    expect(fixtureBounds(node, { blobs: [{ bytes: strokeBlob.bytes }] })).toEqual({
+      x: 0,
+      y: 0,
+      width: 100,
+      height: 100,
+    });
+  });
+
+  it("world viewport applies the root Kiwi translation exactly once", () => {
+    const node = makeFrame({
+      size: { x: 100, y: 100 },
+      transform: { m00: 1, m01: 0, m02: 300, m10: 0, m11: 1, m12: 40 } as FigNode["transform"],
+      effects: [
+        { type: "DROP_SHADOW", radius: 10, offset: { x: 0, y: 4 }, visible: true },
+      ] as unknown as FigNode["effects"],
+    });
+    expect(computeFigExportViewport(node, { childrenOf: fixtureChildrenOf, blobs: [] })).toEqual({
+      x: 290,
+      y: 34,
+      width: 120,
+      height: 120,
+    });
   });
 });

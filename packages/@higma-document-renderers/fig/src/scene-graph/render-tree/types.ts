@@ -46,6 +46,7 @@
 import type { SceneNodeId, Fill, Stroke, PathContour, Color, TextLineLayout, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, ImageNode, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
+import type { FigMaskType } from "@higma-document-models/fig/types";
 
 import type {
   ResolvedFillAttrs,
@@ -157,6 +158,9 @@ export type RenderDef =
 export type RenderMaskDef = {
   readonly type: "mask";
   readonly id: string;
+  readonly maskType: FigMaskType;
+  /** User-space bounds of the authored mask source, used as the SVG mask region. */
+  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   /** The resolved mask content node */
   readonly maskContent: RenderNode;
 };
@@ -223,6 +227,7 @@ export type ClipPathRectShape = {
 export type ClipPathPathShape = {
   readonly kind: "path";
   readonly d: string;
+  readonly fillRule?: "evenodd";
 };
 
 export type ClipPathEllipseShape = {
@@ -389,6 +394,16 @@ export type StrokeRendering =
   | { readonly mode: "uniform"; readonly attrs: ResolvedStrokeAttrs }
   | { readonly mode: "masked"; readonly attrs: ResolvedStrokeAttrs; readonly maskId: string; readonly shape: StrokeShape; readonly blendMode?: BlendMode; readonly layer?: ResolvedStrokeLayer }
   | { readonly mode: "layers"; readonly layers: readonly ResolvedStrokeLayer[]; readonly shape: StrokeShape }
+  | {
+      readonly mode: "geometry";
+      readonly paths: readonly RenderPathContour[];
+      readonly layers: readonly ResolvedStrokeLayer[];
+      readonly mask?: {
+        readonly id: string;
+        readonly shape: ClipPathShape;
+        readonly strokeAlign: "INSIDE" | "OUTSIDE";
+      };
+    }
   | {
       readonly mode: "individual";
       readonly sides: {

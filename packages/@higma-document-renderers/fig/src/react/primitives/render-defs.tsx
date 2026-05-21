@@ -72,7 +72,7 @@ function formatFilterPrimitive(p: ResolvedFilterPrimitive, key: number): ReactNo
 function formatClipPathShape(shape: ClipPathShape): ReactNode {
   switch (shape.kind) {
     case "path":
-      return <path d={shape.d} />;
+      return <path d={shape.d} fillRule={shape.fillRule} clipRule={shape.fillRule} />;
     case "ellipse":
       return <ellipse cx={shape.cx} cy={shape.cy} rx={shape.rx} ry={shape.ry} />;
     case "rect":
@@ -291,13 +291,21 @@ function formatPatternDef(def: RenderPatternDef): ReactNode {
 // =============================================================================
 
 function formatMaskDef(def: RenderMaskDef): ReactNode {
+  const maskType = resolveReactMaskType(def.maskType);
   return (
-    <mask key={def.id} id={def.id} style={{ maskType: "luminance" }}>
+    <mask key={def.id} id={def.id} style={{ maskType }}>
       <g fill="white">
         <RenderNodeComponent node={def.maskContent} />
       </g>
     </mask>
   );
+}
+
+function resolveReactMaskType(maskType: RenderMaskDef["maskType"]): "alpha" | "luminance" {
+  if (maskType === "ALPHA") {
+    return "alpha";
+  }
+  return "luminance";
 }
 
 function formatDef(def: RenderDef): ReactNode {

@@ -9,7 +9,7 @@
  */
 
 import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
-import type { FigFillGeometry, FigKiwiVariableModeBySetMap, FigNode, FigPaint, FigStyleId } from "@higma-document-models/fig/types";
+import type { FigFillGeometry, FigKiwiVariableModeBySetMap, FigMaskType, FigNode, FigPaint, FigStyleId } from "@higma-document-models/fig/types";
 import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import {
@@ -20,7 +20,6 @@ import {
   type SymbolResolver,
 } from "@higma-document-models/fig/symbols";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
-import { resolveAutoLayoutFrame } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type {
   SceneGraph, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, SceneNodeId, ClipShape } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
@@ -36,8 +35,8 @@ import {
 import { reconstructStrokeCenterline } from "@higma-primitives/path";
 import {
   generateEllipseContour, generateLineContour, generatePolygonContour, generateRectContour, generateStarContour, parseSvgPathD, } from "@higma-primitives/path";
-import type { Fill, PathContour, BlendMode, ArcData } from "@higma-document-renderers/fig/scene-graph";
-import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
+import type { Fill, PathContour, ArcData } from "@higma-document-renderers/fig/scene-graph";
+import { convertFigmaNodeBlendMode } from "@higma-document-renderers/fig/scene-graph";
 import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
 import { TEXT_AUTO_RESIZE_OMITTED_DEFAULT, kiwiEnumName } from "@higma-document-models/fig/constants";
 import type { TextFontResolver } from "../text";
@@ -46,10 +45,6 @@ import { resolveBooleanOperationType } from "@higma-document-models/fig/boolean-
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import { resolveClipsContent as resolveGeometryClipsContent } from "@higma-document-models/fig/geometry-interpret";
 import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
-
-function convertBlendMode(node: FigNode): BlendMode | undefined {
-  return convertFigmaBlendMode(node.blendMode);
-}
 
 function convertKiwiTransform(
   matrix: { m00?: number; m01?: number; m02?: number; m10?: number; m11?: number; m12?: number } | undefined,
@@ -140,6 +135,9 @@ function resolveFrameSurfaceShape(
   cornerRadius: CornerRadius | undefined,
   cornerSmoothing: number | undefined,
 ): ClipShape {
+  if (shouldUseParametricSmoothedSurface(node, ctx)) {
+    return { type: "rect", width: size.x, height: size.y, cornerRadius, cornerSmoothing };
+  }
   const contours = decodeGeometryToContours(node.fillGeometry, ctx.blobs);
   if (contours.length > 0) {
     return { type: "path", contours };
@@ -189,6 +187,17 @@ function resolveFramePaintSource(node: FigNode): FramePaintSource {
 /** Check if a FigNode acts as a mask for subsequent siblings. */
 function isMaskNode(node: FigNode): boolean {
   return node.mask === true;
+}
+
+function resolveKiwiMaskType(node: FigNode): FigMaskType {
+  const maskType = kiwiEnumName<FigMaskType>(node.maskType, "maskType");
+  if (maskType !== undefined) {
+    return maskType;
+  }
+  // Kiwi enum fields encode their zero value by omission. MaskType value
+  // 0 is ALPHA in the schema, so an omitted maskType is not a renderer
+  // choice; it is the decoded form of Kiwi's enum default.
+  return "ALPHA";
 }
 
 /** Select fill paints based on whether stroke geometry is being used */
@@ -330,15 +339,12 @@ type BuildContext = {
   readonly previousCache?: SceneGraphBuildCache;
   readonly nextNodesBySource: WeakMap<FigNode, SceneNode>;
   /**
-   * Identity set of top-level FigNodes passed to
-   * `buildSceneGraph`. Used by `resolveCornerSmoothing` to honour
-   * Figma's SVG-exporter rule: `cornerSmoothing` propagates into the
-   * emitted path data ONLY for the export root. Nested FRAME / RECT
-   * children with non-zero `cornerSmoothing` are emitted as
-   * `<rect rx>` (quarter-circle) — same as Figma — because the
-   * smoothing has no effect on their on-canvas presentation when
-   * the visible cornerless rect is bounded by some other clip /
-   * stack interaction.
+   * Identity set of render-surface root FigNodes. It starts with the
+   * top-level nodes passed to `buildSceneGraph`; resolved INSTANCE
+   * roots are added as SymbolResolver materializes them. Root geometry
+   * consumes Kiwi's authored smoothed path data, while ordinary nested
+   * FRAME / RECT children with non-zero `cornerSmoothing` still emit
+   * as `<rect rx>`.
    */
   readonly exportRoots: WeakSet<FigNode>;
   nodeCounter: number;
@@ -401,7 +407,7 @@ function buildGroupNode(node: FigNode, ctx: BuildContext, children: readonly Sce
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    blendMode: convertFigmaNodeBlendMode(node.blendMode),
     clip: resolveGroupClipShape(node, ctx),
     children,
   };
@@ -422,7 +428,7 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    blendMode: convertFigmaNodeBlendMode(node.blendMode),
     width: size.x,
     height: size.y,
     surfaceShape,
@@ -455,7 +461,7 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    blendMode: convertFigmaNodeBlendMode(node.blendMode),
     width: size.x,
     height: size.y,
     cornerRadius,
@@ -472,13 +478,14 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
 }
 
 /**
- * Pick up Figma's `cornerSmoothing` on the source node. Figma's SVG
- * exporter applies smoothing only to the export-root geometry; nested
+ * Pick up Figma's `cornerSmoothing` on export-surface nodes. Figma's
+ * SVG exporter applies smoothing to the exported root and to the
+ * resolved INSTANCE root returned by SymbolResolver. Ordinary nested
  * FRAME/RECTANGLE children with non-zero `cornerSmoothing` still emit
  * as sharp `<rect rx>` so the SVG bytes match Figma's output exactly.
- * Without the export-root gate, applying smoothing universally
- * over-darkens the AA at every inner-frame corner (calibration: Feature
- * cell regressed 0.00% -> 0.01%).
+ * Without this gate, applying smoothing universally over-darkens the
+ * AA at every inner-frame corner (calibration: Feature cell regressed
+ * 0.00% -> 0.01%).
  *
  * Additionally, the SVG exporter falls back to a sharp `<rect rx>` even
  * on the export-root when the node carries a visible effect
@@ -526,7 +533,7 @@ function buildEllipseNode(node: FigNode, ctx: BuildContext): EllipseNode {
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    blendMode: convertFigmaNodeBlendMode(node.blendMode),
     cx: size.x / 2,
     cy: size.y / 2,
     rx: size.x / 2,
@@ -601,6 +608,17 @@ function hasKiwiVectorPaths(node: FigNode): boolean {
   return node.vectorPaths !== undefined && node.vectorPaths.length > 0;
 }
 
+function shouldUseParametricSmoothedSurface(node: FigNode, ctx: BuildContext): boolean {
+  const s = node.cornerSmoothing;
+  if (typeof s !== "number" || s <= 0) { return false; }
+  return resolveCornerSmoothing(node, ctx) === undefined;
+}
+
+function shouldUseParametricRoundedRectangle(node: FigNode, ctx: BuildContext): boolean {
+  if (getNodeType(node) !== "ROUNDED_RECTANGLE") { return false; }
+  return shouldUseParametricSmoothedSurface(node, ctx);
+}
+
 /**
  * Resolve the effective fill paints for a vector per-path style override entry.
  *
@@ -638,8 +656,7 @@ function applyStyleOverrides(
   const overrideTable = node.vectorData?.styleOverrideTable;
 
   if (!overrideTable || overrideTable.length === 0) {
-    // No overrides — strip geometryStyleId from contours
-    return contours.map(({ geometryStyleId: _, ...rest }) => rest);
+    return stripGeometryStyleIds(contours);
   }
 
   const overrideMap = new Map<number, Fill>();
@@ -663,6 +680,10 @@ function applyStyleOverrides(
   });
 }
 
+function stripGeometryStyleIds(contours: readonly DecodedContour[]): PathContour[] {
+  return contours.map(({ geometryStyleId: _geometryStyleId, ...rest }) => rest);
+}
+
 function reconstructThinCenterline(
   contours: Parameters<typeof reconstructStrokeCenterline>[0],
   isStrokeGeometry: boolean,
@@ -676,16 +697,31 @@ function reconstructThinCenterline(
   return reconstructStrokeCenterline(contours, scalarWeight);
 }
 
+function resolveVectorStrokeContours(
+  strokeGeometryContours: readonly DecodedContour[],
+  contoursAreStrokeGeometry: boolean,
+  reconstructedStrokeGeometry: boolean,
+): readonly PathContour[] | undefined {
+  if (strokeGeometryContours.length === 0) {
+    return undefined;
+  }
+  if (contoursAreStrokeGeometry || reconstructedStrokeGeometry) {
+    return undefined;
+  }
+  return stripGeometryStyleIds(strokeGeometryContours);
+}
+
 function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
   const vectorPaths = node.vectorPaths;
 
   const contoursRef = { value: convertVectorPathsToContours(vectorPaths) };
+  const strokeGeometryContours = decodeGeometryToContours(node.strokeGeometry, ctx.blobs);
   const isStrokeGeometryRef = { value: false };
   if (contoursRef.value.length === 0) {
     contoursRef.value = decodeGeometryToContours(node.fillGeometry, ctx.blobs);
   }
   if (contoursRef.value.length === 0) {
-    contoursRef.value = decodeGeometryToContours(node.strokeGeometry, ctx.blobs);
+    contoursRef.value = strokeGeometryContours;
     isStrokeGeometryRef.value = contoursRef.value.length > 0;
   }
 
@@ -727,6 +763,11 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
     paintSubject(node, treatAsFill ? "strokePaints" : "fillPaints"),
   );
   const stroke = resolveVectorStroke(treatAsFill, resolvedStrokePaints, node.strokeWeight, node.strokeCap, node.strokeJoin, node.strokeDashes ?? node.dashPattern, node.strokeAlign);
+  const strokeContours = resolveVectorStrokeContours(
+    strokeGeometryContours,
+    isStrokeGeometryRef.value,
+    reconstructedRef.value,
+  );
 
   const size = node.size;
   // Carry source rect-shape parameters through to PathNode so the
@@ -745,8 +786,9 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    blendMode: convertFigmaNodeBlendMode(node.blendMode),
     contours: resolvedContours,
+    strokeContours,
     fills,
     stroke,
     width: size !== undefined && size.x > 0 ? size.x : undefined,
@@ -795,11 +837,15 @@ function buildTextNode(node: FigNode, ctx: BuildContext): TextNode {
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    // Figma's exporter does not project TEXT-level blendMode onto the
+    // text wrapper. Text paint blend remains represented by
+    // textData.fills/runs, which is the paint SoT for glyph rendering.
+    blendMode: undefined,
     width: node.size?.x ?? 0,
     height: node.size?.y ?? 0,
     textAutoResize,
-    textTruncation: extractEnumName(node.textData?.textTruncation),
+    textTruncation: textData.truncation?.mode ?? extractEnumName(node.textData?.textTruncation),
+    textTruncationClipHeight: textData.truncation?.maxHeight,
     leadingTrim: extractEnumName(node.textData?.leadingTrim),
     hyperlink: node.textData?.hyperlink?.url,
     glyphContours: textData.glyphContours,
@@ -963,7 +1009,7 @@ function buildBooleanOperationNode(
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
     effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
-    blendMode: convertBlendMode(node),
+    blendMode: convertFigmaNodeBlendMode(node.blendMode),
     contours,
     fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints")),
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
@@ -1030,19 +1076,18 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
     case "SECTION":
     case "SLIDE":
     case "SYMBOL": {
-      const resolved = resolveAutoLayoutFrame(node, children);
-      const childNodes = buildChildren(resolved.children, nodeCtx);
-      return cacheBuiltNode(node, buildFrameNode(resolved.parent, nodeCtx, childNodes), ctx);
+      const childNodes = buildChildren(children, nodeCtx);
+      return cacheBuiltNode(node, buildFrameNode(node, nodeCtx, childNodes), ctx);
     }
 
     case "INSTANCE": {
       const resolved = nodeCtx.symbolResolver.resolveInstance(node, {
         variableModeBySetMap: nodeCtx.variableModeBySetMap,
       });
-      const layoutResolved = resolveAutoLayoutFrame(resolved.node, resolved.children);
+      nodeCtx.exportRoots.add(resolved.node);
       const resolvedCtx = withChildrenOf(nodeCtx, nodeCtx.symbolResolver.childrenOfResolvedNode);
-      const childNodes = buildChildren(layoutResolved.children, resolvedCtx);
-      return cacheBuiltNode(node, buildFrameNode(layoutResolved.parent, nodeCtx, childNodes), ctx);
+      const childNodes = buildChildren(resolved.children, resolvedCtx);
+      return cacheBuiltNode(node, buildFrameNode(resolved.node, nodeCtx, childNodes), ctx);
     }
 
     case "GROUP": {
@@ -1068,13 +1113,13 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
 
     case "RECTANGLE":
     case "ROUNDED_RECTANGLE":
-      if (hasKiwiVectorPaths(node) || hasKiwiShapeGeometry(node)) {
+      if (hasKiwiVectorPaths(node) || (hasKiwiShapeGeometry(node) && !shouldUseParametricRoundedRectangle(node, nodeCtx))) {
         return cacheBuiltNode(node, buildVectorNode(node, nodeCtx), ctx);
       }
       return cacheBuiltNode(node, buildRectNode(node, nodeCtx), ctx);
 
     case "ELLIPSE":
-      if (hasKiwiVectorPaths(node) || hasKiwiShapeGeometry(node)) {
+      if (hasKiwiVectorPaths(node)) {
         return cacheBuiltNode(node, buildVectorNode(node, nodeCtx), ctx);
       }
       return cacheBuiltNode(node, buildEllipseNode(node, nodeCtx), ctx);
@@ -1104,6 +1149,7 @@ function buildUnknownNodeTypeGroup(node: FigNode, children: readonly FigNode[], 
 type MaskBuildState = {
   activeMaskContent: SceneNode | null;
   activeMaskId: SceneNodeId | null;
+  activeMaskType: FigMaskType | null;
   maskedChildren: SceneNode[];
 };
 
@@ -1124,6 +1170,7 @@ function buildChildren(children: readonly FigNode[], ctx: BuildContext): SceneNo
   const maskState: MaskBuildState = {
     activeMaskContent: null,
     activeMaskId: null,
+    activeMaskType: null,
     maskedChildren: [],
   };
 
@@ -1149,10 +1196,11 @@ function buildChildren(children: readonly FigNode[], ctx: BuildContext): SceneNo
 function flushMaskState(result: SceneNode[], maskState: MaskBuildState, ctx: BuildContext): void {
   const maskId = maskState.activeMaskId;
   const maskContent = maskState.activeMaskContent;
-  if (maskId === null || maskContent === null || maskState.maskedChildren.length === 0) {
+  const maskType = maskState.activeMaskType;
+  if (maskId === null || maskContent === null || maskType === null || maskState.maskedChildren.length === 0) {
     return;
   }
-  result.push(wrapWithMask(maskId, maskContent, maskState.maskedChildren, ctx));
+  result.push(wrapWithMask(maskId, maskType, maskContent, maskState.maskedChildren, ctx));
   maskState.maskedChildren = [];
 }
 
@@ -1163,10 +1211,12 @@ function startMaskState(maskState: MaskBuildState, child: FigNode, ctx: BuildCon
   const maskNode = buildNode(child, ctx);
   if (maskNode === null) {
     maskState.activeMaskId = null;
+    maskState.activeMaskType = null;
     maskState.activeMaskContent = null;
     return;
   }
   maskState.activeMaskId = maskNode.id;
+  maskState.activeMaskType = resolveKiwiMaskType(child);
   maskState.activeMaskContent = maskNode;
 }
 
@@ -1186,6 +1236,7 @@ function appendBuiltChild(result: SceneNode[], maskState: MaskBuildState, node: 
  */
 function wrapWithMask(
   maskId: SceneNodeId,
+  maskType: FigMaskType,
   maskContent: SceneNode,
   maskedChildren: readonly SceneNode[],
   ctx: BuildContext,
@@ -1197,7 +1248,7 @@ function wrapWithMask(
     opacity: 1,
     visible: true,
     effects: [],
-    mask: { maskId, maskContent },
+    mask: { maskId, maskType, maskContent },
     children: maskedChildren,
   };
 }

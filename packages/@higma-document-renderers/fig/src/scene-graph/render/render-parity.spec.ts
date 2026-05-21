@@ -45,6 +45,7 @@ const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
 const RED: Color = { r: 1, g: 0, b: 0, a: 1 };
 const BLACK_50: Color = { r: 0, g: 0, b: 0, a: 0.5 };
 const DATA_URI_PREFIX = "data:image/png;base64,";
+const KIWI_TINY_OPACITY_SENTINEL = Math.fround(0.0001);
 
 // =============================================================================
 // Test Fixtures
@@ -119,6 +120,14 @@ describe("Fill resolution (shared SoT)", () => {
     expect(result.attrs.fillOpacity).toBe(0.5);
   });
 
+  it("matches Figma SVG export for Kiwi tiny opacity sentinel", () => {
+    const fill: SolidFill = { type: "solid", color: RED, opacity: KIWI_TINY_OPACITY_SENTINEL };
+    const ids = createIdGenerator();
+    const result = resolveFill(fill, ids);
+
+    expect(result.attrs.fillOpacity).toBe(0.01);
+  });
+
   it("handles linear gradient fill", () => {
     const fill: LinearGradientFill = {
       type: "linear-gradient",
@@ -126,7 +135,7 @@ describe("Fill resolution (shared SoT)", () => {
       end: { x: 1, y: 1 },
       stops: [
         { position: 0, color: RED },
-        { position: 1, color: WHITE },
+        { position: 1, color: { r: 1, g: 1, b: 1, a: KIWI_TINY_OPACITY_SENTINEL } },
       ],
       opacity: 1,
     };
@@ -143,6 +152,7 @@ describe("Fill resolution (shared SoT)", () => {
       expect(result.def!.y2).toBe("100%");
       expect(result.def!.stops).toHaveLength(2);
       expect(result.def!.stops[0].stopColor).toBe("#ff0000");
+      expect(result.def!.stops[1].stopOpacity).toBe(0.01);
     }
   });
 
@@ -269,7 +279,7 @@ describe("Fill resolution (shared SoT)", () => {
    * behavior at runtime, but it verifies all current types are handled.
    */
   it("handles all Fill types (exhaustive)", () => {
-    const allTypes: Fill["type"][] = ["solid", "linear-gradient", "radial-gradient", "image"];
+    const allTypes: Fill["type"][] = ["solid", "linear-gradient", "radial-gradient", "image", "angular-gradient", "diamond-gradient"];
     const ids = createIdGenerator();
 
     for (const type of allTypes) {
@@ -319,6 +329,19 @@ describe("Stroke resolution (shared SoT)", () => {
     expect(result.strokeLinejoin).toBeUndefined();
     expect(result.strokeDasharray).toBeUndefined();
   });
+
+  it("matches Figma SVG export for Kiwi tiny stroke opacity sentinel", () => {
+    const stroke: Stroke = {
+      color: RED,
+      width: 1,
+      opacity: KIWI_TINY_OPACITY_SENTINEL,
+      linecap: "butt",
+      linejoin: "miter",
+    };
+    const result = resolveStroke(stroke);
+
+    expect(result.strokeOpacity).toBe(0.01);
+  });
 });
 
 // =============================================================================
@@ -344,20 +367,22 @@ describe("Effects resolution (shared SoT)", () => {
 
     expect(result).toBeDefined();
     expect(result!.filterAttr).toMatch(/^url\(#filter-\d+\)$/);
-    // NORMAL-blend recipe matches Figma's exporter for shadows without
-    // a per-effect blend mode — no composite-out so blurred-hardAlpha
-    // shadow shows through translucent sources:
-    //   1. feColorMatrix (SourceAlpha → hardAlpha)
-    //   2. feOffset
-    //   3. feGaussianBlur
-    //   4. feColorMatrix → tinted RGBA shadow
-    //   5. feMerge (composites shadow under SourceGraphic)
-    expect(result!.primitives).toHaveLength(5);
-    expect(result!.primitives[0].type).toBe("feColorMatrix");
-    expect(result!.primitives[1].type).toBe("feOffset");
-    expect(result!.primitives[2].type).toBe("feGaussianBlur");
-    expect(result!.primitives[3].type).toBe("feColorMatrix");
-    expect(result!.primitives[4].type).toBe("feMerge");
+    // NORMAL-blend recipe matches Figma's exporter: a transparent
+    // BackgroundImageFix seed, shadow tint blended over that seed, and
+    // SourceGraphic blended over the accumulated shadow.
+    expect(result!.primitives).toHaveLength(7);
+    expect(result!.primitives[0].type).toBe("feFlood");
+    expect(result!.primitives[1].type).toBe("feColorMatrix");
+    expect(result!.primitives[2].type).toBe("feOffset");
+    expect(result!.primitives[3].type).toBe("feGaussianBlur");
+    expect(result!.primitives[4].type).toBe("feColorMatrix");
+    expect(result!.primitives[5].type).toBe("feBlend");
+    expect(result!.primitives[6].type).toBe("feBlend");
+    const sourceBlend = result!.primitives[6];
+    if (sourceBlend.type === "feBlend") {
+      expect(sourceBlend.in).toBe("SourceGraphic");
+      expect(sourceBlend.mode).toBe("normal");
+    }
   });
 
   it("resolves OVERLAY-blend drop shadow with composite-out", () => {
@@ -372,32 +397,25 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    // Non-NORMAL recipe adds composite-out + final feBlend with the
-    // configured mode. The composite-out is what prevents shadow tint
-    // from leaking through translucent rounded-corner AA edges into
-    // OVERLAY-blended sources (rounded-corner pink-halo regression).
-    //   1. feColorMatrix (SourceAlpha → hardAlpha)
-    //   2. feOffset
-    //   3. feGaussianBlur
-    //   4. feComposite (out, in2=hardAlpha)
-    //   5. feColorMatrix → tinted RGBA shadow
-    //   6. feBlend (mode=overlay, in2=SourceGraphic)
-    //   7. feMerge
-    expect(result!.primitives).toHaveLength(7);
-    expect(result!.primitives[0].type).toBe("feColorMatrix");
-    expect(result!.primitives[1].type).toBe("feOffset");
-    expect(result!.primitives[2].type).toBe("feGaussianBlur");
-    expect(result!.primitives[3].type).toBe("feComposite");
-    expect(result!.primitives[4].type).toBe("feColorMatrix");
-    expect(result!.primitives[5].type).toBe("feBlend");
-    expect(result!.primitives[6].type).toBe("feMerge");
-    const composite = result!.primitives[3];
+    // Non-NORMAL recipe adds composite-out, then blends the shadow
+    // over the current drop-shadow backdrop with the authored mode.
+    expect(result!.primitives).toHaveLength(8);
+    expect(result!.primitives[0].type).toBe("feFlood");
+    expect(result!.primitives[1].type).toBe("feColorMatrix");
+    expect(result!.primitives[2].type).toBe("feOffset");
+    expect(result!.primitives[3].type).toBe("feGaussianBlur");
+    expect(result!.primitives[4].type).toBe("feComposite");
+    expect(result!.primitives[5].type).toBe("feColorMatrix");
+    expect(result!.primitives[6].type).toBe("feBlend");
+    expect(result!.primitives[7].type).toBe("feBlend");
+    const composite = result!.primitives[4];
     if (composite.type === "feComposite") {
       expect(composite.operator).toBe("out");
     }
-    const blend = result!.primitives[5];
+    const blend = result!.primitives[6];
     if (blend.type === "feBlend") {
       expect(blend.mode).toBe("overlay");
+      expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
 
@@ -440,23 +458,26 @@ describe("Effects resolution (shared SoT)", () => {
     //      where hardAlpha is NOT, producing the 1-px sliver at α=1.
     //   4. feFlood (shadow colour at full opacity, fills the filter region).
     //   5. feComposite (in, in2=composited) — masks the flood to the sliver.
-    //   6. feMerge (composites tinted shadow under SourceGraphic).
-    expect(result!.primitives).toHaveLength(6);
-    expect(result!.primitives[0].type).toBe("feColorMatrix");
-    expect(result!.primitives[1].type).toBe("feOffset");
+    //   6. feBlend (composites tinted shadow over BackgroundImageFix).
+    //   7. feBlend (composites SourceGraphic over that shadow).
+    expect(result!.primitives).toHaveLength(8);
+    expect(result!.primitives[0].type).toBe("feFlood");
+    expect(result!.primitives[1].type).toBe("feColorMatrix");
+    expect(result!.primitives[2].type).toBe("feOffset");
     // Critical: the offset's input MUST be the binarised hardAlpha,
     // not the anti-aliased SourceAlpha. Operating on SourceAlpha here
     // bakes the source's anti-aliased edge into the offset sliver, and
     // after feComposite "out" against hardAlpha the sliver retains the
     // 0.5..0.99 AA values instead of a clean 1.0.
-    const offsetPrim = result!.primitives[1];
+    const offsetPrim = result!.primitives[2];
     if (offsetPrim.type === "feOffset") {
-      expect(offsetPrim.in).toBe(result!.primitives[0].type === "feColorMatrix" ? result!.primitives[0].result : undefined);
+      expect(offsetPrim.in).toBe(result!.primitives[1].type === "feColorMatrix" ? result!.primitives[1].result : undefined);
     }
-    expect(result!.primitives[2].type).toBe("feComposite");
-    expect(result!.primitives[3].type).toBe("feFlood");
-    expect(result!.primitives[4].type).toBe("feComposite");
-    expect(result!.primitives[5].type).toBe("feMerge");
+    expect(result!.primitives[3].type).toBe("feComposite");
+    expect(result!.primitives[4].type).toBe("feFlood");
+    expect(result!.primitives[5].type).toBe("feComposite");
+    expect(result!.primitives[6].type).toBe("feBlend");
+    expect(result!.primitives[7].type).toBe("feBlend");
   });
 
   it("resolves inner shadow", () => {
@@ -470,41 +491,89 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    // Inner-shadow recipe (matching the WebGL renderer's
-    // `shapeAlpha * (1 - blurredAlpha_at_offset)`) emits 6
-    // primitives:
-    //   feOffset (SourceAlpha by dx,dy)
+    // Inner-shadow recipe mirrors Figma's SVG exporter:
+    //   feFlood (transparent BackgroundImageFix)
+    //   feBlend (SourceGraphic over BackgroundImageFix) → shape
+    //   feColorMatrix (SourceAlpha → hardAlpha via 127x binarisation)
+    //   feOffset (hardAlpha by dx,dy)
     //   feGaussianBlur
-    //   feComposite OUT (SourceAlpha minus shifted-blurred) → band
-    //   feFlood (shadow colour)
-    //   feComposite IN (flood × band) → coloured inner band
-    //   feMerge (terminal: SourceGraphic + inner band on top)
-    expect(result!.primitives).toHaveLength(6);
-    expect(result!.primitives[0].type).toBe("feOffset");
-    expect(result!.primitives[1].type).toBe("feGaussianBlur");
-    expect(result!.primitives[2].type).toBe("feComposite");
-    expect(result!.primitives[3].type).toBe("feFlood");
-    expect(result!.primitives[4].type).toBe("feComposite");
-    // And the final primitive must be feMerge so SourceGraphic shows through.
-    expect(result!.primitives[5].type).toBe("feMerge");
-    // Cross-check the band composite operator+inputs — this is the
-    // step that earlier landed the shadow *outside* the original.
-    const band = result!.primitives[2];
-    if (band.type === "feComposite") {
-      expect(band.operator).toBe("out");
-      expect(band.in).toBe("SourceAlpha");
+    //   feComposite arithmetic (hardAlpha - shifted blurred alpha) → band
+    //   feColorMatrix (tint the band)
+    //   feBlend (band over the composed foreground)
+    expect(result!.primitives).toHaveLength(8);
+    expect(result!.primitives[0].type).toBe("feFlood");
+    expect(result!.primitives[1].type).toBe("feBlend");
+    expect(result!.primitives[2].type).toBe("feColorMatrix");
+    expect(result!.primitives[3].type).toBe("feOffset");
+    expect(result!.primitives[4].type).toBe("feGaussianBlur");
+    expect(result!.primitives[5].type).toBe("feComposite");
+    expect(result!.primitives[6].type).toBe("feColorMatrix");
+    expect(result!.primitives[7].type).toBe("feBlend");
+    const shape = result!.primitives[1];
+    if (shape.type === "feBlend") {
+      expect(shape.in).toBe("SourceGraphic");
+      expect(shape.in2).toBe("BackgroundImageFix");
     }
+    const hardAlpha = result!.primitives[2];
+    const offset = result!.primitives[3];
+    if (hardAlpha.type === "feColorMatrix") {
+      expect(hardAlpha.in).toBe("SourceAlpha");
+    }
+    if (offset.type === "feOffset") {
+      expect(offset.in).toBe(hardAlpha.type === "feColorMatrix" ? hardAlpha.result : undefined);
+    }
+    const band = result!.primitives[5];
+    if (band.type === "feComposite") {
+      expect(band.operator).toBe("arithmetic");
+      expect(band.k2).toBe(-1);
+      expect(band.k3).toBe(1);
+      expect(band.in2).toBe(hardAlpha.type === "feColorMatrix" ? hardAlpha.result : undefined);
+    }
+    const blend = result!.primitives[7];
+    if (blend.type === "feBlend") {
+      expect(blend.in2).toBe(shape.type === "feBlend" ? shape.result : undefined);
+    }
+  });
+
+  it("keeps inner-shadow filter bounds on the source element bounds", () => {
+    const effects: Effect[] = [{
+      type: "inner-shadow",
+      offset: { x: 0, y: -8 },
+      radius: 16,
+      color: BLACK_50,
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids, { x: 10, y: 20, width: 30, height: 40 });
+
+    expect(result?.filterBounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+  });
+
+  it("expands mixed shadow filter bounds from drop-shadow only", () => {
+    const effects: Effect[] = [
+      {
+        type: "inner-shadow",
+        offset: { x: 0, y: -8 },
+        radius: 16,
+        color: BLACK_50,
+      },
+      {
+        type: "drop-shadow",
+        offset: { x: 0, y: 1 },
+        radius: 2,
+        color: BLACK_50,
+      },
+    ];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids, { x: 0, y: 0, width: 10, height: 10 });
+
+    expect(result?.filterBounds).toEqual({ x: -2, y: -1, width: 14, height: 14 });
   });
 
   // Regression: Windows 98-style 3D beveled buttons stack four
   // INNER_SHADOWs (top-left highlight + secondary highlight, plus
-  // bottom-right shadow + secondary shadow). Earlier every inner
-  // shadow emitted its own `feMerge[SourceGraphic, inner]`, leaving
-  // only the LAST shadow in the filter output (SVG filter chains
-  // surface the most recent primitive's `result`, so earlier merges
-  // became orphans). Now every inner-shadow result accumulates and
-  // the trailing terminal `feMerge` lists them above `SourceGraphic`.
-  it("stacks multiple inner shadows in a single terminal feMerge", () => {
+  // bottom-right shadow + secondary shadow). Each band must blend
+  // over the previously composed foreground in declaration order.
+  it("stacks multiple inner shadows as sequential foreground blends", () => {
     const effects: Effect[] = [
       { type: "inner-shadow", offset: { x: 2, y: 2 }, radius: 0, color: { r: 0.85, g: 0.85, b: 0.85, a: 1 } },
       { type: "inner-shadow", offset: { x: -2, y: -2 }, radius: 0, color: { r: 0.5, g: 0.5, b: 0.5, a: 1 } },
@@ -515,31 +584,34 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    // 4 shadows × 5 primitives each + 1 terminal feMerge = 21.
-    expect(result!.primitives).toHaveLength(4 * 5 + 1);
+    // BackgroundImageFix + shape, then 4 shadows x 5 band
+    // primitives each + 4 foreground blends.
+    expect(result!.primitives).toHaveLength(2 + 4 * 5 + 4);
     const last = result!.primitives[result!.primitives.length - 1];
-    expect(last.type).toBe("feMerge");
-    if (last.type !== "feMerge") { return; }
-    // First node is SourceGraphic, then the 4 inner-shadow results in
-    // declaration order.
-    expect(last.nodes).toHaveLength(5);
-    expect(last.nodes[0]).toBe("SourceGraphic");
-    // Every other node must be a unique inner-* result ID.
-    const ids4 = last.nodes.slice(1);
-    expect(new Set(ids4).size).toBe(4);
-    for (const id of ids4) {
-      expect(id).toMatch(/^inner-/);
+    expect(last.type).toBe("feBlend");
+    const blends = result!.primitives.filter((primitive) => {
+      if (primitive.type !== "feBlend") {
+        return false;
+      }
+      return primitive.result?.startsWith("inner-shadow-") === true;
+    });
+    expect(blends).toHaveLength(4);
+    const firstBlend = blends[0];
+    if (firstBlend.type === "feBlend") {
+      expect(firstBlend.in2).toMatch(/^shape-/);
+    }
+    for (const blend of blends) {
+      if (blend.type === "feBlend") {
+        expect(blend.result).toMatch(/^inner-shadow-/);
+      }
     }
   });
 
   // Regression guard for the spread branch of the inner-shadow
-  // recipe. A non-zero `spread` morphologically dilates/erodes the
-  // shifted SourceAlpha BEFORE the blur — without it, "Dilate the
-  // shadow by 3 px" silently no-ops and renders the unspread
-  // baseline. The recipe must thread feMorphology between feOffset
-  // and feGaussianBlur, consuming the offset alpha and feeding the
-  // blur.
-  it("inner-shadow with positive spread inserts an feMorphology dilate", () => {
+  // recipe. Figma's SVG exporter applies positive inset shadow spread
+  // as an erode of SourceAlpha before the offset/blur chain; this
+  // widens the inner band after `hardAlpha - blurred(erodedAlpha)`.
+  it("inner-shadow with positive spread inserts an feMorphology erode", () => {
     const effects: Effect[] = [{
       type: "inner-shadow",
       offset: { x: 0, y: 2 },
@@ -552,24 +624,31 @@ describe("Effects resolution (shared SoT)", () => {
 
     expect(result).toBeDefined();
     // Pipeline with spread:
-    //   feOffset → feMorphology(dilate) → feGaussianBlur →
-    //   feComposite OUT → feFlood → feComposite IN → feMerge
-    expect(result!.primitives).toHaveLength(7);
-    expect(result!.primitives[0].type).toBe("feOffset");
-    expect(result!.primitives[1].type).toBe("feMorphology");
-    expect(result!.primitives[2].type).toBe("feGaussianBlur");
-    const morphology = result!.primitives[1];
+    //   feFlood → feBlend(shape) → feColorMatrix → feOffset →
+    //   feMorphology(dilate) → feGaussianBlur →
+    //   feComposite arithmetic → feColorMatrix → feBlend
+    expect(result!.primitives).toHaveLength(9);
+    expect(result!.primitives[0].type).toBe("feFlood");
+    expect(result!.primitives[1].type).toBe("feBlend");
+    expect(result!.primitives[2].type).toBe("feColorMatrix");
+    expect(result!.primitives[3].type).toBe("feMorphology");
+    expect(result!.primitives[4].type).toBe("feOffset");
+    expect(result!.primitives[5].type).toBe("feGaussianBlur");
+    const morphology = result!.primitives[3];
     if (morphology.type === "feMorphology") {
-      expect(morphology.operator).toBe("dilate");
+      expect(morphology.in).toBe("SourceAlpha");
+      expect(morphology.operator).toBe("erode");
       expect(morphology.radius).toBe(3);
+    }
+    const offset = result!.primitives[4];
+    if (offset.type === "feOffset") {
+      expect(offset.in).toBe(morphology.type === "feMorphology" ? morphology.result : undefined);
     }
   });
 
-  // Regression guard for negative spread (erode). The same pipeline
-  // shape must hold with `operator="erode"`. Erode crops the shifted
-  // silhouette inward so the shadow band shrinks — a behavioural
-  // mirror of dilate that must not be silently dropped.
-  it("inner-shadow with negative spread inserts an feMorphology erode", () => {
+  // Regression guard for negative spread. It is the inverse branch of
+  // Figma's inset-shadow spread semantics and must dilate SourceAlpha.
+  it("inner-shadow with negative spread inserts an feMorphology dilate", () => {
     const effects: Effect[] = [{
       type: "inner-shadow",
       offset: { x: 0, y: 2 },
@@ -579,10 +658,11 @@ describe("Effects resolution (shared SoT)", () => {
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
-    const morphology = result!.primitives[1];
+    const morphology = result!.primitives[3];
     expect(morphology.type).toBe("feMorphology");
     if (morphology.type === "feMorphology") {
-      expect(morphology.operator).toBe("erode");
+      expect(morphology.in).toBe("SourceAlpha");
+      expect(morphology.operator).toBe("dilate");
       expect(morphology.radius).toBe(2);
     }
   });
@@ -601,7 +681,7 @@ describe("Effects resolution (shared SoT)", () => {
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
-    const blur = result!.primitives[1];
+    const blur = result!.primitives[4];
     expect(blur.type).toBe("feGaussianBlur");
     if (blur.type === "feGaussianBlur") {
       expect(blur.stdDeviation).toBeCloseTo(4);
@@ -623,13 +703,12 @@ describe("Effects resolution (shared SoT)", () => {
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids);
-    // The non-default blend appends feBlend before the terminal merge.
-    expect(result!.primitives).toHaveLength(7);
-    const blend = result!.primitives[5];
+    expect(result!.primitives).toHaveLength(8);
+    const blend = result!.primitives[7];
     expect(blend.type).toBe("feBlend");
     if (blend.type === "feBlend") {
       expect(blend.mode).toBe("soft-light");
-      expect(blend.in2).toBe("SourceGraphic");
+      expect(blend.in2).toMatch(/^shape-/);
     }
   });
 
@@ -644,6 +723,43 @@ describe("Effects resolution (shared SoT)", () => {
     expect(result).toBeDefined();
     expect(result!.primitives).toHaveLength(1);
     expect(result!.primitives[0].type).toBe("feGaussianBlur");
+  });
+
+  it("applies foreground blur to the composed shadow result", () => {
+    const effects: Effect[] = [
+      {
+        type: "inner-shadow",
+        offset: { x: 0.2, y: 0 },
+        radius: 0.2,
+        color: { r: 0.65, g: 0.65, b: 0.63, a: 1 },
+      },
+      {
+        type: "inner-shadow",
+        offset: { x: -0.2, y: 0 },
+        radius: 0.2,
+        color: BLACK_50,
+      },
+      {
+        type: "layer-blur",
+        radius: 0.803652,
+      },
+    ];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+
+    expect(result).toBeDefined();
+    const primitives = result!.primitives;
+    const composed = primitives[primitives.length - 2];
+    const blur = primitives[primitives.length - 1];
+    expect(composed.type).toBe("feBlend");
+    expect(blur.type).toBe("feGaussianBlur");
+    if (composed.type === "feBlend") {
+      expect(composed.result).toMatch(/^inner-shadow-/);
+    }
+    if (blur.type === "feGaussianBlur") {
+      expect(blur.in).toBe(composed.type === "feBlend" ? composed.result : undefined);
+      expect(blur.stdDeviation).toBeCloseTo(0.401826);
+    }
   });
 
   it("skips background blur (not supported in SVG)", () => {

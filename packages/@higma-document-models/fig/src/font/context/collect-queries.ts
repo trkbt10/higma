@@ -10,7 +10,7 @@
  * INSTANCE recursion, symbol cycles).
  */
 
-import { figmaFontToQuery, fontQueryKey, type FontQuery } from "../query";
+import { figmaFontToQuery, figmaTextFontToQuery, fontQueryKey, type FontQuery } from "../query";
 import type { FigFontName, FigKiwiVariableModeBySetMap, FigNode } from "../../types";
 import { getNodeType, guidToString } from "../../domain";
 import { mergeVariableModeBySetMap, type SymbolResolver } from "../../symbols";
@@ -23,6 +23,7 @@ import { mergeVariableModeBySetMap, type SymbolResolver } from "../../symbols";
 type FontBearingNode = {
   readonly type?: { readonly name?: string } | string;
   readonly fontName?: FigFontName;
+  readonly derivedTextData?: FigNode["derivedTextData"];
   readonly textData?: {
     readonly fontName?: FigFontName;
     readonly styleOverrideTable?: readonly { readonly styleID: number; readonly fontName?: FigFontName }[];
@@ -73,8 +74,9 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
 
   function collectTextNodeFonts(node: FontBearingNode): void {
     const baseFontName: FigFontName | undefined = node.textData?.fontName ?? node.fontName;
-    if (baseFontName !== undefined) {
-      pushQuery(figmaFontToQuery(baseFontName));
+    const metadataFontName = node.derivedTextData?.fontMetaData?.[0]?.key?.family;
+    if (baseFontName !== undefined || metadataFontName !== undefined) {
+      pushQuery(figmaTextFontToQuery(baseFontName, node.derivedTextData?.fontMetaData));
     }
     for (const override of node.textData?.styleOverrideTable ?? []) {
       if (override.fontName !== undefined) {

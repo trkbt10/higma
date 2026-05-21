@@ -126,8 +126,6 @@ export function createSiteEditorSession(document: SiteDocument): SiteEditorSessi
   return createEditorSession("site", document, document.insights);
 }
 
-type FigFamilyRenderableNode = FigNode;
-
 function variantBelongsToActiveSurface(
   variant: SiteBreakpointVariant,
   activeSurfaceId: string | null,
@@ -154,9 +152,9 @@ function readVariantNodeIds(options: SiteFigRenderSurfaceOptions | null): Readon
 
 function filterNodeForVariantIds(
   context: FigFamilyDocumentContext,
-  node: FigFamilyRenderableNode,
+  node: FigNode,
   variantNodeIds: ReadonlySet<string>,
-): FigFamilyRenderableNode | null {
+): FigNode | null {
   if (node.guid === undefined) {
     throw new Error(`Site fig render surface found node without guid: ${node.name ?? "(unnamed)"}`);
   }
@@ -181,9 +179,9 @@ function filterNodeForVariantIds(
 
 function filterPageChildrenForVariants(
   context: FigFamilyDocumentContext,
-  children: readonly FigFamilyRenderableNode[],
+  children: readonly FigNode[],
   variantNodeIds: ReadonlySet<string> | null,
-): readonly FigFamilyRenderableNode[] {
+): readonly FigNode[] {
   if (!variantNodeIds) {
     return children;
   }

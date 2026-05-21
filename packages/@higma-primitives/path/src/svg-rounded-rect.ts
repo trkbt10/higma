@@ -19,6 +19,51 @@
  */
 
 import { KAPPA } from "./contours";
+import { clampCornerRadius } from "./corner-radius";
+
+function cornerRadiusTuple(
+  radii: readonly [number, number, number, number],
+  width: number,
+  height: number,
+): readonly [number, number, number, number] {
+  const clamped = clampCornerRadius(radii, width, height);
+  if (clamped === undefined) {
+    return [0, 0, 0, 0];
+  }
+  if (typeof clamped === "number") {
+    return [clamped, clamped, clamped, clamped];
+  }
+  return clamped;
+}
+
+function maxSmoothingForEdge(length: number, a: number, b: number, insetHalf: number): number {
+  const radiusSum = a + b;
+  if (radiusSum <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return (length + insetHalf * 2) / radiusSum - 1;
+}
+
+function clampSmoothingForRoundedRect(
+  width: number,
+  height: number,
+  radii: readonly [number, number, number, number],
+  smoothing: number,
+  insetHalf: number,
+): number {
+  const [tl, tr, br, bl] = radii;
+  const max = Math.min(
+    smoothing,
+    maxSmoothingForEdge(width, tl, tr, insetHalf),
+    maxSmoothingForEdge(height, tr, br, insetHalf),
+    maxSmoothingForEdge(width, bl, br, insetHalf),
+    maxSmoothingForEdge(height, tl, bl, insetHalf),
+  );
+  if (max <= 0) {
+    return 0;
+  }
+  return max;
+}
 
 /**
  * Build a rounded rect SVG path d string using cubic Bézier corners.
@@ -46,7 +91,7 @@ export function buildRoundedRectPathD(
   radii: readonly [number, number, number, number],
   origin: { x: number; y: number } = { x: 0, y: 0 },
 ): string {
-  const [tl, tr, br, bl] = radii;
+  const [tl, tr, br, bl] = cornerRadiusTuple(radii, w, h);
   const cTl = tl * (1 - KAPPA);
   const cTr = tr * (1 - KAPPA);
   const cBr = br * (1 - KAPPA);
@@ -142,13 +187,18 @@ export function buildSmoothedRoundedRectPathD(
   if (smoothing <= 0) {
     return buildRoundedRectPathD(w, h, radii, origin);
   }
-  const [tl, tr, br, bl] = radii;
+  const clampedRadii = cornerRadiusTuple(radii, w, h);
+  const effectiveSmoothing = clampSmoothingForRoundedRect(w, h, clampedRadii, smoothing, insetHalf);
+  if (effectiveSmoothing <= 0) {
+    return buildRoundedRectPathD(w, h, clampedRadii, origin);
+  }
+  const [tl, tr, br, bl] = clampedRadii;
   const x = origin.x;
   const y = origin.y;
-  const tlParams = cornerParams(tl, smoothing, insetHalf);
-  const trParams = cornerParams(tr, smoothing, insetHalf);
-  const brParams = cornerParams(br, smoothing, insetHalf);
-  const blParams = cornerParams(bl, smoothing, insetHalf);
+  const tlParams = cornerParams(tl, effectiveSmoothing, insetHalf);
+  const trParams = cornerParams(tr, effectiveSmoothing, insetHalf);
+  const brParams = cornerParams(br, effectiveSmoothing, insetHalf);
+  const blParams = cornerParams(bl, effectiveSmoothing, insetHalf);
   // Figma's SVG exporter splits the smoothing-in / smoothing-out
   // transitions of each corner into two sub-cubics (5 cubics per
   // corner) when emitting INSIDE/OUTSIDE-aligned strokes, but uses a

@@ -30,7 +30,7 @@ import {
 import { figDocumentResources, type FigDocumentContext } from "@higma-document-io/fig";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { readKiwiTransform } from "@higma-document-models/fig/matrix";
-import type { FigNode, FigVector } from "@higma-document-models/fig/types";
+import type { FigMatrix, FigNode, FigVector } from "@higma-document-models/fig/types";
 
 export type RenderedNodeSvg = {
   /** Serialised standalone `<svg>` document. */

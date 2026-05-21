@@ -11,6 +11,7 @@ import type {
   FigValueWithUnits,
   KiwiEnumValue,
   FigNode,
+  FigDerivedTextData,
 } from "@higma-document-models/fig/types";
 import type {
   ExtractedTextProps,
@@ -21,7 +22,7 @@ import type {
 } from "./types";
 import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
 import { TEXT_AUTO_RESIZE_OMITTED_DEFAULT } from "@higma-document-models/fig/constants";
-import { figmaFontToQuery } from "@higma-document-models/fig/font";
+import { figmaTextFontToQuery } from "@higma-document-models/fig/font";
 
 /**
  * Structured text data fields.
@@ -55,8 +56,12 @@ export type TextNodeInput = {
   readonly size?: FigVector;
   /** Kiwi TextData payload. */
   readonly textData?: TextDataFields;
+  /** Kiwi precomputed text metrics. */
+  readonly derivedTextData?: FigDerivedTextData;
   /** Kiwi fill paints. */
   readonly fillPaints?: readonly FigPaint[];
+  /** Shared fill style reference resolved by text rendering before extraction. */
+  readonly styleIdForFill?: FigNode["styleIdForFill"];
   /** Additional Kiwi fields carried by FigNode. */
   readonly [key: string]: unknown;
 };
@@ -76,20 +81,22 @@ export function getValueWithUnits(val: FigValueWithUnits | number | undefined, d
   if (typeof val === "number") {
     return val;
   }
-  if (val && typeof val === "object" && "value" in val) {
-    const units = val.units;
-    const unitsName = typeof units === "string" ? units : units?.name;
-
-    if (unitsName === "PERCENT" && fontSize) {
-      return (val.value / 100) * fontSize;
-    }
-    // RAW = unitless em-relative multiplier (e.g., lineHeight 1.4 = 1.4 × fontSize)
-    if (unitsName === "RAW" && fontSize) {
-      return val.value * fontSize;
-    }
+  if (!val || typeof val !== "object" || !("value" in val)) {
+    return defaultValue;
+  }
+  const units = val.units;
+  const unitsName = typeof units === "string" ? units : units?.name;
+  if (!fontSize) {
     return val.value;
   }
-  return defaultValue;
+  if (unitsName === "PERCENT") {
+    return (val.value / 100) * fontSize;
+  }
+  // RAW = unitless em-relative multiplier (e.g., lineHeight 1.4 = 1.4 × fontSize)
+  if (unitsName === "RAW") {
+    return val.value * fontSize;
+  }
+  return val.value;
 }
 
 /**
@@ -163,7 +170,7 @@ export function extractTextProps(node: TextNodeInput): ExtractedTextProps {
   if (hasVisibleText && !fontName?.family) {
     throw new Error("TEXT node requires fontName.family for non-empty characters");
   }
-  const font = figmaFontToQuery(fontName);
+  const font = figmaTextFontToQuery(fontName, node.derivedTextData?.fontMetaData);
 
   // Letter spacing
   const letterSpacingRaw = td?.letterSpacing ?? raw?.letterSpacing;

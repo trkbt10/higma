@@ -117,6 +117,48 @@ describe("resolveRenderTree — text fill SoT", () => {
       fillOpacity: 0.75,
     });
   });
+
+  it("omits a TEXT clip when glyph contours fit inside the text box", () => {
+    const sg = makeSceneGraph([makeGlyphText("contained-text")]);
+    const tree = resolveRenderTree(sg);
+    const node = tree.children[0] as RenderTextNode;
+
+    expect(node.textClipId).toBeUndefined();
+  });
+
+  it("does not infer a TEXT clip from glyph contours exceeding the text box", () => {
+    const sg = makeSceneGraph([{
+      ...makeGlyphText("overflowing-text"),
+      width: 5,
+    }]);
+    const tree = resolveRenderTree(sg);
+    const node = tree.children[0] as RenderTextNode;
+
+    expect(node.textClipId).toBeUndefined();
+  });
+
+  it("uses Kiwi truncation height as the only TEXT clip source", () => {
+    const sg = makeSceneGraph([{
+      ...makeGlyphText("truncated-text"),
+      textTruncation: "ENDING",
+      textTruncationClipHeight: 6,
+    }]);
+    const tree = resolveRenderTree(sg);
+    const node = tree.children[0] as RenderTextNode;
+
+    expect(node.textClipId).toBeDefined();
+    expect(node.defs).toContainEqual({
+      type: "clip-path",
+      id: node.textClipId,
+      shape: {
+        kind: "rect",
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 6,
+      },
+    });
+  });
 });
 
 describe("resolveRenderTree — multi-paint fills", () => {
@@ -203,7 +245,7 @@ describe("resolveRenderTree — multi-paint fills", () => {
           { type: "L", x: 0, y: 20 },
           { type: "Z" },
         ],
-        windingRule: "nonzero",
+        windingRule: "evenodd",
       }],
     };
     const frame: FrameNode = {
@@ -274,6 +316,119 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
 
     expect(node.childClipId).toBeDefined();
     expect(node.omitChildClip).toBeUndefined();
+  });
+
+  it("omits a rounded frame clip when children are fully inside the Kiwi clip shape", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("rounded-contained-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      cornerRadius: 12,
+      surfaceShape: makeFrameSurface(100, 100, 12),
+      fills: [],
+      clipsContent: true,
+      children: [makeRect("inset-child", { ...IDENTITY, m02: 16, m12: 16 })],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeUndefined();
+  });
+
+  it("omits a decoded rounded-rect path clip when children are fully inside that path", () => {
+    const surfaceShape: FrameNode["surfaceShape"] = {
+      type: "path",
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 5 },
+          { type: "C", x1: 0, y1: 2.24, x2: 2.24, y2: 0, x: 5, y: 0 },
+          { type: "L", x: 95, y: 0 },
+          { type: "C", x1: 97.76, y1: 0, x2: 100, y2: 2.24, x: 100, y: 5 },
+          { type: "L", x: 100, y: 95 },
+          { type: "C", x1: 100, y1: 97.76, x2: 97.76, y2: 100, x: 95, y: 100 },
+          { type: "L", x: 5, y: 100 },
+          { type: "C", x1: 2.24, y1: 100, x2: 0, y2: 97.76, x: 0, y: 95 },
+          { type: "L", x: 0, y: 5 },
+        ],
+        windingRule: "evenodd",
+      }],
+    };
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("path-rounded-contained-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      cornerRadius: 5,
+      surfaceShape,
+      fills: [],
+      clipsContent: true,
+      clip: surfaceShape,
+      children: [makeRect("path-inset-child", { ...IDENTITY, m02: 16, m12: 16 })],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeUndefined();
+  });
+
+  it("resolves a decoded rounded-rect path stroke as a rect stroke shape", () => {
+    const surfaceShape: FrameNode["surfaceShape"] = {
+      type: "path",
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 5 },
+          { type: "C", x1: 0, y1: 2.24, x2: 2.24, y2: 0, x: 5, y: 0 },
+          { type: "L", x: 95, y: 0 },
+          { type: "C", x1: 97.76, y1: 0, x2: 100, y2: 2.24, x: 100, y: 5 },
+          { type: "L", x: 100, y: 95 },
+          { type: "C", x1: 100, y1: 97.76, x2: 97.76, y2: 100, x: 95, y: 100 },
+          { type: "L", x: 5, y: 100 },
+          { type: "C", x1: 2.24, y1: 100, x2: 0, y2: 97.76, x: 0, y: 95 },
+          { type: "L", x: 0, y: 5 },
+        ],
+        windingRule: "evenodd",
+      }],
+    };
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("path-rounded-stroked-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      cornerRadius: 5,
+      surfaceShape,
+      fills: [],
+      stroke: {
+        ...BASIC_STROKE,
+        width: 1,
+        align: "INSIDE",
+        dashPattern: [10, 5],
+      },
+      clipsContent: false,
+      children: [],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+    const strokeRendering = node.background?.strokeRendering;
+
+    expect(strokeRendering?.mode).toBe("masked");
+    if (strokeRendering?.mode !== "masked") {
+      return;
+    }
+    expect(strokeRendering.shape.kind).toBe("rect");
+    expect(strokeRendering.attrs.strokeDasharray).toBe("10 5");
   });
 
   it("emits path clips carried by the FrameNode surface SoT", () => {
@@ -630,6 +785,99 @@ describe("resolveRenderTree — stroke layers", () => {
     expect(node.strokeRendering!.mode).toBe("uniform");
   });
 
+  it("resolves simple OUTSIDE path strokes as Figma's aligned centerline path", () => {
+    const pathNode: PathNode = {
+      type: "path",
+      id: createNodeId("outside-path-stroke"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 10, y: 0 },
+          { type: "L", x: 10, y: 10 },
+          { type: "L", x: 0, y: 10 },
+          { type: "L", x: 0, y: 0 },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [RED_SOLID],
+      stroke: {
+        ...BASIC_STROKE,
+        align: "OUTSIDE",
+      },
+    };
+    const sg = makeSceneGraph([pathNode]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderPathNode;
+    expect(node.paths[0].d).toBe("M-1 -1L11 -1L11 11L-1 11Z");
+    expect(node.defs.some((def) => def.type === "stroke-mask")).toBe(false);
+    expect(node.strokeRendering).toBeDefined();
+    expect(node.strokeRendering!.mode).toBe("uniform");
+    if (node.strokeRendering!.mode === "uniform") {
+      expect(node.strokeRendering!.attrs.strokeWidth).toBe(2);
+      expect(node.strokeRendering!.attrs.strokeAlign).toBeUndefined();
+    }
+  });
+
+  it("resolves precomputed path stroke geometry as filled stroke outline", () => {
+    const pathNode: PathNode = {
+      type: "path",
+      id: createNodeId("path-stroke-geometry"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 10, y: 0 },
+          { type: "L", x: 10, y: 10 },
+          { type: "L", x: 0, y: 10 },
+          { type: "L", x: 0, y: 0 },
+        ],
+        windingRule: "evenodd",
+      }],
+      strokeContours: [{
+        commands: [
+          { type: "M", x: -1, y: -1 },
+          { type: "L", x: 11, y: -1 },
+          { type: "L", x: 11, y: 11 },
+          { type: "L", x: -1, y: 11 },
+          { type: "L", x: -1, y: -1 },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [RED_SOLID],
+      stroke: {
+        ...BASIC_STROKE,
+        align: "INSIDE",
+      },
+    };
+    const sg = makeSceneGraph([pathNode]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderPathNode;
+    expect(node.paths[0].d).toBe("M0 0L10 0L10 10L0 10L0 0");
+    expect(node.paths[0].fillRule).toBe("evenodd");
+    const strokeRendering = node.strokeRendering;
+    expect(strokeRendering).toBeDefined();
+    if (strokeRendering === undefined || strokeRendering.mode !== "geometry") {
+      throw new Error("expected geometry stroke rendering");
+    }
+    expect(strokeRendering.paths[0].d).toBe("M-1 -1L11 -1L11 11L-1 11L-1 -1");
+    expect(strokeRendering.layers[0].attrs.stroke).toBe("#000000");
+    expect(strokeRendering.mask?.strokeAlign).toBe("INSIDE");
+    expect(strokeRendering.mask?.shape.kind).toBe("path");
+    if (strokeRendering.mask?.shape.kind === "path") {
+      expect(strokeRendering.mask.shape.fillRule).toBe("evenodd");
+    }
+    expect(node.defs.some((def) => def.type === "stroke-mask" && def.id === strokeRendering.mask?.id)).toBe(true);
+  });
+
   it("resolves multi-paint stroke as layers", () => {
     const rect: RectNode = {
       type: "rect",
@@ -701,14 +949,9 @@ describe("resolveRenderTree — drop shadow z-order", () => {
 
   it("shadow is placed BEHIND SourceGraphic (not composited on top)", () => {
     // Regression for a VECTOR shadow z-order bug: a prior
-    // implementation composited the shadow on top of SourceGraphic via
-    // feBlend when effect.blendMode !== "normal", producing a shadow that
-    // visually appeared IN FRONT of the fill. The correct SVG recipe is
-    // feMerge(shadow, SourceGraphic): first node painted bottom, second
-    // on top. Figma's per-effect blendMode (MULTIPLY/SCREEN/etc.) cannot
-    // be applied inside an SVG filter without backdrop access, so we
-    // intentionally drop the blend-mode nuance in favour of correct
-    // z-order.
+    // implementation composited the shadow on top of SourceGraphic.
+    // Figma's exporter builds a backdrop chain and then blends
+    // SourceGraphic over the final drop-shadow result.
     const rect: RectNode = {
       type: "rect",
       id: createNodeId("rect-shadow-blend"),
@@ -737,15 +980,14 @@ describe("resolveRenderTree — drop shadow z-order", () => {
       throw new Error("Expected a filter def");
     }
     const prims = filterDef.filter.primitives;
-    // Last primitive must be feMerge with (shadow, SourceGraphic) in
-    // that order — this is what guarantees z-order.
     const last = prims[prims.length - 1];
-    expect(last.type).toBe("feMerge");
-    if (last.type !== "feMerge") {
-      throw new Error("Expected the final filter primitive to be feMerge");
+    expect(last.type).toBe("feBlend");
+    if (last.type !== "feBlend") {
+      throw new Error("Expected the final filter primitive to be feBlend");
     }
-    expect(last.nodes.length).toBe(2);
-    expect(last.nodes[1]).toBe("SourceGraphic");
+    expect(last.mode).toBe("normal");
+    expect(last.in).toBe("SourceGraphic");
+    expect(last.in2).toMatch(/^drop-shadow-/);
   });
 
   it("omits SourceGraphic for shadow-only geometry with no paint source", () => {
@@ -781,11 +1023,16 @@ describe("resolveRenderTree — drop shadow z-order", () => {
       throw new Error("Expected a filter def");
     }
     const last = filterDef.filter.primitives[filterDef.filter.primitives.length - 1];
-    if (last.type !== "feMerge") {
-      throw new Error("Expected the final filter primitive to be feMerge");
-    }
-
     expect(node.filterSource).toBe("effect-shape");
-    expect(last.nodes).not.toContain("SourceGraphic");
+    expect(filterDef.filter.primitives.every((primitive) => {
+      if ("in" in primitive && primitive.in === "SourceGraphic") {
+        return false;
+      }
+      if ("in2" in primitive && primitive.in2 === "SourceGraphic") {
+        return false;
+      }
+      return true;
+    })).toBe(true);
+    expect(last.type).toBe("feBlend");
   });
 });

@@ -7,7 +7,7 @@ import type { TextNode } from "@higma-document-renderers/fig/scene-graph";
 import { createSymbolResolver } from "@higma-document-models/fig/symbols";
 import { buildSceneGraph, type BuildSceneGraphOptions } from "./builder";
 import { resolveRenderTree } from "./render-tree";
-import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 const RECT_PATH: FontPath = {
   commands: [
@@ -120,6 +120,17 @@ function buildOptions(textFontResolver: BuildSceneGraphOptions["textFontResolver
 }
 
 describe("buildSceneGraph text font resolver", () => {
+  it("keeps TEXT node-level blend out of the scene wrapper", () => {
+    const sceneGraph = buildSceneGraph([{
+      ...makeTextNode(),
+      blendMode: { value: BLEND_MODE_VALUES.LINEAR_BURN, name: "LINEAR_BURN" },
+    }], buildOptions(() => FONT));
+    const text = sceneGraph.root.children[0] as TextNode;
+
+    expect(text.blendMode).toBeUndefined();
+    expect(text.fills[0]?.blendMode).toBeUndefined();
+  });
+
   it("promotes explicit cached font outlines into the renderer-neutral text node", () => {
     const sceneGraph = buildSceneGraph([makeTextNode()], buildOptions(() => FONT));
     const text = sceneGraph.root.children[0] as TextNode;

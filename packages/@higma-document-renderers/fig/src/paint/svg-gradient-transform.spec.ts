@@ -202,6 +202,59 @@ describe("radialGradientAttrs (SSoT vs Figma export)", () => {
     expect(Number(sy)).toBeCloseTo(50, 4);  // half height
   });
 
+  it("iOS AppStore Corner Shading radial gradients — inverse Kiwi transform", () => {
+    const first = radialGradientAttrs(
+      {
+        m00: 0,
+        m01: 4.080871105194092,
+        m02: 0.5452163219451904,
+        m10: -4.0559468269348145,
+        m11: 0,
+        m12: 0.4413057565689087,
+      },
+      { x: 0, y: 0, width: 86.79444885253906, height: 181.62542724609375 },
+    );
+    expect(first).toBeDefined();
+    const firstMatch = first!.gradientTransform.match(
+      /^translate\(([-\d.e+]+)\s+([-\d.e+]+)\)\s+rotate\(([-\d.e+]+)\)\s+scale\(([-\d.e+]+)\s+([-\d.e+]+)\)$/,
+    );
+    expect(firstMatch).not.toBeNull();
+    const [, firstTx, firstTy, firstAngle, firstSx, firstSy] = firstMatch!;
+    // Figma export: translate(32.5194 170.113) rotate(90) scale(22.2533 10.6997)
+    // The path origin is (33.7754, 172.125), so local centre is (-1.256, -2.012).
+    expect(Number(firstTx)).toBeCloseTo(-1.256, 3);
+    expect(Number(firstTy)).toBeCloseTo(-2.012, 3);
+    expect(Number(firstAngle)).toBeCloseTo(90, 4);
+    expect(Number(firstSx)).toBeCloseTo(22.2533, 4);
+    expect(Number(firstSy)).toBeCloseTo(10.6997, 4);
+
+    const sheared = radialGradientAttrs(
+      {
+        m00: 0.6633641123771667,
+        m01: 5.324599266052246,
+        m02: -5.35941219329834,
+        m10: -5.292078495025635,
+        m11: 0.6674402356147766,
+        m12: 5.053652763366699,
+      },
+      { x: 0, y: 0, width: 86.79444885253906, height: 181.62542724609375 },
+    );
+    expect(sheared).toBeDefined();
+    const shearedMatch = sheared!.gradientTransform.match(
+      /^matrix\(([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)\s+([-\d.e+]+)\)$/,
+    );
+    expect(shearedMatch).not.toBeNull();
+    const [, a, b, c, d, e, f] = shearedMatch!;
+    // Figma export: matrix(1.01202 16.7915 -8.07355 2.10482 119.163 349.732)
+    // Relative to path origin (33.7754, 172.125), translation is (85.388, 177.607).
+    expect(Number(a)).toBeCloseTo(1.01202, 4);
+    expect(Number(b)).toBeCloseTo(16.7915, 4);
+    expect(Number(c)).toBeCloseTo(-8.07355, 4);
+    expect(Number(d)).toBeCloseTo(2.10482, 4);
+    expect(Number(e)).toBeCloseTo(85.388, 3);
+    expect(Number(f)).toBeCloseTo(177.607, 3);
+  });
+
   it("undefined transform returns undefined", () => {
     const paint = paintWith(undefined);
     expect(radialGradientAttrs(paint.transform, { x: 0, y: 0, width: 100, height: 100 })).toBeUndefined();

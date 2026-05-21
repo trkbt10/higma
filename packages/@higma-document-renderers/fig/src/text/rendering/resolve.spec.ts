@@ -6,7 +6,10 @@ import type { AbstractFont, FontPath } from "@higma-document-models/fig/font";
 import { resolveTextLayout, resolveTextRendering } from "./resolve";
 import type { TextFontResolver } from "./types";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { asSolidPaint } from "@higma-document-models/fig/color";
 import { textLayoutToCursorLayout } from "../layout";
+import type { FigStyleRegistry } from "@higma-document-models/fig/domain";
+import type { FigSolidPaint } from "@higma-document-models/fig/types";
 
 const RECT_FONT_PATH: FontPath = {
   commands: [
@@ -76,6 +79,94 @@ describe("resolveTextRendering font outlines", () => {
     expect(rendering.glyphContours.map((contour) => contour.firstCharacter)).toEqual([0, 1, 2, 3, 4]);
     expect(rendering.props.font.family).toBe("Unit Test Sans");
     expect(rendering.layout.lines[0]?.text).toBe("Hello");
+  });
+
+  it("uses Kiwi fontMetaData fontWeight as the rendered FontQuery weight", () => {
+    const resolvedWeights: number[] = [];
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        fontName: { family: "Inter", style: "Regular" },
+      },
+      derivedTextData: {
+        baselines: [{
+          position: { x: 0, y: 10 },
+          width: 50,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 5,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Semibold" },
+          fontLineHeight: 1.2,
+          fontWeight: 590,
+        }],
+      },
+    }, {
+      blobs: [],
+      fontResolver: (query) => {
+        resolvedWeights.push(query.weight);
+        return RECT_FONT;
+      },
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      throw new Error("expected glyph text rendering");
+    }
+    expect(rendering.props.font.family).toBe("Inter");
+    expect(rendering.props.font.weight).toBe(590);
+    expect(resolvedWeights).toContain(590);
+  });
+
+  it("resolves TEXT base styleIdForFill through the style registry", () => {
+    const embeddedWhite: FigSolidPaint = {
+      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      opacity: 1,
+      visible: true,
+    };
+    const registryGrey: FigSolidPaint = {
+      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+      color: { r: 0.23529411852359772, g: 0.23529411852359772, b: 0.26274511218070984, a: 1 },
+      opacity: 0.18000000715255737,
+      visible: true,
+    };
+    const styleRegistry: FigStyleRegistry = {
+      paints: new Map([["text-fill", [registryGrey]]]),
+      effects: new Map(),
+      textProperties: new Map(),
+      layoutGrids: new Map(),
+    };
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      fillPaints: [embeddedWhite],
+      styleIdForFill: { assetRef: { key: "text-fill" } },
+    }, {
+      blobs: [],
+      fontResolver: RECT_FONT_RESOLVER,
+      styleRegistry,
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      throw new Error("expected glyph text rendering");
+    }
+    const firstFill = rendering.props.fillPaints?.[0];
+    if (firstFill === undefined) {
+      throw new Error("expected resolved fill paint");
+    }
+    const resolvedSolidFill = asSolidPaint(firstFill);
+    expect(rendering.runs[0]?.fillColor).toBe("#3c3c43");
+    expect(rendering.runs[0]?.fillOpacity).toBeCloseTo(0.18, 5);
+    if (resolvedSolidFill === undefined) {
+      throw new Error("expected resolved solid fill paint");
+    }
+    expect(resolvedSolidFill.color).toEqual(registryGrey.color);
+    expect(resolvedSolidFill.opacity).toBeCloseTo(0.18, 5);
   });
 
   it("ignores derivedLines when none of the lines carry characters", () => {
@@ -302,5 +393,50 @@ describe("resolveTextRendering font outlines", () => {
     }
     expect(rendering.layout.lines[0]?.charWidths).toEqual([2, 4, 4]);
     expect(rendering.layout.lines[0]?.width).toBe(10);
+  });
+
+  it("treats a baseline range ending at a hard newline as the paragraph line terminator", () => {
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "A\nB",
+      },
+      derivedTextData: {
+        baselines: [
+          {
+            position: { x: 0, y: 20 },
+            width: 10,
+            lineY: 0,
+            lineHeight: 24,
+            lineAscent: 16,
+            firstCharacter: 0,
+            endCharacter: 2,
+          },
+          {
+            position: { x: 0, y: 44 },
+            width: 10,
+            lineY: 24,
+            lineHeight: 24,
+            lineAscent: 16,
+            firstCharacter: 2,
+            endCharacter: 3,
+          },
+        ],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [],
+      fontResolver: RECT_FONT_RESOLVER,
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines.map((line) => line.text)).toEqual(["A", "B"]);
   });
 });

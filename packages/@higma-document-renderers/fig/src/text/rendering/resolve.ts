@@ -11,6 +11,7 @@ import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domai
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import type { KiwiEnumValue, FigDerivedGlyph, FigDerivedTextData, FigFontMetaData, FigGuid, FigTextStyleOverrideEntry } from "@higma-document-models/fig/types";
 import { guidToString } from "@higma-document-models/fig/domain";
+import { resolveStyledPaint } from "@higma-document-models/fig/symbols";
 import { computeTextLayout, extractTextProps, getFillColorAndOpacity } from "../layout";
 import type { ExtractedTextProps, TextLayout, TextLayoutSourceLine, TextNodeInput } from "../layout";
 import { extractDerivedTextPathData, extractTextPathData, hasDerivedGlyphs } from "../paths";
@@ -152,15 +153,15 @@ function resolveTruncation(
   derivedTextData: FigDerivedTextData | undefined,
 ): TextTruncation | undefined {
   const mode = typeof textTruncation === "string" ? textTruncation : textTruncation?.name;
-  if (mode !== "ENDING") {
-    return undefined;
-  }
   if (!derivedTextData) {
     return undefined;
   }
   const startIndex = derivedTextData.truncationStartIndex;
   if (typeof startIndex !== "number" || startIndex < 0) {
     return undefined;
+  }
+  if (mode !== undefined && mode !== "ENDING") {
+    throw new Error(`TEXT derivedTextData truncationStartIndex conflicts with textTruncation=${mode}`);
   }
   const mh = derivedTextData.truncatedHeight;
   return {
@@ -219,9 +220,18 @@ function baselineLineStrings(
   if (!Array.isArray(baselines) || baselines.length === 0) {
     return undefined;
   }
+  const paragraphStarts = paragraphStartOffsets(characters);
   return baselines.map((baseline) => {
     const range = readBaselineCharacterRange(baseline);
-    return characters.slice(range.firstCharacter, range.endCharacter);
+    const sourceRange = sourceRangeForCharacterRange(characters, range);
+    const paragraphStart = paragraphStarts[sourceRange.paragraphIndex];
+    if (paragraphStart === undefined) {
+      throw new Error("text-resolve:baseline-line-metrics:missing-paragraph-start");
+    }
+    return characters.slice(
+      paragraphStart + sourceRange.sourceStart,
+      paragraphStart + sourceRange.sourceEnd,
+    );
   });
 }
 
@@ -299,14 +309,26 @@ function sourceRangeForCharacterRange(
     throw new Error("text-resolve:baseline-line-metrics:missing-paragraph-start");
   }
   const paragraphEnd = paragraphEndForStart(characters, paragraphStarts, paragraphIndex);
-  if (range.endCharacter > paragraphEnd) {
+  const lineEnd = baselineLineEndExcludingParagraphTerminator(characters, range.endCharacter, paragraphEnd);
+  if (lineEnd > paragraphEnd) {
     throw new Error("text-resolve:baseline-line-metrics:range-crosses-paragraph");
   }
   return {
     paragraphIndex,
     sourceStart: range.firstCharacter - paragraphStart,
-    sourceEnd: range.endCharacter - paragraphStart,
+    sourceEnd: lineEnd - paragraphStart,
   };
+}
+
+function baselineLineEndExcludingParagraphTerminator(
+  characters: string,
+  endCharacter: number,
+  paragraphEnd: number,
+): number {
+  if (endCharacter === paragraphEnd + 1 && characters[paragraphEnd] === "\n") {
+    return paragraphEnd;
+  }
+  return endCharacter;
 }
 
 function requireFiniteBaselineMetric(value: number | undefined, field: string): number {
@@ -709,11 +731,10 @@ export type ResolveTextContext = {
   readonly blobs?: readonly FigBlob[];
   readonly fontResolver?: TextFontResolver;
   /**
-   * Document-wide style registry for resolving per-character override
-   * `styleIdForFill` references in `textData.styleOverrideTable`. When
-   * absent, runs collapse to a single base-fill run; a node carrying
-   * `characterStyleIDs` plus override `styleIdForFill` then trips the
-   * registry's no-substitution policy.
+   * Document-wide style registry for resolving TEXT `styleIdForFill`
+   * and per-character override `styleIdForFill` references. Rendering
+   * a styled TEXT without this registry is invalid because the
+   * registry is the file-level paint SoT.
    */
   readonly styleRegistry?: FigStyleRegistry;
 };
@@ -918,7 +939,7 @@ export function resolveTextLayout(
   node: TruncatableTextNode,
   ctx: ResolveTextContext,
 ): TextLayoutResolution {
-  const props = extractTextProps(node);
+  const props = resolveTextProps(node, ctx);
   return resolveTextLayoutFromProps(node, props, ctx);
 }
 
@@ -939,7 +960,7 @@ export function resolveTextRendering(
   node: TruncatableTextNode,
   ctx: ResolveTextContext,
 ): TextRendering {
-  const props = extractTextProps(node);
+  const props = resolveTextProps(node, ctx);
   if (props.characters.length === 0) {
     return { kind: "empty" };
   }
@@ -1010,6 +1031,31 @@ export function resolveTextRendering(
     fontMetrics: layoutResolution.fontMetrics,
   };
   return lines;
+}
+
+function resolveTextProps(
+  node: TruncatableTextNode,
+  ctx: ResolveTextContext,
+): ExtractedTextProps {
+  const styleRegistry = requireTextStyleRegistry(node, ctx);
+  const fillPaints = resolveStyledPaint(node.styleIdForFill, node.fillPaints, styleRegistry);
+  if (fillPaints === node.fillPaints) {
+    return extractTextProps(node);
+  }
+  return extractTextProps({ ...node, fillPaints });
+}
+
+function requireTextStyleRegistry(
+  node: TruncatableTextNode,
+  ctx: ResolveTextContext,
+): FigStyleRegistry {
+  if (ctx.styleRegistry !== undefined) {
+    return ctx.styleRegistry;
+  }
+  if (node.styleIdForFill !== undefined) {
+    throw new Error("Text rendering requires styleRegistry for TEXT styleIdForFill");
+  }
+  return EMPTY_FIG_STYLE_REGISTRY;
 }
 
 type DerivedGlyphRenderingInput = {

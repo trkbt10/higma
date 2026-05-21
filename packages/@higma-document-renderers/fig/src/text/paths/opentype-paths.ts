@@ -9,6 +9,7 @@ import type { AbstractFont, AbstractGlyph } from "@higma-document-models/fig/fon
 import { convertQuadraticsToCubic } from "@higma-primitives/path";
 import type { GlyphContour, PathContour, DecorationRect, TextPathResult } from "./types";
 import type { TextAlignHorizontal } from "../layout/types";
+import { figmaTextOutlineBaselineY } from "./text-outline-baseline";
 
 type FontForCharacter = (sourceIndex: number) => AbstractFont;
 
@@ -164,7 +165,7 @@ function extractGlyphPathContours(
     // (matching what `calculateMixedFontTextWidth` already folded into
     // the total run width).
     cursor.x += pairAdjustment(previousFont, font, previousGlyph, glyph) * scale;
-    const path = glyph.getPath(cursor.x, y, fontSize);
+    const path = glyph.getPath(cursor.x, figmaTextOutlineBaselineY(y), fontSize);
     const commands = convertQuadraticsToCubic(path.commands);
     if (commands.length > 0) {
       contours.push({ commands, firstCharacter: sourceStart + i });
@@ -200,7 +201,7 @@ export function createUnderlineRect(
 
   return {
     x: adjustedX,
-    y: y + underlineOffset,
+    y: figmaTextOutlineBaselineY(y) + underlineOffset,
     width: totalWidth,
     height: underlineThickness,
   };

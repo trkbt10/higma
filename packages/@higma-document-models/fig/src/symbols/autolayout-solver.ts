@@ -1,8 +1,8 @@
 /**
  * @file Figma autolayout solver — primary axis, counter axis, wrap, grid.
  *
- * Single entry point: `resolveAutoLayoutFrame(parent, children)`. It
- * dispatches on the Kiwi `stackMode` field:
+ * SymbolResolver uses `resolveAutoLayoutFrame(parent, children)` while
+ * materialising an INSTANCE. It dispatches on the Kiwi `stackMode` field:
  *
  *   - GRID                       → `applyGridLayout`
  *   - HORIZONTAL / VERTICAL + stackWrap=WRAP → `applyWrapLayout`
@@ -10,24 +10,15 @@
  *                                          then `applyCounterAxisPosition`
  *   - NONE / unset               → noop (with aspect-lock verification)
  *
- * Why we need it:
+ * Boundary:
  *
- *   Figma's `derivedSymbolData` records the post-resize / post-CPA
- *   *positions* of each descendant inside an INSTANCE. When DSD entries
- *   pin a child's transform we honour them verbatim (they're a SoT for
- *   that INSTANCE's resolved layout). But when a FRAME is plain
- *   autolayout — no DSD because it's not the root of an INSTANCE
- *   descendant group, just a layout container — we have to *compute* the
- *   children's positions ourselves.
- *
- *   The counter-axis stretch alone is not enough: Toolbar - Top's
- *   "Controls" FRAME is HORIZONTAL with stackPrimaryAlignItems=
- *   SPACE_EVENLY and three children (Leading, Spacer, Trailing). The
- *   children's stored x positions are SYMBOL-default values; without
- *   primary-axis computation Leading sits at its declared x while
- *   Trailing sits at *its* declared x, leaving Spacer in the middle —
- *   which by coincidence sometimes matches Figma's actual layout but
- *   generally drifts.
+ *   Raw Kiwi document FRAME / SYMBOL descendants are already authored
+ *   document state and must not be recomputed by renderers. This solver
+ *   belongs to INSTANCE materialisation: after SymbolResolver has selected
+ *   a SYMBOL, applied overrides, and merged resized-instance constraints,
+ *   stack layout fields can still describe the resolved INSTANCE's own
+ *   materialised children. Keeping that step inside SymbolResolver prevents
+ *   renderers from becoming a second source of SYMBOL resolution truth.
  *
  * Scope of the primary-axis core (`applyAutoLayoutPrimaryAxis`):
  *

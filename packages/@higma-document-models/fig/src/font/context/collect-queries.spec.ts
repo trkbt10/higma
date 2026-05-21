@@ -245,6 +245,7 @@ describe("collectFontQueries", () => {
           fontMetaData: [{
             key: { family: "SF Pro", style: "Semibold" },
             fontLineHeight: 1,
+            fontWeight: 590,
           }],
         },
       }],
@@ -256,7 +257,7 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.queries).toEqual([
-      { family: "SF Pro", weight: 600, style: "normal" },
+      { family: "SF Pro", weight: 590, style: "normal" },
     ]);
   });
 

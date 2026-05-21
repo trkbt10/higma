@@ -53,6 +53,8 @@ export {
 
 export {
   type FigExportBox,
+  type FigChildrenOf,
   type ComputeFigExportBoundsOptions,
   computeFigExportBounds,
+  computeFigExportViewport,
 } from "./export-bounds";

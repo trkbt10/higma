@@ -72,6 +72,15 @@ export type ElementBounds = {
   readonly height: number;
 };
 
+type SvgGradientMatrix = {
+  readonly a: number;
+  readonly b: number;
+  readonly c: number;
+  readonly d: number;
+  readonly e: number;
+  readonly f: number;
+};
+
 // =============================================================================
 // Transform extraction
 // =============================================================================
@@ -127,7 +136,7 @@ export function linearGradientAttrs(
   elementBounds: ElementBounds,
 ): SvgLinearGradientAttrs | undefined {
   const t = transform;
-  if (!t) return undefined;
+  if (!t) { return undefined; }
   const bx = elementBounds.x;
   const by = elementBounds.y;
   const w = elementBounds.width;
@@ -205,36 +214,34 @@ export function linearGradientAttrs(
  * Compute SVG gradientTransform for a radial gradient from a Figma paint
  * transform.
  *
- * Figma's radial gradient is defined on the unit circle centred at (0.5,
- * 0.5) with radius 0.5 in gradient space. paint.transform maps that
- * gradient-space unit circle into normalized object space.
+ * Figma's radial gradient is defined on the unit circle centred at
+ * `(0.5, 0.5)` with radius `0.5` in gradient space. Kiwi
+ * `paint.transform` maps normalized object space → gradient space:
  *
- * The SVG canonical gradient is cx=0, cy=0, r=1. To map our canonical
- * unit circle onto Figma's positioned/shaped ellipse in user space, we
- * emit `translate(cx, cy) rotate(angle) scale(rx, ry)` where:
+ *   grad = A · object + b
  *
- *   - (cx, cy)      = centre of the ellipse in user-space pixels
- *   - angle         = rotation of the ellipse's primary axis (first
- *                     gradient-space axis image) from the user-space x-axis
- *   - (rx, ry)      = half-lengths of the ellipse's two axes
+ * Therefore the SVG user-space ellipse must be built from the inverse:
  *
- * The centre is Figma-matrix × (0.5, 0.5) scaled to pixels:
- *   cx = (m00 * 0.5 + m01 * 0.5 + m02) * w
- *   cy = (m10 * 0.5 + m11 * 0.5 + m12) * h
+ *   centre = A^-1 · ([0.5, 0.5] - b)
+ *   axis-x = A^-1 · [0.5, 0]
+ *   axis-y = A^-1 · [0, 0.5]
  *
- * The two axes are the images of (0.5, 0) and (0, 0.5) measured from the
- * centre:
- *   axis1 = (m00 * w, m10 * h) × 0.5
- *   axis2 = (m01 * w, m11 * h) × 0.5
+ * The SVG canonical radial gradient is `cx=0 cy=0 r=1`; the returned
+ * matrix maps that unit circle onto the Figma ellipse. For perpendicular
+ * axes we emit Figma's compact `translate(...) rotate(...) scale(...)`
+ * spelling. For sheared radial gradients we emit the full affine
+ * `matrix(a b c d e f)` so no axis information is discarded.
  *
- * rx / ry are the lengths of these axes. angle is atan2(axis1.y, axis1.x).
+ * Throws on a non-invertible matrix. A zero determinant means the
+ * object→gradient transform collapses an axis, so the radial ellipse is
+ * not recoverable from Kiwi data.
  */
 export function radialGradientAttrs(
   transform: FigGradientTransform | undefined,
   elementBounds: ElementBounds,
 ): SvgRadialGradientAttrs | undefined {
   const t = transform;
-  if (!t) return undefined;
+  if (!t) { return undefined; }
   const bx = elementBounds.x;
   const by = elementBounds.y;
   const w = elementBounds.width;
@@ -247,26 +254,57 @@ export function radialGradientAttrs(
   const m11 = m(t, "m11", 1);
   const m12 = m(t, "m12", 0);
 
-  // Centre offset by the bbox origin so VECTOR paths whose bbox is
-  // not at (0, 0) still see the gradient ellipse positioned over them.
-  const cx = bx + (m00 * 0.5 + m01 * 0.5 + m02) * w;
-  const cy = by + (m10 * 0.5 + m11 * 0.5 + m12) * h;
+  const det = m00 * m11 - m01 * m10;
+  if (det === 0) {
+    throw new Error(
+      `radialGradientAttrs: non-invertible paint.transform (det=0). ` +
+        `m=[[${m00}, ${m01}, ${m02}], [${m10}, ${m11}, ${m12}]]. ` +
+        `Caller must treat this paint as malformed.`,
+    );
+  }
 
-  const ax1x = m00 * w * 0.5;
-  const ax1y = m10 * h * 0.5;
-  const ax2x = m01 * w * 0.5;
-  const ax2y = m11 * h * 0.5;
+  const inv00 = m11 / det;
+  const inv01 = -m01 / det;
+  const inv10 = -m10 / det;
+  const inv11 = m00 / det;
 
-  const rx = Math.hypot(ax1x, ax1y);
-  const ry = Math.hypot(ax2x, ax2y);
+  const centerObjX = inv00 * (0.5 - m02) + inv01 * (0.5 - m12);
+  const centerObjY = inv10 * (0.5 - m02) + inv11 * (0.5 - m12);
 
-  const angle = (Math.atan2(ax1y, ax1x) * 180) / Math.PI;
+  const matrix: SvgGradientMatrix = {
+    a: inv00 * w * 0.5,
+    b: inv10 * h * 0.5,
+    c: inv01 * w * 0.5,
+    d: inv11 * h * 0.5,
+    e: bx + centerObjX * w,
+    f: by + centerObjY * h,
+  };
 
   return {
     cx: "0",
     cy: "0",
     r: "1",
     gradientUnits: "userSpaceOnUse",
-    gradientTransform: `translate(${cx} ${cy}) rotate(${angle}) scale(${rx} ${ry})`,
+    gradientTransform: formatRadialGradientMatrix(matrix),
   };
+}
+
+function formatRadialGradientMatrix(matrix: SvgGradientMatrix): string {
+  const rx = Math.hypot(matrix.a, matrix.b);
+  const ry = Math.hypot(matrix.c, matrix.d);
+  if (rx > 0 && ry > 0) {
+    const cos = matrix.a / rx;
+    const sin = matrix.b / rx;
+    const expectedC = -sin * ry;
+    const expectedD = cos * ry;
+    if (nearlyEqual(matrix.c, expectedC) && nearlyEqual(matrix.d, expectedD)) {
+      const angle = (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
+      return `translate(${matrix.e} ${matrix.f}) rotate(${angle}) scale(${rx} ${ry})`;
+    }
+  }
+  return `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})`;
+}
+
+function nearlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 1e-9;
 }

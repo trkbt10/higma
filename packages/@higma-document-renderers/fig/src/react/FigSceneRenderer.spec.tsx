@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { buildSceneGraph } from "../scene-graph";
 import { FigSceneRenderer } from "./FigSceneRenderer";
 import { createKiwiRenderFixture } from "../testing/kiwi-render-fixture";
+import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
 
 function renderFixtureNodes(nodeNames: readonly string[]): string {
   const fixture = createKiwiRenderFixture();
@@ -24,7 +25,7 @@ function renderFixtureNodes(nodeNames: readonly string[]): string {
     warnings: [],
     textFontResolver: undefined,
   });
-  return renderToStaticMarkup(createElement(FigSceneRenderer, { sceneGraph }));
+  return renderToStaticMarkup(createElement("svg", null, createElement(FigSceneRenderer, { sceneGraph })));
 }
 
 describe("FigSceneRenderer", () => {
@@ -38,11 +39,14 @@ describe("FigSceneRenderer", () => {
   it("uses canonical inner-shadow primitives", () => {
     const html = renderFixtureNodes(["Inner Shadow Card"]);
 
-    expect(html).toMatch(/<feFlood\b/);
-    expect(html).toMatch(/<feComposite[^>]+operator="in"/);
-    expect(html).toMatch(/<feComposite[^>]+operator="out"/);
-    expect(html).toMatch(/<feMerge\b/);
-    expect(html).not.toContain("0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0");
+    expect(html).toMatch(/<feFlood[^>]+result="BackgroundImageFix"/);
+    expect(html).toMatch(/<feBlend[^>]+mode="normal"[^>]+in="SourceGraphic"[^>]+in2="BackgroundImageFix"[^>]+result="shape-/);
+    expect(html).toMatch(/<feColorMatrix[^>]+in="SourceAlpha"[^>]+result="hardAlpha-/);
+    expect(html).toMatch(/<feOffset[^>]+in="hardAlpha-/);
+    expect(html).toMatch(/<feComposite[^>]+operator="arithmetic"[^>]+k2="-1"[^>]+k3="1"/);
+    expect(html).toMatch(/<feColorMatrix[^>]+result="inner-tinted-/);
+    expect(html).toMatch(/<feBlend[^>]+mode="normal"[^>]+in="inner-tinted-[^"]+"[^>]+in2="shape-/);
+    expect(html).not.toMatch(/<feMerge\b/);
   });
 
   it("does not put fill directly on stroke mask elements", () => {
@@ -53,5 +57,17 @@ describe("FigSceneRenderer", () => {
       expect(html).toMatch(/<mask\b[^>]*mask-?[Tt]ype/);
       expect(html).toMatch(/<g\s+fill="white"/);
     }
+  });
+
+  it("applies FRAME surface effects outside the clipped surface content", () => {
+    const html = renderToStaticMarkup(createElement("svg", null, createElement(FigSceneRenderer, {
+      sceneGraph: createFrameSurfaceEffectClipSceneGraph(),
+    })));
+    const filterGroupIndex = html.indexOf('<g filter="url(#filter-');
+    const clippedSurfaceIndex = html.indexOf('<g clip-path="url(#clip-');
+
+    expect(filterGroupIndex).toBeGreaterThanOrEqual(0);
+    expect(clippedSurfaceIndex).toBeGreaterThan(filterGroupIndex);
+    expect(html.slice(filterGroupIndex, clippedSurfaceIndex)).not.toContain('clip-path="url(#clip-');
   });
 });

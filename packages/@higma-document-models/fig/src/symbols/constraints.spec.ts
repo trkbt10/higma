@@ -334,4 +334,30 @@ describe("resolveInstanceLayout", () => {
     expect(result.children[0]).toBe(childA);
     expect(result.children[1]).toBe(childB);
   });
+
+  it("treats transform-only derivedSymbolData as resolved layout coverage", () => {
+    const button = makeChild({
+      guid: { sessionID: 8, localID: 22776 },
+      x: 275,
+      y: 25,
+      w: 72,
+      h: 29,
+      hConstraint: CONSTRAINT_TYPE_VALUES.MAX,
+    });
+    const derived = [{
+      guidPath: { guids: [{ sessionID: 8, localID: 22776 }] },
+      transform: { m00: 1, m01: 0, m02: 275, m10: 0, m11: 1, m12: 25 },
+    }];
+
+    const result = resolveInstanceLayout({
+      children: [button],
+      symbolSize: { x: 361, y: 74 },
+      instanceSize: { x: 362, y: 74 },
+      derivedSymbolData: derived,
+    });
+
+    expect(result.sizeApplied).toBe(true);
+    expect(result.children[0]).toBe(button);
+    expect(result.children[0].transform?.m02).toBe(275);
+  });
 });

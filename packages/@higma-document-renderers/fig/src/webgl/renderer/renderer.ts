@@ -28,7 +28,7 @@
  * ```
  */
 
-import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, ClipShape } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, ClipShape, ClipPathShape } from "@higma-document-renderers/fig/scene-graph";
 import { buildEffectStack, renderShapeEffectStack, resolveFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type ResolvedFigmaRenderExportSettings, type ResolvedFillDef, } from "../../scene-graph";
 
 import {
@@ -238,6 +238,30 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       return geometryCache.getRectVertices(clip.width, clip.height, clip.cornerRadius, clip.cornerSmoothing);
     }
     return getCachedClipPathVertices(clip.contours);
+  }
+  type StrokeGeometryRendering = Extract<StrokeRendering, { readonly mode: "geometry" }>;
+  type StrokeGeometryCacheEntry = {
+    readonly contours: readonly PathContour[];
+    readonly vertices: Float32Array;
+    readonly elementSize: { readonly width: number; readonly height: number };
+  };
+  const strokeGeometryCache = new WeakMap<StrokeGeometryRendering, StrokeGeometryCacheEntry>();
+  function getStrokeGeometryCacheEntry(sr: StrokeGeometryRendering): StrokeGeometryCacheEntry {
+    const cached = strokeGeometryCache.get(sr);
+    if (cached) {
+      return cached;
+    }
+    const contours = sr.paths.flatMap((p) => svgPathDToContours({
+      d: p.d,
+      windingRule: p.fillRule ?? "nonzero",
+    }));
+    const value: StrokeGeometryCacheEntry = {
+      contours,
+      vertices: tessellateContours(contours, 0.25, true),
+      elementSize: pathContoursElementSize(contours),
+    };
+    strokeGeometryCache.set(sr, value);
+    return value;
   }
   const BLACK: Color = { r: 0, g: 0, b: 0, a: 1 };
 
@@ -856,11 +880,140 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         break;
       }
 
+      case "geometry": {
+        renderStrokeGeometry(sr, transform, opacity);
+        break;
+      }
+
       case "individual": {
         renderIndividualStroke(sr, transform, opacity);
         break;
       }
     }
+  }
+
+  function renderStrokeGeometry(
+    sr: StrokeGeometryRendering,
+    transform: AffineMatrix,
+    opacity: number,
+  ): void {
+    const geometry = getStrokeGeometryCacheEntry(sr);
+    if (geometry.vertices.length === 0) {
+      return;
+    }
+    if (sr.mask === undefined) {
+      drawStrokeGeometryLayers(sr, geometry.vertices, geometry.elementSize, transform, opacity);
+      return;
+    }
+    renderMaskedStrokeGeometry(sr, geometry, transform, opacity);
+  }
+
+  function drawStrokeGeometryLayers(
+    sr: StrokeGeometryRendering,
+    vertices: Float32Array,
+    elementSize: { readonly width: number; readonly height: number },
+    transform: AffineMatrix,
+    opacity: number,
+  ): void {
+    for (const layer of sr.layers) {
+      drawStrokePaintLayer({
+        vertices,
+        layer,
+        attrs: layer.attrs,
+        transform,
+        opacity,
+        elementSize,
+      });
+    }
+  }
+
+  function renderMaskedStrokeGeometry(
+    sr: StrokeGeometryRendering,
+    geometry: StrokeGeometryCacheEntry,
+    transform: AffineMatrix,
+    opacity: number,
+  ): void {
+    if (sr.mask === undefined) {
+      throw new Error("renderMaskedStrokeGeometry requires a stroke geometry mask");
+    }
+    const maskVerts = tessellateClipPathShape(sr.mask.shape);
+    if (maskVerts.length === 0) {
+      return;
+    }
+
+    const white: Color = { r: 1, g: 1, b: 1, a: 1 };
+    const wasStencilEnabled = glState.isStencilTestEnabled();
+    const stencil = maskedStrokeStencilTest(sr.mask.strokeAlign === "INSIDE");
+
+    glState.setEnabled(gl.STENCIL_TEST, true);
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, FILL_STENCIL_MASK, FILL_STENCIL_MASK);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
+    drawSolidFill({ ctx: getGlContext(), vertices: maskVerts, color: white, transform, opacity: 1 });
+
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0x00);
+    glState.setStencilFunc(gl.EQUAL, stencil.ref, stencil.mask);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    drawStrokeGeometryLayers(sr, geometry.vertices, geometry.elementSize, transform, opacity);
+
+    glState.setColorMask(false, false, false, false);
+    glState.setStencilMask(FILL_STENCIL_MASK);
+    glState.setStencilFunc(gl.ALWAYS, 0, 0xff);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.ZERO);
+    drawSolidFill({ ctx: getGlContext(), vertices: maskVerts, color: white, transform, opacity: 1 });
+
+    glState.setColorMask(true, true, true, true);
+    glState.setStencilMask(0xff);
+    if (!wasStencilEnabled) {
+      glState.setEnabled(gl.STENCIL_TEST, false);
+      return;
+    }
+    glState.setStencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+    glState.setStencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+  }
+
+  function tessellateClipPathShape(shape: ClipPathShape): Float32Array {
+    switch (shape.kind) {
+      case "rect":
+        return translateVertices(
+          geometryCache.getRectVertices(shape.width, shape.height, clipPathRectRadius(shape)),
+          shape.x,
+          shape.y,
+        );
+      case "ellipse":
+        return geometryCache.getEllipseVertices({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
+      case "path": {
+        const contours = svgPathDToContours({
+          d: shape.d,
+          windingRule: shape.fillRule ?? "nonzero",
+        });
+        return tessellateContours(contours, 0.25, true);
+      }
+    }
+  }
+
+  function clipPathRectRadius(shape: Extract<ClipPathShape, { readonly kind: "rect" }>): number | undefined {
+    if (shape.rx === undefined) {
+      return shape.ry;
+    }
+    if (shape.ry === undefined || shape.ry === shape.rx) {
+      return shape.rx;
+    }
+    throw new Error(`WebGL clip-path rect has unsupported elliptical corner radii rx=${shape.rx} ry=${shape.ry}`);
+  }
+
+  function translateVertices(vertices: Float32Array, dx: number, dy: number): Float32Array {
+    if (dx === 0 && dy === 0) {
+      return vertices;
+    }
+    const translated = new Float32Array(vertices.length);
+    for (let i = 0; i < vertices.length; i += 2) {
+      translated[i] = vertices[i] + dx;
+      translated[i + 1] = vertices[i + 1] + dy;
+    }
+    return translated;
   }
 
   type IndividualStrokeRendering = Extract<StrokeRendering, { readonly mode: "individual" }>;
@@ -1647,6 +1800,10 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
         transform,
         opacity,
       });
+      return;
+    }
+    if (sr.mode === "geometry") {
+      renderStrokeGeometry(sr, transform, opacity);
     }
   }
 

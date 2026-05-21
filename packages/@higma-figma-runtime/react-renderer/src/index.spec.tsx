@@ -22,6 +22,7 @@ function createContext(profile: { readonly value: number; readonly name: string 
   return createFigDocumentContextFromNodeChanges({
     nodeChanges: [{
       guid: { sessionID: 0, localID: 0 },
+      phase: { value: 0, name: "CREATED" },
       type: { value: 1, name: "DOCUMENT" },
       documentColorProfile: profile,
     }],
@@ -56,7 +57,7 @@ function createManagedImageSceneGraph(): SceneGraph {
           fills: [
             {
               type: "image",
-              imageRef: "pixel",
+              imageHash: "pixel",
               data: ONE_PIXEL_PNG,
               mimeType: "image/png",
               scaleMode: "FILL",

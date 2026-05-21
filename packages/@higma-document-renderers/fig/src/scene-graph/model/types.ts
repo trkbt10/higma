@@ -13,6 +13,7 @@
 import type { AffineMatrix, CornerRadius, PathCommand } from "@higma-primitives/path";
 import type { ImagePaintFilter } from "@higma-codecs/raster";
 import type { FontQuery } from "@higma-document-models/fig/font";
+import type { FigMaskType } from "@higma-document-models/fig/types";
 
 // =============================================================================
 // Branded ID Type
@@ -323,6 +324,8 @@ export type ClipShape = RectClip | PathClip;
 
 export type MaskNode = {
   readonly maskId: SceneNodeId;
+  /** Kiwi `MaskType`; this is the SoT for alpha/luminance/outline mask interpretation. */
+  readonly maskType: FigMaskType;
   /** SVG content of the mask (for SVG backend) or node reference (for WebGL) */
   readonly maskContent: SceneNode;
 };
@@ -398,7 +401,10 @@ export type SceneNodeBase = {
   readonly effects: readonly Effect[];
   readonly clip?: ClipShape;
   readonly mask?: MaskNode;
-  /** CSS mix-blend-mode (undefined = normal) */
+  /**
+   * Node-level blend mode projected from `FigNode.blendMode`.
+   * Paint and effect blend modes live on their own fill/effect entries.
+   */
   readonly blendMode?: BlendMode;
 };
 
@@ -467,6 +473,14 @@ export type EllipseNode = SceneNodeBase & {
 export type PathNode = SceneNodeBase & {
   readonly type: "path";
   readonly contours: readonly PathContour[];
+  /**
+   * Kiwi `strokeGeometry` for paths that also carry fill/vector
+   * geometry. This is Figma's authored stroke outline, not an input for
+   * reconstructing another SVG stroke. RenderTree consumes it as filled
+   * geometry with stroke paints so SVG / React / WebGL do not each
+   * re-derive stroke expansion.
+   */
+  readonly strokeContours?: readonly PathContour[];
   readonly fills: readonly Fill[];
   readonly stroke?: Stroke;
   /** Bounding box size from the Figma node (for gradient coordinate computation) */
@@ -502,6 +516,12 @@ export type TextNode = SceneNodeBase & {
    * is truncated with an ellipsis ("...").
    */
   readonly textTruncation?: string;
+  /**
+   * Visible height from Kiwi derivedTextData.truncatedHeight when
+   * truncationStartIndex proves Figma actually truncated this text.
+   * Undefined means no text clip should be emitted.
+   */
+  readonly textTruncationClipHeight?: number;
   /**
    * Leading trim mode. When "CAP_HEIGHT", the text's leading is trimmed
    * to cap height rather than full ascent, affecting vertical positioning.

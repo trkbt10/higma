@@ -2,14 +2,25 @@
  * @file Site editor render surface tests.
  */
 
-import type { FigPage } from "@higma-document-models/fig/domain";
-
 import { createSiteEditorTestDocument } from "../spec/shared/site-editor-test-fixture";
+import type { FigNode } from "@higma-document-models/fig/types";
 import { createSiteEditorWorkspace, createSiteFigRenderSurface } from "./site-editor-workspace";
 
-function collectNodeNames(nodes: FigPage["children"]): readonly string[] {
+function collectNodeNames(nodes: readonly FigNode[]): readonly string[] {
   return nodes.flatMap((node) => {
-    const childNames = collectNodeNames(node.children ?? []);
+    if (node.name === undefined) {
+      throw new Error("expected named fig node in site editor fixture");
+    }
+    if (node.children === undefined) {
+      return [node.name];
+    }
+    const children = node.children.flatMap((child) => {
+      if (child === null || child === undefined) {
+        return [];
+      }
+      return [child];
+    });
+    const childNames = collectNodeNames(children);
     return [node.name, ...childNames];
   });
 }
@@ -23,7 +34,7 @@ describe("createSiteFigRenderSurface", () => {
       activeBreakpointName: "Mobile",
       breakpointVariants: workspace.breakpointVariants,
     });
-    const names = collectNodeNames(mobileSurface.page.children);
+    const names = collectNodeNames(mobileSurface.nodes);
 
     expect(names).toContain("Mobile");
     expect(names).toContain("Mobile Articles");
@@ -45,7 +56,7 @@ describe("createSiteFigRenderSurface", () => {
       activeBreakpointName: "Tablet",
       breakpointVariants: workspace.breakpointVariants,
     });
-    const names = collectNodeNames(tabletSurface.page.children);
+    const names = collectNodeNames(tabletSurface.nodes);
 
     expect(names).toContain("Tablet");
     expect(names).toContain("Tablet Articles");

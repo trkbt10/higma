@@ -43,6 +43,7 @@ export type { FontLoader } from "./loader";
 export {
   type FontQuery,
   figmaFontToQuery,
+  figmaTextFontToQuery,
   fontQueryKey,
   fontQueryEqual,
   fontQueryToStyleName,

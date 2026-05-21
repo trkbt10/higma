@@ -18,7 +18,7 @@
  *     unscaled and avoids browser-specific differences in how SVG
  *     documents handle `<head>`-less rendering.
  */
-import { computeFigExportBounds, renderFigToSvg } from "@higma-document-renderers/fig/svg";
+import { computeFigExportViewport, renderFigToSvg } from "@higma-document-renderers/fig/svg";
 import { createCachingFontLoader } from "@higma-document-models/fig/font";
 import { createNodeFontLoader } from "@higma-document-renderers/fig/font-drivers/node";
 import { figDocumentResources } from "@higma-document-io/fig/context";
@@ -49,10 +49,10 @@ export async function emitFigmaSvgForFrame(
   source: FigDocumentContext,
   target: FrameTarget,
   fontPlan: WebFontPlan,
-): Promise<FigmaSvgFiles | undefined> {
+): Promise<FigmaSvgFiles> {
   const node = target.node;
   if (!node.size) {
-    return undefined;
+    throw new Error(`emitFigmaSvgForFrame: frame "${target.node.name ?? target.componentName}" has no size`);
   }
   // The renderer's text path needs OS-resolved font metrics whenever
   // the .fig itself does not embed them via `derivedTextData`.
@@ -66,36 +66,30 @@ export async function emitFigmaSvgForFrame(
   // produces metric drift between this authoritative render and the
   // browser's React render.
   const fontLoader = createCachingFontLoader(createNodeFontLoader());
-  // SoT: spread the canonical four-field bundle from the IO layer
-  // instead of re-listing `symbolResolver` / `styleRegistry` / `blobs` /
-  // `images` by hand. Re-deriving any of them inline would diverge
-  // from the post-style-resolution maps other consumers see.
-  //
-  // The authoritative SVG render is a *comparison-only* artefact for
-  // the dual-pane preview shell. When the source .fig authors a
-  // platform-licensed family that the host environment cannot supply
-  // (e.g. "SF Pro Rounded" on a non-darwin runner with no installed
-  // Apple fonts), the renderer's font preload throws. That failure
-  // should not block TSX emission for the same frame — the React
-  // output is a separate artefact that only embeds the font *name*
-  // and lets the consumer page load it however it wants. Catch the
-  // render failure here, log it, and return `undefined` so the
-  // orchestrator (which already treats a missing figma pair as
-  // "no comparison surface for this frame") simply skips the SVG
-  // side for that frame.
+  // SoT: consume the canonical renderer resource bundle from the IO layer
+  // once, then pass the same document children/style/symbol/assets through
+  // both export-viewport calculation and rendering.
+  const resources = figDocumentResources(source);
   // Match Figma's SVG exporter viewBox: union the root's intrinsic
   // size with its effect halo (DROP_SHADOW / LAYER_BLUR), with
   // `frameMaskDisabled=true` child overflow, then ceil the final
   // width/height to integers. Passing raw `node.size` skips the halo,
   // which makes shadows clip at the frame edge and integer-rounding
   // mismatches (a 26.26×24.03 SF icon would emit a fractional viewBox
-  // where Figma emits 27×25). See `computeFigExportBounds` SoT.
-  const exportBox = computeFigExportBounds(node);
+  // where Figma emits 27×25). See `computeFigExportViewport` SoT.
+  const exportViewport = computeFigExportViewport(node, {
+    childrenOf: resources.childrenOf,
+    blobs: resources.blobs,
+  });
   const result = await renderFigToSvg([node], {
-    width: exportBox.width,
-    height: exportBox.height,
-    viewport: { x: exportBox.x, y: exportBox.y, width: exportBox.width, height: exportBox.height },
-    ...figDocumentResources(source),
+    width: exportViewport.width,
+    height: exportViewport.height,
+    viewport: exportViewport,
+    blobs: resources.blobs,
+    images: resources.images,
+    childrenOf: resources.childrenOf,
+    symbolResolver: resources.symbolResolver,
+    styleRegistry: resources.styleRegistry,
     fontLoader,
     // The authoritative SVG is loaded inside an `<iframe>` running in a
     // normal web browser whose backbuffer is sRGB. Image paints flagged
@@ -105,17 +99,7 @@ export async function emitFigmaSvgForFrame(
     // contract (`requireManagedImageColorProfile` throws if the caller
     // has not made the choice).
     exportSettings: { colorProfile: "SRGB" },
-  }).catch((err: unknown): undefined => {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `[higma] figma SVG render for frame "${target.node.name ?? target.componentName}" failed: ${reason}. ` +
-      `TSX emission continues; the dual-pane preview will have no Figma source pane for this frame.`,
-    );
-    return undefined;
   });
-  if (!result) {
-    return undefined;
-  }
   const svgString = String(result.svg);
   const slug = svgSlugFor(target);
   const svgPath = `figma/${slug}.svg`;

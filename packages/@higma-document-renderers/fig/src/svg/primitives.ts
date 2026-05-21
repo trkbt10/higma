@@ -127,13 +127,16 @@ export type SvgPaintAttrs = {
   "stroke-linejoin"?: "miter" | "round" | "bevel";
   "stroke-dasharray"?: string;
   "fill-rule"?: "nonzero" | "evenodd";
+  "clip-rule"?: "nonzero" | "evenodd";
   "fill-opacity"?: number | string;
   "stroke-opacity"?: number | string;
   transform?: string;
   class?: string;
   style?: string;
+  "shape-rendering"?: "auto" | "optimizeSpeed" | "crispEdges" | "geometricPrecision";
   opacity?: number | string;
   filter?: string;
+  mask?: string;
 };
 
 /**

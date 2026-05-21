@@ -119,18 +119,22 @@ function applyConstraintResolution(
  * derivedSymbolData. Once size changes, the stale baked geometry no longer
  * matches the Kiwi node rectangle.
  */
-function clearDerivedGeometry(
+function deriveResolvedLayoutCoverage(
   derivedSymbolData: FigDerivedSymbolData,
   children: readonly FigNode[],
-): { readonly children: readonly FigNode[]; readonly matched: ReadonlySet<string> } {
-  const matched = new Set<string>();
+): { readonly children: readonly FigNode[]; readonly covered: ReadonlySet<string> } {
+  const covered = new Set<string>();
+  const resized = new Set<string>();
   const geometryAuthored = new Set<string>();
   for (const entry of derivedSymbolData) {
     const targetGuid = entry.guidPath?.guids?.[entry.guidPath.guids.length - 1];
     if (!targetGuid) {continue;}
     const targetKey = guidToString(targetGuid);
+    if (entry.transform !== undefined || entry.size !== undefined) {
+      covered.add(targetKey);
+    }
     if (entry.size) {
-      matched.add(targetKey);
+      resized.add(targetKey);
     }
     if (kiwiSymbolOverrideCarriesGeometry(entry)) {
       geometryAuthored.add(targetKey);
@@ -139,7 +143,7 @@ function clearDerivedGeometry(
   return {
     children: children.map((child) => {
       const key = childGuidKey(child);
-      if (key === undefined || !matched.has(key)) {
+      if (key === undefined || !resized.has(key)) {
         return child;
       }
       if (geometryAuthored.has(key)) {
@@ -154,7 +158,7 @@ function clearDerivedGeometry(
         strokeGeometry: undefined,
       };
     }),
-    matched,
+    covered,
   };
 }
 
@@ -186,8 +190,8 @@ export function resolveInstanceLayout(
   { children, symbolSize, instanceSize, derivedSymbolData }: { children: readonly FigNode[]; symbolSize: { x: number; y: number }; instanceSize: { x: number; y: number }; derivedSymbolData: FigDerivedSymbolData | undefined; }
 ): InstanceLayoutResult {
   if (derivedSymbolData && derivedSymbolData.length > 0 && isDerivedDataApplicable(derivedSymbolData, children)) {
-    const cleared = clearDerivedGeometry(derivedSymbolData, children);
-    const supplemented = supplementConstraints({ children: cleared.children, symbolSize, instanceSize, coveredGuids: cleared.matched });
+    const layout = deriveResolvedLayoutCoverage(derivedSymbolData, children);
+    const supplemented = supplementConstraints({ children: layout.children, symbolSize, instanceSize, coveredGuids: layout.covered });
     return { children: supplemented, sizeApplied: true };
   }
 

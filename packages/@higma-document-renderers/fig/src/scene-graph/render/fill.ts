@@ -24,6 +24,7 @@ import {
   resolveEncodedRasterSourceProfile,
   resolveManagedRasterSourceProfile,
 } from "./image-raster-decode";
+import { resolveFigmaSvgOpacity } from "./figma-svg-opacity";
 import {
   resolveFigmaRenderExportSettings,
   renderExportSettingsCacheKey,
@@ -220,13 +221,13 @@ function resolveGradientStops(stops: readonly GradientStop[]): ResolvedGradientS
   return stops.map((s) => ({
     offset: `${s.position * 100}%`,
     stopColor: colorToHex(s.color),
-    stopOpacity: s.color.a < 1 ? s.color.a : undefined,
+    stopOpacity: s.color.a < 1 ? resolveFigmaSvgOpacity(s.color.a) : undefined,
   }));
 }
 
 function buildAttrs(fillValue: string, opacity: number): ResolvedFillAttrs {
   if (opacity < 1) {
-    return { fill: fillValue, fillOpacity: opacity };
+    return { fill: fillValue, fillOpacity: resolveFigmaSvgOpacity(opacity) };
   }
   return { fill: fillValue };
 }

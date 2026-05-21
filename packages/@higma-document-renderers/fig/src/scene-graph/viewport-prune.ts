@@ -23,20 +23,13 @@
  *
  * What it does NOT do:
  *
- * - Compute clip-aware bounding boxes. A `clipsContent=true` frame
- *   bounds its visible children, but we still treat its `subtree bbox`
- *   as the union of all child bboxes. The result is conservative —
- *   children that lie outside the clip but inside the viewport stay,
- *   even though they would be visually clipped. Pruning fewer nodes is
- *   the safe choice.
- *
  * - Account for effect halos (drop-shadow blur, layer blur). A small
  *   safety padding is applied around the viewport so a shadow that
  *   spills slightly outside the viewport is preserved.
  */
 
 import type { AffineMatrix } from "@higma-primitives/path";
-import type { SceneGraph, SceneNode } from "@higma-document-renderers/fig/scene-graph";
+import type { ClipShape, PathContour, SceneGraph, SceneNode } from "@higma-document-renderers/fig/scene-graph";
 
 type WorldBox = {
   readonly x: number;
@@ -62,6 +55,7 @@ const IDENTITY: AffineMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 
  * tighter margins.
  */
 const VIEWPORT_SAFETY_PAD = 64;
+const EMPTY_CLIP: WorldBox = { x: 0, y: 0, w: 0, h: 0 };
 
 /**
  * Compose two 2x3 affine matrices as `parent * child` so the result
@@ -111,12 +105,86 @@ function unionBox(a: WorldBox, b: WorldBox): WorldBox {
   return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
 }
 
+function intersectBox(a: WorldBox, b: WorldBox): WorldBox | undefined {
+  const xMin = Math.max(a.x, b.x);
+  const yMin = Math.max(a.y, b.y);
+  const xMax = Math.min(a.x + a.w, b.x + b.w);
+  const yMax = Math.min(a.y + a.h, b.y + b.h);
+  if (xMax <= xMin || yMax <= yMin) {
+    return undefined;
+  }
+  return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
+}
+
 function boxesIntersect(a: WorldBox, b: WorldBox): boolean {
   if (a.x + a.w < b.x) { return false; }
   if (b.x + b.w < a.x) { return false; }
   if (a.y + a.h < b.y) { return false; }
   if (b.y + b.h < a.y) { return false; }
   return true;
+}
+
+function contourLocalBox(contours: readonly PathContour[]): WorldBox | undefined {
+  let box: WorldBox | undefined;
+  for (const contour of contours) {
+    for (const command of contour.commands) {
+      const points = [
+        { x: command.type === "M" || command.type === "L" || command.type === "C" || command.type === "Q" ? command.x : undefined, y: command.type === "M" || command.type === "L" || command.type === "C" || command.type === "Q" ? command.y : undefined },
+        { x: command.type === "C" || command.type === "Q" ? command.x1 : undefined, y: command.type === "C" || command.type === "Q" ? command.y1 : undefined },
+        { x: command.type === "C" ? command.x2 : undefined, y: command.type === "C" ? command.y2 : undefined },
+      ];
+      for (const point of points) {
+        if (typeof point.x !== "number" || typeof point.y !== "number") { continue; }
+        const pointBox = { x: point.x, y: point.y, w: 0, h: 0 };
+        box = box ? unionBox(box, pointBox) : pointBox;
+      }
+    }
+  }
+  return box;
+}
+
+function clipLocalBox(clip: ClipShape): WorldBox | undefined {
+  if (clip.type === "rect") {
+    return { x: 0, y: 0, w: clip.width, h: clip.height };
+  }
+  return contourLocalBox(clip.contours);
+}
+
+function nodeClipWorldBox(node: SceneNode, worldM: AffineMatrix): WorldBox | undefined {
+  const clip = node.clip;
+  if (clip === undefined) {
+    return undefined;
+  }
+  const box = clipLocalBox(clip);
+  if (box === undefined) {
+    return undefined;
+  }
+  return transformBox(box, worldM);
+}
+
+function nodeMaskWorldBox(node: SceneNode, worldM: AffineMatrix): WorldBox | undefined {
+  const mask = node.mask;
+  if (mask === undefined) {
+    return undefined;
+  }
+  return subtreeWorldBox(mask.maskContent, worldM, undefined);
+}
+
+function intersectOptionalClip(a: WorldBox | undefined, b: WorldBox | undefined): WorldBox | undefined {
+  if (a === undefined) {
+    return b;
+  }
+  if (b === undefined) {
+    return a;
+  }
+  return intersectBox(a, b) ?? EMPTY_CLIP;
+}
+
+function nodeChildClipWorldBox(node: SceneNode, worldM: AffineMatrix): WorldBox | undefined {
+  return intersectOptionalClip(
+    nodeClipWorldBox(node, worldM),
+    nodeMaskWorldBox(node, worldM),
+  );
 }
 
 /**
@@ -134,6 +202,7 @@ function localBox(node: SceneNode): WorldBox | undefined {
     case "ellipse":
       return { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
     case "path":
+      return contourLocalBox(node.contours);
     case "group":
       return undefined;
   }
@@ -151,16 +220,45 @@ function nodeChildren(node: SceneNode): readonly SceneNode[] | undefined {
  * the parent's accumulated world transform. Returns `undefined` when
  * the subtree has no measurable footprint (e.g. an empty group).
  */
-function subtreeWorldBox(node: SceneNode, parentWorld: AffineMatrix): WorldBox | undefined {
+function applyActiveClip(box: WorldBox | undefined, activeClip: WorldBox | undefined): WorldBox | undefined {
+  if (box === undefined) {
+    return undefined;
+  }
+  if (activeClip === undefined) {
+    return box;
+  }
+  if (activeClip.w <= 0 || activeClip.h <= 0) {
+    return undefined;
+  }
+  return intersectBox(box, activeClip);
+}
+
+function childActiveClip(node: SceneNode, worldM: AffineMatrix, activeClip: WorldBox | undefined): WorldBox | undefined {
+  const ownClip = nodeChildClipWorldBox(node, worldM);
+  if (ownClip === undefined) {
+    return activeClip;
+  }
+  if (activeClip === undefined) {
+    return ownClip;
+  }
+  return intersectBox(activeClip, ownClip) ?? EMPTY_CLIP;
+}
+
+function subtreeWorldBox(
+  node: SceneNode,
+  parentWorld: AffineMatrix,
+  activeClip: WorldBox | undefined,
+): WorldBox | undefined {
   if (node.visible === false) { return undefined; }
   const worldM = composeAffine(parentWorld, node.transform);
   let bbox: WorldBox | undefined;
   const own = localBox(node);
-  if (own) { bbox = transformBox(own, worldM); }
+  if (own) { bbox = applyActiveClip(transformBox(own, worldM), activeClip); }
   const children = nodeChildren(node);
   if (children) {
+    const nextClip = childActiveClip(node, worldM, activeClip);
     for (const child of children) {
-      const childBox = subtreeWorldBox(child, worldM);
+      const childBox = subtreeWorldBox(child, worldM, nextClip);
       if (!childBox) { continue; }
       bbox = bbox ? unionBox(bbox, childBox) : childBox;
     }
@@ -168,10 +266,18 @@ function subtreeWorldBox(node: SceneNode, parentWorld: AffineMatrix): WorldBox |
   return bbox;
 }
 
-function pruneNode(node: SceneNode, parentWorld: AffineMatrix, paddedViewport: WorldBox): SceneNode | null {
+function pruneNode(
+  node: SceneNode,
+  parentWorld: AffineMatrix,
+  paddedViewport: WorldBox,
+  activeClip: WorldBox | undefined,
+): SceneNode | null {
   const worldM = composeAffine(parentWorld, node.transform);
-  const subtree = subtreeWorldBox(node, parentWorld);
+  const subtree = subtreeWorldBox(node, parentWorld, activeClip);
   if (subtree && !boxesIntersect(subtree, paddedViewport)) {
+    return null;
+  }
+  if (subtree === undefined && activeClip !== undefined && localBox(node) !== undefined) {
     return null;
   }
   // Only `frame` and `group` nodes carry a `children` array. Other
@@ -181,12 +287,16 @@ function pruneNode(node: SceneNode, parentWorld: AffineMatrix, paddedViewport: W
     return node;
   }
   const children = node.children;
+  const nextClip = childActiveClip(node, worldM, activeClip);
   let mutated = false;
   const next: SceneNode[] = [];
   for (const child of children) {
-    const pruned = pruneNode(child, worldM, paddedViewport);
+    const pruned = pruneNode(child, worldM, paddedViewport, nextClip);
     if (pruned !== child) { mutated = true; }
     if (pruned !== null) { next.push(pruned); }
+  }
+  if (node.type === "group" && next.length === 0) {
+    return null;
   }
   if (!mutated) { return node; }
   if (node.type === "frame") {
@@ -215,7 +325,7 @@ export function pruneSceneGraphToViewport(sceneGraph: SceneGraph): SceneGraph {
   let mutated = false;
   const nextRootChildren: SceneNode[] = [];
   for (const child of sceneGraph.root.children) {
-    const pruned = pruneNode(child, IDENTITY, paddedViewport);
+    const pruned = pruneNode(child, IDENTITY, paddedViewport, undefined);
     if (pruned !== child) { mutated = true; }
     if (pruned !== null) { nextRootChildren.push(pruned); }
   }

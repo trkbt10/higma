@@ -21,6 +21,7 @@ import type {
   Stroke,
   Effect,
   ClipShape,
+  PathContour,
 } from "@higma-document-renderers/fig/scene-graph";
 
 import {
@@ -37,6 +38,9 @@ import {
   type IdGenerator,
   type ResolvedFill,
   type ResolvedFilter,
+  type ResolvedStrokeAttrs,
+  type ResolvedStrokeLayer,
+  type ResolvedStrokeResult,
   type ResolvedEffectStack,
   type ResolvedFigmaRenderExportSettings,
   type RenderExportSettingsCacheKey,
@@ -49,25 +53,20 @@ import {
   clampCornerRadius,
   cornerRadiusScalar,
   buildEllipseArcPathD,
+  buildStrokeAlignedClosedPathCommands,
 } from "@higma-primitives/path";
 import { createRenderTreeIdGenerator } from "./id-generator";
 import { buildClipShape } from "./clip-shape";
 
 /**
- * Decimal precision for path `d` coordinates emitted into the
- * RenderTree. Figma's SVG exporter quantises path data to ~3-4
- * decimals, and the rasteriser's coverage estimate around mid-column
- * stem edges is sensitive to sub-millipixel FP drift in our pipeline:
- * emitting unrounded JS floats lets values like `39.624611` survive
- * into resvg where Figma would have emitted `39.6246` or `39.625`,
- * shifting the column coverage estimate enough to flip a stem pixel.
- * Rounding to 4 decimals snaps those values back onto Figma's typical
- * quantisation grid so the AA matches for the vast majority of glyphs
- * (small-font glyphs whose stems land on integer-eighths grid still
- * leave a ~0.0004px residual because Figma emits 3 decimals for those
- * exact-fraction values; that residual is tracked separately).
+ * Decimal precision for path `d` coordinates held in the RenderTree.
+ * The SVG formatter owns Figma export quantisation because it has the
+ * final viewport origin and emitted parent transform. Keeping six
+ * decimals here preserves enough Kiwi geometry for scaled instances
+ * before the formatter applies Figma's viewport-local precision rule.
  */
-const RENDER_PATH_PRECISION = 4;
+const RENDER_PATH_PRECISION = 6;
+const STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE = 0.015;
 
 import type {
   RenderTree,
@@ -94,17 +93,6 @@ import type {
   StrokeRendering,
 } from "./types";
 
-function resolveOptionalStrokeRendering(
-  stroke: Stroke | undefined,
-  ids: IdGenerator,
-  defs: RenderDef[],
-  shape: StrokeShape,
-  maskShape: ClipPathShape,
-): StrokeRendering | undefined {
-  if (!stroke) { return undefined; }
-  return resolveStrokeRendering(stroke, ids, defs, shape, maskShape);
-}
-
 function resolveOptionalBackgroundBlur(
   effectStack: ResolvedEffectStack,
   bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } | undefined,
@@ -123,31 +111,44 @@ function resolveFrameStrokeRendering(
   defs: RenderDef[],
   maskShape: ClipPathShape,
 ): StrokeRendering | undefined {
-  if (node.individualStrokeWeights && node.stroke) {
-    if (surfaceShape.kind !== "rect") {
-      throw new Error(`resolveRenderTree: frame ${node.id} has individual stroke weights on a non-rectangular Kiwi surface`);
-    }
-    const result = resolveStrokeResult(node.stroke, ids);
-    collectStrokeLayerGradientDefs(result.layers, defs);
-    return {
-      mode: "individual",
-      sides: node.individualStrokeWeights,
-      color: result.attrs.stroke,
-      opacity: result.attrs.strokeOpacity,
-      width: node.width,
-      height: node.height,
-      cornerRadius: surfaceShape.cornerRadius,
-      strokeAlign: result.attrs.strokeAlign,
-    };
+  const individual = resolveIndividualFrameStrokeRendering(node, surfaceShape, ids, defs);
+  if (individual !== undefined) {
+    return individual;
   }
   if (node.stroke) {
-    const strokeShape = frameSurfaceToStrokeShape(surfaceShape);
-    return resolveStrokeRendering(node.stroke, ids, defs, strokeShape, maskShape);
+    const strokeShape = frameSurfaceToStrokeShape(node, surfaceShape);
+    return resolveStrokeRendering(node.stroke, ids, defs, strokeShape, { kind: "source-shape", maskShape });
   }
   return undefined;
 }
 
-function frameSurfaceToStrokeShape(surfaceShape: RenderFrameSurfaceShape): StrokeShape {
+function resolveIndividualFrameStrokeRendering(
+  node: FrameNode,
+  surfaceShape: RenderFrameSurfaceShape,
+  ids: IdGenerator,
+  defs: RenderDef[],
+): StrokeRendering | undefined {
+  if (!node.individualStrokeWeights || !node.stroke) {
+    return undefined;
+  }
+  if (surfaceShape.kind !== "rect") {
+    throw new Error(`resolveRenderTree: frame ${node.id} has individual stroke weights on a non-rectangular Kiwi surface`);
+  }
+  const result = resolveStrokeResult(node.stroke, ids);
+  collectStrokeLayerGradientDefs(result.layers, defs);
+  return {
+    mode: "individual",
+    sides: node.individualStrokeWeights,
+    color: result.attrs.stroke,
+    opacity: result.attrs.strokeOpacity,
+    width: node.width,
+    height: node.height,
+    cornerRadius: surfaceShape.cornerRadius,
+    strokeAlign: result.attrs.strokeAlign,
+  };
+}
+
+function frameSurfaceToStrokeShape(node: FrameNode, surfaceShape: RenderFrameSurfaceShape): StrokeShape {
   switch (surfaceShape.kind) {
     case "rect":
       return {
@@ -157,9 +158,31 @@ function frameSurfaceToStrokeShape(surfaceShape: RenderFrameSurfaceShape): Strok
         cornerRadius: surfaceShape.cornerRadius,
         cornerSmoothing: surfaceShape.cornerSmoothing,
       };
-    case "path":
+    case "path": {
+      const rectShape = framePathSurfaceToRectStrokeShape(node);
+      if (rectShape !== undefined) {
+        return rectShape;
+      }
       return { kind: "path", paths: surfaceShape.paths };
+    }
   }
+}
+
+function framePathSurfaceToRectStrokeShape(node: FrameNode): StrokeShape | undefined {
+  if (node.surfaceShape.type !== "path") {
+    return undefined;
+  }
+  const radii = roundedRectRadiiFromPathClip(node.surfaceShape, node.width, node.height);
+  if (radii === undefined) {
+    return undefined;
+  }
+  return {
+    kind: "rect",
+    width: node.width,
+    height: node.height,
+    cornerRadius: radii,
+    cornerSmoothing: node.cornerSmoothing,
+  };
 }
 
 function collectStrokeLayerGradientDefs(
@@ -209,6 +232,7 @@ type AffineMatrix2x3 = {
 };
 
 const IDENTITY_AFFINE: AffineMatrix2x3 = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+const GEOMETRY_FLOAT_EPSILON = 1e-4;
 
 function composeAffine(parent: AffineMatrix2x3, child: AffineMatrix2x3): AffineMatrix2x3 {
   return {
@@ -308,12 +332,12 @@ function mergeLocalBoxes(boxes: readonly LocalBox[]): LocalBox | undefined {
 }
 
 /**
- * `true` when every child of this FRAME fits strictly inside the
- * FRAME's local bounds, so a `<clipPath>` wrapper is a structural
- * no-op visually. Figma's own SVG exporter behaves this way: Event
- * metadata (385×206 FRAME with cornerRadius=5 and content well
- * inside) ships without a clip-path while Event Card (320 SYMBOL
- * with overflowing iPhone-screenshot content) ships with one.
+ * `true` when every child of this FRAME fits inside the FRAME's Kiwi
+ * clip shape, so a `<clipPath>` wrapper is a structural no-op visually.
+ * Figma's own SVG exporter behaves this way: Event metadata (385×206
+ * FRAME with cornerRadius=5 and content well inside) ships without a
+ * clip-path while Event Card (320 SYMBOL with overflowing
+ * iPhone-screenshot content) ships with one.
  *
  * Omitting the redundant clip-path also avoids resvg's
  * `<g clip-path="url(#...)">` isolation quirk that breaks
@@ -323,13 +347,14 @@ function mergeLocalBoxes(boxes: readonly LocalBox[]): LocalBox | undefined {
  * OVERLAY}]` text rendered solid black instead of the intended
  * mid-grey overlay composite.
  *
- * Tolerance: 0.5 px on each side absorbs sub-pixel positioning
- * jitter that creeps in through affine compositions of transform
- * matrices already trimmed to single-precision floats during the
- * scene-graph build. Lower tolerance leaves a stable Event-metadata
- * misclassification at e.g. y=205.9999.
+ * The epsilon is only for floating-point noise in affine compositions;
+ * it is intentionally far below one device pixel and cannot turn visible
+ * overflow into a contained child.
  */
-function frameChildrenFitWithinBounds(node: FrameNode): boolean {
+function frameChildrenFitWithinClipShape(
+  node: FrameNode,
+  clampedRadius: ReturnType<typeof clampCornerRadius>,
+): boolean {
   if (node.children.length === 0) { return true; }
   const childBoxes = node.children.map((child) => subtreeLocalBoxRecursive(child, IDENTITY_AFFINE));
   if (childBoxes.some((childBox) => childBox === undefined)) {
@@ -339,13 +364,168 @@ function frameChildrenFitWithinBounds(node: FrameNode): boolean {
   }
   const union = mergeLocalBoxes(childBoxes.filter(isLocalBox));
   if (union === undefined) { return true; }
-  const tol = 0.5;
+  return localBoxFitsWithinFrameClipShape(union, node, clampedRadius);
+}
+
+function localBoxFitsWithinFrameClipShape(
+  box: LocalBox,
+  node: FrameNode,
+  clampedRadius: ReturnType<typeof clampCornerRadius>,
+): boolean {
+  if (!localBoxFitsWithinFrameBounds(box, node)) {
+    return false;
+  }
+  if (node.clip?.type === "path") {
+    return localBoxFitsWithinPathFrameClip(box, node);
+  }
+  const radius = node.clip?.type === "rect" ? node.clip.cornerRadius : clampedRadius;
+  return localBoxCornersFitWithinRoundedRect(box, node.width, node.height, cornerRadii(radius));
+}
+
+function localBoxFitsWithinPathFrameClip(box: LocalBox, node: FrameNode): boolean {
+  if (node.clip?.type !== "path") {
+    return false;
+  }
+  const radii = roundedRectRadiiFromPathClip(node.clip, node.width, node.height);
+  if (radii === undefined) {
+    return false;
+  }
+  return localBoxCornersFitWithinRoundedRect(box, node.width, node.height, radii);
+}
+
+function localBoxFitsWithinFrameBounds(box: LocalBox, node: FrameNode): boolean {
   return (
-    union.x >= -tol &&
-    union.y >= -tol &&
-    union.x + union.w <= node.width + tol &&
-    union.y + union.h <= node.height + tol
+    box.x >= -GEOMETRY_FLOAT_EPSILON &&
+    box.y >= -GEOMETRY_FLOAT_EPSILON &&
+    box.x + box.w <= node.width + GEOMETRY_FLOAT_EPSILON &&
+    box.y + box.h <= node.height + GEOMETRY_FLOAT_EPSILON
   );
+}
+
+function cornerRadii(radius: ReturnType<typeof clampCornerRadius>): readonly [number, number, number, number] {
+  if (radius === undefined) {
+    return [0, 0, 0, 0];
+  }
+  if (typeof radius === "number") {
+    return [radius, radius, radius, radius];
+  }
+  return radius;
+}
+
+function localBoxCornersFitWithinRoundedRect(
+  box: LocalBox,
+  width: number,
+  height: number,
+  radii: readonly [number, number, number, number],
+): boolean {
+  const points = [
+    { x: box.x, y: box.y },
+    { x: box.x + box.w, y: box.y },
+    { x: box.x + box.w, y: box.y + box.h },
+    { x: box.x, y: box.y + box.h },
+  ];
+  return points.every((point) => pointFitsWithinRoundedRect(point.x, point.y, width, height, radii));
+}
+
+function pointFitsWithinRoundedRect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radii: readonly [number, number, number, number],
+): boolean {
+  const [topLeft, topRight, bottomRight, bottomLeft] = radii;
+  if (topLeft > 0 && x < topLeft && y < topLeft) {
+    return pointFitsCornerArc(x, y, topLeft, topLeft, topLeft);
+  }
+  if (topRight > 0 && x > width - topRight && y < topRight) {
+    return pointFitsCornerArc(x, y, width - topRight, topRight, topRight);
+  }
+  if (bottomRight > 0 && x > width - bottomRight && y > height - bottomRight) {
+    return pointFitsCornerArc(x, y, width - bottomRight, height - bottomRight, bottomRight);
+  }
+  if (bottomLeft > 0 && x < bottomLeft && y > height - bottomLeft) {
+    return pointFitsCornerArc(x, y, bottomLeft, height - bottomLeft, bottomLeft);
+  }
+  return true;
+}
+
+function pointFitsCornerArc(
+  x: number,
+  y: number,
+  centerX: number,
+  centerY: number,
+  radius: number,
+): boolean {
+  const dx = x - centerX;
+  const dy = y - centerY;
+  return dx * dx + dy * dy <= radius * radius + GEOMETRY_FLOAT_EPSILON;
+}
+
+function roundedRectRadiiFromPathClip(
+  clip: Extract<ClipShape, { readonly type: "path" }>,
+  width: number,
+  height: number,
+): readonly [number, number, number, number] | undefined {
+  const contour = clip.contours.length === 1 ? clip.contours[0] : undefined;
+  if (contour === undefined) {
+    return undefined;
+  }
+  const commands = commandsWithoutClosingSegment(contour.commands);
+  if (commands.length !== 9) {
+    return undefined;
+  }
+  const [move, topLeftCurve, topEdge, topRightCurve, rightEdge, bottomRightCurve, bottomEdge, bottomLeftCurve, leftEdge] = commands;
+  if (
+    move?.type !== "M" ||
+    topLeftCurve?.type !== "C" ||
+    topEdge?.type !== "L" ||
+    topRightCurve?.type !== "C" ||
+    rightEdge?.type !== "L" ||
+    bottomRightCurve?.type !== "C" ||
+    bottomEdge?.type !== "L" ||
+    bottomLeftCurve?.type !== "C" ||
+    leftEdge?.type !== "L"
+  ) {
+    return undefined;
+  }
+  const topLeft = move.y;
+  const topRight = width - topEdge.x;
+  const bottomRight = height - rightEdge.y;
+  const bottomLeft = bottomEdge.x;
+  if (
+    !nearlyEqual(move.x, 0) ||
+    !nearlyEqual(topLeftCurve.x, topLeft) ||
+    !nearlyEqual(topLeftCurve.y, 0) ||
+    !nearlyEqual(topEdge.y, 0) ||
+    !nearlyEqual(topRightCurve.x, width) ||
+    !nearlyEqual(topRightCurve.y, topRight) ||
+    !nearlyEqual(rightEdge.x, width) ||
+    !nearlyEqual(bottomRightCurve.x, width - bottomRight) ||
+    !nearlyEqual(bottomRightCurve.y, height) ||
+    !nearlyEqual(bottomEdge.y, height) ||
+    !nearlyEqual(bottomLeftCurve.x, 0) ||
+    !nearlyEqual(bottomLeftCurve.y, height - bottomLeft) ||
+    !nearlyEqual(leftEdge.x, 0) ||
+    !nearlyEqual(leftEdge.y, topLeft)
+  ) {
+    return undefined;
+  }
+  return [topLeft, topRight, bottomRight, bottomLeft];
+}
+
+function commandsWithoutClosingSegment(
+  commands: Extract<ClipShape, { readonly type: "path" }>["contours"][number]["commands"],
+): Extract<ClipShape, { readonly type: "path" }>["contours"][number]["commands"] {
+  const last = commands[commands.length - 1];
+  if (last?.type === "Z") {
+    return commands.slice(0, -1);
+  }
+  return commands;
+}
+
+function nearlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) <= GEOMETRY_FLOAT_EPSILON;
 }
 
 function resolveFrameChildClipId(
@@ -377,15 +557,7 @@ function resolveFrameChildClipId(
   // {black @1 OVERLAY}]` text otherwise rasterises near-black instead
   // of the intended mid-grey).
   //
-  // The bbox-fit shortcut is only valid for SHARP-corner clipping. When
-  // the FRAME has a non-zero corner radius (or smoothing), the rounded
-  // corners actually cut content a rect-bounded child would otherwise
-  // cover: e.g. a pill-frame with `cornerRadius=20` and a `160×40` child
-  // RECTANGLE — the bbox fits, but the child's flat corners extend into
-  // the area the rounded clip eats. Without the clip-path, the rounded
-  // shape never gets cut and the rectangle paints square. Force the
-  // clip-path whenever the frame has any rounded-corner geometry.
-  if (!frameClipRequiresClipPath(node, clampedRadius) && frameChildrenFitWithinBounds(node)) {
+  if (frameChildrenFitWithinClipShape(node, clampedRadius)) {
     return undefined;
   }
   const childClipId = ids.getNextId("clip");
@@ -415,6 +587,7 @@ function sceneClipToClipPathShape(clip: ClipShape): ClipPathShape {
       return {
         kind: "path",
         d: clip.contours.map((contour) => contourToSvgD(contour, RENDER_PATH_PRECISION)).join(" "),
+        fillRule: resolvePathContoursFillRule(clip.contours),
       };
   }
 }
@@ -434,38 +607,33 @@ function sceneClipToFrameSurfaceShape(clip: ClipShape): RenderFrameSurfaceShape 
         kind: "path",
         paths: clip.contours.map((contour) => ({
           d: contourToSvgD(contour, RENDER_PATH_PRECISION),
-          fillRule: contour.windingRule !== "nonzero" ? contour.windingRule as "evenodd" : undefined,
+          fillRule: resolveRenderPathFillRule(contour),
         })),
       };
   }
 }
 
-function frameClipRequiresClipPath(
-  node: FrameNode,
-  clampedRadius: ReturnType<typeof clampCornerRadius>,
-): boolean {
-  if (node.clip?.type === "path") {
-    return true;
+function sceneClipElementBounds(clip: ClipShape): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
+  switch (clip.type) {
+    case "rect":
+      return { x: 0, y: 0, width: clip.width, height: clip.height };
+    case "path": {
+      const bbox = pathContoursBoundingBox(clip.contours);
+      if (bbox === undefined) {
+        throw new Error("resolveRenderTree: frame surface path has no bounding box");
+      }
+      return { x: bbox.x, y: bbox.y, width: bbox.w, height: bbox.h };
+    }
   }
-  if (node.clip?.type === "rect") {
-    return frameClipUsesRoundedBoundary(node.clip.cornerRadius);
-  }
-  return frameClipUsesRoundedBoundary(clampedRadius);
-}
-
-function frameClipUsesRoundedBoundary(
-  clampedRadius: ReturnType<typeof clampCornerRadius>,
-): boolean {
-  if (clampedRadius === undefined) { return false; }
-  if (typeof clampedRadius === "number") { return clampedRadius > 0; }
-  return clampedRadius.some((r) => r > 0);
 }
 
 function resolveTextClipId(node: TextNode, ids: IdGenerator, defs: RenderDef[]): string | undefined {
-  const needsClip = node.textAutoResize === "NONE" || node.textAutoResize === "TRUNCATE"
-    || node.textTruncation === "ENDING";
-  if (!needsClip) {
+  const clipHeight = node.textTruncationClipHeight;
+  if (clipHeight === undefined) {
     return undefined;
+  }
+  if (!Number.isFinite(clipHeight) || clipHeight < 0) {
+    throw new Error("resolveRenderTree: textTruncationClipHeight must be a finite non-negative number");
   }
   const textClipId = ids.getNextId("text-clip");
   defs.push({
@@ -476,7 +644,7 @@ function resolveTextClipId(node: TextNode, ids: IdGenerator, defs: RenderDef[]):
       x: 0,
       y: 0,
       width: node.width,
-      height: node.height,
+      height: clipHeight,
     },
   });
   return textClipId;
@@ -863,8 +1031,58 @@ function resolveMask(
   if (!resolvedMaskContent) {
     return undefined;
   }
-  defs.push({ type: "mask", id: maskId, maskContent: resolvedMaskContent });
+  const bounds = resolveMaskContentBounds(node.mask.maskContent);
+  defs.push({ type: "mask", id: maskId, maskType: node.mask.maskType, bounds, maskContent: resolvedMaskContent });
   return { maskAttr: `url(#${maskId})` };
+}
+
+function resolveMaskContentBounds(maskContent: SceneNode): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
+  const box = maskContentLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
+  if (box === undefined) {
+    throw new Error(`Mask source ${maskContent.id} has no measurable geometry for its SVG mask region`);
+  }
+  return { x: box.x, y: box.y, width: box.w, height: box.h };
+}
+
+function maskContentLocalBoxRecursive(
+  node: SceneNode,
+  parentTransform: AffineMatrix2x3,
+): LocalBox | undefined {
+  if (node.visible === false) { return undefined; }
+  const world = composeAffine(parentTransform, node.transform);
+  const own = maskContentIntrinsicLocalBox(node);
+  const ownBox = own === undefined ? undefined : transformLocalBox(own, world);
+  if (node.type !== "frame" && node.type !== "group") {
+    return ownBox;
+  }
+  const childBoxes = node.children
+    .map((child) => maskContentLocalBoxRecursive(child, world))
+    .filter(isLocalBox);
+  return mergeLocalBoxes([ownBox, ...childBoxes].filter(isLocalBox));
+}
+
+function maskContentIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
+  switch (node.type) {
+    case "frame":
+    case "rect":
+    case "image":
+    case "text":
+      return { x: 0, y: 0, w: node.width, h: node.height };
+    case "ellipse":
+      return { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
+    case "path": {
+      const bbox = pathContoursBoundingBox(node.contours);
+      if (bbox) {
+        return { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h };
+      }
+      if (node.width !== undefined && node.height !== undefined) {
+        return { x: 0, y: 0, w: node.width, h: node.height };
+      }
+      return undefined;
+    }
+    case "group":
+      return undefined;
+  }
 }
 
 // =============================================================================
@@ -1017,6 +1235,20 @@ function collectGradientDef(def: ResolvedFill["def"], defs: RenderDef[]): void {
   collectFillDef({ attrs: { fill: "none" }, def }, defs);
 }
 
+type StrokePlacement =
+  | {
+      readonly kind: "source-shape";
+      readonly maskShape: ClipPathShape;
+    }
+  | {
+      readonly kind: "precomputed-geometry";
+      readonly paths: readonly RenderPathContour[];
+      readonly maskShape: ClipPathShape;
+    }
+  | {
+      readonly kind: "figma-export-centerline";
+    };
+
 /**
  * Resolve a Stroke to a StrokeRendering instruction.
  *
@@ -1029,14 +1261,16 @@ function collectGradientDef(def: ResolvedFill["def"], defs: RenderDef[]): void {
  * (Frame/Rect with individualStrokeWeights).
  */
 function resolveStrokeRendering(
-  stroke: Stroke,
+  stroke: Stroke | undefined,
   ids: IdGenerator,
   defs: RenderDef[],
   /** Shape descriptor for non-uniform stroke modes */
   shape: StrokeShape,
-  /** Clip shape for stroke-align mask (required for INSIDE/OUTSIDE) */
-  maskClipShape?: ClipPathShape,
-): StrokeRendering {
+  placement: StrokePlacement,
+): StrokeRendering | undefined {
+  if (stroke === undefined) {
+    return undefined;
+  }
   const result = resolveStrokeResult(stroke, ids);
 
   // Collect gradient defs from any layer up-front so both the "layers"
@@ -1048,6 +1282,14 @@ function resolveStrokeRendering(
         collectGradientDef(layer.gradientDef, defs);
       }
     }
+  }
+
+  if (placement.kind === "figma-export-centerline") {
+    return resolveCenterlineStrokeRendering(result, shape);
+  }
+
+  if (placement.kind === "precomputed-geometry") {
+    return resolvePrecomputedStrokeGeometry(result, ids, defs, placement);
   }
 
   // True multi-paint stroke (two or more visible paints stacked): render
@@ -1062,9 +1304,9 @@ function resolveStrokeRendering(
   // INSIDE/OUTSIDE stroke → masked. Single-layer gradient strokes flow
   // through here too, which means the stroke attrs already point at the
   // gradient url(#lg-N) from the collected def above.
-  if (result.attrs.strokeAlign && maskClipShape) {
+  if (result.attrs.strokeAlign) {
     const maskId = ids.getNextId("stroke-mask");
-    defs.push({ type: "stroke-mask", id: maskId, shape: maskClipShape, strokeAlign: result.attrs.strokeAlign });
+    defs.push({ type: "stroke-mask", id: maskId, shape: placement.maskShape, strokeAlign: result.attrs.strokeAlign });
     // The single-layer branch in resolveStrokeResult forwards a layer with
     // its paint blendMode when the paint is a non-default blend (e.g. a
     // SOFT_LIGHT-blended white outline with strokeAlign=INSIDE). Pull that
@@ -1085,6 +1327,72 @@ function resolveStrokeRendering(
 
   // Uniform stroke
   return { mode: "uniform", attrs: result.attrs };
+}
+
+function resolvePrecomputedStrokeGeometry(
+  result: ReturnType<typeof resolveStrokeResult>,
+  ids: IdGenerator,
+  defs: RenderDef[],
+  placement: Extract<StrokePlacement, { readonly kind: "precomputed-geometry" }>,
+): StrokeRendering {
+  const mask = resolvePrecomputedStrokeGeometryMask(result.attrs, ids, defs, placement.maskShape);
+  return {
+    mode: "geometry",
+    paths: placement.paths,
+    layers: resolvePrecomputedStrokeGeometryLayers(result),
+    mask,
+  };
+}
+
+function resolvePrecomputedStrokeGeometryMask(
+  attrs: ResolvedStrokeAttrs,
+  ids: IdGenerator,
+  defs: RenderDef[],
+  maskShape: ClipPathShape,
+): Extract<StrokeRendering, { readonly mode: "geometry" }>["mask"] {
+  if (attrs.strokeAlign === undefined) {
+    return undefined;
+  }
+  const id = ids.getNextId("stroke-mask");
+  defs.push({ type: "stroke-mask", id, shape: maskShape, strokeAlign: attrs.strokeAlign });
+  return { id, shape: maskShape, strokeAlign: attrs.strokeAlign };
+}
+
+function resolvePrecomputedStrokeGeometryLayers(
+  result: ReturnType<typeof resolveStrokeResult>,
+): readonly ResolvedStrokeLayer[] {
+  if (result.layers !== undefined && result.layers.length > 0) {
+    return result.layers;
+  }
+  return [{ attrs: result.attrs }];
+}
+
+function centerStrokeLayer(layer: ResolvedStrokeLayer): ResolvedStrokeLayer {
+  return {
+    ...layer,
+    attrs: centerStrokeAttrs(layer.attrs),
+  };
+}
+
+function resolveCenterlineStrokeRendering(
+  result: ResolvedStrokeResult,
+  shape: StrokeShape,
+): StrokeRendering {
+  if (result.layers) {
+    return { mode: "layers", layers: result.layers.map(centerStrokeLayer), shape };
+  }
+  return { mode: "uniform", attrs: centerStrokeAttrs(result.attrs) };
+}
+
+function centerStrokeAttrs(attrs: ResolvedStrokeAttrs): ResolvedStrokeAttrs {
+  return {
+    stroke: attrs.stroke,
+    strokeWidth: attrs.strokeWidth / 2,
+    strokeOpacity: attrs.strokeOpacity,
+    strokeLinecap: attrs.strokeLinecap,
+    strokeLinejoin: attrs.strokeLinejoin,
+    strokeDasharray: attrs.strokeDasharray,
+  };
 }
 
 // =============================================================================
@@ -1127,8 +1435,8 @@ function resolveFrameNode(
   const defs: RenderDef[] = [];
   const { wrapper, effectStack } = resolveFrameWrapper(node, ids, defs);
   const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
-  const elementBounds = { x: 0, y: 0, width: node.width, height: node.height };
-  const surfaceFilterAttr = resolveFrameSurfaceFilterAttr(effectStack.foregroundEffects, ids, defs, elementBounds);
+  const surfaceBounds = sceneClipElementBounds(node.surfaceShape);
+  const surfaceFilterAttr = resolveFrameSurfaceFilterAttr(effectStack.foregroundEffects, ids, defs, surfaceBounds);
   const surfaceShape = sceneClipToFrameSurfaceShape(node.surfaceShape);
   const surfaceClipShape = sceneClipToClipPathShape(node.surfaceShape);
 
@@ -1140,15 +1448,18 @@ function resolveFrameNode(
   const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
   const childClipId = resolveFrameChildClipId(node, children, ids, defs, clampedRadius);
 
-  // Finalize gradient coordinates using element size
-  finalizeDefs(defs, { x: 0, y: 0, width: node.width, height: node.height }, exportSettings);
+  // Finalize surface paint coordinates using the actual Kiwi surface,
+  // not the frame's logical layout size. Crop-like FRAME surfaces can
+  // carry a path smaller than node.width/node.height; Figma resolves
+  // those paint transforms against that visible surface bbox.
+  finalizeDefs(defs, surfaceBounds, exportSettings);
 
   // Background blur (foreignObject + backdrop-filter, separate from filter
   // pipeline). Pass the FRAME's rounded-rect shape so the backdrop clip
   // honours cornerRadius (otherwise a rounded FRAME with background blur
   // would show a square blur area bleeding past the rounded corners).
   const backgroundBlur = resolveBackgroundBlur(
-    effectStack, elementBounds, ids, defs,
+    effectStack, surfaceBounds, ids, defs,
     surfaceClipShape,
   );
 
@@ -1187,7 +1498,7 @@ function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: Resol
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
   const maskClipShape = buildClipShape(node.width, node.height, clampedRadius, node.cornerSmoothing);
   const rectStrokeShape: StrokeShape = { kind: "rect", width: node.width, height: node.height, cornerRadius: clampedRadius, cornerSmoothing: node.cornerSmoothing };
-  const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, rectStrokeShape, maskClipShape);
+  const strokeRendering = resolveStrokeRendering(node.stroke, ids, defs, rectStrokeShape, { kind: "source-shape", maskShape: maskClipShape });
 
   finalizeDefs(defs, { x: 0, y: 0, width: node.width, height: node.height }, exportSettings);
 
@@ -1234,7 +1545,7 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings:
   const ellipseMaskShape: ClipPathShape = {
     kind: "ellipse", cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry,
   };
-  const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, ellipseStrokeShape, ellipseMaskShape);
+  const strokeRendering = resolveStrokeRendering(node.stroke, ids, defs, ellipseStrokeShape, { kind: "source-shape", maskShape: ellipseMaskShape });
 
   const ellipseSize = { width: node.rx * 2, height: node.ry * 2 };
   const ellipseBounds = { x: 0, y: 0, ...ellipseSize };
@@ -1308,17 +1619,10 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
   const fillResult = resolveTopFillResult(node.fills, ids, defs, exportSettings);
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
 
-  const paths: RenderPathContour[] = node.contours.map((contour) => {
-    const base: RenderPathContour = {
-      d: contourToSvgD(contour, RENDER_PATH_PRECISION),
-      fillRule: contour.windingRule !== "nonzero" ? contour.windingRule as "evenodd" : undefined,
-    };
-    if (contour.fillOverride) {
-      const overrideFill = resolveFillResult(contour.fillOverride, ids, defs, exportSettings);
-      return { ...base, fillOverride: overrideFill };
-    }
-    return base;
-  });
+  const sourcePaths = resolveRenderPathContours(node.contours, ids, defs, exportSettings);
+  const strokeGeometryPaths = resolveStrokeGeometryPathContours(node.strokeContours);
+  const alignedPaths = strokeGeometryPaths === undefined ? resolveOutsideStrokeAlignedPathContours(node) : undefined;
+  const paths = alignedPaths ?? sourcePaths;
 
   // When the source VECTOR carries parametric rectangle metadata
   // (`width`, `height`, `cornerRadius`, optional `cornerSmoothing`),
@@ -1338,9 +1642,11 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
   // stroke width is clipped to the correct side of the path).
   const pathMaskShape: ClipPathShape = {
     kind: "path",
-    d: paths.map((p) => p.d).join(" "),
+    d: sourcePaths.map((p) => p.d).join(" "),
+    fillRule: resolveRenderPathContoursFillRule(sourcePaths),
   };
-  const strokeRendering = resolveOptionalStrokeRendering(node.stroke, ids, defs, pathStrokeShape, pathMaskShape);
+  const strokePlacement = resolvePathStrokePlacement(strokeGeometryPaths, alignedPaths, pathMaskShape);
+  const strokeRendering = resolveStrokeRendering(node.stroke, ids, defs, pathStrokeShape, strokePlacement);
 
   // For VECTOR / boolean-op paths the contour origin in node-local
   // coordinates can be offset from (0, 0) — Figma's vector network
@@ -1382,6 +1688,97 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
     backgroundBlur,
     mask,
   };
+}
+
+function resolveRenderPathContours(
+  contours: readonly PathContour[],
+  ids: IdGenerator,
+  defs: RenderDef[],
+  exportSettings: ResolvedFigmaRenderExportSettings,
+): readonly RenderPathContour[] {
+  return contours.map((contour) => {
+    const base: RenderPathContour = {
+      d: contourToSvgD(contour, RENDER_PATH_PRECISION),
+      fillRule: resolveRenderPathFillRule(contour),
+    };
+    if (contour.fillOverride) {
+      const overrideFill = resolveFillResult(contour.fillOverride, ids, defs, exportSettings);
+      return { ...base, fillOverride: overrideFill };
+    }
+    return base;
+  });
+}
+
+function resolveStrokeGeometryPathContours(
+  contours: readonly PathContour[] | undefined,
+): readonly RenderPathContour[] | undefined {
+  if (contours === undefined || contours.length === 0) {
+    return undefined;
+  }
+  return contours.map((contour) => ({
+    d: contourToSvgD(contour, RENDER_PATH_PRECISION),
+    fillRule: resolveRenderPathFillRule(contour),
+  }));
+}
+
+function resolveRenderPathFillRule(contour: PathContour): RenderPathContour["fillRule"] {
+  if (contour.windingRule === "nonzero") {
+    return undefined;
+  }
+  return contour.windingRule;
+}
+
+function resolvePathContoursFillRule(contours: readonly PathContour[]): RenderPathContour["fillRule"] {
+  if (contours.some((contour) => contour.windingRule === "evenodd")) {
+    return "evenodd";
+  }
+  return undefined;
+}
+
+function resolveRenderPathContoursFillRule(paths: readonly RenderPathContour[]): RenderPathContour["fillRule"] {
+  if (paths.some((path) => path.fillRule === "evenodd")) {
+    return "evenodd";
+  }
+  return undefined;
+}
+
+function resolvePathStrokePlacement(
+  strokeGeometryPaths: readonly RenderPathContour[] | undefined,
+  alignedPaths: readonly RenderPathContour[] | undefined,
+  maskShape: ClipPathShape,
+): StrokePlacement {
+  if (strokeGeometryPaths !== undefined) {
+    return { kind: "precomputed-geometry", paths: strokeGeometryPaths, maskShape };
+  }
+  if (alignedPaths !== undefined) {
+    return { kind: "figma-export-centerline" };
+  }
+  return { kind: "source-shape", maskShape };
+}
+
+function resolveOutsideStrokeAlignedPathContours(node: PathNode): readonly RenderPathContour[] | undefined {
+  const stroke = node.stroke;
+  if (stroke?.align !== "OUTSIDE") {
+    return undefined;
+  }
+  if (node.contours.length !== 1) {
+    return undefined;
+  }
+  const contour = node.contours[0];
+  if (contour.windingRule !== "nonzero" || contour.fillOverride !== undefined) {
+    return undefined;
+  }
+  const alignedCommands = buildStrokeAlignedClosedPathCommands(
+    contour.commands,
+    stroke.width / 2,
+    { flattenTolerance: STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE },
+  );
+  if (alignedCommands === undefined) {
+    return undefined;
+  }
+  return [{
+    d: contourToSvgD({ commands: alignedCommands }, RENDER_PATH_PRECISION),
+  }];
 }
 
 function resolvePathStrokeShape(node: PathNode, paths: readonly RenderPathContour[]): StrokeShape {

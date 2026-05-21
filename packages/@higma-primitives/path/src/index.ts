@@ -46,6 +46,10 @@ export {
   reconstructStrokeCenterline,
   type CenterlineContour,
 } from "./stroke-centerline";
+export {
+  buildStrokeAlignedClosedPathCommands,
+  type StrokeAlignedClosedPathOptions,
+} from "./stroke-aligned-path";
 
 export {
   evaluateBooleanPathResult,

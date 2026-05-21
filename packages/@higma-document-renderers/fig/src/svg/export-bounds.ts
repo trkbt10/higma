@@ -17,8 +17,12 @@
  *     instead of `0 0 402 306`.
  *
  *     The same recursion applies inside descendants: a clipsContent=true
- *     descendant only contributes its own padded box; a clipsContent=false
- *     descendant additionally contributes its own descendants' boxes.
+ *     descendant contributes its own export surface, while a
+ *     clipsContent=false descendant additionally contributes its own
+ *     descendants' boxes. Descendant authored strokeGeometry can expand
+ *     that descendant surface, but fillGeometry is clipped to the node
+ *     surface and the exported root's own geometry does not replace the
+ *     root surface bounds.
  *
  *  3. After unioning everything, the resulting width/height is rounded
  *     UP to the next integer (the extra sub-pixel goes to the
@@ -33,7 +37,10 @@
  * shape of the function.
  */
 
+import type { FigBlob } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { pathContoursBoundingBox } from "@higma-primitives/path";
+import { decodeGeometryToContours } from "../scene-graph/convert";
 import { computeNodeEffectExpansion } from "./effect-bounds";
 
 /**
@@ -55,10 +62,24 @@ export type FigExportBox = {
   readonly height: number;
 };
 
+export type FigChildrenOf = (node: FigNode) => readonly FigNode[];
+
 /**
  * Options for `computeFigExportBounds`.
  */
 export type ComputeFigExportBoundsOptions = {
+  /**
+   * Parent/child view over the Kiwi document. Export bounds must walk the
+   * same document index the renderer consumes; raw `node.children` is not a
+   * second source of truth.
+   */
+  readonly childrenOf: FigChildrenOf;
+  /**
+   * Binary geometry blobs from the same Kiwi document. Export bounds are
+   * allowed to grow from authored fill/stroke geometry, so callers must
+   * provide the same blob table the renderer consumes.
+   */
+  readonly blobs: readonly FigBlob[];
   /**
    * Round the final width/height up to the next integer. Defaults to
    * `true`, matching Figma's SVG exporter. Set to `false` when sub-pixel
@@ -72,9 +93,33 @@ export type ComputeFigExportBoundsOptions = {
   readonly ceilIntegers?: boolean;
 };
 
-const DEFAULT_OPTIONS: Required<ComputeFigExportBoundsOptions> = {
-  ceilIntegers: true,
+const DEFAULT_CEIL_INTEGERS = true;
+
+type ResolvedComputeFigExportBoundsOptions = {
+  readonly childrenOf: FigChildrenOf;
+  readonly blobs: readonly FigBlob[];
+  readonly ceilIntegers: boolean;
 };
+
+type GeometryExpansionScope = "root-surface" | "unclipped-descendant";
+
+function resolveOptions(options: ComputeFigExportBoundsOptions): ResolvedComputeFigExportBoundsOptions {
+  return {
+    childrenOf: options.childrenOf,
+    blobs: options.blobs,
+    ceilIntegers: options.ceilIntegers ?? DEFAULT_CEIL_INTEGERS,
+  };
+}
+
+const IDENTITY_TRANSLATE = 0;
+
+function schemaTranslateX(node: FigNode): number {
+  return node.transform?.m02 ?? IDENTITY_TRANSLATE;
+}
+
+function schemaTranslateY(node: FigNode): number {
+  return node.transform?.m12 ?? IDENTITY_TRANSLATE;
+}
 
 /**
  * Negate while preserving `+0` instead of producing `-0`. The latter
@@ -93,7 +138,11 @@ function negZeroSafe(value: number): number {
  * inversion of the Figma UI's "Clip content" toggle). Otherwise the
  * box is just the node's intrinsic size + effect halo.
  */
-function unionLocalBox(node: FigNode): FigExportBox {
+function unionLocalBox(
+  node: FigNode,
+  options: ResolvedComputeFigExportBoundsOptions,
+  geometryExpansionScope: GeometryExpansionScope,
+): FigExportBox {
   const effect = computeNodeEffectExpansion(node);
   const sizeX = node.size?.x ?? 0;
   const sizeY = node.size?.y ?? 0;
@@ -103,14 +152,24 @@ function unionLocalBox(node: FigNode): FigExportBox {
   let xMax = sizeX + effect.right;
   let yMax = sizeY + effect.bottom;
 
-  if (node.frameMaskDisabled === true && Array.isArray(node.children)) {
-    for (const child of node.children) {
+  const geometry = descendantStrokeGeometryBox(node, options.blobs, geometryExpansionScope);
+  if (geometry !== undefined) {
+    const gxMax = geometry.x + geometry.width;
+    const gyMax = geometry.y + geometry.height;
+    if (geometry.x < xMin) { xMin = geometry.x; }
+    if (geometry.y < yMin) { yMin = geometry.y; }
+    if (gxMax > xMax) { xMax = gxMax; }
+    if (gyMax > yMax) { yMax = gyMax; }
+  }
+
+  if (node.frameMaskDisabled === true) {
+    for (const child of options.childrenOf(node)) {
       if (child.visible === false) {
         continue;
       }
-      const inner = unionLocalBox(child);
-      const tx = child.transform?.m02 ?? 0;
-      const ty = child.transform?.m12 ?? 0;
+      const inner = unionLocalBox(child, options, "unclipped-descendant");
+      const tx = schemaTranslateX(child);
+      const ty = schemaTranslateY(child);
       const cxMin = inner.x + tx;
       const cyMin = inner.y + ty;
       const cxMax = inner.x + inner.width + tx;
@@ -125,16 +184,39 @@ function unionLocalBox(node: FigNode): FigExportBox {
   return { x: xMin, y: yMin, width: xMax - xMin, height: yMax - yMin };
 }
 
+function descendantStrokeGeometryBox(
+  node: FigNode,
+  blobs: readonly FigBlob[],
+  geometryExpansionScope: GeometryExpansionScope,
+): FigExportBox | undefined {
+  if (geometryExpansionScope === "root-surface") {
+    return undefined;
+  }
+  return nodeStrokeGeometryBox(node, blobs);
+}
+
+function nodeStrokeGeometryBox(
+  node: FigNode,
+  blobs: readonly FigBlob[],
+): FigExportBox | undefined {
+  const contours = decodeGeometryToContours(node.strokeGeometry, blobs);
+  const box = pathContoursBoundingBox(contours);
+  if (box === undefined) {
+    return undefined;
+  }
+  return { x: box.x, y: box.y, width: box.w, height: box.h };
+}
+
 /**
  * Compute the export viewBox a `FigNode` would receive when sent through
  * Figma's SVG exporter.
  */
 export function computeFigExportBounds(
   node: FigNode,
-  options?: ComputeFigExportBoundsOptions,
+  options: ComputeFigExportBoundsOptions,
 ): FigExportBox {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
-  const raw = unionLocalBox(node);
+  const opts = resolveOptions(options);
+  const raw = unionLocalBox(node, opts, "root-surface");
   if (!opts.ceilIntegers) {
     return raw;
   }
@@ -143,5 +225,24 @@ export function computeFigExportBounds(
     y: raw.y,
     width: Math.ceil(raw.width),
     height: Math.ceil(raw.height),
+  };
+}
+
+/**
+ * Compute the world-space viewport to pass to `renderFigToSvg` when
+ * exporting one root node. `computeFigExportBounds` returns a box in the
+ * root's local coordinates; the renderer consumes the document's world
+ * coordinates, so the root's Kiwi translation is applied exactly once here.
+ */
+export function computeFigExportViewport(
+  node: FigNode,
+  options: ComputeFigExportBoundsOptions,
+): FigExportBox {
+  const box = computeFigExportBounds(node, options);
+  return {
+    x: schemaTranslateX(node) + box.x,
+    y: schemaTranslateY(node) + box.y,
+    width: box.width,
+    height: box.height,
   };
 }

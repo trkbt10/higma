@@ -91,6 +91,11 @@ export type ResolveEffectsOptions = {
   readonly sourceGraphic?: "include" | "omit";
 };
 
+type PreparedInnerShadow = {
+  readonly input: string;
+  readonly mode: FeBlendMode;
+};
+
 
 // =============================================================================
 // Resolution
@@ -127,6 +132,7 @@ function effectBlendModeToSvg(bm: BlendMode | undefined): FeBlendMode {
 }
 
 const ALPHA_BINARIZE_MATRIX = "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0";
+const FILTER_BACKGROUND_RESULT = "BackgroundImageFix";
 
 function buildColorMatrix(c: Color): string {
   return `0 0 0 0 ${c.r} 0 0 0 0 ${c.g} 0 0 0 0 ${c.b} 0 0 0 ${c.a} 0`;
@@ -165,6 +171,145 @@ function appendBlendPrimitive(params: {
   return result;
 }
 
+function appendDropShadowBlend(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly mode: FeBlendMode;
+  readonly input: string;
+  readonly backdrop: string;
+}): string {
+  const result = params.ids.getNextId("drop-shadow");
+  params.primitives.push({
+    type: "feBlend",
+    mode: params.mode,
+    in: params.input,
+    in2: params.backdrop,
+    result,
+  });
+  return result;
+}
+
+function appendBackgroundImageFix(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+}): void {
+  params.primitives.push({ type: "feFlood", floodOpacity: 0, result: FILTER_BACKGROUND_RESULT });
+}
+
+function appendDropShadowOverBackdrop(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly mode: FeBlendMode;
+  readonly input: string;
+  readonly currentBackdrop: string | undefined;
+}): string {
+  if (params.currentBackdrop !== undefined) {
+    return appendDropShadowBlend({
+      primitives: params.primitives,
+      ids: params.ids,
+      mode: params.mode,
+      input: params.input,
+      backdrop: params.currentBackdrop,
+    });
+  }
+  params.primitives.unshift({ type: "feFlood", floodOpacity: 0, result: FILTER_BACKGROUND_RESULT });
+  return appendDropShadowBlend({
+    primitives: params.primitives,
+    ids: params.ids,
+    mode: params.mode,
+    input: params.input,
+    backdrop: FILTER_BACKGROUND_RESULT,
+  });
+}
+
+function appendSourceGraphicOverBackdrop(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly backdrop: string;
+}): string {
+  const result = params.ids.getNextId("shape");
+  params.primitives.push({
+    type: "feBlend",
+    mode: "normal",
+    in: "SourceGraphic",
+    in2: params.backdrop,
+    result,
+  });
+  return result;
+}
+
+function appendStandaloneInnerShadowShape(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly sourceGraphic: ResolveEffectsOptions["sourceGraphic"];
+  readonly hasDropShadow: boolean;
+  readonly hasInnerShadow: boolean;
+}): string | undefined {
+  if (params.sourceGraphic === "omit" || params.hasDropShadow || !params.hasInnerShadow) {
+    return undefined;
+  }
+  appendBackgroundImageFix({ primitives: params.primitives });
+  return appendSourceGraphicOverBackdrop({
+    primitives: params.primitives,
+    ids: params.ids,
+    backdrop: FILTER_BACKGROUND_RESULT,
+  });
+}
+
+function appendSourceGraphicOverShadow(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly dropBackdrop: string | undefined;
+  readonly standaloneShape: string | undefined;
+  readonly sourceGraphic: ResolveEffectsOptions["sourceGraphic"];
+}): string | undefined {
+  if (params.dropBackdrop === undefined) {
+    if (params.sourceGraphic === "omit") {
+      return undefined;
+    }
+    if (params.standaloneShape !== undefined) {
+      return params.standaloneShape;
+    }
+    return "SourceGraphic";
+  }
+  if (params.sourceGraphic === "omit") {
+    return params.dropBackdrop;
+  }
+  return appendSourceGraphicOverBackdrop({
+    primitives: params.primitives,
+    ids: params.ids,
+    backdrop: params.dropBackdrop,
+  });
+}
+
+function appendInnerShadowBlends(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly baseResult: string | undefined;
+  readonly innerShadows: readonly PreparedInnerShadow[];
+}): string | undefined {
+  if (params.innerShadows.length === 0) {
+    return params.baseResult;
+  }
+  return params.innerShadows.reduce<string | undefined>((current, inner) => {
+    if (current === undefined) {
+      return inner.input;
+    }
+    const result = params.ids.getNextId("inner-shadow");
+    params.primitives.push({
+      type: "feBlend",
+      mode: inner.mode,
+      in: inner.input,
+      in2: current,
+      result,
+    });
+    return result;
+  }, params.baseResult);
+}
+
+function resolveForegroundBlurInput(result: string | undefined): string {
+  return result ?? "SourceGraphic";
+}
+
 /**
  * Format a 0–1 color as CSS `rgb(r, g, b)` for SVG `flood-color`.
  * Uses the same half-ULP epsilon as colorToHex so float32 kiwi-encoded
@@ -195,19 +340,21 @@ export function resolveEffects(
   }
 
   const primitives: ResolvedFilterPrimitive[] = [];
-  // Names of every drop-shadow result produced during the loop, in
-  // declaration order. The terminal feMerge composites all of them
-  // beneath SourceGraphic so multiple shadows accumulate instead of
-  // each one overpainting the previous (matches Figma's SVG export
-  // which chains `effect1_dropShadow → effect2_dropShadow → ...`).
-  const dropShadowResults: string[] = [];
-  // Names of every inner-shadow result produced during the loop, in
-  // declaration order. Composited above SourceGraphic in the terminal
-  // feMerge so multiple inner shadows stack (Windows-98-style 3D
-  // beveled buttons author four INNER_SHADOWs to fake top-left
-  // highlights and bottom-right shadow strokes; without the
-  // accumulation only the last of the four would survive).
-  const innerShadowResults: string[] = [];
+  const hasDropShadow = effects.some((effect) => effect.type === "drop-shadow");
+  const hasInnerShadow = effects.some((effect) => effect.type === "inner-shadow");
+  const standaloneShape = appendStandaloneInnerShadowShape({
+    primitives,
+    ids,
+    sourceGraphic: options.sourceGraphic,
+    hasDropShadow,
+    hasInnerShadow,
+  });
+  let dropBackdropResult: string | undefined;
+  // Inner shadows are prepared as tinted bands and then blended over
+  // the composed foreground in declaration order. This mirrors Figma's
+  // SVG filter structure: `shape -> effect1_innerShadow -> ...`.
+  const innerShadows: PreparedInnerShadow[] = [];
+  const foregroundBlurEffects: LayerBlurEffect[] = [];
 
   for (const effect of effects) {
     switch (effect.type) {
@@ -262,13 +409,13 @@ export function resolveEffects(
             { type: "feFlood", floodColor: colorToRgb(c), floodOpacity: c.a, result: floodResult },
             { type: "feComposite", in: floodResult, in2: compositedResult, operator: "in", result: tintedResult },
           );
-          dropShadowResults.push(appendBlendPrimitive({
+          dropBackdropResult = appendDropShadowOverBackdrop({
             primitives,
             ids,
             mode: blendMode,
             input: tintedResult,
-            resultPrefix: "drop-blended",
-          }));
+            currentBackdrop: dropBackdropResult,
+          });
           break;
         }
 
@@ -339,13 +486,13 @@ export function resolveEffects(
             { type: "feComposite", in2: hardAlphaResult, operator: "out", result: compositedResult },
             { type: "feColorMatrix", in: compositedResult, matrixType: "matrix", values: buildColorMatrix(c), result: tintedResult },
           );
-          dropShadowResults.push(appendBlendPrimitive({
+          dropBackdropResult = appendDropShadowOverBackdrop({
             primitives,
             ids,
             mode: blendMode,
             input: tintedResult,
-            resultPrefix: "drop-blended",
-          }));
+            currentBackdrop: dropBackdropResult,
+          });
         } else {
           // NORMAL blend: blurred-hardAlpha is tinted directly with no
           // composite-out. The resulting tinted shadow includes both
@@ -357,107 +504,73 @@ export function resolveEffects(
             values: buildColorMatrix(c),
             result: tintedResult,
           });
-          dropShadowResults.push(tintedResult);
+          dropBackdropResult = appendDropShadowOverBackdrop({
+            primitives,
+            ids,
+            mode: blendMode,
+            input: tintedResult,
+            currentBackdrop: dropBackdropResult,
+          });
         }
         break;
       }
 
       case "inner-shadow": {
-        // SVG inner-shadow recipe matching the WebGL renderer
-        // (`webgl/effects/effects-renderer.ts` — `shadowMask =
-        // shapeAlpha * (1 - blurredAlpha_at_offset)`) so the two
-        // backends agree pixel-for-pixel on bevel direction.
+        // Figma's SVG exporter computes the inner band as
+        // `hardAlpha - blurred(offset(hardAlpha))` with arithmetic
+        // feComposite (`k2=-1`, `k3=1`), then tints that alpha band
+        // with feColorMatrix. SVG `out` is not equivalent: it
+        // multiplies by `(1 - blurredAlpha)` instead of subtracting.
         //
-        //   1. Offset the *alpha* of the shape (uncoloured) by
-        //      (dx, dy) — produces the shifted silhouette.
-        //   2. Optionally morphology-spread the shifted alpha.
-        //   3. Gaussian-blur the shifted alpha by `radius / 2`.
-        //   4. Composite `SourceAlpha OUT shiftedBlurred` to obtain
-        //      the inner-edge band: pixels INSIDE the original where
-        //      the shifted silhouette is NOT — i.e. the band on the
-        //      OPPOSITE side of the offset direction. For a Figma
-        //      offset of (+2, +2) (light from bottom-right), the
-        //      band lands on the TOP-LEFT inner edge; for (-1, -1)
-        //      it lands on the BOTTOM-RIGHT inner edge. This is the
-        //      classic Win98 bevel direction encoded by the source data.
-        //   5. Flood the filter region with the shadow colour and
-        //      composite IN with the band → coloured inner band.
-        //   6. Accumulate the result; the terminal feMerge at the
-        //      bottom of this loop paints every inner-shadow band on
-        //      top of `SourceGraphic`.
-        //
-        // The earlier recipe coloured + offset + composite-out-with-
-        // SourceAlpha produced a band *outside* the original — the
-        // exact opposite of the desired bevel direction. The
-        // Windows-98 design system's four-INNER_SHADOW stacked
-        // buttons rendered as a single thin black line on the wrong
-        // corner before this fix, since each shadow's band fell
-        // outside the shape and only the slivers inside the filter
-        // region clipped to the viewBox were visible.
+        // Inner shadow spread uses Figma's inset semantics: positive
+        // spread erodes SourceAlpha before offset/blur, widening the
+        // inner band after the arithmetic subtraction; negative spread
+        // dilates SourceAlpha and narrows it.
         const stdDev = effect.radius / 2;
+        const hardAlphaResult = ids.getNextId("hardAlpha");
         const offsetResult = ids.getNextId("inner-offset");
         const spreadResult = ids.getNextId("inner-spread");
         const blurResult = ids.getNextId("inner-blur");
         const bandResult = ids.getNextId("inner-band");
-        const floodResult = ids.getNextId("inner-flood");
-        const innerResult = ids.getNextId("inner");
+        const tintedResult = ids.getNextId("inner-tinted");
         primitives.push({
-          type: "feOffset",
+          type: "feColorMatrix",
           in: "SourceAlpha",
-          dx: effect.offset.x,
-          dy: effect.offset.y,
-          result: offsetResult,
+          matrixType: "matrix",
+          values: ALPHA_BINARIZE_MATRIX,
+          result: hardAlphaResult,
         });
         if (effect.spread && effect.spread !== 0) {
           primitives.push({
             type: "feMorphology",
-            in: offsetResult,
-            operator: effect.spread > 0 ? "dilate" : "erode",
+            in: "SourceAlpha",
+            operator: effect.spread > 0 ? "erode" : "dilate",
             radius: Math.abs(effect.spread),
             result: spreadResult,
           });
         }
-        const blurIn = effect.spread && effect.spread !== 0 ? spreadResult : offsetResult;
+        const offsetIn = effect.spread && effect.spread !== 0 ? spreadResult : hardAlphaResult;
+        primitives.push({
+          type: "feOffset",
+          in: offsetIn,
+          dx: effect.offset.x,
+          dy: effect.offset.y,
+          result: offsetResult,
+        });
         primitives.push(
-          { type: "feGaussianBlur", in: blurIn, stdDeviation: stdDev, result: blurResult },
-          // SourceAlpha OUT shiftedBlurred = SourceAlpha * (1 - shifted).
-          // Stays *inside* the original on the opposite side of the
-          // offset direction.
-          { type: "feComposite", in: "SourceAlpha", in2: blurResult, operator: "out", result: bandResult },
-          { type: "feFlood", floodColor: colorToRgb(effect.color), floodOpacity: effect.color.a, result: floodResult },
-          { type: "feComposite", in: floodResult, in2: bandResult, operator: "in", result: innerResult },
+          { type: "feGaussianBlur", in: offsetResult, stdDeviation: stdDev, result: blurResult },
+          { type: "feComposite", in: blurResult, in2: hardAlphaResult, operator: "arithmetic", k2: -1, k3: 1, result: bandResult },
+          { type: "feColorMatrix", in: bandResult, matrixType: "matrix", values: buildColorMatrix(effect.color), result: tintedResult },
         );
-        const innerBlendMode = effectBlendModeToSvg(effect.blendMode);
-        if (innerBlendMode !== "normal") {
-          // Non-default per-effect blend (rare): blend this inner
-          // shadow against `SourceGraphic` standalone and accumulate
-          // the blended pixels. The terminal merge then layers that
-          // blended-over-source result on top of `SourceGraphic`
-          // again, which double-paints the source — acceptable for a
-          // blend-mode shadow whose own intensity is what the user
-          // tuned, and the equivalent of how single-shadow output
-          // looked before this fix. A future cleanup can thread the
-          // blend chain explicitly when fixture coverage exists.
-          const blendedResult = ids.getNextId("inner-blended");
-          primitives.push({
-            type: "feBlend",
-            mode: innerBlendMode,
-            in: innerResult,
-            in2: "SourceGraphic",
-            result: blendedResult,
-          });
-          innerShadowResults.push(blendedResult);
-        } else {
-          innerShadowResults.push(innerResult);
-        }
+        innerShadows.push({
+          input: tintedResult,
+          mode: effectBlendModeToSvg(effect.blendMode),
+        });
         break;
       }
 
       case "layer-blur": {
-        const stdDev = effect.radius / 2;
-        primitives.push(
-          { type: "feGaussianBlur", in: "SourceGraphic", stdDeviation: stdDev },
-        );
+        foregroundBlurEffects.push(effect);
         break;
       }
 
@@ -474,18 +587,40 @@ export function resolveEffects(
     }
   }
 
-  // Composite the assembled effect stack in a single terminal feMerge:
-  // drop shadows go BELOW `SourceGraphic`, inner shadows ABOVE. With
-  // only drops this collapses to `[drop1, drop2, ..., SourceGraphic]`
-  // (the prior shape); with only inners it becomes
-  // `[SourceGraphic, inner1, inner2, ...]` (Windows 98's 3D beveled
-  // borders); the mixed case stacks both correctly without orphaning
-  // any shadow's intermediate result.
-  if (dropShadowResults.length > 0 || innerShadowResults.length > 0) {
-    const sourceGraphicNodes = options.sourceGraphic === "omit" ? [] : ["SourceGraphic"];
+  // Composite the assembled shadow stack before foreground blur:
+  // drop shadows go BELOW `SourceGraphic`, inner shadows ABOVE. Drop
+  // shadows are chained with feBlend so Kiwi `showShadowBehindNode`
+  // and declaration order match Figma's exporter
+  // (`effect1_dropShadow → effect2_dropShadow → ... → shape`). Inner
+  // shadows are blended sequentially over that composed base, matching
+  // Figma's `shape → effectN_innerShadow` chain.
+  //
+  // Figma's FOREGROUND_BLUR then consumes that composed foreground
+  // result, not raw SourceGraphic. The iPhone template's side buttons
+  // encode `[INNER_SHADOW, INNER_SHADOW, FOREGROUND_BLUR]`; emitting
+  // the blur before this merge made it dead code because the later
+  // feMerge became the filter output.
+  const baseResult = appendSourceGraphicOverShadow({
+    primitives,
+    ids,
+    dropBackdrop: dropBackdropResult,
+    standaloneShape,
+    sourceGraphic: options.sourceGraphic,
+  });
+
+  const foregroundResult = appendInnerShadowBlends({
+    primitives,
+    ids,
+    baseResult,
+    innerShadows,
+  });
+
+  for (const effect of foregroundBlurEffects) {
+    const stdDev = effect.radius / 2;
     primitives.push({
-      type: "feMerge",
-      nodes: [...dropShadowResults, ...sourceGraphicNodes, ...innerShadowResults],
+      type: "feGaussianBlur",
+      in: resolveForegroundBlurInput(foregroundResult),
+      stdDeviation: stdDev,
     });
   }
 
@@ -596,8 +731,9 @@ function expandFilterExtentsForEffect(
 ): FilterExtents {
   switch (effect.type) {
     case "drop-shadow":
-    case "inner-shadow":
       return expandFilterExtentsForShadow(extents, bounds, effect);
+    case "inner-shadow":
+      return extents;
     case "layer-blur":
       return expandFilterExtentsForLayerBlur(extents, effect);
     case "background-blur":

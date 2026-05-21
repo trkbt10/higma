@@ -645,9 +645,6 @@ export async function emitFromFrames(
     })),
   );
   for (const { figma } of figmaPairs) {
-    if (!figma) {
-      continue;
-    }
     files.push(figma.svg);
     files.push(figma.html);
   }
@@ -656,7 +653,7 @@ export async function emitFromFrames(
   files.push(emitIndexHtml(fontPlan));
   files.push(emitPreviewCss());
   files.push(emitMainTsx());
-  files.push(emitAppTsx(figmaPairs.map(({ target, figma }) => ({ target, figmaSlug: figma?.slug }))));
+  files.push(emitAppTsx(figmaPairs.map(({ target, figma }) => ({ target, figmaSlug: figma.slug }))));
   // Standalone HTML + entry per frame — the React-only render path
   // the visual-fidelity verifier consumes. Distinct from the
   // dual-pane preview shell so dev humans and automation each get a

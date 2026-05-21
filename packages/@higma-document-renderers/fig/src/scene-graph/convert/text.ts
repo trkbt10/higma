@@ -6,7 +6,7 @@
 
 import type { FigBlob, FigStyleRegistry } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { resolveTextRendering, type TextFontResolver, type TextRendering } from "../../text/rendering";
+import { resolveTextRendering, type TextFontResolver, type TextRendering, type TextTruncation } from "../../text/rendering";
 import type { TextRun } from "@higma-document-renderers/fig/scene-graph";
 import type { GlyphContour as PathGlyphContour } from "../../text/paths/types";
 import { textAlignHorizontalToAnchor, getAllVisibleSolidFills } from "../../text/layout";
@@ -75,6 +75,12 @@ export type TextConversionResult = {
   }[];
   /** Text line layout data for SVG <text> rendering */
   readonly textLineLayout?: TextLineLayout;
+  /**
+   * Kiwi derivedTextData truncation metadata, when Figma's layout engine
+   * actually cut the text. This is the SoT for downstream clipping;
+   * textAutoResize alone is not a clipping instruction in Figma's SVG export.
+   */
+  readonly truncation?: TextTruncation;
 };
 
 export type TextConversionOptions = {
@@ -179,6 +185,7 @@ export function convertTextNode(node: FigNode, options: TextConversionOptions): 
       runs: rendering.runs,
       fills,
       textLineLayout,
+      truncation: rendering.truncation,
     };
   }
 
@@ -186,6 +193,7 @@ export function convertTextNode(node: FigNode, options: TextConversionOptions): 
     runs: rendering.runs,
     fills,
     textLineLayout,
+    truncation: rendering.truncation,
   };
 }
 

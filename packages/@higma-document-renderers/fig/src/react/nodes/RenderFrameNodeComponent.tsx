@@ -15,13 +15,23 @@ import type { StrokeRendering } from "../../scene-graph";
 
 type Props = { readonly node: RenderFrameNode };
 
-function renderFrameChildren(node: RenderFrameNode): ReactNode {
+function renderFrameSurfaceContents(
+  node: RenderFrameNode,
+  uniformStroke: ReturnType<typeof getUniformStrokeAttrs>,
+): ReactNode {
   const childElements = node.children.map((child) => <RenderNodeComponent key={child.id} node={child} />);
   const childClipId = node.omitChildClip ? undefined : node.childClipId;
+  const content = (
+    <>
+      {renderFrameBackgroundShape(node, uniformStroke)}
+      {node.backgroundBlur === undefined ? null : <BackgroundBlurElement blur={node.backgroundBlur} />}
+      {childElements}
+    </>
+  );
   if (childClipId && childElements.length > 0) {
-    return <g clipPath={`url(#${childClipId})`}>{childElements}</g>;
+    return <g clipPath={`url(#${childClipId})`}>{content}</g>;
   }
-  return <>{childElements}</>;
+  return content;
 }
 
 function renderFrameBackgroundShape(
@@ -50,7 +60,7 @@ function renderFrameBackgroundShape(
   return <RectShape width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
 }
 
-function renderFrameBackgroundSurface(node: RenderFrameNode, content: ReactNode): ReactNode {
+function renderFrameSurfaceEffectGroup(node: RenderFrameNode, content: ReactNode): ReactNode {
   const filterAttr = node.background?.filterAttr;
   if (filterAttr === undefined) {
     return content;
@@ -62,17 +72,14 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
   const defsEl = formatRenderDefs(node.defs);
   const sr: StrokeRendering | undefined = node.background?.strokeRendering;
   const uniformStroke = getUniformStrokeAttrs(sr);
-  const bgShape = renderFrameBackgroundSurface(node, renderFrameBackgroundShape(node, uniformStroke));
-
-  const childrenContent = renderFrameChildren(node);
+  const surfaceContent = renderFrameSurfaceContents(node, uniformStroke);
+  const surfaceEffectGroup = renderFrameSurfaceEffectGroup(node, surfaceContent);
 
   return (
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
       {defsEl}
-      {bgShape}
-      {sr && <StrokeRenderingElements sr={sr} />}
-      {node.backgroundBlur && <BackgroundBlurElement blur={node.backgroundBlur} />}
-      {childrenContent}
+      {surfaceEffectGroup}
+      {sr === undefined ? null : <StrokeRenderingElements sr={sr} />}
     </RenderWrapper>
   );
 }

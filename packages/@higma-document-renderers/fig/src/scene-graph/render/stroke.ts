@@ -6,6 +6,7 @@
 
 import type { Stroke, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 import { colorToHex } from "./color";
+import { resolveFigmaSvgOpacity } from "./figma-svg-opacity";
 import { resolveFill, type IdGenerator, type ResolvedFill } from "./fill";
 
 // =============================================================================
@@ -86,7 +87,7 @@ export function resolveStroke(stroke: Stroke): ResolvedStrokeAttrs {
   return {
     stroke: colorToHex(stroke.color),
     strokeWidth: alignedStrokeWidth(stroke.width, stroke.align),
-    strokeOpacity: stroke.opacity < 1 ? stroke.opacity : undefined,
+    strokeOpacity: stroke.opacity < 1 ? resolveFigmaSvgOpacity(stroke.opacity) : undefined,
     strokeLinecap: stroke.linecap !== "butt" ? stroke.linecap : undefined,
     strokeLinejoin: stroke.linejoin !== "miter" ? stroke.linejoin : undefined,
     strokeDasharray: stroke.dashPattern?.join(" "),
@@ -115,13 +116,13 @@ export function resolveStrokeResult(stroke: Stroke, ids: IdGenerator): ResolvedS
           attrs: {
             ...base,
             stroke: resolved.attrs.fill,
-            strokeOpacity: layer.opacity < 1 ? layer.opacity : undefined,
+            strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
           },
           layers: [{
             attrs: {
               ...base,
               stroke: resolved.attrs.fill,
-              strokeOpacity: layer.opacity < 1 ? layer.opacity : undefined,
+              strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
             },
             gradientDef: resolved.def,
             blendMode: layer.blendMode,
@@ -145,7 +146,7 @@ export function resolveStrokeResult(stroke: Stroke, ids: IdGenerator): ResolvedS
             attrs: {
               ...base,
               stroke: colorToHex(layer.color),
-              strokeOpacity: layer.opacity < 1 ? layer.opacity : undefined,
+              strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
             },
             blendMode: layer.blendMode,
           }],
@@ -163,7 +164,7 @@ export function resolveStrokeResult(stroke: Stroke, ids: IdGenerator): ResolvedS
         attrs: {
           ...base,
           stroke: resolved.attrs.fill,
-          strokeOpacity: layer.opacity < 1 ? layer.opacity : undefined,
+          strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
         },
         gradientDef: resolved.def,
         blendMode: layer.blendMode,
@@ -173,7 +174,7 @@ export function resolveStrokeResult(stroke: Stroke, ids: IdGenerator): ResolvedS
       attrs: {
         ...base,
         stroke: colorToHex(layer.color),
-        strokeOpacity: layer.opacity < 1 ? layer.opacity : undefined,
+        strokeOpacity: layer.opacity < 1 ? resolveFigmaSvgOpacity(layer.opacity) : undefined,
       },
       blendMode: layer.blendMode,
     };

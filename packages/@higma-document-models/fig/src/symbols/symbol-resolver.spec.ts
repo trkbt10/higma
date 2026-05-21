@@ -12,7 +12,6 @@ import {
   type FigPaint,
 } from "@higma-document-models/fig/types";
 import { indexFigKiwiDocument, type FigBlob } from "@higma-document-models/fig/domain";
-import { resolveAutoLayoutFrame } from "./autolayout-solver";
 import { cloneSymbolChildren, createSymbolResolver } from "./symbol-resolver";
 
 type TestFigNodeInput = Omit<Partial<FigNode>, "children" | "type" | "guid" | "phase"> & {
@@ -65,6 +64,29 @@ function solidPaint(r: number, g: number, b: number): FigPaint {
   return {
     type: { value: 0, name: "SOLID" },
     color: { r, g, b, a: 1 },
+  };
+}
+
+function solidPaintWithOpacity(r: number, g: number, b: number, opacity: number): FigPaint {
+  return {
+    type: { value: 0, name: "SOLID" },
+    color: { r, g, b, a: 1 },
+    opacity,
+  };
+}
+
+function externalVariableSolidPaint(r: number, g: number, b: number, variableKey: string, opacity: number): FigPaint {
+  return {
+    type: { value: 0, name: "SOLID" },
+    color: { r, g, b, a: 1 },
+    opacity,
+    colorVar: {
+      value: {
+        alias: {
+          assetRef: { key: variableKey },
+        },
+      },
+    },
   };
 }
 
@@ -547,6 +569,55 @@ describe("cloneSymbolChildren", () => {
     expect(resultNode.derivedTextData).toBeUndefined();
   });
 
+  it("keeps Kiwi derivedSymbolData glyphs for CPA-overridden text", () => {
+    const labelGuid = { sessionID: 1, localID: 62 };
+    const propGuid = { sessionID: 1, localID: 302 };
+    const textChild = {
+      type: "TEXT",
+      name: "Label",
+      guid: labelGuid,
+      componentPropRefs: [
+        {
+          defID: propGuid,
+          componentPropNodeField: { value: 0, name: "TEXT_DATA" },
+        },
+      ],
+      textData: { characters: "Label" },
+      characters: "Label",
+      derivedTextData: derivedTextData(56, 12, 5),
+    };
+
+    const symbolNode = createTestNode({
+      type: "SYMBOL",
+      name: "Tab item",
+      children: [textChild],
+    });
+    const freshDerivedTextData = derivedTextData(60, 12, 5);
+
+    const result = cloneSymbolChildren(symbolNode, {
+      childrenOf: childrenOfFixtureNode,
+      componentPropAssignments: [
+        {
+          defID: propGuid,
+          value: { textValue: { characters: "Today" } },
+        },
+      ],
+      derivedSymbolData: [
+        {
+          guidPath: { guids: [labelGuid] },
+          size: { x: 60, y: 12 },
+          derivedTextData: freshDerivedTextData,
+        },
+      ],
+    });
+
+    const resultNode = result[0]!;
+    expect(resultNode.textData?.characters).toBe("Today");
+    expect(resultNode.size).toEqual({ x: 60, y: 12 });
+    expect(resultNode.derivedTextData?.glyphs).toHaveLength(5);
+    expect(resultNode.derivedTextData).toBe(freshDerivedTextData);
+  });
+
   it("preserves TEXT_DATA style ids that use Figma logical character length", () => {
     const characters = "A\u{100bfb}B";
     const textChild = {
@@ -592,6 +663,93 @@ describe("cloneSymbolChildren", () => {
 });
 
 describe("createSymbolResolver", () => {
+  it("embeds SYMBOL root self fill color into external variable-backed descendant paints", () => {
+    const symbolGuid = { sessionID: 50, localID: 1 };
+    const externalVariableChildGuid = { sessionID: 50, localID: 2 };
+    const externalVariableStrokeChildGuid = { sessionID: 50, localID: 4 };
+    const literalChildGuid = { sessionID: 50, localID: 3 };
+    const instanceGuid = { sessionID: 51, localID: 1 };
+    const variableKey = "library-status-bar-foreground";
+    const symbolNode = createTestNode({
+      type: "SYMBOL",
+      guid: symbolGuid,
+      children: [
+        {
+          type: "VECTOR",
+          guid: externalVariableChildGuid,
+          parentIndex: { guid: symbolGuid, position: "!" },
+          fillPaints: [externalVariableSolidPaint(0, 0, 0, variableKey, 0.7)],
+        },
+        {
+          type: "ROUNDED_RECTANGLE",
+          guid: externalVariableStrokeChildGuid,
+          parentIndex: { guid: symbolGuid, position: "#" },
+          strokePaints: [externalVariableSolidPaint(0, 0, 0, variableKey, 0.35)],
+        },
+        {
+          type: "VECTOR",
+          guid: literalChildGuid,
+          parentIndex: { guid: symbolGuid, position: "\"" },
+          fillPaints: [solidPaint(0, 0, 0)],
+        },
+      ],
+    });
+    const instance = createTestNode({
+      type: "INSTANCE",
+      guid: instanceGuid,
+      symbolData: {
+        symbolID: symbolGuid,
+        symbolOverrides: [
+          {
+            guidPath: { guids: [symbolGuid] },
+            fillPaints: [solidPaintWithOpacity(1, 1, 1, 0.0001)],
+          },
+        ],
+      },
+    });
+    const document = indexFigKiwiDocument([
+      symbolNode,
+      ...childrenOfFixtureNode(symbolNode),
+      instance,
+    ]);
+    const resolver = createSymbolResolver({ document });
+
+    const resolved = resolver.resolveInstance(instance);
+    const externalVariableChild = findResolvedDescendant(resolved.children, externalVariableChildGuid);
+    const externalVariableStrokeChild = findResolvedDescendant(resolved.children, externalVariableStrokeChildGuid);
+    const literalChild = findResolvedDescendant(resolved.children, literalChildGuid);
+
+    expect(resolved.node.fillPaints?.[0]).toMatchObject({
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      opacity: 0.0001,
+    });
+    expect(externalVariableChild?.fillPaints?.[0]).toMatchObject({
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      opacity: 0.7,
+      colorVar: {
+        value: {
+          alias: {
+            assetRef: { key: variableKey },
+          },
+        },
+      },
+    });
+    expect(externalVariableStrokeChild?.strokePaints?.[0]).toMatchObject({
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      opacity: 0.35,
+      colorVar: {
+        value: {
+          alias: {
+            assetRef: { key: variableKey },
+          },
+        },
+      },
+    });
+    expect(literalChild?.fillPaints?.[0]).toMatchObject({
+      color: { r: 0, g: 0, b: 0, a: 1 },
+    });
+  });
+
   it("uses inherited variable modes and INSTANCE self VCM overrides for variant target selection", () => {
     const variantFrameGuid = { sessionID: 1, localID: 1 };
     const propDefGuid = { sessionID: 1, localID: 2 };
@@ -1435,12 +1593,11 @@ describe("createSymbolResolver", () => {
     const document = indexFigKiwiDocument([instance]);
     const resolver = createSymbolResolver({ document });
     const resolved = resolver.resolveInstance(instance);
-    const layoutResolved = resolveAutoLayoutFrame(resolved.node, resolved.children);
 
     expect(resolved.node.stackMode).toBeUndefined();
     expect(resolved.children.map((child) => child.guid)).toEqual([iconSlot, textSlot]);
-    expect(layoutResolved.children[0]!.transform?.m02).toBe(0);
-    expect(layoutResolved.children[1]!.transform?.m02).toBe(6);
+    expect(resolved.children[0]!.transform?.m02).toBe(0);
+    expect(resolved.children[1]!.transform?.m02).toBe(6);
   });
 
   it("materializes document-external geometry without inventing paint when Kiwi carries none", () => {
@@ -1752,10 +1909,9 @@ describe("createSymbolResolver", () => {
     const resolver = createSymbolResolver({ document });
     const resolved = resolver.resolveInstance(instance);
     const statusBar = resolved.children[0]!;
-    const layoutResolved = resolveAutoLayoutFrame(statusBar, childrenOfFixtureNode(statusBar));
 
     expect(statusBar.stackMode).toBeUndefined();
-    expect(layoutResolved.children[0]!.transform).toBeUndefined();
+    expect(childrenOfFixtureNode(statusBar)[0]!.transform).toBeUndefined();
   });
 
   it("keeps local document-external INSTANCE container surfaces renderable", () => {

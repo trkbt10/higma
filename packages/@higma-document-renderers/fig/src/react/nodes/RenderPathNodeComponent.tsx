@@ -3,18 +3,37 @@
  */
 
 import { memo } from "react";
+import type { CSSProperties } from "react";
 import type { RenderPathNode } from "../../scene-graph";
 import { ShapeShell } from "../primitives/shape-shell";
 import { MultiFillPathLayers } from "../primitives/multi-fill";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
+import type { BlendMode } from "../../scene-graph";
 
 type Props = { readonly node: RenderPathNode };
 
 function renderPathElements(node: RenderPathNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
   return node.paths.map((p, i) => {
     const fa = p.fillOverride ?? node.fill;
-    return <path key={i} d={p.d} fillRule={p.fillRule} fill={fa.attrs.fill} fillOpacity={fa.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+    return (
+      <path
+        key={i}
+        d={p.d}
+        fillRule={p.fillRule}
+        fill={fa.attrs.fill}
+        fillOpacity={fa.attrs.fillOpacity}
+        style={pathBlendModeStyle(fa.blendMode)}
+        {...(uniformStroke ?? {})}
+      />
+    );
   });
+}
+
+function pathBlendModeStyle(blendMode: BlendMode | undefined): CSSProperties | undefined {
+  if (blendMode === undefined) {
+    return undefined;
+  }
+  return { mixBlendMode: blendMode as CSSProperties["mixBlendMode"] };
 }
 
 function renderPathFillContent(node: RenderPathNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {

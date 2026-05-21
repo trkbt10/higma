@@ -76,6 +76,28 @@ function StrokedShape({ shape, stroke }: { shape: StrokeShape; stroke: ResolvedS
   }
 }
 
+function StrokeGeometryElements({ sr }: { readonly sr: Extract<StrokeRendering, { readonly mode: "geometry" }> }): ReactNode {
+  const mask = sr.mask === undefined ? undefined : `url(#${sr.mask.id})`;
+  return (
+    <>
+      {sr.layers.map((layer, layerIndex) => (
+        <g key={layerIndex} style={layer.blendMode ? { mixBlendMode: layer.blendMode as React.CSSProperties["mixBlendMode"] } : undefined}>
+          {sr.paths.map((p, pathIndex) => (
+            <path
+              key={pathIndex}
+              d={p.d}
+              fillRule={p.fillRule}
+              fill={layer.attrs.stroke}
+              fillOpacity={layer.attrs.strokeOpacity}
+              mask={mask}
+            />
+          ))}
+        </g>
+      ))}
+    </>
+  );
+}
+
 /**
  * Render separate stroke elements from StrokeRendering.
  * Returns null for uniform mode (handled via attrs on fill shape).
@@ -115,6 +137,9 @@ export function StrokeRenderingElements({ sr }: { sr: StrokeRendering }): ReactN
           })}
         </>
       );
+
+    case "geometry":
+      return <StrokeGeometryElements sr={sr} />;
 
     case "individual": {
       // sign mirrors svg/scene-renderer.ts: +1 INSIDE, -1 OUTSIDE, 0 CENTER.

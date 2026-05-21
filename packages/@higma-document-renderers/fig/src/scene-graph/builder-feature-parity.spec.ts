@@ -119,6 +119,7 @@ describe("SceneNodeBase feature coverage", () => {
       blendMode: "multiply",
       mask: {
         maskId: "mask-1" as SceneNodeBase["id"],
+        maskType: "ALPHA",
         maskContent: {
           type: "rect",
           id: "mask-rect" as SceneNodeBase["id"],
@@ -186,7 +187,7 @@ describe("FigNode property audit: SVG renderer inputs → scene-graph builder", 
     "node.effects": "domain",
 
     // Blend mode
-    "node.blendMode": "domain",
+    "node.blendMode": "converted",
 
     // Shape-specific
     "node.arcData": "raw",             // Ellipse arc data
@@ -264,7 +265,7 @@ describe("Render feature parity", () => {
    */
   const FEATURE_MAP = [
     ["effects",      "getFilterAttr() post-processing",  "effects field on SceneNodeBase"],
-    ["blendMode",    "getBlendModeCss() post-processing", "blendMode field on SceneNodeBase"],
+    ["blendMode",    "getBlendModeCss() post-processing", "node-level blendMode field on SceneNodeBase"],
     ["mask",         "renderChildrenWithMasks()",         "mask field on SceneNodeBase, buildChildren() detection"],
     ["transform",    "per-node SVG transform",           "transform field on SceneNodeBase"],
     ["opacity",      "per-node SVG opacity",             "opacity field on SceneNodeBase"],
