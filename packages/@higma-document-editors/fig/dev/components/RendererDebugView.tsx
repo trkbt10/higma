@@ -16,6 +16,7 @@ import {
   type FigDocumentResources,
 } from "@higma-document-io/fig";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import { Button, Select, Tabs, Toggle, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
@@ -27,7 +28,6 @@ import {
 import type { InspectorBoxInfo } from "@higma-editor-kernel/core/inspector-types";
 import { FigPageRenderer } from "../../src/canvas/rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "../../src/canvas/rendering/renderer-kind";
-import { readKiwiTransform } from "../../src/context/fig-editor/matrix";
 import {
   FIG_LEGEND_ORDER,
   FIG_NODE_CATEGORY_REGISTRY,
