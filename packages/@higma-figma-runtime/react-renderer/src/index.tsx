@@ -11,6 +11,7 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import { getNodeType } from "@higma-document-models/fig/domain";
 import {
   buildSceneGraphWithCache,
+  pruneSceneGraphToViewport,
   type BuildSceneGraphOptions,
   type SceneGraphBuildCache,
 } from "@higma-document-renderers/fig/scene-graph";
@@ -220,7 +221,7 @@ export function useFigSceneGraph({
       textFontResolver,
       cache: result.cache,
     };
-    return result.sceneGraph;
+    return pruneSceneGraphToViewport(result.sceneGraph);
   }, [page, pageNodes, resources, textFontResolver, canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight]);
 }
 

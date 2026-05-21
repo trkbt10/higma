@@ -301,6 +301,220 @@ describe("resolveTextRendering font outlines", () => {
     expect(rendering.layout.lines[0]?.charWidths).toEqual([8, 7]);
   });
 
+  it("keeps derived glyph advances inside each Kiwi baseline line", () => {
+    const minimalBlob = {
+      bytes: [0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "AB\nCD",
+      },
+      derivedTextData: {
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 0, y: 10 },
+          fontSize: 20,
+          firstCharacter: 0,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 10, y: 10 },
+          fontSize: 20,
+          firstCharacter: 1,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 0, y: 34 },
+          fontSize: 20,
+          firstCharacter: 3,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 12, y: 34 },
+          fontSize: 20,
+          firstCharacter: 4,
+          advance: 0,
+        }],
+        baselines: [{
+          position: { x: 0, y: 10 },
+          width: 20,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 2,
+        }, {
+          position: { x: 0, y: 34 },
+          width: 24,
+          lineY: 24,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 3,
+          endCharacter: 5,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [minimalBlob],
+      fontResolver: () => ({
+        ...RECT_FONT,
+        charToGlyph: () => ({
+          index: 1,
+          advanceWidth: Number.NaN,
+          getPath: () => RECT_FONT_PATH,
+        }),
+      }),
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.charWidths).toEqual([10, 10]);
+    expect(rendering.layout.lines[1]?.charWidths).toEqual([12, 12]);
+  });
+
+  it("treats a Kiwi glyph firstCharacter gap as one source cluster", () => {
+    const minimalBlob = {
+      bytes: [0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "office",
+      },
+      derivedTextData: {
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 0, y: 10 },
+          fontSize: 20,
+          firstCharacter: 0,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 8, y: 10 },
+          fontSize: 20,
+          firstCharacter: 1,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 16, y: 10 },
+          fontSize: 20,
+          firstCharacter: 2,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 28, y: 10 },
+          fontSize: 20,
+          firstCharacter: 4,
+          advance: 0,
+        }, {
+          commandsBlob: 0,
+          position: { x: 36, y: 10 },
+          fontSize: 20,
+          firstCharacter: 5,
+          advance: 0,
+        }],
+        baselines: [{
+          position: { x: 0, y: 10 },
+          width: 44,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 6,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [minimalBlob],
+      fontResolver: () => ({
+        ...RECT_FONT,
+        charToGlyph: () => ({
+          index: 1,
+          advanceWidth: Number.NaN,
+          getPath: () => RECT_FONT_PATH,
+        }),
+      }),
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.charWidths).toEqual([8, 8, 12, 0, 8, 8]);
+  });
+
+  it("accepts an empty Kiwi baseline line terminated by a newline", () => {
+    const minimalBlob = {
+      bytes: [0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "\nX",
+      },
+      derivedTextData: {
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 0, y: 34 },
+          fontSize: 20,
+          firstCharacter: 1,
+          advance: 0,
+        }],
+        baselines: [{
+          position: { x: 0, y: 10 },
+          width: 0,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 1,
+        }, {
+          position: { x: 0, y: 34 },
+          width: 8,
+          lineY: 24,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 1,
+          endCharacter: 2,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [minimalBlob],
+      fontResolver: () => ({
+        ...RECT_FONT,
+        charToGlyph: () => ({
+          index: 1,
+          advanceWidth: Number.NaN,
+          getPath: () => RECT_FONT_PATH,
+        }),
+      }),
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.text).toBe("");
+    expect(rendering.layout.lines[0]?.charWidths).toEqual([]);
+    expect(rendering.layout.lines[1]?.charWidths).toEqual([8]);
+  });
+
   it("uses Kiwi font metrics for baseline layout and explicit font resolver for character widths", () => {
     const node = {
       ...BASE_TEXT_NODE,

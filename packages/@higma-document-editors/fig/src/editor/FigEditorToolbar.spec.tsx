@@ -4,12 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
 import { FigEditorProvider } from "../context/FigEditorContext";
-import { sectionPage } from "../panels/sections/section-specimen";
+import { sectionDocument, sectionPage } from "../panels/sections/section-specimen";
 import { FigEditorToolbar } from "./FigEditorToolbar";
 
 function renderToolbar(): string {
   const context = createFigDocumentContextFromNodeChanges({
-    nodeChanges: [sectionPage()],
+    nodeChanges: [sectionDocument(), sectionPage()],
     blobs: [],
     images: new Map(),
     metadata: null,

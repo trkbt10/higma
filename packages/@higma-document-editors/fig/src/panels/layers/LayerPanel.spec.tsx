@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
 import { FigEditorProvider } from "../../context/FigEditorContext";
-import { sectionNode, sectionPage } from "../sections/section-specimen";
+import { sectionDocument, sectionNode, sectionPage } from "../sections/section-specimen";
 import { LayerPanel } from "./LayerPanel";
 
 describe("LayerPanel", () => {
@@ -18,7 +18,7 @@ describe("LayerPanel", () => {
       parentIndex: { guid: page.guid, position: "a" },
     });
     const context = createFigDocumentContextFromNodeChanges({
-      nodeChanges: [page, frame],
+      nodeChanges: [sectionDocument(), page, frame],
       blobs: [],
       images: new Map(),
       metadata: null,

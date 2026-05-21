@@ -20,6 +20,7 @@ import type {
 } from "@higma-document-models/fig/types";
 import { FigEditorProvider } from "../../context/FigEditorContext";
 
+const DOCUMENT_GUID: FigGuid = { sessionID: 80, localID: 0 };
 const PAGE_GUID: FigGuid = { sessionID: 80, localID: 1 };
 type SectionNodeType = Extract<FigNodeType, keyof typeof NODE_TYPE_VALUES>;
 
@@ -57,7 +58,18 @@ export function sectionInnerShadow(): FigEffect {
 
 /** Return a CANVAS page for section specs. */
 export function sectionPage(): FigNode {
-  return sectionNode("CANVAS", { guid: PAGE_GUID, name: "Page", width: 500, height: 400 });
+  return sectionNode("CANVAS", {
+    guid: PAGE_GUID,
+    parentIndex: { guid: DOCUMENT_GUID, position: "a" },
+    name: "Page",
+    width: 500,
+    height: 400,
+  });
+}
+
+/** Return the DOCUMENT root for section specs. */
+export function sectionDocument(): FigNode {
+  return sectionNode("DOCUMENT", { guid: DOCUMENT_GUID, name: "Document" });
 }
 
 /** Return a Kiwi node for section specs. */
@@ -104,7 +116,7 @@ export function sectionNode(
 /** Render a section inside FigEditorProvider using Kiwi nodeChanges. */
 export function renderSection(element: ReactElement, nodeChanges: readonly FigNode[]): string {
   const context = createFigDocumentContextFromNodeChanges({
-    nodeChanges: [sectionPage(), ...nodeChanges],
+    nodeChanges: [sectionDocument(), sectionPage(), ...nodeChanges],
     blobs: [],
     images: new Map(),
     metadata: null,

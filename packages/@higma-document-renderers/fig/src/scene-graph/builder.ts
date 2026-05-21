@@ -44,6 +44,7 @@ import { evaluateBooleanPathResult, type BooleanPathInput } from "@higma-primiti
 import { resolveBooleanOperationType } from "@higma-document-models/fig/boolean-operation";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import { resolveClipsContent as resolveGeometryClipsContent } from "@higma-document-models/fig/geometry-interpret";
+import { resolveAuthoredAutoLayoutFrameStretch } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
 
 function convertKiwiTransform(
@@ -1086,8 +1087,9 @@ function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
     case "SECTION":
     case "SLIDE":
     case "SYMBOL": {
-      const childNodes = buildChildren(children, nodeCtx);
-      return cacheBuiltNode(node, buildFrameNode(node, nodeCtx, childNodes), ctx);
+      const layoutResolved = resolveAuthoredAutoLayoutFrameStretch(node, children);
+      const childNodes = buildChildren(layoutResolved.children, nodeCtx);
+      return cacheBuiltNode(node, buildFrameNode(layoutResolved.parent, nodeCtx, childNodes), ctx);
     }
 
     case "INSTANCE": {

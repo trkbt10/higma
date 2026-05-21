@@ -11,6 +11,7 @@
 
 import {
   applyAutoLayoutPrimaryAxis,
+  resolveAuthoredAutoLayoutFrameStretch,
   resolveAutoLayoutFrame,
   type PrimaryAxisChild,
   type PrimaryAxisParent,
@@ -75,6 +76,22 @@ function child(size: Vec, opts: ChildOpts = {}): PrimaryAxisChild {
     ...buildChildLayoutFields(opts),
   };
 }
+
+describe("resolveAuthoredAutoLayoutFrameStretch", () => {
+  it("projects counter-axis STRETCH without replaying authored child positions", () => {
+    const p = parent({ x: 370, y: 52 }, { mode: "VERTICAL" });
+    const separator: PrimaryAxisChild = {
+      ...child({ x: 129, y: 1 }),
+      transform: { m00: 1, m01: 0, m02: 7, m10: 0, m11: 1, m12: 11 },
+      stackChildAlignSelf: { name: "STRETCH" },
+    };
+    const out = resolveAuthoredAutoLayoutFrameStretch(p, [separator]).children[0];
+
+    expect(out?.size?.x).toBe(370);
+    expect(out?.transform?.m02).toBe(7);
+    expect(out?.transform?.m12).toBe(11);
+  });
+});
 
 describe("resolveAutoLayoutFrame — aspect-lock verification gate", () => {
   it("does NOT throw when proportionsConstrained=true and targetAspectRatio is absent", () => {

@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
 import { FigEditorProvider } from "../context/FigEditorContext";
-import { sectionNode, sectionPage } from "../panels/sections/section-specimen";
+import { sectionDocument, sectionNode, sectionPage } from "../panels/sections/section-specimen";
 import { FigInspectorOverlay } from "./FigInspectorOverlay";
 
 describe("FigInspectorOverlay", () => {
@@ -18,7 +18,7 @@ describe("FigInspectorOverlay", () => {
       parentIndex: { guid: page.guid, position: "a" },
     });
     const context = createFigDocumentContextFromNodeChanges({
-      nodeChanges: [page, rect],
+      nodeChanges: [sectionDocument(), page, rect],
       blobs: [],
       images: new Map(),
       metadata: null,

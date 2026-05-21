@@ -37,6 +37,10 @@
  *
  * Counter-axis stretch (one child's cross-axis dimension expanding to
  * fill the parent) is resolved here from the same raw stack fields.
+ * Renderers may consume `resolveAuthoredAutoLayoutFrameStretch` for raw
+ * document FRAME / SYMBOL descendants: it projects the stretch dimension
+ * without replaying primary-axis or counter-axis positioning, so authored
+ * Kiwi transforms remain the source of truth.
  */
 
 import { computeFlexShare, interpretGridTrackSize, resolveTrackSize } from "./grid-track-size";
@@ -1005,11 +1009,24 @@ function stretchCounterAxis<C extends PrimaryAxisChild>(
   });
 }
 
+/**
+ * Resolve raw authored FRAME/SYMBOL child stretch without replaying positions.
+ */
+export function resolveAuthoredAutoLayoutFrameStretch<P extends PrimaryAxisParent, C extends PrimaryAxisChild>(
+  parent: P,
+  children: readonly C[],
+): AutoLayoutResolution<C, P> {
+  const modeName = parent.stackMode?.name;
+  if (modeName !== "VERTICAL" && modeName !== "HORIZONTAL") {
+    return { parent, children };
+  }
+  const horizontal = modeName === "HORIZONTAL";
+  return { parent, children: stretchCounterAxis(parent, children, horizontal) };
+}
 
-
-
-
-
+/**
+ * Materialise auto-layout after INSTANCE symbol selection and overrides.
+ */
 export function resolveAutoLayoutFrame<P extends PrimaryAxisParent, C extends PrimaryAxisChild>(
   parent: P,
   children: readonly C[],
