@@ -9,8 +9,8 @@ import {
   type EditorCanvasItemBounds,
 } from "@higma-editor-surfaces/controls/canvas";
 import {
+  createFigFamilyDocumentResources,
   FigFamilyPageRendererFromResources,
-  figDocumentResources,
 } from "@higma-figma-runtime/react-renderer";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
@@ -197,7 +197,7 @@ export function SiteEditorCanvas() {
     [editableUnits],
   );
   const figSurface = figRenderSurface;
-  const figResources = useMemo(() => figDocumentResources(figSurface.context), [figSurface.context]);
+  const figResources = useMemo(() => createFigFamilyDocumentResources(figSurface.context), [figSurface.context]);
   const renderRevision = useMemo(
     () => unitMoves.map((move) => `${move.unitId}:${move.deltaX}:${move.deltaY}`).join("|"),
     [unitMoves],

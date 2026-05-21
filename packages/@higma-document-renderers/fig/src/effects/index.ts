@@ -7,6 +7,7 @@ export {
   extractShadowParams,
   resolveEffectRadius,
   resolveEffectSpread,
+  resolveShowShadowBehindNode,
   hasEffectOfType,
   getEffectsOfType,
   type ShadowParams,

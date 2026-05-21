@@ -5,7 +5,7 @@
  */
 
 import type { FigEffect } from "@higma-document-models/fig/types";
-import { getEffectTypeName, isEffectVisible, extractShadowParams, resolveEffectRadius, resolveEffectSpread } from "../../effects";
+import { getEffectTypeName, isEffectVisible, extractShadowParams, resolveEffectRadius, resolveEffectSpread, resolveShowShadowBehindNode } from "../../effects";
 import type { Effect } from "@higma-document-renderers/fig/scene-graph";
 import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 
@@ -36,7 +36,7 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
           color: p.color,
           spread: resolveEffectSpread(effect),
           blendMode,
-          showShadowBehindNode: requireShowShadowBehindNode(effect),
+          showShadowBehindNode: resolveShowShadowBehindNode(effect),
         });
         break;
       }
@@ -65,11 +65,4 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
   }
 
   return result;
-}
-
-function requireShowShadowBehindNode(effect: FigEffect): boolean {
-  if (effect.showShadowBehindNode === undefined) {
-    throw new Error("DROP_SHADOW effect requires showShadowBehindNode from Kiwi");
-  }
-  return effect.showShadowBehindNode;
 }

@@ -20,16 +20,29 @@ import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scen
 import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 
+/** Kiwi canvas input accepted by the fig family React renderer boundary. */
 export type FigFamilyKiwiCanvas = Parameters<typeof createFigDocumentContextFromKiwiCanvas>[0];
-export type FigFamilyDocumentContext = FigDocumentContext;
-export type FigFamilyPage = FigNode;
+
+/** Render options derived from the decoded fig document context. */
 export type FigFamilyRenderOptions = Exclude<ReturnType<typeof createFigFamilyRenderOptions>, undefined>;
 
-export function createFigFamilyDocumentContext(canvas: FigFamilyKiwiCanvas): FigFamilyDocumentContext {
+/** Decode a Kiwi canvas into the fig document context consumed by renderers. */
+export function createFigFamilyDocumentContext(canvas: FigFamilyKiwiCanvas): FigDocumentContext {
   return createFigDocumentContextFromKiwiCanvas(canvas);
 }
 
-function readDocumentColorProfile(ctx: FigDocumentContext): FigNode["documentColorProfile"] {
+/** Fig document context produced by the fig family runtime boundary. */
+export type FigFamilyDocumentContext = ReturnType<typeof createFigFamilyDocumentContext>;
+
+/** Fig page node obtained from a fig family document context. */
+export type FigFamilyPage = ReturnType<FigFamilyDocumentContext["document"]["childrenOf"]>[number];
+
+/** Build document resources consumed by the shared SceneGraph builder. */
+export function createFigFamilyDocumentResources(ctx: FigFamilyDocumentContext): FigDocumentResources {
+  return figDocumentResources(ctx);
+}
+
+function readDocumentColorProfile(ctx: FigFamilyDocumentContext): FigNode["documentColorProfile"] {
   for (const root of ctx.document.roots) {
     if (getNodeType(root) === "DOCUMENT") {
       return root.documentColorProfile;
@@ -56,7 +69,8 @@ function mapDocumentColorProfile(profile: FigNode["documentColorProfile"]): Figm
   }
 }
 
-export function createFigFamilyRenderOptions(ctx: FigDocumentContext): SceneGraphRenderOptions | undefined {
+/** Resolve renderer options from Kiwi document-level rendering metadata. */
+export function createFigFamilyRenderOptions(ctx: FigFamilyDocumentContext): SceneGraphRenderOptions | undefined {
   const colorProfile = mapDocumentColorProfile(readDocumentColorProfile(ctx));
   if (!colorProfile) {
     return undefined;
@@ -64,6 +78,7 @@ export function createFigFamilyRenderOptions(ctx: FigDocumentContext): SceneGrap
   return { exportSettings: { colorProfile } };
 }
 
+/** Inputs required to build the shared renderer-neutral SceneGraph. */
 export type UseFigSceneGraphParams = {
   readonly page: FigNode | null | undefined;
   readonly nodes?: readonly FigNode[];
@@ -77,6 +92,7 @@ export type UseFigSceneGraphParams = {
   readonly textFontResolver?: TextFontResolver;
 };
 
+/** Props for rendering a fig page from Kiwi resources or a prebuilt SceneGraph. */
 export type FigFamilyPageRendererProps = UseFigSceneGraphParams & {
   readonly sceneGraph?: SceneGraph | null;
   readonly renderOptions?: SceneGraphRenderOptions;
@@ -171,7 +187,7 @@ export function useFigSceneGraph({
 }: UseFigSceneGraphParams): SceneGraph | null {
   const cacheRef = useRef<SceneGraphCacheRef | undefined>(undefined);
   const pageNodes = resolvePageNodes(page, nodes, resources);
-  const contentSceneGraph = useMemo(() => {
+  return useMemo(() => {
     if (!page || pageNodes === undefined || pageNodes.length === 0) {
       return null;
     }
@@ -187,8 +203,8 @@ export function useFigSceneGraph({
     const buildOptions: BuildSceneGraphOptions = {
       blobs: resources.blobs,
       images: resources.images,
-      canvasSize: { width: 0, height: 0 },
-      viewport: { x: 0, y: 0, width: 0, height: 0 },
+      canvasSize: { width: canvasWidth, height: canvasHeight },
+      viewport: { x: viewportX, y: viewportY, width: viewportWidth, height: viewportHeight },
       symbolResolver: resources.symbolResolver,
       childrenOf: resources.childrenOf,
       styleRegistry: resources.styleRegistry,
@@ -205,22 +221,10 @@ export function useFigSceneGraph({
       cache: result.cache,
     };
     return result.sceneGraph;
-  }, [page, pageNodes, resources, textFontResolver]);
-
-  return useMemo(() => {
-    if (!contentSceneGraph) {
-      return null;
-    }
-
-    return {
-      ...contentSceneGraph,
-      width: canvasWidth,
-      height: canvasHeight,
-      viewport: { x: viewportX, y: viewportY, width: viewportWidth, height: viewportHeight },
-    };
-  }, [contentSceneGraph, canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight]);
+  }, [page, pageNodes, resources, textFontResolver, canvasWidth, canvasHeight, viewportX, viewportY, viewportWidth, viewportHeight]);
 }
 
+/** Props for the resource-backed page renderer. */
 export type FigFamilyPageRendererFromResourcesProps = FigFamilyPageRendererProps;
 
 /** Render a fig-family page as React-owned SVG nodes. */
@@ -229,9 +233,29 @@ export function FigFamilyPageRenderer({
   renderOptions,
   ...params
 }: FigFamilyPageRendererProps) {
-  const builtSceneGraph = useFigSceneGraph(params);
-  const sceneGraph = sceneGraphProp ?? builtSceneGraph;
+  if (sceneGraphProp !== undefined && sceneGraphProp !== null) {
+    return <FigFamilyResolvedPageRenderer sceneGraph={sceneGraphProp} renderOptions={renderOptions} />;
+  }
+  return <FigFamilyPageRendererFromKiwi {...params} renderOptions={renderOptions} />;
+}
 
+function FigFamilyPageRendererFromKiwi({
+  renderOptions,
+  ...params
+}: UseFigSceneGraphParams & {
+  readonly renderOptions?: SceneGraphRenderOptions;
+}) {
+  const sceneGraph = useFigSceneGraph(params);
+  return <FigFamilyResolvedPageRenderer sceneGraph={sceneGraph} renderOptions={renderOptions} />;
+}
+
+function FigFamilyResolvedPageRenderer({
+  sceneGraph,
+  renderOptions,
+}: {
+  readonly sceneGraph: SceneGraph | null;
+  readonly renderOptions?: SceneGraphRenderOptions;
+}) {
   if (!sceneGraph) {
     return <g data-fig-family-page-renderer-empty="" />;
   }
@@ -252,8 +276,7 @@ export function FigFamilyPageRenderer({
   );
 }
 
+/** Render a fig page from caller-supplied document resources. */
 export function FigFamilyPageRendererFromResources(props: FigFamilyPageRendererFromResourcesProps) {
   return <FigFamilyPageRenderer {...props} />;
 }
-
-export { figDocumentResources };

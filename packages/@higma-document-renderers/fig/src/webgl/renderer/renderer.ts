@@ -32,7 +32,7 @@ import type { SceneGraph, Fill, Color, LayerBlurEffect, Effect, PathContour, Cli
 import { buildEffectStack, renderShapeEffectStack, resolveFigmaRenderExportSettings, requireManagedImageColorProfile, type FigmaRenderExportSettings, type ResolvedFigmaRenderExportSettings, type ResolvedFillDef, } from "../../scene-graph";
 
 import {
-  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type RenderDef, type StrokeRendering, type StrokeShape, type RenderClipPathDef, } from "../../scene-graph";
+  type RenderNode, type RenderGroupNode, type RenderFrameNode, type RenderRectNode, type RenderEllipseNode, type RenderPathNode, type RenderTextNode, type RenderImageNode, type RenderNodeBase, type RenderDef, type StrokeRendering, type StrokeShape, type RenderClipPathDef, type RenderMaskDef, } from "../../scene-graph";
 
 import {
   generateRectVertices, tessellateContours, } from "../tessellation/tessellation";
@@ -1205,6 +1205,21 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // RenderTree already excludes invisible nodes, so no visibility check needed
 
     const worldTransform = multiplyMatrices(parentTransform, node.source.transform);
+    if (node.mask !== undefined) {
+      renderWithNodeMask({ node, parentTransform, worldTransform, parentOpacity });
+      return;
+    }
+
+    renderRenderNodeWithResolvedTransform({ node, worldTransform, parentOpacity });
+  }
+
+  function renderRenderNodeWithResolvedTransform(
+    { node, worldTransform, parentOpacity }: {
+      readonly node: RenderNode;
+      readonly worldTransform: AffineMatrix;
+      readonly parentOpacity: number;
+    },
+  ): void {
     if (node.type !== "group" && node.type !== "frame" && !isVisualNodeInViewport(node, worldTransform)) {
       return;
     }
@@ -1225,6 +1240,31 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
 
     renderRenderNodeDirect(node, worldTransform, worldOpacity);
+  }
+
+  function renderWithNodeMask(
+    { node, parentTransform, worldTransform, parentOpacity }: {
+      readonly node: RenderNode;
+      readonly parentTransform: AffineMatrix;
+      readonly worldTransform: AffineMatrix;
+      readonly parentOpacity: number;
+    },
+  ): void {
+    const mask = node.mask;
+    if (mask === undefined) {
+      throw new Error(`WebGL node mask dispatch requires a RenderMask on ${node.id}`);
+    }
+    const maskDef = findRequiredMaskDef(node.defs, mask.maskId, node.id);
+    const entry: StencilClipEntry = {
+      drawClipShape: () => {
+        drawRenderMaskContent(maskDef.maskContent, parentTransform, maskDef.maskType);
+      },
+    };
+    clipStack.push(entry);
+    markClipStencilDirty();
+    renderRenderNodeWithResolvedTransform({ node, worldTransform, parentOpacity });
+    clipStack.pop();
+    markClipStencilDirty();
   }
 
   function restoreOuterClipStencil(wasClipActive: boolean): void {
@@ -1383,6 +1423,92 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     if (childClipId) {
       clipStack.pop();
       markClipStencilDirty();
+    }
+  }
+
+  function findRequiredMaskDef(
+    defs: readonly RenderDef[],
+    maskId: string,
+    nodeId: string,
+  ): RenderMaskDef {
+    const maskDef = defs.find(
+      (d): d is RenderMaskDef =>
+        d.type === "mask" && d.id === maskId
+    );
+    if (maskDef === undefined) {
+      throw new Error(`RenderTree node ${nodeId} references missing mask ${maskId}`);
+    }
+    return maskDef;
+  }
+
+  function drawMaskVertices(vertices: Float32Array, transform: AffineMatrix): void {
+    if (vertices.length === 0) {
+      return;
+    }
+    drawSolidFill({
+      ctx: getGlContext(),
+      vertices,
+      color: BLACK,
+      transform,
+      opacity: 1,
+    });
+  }
+
+  function drawRenderMaskContent(node: RenderNode, parentTransform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
+    const transform = multiplyMatrices(parentTransform, node.source.transform);
+    switch (node.type) {
+      case "group":
+        drawRenderGroupMaskContent(node, transform, maskType);
+        return;
+      case "frame":
+        drawRenderFrameMaskContent(node, transform, maskType);
+        return;
+      case "rect":
+        drawRenderRectMaskContent(node, transform, maskType);
+        return;
+      case "ellipse":
+        drawMaskVertices(geometryCache.getEllipseVertices({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry }), transform);
+        return;
+      case "path":
+        drawMaskVertices(geometryCache.getPathGeometry(node).backgroundMaskVertices, transform);
+        return;
+      case "text":
+        drawRenderTextMaskContent(node, transform);
+        return;
+      case "image":
+        throw new Error(`WebGL mask content ${node.id} requires image-alpha masking support`);
+    }
+  }
+
+  function drawRenderGroupMaskContent(node: RenderGroupNode, transform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
+    for (const child of node.children) {
+      drawRenderMaskContent(child, transform, maskType);
+    }
+  }
+
+  function drawRenderFrameMaskContent(node: RenderFrameNode, transform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
+    if (maskType === "OUTLINE" || node.background !== null || node.backgroundBlur !== undefined) {
+      drawMaskVertices(resolveClipVertices(node.sourceSurfaceShape), transform);
+    }
+    for (const child of node.children) {
+      drawRenderMaskContent(child, transform, maskType);
+    }
+  }
+
+  function drawRenderRectMaskContent(node: RenderRectNode, transform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
+    if (maskType !== "OUTLINE" && node.sourceFills.length === 0 && node.strokeRendering === undefined) {
+      return;
+    }
+    drawMaskVertices(geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing), transform);
+  }
+
+  function drawRenderTextMaskContent(node: RenderTextNode, transform: AffineMatrix): void {
+    if (node.content.mode !== "glyphs") {
+      throw new Error(`WebGL text mask node ${node.id} requires glyph geometry`);
+    }
+    const { runs } = geometryCache.getTextGlyphGeometry(node);
+    for (const run of runs) {
+      drawMaskVertices(run.vertices, transform);
     }
   }
 

@@ -169,6 +169,7 @@ export type RenderMaskDef = {
  * Mask reference on a node — points to a mask def by ID.
  */
 export type RenderMask = {
+  readonly maskId: string;
   readonly maskAttr: string;  // "url(#mask-id)"
 };
 

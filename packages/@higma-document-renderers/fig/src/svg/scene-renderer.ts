@@ -22,6 +22,9 @@
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "../scene-graph";
 import {
+  resolveSvgMaskElementAttrs,
+  resolveSvgMaskPresentation,
+  resolveSvgStrokeMaskElementAttrs,
   resolveRenderTree,
   type RenderTree,
   type RenderNode,
@@ -43,6 +46,7 @@ import {
   type StrokeRendering,
   type RenderBackgroundBlur,
   type RenderNodeBase,
+  type SvgMaskElementAttrs,
 } from "../scene-graph";
 
 import type { ResolvedStrokeAttrs, ResolvedAngularGradient, ResolvedDiamondGradient, ResolvedFillLayer, ResolvedStrokeLayer } from "../scene-graph";
@@ -406,12 +410,6 @@ function formatDef(def: RenderDef): SvgNode {
       return clipPath({ id: def.id }, formatClipPathShape(def.shape));
     }
     case "mask": {
-      // `def.maskType` comes from Kiwi `MaskType` and is the SoT for
-      // mask interpretation. ALPHA and LUMINANCE masks consume the
-      // source node directly because its alpha/luminance is the authored
-      // mask signal. OUTLINE masks render the source geometry as an
-      // opaque white outline source.
-      //
       // `maskUnits="userSpaceOnUse"` matches Figma's own SVG export
       // (`mask*_xxxx` decls always carry this) AND is required for
       // correctness here: the mask CONTENT comes from a SceneNode whose
@@ -422,21 +420,16 @@ function formatDef(def: RenderDef): SvgNode {
       // path into a region 165× and 360× the size of the using rect,
       // and crashing resvg on the resulting degenerate geometry
       // (`geom.rs:27 unwrap None`).
-      if (def.maskType === "ALPHA") {
+      const presentation = resolveSvgMaskPresentation(def.maskType);
+      if (presentation.contentMode === "source") {
         return mask(
-          maskElementAttrs(def, "alpha"),
-          formatNode(def.maskContent),
-        );
-      }
-      if (def.maskType === "LUMINANCE") {
-        return mask(
-          maskElementAttrs(def, "luminance"),
+          svgMaskElementAttrs(def, presentation.maskType),
           formatNode(def.maskContent),
         );
       }
       const maskContent = formatNodeAsMaskShape(def.maskContent, "white");
       return mask(
-        maskElementAttrs(def, "luminance"),
+        svgMaskElementAttrs(def, presentation.maskType),
         maskContent,
       );
     }
@@ -449,20 +442,20 @@ function formatDef(def: RenderDef): SvgNode {
       if (def.strokeAlign === "OUTSIDE") {
         // Invert: large white background with black shape hole
         return mask(
-          { id: def.id, style: "mask-type:luminance", maskUnits: "userSpaceOnUse" },
+          svgStrokeMaskElementAttrs(def.id),
           rect({ x: -100, y: -100, width: 10000, height: 10000, fill: "white" }),
           g({ fill: "black" }, shape),
         );
       }
       return mask(
-        { id: def.id, style: "mask-type:luminance", maskUnits: "userSpaceOnUse" },
+        svgStrokeMaskElementAttrs(def.id),
         g({ fill: "white" }, shape),
       );
     }
   }
 }
 
-function maskElementAttrs(
+function svgMaskElementAttrs(
   def: Extract<RenderDef, { readonly type: "mask" }>,
   maskType: "alpha" | "luminance",
 ): {
@@ -474,21 +467,43 @@ function maskElementAttrs(
   readonly width: string;
   readonly height: string;
 } {
-  const x = Math.floor(def.bounds.x);
-  const y = Math.floor(def.bounds.y);
-  const width = Math.ceil(def.bounds.x + def.bounds.width) - x;
-  const height = Math.ceil(def.bounds.y + def.bounds.height) - y;
-  if (!(width > 0) || !(height > 0)) {
-    throw new Error(`Mask ${def.id} has a non-positive SVG mask region`);
-  }
-  return {
+  return svgMaskElementAttrsToSvgAttrs(resolveSvgMaskElementAttrs({
     id: def.id,
-    style: `mask-type:${maskType}`,
-    maskUnits: "userSpaceOnUse",
-    x: String(x),
-    y: String(y),
-    width: String(width),
-    height: String(height),
+    bounds: def.bounds,
+    maskType,
+  }));
+}
+
+function svgStrokeMaskElementAttrs(id: string): {
+  readonly id: string;
+  readonly style: string;
+  readonly maskUnits: "userSpaceOnUse";
+} {
+  const attrs = resolveSvgStrokeMaskElementAttrs(id);
+  return {
+    id: attrs.id,
+    style: `mask-type:${attrs.maskType}`,
+    maskUnits: attrs.maskUnits,
+  };
+}
+
+function svgMaskElementAttrsToSvgAttrs(attrs: SvgMaskElementAttrs): {
+  readonly id: string;
+  readonly style: string;
+  readonly maskUnits: "userSpaceOnUse";
+  readonly x: string;
+  readonly y: string;
+  readonly width: string;
+  readonly height: string;
+} {
+  return {
+    id: attrs.id,
+    style: `mask-type:${attrs.maskType}`,
+    maskUnits: attrs.maskUnits,
+    x: attrs.x,
+    y: attrs.y,
+    width: attrs.width,
+    height: attrs.height,
   };
 }
 
@@ -1815,17 +1830,14 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string): SvgNode {
       return g({}, ...parts);
     }
     case "rect": {
-      const uniform = uniformCornerRadius(node.cornerRadius);
-      if (uniform === undefined && node.cornerRadius !== undefined && typeof node.cornerRadius !== "number") {
-        return path({
-          d: buildRoundedRectPathD(node.width, node.height, coerceCornerRadius(node.cornerRadius)),
-          fill,
-          ...sa,
-        });
-      }
-      const rxValue = uniform ?? 0;
-      const rxAttr = rxValue > 0 ? { rx: rxValue } : {};
-      return rect({ x: 0, y: 0, width: node.width, height: node.height, ...rxAttr, fill, ...sa });
+      return formatMaskRectShape({
+        width: node.width,
+        height: node.height,
+        cornerRadius: node.cornerRadius,
+        cornerSmoothing: node.cornerSmoothing,
+        fill,
+        strokeAttrs,
+      });
     }
     case "ellipse": {
       if (node.rx === node.ry) {
@@ -1865,10 +1877,7 @@ function formatTextMaskShape(node: RenderTextNode, fill: string): SvgNode {
   // mask fill — every mask shape body uses the same constant so the
   // rasterised mask source matches Figma's exporter byte-for-byte.
   if (node.content.mode !== "glyphs") {
-    // Line-mode text is not meaningfully usable as a mask shape (the
-    // glyph contours aren't resolved). Emit empty so the mask falls
-    // through to its background (black → invisible).
-    return EMPTY_SVG;
+    throw new Error(`Text mask node ${node.id} requires glyph geometry`);
   }
   const parts = node.content.runs.map((run) => path({ d: run.d, fill }));
   if (parts.length === 1) { return parts[0]; }
@@ -1876,21 +1885,66 @@ function formatTextMaskShape(node: RenderTextNode, fill: string): SvgNode {
 }
 
 function formatFrameMaskBackground(node: RenderFrameNode, fill: string, strokeAttrs: MaskStrokeAttrs | undefined): SvgNode {
-  const uniform = uniformCornerRadius(node.cornerRadius);
-  if (uniform === undefined && node.cornerRadius !== undefined && typeof node.cornerRadius !== "number") {
+  return formatMaskRectShape({
+    width: node.width,
+    height: node.height,
+    cornerRadius: node.cornerRadius,
+    cornerSmoothing: node.cornerSmoothing,
+    fill,
+    strokeAttrs,
+  });
+}
+
+function formatMaskRectShape(
+  {
+    width,
+    height,
+    cornerRadius,
+    cornerSmoothing,
+    fill,
+    strokeAttrs,
+  }: {
+    readonly width: number;
+    readonly height: number;
+    readonly cornerRadius?: CornerRadius;
+    readonly cornerSmoothing?: number;
+    readonly fill: string;
+    readonly strokeAttrs?: MaskStrokeAttrs;
+  },
+): SvgNode {
+  const uniform = uniformCornerRadius(cornerRadius);
+  const hasSmoothing = cornerSmoothing !== undefined && cornerSmoothing > 0;
+  if (cornerRadius !== undefined && (uniform === undefined || hasSmoothing)) {
+    const radii = coerceCornerRadius(cornerRadius);
+    const d = maskRoundedRectPathD({ width, height, radii, cornerSmoothing });
     return path({
-      d: buildRoundedRectPathD(
-        node.width,
-        node.height,
-        coerceCornerRadius(node.cornerRadius),
-      ),
+      d,
       fill,
       ...strokeAttrs,
     });
   }
   const rxValue = uniform ?? 0;
   const rxAttr = rxValue > 0 ? { rx: rxValue } : {};
-  return rect({ x: 0, y: 0, width: node.width, height: node.height, ...rxAttr, fill, ...strokeAttrs });
+  return rect({ x: 0, y: 0, width, height, ...rxAttr, fill, ...strokeAttrs });
+}
+
+function maskRoundedRectPathD(
+  {
+    width,
+    height,
+    radii,
+    cornerSmoothing,
+  }: {
+    readonly width: number;
+    readonly height: number;
+    readonly radii: readonly [number, number, number, number];
+    readonly cornerSmoothing?: number;
+  },
+): string {
+  if (cornerSmoothing !== undefined && cornerSmoothing > 0) {
+    return buildSmoothedRoundedRectPathD(width, height, radii, cornerSmoothing);
+  }
+  return buildRoundedRectPathD(width, height, radii);
 }
 
 function formatImageMaskShape(node: RenderImageNode): SvgNode {

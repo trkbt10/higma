@@ -98,3 +98,14 @@ export {
   type ResolvedEffectStack,
   type ShapeEffectStackParams,
 } from "./effect-stack";
+
+export {
+  resolveSvgMaskElementAttrs,
+  resolveSvgMaskPresentation,
+  resolveSvgStrokeMaskElementAttrs,
+  type SvgMaskContentMode,
+  type SvgMaskElementAttrs,
+  type SvgMaskPresentation,
+  type SvgMaskType,
+  type SvgStrokeMaskElementAttrs,
+} from "./svg-mask-attrs";

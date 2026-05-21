@@ -1,7 +1,7 @@
 /** @file Effect operations over Kiwi effect arrays. */
 import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, kiwiEnumName, toEnumValue, type EnumValue } from "@higma-document-models/fig/constants";
 import type { BlendMode, FigColor, FigEffect, FigEffectType } from "@higma-document-models/fig/types";
-import { extractShadowParams, getEffectTypeName, isEffectVisible } from "@higma-document-renderers/fig/effects";
+import { extractShadowParams, getEffectTypeName, isEffectVisible, resolveShowShadowBehindNode } from "@higma-document-renderers/fig/effects";
 import type { BlendModeId, EffectTypeId, EffectView } from "@higma-editor-kernel/ui/property-sections";
 import { figColorToHex, hexToFigColor } from "./paint-domain";
 
@@ -49,7 +49,7 @@ export function effectToView(effect: FigEffect): EffectView {
     blendMode: blendModeName(effect),
     hex: figColorToHex(color),
     opacity: color.a,
-    showShadowBehindNode: effect.showShadowBehindNode !== false,
+    showShadowBehindNode: resolveShowShadowBehindNode(effect),
   };
 }
 

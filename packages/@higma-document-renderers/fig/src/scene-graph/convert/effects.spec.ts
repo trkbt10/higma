@@ -70,14 +70,22 @@ describe("convertEffectsToScene", () => {
     }]);
   });
 
-  it("requires Kiwi showShadowBehindNode for drop shadows", () => {
-    expect(() => convertEffectsToScene([{
+  it("treats omitted Kiwi showShadowBehindNode as the enabled shadow state", () => {
+    expect(convertEffectsToScene([{
       type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
       visible: true,
       color: { r: 1, g: 1, b: 1, a: 1 },
       offset: { x: 0, y: 0 },
       radius: 1,
-    }])).toThrow("DROP_SHADOW effect requires showShadowBehindNode from Kiwi");
+    }])).toEqual([{
+      type: "drop-shadow",
+      color: { r: 1, g: 1, b: 1, a: 1 },
+      offset: { x: 0, y: 0 },
+      radius: 1,
+      spread: undefined,
+      blendMode: undefined,
+      showShadowBehindNode: true,
+    }]);
   });
 
   it("throws when an effect variable is an unresolved alias", () => {

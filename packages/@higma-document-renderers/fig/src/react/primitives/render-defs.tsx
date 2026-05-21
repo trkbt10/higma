@@ -18,7 +18,13 @@ import type {
   RenderMaskDef,
   ClipPathShape,
 } from "../../scene-graph";
+import {
+  resolveSvgMaskElementAttrs,
+  resolveSvgMaskPresentation,
+  resolveSvgStrokeMaskElementAttrs,
+} from "../../scene-graph";
 import { RenderNodeComponent } from "../nodes/RenderNodeComponent";
+import { RenderOutlineMaskShape } from "./outline-mask-shape";
 import type { ResolvedFilterPrimitive, ResolvedGradientStop } from "../../scene-graph";
 
 // =============================================================================
@@ -291,21 +297,34 @@ function formatPatternDef(def: RenderPatternDef): ReactNode {
 // =============================================================================
 
 function formatMaskDef(def: RenderMaskDef): ReactNode {
-  const maskType = resolveReactMaskType(def.maskType);
+  const presentation = resolveSvgMaskPresentation(def.maskType);
+  const attrs = resolveSvgMaskElementAttrs({
+    id: def.id,
+    bounds: def.bounds,
+    maskType: presentation.maskType,
+  });
+  const content = formatMaskContent(def, presentation.contentMode);
   return (
-    <mask key={def.id} id={def.id} style={{ maskType }}>
-      <g fill="white">
-        <RenderNodeComponent node={def.maskContent} />
-      </g>
+    <mask
+      key={attrs.id}
+      id={attrs.id}
+      maskUnits={attrs.maskUnits}
+      x={attrs.x}
+      y={attrs.y}
+      width={attrs.width}
+      height={attrs.height}
+      style={{ maskType: attrs.maskType }}
+    >
+      {content}
     </mask>
   );
 }
 
-function resolveReactMaskType(maskType: RenderMaskDef["maskType"]): "alpha" | "luminance" {
-  if (maskType === "ALPHA") {
-    return "alpha";
+function formatMaskContent(def: RenderMaskDef, contentMode: "source" | "outline"): ReactNode {
+  if (contentMode === "source") {
+    return <RenderNodeComponent node={def.maskContent} />;
   }
-  return "luminance";
+  return <RenderOutlineMaskShape node={def.maskContent} fill="white" />;
 }
 
 function formatDef(def: RenderDef): ReactNode {
@@ -326,32 +345,31 @@ function formatDef(def: RenderDef): ReactNode {
     case "mask":
       return formatMaskDef(def);
     case "stroke-mask":
-      // Stroke-align mask for INSIDE/OUTSIDE clipping.
-      //   INSIDE:  white-filled shape → stroke only visible inside shape.
-      //   OUTSIDE: inverted — large white background with black shape hole
-      //            → stroke only visible outside shape.
-      //
-      // BUG GUARD: SVG `<mask>` does NOT accept `fill` directly. The fill
-      // must be on a wrapping `<g>` or the mask shape itself, otherwise
-      // the mask becomes fully black (everything masked out) and the
-      // masked element (the stroke) disappears entirely.
-      // This was the root cause of widgets appearing as empty white
-      // squares on Cover / Components pages: the parent
-      // FRAME's stroke-mask masked out its own children.
-      if (def.strokeAlign === "OUTSIDE") {
-        return (
-          <mask key={def.id} id={def.id} style={{ maskType: "luminance" }}>
-            <rect x={-100} y={-100} width={10000} height={10000} fill="white" />
-            <g fill="black">{formatClipPathShape(def.shape)}</g>
-          </mask>
-        );
-      }
-      return (
-        <mask key={def.id} id={def.id} style={{ maskType: "luminance" }}>
-          <g fill="white">{formatClipPathShape(def.shape)}</g>
-        </mask>
-      );
+      return formatStrokeMaskDef(def);
   }
+}
+
+function formatStrokeMaskDef(def: Extract<RenderDef, { readonly type: "stroke-mask" }>): ReactNode {
+  // Stroke-align mask for INSIDE/OUTSIDE clipping.
+  //   INSIDE: white-filled shape -> stroke only visible inside shape.
+  //   OUTSIDE: inverted, with a large white background and black shape hole.
+  //
+  // SVG <mask> does not accept fill directly. The fill must be on a
+  // wrapping <g> or the mask shape itself.
+  const attrs = resolveSvgStrokeMaskElementAttrs(def.id);
+  if (def.strokeAlign === "OUTSIDE") {
+    return (
+      <mask key={attrs.id} id={attrs.id} maskUnits={attrs.maskUnits} style={{ maskType: attrs.maskType }}>
+        <rect x={-100} y={-100} width={10000} height={10000} fill="white" />
+        <g fill="black">{formatClipPathShape(def.shape)}</g>
+      </mask>
+    );
+  }
+  return (
+    <mask key={attrs.id} id={attrs.id} maskUnits={attrs.maskUnits} style={{ maskType: attrs.maskType }}>
+      <g fill="white">{formatClipPathShape(def.shape)}</g>
+    </mask>
+  );
 }
 
 /**

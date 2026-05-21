@@ -92,6 +92,16 @@ export function resolveEffectSpread(effect: FigEffect): number | undefined {
   return resolveEffectFloat(effect.spreadVar, effect.spread, "Effect.spreadVar");
 }
 
+/** Resolve Kiwi's omitted/enabled drop-shadow-behind-node state. */
+export function resolveShowShadowBehindNode(effect: FigEffect): boolean {
+  // Kiwi omits showShadowBehindNode for the enabled state. Explicit
+  // `false` is the authored disabled state.
+  if (effect.showShadowBehindNode === false) {
+    return false;
+  }
+  return true;
+}
+
 /** Extracts shadow rendering parameters from a Figma effect definition. */
 export function extractShadowParams(effect: FigEffect): ShadowParams {
   return {

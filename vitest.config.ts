@@ -12,6 +12,13 @@ function rootPath(path: string): string {
 }
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      react: rootPath("./node_modules/react"),
+      "react-dom": rootPath("./node_modules/react-dom"),
+    },
+    dedupe: ["react", "react-dom"],
+  },
   test: {
     globals: true,
     environment: "node",

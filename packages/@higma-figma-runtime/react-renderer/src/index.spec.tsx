@@ -3,14 +3,13 @@
 import { Buffer } from "node:buffer";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig/context";
+import { createFigDocumentContextFromNodeChanges, figDocumentResources } from "@higma-document-io/fig/context";
 import type { FigDocumentContext } from "@higma-document-io/fig/context";
 import { EMPTY_FIG_STYLE_REGISTRY } from "@higma-document-models/fig/domain";
 import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
 import {
   createFigFamilyRenderOptions,
   FigFamilyPageRenderer,
-  figDocumentResources,
 } from "./index";
 
 const ONE_PIXEL_PNG = Uint8Array.from(Buffer.from(

@@ -939,7 +939,7 @@ function resolveMask(
   }
   const bounds = resolveMaskContentBounds(node.mask.maskContent);
   defs.push({ type: "mask", id: maskId, maskType: node.mask.maskType, bounds, maskContent: resolvedMaskContent });
-  return { maskAttr: `url(#${maskId})` };
+  return { maskId, maskAttr: `url(#${maskId})` };
 }
 
 function resolveMaskContentBounds(maskContent: SceneNode): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {

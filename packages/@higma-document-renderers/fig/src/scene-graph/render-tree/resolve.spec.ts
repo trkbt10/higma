@@ -530,6 +530,49 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     expect(node.canUnwrapSingleChild).toBe(false);
     expect(clipDef?.shape.kind).toBe("path");
   });
+
+  it("keeps the RenderMask id available for non-SVG backends", () => {
+    const maskContent: RectNode = {
+      type: "rect",
+      id: createNodeId("mask-source"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 10,
+      height: 10,
+      fills: [RED_SOLID],
+    };
+    const maskedGroup: GroupNode = {
+      type: "group",
+      id: createNodeId("masked-group"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      mask: { maskId: maskContent.id, maskType: "ALPHA", maskContent },
+      children: [{
+        type: "rect",
+        id: createNodeId("masked-child"),
+        transform: IDENTITY,
+        opacity: 1,
+        visible: true,
+        effects: [],
+        width: 20,
+        height: 20,
+        fills: [RED_SOLID],
+      }],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([maskedGroup]));
+    const node = tree.children[0] as RenderGroupNode;
+    const maskDef = node.defs.find((def) => def.type === "mask");
+    if (maskDef === undefined) {
+      throw new Error("expected mask def");
+    }
+
+    expect(node.mask).toEqual({ maskId: maskDef.id, maskAttr: `url(#${maskDef.id})` });
+    expect(maskDef.bounds).toEqual({ x: 0, y: 0, width: 10, height: 10 });
+  });
 });
 
 // =============================================================================

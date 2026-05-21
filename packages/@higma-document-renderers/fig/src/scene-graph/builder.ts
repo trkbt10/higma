@@ -358,6 +358,7 @@ type BuildContext = {
 
 export type SceneGraphBuildCache = {
   readonly nodesBySource: WeakMap<FigNode, SceneNode>;
+  readonly root: GroupNode;
 };
 
 export type BuildSceneGraphResult = {
@@ -1240,6 +1241,29 @@ function appendBuiltChild(result: SceneNode[], maskState: MaskBuildState, node: 
   result.push(node);
 }
 
+function sceneNodeChildrenEqual(left: readonly SceneNode[], right: readonly SceneNode[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((node, index) => node === right[index]);
+}
+
+function buildRootNode(children: readonly SceneNode[], previousCache: SceneGraphBuildCache | undefined): GroupNode {
+  const previousRoot = previousCache?.root;
+  if (previousRoot !== undefined && sceneNodeChildrenEqual(previousRoot.children, children)) {
+    return previousRoot;
+  }
+  return {
+    type: "group",
+    id: createNodeId("root"),
+    transform: IDENTITY_MATRIX,
+    opacity: 1,
+    visible: true,
+    effects: [],
+    children,
+  };
+}
+
 /**
  * Wrap masked children in a GroupNode with the mask field set.
  */
@@ -1306,15 +1330,7 @@ export function buildSceneGraphWithCache(
 
   const children = buildChildren(nodes, ctx);
 
-  const root: GroupNode = {
-    type: "group",
-    id: createNodeId("root"),
-    transform: IDENTITY_MATRIX,
-    opacity: 1,
-    visible: true,
-    effects: [],
-    children,
-  };
+  const root = buildRootNode(children, previousCache);
 
   return {
     sceneGraph: {
@@ -1324,6 +1340,6 @@ export function buildSceneGraphWithCache(
       root,
       version: 1,
     },
-    cache: { nodesBySource: nextNodesBySource },
+    cache: { nodesBySource: nextNodesBySource, root },
   };
 }
