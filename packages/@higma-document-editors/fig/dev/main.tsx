@@ -12,9 +12,11 @@ import { useMemo, useState, useCallback, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createEmptyFigDocument,
-  createFigDocumentContext,
+  createFigDocumentContextFromLoaded,
+  type FigDocumentContextKiwiSourceDocument,
   type FigDocumentContext,
 } from "@higma-document-io/fig";
+import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import type { EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
 import { Button, Select, Tabs, Toggle, injectCSSVariables, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import { FigEditor } from "../src/editor/FigEditor";
@@ -44,8 +46,8 @@ const editorRendererOptions = [
 
 type LoadedFile = {
   readonly context: FigDocumentContext;
-  readonly raw: Uint8Array;
   readonly fileName: string;
+  readonly sourceFileNames: readonly string[];
 };
 
 // =============================================================================
@@ -304,7 +306,7 @@ function LoadedDevShell({
       <header style={headerStyle}>
         <div style={headerLeftStyle}>
           <h1 style={titleStyle}>Fig Editor Dev</h1>
-          <span style={fileNameStyle}>{loadedFile.fileName}</span>
+          <span style={fileNameStyle}>{formatLoadedFileName(loadedFile)}</span>
         </div>
         <div style={headerRightStyle}>
           {mode === "editor" && (
@@ -353,7 +355,7 @@ function LoadedDevShell({
             label: "Renderer Debug",
             content: (
               <div style={mainStyle}>
-                <RendererDebugView raw={loadedFile.raw} />
+                <RendererDebugView context={loadedFile.context} />
               </div>
             ),
           },
@@ -370,6 +372,48 @@ function LoadedDevShell({
 // =============================================================================
 // App
 // =============================================================================
+
+type LoadedFigFile = Awaited<ReturnType<typeof loadFigFile>>;
+
+async function readLoadedFigFile(file: File): Promise<LoadedFigFile> {
+  const buffer = await file.arrayBuffer();
+  return loadFigFile(new Uint8Array(buffer));
+}
+
+function kiwiSourceDocumentFromLoaded(loaded: LoadedFigFile): FigDocumentContextKiwiSourceDocument {
+  return {
+    nodeChanges: loaded.nodeChanges,
+    blobs: loaded.blobs,
+    images: loaded.images,
+  };
+}
+
+async function createLoadedFile(files: readonly File[]): Promise<LoadedFile> {
+  const [primaryFile, ...sourceFiles] = files;
+  if (primaryFile === undefined) {
+    throw new Error("Fig Editor Dev requires a primary .fig file");
+  }
+  const primary = await readLoadedFigFile(primaryFile);
+  const sources = await Promise.all(sourceFiles.map(readLoadedFigFile));
+  const context = createFigDocumentContextFromLoaded(primary, {
+    kiwiSourceDocuments: sources.map(kiwiSourceDocumentFromLoaded),
+  });
+  return {
+    context,
+    fileName: primaryFile.name,
+    sourceFileNames: sourceFiles.map((file) => file.name),
+  };
+}
+
+function formatLoadedFileName(loadedFile: LoadedFile): string {
+  if (loadedFile.sourceFileNames.length === 0) {
+    return loadedFile.fileName;
+  }
+  if (loadedFile.sourceFileNames.length === 1) {
+    return `${loadedFile.fileName} (+1 source)`;
+  }
+  return `${loadedFile.fileName} (+${loadedFile.sourceFileNames.length} sources)`;
+}
 
 function App() {
   const [loadedFile, setLoadedFile] = useState<LoadedFile | null>(null);
@@ -399,14 +443,11 @@ function App() {
     [],
   );
 
-  const handleFile = useCallback(async (file: File) => {
+  const handleFiles = useCallback(async (files: readonly File[]) => {
     setIsLoading(true);
     setError(null);
     try {
-      const buffer = await file.arrayBuffer();
-      const data = new Uint8Array(buffer);
-      const context = await createFigDocumentContext(data);
-      setLoadedFile({ context, raw: data, fileName: file.name });
+      setLoadedFile(await createLoadedFile(files));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to parse file";
       setError(message);
@@ -418,7 +459,7 @@ function App() {
 
   const handleNewDocument = useCallback(() => {
     const context = createEmptyFigDocument("Page 1");
-    setLoadedFile({ context, raw: new Uint8Array(), fileName: "Untitled.fig" });
+    setLoadedFile({ context, fileName: "Untitled.fig", sourceFileNames: [] });
     setError(null);
   }, []);
 
@@ -442,7 +483,7 @@ function App() {
           </div>
         </header>
         <main style={mainPaddedStyle}>
-          <FileDropZone onFile={handleFile} isLoading={isLoading} />
+          <FileDropZone onFiles={handleFiles} isLoading={isLoading} />
           {error && <div style={errorStyle}>{error}</div>}
         </main>
       </div>

@@ -2,14 +2,12 @@
 
 import {
   useCallback,
-  useEffect,
   useMemo,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
 import {
-  createFigDocumentContext,
   figDocumentResources,
   findCanvases,
   type FigDocumentContext,
@@ -37,7 +35,7 @@ import {
 import { useBrowserTextFontResolver } from "./browser-text-font-resolver";
 
 type Props = {
-  readonly raw: Uint8Array;
+  readonly context: FigDocumentContext;
 };
 
 type CanvasInfo = {
@@ -483,43 +481,6 @@ function RendererDebugContent({ context }: { readonly context: FigDocumentContex
 }
 
 /** Render SVG/WebGL debug output for one loaded fig file. */
-export function RendererDebugView({ raw }: Props) {
-  const [context, setContext] = useState<FigDocumentContext | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (raw.length === 0) {
-      setContext(null);
-      setParseError(null);
-      return;
-    }
-    const cancelled = { value: false };
-    createFigDocumentContext(raw).then(
-      (loadedContext) => {
-        if (cancelled.value) {
-          return;
-        }
-        setContext(loadedContext);
-        setParseError(null);
-      },
-      (error: unknown) => {
-        if (cancelled.value) {
-          return;
-        }
-        setContext(null);
-        setParseError(error instanceof Error ? error.message : String(error));
-      },
-    );
-    return () => {
-      cancelled.value = true;
-    };
-  }, [raw]);
-
-  if (parseError !== null) {
-    return <div style={emptyStateStyle}>Parse error: {parseError}</div>;
-  }
-  if (context === null) {
-    return <div style={emptyStateStyle}>Parsing .fig for renderer debug...</div>;
-  }
+export function RendererDebugView({ context }: Props) {
   return <RendererDebugContent context={context} />;
 }
