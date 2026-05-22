@@ -30,7 +30,7 @@ import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigSvgRenderResult } from "../types";
 import type { SvgString } from "./primitives";
 import type { FontLoader, FontQuery } from "@higma-document-models/fig/font";
-import { collectFontQueries, preloadFonts, fontQueryKey } from "@higma-document-models/fig/font";
+import { collectFontQueries, fontQueryKey, preloadFonts } from "@higma-document-models/fig/font";
 import { createCachedTextFontResolver, type TextFontResolver } from "../text";
 import type { SymbolResolver } from "@higma-document-models/fig/symbols";
 import { buildSceneGraph, pruneSceneGraphToViewport, resolveRenderTree, type FigmaRenderExportSettings } from "../scene-graph";
@@ -84,17 +84,16 @@ export type FigSvgRenderOptions = {
 };
 
 /**
- * Walk every TEXT node and collect the unique `FontQuery`s that the
- * renderer will demand from the resolver — both the base font and every
- * per-character override entry. Dedupe via the canonical `fontQueryKey`
- * so the preload set, the resolver lookups, and the cache all agree.
+ * Walk every TEXT node and collect the unique `FontQuery`s that cannot
+ * be satisfied by Kiwi derived text payloads and therefore require a
+ * font resolver.
  */
-function collectTextFontQueries(
+function collectTextFontResolverQueries(
   nodes: readonly FigNode[],
   symbolResolver: SymbolResolver,
   childrenOf: (node: FigNode) => readonly FigNode[],
 ): readonly FontQuery[] {
-  return collectFontQueries({ roots: nodes, symbolResolver, childrenOf }).queries;
+  return collectFontQueries({ roots: nodes, symbolResolver, childrenOf }).fontResolverQueries;
 }
 
 async function createPreloadedTextFontResolver(
@@ -106,19 +105,16 @@ async function createPreloadedTextFontResolver(
   if (fontLoader === undefined) {
     return undefined;
   }
-  const queries = collectTextFontQueries(nodes, symbolResolver, childrenOf);
+  const queries = collectTextFontResolverQueries(nodes, symbolResolver, childrenOf);
+  if (queries.length === 0) {
+    return undefined;
+  }
   // `preloadFonts` (SoT) loads each query, throws on failure when no
   // substitution chain is configured — exactly the renderer's no-
   // substitution policy. The returned `cache` is keyed by `fontQueryKey`.
   const result = await preloadFonts({ queries, loader: fontLoader });
   return createCachedTextFontResolver({
-    getCachedFont: (query) => {
-      const loaded = result.cache.get(fontQueryKey(query));
-      if (loaded === undefined) {
-        throw new Error(`renderFigToSvg: text font resolver was not preloaded for "${query.family}" weight ${query.weight} style ${query.style}`);
-      }
-      return loaded;
-    },
+    getCachedFont: (query) => result.cache.get(fontQueryKey(query)),
   });
 }
 

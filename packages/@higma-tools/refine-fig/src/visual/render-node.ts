@@ -127,9 +127,9 @@ export function createNodeRenderer(ctx: FigDocumentContext): NodeRenderer {
 
 /**
  * Walk the structure and ask the font loader about every distinct
- * `(family, weight, style)` referenced by a TEXT node. Returns the
- * first family that the loader cannot satisfy, or `undefined` when
- * every TEXT-required face resolves.
+ * `(family, weight, style)` that a TEXT node needs from TextFontResolver.
+ * Returns the first family that the loader cannot satisfy, or `undefined`
+ * when every resolver-required face resolves.
  *
  * Pre-flighting before resvg avoids a class of native-side panics
  * triggered by partially-resolvable fonts: the renderer's own
@@ -143,12 +143,12 @@ export function createNodeRenderer(ctx: FigDocumentContext): NodeRenderer {
  * drift on edge cases the SoT spec already covers.
  */
 async function unresolvableFonts(node: FigNode, loader: FontLoader, ctx: FigDocumentContext): Promise<string | undefined> {
-  const { queries } = collectFontQueries({
+  const { fontResolverQueries } = collectFontQueries({
     roots: [node],
     symbolResolver: ctx.symbolResolver,
     childrenOf: ctx.document.childrenOf,
   });
-  for (const query of queries) {
+  for (const query of fontResolverQueries) {
     if (!query.family) {
       continue;
     }

@@ -120,17 +120,20 @@ export async function renderFigViewports(
   for (const page of canvasNodes(context)) {
     for (const child of context.document.childrenOf(page)) {
       const breakpoint = parseBreakpointSlug(child.name);
-      if (!breakpoint) continue;
-      if (!wantedBreakpoints.has(breakpoint)) continue;
+      if (!breakpoint) {
+        continue;
+      }
+      if (!wantedBreakpoints.has(breakpoint)) {
+        continue;
+      }
       wrappers.push({ breakpoint, node: child });
     }
   }
 
-  // Pre-load every TEXT font referenced anywhere in the wrapper
-  // subtrees (and their resolved SYMBOL definitions). The renderer's
-  // scene-graph builder asks the resolver synchronously per character
-  // run, so all fonts must be in the cache by the time we call
-  // `buildSceneGraph`.
+  // Pre-load the TEXT fonts that Kiwi derived text payloads cannot
+  // satisfy. The scene-graph builder asks the resolver synchronously
+  // only when derived metrics/glyphs are insufficient, so the cache
+  // must cover that exact subset before `buildSceneGraph`.
   const fontResolver = await buildFontResolver(
     wrappers.map((w) => rootAtOrigin(w.node)),
     context,
@@ -407,7 +410,7 @@ async function buildFontResolver(
   roots: readonly FigNode[],
   context: FigDocumentContext,
 ): Promise<TextFontResolver> {
-  const { queries } = collectFontQueries({
+  const { fontResolverQueries } = collectFontQueries({
     roots,
     symbolResolver: context.symbolResolver,
     childrenOf: context.document.childrenOf,
@@ -432,7 +435,7 @@ async function buildFontResolver(
   }
 
   const result = await preloadFonts({
-    queries,
+    queries: fontResolverQueries,
     loader,
     fallbacks: [FALLBACK_CJK, FALLBACK_LATIN],
     // Verifier-side: families bundled via @fontsource that the
@@ -475,7 +478,7 @@ async function buildFontResolver(
   // Pre-load 400/regular for the lazy fallback below.
   const helveticaLatin = await loader.loadFont({ family: "Helvetica Neue", weight: 400, style: "normal" });
   const validatedCache = new Map<string, LoadedFont>();
-  for (const query of queries) {
+  for (const query of fontResolverQueries) {
     const key = fontQueryKey(query);
     const loaded = result.cache.get(key);
     if (loaded === undefined) {
@@ -488,7 +491,9 @@ async function buildFontResolver(
     const replacement = await helveticaFor(query);
     if (replacement !== undefined) {
       validatedCache.set(key, replacement);
-    } else if (helveticaLatin !== undefined) {
+      continue;
+    }
+    if (helveticaLatin !== undefined) {
       validatedCache.set(key, helveticaLatin);
     }
   }
@@ -596,6 +601,20 @@ function documentHasCjk(
   context: FigDocumentContext,
 ): boolean {
   const visited = new Set<string>();
+  function walkResolvedInstance(node: FigNode): boolean {
+    const reference = context.symbolResolver.resolveReferences(node).effectiveSymbol;
+    const referenceGuid = reference === undefined ? undefined : guidToString(reference.guid);
+    if (referenceGuid === undefined) {
+      return false;
+    }
+    if (visited.has(referenceGuid)) {
+      return false;
+    }
+    visited.add(referenceGuid);
+    const resolved = context.symbolResolver.resolveInstance(node);
+    return resolved.children.some((child) => walk(child));
+  }
+
   function walk(node: FigNode | undefined): boolean {
     if (!node) {
       return false;
@@ -605,16 +624,7 @@ function documentHasCjk(
       return true;
     }
     if (getNodeType(node) === "INSTANCE") {
-      const reference = context.symbolResolver.resolveReferences(node).effectiveSymbol;
-      const referenceGuid = reference === undefined ? undefined : guidToString(reference.guid);
-      if (referenceGuid !== undefined && !visited.has(referenceGuid)) {
-        visited.add(referenceGuid);
-        const resolved = context.symbolResolver.resolveInstance(node);
-        if (resolved.children.some((child) => walk(child))) {
-          return true;
-        }
-      }
-      return false;
+      return walkResolvedInstance(node);
     }
     for (const child of context.document.childrenOf(node)) {
       if (walk(child)) {
@@ -684,9 +694,14 @@ function canvasNodes(context: FigDocumentContext): readonly FigNode[] {
 }
 
 function parseBreakpointSlug(name: string | undefined): string | undefined {
-  if (!name) return undefined;
+  if (!name) {
+    return undefined;
+  }
   const head = name.split("/")[0]?.trim();
-  return head && head.length > 0 ? head : undefined;
+  if (head === undefined || head.length === 0) {
+    return undefined;
+  }
+  return head;
 }
 
 /**
@@ -713,7 +728,7 @@ type RGBA = { readonly r: number; readonly g: number; readonly b: number; readon
  * stay strictly typed end-to-end.
  */
 declare global {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
+  // eslint-disable-next-line no-restricted-syntax, @typescript-eslint/consistent-type-definitions -- ambient Window augmentation requires interface merging
   interface Window {
     renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
     __webglRenderSlots?: Map<string, string>;

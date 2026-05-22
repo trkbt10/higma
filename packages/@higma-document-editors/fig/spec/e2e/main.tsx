@@ -934,7 +934,7 @@ function collectHarnessFontQueries(context: FigDocumentContext) {
     roots: context.document.nodeChanges,
     symbolResolver: context.symbolResolver,
     childrenOf: resources.childrenOf,
-  }).queries;
+  }).fontResolverQueries;
 }
 
 function useBrowserTextFontPreload({

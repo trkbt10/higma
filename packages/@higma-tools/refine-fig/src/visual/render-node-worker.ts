@@ -63,19 +63,19 @@ async function setup(figPath: string): Promise<{
 
 /**
  * Walk the resolved descendants and ask the font loader about every distinct
- * `(family, weight, style)` referenced by a TEXT node. Returns the
- * first family that the loader cannot satisfy, or `undefined` when
- * every TEXT-required face resolves. Document traversal + override
+ * `(family, weight, style)` that a TEXT node needs from TextFontResolver.
+ * Returns the first family that the loader cannot satisfy, or `undefined`
+ * when every resolver-required face resolves. Document traversal + override
  * traversal is delegated to the canonical `collectFontQueries`
  * SoT — re-implementing it here would drift on edge cases.
  */
 async function unresolvableFonts(node: FigNode, loader: FontLoader, ctx: FigDocumentContext): Promise<string | undefined> {
-  const { queries } = collectFontQueries({
+  const { fontResolverQueries } = collectFontQueries({
     roots: [node],
     symbolResolver: ctx.symbolResolver,
     childrenOf: ctx.document.childrenOf,
   });
-  for (const query of queries) {
+  for (const query of fontResolverQueries) {
     if (!query.family) {
       continue;
     }

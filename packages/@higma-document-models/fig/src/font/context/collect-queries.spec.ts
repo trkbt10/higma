@@ -31,6 +31,41 @@ function textNode(g: FigGuid, family: string, style: string): FigNode {
   };
 }
 
+function textNodeWithKiwiDerivedText(g: FigGuid, family: string, style: string): FigNode {
+  const base = textNode(g, family, style);
+  return {
+    ...base,
+    characters: "Hello",
+    textData: {
+      characters: "Hello",
+      fontName: { family, style },
+    },
+    derivedTextData: {
+      baselines: [{
+        position: { x: 0, y: 12 },
+        width: 40,
+        lineY: 0,
+        lineHeight: 16,
+        lineAscent: 12,
+        firstCharacter: 0,
+        endCharacter: 5,
+      }],
+      fontMetaData: [{
+        key: { family, style },
+        fontLineHeight: 1,
+        fontWeight: 400,
+      }],
+      glyphs: [{
+        commandsBlob: 0,
+        position: { x: 0, y: 0 },
+        fontSize: 16,
+        firstCharacter: 0,
+        advance: 8,
+      }],
+    },
+  };
+}
+
 function frameNode(g: FigGuid, children: readonly FigNode[]): FigNode {
   return {
     guid: g,
@@ -76,6 +111,45 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.queries).toEqual([{ family: "Inter", weight: 400, style: "normal" }]);
+  });
+
+  it("does not require a TextFontResolver when Kiwi derived text carries metrics and glyphs", () => {
+    const result = collectFontQueries({
+      roots: [textNodeWithKiwiDerivedText(guid(1, 1), "Poppins", "Regular")],
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: () => [],
+    });
+    expect(result.queries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
+    expect(result.fontResolverQueries).toEqual([]);
+  });
+
+  it("requires a TextFontResolver when non-empty text has no Kiwi glyph payload", () => {
+    const result = collectFontQueries({
+      roots: [{
+        ...textNode(guid(1, 1), "Poppins", "Regular"),
+        characters: "Hello",
+        textData: { characters: "Hello", fontName: { family: "Poppins", style: "Regular" } },
+      }],
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: () => [],
+    });
+    expect(result.fontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
+  });
+
+  it("requires a TextFontResolver when derived glyphs exist without line metrics", () => {
+    const derivedNode = textNodeWithKiwiDerivedText(guid(1, 1), "Poppins", "Regular");
+    const result = collectFontQueries({
+      roots: [{
+        ...derivedNode,
+        derivedTextData: {
+          ...derivedNode.derivedTextData,
+          baselines: [],
+        },
+      }],
+      symbolResolver: EMPTY_SYMBOL_RESOLVER,
+      childrenOf: () => [],
+    });
+    expect(result.fontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
   });
 
   it("collects base font from structured textData.fontName", () => {
