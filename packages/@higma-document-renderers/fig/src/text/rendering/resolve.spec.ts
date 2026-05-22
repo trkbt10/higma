@@ -244,7 +244,7 @@ describe("resolveTextRendering font outlines", () => {
     expect(rendering.kind).toBe("empty");
   });
 
-  it("uses Kiwi glyph positions for placeholder text line metrics before font measurement", () => {
+  it("uses Kiwi glyph advances for placeholder text line metrics before font measurement", () => {
     const minimalBlob = {
       bytes: [0x01, 0, 0, 0, 0, 0, 0, 0, 0],
     };
@@ -260,16 +260,73 @@ describe("resolveTextRendering font outlines", () => {
           position: { x: 3, y: 10 },
           fontSize: 20,
           firstCharacter: 0,
-          advance: 0,
+          advance: 8,
         }, {
           commandsBlob: 0,
           position: { x: 11, y: 10 },
           fontSize: 20,
           firstCharacter: 1,
-          advance: 0,
+          advance: 7,
         }],
         baselines: [{
           position: { x: 3, y: 10 },
+          width: 15,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 2,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+        }],
+      },
+    }, {
+      blobs: [minimalBlob],
+      fontResolver: () => ({
+        ...RECT_FONT,
+        charToGlyph: () => ({
+          index: 1,
+          advanceWidth: Number.NaN,
+          getPath: () => RECT_FONT_PATH,
+        }),
+      }),
+    });
+
+    expect(rendering.kind).toBe("glyphs");
+    if (rendering.kind !== "glyphs") {
+      return;
+    }
+    expect(rendering.layout.lines[0]?.charWidths).toEqual([8, 7]);
+  });
+
+  it("does not derive character widths from visual-order glyph positions", () => {
+    const minimalBlob = {
+      bytes: [0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+    };
+    const rendering = resolveTextRendering({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "AB",
+      },
+      derivedTextData: {
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 20, y: 10 },
+          fontSize: 20,
+          firstCharacter: 0,
+          advance: 8,
+        }, {
+          commandsBlob: 0,
+          position: { x: 10, y: 10 },
+          fontSize: 20,
+          firstCharacter: 1,
+          advance: 7,
+        }],
+        baselines: [{
+          position: { x: 0, y: 10 },
           width: 15,
           lineY: 0,
           lineHeight: 24,
@@ -317,25 +374,25 @@ describe("resolveTextRendering font outlines", () => {
           position: { x: 0, y: 10 },
           fontSize: 20,
           firstCharacter: 0,
-          advance: 0,
+          advance: 10,
         }, {
           commandsBlob: 0,
           position: { x: 10, y: 10 },
           fontSize: 20,
           firstCharacter: 1,
-          advance: 0,
+          advance: 10,
         }, {
           commandsBlob: 0,
           position: { x: 0, y: 34 },
           fontSize: 20,
           firstCharacter: 3,
-          advance: 0,
+          advance: 12,
         }, {
           commandsBlob: 0,
           position: { x: 12, y: 34 },
           fontSize: 20,
           firstCharacter: 4,
-          advance: 0,
+          advance: 12,
         }],
         baselines: [{
           position: { x: 0, y: 10 },
@@ -395,31 +452,31 @@ describe("resolveTextRendering font outlines", () => {
           position: { x: 0, y: 10 },
           fontSize: 20,
           firstCharacter: 0,
-          advance: 0,
+          advance: 8,
         }, {
           commandsBlob: 0,
           position: { x: 8, y: 10 },
           fontSize: 20,
           firstCharacter: 1,
-          advance: 0,
+          advance: 8,
         }, {
           commandsBlob: 0,
           position: { x: 16, y: 10 },
           fontSize: 20,
           firstCharacter: 2,
-          advance: 0,
+          advance: 12,
         }, {
           commandsBlob: 0,
           position: { x: 28, y: 10 },
           fontSize: 20,
           firstCharacter: 4,
-          advance: 0,
+          advance: 8,
         }, {
           commandsBlob: 0,
           position: { x: 36, y: 10 },
           fontSize: 20,
           firstCharacter: 5,
-          advance: 0,
+          advance: 8,
         }],
         baselines: [{
           position: { x: 0, y: 10 },
@@ -470,7 +527,7 @@ describe("resolveTextRendering font outlines", () => {
           position: { x: 0, y: 34 },
           fontSize: 20,
           firstCharacter: 1,
-          advance: 0,
+          advance: 8,
         }],
         baselines: [{
           position: { x: 0, y: 10 },

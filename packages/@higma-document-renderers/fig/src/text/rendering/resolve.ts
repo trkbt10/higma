@@ -473,7 +473,6 @@ function derivedLineWidthsFromGlyphs(
       glyphsBySourceIndex,
       lineSourceStart: base.absoluteSourceStart,
       lineSourceEnd: base.absoluteSourceEnd,
-      lineEndX: base.baselineX + base.width,
     });
     return measuredSourceLine({
       text,
@@ -523,22 +522,6 @@ function nextGlyphStartOrLineEnd(
   return next;
 }
 
-function glyphClusterEndX(input: {
-  readonly glyphsBySourceIndex: ReadonlyMap<number, FigDerivedGlyph>;
-  readonly nextSourceIndex: number;
-  readonly lineSourceEnd: number;
-  readonly lineEndX: number;
-}): number {
-  if (input.nextSourceIndex === input.lineSourceEnd) {
-    return input.lineEndX;
-  }
-  const nextGlyph = input.glyphsBySourceIndex.get(input.nextSourceIndex);
-  if (nextGlyph === undefined) {
-    throw new Error("text-resolve:derived-line-metrics:missing-glyph-position");
-  }
-  return nextGlyph.position.x;
-}
-
 function glyphClusterCharacterWidths(clusterLength: number, width: number): readonly number[] {
   if (clusterLength < 1) {
     throw new Error("text-resolve:derived-line-metrics:invalid-glyph-cluster");
@@ -555,7 +538,6 @@ function derivedGlyphClusterWidthsForLine(input: {
   readonly glyphsBySourceIndex: ReadonlyMap<number, FigDerivedGlyph>;
   readonly lineSourceStart: number;
   readonly lineSourceEnd: number;
-  readonly lineEndX: number;
 }): readonly number[] {
   const glyphStartIndexes = glyphStartIndexesForLine(input);
   return glyphStartIndexes.flatMap((sourceIndex, index) => {
@@ -564,13 +546,7 @@ function derivedGlyphClusterWidthsForLine(input: {
       throw new Error("text-resolve:derived-line-metrics:missing-glyph-position");
     }
     const nextSourceIndex = nextGlyphStartOrLineEnd(glyphStartIndexes, index, input.lineSourceEnd);
-    const clusterEndX = glyphClusterEndX({
-      glyphsBySourceIndex: input.glyphsBySourceIndex,
-      nextSourceIndex,
-      lineSourceEnd: input.lineSourceEnd,
-      lineEndX: input.lineEndX,
-    });
-    const width = requireDerivedGlyphWidth(clusterEndX - glyph.position.x);
+    const width = requireDerivedGlyphWidth(glyph.advance);
     return glyphClusterCharacterWidths(nextSourceIndex - sourceIndex, width);
   });
 }
