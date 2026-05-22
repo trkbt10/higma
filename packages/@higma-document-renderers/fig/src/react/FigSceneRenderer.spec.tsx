@@ -163,6 +163,29 @@ describe("FigSceneRenderer", () => {
     expect(maskMarkup).not.toContain('<g fill="white"');
   });
 
+  it("formats paintless Kiwi ALPHA mask geometry as coverage in React SVG", () => {
+    const maskContent: RectNode = {
+      ...rectNode("paintless-alpha-mask-source", 10, 10),
+      fills: [],
+    };
+    const maskedGroup: GroupNode = {
+      type: "group",
+      id: createNodeId("paintless-alpha-masked-group"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      mask: { maskId: maskContent.id, maskType: "ALPHA", maskContent },
+      children: [rectNode("paintless-alpha-masked-rect", 20, 20)],
+    };
+    const html = renderSceneGraph(sceneWithChildren([maskedGroup]));
+    const maskMarkup = requireFirstElementMarkup(html, "mask");
+
+    expect(maskMarkup).toMatch(/mask-?[Tt]ype:alpha/);
+    expect(maskMarkup).toContain('fill="white"');
+    expect(maskMarkup).not.toContain('fill="none"');
+  });
+
   it("formats Kiwi OUTLINE masks as white luminance geometry in React SVG", () => {
     const maskContent = rectNode("outline-mask-source", 10, 10);
     const maskedGroup: GroupNode = {

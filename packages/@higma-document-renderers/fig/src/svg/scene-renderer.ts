@@ -421,7 +421,7 @@ function formatDef(def: RenderDef): SvgNode {
       // and crashing resvg on the resulting degenerate geometry
       // (`geom.rs:27 unwrap None`).
       const presentation = resolveSvgMaskPresentation(def.maskType);
-      if (presentation.contentMode === "source") {
+      if (def.contentRendering === "source-paint") {
         return mask(
           svgMaskElementAttrs(def, presentation.maskType),
           formatNode(def.maskContent),

@@ -258,6 +258,7 @@ export type InstanceResolution = {
 export type ResolvedSymbolTarget = {
   readonly node: FigNode;
   readonly guid: FigGuid;
+  readonly document: FigKiwiDocumentIndex;
 };
 
 export type SymbolResolverScope = {
@@ -277,7 +278,18 @@ export type SymbolResolver = {
 
 export type SymbolResolverInput = {
   readonly document: FigKiwiDocumentIndex;
+  /**
+   * Additional Kiwi document indexes that form the explicit SYMBOL
+   * source set for this resolver. Callers must provide these sources
+   * deliberately; renderer code must not infer or synthesize them.
+   */
+  readonly symbolSourceDocuments?: readonly FigKiwiDocumentIndex[];
   readonly blobs?: readonly FigBlob[];
+};
+
+type SymbolResolverDocuments = {
+  readonly primary: FigKiwiDocumentIndex;
+  readonly sources: readonly FigKiwiDocumentIndex[];
 };
 
 type SymbolIDPair = {
@@ -313,12 +325,44 @@ function extractSymbolIDPair(nodeData: SymbolIDSource): SymbolIDPair | undefined
 
 function resolveSymbolTarget(
   symbolID: FigGuid,
+  documents: SymbolResolverDocuments,
+): ResolvedSymbolTarget | undefined {
+  const primary = resolvePrimarySymbolTarget(symbolID, documents.primary);
+  if (primary !== undefined) {
+    return primary;
+  }
+  const matches: ResolvedSymbolTarget[] = [];
+  for (const document of documents.sources) {
+    const exact = findNodeByGuid(document, symbolID);
+    if (exact === undefined) {
+      continue;
+    }
+    if (getNodeType(exact) !== "SYMBOL") {
+      continue;
+    }
+    matches.push({ node: exact, guid: exact.guid, document });
+  }
+  if (matches.length === 0) {
+    return undefined;
+  }
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  throw new Error(`SymbolResolver: SYMBOL ${guidToString(symbolID)} is defined by multiple Kiwi document sources`);
+}
+
+function resolvePrimarySymbolTarget(
+  symbolID: FigGuid,
   document: FigKiwiDocumentIndex,
 ): ResolvedSymbolTarget | undefined {
-  const exact = findNodeByGuid(document, symbolID);
-  if (exact === undefined) { return undefined; }
-  if (getNodeType(exact) !== "SYMBOL") { return undefined; }
-  return { node: exact, guid: exact.guid };
+  const primary = findNodeByGuid(document, symbolID);
+  if (primary === undefined) {
+    return undefined;
+  }
+  if (getNodeType(primary) !== "SYMBOL") {
+    throw new Error(`SymbolResolver: symbolID ${guidToString(symbolID)} targets ${getNodeType(primary)} in the primary Kiwi document`);
+  }
+  return { node: primary, guid: primary.guid, document };
 }
 
 const EMPTY_RESOLVED_CHILDREN: readonly FigNode[] = [];
@@ -344,6 +388,10 @@ function childrenOfResolvedNode(node: FigNode): readonly FigNode[] {
 export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver {
   const document = input.document;
   const blobs = input.blobs;
+  const documents: SymbolResolverDocuments = {
+    primary: document,
+    sources: input.symbolSourceDocuments ?? [],
+  };
   const resolveInstanceTarget = (
     node: FigNode,
     overrideSymbolID?: FigGuid,
@@ -352,17 +400,18 @@ export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver
     const pair = extractSymbolIDPair(node);
     if (!pair) { return undefined; }
     if (overrideSymbolID === undefined) {
-      return resolveReferencesForNode(node, document, scope?.variableModeBySetMap).effectiveSymbol;
+      return resolveReferencesForNode(node, documents, scope?.variableModeBySetMap).effectiveSymbol;
     }
     const targetSymbolID = overrideSymbolID ?? pair.overriddenSymbolID ?? pair.symbolID;
-    return resolveSymbolTarget(targetSymbolID, document);
+    return resolveSymbolTarget(targetSymbolID, documents);
   };
   const resolveReferences = (node: FigNode, scope?: SymbolResolverScope): InstanceResolution => (
-    resolveReferencesForNode(node, document, scope?.variableModeBySetMap)
+    resolveReferencesForNode(node, documents, scope?.variableModeBySetMap)
   );
   const resolveInstance = (node: FigNode, scope?: SymbolResolverScope): ResolvedInstanceNode => (
     resolveInstanceNode(node, {
       document,
+      documents,
       blobs,
       variableModeBySetMap: scope?.variableModeBySetMap,
     })
@@ -397,7 +446,7 @@ export function createSymbolResolver(input: SymbolResolverInput): SymbolResolver
  */
 function resolveReferencesForNode(
   node: FigNode,
-  document: FigKiwiDocumentIndex,
+  documents: SymbolResolverDocuments,
   inheritedVariableModeBySetMap?: FigKiwiVariableModeBySetMap,
 ): InstanceResolution {
   const variableModeBySetMap = mergeVariableModeBySetMap(inheritedVariableModeBySetMap, node.variableModeBySetMap);
@@ -407,17 +456,17 @@ function resolveReferencesForNode(
 
   const allDeps: FigGuid[] = [];
 
-  const primaryResolved = resolveSymbolTarget(pair.symbolID, document);
+  const primaryResolved = resolveSymbolTarget(pair.symbolID, documents);
   if (primaryResolved) { allDeps.push(primaryResolved.guid); }
 
-  const overrideResolved = resolveOverriddenSymbolTarget(pair.overriddenSymbolID, document);
+  const overrideResolved = resolveOverriddenSymbolTarget(pair.overriddenSymbolID, documents);
   if (overrideResolved) { allDeps.push(overrideResolved.guid); }
 
   const variantResolved = resolveVariantSymbolTarget(
     referenceNode,
     primaryResolved,
     overrideResolved,
-    document,
+    documents,
     variableModeBySetMap,
   );
   if (variantResolved !== undefined) {
@@ -456,25 +505,26 @@ function symbolOverrideCarriesReferenceSelection(override: FigKiwiSymbolOverride
 
 function resolveOverriddenSymbolTarget(
   overriddenSymbolID: FigGuid | undefined,
-  document: FigKiwiDocumentIndex,
+  documents: SymbolResolverDocuments,
 ): ResolvedSymbolTarget | undefined {
   if (overriddenSymbolID === undefined) {
     return undefined;
   }
-  return resolveSymbolTarget(overriddenSymbolID, document);
+  return resolveSymbolTarget(overriddenSymbolID, documents);
 }
 
 function resolveVariantSymbolTarget(
   node: FigNode,
   primaryResolved: ResolvedSymbolTarget | undefined,
   overrideResolved: ResolvedSymbolTarget | undefined,
-  document: FigKiwiDocumentIndex,
+  documents: SymbolResolverDocuments,
   variableModeBySetMap: FigKiwiVariableModeBySetMap | undefined,
 ): ResolvedSymbolTarget | undefined {
   const activeReference = overrideResolved ?? primaryResolved;
   if (activeReference === undefined) {
     return undefined;
   }
+  const document = activeReference.document;
   const variantOutcome = resolveVariantOverride(node, activeReference.node, {
     document,
     childrenOf: document.childrenOf,
@@ -483,7 +533,7 @@ function resolveVariantSymbolTarget(
   if (variantOutcome.resolvedSymbolID === undefined) {
     return undefined;
   }
-  return resolveSymbolTarget(variantOutcome.resolvedSymbolID, document);
+  return resolveSymbolTarget(variantOutcome.resolvedSymbolID, documents);
 }
 
 // =============================================================================
@@ -1715,6 +1765,7 @@ export type ResolvedInstanceNode = {
  */
 type InstanceResolveRuntime = {
   readonly document: FigKiwiDocumentIndex;
+  readonly documents: SymbolResolverDocuments;
   readonly blobs?: readonly FigBlob[];
   readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
 };
@@ -2030,12 +2081,13 @@ function resolveInstanceNode(
 ): ResolvedInstanceNode {
   const variableModeBySetMap = mergeVariableModeBySetMap(ctx.variableModeBySetMap, node.variableModeBySetMap);
   // 1. Resolve INSTANCE → SYMBOL
-  const resolution = resolveReferencesForNode(node, ctx.document, ctx.variableModeBySetMap);
+  const resolution = resolveReferencesForNode(node, ctx.documents, ctx.variableModeBySetMap);
   if (!resolution.effectiveSymbol) {
     return resolveDocumentExternalInstanceOrThrow(node, { ...ctx, variableModeBySetMap });
   }
 
   const { node: symNode } = resolution.effectiveSymbol;
+  const symbolDocument = resolution.effectiveSymbol.document;
   const originalSymNode = symNode;
 
   // 2. Merge SYMBOL properties into INSTANCE
@@ -2045,9 +2097,9 @@ function resolveInstanceNode(
   // 3. Resolve overrideKey addresses to descendant GUIDs.
   const componentPropAssignments = collectComponentPropAssignments(node);
   const sourceSymbolOverrides = node.symbolData?.symbolOverrides;
-  const slotIndex = buildSymbolSlotIndex(originalSymNode, ctx.document.childrenOf);
-  const supersededSlotIndex = buildSupersededSymbolSlotIndex(node, resolution.effectiveSymbol, ctx.document);
-  const inactiveVariantSlotIndex = buildInactiveVariantFamilySlotIndex(resolution.effectiveSymbol, ctx.document);
+  const slotIndex = buildSymbolSlotIndex(originalSymNode, symbolDocument.childrenOf);
+  const supersededSlotIndex = buildSupersededSymbolSlotIndex(node, resolution.effectiveSymbol, ctx.documents);
+  const inactiveVariantSlotIndex = buildInactiveVariantFamilySlotIndex(resolution.effectiveSymbol);
   const activeSourceSymbolOverrides = selectOverridesForEffectiveSymbol(
     sourceSymbolOverrides,
     slotIndex,
@@ -2062,7 +2114,7 @@ function resolveInstanceNode(
   );
   const materializedSlotResolution = resolveSymbolMaterializedOverrideSlotAddresses(
     originalSymNode,
-    ctx.document.childrenOf,
+    symbolDocument.childrenOf,
     activeSourceSymbolOverrides,
     activeSourceDerivedData,
   );
@@ -2106,7 +2158,7 @@ function resolveInstanceNode(
 
   // 5. Clone SYMBOL children with overrides
   const clonedChildren = cloneSymbolChildren(symNode, {
-    childrenOf: ctx.document.childrenOf,
+    childrenOf: symbolDocument.childrenOf,
     symbolOverrides,
     derivedSymbolData,
     componentPropAssignments: componentPropAssignments.length > 0 ? componentPropAssignments : undefined,
@@ -2300,6 +2352,7 @@ function resolveDocumentExternalInstanceNode(node: FigNode, ctx: InstanceResolve
     node: applyVariableModeBySetMapToClonedNode(root, ctx.variableModeBySetMap),
     children: applyVariableModeBySetMapToResolvedChildren(materializeDocumentExternalDerivedChildren(node, {
       document: ctx.document,
+      documents: ctx.documents,
       blobs: ctx.blobs,
       visualContext: externalDerivedVisualContextFromNode(root, undefined),
       variableModeBySetMap: ctx.variableModeBySetMap,
@@ -2404,6 +2457,7 @@ type ExternalDerivedVisualContext = {
 
 type ExternalDerivedMaterializeContext = {
   readonly document: FigKiwiDocumentIndex;
+  readonly documents: SymbolResolverDocuments;
   readonly blobs?: readonly FigBlob[];
   readonly visualContext?: ExternalDerivedVisualContext;
   readonly documentExternalSlotSymbolRoots?: ReadonlyMap<string, FigNode>;
@@ -2431,6 +2485,7 @@ function materializeDocumentExternalDerivedChildren(
   const documentExternalSlotSymbolRoots = resolveDocumentExternalSlotSymbolRoots(node, slots, ctx.document);
   const materializeContext: ExternalDerivedMaterializeContext = {
     document: ctx.document,
+    documents: ctx.documents,
     blobs: ctx.blobs,
     visualContext: ctx.visualContext,
     documentExternalSlotSymbolRoots,
@@ -2775,6 +2830,7 @@ function materializeExternalDerivedSlot(
   applyExternalDerivedVisualContext(node, ctx.visualContext);
   const childCtx: ExternalDerivedMaterializeContext = {
     document: ctx.document,
+    documents: ctx.documents,
     blobs: ctx.blobs,
     visualContext: externalDerivedVisualContextFromNode(node, ctx.visualContext),
     documentExternalSlotSymbolRoots: ctx.documentExternalSlotSymbolRoots,
@@ -2799,13 +2855,14 @@ function materializeResolvedLocalInstanceSlot(
   if (localNode === undefined || getNodeType(localNode) !== "INSTANCE") {
     return undefined;
   }
-  const resolution = resolveReferencesForNode(localNode, ctx.document, ctx.variableModeBySetMap);
+  const resolution = resolveReferencesForNode(localNode, ctx.documents, ctx.variableModeBySetMap);
   if (resolution.effectiveSymbol === undefined) {
     return undefined;
   }
   const scopedLocalNode = scopedLocalInstanceForExternalDerivedSlot(localNode, slot);
   const resolved = resolveInstanceNode(scopedLocalNode, {
     document: ctx.document,
+    documents: ctx.documents,
     blobs: ctx.blobs,
     variableModeBySetMap: ctx.variableModeBySetMap,
   });
@@ -3339,7 +3396,11 @@ function isUnresolvedExternalInstanceLocalNode(
   if (localNode.symbolData?.symbolID === undefined) {
     return false;
   }
-  return resolveReferencesForNode(localNode, document, localNode.variableModeBySetMap).effectiveSymbol === undefined;
+  return resolveReferencesForNode(
+    localNode,
+    { primary: document, sources: [] },
+    localNode.variableModeBySetMap,
+  ).effectiveSymbol === undefined;
 }
 
 function externalDerivedVisualContextFromNode(
@@ -3769,7 +3830,7 @@ function resolveResizedInstanceChildren(
 function buildSupersededSymbolSlotIndex(
   node: FigNode,
   effectiveSymbol: ResolvedSymbolTarget,
-  document: FigKiwiDocumentIndex,
+  documents: SymbolResolverDocuments,
 ): SymbolSlotIndex | undefined {
   const pair = extractSymbolIDPair(node);
   if (pair === undefined) {
@@ -3778,17 +3839,17 @@ function buildSupersededSymbolSlotIndex(
   if (guidToString(pair.symbolID) === guidToString(effectiveSymbol.guid)) {
     return undefined;
   }
-  const primarySymbol = resolveSymbolTarget(pair.symbolID, document);
+  const primarySymbol = resolveSymbolTarget(pair.symbolID, documents);
   if (primarySymbol === undefined) {
     return undefined;
   }
-  return buildSymbolSlotIndex(primarySymbol.node, document.childrenOf);
+  return buildSymbolSlotIndex(primarySymbol.node, primarySymbol.document.childrenOf);
 }
 
 function buildInactiveVariantFamilySlotIndex(
   effectiveSymbol: ResolvedSymbolTarget,
-  document: FigKiwiDocumentIndex,
 ): SymbolSlotIndex | undefined {
+  const document = effectiveSymbol.document;
   const parentGuid = effectiveSymbol.node.parentIndex?.guid;
   if (parentGuid === undefined) {
     return undefined;

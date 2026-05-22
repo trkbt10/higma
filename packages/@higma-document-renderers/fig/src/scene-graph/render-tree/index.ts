@@ -30,6 +30,7 @@ export type {
   RenderClipPathDef,
   RenderPatternDef,
   RenderMaskDef,
+  RenderMaskContentRendering,
   RenderStrokeMaskDef,
   RenderMask,
   ClipPathShape,

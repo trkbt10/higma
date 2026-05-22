@@ -159,11 +159,16 @@ export type RenderMaskDef = {
   readonly type: "mask";
   readonly id: string;
   readonly maskType: FigMaskType;
+  readonly contentRendering: RenderMaskContentRendering;
   /** User-space bounds of the authored mask source, used as the SVG mask region. */
   readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
   /** The resolved mask content node */
   readonly maskContent: RenderNode;
 };
+
+export type RenderMaskContentRendering =
+  | "source-paint"
+  | "geometry-coverage";
 
 /**
  * Mask reference on a node — points to a mask def by ID.

@@ -303,7 +303,7 @@ function formatMaskDef(def: RenderMaskDef): ReactNode {
     bounds: def.bounds,
     maskType: presentation.maskType,
   });
-  const content = formatMaskContent(def, presentation.contentMode);
+  const content = formatMaskContent(def);
   return (
     <mask
       key={attrs.id}
@@ -320,8 +320,8 @@ function formatMaskDef(def: RenderMaskDef): ReactNode {
   );
 }
 
-function formatMaskContent(def: RenderMaskDef, contentMode: "source" | "outline"): ReactNode {
-  if (contentMode === "source") {
+function formatMaskContent(def: RenderMaskDef): ReactNode {
+  if (def.contentRendering === "source-paint") {
     return <RenderNodeComponent node={def.maskContent} />;
   }
   return <RenderOutlineMaskShape node={def.maskContent} fill="white" />;

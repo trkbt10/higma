@@ -11,6 +11,8 @@ export {
   addImageToFigDocumentContext,
   replaceFigDocumentContextNodeChanges,
   type FigDocumentContext,
+  type FigDocumentContextKiwiSourceDocument,
+  type CreateFigDocumentContextOptions,
   type CreateFigDocumentContextFromNodeChangesOptions,
   type AddFigDocumentBlobOptions,
   type AddFigDocumentImageOptions,

@@ -663,6 +663,96 @@ describe("cloneSymbolChildren", () => {
 });
 
 describe("createSymbolResolver", () => {
+  it("resolves INSTANCE targets from explicit Kiwi symbol source documents", () => {
+    const symbolGuid = { sessionID: 70, localID: 1 };
+    const childGuid = { sessionID: 70, localID: 2 };
+    const instance = createTestNode({
+      type: "INSTANCE",
+      guid: { sessionID: 71, localID: 1 },
+      symbolData: { symbolID: symbolGuid },
+    });
+    const symbol = createTestNode({
+      type: "SYMBOL",
+      name: "Linked source symbol",
+      guid: symbolGuid,
+      size: { x: 120, y: 40 },
+    });
+    const child = createTestNode({
+      type: "TEXT",
+      name: "Linked source child",
+      guid: childGuid,
+      parentIndex: { guid: symbolGuid, position: "!" },
+      textData: { characters: "Linked" },
+      characters: "Linked",
+    });
+    const document = indexFigKiwiDocument([instance]);
+    const symbolSourceDocument = indexFigKiwiDocument([symbol, child]);
+    const resolver = createSymbolResolver({ document, symbolSourceDocuments: [symbolSourceDocument] });
+
+    const references = resolver.resolveReferences(instance);
+    const resolved = resolver.resolveInstance(instance);
+
+    expect(references.effectiveSymbol?.guid).toEqual(symbolGuid);
+    expect(references.effectiveSymbol?.node.name).toBe("Linked source symbol");
+    expect(resolved.children).toHaveLength(1);
+    expect(resolved.children[0]!.guid).toEqual(childGuid);
+    expect(resolved.children[0]!.textData?.characters).toBe("Linked");
+  });
+
+  it("keeps the primary Kiwi document authoritative when a source repeats a SYMBOL GUID", () => {
+    const symbolGuid = { sessionID: 72, localID: 1 };
+    const instance = createTestNode({
+      type: "INSTANCE",
+      guid: { sessionID: 73, localID: 1 },
+      symbolData: { symbolID: symbolGuid },
+    });
+    const localSymbol = createTestNode({
+      type: "SYMBOL",
+      name: "Local symbol",
+      guid: symbolGuid,
+    });
+    const linkedSymbol = createTestNode({
+      type: "SYMBOL",
+      name: "Linked symbol",
+      guid: symbolGuid,
+    });
+    const document = indexFigKiwiDocument([instance, localSymbol]);
+    const symbolSourceDocument = indexFigKiwiDocument([linkedSymbol]);
+    const resolver = createSymbolResolver({ document, symbolSourceDocuments: [symbolSourceDocument] });
+
+    const references = resolver.resolveReferences(instance);
+
+    expect(references.effectiveSymbol?.node.name).toBe("Local symbol");
+  });
+
+  it("rejects duplicate SYMBOL definitions across secondary Kiwi symbol source documents", () => {
+    const symbolGuid = { sessionID: 74, localID: 1 };
+    const instance = createTestNode({
+      type: "INSTANCE",
+      guid: { sessionID: 75, localID: 1 },
+      symbolData: { symbolID: symbolGuid },
+    });
+    const firstSourceSymbol = createTestNode({
+      type: "SYMBOL",
+      name: "First source symbol",
+      guid: symbolGuid,
+    });
+    const secondSourceSymbol = createTestNode({
+      type: "SYMBOL",
+      name: "Second source symbol",
+      guid: symbolGuid,
+    });
+    const document = indexFigKiwiDocument([instance]);
+    const firstSourceDocument = indexFigKiwiDocument([firstSourceSymbol]);
+    const secondSourceDocument = indexFigKiwiDocument([secondSourceSymbol]);
+    const resolver = createSymbolResolver({
+      document,
+      symbolSourceDocuments: [firstSourceDocument, secondSourceDocument],
+    });
+
+    expect(() => resolver.resolveReferences(instance)).toThrow(/defined by multiple Kiwi document sources/);
+  });
+
   it("embeds SYMBOL root self fill color into external variable-backed descendant paints", () => {
     const symbolGuid = { sessionID: 50, localID: 1 };
     const externalVariableChildGuid = { sessionID: 50, localID: 2 };

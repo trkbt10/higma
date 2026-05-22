@@ -1257,7 +1257,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const maskDef = findRequiredMaskDef(node.defs, mask.maskId, node.id);
     const entry: StencilClipEntry = {
       drawClipShape: () => {
-        drawRenderMaskContent(maskDef.maskContent, parentTransform, maskDef.maskType);
+        drawRenderMaskContent(maskDef.maskContent, parentTransform, maskDef.contentRendering);
       },
     };
     clipStack.push(entry);
@@ -1454,22 +1454,32 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     });
   }
 
-  function drawRenderMaskContent(node: RenderNode, parentTransform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
+  function drawRenderMaskContent(
+    node: RenderNode,
+    parentTransform: AffineMatrix,
+    contentRendering: RenderMaskDef["contentRendering"],
+  ): void {
     const transform = multiplyMatrices(parentTransform, node.source.transform);
     switch (node.type) {
       case "group":
-        drawRenderGroupMaskContent(node, transform, maskType);
+        drawRenderGroupMaskContent(node, transform, contentRendering);
         return;
       case "frame":
-        drawRenderFrameMaskContent(node, transform, maskType);
+        drawRenderFrameMaskContent(node, transform, contentRendering);
         return;
       case "rect":
-        drawRenderRectMaskContent(node, transform, maskType);
+        drawRenderRectMaskContent(node, transform, contentRendering);
         return;
       case "ellipse":
+        if (!shouldDrawMaskShape(node, contentRendering)) {
+          return;
+        }
         drawMaskVertices(geometryCache.getEllipseVertices({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry }), transform);
         return;
       case "path":
+        if (!shouldDrawMaskShape(node, contentRendering)) {
+          return;
+        }
         drawMaskVertices(geometryCache.getPathGeometry(node).backgroundMaskVertices, transform);
         return;
       case "text":
@@ -1480,26 +1490,48 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     }
   }
 
-  function drawRenderGroupMaskContent(node: RenderGroupNode, transform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
+  function drawRenderGroupMaskContent(
+    node: RenderGroupNode,
+    transform: AffineMatrix,
+    contentRendering: RenderMaskDef["contentRendering"],
+  ): void {
     for (const child of node.children) {
-      drawRenderMaskContent(child, transform, maskType);
+      drawRenderMaskContent(child, transform, contentRendering);
     }
   }
 
-  function drawRenderFrameMaskContent(node: RenderFrameNode, transform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
-    if (maskType === "OUTLINE" || node.background !== null || node.backgroundBlur !== undefined) {
+  function drawRenderFrameMaskContent(
+    node: RenderFrameNode,
+    transform: AffineMatrix,
+    contentRendering: RenderMaskDef["contentRendering"],
+  ): void {
+    if (contentRendering === "geometry-coverage" || node.background !== null || node.backgroundBlur !== undefined) {
       drawMaskVertices(resolveClipVertices(node.sourceSurfaceShape), transform);
     }
     for (const child of node.children) {
-      drawRenderMaskContent(child, transform, maskType);
+      drawRenderMaskContent(child, transform, contentRendering);
     }
   }
 
-  function drawRenderRectMaskContent(node: RenderRectNode, transform: AffineMatrix, maskType: RenderMaskDef["maskType"]): void {
-    if (maskType !== "OUTLINE" && node.sourceFills.length === 0 && node.strokeRendering === undefined) {
+  function drawRenderRectMaskContent(
+    node: RenderRectNode,
+    transform: AffineMatrix,
+    contentRendering: RenderMaskDef["contentRendering"],
+  ): void {
+    if (!shouldDrawMaskShape(node, contentRendering)) {
       return;
     }
     drawMaskVertices(geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing), transform);
+  }
+
+  function shouldDrawMaskShape(
+    node: RenderRectNode | RenderEllipseNode | RenderPathNode,
+    contentRendering: RenderMaskDef["contentRendering"],
+  ): boolean {
+    if (contentRendering === "geometry-coverage") {
+      return true;
+    }
+    return node.sourceFills.length > 0 || node.strokeRendering !== undefined || node.filterSource === "effect-shape";
   }
 
   function drawRenderTextMaskContent(node: RenderTextNode, transform: AffineMatrix): void {

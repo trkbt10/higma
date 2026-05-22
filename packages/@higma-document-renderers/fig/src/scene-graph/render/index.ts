@@ -103,7 +103,6 @@ export {
   resolveSvgMaskElementAttrs,
   resolveSvgMaskPresentation,
   resolveSvgStrokeMaskElementAttrs,
-  type SvgMaskContentMode,
   type SvgMaskElementAttrs,
   type SvgMaskPresentation,
   type SvgMaskType,

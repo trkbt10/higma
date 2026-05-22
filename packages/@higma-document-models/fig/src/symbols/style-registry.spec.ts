@@ -37,6 +37,7 @@
 
 import {
   buildFigStyleRegistry,
+  buildFigStyleRegistryFromDocuments,
   resolveNodeStyleIds,
   resolvePaintRef,
   resolveStyledPaint,
@@ -151,6 +152,10 @@ function registryFrom(nodes: readonly FigNode[]) {
   return buildFigStyleRegistry(indexFigKiwiDocument(nodes));
 }
 
+function registryFromDocuments(documents: readonly (readonly FigNode[])[]) {
+  return buildFigStyleRegistryFromDocuments(documents.map((nodes) => indexFigKiwiDocument(nodes)));
+}
+
 describe("styleRefKey / styleRefKeys / styleRefHasKey", () => {
   it("returns the guid string when the reference carries a guid", () => {
     expect(styleRefKey({ guid: { sessionID: 15, localID: 133 } })).toBe("15:133");
@@ -198,6 +203,70 @@ describe("styleRefKey / styleRefKeys / styleRefHasKey", () => {
 });
 
 describe("buildFigStyleRegistry", () => {
+  it("indexes explicit Kiwi style source documents in the same registry", () => {
+    const consumer = node({
+      guid: { sessionID: 1, localID: 1 },
+      styleIdForFill: { assetRef: { key: "source-fill" } },
+      fillPaints: [solidPaint(1, 1, 1)],
+    });
+    const styleSource = node({
+      guid: { sessionID: 2, localID: 1 },
+      styleType: { value: 1, name: "FILL" },
+      key: "source-fill",
+      fillPaints: [solidPaint(0, 0, 0)],
+    });
+    const registry = registryFromDocuments([[consumer], [styleSource]]);
+
+    expect(resolveStyledPaint(consumer.styleIdForFill, consumer.fillPaints, registry)).toEqual([solidPaint(0, 0, 0)]);
+  });
+
+  it("rejects duplicate style definitions across explicit Kiwi style source documents", () => {
+    const first = node({
+      guid: { sessionID: 3, localID: 1 },
+      styleType: { value: 1, name: "FILL" },
+      key: "duplicated-style",
+      fillPaints: [solidPaint(1, 0, 0)],
+    });
+    const second = node({
+      guid: { sessionID: 4, localID: 1 },
+      styleType: { value: 1, name: "FILL" },
+      key: "duplicated-style",
+      fillPaints: [solidPaint(0, 0, 1)],
+    });
+
+    expect(() => registryFromDocuments([[first], [second]])).toThrow(/conflicts with an existing Kiwi style definition/);
+  });
+
+  it("uses source VARIABLE definitions without indexing source observed color caches", () => {
+    const variableKey = "source-variable";
+    const primaryConsumer = node({
+      guid: { sessionID: 5, localID: 1 },
+      fillPaints: [variableSolidPaint(1, 1, 1, variableKey)],
+      variableModeBySetMap: selectedModeMap(),
+    });
+    const sourceVariable = colorVariableNode(
+      { sessionID: 6, localID: 1 },
+      variableKey,
+      { r: 1, g: 1, b: 1, a: 1 },
+      { r: 0, g: 0, b: 0, a: 1 },
+    );
+    const sourceObservedConsumer = node({
+      guid: { sessionID: 6, localID: 2 },
+      fillPaints: [variableSolidPaint(0.5, 0.5, 0.5, variableKey)],
+      variableModeBySetMap: selectedModeMap(),
+    });
+    const registry = registryFromDocuments([[primaryConsumer], [sourceVariable, sourceObservedConsumer]]);
+
+    const got = resolveStyledPaint(
+      undefined,
+      primaryConsumer.fillPaints,
+      registry,
+      { variableModeBySetMap: selectedModeMap() },
+    );
+
+    expect(got?.[0]).toMatchObject({ color: { r: 0, g: 0, b: 0, a: 1 } });
+  });
+
   it("indexes a FILL style-definition node under its GUID using fillPaints", () => {
     const def = node({
       guid: { sessionID: 1, localID: 100 },

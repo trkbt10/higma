@@ -4,6 +4,7 @@ import { useMemo, useRef } from "react";
 import {
   createFigDocumentContextFromKiwiCanvas,
   figDocumentResources,
+  type CreateFigDocumentContextOptions,
   type FigDocumentContext,
   type FigDocumentResources,
 } from "@higma-document-io/fig";
@@ -28,8 +29,11 @@ export type FigFamilyKiwiCanvas = Parameters<typeof createFigDocumentContextFrom
 export type FigFamilyRenderOptions = Exclude<ReturnType<typeof createFigFamilyRenderOptions>, undefined>;
 
 /** Decode a Kiwi canvas into the fig document context consumed by renderers. */
-export function createFigFamilyDocumentContext(canvas: FigFamilyKiwiCanvas): FigDocumentContext {
-  return createFigDocumentContextFromKiwiCanvas(canvas);
+export function createFigFamilyDocumentContext(
+  canvas: FigFamilyKiwiCanvas,
+  options?: CreateFigDocumentContextOptions,
+): FigDocumentContext {
+  return createFigDocumentContextFromKiwiCanvas(canvas, options);
 }
 
 /** Fig document context produced by the fig family runtime boundary. */

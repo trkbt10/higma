@@ -11,11 +11,8 @@ export type SvgMaskBounds = {
 
 export type SvgMaskType = "alpha" | "luminance";
 
-export type SvgMaskContentMode = "source" | "outline";
-
 export type SvgMaskPresentation = {
   readonly maskType: SvgMaskType;
-  readonly contentMode: SvgMaskContentMode;
 };
 
 export type SvgMaskElementAttrs = {
@@ -38,11 +35,11 @@ export type SvgStrokeMaskElementAttrs = {
 export function resolveSvgMaskPresentation(maskType: FigMaskType): SvgMaskPresentation {
   switch (maskType) {
     case "ALPHA":
-      return { maskType: "alpha", contentMode: "source" };
+      return { maskType: "alpha" };
     case "LUMINANCE":
-      return { maskType: "luminance", contentMode: "source" };
+      return { maskType: "luminance" };
     case "OUTLINE":
-      return { maskType: "luminance", contentMode: "outline" };
+      return { maskType: "luminance" };
   }
 }
 

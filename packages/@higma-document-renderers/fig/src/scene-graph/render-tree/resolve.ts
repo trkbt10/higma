@@ -91,6 +91,7 @@ import type {
   RenderPathContour,
   RenderBackgroundBlur,
   RenderMask,
+  RenderMaskContentRendering,
   ClipPathShape,
   StrokeShape,
   StrokeRendering,
@@ -938,8 +939,52 @@ function resolveMask(
     return undefined;
   }
   const bounds = resolveMaskContentBounds(node.mask.maskContent);
-  defs.push({ type: "mask", id: maskId, maskType: node.mask.maskType, bounds, maskContent: resolvedMaskContent });
+  defs.push({
+    type: "mask",
+    id: maskId,
+    maskType: node.mask.maskType,
+    contentRendering: resolveMaskContentRendering(node.mask.maskType, resolvedMaskContent),
+    bounds,
+    maskContent: resolvedMaskContent,
+  });
   return { maskId, maskAttr: `url(#${maskId})` };
+}
+
+function resolveMaskContentRendering(
+  maskType: NonNullable<SceneNode["mask"]>["maskType"],
+  maskContent: RenderNode,
+): RenderMaskContentRendering {
+  switch (maskType) {
+    case "ALPHA":
+    case "LUMINANCE":
+      if (renderMaskContentHasAuthoredPaint(maskContent)) {
+        return "source-paint";
+      }
+      return "geometry-coverage";
+    case "OUTLINE":
+      return "geometry-coverage";
+  }
+}
+
+function renderMaskContentHasAuthoredPaint(node: RenderNode): boolean {
+  switch (node.type) {
+    case "group":
+      return node.children.some((child) => renderMaskContentHasAuthoredPaint(child));
+    case "frame":
+      return (
+        node.background !== null ||
+        node.backgroundBlur !== undefined ||
+        node.children.some((child) => renderMaskContentHasAuthoredPaint(child))
+      );
+    case "rect":
+    case "ellipse":
+    case "path":
+      return node.sourceFills.length > 0 || node.strokeRendering !== undefined || node.filterSource === "effect-shape";
+    case "text":
+      return node.content.mode === "lines" || node.content.runs.length > 0;
+    case "image":
+      return true;
+  }
 }
 
 function resolveMaskContentBounds(maskContent: SceneNode): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {

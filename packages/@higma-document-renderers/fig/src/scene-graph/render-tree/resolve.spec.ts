@@ -7,7 +7,14 @@
 
 import { resolveRenderTree } from "./resolve";
 import type {
-  RenderRectNode, RenderEllipseNode, RenderPathNode, RenderFrameNode, RenderGroupNode, RenderTextNode, } from "./types";
+  RenderEllipseNode,
+  RenderFrameNode,
+  RenderGroupNode,
+  RenderMaskDef,
+  RenderPathNode,
+  RenderRectNode,
+  RenderTextNode,
+} from "./types";
 import type {
   SceneGraph, GroupNode, RectNode, EllipseNode, PathNode, FrameNode, TextNode, Fill, Stroke } from "@higma-document-renderers/fig/scene-graph";
 import { createNodeId } from "@higma-document-renderers/fig/scene-graph";
@@ -572,6 +579,40 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
 
     expect(node.mask).toEqual({ maskId: maskDef.id, maskAttr: `url(#${maskDef.id})` });
     expect(maskDef.bounds).toEqual({ x: 0, y: 0, width: 10, height: 10 });
+    expect(maskDef.contentRendering).toBe("source-paint");
+  });
+
+  it("treats paintless ALPHA mask geometry as coverage in the RenderTree", () => {
+    const maskContent: RectNode = {
+      type: "rect",
+      id: createNodeId("paintless-mask-source"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 10,
+      height: 10,
+      fills: [],
+    };
+    const maskedGroup: GroupNode = {
+      type: "group",
+      id: createNodeId("paintless-masked-group"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      mask: { maskId: maskContent.id, maskType: "ALPHA", maskContent },
+      children: [makeRect("paintless-masked-child")],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([maskedGroup]));
+    const node = tree.children[0] as RenderGroupNode;
+    const maskDef = node.defs.find((def): def is RenderMaskDef => def.type === "mask");
+    if (maskDef === undefined) {
+      throw new Error("expected mask def");
+    }
+
+    expect(maskDef.maskType).toBe("ALPHA");
+    expect(maskDef.contentRendering).toBe("geometry-coverage");
   });
 });
 

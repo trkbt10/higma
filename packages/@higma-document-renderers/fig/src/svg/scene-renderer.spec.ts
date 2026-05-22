@@ -1182,6 +1182,60 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).not.toMatch(/<mask[^>]*style="mask-type:luminance"/);
   });
 
+  it("emits paintless Kiwi ALPHA mask geometry as mask coverage", () => {
+    const sceneGraph: SceneGraph = {
+      width: 120,
+      height: 80,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "group",
+          id: createNodeId("masked"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          mask: {
+            maskId: createNodeId("mask-source"),
+            maskType: "ALPHA",
+            maskContent: {
+              type: "rect",
+              id: createNodeId("mask-source"),
+              transform: { m00: 1, m01: 0, m02: 10, m10: 0, m11: 1, m12: 20 },
+              opacity: 1,
+              visible: true,
+              effects: [],
+              width: 50,
+              height: 30,
+              fills: [],
+            },
+          },
+          children: [{
+            type: "rect",
+            id: createNodeId("masked-rect"),
+            transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+            opacity: 1,
+            visible: true,
+            effects: [],
+            width: 100,
+            height: 60,
+            fills: [{ type: "solid", color: { r: 0.1, g: 0.1, b: 0.1, a: 1 }, opacity: 1 }],
+          }],
+        }],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+    expect(svg).toMatch(/<mask[^>]*style="mask-type:alpha"[^>]*>[\s\S]*fill="white"/);
+    expect(svg).not.toMatch(/<mask[^>]*style="mask-type:alpha"[^>]*>[\s\S]*fill="none"/);
+  });
+
   it("preserves source black and white fills for Kiwi LUMINANCE masks", () => {
     const sceneGraph: SceneGraph = {
       width: 120,

@@ -24,6 +24,7 @@ export {
 
 export {
   buildFigStyleRegistry,
+  buildFigStyleRegistryFromDocuments,
   resolveNodeStyleIds,
   resolveStyleIdOnMutableNode,
   resolvePaintRef,

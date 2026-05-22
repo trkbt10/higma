@@ -228,24 +228,42 @@ function readTextStyleProperties(node: FigNode): FigTextStyleProperties | undefi
  * resolve with type-correct value shapes without a runtime tag check.
  */
 export function buildFigStyleRegistry(document: FigKiwiDocumentIndex): FigStyleRegistry {
+  return buildFigStyleRegistryFromDocuments([document]);
+}
+
+/** Build one style registry from the primary Kiwi document plus explicit source documents. */
+export function buildFigStyleRegistryFromDocuments(
+  documents: readonly FigKiwiDocumentIndex[],
+): FigStyleRegistry {
+  if (documents.length === 0) {
+    throw new Error("StyleRegistry: at least one Kiwi document source is required");
+  }
   const paints = new Map<string, readonly FigPaint[]>();
   const effects = new Map<string, readonly FigEffect[]>();
   const textProperties = new Map<string, FigTextStyleProperties>();
   const layoutGrids = new Map<string, readonly unknown[]>();
-  const variableColorMaterializations = buildVariableColorMaterializations(document);
-  for (const node of document.nodeChanges) {
-    const entry = readStyleDefinition(node);
-    if (!entry) { continue; }
-    indexEntryUnderKeys(node, entry, { paints, effects, textProperties, layoutGrids });
+  const variableColorMaterializations = buildVariableColorMaterializations(documents);
+  for (const document of documents) {
+    for (const node of document.nodeChanges) {
+      const entry = readStyleDefinition(node);
+      if (!entry) { continue; }
+      indexEntryUnderKeys(node, entry, { paints, effects, textProperties, layoutGrids });
+    }
   }
   return { paints, effects, textProperties, layoutGrids, variableColorMaterializations };
 }
 
-function buildVariableColorMaterializations(document: FigKiwiDocumentIndex): ReadonlyMap<string, FigColor> {
+function buildVariableColorMaterializations(documents: readonly FigKiwiDocumentIndex[]): ReadonlyMap<string, FigColor> {
+  const primary = documents[0];
+  if (primary === undefined) {
+    throw new Error("StyleRegistry: at least one Kiwi document source is required for variable materialization");
+  }
   const colors = new Map<string, FigColor>();
-  indexLocalVariableColorMaterializations(document, colors);
-  for (const root of document.roots) {
-    indexVariableColorMaterializationsForSubtree(root, document.childrenOf, undefined, colors);
+  for (const document of documents) {
+    indexLocalVariableColorMaterializations(document, colors);
+  }
+  for (const root of primary.roots) {
+    indexVariableColorMaterializationsForSubtree(root, primary.childrenOf, undefined, colors);
   }
   return colors;
 }
@@ -415,18 +433,35 @@ function indexEntryUnderKeys(
   const keys = nodeRegistryKeys(node);
   if (keys.length === 0) { return; }
   if (entry.kind === "paint") {
-    for (const key of keys) { maps.paints.set(key, entry.paints); }
+    for (const key of keys) { setRegistryEntry(maps.paints, key, entry.paints, node); }
     return;
   }
   if (entry.kind === "effect") {
-    for (const key of keys) { maps.effects.set(key, entry.effects); }
+    for (const key of keys) { setRegistryEntry(maps.effects, key, entry.effects, node); }
     return;
   }
   if (entry.kind === "text") {
-    for (const key of keys) { maps.textProperties.set(key, entry.properties); }
+    for (const key of keys) { setRegistryEntry(maps.textProperties, key, entry.properties, node); }
     return;
   }
-  for (const key of keys) { maps.layoutGrids.set(key, entry.layoutGrids); }
+  for (const key of keys) { setRegistryEntry(maps.layoutGrids, key, entry.layoutGrids, node); }
+}
+
+function setRegistryEntry<V>(
+  map: Map<string, V>,
+  key: string,
+  value: V,
+  node: FigNode,
+): void {
+  const existing = map.get(key);
+  if (existing === undefined) {
+    map.set(key, value);
+    return;
+  }
+  if (existing === value) {
+    return;
+  }
+  throw new Error(`StyleRegistry: ${formatNodeLocator(node)} conflicts with an existing Kiwi style definition for ${key}`);
 }
 
 function nodeRegistryKeys(node: FigNode): readonly string[] {
