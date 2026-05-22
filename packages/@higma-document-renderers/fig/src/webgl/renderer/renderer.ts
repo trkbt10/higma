@@ -155,6 +155,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   const shaders = resourceContext.shaders;
   const textureCache = resourceContext.textures;
   const effectsRenderer = createEffectsRenderer(gl);
+  const currentEffectOutputFramebuffer = { value: null as WebGLFramebuffer | null };
+  const currentEffectBackdropFramebuffer = { value: null as WebGLFramebuffer | null };
   const width = { value: 0 };
   const height = { value: 0 };
   const clipActive = { value: false };
@@ -571,6 +573,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     pixelRatio: () => pixelRatioRef.value,
     canvasWidth: () => width.value * pixelRatioRef.value,
     canvasHeight: () => height.value * pixelRatioRef.value,
+    outputFramebuffer: () => currentEffectOutputFramebuffer.value,
+    backdropFramebuffer: () => currentEffectBackdropFramebuffer.value,
     isClipStencilRequired: () => clipActive.value && clipStencilValid.value,
     drawStencilFill,
   });
@@ -1281,6 +1285,22 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     glState.setEnabled(gl.STENCIL_TEST, false);
   }
 
+  function renderWithEffectCaptureTarget(
+    captureFbo: WebGLFramebuffer,
+    renderCapturedContent: () => void,
+  ): void {
+    const previousOutputFramebuffer = currentEffectOutputFramebuffer.value;
+    const previousBackdropFramebuffer = currentEffectBackdropFramebuffer.value;
+    currentEffectOutputFramebuffer.value = captureFbo;
+    currentEffectBackdropFramebuffer.value = null;
+    try {
+      renderCapturedContent();
+    } finally {
+      currentEffectOutputFramebuffer.value = previousOutputFramebuffer;
+      currentEffectBackdropFramebuffer.value = previousBackdropFramebuffer;
+    }
+  }
+
   /**
    * Render a container node with isolated group opacity via FBO.
    */
@@ -1296,7 +1316,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     // stencil/blend state directly. Invalidate the state cache after
     // each call so subsequent setters know they can't trust the
     // previous cached values.
-    effectsRenderer.beginLayerCapture(canvasW, canvasH);
+    const capture = effectsRenderer.beginLayerCapture(canvasW, canvasH);
     glState.invalidate();
 
     // Children render into the FBO with no outer clip applied.
@@ -1312,8 +1332,10 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     clipActive.value = false;
     markClipStencilDirty();
 
-    // Render children at full parent opacity (no node opacity yet)
-    renderRenderNodeDirect(node, worldTransform, parentOpacity);
+    renderWithEffectCaptureTarget(capture.fbo, () => {
+      // Render children at full parent opacity (no node opacity yet)
+      renderRenderNodeDirect(node, worldTransform, parentOpacity);
+    });
 
     clipStack.push(...savedClipStack);
     clipActive.value = hadOuterClip;
@@ -1373,7 +1395,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const canvasW = width.value * pixelRatioRef.value;
     const canvasH = height.value * pixelRatioRef.value;
 
-    effectsRenderer.beginLayerCapture(canvasW, canvasH);
+    const capture = effectsRenderer.beginLayerCapture(canvasW, canvasH);
     glState.invalidate();
 
     const savedClipStack = clipStack.splice(0);
@@ -1381,7 +1403,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     clipActive.value = false;
     markClipStencilDirty();
 
-    renderRenderNodeDirect(node, worldTransform, worldOpacity);
+    renderWithEffectCaptureTarget(capture.fbo, () => {
+      renderRenderNodeDirect(node, worldTransform, worldOpacity);
+    });
 
     clipStack.push(...savedClipStack);
     clipActive.value = hadOuterClip;

@@ -15,6 +15,7 @@ import {
 } from "@higma-document-io/fig";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { readKiwiTransform } from "@higma-document-models/fig/matrix";
+import { guidToString } from "@higma-document-models/fig/domain";
 import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import { Button, Select, Tabs, Toggle, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
@@ -36,6 +37,8 @@ import { useBrowserTextFontResolver } from "./browser-text-font-resolver";
 
 type Props = {
   readonly context: FigDocumentContext;
+  readonly initialFrameGuid?: string;
+  readonly initialRenderer?: FigEditorRendererKind;
 };
 
 type CanvasInfo = {
@@ -211,6 +214,29 @@ function collectCanvases(context: FigDocumentContext, resources: FigDocumentReso
     }));
 }
 
+function frameGuid(frame: FrameInfo): string {
+  if (frame.node.guid === undefined) {
+    throw new Error(`RendererDebugView frame "${frame.name}" is missing Kiwi guid`);
+  }
+  return guidToString(frame.node.guid);
+}
+
+function resolveInitialFrameSelection(
+  canvases: readonly CanvasInfo[],
+  initialFrameGuid: string | undefined,
+): { readonly canvasIndex: number; readonly frameIndex: number } {
+  if (initialFrameGuid === undefined) {
+    return { canvasIndex: 0, frameIndex: 0 };
+  }
+  for (const [canvasIndex, canvas] of canvases.entries()) {
+    const frameIndex = canvas.frames.findIndex((frame) => frameGuid(frame) === initialFrameGuid);
+    if (frameIndex >= 0) {
+      return { canvasIndex, frameIndex };
+    }
+  }
+  throw new Error(`RendererDebugView cannot find frame GUID ${initialFrameGuid}`);
+}
+
 function renderFontAccessControl({
   fontAccessSupported,
   fontAccessGranted,
@@ -332,14 +358,26 @@ function renderFramePreview({
   );
 }
 
-function RendererDebugContent({ context }: { readonly context: FigDocumentContext }) {
+function RendererDebugContent({
+  context,
+  initialFrameGuid,
+  initialRenderer = "svg",
+}: {
+  readonly context: FigDocumentContext;
+  readonly initialFrameGuid: string | undefined;
+  readonly initialRenderer?: FigEditorRendererKind;
+}) {
   const resources = useMemo(() => figDocumentResources(context), [context]);
   const canvases = useMemo(() => collectCanvases(context, resources), [context, resources]);
-  const [selectedCanvasIndex, setSelectedCanvasIndex] = useState(0);
-  const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
+  const initialSelection = useMemo(
+    () => resolveInitialFrameSelection(canvases, initialFrameGuid),
+    [canvases, initialFrameGuid],
+  );
+  const [selectedCanvasIndex, setSelectedCanvasIndex] = useState(initialSelection.canvasIndex);
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState(initialSelection.frameIndex);
   const [showHiddenNodes, setShowHiddenNodes] = useState(false);
   const [inspectorEnabled, setInspectorEnabled] = useState(false);
-  const [rendererMode, setRendererMode] = useState<FigEditorRendererKind>("svg");
+  const [rendererMode, setRendererMode] = useState<FigEditorRendererKind>(initialRenderer);
   const fontResolverState = useBrowserTextFontResolver(context);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
@@ -481,6 +519,12 @@ function RendererDebugContent({ context }: { readonly context: FigDocumentContex
 }
 
 /** Render SVG/WebGL debug output for one loaded fig file. */
-export function RendererDebugView({ context }: Props) {
-  return <RendererDebugContent context={context} />;
+export function RendererDebugView({ context, initialFrameGuid, initialRenderer }: Props) {
+  return (
+    <RendererDebugContent
+      context={context}
+      initialFrameGuid={initialFrameGuid}
+      initialRenderer={initialRenderer}
+    />
+  );
 }

@@ -34,8 +34,6 @@ export type FeBlendMode =
   | "soft-light"
   | "difference"
   | "exclusion"
-  | "plus-darker"
-  | "plus-lighter"
   | "hue"
   | "saturation"
   | "color"
@@ -78,8 +76,10 @@ export type ResolvedFilterPrimitive =
       readonly in?: string;
       readonly in2: string;
       readonly operator: FeCompositeOperator;
+      readonly k1?: number;
       readonly k2?: number;
       readonly k3?: number;
+      readonly k4?: number;
       readonly result?: string;
     }
   | { readonly type: "feMorphology"; readonly in?: string; readonly operator: "dilate" | "erode"; readonly radius: number; readonly result?: string }
@@ -112,20 +112,36 @@ export type ResolveEffectsOptions = {
 
 type PreparedInnerShadow = {
   readonly input: string;
-  readonly mode: FeBlendMode;
+  readonly blend: EffectFilterBlend;
 };
 
+type EffectFilterBlend =
+  | { readonly type: "feBlend"; readonly mode: FeBlendMode }
+  | {
+      readonly type: "feCompositeArithmetic";
+      readonly k1: number;
+      readonly k2: number;
+      readonly k3: number;
+      readonly k4: number;
+    };
 
 // =============================================================================
 // Resolution
 // =============================================================================
 
 /**
- * Convert a BlendMode to SVG feBlend mode string.
- * Returns "normal" when no blend mode is specified.
+ * Resolve a SceneGraph blend token to a browser-valid SVG filter primitive.
+ * LINEAR_DODGE / LINEAR_BURN enter SceneGraph as CSS `plus-*` tokens,
+ * but browser SVG rejects those as `feBlend.mode` values. SVG filter
+ * arithmetic is the filter-domain representation of the same channel math:
+ *
+ * - plus-lighter: source + backdrop
+ * - plus-darker:  source + backdrop - 1
  */
-function effectBlendModeToSvg(bm: BlendMode | undefined): FeBlendMode {
-  if (!bm) { return "normal"; }
+function resolveEffectFilterBlend(bm: BlendMode | undefined): EffectFilterBlend {
+  if (!bm) {
+    return { type: "feBlend", mode: "normal" };
+  }
   switch (bm) {
     case "multiply":
     case "screen":
@@ -138,15 +154,17 @@ function effectBlendModeToSvg(bm: BlendMode | undefined): FeBlendMode {
     case "soft-light":
     case "difference":
     case "exclusion":
-    case "plus-darker":
-    case "plus-lighter":
     case "hue":
     case "saturation":
     case "color":
     case "luminosity":
-      return bm;
+      return { type: "feBlend", mode: bm };
+    case "plus-lighter":
+      return { type: "feCompositeArithmetic", k1: 0, k2: 1, k3: 1, k4: 0 };
+    case "plus-darker":
+      return { type: "feCompositeArithmetic", k1: 0, k2: 1, k3: 1, k4: -1 };
     default:
-      throw new Error(`Unsupported SVG feBlend mode "${bm}"`);
+      throw new Error(`Unsupported SVG filter blend mode "${bm}"`);
   }
 }
 
@@ -172,19 +190,49 @@ function resolvePositiveDirectionExpansion(isNormalBlend: boolean, totalExpansio
 function appendDropShadowBlend(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
-  readonly mode: FeBlendMode;
+  readonly blend: EffectFilterBlend;
   readonly input: string;
   readonly backdrop: string;
 }): string {
   const result = params.ids.getNextId("drop-shadow");
-  params.primitives.push({
-    type: "feBlend",
-    mode: params.mode,
-    in: params.input,
-    in2: params.backdrop,
+  appendFilterBlendPrimitive({
+    primitives: params.primitives,
+    blend: params.blend,
+    input: params.input,
+    backdrop: params.backdrop,
     result,
   });
   return result;
+}
+
+function appendFilterBlendPrimitive(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly blend: EffectFilterBlend;
+  readonly input: string;
+  readonly backdrop: string;
+  readonly result: string;
+}): void {
+  if (params.blend.type === "feBlend") {
+    params.primitives.push({
+      type: "feBlend",
+      mode: params.blend.mode,
+      in: params.input,
+      in2: params.backdrop,
+      result: params.result,
+    });
+    return;
+  }
+  params.primitives.push({
+    type: "feComposite",
+    in: params.input,
+    in2: params.backdrop,
+    operator: "arithmetic",
+    k1: params.blend.k1,
+    k2: params.blend.k2,
+    k3: params.blend.k3,
+    k4: params.blend.k4,
+    result: params.result,
+  });
 }
 
 function appendBackgroundImageFix(params: {
@@ -196,7 +244,7 @@ function appendBackgroundImageFix(params: {
 function appendDropShadowOverBackdrop(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
-  readonly mode: FeBlendMode;
+  readonly blend: EffectFilterBlend;
   readonly input: string;
   readonly currentBackdrop: string | undefined;
 }): string {
@@ -204,7 +252,7 @@ function appendDropShadowOverBackdrop(params: {
     return appendDropShadowBlend({
       primitives: params.primitives,
       ids: params.ids,
-      mode: params.mode,
+      blend: params.blend,
       input: params.input,
       backdrop: params.currentBackdrop,
     });
@@ -213,7 +261,7 @@ function appendDropShadowOverBackdrop(params: {
   return appendDropShadowBlend({
     primitives: params.primitives,
     ids: params.ids,
-    mode: params.mode,
+    blend: params.blend,
     input: params.input,
     backdrop: FILTER_BACKGROUND_RESULT,
   });
@@ -300,11 +348,11 @@ function appendInnerShadowBlends(params: {
       return inner.input;
     }
     const result = params.ids.getNextId("inner-shadow");
-    params.primitives.push({
-      type: "feBlend",
-      mode: inner.mode,
-      in: inner.input,
-      in2: current,
+    appendFilterBlendPrimitive({
+      primitives: params.primitives,
+      blend: inner.blend,
+      input: inner.input,
+      backdrop: current,
       result,
     });
     return result;
@@ -354,7 +402,7 @@ export function resolveEffects(
     hasDropShadow,
     hasInnerShadow,
   });
-  let dropBackdropResult: string | undefined;
+  const dropBackdropResult: { result: string | undefined } = { result: undefined };
   // Inner shadows are prepared as tinted bands and then blended over
   // the composed foreground in declaration order. This mirrors Figma's
   // SVG filter structure: `shape -> effect1_innerShadow -> ...`.
@@ -365,7 +413,7 @@ export function resolveEffects(
     switch (effect.type) {
       case "drop-shadow": {
         const isSharp = effect.radius === 0 && (!effect.spread || effect.spread === 0);
-        const blendMode = effectBlendModeToSvg(effect.blendMode);
+        const blend = resolveEffectFilterBlend(effect.blendMode);
 
         if (isSharp) {
           // Sharp drop-shadow recipe (Figma's exact SVG export shape, used
@@ -414,12 +462,12 @@ export function resolveEffects(
             { type: "feFlood", floodColor: colorToRgb(c), floodOpacity: c.a, result: floodResult },
             { type: "feComposite", in: floodResult, in2: compositedResult, operator: "in", result: tintedResult },
           );
-          dropBackdropResult = appendDropShadowOverBackdrop({
+          dropBackdropResult.result = appendDropShadowOverBackdrop({
             primitives,
             ids,
-            mode: blendMode,
+            blend,
             input: tintedResult,
-            currentBackdrop: dropBackdropResult,
+            currentBackdrop: dropBackdropResult.result,
           });
           break;
         }
@@ -487,12 +535,12 @@ export function resolveEffects(
             { type: "feComposite", in2: hardAlphaResult, operator: "out", result: compositedResult },
             { type: "feColorMatrix", in: compositedResult, matrixType: "matrix", values: buildColorMatrix(c), result: tintedResult },
           );
-          dropBackdropResult = appendDropShadowOverBackdrop({
+          dropBackdropResult.result = appendDropShadowOverBackdrop({
             primitives,
             ids,
-            mode: blendMode,
+            blend,
             input: tintedResult,
-            currentBackdrop: dropBackdropResult,
+            currentBackdrop: dropBackdropResult.result,
           });
         } else {
           // showShadowBehindNode=true: blurred-hardAlpha is tinted directly
@@ -504,12 +552,12 @@ export function resolveEffects(
             values: buildColorMatrix(c),
             result: tintedResult,
           });
-          dropBackdropResult = appendDropShadowOverBackdrop({
+          dropBackdropResult.result = appendDropShadowOverBackdrop({
             primitives,
             ids,
-            mode: blendMode,
+            blend,
             input: tintedResult,
-            currentBackdrop: dropBackdropResult,
+            currentBackdrop: dropBackdropResult.result,
           });
         }
         break;
@@ -564,7 +612,7 @@ export function resolveEffects(
         );
         innerShadows.push({
           input: tintedResult,
-          mode: effectBlendModeToSvg(effect.blendMode),
+          blend: resolveEffectFilterBlend(effect.blendMode),
         });
         break;
       }
@@ -603,7 +651,7 @@ export function resolveEffects(
   const baseResult = appendSourceGraphicOverShadow({
     primitives,
     ids,
-    dropBackdrop: dropBackdropResult,
+    dropBackdrop: dropBackdropResult.result,
     standaloneShape,
     sourceGraphic: options.sourceGraphic,
   });

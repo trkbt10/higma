@@ -278,9 +278,9 @@ export const blitFragmentShader = `
 
 /** Effects renderer instance */
 export type EffectsRendererInstance = {
-  renderDropShadow(params: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }): void;
-  renderInnerShadow(params: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }): void;
-  renderBackgroundBlur(params: { canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; requireClipStencil: boolean; renderMask: () => void }): void;
+  renderDropShadow(params: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }): void;
+  renderInnerShadow(params: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }): void;
+  renderBackgroundBlur(params: { canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderMask: () => void }): void;
   beginLayerCapture(canvasWidth: number, canvasHeight: number): Framebuffer;
   endLayerCaptureAndBlur(params: { canvasWidth: number; canvasHeight: number; effect: LayerBlurEffect; worldToBacking: EffectBackingScale }): void;
   /** Blit the captured layer FBO to screen with the given opacity (no blur). */
@@ -332,6 +332,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
   const tempFBO2 = { value: null as Framebuffer | null };
   const shapeFBO = { value: null as Framebuffer | null };
   const layerFBO = { value: null as Framebuffer | null };
+  const backdropFBO = { value: null as Framebuffer | null };
 
   function compileShader(label: string, type: number, source: string): WebGLShader {
     const shader = gl.createShader(type);
@@ -424,6 +425,13 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     }
   }
 
+  function ensureBackdropFBO(width: number, height: number): void {
+    if (!backdropFBO.value || backdropFBO.value.width !== width || backdropFBO.value.height !== height) {
+      deleteFramebufferIfPresent(backdropFBO.value);
+      backdropFBO.value = createFramebuffer(gl, width, height);
+    }
+  }
+
   function deleteFramebufferIfPresent(framebuffer: Framebuffer | null): void {
     if (framebuffer === null) {
       return;
@@ -445,13 +453,19 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     return buffer;
   }
 
-  function copyDefaultFramebufferToLayer(canvasWidth: number, canvasHeight: number): Framebuffer {
-    ensureLayerFBO(canvasWidth, canvasHeight);
-    bindFramebuffer(gl, null);
-    gl.bindTexture(gl.TEXTURE_2D, layerFBO.value!.texture);
+  function bindEffectOutputFramebuffer(framebuffer: WebGLFramebuffer | null): void {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  }
+
+  function copyFramebufferToBackdrop(canvasWidth: number, canvasHeight: number, sourceFramebuffer: WebGLFramebuffer | null): Framebuffer {
+    ensureBackdropFBO(canvasWidth, canvasHeight);
+    const restoreFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    bindEffectOutputFramebuffer(sourceFramebuffer);
+    gl.bindTexture(gl.TEXTURE_2D, backdropFBO.value!.texture);
     gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, canvasWidth, canvasHeight, 0);
     gl.bindTexture(gl.TEXTURE_2D, null);
-    return layerFBO.value!;
+    bindEffectOutputFramebuffer(restoreFramebuffer);
+    return backdropFBO.value!;
   }
 
   function ensureBlitProgram(): void {
@@ -572,7 +586,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
   return {
     renderDropShadow(
-      { canvasWidth, canvasHeight, effect, worldToBacking, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }
+      { canvasWidth, canvasHeight, effect, worldToBacking, outputFramebuffer, backdropFramebuffer, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: DropShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureShapeFBO(canvasWidth, canvasHeight);
@@ -591,7 +605,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         resultFBORef.value = spreadSource;
       }
 
-      bindFramebuffer(gl, null);
+      bindEffectOutputFramebuffer(outputFramebuffer);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
 
       // World-space offset → backing-pixel offset. The texCoord sampling
@@ -603,7 +617,8 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       const blendModeCode = blendModeToShaderCode(effect.blendMode);
       if (blendModeCode !== 0) {
-        const backdrop = copyDefaultFramebufferToLayer(canvasWidth, canvasHeight);
+        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, backdropFramebuffer);
+        bindEffectOutputFramebuffer(outputFramebuffer);
         const programForBlend = requireProgram(blendShadowProgram.value, "drop shadow blend");
         gl.useProgram(programForBlend);
 
@@ -682,7 +697,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     renderInnerShadow(
-      { canvasWidth, canvasHeight, effect, worldToBacking, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; renderSilhouette: () => void }
+      { canvasWidth, canvasHeight, effect, worldToBacking, outputFramebuffer, backdropFramebuffer, renderSilhouette }: { canvasWidth: number; canvasHeight: number; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureShapeFBO(canvasWidth, canvasHeight);
@@ -702,7 +717,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         blurredFBORef.value = spreadSource;
       }
 
-      bindFramebuffer(gl, null);
+      bindEffectOutputFramebuffer(outputFramebuffer);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
 
       const program = requireProgram(innerShadowProgram.value, "inner shadow");
@@ -740,9 +755,10 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         );
         drawFullscreenQuad(program);
 
-        bindFramebuffer(gl, null);
+        bindEffectOutputFramebuffer(outputFramebuffer);
         gl.viewport(0, 0, canvasWidth, canvasHeight);
-        const backdrop = copyDefaultFramebufferToLayer(canvasWidth, canvasHeight);
+        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, backdropFramebuffer);
+        bindEffectOutputFramebuffer(outputFramebuffer);
         const blendProgram = requireProgram(blendShadowProgram.value, "inner shadow blend");
         gl.useProgram(blendProgram);
         gl.activeTexture(gl.TEXTURE0);
@@ -804,17 +820,17 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     renderBackgroundBlur(
-      { canvasWidth, canvasHeight, effect, worldToBacking, requireClipStencil, renderMask }: {
-        canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; requireClipStencil: boolean; renderMask: () => void;
+      { canvasWidth, canvasHeight, effect, worldToBacking, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderMask }: {
+        canvasWidth: number; canvasHeight: number; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderMask: () => void;
       }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      const backdrop = copyDefaultFramebufferToLayer(canvasWidth, canvasHeight);
+      const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, backdropFramebuffer);
       const blurred = applyGaussianBlur(backdrop, effect.radius * worldToBacking.lengthScale);
 
-      bindFramebuffer(gl, null);
+      bindEffectOutputFramebuffer(outputFramebuffer);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
 
       gl.enable(gl.STENCIL_TEST);
@@ -896,15 +912,13 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
       gl.uniform1f(gl.getUniformLocation(program, "u_opacity"), 1.0);
 
-      // Use premultiplied alpha blending for the blit.
-      // The blur pass samples non-premultiplied RGBA from the FBO, so the
-      // blurred edge pixels have color darkened by alpha (e.g. transparent
-      // black (0,0,0,0) mixed with red (0.9,0.2,0.2,1) produces dark edges).
-      // Using ONE instead of SRC_ALPHA for the source factor treats the
-      // texture as premultiplied, which matches SVG filter compositing.
+      // gaussianBlurFragmentShader returns straight-alpha RGBA: it blurs in
+      // premultiplied space, then un-premultiplies before writing. The blit
+      // must therefore use the same straight-alpha blend contract as normal
+      // layer compositing.
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(
-        gl.ONE, gl.ONE_MINUS_SRC_ALPHA,
+        gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
         gl.ONE, gl.ONE_MINUS_SRC_ALPHA
       );
       drawFullscreenQuad(program);
@@ -969,6 +983,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       if (tempFBO2.value) {deleteFramebuffer(gl, tempFBO2.value);}
       if (shapeFBO.value) {deleteFramebuffer(gl, shapeFBO.value);}
       if (layerFBO.value) {deleteFramebuffer(gl, layerFBO.value);}
+      if (backdropFBO.value) {deleteFramebuffer(gl, backdropFBO.value);}
     },
   };
 }

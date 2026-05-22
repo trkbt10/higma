@@ -30,6 +30,8 @@ export type WebGLEffectRenderingParams = {
   readonly pixelRatio: () => number;
   readonly canvasWidth: () => number;
   readonly canvasHeight: () => number;
+  readonly outputFramebuffer: () => WebGLFramebuffer | null;
+  readonly backdropFramebuffer: () => WebGLFramebuffer | null;
   readonly isClipStencilRequired: () => boolean;
   readonly drawStencilFill: (params: DrawStencilFillParams) => void;
 };
@@ -94,6 +96,8 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
       canvasHeight: params.canvasHeight(),
       effect,
       worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
+      outputFramebuffer: params.outputFramebuffer(),
+      backdropFramebuffer: params.backdropFramebuffer(),
       requireClipStencil: params.isClipStencilRequired(),
       renderMask: () => {
         drawSolidFill({
@@ -136,6 +140,8 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         canvasHeight: params.canvasHeight(),
         effect,
         worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
+        outputFramebuffer: params.outputFramebuffer(),
+        backdropFramebuffer: params.backdropFramebuffer(),
         renderSilhouette: () => {
           drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
         },
@@ -159,6 +165,8 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         canvasHeight: params.canvasHeight(),
         effect,
         worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
+        outputFramebuffer: params.outputFramebuffer(),
+        backdropFramebuffer: params.backdropFramebuffer(),
         renderSilhouette: () => {
           drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
         },
@@ -205,6 +213,8 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         canvasHeight: params.canvasHeight(),
         effect,
         worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
+        outputFramebuffer: params.outputFramebuffer(),
+        backdropFramebuffer: params.backdropFramebuffer(),
         renderSilhouette: () => {
           drawSolidFill({ ctx: params.getGlContext(), vertices: silhouetteVertices, color: WHITE, transform, opacity: 1 });
         },

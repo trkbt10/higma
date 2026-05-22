@@ -421,7 +421,7 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
-  it("keeps LINEAR_DODGE effect blend as plus-lighter", () => {
+  it("resolves LINEAR_DODGE effect blend as SVG arithmetic add", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",
       offset: { x: 0, y: 2 },
@@ -434,10 +434,38 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    const blend = result!.primitives.find((primitive) => primitive.type === "feBlend");
-    expect(blend?.type).toBe("feBlend");
-    if (blend?.type === "feBlend") {
-      expect(blend.mode).toBe("plus-lighter");
+    const blend = result!.primitives.find((primitive) => primitive.type === "feComposite");
+    expect(blend?.type).toBe("feComposite");
+    if (blend?.type === "feComposite") {
+      expect(blend.operator).toBe("arithmetic");
+      expect(blend.k1).toBe(0);
+      expect(blend.k2).toBe(1);
+      expect(blend.k3).toBe(1);
+      expect(blend.k4).toBe(0);
+    }
+  });
+
+  it("resolves LINEAR_BURN effect blend as SVG arithmetic subtract-one", () => {
+    const effects: Effect[] = [{
+      type: "drop-shadow",
+      offset: { x: 0, y: 2 },
+      radius: 8,
+      color: WHITE,
+      blendMode: "plus-darker",
+      showShadowBehindNode: true,
+    }];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids);
+
+    expect(result).toBeDefined();
+    const blend = result!.primitives.find((primitive) => primitive.type === "feComposite");
+    expect(blend?.type).toBe("feComposite");
+    if (blend?.type === "feComposite") {
+      expect(blend.operator).toBe("arithmetic");
+      expect(blend.k1).toBe(0);
+      expect(blend.k2).toBe(1);
+      expect(blend.k3).toBe(1);
+      expect(blend.k4).toBe(-1);
     }
   });
 
@@ -456,10 +484,14 @@ describe("Effects resolution (shared SoT)", () => {
     expect(result).toBeDefined();
     expect(result!.primitives).toHaveLength(7);
     expect(result!.primitives[4].type).toBe("feColorMatrix");
-    expect(result!.primitives[5].type).toBe("feBlend");
+    expect(result!.primitives[5].type).toBe("feComposite");
     const blend = result!.primitives[5];
-    if (blend.type === "feBlend") {
-      expect(blend.mode).toBe("plus-lighter");
+    if (blend.type === "feComposite") {
+      expect(blend.operator).toBe("arithmetic");
+      expect(blend.k1).toBe(0);
+      expect(blend.k2).toBe(1);
+      expect(blend.k3).toBe(1);
+      expect(blend.k4).toBe(0);
     }
   });
 

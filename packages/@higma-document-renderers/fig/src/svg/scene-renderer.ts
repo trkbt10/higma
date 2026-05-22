@@ -140,8 +140,10 @@ function formatFilterPrimitive(p: ResolvedFilterPrimitive): SvgNode {
         in: p.in,
         in2: p.in2,
         operator: p.operator,
+        k1: p.k1,
         k2: p.k2,
         k3: p.k3,
+        k4: p.k4,
         result: p.result,
       });
     case "feMorphology":

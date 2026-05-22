@@ -8,7 +8,7 @@
  * Both modes share the same .fig file loading pipeline.
  */
 
-import { useMemo, useState, useCallback, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, useCallback, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createEmptyFigDocument,
@@ -48,6 +48,26 @@ type LoadedFile = {
   readonly context: FigDocumentContext;
   readonly fileName: string;
   readonly sourceFileNames: readonly string[];
+};
+
+type LoadedFigFile = Awaited<ReturnType<typeof loadFigFile>>;
+
+type LoadedFigInput = {
+  readonly loaded: LoadedFigFile;
+  readonly fileName: string;
+};
+
+type DevFigRouteInput = {
+  readonly ref: string;
+  readonly kind: "local-path" | "url";
+};
+
+type DevFileRoute = {
+  readonly fig: DevFigRouteInput;
+  readonly sources: readonly DevFigRouteInput[];
+  readonly mode: DevMode;
+  readonly renderer: FigEditorRendererKind;
+  readonly frameGuid?: string;
 };
 
 // =============================================================================
@@ -288,6 +308,7 @@ function LoadedDevShell({
   editorRenderer,
   setEditorRenderer,
   editorPanels,
+  debugFrameGuid,
   onClose,
 }: {
   readonly loadedFile: LoadedFile;
@@ -298,6 +319,7 @@ function LoadedDevShell({
   readonly editorRenderer: FigEditorRendererKind;
   readonly setEditorRenderer: (renderer: FigEditorRendererKind) => void;
   readonly editorPanels: EditorPanel[];
+  readonly debugFrameGuid: string | undefined;
   readonly onClose: () => void;
 }) {
   const fontResolverState = useBrowserTextFontResolver(loadedFile.context);
@@ -355,7 +377,12 @@ function LoadedDevShell({
             label: "Renderer Debug",
             content: (
               <div style={mainStyle}>
-                <RendererDebugView context={loadedFile.context} />
+                <RendererDebugView
+                  key={`${loadedFile.fileName}:${debugFrameGuid ?? ""}:${editorRenderer}`}
+                  context={loadedFile.context}
+                  initialFrameGuid={debugFrameGuid}
+                  initialRenderer={editorRenderer}
+                />
               </div>
             ),
           },
@@ -373,11 +400,12 @@ function LoadedDevShell({
 // App
 // =============================================================================
 
-type LoadedFigFile = Awaited<ReturnType<typeof loadFigFile>>;
-
-async function readLoadedFigFile(file: File): Promise<LoadedFigFile> {
+async function readLoadedFigFile(file: File): Promise<LoadedFigInput> {
   const buffer = await file.arrayBuffer();
-  return loadFigFile(new Uint8Array(buffer));
+  return {
+    loaded: await loadFigFile(new Uint8Array(buffer)),
+    fileName: file.name,
+  };
 }
 
 function kiwiSourceDocumentFromLoaded(loaded: LoadedFigFile): FigDocumentContextKiwiSourceDocument {
@@ -388,21 +416,25 @@ function kiwiSourceDocumentFromLoaded(loaded: LoadedFigFile): FigDocumentContext
   };
 }
 
-async function createLoadedFile(files: readonly File[]): Promise<LoadedFile> {
-  const [primaryFile, ...sourceFiles] = files;
-  if (primaryFile === undefined) {
+function createLoadedFileFromInputs(inputs: readonly LoadedFigInput[]): LoadedFile {
+  const [primaryInput, ...sourceInputs] = inputs;
+  if (primaryInput === undefined) {
     throw new Error("Fig Editor Dev requires a primary .fig file");
   }
-  const primary = await readLoadedFigFile(primaryFile);
-  const sources = await Promise.all(sourceFiles.map(readLoadedFigFile));
+  const primary = primaryInput.loaded;
+  const sources = sourceInputs.map((input) => input.loaded);
   const context = createFigDocumentContextFromLoaded(primary, {
     kiwiSourceDocuments: sources.map(kiwiSourceDocumentFromLoaded),
   });
   return {
     context,
-    fileName: primaryFile.name,
-    sourceFileNames: sourceFiles.map((file) => file.name),
+    fileName: primaryInput.fileName,
+    sourceFileNames: sourceInputs.map((input) => input.fileName),
   };
+}
+
+async function createLoadedFile(files: readonly File[]): Promise<LoadedFile> {
+  return createLoadedFileFromInputs(await Promise.all(files.map(readLoadedFigFile)));
 }
 
 function formatLoadedFileName(loadedFile: LoadedFile): string {
@@ -415,6 +447,120 @@ function formatLoadedFileName(loadedFile: LoadedFile): string {
   return `${loadedFile.fileName} (+${loadedFile.sourceFileNames.length} sources)`;
 }
 
+function parseDevModeParam(value: string | null): DevMode {
+  if (value === null) {
+    return "editor";
+  }
+  if (value === "editor" || value === "renderer-debug") {
+    return value;
+  }
+  throw new Error(`Fig Editor Dev unsupported mode "${value}"`);
+}
+
+function parseRendererParam(value: string | null): FigEditorRendererKind {
+  if (value === null) {
+    return "svg";
+  }
+  if (value === "svg" || value === "webgl") {
+    return value;
+  }
+  throw new Error(`Fig Editor Dev unsupported renderer "${value}"`);
+}
+
+function readDevFileRoute(search: string): DevFileRoute | null {
+  const params = new URLSearchParams(search);
+  const figInput = readPrimaryRouteInput(params);
+  if (figInput === null) {
+    return null;
+  }
+  const frameGuid = params.get("frameGuid") ?? undefined;
+  return {
+    fig: figInput,
+    sources: readSourceRouteInputs(params),
+    mode: parseDevModeParam(params.get("mode")),
+    renderer: parseRendererParam(params.get("renderer")),
+    ...(frameGuid === undefined ? {} : { frameGuid }),
+  };
+}
+
+function requireSingleRouteValue(params: URLSearchParams, localName: string, urlName: string): DevFigRouteInput | null {
+  const local = params.get(localName);
+  const url = params.get(urlName);
+  if (local !== null && url !== null) {
+    throw new Error(`Fig Editor Dev route must not set both ${localName} and ${urlName}`);
+  }
+  if (local !== null) {
+    return { ref: requireNonEmptyRouteRef(local, localName), kind: "local-path" };
+  }
+  if (url !== null) {
+    return { ref: requireNonEmptyRouteRef(url, urlName), kind: "url" };
+  }
+  return null;
+}
+
+function requireNonEmptyRouteRef(value: string, name: string): string {
+  if (value.length === 0) {
+    throw new Error(`Fig Editor Dev route requires a non-empty ${name} parameter`);
+  }
+  return value;
+}
+
+function readPrimaryRouteInput(params: URLSearchParams): DevFigRouteInput | null {
+  return requireSingleRouteValue(params, "fig", "figUrl");
+}
+
+function readSourceRouteInputs(params: URLSearchParams): readonly DevFigRouteInput[] {
+  const sourcePaths = params.getAll("source").map((ref) => ({ ref, kind: "local-path" as const }));
+  const sourceUrls = params.getAll("sourceUrl").map((ref) => ({ ref, kind: "url" as const }));
+  const empty = [...sourcePaths, ...sourceUrls].find((source) => source.ref.length === 0);
+  if (empty !== undefined) {
+    throw new Error("Fig Editor Dev route source parameters must be non-empty");
+  }
+  return [...sourcePaths, ...sourceUrls];
+}
+
+function devServerFileUrl(input: DevFigRouteInput): string {
+  if (input.kind === "url") {
+    return input.ref;
+  }
+  const path = input.ref;
+  if (path.startsWith("/@fs/")) {
+    return path;
+  }
+  if (!path.startsWith("/")) {
+    throw new Error(`Fig Editor Dev route requires an absolute local path, got "${path}"`);
+  }
+  return `/@fs${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function fileNameFromRouteInput(input: DevFigRouteInput): string {
+  const last = input.ref.split("/").filter((segment) => segment.length > 0).at(-1);
+  if (last === undefined) {
+    throw new Error(`Fig Editor Dev route cannot derive file name from "${input.ref}"`);
+  }
+  return decodeURIComponent(last);
+}
+
+async function readLoadedFigFileFromRouteInput(input: DevFigRouteInput): Promise<LoadedFigInput> {
+  const response = await fetch(devServerFileUrl(input));
+  if (!response.ok) {
+    throw new Error(`Fig Editor Dev failed to fetch "${input.ref}": ${response.status} ${response.statusText}`);
+  }
+  const buffer = await response.arrayBuffer();
+  return {
+    loaded: await loadFigFile(new Uint8Array(buffer)),
+    fileName: fileNameFromRouteInput(input),
+  };
+}
+
+async function createLoadedFileFromRoute(route: DevFileRoute): Promise<LoadedFile> {
+  const inputs = await Promise.all([
+    readLoadedFigFileFromRouteInput(route.fig),
+    ...route.sources.map(readLoadedFigFileFromRouteInput),
+  ]);
+  return createLoadedFileFromInputs(inputs);
+}
+
 function App() {
   const [loadedFile, setLoadedFile] = useState<LoadedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -422,6 +568,7 @@ function App() {
   const [mode, setMode] = useState<DevMode>("editor");
   const [inspectorOverlayEnabled, setInspectorOverlayEnabled] = useState(false);
   const [editorRenderer, setEditorRenderer] = useState<FigEditorRendererKind>("svg");
+  const [debugFrameGuid, setDebugFrameGuid] = useState<string | undefined>(undefined);
 
   const editorPanels = useMemo<EditorPanel[]>(
     () => [
@@ -448,6 +595,7 @@ function App() {
     setError(null);
     try {
       setLoadedFile(await createLoadedFile(files));
+      setDebugFrameGuid(undefined);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to parse file";
       setError(message);
@@ -461,11 +609,52 @@ function App() {
     const context = createEmptyFigDocument("Page 1");
     setLoadedFile({ context, fileName: "Untitled.fig", sourceFileNames: [] });
     setError(null);
+    setDebugFrameGuid(undefined);
   }, []);
 
   const handleClose = useCallback(() => {
     setLoadedFile(null);
     setError(null);
+    setDebugFrameGuid(undefined);
+  }, []);
+
+  useEffect(() => {
+    const cancellation = { cancelled: false };
+
+    async function loadRouteFile(): Promise<void> {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const route = readDevFileRoute(window.location.search);
+        if (route === null) {
+          return;
+        }
+        const nextLoadedFile = await createLoadedFileFromRoute(route);
+        if (cancellation.cancelled) {
+          return;
+        }
+        setMode(route.mode);
+        setEditorRenderer(route.renderer);
+        setDebugFrameGuid(route.frameGuid);
+        setLoadedFile(nextLoadedFile);
+      } catch (e) {
+        if (cancellation.cancelled) {
+          return;
+        }
+        const message = e instanceof Error ? e.message : "Failed to parse routed file";
+        setError(message);
+        setLoadedFile(null);
+      } finally {
+        if (!cancellation.cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadRouteFile();
+    return () => {
+      cancellation.cancelled = true;
+    };
   }, []);
 
   // No file loaded: show drop zone
@@ -500,6 +689,7 @@ function App() {
       editorRenderer={editorRenderer}
       setEditorRenderer={setEditorRenderer}
       editorPanels={editorPanels}
+      debugFrameGuid={debugFrameGuid}
       onClose={handleClose}
     />
   );

@@ -330,8 +330,10 @@ export function feComposite(attrs: {
   in?: string;
   in2?: string;
   operator?: string;
+  k1?: number | string;
   k2?: number | string;
   k3?: number | string;
+  k4?: number | string;
   result?: string;
 }): SvgNode {
   return element("feComposite", attrs, [], true);
