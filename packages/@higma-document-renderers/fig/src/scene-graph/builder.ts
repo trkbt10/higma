@@ -17,6 +17,7 @@ import {
   mergeVariableModeBySetMap,
   resolveStyledEffects,
   resolveStyledPaint,
+  isVariantSetFrame,
   type SymbolResolver,
 } from "@higma-document-models/fig/symbols";
 import { IDENTITY_MATRIX } from "@higma-document-models/fig/matrix";
@@ -46,6 +47,14 @@ import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import { resolveClipsContent as resolveGeometryClipsContent } from "@higma-document-models/fig/geometry-interpret";
 import { resolveAuthoredAutoLayoutFrameStretch } from "@higma-document-models/fig/symbols/autolayout-solver";
 import type { AffineMatrix, CornerRadius } from "@higma-primitives/path";
+
+/**
+ * Figma stores a component variant set as a Kiwi FRAME with
+ * `isStateGroup === true` and VARIANT component properties. The
+ * exported component-set chrome is a purple 10/5 dashed inside stroke
+ * even when Kiwi does not carry an explicit dash array for that FRAME.
+ */
+const FIGMA_VARIANT_SET_FRAME_STROKE_DASH_PATTERN = [10, 5] as const;
 
 function convertKiwiTransform(
   matrix: { m00?: number; m01?: number; m02?: number; m10?: number; m11?: number; m12?: number } | undefined,
@@ -247,6 +256,17 @@ function resolveVectorStroke(
   return convertStrokeToSceneStroke(strokePaints, strokeWeight, { strokeCap, strokeJoin, dashPattern: strokeDashes, strokeAlign });
 }
 
+function resolveKiwiStrokeDashPattern(node: FigNode): readonly number[] | undefined {
+  const authored = node.strokeDashes ?? node.dashPattern;
+  if (authored !== undefined && authored.length > 0) {
+    return authored;
+  }
+  if (isVariantSetFrame(node)) {
+    return FIGMA_VARIANT_SET_FRAME_STROKE_DASH_PATTERN;
+  }
+  return authored;
+}
+
 function resolveNodeFillPaints(node: FigNode, fillPaints: readonly FigPaint[] | undefined, ctx: BuildContext): readonly FigPaint[] | undefined {
   return resolveStyledPaint(node.styleIdForFill, fillPaints, ctx.styleRegistry, {
     variableModeBySetMap: ctx.variableModeBySetMap,
@@ -446,7 +466,7 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
-      dashPattern: node.strokeDashes ?? node.dashPattern,
+      dashPattern: resolveKiwiStrokeDashPattern(node),
       strokeAlign: node.strokeAlign,
     }),
     individualStrokeWeights: node.individualStrokeWeights,
@@ -478,7 +498,7 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
-      dashPattern: node.strokeDashes ?? node.dashPattern,
+      dashPattern: resolveKiwiStrokeDashPattern(node),
       strokeAlign: node.strokeAlign,
     }),
     individualStrokeWeights: node.individualStrokeWeights,
@@ -550,7 +570,7 @@ function buildEllipseNode(node: FigNode, ctx: BuildContext): EllipseNode {
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
-      dashPattern: node.strokeDashes ?? node.dashPattern,
+      dashPattern: resolveKiwiStrokeDashPattern(node),
       strokeAlign: node.strokeAlign,
     }),
     arcData: extractArcData(node),
@@ -772,7 +792,7 @@ function buildVectorNode(node: FigNode, ctx: BuildContext): PathNode {
     ctx.images,
     paintSubject(node, treatAsFill ? "strokePaints" : "fillPaints"),
   );
-  const stroke = resolveVectorStroke(treatAsFill, resolvedStrokePaints, node.strokeWeight, node.strokeCap, node.strokeJoin, node.strokeDashes ?? node.dashPattern, node.strokeAlign);
+  const stroke = resolveVectorStroke(treatAsFill, resolvedStrokePaints, node.strokeWeight, node.strokeCap, node.strokeJoin, resolveKiwiStrokeDashPattern(node), node.strokeAlign);
   const strokeContours = resolveVectorStrokeContours(
     strokeGeometryContours,
     isStrokeGeometryRef.value,
@@ -1026,7 +1046,7 @@ function buildBooleanOperationNode(
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
-      dashPattern: node.strokeDashes ?? node.dashPattern,
+      dashPattern: resolveKiwiStrokeDashPattern(node),
       strokeAlign: node.strokeAlign,
     }),
   };

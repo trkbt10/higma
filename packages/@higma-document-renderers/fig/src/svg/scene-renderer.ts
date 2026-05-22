@@ -1987,11 +1987,11 @@ export type FormatRenderTreeToSvgOptions = {
   /**
    * When true, prepend Figma's "no-fill frame" indicator — a 1-px purple
    * dashed rectangle inset by 0.5 along each viewport edge. Figma's own
-   * SVG exporter writes this rect for any root FRAME exported with no
-   * visible fill paint, as a visual cue that the frame's interior is
-   * transparent. Matching this byte pattern is what closes the residual
-   * pixel diff on the App Store template's `Metadata`, `Event metadata`,
-   * and `Tab Bar` fixtures (all FRAMEs with empty `fillPaints`).
+   * SVG exporter writes this rect for a root FRAME exported with no
+   * visible fill or stroke paint, as a visual cue that the frame's
+   * interior is transparent. Variant-set FRAME chrome is not handled by
+   * this flag; it is resolved from Kiwi `isStateGroup` in the SceneGraph
+   * builder so every renderer backend consumes the same dashed stroke.
    */
   readonly figmaEmptyFrameIndicator?: boolean;
 };
@@ -2022,7 +2022,8 @@ export function formatRenderTreeToSvg(
   }
   if (options?.figmaEmptyFrameIndicator) {
     // Figma's SVG exporter emits this exact byte pattern for the
-    // root FRAME of any export whose root has no visible fill paint:
+    // root FRAME of any export whose root has no visible fill or stroke
+    // paint:
     //
     //   <rect x="0.5" y="0.5" width="W-1" height="H-1" rx="4.5"
     //         stroke="#9747FF" stroke-dasharray="10 5"/>

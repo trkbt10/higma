@@ -4,6 +4,7 @@ import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg";
 import { encodeSvgPathBlob } from "@higma-document-models/fig/node-factory";
 import { STACK_COUNTER_ALIGN_VALUES, STACK_MODE_VALUES, STROKE_ALIGN_VALUES, STYLE_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import type { FigNode } from "@higma-document-models/fig/types";
 import type {
   EllipseNode,
   Fill,
@@ -25,7 +26,7 @@ function findAllByType(nodes: readonly SceneNode[], type: SceneNode["type"]): Sc
   });
 }
 
-function buildFixturePage(pageNodes: readonly ReturnType<typeof kiwiNode>[]) {
+function buildFixturePage(pageNodes: readonly FigNode[]) {
   const fixture = createKiwiRenderFixture();
   return buildSceneGraph(pageNodes, {
     blobs: fixture.resources.blobs,
@@ -82,6 +83,35 @@ describe("buildSceneGraph", () => {
       type: "solid",
       color: KIWI_RENDER_COLORS.red,
     });
+  });
+
+  it("renders Kiwi variant-set FRAME chrome as Figma's dashed component-set outline", () => {
+    const frame = {
+      ...kiwiNode({
+        guid: kiwiGuid(42, 4),
+        type: "FRAME",
+        name: "State group",
+        width: 384,
+        height: 196,
+        strokePaints: [kiwiSolidPaint({ r: 0.5921568870544434, g: 0.27843138575553894, b: 1, a: 1 })],
+        strokeWeight: 1,
+        cornerRadius: 5,
+      }),
+      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" as const },
+      isStateGroup: true,
+      componentPropDefs: [{
+        id: kiwiGuid(42, 5),
+        name: "Property 1",
+        type: { value: 4, name: "VARIANT" as const },
+      }],
+    };
+
+    const sceneGraph = buildFixturePage([frame]);
+    const built = sceneGraph.root.children[0] as FrameNode;
+    const svg = String(renderSceneGraphToSvg(sceneGraph));
+
+    expect(built.stroke?.dashPattern).toEqual([10, 5]);
+    expect(svg).toContain('stroke-dasharray="10 5"');
   });
 
   it("preserves raw Kiwi FRAME child positions instead of replaying auto-layout", () => {
