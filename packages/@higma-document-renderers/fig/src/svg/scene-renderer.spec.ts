@@ -1,6 +1,6 @@
 /** @file SceneGraph SVG renderer viewport tests. */
 import { renderSceneGraphToSvg, formatRenderTreeToSvg } from "./scene-renderer";
-import { resolveRenderTree, createNodeId, type FrameNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId, type FrameNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
 import { createPngImage, readPng, writePng, type PngImage } from "@higma-codecs/png";
 import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
 
@@ -1352,43 +1352,4 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).not.toContain('rx="24"');
   });
 
-  it("prepends Figma's empty-frame purple dashed indicator when requested", () => {
-    // Figma's SVG exporter writes a 1-px purple dashed rectangle —
-    // `<rect x="0.5" y="0.5" width="W-1" height="H-1" rx="4.5"
-    //  stroke="#9747FF" stroke-dasharray="10 5"/>` — as a visual cue
-    // when the exported root is a FRAME whose `fillPaints` array is
-    // empty (or contains only invisible paints). The App Store
-    // Community template's `Metadata`, `Event metadata`, and `Tab Bar`
-    // fixtures are all such FRAMEs; matching the byte pattern collapses
-    // their residual diff. The rect is positioned in the viewport's
-    // coordinate frame, not the canvas one, so non-origin viewports
-    // (e.g. cropped slide renders) still place the indicator at the
-    // visible boundary.
-    const sceneGraph: SceneGraph = {
-      width: 384,
-      height: 196,
-      viewport: { x: 0, y: 0, width: 384, height: 196 },
-      root: {
-        type: "group",
-        id: createNodeId("root"),
-        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
-        opacity: 1,
-        visible: true,
-        effects: [],
-        children: [],
-      },
-      version: 1,
-    };
-
-    const renderTree = resolveRenderTree(sceneGraph);
-    const svg = formatRenderTreeToSvg(renderTree, { figmaEmptyFrameIndicator: true }) as string;
-
-    expect(svg).toContain('<rect x="0.5" y="0.5" width="383" height="195" rx="4.5"');
-    expect(svg).toContain('stroke="#9747FF"');
-    expect(svg).toContain('stroke-dasharray="10 5"');
-
-    // Sanity: without the flag, no indicator is emitted.
-    const plainSvg = formatRenderTreeToSvg(renderTree) as string;
-    expect(plainSvg).not.toContain('#9747FF');
-  });
 });

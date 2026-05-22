@@ -84,6 +84,21 @@ function createTextNode(): FigNode {
   };
 }
 
+function createEmptyFrameNode(): FigNode {
+  return {
+    guid: { sessionID: 1, localID: 2 },
+    phase: { value: 0, name: "CREATED" },
+    type: { value: 1, name: "FRAME" },
+    name: "Empty frame",
+    visible: true,
+    opacity: 1,
+    transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+    size: { x: 120, y: 80 },
+    fillPaints: [],
+    strokePaints: [],
+  };
+}
+
 describe("renderFigToSvg fontLoader", () => {
   it("preloads requested text fonts and renders font-backed glyph paths", async () => {
     const result = await renderFigToSvg([createTextNode()], {
@@ -103,5 +118,24 @@ describe("renderFigToSvg fontLoader", () => {
 
     expect(result.svg).toContain("<path");
     expect(result.svg).not.toContain("<text");
+  });
+
+  it("does not synthesize purple dashed chrome for plain empty FRAME roots", async () => {
+    const result = await renderFigToSvg([createEmptyFrameNode()], {
+      width: 120,
+      height: 80,
+      viewport: { x: 0, y: 0, width: 120, height: 80 },
+      blobs: [],
+      images: new Map(),
+      childrenOf: () => [],
+      symbolResolver: createSymbolResolver({
+        document: indexFigKiwiDocument([]),
+      }),
+      styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+      backgroundColor: "#ffffff",
+    });
+
+    expect(result.svg).not.toContain("#9747FF");
+    expect(result.svg).not.toContain('stroke-dasharray="10 5"');
   });
 });

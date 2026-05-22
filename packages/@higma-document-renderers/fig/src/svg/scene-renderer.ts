@@ -1984,16 +1984,6 @@ export type FormatRenderTreeToSvgOptions = {
    * SVG renderer's output ordering (defs are on nodes, not root-level).
    */
   readonly backgroundColor?: string;
-  /**
-   * When true, prepend Figma's "no-fill frame" indicator — a 1-px purple
-   * dashed rectangle inset by 0.5 along each viewport edge. Figma's own
-   * SVG exporter writes this rect for a root FRAME exported with no
-   * visible fill or stroke paint, as a visual cue that the frame's
-   * interior is transparent. Variant-set FRAME chrome is not handled by
-   * this flag; it is resolved from Kiwi `isStateGroup` in the SceneGraph
-   * builder so every renderer backend consumes the same dashed stroke.
-   */
-  readonly figmaEmptyFrameIndicator?: boolean;
 };
 
 /**
@@ -2020,35 +2010,6 @@ export function formatRenderTreeToSvg(
       }),
     );
   }
-  if (options?.figmaEmptyFrameIndicator) {
-    // Figma's SVG exporter emits this exact byte pattern for the
-    // root FRAME of any export whose root has no visible fill or stroke
-    // paint:
-    //
-    //   <rect x="0.5" y="0.5" width="W-1" height="H-1" rx="4.5"
-    //         stroke="#9747FF" stroke-dasharray="10 5"/>
-    //
-    // The 0.5 inset centers the 1-px stroke on the viewport boundary
-    // (so the dashes sit inside the canvas), the `rx="4.5"` constant
-    // gives the indicator its signature soft-rounded corners, and the
-    // `#9747FF` purple + `10 5` dashes are the Figma exporter's
-    // canonical "internal-only frame" cue. The rect carries no fill
-    // (we set it explicitly so the rect doesn't inherit a default
-    // black from any future wrapper that changes fill inheritance).
-    body.push(
-      rect({
-        x: renderTree.viewport.x + 0.5,
-        y: renderTree.viewport.y + 0.5,
-        width: renderTree.viewport.width - 1,
-        height: renderTree.viewport.height - 1,
-        rx: 4.5,
-        fill: "none",
-        stroke: "#9747FF",
-        "stroke-dasharray": "10 5",
-      }),
-    );
-  }
-
   // No root-level `<g clip-path>` wrapper. Figma's own SVG exporter
   // relies on (a) the `viewBox` attribute for visual clipping and
   // (b) callers pruning off-canvas subtrees before render.
