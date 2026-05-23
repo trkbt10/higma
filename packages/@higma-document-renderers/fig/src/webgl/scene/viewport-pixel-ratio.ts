@@ -12,7 +12,6 @@ export type WebGLViewportPixelRatioInput = {
 
 const DEFAULT_MAX_PIXEL_RATIO = 3;
 const DEFAULT_STEP = 0.5;
-const DEFAULT_MAX_BACKING_STORE_PIXELS = 4_000_000;
 const MIN_PIXEL_RATIO = 0.25;
 
 function finitePositiveOrOne(value: number): number {
@@ -34,19 +33,34 @@ function requireFinitePositive(name: string, value: number): number {
   return value;
 }
 
+function resolveBackingStoreBudgetedMaxPixelRatio(
+  max: number,
+  maxBackingStorePixels: number | undefined,
+  surfacePixels: number,
+): number {
+  if (maxBackingStorePixels === undefined) {
+    return max;
+  }
+  return Math.max(MIN_PIXEL_RATIO, Math.min(max, Math.sqrt(finitePositiveOrOne(maxBackingStorePixels) / surfacePixels)));
+}
+
 /**
  * Resolve the backing-store ratio for a WebGL viewport.
  *
  * DPR is the baseline. Zoom only increases the backing store by sqrt(scale),
  * then quantizes to coarse buckets. This keeps zoom crisp enough without
  * resizing the canvas on every wheel tick or allocating unbounded FBOs.
+ *
+ * A backing-store pixel budget is only applied when the caller explicitly
+ * provides one. The renderer must not silently rasterize below CSS-pixel
+ * resolution: that makes large frames visibly softer than SVG/Figma at 100%.
  */
 export function resolveWebGLViewportPixelRatio({
   devicePixelRatio,
   viewportScale,
   surfaceWidth,
   surfaceHeight,
-  maxBackingStorePixels = DEFAULT_MAX_BACKING_STORE_PIXELS,
+  maxBackingStorePixels,
   maxPixelRatio = DEFAULT_MAX_PIXEL_RATIO,
   step = DEFAULT_STEP,
 }: WebGLViewportPixelRatioInput): number {
@@ -55,7 +69,6 @@ export function resolveWebGLViewportPixelRatio({
   const max = Math.max(1, finitePositiveOrOne(maxPixelRatio));
   const desired = dpr * Math.sqrt(scale);
   const surfacePixels = requireFinitePositive("surfaceWidth", surfaceWidth) * requireFinitePositive("surfaceHeight", surfaceHeight);
-  const pixelBudgetRatio = Math.sqrt(finitePositiveOrOne(maxBackingStorePixels) / surfacePixels);
-  const budgetedMax = Math.max(MIN_PIXEL_RATIO, Math.min(max, pixelBudgetRatio));
+  const budgetedMax = resolveBackingStoreBudgetedMaxPixelRatio(max, maxBackingStorePixels, surfacePixels);
   return Math.min(budgetedMax, Math.max(MIN_PIXEL_RATIO, quantizeUp(desired, step)));
 }

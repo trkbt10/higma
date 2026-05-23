@@ -749,13 +749,9 @@ function applyTextDataAssignment(
   const existingTextData = node.textData;
   const existingChars = existingTextData?.characters ?? node.characters ?? "";
   const isNoOp = existingChars === textValue.characters;
-  const hasVisualDerivedTextData = derivedTextDataHasVisualPayload(node.derivedTextData);
   node.textData = resolveAssignedTextData(existingTextData, textValue);
   node.characters = textValue.characters;
   if (isNoOp) {
-    return;
-  }
-  if (!hasVisualDerivedTextData) {
     return;
   }
   discardDerivedTextVisualPayload(node);

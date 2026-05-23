@@ -37,7 +37,9 @@ export type FeBlendMode =
   | "hue"
   | "saturation"
   | "color"
-  | "luminosity";
+  | "luminosity"
+  | "plus-lighter"
+  | "plus-darker";
 
 /** SVG feComposite `operator` attribute values. */
 export type FeCompositeOperator = "over" | "in" | "out" | "atop" | "xor" | "arithmetic";
@@ -112,35 +114,20 @@ export type ResolveEffectsOptions = {
 
 type PreparedInnerShadow = {
   readonly input: string;
-  readonly blend: EffectFilterBlend;
+  readonly blendMode: FeBlendMode;
 };
-
-type EffectFilterBlend =
-  | { readonly type: "feBlend"; readonly mode: FeBlendMode }
-  | {
-      readonly type: "feCompositeArithmetic";
-      readonly k1: number;
-      readonly k2: number;
-      readonly k3: number;
-      readonly k4: number;
-    };
 
 // =============================================================================
 // Resolution
 // =============================================================================
 
 /**
- * Resolve a SceneGraph blend token to a browser-valid SVG filter primitive.
- * LINEAR_DODGE / LINEAR_BURN enter SceneGraph as CSS `plus-*` tokens,
- * but browser SVG rejects those as `feBlend.mode` values. SVG filter
- * arithmetic is the filter-domain representation of the same channel math:
- *
- * - plus-lighter: source + backdrop
- * - plus-darker:  source + backdrop - 1
+ * Resolve a SceneGraph blend token to the SVG filter blend mode emitted
+ * by Figma's exporter.
  */
-function resolveEffectFilterBlend(bm: BlendMode | undefined): EffectFilterBlend {
+function resolveEffectFilterBlendMode(bm: BlendMode | undefined): FeBlendMode {
   if (!bm) {
-    return { type: "feBlend", mode: "normal" };
+    return "normal";
   }
   switch (bm) {
     case "multiply":
@@ -158,11 +145,9 @@ function resolveEffectFilterBlend(bm: BlendMode | undefined): EffectFilterBlend 
     case "saturation":
     case "color":
     case "luminosity":
-      return { type: "feBlend", mode: bm };
     case "plus-lighter":
-      return { type: "feCompositeArithmetic", k1: 0, k2: 1, k3: 1, k4: 0 };
     case "plus-darker":
-      return { type: "feCompositeArithmetic", k1: 0, k2: 1, k3: 1, k4: -1 };
+      return bm;
     default:
       throw new Error(`Unsupported SVG filter blend mode "${bm}"`);
   }
@@ -190,48 +175,28 @@ function resolvePositiveDirectionExpansion(isNormalBlend: boolean, totalExpansio
 function appendDropShadowBlend(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
-  readonly blend: EffectFilterBlend;
+  readonly blendMode: FeBlendMode;
   readonly input: string;
   readonly backdrop: string;
 }): string {
   const result = params.ids.getNextId("drop-shadow");
-  appendFilterBlendPrimitive({
-    primitives: params.primitives,
-    blend: params.blend,
-    input: params.input,
-    backdrop: params.backdrop,
-    result,
-  });
+  appendFilterBlendPrimitive(params.primitives, params.blendMode, params.input, params.backdrop, result);
   return result;
 }
 
-function appendFilterBlendPrimitive(params: {
-  readonly primitives: ResolvedFilterPrimitive[];
-  readonly blend: EffectFilterBlend;
-  readonly input: string;
-  readonly backdrop: string;
-  readonly result: string;
-}): void {
-  if (params.blend.type === "feBlend") {
-    params.primitives.push({
-      type: "feBlend",
-      mode: params.blend.mode,
-      in: params.input,
-      in2: params.backdrop,
-      result: params.result,
-    });
-    return;
-  }
-  params.primitives.push({
-    type: "feComposite",
-    in: params.input,
-    in2: params.backdrop,
-    operator: "arithmetic",
-    k1: params.blend.k1,
-    k2: params.blend.k2,
-    k3: params.blend.k3,
-    k4: params.blend.k4,
-    result: params.result,
+function appendFilterBlendPrimitive(
+  primitives: ResolvedFilterPrimitive[],
+  mode: FeBlendMode,
+  input: string,
+  backdrop: string,
+  result: string,
+): void {
+  primitives.push({
+    type: "feBlend",
+    mode,
+    in: input,
+    in2: backdrop,
+    result,
   });
 }
 
@@ -244,7 +209,7 @@ function appendBackgroundImageFix(params: {
 function appendDropShadowOverBackdrop(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
-  readonly blend: EffectFilterBlend;
+  readonly blendMode: FeBlendMode;
   readonly input: string;
   readonly currentBackdrop: string | undefined;
 }): string {
@@ -252,7 +217,7 @@ function appendDropShadowOverBackdrop(params: {
     return appendDropShadowBlend({
       primitives: params.primitives,
       ids: params.ids,
-      blend: params.blend,
+      blendMode: params.blendMode,
       input: params.input,
       backdrop: params.currentBackdrop,
     });
@@ -261,7 +226,7 @@ function appendDropShadowOverBackdrop(params: {
   return appendDropShadowBlend({
     primitives: params.primitives,
     ids: params.ids,
-    blend: params.blend,
+    blendMode: params.blendMode,
     input: params.input,
     backdrop: FILTER_BACKGROUND_RESULT,
   });
@@ -307,9 +272,10 @@ function appendSourceGraphicOverShadow(params: {
   readonly dropBackdrop: string | undefined;
   readonly standaloneShape: string | undefined;
   readonly sourceGraphic: ResolveEffectsOptions["sourceGraphic"];
+  readonly materializeSourceGraphicForForegroundBlur: boolean;
 }): string | undefined {
   if (params.dropBackdrop === undefined) {
-    return resolveSourceGraphicWithoutDropShadow(params.sourceGraphic, params.standaloneShape);
+    return resolveSourceGraphicWithoutDropShadow(params);
   }
   if (params.sourceGraphic === "omit") {
     return params.dropBackdrop;
@@ -321,15 +287,26 @@ function appendSourceGraphicOverShadow(params: {
   });
 }
 
-function resolveSourceGraphicWithoutDropShadow(
-  sourceGraphic: ResolveEffectsOptions["sourceGraphic"],
-  standaloneShape: string | undefined,
-): string | undefined {
-  if (sourceGraphic === "omit") {
+function resolveSourceGraphicWithoutDropShadow(params: {
+  readonly primitives: ResolvedFilterPrimitive[];
+  readonly ids: IdGenerator;
+  readonly sourceGraphic: ResolveEffectsOptions["sourceGraphic"];
+  readonly standaloneShape: string | undefined;
+  readonly materializeSourceGraphicForForegroundBlur: boolean;
+}): string | undefined {
+  if (params.sourceGraphic === "omit") {
     return undefined;
   }
-  if (standaloneShape !== undefined) {
-    return standaloneShape;
+  if (params.standaloneShape !== undefined) {
+    return params.standaloneShape;
+  }
+  if (params.materializeSourceGraphicForForegroundBlur) {
+    appendBackgroundImageFix({ primitives: params.primitives });
+    return appendSourceGraphicOverBackdrop({
+      primitives: params.primitives,
+      ids: params.ids,
+      backdrop: FILTER_BACKGROUND_RESULT,
+    });
   }
   return "SourceGraphic";
 }
@@ -348,13 +325,7 @@ function appendInnerShadowBlends(params: {
       return inner.input;
     }
     const result = params.ids.getNextId("inner-shadow");
-    appendFilterBlendPrimitive({
-      primitives: params.primitives,
-      blend: inner.blend,
-      input: inner.input,
-      backdrop: current,
-      result,
-    });
+    appendFilterBlendPrimitive(params.primitives, inner.blendMode, inner.input, current, result);
     return result;
   }, params.baseResult);
 }
@@ -413,7 +384,7 @@ export function resolveEffects(
     switch (effect.type) {
       case "drop-shadow": {
         const isSharp = effect.radius === 0 && (!effect.spread || effect.spread === 0);
-        const blend = resolveEffectFilterBlend(effect.blendMode);
+        const blendMode = resolveEffectFilterBlendMode(effect.blendMode);
 
         if (isSharp) {
           // Sharp drop-shadow recipe (Figma's exact SVG export shape, used
@@ -465,7 +436,7 @@ export function resolveEffects(
           dropBackdropResult.result = appendDropShadowOverBackdrop({
             primitives,
             ids,
-            blend,
+            blendMode,
             input: tintedResult,
             currentBackdrop: dropBackdropResult.result,
           });
@@ -538,7 +509,7 @@ export function resolveEffects(
           dropBackdropResult.result = appendDropShadowOverBackdrop({
             primitives,
             ids,
-            blend,
+            blendMode,
             input: tintedResult,
             currentBackdrop: dropBackdropResult.result,
           });
@@ -555,7 +526,7 @@ export function resolveEffects(
           dropBackdropResult.result = appendDropShadowOverBackdrop({
             primitives,
             ids,
-            blend,
+            blendMode,
             input: tintedResult,
             currentBackdrop: dropBackdropResult.result,
           });
@@ -612,7 +583,7 @@ export function resolveEffects(
         );
         innerShadows.push({
           input: tintedResult,
-          blend: resolveEffectFilterBlend(effect.blendMode),
+          blendMode: resolveEffectFilterBlendMode(effect.blendMode),
         });
         break;
       }
@@ -654,6 +625,7 @@ export function resolveEffects(
     dropBackdrop: dropBackdropResult.result,
     standaloneShape,
     sourceGraphic: options.sourceGraphic,
+    materializeSourceGraphicForForegroundBlur: foregroundBlurEffects.length > 0,
   });
 
   const foregroundResult = appendInnerShadowBlends({
@@ -761,15 +733,48 @@ function expandFilterExtentsForShadow(
 
 function expandFilterExtentsForLayerBlur(
   extents: FilterExtents,
+  bounds: FilterBounds,
   effect: LayerBlurEffect,
 ): FilterExtents {
   const expand = effect.radius;
   return {
-    minX: extents.minX - expand,
-    minY: extents.minY - expand,
-    maxX: extents.maxX + expand,
-    maxY: extents.maxY + expand,
+    minX: Math.min(extents.minX, bounds.x - expand),
+    minY: Math.min(extents.minY, bounds.y - expand),
+    maxX: Math.max(extents.maxX, bounds.x + bounds.width + expand),
+    maxY: Math.max(extents.maxY, bounds.y + bounds.height + expand),
   };
+}
+
+function expandFilterExtentsForInnerShadow(
+  extents: FilterExtents,
+  bounds: FilterBounds,
+  effect: InnerShadowEffect,
+): FilterExtents {
+  const expand = effect.radius + Math.abs(effect.spread ?? 0);
+  const leftExpand = resolveInnerShadowNegativeDirectionExpansion(expand, effect.offset.x);
+  const rightExpand = resolveInnerShadowPositiveDirectionExpansion(expand, effect.offset.x);
+  const upExpand = resolveInnerShadowNegativeDirectionExpansion(expand, effect.offset.y);
+  const downExpand = resolveInnerShadowPositiveDirectionExpansion(expand, effect.offset.y);
+  return {
+    minX: Math.min(extents.minX, bounds.x - leftExpand),
+    minY: Math.min(extents.minY, bounds.y - upExpand),
+    maxX: Math.max(extents.maxX, bounds.x + bounds.width + rightExpand),
+    maxY: Math.max(extents.maxY, bounds.y + bounds.height + downExpand),
+  };
+}
+
+function resolveInnerShadowNegativeDirectionExpansion(expand: number, offset: number): number {
+  if (offset < 0) {
+    return expand;
+  }
+  return 0;
+}
+
+function resolveInnerShadowPositiveDirectionExpansion(expand: number, offset: number): number {
+  if (offset > 0) {
+    return expand;
+  }
+  return 0;
 }
 
 function expandFilterExtentsForEffect(
@@ -781,12 +786,26 @@ function expandFilterExtentsForEffect(
     case "drop-shadow":
       return expandFilterExtentsForShadow(extents, bounds, effect);
     case "inner-shadow":
-      return extents;
+      return expandFilterExtentsForInnerShadow(extents, bounds, effect);
     case "layer-blur":
-      return expandFilterExtentsForLayerBlur(extents, effect);
+      return expandFilterExtentsForLayerBlur(extents, bounds, effect);
     case "background-blur":
-      return extents;
+      return expandFilterExtentsForBackgroundBlur(extents, bounds, effect);
   }
+}
+
+function expandFilterExtentsForBackgroundBlur(
+  extents: FilterExtents,
+  bounds: FilterBounds,
+  effect: Extract<Effect, { readonly type: "background-blur" }>,
+): FilterExtents {
+  const expand = effect.radius;
+  return {
+    minX: Math.min(extents.minX, bounds.x - expand),
+    minY: Math.min(extents.minY, bounds.y - expand),
+    maxX: Math.max(extents.maxX, bounds.x + bounds.width + expand),
+    maxY: Math.max(extents.maxY, bounds.y + bounds.height + expand),
+  };
 }
 
 /**

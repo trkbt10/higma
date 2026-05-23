@@ -471,6 +471,8 @@ function derivedLineWidthsFromGlyphs(
     }
     const charWidths = derivedGlyphClusterWidthsForLine({
       glyphsBySourceIndex,
+      lineWidth: base.width,
+      baselineX: base.baselineX,
       lineSourceStart: base.absoluteSourceStart,
       lineSourceEnd: base.absoluteSourceEnd,
     });
@@ -494,32 +496,66 @@ function sourceIndexesForRange(start: number, end: number): readonly number[] {
   return Array.from({ length: end - start }, (_item, offset) => start + offset);
 }
 
-function glyphStartIndexesForLine(input: {
+type DerivedGlyphClusterStart = {
+  readonly sourceIndex: number;
+  readonly glyph: FigDerivedGlyph;
+};
+
+function glyphStartsForLine(input: {
   readonly glyphsBySourceIndex: ReadonlyMap<number, FigDerivedGlyph>;
   readonly lineSourceStart: number;
   readonly lineSourceEnd: number;
-}): readonly number[] {
+}): readonly DerivedGlyphClusterStart[] {
   if (input.lineSourceStart === input.lineSourceEnd) {
     return [];
   }
-  const glyphStartIndexes = sourceIndexesForRange(input.lineSourceStart, input.lineSourceEnd)
-    .filter((sourceIndex) => input.glyphsBySourceIndex.has(sourceIndex));
-  if (glyphStartIndexes[0] !== input.lineSourceStart) {
-    throw new Error("text-resolve:derived-line-metrics:missing-glyph-position");
-  }
-  return glyphStartIndexes;
+  return sourceIndexesForRange(input.lineSourceStart, input.lineSourceEnd)
+    .flatMap((sourceIndex) => {
+      const glyph = input.glyphsBySourceIndex.get(sourceIndex);
+      if (glyph === undefined) {
+        return [];
+      }
+      return [{ sourceIndex, glyph }];
+    });
 }
 
-function nextGlyphStartOrLineEnd(
-  glyphStartIndexes: readonly number[],
+function nextClusterSourceIndexOrLineEnd(
+  glyphStarts: readonly DerivedGlyphClusterStart[],
   index: number,
   lineSourceEnd: number,
 ): number {
-  const next = glyphStartIndexes[index + 1];
+  const next = glyphStarts[index + 1]?.sourceIndex;
   if (next === undefined) {
     return lineSourceEnd;
   }
   return next;
+}
+
+function leadingGlyphClusterWidths(input: {
+  readonly first: DerivedGlyphClusterStart;
+  readonly lineSourceStart: number;
+  readonly baselineX: number;
+}): readonly number[] {
+  if (input.first.sourceIndex === input.lineSourceStart) {
+    return [];
+  }
+  return glyphClusterCharacterWidths(
+    input.first.sourceIndex - input.lineSourceStart,
+    requireDerivedGlyphWidth(input.first.glyph.position.x - input.baselineX),
+  );
+}
+
+function glyphWidthsFromAdvanceClusters(input: {
+  readonly glyphStarts: readonly DerivedGlyphClusterStart[];
+  readonly lineSourceEnd: number;
+}): readonly number[] {
+  return input.glyphStarts.flatMap((entry, index) => {
+    const nextSourceIndex = nextClusterSourceIndexOrLineEnd(input.glyphStarts, index, input.lineSourceEnd);
+    return glyphClusterCharacterWidths(
+      nextSourceIndex - entry.sourceIndex,
+      requireDerivedGlyphWidth(entry.glyph.advance),
+    );
+  });
 }
 
 function glyphClusterCharacterWidths(clusterLength: number, width: number): readonly number[] {
@@ -536,19 +572,29 @@ function glyphClusterCharacterWidths(clusterLength: number, width: number): read
 
 function derivedGlyphClusterWidthsForLine(input: {
   readonly glyphsBySourceIndex: ReadonlyMap<number, FigDerivedGlyph>;
+  readonly lineWidth: number;
+  readonly baselineX: number;
   readonly lineSourceStart: number;
   readonly lineSourceEnd: number;
 }): readonly number[] {
-  const glyphStartIndexes = glyphStartIndexesForLine(input);
-  return glyphStartIndexes.flatMap((sourceIndex, index) => {
-    const glyph = input.glyphsBySourceIndex.get(sourceIndex);
-    if (glyph === undefined) {
-      throw new Error("text-resolve:derived-line-metrics:missing-glyph-position");
-    }
-    const nextSourceIndex = nextGlyphStartOrLineEnd(glyphStartIndexes, index, input.lineSourceEnd);
-    const width = requireDerivedGlyphWidth(glyph.advance);
-    return glyphClusterCharacterWidths(nextSourceIndex - sourceIndex, width);
+  if (input.lineSourceStart === input.lineSourceEnd) {
+    return [];
+  }
+  const glyphStarts = glyphStartsForLine(input);
+  if (glyphStarts.length === 0) {
+    return glyphClusterCharacterWidths(input.lineSourceEnd - input.lineSourceStart, input.lineWidth);
+  }
+  const first = glyphStarts[0];
+  if (first === undefined) {
+    throw new Error("text-resolve:derived-line-metrics:missing-glyph-position");
+  }
+  const leadingWidths = leadingGlyphClusterWidths({
+    first,
+    lineSourceStart: input.lineSourceStart,
+    baselineX: input.baselineX,
   });
+  const glyphWidths = glyphWidthsFromAdvanceClusters({ glyphStarts, lineSourceEnd: input.lineSourceEnd });
+  return [...leadingWidths, ...glyphWidths];
 }
 
 function requireDerivedGlyphWidth(width: number): number {

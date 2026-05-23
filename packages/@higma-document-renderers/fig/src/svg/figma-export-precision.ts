@@ -9,7 +9,6 @@
 import { unsafeSvg, type SvgString } from "./primitives";
 import {
   serializeSvgNode,
-  serializeSvgAttributes,
   type SvgAttributeValue,
   type SvgAttributes,
   type SvgElementNode,
@@ -42,67 +41,79 @@ type RewrittenTranslation = {
 const SVG_X_POSITION_ATTRIBUTES = new Set(["x", "cx", "x1", "x2", "fx"]);
 const SVG_Y_POSITION_ATTRIBUTES = new Set(["y", "cy", "y1", "y2", "fy"]);
 const SVG_SIZE_ATTRIBUTES = new Set(["width", "height", "r", "rx", "ry", "stroke-width", "fill-opacity", "stroke-opacity", "opacity"]);
-const SVG_PRECISION_TAG_NAMES = new Set(["path", "rect", "circle", "ellipse", "linearGradient", "radialGradient", "line", "stop"]);
+const SVG_PRECISION_TAG_NAMES = new Set(["path", "rect", "circle", "ellipse", "linearGradient", "radialGradient", "line", "stop", "filter", "mask"]);
 const PLAIN_SVG_NUMBER_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-
-const SVG_EXPORT_TRANSLATION_RESIDUE_EPSILON = 0.001;
 
 /**
  * Serialize a structured SVG tree with Figma-compatible export precision.
  */
 export function serializeFigmaExportSvg(root: SvgNode): SvgString {
+  return unsafeSvg(serializeSvgNode(applyFigmaExportSvgPrecision(root)));
+}
+
+/**
+ * Apply Figma-compatible export precision to a structured SVG tree.
+ *
+ * React SVG rendering and string serialization both consume this same
+ * structured result, so DOM-backed editor pixels and exported SVG text
+ * do not diverge on coordinate quantization.
+ */
+export function applyFigmaExportSvgPrecision(root: SvgNode): SvgNode {
   if (root.kind !== "element" || root.name !== "svg") {
     throw new Error("serializeFigmaExportSvg requires an <svg> root element");
   }
   const viewportOrigin = readSvgExportViewportOrigin(root);
   const stack: TranslationScope[] = [{ tx: 0, ty: 0, txRaw: 0, tyRaw: 0 }];
-  const serialized = serializePrecisionNode(root, stack, viewportOrigin);
+  const projected = precisionNode(root, stack, viewportOrigin);
   if (stack.length !== 1) {
     throw new Error("serializeFigmaExportSvg found unclosed SVG group scopes");
   }
-  return unsafeSvg(serialized);
+  return projected;
 }
 
-function serializePrecisionNode(
+function precisionNode(
   node: SvgNode,
   stack: TranslationScope[],
   viewportOrigin: ExportPoint,
-): string {
-  if (node.kind !== "element") {
-    return serializeSvgNode(node);
+): SvgNode {
+  if (node.kind === "text") {
+    return node;
+  }
+  if (node.kind === "fragment") {
+    return {
+      ...node,
+      children: node.children.map((child) => precisionNode(child, stack, viewportOrigin)),
+    };
   }
   if (node.name === "g") {
-    return serializeGroupNode(node, stack, viewportOrigin);
+    return precisionGroupNode(node, stack, viewportOrigin);
   }
-  return serializeElementNode(node, currentScope(stack), stack, viewportOrigin);
+  return precisionElementNode(node, currentScope(stack), stack, viewportOrigin);
 }
 
-function serializeGroupNode(
+function precisionGroupNode(
   node: SvgElementNode,
   stack: TranslationScope[],
   viewportOrigin: ExportPoint,
-): string {
+): SvgElementNode {
   const parent = currentScope(stack);
   const rewritten = rewriteTranslationScope(node.attrs, parent, viewportOrigin);
   const attrs = roundCoordinateAttributes(rewritten.attrs, parent, viewportOrigin);
   stack.push(rewritten.scope);
-  const body = node.children.map((child) => serializePrecisionNode(child, stack, viewportOrigin)).join("");
+  const children = node.children.map((child) => precisionNode(child, stack, viewportOrigin));
   stack.pop();
-  return serializeElementOpen(node, attrs, body);
+  return { ...node, attrs, children };
 }
 
-function serializeElementNode(
+function precisionElementNode(
   node: SvgElementNode,
   parent: TranslationScope,
   stack: TranslationScope[],
   viewportOrigin: ExportPoint,
-): string {
+): SvgElementNode {
   const attrs = precisionAttributes(node, parent, viewportOrigin);
-  if (node.selfClosing) {
-    return serializeSelfClosingElement(node, attrs);
-  }
-  const body = node.children.map((child) => serializePrecisionNode(child, stack, viewportOrigin)).join("");
-  return serializeElementOpen(node, attrs, body);
+  const children = node.children.map((child) => precisionNode(child, stack, viewportOrigin));
+  return { ...node, attrs, children };
 }
 
 function precisionAttributes(
@@ -232,7 +243,24 @@ function roundCoordinateAttribute(
   if (SVG_SIZE_ATTRIBUTES.has(name)) {
     return roundPlainNumberAttribute(stringValue);
   }
+  if (name === "transform") {
+    return roundPureTranslationTransformAttribute(stringValue, parent, viewportOrigin);
+  }
   return value;
+}
+
+function roundPureTranslationTransformAttribute(
+  value: string,
+  parent: TranslationScope,
+  viewportOrigin: ExportPoint,
+): SvgAttributeValue {
+  const translation = readTranslationTransform(value);
+  if (translation === undefined) {
+    return value;
+  }
+  const dx = roundExportPosition(translation.dx + parent.tx, "x", viewportOrigin) - parent.tx;
+  const dy = roundExportPosition(translation.dy + parent.ty, "y", viewportOrigin) - parent.ty;
+  return formatTranslationTransform(translation.kind, dx, dy);
 }
 
 function roundAxisPositionAttribute(
@@ -265,7 +293,8 @@ function roundExportPosition(worldCoord: number, axis: "x" | "y", viewportOrigin
 function roundMagnitude(value: number): number {
   const precision = figmaSixSignificantDecimalPlaces(Math.abs(value));
   const factor = 10 ** precision;
-  return Math.round(value * factor) / factor;
+  const tieGuard = Math.sign(value) / (factor * 1_000);
+  return Math.round((value - tieGuard) * factor) / factor;
 }
 
 function readSvgExportViewportOrigin(root: SvgElementNode): ExportPoint {
@@ -331,16 +360,18 @@ function rewritePathDWithMagnitudeRule(
   }
   function roundRelativeValue(value: number): string {
     const factor = 10 ** precisionForMag(Math.abs(value));
-    return formatFigmaRoundedNumber(Math.round(value * factor) / factor);
+    const tieGuard = Math.sign(value) / (factor * 1_000);
+    return formatFigmaRoundedNumber(Math.round((value - tieGuard) * factor) / factor);
   }
   function roundAbsoluteValue(local: number, isX: boolean): string {
     const emittedOffset = isX ? parent.tx : parent.ty;
-    const geometryOffset = canonicalExportGeometryOffset(isX ? parent.txRaw : parent.tyRaw, emittedOffset);
+    const geometryOffset = isX ? parent.txRaw : parent.tyRaw;
     const origin = isX ? viewportOrigin.x : viewportOrigin.y;
     const world = local + geometryOffset;
     const localToExport = world - origin;
     const factor = 10 ** precisionForMag(Math.abs(localToExport));
-    const roundedWorld = origin + Math.round(localToExport * factor) / factor;
+    const tieGuard = Math.sign(localToExport) / (factor * 1_000);
+    const roundedWorld = origin + Math.round((localToExport - tieGuard) * factor) / factor;
     return formatFigmaRoundedNumber(roundedWorld - emittedOffset);
   }
   return d.replace(/([MLHVCSQTAZmlhvcsqtaz])([^MLHVCSQTAZmlhvcsqtaz]*)/g, (segment: string, cmd: string, argText: string) => {
@@ -429,28 +460,4 @@ function rewritePathDWithMagnitudeRule(
     }
     return cmd + segments.join(" ");
   });
-}
-
-function canonicalExportGeometryOffset(rawOffset: number, emittedOffset: number): number {
-  const residue = rawOffset - emittedOffset;
-  if (Math.abs(residue) < SVG_EXPORT_TRANSLATION_RESIDUE_EPSILON) {
-    return emittedOffset;
-  }
-  return rawOffset;
-}
-
-function serializeElementOpen(node: SvgElementNode, attrs: SvgAttributes, body: string): string {
-  return `<${node.name}${serializeAttrPart(attrs)}>${body}</${node.name}>`;
-}
-
-function serializeSelfClosingElement(node: SvgElementNode, attrs: SvgAttributes): string {
-  return `<${node.name}${serializeAttrPart(attrs)}/>`;
-}
-
-function serializeAttrPart(attrs: SvgAttributes): string {
-  const serialized = serializeSvgAttributes(attrs);
-  if (serialized.length === 0) {
-    return "";
-  }
-  return ` ${serialized}`;
 }

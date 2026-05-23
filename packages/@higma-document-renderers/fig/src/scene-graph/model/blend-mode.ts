@@ -36,11 +36,9 @@ const FIGMA_BLEND_MODE_TO_SCENE: Partial<Record<FigBlendMode, BlendMode>> = {
   LUMINOSITY: "luminosity",
 };
 
-
-
-
-
-
+/**
+ * Converts a Figma blend mode enum carried by paints and effects.
+ */
 export function convertFigmaBlendMode(
   blendMode: FigBlendMode | KiwiEnumValue<FigBlendMode> | undefined,
 ): BlendMode | undefined {

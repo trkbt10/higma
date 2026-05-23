@@ -14,6 +14,8 @@ import type { ReactNode } from "react";
 import type { StrokeRendering, StrokeShape } from "../../scene-graph";
 import type { ResolvedStrokeAttrs } from "../../scene-graph";
 import { RectShape } from "./rect-shape";
+import { blendModeStyle } from "./blend-mode";
+import { PathContourShape } from "./path-contour-shape";
 
 type IndividualCornerRadius = Extract<StrokeRendering, { readonly mode: "individual" }>["cornerRadius"];
 
@@ -69,7 +71,7 @@ function StrokedShape({ shape, stroke }: { shape: StrokeShape; stroke: ResolvedS
       return (
         <>
           {shape.paths.map((p, i) => (
-            <path key={i} d={p.d} fillRule={p.fillRule} fill="none" {...sAttrs} />
+            <PathContourShape key={i} contour={p} fill="none" {...sAttrs} />
           ))}
         </>
       );
@@ -81,7 +83,7 @@ function StrokeGeometryElements({ sr }: { readonly sr: Extract<StrokeRendering, 
   return (
     <>
       {sr.layers.map((layer, layerIndex) => (
-        <g key={layerIndex} style={layer.blendMode ? { mixBlendMode: layer.blendMode as React.CSSProperties["mixBlendMode"] } : undefined}>
+        <g key={layerIndex} style={blendModeStyle(layer.blendMode)}>
           {sr.paths.map((p, pathIndex) => (
             <path
               key={pathIndex}
@@ -130,7 +132,7 @@ export function StrokeRenderingElements({ sr }: { sr: StrokeRendering }): ReactN
               strokeDasharray: layer.attrs.strokeDasharray,
             };
             return (
-              <g key={i} style={layer.blendMode ? { mixBlendMode: layer.blendMode as React.CSSProperties["mixBlendMode"] } : undefined}>
+              <g key={i} style={blendModeStyle(layer.blendMode)}>
                 <StrokedShape shape={sr.shape} stroke={lAttrs} />
               </g>
             );

@@ -26,6 +26,10 @@ import {
   resolveSvgMaskPresentation,
   resolveSvgStrokeMaskElementAttrs,
   resolveRenderTree,
+  resolveLayeredRectShapePrimitive,
+  resolvePathBackedRectShapePrimitive,
+  resolvePathContourRectPrimitive,
+  resolveRectShapePrimitive,
   type RenderTree,
   type RenderNode,
   type BlendMode,
@@ -47,12 +51,14 @@ import {
   type RenderBackgroundBlur,
   type RenderNodeBase,
   type SvgMaskElementAttrs,
+  type PathContourRectSize,
+  type RectShapePrimitive,
 } from "../scene-graph";
 
 import type { ResolvedStrokeAttrs, ResolvedAngularGradient, ResolvedDiamondGradient, ResolvedFillLayer, ResolvedStrokeLayer } from "../scene-graph";
 
 import type { ResolvedFilterPrimitive } from "../scene-graph";
-import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD, type CornerRadius } from "@higma-primitives/path";
+import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD, parseSvgPathD, pathCommandsBoundingBox, type CornerRadius } from "@higma-primitives/path";
 
 import {
   svg,
@@ -70,6 +76,7 @@ import {
   stop,
   pattern,
   image,
+  useElement,
   filter,
   feGaussianBlur,
   feFlood,
@@ -85,20 +92,39 @@ import {
   foreignObject,
   htmlDiv,
   type SvgNode,
+  type SvgElementNode,
   type SvgPaintAttrs,
+  type SvgAttributeValue,
+  type SvgAttributes,
   EMPTY_SVG,
 } from "./element-primitives";
 import type { SvgString } from "./primitives";
 import { serializeFigmaExportSvg } from "./figma-export-precision";
+import { projectFigmaExportTransforms } from "./figma-export-transform-projection";
 
 // =============================================================================
 // Def Formatting
 // =============================================================================
 
+const DATA_IMAGE_URI_PREFIX = "data:image/";
+let svgImageAssetGeneration = 0;
+
+type SvgImageAsset = {
+  readonly id: string;
+  readonly node: SvgNode;
+};
+
+type SvgImageAssetRegistry = {
+  readonly generation: number;
+  readonly byKey: Map<string, SvgImageAsset>;
+  nextIndex: number;
+};
+
 function formatClipPathShape(shape: ClipPathShape): SvgNode {
   switch (shape.kind) {
-    case "path":
+    case "path": {
       return path({ d: shape.d, "fill-rule": shape.fillRule, "clip-rule": shape.fillRule });
+    }
     case "ellipse":
       return ellipse({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
     case "rect":
@@ -409,7 +435,11 @@ function formatDef(def: RenderDef): SvgNode {
       return filter(filterAttrs, ...primitives);
     }
     case "clip-path": {
-      return clipPath({ id: def.id }, formatClipPathShape(def.shape));
+      const shape = formatClipPathShape(def.shape);
+      if (def.transformProjection === undefined) {
+        return clipPath({ id: def.id, transform: def.transform }, shape);
+      }
+      return clipPath({ id: def.id, transform: def.transform }, { transformProjection: def.transformProjection }, shape);
     }
     case "mask": {
       // `maskUnits="userSpaceOnUse"` matches Figma's own SVG export
@@ -612,24 +642,9 @@ function wrapperFilterAttr(wrapper: ResolvedWrapperAttrs, includeFilter: boolean
 /**
  * Render a rectangle shape.
  *
- * Sharp-cornered rects (`cr` undefined or 0) and equal-corner rounded
- * rects emit as native `<rect>` / `<rect rx>` — matching Figma's SVG
- * exporter's byte pattern. Theirs uses `<rect rx="…"/>` exclusively for
- * uniform-corner rounded rects (App page screenshots iPhone bezels
- * `rx=24`, AppStore Search Cell icon mounts, the Metadata icon outline)
- * and our renderer previously emitted these as `<path>` with cubic-
- * Bezier corners, producing a slightly different sub-pixel AA pattern
- * along rounded boundaries (the App page screenshots / AppStore Search
- * Cell bezel-edge diff). Only per-corner-differing radii fall back to
- * `<path>` because SVG `<rect rx>` cannot express that shape.
- *
- * When `cornerSmoothing > 0` (Figma's iOS-style continuous-curvature
- * toggle, on by default for App Store template assets at 0.6), the
- * standard SVG `<rect rx>` and quarter-circle path no longer match
- * the visible corner: the smoothed corner extends `r·(1+s)` along
- * each edge with a continuous-curvature transition. We route those
- * through `buildSmoothedRoundedRectPathD`, which produces the same
- * three-cubic-Bezier-per-corner byte pattern Figma's exporter emits.
+ * Sharp-cornered rects and single-fill uniform rounded rects emit as
+ * native `<rect>` / `<rect rx>`. Per-corner or smoothed rounded rects
+ * use `<path>` because SVG `<rect>` cannot express their Kiwi geometry.
  */
 function formatRectShape(
   w: number, h: number, cr: CornerRadius | undefined,
@@ -637,54 +652,50 @@ function formatRectShape(
   strokeAttrs: SvgPaintAttrs,
   cornerSmoothing?: number,
 ): SvgNode {
-  const smoothed = tryFormatSmoothedRectShape(w, h, cr, cornerSmoothing, fillAttrs, strokeAttrs);
-  if (smoothed !== undefined) {
-    return smoothed;
-  }
-  const uniform = uniformCornerRadius(cr);
-  if (uniform === undefined && cr !== undefined && typeof cr !== "number") {
-    return path({
-      d: buildRoundedRectPathD(w, h, cr),
-      ...fillAttrs,
-      ...strokeAttrs,
-    });
-  }
-  const rxValue = uniform ?? (typeof cr === "number" ? cr : 0);
-  const rxAttr = rxValue > 0 ? { rx: clampSvgRectCornerRadius(w, h, rxValue) } : {};
-  return rect({
-    x: 0, y: 0,
-    width: w, height: h,
-    ...rxAttr,
-    ...fillAttrs,
-    ...strokeAttrs,
-  });
+  const shape = resolveRectShapePrimitive(w, h, cr, cornerSmoothing);
+  return formatRectShapePrimitive(shape, { ...fillAttrs, ...strokeAttrs });
 }
 
-function tryFormatSmoothedRectShape(
+function formatLayeredRectShape(
   w: number,
   h: number,
   cr: CornerRadius | undefined,
-  cornerSmoothing: number | undefined,
-  fillAttrs: SvgPaintAttrs,
-  strokeAttrs: SvgPaintAttrs,
-): SvgNode | undefined {
-  const smoothing = positiveCornerSmoothing(cornerSmoothing);
-  if (smoothing === 0) {
-    return undefined;
-  }
-  const radii = cornerRadiusToTuple(cr);
-  if (radii === undefined) {
-    return undefined;
-  }
-  return path({
-    d: buildSmoothedRoundedRectPathD(w, h, radii, smoothing),
-    ...fillAttrs,
-    ...strokeAttrs,
-  });
+  attrs: SvgPaintAttrs,
+  cornerSmoothing?: number,
+): SvgNode {
+  const shape = resolveLayeredRectShapePrimitive(w, h, cr, cornerSmoothing);
+  return formatRectShapePrimitive(shape, attrs);
 }
 
-function clampSvgRectCornerRadius(w: number, h: number, radius: number): number {
-  return Math.min(radius, w / 2, h / 2);
+function formatPathBackedRectShape(
+  w: number,
+  h: number,
+  cr: CornerRadius | undefined,
+  fillAttrs: SvgPaintAttrs,
+  strokeAttrs: SvgPaintAttrs,
+  cornerSmoothing?: number,
+): SvgNode {
+  const shape = resolvePathBackedRectShapePrimitive(w, h, cr, cornerSmoothing);
+  return formatRectShapePrimitive(shape, { ...fillAttrs, ...strokeAttrs });
+}
+
+function formatRectShapePrimitive(shape: RectShapePrimitive, attrs: SvgPaintAttrs): SvgNode {
+  switch (shape.kind) {
+    case "rect":
+      return rect({
+        x: shape.x,
+        y: shape.y,
+        width: shape.width,
+        height: shape.height,
+        rx: shape.rx,
+        ...attrs,
+      });
+    case "path":
+      return path({
+        d: shape.d,
+        ...attrs,
+      });
+  }
 }
 
 /**
@@ -732,6 +743,30 @@ function blendModeStyle(bm: BlendMode | undefined): string | undefined {
   return bm ? `mix-blend-mode:${bm}` : undefined;
 }
 
+function directShapeStyleWithNodeBlend(
+  node: RenderNodeBase & { readonly needsWrapper?: boolean },
+  style: string | undefined,
+): string | undefined {
+  if (node.needsWrapper === true || node.wrapper.blendMode === undefined) {
+    return style;
+  }
+  const nodeBlendStyle = blendModeStyle(node.wrapper.blendMode);
+  if (style !== undefined) {
+    throw new Error(`formatRenderTree cannot fold node-level blend onto paint-blended shape ${node.id}`);
+  }
+  return nodeBlendStyle;
+}
+
+function directShapeAttrsWithNodeBlend<T extends SvgPaintAttrs>(
+  node: RenderNodeBase & { readonly needsWrapper?: boolean },
+  attrs: T,
+): T {
+  return {
+    ...attrs,
+    style: directShapeStyleWithNodeBlend(node, attrs.style),
+  };
+}
+
 /**
  * Render stacked rect shapes for multi-paint fills.
  * Each fill layer becomes its own rect/path element, bottom-to-top.
@@ -750,7 +785,7 @@ function formatMultiFillRectLayers(
     };
     // Only last layer gets stroke
     const sAttrs: SvgPaintAttrs = i === layers.length - 1 ? strokeAttrs : {};
-    return formatRectShape(w, h, cr, fillAttrs, sAttrs, cornerSmoothing);
+    return formatLayeredRectShape(w, h, cr, { ...fillAttrs, ...sAttrs }, cornerSmoothing);
   });
 }
 
@@ -801,9 +836,7 @@ function formatMultiFillPathLayers(
     const sAttrs = li === layers.length - 1 ? strokeAttrs : {};
     const style = blendModeStyle(layer.blendMode);
     for (const p of paths) {
-      result.push(path({
-        d: p.d,
-        "fill-rule": p.fillRule,
+      result.push(formatPreservedPathContourElement(p, {
         ...fillAttrs,
         ...sAttrs,
         style,
@@ -821,6 +854,16 @@ function formatFrameSurfaceShape(
   const attrs = { ...fillAttrs, ...(strokeAttrs ?? {}), ...frameBackgroundShapeRendering(node) };
   switch (node.surfaceShape.kind) {
     case "rect":
+      if (frameSurfaceNeedsPathBackedShape(node)) {
+        return [formatPathBackedRectShape(
+          node.surfaceShape.width,
+          node.surfaceShape.height,
+          node.surfaceShape.cornerRadius,
+          attrs,
+          {},
+          node.surfaceShape.cornerSmoothing,
+        )];
+      }
       return [formatRectShape(
         node.surfaceShape.width,
         node.surfaceShape.height,
@@ -830,12 +873,63 @@ function formatFrameSurfaceShape(
         node.surfaceShape.cornerSmoothing,
       )];
     case "path":
-      return node.surfaceShape.paths.map((p) => path({
-        d: p.d,
-        "fill-rule": p.fillRule,
-        ...attrs,
+      if (frameSurfaceNeedsPathBackedShape(node)) {
+        return node.surfaceShape.paths.map((p) => formatPreservedPathContourElement(p, attrs));
+      }
+      return node.surfaceShape.paths.map((p) => formatPathContourElement(p, attrs, {
+        width: node.width,
+        height: node.height,
       }));
   }
+}
+
+function frameSurfaceNeedsPathBackedShape(node: RenderFrameNode): boolean {
+  return node.background?.filterAttr !== undefined || node.wrapper.filterAttr !== undefined;
+}
+
+function formatPathContourElement(
+  contour: { readonly d: string; readonly fillRule?: "evenodd" },
+  attrs: SvgPaintAttrs,
+  size?: PathContourRectSize,
+): SvgNode {
+  const rectPrimitive = resolvePathContourRectPrimitive(contour, size);
+  if (rectPrimitive !== undefined) {
+    return formatPathContourRectElement(rectPrimitive, attrs);
+  }
+  return path({
+    d: contour.d,
+    "fill-rule": contour.fillRule,
+    ...attrs,
+  });
+}
+
+function formatPathContourRectElement(
+  rectPrimitive: Extract<RectShapePrimitive, { readonly kind: "rect" }>,
+  attrs: SvgPaintAttrs,
+): SvgNode {
+  const rectNode = rect({
+      x: rectPrimitive.x,
+      y: rectPrimitive.y,
+      width: rectPrimitive.width,
+      height: rectPrimitive.height,
+      rx: rectPrimitive.rx,
+      ...attrs,
+    });
+  if (rectNode.kind !== "element") {
+    throw new Error("formatPathContourElement requires rect() to return an SVG element");
+  }
+  return rectNode;
+}
+
+function formatPreservedPathContourElement(
+  contour: { readonly d: string; readonly fillRule?: "evenodd" },
+  attrs: SvgPaintAttrs,
+): SvgNode {
+  return path({
+    d: contour.d,
+    "fill-rule": contour.fillRule,
+    ...attrs,
+  });
 }
 
 function formatMultiFillFrameSurfaceLayers(
@@ -918,19 +1012,18 @@ function formatMultiStrokeEllipseLayers(
 function formatMultiStrokePathLayers(
   layers: readonly ResolvedStrokeLayer[],
   paths: readonly { d: string; fillRule?: "evenodd" }[],
+  size?: PathContourRectSize,
 ): SvgNode[] {
   const result: SvgNode[] = [];
   for (const layer of layers) {
     const sAttrs = strokeToSvgAttrs(layer.attrs);
     const style = blendModeStyle(layer.blendMode);
     for (const p of paths) {
-      result.push(path({
-        d: p.d,
-        "fill-rule": p.fillRule,
+      result.push(formatPathContourElement(p, {
         fill: "none",
         ...sAttrs,
         style,
-      }));
+      }, size));
     }
   }
   return result;
@@ -978,13 +1071,18 @@ function formatStrokeGeometryLayers(
 function formatBackgroundBlur(bgBlur: RenderBackgroundBlur): SvgNode {
   const foContent = htmlDiv({
     xmlns: "http://www.w3.org/1999/xhtml",
-    style: `backdrop-filter:blur(${bgBlur.stdDeviation}px);width:100%;height:100%`,
+    style: `backdrop-filter:blur(${bgBlur.stdDeviation}px);clip-path:url(#${bgBlur.clipId});width:100%;height:100%`,
   });
   const fo = foreignObject(
-    { x: bgBlur.bounds.x, y: bgBlur.bounds.y, width: bgBlur.bounds.width, height: bgBlur.bounds.height },
+    {
+      x: bgBlur.backdropBounds.x,
+      y: bgBlur.backdropBounds.y,
+      width: bgBlur.backdropBounds.width,
+      height: bgBlur.backdropBounds.height,
+    },
     foContent,
   );
-  return g({ "clip-path": `url(#${bgBlur.clipId})` }, fo);
+  return fo;
 }
 
 
@@ -1016,7 +1114,7 @@ function formatStrokedShape(shape: StrokeShape, sAttrs: StrokeSvgAttrs): SvgNode
       return ellipse({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry, fill: "none", ...sAttrs });
     case "path": {
       const els = shape.paths.map((p) =>
-        path({ d: p.d, "fill-rule": p.fillRule, fill: "none", ...sAttrs }),
+        formatPathContourElement(p, { fill: "none", ...sAttrs }),
       );
       return els.length === 1 ? els[0] : g({}, ...els);
     }
@@ -1337,7 +1435,7 @@ function formatGroupChildren(node: RenderGroupNode, children: readonly SvgNode[]
   if (node.childClipId === undefined) {
     return children;
   }
-  return [g({ "clip-path": `url(#${node.childClipId})` }, ...children)];
+  return [clipSvgChildren(node.childClipId, children)];
 }
 
 function formatFrameNode(node: RenderFrameNode): SvgNode {
@@ -1359,7 +1457,7 @@ function formatFrameNode(node: RenderFrameNode): SvgNode {
   const childElements = node.children.map(formatNode);
   const childClipId = node.omitChildClip ? undefined : node.childClipId;
   if (childClipId && childElements.length > 0) {
-    const clippedFrameContent = g({ "clip-path": `url(#${childClipId})` }, ...bgFillParts, ...childElements);
+    const clippedFrameContent = clipSvgChildren(childClipId, [...bgFillParts, ...childElements]);
     foregroundParts.push(...formatFrameSurfaceEffectGroup(node, [clippedFrameContent]));
     foregroundParts.push(...bgStrokeParts);
   } else {
@@ -1438,21 +1536,44 @@ function formatRectNodeContent(node: RenderRectNode, fillStrokeAttrs: StrokeSvgA
   if (node.fillLayers) {
     return formatMultiFillRectLayers(node.fillLayers, node.width, node.height, node.cornerRadius, strokeAttrs, node.cornerSmoothing);
   }
-  return [formatRectShape(
-    node.width,
-    node.height,
-    node.cornerRadius,
+  return [formatRectNodeSingleFillShape(
+    node,
     { ...fillToSvgAttrs(node.fill), ...nodeWrapperShapeRendering(node) },
     strokeAttrs,
-    node.cornerSmoothing,
   )];
 }
 
+function formatRectNodeSingleFillShape(
+  node: RenderRectNode,
+  fillAttrs: SvgPaintAttrs,
+  strokeAttrs: SvgPaintAttrs,
+): SvgNode {
+  const attrs = directShapeAttrsWithNodeBlend(node, effectSourceFillAttrs(node, fillAttrs));
+  if (node.wrapper.filterAttr !== undefined) {
+    return formatPathBackedRectShape(
+      node.width,
+      node.height,
+      node.cornerRadius,
+      attrs,
+      strokeAttrs,
+      node.cornerSmoothing,
+    );
+  }
+  return formatRectShape(
+    node.width,
+    node.height,
+    node.cornerRadius,
+    attrs,
+    strokeAttrs,
+    node.cornerSmoothing,
+  );
+}
+
 function formatEllipseElement(node: RenderEllipseNode, fillStrokeAttrs: StrokeSvgAttrs | undefined): SvgNode {
-  const fillAttrs = {
+  const fillAttrs = directShapeAttrsWithNodeBlend(node, {
     ...effectSourceFillAttrs(node, fillToSvgAttrs(node.fill)),
     ...nodeWrapperShapeRendering(node),
-  };
+  });
   const strokeAttrs = fillStrokeAttrs ?? {};
   if (node.rx === node.ry) {
     return circle({ cx: node.cx, cy: node.cy, r: node.rx, ...fillAttrs, ...strokeAttrs });
@@ -1476,14 +1597,22 @@ function formatPathElements(node: RenderPathNode, fillStrokeAttrs: StrokeSvgAttr
   const strokeAttrs = fillStrokeAttrs ?? {};
   return node.paths.map((p) => {
     const fa = fillAttrsForPath(p.fillOverride, defaultFillAttrs);
-    return path({ d: p.d, "fill-rule": p.fillRule, ...fa, ...strokeAttrs });
+    return formatPathContourElement(p, directShapeAttrsWithNodeBlend(node, { ...fa, ...strokeAttrs }), pathNodeContourSize(node));
   });
 }
 
 function effectSourceFillAttrs<T extends { readonly filterSource?: "effect-shape" }>(
   node: T,
   attrs: ReturnType<typeof fillToSvgAttrs>,
-): ReturnType<typeof fillToSvgAttrs> {
+): ReturnType<typeof fillToSvgAttrs>;
+function effectSourceFillAttrs<T extends { readonly filterSource?: "effect-shape" }>(
+  node: T,
+  attrs: SvgPaintAttrs,
+): SvgPaintAttrs;
+function effectSourceFillAttrs<T extends { readonly filterSource?: "effect-shape" }>(
+  node: T,
+  attrs: SvgPaintAttrs,
+): SvgPaintAttrs {
   if (node.filterSource !== "effect-shape") {
     return attrs;
   }
@@ -1533,6 +1662,58 @@ function clipSvgContent(content: SvgNode, clipId: string | undefined): SvgNode {
   return g({ "clip-path": `url(#${clipId})` }, content);
 }
 
+function clipSvgChildren(clipId: string, children: readonly SvgNode[]): SvgNode {
+  const liftedMask = liftSingleMaskGroupAcrossClip(clipId, children);
+  if (liftedMask !== undefined) {
+    return liftedMask;
+  }
+  return g({ "clip-path": `url(#${clipId})` }, ...children);
+}
+
+function liftSingleMaskGroupAcrossClip(clipId: string, children: readonly SvgNode[]): SvgNode | undefined {
+  if (children.length !== 1) {
+    return undefined;
+  }
+  const child = children[0];
+  if (child.kind !== "element" || child.name !== "g") {
+    return undefined;
+  }
+  const maskAttr = child.attrs.mask;
+  if (typeof maskAttr !== "string") {
+    return undefined;
+  }
+  const nonMaskAttrs = definedSvgAttributeNames(child.attrs).filter((name) => name !== "mask");
+  if (nonMaskAttrs.length > 0) {
+    return undefined;
+  }
+  const { defChildren, contentChildren } = splitDefsFromContent(child.children);
+  return g(
+    { mask: maskAttr },
+    ...defChildren,
+    g({ "clip-path": `url(#${clipId})` }, ...contentChildren),
+  );
+}
+
+function splitDefsFromContent(children: readonly SvgNode[]): {
+  readonly defChildren: readonly SvgNode[];
+  readonly contentChildren: readonly SvgNode[];
+} {
+  return {
+    defChildren: children.filter(isSvgDefsElement),
+    contentChildren: children.filter((child) => !isSvgDefsElement(child)),
+  };
+}
+
+function isSvgDefsElement(node: SvgNode): node is SvgElementNode {
+  return node.kind === "element" && node.name === "defs";
+}
+
+function definedSvgAttributeNames(attrs: SvgElementNode["attrs"]): readonly string[] {
+  return Object.entries(attrs)
+    .filter(([, value]) => value !== undefined)
+    .map(([name]) => name);
+}
+
 function fontVariationStyle(fontVariationSettings: string | undefined): string | undefined {
   if (!fontVariationSettings) { return undefined; }
   return `font-variation-settings:${fontVariationSettings}`;
@@ -1558,7 +1739,7 @@ function formatRectNode(node: RenderRectNode): SvgNode {
     return assembleShapeNode(node, formatShapeContentWithStroke(formatRectNodeContent(node, fillStrokeAttrs), sr));
   }
 
-  const rectEl = formatRectShape(node.width, node.height, node.cornerRadius, effectSourceFillAttrs(node, fillToSvgAttrs(node.fill)), fillStrokeAttrs, node.cornerSmoothing);
+  const rectEl = formatRectNodeSingleFillShape(node, fillToSvgAttrs(node.fill), fillStrokeAttrs);
 
   if (node.needsWrapper) {
     return assembleShapeNode(node, [rectEl]);
@@ -1596,13 +1777,24 @@ function formatPathNode(node: RenderPathNode): SvgNode {
   const defaultFillAttrs = effectSourceFillAttrs(node, fillToSvgAttrs(node.fill));
   const pathElements: SvgNode[] = node.paths.map((p) => {
     const fa = fillAttrsForPath(p.fillOverride, defaultFillAttrs);
-    return path({ d: p.d, "fill-rule": p.fillRule, ...fa, ...fillStrokeAttrs });
+    return formatPathContourElement(p, { ...fa, ...fillStrokeAttrs }, pathNodeContourSize(node));
   });
 
   if (node.needsWrapper) {
     return assembleShapeNode(node, pathElements);
   }
   return pathElements[0];
+}
+
+function pathNodeContourSize(node: RenderPathNode): PathContourRectSize | undefined {
+  const source = node.source;
+  if (source.type !== "path") {
+    return undefined;
+  }
+  if (typeof source.width !== "number" || typeof source.height !== "number") {
+    return undefined;
+  }
+  return { width: source.width, height: source.height };
 }
 
 function formatShapeContentWithStroke(
@@ -1704,6 +1896,7 @@ function formatImageNode(node: RenderImageNode): SvgNode {
     width: node.width,
     height: node.height,
     preserveAspectRatio: node.preserveAspectRatio,
+    style: directShapeStyleWithNodeBlend(node, undefined),
   });
 
   if (node.needsWrapper) {
@@ -1740,6 +1933,12 @@ function formatNode(node: RenderNode): SvgNode {
  * this walker preserves transforms while overriding primitive paint.
  */
 type MaskStrokeAttrs = { readonly stroke: "white"; readonly "stroke-width": number };
+type MaskInlineGeometryStroke = {
+  readonly attrs: MaskStrokeAttrs;
+  readonly suppressGeometryPaths: true;
+};
+
+const MASK_RECT_STROKE_GEOMETRY_EPSILON = 0.02;
 
 function formatNodeAsMaskShape(node: RenderNode, fill: string): SvgNode {
   const wrapper = node.wrapper;
@@ -1812,19 +2011,89 @@ function formatMaskStrokeGeometry(strokeRendering: StrokeRendering | undefined, 
   if (strokeRendering?.mode !== "geometry") {
     return [];
   }
-  return strokeRendering.paths.map((p) => path({ d: p.d, "fill-rule": p.fillRule, fill }));
+  return strokeRendering.paths.map((p) => formatPathContourElement(p, { fill }));
+}
+
+function maskInlineGeometryStrokeForPathNode(node: RenderPathNode): MaskInlineGeometryStroke | undefined {
+  const strokeRendering = node.strokeRendering;
+  if (strokeRendering?.mode !== "geometry") {
+    return undefined;
+  }
+  const sourceContour = singleItem(node.paths);
+  const strokeContour = singleItem(strokeRendering.paths);
+  if (sourceContour === undefined || strokeContour === undefined) {
+    return undefined;
+  }
+  const strokeWidth = uniformPositiveGeometryStrokeWidth(strokeRendering.layers);
+  if (strokeWidth === undefined) {
+    return undefined;
+  }
+  const sourceRect = resolvePathContourRectPrimitive(sourceContour, pathNodeContourSize(node));
+  if (sourceRect === undefined) {
+    return undefined;
+  }
+  const strokeBounds = pathCommandsBoundingBox(parseSvgPathD(strokeContour.d));
+  if (!rectStrokeBoundsMatchSourceRect(sourceRect, strokeBounds, strokeWidth)) {
+    return undefined;
+  }
+  return {
+    attrs: { stroke: "white", "stroke-width": strokeWidth },
+    suppressGeometryPaths: true,
+  };
+}
+
+function singleItem<T>(items: readonly T[]): T | undefined {
+  if (items.length !== 1) {
+    return undefined;
+  }
+  return items[0];
+}
+
+function uniformPositiveGeometryStrokeWidth(layers: readonly ResolvedStrokeLayer[]): number | undefined {
+  const first = singleItem(layers);
+  if (first === undefined) {
+    return undefined;
+  }
+  const strokeWidth = positiveStrokeWidth(first.attrs.strokeWidth);
+  if (strokeWidth === undefined) {
+    return undefined;
+  }
+  return strokeWidth;
+}
+
+function rectStrokeBoundsMatchSourceRect(
+  sourceRect: Extract<RectShapePrimitive, { readonly kind: "rect" }>,
+  strokeBounds: { readonly x: number; readonly y: number; readonly w: number; readonly h: number },
+  strokeWidth: number,
+): boolean {
+  const inset = strokeWidth / 2;
+  const expected = {
+    x: sourceRect.x - inset,
+    y: sourceRect.y - inset,
+    width: sourceRect.width + strokeWidth,
+    height: sourceRect.height + strokeWidth,
+  };
+  return (
+    nearMaskRectStrokeGeometry(strokeBounds.x, expected.x) &&
+    nearMaskRectStrokeGeometry(strokeBounds.y, expected.y) &&
+    nearMaskRectStrokeGeometry(strokeBounds.w, expected.width) &&
+    nearMaskRectStrokeGeometry(strokeBounds.h, expected.height)
+  );
+}
+
+function nearMaskRectStrokeGeometry(a: number, b: number): boolean {
+  return Math.abs(a - b) <= MASK_RECT_STROKE_GEOMETRY_EPSILON;
 }
 
 function formatNodeAsMaskShapeBody(node: RenderNode, fill: string): SvgNode {
-  const strokeAttrs = maskStrokeAttrsForNode(node);
-  const sa = strokeAttrs ?? {};
   switch (node.type) {
     case "path": {
+      const inlineGeometryStroke = maskInlineGeometryStrokeForPathNode(node);
+      const strokeAttrs = maskStrokeAttrsForNode(node) ?? inlineGeometryStroke?.attrs;
+      const sa = strokeAttrs ?? {};
       const parts = [
-        ...node.paths.map((p) =>
-          path({ d: p.d, "fill-rule": p.fillRule, fill, ...sa }),
-        ),
-        ...formatMaskStrokeGeometry(node.strokeRendering, fill),
+        ...node.paths.map((p) => formatPathContourElement(p, { fill, ...sa }, pathNodeContourSize(node))),
+        ...(inlineGeometryStroke?.suppressGeometryPaths === true ? [] : formatMaskStrokeGeometry(node.strokeRendering, fill)),
       ];
       if (parts.length === 1) {
         return parts[0];
@@ -1832,6 +2101,7 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string): SvgNode {
       return g({}, ...parts);
     }
     case "rect": {
+      const strokeAttrs = maskStrokeAttrsForNode(node);
       return formatMaskRectShape({
         width: node.width,
         height: node.height,
@@ -1842,6 +2112,8 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string): SvgNode {
       });
     }
     case "ellipse": {
+      const strokeAttrs = maskStrokeAttrsForNode(node);
+      const sa = strokeAttrs ?? {};
       if (node.rx === node.ry) {
         return circle({ cx: node.cx, cy: node.cy, r: node.rx, fill, ...sa });
       }
@@ -1855,6 +2127,7 @@ function formatNodeAsMaskShapeBody(node: RenderNode, fill: string): SvgNode {
       return g({}, ...children);
     }
     case "frame": {
+      const strokeAttrs = maskStrokeAttrsForNode(node);
       // Frame as a mask: emit its rounded-rect background as the shape.
       // Children of a frame-as-mask are unusual and would each need to
       // be treated as additive mask geometry — drop through to a group.
@@ -1915,8 +2188,7 @@ function formatMaskRectShape(
   },
 ): SvgNode {
   const uniform = uniformCornerRadius(cornerRadius);
-  const hasSmoothing = cornerSmoothing !== undefined && cornerSmoothing > 0;
-  if (cornerRadius !== undefined && (uniform === undefined || hasSmoothing)) {
+  if (cornerRadius !== undefined && uniform === undefined) {
     const radii = coerceCornerRadius(cornerRadius);
     const d = maskRoundedRectPathD({ width, height, radii, cornerSmoothing });
     return path({
@@ -1972,6 +2244,146 @@ function coerceCornerRadius(cr: CornerRadius | undefined): readonly [number, num
   return cr;
 }
 
+function createSvgImageAssetRegistry(): SvgImageAssetRegistry {
+  const generation = svgImageAssetGeneration;
+  svgImageAssetGeneration += 1;
+  return {
+    generation,
+    byKey: new Map(),
+    nextIndex: 0,
+  };
+}
+
+function isDataImageHref(value: SvgAttributeValue): value is string {
+  return typeof value === "string" && value.startsWith(DATA_IMAGE_URI_PREFIX);
+}
+
+function requireSvgImageAssetDimension(
+  value: SvgAttributeValue,
+  attributeName: "width" | "height",
+): number | string {
+  if (typeof value === "number" || typeof value === "string") {
+    return value;
+  }
+  throw new Error(`SVG image asset hoisting requires image ${attributeName}`);
+}
+
+function optionalSvgNumberOrStringAttribute(
+  value: SvgAttributeValue,
+  attributeName: string,
+): number | string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "number" || typeof value === "string") {
+    return value;
+  }
+  throw new Error(`SVG image asset hoisting requires ${attributeName} to be numeric or string when present`);
+}
+
+function optionalSvgStringAttribute(
+  value: SvgAttributeValue,
+  attributeName: string,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  throw new Error(`SVG image asset hoisting requires ${attributeName} to be a string when present`);
+}
+
+function svgImageAssetKey(
+  attrs: SvgAttributes,
+): string {
+  return JSON.stringify([
+    attrs.href,
+    attrs.width,
+    attrs.height,
+    attrs.preserveAspectRatio,
+  ]);
+}
+
+function getSvgImageAsset(
+  attrs: SvgAttributes,
+  registry: SvgImageAssetRegistry,
+): SvgImageAsset {
+  const key = svgImageAssetKey(attrs);
+  const existing = registry.byKey.get(key);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const id = `higma-svg-image-asset-g${registry.generation}-${registry.nextIndex}`;
+  registry.nextIndex += 1;
+  const asset = {
+    id,
+    node: image({
+      id,
+      href: attrs.href as string,
+      width: requireSvgImageAssetDimension(attrs.width, "width"),
+      height: requireSvgImageAssetDimension(attrs.height, "height"),
+      preserveAspectRatio: optionalSvgStringAttribute(attrs.preserveAspectRatio, "image preserveAspectRatio"),
+    }),
+  };
+  registry.byKey.set(key, asset);
+  return asset;
+}
+
+function replaceImageWithAssetUse(
+  node: SvgElementNode,
+  registry: SvgImageAssetRegistry,
+): SvgNode {
+  const asset = getSvgImageAsset(node.attrs, registry);
+  return useElement({
+    href: `#${asset.id}`,
+    x: optionalSvgNumberOrStringAttribute(node.attrs.x, "image x"),
+    y: optionalSvgNumberOrStringAttribute(node.attrs.y, "image y"),
+    transform: optionalSvgStringAttribute(node.attrs.transform, "image transform"),
+    opacity: optionalSvgNumberOrStringAttribute(node.attrs.opacity, "image opacity"),
+    filter: optionalSvgStringAttribute(node.attrs.filter, "image filter"),
+    mask: optionalSvgStringAttribute(node.attrs.mask, "image mask"),
+  });
+}
+
+function rewriteSvgImageAssets(
+  node: SvgNode,
+  registry: SvgImageAssetRegistry,
+): SvgNode {
+  switch (node.kind) {
+    case "fragment":
+      return { ...node, children: node.children.map((child) => rewriteSvgImageAssets(child, registry)) };
+    case "text":
+      return node;
+    case "element":
+      if (node.name === "image" && isDataImageHref(node.attrs.href)) {
+        return replaceImageWithAssetUse(node, registry);
+      }
+      return {
+        ...node,
+        children: node.children.map((child) => rewriteSvgImageAssets(child, registry)),
+      };
+  }
+}
+
+function hoistSvgImageAssets(root: SvgElementNode): SvgElementNode {
+  const registry = createSvgImageAssetRegistry();
+  const rewritten = rewriteSvgImageAssets(root, registry);
+  if (registry.byKey.size === 0) {
+    return root;
+  }
+  if (rewritten.kind !== "element") {
+    throw new Error("SVG image asset hoisting requires an SVG root element");
+  }
+  return {
+    ...rewritten,
+    children: [
+      defs(...Array.from(registry.byKey.values(), (asset) => asset.node)),
+      ...rewritten.children,
+    ],
+  };
+}
+
 // =============================================================================
 // RenderTree → SVG string
 // =============================================================================
@@ -1989,15 +2401,15 @@ export type FormatRenderTreeToSvgOptions = {
 };
 
 /**
- * Format a RenderTree to an SVG string.
+ * Format a RenderTree to the structured SVG element used as the SVG formatter SoT.
  *
  * This is a pure formatter — no attribute resolution happens here.
  * All rendering decisions were made by resolveRenderTree().
  */
-export function formatRenderTreeToSvg(
+export function formatRenderTreeToSvgElement(
   renderTree: RenderTree,
   options?: FormatRenderTreeToSvgOptions,
-): SvgString {
+): SvgElementNode {
   const children = renderTree.children.map(formatNode);
 
   const body: SvgNode[] = [];
@@ -2046,7 +2458,24 @@ export function formatRenderTreeToSvg(
     },
     ...svgChildren,
   );
-  return serializeFigmaExportSvg(built);
+  const projected = projectFigmaExportTransforms(built);
+  if (projected.kind !== "element" || projected.name !== "svg") {
+    throw new Error("formatRenderTreeToSvgElement requires an SVG root element");
+  }
+  return hoistSvgImageAssets(projected);
+}
+
+/**
+ * Format a RenderTree to an SVG string.
+ *
+ * This is a pure formatter — no attribute resolution happens here.
+ * All rendering decisions were made by resolveRenderTree().
+ */
+export function formatRenderTreeToSvg(
+  renderTree: RenderTree,
+  options?: FormatRenderTreeToSvgOptions,
+): SvgString {
+  return serializeFigmaExportSvg(formatRenderTreeToSvgElement(renderTree, options));
 }
 
 function formatSvgNumber(value: number): string {

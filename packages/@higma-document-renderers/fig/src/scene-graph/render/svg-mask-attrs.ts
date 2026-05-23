@@ -48,7 +48,10 @@ export function resolveSvgMaskPresentation(maskType: FigMaskType): SvgMaskPresen
  *
  * SVG defaults mask coordinates to objectBoundingBox. Figma mask content is
  * already in user space, so every backend must emit userSpaceOnUse plus an
- * explicit integer region derived from the mask source geometry.
+ * explicit region derived from the mask source geometry. The coordinates are
+ * intentionally not quantized here: the SVG export boundary projects wrapper
+ * transforms into user-space defs first, then applies the same Figma precision
+ * rule used by normal geometry attributes.
  */
 export function resolveSvgMaskElementAttrs({
   id,
@@ -59,21 +62,17 @@ export function resolveSvgMaskElementAttrs({
   readonly bounds: SvgMaskBounds;
   readonly maskType: SvgMaskType;
 }): SvgMaskElementAttrs {
-  const x = Math.floor(bounds.x);
-  const y = Math.floor(bounds.y);
-  const width = Math.ceil(bounds.x + bounds.width) - x;
-  const height = Math.ceil(bounds.y + bounds.height) - y;
-  if (!(width > 0) || !(height > 0)) {
+  if (!(bounds.width > 0) || !(bounds.height > 0)) {
     throw new Error(`Mask ${id} has a non-positive SVG mask region`);
   }
   return {
     id,
     maskType,
     maskUnits: "userSpaceOnUse",
-    x: String(x),
-    y: String(y),
-    width: String(width),
-    height: String(height),
+    x: String(bounds.x),
+    y: String(bounds.y),
+    width: String(bounds.width),
+    height: String(bounds.height),
   };
 }
 

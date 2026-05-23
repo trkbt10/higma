@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { FigWebGLViewportLoadingOverlay } from "../status/FigWebGLViewportLoadingOverlay";
-import { useFigWebGLViewportRenderer } from "./use-webgl-viewport-renderer";
+import { useWebGLSvgRasterRenderer } from "./use-webgl-svg-raster-renderer";
 
 export type FigWebGLViewportLayerProps = {
   readonly sceneGraph: SceneGraph | null;
@@ -49,7 +49,7 @@ export function FigWebGLViewportLayer({
   viewportRevision,
   initializationDelayMs,
 }: FigWebGLViewportLayerProps) {
-  const state = useFigWebGLViewportRenderer({
+  const state = useWebGLSvgRasterRenderer({
     sceneGraph,
     renderOptions,
     viewportScale,

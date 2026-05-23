@@ -3,37 +3,37 @@
  */
 
 import { memo } from "react";
-import type { CSSProperties } from "react";
 import type { RenderPathNode } from "../../scene-graph";
 import { ShapeShell } from "../primitives/shape-shell";
 import { MultiFillPathLayers } from "../primitives/multi-fill";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
-import type { BlendMode } from "../../scene-graph";
+import { directShapeBlendModeStyle } from "../primitives/blend-mode";
+import { PathContourShape } from "../primitives/path-contour-shape";
+import type { PathContourRectSize } from "../../scene-graph";
 
 type Props = { readonly node: RenderPathNode };
 
 function renderPathElements(node: RenderPathNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
+  const size = pathNodeContourSize(node);
   return node.paths.map((p, i) => {
     const fa = p.fillOverride ?? node.fill;
     return (
-      <path
+      <PathContourShape
         key={i}
-        d={p.d}
-        fillRule={p.fillRule}
+        contour={p}
+        size={size}
         fill={fa.attrs.fill}
         fillOpacity={fa.attrs.fillOpacity}
-        style={pathBlendModeStyle(fa.blendMode)}
+        style={directShapeBlendModeStyle({
+          paintBlendMode: fa.blendMode,
+          nodeBlendMode: node.wrapper.blendMode,
+          wrapped: node.needsWrapper,
+          nodeId: node.id,
+        })}
         {...(uniformStroke ?? {})}
       />
     );
   });
-}
-
-function pathBlendModeStyle(blendMode: BlendMode | undefined): CSSProperties | undefined {
-  if (blendMode === undefined) {
-    return undefined;
-  }
-  return { mixBlendMode: blendMode as CSSProperties["mixBlendMode"] };
 }
 
 function renderPathFillContent(node: RenderPathNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
@@ -41,6 +41,17 @@ function renderPathFillContent(node: RenderPathNode, uniformStroke: ReturnType<t
     return <MultiFillPathLayers layers={node.fillLayers} paths={node.paths} stroke={uniformStroke} />;
   }
   return renderPathElements(node, uniformStroke);
+}
+
+function pathNodeContourSize(node: RenderPathNode): PathContourRectSize | undefined {
+  const source = node.source;
+  if (source.type !== "path") {
+    return undefined;
+  }
+  if (typeof source.width !== "number" || typeof source.height !== "number") {
+    return undefined;
+  }
+  return { width: source.width, height: source.height };
 }
 
 function RenderPathNodeComponentImpl({ node }: Props) {

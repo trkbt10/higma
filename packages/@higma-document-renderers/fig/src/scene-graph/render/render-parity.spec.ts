@@ -120,6 +120,15 @@ describe("Fill resolution (shared SoT)", () => {
     expect(result.attrs.fillOpacity).toBe(0.5);
   });
 
+  it("applies solid fill color alpha to SVG fill opacity", () => {
+    const fill: SolidFill = { type: "solid", color: { ...RED, a: 0.25 }, opacity: 0.5 };
+    const ids = createIdGenerator();
+    const result = resolveFill(fill, ids);
+
+    expect(result.attrs.fill).toBe("#ff0000");
+    expect(result.attrs.fillOpacity).toBe(0.125);
+  });
+
   it("matches Figma SVG export for Kiwi tiny opacity sentinel", () => {
     const fill: SolidFill = { type: "solid", color: RED, opacity: KIWI_TINY_OPACITY_SENTINEL };
     const ids = createIdGenerator();
@@ -314,6 +323,20 @@ describe("Stroke resolution (shared SoT)", () => {
     expect(result.strokeDasharray).toBe("4 2");
   });
 
+  it("applies stroke color alpha to SVG stroke opacity", () => {
+    const stroke: Stroke = {
+      color: { ...RED, a: 0.25 },
+      width: 2,
+      opacity: 0.8,
+      linecap: "butt",
+      linejoin: "miter",
+    };
+    const result = resolveStroke(stroke);
+
+    expect(result.stroke).toBe("#ff0000");
+    expect(result.strokeOpacity).toBe(0.2);
+  });
+
   it("omits default values", () => {
     const stroke: Stroke = {
       color: RED,
@@ -421,7 +444,7 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
-  it("resolves LINEAR_DODGE effect blend as SVG arithmetic add", () => {
+  it("resolves LINEAR_DODGE effect blend as Figma SVG plus-lighter", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",
       offset: { x: 0, y: 2 },
@@ -434,18 +457,15 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    const blend = result!.primitives.find((primitive) => primitive.type === "feComposite");
-    expect(blend?.type).toBe("feComposite");
-    if (blend?.type === "feComposite") {
-      expect(blend.operator).toBe("arithmetic");
-      expect(blend.k1).toBe(0);
-      expect(blend.k2).toBe(1);
-      expect(blend.k3).toBe(1);
-      expect(blend.k4).toBe(0);
+    const blend = result!.primitives[5];
+    expect(blend.type).toBe("feBlend");
+    if (blend.type === "feBlend") {
+      expect(blend.mode).toBe("plus-lighter");
+      expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
 
-  it("resolves LINEAR_BURN effect blend as SVG arithmetic subtract-one", () => {
+  it("resolves LINEAR_BURN effect blend as Figma SVG plus-darker", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",
       offset: { x: 0, y: 2 },
@@ -458,14 +478,11 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    const blend = result!.primitives.find((primitive) => primitive.type === "feComposite");
-    expect(blend?.type).toBe("feComposite");
-    if (blend?.type === "feComposite") {
-      expect(blend.operator).toBe("arithmetic");
-      expect(blend.k1).toBe(0);
-      expect(blend.k2).toBe(1);
-      expect(blend.k3).toBe(1);
-      expect(blend.k4).toBe(-1);
+    const blend = result!.primitives[5];
+    expect(blend.type).toBe("feBlend");
+    if (blend.type === "feBlend") {
+      expect(blend.mode).toBe("plus-darker");
+      expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
 
@@ -484,14 +501,11 @@ describe("Effects resolution (shared SoT)", () => {
     expect(result).toBeDefined();
     expect(result!.primitives).toHaveLength(7);
     expect(result!.primitives[4].type).toBe("feColorMatrix");
-    expect(result!.primitives[5].type).toBe("feComposite");
+    expect(result!.primitives[5].type).toBe("feBlend");
     const blend = result!.primitives[5];
-    if (blend.type === "feComposite") {
-      expect(blend.operator).toBe("arithmetic");
-      expect(blend.k1).toBe(0);
-      expect(blend.k2).toBe(1);
-      expect(blend.k3).toBe(1);
-      expect(blend.k4).toBe(0);
+    if (blend.type === "feBlend") {
+      expect(blend.mode).toBe("plus-lighter");
+      expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
 
@@ -593,20 +607,20 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
-  it("keeps inner-shadow filter bounds on the source element bounds", () => {
+  it("expands inner-shadow filter bounds in the offset direction", () => {
     const effects: Effect[] = [{
       type: "inner-shadow",
-      offset: { x: 0, y: -8 },
-      radius: 16,
+      offset: { x: -1, y: 0 },
+      radius: 0.5,
       color: BLACK_50,
     }];
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids, { x: 10, y: 20, width: 30, height: 40 });
 
-    expect(result?.filterBounds).toEqual({ x: 10, y: 20, width: 30, height: 40 });
+    expect(result?.filterBounds).toEqual({ x: 9.5, y: 20, width: 30.5, height: 40 });
   });
 
-  it("expands mixed shadow filter bounds from drop-shadow only", () => {
+  it("unions mixed shadow filter bounds from drop-shadow and inner-shadow", () => {
     const effects: Effect[] = [
       {
         type: "inner-shadow",
@@ -625,7 +639,7 @@ describe("Effects resolution (shared SoT)", () => {
     const ids = createIdGenerator();
     const result = resolveEffects(effects, ids, { x: 0, y: 0, width: 10, height: 10 });
 
-    expect(result?.filterBounds).toEqual({ x: -2, y: -1, width: 14, height: 14 });
+    expect(result?.filterBounds).toEqual({ x: -2, y: -16, width: 14, height: 29 });
   });
 
   // Regression: Windows 98-style 3D beveled buttons stack four
@@ -780,8 +794,60 @@ describe("Effects resolution (shared SoT)", () => {
     const result = resolveEffects(effects, ids);
 
     expect(result).toBeDefined();
-    expect(result!.primitives).toHaveLength(1);
-    expect(result!.primitives[0].type).toBe("feGaussianBlur");
+    expect(result!.primitives).toHaveLength(3);
+    expect(result!.primitives[0]).toEqual({ type: "feFlood", floodOpacity: 0, result: "BackgroundImageFix" });
+    expect(result!.primitives[1].type).toBe("feBlend");
+    expect(result!.primitives[2].type).toBe("feGaussianBlur");
+  });
+
+  it("expands foreground blur filter region by co-authored background blur radius", () => {
+    const effects: Effect[] = [
+      {
+        type: "background-blur",
+        radius: 40,
+      },
+      {
+        type: "layer-blur",
+        radius: 20,
+      },
+    ];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids, { x: 0, y: 0, width: 290, height: 62 });
+
+    expect(result?.filterBounds).toEqual({ x: -40, y: -40, width: 370, height: 142 });
+    expect(result?.primitives).toHaveLength(3);
+    expect(result?.primitives[0]).toEqual({ type: "feFlood", floodOpacity: 0, result: "BackgroundImageFix" });
+    expect(result?.primitives[1].type).toBe("feBlend");
+    expect(result?.primitives[2]).toEqual({
+      type: "feGaussianBlur",
+      in: "shape-0",
+      stdDeviation: 10,
+    });
+  });
+
+  it("unions foreground blur bounds from source bounds, not accumulated inner-shadow bounds", () => {
+    const effects: Effect[] = [
+      {
+        type: "inner-shadow",
+        offset: { x: -1, y: 0 },
+        radius: 0.5,
+        color: BLACK_50,
+      },
+      {
+        type: "inner-shadow",
+        offset: { x: 2, y: 0 },
+        radius: 2,
+        color: BLACK_50,
+      },
+      {
+        type: "layer-blur",
+        radius: 4,
+      },
+    ];
+    const ids = createIdGenerator();
+    const result = resolveEffects(effects, ids, { x: 0, y: 0, width: 5, height: 107 });
+
+    expect(result?.filterBounds).toEqual({ x: -4, y: -4, width: 13, height: 115 });
   });
 
   it("applies foreground blur to the composed shadow result", () => {
@@ -896,7 +962,7 @@ describe("Path serialization (shared SoT)", () => {
       ],
       windingRule: "nonzero",
     };
-    expect(contourToSvgD(contour)).toBe("M0 0L100 0L100 100Z");
+    expect(contourToSvgD(contour)).toBe("M0 0H100V100Z");
   });
 
   it("serializes cubic bezier", () => {
@@ -908,5 +974,34 @@ describe("Path serialization (shared SoT)", () => {
       windingRule: "nonzero",
     };
     expect(contourToSvgD(contour)).toBe("M0 0C10 20 30 40 50 60");
+  });
+
+  it("serializes Figma contours closed by returning to the subpath start with Z", () => {
+    const contour: PathContour = {
+      commands: [
+        { type: "M", x: 0, y: 0 },
+        { type: "L", x: 10, y: 0 },
+        { type: "L", x: 10, y: 10 },
+        { type: "L", x: 0, y: 10 },
+        { type: "L", x: 0, y: 0 },
+      ],
+      windingRule: "nonzero",
+    };
+    expect(contourToSvgD(contour)).toBe("M0 0H10V10H0V0Z");
+  });
+
+  it("serializes every implicitly closed Figma subpath with Z", () => {
+    const contour: PathContour = {
+      commands: [
+        { type: "M", x: 0, y: 0 },
+        { type: "L", x: 10, y: 0 },
+        { type: "L", x: 0, y: 0 },
+        { type: "M", x: 20, y: 20 },
+        { type: "L", x: 30, y: 20 },
+        { type: "L", x: 20, y: 20 },
+      ],
+      windingRule: "nonzero",
+    };
+    expect(contourToSvgD(contour)).toBe("M0 0H10H0ZM20 20H30H20Z");
   });
 });

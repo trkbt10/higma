@@ -48,6 +48,8 @@ export {
 } from "./stroke-centerline";
 export {
   buildStrokeAlignedClosedPathCommands,
+  buildStrokeGeometryBackedInsideStrokeCenterlineCommands,
+  buildStrokeGeometryBackedOutsideStrokeCenterlineCommands,
   type StrokeAlignedClosedPathOptions,
 } from "./stroke-aligned-path";
 

@@ -30,4 +30,13 @@ describe("ComponentPropertiesSection", () => {
     expect(html).toContain("Default label");
     expect(renderSection(createElement(ComponentPropertiesSection, { node: rect }), [rect])).not.toContain("Component");
   });
+
+  it("does not render properties when the document SymbolResolver cannot resolve the INSTANCE symbol", () => {
+    const instance = sectionNode("INSTANCE", {
+      guid: sectionGuid(11),
+      symbolData: { symbolID: sectionGuid(99) },
+    });
+
+    expect(renderSection(createElement(ComponentPropertiesSection, { node: instance }), [instance])).not.toContain("Component");
+  });
 });

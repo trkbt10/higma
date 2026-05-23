@@ -592,6 +592,37 @@ describe("resolveStyledPaint (registry-vs-embedded SoT)", () => {
     expect(got).toEqual([variableSolidPaint(1, 1, 1, variableKey)]);
   });
 
+  it("materializes variable-bound solid alpha into paint opacity", () => {
+    const variableKey = "baf9e41e6ce2441a8117a30d9eb3deead72801a8";
+    const variableNode = colorVariableNode(
+      { sessionID: 1, localID: 205 },
+      variableKey,
+      { r: 0.4627451002597809, g: 0.4627451002597809, b: 0.501960813999176, a: 0.12 },
+      { r: 0.4627451002597809, g: 0.4627451002597809, b: 0.501960813999176, a: 0.24 },
+    );
+    const variableStyleNode = node({
+      guid: { sessionID: 1, localID: 101 },
+      styleType: { value: 1, name: "FILL" },
+      fillPaints: [{
+        ...variableSolidPaint(0.4627451002597809, 0.4627451002597809, 0.501960813999176, variableKey),
+        opacity: 0.12,
+      }],
+    });
+
+    const got = resolveStyledPaint(
+      { guid: { sessionID: 1, localID: 101 } },
+      undefined,
+      registryFrom([variableNode, variableStyleNode]),
+      { variableModeBySetMap: selectedModeMap() },
+    );
+
+    expect(got).toEqual([{
+      ...variableSolidPaint(0.4627451002597809, 0.4627451002597809, 0.501960813999176, variableKey),
+      color: { r: 0.4627451002597809, g: 0.4627451002597809, b: 0.501960813999176, a: 1 },
+      opacity: 0.24,
+    }]);
+  });
+
   it("does not let a consumer embedded variable cache replace a resolved style variable", () => {
     const primaryKey = "039b9d935dc4bb8355a386faedf5de607afa115b";
     const secondaryKey = "dbc0e46f480e7c1ab174e77cef2c29dcc78cb403";

@@ -1,6 +1,6 @@
 /** @file WebGL viewport loading status overlay. */
 import type { CSSProperties } from "react";
-import type { WebGLViewportPreparationStatus } from "@higma-document-renderers/fig/webgl/preparation-status";
+import type { WebGLViewportPreparationStatus } from "@higma-document-renderers/fig/webgl";
 
 export type FigWebGLViewportLoadingOverlayProps = {
   readonly status: WebGLViewportPreparationStatus;

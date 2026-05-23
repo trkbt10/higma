@@ -26,6 +26,12 @@ export {
 } from "./primitives";
 
 export {
+  type SvgAttributeValue,
+  type SvgAttributes,
+  type SvgNode,
+} from "./element-primitives";
+
+export {
   buildTransformAttr,
 } from "./transform";
 
@@ -42,8 +48,14 @@ export {
 
 export {
   renderSceneGraphToSvg,
+  formatRenderTreeToSvgElement,
   formatRenderTreeToSvg,
 } from "./scene-renderer";
+
+export {
+  applyFigmaExportSvgPrecision,
+  serializeFigmaExportSvg,
+} from "./figma-export-precision";
 
 export {
   type EffectExpansion,

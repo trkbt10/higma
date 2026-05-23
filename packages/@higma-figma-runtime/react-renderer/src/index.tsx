@@ -19,7 +19,7 @@ import {
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
 import type { FigmaExportColorProfile } from "@higma-codecs/raster";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
-import { FigSceneRenderer } from "@higma-document-renderers/fig/react";
+import { FigSceneSvgRenderer } from "@higma-document-renderers/fig/react";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 
 /** Kiwi canvas input accepted by the fig family React renderer boundary. */
@@ -153,16 +153,6 @@ function resolvePreviousSceneGraphCache({
   return previous.cache;
 }
 
-function resolveViewBox(sceneGraph: SceneGraph): string {
-  const viewport = sceneGraph.viewport ?? {
-    x: 0,
-    y: 0,
-    width: sceneGraph.width,
-    height: sceneGraph.height,
-  };
-  return `${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`;
-}
-
 function resolvePageNodes(
   page: FigNode | null | undefined,
   nodes: readonly FigNode[] | undefined,
@@ -266,18 +256,15 @@ function FigFamilyResolvedPageRenderer({
   }
 
   return (
-    <svg
-      data-fig-family-page-renderer=""
-      viewBox={resolveViewBox(sceneGraph)}
-      preserveAspectRatio="none"
-      width={sceneGraph.width}
-      height={sceneGraph.height}
-      overflow="visible"
-      pointerEvents="none"
-      aria-hidden="true"
-    >
-      <FigSceneRenderer sceneGraph={sceneGraph} renderOptions={renderOptions} />
-    </svg>
+    <FigSceneSvgRenderer
+      sceneGraph={sceneGraph}
+      renderOptions={renderOptions}
+      rootProps={{
+        "data-fig-family-page-renderer": "",
+        pointerEvents: "none",
+        "aria-hidden": true,
+      }}
+    />
   );
 }
 

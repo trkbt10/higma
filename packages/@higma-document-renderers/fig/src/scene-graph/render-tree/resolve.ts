@@ -56,7 +56,9 @@ import {
   cornerRadiusScalar,
   buildEllipseArcPathD,
   buildStrokeAlignedClosedPathCommands,
-  type CornerRadius,
+  buildStrokeGeometryBackedInsideStrokeCenterlineCommands,
+  buildStrokeGeometryBackedOutsideStrokeCenterlineCommands,
+  type PathCommand,
 } from "@higma-primitives/path";
 import { createRenderTreeIdGenerator } from "./id-generator";
 import { buildClipShape } from "./clip-shape";
@@ -69,7 +71,8 @@ import { buildClipShape } from "./clip-shape";
  * before the formatter applies Figma's viewport-local precision rule.
  */
 const RENDER_PATH_PRECISION = 6;
-const STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE = 0.015;
+const STROKE_GEOMETRY_CENTERLINE_PATH_PRECISION = RENDER_PATH_PRECISION;
+const STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE = 0.001;
 
 import type {
   RenderTree,
@@ -357,7 +360,7 @@ function nearlyEqual(a: number, b: number): boolean {
 
 function frameClipCropsChildren(node: FrameNode): boolean {
   return node.children
-    .map((child) => sceneNodeVisualLocalBoxRecursive(child, IDENTITY_AFFINE))
+    .map((child) => sceneNodeClipLocalBoxRecursive(child, IDENTITY_AFFINE))
     .filter(isLocalBox)
     .some((box) => !frameClipContainsLocalBox(node, box));
 }
@@ -365,83 +368,34 @@ function frameClipCropsChildren(node: FrameNode): boolean {
 function frameClipContainsLocalBox(node: FrameNode, box: LocalBox): boolean {
   const clip = node.clip;
   if (clip === undefined) {
-    return roundedFrameClipContainsLocalBox(node.width, node.height, node.cornerRadius, box);
+    return frameRectContainsLocalBox(node.width, node.height, box);
   }
   switch (clip.type) {
     case "rect":
-      return roundedFrameClipContainsLocalBox(clip.width, clip.height, clip.cornerRadius, box);
+      return frameRectContainsLocalBox(clip.width, clip.height, box);
     case "path": {
       const radii = roundedRectRadiiFromPathClip(clip, node.width, node.height);
       if (radii === undefined) {
         return false;
       }
-      return roundedFrameClipContainsLocalBox(node.width, node.height, radii, box);
+      return frameRectContainsLocalBox(node.width, node.height, box);
     }
   }
 }
 
-function roundedFrameClipContainsLocalBox(
+// Figma's SVG exporter emits FRAME child clips for rectangular overflow.
+// Rounded corners stay on the frame surface/mask; children that only cover
+// the corner curve but remain inside the authored rectangle do not create a
+// child clip.
+function frameRectContainsLocalBox(
   width: number,
   height: number,
-  cornerRadius: CornerRadius | undefined,
   box: LocalBox,
 ): boolean {
-  const corners = [
-    { x: box.x, y: box.y },
-    { x: box.x + box.w, y: box.y },
-    { x: box.x, y: box.y + box.h },
-    { x: box.x + box.w, y: box.y + box.h },
-  ];
-  return corners.every((point) => roundedFrameClipContainsPoint(width, height, cornerRadius, point.x, point.y));
-}
-
-function roundedFrameClipContainsPoint(
-  width: number,
-  height: number,
-  cornerRadius: CornerRadius | undefined,
-  x: number,
-  y: number,
-): boolean {
-  if (x < -GEOMETRY_FLOAT_EPSILON || y < -GEOMETRY_FLOAT_EPSILON) {
-    return false;
-  }
-  if (x > width + GEOMETRY_FLOAT_EPSILON || y > height + GEOMETRY_FLOAT_EPSILON) {
-    return false;
-  }
-  const [topLeft, topRight, bottomRight, bottomLeft] = cornerRadiusTuple(cornerRadius);
-  if (topLeft > 0 && x < topLeft && y < topLeft) {
-    return pointInsideCornerRadius(x, y, topLeft, topLeft, topLeft);
-  }
-  if (topRight > 0 && x > width - topRight && y < topRight) {
-    return pointInsideCornerRadius(x, y, width - topRight, topRight, topRight);
-  }
-  if (bottomRight > 0 && x > width - bottomRight && y > height - bottomRight) {
-    return pointInsideCornerRadius(x, y, width - bottomRight, height - bottomRight, bottomRight);
-  }
-  if (bottomLeft > 0 && x < bottomLeft && y > height - bottomLeft) {
-    return pointInsideCornerRadius(x, y, bottomLeft, height - bottomLeft, bottomLeft);
-  }
-  return true;
-}
-
-function pointInsideCornerRadius(
-  x: number,
-  y: number,
-  centerX: number,
-  centerY: number,
-  radius: number,
-): boolean {
-  return ((x - centerX) ** 2) + ((y - centerY) ** 2) <= (radius ** 2) + GEOMETRY_FLOAT_EPSILON;
-}
-
-function cornerRadiusTuple(cornerRadius: CornerRadius | undefined): readonly [number, number, number, number] {
-  if (cornerRadius === undefined) {
-    return [0, 0, 0, 0];
-  }
-  if (typeof cornerRadius === "number") {
-    return [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
-  }
-  return cornerRadius;
+  return box.x >= -GEOMETRY_FLOAT_EPSILON
+    && box.y >= -GEOMETRY_FLOAT_EPSILON
+    && box.x + box.w <= width + GEOMETRY_FLOAT_EPSILON
+    && box.y + box.h <= height + GEOMETRY_FLOAT_EPSILON;
 }
 
 function resolveFrameChildClipId(
@@ -761,8 +715,9 @@ function resolveWrapper(
   const transformStr = matrixToSvgTransform(node.transform);
   const effectStack = buildEffectStack(node.effects);
   const filterSource = resolveFilterSource(node, effectStack.foregroundEffects);
+  const filterEffects = foregroundFilterEffectsWithBackdropRegion(effectStack, effectStack.foregroundEffects);
   const filterResult = resolveEffects(
-    effectStack.foregroundEffects,
+    filterEffects,
     ids,
     elementBounds,
     filterSource === "effect-shape" ? { sourceGraphic: "omit" } : undefined,
@@ -825,7 +780,8 @@ function resolveFrameWrapper(
   const transformStr = matrixToSvgTransform(node.transform);
   const effectStack = buildEffectStack(node.effects);
   const layerEffects = effectStack.foregroundEffects.filter((effect) => effect.type === "layer-blur");
-  const filterResult = resolveEffects(layerEffects, ids, getNodeBounds(node));
+  const filterEffects = foregroundFilterEffectsWithBackdropRegion(effectStack, layerEffects);
+  const filterResult = resolveEffects(filterEffects, ids, getNodeBounds(node));
 
   if (filterResult) {
     defs.push({ type: "filter", filter: filterResult });
@@ -840,6 +796,16 @@ function resolveFrameWrapper(
     },
     effectStack,
   };
+}
+
+function foregroundFilterEffectsWithBackdropRegion(
+  effectStack: ResolvedEffectStack,
+  foregroundEffects: readonly Effect[],
+): readonly Effect[] {
+  if (effectStack.backgroundBlur === null) {
+    return foregroundEffects;
+  }
+  return [...foregroundEffects, effectStack.backgroundBlur];
 }
 
 function resolveFrameSurfaceFilterAttr(
@@ -938,12 +904,13 @@ function resolveMask(
   if (!resolvedMaskContent) {
     return undefined;
   }
-  const bounds = resolveMaskContentBounds(node.mask.maskContent);
+  const contentRendering = resolveMaskContentRendering(node.mask.maskType, resolvedMaskContent);
+  const bounds = resolveMaskContentBounds(node.mask.maskContent, contentRendering);
   defs.push({
     type: "mask",
     id: maskId,
     maskType: node.mask.maskType,
-    contentRendering: resolveMaskContentRendering(node.mask.maskType, resolvedMaskContent),
+    contentRendering,
     bounds,
     maskContent: resolvedMaskContent,
   });
@@ -987,12 +954,48 @@ function renderMaskContentHasAuthoredPaint(node: RenderNode): boolean {
   }
 }
 
-function resolveMaskContentBounds(maskContent: SceneNode): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
-  const box = sceneNodeVisualLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
+function resolveMaskContentBounds(
+  maskContent: SceneNode,
+  contentRendering: RenderMaskContentRendering,
+): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
+  const box = resolveMaskContentBoundsBox(maskContent, contentRendering);
   if (box === undefined) {
     throw new Error(`Mask source ${maskContent.id} has no measurable geometry for its SVG mask region`);
   }
   return { x: box.x, y: box.y, width: box.w, height: box.h };
+}
+
+function resolveMaskContentBoundsBox(
+  maskContent: SceneNode,
+  contentRendering: RenderMaskContentRendering,
+): LocalBox | undefined {
+  if (contentRendering === "source-paint") {
+    return sceneNodeAuthoredLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
+  }
+  return sceneNodeVisualLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
+}
+
+function sceneNodeAuthoredLocalBoxRecursive(
+  node: SceneNode,
+  parentTransform: AffineMatrix2x3,
+): LocalBox | undefined {
+  if (node.visible === false) { return undefined; }
+  const localBox = sceneNodeAuthoredLocalBox(node);
+  if (localBox === undefined) {
+    return undefined;
+  }
+  return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
+}
+
+function sceneNodeAuthoredLocalBox(node: SceneNode): LocalBox | undefined {
+  const own = sceneNodeOwnIntrinsicLocalBox(node);
+  if (node.type !== "frame" && node.type !== "group") {
+    return own;
+  }
+  const childBoxes = node.children
+    .map((child) => sceneNodeAuthoredLocalBoxRecursive(child, IDENTITY_AFFINE))
+    .filter(isLocalBox);
+  return mergeLocalBoxes([own, ...childBoxes].filter(isLocalBox));
 }
 
 function sceneNodeVisualLocalBoxRecursive(
@@ -1005,6 +1008,35 @@ function sceneNodeVisualLocalBoxRecursive(
     return undefined;
   }
   return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
+}
+
+function sceneNodeClipLocalBoxRecursive(
+  node: SceneNode,
+  parentTransform: AffineMatrix2x3,
+): LocalBox | undefined {
+  if (node.visible === false) { return undefined; }
+  const localBox = sceneNodeClipLocalBox(node);
+  if (localBox === undefined) {
+    return undefined;
+  }
+  return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
+}
+
+function sceneNodeClipLocalBox(node: SceneNode): LocalBox | undefined {
+  const own = sceneNodeClipIntrinsicLocalBox(node);
+  if (node.type !== "frame" && node.type !== "group") {
+    return own;
+  }
+  const childBoxes = node.children
+    .map((child) => sceneNodeClipLocalBoxRecursive(child, IDENTITY_AFFINE))
+    .filter(isLocalBox);
+  return mergeLocalBoxes([own, ...childBoxes].filter(isLocalBox));
+}
+
+function sceneNodeClipIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
+  const own = sceneNodeOwnIntrinsicLocalBox(node);
+  const stroke = sceneNodeClipStrokeLocalBox(node);
+  return mergeLocalBoxes([own, stroke].filter(isLocalBox));
 }
 
 function sceneNodeVisualLocalBox(node: SceneNode): LocalBox | undefined {
@@ -1028,6 +1060,16 @@ function sceneNodeVisualIntrinsicLocalBox(node: SceneNode): LocalBox | undefined
   const own = sceneNodeOwnIntrinsicLocalBox(node);
   const stroke = sceneNodeStrokeLocalBox(node);
   return mergeLocalBoxes([own, stroke].filter(isLocalBox));
+}
+
+function sceneNodeClipStrokeLocalBox(node: SceneNode): LocalBox | undefined {
+  if (node.type !== "path") {
+    return sceneNodeStrokeLocalBox(node);
+  }
+  if (node.stroke?.align === "INSIDE") {
+    return undefined;
+  }
+  return sceneNodeStrokeLocalBox(node);
 }
 
 function sceneNodeOwnIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
@@ -1159,18 +1201,37 @@ function resolveBackgroundBlur(
     return undefined;
   }
 
-  // Create a clip path for the foreignObject (same shape as the node)
+  const backdropBounds = {
+    x: bounds.x - bgBlur.radius,
+    y: bounds.y - bgBlur.radius,
+    width: bounds.width + bgBlur.radius * 2,
+    height: bounds.height + bgBlur.radius * 2,
+  };
+
+  // CSS clip-path inside foreignObject resolves in the foreignObject's
+  // local coordinate space, so shift the Kiwi node-local shape by the
+  // backdrop sampling origin. This matches Figma's exported
+  // `bgblur_*_clip_path` structure without duplicating shape geometry.
   const clipId = ids.getNextId("bg-blur-clip");
   defs.push({
     type: "clip-path",
     id: clipId,
     shape,
+    transform: matrixToSvgTransform({
+      m00: 1,
+      m01: 0,
+      m02: -backdropBounds.x,
+      m10: 0,
+      m11: 1,
+      m12: -backdropBounds.y,
+    }),
+    transformProjection: "preserve",
   });
 
   return {
     stdDeviation: resolveFigmaBlurStdDeviation(bgBlur.radius),
     clipId,
-    bounds,
+    backdropBounds,
   };
 }
 
@@ -1294,7 +1355,7 @@ type StrokePlacement =
       readonly maskShape: ClipPathShape;
     }
   | {
-      readonly kind: "figma-export-centerline";
+      readonly kind: "kiwi-stroke-centerline";
     };
 
 /**
@@ -1332,7 +1393,7 @@ function resolveStrokeRendering(
     }
   }
 
-  if (placement.kind === "figma-export-centerline") {
+  if (placement.kind === "kiwi-stroke-centerline") {
     return resolveCenterlineStrokeRendering(result, shape);
   }
 
@@ -1426,10 +1487,8 @@ function resolveCenterlineStrokeRendering(
   result: ResolvedStrokeResult,
   shape: StrokeShape,
 ): StrokeRendering {
-  if (result.layers) {
-    return { mode: "layers", layers: result.layers.map(centerStrokeLayer), shape };
-  }
-  return { mode: "uniform", attrs: centerStrokeAttrs(result.attrs) };
+  const layers = result.layers?.map(centerStrokeLayer) ?? [{ attrs: centerStrokeAttrs(result.attrs) }];
+  return { mode: "layers", layers, shape };
 }
 
 function centerStrokeAttrs(attrs: ResolvedStrokeAttrs): ResolvedStrokeAttrs {
@@ -1472,6 +1531,23 @@ function resolveGroupNode(
     canUnwrapSingleChild:
       !wrapper.transform && (node.opacity >= 1) && !wrapper.filterAttr && !mask && !wrapper.blendMode && !childClipId,
   };
+}
+
+function requiresRenderWrapper(input: {
+  readonly wrapper: ResolvedWrapperAttrs;
+  readonly opacity: number;
+  readonly reasons: readonly boolean[];
+}): boolean {
+  if (input.wrapper.transform !== undefined) {
+    return true;
+  }
+  if (input.opacity < 1) {
+    return true;
+  }
+  if (input.wrapper.filterAttr !== undefined) {
+    return true;
+  }
+  return input.reasons.some((reason) => reason);
 }
 
 function resolveFrameNode(
@@ -1556,7 +1632,17 @@ function resolveRectNode(node: RectNode, ids: IdGenerator, exportSettings: Resol
   );
 
   const mask = resolveMask(node, ids, defs, exportSettings);
-  const needsWrapper = !!(wrapper.transform || node.opacity < 1 || wrapper.filterAttr || defs.length > 0 || fillLayers || strokeRendering || backgroundBlur || mask);
+  const needsWrapper = requiresRenderWrapper({
+    wrapper,
+    opacity: node.opacity,
+    reasons: [
+      defs.length > 0,
+      fillLayers !== undefined,
+      strokeRendering !== undefined,
+      backgroundBlur !== undefined,
+      mask !== undefined,
+    ],
+  });
 
   return {
     type: "rect",
@@ -1613,9 +1699,17 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings:
     const d = buildEllipseArcPathD(node.cx, node.cy, node.rx, node.ry, node.arcData);
     const paths: RenderPathContour[] = [{ d, fillRule: "evenodd" }];
     finalizeDefs(defs, ellipseBounds, exportSettings);
-    const needsWrapper = !!(
-      wrapper.transform || node.opacity < 1 || wrapper.filterAttr || defs.length > 0 || fillLayers || strokeRendering || backgroundBlur || mask
-    );
+    const needsWrapper = requiresRenderWrapper({
+      wrapper,
+      opacity: node.opacity,
+      reasons: [
+        defs.length > 0,
+        fillLayers !== undefined,
+        strokeRendering !== undefined,
+        backgroundBlur !== undefined,
+        mask !== undefined,
+      ],
+    });
     return {
       type: "path",
       id: node.id,
@@ -1637,7 +1731,17 @@ function resolveEllipseNode(node: EllipseNode, ids: IdGenerator, exportSettings:
   }
 
   finalizeDefs(defs, ellipseBounds, exportSettings);
-  const needsWrapper = !!(wrapper.transform || node.opacity < 1 || wrapper.filterAttr || defs.length > 0 || fillLayers || strokeRendering || backgroundBlur || mask);
+  const needsWrapper = requiresRenderWrapper({
+    wrapper,
+    opacity: node.opacity,
+    reasons: [
+      defs.length > 0,
+      fillLayers !== undefined,
+      strokeRendering !== undefined,
+      backgroundBlur !== undefined,
+      mask !== undefined,
+    ],
+  });
 
   return {
     type: "ellipse",
@@ -1668,23 +1772,11 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
   const fillLayers = resolveAllFillLayers(node.fills, ids, defs, exportSettings);
 
   const sourcePaths = resolveRenderPathContours(node.contours, ids, defs, exportSettings);
-  const strokeGeometryPaths = resolveStrokeGeometryPathContours(node.strokeContours);
-  const alignedPaths = strokeGeometryPaths === undefined ? resolveOutsideStrokeAlignedPathContours(node) : undefined;
-  const paths = alignedPaths ?? sourcePaths;
+  const centerlinePaths = resolveStrokeCenterlinePathContours(node);
+  const strokeGeometryPaths = centerlinePaths === undefined ? resolveStrokeGeometryPathContours(node.strokeContours) : undefined;
+  const paths = sourcePaths;
 
-  // When the source VECTOR carries parametric rectangle metadata
-  // (`width`, `height`, `cornerRadius`, optional `cornerSmoothing`),
-  // route the stroke through a `kind: "rect"` shape so INSIDE/OUTSIDE-
-  // aligned smoothed strokes flow through the inset-rect emission
-  // (with Figma's hybrid `r_for_p = R − half/(1+s)` / `r_for_arc = R −
-  // half` formula in `buildSmoothedRoundedRectPathD`). The fill still
-  // rasterises from the baked `contours`, so non-rect VECTORs (icons,
-  // glyphs, decorations) and VECTORs without `cornerRadius` keep the
-  // path codepath. Calibration: iPhone bezel `Aluminum` / `Corner
-  // Shading` VECTORs (size 432×904, cornerRadius 76, cornerSmoothing
-  // 0.6, strokeAlign INSIDE, strokeWeight 6) on App page screenshots
-  // / AppStore Search Cell.
-  const pathStrokeShape = resolvePathStrokeShape(node, paths);
+  const pathStrokeShape = resolvePathStrokeShape(node, paths, centerlinePaths);
   // INSIDE/OUTSIDE stroke needs a shape-matching mask; for paths the mask
   // uses the same contour data drawn as a clip-path (so the doubled
   // stroke width is clipped to the correct side of the path).
@@ -1693,7 +1785,7 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
     d: sourcePaths.map((p) => p.d).join(" "),
     fillRule: resolveRenderPathContoursFillRule(sourcePaths),
   };
-  const strokePlacement = resolvePathStrokePlacement(strokeGeometryPaths, alignedPaths, pathMaskShape, pathStrokeShape);
+  const strokePlacement = resolvePathStrokePlacement(strokeGeometryPaths, centerlinePaths, pathMaskShape, pathStrokeShape);
   const strokeRendering = resolveStrokeRendering(node.stroke, ids, defs, pathStrokeShape, strokePlacement);
 
   // For VECTOR / boolean-op paths the contour origin in node-local
@@ -1713,10 +1805,18 @@ function resolvePathNode(node: PathNode, ids: IdGenerator, exportSettings: Resol
   const backgroundBlur = resolveOptionalBackgroundBlur(effectStack, pathBounds, ids, defs, pathMaskShape);
   const mask = resolveMask(node, ids, defs, exportSettings);
 
-  const needsWrapper = !!(
-    wrapper.transform || node.opacity < 1 || wrapper.filterAttr ||
-    defs.length > 0 || paths.length > 1 || fillLayers || strokeRendering || backgroundBlur || mask
-  );
+  const needsWrapper = requiresRenderWrapper({
+    wrapper,
+    opacity: node.opacity,
+    reasons: [
+      defs.length > 0,
+      paths.length > 1,
+      fillLayers !== undefined,
+      strokeRendering !== undefined,
+      backgroundBlur !== undefined,
+      mask !== undefined,
+    ],
+  });
 
   return {
     type: "path",
@@ -1792,15 +1892,18 @@ function resolveRenderPathContoursFillRule(paths: readonly RenderPathContour[]):
 
 function resolvePathStrokePlacement(
   strokeGeometryPaths: readonly RenderPathContour[] | undefined,
-  alignedPaths: readonly RenderPathContour[] | undefined,
+  centerlinePaths: readonly RenderPathContour[] | undefined,
   maskShape: ClipPathShape,
   strokeShape: StrokeShape,
 ): StrokePlacement {
-  if (strokeGeometryPaths !== undefined) {
-    return resolveStrokeGeometryPlacement(strokeGeometryPaths, maskShape, strokeShape);
+  if (centerlinePaths !== undefined) {
+    return { kind: "kiwi-stroke-centerline" };
   }
-  if (alignedPaths !== undefined) {
-    return { kind: "figma-export-centerline" };
+  if (strokeShape.kind === "rect") {
+    return { kind: "source-shape", maskShape };
+  }
+  if (strokeGeometryPaths !== undefined) {
+    return resolveStrokeGeometryPlacement(strokeGeometryPaths, maskShape);
   }
   return { kind: "source-shape", maskShape };
 }
@@ -1808,12 +1911,37 @@ function resolvePathStrokePlacement(
 function resolveStrokeGeometryPlacement(
   strokeGeometryPaths: readonly RenderPathContour[],
   maskShape: ClipPathShape,
-  strokeShape: StrokeShape,
 ): StrokePlacement {
-  if (strokeShape.kind === "rect") {
-    return { kind: "source-shape", maskShape };
-  }
   return { kind: "precomputed-geometry", paths: strokeGeometryPaths, maskShape };
+}
+
+function resolveStrokeCenterlinePathContours(node: PathNode): readonly RenderPathContour[] | undefined {
+  return resolveInsideStrokeGeometryCenterlinePathContours(node) ?? resolveOutsideStrokeAlignedPathContours(node);
+}
+
+function resolveInsideStrokeGeometryCenterlinePathContours(node: PathNode): readonly RenderPathContour[] | undefined {
+  const stroke = node.stroke;
+  if (stroke?.align !== "INSIDE") {
+    return undefined;
+  }
+  if (node.contours.length !== 1 || node.strokeContours?.length !== 1) {
+    return undefined;
+  }
+  const contour = node.contours[0];
+  if (contour.windingRule !== "nonzero" || contour.fillOverride !== undefined) {
+    return undefined;
+  }
+  const centerlineCommands = buildStrokeGeometryBackedInsideStrokeCenterlineCommands(
+    contour.commands,
+    node.strokeContours[0].commands,
+    stroke.width,
+  );
+  if (centerlineCommands === undefined) {
+    return undefined;
+  }
+  return [{
+    d: contourToSvgD({ commands: centerlineCommands }, STROKE_GEOMETRY_CENTERLINE_PATH_PRECISION),
+  }];
 }
 
 function resolveOutsideStrokeAlignedPathContours(node: PathNode): readonly RenderPathContour[] | undefined {
@@ -1828,10 +1956,10 @@ function resolveOutsideStrokeAlignedPathContours(node: PathNode): readonly Rende
   if (contour.windingRule !== "nonzero" || contour.fillOverride !== undefined) {
     return undefined;
   }
-  const alignedCommands = buildStrokeAlignedClosedPathCommands(
+  const alignedCommands = resolveOutsideStrokeAlignedPathCommands(
     contour.commands,
+    node.strokeContours,
     stroke.width / 2,
-    { flattenTolerance: STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE },
   );
   if (alignedCommands === undefined) {
     return undefined;
@@ -1841,17 +1969,47 @@ function resolveOutsideStrokeAlignedPathContours(node: PathNode): readonly Rende
   }];
 }
 
-function resolvePathStrokeShape(node: PathNode, paths: readonly RenderPathContour[]): StrokeShape {
-  if (node.cornerRadius === undefined || typeof node.width !== "number" || typeof node.height !== "number") {
-    return { kind: "path", paths };
+function resolveOutsideStrokeAlignedPathCommands(
+  commands: PathContour["commands"],
+  strokeContours: readonly PathContour[] | undefined,
+  offsetDistance: number,
+): readonly PathCommand[] | undefined {
+  if (strokeContours === undefined) {
+    return buildStrokeAlignedClosedPathCommands(
+      commands,
+      offsetDistance,
+      { flattenTolerance: STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE },
+    );
   }
-  return {
-    kind: "rect",
-    width: node.width,
-    height: node.height,
-    cornerRadius: node.cornerRadius,
-    cornerSmoothing: node.cornerSmoothing,
-  };
+  if (strokeContours.length !== 1) {
+    return undefined;
+  }
+  return buildStrokeGeometryBackedOutsideStrokeCenterlineCommands(
+    commands,
+    strokeContours[0].commands,
+    offsetDistance,
+    { flattenTolerance: STROKE_ALIGNED_PATH_FLATTEN_TOLERANCE },
+  );
+}
+
+function resolvePathStrokeShape(
+  node: PathNode,
+  paths: readonly RenderPathContour[],
+  centerlinePaths: readonly RenderPathContour[] | undefined,
+): StrokeShape {
+  if (centerlinePaths !== undefined) {
+    return { kind: "path", paths: centerlinePaths };
+  }
+  if (node.cornerRadius !== undefined && typeof node.width === "number" && typeof node.height === "number") {
+    return {
+      kind: "rect",
+      width: node.width,
+      height: node.height,
+      cornerRadius: node.cornerRadius,
+      cornerSmoothing: node.cornerSmoothing,
+    };
+  }
+  return { kind: "path", paths };
 }
 
 function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderTextNode {
@@ -1898,7 +2056,11 @@ function resolveImageNode(node: ImageNode, ids: IdGenerator, exportSettings: Res
   const dataUri = resolveImageDataUri(node);
 
   const mask = resolveMask(node, ids, defs, exportSettings);
-  const needsWrapper = !!(wrapper.transform || node.opacity < 1 || mask);
+  const needsWrapper = requiresRenderWrapper({
+    wrapper,
+    opacity: node.opacity,
+    reasons: [mask !== undefined],
+  });
 
   return {
     type: "image",

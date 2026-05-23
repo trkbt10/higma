@@ -1,10 +1,10 @@
 /** @file Renderer switch for the Fig editor canvas. */
 import {
-  FigFamilyPageRendererFromResources,
   useFigSceneGraph,
 } from "@higma-figma-runtime/react-renderer";
 import type { FigDocumentResources } from "@higma-document-io/fig";
 import type { FigNode } from "@higma-document-models/fig/types";
+import { FigSceneSvgRenderer } from "@higma-document-renderers/fig/react";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import { FigWebGLViewportLayer } from "../webgl/FigWebGLViewportLayer";
@@ -28,6 +28,24 @@ export type FigPageRendererProps = {
   readonly textFontResolver?: TextFontResolver;
   readonly webglInitializationDelayMs?: number;
 };
+
+function htmlSvgRootProps(viewportWidth: number, viewportHeight: number): {
+  readonly width: number;
+  readonly height: number;
+  readonly style: { readonly width: "100%"; readonly height: "100%"; readonly display: "block" };
+  readonly "data-fig-family-page-renderer": "";
+  readonly pointerEvents: "none";
+  readonly "aria-hidden": true;
+} {
+  return {
+    width: viewportWidth,
+    height: viewportHeight,
+    style: { width: "100%", height: "100%", display: "block" },
+    "data-fig-family-page-renderer": "",
+    pointerEvents: "none",
+    "aria-hidden": true,
+  };
+}
 
 /** Render a page through the requested backend while sharing the same scene graph inputs. */
 export function FigPageRenderer({
@@ -61,21 +79,27 @@ export function FigPageRenderer({
     textFontResolver,
   });
 
-  if (renderer !== "webgl") {
+  if (renderer !== "webgl" && sceneGraph === null && host === "svg") {
+    return <g data-fig-page-renderer-empty="" />;
+  }
+  if (renderer !== "webgl" && sceneGraph === null) {
     return (
-      <FigFamilyPageRendererFromResources
-        page={page}
-        nodes={nodes}
-        canvasWidth={canvasWidth}
-        canvasHeight={canvasHeight}
-        viewportX={viewportX}
-        viewportY={viewportY}
-        viewportWidth={viewportWidth}
-        viewportHeight={viewportHeight}
-        resources={resources}
-        textFontResolver={textFontResolver}
+      <svg {...htmlSvgRootProps(viewportWidth, viewportHeight)}>
+        <g data-fig-page-renderer-empty="" />
+      </svg>
+    );
+  }
+  if (renderer !== "webgl" && host === "svg" && sceneGraph !== null) {
+    return (
+      <FigSceneSvgRenderer sceneGraph={sceneGraph} renderOptions={renderOptions} />
+    );
+  }
+  if (renderer !== "webgl" && sceneGraph !== null) {
+    return (
+      <FigSceneSvgRenderer
         sceneGraph={sceneGraph}
         renderOptions={renderOptions}
+        rootProps={htmlSvgRootProps(viewportWidth, viewportHeight)}
       />
     );
   }

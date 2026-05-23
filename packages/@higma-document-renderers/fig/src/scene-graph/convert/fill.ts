@@ -23,6 +23,11 @@ export function figColorToSceneColor(color: FigColor): Color {
 }
 import type { AffineMatrix } from "@higma-primitives/path";
 
+export type SceneSolidPaintAlpha = {
+  readonly color: Color;
+  readonly opacity: number;
+};
+
 /**
  * Convert gradient stops to scene graph format
  */
@@ -45,6 +50,17 @@ function resolvePaintColor(paint: FigPaint & { readonly color: FigColor }, subje
     return resolveConcreteVariableColor(paint.colorVar, `${subject}.colorVar`) ?? paint.color;
   }
   return paint.color;
+}
+
+export function resolveSolidPaintSceneAlpha(
+  paint: FigPaint & { readonly color: FigColor },
+  subject: string,
+): SceneSolidPaintAlpha {
+  const color = figColorToSceneColor(resolvePaintColor(paint, subject));
+  return {
+    color: { r: color.r, g: color.g, b: color.b, a: 1 },
+    opacity: color.a * resolvePaintOpacity(paint, subject),
+  };
 }
 
 /**
@@ -169,10 +185,11 @@ export function convertPaintToFill(
     case "SOLID": {
       const solidPaint = asSolidPaint(paint);
       if (!solidPaint) { return null; }
+      const solid = resolveSolidPaintSceneAlpha(solidPaint, subject);
       return {
         type: "solid",
-        color: figColorToSceneColor(resolvePaintColor(solidPaint, subject)),
-        opacity,
+        color: solid.color,
+        opacity: solid.opacity,
         blendMode,
       };
     }

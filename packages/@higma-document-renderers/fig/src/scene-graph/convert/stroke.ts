@@ -10,7 +10,7 @@ import { getPaintType, asGradientPaint, asSolidPaint } from "@higma-document-mod
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { resolveStrokeWeight, mapStrokeCap, mapStrokeJoin } from "../../stroke";
 import type { Stroke, StrokeLayer, StrokeAlign, LinearGradientFill, RadialGradientFill, Color } from "@higma-document-renderers/fig/scene-graph";
-import { figColorToSceneColor } from "./fill";
+import { figColorToSceneColor, resolveSolidPaintSceneAlpha } from "./fill";
 import {
   getGradientStops,
   getGradientDirection,
@@ -121,8 +121,7 @@ function buildSolidStrokeLayer(paint: FigPaint, blendMode: StrokeLayer["blendMod
     throw new Error("buildStrokeLayer expected a SOLID paint payload");
   }
   return {
-    color: figColorToSceneColor(solidPaint.color),
-    opacity: paint.opacity ?? 1,
+    ...resolveSolidPaintSceneAlpha(solidPaint, "Stroke paint"),
     blendMode,
   };
 }
@@ -147,7 +146,7 @@ function buildGradientStrokeLayer(
 function primaryStrokeColor(paint: FigPaint): Color {
   const primarySolid = asSolidPaint(paint);
   if (primarySolid) {
-    return figColorToSceneColor(primarySolid.color);
+    return resolveSolidPaintSceneAlpha(primarySolid, "Stroke paint").color;
   }
   return { r: 0, g: 0, b: 0, a: 1 };
 }
@@ -233,13 +232,21 @@ export function convertStrokeToSceneStroke(
   return {
     color: primaryColor,
     width,
-    opacity: primary.opacity ?? 1,
+    opacity: primaryStrokeOpacity(primary),
     linecap: mapStrokeCap(options?.strokeCap),
     linejoin: mapStrokeJoin(options?.strokeJoin),
     dashPattern: resolveDashPattern(options?.dashPattern),
     layers,
     align,
   };
+}
+
+function primaryStrokeOpacity(paint: FigPaint): number {
+  const primarySolid = asSolidPaint(paint);
+  if (primarySolid !== undefined) {
+    return resolveSolidPaintSceneAlpha(primarySolid, "Stroke paint").opacity;
+  }
+  return paint.opacity ?? 1;
 }
 
 function resolveStrokeAlign(raw: KiwiEnumValue<FigStrokeAlign> | undefined): StrokeAlign | undefined {

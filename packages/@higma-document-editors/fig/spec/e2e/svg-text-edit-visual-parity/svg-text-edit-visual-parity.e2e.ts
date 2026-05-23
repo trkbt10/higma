@@ -11,7 +11,9 @@ import pixelmatch from "pixelmatch";
 import { createPngImage, readPng } from "@higma-codecs/png";
 
 const HELLO_TEXT = { pageX: 50, pageY: 50, width: 200, height: 30 };
+const HELLO_TEXT_GUID = "1:2";
 const WRAPPED_TEXT = { pageX: 260, pageY: 50, width: 60, height: 80 };
+const WRAPPED_TEXT_GUID = "1:16";
 
 test.describe("Fig editor SVG text editing visual parity", () => {
   test.beforeEach(async ({ page }) => {
@@ -20,7 +22,9 @@ test.describe("Fig editor SVG text editing visual parity", () => {
   });
 
   test("keeps text rendering in the SVG backend while overlay text is not duplicated", async ({ page }) => {
-    expect(await decodedSvgImage(page)).toContain("Hello World");
+    const beforeSvg = await renderedTextSvgState(page, HELLO_TEXT_GUID);
+    expect(beforeSvg.pathCount).toBeGreaterThan(0);
+    expect(beforeSvg.textCount).toBe(0);
     const textClip = await textInteriorClip(page, HELLO_TEXT);
     const beforeEdit = readPng(await page.screenshot({ clip: textClip }));
 
@@ -29,38 +33,41 @@ test.describe("Fig editor SVG text editing visual parity", () => {
     const duringEdit = readPng(await page.screenshot({ clip: textClip }));
 
     const editingState = await page.evaluate(() => {
-      const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']")?.outerHTML ?? "";
+      const svg = document.querySelector<SVGSVGElement>("[data-fig-editor-root-surface-content-guid='1:2'] svg[aria-hidden='true']");
       const overlayTexts = Array.from(document.querySelectorAll<SVGTextElement>("svg:not([aria-hidden='true']) text"))
         .map((text) => text.textContent ?? "")
         .filter((text) => text.includes("Hello World"));
-      return { svg, overlayTextCount: overlayTexts.length };
+      return { pathCount: svg?.querySelectorAll("path").length ?? 0, textCount: svg?.querySelectorAll("text").length ?? 0, overlayTextCount: overlayTexts.length };
     });
 
-    expect(editingState.svg).toContain("Hello World");
+    expect(editingState.pathCount).toBeGreaterThan(0);
+    expect(editingState.textCount).toBe(0);
     expect(editingState.overlayTextCount).toBe(0);
     expect(countDifferentPixels(beforeEdit, duringEdit)).toBeLessThanOrEqual(25);
 
     await fillHiddenCanvasTextarea(page, "Edited SVG text");
-    const afterEditState = await page.evaluate(() => {
-      const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']")?.outerHTML ?? "";
+    const afterEditState = await page.evaluate((guid) => {
+      const svg = document.querySelector<SVGSVGElement>(`[data-fig-editor-root-surface-content-guid='${guid}'] svg[aria-hidden='true']`);
       const overlayTexts = Array.from(document.querySelectorAll<SVGTextElement>("svg:not([aria-hidden='true']) text"))
         .map((text) => text.textContent ?? "")
         .filter((text) => text.includes("Edited SVG text"));
-      return { svg, overlayTextCount: overlayTexts.length };
-    });
+      return { outerHTML: svg?.outerHTML ?? "", pathCount: svg?.querySelectorAll("path").length ?? 0, textCount: svg?.querySelectorAll("text").length ?? 0, overlayTextCount: overlayTexts.length };
+    }, HELLO_TEXT_GUID);
 
-    expect(afterEditState.svg).toContain("Edited SVG text");
+    expect(afterEditState.outerHTML).not.toBe(beforeSvg.outerHTML);
+    expect(afterEditState.pathCount).toBeGreaterThan(0);
+    expect(afterEditState.textCount).toBe(0);
     expect(afterEditState.overlayTextCount).toBe(0);
 
     await page.keyboard.press("Escape");
     await expect(page.locator("textarea")).toHaveCount(0);
-    expect(await decodedSvgImage(page)).toContain("Edited SVG text");
+    expect((await renderedTextSvgState(page, HELLO_TEXT_GUID)).outerHTML).toBe(afterEditState.outerHTML);
   });
 
   test("maps wrapped source selection to the rendered visual line", async ({ page }) => {
-    const svgBeforeEdit = await decodedSvgImage(page);
-    expect(svgBeforeEdit).toContain(">Hello<");
-    expect(svgBeforeEdit).toContain(">World<");
+    const svgBeforeEdit = await renderedTextSvgState(page, WRAPPED_TEXT_GUID);
+    expect(svgBeforeEdit.pathCount).toBeGreaterThan(0);
+    expect(svgBeforeEdit.textCount).toBe(0);
 
     await doubleClickNode(page, WRAPPED_TEXT);
     await page.locator("textarea").waitFor({ state: "attached" });
@@ -82,13 +89,17 @@ test.describe("Fig editor SVG text editing visual parity", () => {
     expect(selectionRects[0].y).toBeGreaterThan(15);
 
     await setHiddenCanvasTextareaSelection(page, 5, 6);
-    await page.waitForFunction(() => document.querySelectorAll("svg rect[fill-opacity='0.3']").length === 0);
-    const suppressedWhitespaceRects = await page.evaluate(() => {
+    await page.waitForFunction(() => document.querySelectorAll("svg rect[fill-opacity='0.3']").length === 1);
+    const whitespaceRects = await page.evaluate(() => {
       return Array.from(document.querySelectorAll<SVGRectElement>("svg rect[fill-opacity='0.3']")).map((rect) => ({
+        y: Number(rect.getAttribute("y")),
         width: Number(rect.getAttribute("width")),
       }));
     });
-    expect(suppressedWhitespaceRects).toHaveLength(0);
+    expect(whitespaceRects).toHaveLength(1);
+    expect(whitespaceRects[0].width).toBeGreaterThan(0);
+    expect(whitespaceRects[0].width).toBeLessThan(selectionRects[0].width);
+    expect(whitespaceRects[0].y).toBeLessThan(selectionRects[0].y);
   });
 });
 
@@ -103,14 +114,22 @@ async function waitForSvgEditor(page: Page): Promise<void> {
   );
 }
 
-async function decodedSvgImage(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']");
+async function renderedTextSvgState(page: Page, guid: string): Promise<{
+  readonly outerHTML: string;
+  readonly pathCount: number;
+  readonly textCount: number;
+}> {
+  return page.evaluate((textGuid) => {
+    const svg = document.querySelector<SVGSVGElement>(`[data-fig-editor-root-surface-content-guid='${textGuid}'] svg[aria-hidden='true']`);
     if (!svg) {
-      throw new Error("SVG renderer tree was not found");
+      throw new Error(`SVG renderer tree was not found for text node ${textGuid}`);
     }
-    return svg.outerHTML;
-  });
+    return {
+      outerHTML: svg.outerHTML,
+      pathCount: svg.querySelectorAll("path").length,
+      textCount: svg.querySelectorAll("text").length,
+    };
+  }, guid);
 }
 
 async function doubleClickNode(

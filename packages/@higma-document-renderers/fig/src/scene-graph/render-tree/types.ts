@@ -213,6 +213,8 @@ export type RenderClipPathDef = {
   readonly type: "clip-path";
   readonly id: string;
   readonly shape: ClipPathShape;
+  readonly transform?: string;
+  readonly transformProjection?: "preserve";
 };
 
 export type RenderPatternDef = {
@@ -280,8 +282,8 @@ export type RenderBackgroundBlur = {
   readonly stdDeviation: number;
   /** Clip path ID that defines the node's shape (for clipping the foreignObject) */
   readonly clipId: string;
-  /** Element bounds */
-  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  /** foreignObject bounds for backdrop sampling, expanded by the authored Kiwi blur radius. */
+  readonly backdropBounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 };
 
 /**

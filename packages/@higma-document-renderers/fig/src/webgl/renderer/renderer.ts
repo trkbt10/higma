@@ -47,6 +47,12 @@ import {
 import { createEffectsRenderer } from "../effects/effects-renderer";
 import { createWebGLEffectRendering } from "../effects/effect-rendering";
 import { resolveEffectBackingScale } from "../effects/effect-scale";
+import {
+  resolveRenderFrameSurfaceLocalEffectBounds,
+  resolveRenderNodeLocalEffectBounds,
+  resolveWebGLEffectRenderRegion,
+  type WebGLEffectRenderRegion,
+} from "../effects/effect-render-region";
 import { shouldRenderVisualNode, type ViewportRect } from "../scene/render-culling";
 import { createWebGLFigmaResourceContext, type WebGLFigmaResourceContext } from "../resources/resource-context";
 import {
@@ -289,6 +295,14 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
   }
 
   type StencilFillRule = WebGLPathFillRule;
+
+  function canvasBackingWidth(): number {
+    return Math.ceil(width.value * pixelRatioRef.value);
+  }
+
+  function canvasBackingHeight(): number {
+    return Math.ceil(height.value * pixelRatioRef.value);
+  }
 
   type StencilPreparedGeometry = NonNullable<ReturnType<typeof prepareFanTriangles>>;
 
@@ -571,13 +585,53 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     getGlContext,
     effectsRenderer,
     pixelRatio: () => pixelRatioRef.value,
-    canvasWidth: () => width.value * pixelRatioRef.value,
-    canvasHeight: () => height.value * pixelRatioRef.value,
+    canvasWidth: canvasBackingWidth,
+    canvasHeight: canvasBackingHeight,
     outputFramebuffer: () => currentEffectOutputFramebuffer.value,
     backdropFramebuffer: () => currentEffectBackdropFramebuffer.value,
     isClipStencilRequired: () => clipActive.value && clipStencilValid.value,
-    drawStencilFill,
   });
+
+  function resolveEffectRegion(
+    { localBounds, effects, transform }: {
+      readonly localBounds: Parameters<typeof resolveWebGLEffectRenderRegion>[0]["localBounds"];
+      readonly effects: readonly Effect[];
+      readonly transform: AffineMatrix;
+    },
+  ): WebGLEffectRenderRegion {
+    return resolveWebGLEffectRenderRegion({
+      localBounds,
+      effects,
+      transform,
+      canvasWidth: canvasBackingWidth(),
+      canvasHeight: canvasBackingHeight(),
+      pixelRatio: pixelRatioRef.value,
+    });
+  }
+
+  function resolveNodeEffectRegion(
+    node: RenderNode,
+    transform: AffineMatrix,
+    effects: readonly Effect[],
+  ): WebGLEffectRenderRegion {
+    return resolveEffectRegion({
+      localBounds: resolveRenderNodeLocalEffectBounds(node),
+      effects,
+      transform,
+    });
+  }
+
+  function resolveFrameSurfaceEffectRegion(
+    node: RenderFrameNode,
+    transform: AffineMatrix,
+    effects: readonly Effect[],
+  ): WebGLEffectRenderRegion {
+    return resolveEffectRegion({
+      localBounds: resolveRenderFrameSurfaceLocalEffectBounds(node),
+      effects,
+      transform,
+    });
+  }
 
   // =========================================================================
   // Stroke rendering — uses StrokeRendering discriminated union from RenderTree
@@ -1309,8 +1363,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       node: RenderNode; worldTransform: AffineMatrix; parentOpacity: number; nodeOpacity: number;
     }
   ): void {
-    const canvasW = width.value * pixelRatioRef.value;
-    const canvasH = height.value * pixelRatioRef.value;
+    const canvasW = canvasBackingWidth();
+    const canvasH = canvasBackingHeight();
+    const region = resolveNodeEffectRegion(node, worldTransform, getSourceEffects(node));
 
     // Effects rendering binds its own FBO programs and changes
     // stencil/blend state directly. Invalidate the state cache after
@@ -1351,6 +1406,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
 
     effectsRenderer.blitLayerWithOpacity({
       canvasWidth: canvasW, canvasHeight: canvasH,
+      region,
       opacity: nodeOpacity,
     });
     glState.invalidate();
@@ -1392,8 +1448,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       node: RenderNode; worldTransform: AffineMatrix; worldOpacity: number; effect: LayerBlurEffect;
     }
   ): void {
-    const canvasW = width.value * pixelRatioRef.value;
-    const canvasH = height.value * pixelRatioRef.value;
+    const canvasW = canvasBackingWidth();
+    const canvasH = canvasBackingHeight();
+    const region = resolveNodeEffectRegion(node, worldTransform, [effect]);
 
     const capture = effectsRenderer.beginLayerCapture(canvasW, canvasH);
     glState.invalidate();
@@ -1422,6 +1479,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     effectsRenderer.endLayerCaptureAndBlur({
       canvasWidth: canvasW,
       canvasHeight: canvasH,
+      region,
       effect,
       worldToBacking: resolveEffectBackingScale(worldTransform, pixelRatioRef.value),
     });
@@ -1589,6 +1647,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       transform: AffineMatrix;
     },
   ): { clip: ClipShape; transform: AffineMatrix } {
+    if (clipDef.transform !== undefined) {
+      throw new Error(`WebGL clip-path ${clipDef.id} carries an SVG transform and cannot be consumed as a render stencil`);
+    }
     if (clipDef.shape.kind === "path") {
       // `clipDef.shape` belongs to the cached `node.defs` entry, so its
       // identity stays stable across viewport-only renders. Caching the
@@ -1677,6 +1738,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const elementSize = { width: node.width, height: node.height };
     const vertices = resolveClipVertices(node.sourceSurfaceShape);
     const effects = getSourceEffects(node);
+    const region = resolveFrameSurfaceEffectRegion(node, transform, effects);
 
     // Check if node has visible content — SVG filters operate on rendered content,
     // so fill=none + no stroke produces an empty shadow silhouette
@@ -1688,9 +1750,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       effectRendering.renderVertexShapeEffectStack({
         effects,
         hasVisibleContent,
+        region,
         vertices,
         transform,
-        opacity,
         renderContent: () => {
           if (node.background) {
             drawAllFills({ vertices, fills: node.sourceFills, transform, opacity, elementSize });
@@ -1739,6 +1801,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const elementSize = { width: node.width, height: node.height };
     const vertices = geometryCache.getRectVertices(node.width, node.height, node.cornerRadius, node.cornerSmoothing);
     const effects = getSourceEffects(node);
+    const region = resolveNodeEffectRegion(node, transform, effects);
 
     // Skip effects when node has no visible content (fill=none + no stroke → empty silhouette)
     const hasVisibleContent = node.sourceFills.length > 0 || !!node.strokeRendering;
@@ -1746,9 +1809,9 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     effectRendering.renderVertexShapeEffectStack({
       effects,
       hasVisibleContent,
+      region,
       vertices,
       transform,
-      opacity,
       renderContent: () => {
         if (node.sourceFills.length > 0) {
           drawAllFills({ vertices, fills: node.sourceFills, transform, opacity, elementSize });
@@ -1783,15 +1846,16 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     const elementSize = { width: node.rx * 2, height: node.ry * 2 };
     const vertices = geometryCache.getEllipseVertices({ cx: node.cx, cy: node.cy, rx: node.rx, ry: node.ry });
     const effects = getSourceEffects(node);
+    const region = resolveNodeEffectRegion(node, transform, effects);
 
     const hasVisibleContent = node.sourceFills.length > 0 || !!node.strokeRendering;
 
     effectRendering.renderVertexShapeEffectStack({
       effects,
       hasVisibleContent,
+      region,
       vertices,
       transform,
-      opacity,
       renderContent: () => {
         if (node.sourceFills.length > 0) {
           drawAllFills({ vertices, fills: node.sourceFills, transform, opacity, elementSize });
@@ -1998,6 +2062,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     flushClipStencilIfDirty();
     const effects = getSourceEffects(node);
     const effectStack = buildEffectStack(effects);
+    const region = resolveNodeEffectRegion(node, transform, effects);
 
     const hasVisibleContent = node.sourceFills.length > 0 || !!node.strokeRendering;
     const pathGeometry = geometryCache.getPathGeometry(node);
@@ -2008,24 +2073,21 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       hasVisibleContent,
       renderBackgroundBlur: (effect) => {
         if (backgroundMaskVertices.length > 0) {
-          effectRendering.renderBackgroundBlurMask({ effect, vertices: backgroundMaskVertices, transform });
+          effectRendering.renderBackgroundBlurMask({ effect, region, vertices: backgroundMaskVertices, transform });
         }
       },
       renderDropShadows: (sourceEffects) => {
         if (prepared && coverQuad) {
           effectRendering.renderDropShadowsStencil({
             effects: sourceEffects,
-            fanVertices: prepared.fanVertices,
-            coverQuad,
-            bounds: prepared.bounds,
+            region,
             silhouetteVertices: dropShadowSilhouetteVertices,
             transform,
-            opacity,
           });
           return;
         }
         if (pathVertices.length > 0) {
-          effectRendering.renderDropShadows({ effects: sourceEffects, vertices: pathVertices, transform, opacity });
+          effectRendering.renderDropShadows({ effects: sourceEffects, region, vertices: pathVertices, transform });
         }
       },
       renderContent: () => {
@@ -2049,7 +2111,7 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       },
       renderInnerShadows: (sourceEffects) => {
         if (backgroundMaskVertices.length > 0) {
-          effectRendering.renderInnerShadows({ effects: sourceEffects, vertices: backgroundMaskVertices, transform });
+          effectRendering.renderInnerShadows({ effects: sourceEffects, region, vertices: backgroundMaskVertices, transform });
         }
       },
       renderStroke: () => {

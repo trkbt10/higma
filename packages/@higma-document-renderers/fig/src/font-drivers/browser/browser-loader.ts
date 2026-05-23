@@ -20,55 +20,35 @@ import {
   type FontPlatform,
 } from "@higma-document-models/fig/font";
 import type { AbstractFont, LoadedFont } from "@higma-document-models/fig/font";
+import { getVariableAxes, variationForWeight, wrapFontWithVariation } from "../variable-font";
 
 /**
- * Parse font data and return as AbstractFont.
+ * Parse font data and return as the shared `AbstractFont` surface.
  *
- * opentype.js' `Font` class is structurally a superset of `AbstractFont`
- * (it exposes `unitsPerEm`, `ascender`, `descender`, `charToGlyph`,
- * `getPath`, and optional `tables` with the same shapes). We narrow via
- * a runtime-checked mapping to the minimal `AbstractFont` surface — no
- * casts — so the compatibility contract is verified per field instead
- * of being asserted with `as`.
+ * Keep the original opentype.js Font object rather than wrapping it:
+ * variable-font rendering needs the raw `variation` API and raw glyph
+ * objects so the shared `wrapFontWithVariation` implementation can apply
+ * the same `wght` / `opsz` axes in browser and node loaders.
  */
 function parseOpentypeAsAbstractFont(data: ArrayBuffer): AbstractFont {
-  const font = parseFont(data);
-  const wrapped: AbstractFont = {
-    unitsPerEm: font.unitsPerEm,
-    ascender: font.ascender,
-    descender: font.descender,
-    charToGlyph(char: string) {
-      const g = font.charToGlyph(char);
-      return {
-        index: g.index,
-        advanceWidth: g.advanceWidth,
-        getPath(x: number, y: number, fontSize: number) {
-          const path = g.getPath(x, y, fontSize);
-          return {
-            commands: path.commands,
-            // opentype.js requires an explicit decimal-place count; the
-            // AbstractFont contract makes it optional. Default to 4 so
-            // callers that omit the arg match opentype.js' built-in
-            // precision for hinted outlines.
-            toPathData(decimalPlaces?: number) {
-              return path.toPathData(decimalPlaces ?? 4);
-            },
-          };
-        },
-      };
-    },
-    getPath(text: string, x: number, y: number, fontSize: number, options?: { letterSpacing?: number }) {
-      const path = font.getPath(text, x, y, fontSize, options);
-      return {
-        commands: path.commands,
-        toPathData(decimalPlaces?: number) {
-          return path.toPathData(decimalPlaces ?? 4);
-        },
-      };
-    },
-    tables: font.tables,
-  };
-  return wrapped;
+  return parseFont(data);
+}
+
+function applyVariationWrapping(
+  rawFont: AbstractFont,
+  variableAxes: ReturnType<typeof getVariableAxes>,
+  weight: number,
+): AbstractFont {
+  if (!variableAxes) {
+    return rawFont;
+  }
+  return wrapFontWithVariation(rawFont, variationForWeight(variableAxes, weight), variableAxes);
+}
+
+async function parseBrowserFontData(font: FontData): Promise<AbstractFont> {
+  const blob = await font.blob();
+  const arrayBuffer = await blob.arrayBuffer();
+  return parseOpentypeAsAbstractFont(arrayBuffer);
 }
 
 /**
@@ -187,6 +167,7 @@ export function createBrowserFontLoader(
   const fontIndexRef = { value: null as Map<string, FontData[]> | null };
   const indexPromiseRef = { value: null as Promise<void> | null };
   const permissionGrantedRef = { value: false };
+  const parsedFontRef = { value: new Map<string, AbstractFont>() };
 
   async function buildFontIndex(): Promise<void> {
     if (typeof window === "undefined" || !hasLocalFontsApi(window)) {
@@ -261,9 +242,8 @@ export function createBrowserFontLoader(
       return undefined;
     }
 
-    const blob = await bestMatch.blob();
-    const arrayBuffer = await blob.arrayBuffer();
-    const font = parseOpentypeAsAbstractFont(arrayBuffer);
+    const rawFont = await loadParsedFont(bestMatch);
+    const font = applyVariationWrapping(rawFont, getVariableAxes(rawFont), query.weight);
     const matchedQuery = figmaFontToQuery({ family: bestMatch.family, style: bestMatch.style });
 
     return {
@@ -271,6 +251,16 @@ export function createBrowserFontLoader(
       query: matchedQuery,
       postscriptName: bestMatch.postscriptName,
     };
+  }
+
+  async function loadParsedFont(font: FontData): Promise<AbstractFont> {
+    const cached = parsedFontRef.value.get(font.postscriptName);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const parsed = await parseBrowserFontData(font);
+    parsedFontRef.value.set(font.postscriptName, parsed);
+    return parsed;
   }
 
   async function isFontAvailable(family: string): Promise<boolean> {

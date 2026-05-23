@@ -41,7 +41,6 @@ describe("derivedTextDataWithoutVisualPayload", () => {
     const metricsOnly = derivedTextDataWithoutVisualPayload(dtd);
 
     expect(metricsOnly).toEqual({
-      baselines: [METRIC_BASELINE],
       fontMetaData: [FONT_META_DATA],
     });
     expect(derivedTextDataHasVisualPayload(metricsOnly)).toBe(false);

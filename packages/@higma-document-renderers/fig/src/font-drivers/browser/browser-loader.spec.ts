@@ -103,6 +103,7 @@ function fakeFont(params: {
   readonly style: string;
   readonly fullName?: string;
   readonly postscriptName?: string;
+  readonly onBlob?: () => void;
 }): FakeFontData {
   const bytes = synthesizeFontBytes({ familyName: params.family, styleName: params.style });
   return {
@@ -111,6 +112,7 @@ function fakeFont(params: {
     postscriptName: params.postscriptName ?? `${params.family.replace(/\s+/g, "")}-${params.style}`,
     style: params.style,
     async blob(): Promise<Blob> {
+      params.onBlob?.();
       // `arrayBuffer()` is the only method the loader consumes — we
       // expose the synthesised bytes directly rather than constructing
       // a real `Blob` (which jsdom would have to provide).
@@ -321,5 +323,26 @@ describe("createBrowserFontLoader — variant selection priority", () => {
     // Inter-BoldItalic (style match, weight 300 delta).
     const result = await loader.loadFont({ family: "Inter", weight: 400, style: "italic" });
     expect(result?.postscriptName).toBe("Inter-Italic");
+  });
+
+  it("parses the selected physical browser font once across multiple query weights", async () => {
+    const blobCalls = { value: 0 };
+    installCatalogue([
+      fakeFont({
+        family: "Inter",
+        style: "Regular",
+        postscriptName: "Inter-Regular",
+        onBlob: () => {
+          blobCalls.value += 1;
+        },
+      }),
+    ]);
+    const loader = createBrowserFontLoader({ platform: "unknown" });
+
+    await loader.loadFont({ family: "Inter", weight: 400, style: "normal" });
+    await loader.loadFont({ family: "Inter", weight: 500, style: "normal" });
+    await loader.loadFont({ family: "Inter", weight: 700, style: "normal" });
+
+    expect(blobCalls.value).toBe(1);
   });
 });

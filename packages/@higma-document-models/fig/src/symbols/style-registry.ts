@@ -59,6 +59,7 @@ import type {
   FigGuidOrAssetRefId,
   FigNode,
   FigPaint,
+  FigSolidPaint,
   FigStyleId,
   FigEffect,
   MutableFigNode,
@@ -73,6 +74,7 @@ import {
 } from "../domain";
 import { projectVariableAnyValue, variableIdKey } from "../variables";
 import { mergeVariableModeBySetMap, resolveVariableColor } from "./variable-resolution";
+import { asSolidPaint } from "../color";
 
 // =============================================================================
 // Construction
@@ -668,14 +670,25 @@ function materializePaintColor(
   registry: FigStyleRegistry,
   modeMap: FigKiwiVariableModeBySetMap | undefined,
 ): FigPaint {
-  if (!paintHasColor(paint)) {
-    return paint;
-  }
+  const solidPaint = asSolidPaint(paint);
+  if (solidPaint === undefined) { return paint; }
   const color = resolveVariableMaterializedColor(paint.colorVar, registry, modeMap);
-  if (color === undefined || figColorEquals(color, paint.color)) {
+  if (color === undefined) {
     return paint;
   }
-  return { ...paint, color };
+  return materializeSolidPaintColor(solidPaint, color);
+}
+
+function materializeSolidPaintColor(paint: FigSolidPaint, color: FigColor): FigSolidPaint {
+  const materializedColor = { r: color.r, g: color.g, b: color.b, a: 1 };
+  if (figColorEquals(materializedColor, paint.color) && paint.opacity === color.a) {
+    return paint;
+  }
+  return {
+    ...paint,
+    color: materializedColor,
+    opacity: color.a,
+  };
 }
 
 function materializePaintStopColors(

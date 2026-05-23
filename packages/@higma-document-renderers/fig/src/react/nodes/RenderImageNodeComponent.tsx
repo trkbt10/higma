@@ -5,6 +5,7 @@
 import { memo } from "react";
 import type { RenderImageNode } from "../../scene-graph";
 import { RenderWrapper } from "../primitives/wrapper";
+import { directShapeBlendModeStyle } from "../primitives/blend-mode";
 
 type Props = {
   readonly node: RenderImageNode;
@@ -23,6 +24,11 @@ function RenderImageNodeComponentImpl({ node }: Props) {
       width={node.width}
       height={node.height}
       preserveAspectRatio={node.preserveAspectRatio}
+      style={directShapeBlendModeStyle({
+        nodeBlendMode: node.wrapper.blendMode,
+        wrapped: node.needsWrapper,
+        nodeId: node.id,
+      })}
     />
   );
 

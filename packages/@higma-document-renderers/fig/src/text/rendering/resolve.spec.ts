@@ -170,6 +170,50 @@ describe("resolveTextRendering font outlines", () => {
     expect(resolvedSolidFill.opacity).toBeCloseTo(0.18, 5);
   });
 
+  it("uses derived glyph positions to measure leading whitespace omitted from glyphs", () => {
+    const layout = resolveTextLayout({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: " Hi",
+      },
+      derivedTextData: {
+        baselines: [{
+          position: { x: 0, y: 10 },
+          width: 20,
+          lineY: 0,
+          lineHeight: 24,
+          lineAscent: 19.2,
+          firstCharacter: 0,
+          endCharacter: 3,
+        }],
+        glyphs: [
+          {
+            commandsBlob: 0,
+            position: { x: 5, y: 0 },
+            fontSize: 20,
+            firstCharacter: 1,
+            advance: 10,
+          },
+          {
+            commandsBlob: 0,
+            position: { x: 15, y: 0 },
+            fontSize: 20,
+            firstCharacter: 2,
+            advance: 5,
+          },
+        ],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1.2,
+          fontWeight: 400,
+        }],
+      },
+    }, {});
+
+    expect(layout.layout.lines[0]?.charWidths).toEqual([5, 10, 5]);
+  });
+
   it("ignores derivedLines when none of the lines carry characters", () => {
     const rendering = resolveTextRendering({
       ...BASE_TEXT_NODE,

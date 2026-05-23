@@ -88,3 +88,7 @@ export {
   resolveWebGLViewportPixelRatio,
   type WebGLViewportPixelRatioInput,
 } from "./scene/viewport-pixel-ratio";
+export {
+  getWebGLViewportPreparationStatus,
+  type WebGLViewportPreparationStatus,
+} from "./scene/preparation-status";

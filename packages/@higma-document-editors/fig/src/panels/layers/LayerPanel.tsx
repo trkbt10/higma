@@ -43,6 +43,56 @@ function requireGuid(node: FigNode): FigGuid {
   return node.guid;
 }
 
+function nodeKey(node: FigNode): string {
+  return guidToString(requireGuid(node));
+}
+
+function collectAncestorKeysForNode(
+  nodesByGuid: ReadonlyMap<string, FigNode>,
+  node: FigNode,
+  keys: Set<string>,
+): void {
+  const parentGuid = node.parentIndex?.guid;
+  if (parentGuid === undefined) {
+    return;
+  }
+  const parentKey = guidToString(parentGuid);
+  keys.add(parentKey);
+  const parent = nodesByGuid.get(parentKey);
+  if (parent === undefined) {
+    return;
+  }
+  collectAncestorKeysForNode(nodesByGuid, parent, keys);
+}
+
+function collectSelectedAncestorKeys(
+  nodesByGuid: ReadonlyMap<string, FigNode>,
+  selectedGuids: readonly FigGuid[],
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const guid of selectedGuids) {
+    const node = nodesByGuid.get(guidToString(guid));
+    if (node !== undefined) {
+      collectAncestorKeysForNode(nodesByGuid, node, keys);
+    }
+  }
+  return keys;
+}
+
+function includeSelectedAncestorKeys(
+  expandedIds: ReadonlySet<string>,
+  selectedAncestorKeys: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const next = new Set(expandedIds);
+  for (const key of selectedAncestorKeys) {
+    next.add(key);
+  }
+  if (next.size === expandedIds.size) {
+    return expandedIds;
+  }
+  return next;
+}
+
 function nodeIcon(node: FigNode): ReactNode {
   switch (getNodeType(node)) {
     case "FRAME":
@@ -148,13 +198,13 @@ function renderLayerDisclosure({
   expanded,
   label,
   id,
-  toggleCollapsed,
+  toggleExpanded,
 }: {
   readonly childCount: number;
   readonly expanded: boolean;
   readonly label: string;
   readonly id: string;
-  readonly toggleCollapsed: (id: string) => void;
+  readonly toggleExpanded: (id: string) => void;
 }): ReactNode {
   if (childCount === 0) {
     return <span className={styles.disclosureSpacer} />;
@@ -166,7 +216,7 @@ function renderLayerDisclosure({
       aria-label={expanded ? `Collapse ${label}` : `Expand ${label}`}
       onClick={(event) => {
         event.stopPropagation();
-        toggleCollapsed(id);
+        toggleExpanded(id);
       }}
     >
       {expanded ? <ChevronDownIcon size={DISCLOSURE_SIZE} /> : <ChevronRightIcon size={DISCLOSURE_SIZE} />}
@@ -179,33 +229,33 @@ function renderChildLayerRows({
   children,
   depth,
   selectedIds,
-  collapsedIds,
+  expandedIds,
   canSelect,
   canMutate,
-  toggleCollapsed,
+  toggleExpanded,
 }: {
   readonly expanded: boolean;
   readonly children: readonly FigNode[];
   readonly depth: number;
   readonly selectedIds: ReadonlySet<string>;
-  readonly collapsedIds: ReadonlySet<string>;
+  readonly expandedIds: ReadonlySet<string>;
   readonly canSelect: boolean;
   readonly canMutate: boolean;
-  readonly toggleCollapsed: (id: string) => void;
+  readonly toggleExpanded: (id: string) => void;
 }): ReactNode {
   if (!expanded) {
     return null;
   }
   return children.map((child) => (
     <LayerRow
-      key={guidToString(requireGuid(child))}
+      key={nodeKey(child)}
       node={child}
       depth={depth + 1}
       selectedIds={selectedIds}
-      collapsedIds={collapsedIds}
+      expandedIds={expandedIds}
       canSelect={canSelect}
       canMutate={canMutate}
-      toggleCollapsed={toggleCollapsed}
+      toggleExpanded={toggleExpanded}
     />
   ));
 }
@@ -214,26 +264,26 @@ function LayerRow({
   node,
   depth,
   selectedIds,
-  collapsedIds,
+  expandedIds,
   canSelect,
   canMutate,
-  toggleCollapsed,
+  toggleExpanded,
 }: {
   readonly node: FigNode;
   readonly depth: number;
   readonly selectedIds: ReadonlySet<string>;
-  readonly collapsedIds: ReadonlySet<string>;
+  readonly expandedIds: ReadonlySet<string>;
   readonly canSelect: boolean;
   readonly canMutate: boolean;
-  readonly toggleCollapsed: (id: string) => void;
+  readonly toggleExpanded: (id: string) => void;
 }) {
   const { context, selectNodeGuid, updateNode } = useFigEditor();
   const guid = requireGuid(node);
-  const id = guidToString(guid);
+  const id = nodeKey(node);
   const presentation = getLayerNodePresentation(node);
   const children = context.document.childrenOf(node);
   const selected = selectedIds.has(id);
-  const expanded = !collapsedIds.has(id);
+  const expanded = expandedIds.has(id);
   const visible = node.visible !== false;
   const [renaming, setRenaming] = useState(false);
 
@@ -282,7 +332,7 @@ function LayerRow({
           expanded,
           label: presentation.label,
           id,
-          toggleCollapsed,
+          toggleExpanded,
         })}
         <span className={styles.icon}>{nodeIcon(node)}</span>
         <LayerNameEditor
@@ -311,10 +361,10 @@ function LayerRow({
         children,
         depth,
         selectedIds,
-        collapsedIds,
+        expandedIds,
         canSelect,
         canMutate,
-        toggleCollapsed,
+        toggleExpanded,
       })}
     </>
   );
@@ -324,12 +374,21 @@ function LayerRow({
 export function LayerPanel() {
   const { activePage, context, selectedGuids } = useFigEditor();
   const operationDomain = useFigOperationDomain();
-  const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<string>>(new Set());
+  const selectedAncestorKeys = useMemo(
+    () => collectSelectedAncestorKeys(context.document.nodesByGuid, selectedGuids),
+    [context.document.nodesByGuid, selectedGuids],
+  );
+  const activePageKey = activePage === undefined ? undefined : nodeKey(activePage);
+  const initialExpandedIds = useMemo(
+    () => new Set(selectedAncestorKeys),
+    [selectedAncestorKeys],
+  );
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => initialExpandedIds);
   const selectedIds = useMemo(() => new Set(selectedGuids.map(guidToString)), [selectedGuids]);
   const canSelect = allowsFigUserOperation(operationDomain, "select-node");
   const canMutate = allowsFigUserOperation(operationDomain, "update-property");
-  const toggleCollapsed = useCallback((id: string): void => {
-    setCollapsedIds((previous) => {
+  const toggleExpanded = useCallback((id: string): void => {
+    setExpandedIds((previous) => {
       const next = new Set(previous);
       if (next.has(id)) {
         next.delete(id);
@@ -339,6 +398,15 @@ export function LayerPanel() {
       return next;
     });
   }, []);
+  useEffect(() => {
+    setExpandedIds(initialExpandedIds);
+  }, [activePageKey, initialExpandedIds]);
+  useEffect(() => {
+    if (selectedAncestorKeys.size === 0) {
+      return;
+    }
+    setExpandedIds((previous) => includeSelectedAncestorKeys(previous, selectedAncestorKeys));
+  }, [selectedAncestorKeys]);
   if (activePage === undefined) {
     throw new Error("LayerPanel requires an active CANVAS");
   }
@@ -349,14 +417,14 @@ export function LayerPanel() {
       <div className={styles.list} role="tree" aria-label="Layers">
         {children.map((node) => (
           <LayerRow
-            key={guidToString(requireGuid(node))}
+            key={nodeKey(node)}
             node={node}
             depth={0}
             selectedIds={selectedIds}
-            collapsedIds={collapsedIds}
+            expandedIds={expandedIds}
             canSelect={canSelect}
             canMutate={canMutate}
-            toggleCollapsed={toggleCollapsed}
+            toggleExpanded={toggleExpanded}
           />
         ))}
       </div>

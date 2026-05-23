@@ -31,6 +31,7 @@ import { derivedTextDataWithoutVisualPayload } from "@higma-document-models/fig/
 import {
   resolveTextLayout,
   textLayoutToCursorLayout,
+  type ResolveTextContext,
   type TextFontResolver,
 } from "@higma-document-renderers/fig/text";
 import { useFigEditor } from "../context/FigEditorContext";
@@ -47,6 +48,7 @@ export type FigTextEditOverlayProps = {
   readonly canvasWidth: number;
   readonly canvasHeight: number;
   readonly textFontResolver?: TextFontResolver;
+  readonly textResolveContext?: Pick<ResolveTextContext, "styleRegistry">;
   readonly onExit: () => void;
 };
 
@@ -158,6 +160,7 @@ export function FigTextEditOverlay({
   canvasWidth,
   canvasHeight,
   textFontResolver,
+  textResolveContext,
   onExit,
 }: FigTextEditOverlayProps) {
   const { updateNode } = useFigEditor();
@@ -172,8 +175,11 @@ export function FigTextEditOverlay({
   const svgRef = useRef<SVGSVGElement>(null);
 
   const textLayoutResolution = useMemo(
-    () => resolveTextLayout(node, { fontResolver: textFontResolver }),
-    [node, textFontResolver],
+    () => resolveTextLayout(node, {
+      fontResolver: textFontResolver,
+      styleRegistry: textResolveContext?.styleRegistry,
+    }),
+    [node, textFontResolver, textResolveContext?.styleRegistry],
   );
   const textLayout = textLayoutResolution.layout;
   const cursorLayout = useMemo(

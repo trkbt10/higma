@@ -1,3 +1,5 @@
+/** @file Figma SVG opacity serialization rules. */
+
 const KIWI_TINY_OPACITY_SENTINEL = Math.fround(0.0001);
 const FIGMA_SVG_TINY_OPACITY = 0.01;
 

@@ -12,11 +12,11 @@ test.describe("Fig editor image fill resolution", () => {
     await expect.poll(() => renderedSvgMarkup(page)).toContain("data:image/png;base64,");
   });
 
-  test("uploads image fills into the WebGL texture pipeline", async ({ page }) => {
+  test("renders image fills in the WebGL viewport canvas", async ({ page }) => {
     await page.goto("/?renderer=webgl");
     await waitForEditor(page);
 
-    await expect.poll(() => webglNonWhitePixelCountInNode(page, IMAGE_FILL_RECT)).toBeGreaterThan(0);
+    await expect.poll(() => canvasNonWhitePixelCountInNode(page, IMAGE_FILL_RECT)).toBeGreaterThan(0);
   });
 });
 
@@ -32,11 +32,11 @@ async function waitForEditor(page: Page): Promise<void> {
 
 async function renderedSvgMarkup(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']");
-    if (!svg) {
-      throw new Error("Rendered SVG tree was not found");
+    const svgs = Array.from(document.querySelectorAll<SVGSVGElement>("svg[aria-hidden='true']"));
+    if (svgs.length === 0) {
+      throw new Error("Rendered SVG trees were not found");
     }
-    return svg.outerHTML;
+    return svgs.map((svg) => svg.outerHTML).join("\n");
   });
 }
 
@@ -73,28 +73,30 @@ async function nodeScreenPoint(
   return point;
 }
 
-async function webglNonWhitePixelCountInNode(
+async function canvasNonWhitePixelCountInNode(
   page: Page,
   node: { readonly pageX: number; readonly pageY: number; readonly width: number; readonly height: number },
 ): Promise<number> {
   const center = await nodeScreenPoint(page, node, { x: 0.5, y: 0.5 });
   return page.evaluate(({ x, y }) => {
-    const canvas = document.querySelector("canvas");
+    const canvas = Array.from(document.querySelectorAll<HTMLCanvasElement>("canvas")).find((candidate) => {
+      const bounds = candidate.getBoundingClientRect();
+      return x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom;
+    });
     if (!canvas) {
-      throw new Error("WebGL canvas was not found");
+      throw new Error(`Viewport canvas containing (${x}, ${y}) was not found`);
     }
-    const gl = canvas.getContext("webgl", { preserveDrawingBuffer: true });
-    if (!gl) {
-      throw new Error("WebGL context was not available");
+    const context = canvas.getContext("2d");
+    if (context === null) {
+      throw new Error("Viewport canvas 2D context was not available");
     }
     const canvasRect = canvas.getBoundingClientRect();
     const sampleOffsets = [-12, -6, 0, 6, 12];
     return sampleOffsets.reduce((matchingPixels, offsetX) => {
       return matchingPixels + sampleOffsets.reduce((rowMatches, offsetY) => {
-        const pixel = new Uint8Array(4);
         const pixelX = Math.floor((x + offsetX - canvasRect.left) * (canvas.width / canvasRect.width));
-        const pixelY = Math.floor((canvasRect.bottom - (y + offsetY)) * (canvas.height / canvasRect.height));
-        gl.readPixels(pixelX, pixelY, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        const pixelY = Math.floor((y + offsetY - canvasRect.top) * (canvas.height / canvasRect.height));
+        const pixel = context.getImageData(pixelX, pixelY, 1, 1).data;
         const isOpaque = (pixel[3] ?? 0) > 200;
         const isWhite = (pixel[0] ?? 0) > 245 && (pixel[1] ?? 0) > 245 && (pixel[2] ?? 0) > 245;
         if (isOpaque && !isWhite) {

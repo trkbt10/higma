@@ -105,6 +105,8 @@ export type FigEditorProviderProps = {
   readonly context: FigDocumentContext;
   readonly children: ReactNode;
   readonly onContextChange?: (context: FigDocumentContext) => void;
+  readonly initialActivePageGuid?: FigGuid;
+  readonly initialSelectedGuids?: readonly FigGuid[];
 };
 
 export type SelectNodeOptions = {
@@ -146,6 +148,19 @@ function guidEquals(left: FigGuid, right: FigGuid): boolean {
 
 function guidKey(guid: FigGuid): string {
   return guidToString(guid);
+}
+
+function guidListEquals(left: readonly FigGuid[], right: readonly FigGuid[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((guid, index) => {
+    const candidate = right[index];
+    if (candidate === undefined) {
+      return false;
+    }
+    return guidEquals(guid, candidate);
+  });
 }
 
 function positionString(index: number): string {
@@ -231,6 +246,17 @@ function firstPageGuid(pages: readonly FigNode[]): FigGuid | undefined {
   return requireNodeGuid(first, "FigEditorProvider");
 }
 
+function initialActivePageGuid(
+  pages: readonly FigNode[],
+  guid: FigGuid | undefined,
+): FigGuid | undefined {
+  if (guid === undefined) {
+    return firstPageGuid(pages);
+  }
+  requireCanvasPage(pages, guid);
+  return guid;
+}
+
 function pageByGuid(pages: readonly FigNode[], guid: FigGuid): FigNode | undefined {
   return pages.find((page) => {
     const pageGuid = requireNodeGuid(page, "FigEditorProvider page lookup");
@@ -260,6 +286,17 @@ function nodeByGuid(context: FigDocumentContext, guid: FigGuid): FigNode {
 
 function validateSelection(context: FigDocumentContext, guids: readonly FigGuid[]): readonly FigNode[] {
   return guids.map((guid) => nodeByGuid(context, guid));
+}
+
+function initialSelectedGuids(
+  context: FigDocumentContext,
+  guids: readonly FigGuid[] | undefined,
+): readonly FigGuid[] {
+  if (guids === undefined) {
+    return [];
+  }
+  validateSelection(context, guids);
+  return [...guids];
 }
 
 function createBuilderState(context: FigDocumentContext): FigBuilderState {
@@ -310,14 +347,24 @@ function removeDescendants(
 /**
  * Provide Kiwi document state and editor-only selection/tool state.
  */
-export function FigEditorProvider({ context, children, onContextChange }: FigEditorProviderProps) {
+export function FigEditorProvider({
+  context,
+  children,
+  onContextChange,
+  initialActivePageGuid: initialActivePageGuidProp,
+  initialSelectedGuids: initialSelectedGuidsProp,
+}: FigEditorProviderProps) {
   const builderStateRef = useRef(createBuilderState(context));
   const [currentContext, setCurrentContext] = useState(context);
   const [contextHistory, setContextHistory] = useState<FigContextHistory>({ past: [], future: [] });
   const pages = useMemo(() => findCanvases(currentContext.document), [currentContext]);
   const resources = useMemo(() => figDocumentResources(currentContext), [currentContext]);
-  const [activePageGuid, setActivePageGuidState] = useState<FigGuid | undefined>(() => firstPageGuid(pages));
-  const [selectedGuids, setSelectedGuidsState] = useState<readonly FigGuid[]>([]);
+  const [activePageGuid, setActivePageGuidState] = useState<FigGuid | undefined>(
+    () => initialActivePageGuid(pages, initialActivePageGuidProp),
+  );
+  const [selectedGuids, setSelectedGuidsState] = useState<readonly FigGuid[]>(
+    () => initialSelectedGuids(context, initialSelectedGuidsProp),
+  );
   const [creationMode, setCreationMode] = useState<FigCreationMode>("select");
   const [textEdit, setTextEdit] = useState<FigTextEditState>(INACTIVE_TEXT_EDIT_STATE);
   const [canvasTransformActive, setCanvasTransformActive] = useState(false);
@@ -361,7 +408,12 @@ export function FigEditorProvider({ context, children, onContextChange }: FigEdi
 
   const setSelectedGuids = useCallback((guids: readonly FigGuid[]): void => {
     validateSelection(currentContext, guids);
-    setSelectedGuidsState([...guids]);
+    setSelectedGuidsState((previous) => {
+      if (guidListEquals(previous, guids)) {
+        return previous;
+      }
+      return [...guids];
+    });
   }, [currentContext]);
 
   const selectNodeGuid = useCallback((guid: FigGuid, options?: SelectNodeOptions): void => {
@@ -374,12 +426,23 @@ export function FigEditorProvider({ context, children, onContextChange }: FigEdi
       if (options?.additive === true && !alreadySelected) {
         return [...previous, guid];
       }
+      if (options?.additive === true && alreadySelected) {
+        return previous;
+      }
+      if (previous.length === 1 && alreadySelected) {
+        return previous;
+      }
       return [guid];
     });
   }, [currentContext]);
 
   const clearSelection = useCallback((): void => {
-    setSelectedGuidsState([]);
+    setSelectedGuidsState((previous) => {
+      if (previous.length === 0) {
+        return previous;
+      }
+      return [];
+    });
   }, []);
 
   const enterTextEdit = useCallback((guid: FigGuid): void => {
@@ -397,11 +460,21 @@ export function FigEditorProvider({ context, children, onContextChange }: FigEdi
   }, []);
 
   const beginCanvasTransform = useCallback((): void => {
-    setCanvasTransformActive(true);
+    setCanvasTransformActive((previous) => {
+      if (previous) {
+        return previous;
+      }
+      return true;
+    });
   }, []);
 
   const endCanvasTransform = useCallback((): void => {
-    setCanvasTransformActive(false);
+    setCanvasTransformActive((previous) => {
+      if (!previous) {
+        return previous;
+      }
+      return false;
+    });
   }, []);
 
   const updateNode = useCallback((

@@ -1,6 +1,6 @@
 /** @file Viewport pruning tests. */
 
-import { createNodeId, type FrameNode, type GroupNode, type RectNode, type SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId, type FrameNode, type GroupNode, type PathNode, type RectNode, type SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import { pruneSceneGraphToViewport } from "./viewport-prune";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
@@ -16,6 +16,32 @@ function rect(id: string, x: number): RectNode {
     width: 30,
     height: 30,
     fills: [],
+  };
+}
+
+function horizontalStrokePath(id: string, y: number): PathNode {
+  return {
+    type: "path",
+    id: createNodeId(id),
+    transform: { ...IDENTITY, m12: y },
+    opacity: 1,
+    visible: true,
+    effects: [],
+    contours: [{
+      commands: [
+        { type: "M", x: 0, y: 0 },
+        { type: "L", x: 100, y: 0 },
+      ],
+      windingRule: "nonzero",
+    }],
+    fills: [],
+    stroke: {
+      color: { r: 0, g: 0, b: 0, a: 1 },
+      width: 0.087890625,
+      opacity: 0.2,
+      linecap: "butt",
+      linejoin: "miter",
+    },
   };
 }
 
@@ -36,7 +62,7 @@ function maskedGroupOutsideClip(): GroupNode {
   };
 }
 
-function clippedFrame(children: readonly (GroupNode | RectNode)[]): FrameNode {
+function clippedFrame(children: readonly (GroupNode | PathNode | RectNode)[]): FrameNode {
   return {
     type: "frame",
     id: createNodeId("clip-frame"),
@@ -54,7 +80,7 @@ function clippedFrame(children: readonly (GroupNode | RectNode)[]): FrameNode {
   };
 }
 
-function graph(children: readonly (GroupNode | RectNode)[]): SceneGraph {
+function graph(children: readonly (GroupNode | PathNode | RectNode)[]): SceneGraph {
   return {
     width: 100,
     height: 100,
@@ -92,5 +118,12 @@ describe("pruneSceneGraphToViewport", () => {
     const frame = pruned.root.children[0] as FrameNode;
 
     expect(frame.children).toHaveLength(0);
+  });
+
+  it("keeps zero-area path contours when their stroke intersects an active frame clip", () => {
+    const pruned = pruneSceneGraphToViewport(graph([horizontalStrokePath("thin-line", 50)]));
+    const frame = pruned.root.children[0] as FrameNode;
+
+    expect(frame.children.map((child) => child.id)).toEqual([createNodeId("thin-line")]);
   });
 });

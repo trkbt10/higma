@@ -302,7 +302,7 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     expect(node.omitChildClip).toBe(true);
   });
 
-  it("keeps a rounded viewport-root frame clip on the frame", () => {
+  it("omits a rounded viewport-root frame clip when children stay inside the rectangular frame bounds", () => {
     const frame: FrameNode = {
       type: "frame",
       id: createNodeId("rounded-viewport-frame"),
@@ -321,8 +321,53 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     const tree = resolveRenderTree(makeSceneGraph([frame], { x: 0, y: 0, width: 100, height: 100 }));
     const node = tree.children[0] as RenderFrameNode;
 
+    expect(node.childClipId).toBeUndefined();
+    expect(node.omitChildClip).toBeUndefined();
+  });
+
+  it("emits a rounded viewport-root frame clip when a child overflows the rectangular frame bounds", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("rounded-viewport-overflow-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      cornerRadius: 12,
+      surfaceShape: makeFrameSurface(100, 100, 12),
+      fills: [],
+      clipsContent: true,
+      children: [makeRect("overflowing-child", { ...IDENTITY, m02: 92 })],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame], { x: 0, y: 0, width: 100, height: 100 }));
+    const node = tree.children[0] as RenderFrameNode;
+
     expect(node.childClipId).toBeDefined();
     expect(node.omitChildClip).toBeUndefined();
+  });
+
+  it("omits a rounded frame clip when children only cross rounded-corner curves inside the rectangular bounds", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("rounded-corner-contained-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      cornerRadius: 12,
+      surfaceShape: makeFrameSurface(100, 100, 12),
+      fills: [],
+      clipsContent: true,
+      children: [makeRect("corner-child")],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeUndefined();
   });
 
   it("omits a rounded frame clip when every child is fully inside the Kiwi clip shape", () => {
@@ -387,7 +432,7 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     expect(node.childClipId).toBeUndefined();
   });
 
-  it("keeps a frame clip when a child effect extends outside the Kiwi clip shape", () => {
+  it("omits a frame clip when only a child effect extends outside the Kiwi clip shape", () => {
     const shadowedChild: RectNode = {
       ...makeRect("shadowed-child", { ...IDENTITY, m02: 70, m12: 70 }),
       effects: [{
@@ -415,7 +460,67 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
     const tree = resolveRenderTree(makeSceneGraph([frame]));
     const node = tree.children[0] as RenderFrameNode;
 
-    expect(node.childClipId).toBeDefined();
+    expect(node.childClipId).toBeUndefined();
+  });
+
+  it("omits a frame clip when a child path has INSIDE stroke geometry outside its authored contour", () => {
+    const strokedIconFrame: PathNode = {
+      type: "path",
+      id: createNodeId("inside-stroked-icon-frame"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 19,
+      height: 24,
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 3 },
+          { type: "C", x1: 0, y1: 1.343146, x2: 1.343146, y2: 0, x: 3, y: 0 },
+          { type: "L", x: 16, y: 0 },
+          { type: "C", x1: 17.656855, y1: 0, x2: 19, y2: 1.343146, x: 19, y: 3 },
+          { type: "L", x: 19, y: 21 },
+          { type: "C", x1: 19, y1: 22.656855, x2: 17.656855, y2: 24, x: 16, y: 24 },
+          { type: "L", x: 3, y: 24 },
+          { type: "C", x1: 1.343146, y1: 24, x2: 0, y2: 22.656855, x: 0, y: 21 },
+          { type: "L", x: 0, y: 3 },
+        ],
+        windingRule: "nonzero",
+      }],
+      strokeContours: [{
+        commands: [
+          { type: "M", x: -2, y: -2 },
+          { type: "L", x: 21, y: -2 },
+          { type: "L", x: 21, y: 26 },
+          { type: "L", x: -2, y: 26 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [],
+      stroke: {
+        ...BASIC_STROKE,
+        align: "INSIDE",
+      },
+    };
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("inside-stroked-icon-container"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 19,
+      height: 24,
+      surfaceShape: makeFrameSurface(19, 24),
+      fills: [],
+      clipsContent: true,
+      children: [strokedIconFrame],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([frame]));
+    const node = tree.children[0] as RenderFrameNode;
+
+    expect(node.childClipId).toBeUndefined();
   });
 
   it("resolves a decoded rounded-rect path stroke as a rect stroke shape", () => {
@@ -613,6 +718,58 @@ describe("resolveRenderTree — viewport-root frame clip", () => {
 
     expect(maskDef.maskType).toBe("ALPHA");
     expect(maskDef.contentRendering).toBe("geometry-coverage");
+  });
+
+  it("uses authored source geometry, not stroke outsets, for source-paint ALPHA mask regions", () => {
+    const maskContent: PathNode = {
+      type: "path",
+      id: createNodeId("alpha-stroked-mask-source"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 432, y: 0 },
+          { type: "L", x: 432, y: 904 },
+          { type: "L", x: 0, y: 904 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      strokeContours: [{
+        commands: [
+          { type: "M", x: -6, y: -6 },
+          { type: "L", x: 438, y: -6 },
+          { type: "L", x: 438, y: 910 },
+          { type: "L", x: -6, y: 910 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [],
+      stroke: { ...BASIC_STROKE, width: 6 },
+    };
+    const maskedGroup: GroupNode = {
+      type: "group",
+      id: createNodeId("alpha-stroked-masked-group"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      mask: { maskId: maskContent.id, maskType: "ALPHA", maskContent },
+      children: [makeRect("alpha-stroked-masked-child")],
+    };
+    const tree = resolveRenderTree(makeSceneGraph([maskedGroup]));
+    const node = tree.children[0] as RenderGroupNode;
+    const maskDef = node.defs.find((def): def is RenderMaskDef => def.type === "mask");
+    if (maskDef === undefined) {
+      throw new Error("expected mask def");
+    }
+
+    expect(maskDef.contentRendering).toBe("source-paint");
+    expect(maskDef.bounds).toEqual({ x: 0, y: 0, width: 432, height: 904 });
   });
 });
 
@@ -928,14 +1085,20 @@ describe("resolveRenderTree — stroke layers", () => {
     const tree = resolveRenderTree(sg);
 
     const node = tree.children[0] as RenderPathNode;
-    expect(node.paths[0].d).toBe("M-1 -1L11 -1L11 11L-1 11Z");
+    expect(node.paths[0].d).toBe("M0 0H10V10H0V0Z");
     expect(node.defs.some((def) => def.type === "stroke-mask")).toBe(false);
     expect(node.strokeRendering).toBeDefined();
-    expect(node.strokeRendering!.mode).toBe("uniform");
-    if (node.strokeRendering!.mode === "uniform") {
-      expect(node.strokeRendering!.attrs.strokeWidth).toBe(2);
-      expect(node.strokeRendering!.attrs.strokeAlign).toBeUndefined();
+    expect(node.strokeRendering!.mode).toBe("layers");
+    if (node.strokeRendering!.mode !== "layers") {
+      throw new Error("Expected stroke rendering layers");
     }
+    expect(node.strokeRendering!.layers[0].attrs.strokeWidth).toBe(2);
+    expect(node.strokeRendering!.layers[0].attrs.strokeAlign).toBeUndefined();
+    expect(node.strokeRendering!.shape.kind).toBe("path");
+    if (node.strokeRendering!.shape.kind !== "path") {
+      throw new Error("Expected stroke rendering path shape");
+    }
+    expect(node.strokeRendering!.shape.paths[0].d).toBe("M-1 -1H11V11H-1Z");
   });
 
   it("resolves precomputed path stroke geometry as filled stroke outline", () => {
@@ -976,14 +1139,14 @@ describe("resolveRenderTree — stroke layers", () => {
     const tree = resolveRenderTree(sg);
 
     const node = tree.children[0] as RenderPathNode;
-    expect(node.paths[0].d).toBe("M0 0L10 0L10 10L0 10L0 0");
+    expect(node.paths[0].d).toBe("M0 0H10V10H0V0Z");
     expect(node.paths[0].fillRule).toBe("evenodd");
     const strokeRendering = node.strokeRendering;
     expect(strokeRendering).toBeDefined();
     if (strokeRendering === undefined || strokeRendering.mode !== "geometry") {
       throw new Error("expected geometry stroke rendering");
     }
-    expect(strokeRendering.paths[0].d).toBe("M-1 -1L11 -1L11 11L-1 11L-1 -1");
+    expect(strokeRendering.paths[0].d).toBe("M-1 -1H11V11H-1V-1Z");
     expect(strokeRendering.layers[0].attrs.stroke).toBe("#000000");
     expect(strokeRendering.mask?.strokeAlign).toBe("INSIDE");
     expect(strokeRendering.mask?.shape.kind).toBe("path");
@@ -991,6 +1154,65 @@ describe("resolveRenderTree — stroke layers", () => {
       expect(strokeRendering.mask.shape.fillRule).toBe("evenodd");
     }
     expect(node.defs.some((def) => def.type === "stroke-mask" && def.id === strokeRendering.mask?.id)).toBe(true);
+  });
+
+  it("uses Kiwi rect metadata as the stroke shape when a VECTOR carries rounded-rectangle metadata", () => {
+    const pathNode: PathNode = {
+      type: "path",
+      id: createNodeId("path-stroke-geometry-rect-metadata"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 200,
+      cornerRadius: 20,
+      cornerSmoothing: 0.6,
+      contours: [{
+        commands: [
+          { type: "M", x: 0, y: 20 },
+          { type: "L", x: 0, y: 180 },
+          { type: "L", x: 100, y: 180 },
+          { type: "L", x: 100, y: 20 },
+          { type: "L", x: 0, y: 20 },
+        ],
+        windingRule: "nonzero",
+      }],
+      strokeContours: [{
+        commands: [
+          { type: "M", x: 1, y: 20 },
+          { type: "L", x: 1, y: 180 },
+          { type: "L", x: 99, y: 180 },
+          { type: "L", x: 99, y: 20 },
+          { type: "L", x: 1, y: 20 },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [RED_SOLID],
+      stroke: {
+        ...BASIC_STROKE,
+        align: "INSIDE",
+      },
+    };
+    const sg = makeSceneGraph([pathNode]);
+    const tree = resolveRenderTree(sg);
+
+    const node = tree.children[0] as RenderPathNode;
+    const strokeRendering = node.strokeRendering;
+    expect(strokeRendering).toBeDefined();
+    if (strokeRendering === undefined || strokeRendering.mode !== "masked") {
+      throw new Error("expected masked rect stroke rendering");
+    }
+    expect(strokeRendering.attrs.stroke).toBe("#000000");
+    expect(strokeRendering.attrs.strokeWidth).toBe(4);
+    expect(strokeRendering.attrs.strokeAlign).toBe("INSIDE");
+    expect(strokeRendering.shape).toMatchObject({
+      kind: "rect",
+      width: 100,
+      height: 200,
+      cornerRadius: 20,
+      cornerSmoothing: 0.6,
+    });
   });
 
   it("resolves multi-paint stroke as layers", () => {
@@ -1046,6 +1268,20 @@ describe("resolveRenderTree — drop shadow z-order", () => {
       throw new Error("Expected background blur to be resolved");
     }
     expect(node.backgroundBlur.stdDeviation).toBe(20);
+    expect(node.backgroundBlur.backdropBounds).toEqual({
+      x: -40,
+      y: -40,
+      width: 100,
+      height: 100,
+    });
+    const clipDef = node.defs.find((def) => def.type === "clip-path" && def.id === node.backgroundBlur?.clipId);
+    if (clipDef === undefined) {
+      throw new Error("Expected background blur clip def");
+    }
+    if (clipDef.type !== "clip-path") {
+      throw new Error("Expected background blur clip def to be a clip-path");
+    }
+    expect(clipDef.transform).toBe("matrix(1,0,0,1,40,40)");
   });
 
   it("puts frame surface shadows on the background instead of the child wrapper", () => {

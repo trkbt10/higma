@@ -11,6 +11,7 @@
 
 import type { ReactNode } from "react";
 import type { ResolvedWrapperAttrs, RenderMask } from "../../scene-graph";
+import { blendModeStyle } from "./blend-mode";
 
 type WrapperProps = {
   readonly wrapper: ResolvedWrapperAttrs;
@@ -23,11 +24,6 @@ type ForegroundFilterProps = {
   readonly wrapper: ResolvedWrapperAttrs;
   readonly children: ReactNode;
 };
-
-function buildBlendModeStyle(wrapper: ResolvedWrapperAttrs): React.CSSProperties | undefined {
-  if (!wrapper.blendMode) { return undefined; }
-  return { mixBlendMode: wrapper.blendMode as React.CSSProperties["mixBlendMode"] };
-}
 
 function resolveWrapperFilter(wrapper: ResolvedWrapperAttrs, includeFilter: boolean): string | undefined {
   if (!includeFilter) {
@@ -48,7 +44,7 @@ export function RenderWrapper({ wrapper, mask, includeFilter = true, children }:
   // Blend isolation changes the backdrop that mix-blend-mode samples and
   // is therefore never inferred here; filters already define their own SVG
   // offscreen pipeline via <filter>.
-  const finalStyle = buildBlendModeStyle(wrapper);
+  const finalStyle = blendModeStyle(wrapper.blendMode);
 
   return (
     <g
@@ -63,11 +59,9 @@ export function RenderWrapper({ wrapper, mask, includeFilter = true, children }:
   );
 }
 
-
-
-
-
-
+/**
+ * Applies an already-resolved foreground filter wrapper around rendered children.
+ */
 export function RenderForegroundFilter({ wrapper, children }: ForegroundFilterProps) {
   if (wrapper.filterAttr === undefined) {
     return <>{children}</>;

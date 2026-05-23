@@ -27,6 +27,14 @@ function approx(a: number, b: number, eps = 1e-6): void {
   expect(Math.abs(a - b)).toBeLessThanOrEqual(eps);
 }
 
+function assertPathCommandType<T extends PathCommand["type"]>(
+  command: PathCommand,
+  type: T,
+): asserts command is Extract<PathCommand, { readonly type: T }> {
+  expect(command.type).toBe(type);
+  if (command.type !== type) { throw new Error(`Expected ${type} command`); }
+}
+
 function approxCommands(
   actual: readonly PathCommand[],
   expected: readonly PathCommand[],
@@ -37,25 +45,38 @@ function approxCommands(
     const a = actual[i];
     const e = expected[i];
     expect(a.type).toBe(e.type);
-    if (a.type === "M" && e.type === "M") {
+    if (a.type === "M") {
+      assertPathCommandType(e, "M");
       approx(a.x, e.x, eps);
       approx(a.y, e.y, eps);
-    } else if (a.type === "L" && e.type === "L") {
+      continue;
+    }
+    if (a.type === "L") {
+      assertPathCommandType(e, "L");
       approx(a.x, e.x, eps);
       approx(a.y, e.y, eps);
-    } else if (a.type === "C" && e.type === "C") {
+      continue;
+    }
+    if (a.type === "C") {
+      assertPathCommandType(e, "C");
       approx(a.x1, e.x1, eps);
       approx(a.y1, e.y1, eps);
       approx(a.x2, e.x2, eps);
       approx(a.y2, e.y2, eps);
       approx(a.x, e.x, eps);
       approx(a.y, e.y, eps);
-    } else if (a.type === "Q" && e.type === "Q") {
+      continue;
+    }
+    if (a.type === "Q") {
+      assertPathCommandType(e, "Q");
       approx(a.x1, e.x1, eps);
       approx(a.y1, e.y1, eps);
       approx(a.x, e.x, eps);
       approx(a.y, e.y, eps);
-    } else if (a.type === "A" && e.type === "A") {
+      continue;
+    }
+    if (a.type === "A") {
+      assertPathCommandType(e, "A");
       approx(a.rx, e.rx, eps);
       approx(a.ry, e.ry, eps);
       approx(a.rotation, e.rotation, eps);
@@ -63,7 +84,9 @@ function approxCommands(
       expect(a.sweep).toBe(e.sweep);
       approx(a.x, e.x, eps);
       approx(a.y, e.y, eps);
+      continue;
     }
+    expect(a.type).toBe(e.type);
   }
 }
 
@@ -332,11 +355,15 @@ describe("primitive contour generators", () => {
       if (cmd.type === "M" || cmd.type === "L") {
         expect(Number.isFinite(cmd.x)).toBe(true);
         expect(Number.isFinite(cmd.y)).toBe(true);
-      } else if (cmd.type === "C") {
+        continue;
+      }
+      if (cmd.type === "C") {
         for (const v of [cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y]) {
           expect(Number.isFinite(v)).toBe(true);
         }
-      } else if (cmd.type === "Q") {
+        continue;
+      }
+      if (cmd.type === "Q") {
         for (const v of [cmd.x1, cmd.y1, cmd.x, cmd.y]) {
           expect(Number.isFinite(v)).toBe(true);
         }

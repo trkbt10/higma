@@ -39,6 +39,12 @@ describe("getFillColorAndOpacity", () => {
     ])).toEqual({ color: "#000000", opacity: 0.15 });
   });
 
+  it("applies solid color alpha to the resolved text fill opacity", () => {
+    expect(getFillColorAndOpacity([
+      solid({ r: 0.23529411852359772, g: 0.23529411852359772, b: 0.26274511218070984, a: 0.18 }, 0.5),
+    ])).toEqual({ color: "#3c3c43", opacity: 0.09 });
+  });
+
   it("skips paints flagged invisible", () => {
     expect(getFillColorAndOpacity([
       solid({ r: 0, g: 0, b: 0 }, 0.5, false),
@@ -63,6 +69,16 @@ describe("getAllVisibleSolidFills", () => {
     ])).toEqual([
       { color: "#ffffff", opacity: 0.15 },
       { color: "#ffffff", opacity: 1 },
+    ]);
+  });
+
+  it("applies each solid color alpha to stacked text fill opacities", () => {
+    expect(getAllVisibleSolidFills([
+      solid({ r: 1, g: 1, b: 1, a: 0.24 }, 0.5),
+      solid({ r: 1, g: 1, b: 1, a: 1 }, 0.75),
+    ])).toEqual([
+      { color: "#ffffff", opacity: 0.12 },
+      { color: "#ffffff", opacity: 0.75 },
     ]);
   });
 

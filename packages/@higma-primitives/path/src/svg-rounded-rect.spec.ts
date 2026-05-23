@@ -28,4 +28,10 @@ describe("svg rounded rect path", () => {
     expect(smoothed).not.toBe(rounded);
     expect(smoothed).toContain("M 0 32");
   });
+
+  it("emits inset smoothed strokes from the top edge like Figma SVG export", () => {
+    const d = buildSmoothedRoundedRectPathD(177.708, 372.86, [15.283, 15.283, 15.283, 15.283], 0.6, { x: 1.237, y: 1.237 }, 1.237);
+
+    expect(d.startsWith("M 24.452800000000003 1.237 L")).toBe(true);
+  });
 });

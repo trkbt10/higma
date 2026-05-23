@@ -12,6 +12,10 @@ import type { FillColorResult } from "./types";
  */
 const DEFAULT_FILL: FillColorResult = { color: "#000000", opacity: 1 };
 
+function solidPaintOpacity(paint: FigPaint & { readonly color: { readonly a: number } }): number {
+  return paint.color.a * (paint.opacity ?? 1);
+}
+
 /**
  * Get fill color and opacity from paints for text nodes
  *
@@ -38,7 +42,7 @@ export function getFillColorAndOpacity(paints: readonly FigPaint[] | undefined):
 
   return {
     color: figColorToHex(solidPaint.color),
-    opacity: firstPaint.opacity ?? 1,
+    opacity: solidPaintOpacity(solidPaint),
   };
 }
 
@@ -78,7 +82,7 @@ export function getAllVisibleSolidFills(
     const blendMode = convertFigmaBlendMode(paint.blendMode);
     out.push({
       color: figColorToHex(solid.color),
-      opacity: paint.opacity ?? 1,
+      opacity: solidPaintOpacity(solid),
       ...(blendMode === undefined ? {} : { blendMode }),
     });
   }

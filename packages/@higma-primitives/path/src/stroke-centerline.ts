@@ -50,18 +50,17 @@ function commandsToSubpaths(commands: readonly PathCommand[]): Point[][] | undef
   const subpaths: Point[][] = [];
   let current: Point[] | undefined;
   for (const cmd of commands) {
-    if (cmd.type === "M") {
-      current = [{ x: cmd.x, y: cmd.y }];
-      subpaths.push(current);
-      continue;
-    }
-    if (cmd.type === "L") {
-      if (!current) { return undefined; }
-      current.push({ x: cmd.x, y: cmd.y });
-      continue;
-    }
-    if (cmd.type === "Z") {
-      continue;
+    switch (cmd.type) {
+      case "M":
+        current = [{ x: cmd.x, y: cmd.y }];
+        subpaths.push(current);
+        continue;
+      case "L":
+        if (current === undefined) { return undefined; }
+        current.push({ x: cmd.x, y: cmd.y });
+        continue;
+      case "Z":
+        continue;
     }
     return undefined;
   }
@@ -190,15 +189,21 @@ function chainSegments(segments: readonly Segment[]): Point[][] {
           poly.push(seg.b);
           used[j] = true;
           extended = true;
-        } else if (near(seg.b, tail)) {
+          continue;
+        }
+        if (near(seg.b, tail)) {
           poly.push(seg.a);
           used[j] = true;
           extended = true;
-        } else if (near(seg.a, head)) {
+          continue;
+        }
+        if (near(seg.a, head)) {
           poly.unshift(seg.b);
           used[j] = true;
           extended = true;
-        } else if (near(seg.b, head)) {
+          continue;
+        }
+        if (near(seg.b, head)) {
           poly.unshift(seg.a);
           used[j] = true;
           extended = true;
@@ -248,11 +253,17 @@ function tryDetectCircularAnnulus(
     for (const cmd of c.commands) {
       if (cmd.type === "M" || cmd.type === "L") {
         points.push({ x: cmd.x, y: cmd.y });
-      } else if (cmd.type === "C") {
+        continue;
+      }
+      if (cmd.type === "C") {
         points.push({ x: cmd.x, y: cmd.y });
-      } else if (cmd.type === "Q") {
+        continue;
+      }
+      if (cmd.type === "Q") {
         points.push({ x: cmd.x, y: cmd.y });
-      } else if (cmd.type === "A") {
+        continue;
+      }
+      if (cmd.type === "A") {
         points.push({ x: cmd.x, y: cmd.y });
       }
       // "Z" carries no coordinate.

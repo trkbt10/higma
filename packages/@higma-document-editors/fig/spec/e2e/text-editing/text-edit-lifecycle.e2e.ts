@@ -1,9 +1,10 @@
 /** @file Text editing lifecycle through human mouse and keyboard operations. */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   HELLO_TEXT,
   RECT,
+  STYLED_TEXT,
   canvasTextareaSelection,
   clickNode,
   countCanvasHitAreas,
@@ -38,10 +39,18 @@ test.describe("fig editor text edit lifecycle", () => {
     await expect.poll(() => getCanvasTextareaValue(page)).toBe("Hello World!!!");
   });
 
+  test("double-click on styled text enters text edit using the document style registry", async ({ page }) => {
+    await doubleClickNode(page, STYLED_TEXT);
+
+    await expect.poll(() => isCanvasTextEditActive(page)).toBe(true);
+    await expect.poll(() => getCanvasTextareaValue(page)).toBe("Styled text");
+  });
+
   test("Backspace in canvas textarea deletes characters, not the node", async ({ page }) => {
     await doubleClickNode(page, HELLO_TEXT);
     await focusCanvasTextarea(page);
     await expect.poll(() => getCanvasTextareaValue(page)).toBe("Hello World");
+    await placeCanvasTextareaCaret(page, "Hello World".length);
 
     for (let i = 0; i < 5; i += 1) {
       await page.keyboard.press("Backspace");
@@ -87,3 +96,16 @@ test.describe("fig editor text edit lifecycle", () => {
     await expect.poll(() => isCanvasTextEditActive(page)).toBe(false);
   });
 });
+
+async function placeCanvasTextareaCaret(page: Page, offset: number): Promise<void> {
+  await page.evaluate((selectionOffset) => {
+    const hidden = Array.from(document.querySelectorAll("textarea")).find((textarea) => {
+      return window.getComputedStyle(textarea).opacity === "0";
+    });
+    if (hidden === undefined) {
+      throw new Error("Canvas text edit textarea was not found");
+    }
+    hidden.focus();
+    hidden.setSelectionRange(selectionOffset, selectionOffset);
+  }, offset);
+}

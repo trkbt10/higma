@@ -8,11 +8,28 @@ import { ShapeShell } from "../primitives/shape-shell";
 import { RectShape } from "../primitives/rect-shape";
 import { MultiFillRectLayers } from "../primitives/multi-fill";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
+import { directShapeBlendModeStyle } from "../primitives/blend-mode";
 
 type Props = { readonly node: RenderRectNode };
 
 function renderRectShape(node: RenderRectNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
-  return <RectShape width={node.width} height={node.height} cornerRadius={node.cornerRadius} cornerSmoothing={node.cornerSmoothing} fill={node.fill.attrs.fill} fillOpacity={node.fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+  return (
+    <RectShape
+      width={node.width}
+      height={node.height}
+      cornerRadius={node.cornerRadius}
+      cornerSmoothing={node.cornerSmoothing}
+      fill={node.fill.attrs.fill}
+      fillOpacity={node.fill.attrs.fillOpacity}
+      style={directShapeBlendModeStyle({
+        paintBlendMode: node.fill.blendMode,
+        nodeBlendMode: node.wrapper.blendMode,
+        wrapped: node.needsWrapper,
+        nodeId: node.id,
+      })}
+      {...(uniformStroke ?? {})}
+    />
+  );
 }
 
 function renderRectFillContent(node: RenderRectNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {

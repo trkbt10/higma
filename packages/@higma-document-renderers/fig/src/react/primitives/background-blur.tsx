@@ -18,24 +18,23 @@ type Props = {
  */
 export function BackgroundBlurElement({ blur }: Props) {
   return (
-    <g clipPath={`url(#${blur.clipId})`}>
-      <foreignObject
-        x={blur.bounds.x}
-        y={blur.bounds.y}
-        width={blur.bounds.width}
-        height={blur.bounds.height}
-      >
-        <div
-          // xmlns is required for foreignObject content in SVG
-          // @ts-expect-error — React does not type xmlns on div, but it's valid in foreignObject
-          xmlns="http://www.w3.org/1999/xhtml"
-          style={{
-            backdropFilter: `blur(${blur.stdDeviation}px)`,
-            width: "100%",
-            height: "100%",
-          }}
-        />
-      </foreignObject>
-    </g>
+    <foreignObject
+      x={blur.backdropBounds.x}
+      y={blur.backdropBounds.y}
+      width={blur.backdropBounds.width}
+      height={blur.backdropBounds.height}
+    >
+      <div
+        // xmlns is required for foreignObject content in SVG
+        // @ts-expect-error — React does not type xmlns on div, but it's valid in foreignObject
+        xmlns="http://www.w3.org/1999/xhtml"
+        style={{
+          backdropFilter: `blur(${blur.stdDeviation}px)`,
+          clipPath: `url(#${blur.clipId})`,
+          width: "100%",
+          height: "100%",
+        }}
+      />
+    </foreignObject>
   );
 }

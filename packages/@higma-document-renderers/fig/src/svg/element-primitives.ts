@@ -15,6 +15,7 @@ export type SvgElementNode = {
   readonly attrs: SvgAttributes;
   readonly children: readonly SvgNode[];
   readonly selfClosing: boolean;
+  readonly transformProjection?: "preserve";
 };
 
 export type SvgTextNode = {
@@ -173,6 +174,7 @@ export function text(
 }
 
 export function image(attrs: {
+  id?: string;
   href: string;
   x?: number | string;
   y?: number | string;
@@ -183,8 +185,21 @@ export function image(attrs: {
   opacity?: number | string;
   filter?: string;
   mask?: string;
+  style?: string;
 }): SvgNode {
   return element("image", attrs, [], true);
+}
+
+export function useElement(attrs: {
+  href: string;
+  x?: number | string;
+  y?: number | string;
+  transform?: string;
+  opacity?: number | string;
+  filter?: string;
+  mask?: string;
+}): SvgNode {
+  return element("use", attrs, [], true);
 }
 
 export function linearGradient(attrs: {
@@ -233,8 +248,21 @@ export function pattern(attrs: {
   return element("pattern", attrs, children, false);
 }
 
-export function clipPath(attrs: { id: string }, ...children: readonly SvgNode[]): SvgNode {
-  return element("clipPath", attrs, children, false);
+export function clipPath(
+  attrs: { id: string; transform?: string },
+  options: { readonly transformProjection?: "preserve" },
+  ...children: readonly SvgNode[]
+): SvgNode;
+export function clipPath(attrs: { id: string; transform?: string }, ...children: readonly SvgNode[]): SvgNode;
+export function clipPath(
+  attrs: { id: string; transform?: string },
+  first?: SvgNode | { readonly transformProjection?: "preserve" },
+  ...rest: readonly SvgNode[]
+): SvgNode {
+  if (isSvgNode(first)) {
+    return element("clipPath", attrs, [first, ...rest], false);
+  }
+  return element("clipPath", attrs, rest, false, first);
 }
 
 export function mask(attrs: {
@@ -344,8 +372,12 @@ function element(
   attrs: SvgAttributes,
   children: readonly SvgNode[],
   selfClosing: boolean,
+  options?: { readonly transformProjection?: "preserve" },
 ): SvgElementNode {
-  return { kind: "element", name, attrs, children, selfClosing };
+  if (options?.transformProjection === undefined) {
+    return { kind: "element", name, attrs, children, selfClosing };
+  }
+  return { kind: "element", name, attrs, children, selfClosing, transformProjection: options.transformProjection };
 }
 
 function serializeSvgElement(node: SvgElementNode): string {

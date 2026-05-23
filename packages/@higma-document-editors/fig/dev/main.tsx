@@ -68,6 +68,7 @@ type DevFileRoute = {
   readonly mode: DevMode;
   readonly renderer: FigEditorRendererKind;
   readonly frameGuid?: string;
+  readonly captureFrameOnly: boolean;
 };
 
 // =============================================================================
@@ -268,7 +269,7 @@ function RightPanelContent() {
           { id: "inspector", label: "Inspector", content: <InspectorTabContent /> },
           { id: "properties", label: "Properties", content: <PropertiesTabContent /> },
         ]}
-        defaultValue="inspector"
+        defaultValue="properties"
         size="sm"
         style={rightTabsStyle}
       />
@@ -309,6 +310,7 @@ function LoadedDevShell({
   setEditorRenderer,
   editorPanels,
   debugFrameGuid,
+  rendererDebugCaptureFrameOnly,
   onClose,
 }: {
   readonly loadedFile: LoadedFile;
@@ -320,6 +322,7 @@ function LoadedDevShell({
   readonly setEditorRenderer: (renderer: FigEditorRendererKind) => void;
   readonly editorPanels: EditorPanel[];
   readonly debugFrameGuid: string | undefined;
+  readonly rendererDebugCaptureFrameOnly: boolean;
   readonly onClose: () => void;
 }) {
   const fontResolverState = useBrowserTextFontResolver(loadedFile.context);
@@ -382,6 +385,7 @@ function LoadedDevShell({
                   context={loadedFile.context}
                   initialFrameGuid={debugFrameGuid}
                   initialRenderer={editorRenderer}
+                  captureFrameOnly={rendererDebugCaptureFrameOnly}
                 />
               </div>
             ),
@@ -467,6 +471,16 @@ function parseRendererParam(value: string | null): FigEditorRendererKind {
   throw new Error(`Fig Editor Dev unsupported renderer "${value}"`);
 }
 
+function parseCaptureFrameOnlyParam(value: string | null): boolean {
+  if (value === null) {
+    return false;
+  }
+  if (value === "frame") {
+    return true;
+  }
+  throw new Error(`Fig Editor Dev unsupported capture "${value}"`);
+}
+
 function readDevFileRoute(search: string): DevFileRoute | null {
   const params = new URLSearchParams(search);
   const figInput = readPrimaryRouteInput(params);
@@ -479,6 +493,7 @@ function readDevFileRoute(search: string): DevFileRoute | null {
     sources: readSourceRouteInputs(params),
     mode: parseDevModeParam(params.get("mode")),
     renderer: parseRendererParam(params.get("renderer")),
+    captureFrameOnly: parseCaptureFrameOnlyParam(params.get("capture")),
     ...(frameGuid === undefined ? {} : { frameGuid }),
   };
 }
@@ -569,6 +584,7 @@ function App() {
   const [inspectorOverlayEnabled, setInspectorOverlayEnabled] = useState(false);
   const [editorRenderer, setEditorRenderer] = useState<FigEditorRendererKind>("svg");
   const [debugFrameGuid, setDebugFrameGuid] = useState<string | undefined>(undefined);
+  const [rendererDebugCaptureFrameOnly, setRendererDebugCaptureFrameOnly] = useState(false);
 
   const editorPanels = useMemo<EditorPanel[]>(
     () => [
@@ -596,6 +612,7 @@ function App() {
     try {
       setLoadedFile(await createLoadedFile(files));
       setDebugFrameGuid(undefined);
+      setRendererDebugCaptureFrameOnly(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to parse file";
       setError(message);
@@ -610,12 +627,14 @@ function App() {
     setLoadedFile({ context, fileName: "Untitled.fig", sourceFileNames: [] });
     setError(null);
     setDebugFrameGuid(undefined);
+    setRendererDebugCaptureFrameOnly(false);
   }, []);
 
   const handleClose = useCallback(() => {
     setLoadedFile(null);
     setError(null);
     setDebugFrameGuid(undefined);
+    setRendererDebugCaptureFrameOnly(false);
   }, []);
 
   useEffect(() => {
@@ -636,6 +655,7 @@ function App() {
         setMode(route.mode);
         setEditorRenderer(route.renderer);
         setDebugFrameGuid(route.frameGuid);
+        setRendererDebugCaptureFrameOnly(route.captureFrameOnly);
         setLoadedFile(nextLoadedFile);
       } catch (e) {
         if (cancellation.cancelled) {
@@ -690,6 +710,7 @@ function App() {
       setEditorRenderer={setEditorRenderer}
       editorPanels={editorPanels}
       debugFrameGuid={debugFrameGuid}
+      rendererDebugCaptureFrameOnly={rendererDebugCaptureFrameOnly}
       onClose={handleClose}
     />
   );

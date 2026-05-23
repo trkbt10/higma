@@ -273,7 +273,7 @@ function formatFilterDef(def: RenderFilterDef): ReactNode {
 
 function formatClipPathDef(def: RenderClipPathDef): ReactNode {
   return (
-    <clipPath key={def.id} id={def.id}>
+    <clipPath key={def.id} id={def.id} transform={def.transform}>
       {formatClipPathShape(def.shape)}
     </clipPath>
   );

@@ -108,3 +108,12 @@ export {
   type SvgMaskType,
   type SvgStrokeMaskElementAttrs,
 } from "./svg-mask-attrs";
+
+export {
+  resolveLayeredRectShapePrimitive,
+  resolvePathBackedRectShapePrimitive,
+  resolvePathContourRectPrimitive,
+  resolveRectShapePrimitive,
+  type PathContourRectSize,
+  type RectShapePrimitive,
+} from "./rect-shape";

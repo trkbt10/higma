@@ -80,14 +80,19 @@ function buildStrokeAttrsBase(stroke: Stroke): Omit<ResolvedStrokeAttrs, "stroke
   };
 }
 
+function resolveStrokeOpacity(color: Stroke["color"], opacity: number): number {
+  return color.a * opacity;
+}
+
 /**
  * Resolve a Stroke to SVG stroke attributes.
  */
 export function resolveStroke(stroke: Stroke): ResolvedStrokeAttrs {
+  const strokeOpacity = resolveStrokeOpacity(stroke.color, stroke.opacity);
   return {
     stroke: colorToHex(stroke.color),
     strokeWidth: alignedStrokeWidth(stroke.width, stroke.align),
-    strokeOpacity: stroke.opacity < 1 ? resolveFigmaSvgOpacity(stroke.opacity) : undefined,
+    strokeOpacity: strokeOpacity < 1 ? resolveFigmaSvgOpacity(strokeOpacity) : undefined,
     strokeLinecap: stroke.linecap !== "butt" ? stroke.linecap : undefined,
     strokeLinejoin: stroke.linejoin !== "miter" ? stroke.linejoin : undefined,
     strokeDasharray: stroke.dashPattern?.join(" "),
@@ -126,7 +131,7 @@ function hasMultipleStrokeLayers(layers: readonly StrokeLayer[] | undefined): la
 
 function resolveSingleStrokeLayerResult(
   stroke: Stroke,
-  fallbackAttrs: ResolvedStrokeAttrs,
+  uniformAttrs: ResolvedStrokeAttrs,
   ids: IdGenerator,
 ): ResolvedStrokeResult | undefined {
   const layer = stroke.layers?.[0];
@@ -153,7 +158,7 @@ function resolveSingleStrokeLayerResult(
   // non-default blend. Emitting a single-layer result routes through
   // the layered renderer, which wraps the stroke draw in a styled
   // element and preserves the blend mode.
-  return { attrs: fallbackAttrs, layers: [resolvedLayer] };
+  return { attrs: uniformAttrs, layers: [resolvedLayer] };
 }
 
 function resolveStrokeLayer(
@@ -170,7 +175,7 @@ function resolveStrokeLayer(
     };
   }
   return {
-    attrs: buildStrokeLayerAttrs(base, colorToHex(layer.color), layer.opacity),
+    attrs: buildStrokeLayerAttrs(base, colorToHex(layer.color), resolveStrokeOpacity(layer.color, layer.opacity)),
     blendMode: layer.blendMode,
   };
 }

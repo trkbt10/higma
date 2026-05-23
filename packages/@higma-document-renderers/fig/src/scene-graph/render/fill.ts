@@ -232,6 +232,10 @@ function buildAttrs(fillValue: string, opacity: number): ResolvedFillAttrs {
   return { fill: fillValue };
 }
 
+function resolveSolidFillOpacity(fill: Extract<Fill, { readonly type: "solid" }>): number {
+  return fill.color.a * fill.opacity;
+}
+
 function byteFromUnit(value: number): number {
   return Math.round(Math.min(1, Math.max(0, value)) * 255);
 }
@@ -417,7 +421,7 @@ export function resolveFillWithRenderSettings(
 ): ResolvedFill {
   switch (fill.type) {
     case "solid":
-      return { attrs: buildAttrs(colorToHex(fill.color), fill.opacity) };
+      return { attrs: buildAttrs(colorToHex(fill.color), resolveSolidFillOpacity(fill)) };
 
     case "linear-gradient": {
       const id = ids.getNextId("lg");

@@ -64,7 +64,7 @@ import { discoverDarwin } from "./discover-darwin";
 import { discoverLinux } from "./discover-linux";
 import { discoverWin32 } from "./discover-win32";
 import { classifyFontFile, scanFontDirectories } from "./discover-dirs";
-import { getVariableAxes, variationForWeight, wrapFontWithVariation } from "./variable-font";
+import { getVariableAxes, variationForWeight, wrapFontWithVariation } from "../variable-font";
 import { applyGposExtensionFixup } from "./gpos-extension/fixup";
 import type {
   DiscoveredFontFile,

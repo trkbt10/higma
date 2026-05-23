@@ -39,6 +39,7 @@ type Props = {
   readonly context: FigDocumentContext;
   readonly initialFrameGuid?: string;
   readonly initialRenderer?: FigEditorRendererKind;
+  readonly captureFrameOnly?: boolean;
 };
 
 type CanvasInfo = {
@@ -90,6 +91,11 @@ const contentStyle: CSSProperties = {
   minHeight: 0,
   display: "flex",
   gap: spacingTokens.md,
+};
+
+const captureFrameOnlyStyle: CSSProperties = {
+  display: "inline-block",
+  backgroundColor: colorTokens.background.primary,
 };
 
 const previewStyle: CSSProperties = {
@@ -277,6 +283,35 @@ function shiftInspectorBoxes(
   }));
 }
 
+function collectFramePreviewInspectorBoxes({
+  currentFrame,
+  resources,
+  rendererMode,
+  showHiddenNodes,
+  inspectorEnabled,
+}: {
+  readonly currentFrame: FrameInfo;
+  readonly resources: FigDocumentResources;
+  readonly rendererMode: FigEditorRendererKind;
+  readonly showHiddenNodes: boolean;
+  readonly inspectorEnabled: boolean;
+}): readonly InspectorBoxInfo[] {
+  if (!inspectorEnabled) {
+    return [];
+  }
+  if (rendererMode !== "svg") {
+    return [];
+  }
+  return shiftInspectorBoxes(
+    collectFigInspectorBoxes({
+      root: currentFrame.node,
+      childrenOf: resources.childrenOf,
+      showHiddenNodes,
+    }),
+    { x: currentFrame.viewportX, y: currentFrame.viewportY },
+  );
+}
+
 function renderFramePreview({
   context,
   resources,
@@ -304,18 +339,18 @@ function renderFramePreview({
   readonly onHover: (nodeId: string | null) => void;
   readonly onClick: (nodeId: string) => void;
 }): ReactNode {
-  const boxes = shiftInspectorBoxes(
-    collectFigInspectorBoxes({
-      root: currentFrame.node,
-      childrenOf: resources.childrenOf,
-      showHiddenNodes,
-    }),
-    { x: currentFrame.viewportX, y: currentFrame.viewportY },
-  );
+  const boxes = collectFramePreviewInspectorBoxes({
+    currentFrame,
+    resources,
+    rendererMode,
+    showHiddenNodes,
+    inspectorEnabled,
+  });
 
   return (
-    <div style={stageStyle}>
+    <div style={stageStyle} data-renderer-debug-stage="">
       <svg
+        data-renderer-debug-frame=""
         width={currentFrame.width}
         height={currentFrame.height}
         viewBox={`0 0 ${currentFrame.width} ${currentFrame.height}`}
@@ -362,10 +397,12 @@ function RendererDebugContent({
   context,
   initialFrameGuid,
   initialRenderer = "svg",
+  captureFrameOnly = false,
 }: {
   readonly context: FigDocumentContext;
   readonly initialFrameGuid: string | undefined;
   readonly initialRenderer?: FigEditorRendererKind;
+  readonly captureFrameOnly?: boolean;
 }) {
   const resources = useMemo(() => figDocumentResources(context), [context]);
   const canvases = useMemo(() => collectCanvases(context, resources), [context, resources]);
@@ -425,6 +462,27 @@ function RendererDebugContent({
   }, []);
   if (currentCanvas === undefined || currentFrame === undefined || treeRoot === undefined) {
     return <div style={emptyStateStyle}>No frames</div>;
+  }
+
+  if (captureFrameOnly) {
+    return (
+      <div style={captureFrameOnlyStyle}>
+        {renderFramePreview({
+          context,
+          resources,
+          currentCanvas,
+          currentFrame,
+          rendererMode,
+          showHiddenNodes,
+          inspectorEnabled: false,
+          textFontResolver,
+          highlightedId,
+          hoveredId,
+          onHover: setHoveredId,
+          onClick: handleNodeClick,
+        })}
+      </div>
+    );
   }
 
   return (
@@ -519,12 +577,13 @@ function RendererDebugContent({
 }
 
 /** Render SVG/WebGL debug output for one loaded fig file. */
-export function RendererDebugView({ context, initialFrameGuid, initialRenderer }: Props) {
+export function RendererDebugView({ context, initialFrameGuid, initialRenderer, captureFrameOnly }: Props) {
   return (
     <RendererDebugContent
       context={context}
       initialFrameGuid={initialFrameGuid}
       initialRenderer={initialRenderer}
+      captureFrameOnly={captureFrameOnly}
     />
   );
 }

@@ -5,7 +5,7 @@
  */
 
 import type { FigEffect } from "@higma-document-models/fig/types";
-import { getEffectTypeName, isEffectVisible, extractShadowParams, resolveEffectRadius, resolveEffectSpread, resolveShowShadowBehindNode } from "../../effects";
+import { getEffectBlurOpTypeName, getEffectTypeName, isEffectVisible, extractShadowParams, resolveEffectRadius, resolveEffectSpread, resolveShowShadowBehindNode } from "../../effects";
 import type { Effect } from "@higma-document-renderers/fig/scene-graph";
 import { convertFigmaBlendMode } from "@higma-document-renderers/fig/scene-graph";
 
@@ -59,6 +59,9 @@ export function convertEffectsToScene(effects: readonly FigEffect[] | undefined)
         break;
 
       case "BACKGROUND_BLUR":
+        if (getEffectBlurOpTypeName(effect) === "PROGRESSIVE") {
+          break;
+        }
         result.push({ type: "background-blur", radius: resolveEffectRadius(effect) });
         break;
     }

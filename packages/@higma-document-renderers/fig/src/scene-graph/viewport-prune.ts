@@ -192,6 +192,54 @@ function nodeChildClipWorldBox(node: SceneNode, worldM: AffineMatrix): WorldBox 
  * `undefined` for node types whose local extent depends on descendants
  * (groups) or on parsing contours we'd rather not redo here (paths).
  */
+function expandBox(box: WorldBox, amount: number): WorldBox {
+  if (amount <= 0) {
+    return box;
+  }
+  return {
+    x: box.x - amount,
+    y: box.y - amount,
+    w: box.w + amount * 2,
+    h: box.h + amount * 2,
+  };
+}
+
+function pathStrokeOutset(node: Extract<SceneNode, { readonly type: "path" }>): number {
+  const stroke = node.stroke;
+  if (stroke === undefined || stroke.width <= 0) {
+    return 0;
+  }
+  if (stroke.align === "INSIDE") {
+    return 0;
+  }
+  if (stroke.align === "OUTSIDE") {
+    return stroke.width;
+  }
+  return stroke.width / 2;
+}
+
+function pathLocalBox(node: Extract<SceneNode, { readonly type: "path" }>): WorldBox | undefined {
+  const contourBox = contourLocalBox(node.contours);
+  const strokeContourBox = pathStrokeContourBox(node);
+  if (contourBox === undefined && strokeContourBox !== undefined) {
+    return expandBox(strokeContourBox, pathStrokeOutset(node));
+  }
+  if (contourBox === undefined) {
+    return undefined;
+  }
+  if (strokeContourBox === undefined) {
+    return expandBox(contourBox, pathStrokeOutset(node));
+  }
+  return expandBox(unionBox(contourBox, strokeContourBox), pathStrokeOutset(node));
+}
+
+function pathStrokeContourBox(node: Extract<SceneNode, { readonly type: "path" }>): WorldBox | undefined {
+  if (node.strokeContours === undefined) {
+    return undefined;
+  }
+  return contourLocalBox(node.strokeContours);
+}
+
 function localBox(node: SceneNode): WorldBox | undefined {
   switch (node.type) {
     case "frame":
@@ -202,7 +250,7 @@ function localBox(node: SceneNode): WorldBox | undefined {
     case "ellipse":
       return { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
     case "path":
-      return contourLocalBox(node.contours);
+      return pathLocalBox(node);
     case "group":
       return undefined;
   }

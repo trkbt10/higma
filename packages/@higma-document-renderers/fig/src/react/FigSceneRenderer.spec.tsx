@@ -2,8 +2,8 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { buildSceneGraph, createNodeId, type GroupNode, type RectNode, type SceneGraph } from "../scene-graph";
-import { FigSceneRenderer } from "./FigSceneRenderer";
+import { buildSceneGraph, createNodeId, type FrameNode, type GroupNode, type RectNode, type SceneGraph } from "../scene-graph";
+import { FigSceneRenderer, FigSceneSvgRenderer } from "./FigSceneRenderer";
 import { createKiwiRenderFixture } from "../testing/kiwi-render-fixture";
 import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
 
@@ -12,6 +12,10 @@ const BLACK = { r: 0, g: 0, b: 0, a: 1 };
 
 function renderSceneGraph(sceneGraph: SceneGraph): string {
   return renderToStaticMarkup(createElement("svg", null, createElement(FigSceneRenderer, { sceneGraph })));
+}
+
+function renderSceneGraphSvgRoot(sceneGraph: SceneGraph): string {
+  return renderToStaticMarkup(createElement(FigSceneSvgRenderer, { sceneGraph }));
 }
 
 function requireFirstTag(html: string, tagName: string): string {
@@ -91,6 +95,149 @@ describe("FigSceneRenderer", () => {
 
     expect(html).toMatch(/<rect[^>]+fill="#ffffff"/i);
     expect(html).toMatch(/<rect[^>]+width="480"[^>]+height="320"/);
+  });
+
+  it("preserves single FRAME fill blend mode in the React SVG path", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("single-frame-fill-blend"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 44,
+      height: 44,
+      surfaceShape: { type: "rect", width: 44, height: 44, cornerRadius: 22 },
+      fills: [{ type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, blendMode: "multiply" }],
+      clipsContent: false,
+      children: [],
+    };
+    const html = renderSceneGraph(sceneWithChildren([frame]));
+
+    expect(html).toMatch(/style="mix-blend-mode:multiply"/);
+  });
+
+  it("preserves node-level blend mode on a simple React SVG rect", () => {
+    const node: RectNode = {
+      ...rectNode("node-level-linear-burn", 6, 9),
+      blendMode: "plus-darker",
+      fills: [{ type: "solid", color: BLACK, opacity: 0.1 }],
+    };
+    const html = renderSceneGraph(sceneWithChildren([node]));
+
+    expect(html).toMatch(/style="mix-blend-mode:plus-darker"/);
+    expect(html).toMatch(/<rect[^>]+width="6"[^>]+height="9"/);
+  });
+
+  it("renders the structured SVG formatter root through React without string style props", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("svg-root-fill-blend"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 44,
+      height: 44,
+      surfaceShape: { type: "rect", width: 44, height: 44, cornerRadius: 22 },
+      fills: [{ type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1, blendMode: "multiply" }],
+      clipsContent: false,
+      children: [],
+    };
+    const html = renderSceneGraphSvgRoot(sceneWithChildren([frame]));
+
+    expect(html).toMatch(/^<svg[^>]+viewBox="0 0 100 100"/);
+    expect(html).toMatch(/style="mix-blend-mode:multiply"/);
+    expect(html).not.toContain("[object Object]");
+  });
+
+  it("keeps CSS-class-backed plus-darker blend mode through the structured SVG React bridge", () => {
+    const node: RectNode = {
+      ...rectNode("paint-level-linear-burn", 6, 9),
+      fills: [{ type: "solid", color: BLACK, opacity: 0.1, blendMode: "plus-darker" }],
+    };
+    const html = renderSceneGraphSvgRoot(sceneWithChildren([node]));
+
+    expect(html).toContain(".higma-svg-blend-plus-darker{mix-blend-mode:plus-darker}");
+    expect(html).toMatch(/class="higma-svg-blend-plus-darker"/);
+    expect(html).not.toContain('style="mix-blend-mode:plus-darker"');
+  });
+
+  it("formats baked rounded frame surface paths through the shared rect primitive", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("baked-rounded-surface"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 165.8087615966797,
+      height: 360.4897155761719,
+      surfaceShape: {
+        type: "path",
+        contours: [{
+          windingRule: "nonzero",
+          commands: [
+            { type: "M", x: 0, y: 23.51 },
+            { type: "C", x1: 0, y1: 10.526, x2: 10.526, y2: 0, x: 23.51, y: 0 },
+            { type: "L", x: 142.299, y: 0 },
+            { type: "C", x1: 155.283, y1: 0, x2: 165.809, y2: 10.526, x: 165.809, y: 23.51 },
+            { type: "L", x: 165.809, y: 336.979 },
+            { type: "C", x1: 165.809, y1: 349.965, x2: 155.283, y2: 360.485, x: 142.299, y: 360.485 },
+            { type: "L", x: 23.51, y: 360.485 },
+            { type: "C", x1: 10.526, y1: 360.485, x2: 0, y2: 349.965, x: 0, y: 336.98 },
+            { type: "L", x: 0, y: 23.51 },
+          ],
+        }],
+      },
+      fills: [{ type: "solid", color: BLACK, opacity: 1 }],
+      clipsContent: false,
+      children: [],
+    };
+    const html = renderSceneGraph(sceneWithChildren([frame]));
+
+    expect(html).toContain('<rect x="0" y="0" width="165.8087615966797" height="360.4897155761719" rx="23.51"');
+    expect(html).not.toContain("<path");
+  });
+
+  it("preserves baked rounded frame surface paths for multi-fill layers", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("baked-rounded-multi-fill-surface"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 226,
+      height: 48,
+      surfaceShape: {
+        type: "path",
+        contours: [{
+          windingRule: "nonzero",
+          commands: [
+            { type: "M", x: 0, y: 24 },
+            { type: "C", x1: 0, y1: 10.7452, x2: 10.7452, y2: 0, x: 24, y: 0 },
+            { type: "L", x: 202, y: 0 },
+            { type: "C", x1: 215.255, y1: 0, x2: 226, y2: 10.7452, x: 226, y: 24 },
+            { type: "L", x: 226, y: 24 },
+            { type: "C", x1: 226, y1: 37.2548, x2: 215.255, y2: 48, x: 202, y: 48 },
+            { type: "L", x: 24, y: 48 },
+            { type: "C", x1: 10.7452, y1: 48, x2: 0, y2: 37.2548, x: 0, y: 24 },
+            { type: "Z" },
+          ],
+        }],
+      },
+      fills: [
+        { type: "solid", color: BLACK, opacity: 1, blendMode: "color-dodge" },
+        { type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 0.5 },
+      ],
+      clipsContent: false,
+      children: [],
+    };
+    const html = renderSceneGraph(sceneWithChildren([frame]));
+
+    expect(html).toContain('<path d="M0 24C0 10.7452 10.7452 0 24 0');
+    expect(html).not.toContain('<rect x="0" y="0" width="226" height="48" rx="24"');
   });
 
   it("uses canonical inner-shadow primitives", () => {
@@ -221,6 +368,25 @@ describe("FigSceneRenderer", () => {
 
     expect(html).toContain("<clipPath");
     expect(html).toMatch(/<g clip-path="url\(#group-clip-/);
+  });
+
+  it("formats uniform rounded clip primitives as native SVG rect clips", () => {
+    const clippedGroup: GroupNode = {
+      type: "group",
+      id: createNodeId("rounded-clip-group"),
+      transform: IDENTITY,
+      opacity: 1,
+      visible: true,
+      effects: [],
+      clip: { type: "rect", width: 20, height: 20, cornerRadius: 10 },
+      children: [rectNode("rounded-clip-child", 20, 20)],
+    };
+    const html = renderSceneGraph(sceneWithChildren([clippedGroup]));
+    const clipPathMarkup = requireFirstElementMarkup(html, "clipPath");
+
+    expect(clipPathMarkup).toContain("<rect");
+    expect(clipPathMarkup).toContain('rx="10"');
+    expect(clipPathMarkup).not.toContain("<path");
   });
 
   it("emits stroke masks in user space in the React SVG formatter", () => {

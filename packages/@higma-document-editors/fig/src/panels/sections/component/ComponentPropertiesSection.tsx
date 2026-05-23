@@ -238,7 +238,7 @@ export function ComponentPropertiesSection({ node }: { readonly node: FigNode })
   const resolution = context.symbolResolver.resolveReferences(node);
   const symbol = resolution.effectiveSymbol?.node;
   if (symbol === undefined) {
-    throw new Error(`ComponentPropertiesSection: INSTANCE ${guidToString(node.guid)} does not resolve to a SYMBOL`);
+    return null;
   }
   const properties = resolveComponentProperties(symbol, node);
   if (properties.length === 0) {

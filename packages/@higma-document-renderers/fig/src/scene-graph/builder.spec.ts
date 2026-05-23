@@ -517,11 +517,13 @@ describe("buildSceneGraph", () => {
     });
     const sceneGraph = buildFixturePage([unclipped, clipped]);
     const frames = sceneGraph.root.children as readonly FrameNode[];
+    const builtUnclipped = frames.find((frame) => frame.id === "42:2");
+    const builtClipped = frames.find((frame) => frame.id === "42:3");
 
-    expect(frames[0].clipsContent).toBe(false);
-    expect(frames[0].clip).toBeUndefined();
-    expect(frames[1].clipsContent).toBe(true);
-    expect(frames[1].clip).toBeDefined();
+    expect(builtUnclipped?.clipsContent).toBe(false);
+    expect(builtUnclipped?.clip).toBeUndefined();
+    expect(builtClipped?.clipsContent).toBe(true);
+    expect(builtClipped?.clip).toBeDefined();
   });
 
   it("uses Kiwi FRAME fillGeometry as the frame surface shape", () => {
@@ -762,8 +764,16 @@ describe("buildSceneGraph", () => {
       height: 100,
       fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.blue)],
     });
-    const resources = kiwiRenderResources([maskSource, maskedRect]);
-    const sceneGraph = buildSceneGraph([maskSource, maskedRect], {
+    const unmaskedRect = kiwiNode({
+      guid: kiwiGuid(42, 34),
+      type: "RECTANGLE",
+      name: "Unmasked rect after source",
+      width: 100,
+      height: 100,
+      fillPaints: [kiwiSolidPaint(KIWI_RENDER_COLORS.white)],
+    });
+    const resources = kiwiRenderResources([unmaskedRect, maskSource, maskedRect]);
+    const sceneGraph = buildSceneGraph([unmaskedRect, maskSource, maskedRect], {
       blobs: resources.blobs,
       images: resources.images,
       canvasSize: { width: 1200, height: 800 },
@@ -775,9 +785,10 @@ describe("buildSceneGraph", () => {
       warnings: [],
       textFontResolver: undefined,
     });
-    const maskedGroup = sceneGraph.root.children[0] as GroupNode;
+    const maskedGroup = sceneGraph.root.children[1] as GroupNode;
 
-    expect(sceneGraph.root.children).toHaveLength(1);
+    expect(sceneGraph.root.children).toHaveLength(2);
+    expect(sceneGraph.root.children[0]!.id).toBe("42:34");
     expect(maskedGroup.type).toBe("group");
     expect(maskedGroup.mask?.maskContent.id).toBe("42:32");
     expect(maskedGroup.mask?.maskType).toBe("ALPHA");

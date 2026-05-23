@@ -12,6 +12,8 @@ import { BackgroundBlurElement } from "../primitives/background-blur";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
 import { RenderNodeComponent } from "./RenderNodeComponent";
 import type { StrokeRendering } from "../../scene-graph";
+import { blendModeStyle } from "../primitives/blend-mode";
+import { PathContourShape } from "../primitives/path-contour-shape";
 
 type Props = { readonly node: RenderFrameNode };
 
@@ -48,12 +50,12 @@ function renderFrameBackgroundShape(
     return (
       <>
         {node.surfaceShape.paths.map((p, index) => (
-          <path key={index} d={p.d} fillRule={p.fillRule} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />
+          <PathContourShape key={index} contour={p} size={{ width: node.width, height: node.height }} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} style={blendModeStyle(fill.blendMode)} {...(uniformStroke ?? {})} />
         ))}
       </>
     );
   }
-  return <RectShape width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} {...(uniformStroke ?? {})} />;
+  return <RectShape width={node.surfaceShape.width} height={node.surfaceShape.height} cornerRadius={node.surfaceShape.cornerRadius} cornerSmoothing={node.surfaceShape.cornerSmoothing} fill={fill.attrs.fill} fillOpacity={fill.attrs.fillOpacity} style={blendModeStyle(fill.blendMode)} {...(uniformStroke ?? {})} />;
 }
 
 function renderFrameMultiFillBackgroundShape(

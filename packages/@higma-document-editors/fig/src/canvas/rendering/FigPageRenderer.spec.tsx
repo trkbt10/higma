@@ -83,6 +83,38 @@ function renderPrunedSvgPage(): string {
   }));
 }
 
+function renderScaledHtmlSvgPage(): string {
+  const page = sectionPage();
+  const frame = sectionNode("FRAME", {
+    guid: { sessionID: 83, localID: 2 },
+    parentIndex: { guid: page.guid, position: "a" },
+    name: "Scaled Frame",
+    width: 320,
+    height: 180,
+    fillPaints: sectionPaints(SECTION_COLORS.blue),
+  });
+  const context = createFigDocumentContextFromNodeChanges({
+    nodeChanges: [page, frame],
+    blobs: [],
+    images: new Map(),
+    metadata: null,
+  });
+  return renderToStaticMarkup(createElement(FigPageRenderer, {
+    page,
+    nodes: [frame],
+    canvasWidth: 160,
+    canvasHeight: 90,
+    viewportX: 0,
+    viewportY: 0,
+    viewportWidth: 320,
+    viewportHeight: 180,
+    viewportScale: 0.5,
+    resources: figDocumentResources(context),
+    renderer: "svg",
+    host: "html",
+  }));
+}
+
 describe("FigPageRenderer", () => {
   it("defaults to the SVG backend without encoding an SVG image URL", () => {
     const html = renderPage();
@@ -96,6 +128,14 @@ describe("FigPageRenderer", () => {
 
     expect(html).toMatch(/fill="#3380e6"|fill="rgb\(51, ?128, ?230\)"/i);
     expect(html).not.toMatch(/fill="#e63333"|fill="rgb\(230, ?51, ?51\)"/i);
+  });
+
+  it("keeps editor-hosted SVG root dimensions in viewport units while CSS owns display scale", () => {
+    const html = renderScaledHtmlSvgPage();
+
+    expect(html).toMatch(/<svg[^>]*width="320"[^>]*height="180"[^>]*viewBox="0 0 320 180"/);
+    expect(html).toContain('style="width:100%;height:100%;display:block"');
+    expect(html).toContain("data-fig-family-page-renderer");
   });
 
   it("renders the WebGL backend shell when requested", () => {

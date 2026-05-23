@@ -35,7 +35,12 @@ export {
 } from "./strokes";
 
 // Effects
-export { EFFECT_TYPE_VALUES, type EffectType } from "./effects";
+export {
+  BLUR_OP_TYPE_VALUES,
+  EFFECT_TYPE_VALUES,
+  type BlurOpType,
+  type EffectType,
+} from "./effects";
 
 // Styles
 export { STYLE_TYPE_VALUES, type StyleType } from "./styles";

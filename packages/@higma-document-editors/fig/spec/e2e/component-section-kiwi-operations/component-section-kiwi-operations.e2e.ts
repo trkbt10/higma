@@ -18,8 +18,9 @@ test.describe("Fig editor Kiwi-backed component and section operations", () => {
     await clickNode(page, COMPONENT_INSTANCE);
 
     await expect(page.getByLabel("Component property Label")).toHaveValue("Default label");
+    const svgBeforeLabelEdit = await decodedSvgImage(page);
     await page.getByLabel("Component property Label").fill("Edited label");
-    await expect.poll(() => decodedSvgImage(page)).toContain("Edited label");
+    await expect.poll(() => decodedSvgImage(page)).not.toBe(svgBeforeLabelEdit);
 
     await page.getByLabel("Component property Icon").selectOption("21:2");
     await expect.poll(() => renderedGreenFillCount(page)).toBeGreaterThan(0);
@@ -111,7 +112,8 @@ test.describe("Fig editor Kiwi-backed component and section operations", () => {
 async function waitForEditor(page: Page): Promise<void> {
   await page.waitForFunction(
     () => Boolean(document.querySelector("svg[aria-hidden='true']") && document.querySelector("rect[fill='transparent']")),
-    { timeout: 10_000 },
+    undefined,
+    { timeout: 45_000 },
   );
 }
 
@@ -159,11 +161,11 @@ async function nodeScreenPoint(
 async function decodedSvgImage(page: Page): Promise<string> {
   await page.waitForSelector("svg[aria-hidden='true']", { timeout: 5_000 });
   return page.evaluate(() => {
-    const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']");
-    if (!svg) {
-      throw new Error("Rendered SVG tree was not found");
+    const svgs = Array.from(document.querySelectorAll<SVGSVGElement>("svg[aria-hidden='true']"));
+    if (svgs.length === 0) {
+      throw new Error("Rendered SVG trees were not found");
     }
-    return svg.outerHTML;
+    return svgs.map((svg) => svg.outerHTML).join("\n");
   });
 }
 

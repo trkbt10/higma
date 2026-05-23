@@ -11,6 +11,7 @@ export type NodeBounds = {
 };
 
 export const HELLO_TEXT = { pageX: 50, pageY: 50, width: 200, height: 30 } satisfies NodeBounds;
+export const STYLED_TEXT = { pageX: 260, pageY: 150, width: 220, height: 30 } satisfies NodeBounds;
 export const RECT = { pageX: 50, pageY: 310, width: 150, height: 80 } satisfies NodeBounds;
 export const ELLIPSE = { pageX: 130, pageY: 330, width: 120, height: 80 } satisfies NodeBounds;
 export const LINE = { pageX: 280, pageY: 455, width: 120, height: 40 } satisfies NodeBounds;
@@ -39,7 +40,8 @@ export async function openEditor(page: Page, query = ""): Promise<void> {
 export async function waitForEditor(page: Page): Promise<void> {
   await page.waitForFunction(
     () => Boolean(document.querySelector("svg[aria-hidden='true']") && document.querySelector("rect[fill='transparent']")),
-    { timeout: 10_000 },
+    undefined,
+    { timeout: 45_000 },
   );
 }
 

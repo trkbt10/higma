@@ -1,16 +1,13 @@
 /**
  * @file Rectangle shape for React — handles both uniform and per-corner radius
  *
- * Sharp-cornered rects (cornerRadius undefined or 0) emit `<rect>`. Rounded
- * rects emit `<path>` with cubic Bézier corners — the path-d builder is
- * the shared SoT (scene-graph/render/rounded-rect-path) used by the SVG
- * scene renderer and the RenderTree clip-path resolver. Using `<rect rx>`
- * for rounded corners would rasterise at slightly different sub-pixels
- * from Figma's exporter and produce AA-only diff regressions.
+ * This consumes the scene-graph/render rectangle primitive resolver so
+ * React SVG and the string SVG renderer do not make independent
+ * `<rect rx>` vs `<path>` decisions.
  */
 
 
-import { buildRoundedRectPathD, buildSmoothedRoundedRectPathD } from "@higma-primitives/path";
+import { resolveLayeredRectShapePrimitive, resolveRectShapePrimitive, type RectShapePrimitive } from "../../scene-graph";
 import type { CornerRadius } from "@higma-primitives/path";
 
 type RectShapeProps = {
@@ -23,38 +20,42 @@ type RectShapeProps = {
   readonly [key: string]: unknown;
 };
 
-function cornerRadiusTuple(cornerRadius: CornerRadius): readonly [number, number, number, number] {
-  if (typeof cornerRadius !== "number") {
-    return cornerRadius;
-  }
-  return [cornerRadius, cornerRadius, cornerRadius, cornerRadius];
-}
-
-function roundedRectPathD(width: number, height: number, cornerRadius: CornerRadius, cornerSmoothing: number | undefined): string {
-  const radii = cornerRadiusTuple(cornerRadius);
-  if (cornerSmoothing !== undefined && cornerSmoothing > 0) {
-    return buildSmoothedRoundedRectPathD(width, height, radii, cornerSmoothing);
-  }
-  return buildRoundedRectPathD(width, height, radii);
-}
-
-
-
-
-
-
+/**
+ * Renders the shared rectangle primitive as React SVG.
+ */
 export function RectShape({ width, height, cornerRadius, cornerSmoothing, ...rest }: RectShapeProps) {
-  if (cornerRadius !== undefined && (typeof cornerRadius !== "number" || cornerRadius > 0)) {
-    return <path d={roundedRectPathD(width, height, cornerRadius, cornerSmoothing)} {...rest} />;
-  }
+  const shape = resolveRectShapePrimitive(width, height, cornerRadius, cornerSmoothing);
+  return <ResolvedRectShape shape={shape} attrs={rest} />;
+}
 
-  return (
-    <rect
-      x={0}
-      y={0}
-      width={width}
-      height={height}
-      {...rest}
-    />
-  );
+/**
+ * Renders a stacked paint layer rectangle using Figma's path primitive
+ * for rounded corners.
+ */
+export function LayeredRectShape({ width, height, cornerRadius, cornerSmoothing, ...rest }: RectShapeProps) {
+  const shape = resolveLayeredRectShapePrimitive(width, height, cornerRadius, cornerSmoothing);
+  return <ResolvedRectShape shape={shape} attrs={rest} />;
+}
+
+function ResolvedRectShape(
+  { shape, attrs }: {
+    readonly shape: RectShapePrimitive;
+    readonly attrs: Omit<RectShapeProps, "width" | "height" | "cornerRadius" | "cornerSmoothing">;
+  },
+) {
+  switch (shape.kind) {
+    case "path":
+      return <path d={shape.d} {...attrs} />;
+    case "rect":
+      return (
+        <rect
+          x={shape.x}
+          y={shape.y}
+          width={shape.width}
+          height={shape.height}
+          rx={shape.rx}
+          {...attrs}
+        />
+      );
+  }
 }

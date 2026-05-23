@@ -13,10 +13,8 @@ export function clampCornerRadius(
 ): CornerRadius | undefined {
   if (radius === undefined) { return undefined; }
   const max = Math.min(width, height) / 2;
-  if (typeof radius === "number") {
-    if (radius <= 0) { return undefined; }
-    return Math.min(radius, max);
-  }
+  if (typeof radius === "number" && radius <= 0) { return undefined; }
+  if (typeof radius === "number") { return Math.min(radius, max); }
   const clamped: readonly [number, number, number, number] = [
     Math.min(radius[0], max),
     Math.min(radius[1], max),

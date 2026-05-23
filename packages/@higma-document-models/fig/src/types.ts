@@ -2111,6 +2111,10 @@ export type FigEffectType =
   | "FOREGROUND_BLUR"
   | "BACKGROUND_BLUR";
 
+export type FigBlurOpType =
+  | "NORMAL"
+  | "PROGRESSIVE";
+
 /**
  * Figma effect as stored in Kiwi binary format.
  */
@@ -2128,4 +2132,33 @@ export type FigEffect = {
   readonly spreadVar?: FigKiwiVariableData;
   readonly blendMode?: KiwiEnumValue<BlendMode>;
   readonly showShadowBehindNode?: boolean;
+  readonly count?: number;
+  readonly repeatType?: KiwiEnumValue;
+  readonly axis?: KiwiEnumValue;
+  readonly unitType?: KiwiEnumValue;
+  readonly order?: KiwiEnumValue;
+  readonly blurOpType?: KiwiEnumValue<FigBlurOpType>;
+  readonly startOffset?: FigVector;
+  readonly endOffset?: FigVector;
+  readonly startRadius?: number;
+  readonly secondaryColor?: FigColor;
+  readonly noiseSize?: FigVector;
+  readonly seed?: number;
+  readonly clipToShape?: boolean;
+  readonly density?: number;
+  readonly noiseType?: KiwiEnumValue;
+  readonly opacity?: number;
+  readonly refractionRadius?: number;
+  readonly specularAngle?: number;
+  readonly specularIntensity?: number;
+  readonly bevelSize?: number;
+  readonly chromaticAberration?: number;
+  readonly reflectionDistance?: number;
+  readonly refractionIntensity?: number;
+  readonly refractionRadiusVar?: FigKiwiVariableData;
+  readonly specularAngleVar?: FigKiwiVariableData;
+  readonly specularIntensityVar?: FigKiwiVariableData;
+  readonly chromaticAberrationVar?: FigKiwiVariableData;
+  readonly splayVar?: FigKiwiVariableData;
+  readonly refractionIntensityVar?: FigKiwiVariableData;
 };

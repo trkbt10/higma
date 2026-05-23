@@ -44,18 +44,18 @@ export function buildEllipseArcPathD(
   const largeArc = Math.abs(sweep) > Math.PI ? 1 : 0;
   const sweepFlag = sweep > 0 ? 1 : 0;
 
+  if (innerRadius <= 0 && isFullCircle) {
+    const midAngle = startingAngle + Math.PI;
+    const midX = cx + rx * Math.cos(midAngle);
+    const midY = cy + ry * Math.sin(midAngle);
+    return [
+      `M${outerStartX} ${outerStartY}`,
+      `A${rx} ${ry} 0 1 ${sweepFlag} ${midX} ${midY}`,
+      `A${rx} ${ry} 0 1 ${sweepFlag} ${outerStartX} ${outerStartY}`,
+      "Z",
+    ].join("");
+  }
   if (innerRadius <= 0) {
-    if (isFullCircle) {
-      const midAngle = startingAngle + Math.PI;
-      const midX = cx + rx * Math.cos(midAngle);
-      const midY = cy + ry * Math.sin(midAngle);
-      return [
-        `M${outerStartX} ${outerStartY}`,
-        `A${rx} ${ry} 0 1 ${sweepFlag} ${midX} ${midY}`,
-        `A${rx} ${ry} 0 1 ${sweepFlag} ${outerStartX} ${outerStartY}`,
-        "Z",
-      ].join("");
-    }
     return [
       `M${cx} ${cy}`,
       `L${outerStartX} ${outerStartY}`,

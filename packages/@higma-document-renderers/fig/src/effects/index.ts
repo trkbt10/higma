@@ -2,6 +2,7 @@
  * @file Effect interpretation — shared SoT exports
  */
 export {
+  getEffectBlurOpTypeName,
   getEffectTypeName,
   isEffectVisible,
   extractShadowParams,

@@ -6,7 +6,7 @@
  * and the SceneGraph builder consume these.
  */
 
-import type { FigEffect, FigEffectType } from "@higma-document-models/fig/types";
+import type { FigBlurOpType, FigEffect, FigEffectType } from "@higma-document-models/fig/types";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { requireVariableColor, requireVariableFloat, resolveConcreteVariableColor } from "@higma-document-models/fig/variables";
 
@@ -22,6 +22,21 @@ export function getEffectTypeName(effect: FigEffect): FigEffectType {
   const type = kiwiEnumName<FigEffectType>(effect.type, "FigEffect.type");
   if (type === undefined) {
     throw new Error("FigEffect.type is required");
+  }
+  return type;
+}
+
+/**
+ * Resolve the Kiwi background-blur operation mode.
+ *
+ * `BlurOpType.NORMAL` is enum value 0 in the Kiwi schema, so the field
+ * is absent in files that carry the normal operation. This is wire
+ * decoding, not a visual fallback.
+ */
+export function getEffectBlurOpTypeName(effect: FigEffect): FigBlurOpType {
+  const type = kiwiEnumName<FigBlurOpType>(effect.blurOpType, "FigEffect.blurOpType");
+  if (type === undefined) {
+    return "NORMAL";
   }
   return type;
 }

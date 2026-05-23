@@ -1,6 +1,6 @@
 /** @file SceneGraph SVG renderer viewport tests. */
 import { renderSceneGraphToSvg, formatRenderTreeToSvg } from "./scene-renderer";
-import { createNodeId, type FrameNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
+import { createNodeId, type FrameNode, type GroupNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
 import { createPngImage, readPng, writePng, type PngImage } from "@higma-codecs/png";
 import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
 
@@ -64,8 +64,143 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     expect(svg).toContain("backdrop-filter:blur(20px)");
     expect(svg).not.toContain("backdrop-filter:blur(40px)");
+    expect(svg).toContain('<foreignObject x="-40" y="-40" width="128" height="128">');
+    expect(svg).toMatch(/<g filter="url\(#filter-g0-\d+\)"><path d="M24 0L24 0C37.2548 0 48 10.7452 48 24/);
+    expect(svg).not.toMatch(/<g filter="url\(#filter-g0-\d+\)"><rect x="0" y="0" width="48" height="48" rx="24"/);
     expect(backgroundBlurIndex).toBeGreaterThan(-1);
     expect(foregroundFilterIndex).toBeGreaterThan(backgroundBlurIndex);
+  });
+
+  it("formats rounded multi-fill frame layers as Figma-export path primitives", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("rounded-layered-frame"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 226,
+      height: 48,
+      surfaceShape: { type: "rect", width: 226, height: 48, cornerRadius: 24 },
+      cornerRadius: 24,
+      fills: [
+        { type: "solid", color: { r: 0.2, g: 0.2, b: 0.2, a: 1 }, opacity: 1, blendMode: "color-dodge" },
+        { type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 0.5 },
+        { type: "solid", color: { r: 0.97, g: 0.97, b: 0.97, a: 1 }, opacity: 1, blendMode: "plus-darker" },
+      ],
+      clipsContent: false,
+      children: [],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 226,
+      height: 48,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [frame],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('<path d="M24 0L202 0C215.255 0 226 10.7452 226 24');
+    expect(svg).toContain('style="mix-blend-mode:color-dodge"');
+    expect(svg).toContain('style="mix-blend-mode:plus-darker"');
+    expect(svg).not.toContain('<rect x="0" y="0" width="226" height="48" rx="24" fill="#333333"');
+  });
+
+  it("preserves node-level blend mode on a single-fill rect without other wrapper reasons", () => {
+    const rectNode: RectNode = {
+      type: "rect",
+      id: createNodeId("node-level-linear-burn"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      blendMode: "plus-darker",
+      width: 6,
+      height: 9,
+      fills: [{ type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 0.1 }],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 16,
+      height: 16,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [rectNode],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('style="mix-blend-mode:plus-darker"');
+    expect(svg).toContain('<rect x="0" y="0" width="6" height="9" fill="#000000" fill-opacity="0.1"');
+  });
+
+  it("preserves rounded path-surface multi-fill layers as paths", () => {
+    const frame: FrameNode = {
+      type: "frame",
+      id: createNodeId("rounded-path-layered-frame"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 226,
+      height: 48,
+      surfaceShape: {
+        type: "path",
+        contours: [{
+          windingRule: "nonzero",
+          commands: [
+            { type: "M", x: 0, y: 24 },
+            { type: "C", x1: 0, y1: 10.7452, x2: 10.7452, y2: 0, x: 24, y: 0 },
+            { type: "L", x: 202, y: 0 },
+            { type: "C", x1: 215.255, y1: 0, x2: 226, y2: 10.7452, x: 226, y: 24 },
+            { type: "L", x: 226, y: 24 },
+            { type: "C", x1: 226, y1: 37.2548, x2: 215.255, y2: 48, x: 202, y: 48 },
+            { type: "L", x: 24, y: 48 },
+            { type: "C", x1: 10.7452, y1: 48, x2: 0, y2: 37.2548, x: 0, y: 24 },
+            { type: "Z" },
+          ],
+        }],
+      },
+      fills: [
+        { type: "solid", color: { r: 0.2, g: 0.2, b: 0.2, a: 1 }, opacity: 1, blendMode: "color-dodge" },
+        { type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 0.5 },
+      ],
+      clipsContent: false,
+      children: [],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 226,
+      height: 48,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [frame],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('<path d="M0 24C0 10.7452 10.7452 0 24 0');
+    expect(svg).not.toContain('<rect x="0" y="0" width="226" height="48" rx="24"');
   });
 
   it("formats Kiwi strokeGeometry as filled stroke outline instead of restroking it", () => {
@@ -122,12 +257,12 @@ describe("renderSceneGraphToSvg viewport", () => {
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('<path d="M-1 -1L11 -1L11 11L-1 11Z" fill="#000000"');
+    expect(svg).toContain('<path d="M-1 -1H11V11H-1Z" fill="#000000"');
     expect(svg).toContain('fill-rule="evenodd" clip-rule="evenodd"');
     expect(svg).not.toContain('stroke-width="4"');
   });
 
-  it("renders rect-metadata VECTOR strokeGeometry through the rect stroke SoT", () => {
+  it("renders rect-metadata VECTOR strokes from Kiwi rounded-rectangle metadata", () => {
     const strokedRectPath: PathNode = {
       type: "path",
       id: createNodeId("rect-param-stroke-geometry"),
@@ -187,7 +322,60 @@ describe("renderSceneGraphToSvg viewport", () => {
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
     expect(svg).toContain('fill="none" stroke="#8c8b87" stroke-width="2"');
-    expect(svg).not.toContain('fill="#8c8b87" mask=');
+    expect(svg).not.toContain('fill="#8c8b87" mask="url(#stroke-mask-');
+  });
+
+  it("formats rounded path strokes through the shared rect primitive", () => {
+    const strokedPath: PathNode = {
+      type: "path",
+      id: createNodeId("rounded-path-stroke"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      contours: [{
+        commands: [
+          { type: "M", x: 1, y: 3 },
+          { type: "C", x1: 1, y1: 1.895, x2: 1.895, y2: 1, x: 3, y: 1 },
+          { type: "L", x: 16, y: 1 },
+          { type: "C", x1: 17.105, y1: 1, x2: 18, y2: 1.895, x: 18, y: 3 },
+          { type: "L", x: 18, y: 21 },
+          { type: "C", x1: 18, y1: 22.105, x2: 17.105, y2: 23, x: 16, y: 23 },
+          { type: "L", x: 3, y: 23 },
+          { type: "C", x1: 1.895, y1: 23, x2: 1, y2: 22.105, x: 1, y: 21 },
+          { type: "Z" },
+        ],
+        windingRule: "nonzero",
+      }],
+      fills: [],
+      stroke: {
+        width: 2,
+        color: { r: 0.6, g: 0.6, b: 0.6, a: 1 },
+        opacity: 1,
+        linecap: "square",
+        linejoin: "miter",
+        align: "INSIDE",
+      },
+    };
+    const sceneGraph: SceneGraph = {
+      width: 24,
+      height: 26,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [strokedPath],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('<rect x="1" y="1" width="17" height="22" rx="2" fill="none" stroke="#999999" stroke-width="4"');
+    expect(svg).not.toContain('<path d="M1 3C1 1.895 1.895 1 3 1H16C17.105 1 18 1.895 18 3V21C18 22.105 17.105 23 16 23H3C1.895 23 1 22.105 1 21Z" fill="none" stroke="#999999"');
   });
 
   it("rounds wrapper opacity attributes through the Figma export number rule", () => {
@@ -405,7 +593,7 @@ describe("renderSceneGraphToSvg viewport", () => {
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('<path d="M0 0L40 0L40 20L0 20Z" fill="#ff0000"');
+    expect(svg).toContain('<rect x="0" y="0" width="40" height="20" fill="#ff0000"');
     expect(svg).not.toContain('<rect x="0" y="0" width="100" height="80" fill="#ff0000"');
   });
 
@@ -554,7 +742,7 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     expect(svg).toMatch(/<clipPath[^>]*id="group-clip-/);
     expect(svg).toMatch(/<g clip-path="url\(#group-clip-/);
-    expect(svg).toContain('<path d="M0 0L40 0L40 20L0 20Z"');
+    expect(svg).toContain('<path d="M0 0H40V20H0Z"');
   });
 
   it("exports a viewport-local SVG viewBox while preserving world-space content", () => {
@@ -569,7 +757,17 @@ describe("renderSceneGraphToSvg viewport", () => {
         opacity: 1,
         visible: true,
         effects: [],
-        children: [],
+        children: [{
+          type: "rect",
+          id: createNodeId("world-origin-rect"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          width: 12,
+          height: 8,
+          fills: [{ type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
+        }],
       },
       version: 1,
     };
@@ -579,7 +777,7 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).toContain('width="300"');
     expect(svg).toContain('height="200"');
     expect(svg).toContain('viewBox="0 0 300 200"');
-    expect(svg).toContain('transform="translate(120 40)"');
+    expect(svg).toContain('<rect x="120" y="40" width="12" height="8" fill="#000000"');
     expect(svg).toContain('fill="none"');
   });
 
@@ -627,7 +825,6 @@ describe("renderSceneGraphToSvg viewport", () => {
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
     expect(svg).toContain('viewBox="0 0 402 388"');
-    expect(svg).toContain('transform="translate(-165 -1047)"');
     expect(svg).toContain('d="M33.7754 172.125L86.7946 181.625Z"');
   });
 
@@ -666,7 +863,7 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('d="M2662.43 366.789L1000.13 0.401826Z"');
+    expect(svg).toContain('d="M2662.43 366.789L1000.12 0.401826Z"');
   });
 
   it("does not carry sub-millipixel transform residue into flattened path coordinates", () => {
@@ -712,9 +909,8 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('<g transform="matrix(1,0,0,1,4654,245)">');
-    expect(svg).toContain('d="M25.146 30L26.146 30Z"');
-    expect(svg).not.toContain('d="M25.147 30');
+    expect(svg).toContain('d="M472.147 394L473.147 394Z"');
+    expect(svg).not.toContain("4654.000152587890625");
   });
 
   it("keeps serialized transform fractions in the path coordinate basis", () => {
@@ -760,9 +956,8 @@ describe("renderSceneGraphToSvg viewport", () => {
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('<g transform="matrix(1,0,0,1,5565.67,892)">');
-    expect(svg).toContain('d="M17.2 10.17L18.2 10.17Z"');
-    expect(svg).not.toContain('d="M17.21 10.17');
+    expect(svg).toContain('d="M1375.87 1021.17L1376.87 1021.17Z"');
+    expect(svg).not.toContain("5565.666748046875");
   });
 
   it("rounds gradient coordinate attributes with numeric suffixes", () => {
@@ -815,6 +1010,167 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).toContain('x1="33.7754"');
     expect(svg).toContain('x2="86.7946"');
     expect(svg).not.toContain('x1="33.77539"');
+  });
+
+  it("keeps path-contour rect projection in geometry coordinates when the paint references a def", () => {
+    const sourcePath: PathNode = {
+      type: "path",
+      id: createNodeId("gradient-path-rect"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      fills: [],
+      contours: [{
+        windingRule: "nonzero",
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 100, y: 0 },
+          { type: "L", x: 100, y: 100 },
+          { type: "L", x: 0, y: 100 },
+          { type: "Z" },
+        ],
+      }],
+    };
+    const renderTree: RenderTree = {
+      width: 120,
+      height: 140,
+      viewport: { x: 0, y: 0, width: 120, height: 140 },
+      children: [{
+        type: "path",
+        id: sourcePath.id,
+        wrapper: { transform: "matrix(1,0,0,1,10,20)" },
+        defs: [{
+          type: "linear-gradient",
+          def: {
+            type: "linear-gradient",
+            id: "lg-path-test",
+            x1: "50",
+            y1: "100",
+            x2: "50",
+            y2: "0",
+            gradientUnits: "userSpaceOnUse",
+            stops: [
+              { offset: "0%", stopColor: "#000000" },
+              { offset: "100%", stopColor: "#ffffff" },
+            ],
+          },
+        }],
+        source: sourcePath,
+        paths: [{ d: "M0 0L100 0L100 100L0 100Z" }],
+        fill: { attrs: { fill: "url(#lg-path-test)" } },
+        needsWrapper: true,
+        sourceContours: sourcePath.contours,
+        sourceFills: [],
+      }],
+    };
+
+    const svg = formatRenderTreeToSvg(renderTree) as string;
+
+    expect(svg).toContain('<rect x="10" y="20" width="100" height="100" fill="url(#lg-path-test)"');
+    expect(svg).not.toContain('fill="url(#lg-path-test)" transform="translate(10 20)"');
+  });
+
+  it("projects solid path-contour rect translations into geometry at the SVG export boundary", () => {
+    const sourcePath: PathNode = {
+      type: "path",
+      id: createNodeId("solid-path-rect"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 100,
+      height: 100,
+      fills: [],
+      contours: [{
+        windingRule: "nonzero",
+        commands: [
+          { type: "M", x: 0, y: 0 },
+          { type: "L", x: 100, y: 0 },
+          { type: "L", x: 100, y: 100 },
+          { type: "L", x: 0, y: 100 },
+          { type: "Z" },
+        ],
+      }],
+    };
+    const renderTree: RenderTree = {
+      width: 120,
+      height: 140,
+      viewport: { x: 0, y: 0, width: 120, height: 140 },
+      children: [{
+        type: "path",
+        id: sourcePath.id,
+        wrapper: { transform: "matrix(1,0,0,1,10,20)" },
+        defs: [],
+        source: sourcePath,
+        paths: [{ d: "M0 0L100 0L100 100L0 100Z" }],
+        fill: { attrs: { fill: "#f2f2f7" } },
+        needsWrapper: true,
+        sourceContours: sourcePath.contours,
+        sourceFills: [],
+      }],
+    };
+
+    const svg = formatRenderTreeToSvg(renderTree) as string;
+
+    expect(svg).toContain('<rect x="10" y="20" width="100" height="100" fill="#f2f2f7"');
+    expect(svg).not.toContain('fill="#f2f2f7" transform="translate(10 20)"');
+  });
+
+  it("hoists repeated image pattern bytes into shared SVG image assets", () => {
+    const source = createPngBytes({ width: 10, height: 10 }, 224);
+    const dataUri = `data:image/png;base64,${Buffer.from(source).toString("base64")}`;
+    const sourceRect: RectNode = {
+      type: "rect",
+      id: createNodeId("image-source"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 10,
+      height: 10,
+      fills: [],
+    };
+    const renderTree: RenderTree = {
+      width: 100,
+      height: 40,
+      viewport: { x: 0, y: 0, width: 100, height: 40 },
+      children: ["img-a", "img-b"].map((id, index) => ({
+        type: "rect",
+        id: createNodeId(`rect-${id}`),
+        wrapper: { transform: `matrix(1,0,0,1,${index * 20},0)` },
+        defs: [{
+          type: "pattern",
+          def: {
+            type: "image",
+            id,
+            dataUri,
+            patternContentUnits: "objectBoundingBox",
+            width: 1,
+            height: 1,
+            imageWidth: 10,
+            imageHeight: 10,
+            preserveAspectRatio: "none",
+            scaleMode: "FILL",
+          },
+        }],
+        source: sourceRect,
+        width: 10,
+        height: 10,
+        fill: { attrs: { fill: `url(#${id})` } },
+        needsWrapper: true,
+        sourceFills: [],
+      })),
+    };
+
+    const svg = formatRenderTreeToSvg(renderTree) as string;
+
+    expect(svg.match(/href="data:image\/png/g)?.length).toBe(1);
+    expect(svg.match(/<use href="#higma-svg-image-asset-/g)?.length).toBe(2);
+    expect(svg).toContain('<pattern id="img-a"');
+    expect(svg).toContain('<pattern id="img-b"');
   });
 
   it("bakes image paint filters into SVG pattern image data", () => {
@@ -1064,7 +1420,7 @@ describe("renderSceneGraphToSvg viewport", () => {
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
     expect(svg).toMatch(/<mask[^>]*x="-1"[^>]*y="-1"[^>]*width="102"[^>]*height="102"/);
-    expect(svg).toContain('d="M-1 -1L101 -1L101 101L-1 101Z"');
+    expect(svg).toContain('<rect x="0" y="0" width="100" height="100" fill="white" stroke="white" stroke-width="2"');
   });
 
   it("emits SVG mask regions from the authored mask source bounds", () => {
@@ -1109,7 +1465,7 @@ describe("renderSceneGraphToSvg viewport", () => {
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
-    expect(svg).toMatch(/<mask[^>]*x="10"[^>]*y="20"[^>]*width="10"[^>]*height="8"/);
+    expect(svg).toMatch(/<mask[^>]*x="10\.4"[^>]*y="20\.2"[^>]*width="9\.2"[^>]*height="7\.6"/);
   });
 
   it("preserves source alpha paints for Kiwi ALPHA masks", () => {
@@ -1350,6 +1706,48 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).toContain("<clipPath");
     expect(svg).toMatch(/<clipPath[^>]*>[^<]*<path[^>]*d="/);
     expect(svg).not.toContain('rx="24"');
+  });
+
+  it("formats uniform rounded clip primitives as native SVG rect clips", () => {
+    const clippedGroup: GroupNode = {
+      type: "group",
+      id: createNodeId("rounded-clip-group"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      clip: { type: "rect", width: 20, height: 20, cornerRadius: 10 },
+      children: [{
+        type: "rect",
+        id: createNodeId("rounded-clip-child"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        width: 20,
+        height: 20,
+        fills: [{ type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
+      }],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 20,
+      height: 20,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [clippedGroup],
+      },
+      version: 1,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toMatch(/<clipPath[^>]*>[^<]*<rect[^>]*rx="10"/);
+    expect(svg).not.toMatch(/<clipPath[^>]*>[^<]*<path[^>]*d="/);
   });
 
 });

@@ -19,6 +19,15 @@ describe("resolveWebGLViewportPixelRatio", () => {
     expect(resolveWebGLViewportPixelRatio({ devicePixelRatio: 2, viewportScale: 9, surfaceWidth: 100, surfaceHeight: 100 })).toBe(3);
   });
 
+  it("does not downsample large 100% viewports without an explicit pixel budget", () => {
+    expect(resolveWebGLViewportPixelRatio({
+      devicePixelRatio: 1,
+      viewportScale: 1,
+      surfaceWidth: 3454,
+      surfaceHeight: 1236,
+    })).toBe(1);
+  });
+
   it("caps the ratio by the visible surface pixel budget", () => {
     expect(resolveWebGLViewportPixelRatio({
       devicePixelRatio: 2,

@@ -78,10 +78,10 @@ function evaluateBooleanPathsUnsafe(
     const nextFillRule = toFillRuleEnum(childPaths[i].windingRule);
     const results = pathBoolean(currentPath, currentFillRule, nextPath, nextFillRule, boolOp);
 
+    if (results.length === 0 && boolOp === PathBooleanOperation.Difference) {
+      continue;
+    }
     if (results.length === 0) {
-      if (boolOp === PathBooleanOperation.Difference) {
-        continue;
-      }
       return [];
     }
 

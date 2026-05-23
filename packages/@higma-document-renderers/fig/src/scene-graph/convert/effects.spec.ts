@@ -2,7 +2,7 @@
 
 import type { FigEffect } from "@higma-document-models/fig/types";
 import { convertEffectsToScene } from "./effects";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { BLEND_MODE_VALUES, BLUR_OP_TYPE_VALUES, EFFECT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 
 function blurEffect(type: "FOREGROUND_BLUR" | "BACKGROUND_BLUR", radius: number): FigEffect {
   return {
@@ -23,6 +23,16 @@ describe("convertEffectsToScene", () => {
     expect(convertEffectsToScene([blurEffect("BACKGROUND_BLUR", 10)])).toEqual([
       { type: "background-blur", radius: 10 },
     ]);
+  });
+
+  it("does not coerce progressive background blur into uniform background blur", () => {
+    expect(convertEffectsToScene([{
+      ...blurEffect("BACKGROUND_BLUR", 4),
+      blurOpType: { value: BLUR_OP_TYPE_VALUES.PROGRESSIVE, name: "PROGRESSIVE" },
+      startOffset: { x: 0.5, y: 0 },
+      endOffset: { x: 0.5, y: 1 },
+      startRadius: 20,
+    }])).toEqual([]);
   });
 
   it("preserves first-class drop shadow attributes", () => {

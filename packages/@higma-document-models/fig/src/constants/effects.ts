@@ -20,3 +20,14 @@ export const EFFECT_TYPE_VALUES = requireFigEnumTable("EffectType", [
 ]);
 
 export type EffectType = "INNER_SHADOW" | "DROP_SHADOW" | "FOREGROUND_BLUR" | "BACKGROUND_BLUR";
+
+/**
+ * Background blur operation mode. Kiwi omits enum-zero fields on many
+ * files, so an absent `blurOpType` decodes as `NORMAL`.
+ */
+export const BLUR_OP_TYPE_VALUES = requireFigEnumTable("BlurOpType", [
+  "NORMAL",
+  "PROGRESSIVE",
+]);
+
+export type BlurOpType = "NORMAL" | "PROGRESSIVE";

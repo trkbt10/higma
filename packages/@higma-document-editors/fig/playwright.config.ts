@@ -10,6 +10,7 @@ export default defineConfig({
   testDir: resolve(__dirname, "spec/e2e"),
   testMatch: "**/*.e2e.ts",
   timeout: 30_000,
+  workers: 1,
   use: {
     baseURL: `http://localhost:${PORT}`,
     browserName: "chromium",

@@ -7,11 +7,21 @@ import type { RenderEllipseNode } from "../../scene-graph";
 import { ShapeShell } from "../primitives/shape-shell";
 import { MultiFillEllipseLayers } from "../primitives/multi-fill";
 import { getUniformStrokeAttrs, StrokeRenderingElements } from "../primitives/stroke-rendering";
+import { directShapeBlendModeStyle } from "../primitives/blend-mode";
 
 type Props = { readonly node: RenderEllipseNode };
 
 function renderEllipseShape(node: RenderEllipseNode, uniformStroke: ReturnType<typeof getUniformStrokeAttrs>) {
-  const fillAttrs = { fill: node.fill.attrs.fill, fillOpacity: node.fill.attrs.fillOpacity };
+  const fillAttrs = {
+    fill: node.fill.attrs.fill,
+    fillOpacity: node.fill.attrs.fillOpacity,
+    style: directShapeBlendModeStyle({
+      paintBlendMode: node.fill.blendMode,
+      nodeBlendMode: node.wrapper.blendMode,
+      wrapped: node.needsWrapper,
+      nodeId: node.id,
+    }),
+  };
   if (node.rx === node.ry) {
     return <circle cx={node.cx} cy={node.cy} r={node.rx} {...fillAttrs} {...(uniformStroke ?? {})} />;
   }

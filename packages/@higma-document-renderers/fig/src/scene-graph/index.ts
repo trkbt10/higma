@@ -39,6 +39,7 @@ export {
   resolveStroke,
   resolveStrokeResult,
   resolveEffects,
+  resolveEffectBounds,
   resolveFigmaBlurStdDeviation,
   buildEffectStack,
   renderShapeEffectStack,
@@ -49,6 +50,10 @@ export {
   resolveSvgMaskElementAttrs,
   resolveSvgMaskPresentation,
   resolveSvgStrokeMaskElementAttrs,
+  resolveLayeredRectShapePrimitive,
+  resolvePathBackedRectShapePrimitive,
+  resolvePathContourRectPrimitive,
+  resolveRectShapePrimitive,
   renderExportSettingsCacheKey,
   requireManagedImageColorProfile,
   type ResolvedFill,
@@ -78,6 +83,8 @@ export {
   type SvgStrokeMaskElementAttrs,
   type IdGenerator,
   type SceneGraphRenderOptions,
+  type PathContourRectSize,
+  type RectShapePrimitive,
 } from "./render";
 
 // RenderTree — intermediate representation for SVG/React/WebGL backends

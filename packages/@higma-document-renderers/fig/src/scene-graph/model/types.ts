@@ -488,15 +488,9 @@ export type PathNode = SceneNodeBase & {
   readonly height?: number;
   /**
    * Source `cornerRadius` carried alongside the baked contour data so the
-   * stroke emitter can recognise a smoothed-corner rectangle authored as
-   * a VECTOR (e.g. iPhone bezel "Aluminum" / "Corner Shading" SYMBOLs —
-   * type VECTOR, size 432×904, cornerRadius 76, cornerSmoothing 0.6,
-   * strokeAlign INSIDE, strokeWeight 6). Figma's SVG exporter treats
-   * these as rectangles for stroke emission, producing a single smoothed
-   * inset path stroked at the actual strokeWidth instead of the masked-
-   * doubled-stroke fallback used for arbitrary contours. The fillGeometry
-   * blob carries the same smoothed outline verbatim, so this metadata is
-   * purely a stroke-emission hint — fill is still rendered from `contours`.
+   * stroke emitter can draw Figma's aligned rounded-rectangle stroke from
+   * the Kiwi shape metadata. Arbitrary VECTOR strokes without this
+   * metadata use `strokeContours` as the authored stroke outline.
    */
   readonly cornerRadius?: CornerRadius;
   /** Continuous-curvature smoothing factor (0..1); see `cornerRadius`. */

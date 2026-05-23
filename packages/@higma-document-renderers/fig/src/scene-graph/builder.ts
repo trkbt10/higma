@@ -144,8 +144,10 @@ function resolveFrameSurfaceShape(
   size: NonNullable<FigNode["size"]>,
   cornerRadius: CornerRadius | undefined,
   cornerSmoothing: number | undefined,
+  fills: readonly Fill[],
+  effects: SceneNode["effects"],
 ): ClipShape {
-  if (shouldUseParametricSmoothedSurface(node, ctx)) {
+  if (shouldUseParametricSmoothedSurface(node, ctx, fills, effects)) {
     return { type: "rect", width: size.x, height: size.y, cornerRadius, cornerSmoothing };
   }
   const contours = decodeGeometryToContours(node.fillGeometry, ctx.blobs);
@@ -446,7 +448,9 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
   const cornerRadius = extractKiwiCornerRadius(node);
   const cornerSmoothing = resolveCornerSmoothing(node, ctx);
   const clipsContent = resolveKiwiClipsContent(node);
-  const surfaceShape = resolveFrameSurfaceShape(node, ctx, size, cornerRadius, cornerSmoothing);
+  const fills = convertPaintsToFills(resolveFrameFillPaints(node, ctx), ctx.images, paintSubject(node, framePaintField(node)));
+  const effects = convertEffectsToScene(resolveNodeEffects(node, ctx));
+  const surfaceShape = resolveFrameSurfaceShape(node, ctx, size, cornerRadius, cornerSmoothing, fills, effects);
 
   return {
     type: "frame",
@@ -455,14 +459,14 @@ function buildFrameNode(node: FigNode, ctx: BuildContext, children: readonly Sce
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
+    effects,
     blendMode: convertFigmaNodeBlendMode(node.blendMode),
     width: size.x,
     height: size.y,
     surfaceShape,
     cornerRadius,
     cornerSmoothing,
-    fills: convertPaintsToFills(resolveFrameFillPaints(node, ctx), ctx.images, paintSubject(node, framePaintField(node))),
+    fills,
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
@@ -480,6 +484,8 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
   const size = requireNodeSize(node, "buildRectNode");
   const cornerRadius = extractKiwiCornerRadius(node);
   const cornerSmoothing = resolveCornerSmoothing(node, ctx);
+  const fills = convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints"));
+  const effects = convertEffectsToScene(resolveNodeEffects(node, ctx));
 
   return {
     type: "rect",
@@ -488,13 +494,13 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
     transform: convertKiwiTransform(node.transform),
     opacity: node.opacity ?? 1,
     visible: node.visible ?? true,
-    effects: convertEffectsToScene(resolveNodeEffects(node, ctx)),
+    effects,
     blendMode: convertFigmaNodeBlendMode(node.blendMode),
     width: size.x,
     height: size.y,
     cornerRadius,
     cornerSmoothing,
-    fills: convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints")),
+    fills,
     stroke: convertStrokeToSceneStroke(resolveNodeStrokePaints(node, node.strokePaints, ctx), node.strokeWeight, {
       strokeCap: node.strokeCap,
       strokeJoin: node.strokeJoin,
@@ -509,11 +515,11 @@ function buildRectNode(node: FigNode, ctx: BuildContext): RectNode {
  * Pick up Figma's `cornerSmoothing` on export-surface nodes. Figma's
  * SVG exporter applies smoothing to the exported root and to the
  * resolved INSTANCE root returned by SymbolResolver. Ordinary nested
- * FRAME/RECTANGLE children with non-zero `cornerSmoothing` still emit
- * as sharp `<rect rx>` so the SVG bytes match Figma's output exactly.
- * Without this gate, applying smoothing universally over-darkens the
- * AA at every inner-frame corner (calibration: Feature cell regressed
- * 0.00% -> 0.01%).
+ * single-paint FRAME/RECTANGLE children with non-zero `cornerSmoothing`
+ * still emit as sharp `<rect rx>` so the SVG bytes match Figma's
+ * output exactly. Without this gate, applying smoothing universally
+ * over-darkens the AA at every inner-frame corner (calibration:
+ * Feature cell regressed 0.00% -> 0.01%).
  *
  * Additionally, the SVG exporter falls back to a sharp `<rect rx>` even
  * on the export-root when the node carries a visible effect
@@ -548,6 +554,17 @@ function hasVisibleEffect(node: FigNode): boolean {
     return true;
   }
   return false;
+}
+
+function hasFigmaBlurEffect(effects: ReadonlyArray<SceneNode["effects"][number]>): boolean {
+  return effects.some((effect) => effect.type === "background-blur" || effect.type === "layer-blur");
+}
+
+function kiwiSurfaceGeometryIsAuthoritative(
+  fills: readonly Fill[],
+  effects: ReadonlyArray<SceneNode["effects"][number]>,
+): boolean {
+  return fills.length > 1 || hasFigmaBlurEffect(effects);
 }
 
 function buildEllipseNode(node: FigNode, ctx: BuildContext): EllipseNode {
@@ -636,15 +653,23 @@ function hasKiwiVectorPaths(node: FigNode): boolean {
   return node.vectorPaths !== undefined && node.vectorPaths.length > 0;
 }
 
-function shouldUseParametricSmoothedSurface(node: FigNode, ctx: BuildContext): boolean {
+function shouldUseParametricSmoothedSurface(
+  node: FigNode,
+  ctx: BuildContext,
+  fills: readonly Fill[],
+  effects: ReadonlyArray<SceneNode["effects"][number]>,
+): boolean {
   const s = node.cornerSmoothing;
   if (typeof s !== "number" || s <= 0) { return false; }
+  if (kiwiSurfaceGeometryIsAuthoritative(fills, effects)) { return false; }
   return resolveCornerSmoothing(node, ctx) === undefined;
 }
 
 function shouldUseParametricRoundedRectangle(node: FigNode, ctx: BuildContext): boolean {
   if (getNodeType(node) !== "ROUNDED_RECTANGLE") { return false; }
-  return shouldUseParametricSmoothedSurface(node, ctx);
+  const fills = convertPaintsToFills(resolveNodeFillPaints(node, node.fillPaints, ctx), ctx.images, paintSubject(node, "fillPaints"));
+  const effects = convertEffectsToScene(resolveNodeEffects(node, ctx));
+  return shouldUseParametricSmoothedSurface(node, ctx, fills, effects);
 }
 
 /**
@@ -1192,9 +1217,6 @@ type MaskBuildState = {
  * it becomes an SVG mask for all subsequent siblings until the next mask
  * node or the end of the list. Masked siblings are wrapped in a GroupNode
  * with the `mask` field set.
- *
- * This mirrors the old SVG renderer's `renderChildrenWithMasks()` logic,
- * but produces SceneNodes instead of SVG strings.
  */
 function buildChildren(children: readonly FigNode[], ctx: BuildContext): SceneNode[] {
   const result: SceneNode[] = [];
@@ -1219,7 +1241,6 @@ function buildChildren(children: readonly FigNode[], ctx: BuildContext): SceneNo
     appendBuiltChild(result, maskState, buildNode(child, ctx));
   }
 
-  // Flush final masked group
   flushMaskState(result, maskState, ctx);
 
   return result;

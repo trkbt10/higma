@@ -2,13 +2,16 @@
 
 import type { ReactNode } from "react";
 import type {
+  PathContourRectSize,
   RenderFrameNode,
   RenderImageNode,
   RenderNode,
+  RenderPathNode,
   RenderTextNode,
   StrokeRendering,
 } from "../../scene-graph";
 import { RectShape } from "./rect-shape";
+import { PathContourShape } from "./path-contour-shape";
 
 type Props = {
   readonly node: RenderNode;
@@ -76,7 +79,7 @@ function renderMaskStrokeGeometry(strokeRendering: StrokeRendering | undefined, 
     return [];
   }
   return strokeRendering.paths.map((path, index) => (
-    <path key={`stroke-${index}`} d={path.d} fillRule={path.fillRule} fill={fill} />
+    <PathContourShape key={`stroke-${index}`} contour={path} fill={fill} />
   ));
 }
 
@@ -130,9 +133,10 @@ function renderOutlineMaskShapeBody(node: RenderNode, fill: string): ReactNode {
   const strokeAttrs = maskStrokeAttrsForNode(node);
   switch (node.type) {
     case "path": {
+      const size = pathNodeContourSize(node);
       const parts = [
         ...node.paths.map((path, index) => (
-          <path key={`fill-${index}`} d={path.d} fillRule={path.fillRule} fill={fill} {...(strokeAttrs ?? {})} />
+          <PathContourShape key={`fill-${index}`} contour={path} size={size} fill={fill} {...(strokeAttrs ?? {})} />
         )),
         ...renderMaskStrokeGeometry(node.strokeRendering, fill),
       ];
@@ -186,6 +190,17 @@ function renderOutlineMaskShapeBody(node: RenderNode, fill: string): ReactNode {
     case "image":
       return renderImageMaskShape(node);
   }
+}
+
+function pathNodeContourSize(node: RenderPathNode): PathContourRectSize | undefined {
+  const source = node.source;
+  if (source.type !== "path") {
+    return undefined;
+  }
+  if (typeof source.width !== "number" || typeof source.height !== "number") {
+    return undefined;
+  }
+  return { width: source.width, height: source.height };
 }
 
 /** Render a RenderTree node as forced geometry for a Kiwi OUTLINE mask. */

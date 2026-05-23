@@ -1,3 +1,5 @@
+/** @file Tests for Figma blend mode conversion. */
+
 import { BLEND_MODE_VALUES } from "@higma-document-models/fig/constants";
 import { convertFigmaBlendMode, convertFigmaNodeBlendMode } from "./blend-mode";
 

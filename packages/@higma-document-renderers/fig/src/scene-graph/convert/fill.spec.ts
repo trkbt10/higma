@@ -45,6 +45,22 @@ describe("convertPaintToFill", () => {
       });
     });
 
+    it("canonicalizes SOLID paint alpha into fill opacity", () => {
+      const paint: FigSolidPaint = {
+        type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+        color: { r: 0.4627451002597809, g: 0.4627451002597809, b: 0.501960813999176, a: 0.24 },
+        opacity: 0.5,
+        visible: true,
+      };
+      const fill = convertPaintToFill(paint, NO_IMAGES);
+
+      expect(fill).toEqual({
+        type: "solid",
+        color: { r: 0.4627451002597809, g: 0.4627451002597809, b: 0.501960813999176, a: 1 },
+        opacity: 0.12,
+      });
+    });
+
     it("uses Paint.colorVar when Kiwi carries a concrete color value", () => {
       const paint: FigSolidPaint = {
         type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },

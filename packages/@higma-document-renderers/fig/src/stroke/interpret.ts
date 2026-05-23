@@ -51,11 +51,9 @@ function enumName<T extends string>(value: KiwiEnumValue<T> | undefined | null):
   return name;
 }
 
-
-
-
-
-
+/**
+ * Maps a Kiwi stroke cap enum into the SVG stroke-linecap token.
+ */
 export function mapStrokeCap(cap: KiwiEnumValue<FigStrokeCap> | undefined | null): SvgStrokeCap {
   switch (enumName(cap)) {
     case "ROUND":

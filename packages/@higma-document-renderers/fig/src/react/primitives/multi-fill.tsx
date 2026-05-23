@@ -13,13 +13,10 @@ import type { ReactNode } from "react";
 import type { ResolvedFillLayer } from "../../scene-graph";
 import type { ResolvedStrokeLayer } from "../../scene-graph";
 import type { CornerRadius } from "@higma-primitives/path";
-import type { BlendMode } from "@higma-document-renderers/fig/scene-graph";
-import { RectShape } from "./rect-shape";
+import { LayeredRectShape, RectShape } from "./rect-shape";
 import type { UniformStrokeDomAttrs } from "./stroke-rendering";
-
-function blendModeStyle(bm: BlendMode | undefined): React.CSSProperties | undefined {
-  return bm ? { mixBlendMode: bm as React.CSSProperties["mixBlendMode"] } : undefined;
-}
+import { blendModeStyle } from "./blend-mode";
+import { PathContourShape, PreservedPathContourShape } from "./path-contour-shape";
 
 type MultiFillRectLayersProps = {
   readonly layers: readonly ResolvedFillLayer[];
@@ -30,16 +27,14 @@ type MultiFillRectLayersProps = {
   readonly stroke?: UniformStrokeDomAttrs;
 };
 
-
-
-
-
-
+/**
+ * Renders stacked rectangle fill layers in Figma paint order.
+ */
 export function MultiFillRectLayers({ layers, width, height, cornerRadius, cornerSmoothing, stroke }: MultiFillRectLayersProps): ReactNode {
   return (
     <>
       {layers.map((layer, i) => (
-        <RectShape
+        <LayeredRectShape
           key={i}
           width={width}
           height={height}
@@ -48,7 +43,7 @@ export function MultiFillRectLayers({ layers, width, height, cornerRadius, corne
           fill={layer.attrs.fill}
           fillOpacity={layer.attrs.fillOpacity}
           style={blendModeStyle(layer.blendMode)}
-          {...(i === layers.length - 1 && stroke ? stroke : {})}
+          {...strokeAttrsForTopLayer(i, layers.length, stroke)}
         />
       ))}
     </>
@@ -64,11 +59,9 @@ type MultiFillEllipseLayersProps = {
   readonly stroke?: UniformStrokeDomAttrs;
 };
 
-
-
-
-
-
+/**
+ * Renders stacked ellipse fill layers in Figma paint order.
+ */
 export function MultiFillEllipseLayers({ layers, cx, cy, rx, ry, stroke }: MultiFillEllipseLayersProps): ReactNode {
   return (
     <>
@@ -82,7 +75,7 @@ export function MultiFillEllipseLayers({ layers, cx, cy, rx, ry, stroke }: Multi
           fill={layer.attrs.fill}
           fillOpacity={layer.attrs.fillOpacity}
           style={blendModeStyle(layer.blendMode)}
-          {...(i === layers.length - 1 && stroke ? stroke : {})}
+          {...strokeAttrsForTopLayer(i, layers.length, stroke)}
         />
       ))}
     </>
@@ -95,32 +88,26 @@ type MultiFillPathLayersProps = {
   readonly stroke?: UniformStrokeDomAttrs;
 };
 
-
-
-
-
-
+/**
+ * Renders stacked path fill layers in Figma paint order.
+ */
 export function MultiFillPathLayers({ layers, paths, stroke }: MultiFillPathLayersProps): ReactNode {
-  const elements: ReactNode[] = [];
-  for (let li = 0; li < layers.length; li++) {
-    const layer = layers[li];
-    const sAttrs = li === layers.length - 1 && stroke ? stroke : {};
-    for (let pi = 0; pi < paths.length; pi++) {
-      const p = paths[pi];
-      elements.push(
-        <path
-          key={`${li}-${pi}`}
-          d={p.d}
-          fillRule={p.fillRule}
-          fill={layer.attrs.fill}
-          fillOpacity={layer.attrs.fillOpacity}
-          style={blendModeStyle(layer.blendMode)}
-          {...sAttrs}
-        />,
-      );
-    }
-  }
-  return <>{elements}</>;
+  return (
+    <>
+      {layers.flatMap((layer, li) =>
+        paths.map((pathItem, pi) => (
+          <PreservedPathContourShape
+            key={`${li}-${pi}`}
+            contour={pathItem}
+            fill={layer.attrs.fill}
+            fillOpacity={layer.attrs.fillOpacity}
+            style={blendModeStyle(layer.blendMode)}
+            {...strokeAttrsForTopLayer(li, layers.length, stroke)}
+          />
+        )),
+      )}
+    </>
+  );
 }
 
 // =============================================================================
@@ -135,11 +122,9 @@ type MultiStrokeRectLayersProps = {
   readonly cornerSmoothing?: number;
 };
 
-
-
-
-
-
+/**
+ * Renders stacked rectangle stroke layers in Figma paint order.
+ */
 export function MultiStrokeRectLayers({ layers, width, height, cornerRadius, cornerSmoothing }: MultiStrokeRectLayersProps): ReactNode {
   return (
     <>
@@ -167,11 +152,9 @@ type MultiStrokeEllipseLayersProps = {
   readonly ry: number;
 };
 
-
-
-
-
-
+/**
+ * Renders stacked ellipse stroke layers in Figma paint order.
+ */
 export function MultiStrokeEllipseLayers({ layers, cx, cy, rx, ry }: MultiStrokeEllipseLayersProps): ReactNode {
   return (
     <>
@@ -196,28 +179,34 @@ type MultiStrokePathLayersProps = {
   readonly paths: readonly { d: string; fillRule?: "evenodd" }[];
 };
 
-
-
-
-
-
+/**
+ * Renders stacked path stroke layers in Figma paint order.
+ */
 export function MultiStrokePathLayers({ layers, paths }: MultiStrokePathLayersProps): ReactNode {
-  const elements: ReactNode[] = [];
-  for (let li = 0; li < layers.length; li++) {
-    const layer = layers[li];
-    for (let pi = 0; pi < paths.length; pi++) {
-      const p = paths[pi];
-      elements.push(
-        <path
-          key={`stroke-${li}-${pi}`}
-          d={p.d}
-          fillRule={p.fillRule}
-          fill="none"
-          style={blendModeStyle(layer.blendMode)}
-          {...layer.attrs}
-        />,
-      );
-    }
+  return (
+    <>
+      {layers.flatMap((layer, li) =>
+        paths.map((pathItem, pi) => (
+          <PathContourShape
+            key={`stroke-${li}-${pi}`}
+            contour={pathItem}
+            fill="none"
+            style={blendModeStyle(layer.blendMode)}
+            {...layer.attrs}
+          />
+        )),
+      )}
+    </>
+  );
+}
+
+function strokeAttrsForTopLayer(
+  index: number,
+  layerCount: number,
+  stroke: UniformStrokeDomAttrs | undefined,
+): UniformStrokeDomAttrs | undefined {
+  if (index !== layerCount - 1) {
+    return undefined;
   }
-  return <>{elements}</>;
+  return stroke;
 }

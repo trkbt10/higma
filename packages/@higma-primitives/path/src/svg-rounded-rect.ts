@@ -210,6 +210,18 @@ export function buildSmoothedRoundedRectPathD(
   // like Event Details Card (cs=0.6, no stroke).
   const subdivide = insetHalf !== 0;
 
+  if (subdivide) {
+    return buildSubdividedSmoothedRoundedRectPathD({
+      w,
+      h,
+      origin,
+      tl: tlParams,
+      tr: trParams,
+      br: brParams,
+      bl: blParams,
+    });
+  }
+
   const parts: string[] = [];
   parts.push(`M ${x} ${y + tlParams.p}`);
   parts.push(...cornerCommandsTopLeft(x, y, tlParams, subdivide));
@@ -220,6 +232,37 @@ export function buildSmoothedRoundedRectPathD(
   parts.push(`L ${x + blParams.p} ${y + h}`);
   parts.push(...cornerCommandsBottomLeft(x, y + h, blParams, subdivide));
   parts.push(`L ${x} ${y + tlParams.p}`);
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+function buildSubdividedSmoothedRoundedRectPathD(
+  params: {
+    readonly w: number;
+    readonly h: number;
+    readonly origin: { readonly x: number; readonly y: number };
+    readonly tl: CornerParams;
+    readonly tr: CornerParams;
+    readonly br: CornerParams;
+    readonly bl: CornerParams;
+  },
+): string {
+  const { w, h, origin, tl, tr, br, bl } = params;
+  const x = origin.x;
+  const y = origin.y;
+  const parts: string[] = [];
+  // Figma's SVG exporter emits aligned smoothed strokes from the top
+  // edge. Keeping the same closed-path join location avoids backend
+  // rasterizers placing the start/end join on a different curve.
+  parts.push(`M ${x + tl.p} ${y}`);
+  parts.push(`L ${x + w - tr.p} ${y}`);
+  parts.push(...cornerCommandsTopRight(x + w, y, tr, true));
+  parts.push(`L ${x + w} ${y + h - br.p}`);
+  parts.push(...cornerCommandsBottomRight(x + w, y + h, br, true));
+  parts.push(`L ${x + bl.p} ${y + h}`);
+  parts.push(...cornerCommandsBottomLeft(x, y + h, bl, true));
+  parts.push(`L ${x} ${y + tl.p}`);
+  parts.push(...cornerCommandsTopLeft(x, y, tl, true));
   parts.push("Z");
   return parts.join(" ");
 }
@@ -360,7 +403,7 @@ function deCasteljauSplit(
  * slightly differently from short ones).
  */
 const SMOOTHING_T_IN = 0.5057;
-const SMOOTHING_T_OUT = 0.489;
+const SMOOTHING_T_OUT = 1 - SMOOTHING_T_IN;
 
 function cornerCommandsTopLeft(x: number, y: number, c: CornerParams, subdivide: boolean = false): readonly string[] {
   // Corner vertex at (x, y). Path entry: (x, y + p); exit: (x + p, y).
