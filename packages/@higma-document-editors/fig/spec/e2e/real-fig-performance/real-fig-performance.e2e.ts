@@ -14,12 +14,15 @@ const MACOS_SFNS_FONT = "/System/Library/Fonts/SFNS.ttf";
 const DEEP_BLUE_INSTANCE_GUID = "2316:9650";
 
 type PerformanceMetrics = {
+  readonly renderer: "svg" | "webgl";
   readonly initialDisplayMs: number;
+  readonly initialStats: RenderStats;
   readonly layerExpandMs: number;
   readonly selectionMs: number;
   readonly selectionPointerDispatchMs: number;
   readonly selectionPanelVisibleMs: number;
   readonly pageSwitchMs: number;
+  readonly pageSwitchStats: RenderStats;
 };
 
 type SelectionMetrics = Pick<
@@ -34,24 +37,39 @@ test.describe("real fig editor performance", () => {
   );
   test.skip(!existsSync(MACOS_SFNS_FONT), "requires macOS SFNS.ttf for browser-real font mode");
 
-  test("records iOS source-backed editor interaction timings", async ({ page }, testInfo) => {
-    test.setTimeout(90_000);
-    const errors = collectPageErrors(page);
-    await installMacOsSfProFontAccess(page);
+  for (const renderer of ["svg", "webgl"] as const) {
+    test(`records iOS source-backed editor interaction timings in ${renderer}`, async ({ page }, testInfo) => {
+      test.setTimeout(120_000);
+      const errors = collectPageErrors(page);
+      await installMacOsSfProFontAccess(page);
 
-    const initialDisplayMs = await measureInitialDisplay(page);
-    const layerExpandMs = await measureLayerExpansion(page);
-    const selection = await measureSelection(page);
-    const pageSwitchMs = await measurePageSwitch(page, errors);
+      const initialDisplayMs = await measureInitialDisplay(page, renderer);
+      const initialStats = await readRenderStats(page);
+      const layerExpandMs = await measureLayerExpansion(page);
+      const selection = await measureSelection(page);
+      const pageSwitchMs = await measurePageSwitch(page, renderer, errors);
+      const pageSwitchStats = await readRenderStats(page);
 
-    expect(errors).toEqual([]);
-    await attachMetrics(testInfo, {
-      initialDisplayMs,
-      layerExpandMs,
-      ...selection,
-      pageSwitchMs,
+      expect(errors).toEqual([]);
+      expect(initialStats.rootSurfaceCount).toBeLessThan(20);
+      expect(initialStats.hitAreaCount).toBeLessThan(1_000);
+      expect(pageSwitchStats.rootSurfaceCount).toBeLessThan(20);
+      expect(pageSwitchStats.hitAreaCount).toBeLessThan(1_000);
+      if (renderer === "webgl") {
+        expect(initialStats.webglCanvasCount).toBe(initialStats.rootSurfaceCount);
+        expect(pageSwitchStats.webglCanvasCount).toBe(pageSwitchStats.rootSurfaceCount);
+      }
+      await attachMetrics(testInfo, {
+        renderer,
+        initialDisplayMs,
+        initialStats,
+        layerExpandMs,
+        ...selection,
+        pageSwitchMs,
+        pageSwitchStats,
+      });
     });
-  });
+  }
 });
 
 function collectPageErrors(page: Page): string[] {
@@ -62,11 +80,11 @@ function collectPageErrors(page: Page): string[] {
   return errors;
 }
 
-async function measureInitialDisplay(page: Page): Promise<number> {
+async function measureInitialDisplay(page: Page, renderer: "svg" | "webgl"): Promise<number> {
   const startedAt = performance.now();
-  await page.goto(`/?${routeParams().toString()}`);
+  await page.goto(`/?${routeParams(renderer).toString()}`);
   await page.waitForSelector("[data-fig-editor-canvas]", { timeout: 45_000 });
-  await expect(page.locator("svg[data-fig-family-page-renderer]").first()).toBeVisible({ timeout: 45_000 });
+  await waitForRendererReady(page, renderer);
   return performance.now() - startedAt;
 }
 
@@ -100,7 +118,7 @@ async function measureSelection(page: Page): Promise<SelectionMetrics> {
   };
 }
 
-async function measurePageSwitch(page: Page, pageErrors: readonly string[]): Promise<number> {
+async function measurePageSwitch(page: Page, renderer: "svg" | "webgl", pageErrors: readonly string[]): Promise<number> {
   const pages = page.getByRole("listbox", { name: "Pages" }).getByRole("option");
   const pageCount = await pages.count();
   if (pageCount < 2) {
@@ -118,7 +136,7 @@ async function measurePageSwitch(page: Page, pageErrors: readonly string[]): Pro
   try {
     await expect(selectedNextPage).toHaveAttribute("aria-selected", "true", { timeout: 45_000 });
     await expect(page.locator("[data-browser-font-preload='pending']")).toHaveCount(0, { timeout: 45_000 });
-    await expect(page.locator("svg[data-fig-family-page-renderer]").first()).toBeVisible({ timeout: 45_000 });
+    await waitForRendererReady(page, renderer);
   } catch (error) {
     const diagnostics = await readPageSwitchDiagnostics(page, pageErrors);
     throw new Error(`real fig performance page switch did not settle: ${JSON.stringify(diagnostics)}`, { cause: error });
@@ -155,9 +173,59 @@ async function readPageSwitchDiagnostics(
   }, pageErrors);
 }
 
-function routeParams(): URLSearchParams {
+async function waitForRendererReady(page: Page, renderer: "svg" | "webgl"): Promise<void> {
+  if (renderer === "svg") {
+    await expect(page.locator("svg[data-fig-family-page-renderer]").first()).toBeVisible({ timeout: 45_000 });
+    return;
+  }
+  await expect.poll(() => allWebGLSurfacesReady(page), { timeout: 45_000 }).toBe(true);
+}
+
+async function allWebGLSurfacesReady(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const canvases = Array.from(document.querySelectorAll<HTMLCanvasElement>("[data-fig-editor-webgl-layer] canvas"));
+    if (canvases.length === 0) {
+      return false;
+    }
+    return canvases.every((canvas) => {
+      if (canvas.getAttribute("data-webgl-ready") !== "true") {
+        return false;
+      }
+      return canvas.offsetWidth > 0 && canvas.offsetHeight > 0;
+    });
+  });
+}
+
+type RenderStats = {
+  readonly rootSurfaceCount: number;
+  readonly hitAreaCount: number;
+  readonly rendererSvgCount: number;
+  readonly webglCanvasCount: number;
+  readonly webglPrepareCount: number;
+  readonly webglRenderCount: number;
+  readonly webglLastPrepareMsMax: number;
+  readonly webglLastRenderMsMax: number;
+};
+
+async function readRenderStats(page: Page): Promise<RenderStats> {
+  return page.evaluate(() => {
+    const canvases = Array.from(document.querySelectorAll<HTMLCanvasElement>("[data-fig-editor-webgl-layer] canvas"));
+    return {
+      rootSurfaceCount: document.querySelectorAll("[data-fig-editor-root-surface-content-guid]").length,
+      hitAreaCount: document.querySelectorAll("[data-editor-canvas-item-id]").length,
+      rendererSvgCount: document.querySelectorAll("svg[data-fig-family-page-renderer]").length,
+      webglCanvasCount: canvases.length,
+      webglPrepareCount: canvases.reduce((sum, canvas) => sum + Number(canvas.getAttribute("data-webgl-prepare-count") ?? 0), 0),
+      webglRenderCount: canvases.reduce((sum, canvas) => sum + Number(canvas.getAttribute("data-webgl-render-count") ?? 0), 0),
+      webglLastPrepareMsMax: Math.max(0, ...canvases.map((canvas) => Number(canvas.getAttribute("data-webgl-last-prepare-ms") ?? 0))),
+      webglLastRenderMsMax: Math.max(0, ...canvases.map((canvas) => Number(canvas.getAttribute("data-webgl-last-render-ms") ?? 0))),
+    };
+  });
+}
+
+function routeParams(renderer: "svg" | "webgl"): URLSearchParams {
   return new URLSearchParams({
-    renderer: "svg",
+    renderer,
     panel: "all",
     fontMode: "browser-real",
     figUrl: fileUrl(IOS_PRIMARY),

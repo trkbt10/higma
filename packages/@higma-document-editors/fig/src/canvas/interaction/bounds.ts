@@ -7,11 +7,13 @@ import { computePreRotationTopLeft, extractRotationDeg } from "../../context/fig
 
 export type NodeBounds = {
   readonly id: string;
+  readonly rootId: string;
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
   readonly rotation: number;
+  readonly aabb: BoundsLike;
 };
 
 export type BoundsLike = {
@@ -40,16 +42,53 @@ function requireSize(node: FigNode): NonNullable<FigNode["size"]> {
   return node.size;
 }
 
-function boundsForNode(node: FigNode, absoluteTransform: FigMatrix): NodeBounds {
+function rotatedAabb(bounds: Omit<BoundsLike, "rotation"> & { readonly rotation: number }): BoundsLike {
+  if (bounds.rotation === 0) {
+    return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+  }
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  const radians = bounds.rotation * (Math.PI / 180);
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const points = [
+    { x: bounds.x, y: bounds.y },
+    { x: bounds.x + bounds.width, y: bounds.y },
+    { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
+    { x: bounds.x, y: bounds.y + bounds.height },
+  ].map((point) => {
+    const dx = point.x - centerX;
+    const dy = point.y - centerY;
+    return {
+      x: centerX + dx * cos - dy * sin,
+      y: centerY + dx * sin + dy * cos,
+    };
+  });
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const maxX = Math.max(...xs);
+  const maxY = Math.max(...ys);
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+function boundsForNode(node: FigNode, absoluteTransform: FigMatrix, rootGuid: FigGuid): NodeBounds {
   const size = requireSize(node);
   const topLeft = computePreRotationTopLeft(absoluteTransform, size.x, size.y);
-  return {
-    id: guidToString(requireGuid(node)),
+  const rotation = extractRotationDeg(absoluteTransform);
+  const base = {
     x: topLeft.x,
     y: topLeft.y,
     width: size.x,
     height: size.y,
-    rotation: extractRotationDeg(absoluteTransform),
+    rotation,
+  };
+  return {
+    id: guidToString(requireGuid(node)),
+    rootId: guidToString(rootGuid),
+    ...base,
+    aabb: rotatedAabb(base),
   };
 }
 
@@ -82,7 +121,7 @@ export function flattenAllNodeBounds(
   nodes: readonly FigNode[],
 ): readonly NodeBounds[] {
   const out: NodeBounds[] = [];
-  flattenRecursive(document, nodes, IDENTITY_MATRIX, out);
+  flattenRecursive(document, nodes, IDENTITY_MATRIX, undefined, out);
   return out;
 }
 
@@ -90,15 +129,18 @@ function flattenRecursive(
   document: FigKiwiDocumentIndex,
   nodes: readonly FigNode[],
   parentTransform: FigMatrix,
+  rootGuid: FigGuid | undefined,
   out: NodeBounds[],
 ): void {
   for (const node of nodes) {
     if (node.visible === false) {
       continue;
     }
+    const nodeGuid = requireGuid(node);
+    const currentRootGuid = rootGuid ?? nodeGuid;
     const transform = multiplyMatrices(parentTransform, readKiwiTransform(node.transform));
-    out.push(boundsForNode(node, transform));
-    flattenRecursive(document, document.childrenOf(node), transform, out);
+    out.push(boundsForNode(node, transform, currentRootGuid));
+    flattenRecursive(document, document.childrenOf(node), transform, currentRootGuid, out);
   }
 }
 
@@ -144,7 +186,7 @@ export function computeAbsoluteNodeBounds(
   if (node === undefined) {
     return undefined;
   }
-  return boundsForNode(node, transform);
+  return boundsForNode(node, transform, target);
 }
 
 /** Remove ancestor hits when descendants are already hit by marquee selection. */

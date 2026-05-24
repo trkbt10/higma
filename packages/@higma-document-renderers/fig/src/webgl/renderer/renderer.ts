@@ -81,6 +81,8 @@ export type WebGLRendererOptions = {
   /** Central resource owner for caches and precompiled GPU programs. */
   readonly resourceContext?: WebGLFigmaResourceContext;
   readonly exportSettings?: FigmaRenderExportSettings;
+  /** Preserve the back buffer for explicit readback/export contexts. Interactive viewports leave this disabled. */
+  readonly preserveDrawingBuffer?: boolean;
 };
 
 export type WebGLFigmaRendererMetrics = {
@@ -136,15 +138,20 @@ export type WebGLFigmaRendererInstance = {
   dispose(): void;
 };
 
-/** Create a WebGL renderer for Figma scene graphs */
-export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFigmaRendererInstance {
-  const glOrNull = options.canvas.getContext("webgl", {
+/** Resolve WebGL context attributes for the renderer viewport. */
+export function resolveWebGLRendererContextAttributes(options: WebGLRendererOptions): WebGLContextAttributes {
+  return {
     antialias: options.antialias ?? true,
     alpha: true,
     premultipliedAlpha: false,
     stencil: true,
-    preserveDrawingBuffer: true,
-  });
+    preserveDrawingBuffer: options.preserveDrawingBuffer ?? false,
+  };
+}
+
+/** Create a WebGL renderer for Figma scene graphs */
+export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFigmaRendererInstance {
+  const glOrNull = options.canvas.getContext("webgl", resolveWebGLRendererContextAttributes(options));
 
   if (!glOrNull) {
     throw new Error("WebGL not supported");

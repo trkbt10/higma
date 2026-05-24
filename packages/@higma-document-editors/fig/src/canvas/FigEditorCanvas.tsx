@@ -16,7 +16,6 @@ import type { BooleanOperationType } from "@higma-primitives/path";
 import type { FigGuid, FigNode, FigPaint } from "@higma-document-models/fig/types";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
-import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { FigDocumentResources } from "@higma-document-io/fig";
 import { useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
@@ -34,7 +33,10 @@ import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy
 import { exceedsThreshold } from "./interaction/drag-threshold";
 import { useFigKeyboard } from "./interaction/use-fig-keyboard";
 import { computeCanvasBoundsFromNodeBounds } from "./layout/canvas-bounds";
+import type { LayoutBounds } from "./layout/layout-bounds";
 import { resolveViewportRenderWindow } from "./layout/viewport-render-window";
+import { filterNodeBoundsForViewport, filterRootNodesForViewport } from "./layout/viewport-node-visibility";
+import { resolveViewportRootSurfacePlan, type ViewportRootSurfacePlan } from "./layout/viewport-root-surface";
 import { FigTextEditOverlay } from "../text-edit/FigTextEditOverlay";
 import {
   addVectorPathPoint,
@@ -141,7 +143,6 @@ const TEXT_FILL: FigPaint = {
   opacity: 1,
   visible: true,
 };
-const VIEWPORT_SURFACE_MATRIX_EPSILON = 1e-6;
 const canvasHostStyle: CSSProperties = {
   position: "relative",
   flex: 1,
@@ -158,15 +159,6 @@ const viewportRootSurfacesStyle: CSSProperties = {
   overflow: "hidden",
   pointerEvents: "none",
 };
-const fullViewportSurfaceStyle: CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  width: "100%",
-  height: "100%",
-  pointerEvents: "none",
-  lineHeight: 0,
-};
-
 function orderedViewportSurfaceStyle(index: number): CSSProperties {
   return {
     position: "absolute",
@@ -198,25 +190,36 @@ type ViewportRootSurfacesProps = {
   readonly webglInitializationDelayMs: number | undefined;
 };
 
-function isViewportSurfaceMatrixSupported(transform: ReturnType<typeof readKiwiTransform>): boolean {
-  return Math.abs(transform.m00 - 1) <= VIEWPORT_SURFACE_MATRIX_EPSILON
-    && Math.abs(transform.m01) <= VIEWPORT_SURFACE_MATRIX_EPSILON
-    && Math.abs(transform.m10) <= VIEWPORT_SURFACE_MATRIX_EPSILON
-    && Math.abs(transform.m11 - 1) <= VIEWPORT_SURFACE_MATRIX_EPSILON;
-}
-
-function hasViewportSurfaceSize(node: FigNode): node is FigNode & { readonly size: { readonly x: number; readonly y: number } } {
-  return node.size !== undefined && node.size.x > 0 && node.size.y > 0;
-}
-
-function viewportRootSurfaceKey(node: FigNode, index: number): string {
+function requireViewportRootSurfaceGuid(node: FigNode): string {
   if (node.guid === undefined) {
-    return `viewport-root-${index}`;
+    throw new Error(`FigEditorCanvas viewport root "${node.name ?? "(unnamed)"}" requires a Kiwi guid`);
   }
   return guidToString(node.guid);
 }
 
-function renderFullViewportRootSurface({
+function viewportBoundsFromRenderWindow(
+  renderWindow: ViewportSurfaceRenderWindow | null,
+): LayoutBounds | null {
+  if (renderWindow === null) {
+    return null;
+  }
+  return { x: renderWindow.x, y: renderWindow.y, width: renderWindow.width, height: renderWindow.height };
+}
+
+function rootViewportSurfaceStyle(plan: ViewportRootSurfacePlan): CSSProperties {
+  return {
+    position: "absolute",
+    left: plan.cssBox.x,
+    top: plan.cssBox.y,
+    width: plan.cssBox.width,
+    height: plan.cssBox.height,
+    overflow: "hidden",
+    pointerEvents: "none",
+    lineHeight: 0,
+  };
+}
+
+function renderViewportRootSurface({
   page,
   node,
   renderWindow,
@@ -230,20 +233,24 @@ function renderFullViewportRootSurface({
 }: Omit<ViewportRootSurfacesProps, "nodes"> & {
   readonly node: FigNode;
 }) {
+  const plan = resolveViewportRootSurfacePlan({ node, renderWindow, viewportScale });
+  if (plan === undefined) {
+    return null;
+  }
   return (
     <div
-      style={fullViewportSurfaceStyle}
-      data-fig-editor-root-surface-content-guid={node.guid === undefined ? undefined : guidToString(node.guid)}
+      style={rootViewportSurfaceStyle(plan)}
+      data-fig-editor-root-surface-content-guid={requireViewportRootSurfaceGuid(node)}
     >
       <FigPageRenderer
         page={page}
         nodes={[node]}
-        canvasWidth={renderWindow.surfaceWidth}
-        canvasHeight={renderWindow.surfaceHeight}
-        viewportX={renderWindow.x}
-        viewportY={renderWindow.y}
-        viewportWidth={renderWindow.width}
-        viewportHeight={renderWindow.height}
+        canvasWidth={plan.canvasWidth}
+        canvasHeight={plan.canvasHeight}
+        viewportX={plan.viewport.x}
+        viewportY={plan.viewport.y}
+        viewportWidth={plan.viewport.width}
+        viewportHeight={plan.viewport.height}
         viewportScale={viewportScale}
         viewportRevision={viewportRevision}
         resources={resources}
@@ -255,101 +262,6 @@ function renderFullViewportRootSurface({
       />
     </div>
   );
-}
-
-function rootViewportSurfaceStyle(input: {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}): CSSProperties {
-  return {
-    position: "absolute",
-    left: input.x,
-    top: input.y,
-    width: input.width,
-    height: input.height,
-    overflow: "hidden",
-    pointerEvents: "none",
-    lineHeight: 0,
-  };
-}
-
-function renderBoundedViewportRootSurface({
-  page,
-  node,
-  renderWindow,
-  viewportScale,
-  viewportRevision,
-  resources,
-  renderOptions,
-  renderer,
-  textFontResolver,
-  webglInitializationDelayMs,
-}: Omit<ViewportRootSurfacesProps, "nodes"> & {
-  readonly node: FigNode & { readonly size: { readonly x: number; readonly y: number } };
-}) {
-  const transform = readKiwiTransform(node.transform);
-  if (!isViewportSurfaceMatrixSupported(transform)) {
-    return renderFullViewportRootSurface({
-      page,
-      node,
-      renderWindow,
-      viewportScale,
-      viewportRevision,
-      resources,
-      renderOptions,
-      renderer,
-      textFontResolver,
-      webglInitializationDelayMs,
-    });
-  }
-  const width = node.size.x * viewportScale;
-  const height = node.size.y * viewportScale;
-  return (
-    <div
-      style={rootViewportSurfaceStyle({
-        x: (transform.m02 - renderWindow.x) * viewportScale,
-        y: (transform.m12 - renderWindow.y) * viewportScale,
-        width,
-        height,
-      })}
-      data-fig-editor-root-surface-content-guid={node.guid === undefined ? undefined : guidToString(node.guid)}
-    >
-      <FigPageRenderer
-        page={page}
-        nodes={[node]}
-        canvasWidth={width}
-        canvasHeight={height}
-        viewportX={transform.m02}
-        viewportY={transform.m12}
-        viewportWidth={node.size.x}
-        viewportHeight={node.size.y}
-        viewportScale={viewportScale}
-        viewportRevision={viewportRevision}
-        resources={resources}
-        renderOptions={renderOptions}
-        renderer={renderer}
-        host="html"
-        textFontResolver={textFontResolver}
-        webglInitializationDelayMs={webglInitializationDelayMs}
-      />
-    </div>
-  );
-}
-
-function renderViewportRootSurface(
-  props: Omit<ViewportRootSurfacesProps, "nodes"> & {
-    readonly node: FigNode;
-  },
-) {
-  if (hasViewportSurfaceSize(props.node)) {
-    return renderBoundedViewportRootSurface({
-      ...props,
-      node: props.node,
-    });
-  }
-  return renderFullViewportRootSurface(props);
 }
 
 function ViewportRootSurfaces({
@@ -368,9 +280,9 @@ function ViewportRootSurfaces({
     <div style={viewportRootSurfacesStyle} data-fig-editor-viewport-root-surfaces="">
       {nodes.map((node, index) => (
         <div
-          key={viewportRootSurfaceKey(node, index)}
+          key={requireViewportRootSurfaceGuid(node)}
           style={orderedViewportSurfaceStyle(index)}
-          data-fig-editor-root-surface-guid={node.guid === undefined ? undefined : guidToString(node.guid)}
+          data-fig-editor-root-surface-guid={requireViewportRootSurfaceGuid(node)}
         >
           {renderViewportRootSurface({
             page,
@@ -618,7 +530,6 @@ export function FigEditorCanvas({
       height: canvasHeight ?? computed.height,
     };
   }, [canvasHeight, canvasWidth, worldBounds]);
-  const itemBounds = worldBounds;
   const selectedIds = useMemo(() => canvasIdsFromGuids(selectedGuids), [selectedGuids]);
   const primaryId = selectedIds[0];
   const [zoomMode, setZoomMode] = useState<ZoomMode>(INITIAL_ZOOM_MODE);
@@ -628,6 +539,23 @@ export function FigEditorCanvas({
   const renderWindow = useMemo(
     () => resolveViewportRenderWindow({ context: viewportRenderContext }),
     [viewportRenderContext],
+  );
+  const viewportBounds = useMemo(() => viewportBoundsFromRenderWindow(renderWindow), [renderWindow]);
+  const visibleItemBounds = useMemo(
+    () => filterNodeBoundsForViewport({
+      bounds: worldBounds,
+      viewport: viewportBounds,
+      retainedIds: selectedIds,
+    }),
+    [selectedIds, viewportBounds, worldBounds],
+  );
+  const viewportPageChildren = useMemo(
+    () => filterRootNodesForViewport({
+      nodes: pageChildren,
+      bounds: worldBounds,
+      viewport: viewportBounds,
+    }),
+    [pageChildren, viewportBounds, worldBounds],
   );
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [vectorPathDraftSession, setVectorPathDraftSession] = useState<VectorPathDraftSession | null>(null);
@@ -649,8 +577,8 @@ export function FigEditorCanvas({
     if (primaryId === undefined) {
       return undefined;
     }
-    return itemBounds.find((item) => item.id === primaryId);
-  }, [itemBounds, primaryId]);
+    return worldBounds.find((item) => item.id === primaryId);
+  }, [primaryId, worldBounds]);
   const primaryEditableVectorPaths = useMemo(
     () => policy.canEditPath ? resolveEditableVectorPaths(primaryNode) : undefined,
     [policy.canEditPath, primaryNode],
@@ -1380,7 +1308,7 @@ export function FigEditorCanvas({
     if (getNodeType(node) !== "TEXT") {
       throw new Error(`FigEditorCanvas: active text edit node ${key} is not TEXT`);
     }
-    const bounds = itemBounds.find((item) => item.id === key);
+    const bounds = worldBounds.find((item) => item.id === key);
     if (bounds === undefined) {
       throw new Error(`FigEditorCanvas: active text edit node ${key} has no canvas bounds`);
     }
@@ -1403,7 +1331,7 @@ export function FigEditorCanvas({
         onExit={exitTextEdit}
       />
     );
-  }, [context.document.nodesByGuid, exitTextEdit, extents.height, extents.width, itemBounds, resources.styleRegistry, textEdit, textFontResolver]);
+  }, [context.document.nodesByGuid, exitTextEdit, extents.height, extents.width, resources.styleRegistry, textEdit, textFontResolver, worldBounds]);
 
   const rendererNode = useMemo(() => {
     if (renderWindow === null) {
@@ -1413,7 +1341,7 @@ export function FigEditorCanvas({
     return (
       <ViewportRootSurfaces
         page={activePage}
-        nodes={pageChildren}
+        nodes={viewportPageChildren}
         renderWindow={renderWindow}
         viewportScale={viewportScale}
         viewportRevision={viewportRevision}
@@ -1427,11 +1355,11 @@ export function FigEditorCanvas({
   }, [
     activePage,
     context,
-    pageChildren,
     renderWindow,
     renderer,
     resources,
     textFontResolver,
+    viewportPageChildren,
     viewportRevision,
     viewportScale,
     webglInitializationDelayMs,
@@ -1452,7 +1380,7 @@ export function FigEditorCanvas({
         rulerCoordinateMode="unbounded"
         rulerCoordinateOffset={{ x: 0, y: 0 }}
         clampFn={(viewportValue) => viewportValue}
-        itemBounds={itemBounds}
+        itemBounds={visibleItemBounds}
         getItemAriaLabel={getItemAriaLabel}
         selectedIds={selectedIds}
         primaryId={primaryId}

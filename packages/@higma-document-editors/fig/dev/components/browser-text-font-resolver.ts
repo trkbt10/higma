@@ -1,7 +1,7 @@
 /** @file Browser font access boundary for dev Fig rendering/editing. */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { figDocumentResources, type FigDocumentContext } from "@higma-document-io/fig";
-import { collectFontQueries, createCachingFontLoader, preloadFonts } from "@higma-document-models/fig/font";
+import { collectFontQueries, createCachingFontLoader, fontQueryKey, preloadFonts, type FontQuery } from "@higma-document-models/fig/font";
 import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
 import { createCachedTextFontResolver, type TextFontResolver } from "@higma-document-renderers/fig/text";
 
@@ -14,6 +14,11 @@ export type BrowserTextFontResolverState = {
   readonly ready: boolean;
   readonly resolver: TextFontResolver | undefined;
   readonly requestAccess: () => void;
+};
+
+type BrowserTextFontPreloadState = {
+  readonly key: string;
+  readonly ready: boolean;
 };
 
 function collectContextFontQueries(context: FigDocumentContext) {
@@ -32,11 +37,14 @@ function toError(reason: unknown): Error {
   return new Error(`Browser font resolver failed with non-Error reason: ${String(reason)}`);
 }
 
+function fontPreloadKey(queries: readonly FontQuery[]): string {
+  return queries.map(fontQueryKey).join("\n");
+}
+
 /** Create the dev text font resolver from browser-local fonts declared by the Kiwi document. */
 export function useBrowserTextFontResolver(context: FigDocumentContext): BrowserTextFontResolverState {
   const [supported] = useState(() => isBrowserFontLoaderSupported());
   const [granted, setGranted] = useState(() => browserFontLoader.hasPermission());
-  const [ready, setReady] = useState(() => browserFontLoader.hasPermission());
   const [error, setError] = useState<Error | null>(null);
   const queries = useMemo(() => {
     if (!granted) {
@@ -44,23 +52,29 @@ export function useBrowserTextFontResolver(context: FigDocumentContext): Browser
     }
     return collectContextFontQueries(context);
   }, [context, granted]);
+  const preloadKey = useMemo(() => fontPreloadKey(queries), [queries]);
+  const [preloadState, setPreloadState] = useState<BrowserTextFontPreloadState>(() => ({
+    key: preloadKey,
+    ready: !granted,
+  }));
+  const ready = !granted || (preloadState.key === preloadKey && preloadState.ready);
 
   useEffect(() => {
     if (!granted) {
-      setReady(false);
+      setPreloadState({ key: preloadKey, ready: true });
       setError(null);
       return;
     }
 
     const cancelled = { value: false };
-    setReady(false);
+    setPreloadState({ key: preloadKey, ready: false });
     setError(null);
     void preloadFonts({ queries, loader: fontLoader }).then(
       () => {
         if (cancelled.value) {
           return;
         }
-        setReady(true);
+        setPreloadState({ key: preloadKey, ready: true });
       },
       (reason: unknown) => {
         if (cancelled.value) {
@@ -72,7 +86,7 @@ export function useBrowserTextFontResolver(context: FigDocumentContext): Browser
     return () => {
       cancelled.value = true;
     };
-  }, [granted, queries]);
+  }, [granted, preloadKey, queries]);
 
   const requestAccess = useCallback((): void => {
     const run = async (): Promise<void> => {

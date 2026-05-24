@@ -1,5 +1,6 @@
 /** @file Canvas extents derived from Kiwi node bounds. */
 import type { NodeBounds } from "../interaction/bounds";
+import { layoutBoundsBottom, layoutBoundsRight } from "./layout-bounds";
 
 export type FigCanvasBounds = {
   readonly width: number;
@@ -21,8 +22,8 @@ export function computeCanvasBoundsFromNodeBounds(bounds: readonly NodeBounds[])
       offsetY: 0,
     };
   }
-  const maxX = Math.max(...bounds.map((item) => item.x + item.width));
-  const maxY = Math.max(...bounds.map((item) => item.y + item.height));
+  const maxX = Math.max(...bounds.map((item) => layoutBoundsRight(item.aabb)));
+  const maxY = Math.max(...bounds.map((item) => layoutBoundsBottom(item.aabb)));
   return {
     width: Math.max(maxX + CANVAS_PADDING, MIN_CANVAS_SIZE),
     height: Math.max(maxY + CANVAS_PADDING, MIN_CANVAS_SIZE),

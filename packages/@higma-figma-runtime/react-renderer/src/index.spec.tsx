@@ -165,6 +165,13 @@ describe("createFigFamilyRenderOptions", () => {
     expect(options).toEqual({ exportSettings: { colorProfile: "SRGB" } });
   });
 
+  it("keeps SRGB render options referentially stable across document edits", () => {
+    const first = createFigFamilyRenderOptions(createContext({ value: 1, name: "SRGB" }));
+    const second = createFigFamilyRenderOptions(createContext({ value: 1, name: "SRGB" }));
+
+    expect(second).toBe(first);
+  });
+
   it("keeps missing document color profile detectable by managed image rendering", () => {
     const options = createFigFamilyRenderOptions(createContext(undefined));
 

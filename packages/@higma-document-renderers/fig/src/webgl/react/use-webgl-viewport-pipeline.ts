@@ -107,6 +107,7 @@ export function useWebGLViewportPipeline({
   const prepareRunningRef = useRef(false);
   const pendingPrepareRef = useRef<PendingPrepare | null>(null);
   const latestRenderRef = useRef<LatestRender | null>(null);
+  const hasPresentedFrameRef = useRef(false);
   const disposedRef = useRef(false);
   const [status, setStatus] = useState(() => getWebGLViewportPreparationStatus("scheduled"));
   const [devicePixelRatio, setDevicePixelRatio] = useState(() =>
@@ -155,6 +156,12 @@ export function useWebGLViewportPipeline({
         setStatus(getWebGLViewportPreparationStatus(phase));
       }
     };
+    const setPhaseUntilFirstPresentedFrame = (phase: WebGLViewportPreparationStatus["phase"]) => {
+      if (hasPresentedFrameRef.current) {
+        return;
+      }
+      setPhase(phase);
+    };
 
     const cancelInitializationSchedule = () => {
       if (initializeFrameRef.current !== null && typeof window !== "undefined") {
@@ -175,7 +182,7 @@ export function useWebGLViewportPipeline({
     };
 
     const createRenderer = (): WebGLFigmaRendererInstance => {
-      setPhase("precompiling");
+      setPhaseUntilFirstPresentedFrame("precompiling");
       const renderer = createWebGLFigmaRenderer({
         canvas,
         antialias: true,
@@ -197,7 +204,7 @@ export function useWebGLViewportPipeline({
       exposeCachedGeometryFrame: boolean,
     ) => {
       renderFrameRef.current = null;
-      setPhase("rendering");
+      setPhaseUntilFirstPresentedFrame("rendering");
       renderer.setPixelRatio(nextPixelRatio);
       renderer.render(scene);
       writeMetrics(renderer);
@@ -205,6 +212,7 @@ export function useWebGLViewportPipeline({
         renderer.render(scene);
         writeMetrics(renderer);
       }
+      hasPresentedFrameRef.current = true;
       setPhase("ready");
     };
 
@@ -231,7 +239,7 @@ export function useWebGLViewportPipeline({
       }
       pendingPrepareRef.current = null;
       prepareRunningRef.current = true;
-      setPhase("preparing-resources");
+      setPhaseUntilFirstPresentedFrame("preparing-resources");
       void renderer.prepareScene(next.scene).then(
         () => {
           prepareRunningRef.current = false;
@@ -252,7 +260,7 @@ export function useWebGLViewportPipeline({
 
     const renderWithResources = (renderer: WebGLFigmaRendererInstance) => {
       if (!renderer.isScenePrepared(sceneGraph)) {
-        setPhase("scheduled");
+        setPhaseUntilFirstPresentedFrame("scheduled");
         pendingPrepareRef.current = { scene: sceneGraph, pixelRatio };
         runPrepareQueue(renderer);
         return;
@@ -272,11 +280,15 @@ export function useWebGLViewportPipeline({
         return;
       }
       cancelInitializationSchedule();
-      setPhase("scheduled");
+      setPhaseUntilFirstPresentedFrame("scheduled");
       const requestInitialize = () => {
         initializeFrameRef.current = window.requestAnimationFrame(initializeAndRender);
       };
       if (initializationDelayMs === undefined || initializationDelayMs === 0) {
+        requestInitialize();
+        return;
+      }
+      if (hasPresentedFrameRef.current) {
         requestInitialize();
         return;
       }
@@ -308,6 +320,7 @@ export function useWebGLViewportPipeline({
       }
       pendingPrepareRef.current = null;
       latestRenderRef.current = null;
+      hasPresentedFrameRef.current = false;
       setStatus(getWebGLViewportPreparationStatus("scheduled"));
       rendererRef.current?.dispose();
       rendererRef.current = null;

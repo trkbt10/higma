@@ -36,6 +36,8 @@ test.describe("Fig editor WebGL text editing", () => {
     await doubleClickNode(page, HELLO_TEXT);
     await page.locator("textarea").waitFor({ state: "attached" });
     await fillHiddenCanvasTextarea(page, "WebGL text\nwrap parity");
+    await expect(webGLLoadingForNode(page, HELLO_TEXT_GUID)).toHaveCount(0);
+    expect(await canvasAlphaSum(page, HELLO_TEXT_GUID)).toBeGreaterThan(0);
     await expect.poll(
       () => canvas.evaluate((node) => node.toDataURL("image/png")),
       { timeout: 5_000 },
@@ -139,6 +141,7 @@ test.describe("Fig editor WebGL initialization performance", () => {
 
     const before = await readWebGLMetrics(page, HELLO_TEXT_GUID);
     await panWebGLViewport(page);
+    await expect(webGLLoadingForNode(page, HELLO_TEXT_GUID)).toHaveCount(0);
     const immediate = await readWebGLMetrics(page, HELLO_TEXT_GUID);
     expect(immediate.prepareCount).toBe(before.prepareCount);
     await expect.poll(
@@ -147,6 +150,7 @@ test.describe("Fig editor WebGL initialization performance", () => {
     ).toBeGreaterThan(before.renderCount);
 
     const after = await readWebGLMetrics(page, HELLO_TEXT_GUID);
+    await expect(webGLLoadingForNode(page, HELLO_TEXT_GUID)).toHaveCount(0);
     expect(after.prepareCount).toBeLessThanOrEqual(before.prepareCount + 1);
     expect(after.lastRenderMs).toBeLessThan(100);
   });
@@ -171,12 +175,32 @@ function webGLCanvasForNode(page: Page, guid: string) {
   return webGLSurfaceForNode(page, guid).locator("canvas");
 }
 
+function webGLLoadingForNode(page: Page, guid: string) {
+  return webGLSurfaceForNode(page, guid).locator("[data-webgl-loading='true']");
+}
+
 async function waitForReadyWebGLCanvas(page: Page, guid: string): Promise<void> {
   await expect(webGLCanvasForNode(page, guid)).toHaveAttribute("data-webgl-ready", "true", { timeout: 10_000 });
 }
 
 async function readyCanvasCount(page: Page): Promise<number> {
   return page.locator("canvas[data-webgl-ready='true']").count();
+}
+
+async function canvasAlphaSum(page: Page, guid: string): Promise<number> {
+  return page.evaluate((guid) => {
+    const canvas = document.querySelector<HTMLCanvasElement>(`[data-fig-editor-root-surface-content-guid='${guid}'] canvas`);
+    if (!canvas) {
+      throw new Error(`WebGL canvas was not found for node ${guid}`);
+    }
+    const context = canvas.getContext("2d");
+    if (context === null) {
+      throw new Error(`WebGL canvas for node ${guid} does not expose a 2D context`);
+    }
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    const alphaIndexes = Array.from({ length: pixels.length / 4 }, (_item, index) => index * 4 + 3);
+    return alphaIndexes.reduce((sum, index) => sum + pixels[index], 0);
+  }, guid);
 }
 
 async function readWebGLMetrics(page: Page, guid = HELLO_TEXT_GUID): Promise<{

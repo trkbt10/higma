@@ -10,7 +10,7 @@ import type { Framebuffer } from "../resources/framebuffer";
 import { createFramebuffer, createFramebufferWithStencil, deleteFramebuffer, bindFramebuffer } from "../resources/framebuffer";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
 import { applyEffectOffsetScale, type EffectBackingScale } from "./effect-scale";
-import type { WebGLEffectRenderRegion } from "./effect-render-region";
+import { resolveWebGLEffectBackdropCopyRegion, type WebGLEffectRenderRegion } from "./effect-render-region";
 
 /**
  * Gaussian blur shader (separable 2-pass)
@@ -458,12 +458,30 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   }
 
-  function copyFramebufferToBackdrop(canvasWidth: number, canvasHeight: number, sourceFramebuffer: WebGLFramebuffer | null): Framebuffer {
+  function copyFramebufferToBackdrop(
+    canvasWidth: number,
+    canvasHeight: number,
+    region: WebGLEffectRenderRegion,
+    sourceFramebuffer: WebGLFramebuffer | null,
+  ): Framebuffer {
     ensureBackdropFBO(canvasWidth, canvasHeight);
+    const copyRegion = resolveWebGLEffectBackdropCopyRegion(region);
+    if (copyRegion === null) {
+      return backdropFBO.value!;
+    }
     const restoreFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
     bindEffectOutputFramebuffer(sourceFramebuffer);
     gl.bindTexture(gl.TEXTURE_2D, backdropFBO.value!.texture);
-    gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, canvasWidth, canvasHeight, 0);
+    gl.copyTexSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      copyRegion.textureX,
+      copyRegion.textureY,
+      copyRegion.sourceX,
+      copyRegion.sourceY,
+      copyRegion.width,
+      copyRegion.height,
+    );
     gl.bindTexture(gl.TEXTURE_2D, null);
     bindEffectOutputFramebuffer(restoreFramebuffer);
     return backdropFBO.value!;
@@ -656,7 +674,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       const blendModeCode = blendModeToShaderCode(effect.blendMode);
       if (blendModeCode !== 0) {
-        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, backdropFramebuffer);
+        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer);
         bindEffectOutputFramebuffer(outputFramebuffer);
         const programForBlend = requireProgram(blendShadowProgram.value, "drop shadow blend");
         gl.useProgram(programForBlend);
@@ -802,7 +820,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
         bindEffectOutputFramebuffer(outputFramebuffer);
         gl.viewport(0, 0, canvasWidth, canvasHeight);
-        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, backdropFramebuffer);
+        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer);
         bindEffectOutputFramebuffer(outputFramebuffer);
         const blendProgram = requireProgram(blendShadowProgram.value, "inner shadow blend");
         gl.useProgram(blendProgram);
@@ -876,7 +894,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, backdropFramebuffer);
+      const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer);
       const blurred = applyGaussianBlur(backdrop, effect.radius * worldToBacking.lengthScale, region);
 
       bindEffectOutputFramebuffer(outputFramebuffer);

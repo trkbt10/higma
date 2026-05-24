@@ -242,6 +242,10 @@ function writeCanvasMetrics(
   onMetrics?.(canvas, metrics);
 }
 
+function shouldExposePreparationStatus(frame: RasterFrame | null): boolean {
+  return frame === null;
+}
+
 function cancelScheduledWork(work: ScheduledWork): void {
   if (work.value === null || typeof window === "undefined") {
     return;
@@ -307,7 +311,12 @@ export function useWebGLSvgRasterRenderer({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas === null || sceneGraph === null) {
+    const missingRenderInput = canvas === null || sceneGraph === null;
+    const exposeMissingInputStatus = shouldExposePreparationStatus(frameRef.current);
+    if (missingRenderInput && !exposeMissingInputStatus) {
+      return;
+    }
+    if (missingRenderInput) {
       setStatus(getWebGLViewportPreparationStatus("scheduled"));
       return;
     }
@@ -321,11 +330,17 @@ export function useWebGLSvgRasterRenderer({
         setStatus(getWebGLViewportPreparationStatus(phase));
       }
     };
+    const syncCanvasBeforePreparing = (reportStatus: boolean): void => {
+      if (!reportStatus && frameRef.current !== null) {
+        return;
+      }
+      syncCanvasSize({ canvas, sceneGraph, pixelRatio });
+    };
     const run = async ({ reportStatus }: { readonly reportStatus: boolean }): Promise<void> => {
       if (reportStatus) {
         setPhase("preparing-resources");
       }
-      syncCanvasSize({ canvas, sceneGraph, pixelRatio });
+      syncCanvasBeforePreparing(reportStatus);
       const prepareStart = performance.now();
       const svgText = renderSceneGraphToSvg(sceneGraph, renderOptions) as string;
       if (cancelled.value) {
@@ -344,6 +359,7 @@ export function useWebGLSvgRasterRenderer({
         setPhase("rendering");
       }
       const renderStart = performance.now();
+      syncCanvasSize({ canvas, sceneGraph, pixelRatio });
       drawSvgImageToCanvas({ canvas, image });
       if (cancelled.value) {
         return;
@@ -351,9 +367,7 @@ export function useWebGLSvgRasterRenderer({
       metricsRef.current.renderCount += 1;
       metricsRef.current.lastRenderMs = performance.now() - renderStart;
       writeCanvasMetrics(canvas, metricsRef.current, onMetrics);
-      if (reportStatus) {
-        setPhase("ready");
-      }
+      setPhase("ready");
     };
     const scheduleRun = (reportStatus: boolean): void => {
       if (typeof window === "undefined") {
@@ -369,13 +383,23 @@ export function useWebGLSvgRasterRenderer({
         });
       });
     };
+    const scheduleRunAfterExplicitInitialDelay = (reportStatus: boolean): void => {
+      if (delayMs === undefined || delayMs === 0) {
+        scheduleRun(reportStatus);
+        return;
+      }
+      if (!reportStatus) {
+        scheduleRun(reportStatus);
+        return;
+      }
+      timer.value = window.setTimeout(() => scheduleRun(reportStatus), delayMs);
+    };
     const currentFrame = frameRef.current;
     if (
       currentFrame !== null &&
       canReprojectRasterFrame({ frame: currentFrame, sceneGraph, pixelRatio, renderOptions })
     ) {
       syncCanvasSize({ canvas, sceneGraph, pixelRatio });
-      setPhase("rendering");
       const renderStart = performance.now();
       drawReprojectedRasterFrame({ canvas, frame: currentFrame, sceneGraph });
       metricsRef.current.renderCount += 1;
@@ -393,12 +417,13 @@ export function useWebGLSvgRasterRenderer({
       };
     }
 
-    setPhase("scheduled");
-    if (delayMs === undefined || delayMs === 0) {
-      scheduleRun(true);
+    const reportPreparationStatus = shouldExposePreparationStatus(currentFrame);
+    if (reportPreparationStatus) {
+      setPhase("scheduled");
     } else {
-      timer.value = window.setTimeout(() => scheduleRun(true), delayMs);
+      setPhase("ready");
     }
+    scheduleRunAfterExplicitInitialDelay(reportPreparationStatus);
 
     return () => {
       cancelled.value = true;

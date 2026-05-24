@@ -74,11 +74,19 @@ function mapDocumentColorProfile(profile: FigNode["documentColorProfile"]): Figm
   }
 }
 
+const SRGB_EXPORT_SETTINGS = Object.freeze({ colorProfile: "SRGB" as const });
+const SRGB_RENDER_OPTIONS: SceneGraphRenderOptions = Object.freeze({
+  exportSettings: SRGB_EXPORT_SETTINGS,
+});
+
 /** Resolve renderer options from Kiwi document-level rendering metadata. */
 export function createFigFamilyRenderOptions(ctx: FigFamilyDocumentContext): SceneGraphRenderOptions | undefined {
   const colorProfile = mapDocumentColorProfile(readDocumentColorProfile(ctx));
   if (!colorProfile) {
     return undefined;
+  }
+  if (colorProfile === "SRGB") {
+    return SRGB_RENDER_OPTIONS;
   }
   return { exportSettings: { colorProfile } };
 }
@@ -105,7 +113,6 @@ export type FigFamilyPageRendererProps = UseFigSceneGraphParams & {
 
 type SceneGraphCacheRef = {
   readonly page: FigNode;
-  readonly nodes: readonly FigNode[];
   readonly resources: FigDocumentResources;
   readonly textFontResolver: TextFontResolver | undefined;
   readonly cache: SceneGraphBuildCache;
@@ -114,19 +121,16 @@ type SceneGraphCacheRef = {
 function canReuseSceneGraphCache({
   previous,
   page,
-  nodes,
   resources,
   textFontResolver,
 }: {
   readonly previous: SceneGraphCacheRef | undefined;
   readonly page: FigNode;
-  readonly nodes: readonly FigNode[];
   readonly resources: FigDocumentResources;
   readonly textFontResolver: TextFontResolver | undefined;
 }): boolean {
   return !!previous
     && previous.page === page
-    && previous.nodes === nodes
     && previous.resources === resources
     && previous.textFontResolver === textFontResolver;
 }
@@ -134,20 +138,18 @@ function canReuseSceneGraphCache({
 function resolvePreviousSceneGraphCache({
   previous,
   page,
-  nodes,
   resources,
   textFontResolver,
 }: {
   readonly previous: SceneGraphCacheRef | undefined;
   readonly page: FigNode;
-  readonly nodes: readonly FigNode[];
   readonly resources: FigDocumentResources;
   readonly textFontResolver: TextFontResolver | undefined;
 }): SceneGraphBuildCache | undefined {
   if (!previous) {
     return undefined;
   }
-  if (!canReuseSceneGraphCache({ previous, page, nodes, resources, textFontResolver })) {
+  if (!canReuseSceneGraphCache({ previous, page, resources, textFontResolver })) {
     return undefined;
   }
   return previous.cache;
@@ -190,7 +192,6 @@ export function useFigSceneGraph({
     const previous = resolvePreviousSceneGraphCache({
       previous: cacheRef.current,
       page,
-      nodes: pageNodes,
       resources,
       textFontResolver,
     });
@@ -210,7 +211,6 @@ export function useFigSceneGraph({
     const result = buildSceneGraphWithCache(pageNodes, buildOptions, previous);
     cacheRef.current = {
       page,
-      nodes: pageNodes,
       resources,
       textFontResolver,
       cache: result.cache,

@@ -12,6 +12,15 @@ export type WebGLEffectRenderRegion = {
   readonly height: number;
 };
 
+export type WebGLEffectBackdropCopyRegion = {
+  readonly textureX: number;
+  readonly textureY: number;
+  readonly sourceX: number;
+  readonly sourceY: number;
+  readonly width: number;
+  readonly height: number;
+};
+
 type LocalEffectBounds = {
   readonly x: number;
   readonly y: number;
@@ -68,6 +77,23 @@ function requirePositivePixelRatio(pixelRatio: number): number {
     throw new Error(`WebGL effect render region requires positive pixelRatio, got ${pixelRatio}`);
   }
   return pixelRatio;
+}
+
+/** Resolve the sub-rectangle copied from the current framebuffer into the backdrop texture. */
+export function resolveWebGLEffectBackdropCopyRegion(
+  region: WebGLEffectRenderRegion,
+): WebGLEffectBackdropCopyRegion | null {
+  if (region.width === 0 || region.height === 0) {
+    return null;
+  }
+  return {
+    textureX: region.x,
+    textureY: region.y,
+    sourceX: region.x,
+    sourceY: region.y,
+    width: region.width,
+    height: region.height,
+  };
 }
 
 function renderNodeChildren(node: RenderNode): readonly RenderNode[] {
