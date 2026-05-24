@@ -5,7 +5,7 @@ import {
   VariantPropertiesSectionView,
   type VariantPropertyView,
 } from "@higma-editor-kernel/ui/property-sections";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 function requirePropDefId(spec: FigVariantPropSpec): FigGuid {
@@ -59,7 +59,7 @@ export function VariantPropertiesSection({ node }: { readonly node: FigNode }) {
       <VariantPropertiesSectionView
         specs={variantSpecViews(specs)}
         onChange={(id, value) => {
-          updateNode(node.guid, (current) => writeVariantSpecValue(current, id, value), "property-panel");
+          updateNode(node.guid, (current) => writeVariantSpecValue(current, id, value), FIG_NODE_MUTATION_SOURCE.propertyPanel);
         }}
       />
     </section>

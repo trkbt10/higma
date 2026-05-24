@@ -28,7 +28,7 @@ export function resolveFigUserOperationDomain(intent: FigUserIntent): FigUserOpe
       allowed: new Set(["select-node", "edit-path"]),
     };
   }
-  if (intent.kind === "text-edit" || intent.kind === "transform") {
+  if (intent.kind === "text-edit" || intent.kind === "selected-fig-node-drag-transform") {
     return {
       intent,
       allowed: new Set([]),

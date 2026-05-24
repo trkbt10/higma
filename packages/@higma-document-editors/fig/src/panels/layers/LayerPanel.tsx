@@ -26,7 +26,7 @@ import {
   UnknownShapeIcon,
   VisibleIcon,
 } from "@higma-editor-kernel/ui/icons";
-import { useFigEditor } from "../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../context/FigEditorContext";
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
 import { getLayerNodePresentation } from "./layer-node-presentation";
@@ -298,7 +298,7 @@ function LayerRow({
   }, [canSelect, guid, selectNodeGuid]);
 
   const rename = useCallback((name: string): void => {
-    updateNode(guid, (current) => ({ ...current, name }), "layer-panel");
+    updateNode(guid, (current) => ({ ...current, name }), FIG_NODE_MUTATION_SOURCE.layerPanel);
   }, [guid, updateNode]);
 
   const requestRename = useCallback((): void => {
@@ -313,7 +313,7 @@ function LayerRow({
   }, []);
 
   const toggleVisibility = useCallback((): void => {
-    updateNode(guid, (current) => ({ ...current, visible: !visible }), "layer-panel");
+    updateNode(guid, (current) => ({ ...current, visible: !visible }), FIG_NODE_MUTATION_SOURCE.layerPanel);
   }, [guid, updateNode, visible]);
 
   return (

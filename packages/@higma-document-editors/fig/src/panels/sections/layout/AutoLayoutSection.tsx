@@ -1,6 +1,6 @@
 /** @file Auto layout fields for Kiwi FRAME/SYMBOL nodes. */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 /** Render editable auto-layout controls for Kiwi stack fields. */
@@ -24,7 +24,7 @@ export function AutoLayoutSection({ node }: { readonly node: FigNode }) {
           onChange={(event) => updateNode(guid, (current) => ({
             ...current,
             stackSpacing: Number(event.currentTarget.value),
-          }), "property-panel")}
+          }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
         />
       </PropertyField>
     </section>

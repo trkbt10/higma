@@ -7,7 +7,7 @@ import type {
   PaintItemHandlers,
   PaintTypeId,
 } from "@higma-editor-kernel/ui/property-sections";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { createFigImageAsset } from "./image-asset";
 import {
   addGradientStop,
@@ -48,21 +48,21 @@ export function usePaintEditor(kind: PaintListKind): PaintEditor {
   const updatePaint = useCallback((index: number, updater: Parameters<typeof replacePaint>[2]): void => {
     updateSelectedNodes(
       (node) => writePaintList(node, kind, replacePaint(paintList(node, kind), index, updater)),
-      "property-panel",
+      FIG_NODE_MUTATION_SOURCE.propertyPanel,
     );
   }, [kind, updateSelectedNodes]);
 
   const addPaintItem = useCallback((): void => {
     updateSelectedNodes(
       (node) => writePaintList(node, kind, addPaint(paintList(node, kind))),
-      "property-panel",
+      FIG_NODE_MUTATION_SOURCE.propertyPanel,
     );
   }, [kind, updateSelectedNodes]);
 
   const removePaintItem = useCallback((index: number): void => {
     updateSelectedNodes(
       (node) => writePaintList(node, kind, removePaint(paintList(node, kind), index)),
-      "property-panel",
+      FIG_NODE_MUTATION_SOURCE.propertyPanel,
     );
   }, [kind, updateSelectedNodes]);
 
@@ -92,7 +92,7 @@ export function usePaintEditor(kind: PaintListKind): PaintEditor {
           kind,
           replacePaint(paintList(node, kind), paintIndex, (paint) => setImageHashHex(paint, image.ref)),
         ),
-        "property-panel",
+        FIG_NODE_MUTATION_SOURCE.propertyPanel,
       );
     });
   }, [kind, updateSelectedNodesWithImages]);

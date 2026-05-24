@@ -10,7 +10,11 @@ import type { Framebuffer } from "../resources/framebuffer";
 import { createFramebuffer, createFramebufferWithStencil, deleteFramebuffer, bindFramebuffer } from "../resources/framebuffer";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
 import { applyEffectOffsetScale, type EffectBackingScale } from "./effect-scale";
-import { resolveWebGLEffectBackdropCopyRegion, type WebGLEffectRenderRegion } from "./effect-render-region";
+import {
+  expandWebGLEffectRenderRegionForShaderSampling,
+  resolveWebGLEffectBackdropCopyRegion,
+  type WebGLEffectRenderRegion,
+} from "./effect-render-region";
 
 /**
  * Gaussian blur shader (separable 2-pass)
@@ -258,7 +262,7 @@ export const innerShadowFragmentShader = `
 `;
 
 /**
- * Blit (copy) shader for compositing FBO texture to screen with opacity
+ * Blit shader for compositing framebuffer texture to screen with opacity.
  */
 export const blitFragmentShader = `
   precision mediump float;
@@ -277,14 +281,22 @@ export const blitFragmentShader = `
   }
 `;
 
+const EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS = 16;
+
+type BeginWebGLEffectLayerCaptureParams = {
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly region: WebGLEffectRenderRegion;
+};
+
 /** Effects renderer instance */
 export type EffectsRendererInstance = {
   renderDropShadow(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: DropShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }): void;
   renderInnerShadow(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }): void;
   renderBackgroundBlur(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderMask: () => void }): void;
-  beginLayerCapture(canvasWidth: number, canvasHeight: number): Framebuffer;
+  beginLayerCapture(params: BeginWebGLEffectLayerCaptureParams): Framebuffer;
   endLayerCaptureAndBlur(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: LayerBlurEffect; worldToBacking: EffectBackingScale }): void;
-  /** Blit the captured layer FBO to screen with the given opacity (no blur). */
+  /** Blit the captured layer framebuffer to screen with the given opacity and no blur. */
   blitLayerWithOpacity(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; opacity: number }): void;
   /**
    * Apply a Gaussian blur to a framebuffer. `radius` is in **backing-buffer
@@ -470,6 +482,17 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       return backdropFBO.value!;
     }
     const restoreFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    bindFramebuffer(gl, backdropFBO.value!);
+    gl.colorMask(true, true, true, true);
+    gl.clearColor(0, 0, 0, 0);
+    clearWebGLEffectFramebufferRegion({
+      framebuffer: backdropFBO.value!,
+      canvasWidth,
+      canvasHeight,
+      region,
+      clearBits: gl.COLOR_BUFFER_BIT,
+      paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+    });
     bindEffectOutputFramebuffer(sourceFramebuffer);
     gl.bindTexture(gl.TEXTURE_2D, backdropFBO.value!.texture);
     gl.copyTexSubImage2D(
@@ -531,6 +554,41 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     }
   }
 
+  function webGLEffectShaderSamplingRegion(
+    region: WebGLEffectRenderRegion,
+    canvasWidth: number,
+    canvasHeight: number,
+    paddingInBackingPixels: number,
+  ): WebGLEffectRenderRegion {
+    return expandWebGLEffectRenderRegionForShaderSampling({
+      region,
+      canvasWidth,
+      canvasHeight,
+      paddingInBackingPixels,
+    });
+  }
+
+  function clearWebGLEffectFramebufferRegion({
+    framebuffer,
+    canvasWidth,
+    canvasHeight,
+    region,
+    clearBits,
+    paddingInBackingPixels,
+  }: {
+    readonly framebuffer: Framebuffer;
+    readonly canvasWidth: number;
+    readonly canvasHeight: number;
+    readonly region: WebGLEffectRenderRegion;
+    readonly clearBits: number;
+    readonly paddingInBackingPixels: number;
+  }): void {
+    bindFramebuffer(gl, framebuffer);
+    withEffectRegion(webGLEffectShaderSamplingRegion(region, canvasWidth, canvasHeight, paddingInBackingPixels), () => {
+      gl.clear(clearBits);
+    });
+  }
+
   function withStencilDisabled<T>(operation: () => T): T {
     const wasStencilEnabled = gl.isEnabled(gl.STENCIL_TEST);
     gl.disable(gl.STENCIL_TEST);
@@ -539,6 +597,18 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     } finally {
       if (wasStencilEnabled) {
         gl.enable(gl.STENCIL_TEST);
+      }
+    }
+  }
+
+  function withBlendDisabled<T>(operation: () => T): T {
+    const wasBlendEnabled = gl.isEnabled(gl.BLEND);
+    gl.disable(gl.BLEND);
+    try {
+      return operation();
+    } finally {
+      if (wasBlendEnabled) {
+        gl.enable(gl.BLEND);
       }
     }
   }
@@ -560,6 +630,43 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     drawFullscreenQuad(program);
   }
 
+  function renderEffectFramebufferRegionIntoTemporaryFramebuffer(
+    source: Framebuffer,
+    region: WebGLEffectRenderRegion,
+  ): Framebuffer {
+    ensureResources(source.width, source.height);
+    ensureBlitProgram();
+    const target = source === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
+
+    withStencilDisabled(() => {
+      gl.colorMask(true, true, true, true);
+      gl.clearColor(0, 0, 0, 0);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: target,
+        canvasWidth: source.width,
+        canvasHeight: source.height,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT,
+        paddingInBackingPixels: 0,
+      });
+
+      const program = requireProgram(blitProgram.value, "effect framebuffer region copy");
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, source.texture);
+      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
+      gl.uniform1f(gl.getUniformLocation(program, "u_opacity"), 1.0);
+      withBlendDisabled(() => {
+        withEffectRegion(region, () => {
+          drawFullscreenQuad(program);
+        });
+      });
+    });
+
+    bindFramebuffer(gl, null);
+    return target;
+  }
+
   function applyGaussianBlur(source: Framebuffer, radius: number, region: WebGLEffectRenderRegion): Framebuffer {
     ensureResources(source.width, source.height);
 
@@ -577,18 +684,30 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         const horizontalTarget = currentSourceRef.value === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
         const verticalTarget = horizontalTarget === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
 
-        bindFramebuffer(gl, horizontalTarget);
         gl.colorMask(true, true, true, true);
         gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        clearWebGLEffectFramebufferRegion({
+          framebuffer: horizontalTarget,
+          canvasWidth: width,
+          canvasHeight: height,
+          region,
+          clearBits: gl.COLOR_BUFFER_BIT,
+          paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+        });
         withEffectRegion(region, () => {
           drawBlurPass({ sourceTexture: currentSourceRef.value.texture, width, height, dirX: 1, dirY: 0, radius: sigmaPerPass });
         });
 
-        bindFramebuffer(gl, verticalTarget);
         gl.colorMask(true, true, true, true);
         gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        clearWebGLEffectFramebufferRegion({
+          framebuffer: verticalTarget,
+          canvasWidth: width,
+          canvasHeight: height,
+          region,
+          clearBits: gl.COLOR_BUFFER_BIT,
+          paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+        });
         withEffectRegion(region, () => {
           drawBlurPass({ sourceTexture: horizontalTarget.texture, width, height, dirX: 0, dirY: 1, radius: sigmaPerPass });
         });
@@ -608,10 +727,16 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     const program = requireProgram(morphologyProgram.value, "alpha morphology");
 
     withStencilDisabled(() => {
-      bindFramebuffer(gl, tempFBO1.value!);
       gl.colorMask(true, true, true, true);
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: tempFBO1.value!,
+        canvasWidth: source.width,
+        canvasHeight: source.height,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT,
+        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+      });
 
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
@@ -648,10 +773,16 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       ensureResources(canvasWidth, canvasHeight);
       ensureShapeFBO(canvasWidth, canvasHeight);
 
-      bindFramebuffer(gl, shapeFBO.value!);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: shapeFBO.value!,
+        canvasWidth,
+        canvasHeight,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT,
+        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+      });
       withEffectRegion(region, renderSilhouette);
 
       const spreadSource = applyEffectSpread(shapeFBO.value!, effect.spread, worldToBacking, region);
@@ -764,10 +895,16 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       ensureShapeFBO(canvasWidth, canvasHeight);
       ensureInnerShadowProgram();
 
-      bindFramebuffer(gl, shapeFBO.value!);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: shapeFBO.value!,
+        canvasWidth,
+        canvasHeight,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT,
+        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+      });
       withEffectRegion(region, renderSilhouette);
 
       const spreadSource = applyEffectSpread(shapeFBO.value!, effect.spread, worldToBacking, region);
@@ -789,10 +926,16 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       const blendModeCode = blendModeToShaderCode(effect.blendMode);
       if (blendModeCode !== 0) {
         const maskTarget = blurredFBORef.value === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
-        bindFramebuffer(gl, maskTarget);
         gl.viewport(0, 0, canvasWidth, canvasHeight);
         gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
+        clearWebGLEffectFramebufferRegion({
+          framebuffer: maskTarget,
+          canvasWidth,
+          canvasHeight,
+          region,
+          clearBits: gl.COLOR_BUFFER_BIT,
+          paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+        });
         gl.useProgram(program);
 
         gl.activeTexture(gl.TEXTURE0);
@@ -948,16 +1091,23 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       );
     },
 
-    beginLayerCapture(canvasWidth: number, canvasHeight: number): Framebuffer {
+    beginLayerCapture({ canvasWidth, canvasHeight, region }: BeginWebGLEffectLayerCaptureParams): Framebuffer {
       ensureLayerFBO(canvasWidth, canvasHeight);
 
-      bindFramebuffer(gl, layerFBO.value!);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
       gl.disable(gl.STENCIL_TEST);
       gl.colorMask(true, true, true, true);
       gl.stencilMask(0xff);
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+      gl.clearStencil(0);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: layerFBO.value!,
+        canvasWidth,
+        canvasHeight,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT,
+        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+      });
 
       return layerFBO.value!;
     },
@@ -1007,13 +1157,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      // Use the same path as endLayerCaptureAndBlur: route through
-      // applyGaussianBlur (radius=0 = identity copy) so that the texture
-      // is read from tempFBO2 instead of directly from layerFBO.
-      // This avoids a subtle issue where layerFBO's texture cannot be
-      // reliably sampled in some WebGL implementations after being used
-      // as a render target in the same draw sequence.
-      const copied = applyGaussianBlur(layerFBO.value!, 0, region);
+      const copied = renderEffectFramebufferRegionIntoTemporaryFramebuffer(layerFBO.value!, region);
 
       bindFramebuffer(gl, null);
       gl.viewport(0, 0, canvasWidth, canvasHeight);

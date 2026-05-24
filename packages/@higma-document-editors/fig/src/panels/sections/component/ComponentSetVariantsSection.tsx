@@ -12,7 +12,7 @@ import {
   type VariantChildValueView,
   type VariantDefView,
 } from "@higma-editor-kernel/ui/property-sections";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 function requireDefId(def: FigComponentPropDef): FigGuid {
@@ -135,14 +135,14 @@ export function ComponentSetVariantsSection({ node }: { readonly node: FigNode }
         variantDefs={defViews(defs)}
         childValues={childValueViews(children, defs)}
         onDefNameChange={(defId, name) => {
-          updateNode(node.guid, (current) => writeVariantDefName(current, defId, name), "property-panel");
+          updateNode(node.guid, (current) => writeVariantDefName(current, defId, name), FIG_NODE_MUTATION_SOURCE.propertyPanel);
         }}
         onChildValueChange={(childId, defId, value) => {
           const child = context.document.nodesByGuid.get(childId);
           if (child === undefined) {
             throw new Error(`Component set child ${childId} is not present in the Kiwi document`);
           }
-          updateNode(child.guid, (current) => writeChildVariantValue(current, defId, value), "property-panel");
+          updateNode(child.guid, (current) => writeChildVariantValue(current, defId, value), FIG_NODE_MUTATION_SOURCE.propertyPanel);
         }}
       />
     </section>

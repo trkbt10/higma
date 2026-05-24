@@ -5,7 +5,7 @@ import {
   InstanceOverridesSectionView,
   type InstanceOverrideRowView,
 } from "@higma-editor-kernel/ui/property-sections";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 type OverrideTarget = {
@@ -199,11 +199,11 @@ export function InstanceOverridesSection({ node }: { readonly node: FigNode }) {
         onOpacityChange={(key, percent) => {
           const opacity = opacityFromPercent(percent);
           if (key === selfKey) {
-            updateNode(node.guid, (current) => ({ ...current, opacity }), "property-panel");
+            updateNode(node.guid, (current) => ({ ...current, opacity }), FIG_NODE_MUTATION_SOURCE.propertyPanel);
             return;
           }
           const target = requireTargetByKey(targets, key);
-          updateNode(node.guid, (current) => writeChildOpacityOverride(current, target.path, opacity), "property-panel");
+          updateNode(node.guid, (current) => writeChildOpacityOverride(current, target.path, opacity), FIG_NODE_MUTATION_SOURCE.propertyPanel);
         }}
       />
     </section>

@@ -6,7 +6,7 @@ import {
   type StrokeCapId,
   type StrokeJoinId,
 } from "@higma-editor-kernel/ui/property-sections";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import {
   paintList,
@@ -53,11 +53,11 @@ export function StrokeSection({ node }: { readonly node: FigNode }) {
         imageOptions={editor.imageOptions}
         fileInputRef={editor.fileInputRef}
         onImageFileChange={editor.handleImageFileChange}
-        onStrokeWeightChange={(strokeWeight) => updateSelectedNodes((current) => ({ ...current, strokeWeight }), "property-panel")}
-        onAlignChange={(strokeAlign: StrokeAlignId) => updateSelectedNodes((current) => setStrokeAlign(current, strokeAlign), "property-panel")}
-        onCapChange={(strokeCap: StrokeCapId) => updateSelectedNodes((current) => setStrokeCap(current, strokeCap), "property-panel")}
-        onJoinChange={(strokeJoin: StrokeJoinId) => updateSelectedNodes((current) => setStrokeJoin(current, strokeJoin), "property-panel")}
-        onDashesChange={(dashes) => updateSelectedNodes((current) => setStrokeDashes(current, parseStrokeDashes(dashes)), "property-panel")}
+        onStrokeWeightChange={(strokeWeight) => updateSelectedNodes((current) => ({ ...current, strokeWeight }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
+        onAlignChange={(strokeAlign: StrokeAlignId) => updateSelectedNodes((current) => setStrokeAlign(current, strokeAlign), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
+        onCapChange={(strokeCap: StrokeCapId) => updateSelectedNodes((current) => setStrokeCap(current, strokeCap), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
+        onJoinChange={(strokeJoin: StrokeJoinId) => updateSelectedNodes((current) => setStrokeJoin(current, strokeJoin), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
+        onDashesChange={(dashes) => updateSelectedNodes((current) => setStrokeDashes(current, parseStrokeDashes(dashes)), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
         onAddPaint={editor.addPaint}
         handlers={editor.handlers}
       />

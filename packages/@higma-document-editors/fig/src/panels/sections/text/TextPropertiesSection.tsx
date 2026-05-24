@@ -1,7 +1,7 @@
 /** @file Text node property section over Kiwi textData. */
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { FigFontName, FigKiwiTextData, FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 function requireTextData(node: FigNode): FigKiwiTextData {
@@ -55,7 +55,7 @@ export function TextPropertiesSection({ node }: { readonly node: FigNode }) {
               ...requireTextData(current),
               characters: event.currentTarget.value,
             },
-          }), "property-panel")}
+          }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
         />
       </PropertyField>
       <div style={{ ...fieldGridStyle, marginTop: 8 }}>
@@ -75,7 +75,7 @@ export function TextPropertiesSection({ node }: { readonly node: FigNode }) {
                   fontSize,
                 },
               };
-            }, "property-panel")}
+            }, FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
         <PropertyField label="Family">
@@ -98,7 +98,7 @@ export function TextPropertiesSection({ node }: { readonly node: FigNode }) {
                   fontName: nextFontName,
                 },
               };
-            }, "property-panel")}
+            }, FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
       </div>

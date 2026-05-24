@@ -2,7 +2,7 @@
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { SectionBehaviorSectionView } from "@higma-editor-kernel/ui/property-sections";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 /** Render SECTION-specific visibility behavior controls. */
@@ -23,7 +23,7 @@ export function SectionBehaviorSection({ node }: { readonly node: FigNode }) {
         onContentsHiddenChange={(hidden) => updateNode(guid, (current) => ({
           ...current,
           sectionContentsHidden: hidden,
-        }), "property-panel")}
+        }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
       />
     </section>
   );

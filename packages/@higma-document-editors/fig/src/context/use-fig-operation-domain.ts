@@ -6,13 +6,13 @@ import { resolveFigUserOperationDomain, type FigUserOperationDomain } from "./fi
 
 /** Return the operation domain for the current editor tool. */
 export function useFigOperationDomain(): FigUserOperationDomain {
-  const { creationMode, textEdit, canvasTransformActive } = useFigEditor();
+  const { creationMode, textEdit, selectedFigNodeDragTransformActive } = useFigEditor();
   return useMemo(
     () => resolveFigUserOperationDomain(resolveFigUserIntent({
       mode: creationMode,
       textEditActive: textEdit.type === "active",
-      canvasTransformActive,
+      selectedFigNodeDragTransformActive,
     })),
-    [canvasTransformActive, creationMode, textEdit.type],
+    [creationMode, selectedFigNodeDragTransformActive, textEdit.type],
   );
 }

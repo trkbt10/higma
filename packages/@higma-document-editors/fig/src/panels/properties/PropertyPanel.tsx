@@ -2,7 +2,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import { InlineRenameInput } from "@higma-editor-kernel/ui";
-import { useFigEditor } from "../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../context/FigEditorContext";
 import { PositionSection } from "../sections/appearance/PositionSection";
 import { SizeSection } from "../sections/appearance/SizeSection";
 import { RotationSection } from "../sections/appearance/RotationSection";
@@ -120,7 +120,7 @@ export function PropertyPanel() {
       <div style={headerStyle}>
         <InlineRenameInput
           value={primaryNode.name ?? typeName}
-          onCommit={(name) => updateNode(primaryGuid, (current) => ({ ...current, name }), "property-panel")}
+          onCommit={(name) => updateNode(primaryGuid, (current) => ({ ...current, name }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           disabled={propertyMutationDisabled}
           ariaLabel={`Rename selected ${primaryNode.name ?? typeName}`}
           displayStyle={nameStyle}

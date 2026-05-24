@@ -34,7 +34,7 @@ import {
   type ResolveTextContext,
   type TextFontResolver,
 } from "@higma-document-renderers/fig/text";
-import { useFigEditor } from "../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../context/FigEditorContext";
 
 export type FigTextEditOverlayProps = {
   readonly node: FigNode;
@@ -251,7 +251,7 @@ export function FigTextEditOverlay({
 
   const handleChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>): void => {
     const nextText = event.currentTarget.value;
-    updateNode(guid, (current) => writeTextCharacters(current, nextText), "text-edit");
+    updateNode(guid, (current) => writeTextCharacters(current, nextText), FIG_NODE_MUTATION_SOURCE.textEdit);
     requestAnimationFrame(updateSelection);
   }, [guid, updateNode, updateSelection]);
 

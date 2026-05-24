@@ -14,7 +14,7 @@ import {
   type ResolvedComponentPropertyView,
 } from "@higma-editor-kernel/ui/property-sections";
 import type { SelectOption } from "@higma-editor-kernel/ui/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 type ResolvedComponentProperty = {
@@ -258,7 +258,7 @@ export function ComponentPropertiesSection({ node }: { readonly node: FigNode })
           const def = requireDefByKey(defs, propertyId);
           const defID = requireDefId(def);
           const nextValue = componentPropValueFromView(value, context.document.nodesByGuid);
-          updateNode(node.guid, (current) => writeComponentAssignment(current, defID, nextValue), "property-panel");
+          updateNode(node.guid, (current) => writeComponentAssignment(current, defID, nextValue), FIG_NODE_MUTATION_SOURCE.propertyPanel);
         }}
       />
     </section>

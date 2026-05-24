@@ -18,7 +18,7 @@ import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import type { FigDocumentResources } from "@higma-document-io/fig";
-import { useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
 import { translateTransform } from "../context/fig-editor/matrix";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
@@ -504,8 +504,8 @@ export function FigEditorCanvas({
     setCreationMode,
     enterTextEdit,
     exitTextEdit,
-    beginCanvasTransform,
-    endCanvasTransform,
+    beginSelectedFigNodeDragTransform,
+    endSelectedFigNodeDragTransform,
     updateNode,
     addNodeToActivePage,
     createBooleanOperationFromSelection,
@@ -618,7 +618,11 @@ export function FigEditorCanvas({
       return;
     }
     const spec = commitVectorPathDraftToNodeSpec(result.committedDraft);
-    addNodeToActivePage(spec, result.committedDraft.parentId, "canvas");
+    addNodeToActivePage(
+      spec,
+      result.committedDraft.parentId,
+      FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathCommit,
+    );
     if (nextModeAfterCommit !== undefined) {
       setCreationMode(nextModeAfterCommit);
     }
@@ -657,7 +661,7 @@ export function FigEditorCanvas({
     hasSelection: selectedGuids.length > 0,
     setCreationMode,
     clearSelection,
-    deleteSelection: () => deleteSelectedNodes("canvas"),
+    deleteSelection: () => deleteSelectedNodes(FIG_NODE_MUTATION_SOURCE.editorCanvasSelectionDelete),
     vectorPathDraftActive: vectorPathDraftSession !== null,
     commitVectorPathDraft,
     canUndo,
@@ -920,35 +924,35 @@ export function FigEditorCanvas({
             node,
             pathIndex: handle.pathIndex,
             operation: { type: "convert-segment-to-curve", commandIndex: handle.commandIndex },
-          }), "canvas");
+          }), FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathContextMenu);
           return;
         case "convert-vector-point-line":
           updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
             node,
             pathIndex: handle.pathIndex,
             operation: { type: "convert-segment-to-line", commandIndex: handle.commandIndex },
-          }), "canvas");
+          }), FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathContextMenu);
           return;
         case "delete-vector-point":
           updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
             node,
             pathIndex: handle.pathIndex,
             operation: { type: "delete-anchor", commandIndex: handle.commandIndex },
-          }), "canvas");
+          }), FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathContextMenu);
           return;
         case "open-vector-path":
           updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
             node,
             pathIndex: handle.pathIndex,
             operation: { type: "set-closed", closed: false },
-          }), "canvas");
+          }), FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathContextMenu);
           return;
         case "close-vector-path":
           updateNode(handle.nodeGuid, (node) => updateVectorPathWithOperation({
             node,
             pathIndex: handle.pathIndex,
             operation: { type: "set-closed", closed: true },
-          }), "canvas");
+          }), FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathContextMenu);
           return;
         default:
           throw new Error(`FigEditorCanvas received unsupported vector context menu action ${actionId}`);
@@ -964,7 +968,7 @@ export function FigEditorCanvas({
     if (operation === undefined) {
       throw new Error(`FigEditorCanvas received unsupported context menu action ${actionId}`);
     }
-    createBooleanOperationFromSelection(operation, "canvas");
+    createBooleanOperationFromSelection(operation, FIG_NODE_MUTATION_SOURCE.editorCanvasBooleanContextMenu);
   }, [contextMenu, createBooleanOperationFromSelection, updateNode]);
 
   const handleVectorPathHandlePointerDown = useCallback((
@@ -994,7 +998,7 @@ export function FigEditorCanvas({
         valueIndex: handle.valueIndex,
         point,
       },
-    }), "canvas");
+    }), FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathHandleDrag);
   }, [updateNode]);
 
   const handleVectorPathHandlePointerUp = useCallback((event: ReactPointerEvent<SVGCircleElement>): void => {
@@ -1014,7 +1018,11 @@ export function FigEditorCanvas({
     event.preventDefault();
     event.stopPropagation();
     const point = svgElementPoint(event.currentTarget, event.clientX, event.clientY);
-    updateNode(primaryNode.guid, (node) => addVectorPathPoint({ node, pathIndex, point }), "canvas");
+    updateNode(
+      primaryNode.guid,
+      (node) => addVectorPathPoint({ node, pathIndex, point }),
+      FIG_NODE_MUTATION_SOURCE.editorCanvasVectorPathPointInsert,
+    );
   }, [primaryNode, updateNode]);
 
   const handleVectorPathHandleContextMenu = useCallback((
@@ -1221,14 +1229,14 @@ export function FigEditorCanvas({
       return;
     }
     if (!session.transformed) {
-      beginCanvasTransform();
+      beginSelectedFigNodeDragTransform();
     }
     updateNode(session.guid, (node) => ({
       ...node,
       transform: translateTransform(node.transform, dx, dy),
-    }), "canvas");
+    }), FIG_NODE_MUTATION_SOURCE.editorCanvasSelectedFigNodeDrag);
     moveSessionRef.current = { ...session, startX: point.x, startY: point.y, transformed: true };
-  }, [beginCanvasTransform, updateNode]);
+  }, [beginSelectedFigNodeDragTransform, updateNode]);
 
   const handleItemDragEnd = useCallback((coords: CanvasPageCoords): void => {
     const creationSession = creationDragSessionRef.current;
@@ -1237,15 +1245,15 @@ export function FigEditorCanvas({
       const end = worldPoint(coords);
       const rect = dragRect({ x: creationSession.startX, y: creationSession.startY }, end);
       const spec = nodeSpecForCreation(creationMode, rect);
-      addNodeToActivePage(spec, null, "canvas");
+      addNodeToActivePage(spec, null, FIG_NODE_MUTATION_SOURCE.editorCanvasCreationDrag);
       return;
     }
     const moveSession = moveSessionRef.current;
     moveSessionRef.current = null;
     if (moveSession?.transformed === true) {
-      endCanvasTransform();
+      endSelectedFigNodeDragTransform();
     }
-  }, [addNodeToActivePage, creationMode, endCanvasTransform]);
+  }, [addNodeToActivePage, creationMode, endSelectedFigNodeDragTransform]);
 
   const getItemAriaLabel = useCallback((id: string): string => {
     return createItemLabel(context.document.nodesByGuid, id);
@@ -1285,7 +1293,7 @@ export function FigEditorCanvas({
   ): void => {
     if (policy.canCreate) {
       const spec = nodeSpecForCreation(creationMode, result.rect);
-      addNodeToActivePage(spec, null, "canvas");
+      addNodeToActivePage(spec, null, FIG_NODE_MUTATION_SOURCE.editorCanvasCreationMarquee);
       return;
     }
     const guids = resolveSelectableMarqueeGuids(context.document, result.itemIds);

@@ -1,7 +1,7 @@
 /** @file Vector path data section. */
 import { getNodeType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 /** Render editable SVG path data for Kiwi VECTOR nodes. */
@@ -28,7 +28,7 @@ export function VectorPathSection({ node }: { readonly node: FigNode }) {
           onChange={(event) => updateNode(guid, (current) => ({
             ...current,
             vectorPaths: [{ ...firstPath, data: event.currentTarget.value }],
-          }), "property-panel")}
+          }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
         />
       </PropertyField>
     </section>

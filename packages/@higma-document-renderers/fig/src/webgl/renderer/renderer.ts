@@ -1370,22 +1370,26 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       node: RenderNode; worldTransform: AffineMatrix; parentOpacity: number; nodeOpacity: number;
     }
   ): void {
-    const canvasW = canvasBackingWidth();
-    const canvasH = canvasBackingHeight();
+    const canvasBackingWidthValue = canvasBackingWidth();
+    const canvasBackingHeightValue = canvasBackingHeight();
     const region = resolveNodeEffectRegion(node, worldTransform, getSourceEffects(node));
 
     // Effects rendering binds its own FBO programs and changes
     // stencil/blend state directly. Invalidate the state cache after
     // each call so subsequent setters know they can't trust the
     // previous cached values.
-    const capture = effectsRenderer.beginLayerCapture(canvasW, canvasH);
+    const capture = effectsRenderer.beginLayerCapture({
+      canvasWidth: canvasBackingWidthValue,
+      canvasHeight: canvasBackingHeightValue,
+      region,
+    });
     glState.invalidate();
 
-    // Children render into the FBO with no outer clip applied.
-    // `beginLayerCapture` already cleared the FBO stencil and
+    // Children render into the framebuffer with no outer clip applied.
+    // `beginLayerCapture` already cleared the capture-region framebuffer stencil and
     // disabled STENCIL_TEST, so we swap `clipStack` for an empty
     // one and mark the deferred-rebuild dirty so the first draw
-    // inside the FBO re-derives state for an empty clip stack.
+    // inside the framebuffer re-derives state for an empty clip stack.
     const savedClipStack = clipStack.splice(0);
     // `clipActive.value` only updates on flush; if previous siblings
     // pushed and popped without an intervening draw, it lags reality.
@@ -1412,7 +1416,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     restoreOuterClipStencil(hadOuterClip);
 
     effectsRenderer.blitLayerWithOpacity({
-      canvasWidth: canvasW, canvasHeight: canvasH,
+      canvasWidth: canvasBackingWidthValue,
+      canvasHeight: canvasBackingHeightValue,
       region,
       opacity: nodeOpacity,
     });
@@ -1455,11 +1460,15 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
       node: RenderNode; worldTransform: AffineMatrix; worldOpacity: number; effect: LayerBlurEffect;
     }
   ): void {
-    const canvasW = canvasBackingWidth();
-    const canvasH = canvasBackingHeight();
+    const canvasBackingWidthValue = canvasBackingWidth();
+    const canvasBackingHeightValue = canvasBackingHeight();
     const region = resolveNodeEffectRegion(node, worldTransform, [effect]);
 
-    const capture = effectsRenderer.beginLayerCapture(canvasW, canvasH);
+    const capture = effectsRenderer.beginLayerCapture({
+      canvasWidth: canvasBackingWidthValue,
+      canvasHeight: canvasBackingHeightValue,
+      region,
+    });
     glState.invalidate();
 
     const savedClipStack = clipStack.splice(0);
@@ -1484,8 +1493,8 @@ export function createWebGLFigmaRenderer(options: WebGLRendererOptions): WebGLFi
     restoreOuterClipStencil(hadOuterClip);
 
     effectsRenderer.endLayerCaptureAndBlur({
-      canvasWidth: canvasW,
-      canvasHeight: canvasH,
+      canvasWidth: canvasBackingWidthValue,
+      canvasHeight: canvasBackingHeightValue,
       region,
       effect,
       worldToBacking: resolveEffectBackingScale(worldTransform, pixelRatioRef.value),

@@ -1,6 +1,6 @@
 /** @file Position property section. */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { readTransformPosition, setTransformPosition } from "./transform-matrix";
 
@@ -24,7 +24,7 @@ export function PositionSection({ node }: { readonly node: FigNode }) {
             onChange={(event) => updateNode(guid, (current) => ({
               ...current,
               transform: setTransformPosition(current.transform, Number(event.currentTarget.value), readTransformPosition(current.transform).y),
-            }), "property-panel")}
+            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
         <PropertyField label="Y">
@@ -35,7 +35,7 @@ export function PositionSection({ node }: { readonly node: FigNode }) {
             onChange={(event) => updateNode(guid, (current) => ({
               ...current,
               transform: setTransformPosition(current.transform, readTransformPosition(current.transform).x, Number(event.currentTarget.value)),
-            }), "property-panel")}
+            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
       </div>

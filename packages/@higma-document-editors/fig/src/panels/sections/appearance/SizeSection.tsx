@@ -1,6 +1,6 @@
 /** @file Size property section. */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 /** Render editable size controls for nodes that carry Kiwi size. */
@@ -26,7 +26,7 @@ export function SizeSection({ node }: { readonly node: FigNode }) {
             onChange={(event) => updateNode(guid, (current) => ({
               ...current,
               size: { x: Number(event.currentTarget.value), y: current.size?.y ?? size.y },
-            }), "property-panel")}
+            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
         <PropertyField label="H">
@@ -37,7 +37,7 @@ export function SizeSection({ node }: { readonly node: FigNode }) {
             onChange={(event) => updateNode(guid, (current) => ({
               ...current,
               size: { x: current.size?.x ?? size.x, y: Number(event.currentTarget.value) },
-            }), "property-panel")}
+            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
       </div>

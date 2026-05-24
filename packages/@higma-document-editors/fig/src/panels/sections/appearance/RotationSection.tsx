@@ -1,6 +1,6 @@
 /** @file Rotation property section. */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { readTransformRotation, setTransformRotation } from "./transform-matrix";
 
@@ -22,7 +22,7 @@ export function RotationSection({ node }: { readonly node: FigNode }) {
           onChange={(event) => updateNode(guid, (current) => ({
             ...current,
             transform: setTransformRotation(current.transform, Number(event.currentTarget.value)),
-          }), "property-panel")}
+          }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
         />
       </PropertyField>
     </section>

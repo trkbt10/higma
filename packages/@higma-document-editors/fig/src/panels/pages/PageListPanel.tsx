@@ -14,7 +14,7 @@ import {
   type ListRowVisualState,
   type MenuEntry,
 } from "@higma-editor-kernel/ui";
-import { useFigEditor } from "../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../context/FigEditorContext";
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
 
@@ -130,14 +130,14 @@ export function PageListPanel() {
       return;
     }
     if (actionId === PAGE_MENU_ACTIONS.moveUp) {
-      movePage(menu.pageGuid, currentIndex - 1, "page-panel");
+      movePage(menu.pageGuid, currentIndex - 1, FIG_NODE_MUTATION_SOURCE.pagePanel);
       return;
     }
     if (actionId === PAGE_MENU_ACTIONS.moveDown) {
-      movePage(menu.pageGuid, currentIndex + 1, "page-panel");
+      movePage(menu.pageGuid, currentIndex + 1, FIG_NODE_MUTATION_SOURCE.pagePanel);
       return;
     }
-    deletePage(menu.pageGuid, "page-panel");
+    deletePage(menu.pageGuid, FIG_NODE_MUTATION_SOURCE.pagePanel);
   }, [canMutatePages, deletePage, indexByKey, menu, movePage]);
 
   return (
@@ -163,7 +163,7 @@ export function PageListPanel() {
               <InlineRenameInput
                 ref={registerRenameHandle(key)}
                 value={requirePageName(page)}
-                onCommit={(name) => renamePage(guid, name, "page-panel")}
+                onCommit={(name) => renamePage(guid, name, FIG_NODE_MUTATION_SOURCE.pagePanel)}
                 disabled={!canMutatePages}
                 ariaLabel={`Rename page ${requirePageName(page)}`}
               />
@@ -174,7 +174,7 @@ export function PageListPanel() {
       <AddItemButton
         label="Add Page"
         disabled={!canMutatePages}
-        onClick={() => addPage(`Page ${pages.length + 1}`, "page-panel")}
+        onClick={() => addPage(`Page ${pages.length + 1}`, FIG_NODE_MUTATION_SOURCE.pagePanel)}
       />
       {menu.open && (
         <ContextMenu

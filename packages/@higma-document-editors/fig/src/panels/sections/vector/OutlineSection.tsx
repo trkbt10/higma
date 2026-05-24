@@ -1,7 +1,7 @@
 /** @file Outline operation section. */
 import { OutlineSectionView } from "@higma-editor-kernel/ui/property-sections";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { canOutlineKiwiNode, outlineKiwiNode } from "./outline-node";
 
@@ -20,7 +20,7 @@ export function OutlineSection({ node }: { readonly node: FigNode }) {
       <div style={sectionTitleStyle}>Outline</div>
       <OutlineSectionView
         enabled
-        onOutline={() => updateNode(guid, outlineKiwiNode, "property-panel")}
+        onOutline={() => updateNode(guid, outlineKiwiNode, FIG_NODE_MUTATION_SOURCE.propertyPanel)}
       />
     </section>
   );

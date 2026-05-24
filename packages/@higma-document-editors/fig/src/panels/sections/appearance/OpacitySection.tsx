@@ -1,6 +1,6 @@
 /** @file Opacity and visibility property section. */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
 /** Render opacity and visibility controls for a Kiwi node. */
@@ -25,7 +25,7 @@ export function OpacitySection({ node }: { readonly node: FigNode }) {
             onChange={(event) => updateNode(guid, (current) => ({
               ...current,
               opacity: Number(event.currentTarget.value),
-            }), "property-panel")}
+            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
         <PropertyField label="Visible">
@@ -35,7 +35,7 @@ export function OpacitySection({ node }: { readonly node: FigNode }) {
             onChange={(event) => updateNode(guid, (current) => ({
               ...current,
               visible: event.currentTarget.checked,
-            }), "property-panel")}
+            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
           />
         </PropertyField>
       </div>

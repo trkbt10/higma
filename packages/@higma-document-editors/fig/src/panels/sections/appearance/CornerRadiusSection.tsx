@@ -1,6 +1,6 @@
 /** @file Corner radius property section. */
 import type { FigNode } from "@higma-document-models/fig/types";
-import { useFigEditor } from "../../../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { readUniformCornerRadius } from "./corner-radius-domain";
 
@@ -28,7 +28,7 @@ export function CornerRadiusSection({ node }: { readonly node: FigNode }) {
             ...current,
             cornerRadius: Number(event.currentTarget.value),
             rectangleCornerRadii: undefined,
-          }), "property-panel")}
+          }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
         />
       </PropertyField>
     </section>

@@ -21,6 +21,13 @@ export type WebGLEffectBackdropCopyRegion = {
   readonly height: number;
 };
 
+export type ExpandWebGLEffectRenderRegionForShaderSamplingParams = {
+  readonly region: WebGLEffectRenderRegion;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly paddingInBackingPixels: number;
+};
+
 type LocalEffectBounds = {
   readonly x: number;
   readonly y: number;
@@ -79,6 +86,15 @@ function requirePositivePixelRatio(pixelRatio: number): number {
   return pixelRatio;
 }
 
+function requireNonNegativeFinitePaddingInBackingPixels(paddingInBackingPixels: number): number {
+  if (!Number.isFinite(paddingInBackingPixels) || paddingInBackingPixels < 0) {
+    throw new Error(
+      `WebGL effect render region requires non-negative finite paddingInBackingPixels, got ${paddingInBackingPixels}`,
+    );
+  }
+  return paddingInBackingPixels;
+}
+
 /** Resolve the sub-rectangle copied from the current framebuffer into the backdrop texture. */
 export function resolveWebGLEffectBackdropCopyRegion(
   region: WebGLEffectRenderRegion,
@@ -93,6 +109,26 @@ export function resolveWebGLEffectBackdropCopyRegion(
     sourceY: region.y,
     width: region.width,
     height: region.height,
+  };
+}
+
+/** Expand a backing-buffer region to cover texels read by effect shaders outside the draw scissor. */
+export function expandWebGLEffectRenderRegionForShaderSampling({
+  region,
+  canvasWidth,
+  canvasHeight,
+  paddingInBackingPixels,
+}: ExpandWebGLEffectRenderRegionForShaderSamplingParams): WebGLEffectRenderRegion {
+  const padding = requireNonNegativeFinitePaddingInBackingPixels(paddingInBackingPixels);
+  const x = clampFloor(region.x - padding, 0, canvasWidth);
+  const y = clampFloor(region.y - padding, 0, canvasHeight);
+  const maxX = clampCeil(region.x + region.width + padding, 0, canvasWidth);
+  const maxY = clampCeil(region.y + region.height + padding, 0, canvasHeight);
+  return {
+    x,
+    y,
+    width: Math.max(0, maxX - x),
+    height: Math.max(0, maxY - y),
   };
 }
 

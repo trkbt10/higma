@@ -48,13 +48,25 @@ export type FigCreationMode =
   | "text"
   | "pen";
 
+export const FIG_NODE_MUTATION_SOURCE = {
+  editorCanvasVectorPathCommit: "editor-canvas-vector-path-commit",
+  editorCanvasSelectionDelete: "editor-canvas-selection-delete",
+  editorCanvasVectorPathContextMenu: "editor-canvas-vector-path-context-menu",
+  editorCanvasBooleanContextMenu: "editor-canvas-boolean-context-menu",
+  editorCanvasVectorPathHandleDrag: "editor-canvas-vector-path-handle-drag",
+  editorCanvasVectorPathPointInsert: "editor-canvas-vector-path-point-insert",
+  editorCanvasSelectedFigNodeDrag: "editor-canvas-selected-fig-node-drag",
+  editorCanvasCreationDrag: "editor-canvas-creation-drag",
+  editorCanvasCreationMarquee: "editor-canvas-creation-marquee",
+  propertyPanel: "property-panel",
+  layerPanel: "layer-panel",
+  pagePanel: "page-panel",
+  toolbar: "toolbar",
+  textEdit: "text-edit",
+} as const satisfies Readonly<Record<string, string>>;
+
 export type FigNodeMutationSource =
-  | "canvas"
-  | "property-panel"
-  | "layer-panel"
-  | "page-panel"
-  | "toolbar"
-  | "text-edit";
+  typeof FIG_NODE_MUTATION_SOURCE[keyof typeof FIG_NODE_MUTATION_SOURCE];
 
 export type FigTextEditState =
   | { readonly type: "inactive" }
@@ -71,7 +83,7 @@ export type FigEditorContextValue = {
   readonly primaryNode: FigNode | undefined;
   readonly creationMode: FigCreationMode;
   readonly textEdit: FigTextEditState;
-  readonly canvasTransformActive: boolean;
+  readonly selectedFigNodeDragTransformActive: boolean;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly setActivePageGuid: (guid: FigGuid) => void;
@@ -81,8 +93,8 @@ export type FigEditorContextValue = {
   readonly setCreationMode: (mode: FigCreationMode) => void;
   readonly enterTextEdit: (guid: FigGuid) => void;
   readonly exitTextEdit: () => void;
-  readonly beginCanvasTransform: () => void;
-  readonly endCanvasTransform: () => void;
+  readonly beginSelectedFigNodeDragTransform: () => void;
+  readonly endSelectedFigNodeDragTransform: () => void;
   readonly updateNode: (guid: FigGuid, updater: (node: FigNode) => FigNode, source: FigNodeMutationSource) => void;
   readonly updateSelectedNodes: (updater: (node: FigNode) => FigNode, source: FigNodeMutationSource) => void;
   readonly updateSelectedNodesWithImages: (
@@ -120,19 +132,27 @@ function createFigContextWithImages(
   images: Map<string, FigPackageImage>,
 ): FigDocumentContext {
   if (currentContext.loaded) {
-    return createFigDocumentContextFromLoaded({ ...currentContext.loaded, nodeChanges, images });
+    return createFigDocumentContextFromLoaded(
+      { ...currentContext.loaded, nodeChanges, images },
+      { kiwiSourceDocuments: currentContext.kiwiSourceDocuments },
+    );
   }
   return createFigDocumentContextFromNodeChanges({
     nodeChanges,
     blobs: currentContext.blobs,
     images,
     metadata: currentContext.metadata,
+    kiwiSourceDocuments: currentContext.kiwiSourceDocuments,
   });
 }
 
 type FigContextHistory = {
   readonly past: readonly FigDocumentContext[];
   readonly future: readonly FigDocumentContext[];
+};
+
+type FigContextPublishOptions = {
+  readonly source: FigNodeMutationSource;
 };
 
 const EDITOR_AUTHORED_NODE_SESSION_ID = 1;
@@ -221,6 +241,16 @@ function nodeFrame(node: FigNode, owner: string): NodeFrame {
     y: transform.m12,
     width: size.x,
     height: size.y,
+  };
+}
+
+function appendUndoPastContext(
+  history: FigContextHistory,
+  context: FigDocumentContext,
+): FigContextHistory {
+  return {
+    past: [...history.past, context],
+    future: [],
   };
 }
 
@@ -357,6 +387,8 @@ export function FigEditorProvider({
   const builderStateRef = useRef(createBuilderState(context));
   const [currentContext, setCurrentContext] = useState(context);
   const [contextHistory, setContextHistory] = useState<FigContextHistory>({ past: [], future: [] });
+  const selectedFigNodeDragUndoBaseContextRef = useRef<FigDocumentContext | null>(null);
+  const selectedFigNodeDragPublishedContextChangeRef = useRef(false);
   const pages = useMemo(() => findCanvases(currentContext.document), [currentContext]);
   const resources = useMemo(() => figDocumentResources(currentContext), [currentContext]);
   const [activePageGuid, setActivePageGuidState] = useState<FigGuid | undefined>(
@@ -367,22 +399,36 @@ export function FigEditorProvider({
   );
   const [creationMode, setCreationMode] = useState<FigCreationMode>("select");
   const [textEdit, setTextEdit] = useState<FigTextEditState>(INACTIVE_TEXT_EDIT_STATE);
-  const [canvasTransformActive, setCanvasTransformActive] = useState(false);
+  const [selectedFigNodeDragTransformActive, setSelectedFigNodeDragTransformActive] = useState(false);
 
-  const publishContext = useCallback((next: FigDocumentContext): void => {
-    setContextHistory((previous) => ({
-      past: [...previous.past, currentContext],
-      future: [],
-    }));
+  const publishContext = useCallback((next: FigDocumentContext, options: FigContextPublishOptions): void => {
+    const selectedFigNodeDragUndoBaseContext = selectedFigNodeDragUndoBaseContextRef.current;
+    if (
+      selectedFigNodeDragUndoBaseContext !== null
+      && options.source !== FIG_NODE_MUTATION_SOURCE.editorCanvasSelectedFigNodeDrag
+    ) {
+      throw new Error(
+        `FigEditorProvider: ${options.source} mutation cannot publish during active selected FigNode drag transform`,
+      );
+    }
+    if (selectedFigNodeDragUndoBaseContext !== null) {
+      selectedFigNodeDragPublishedContextChangeRef.current = true;
+      setCurrentContext(next);
+      onContextChange?.(next);
+      return;
+    }
+    setContextHistory((previous) => appendUndoPastContext(previous, currentContext));
     setCurrentContext(next);
     onContextChange?.(next);
   }, [currentContext, onContextChange]);
 
   const restoreContext = useCallback((next: FigDocumentContext): void => {
+    selectedFigNodeDragUndoBaseContextRef.current = null;
+    selectedFigNodeDragPublishedContextChangeRef.current = false;
     setCurrentContext(next);
     setSelectedGuidsState([]);
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
-    setCanvasTransformActive(false);
+    setSelectedFigNodeDragTransformActive(false);
     onContextChange?.(next);
   }, [onContextChange]);
 
@@ -403,7 +449,9 @@ export function FigEditorProvider({
     setActivePageGuidState(guid);
     setSelectedGuidsState([]);
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
-    setCanvasTransformActive(false);
+    selectedFigNodeDragUndoBaseContextRef.current = null;
+    selectedFigNodeDragPublishedContextChangeRef.current = false;
+    setSelectedFigNodeDragTransformActive(false);
   }, [pages]);
 
   const setSelectedGuids = useCallback((guids: readonly FigGuid[]): void => {
@@ -459,17 +507,37 @@ export function FigEditorProvider({
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
   }, []);
 
-  const beginCanvasTransform = useCallback((): void => {
-    setCanvasTransformActive((previous) => {
+  const beginSelectedFigNodeDragTransform = useCallback((): void => {
+    if (selectedFigNodeDragUndoBaseContextRef.current === null) {
+      selectedFigNodeDragUndoBaseContextRef.current = currentContext;
+      selectedFigNodeDragPublishedContextChangeRef.current = false;
+    }
+    setSelectedFigNodeDragTransformActive((previous) => {
       if (previous) {
         return previous;
       }
       return true;
     });
-  }, []);
+  }, [currentContext]);
 
-  const endCanvasTransform = useCallback((): void => {
-    setCanvasTransformActive((previous) => {
+  const endSelectedFigNodeDragTransform = useCallback((): void => {
+    const selectedFigNodeDragUndoBaseContext = selectedFigNodeDragUndoBaseContextRef.current;
+    const selectedFigNodeDragPublishedContextChange = selectedFigNodeDragPublishedContextChangeRef.current;
+    if (selectedFigNodeDragUndoBaseContext === null) {
+      setSelectedFigNodeDragTransformActive((previous) => {
+        if (!previous) {
+          return previous;
+        }
+        return false;
+      });
+      return;
+    }
+    selectedFigNodeDragUndoBaseContextRef.current = null;
+    selectedFigNodeDragPublishedContextChangeRef.current = false;
+    if (selectedFigNodeDragPublishedContextChange) {
+      setContextHistory((previous) => appendUndoPastContext(previous, selectedFigNodeDragUndoBaseContext));
+    }
+    setSelectedFigNodeDragTransformActive((previous) => {
       if (!previous) {
         return previous;
       }
@@ -480,7 +548,7 @@ export function FigEditorProvider({
   const updateNode = useCallback((
     guid: FigGuid,
     updater: (node: FigNode) => FigNode,
-    _source: FigNodeMutationSource,
+    source: FigNodeMutationSource,
   ): void => {
     const key = guidKey(guid);
     const found = currentContext.document.nodeChanges.some((node) => guidKey(requireNodeGuid(node, "updateNode")) === key);
@@ -499,12 +567,15 @@ export function FigEditorProvider({
       }
       return next;
     });
-    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+    publishContext(
+      replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }),
+      { source },
+    );
   }, [currentContext, publishContext]);
 
   const updateSelectedNodes = useCallback((
     updater: (node: FigNode) => FigNode,
-    _source: FigNodeMutationSource,
+    source: FigNodeMutationSource,
   ): void => {
     if (selectedGuids.length === 0) {
       throw new Error("updateSelectedNodes requires at least one selected Kiwi node");
@@ -523,13 +594,16 @@ export function FigEditorProvider({
       }
       return next;
     });
-    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+    publishContext(
+      replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }),
+      { source },
+    );
   }, [currentContext, publishContext, selectedGuids]);
 
   const updateSelectedNodesWithImages = useCallback((
     images: readonly FigPackageImage[],
     updater: (node: FigNode) => FigNode,
-    _source: FigNodeMutationSource,
+    source: FigNodeMutationSource,
   ): void => {
     if (images.length === 0) {
       throw new Error("updateSelectedNodesWithImages requires at least one image asset");
@@ -556,12 +630,12 @@ export function FigEditorProvider({
       return nextNode;
     });
     const next = createFigContextWithImages(currentContext, nodeChanges, imageMap);
-    publishContext(next);
+    publishContext(next, { source });
   }, [currentContext, publishContext, selectedGuids]);
 
   const createBooleanOperationFromSelection = useCallback((
     operation: BooleanOperationType,
-    _source: FigNodeMutationSource,
+    source: FigNodeMutationSource,
   ): void => {
     if (activePageGuid === undefined) {
       throw new Error("createBooleanOperationFromSelection requires an active CANVAS");
@@ -610,7 +684,7 @@ export function FigEditorProvider({
       };
     });
     const nextContext = replaceFigDocumentContextNodeChanges({ context: result.context, nodeChanges });
-    publishContext(nextContext);
+    publishContext(nextContext, { source });
     setSelectedGuidsState([result.nodeGuid]);
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
   }, [activePageGuid, currentContext, publishContext, selectedGuids]);
@@ -618,7 +692,7 @@ export function FigEditorProvider({
   const addNodeToActivePage = useCallback((
     spec: NodeSpec,
     parentGuid: FigGuid | null,
-    _source: FigNodeMutationSource,
+    source: FigNodeMutationSource,
   ): FigGuid => {
     if (activePageGuid === undefined) {
       throw new Error("addNodeToActivePage requires an active CANVAS");
@@ -630,7 +704,7 @@ export function FigEditorProvider({
       parentGuid,
       spec,
     });
-    publishContext(result.context);
+    publishContext(result.context, { source });
     setSelectedGuidsState([result.nodeGuid]);
     setCreationMode("select");
     if (spec.type === "TEXT") {
@@ -641,31 +715,34 @@ export function FigEditorProvider({
     return result.nodeGuid;
   }, [activePageGuid, currentContext, publishContext]);
 
-  const deleteSelectedNodes = useCallback((_source: FigNodeMutationSource): void => {
+  const deleteSelectedNodes = useCallback((source: FigNodeMutationSource): void => {
     if (selectedGuids.length === 0) {
       return;
     }
     const selected = new Set(selectedGuids.map(guidKey));
     const nodeChanges = removeDescendants(currentContext, selected);
-    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+    publishContext(
+      replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }),
+      { source },
+    );
     setSelectedGuidsState([]);
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
   }, [currentContext, publishContext, selectedGuids]);
 
-  const addCanvasPage = useCallback((name: string, _source: FigNodeMutationSource): FigGuid => {
+  const addCanvasPage = useCallback((name: string, source: FigNodeMutationSource): FigGuid => {
     const result = addPage({
       state: builderStateRef.current,
       context: currentContext,
       name,
     });
-    publishContext(result.context);
+    publishContext(result.context, { source });
     setActivePageGuidState(result.pageGuid);
     setSelectedGuidsState([]);
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
     return result.pageGuid;
   }, [currentContext, publishContext]);
 
-  const renamePage = useCallback((guid: FigGuid, name: string, _source: FigNodeMutationSource): void => {
+  const renamePage = useCallback((guid: FigGuid, name: string, source: FigNodeMutationSource): void => {
     const key = guidKey(guid);
     const page = requireCanvasPage(pages, guid);
     const nodeChanges = currentContext.document.nodeChanges.map((node) => {
@@ -679,10 +756,13 @@ export function FigEditorProvider({
       return { ...node, name };
     });
     requireNodeGuid(page, "renamePage target");
-    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+    publishContext(
+      replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }),
+      { source },
+    );
   }, [currentContext, pages, publishContext]);
 
-  const deletePage = useCallback((guid: FigGuid, _source: FigNodeMutationSource): void => {
+  const deletePage = useCallback((guid: FigGuid, source: FigNodeMutationSource): void => {
     const key = guidKey(guid);
     requireCanvasPage(pages, guid);
     if (pages.length <= 1) {
@@ -695,13 +775,13 @@ export function FigEditorProvider({
     if (nextActivePage === undefined) {
       throw new Error("deletePage removed every CANVAS from the Kiwi document");
     }
-    publishContext(next);
+    publishContext(next, { source });
     setActivePageGuidState(requireNodeGuid(nextActivePage, "deletePage next active page"));
     setSelectedGuidsState([]);
     setTextEdit(INACTIVE_TEXT_EDIT_STATE);
   }, [currentContext, pages, publishContext]);
 
-  const movePage = useCallback((guid: FigGuid, toIndex: number, _source: FigNodeMutationSource): void => {
+  const movePage = useCallback((guid: FigGuid, toIndex: number, source: FigNodeMutationSource): void => {
     const key = guidKey(guid);
     requireCanvasPage(pages, guid);
     if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= pages.length) {
@@ -737,10 +817,16 @@ export function FigEditorProvider({
       }
       return { ...node, parentIndex: { ...parentIndex, position } };
     });
-    publishContext(replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }));
+    publishContext(
+      replaceFigDocumentContextNodeChanges({ context: currentContext, nodeChanges }),
+      { source },
+    );
   }, [currentContext, pages, publishContext]);
 
   const undo = useCallback((): void => {
+    if (selectedFigNodeDragUndoBaseContextRef.current !== null) {
+      throw new Error("FigEditorProvider: undo cannot run while a selected FigNode drag transform is active");
+    }
     const previousContext = contextHistory.past[contextHistory.past.length - 1];
     if (previousContext === undefined) {
       throw new Error("FigEditorProvider: undo requires a previous Kiwi document context");
@@ -753,6 +839,9 @@ export function FigEditorProvider({
   }, [contextHistory.future, contextHistory.past, currentContext, restoreContext]);
 
   const redo = useCallback((): void => {
+    if (selectedFigNodeDragUndoBaseContextRef.current !== null) {
+      throw new Error("FigEditorProvider: redo cannot run while a selected FigNode drag transform is active");
+    }
     const nextContext = contextHistory.future[0];
     if (nextContext === undefined) {
       throw new Error("FigEditorProvider: redo requires a future Kiwi document context");
@@ -775,7 +864,7 @@ export function FigEditorProvider({
     primaryNode: selectedNodes[0],
     creationMode,
     textEdit,
-    canvasTransformActive,
+    selectedFigNodeDragTransformActive,
     canUndo: contextHistory.past.length > 0,
     canRedo: contextHistory.future.length > 0,
     setActivePageGuid,
@@ -785,8 +874,8 @@ export function FigEditorProvider({
     setCreationMode,
     enterTextEdit,
     exitTextEdit,
-    beginCanvasTransform,
-    endCanvasTransform,
+    beginSelectedFigNodeDragTransform,
+    endSelectedFigNodeDragTransform,
     updateNode,
     updateSelectedNodes,
     updateSelectedNodesWithImages,
@@ -811,7 +900,7 @@ export function FigEditorProvider({
     selectedNodes,
     creationMode,
     textEdit,
-    canvasTransformActive,
+    selectedFigNodeDragTransformActive,
     setActivePageGuid,
     setSelectedGuids,
     selectNodeGuid,
@@ -819,8 +908,8 @@ export function FigEditorProvider({
     setCreationMode,
     enterTextEdit,
     exitTextEdit,
-    beginCanvasTransform,
-    endCanvasTransform,
+    beginSelectedFigNodeDragTransform,
+    endSelectedFigNodeDragTransform,
     updateNode,
     updateSelectedNodes,
     updateSelectedNodesWithImages,

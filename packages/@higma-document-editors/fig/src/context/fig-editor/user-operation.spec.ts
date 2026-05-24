@@ -27,4 +27,12 @@ describe("resolveFigUserOperationDomain", () => {
     expect(allowsFigUserOperation(domain, "create-node")).toBe(true);
     expect(allowsFigUserOperation(domain, "select-node")).toBe(false);
   });
+
+  it("blocks document mutations during selected FigNode drag transform intent", () => {
+    const domain = resolveFigUserOperationDomain({ kind: "selected-fig-node-drag-transform", mode: "select" });
+
+    expect(allowsFigUserOperation(domain, "move-node")).toBe(false);
+    expect(allowsFigUserOperation(domain, "update-property")).toBe(false);
+    expect(allowsFigUserOperation(domain, "create-node")).toBe(false);
+  });
 });

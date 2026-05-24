@@ -16,7 +16,7 @@ import {
   TextBoxIcon,
   UndoIcon,
 } from "@higma-editor-kernel/ui/icons";
-import { useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
+import { FIG_NODE_MUTATION_SOURCE, useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
 import { useExportFig } from "../hooks/use-export-fig";
 
 type ToolButtonSpec = {
@@ -107,7 +107,7 @@ export function FigEditorToolbar() {
         icon={<DeleteIcon size={16} aria-hidden={false} />}
         label="Delete"
         disabled={selectedGuids.length === 0}
-        onClick={() => deleteSelectedNodes("toolbar")}
+        onClick={() => deleteSelectedNodes(FIG_NODE_MUTATION_SOURCE.toolbar)}
         size="md"
       />
       <ToolbarSeparator />

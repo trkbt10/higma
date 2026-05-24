@@ -12,6 +12,13 @@ describe("resolveFigUserIntent", () => {
     expect(resolveFigUserIntent("pen")).toEqual({ kind: "path-edit", mode: "pen" });
   });
 
+  it("maps active selected FigNode drag transform to selected FigNode drag transform intent", () => {
+    expect(resolveFigUserIntent({
+      mode: "select",
+      selectedFigNodeDragTransformActive: true,
+    })).toEqual({ kind: "selected-fig-node-drag-transform", mode: "select" });
+  });
+
   it.each<FigCreationMode>([
     "frame",
     "rectangle",
