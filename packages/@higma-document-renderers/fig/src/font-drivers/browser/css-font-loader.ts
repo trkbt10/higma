@@ -10,11 +10,27 @@ import type { FontLoader } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";
 import type { LoadedFont } from "@higma-document-models/fig/font";
 
+export type CssFontLoaderGlobalThisHost = {
+  readonly document?: {
+    readonly fonts?: {
+      check(font: string, text?: string): boolean;
+    };
+  };
+};
+
 /**
  * Check if CSS Font Loading API is available
  */
-export function isCssFontLoaderSupported(): boolean {
-  return typeof document !== "undefined" && "fonts" in document;
+export function isCssFontLoaderSupported(host: CssFontLoaderGlobalThisHost): boolean {
+  return host.document?.fonts !== undefined;
+}
+
+function requireCssFontLoaderFonts(host: CssFontLoaderGlobalThisHost) {
+  const fonts = host.document?.fonts;
+  if (fonts === undefined) {
+    throw new Error("CSS font loader requires host.document.fonts");
+  }
+  return fonts;
 }
 
 /**
@@ -24,7 +40,8 @@ export function isCssFontLoaderSupported(): boolean {
  * Path-based text rendering (`renderTextNodeAsPath`) will not work
  * with this loader since it cannot provide font files.
  */
-export function createCssFontLoader(): FontLoader {
+export function createCssFontLoader(host: CssFontLoaderGlobalThisHost): FontLoader {
+  const fonts = requireCssFontLoaderFonts(host);
   return {
     async loadFont(_query: FontQuery): Promise<LoadedFont | undefined> {
       // Cannot load font files with CSS Font Loading API
@@ -32,13 +49,8 @@ export function createCssFontLoader(): FontLoader {
     },
 
     async isFontAvailable(family: string): Promise<boolean> {
-      if (!isCssFontLoaderSupported()) {
-        return false;
-      }
-
-      // Use document.fonts.check() to test availability
       const testString = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      return document.fonts.check(`16px "${family}"`, testString);
+      return fonts.check(`16px "${family}"`, testString);
     },
 
     async listFontFamilies(): Promise<readonly string[]> {

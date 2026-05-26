@@ -9,8 +9,8 @@
 import type { SceneGraph } from "@higma-document-models/fig/scene-graph";
 import { createWebGLFigmaRenderer } from "../../../../src/webgl/renderer/renderer";
 
-type WindowWithRenderSceneGraph = Window & {
-  renderSceneGraph: (json: string) => Promise<string>;
+type WebGLHarnessGlobalThis = typeof globalThis & {
+  renderSceneGraph?: (json: string) => Promise<string>;
 };
 
 const canvas = document.getElementById("canvas") as HTMLCanvasElement;
@@ -60,52 +60,47 @@ function restoreUint8Arrays(node: Record<string, unknown>): void {
   }
 }
 
-/** Type guard that extends window to include the render function */
-function isRenderableWindow(w: unknown): w is WindowWithRenderSceneGraph {
-  return typeof w === "object" && w !== null;
-}
-
 /** Type guard for converting parsed JSON to a record for Uint8Array restoration */
 function isRecord(obj: unknown): obj is Record<string, unknown> {
   return typeof obj === "object" && obj !== null;
 }
 
-if (isRenderableWindow(window)) {
-  window.renderSceneGraph = async (json: string): Promise<string> => {
-    const sceneGraph = JSON.parse(json) as SceneGraph;
+const webGLHarnessGlobalThis = globalThis as WebGLHarnessGlobalThis;
 
-    // Restore Uint8Array fields from base64
-    const sceneRecord = isRecord(sceneGraph) ? sceneGraph : {};
-    restoreUint8Arrays(sceneRecord);
+webGLHarnessGlobalThis.renderSceneGraph = async (json: string): Promise<string> => {
+  const sceneGraph = JSON.parse(json) as SceneGraph;
 
-    canvas.width = sceneGraph.width;
-    canvas.height = sceneGraph.height;
-    canvas.style.width = `${sceneGraph.width}px`;
-    canvas.style.height = `${sceneGraph.height}px`;
+  // Restore Uint8Array fields from base64
+  const sceneRecord = isRecord(sceneGraph) ? sceneGraph : {};
+  restoreUint8Arrays(sceneRecord);
 
-    // Create a fresh renderer for each frame to prevent state contamination.
-    // If one frame's effects shader fails, the next frame starts clean.
-    const renderer = createWebGLFigmaRenderer({
-      canvas,
-      pixelRatio: 1,
-      antialias: true,
-      backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
-    });
+  canvas.width = sceneGraph.width;
+  canvas.height = sceneGraph.height;
+  canvas.style.width = `${sceneGraph.width}px`;
+  canvas.style.height = `${sceneGraph.height}px`;
 
-    try {
-      await renderer.prepareScene(sceneGraph);
-      renderer.render(sceneGraph);
+  // Create a fresh renderer for each frame to prevent state contamination.
+  // If one frame's effects shader fails, the next frame starts clean.
+  const renderer = createWebGLFigmaRenderer({
+    canvas,
+    pixelRatio: 1,
+    antialias: true,
+    backgroundColor: { r: 1, g: 1, b: 1, a: 1 },
+  });
 
-    } catch (err) {
-      console.error("WebGL render error:", (err as Error).message);
-      throw err;
-    } finally {
-      renderer.dispose();
-    }
+  try {
+    await renderer.prepareScene(sceneGraph);
+    renderer.render(sceneGraph);
 
-    return canvas.toDataURL("image/png");
-  };
-}
+  } catch (err) {
+    console.error("WebGL render error:", (err as Error).message);
+    throw err;
+  } finally {
+    renderer.dispose();
+  }
+
+  return canvas.toDataURL("image/png");
+};
 
 // Signal readiness
 document.title = "ready";

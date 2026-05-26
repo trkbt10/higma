@@ -1,5 +1,9 @@
 /** @file Variant set controls over Kiwi FRAME state-group fields. */
-import { guidToString } from "@higma-document-models/fig/domain";
+import {
+  guidToString,
+  resolveFigComponentPropDef,
+  type FigKiwiDocumentIndex,
+} from "@higma-document-models/fig/domain";
 import { isVariantSetFrame } from "@higma-document-models/fig/symbols";
 import type {
   FigComponentPropDef,
@@ -50,8 +54,10 @@ function requireSpecValue(spec: FigVariantPropSpec): string {
   return spec.value;
 }
 
-function variantDefs(node: FigNode): readonly FigComponentPropDef[] {
-  return (node.componentPropDefs ?? []).filter((def) => def.type?.name === "VARIANT");
+function variantDefs(node: FigNode, document: FigKiwiDocumentIndex): readonly FigComponentPropDef[] {
+  return (node.componentPropDefs ?? []).filter((def) => (
+    resolveFigComponentPropDef({ ownerNode: node, def, document }).type === "VARIANT"
+  ));
 }
 
 function defViews(defs: readonly FigComponentPropDef[]): readonly VariantDefView[] {
@@ -123,7 +129,7 @@ export function ComponentSetVariantsSection({ node }: { readonly node: FigNode }
   if (!isVariantSetFrame(node)) {
     return null;
   }
-  const defs = variantDefs(node);
+  const defs = variantDefs(node, context.document);
   if (defs.length === 0) {
     return null;
   }

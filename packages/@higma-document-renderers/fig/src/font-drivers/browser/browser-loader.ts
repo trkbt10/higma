@@ -1,8 +1,8 @@
 /**
  * @file Browser font loader implementation using Local Font Access API
  *
- * Uses the Local Font Access API to enumerate and load system fonts.
- * Uses CSS Font Loading API for availability checks when Local Font Access is unavailable.
+ * Uses an explicit Local Font Access API host to enumerate and load
+ * system fonts.
  *
  * Weight/style detection delegates to the canonical SoT (`figmaFontToQuery`)
  * — see node-loader for the same contract.
@@ -14,10 +14,10 @@ import { parse as parseFont } from "opentype.js";
 import type { FontLoader } from "@higma-document-models/fig/font";
 import type { FontQuery } from "@higma-document-models/fig/font";
 import {
-  detectBrowserFontPlatform,
   figmaFontToQuery,
   getPhysicalFamilyAliases,
   type FontPlatform,
+  type BrowserFontPlatformDetectionHost,
 } from "@higma-document-models/fig/font";
 import type { AbstractFont, LoadedFont } from "@higma-document-models/fig/font";
 import { getVariableAxes, variationForWeight, wrapFontWithVariation } from "../variable-font";
@@ -62,8 +62,13 @@ type FontData = {
   blob(): Promise<Blob>;
 };
 
-type WindowWithLocalFonts = Window & {
-  queryLocalFonts: (options?: { postscriptNames?: string[] }) => Promise<FontData[]>;
+export type BrowserFontLoaderGlobalThisHost = BrowserFontPlatformDetectionHost &
+  {
+    readonly queryLocalFonts?: (options?: { postscriptNames?: string[] }) => Promise<FontData[]>;
+  };
+
+type BrowserFontLoaderLocalFontsHost = BrowserFontLoaderGlobalThisHost & {
+  readonly queryLocalFonts: (options?: { postscriptNames?: string[] }) => Promise<FontData[]>;
 };
 
 function isLoadableFontData(font: { readonly family: string; readonly fullName: string; readonly postscriptName: string; readonly style: string }): font is FontData {
@@ -100,18 +105,25 @@ function findVariantsThroughAliases(
 /**
  * Check if Local Font Access API is available.
  */
-export function isBrowserFontLoaderSupported(): boolean {
-  return typeof window !== "undefined" && "queryLocalFonts" in window;
+export function isBrowserFontLoaderSupported(host: BrowserFontLoaderGlobalThisHost): boolean {
+  return hasLocalFontsApi(host);
 }
 
 /**
- * Type guard: narrow `window` to `WindowWithLocalFonts`. The Local Font
- * Access API isn't part of the standard DOM lib types, so we attach the
- * extension signature via a structural narrowing instead of an `as`
- * cast at every call site.
+ * Type guard: narrow an explicit JavaScript global object to the
+ * Local Font Access API surface. The API isn't part of every DOM lib
+ * type, so we attach the extension signature via structural
+ * narrowing.
  */
-function hasLocalFontsApi(w: Window): w is WindowWithLocalFonts {
-  return "queryLocalFonts" in w;
+function hasLocalFontsApi(host: BrowserFontLoaderGlobalThisHost): host is BrowserFontLoaderLocalFontsHost {
+  return typeof host.queryLocalFonts === "function";
+}
+
+function requireLocalFontsHost(host: BrowserFontLoaderGlobalThisHost): BrowserFontLoaderLocalFontsHost {
+  if (!hasLocalFontsApi(host)) {
+    throw new Error("Browser font loader requires host.queryLocalFonts");
+  }
+  return host;
 }
 
 /** Browser font loader with permission tracking */
@@ -130,19 +142,8 @@ export type BrowserFontLoaderInstance = FontLoader & {
 };
 
 export type CreateBrowserFontLoaderOptions = {
-  /**
-   * Override the platform the alias chain resolves against. Default:
-   * `detectBrowserFontPlatform()` via `navigator.userAgent`.
-   *
-   * Test harnesses that want to drive each platform's resolution
-   * path deterministically should set this rather than mutating
-   * `navigator.userAgent` — the explicit handoff makes the
-   * environment under test obvious to anyone reading the test.
-   *
-   * Production callers should leave this unset; the default detection
-   * matches the host the browser is actually running on.
-   */
-  readonly platform?: FontPlatform;
+  readonly host: BrowserFontLoaderGlobalThisHost;
+  readonly platform: FontPlatform;
 };
 
 /**
@@ -151,31 +152,26 @@ export type CreateBrowserFontLoaderOptions = {
  * Requires user permission to access local fonts. The browser will
  * prompt the user when `queryLocalFonts()` is first called.
  *
- * The loader binds the **environment-specific** physical-alias
- * chain at construction time. The browser's queryLocalFonts catalogue
- * is host-OS-specific (macOS reports SFNS.ttf under "System Font",
- * Linux/Windows do not), and the alias chain must match. See
- * `@higma-document-models/fig/font/physical-aliases.ts` for the
- * per-platform contents and `detectBrowserFontPlatform` /
- * `CreateBrowserFontLoaderOptions.platform` for how the loader
- * decides which platform's table to use.
+ * The loader binds the **environment-specific** physical-alias chain
+ * at construction time. The browser's queryLocalFonts catalogue is
+ * host-OS-specific (macOS reports SFNS.ttf under "System Font",
+ * Linux/Windows do not), and the caller must pass the matching
+ * platform. Use `detectBrowserFontPlatform(globalThis)` at the ESM
+ * composition boundary when the browser host is the source for that
+ * decision.
  */
 export function createBrowserFontLoader(
-  options?: CreateBrowserFontLoaderOptions,
+  options: CreateBrowserFontLoaderOptions,
 ): BrowserFontLoaderInstance {
-  const platform: FontPlatform = options?.platform ?? detectBrowserFontPlatform();
+  const { host, platform } = options;
+  const localFontsHost = requireLocalFontsHost(host);
   const fontIndexRef = { value: null as Map<string, FontData[]> | null };
   const indexPromiseRef = { value: null as Promise<void> | null };
   const permissionGrantedRef = { value: false };
   const parsedFontRef = { value: new Map<string, AbstractFont>() };
 
   async function buildFontIndex(): Promise<void> {
-    if (typeof window === "undefined" || !hasLocalFontsApi(window)) {
-      fontIndexRef.value = new Map();
-      return;
-    }
-
-    const fonts = await window.queryLocalFonts();
+    const fonts = await localFontsHost.queryLocalFonts();
     permissionGrantedRef.value = true;
 
     const index = new Map<string, FontData[]>();
@@ -266,20 +262,14 @@ export function createBrowserFontLoader(
   async function isFontAvailable(family: string): Promise<boolean> {
     const index = await ensureIndex();
     // Check the requested name and any platform-specific physical
-    // alias before falling through to `document.fonts.check` — the
-    // alias chain reaches the same OS-installed file the browser
-    // indexes under a different family label (e.g. on darwin
-    // "SF Pro" → "System Font" via SFNS.ttf). The alias chain is
-    // platform-keyed so a stale macOS alias does not bleed into
-    // Linux/Windows availability checks.
+    // alias against the same Local Font Access catalogue used by
+    // `loadFont`. CSS-only availability lives in the CSS font loader;
+    // returning true here without loadable font bytes would hide a
+    // text-metrics SoT failure.
     for (const alias of getPhysicalFamilyAliases(family, platform)) {
       if (index.has(alias.toLowerCase())) {
         return true;
       }
-    }
-
-    if (typeof document !== "undefined" && document.fonts) {
-      return document.fonts.check(`16px "${family}"`);
     }
 
     return false;

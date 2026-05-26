@@ -166,7 +166,7 @@ export type FigDerivedBaseline = {
   readonly width: number;
   readonly lineY: number;
   readonly lineHeight: number;
-  readonly lineAscent: number;
+  readonly lineAscent?: number;
   readonly firstCharacter: number;
   readonly endCharacter: number;
 };
@@ -1258,6 +1258,21 @@ export type FigComponentPropDef = {
   readonly type?: KiwiEnumValue;
   readonly initialValue?: FigComponentPropValue;
   readonly sortPosition?: string;
+  readonly parentPropDefId?: FigGuid;
+  readonly isDeleted?: boolean;
+  readonly preferredValues?: FigComponentPropPreferredValues;
+  readonly varValue?: unknown;
+  readonly parameterConfig?: unknown;
+  readonly description?: string;
+  readonly [key: string]: unknown;
+};
+
+/**
+ * Preferred values for a Kiwi component property definition.
+ */
+export type FigComponentPropPreferredValues = {
+  readonly stringValues?: readonly string[];
+  readonly instanceSwapValues?: readonly unknown[];
   readonly [key: string]: unknown;
 };
 

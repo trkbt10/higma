@@ -151,7 +151,7 @@ function pdfQualityKey(settings: PdfImageQualitySettings): string {
   return `pdf-quality:${settings.quality}`;
 }
 
-/** Build the cache identity for resolved export settings. */
+/** Build the cache key for resolved export settings. */
 export function renderExportSettingsCacheKey(settings: ResolvedFigmaRenderExportSettings): RenderExportSettingsCacheKey {
   return makeRenderExportSettingsCacheKey([
     colorManagementKey(settings.imageColorManagement),

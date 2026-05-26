@@ -95,6 +95,8 @@ export function createNodeThumbnailRenderer(
       width: request.canvasBounds.width,
       height: request.canvasBounds.height,
       viewport: request.canvasBounds,
+      sourceDocumentReference: request.context.document,
+      sourceRevision: 0,
       blobs: request.context.blobs,
       images: request.context.images,
       childrenOf: request.context.document.childrenOf,

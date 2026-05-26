@@ -35,6 +35,11 @@
 export { colorToHex, uint8ArrayToBase64 } from "./color";
 
 export {
+  resolveBrowserRenderedFigmaExportCssBlendMode,
+  type BrowserRenderedFigmaExportCssBlendMode,
+} from "./blend-mode";
+
+export {
   resolveFill,
   resolveFillWithRenderSettings,
   resolveTopFill,
@@ -85,6 +90,7 @@ export {
 } from "./stroke";
 
 export {
+  resolveBrowserRenderedFigmaExportEffectBlendMode,
   resolveEffects,
   resolveEffectBounds,
   resolveFigmaBlurStdDeviation,
@@ -94,7 +100,10 @@ export {
 
 export {
   buildEffectStack,
+  buildLayerBlurCapturedContentEffectStack,
   renderShapeEffectStack,
+  resolveFrameSurfaceFilterEffects,
+  type FrameSurfaceFilterEffect,
   type ResolvedEffectStack,
   type ShapeEffectStackParams,
 } from "./effect-stack";

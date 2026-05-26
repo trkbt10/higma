@@ -13,6 +13,7 @@ import { FieldGroup, FieldRow } from "../../layout";
 import type { SelectOption } from "../../types";
 
 export type StackModeId = "NONE" | "HORIZONTAL" | "VERTICAL" | "GRID";
+export type StackJustifyId = "MIN" | "CENTER" | "MAX" | "SPACE_EVENLY" | "SPACE_BETWEEN";
 export type StackAlignId = "MIN" | "CENTER" | "MAX" | "BASELINE";
 
 export type AutoLayoutPadding = {
@@ -28,18 +29,18 @@ export type AutoLayoutSectionViewProps = {
   readonly mode: StackModeId;
   readonly gap: number;
   readonly padding: AutoLayoutPadding;
-  readonly primaryAlign: StackAlignId;
+  readonly primaryAlign: StackJustifyId;
   readonly counterAlign: StackAlignId;
-  readonly alignContent: StackAlignId;
+  readonly alignContent: StackJustifyId;
   readonly counterGap: number;
   readonly wrap: boolean;
   readonly reverseZ: boolean;
   readonly onModeChange: (mode: StackModeId) => void;
   readonly onGapChange: (value: number) => void;
   readonly onPaddingChange: (side: AutoLayoutPaddingSide, value: number) => void;
-  readonly onPrimaryAlignChange: (align: StackAlignId) => void;
+  readonly onPrimaryAlignChange: (align: StackJustifyId) => void;
   readonly onCounterAlignChange: (align: StackAlignId) => void;
-  readonly onAlignContentChange: (align: StackAlignId) => void;
+  readonly onAlignContentChange: (align: StackJustifyId) => void;
   readonly onCounterGapChange: (value: number) => void;
   readonly onWrapChange: (value: boolean) => void;
   readonly onReverseZChange: (value: boolean) => void;
@@ -57,6 +58,14 @@ export const STACK_ALIGN_OPTIONS: readonly SelectOption<StackAlignId>[] = [
   { value: "CENTER", label: "Center" },
   { value: "MAX", label: "Max" },
   { value: "BASELINE", label: "Baseline" },
+];
+
+export const STACK_JUSTIFY_OPTIONS: readonly SelectOption<StackJustifyId>[] = [
+  { value: "MIN", label: "Min" },
+  { value: "CENTER", label: "Center" },
+  { value: "MAX", label: "Max" },
+  { value: "SPACE_EVENLY", label: "Space evenly" },
+  { value: "SPACE_BETWEEN", label: "Space between" },
 ];
 
 /** Renders auto-layout mode, gap, padding, alignment, wrap and Z-order controls. */
@@ -157,7 +166,7 @@ export function AutoLayoutSectionView({
             label="Primary align"
             tooltip="Alignment along the stack's main axis (horizontal for HORIZONTAL stacks, vertical for VERTICAL stacks). Controls how children distribute along the stacking direction."
           >
-            <Select value={primaryAlign} onChange={onPrimaryAlignChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout primary align" />
+            <Select value={primaryAlign} onChange={onPrimaryAlignChange} options={STACK_JUSTIFY_OPTIONS} ariaLabel="Auto layout primary align" />
           </FieldGroup>
           <FieldGroup
             label="Counter align"
@@ -169,7 +178,7 @@ export function AutoLayoutSectionView({
             label="Align content"
             tooltip="When wrap is enabled, controls how rows/columns are distributed in the cross direction."
           >
-            <Select value={alignContent} onChange={onAlignContentChange} options={STACK_ALIGN_OPTIONS} ariaLabel="Auto layout align content" />
+            <Select value={alignContent} onChange={onAlignContentChange} options={STACK_JUSTIFY_OPTIONS} ariaLabel="Auto layout align content" />
           </FieldGroup>
           <FieldRow>
             <Toggle checked={wrap} onChange={onWrapChange} label="Wrap" />

@@ -104,11 +104,14 @@ async function handleRequest(req: WorkerRequest, w: WorkerCtx): Promise<WorkerRe
   if (missingFont) {
     return { id: req.id, ok: false, error: `font "${missingFont}" not available on host` };
   }
+  const resources = figDocumentResources(w.ctx);
   const result = await renderFigToSvg([node], {
     width: node.size.x,
     height: node.size.y,
     viewport: requireFigNodeViewport(node, "render-node-worker"),
-    ...figDocumentResources(w.ctx),
+    ...resources,
+    sourceDocumentReference: resources.document,
+    sourceRevision: 0,
     fontLoader: w.fontLoader,
   });
   const svg = String(result.svg);

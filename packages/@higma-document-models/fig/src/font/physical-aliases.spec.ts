@@ -194,63 +194,36 @@ describe("fontPlatformFromNodePlatform — Node.js platform mapping", () => {
 });
 
 describe("detectBrowserFontPlatform — userAgent sniffing", () => {
-  const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
-
-  function installNavigator(userAgent: string): void {
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: { userAgent },
-    });
-  }
-
-  function restoreNavigator(): void {
-    if (originalNavigatorDescriptor) {
-      Object.defineProperty(globalThis, "navigator", originalNavigatorDescriptor);
-      return;
-    }
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: undefined,
-    });
-  }
-
-  afterEach(() => {
-    restoreNavigator();
-  });
-
   it("returns 'unknown' when navigator is absent (Node, jsdom-less runner)", () => {
-    Object.defineProperty(globalThis, "navigator", {
-      configurable: true,
-      value: undefined,
-    });
-    expect(detectBrowserFontPlatform()).toBe("unknown");
+    expect(detectBrowserFontPlatform({})).toBe("unknown");
   });
 
   it("returns 'darwin' for representative Chromium Mac userAgents", () => {
-    installNavigator(
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    );
-    expect(detectBrowserFontPlatform()).toBe("darwin");
+    expect(detectBrowserFontPlatform({
+      navigator: {
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      },
+    })).toBe("darwin");
   });
 
   it("returns 'win32' for representative Chromium Windows userAgents", () => {
-    installNavigator(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    );
-    expect(detectBrowserFontPlatform()).toBe("win32");
+    expect(detectBrowserFontPlatform({
+      navigator: {
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      },
+    })).toBe("win32");
   });
 
   it("returns 'linux' for representative Chromium Linux userAgents", () => {
-    installNavigator(
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    );
-    expect(detectBrowserFontPlatform()).toBe("linux");
+    expect(detectBrowserFontPlatform({
+      navigator: {
+        userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      },
+    })).toBe("linux");
   });
 
   it("returns 'unknown' when the userAgent string is empty or unrecognised", () => {
-    installNavigator("");
-    expect(detectBrowserFontPlatform()).toBe("unknown");
-    installNavigator("CustomSandboxed/1.0");
-    expect(detectBrowserFontPlatform()).toBe("unknown");
+    expect(detectBrowserFontPlatform({ navigator: { userAgent: "" } })).toBe("unknown");
+    expect(detectBrowserFontPlatform({ navigator: { userAgent: "CustomSandboxed/1.0" } })).toBe("unknown");
   });
 });

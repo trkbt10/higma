@@ -1,8 +1,8 @@
-/** @file Selection hit resolution for Kiwi editor bounds. */
+/** @file Selection hit resolution for renderer-derived SceneGraph bounds. */
 import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import { guidToString } from "@higma-document-models/fig/domain";
 import type { FigGuid } from "@higma-document-models/fig/types";
-import { filterMarqueeSelectionByHierarchy } from "./bounds";
+import { filterMarqueeSelectionByHierarchy } from "./rendered-node-bounds";
 
 /** Resolve a canvas hit string back to the Kiwi GUID carried by the node. */
 export function resolveNodeGuidFromCanvasId(

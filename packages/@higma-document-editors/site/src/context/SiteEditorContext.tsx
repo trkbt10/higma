@@ -134,20 +134,38 @@ function resolveActiveBreakpointName(workspace: SiteEditorWorkspace, breakpointI
   return breakpoint.name;
 }
 
+function resolveBreakpoint(workspace: SiteEditorWorkspace, breakpointId: string): SiteBreakpointVariant["breakpointName"] {
+  const breakpoint = workspace.breakpoints.find((item) => item.id === breakpointId);
+  if (!breakpoint) {
+    throw new Error(`SiteEditorProvider could not find breakpoint ${breakpointId}`);
+  }
+  return breakpoint.name;
+}
+
+function resolveRequestedBreakpointIdForSurface(
+  workspace: SiteEditorWorkspace,
+  surface: SiteRenderSurface,
+  breakpointId: string | null,
+): string | null {
+  if (!breakpointId) {
+    return null;
+  }
+  const breakpointName = resolveBreakpoint(workspace, breakpointId);
+  if (!surface.breakpointNames.includes(breakpointName)) {
+    return null;
+  }
+  return breakpointId;
+}
+
 function resolveBreakpointIdForSurface(
   workspace: SiteEditorWorkspace,
   surfaceId: string,
   breakpointId: string | null,
 ): string | null {
   const surface = resolveActiveSurface(workspace, surfaceId);
-  if (breakpointId) {
-    const breakpoint = workspace.breakpoints.find((item) => item.id === breakpointId);
-    if (!breakpoint) {
-      throw new Error(`SiteEditorProvider could not find breakpoint ${breakpointId}`);
-    }
-    if (surface.breakpointNames.includes(breakpoint.name)) {
-      return breakpointId;
-    }
+  const requestedBreakpointId = resolveRequestedBreakpointIdForSurface(workspace, surface, breakpointId);
+  if (requestedBreakpointId) {
+    return requestedBreakpointId;
   }
   const breakpoint = workspace.breakpoints.find((item) => surface.breakpointNames.includes(item.name));
   if (!breakpoint) {
@@ -162,12 +180,9 @@ function assertSurfaceSupportsBreakpoint(
   breakpointId: string,
 ): void {
   const surface = resolveActiveSurface(workspace, surfaceId);
-  const breakpoint = workspace.breakpoints.find((item) => item.id === breakpointId);
-  if (!breakpoint) {
-    throw new Error(`SiteEditorProvider could not find breakpoint ${breakpointId}`);
-  }
-  if (!surface.breakpointNames.includes(breakpoint.name)) {
-    throw new Error(`Site surface ${surfaceId} does not support breakpoint ${breakpoint.name}`);
+  const breakpointName = resolveBreakpoint(workspace, breakpointId);
+  if (!surface.breakpointNames.includes(breakpointName)) {
+    throw new Error(`Site surface ${surfaceId} does not support breakpoint ${breakpointName}`);
   }
 }
 

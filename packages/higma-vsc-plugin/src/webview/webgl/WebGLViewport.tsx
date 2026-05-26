@@ -14,6 +14,7 @@
  */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
+import type { KiwiSceneGraphMutation } from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "@higma-document-renderers/fig/scene-graph/render";
 import { useWebGLViewport } from "./use-webgl-viewport";
 import { WebGLLoadingOverlay } from "./WebGLLoadingOverlay";
@@ -21,6 +22,7 @@ import { WebGLLoadingOverlay } from "./WebGLLoadingOverlay";
 type Props = {
   readonly sceneGraph: SceneGraph | null;
   readonly renderOptions?: SceneGraphRenderOptions;
+  readonly kiwiDocumentMutation: KiwiSceneGraphMutation;
   /** Active zoom (the viewport transform's `scale`). The renderer paints
    *  the world-space `sceneGraph.viewport` rect onto the surface itself,
    *  so this value is *not* used as a CSS transform. It only feeds the
@@ -28,7 +30,7 @@ type Props = {
    *  zooms — e.g. zooming to 4× allocates a denser framebuffer so 1px
    *  on screen still maps to ~1px of fidelity in the GL output. */
   readonly viewportScale: number;
-  /** ms to defer GL init after mount so the overlay can paint first. */
+  /** Explicit ms to defer GL init after mount for surfaces that intentionally prioritize an already-committed overlay. */
   readonly initializationDelayMs?: number;
 };
 
@@ -36,12 +38,14 @@ type Props = {
 export function WebGLViewport({
   sceneGraph,
   renderOptions,
+  kiwiDocumentMutation,
   viewportScale,
-  initializationDelayMs = 16,
+  initializationDelayMs,
 }: Props) {
   const { canvasRef, isReady, status } = useWebGLViewport({
     sceneGraph,
     renderOptions,
+    kiwiDocumentMutation,
     viewportScale,
     initializationDelayMs,
   });

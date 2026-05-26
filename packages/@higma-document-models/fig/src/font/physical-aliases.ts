@@ -123,6 +123,12 @@
  */
 export type FontPlatform = "darwin" | "linux" | "win32" | "unknown";
 
+export type BrowserFontPlatformDetectionHost = {
+  readonly navigator?: {
+    readonly userAgent?: string;
+  };
+};
+
 /**
  * Map a Node.js `process.platform` value into the SoT's
  * `FontPlatform`. Non-darwin/linux/win32 values become `unknown`;
@@ -137,22 +143,20 @@ export function fontPlatformFromNodePlatform(p: NodeJS.Platform): FontPlatform {
 }
 
 /**
- * Detect the host OS the running browser reports through
- * `navigator.userAgent`. Returns `unknown` when navigator is absent
- * (Node, jsdom-less Vitest, headless contexts before init scripts).
+ * Detect the host OS reported through an explicit JavaScript global
+ * object's `navigator.userAgent`. Returns `unknown` when navigator is
+ * absent (Node, jsdom-less Vitest, headless contexts before init
+ * scripts).
  *
  * The browser does not expose the OS directly through the Local
  * Font Access API; UA sniffing is the only signal available before
  * the catalogue is built. Test harnesses can pre-set
- * `navigator.userAgent` (or `globalThis.navigator`) via Playwright's
- * `addInitScript` / Vitest's environment override to drive each
- * platform's resolution path deterministically.
+ * `host.navigator.userAgent` via Playwright's `addInitScript` /
+ * Vitest's environment override to drive each platform's resolution
+ * path deterministically.
  */
-export function detectBrowserFontPlatform(): FontPlatform {
-  if (typeof navigator === "undefined") {
-    return "unknown";
-  }
-  const ua = navigator.userAgent;
+export function detectBrowserFontPlatform(host: BrowserFontPlatformDetectionHost): FontPlatform {
+  const ua = host.navigator?.userAgent;
   if (typeof ua !== "string" || ua.length === 0) {
     return "unknown";
   }

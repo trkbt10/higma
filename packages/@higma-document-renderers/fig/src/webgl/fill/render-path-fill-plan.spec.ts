@@ -1,14 +1,7 @@
 /** @file Tests for WebGL path fill planning from RenderTree contours. */
 
-import type { Fill } from "@higma-document-renderers/fig/scene-graph";
 import type { RenderPathContour } from "../../scene-graph";
-import { createWebGLPathFillPlan, resolvedFillOverrideToWebGLFills } from "./render-path-fill-plan";
-
-const whiteFill: Fill = {
-  type: "solid",
-  color: { r: 1, g: 1, b: 1, a: 1 },
-  opacity: 1,
-};
+import { createWebGLPathFillPlan } from "./render-path-fill-plan";
 
 describe("createWebGLPathFillPlan", () => {
   it("keeps each RenderPathContour as a separate WebGL fill instruction", () => {
@@ -20,7 +13,7 @@ describe("createWebGLPathFillPlan", () => {
       { d: "M80 0H90V10H80Z" },
     ];
 
-    const plan = createWebGLPathFillPlan({ paths, sourceFills: [whiteFill] });
+    const plan = createWebGLPathFillPlan({ paths });
 
     expect(plan).toHaveLength(5);
     expect(plan.map((instruction) => instruction.fillRule)).toEqual([
@@ -39,38 +32,23 @@ describe("createWebGLPathFillPlan", () => {
       { d: "M20 0H30V10H20Z" },
     ];
 
-    const plan = createWebGLPathFillPlan({ paths, sourceFills: [whiteFill] });
+    const plan = createWebGLPathFillPlan({ paths });
 
     expect(plan.map((instruction) => instruction.fillRule)).toEqual(["evenodd", "nonzero"]);
     expect(plan[0].contours[0].windingRule).toBe("evenodd");
     expect(plan[1].contours[0].windingRule).toBe("nonzero");
   });
 
-  it("uses per-contour fillOverride as the path-level paint SoT", () => {
-    const sourceFills: Fill[] = [whiteFill];
-
-    const result = resolvedFillOverrideToWebGLFills({
+  it("preserves per-contour fillOverride without resolving paint in the geometry plan", () => {
+    const fillOverride = {
       attrs: { fill: "#336699", fillOpacity: 0.4 },
-    }, sourceFills);
+    };
+    const paths: RenderPathContour[] = [
+      { d: "M0 0H10V10H0Z", fillOverride },
+    ];
 
-    expect(result).toEqual({ fills: [{
-      type: "solid",
-      color: { r: 0.2, g: 0.4, b: 0.6, a: 1 },
-      opacity: 0.4,
-    }] });
-  });
+    const plan = createWebGLPathFillPlan({ paths });
 
-  it("keeps fill=none as an empty paint list for that contour", () => {
-    const result = resolvedFillOverrideToWebGLFills({
-      attrs: { fill: "none" },
-    }, [whiteFill]);
-
-    expect(result).toEqual({ fills: [] });
-  });
-
-  it("throws on unsupported fillOverride", () => {
-    expect(() => resolvedFillOverrideToWebGLFills({
-      attrs: { fill: "url(#paint-unsupported)" },
-    }, [whiteFill])).toThrow("WebGL path fill plan does not support fillOverride url(#paint-unsupported)");
+    expect(plan[0].fillOverride).toBe(fillOverride);
   });
 });

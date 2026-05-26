@@ -81,9 +81,11 @@ export {
   type AutoLayoutPaddingSide,
   type AutoLayoutSectionViewProps,
   type StackAlignId,
+  type StackJustifyId,
   type StackModeId,
   STACK_MODE_OPTIONS,
   STACK_ALIGN_OPTIONS,
+  STACK_JUSTIFY_OPTIONS,
 } from "./layout/AutoLayoutSectionView";
 export {
   LayoutConstraintsSectionView,

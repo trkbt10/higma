@@ -17,6 +17,12 @@ import type { FigNode } from "@higma-document-models/fig/types";
 import { readKiwiTransform } from "@higma-document-models/fig/matrix";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import {
+  createKiwiSceneGraphPipeline,
+  flattenSceneGraphNodeBounds,
+  type KiwiSceneGraphMutation,
+  type SceneGraph,
+} from "@higma-document-renderers/fig/scene-graph";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import { Button, Select, Tabs, Toggle, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import {
@@ -30,7 +36,7 @@ import type { FigEditorRendererKind } from "../../src/canvas/rendering/renderer-
 import {
   FIG_LEGEND_ORDER,
   FIG_NODE_CATEGORY_REGISTRY,
-  collectFigInspectorBoxes,
+  collectFigInspectorBoxesFromRenderedNodeBounds,
   figNodeToInspectorTree,
 } from "../../src/inspector";
 import { useBrowserTextFontResolver } from "./browser-text-font-resolver";
@@ -56,6 +62,19 @@ type FrameInfo = {
   readonly viewportX: number;
   readonly viewportY: number;
 };
+
+const RENDERER_DEBUG_KIWI_DOCUMENT_MUTATION: KiwiSceneGraphMutation = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
+
+function requireFrameGuidKey(frame: FigNode): string {
+  if (frame.guid === undefined) {
+    throw new Error("RendererDebugView frame requires a Kiwi guid");
+  }
+  return guidToString(frame.guid);
+}
 
 const containerStyle: CSSProperties = {
   flex: 1,
@@ -266,34 +285,50 @@ function renderFontAccessControl({
   return <Button variant="outline" size="sm" onClick={onRequestFontAccess}>Enable Fonts</Button>;
 }
 
-function shiftInspectorBoxes(
-  boxes: readonly InspectorBoxInfo[],
-  origin: { readonly x: number; readonly y: number },
-): readonly InspectorBoxInfo[] {
-  return boxes.map((box) => ({
-    ...box,
-    transform: [
-      box.transform[0],
-      box.transform[1],
-      box.transform[2],
-      box.transform[3],
-      box.transform[4] - origin.x,
-      box.transform[5] - origin.y,
-    ],
-  }));
+function buildFramePreviewSceneGraph({
+  currentCanvas,
+  currentFrame,
+  resources,
+  showHiddenNodes,
+  textFontResolver,
+}: {
+  readonly currentCanvas: CanvasInfo;
+  readonly currentFrame: FrameInfo;
+  readonly resources: FigDocumentResources;
+  readonly showHiddenNodes: boolean;
+  readonly textFontResolver: TextFontResolver | undefined;
+}): SceneGraph {
+  const sceneGraph = createKiwiSceneGraphPipeline().resolve({
+    page: currentCanvas.node,
+    nodes: [currentFrame.node],
+    kiwiDocumentMutation: RENDERER_DEBUG_KIWI_DOCUMENT_MUTATION,
+    canvasWidth: currentFrame.width,
+    canvasHeight: currentFrame.height,
+    viewportX: currentFrame.viewportX,
+    viewportY: currentFrame.viewportY,
+    viewportWidth: currentFrame.width,
+    viewportHeight: currentFrame.height,
+    showHiddenNodes,
+    resources,
+    textFontResolver,
+  });
+  if (sceneGraph === null) {
+    throw new Error(`RendererDebugView cannot build a SceneGraph for frame "${currentFrame.name}"`);
+  }
+  return sceneGraph;
 }
 
 function collectFramePreviewInspectorBoxes({
+  context,
   currentFrame,
-  resources,
+  sceneGraph,
   rendererMode,
-  showHiddenNodes,
   inspectorEnabled,
 }: {
+  readonly context: FigDocumentContext;
   readonly currentFrame: FrameInfo;
-  readonly resources: FigDocumentResources;
+  readonly sceneGraph: ReturnType<typeof buildFramePreviewSceneGraph>;
   readonly rendererMode: FigEditorRendererKind;
-  readonly showHiddenNodes: boolean;
   readonly inspectorEnabled: boolean;
 }): readonly InspectorBoxInfo[] {
   if (!inspectorEnabled) {
@@ -302,14 +337,11 @@ function collectFramePreviewInspectorBoxes({
   if (rendererMode !== "svg") {
     return [];
   }
-  return shiftInspectorBoxes(
-    collectFigInspectorBoxes({
-      root: currentFrame.node,
-      childrenOf: resources.childrenOf,
-      showHiddenNodes,
-    }),
-    { x: currentFrame.viewportX, y: currentFrame.viewportY },
-  );
+  return collectFigInspectorBoxesFromRenderedNodeBounds({
+    document: context.document,
+    bounds: flattenSceneGraphNodeBounds(sceneGraph),
+    shift: { x: -currentFrame.viewportX, y: -currentFrame.viewportY },
+  });
 }
 
 function renderFramePreview({
@@ -339,11 +371,19 @@ function renderFramePreview({
   readonly onHover: (nodeId: string | null) => void;
   readonly onClick: (nodeId: string) => void;
 }): ReactNode {
-  const boxes = collectFramePreviewInspectorBoxes({
+  const frameGuidKey = requireFrameGuidKey(currentFrame.node);
+  const sceneGraph = buildFramePreviewSceneGraph({
+    currentCanvas,
     currentFrame,
     resources,
-    rendererMode,
     showHiddenNodes,
+    textFontResolver,
+  });
+  const boxes = collectFramePreviewInspectorBoxes({
+    context,
+    currentFrame,
+    sceneGraph,
+    rendererMode,
     inspectorEnabled,
   });
 
@@ -356,19 +396,19 @@ function renderFramePreview({
         viewBox={`0 0 ${currentFrame.width} ${currentFrame.height}`}
       >
         <FigPageRenderer
-          page={currentCanvas.node}
-          nodes={[currentFrame.node]}
-          canvasWidth={currentFrame.width}
-          canvasHeight={currentFrame.height}
-          viewportX={currentFrame.viewportX}
-          viewportY={currentFrame.viewportY}
-          viewportWidth={currentFrame.width}
-          viewportHeight={currentFrame.height}
+          sceneGraph={sceneGraph}
+          kiwiDocumentMutation={RENDERER_DEBUG_KIWI_DOCUMENT_MUTATION}
+          surfaceWidth={currentFrame.width}
+          surfaceHeight={currentFrame.height}
           viewportScale={1}
-          resources={resources}
           renderOptions={createFigFamilyRenderOptions(context)}
           renderer={rendererMode}
-          textFontResolver={textFontResolver}
+          webGLSurface={{
+            surfaceKey: `renderer-debug-webgl-frame:${frameGuidKey}`,
+            kind: "root",
+            rootGuidKey: frameGuidKey,
+            label: `Renderer debug WebGL frame ${frameGuidKey}`,
+          }}
         />
       </svg>
       {inspectorEnabled && rendererMode === "svg" && (

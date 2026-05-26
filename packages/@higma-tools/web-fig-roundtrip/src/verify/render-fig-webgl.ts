@@ -140,6 +140,7 @@ export async function renderFigViewports(
   );
 
   const results: FigDirectRenderResult[] = [];
+  const resources = figDocumentResources(context);
   for (const w of wrappers) {
     const sz = w.node.size;
     if (!sz) {
@@ -148,7 +149,9 @@ export async function renderFigViewports(
     const width = Math.round(sz.x);
     const height = Math.round(sz.y);
     const sceneGraph = buildSceneGraph([rootAtOrigin(w.node)], {
-      ...figDocumentResources(context),
+      ...resources,
+      sourceDocumentReference: resources.document,
+      sourceRevision: 0,
       canvasSize: { width, height },
       viewport: { x: 0, y: 0, width, height },
       showHiddenNodes: false,
@@ -305,9 +308,12 @@ export async function* streamFigFrames(
     context,
   );
   const pixelRatio = options.pixelRatio ?? 1;
+  const resources = figDocumentResources(context);
   for (const t of targets) {
     const sceneGraph = buildSceneGraph([rootAtOrigin(t.node)], {
-      ...figDocumentResources(context),
+      ...resources,
+      sourceDocumentReference: resources.document,
+      sourceRevision: 0,
       canvasSize: { width: t.width, height: t.height },
       viewport: { x: 0, y: 0, width: t.width, height: t.height },
       showHiddenNodes: false,
@@ -362,9 +368,12 @@ export async function renderFigNodes(
     context,
   );
   const out: { key: string; png: Uint8Array; width: number; height: number }[] = [];
+  const resources = figDocumentResources(context);
   for (const t of resolved) {
     const sceneGraph = buildSceneGraph([rootAtOrigin(t.node)], {
-      ...figDocumentResources(context),
+      ...resources,
+      sourceDocumentReference: resources.document,
+      sourceRevision: 0,
       canvasSize: { width: t.width, height: t.height },
       viewport: { x: 0, y: 0, width: t.width, height: t.height },
       showHiddenNodes: false,
@@ -720,20 +729,17 @@ function uint8ArrayReplacer(_key: string, value: unknown): unknown {
 type RGBA = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
 
 /**
- * Browser-side surface installed by the WebGL harness bundle
+ * Global operation surface installed by the WebGL harness bundle
  * (`webgl-harness/main.ts`). `renderSceneGraph` is the entry point;
  * `__webglRenderSlots` is the result inbox the host polls — keyed by
  * an opaque token the host chose per call. Using a typed Map (vs.
- * dynamic property names on `window`) lets the page.evaluate body
+ * dynamic global property names) lets the page.evaluate body
  * stay strictly typed end-to-end.
  */
-declare global {
-  // eslint-disable-next-line no-restricted-syntax, @typescript-eslint/consistent-type-definitions -- ambient Window augmentation requires interface merging
-  interface Window {
-    renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
-    __webglRenderSlots?: Map<string, string>;
-  }
-}
+type WebGLHarnessGlobalThis = typeof globalThis & {
+  renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
+  __webglRenderSlots?: Map<string, string>;
+};
 
 async function captureWebgl(
   page: Page,
@@ -750,8 +756,8 @@ async function captureWebgl(
   // propagate cleanly across all puppeteer minor versions, so we
   // also explicitly drive the rendering call via
   // `page.exposeFunction` + `page.waitForFunction` to bypass the
-  // `Runtime.callFunctionOn` timeout entirely. The browser-side
-  // `renderSceneGraph` now writes its result into a global slot,
+  // `Runtime.callFunctionOn` timeout entirely. The global
+  // `renderSceneGraph` writes its result into a global slot,
   // and the host polls until it lands.
   const slot = `__renderResult_${Math.random().toString(36).slice(2)}`;
   await page.evaluate(
@@ -761,12 +767,13 @@ async function captureWebgl(
       pixelRatio: number;
       backgroundColor?: RGBA;
     }) => {
-      const renderSceneGraph = window.renderSceneGraph;
+      const webGLHarnessGlobalThis = globalThis as WebGLHarnessGlobalThis;
+      const renderSceneGraph = webGLHarnessGlobalThis.renderSceneGraph;
       if (!renderSceneGraph) {
-        throw new Error("captureWebgl: window.renderSceneGraph is not installed; harness bundle did not boot");
+        throw new Error("captureWebgl: globalThis.renderSceneGraph is not installed; harness bundle did not boot");
       }
-      const slots = window.__webglRenderSlots ?? new Map<string, string>();
-      window.__webglRenderSlots = slots;
+      const slots = webGLHarnessGlobalThis.__webglRenderSlots ?? new Map<string, string>();
+      webGLHarnessGlobalThis.__webglRenderSlots = slots;
       slots.set(args.slot, "pending");
       renderSceneGraph(args.json, args.pixelRatio, args.backgroundColor).then((dataUrl) => {
         slots.set(args.slot, dataUrl);
@@ -782,14 +789,16 @@ async function captureWebgl(
   // independent of `Runtime.callFunctionOn`'s built-in budget.
   await page.waitForFunction(
     (slotName: string) => {
-      const v = window.__webglRenderSlots?.get(slotName);
+      const webGLHarnessGlobalThis = globalThis as WebGLHarnessGlobalThis;
+      const v = webGLHarnessGlobalThis.__webglRenderSlots?.get(slotName);
       return typeof v === "string" && v !== "pending";
     },
     { timeout: 300_000, polling: 250 },
     slot,
   );
   const dataUrl = await page.evaluate((slotName: string) => {
-    const v = window.__webglRenderSlots?.get(slotName);
+    const webGLHarnessGlobalThis = globalThis as WebGLHarnessGlobalThis;
+    const v = webGLHarnessGlobalThis.__webglRenderSlots?.get(slotName);
     if (typeof v !== "string") {
       throw new Error(`captureWebgl: slot "${slotName}" did not flip to a string payload`);
     }

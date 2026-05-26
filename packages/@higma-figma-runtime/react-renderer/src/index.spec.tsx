@@ -10,6 +10,10 @@ import { NODE_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/
 import type { FigColor, FigGuid, FigMatrix, FigNode, KiwiEnumValue } from "@higma-document-models/fig/types";
 import { createNodeId, type SceneGraph } from "@higma-document-renderers/fig/scene-graph/model";
 import {
+  createKiwiSceneGraphPipeline,
+  type KiwiSceneGraphMutation,
+} from "@higma-document-renderers/fig/scene-graph";
+import {
   createFigFamilyRenderOptions,
   FigFamilyPageRenderer,
 } from "./index";
@@ -21,6 +25,12 @@ const ONE_PIXEL_PNG = Uint8Array.from(Buffer.from(
 
 const PHASE_PAINT: KiwiEnumValue = { value: 0, name: "PAINT" };
 const IDENTITY_MATRIX: FigMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+const INITIAL_KIWI_DOCUMENT_MUTATION: KiwiSceneGraphMutation = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
+const MANAGED_IMAGE_SCENE_GRAPH_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 type RuntimeFixtureNodeType = "CANVAS" | "RECTANGLE";
 
 function kiwiGuid(sessionID: number, localID: number): FigGuid {
@@ -124,6 +134,7 @@ function createManagedImageSceneGraph(): SceneGraph {
     width: 1,
     height: 1,
     version: 1,
+    sourceDocumentReference: MANAGED_IMAGE_SCENE_GRAPH_SOURCE_DOCUMENT_REFERENCE,
     root: {
       type: "group",
       id: createNodeId("root"),
@@ -156,6 +167,27 @@ function createManagedImageSceneGraph(): SceneGraph {
       ],
     },
   };
+}
+
+function requireRuntimeSceneGraph(
+  sceneGraph: SceneGraph | null,
+  owner: string,
+): SceneGraph {
+  if (sceneGraph === null) {
+    throw new Error(`${owner} requires a non-null SceneGraph`);
+  }
+  return sceneGraph;
+}
+
+function requireSceneRootChild(sceneGraph: SceneGraph | null, index: number) {
+  if (sceneGraph === null) {
+    throw new Error("SceneGraph cache spec requires a non-null SceneGraph");
+  }
+  const child = sceneGraph.root.children[index];
+  if (child === undefined) {
+    throw new Error(`SceneGraph cache spec requires root child ${index}`);
+  }
+  return child;
 }
 
 describe("createFigFamilyRenderOptions", () => {
@@ -191,13 +223,6 @@ describe("FigFamilyPageRenderer", () => {
     const renderOptions = createFigFamilyRenderOptions(context);
 
     const html = renderToStaticMarkup(createElement(FigFamilyPageRenderer, {
-      page: null,
-      canvasWidth: 1,
-      canvasHeight: 1,
-      resources: {
-        ...figDocumentResources(context),
-        styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
-      },
       sceneGraph,
       renderOptions,
     }));
@@ -205,24 +230,192 @@ describe("FigFamilyPageRenderer", () => {
     expect(html).toContain("data:image/png");
   });
 
-  it("prunes the runtime SceneGraph to the requested viewport before React rendering", () => {
+  it("renders the complete runtime SceneGraph even when nodes are outside the viewport", () => {
     const { context, page, nodes } = createViewportContext();
+    const sceneGraph = requireRuntimeSceneGraph(
+      createKiwiSceneGraphPipeline().resolve({
+        page,
+        nodes,
+        canvasWidth: 100,
+        canvasHeight: 100,
+        viewportX: 0,
+        viewportY: 0,
+        viewportWidth: 100,
+        viewportHeight: 100,
+        kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+        showHiddenNodes: false,
+        resources: {
+          ...figDocumentResources(context),
+          styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
+        },
+      }),
+      "FigFamilyPageRenderer complete SceneGraph spec",
+    );
     const html = renderToStaticMarkup(createElement(FigFamilyPageRenderer, {
-      page,
-      nodes,
-      canvasWidth: 100,
-      canvasHeight: 100,
-      viewportX: 0,
-      viewportY: 0,
-      viewportWidth: 100,
-      viewportHeight: 100,
-      resources: {
-        ...figDocumentResources(context),
-        styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
-      },
+      sceneGraph,
     }));
 
     expect(html).toContain("#ff0000");
-    expect(html).not.toContain("#0000ff");
+    expect(html).toContain("#0000ff");
+  });
+});
+
+describe("createKiwiSceneGraphPipeline", () => {
+  it("reuses unchanged sibling SceneNodes for node-content mutations", () => {
+    const { context, page, nodes } = createViewportContext();
+    const pipeline = createKiwiSceneGraphPipeline();
+    const first = pipeline.resolve({
+      page,
+      nodes,
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+      showHiddenNodes: false,
+      resources: figDocumentResources(context),
+    });
+    const visible = nodes[0];
+    if (visible === undefined) {
+      throw new Error("SceneGraph cache spec requires visible node");
+    }
+    const outside = nodes[1];
+    if (outside === undefined) {
+      throw new Error("SceneGraph cache spec requires outside node");
+    }
+    const movedVisible = { ...visible, transform: { ...IDENTITY_MATRIX, m02: 10 } };
+    const nextContext = createFigDocumentContextFromNodeChanges({
+      nodeChanges: [page, movedVisible, outside],
+      blobs: [],
+      images: new Map(),
+      metadata: null,
+    });
+    const second = pipeline.resolve({
+      page,
+      nodes: [movedVisible, outside],
+      kiwiDocumentMutation: { revision: 1, scope: "node-content", changedGuidKeys: ["9:2"] },
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      showHiddenNodes: false,
+      resources: figDocumentResources(nextContext),
+    });
+
+    expect(requireSceneRootChild(second, 0)).not.toBe(requireSceneRootChild(first, 0));
+    expect(requireSceneRootChild(second, 1)).toBe(requireSceneRootChild(first, 1));
+  });
+
+  it("reuses unchanged sibling SceneNodes when the same Kiwi page GUID is reindexed", () => {
+    const { context, page, nodes } = createViewportContext();
+    const pipeline = createKiwiSceneGraphPipeline();
+    const first = pipeline.resolve({
+      page,
+      nodes,
+      kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      showHiddenNodes: false,
+      resources: figDocumentResources(context),
+    });
+    const visible = nodes[0];
+    if (visible === undefined) {
+      throw new Error("SceneGraph cache spec requires visible node");
+    }
+    const outside = nodes[1];
+    if (outside === undefined) {
+      throw new Error("SceneGraph cache spec requires outside node");
+    }
+    const reindexedPage = { ...page };
+    const movedVisible = { ...visible, transform: { ...IDENTITY_MATRIX, m02: 10 } };
+    const nextContext = createFigDocumentContextFromNodeChanges({
+      nodeChanges: [reindexedPage, movedVisible, outside],
+      blobs: [],
+      images: new Map(),
+      metadata: null,
+    });
+    const second = pipeline.resolve({
+      page: reindexedPage,
+      nodes: [movedVisible, outside],
+      kiwiDocumentMutation: { revision: 1, scope: "node-content", changedGuidKeys: ["9:2"] },
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      showHiddenNodes: false,
+      resources: figDocumentResources(nextContext),
+    });
+
+    expect(requireSceneRootChild(second, 0)).not.toBe(requireSceneRootChild(first, 0));
+    expect(requireSceneRootChild(second, 1)).toBe(requireSceneRootChild(first, 1));
+  });
+
+  it("uses the Kiwi document mutation revision as the SceneGraph resource version", () => {
+    const { context, page, nodes } = createViewportContext();
+    const pipeline = createKiwiSceneGraphPipeline();
+    const scene = pipeline.resolve({
+      page,
+      nodes,
+      kiwiDocumentMutation: { revision: 7, scope: "node-content", changedGuidKeys: ["9:2"] },
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      showHiddenNodes: false,
+      resources: figDocumentResources(context),
+    });
+
+    expect(scene?.version).toBe(7);
+  });
+
+  it("does not reuse SceneNodes for document-structure mutations", () => {
+    const { context, page, nodes } = createViewportContext();
+    const pipeline = createKiwiSceneGraphPipeline();
+    const first = pipeline.resolve({
+      page,
+      nodes,
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+      showHiddenNodes: false,
+      resources: figDocumentResources(context),
+    });
+    const nextContext = createFigDocumentContextFromNodeChanges({
+      nodeChanges: [page, ...nodes],
+      blobs: [],
+      images: new Map(),
+      metadata: null,
+    });
+    const second = pipeline.resolve({
+      page,
+      nodes,
+      kiwiDocumentMutation: { revision: 1, scope: "document-structure", changedGuidKeys: ["9:2"] },
+      canvasWidth: 300,
+      canvasHeight: 100,
+      viewportX: 0,
+      viewportY: 0,
+      viewportWidth: 300,
+      viewportHeight: 100,
+      showHiddenNodes: false,
+      resources: figDocumentResources(nextContext),
+    });
+
+    expect(requireSceneRootChild(second, 1)).not.toBe(requireSceneRootChild(first, 1));
   });
 });

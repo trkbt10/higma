@@ -1,12 +1,18 @@
 /** @file Effects property section. */
+import { memo } from "react";
+import { sameKiwiNodeExceptTransform } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { EffectsSectionView, type EffectView } from "@higma-editor-kernel/ui/property-sections";
 import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { addEffect, effectSummary, effectToView, removeEffect, updateEffect } from "./effect-domain";
 
+type EffectsSectionProps = {
+  readonly node: FigNode;
+};
+
 /** Render Kiwi effects as editable property controls. */
-export function EffectsSection({ node }: { readonly node: FigNode }) {
+function EffectsSectionContent({ node }: EffectsSectionProps) {
   const { updateSelectedNodes } = useFigEditor();
   return (
     <section style={sectionStyle}>
@@ -24,3 +30,9 @@ export function EffectsSection({ node }: { readonly node: FigNode }) {
     </section>
   );
 }
+
+function sameEffectsSectionProps(left: EffectsSectionProps, right: EffectsSectionProps): boolean {
+  return sameKiwiNodeExceptTransform(left.node, right.node);
+}
+
+export const EffectsSection = memo(EffectsSectionContent, sameEffectsSectionProps);

@@ -1,5 +1,5 @@
-/** @file Canvas extents derived from Kiwi node bounds. */
-import type { NodeBounds } from "../interaction/bounds";
+/** @file Canvas extents derived from renderer SceneGraph node bounds. */
+import type { SceneGraphNodeBounds } from "@higma-document-renderers/fig/scene-graph";
 import { layoutBoundsBottom, layoutBoundsRight } from "./layout-bounds";
 
 export type FigCanvasBounds = {
@@ -12,8 +12,10 @@ export type FigCanvasBounds = {
 const CANVAS_PADDING = 160;
 const MIN_CANVAS_SIZE = 320;
 
-/** Compute an infinite-canvas surface that contains every node bound. */
-export function computeCanvasBoundsFromNodeBounds(bounds: readonly NodeBounds[]): FigCanvasBounds {
+/** Compute an infinite-canvas surface that contains every rendered node bound. */
+export function computeCanvasBoundsFromSceneGraphNodeBounds(
+  bounds: readonly SceneGraphNodeBounds[],
+): FigCanvasBounds {
   if (bounds.length === 0) {
     return {
       width: MIN_CANVAS_SIZE,

@@ -1,7 +1,7 @@
 /** @file Shared effect stack tests */
 
 import type { Effect } from "@higma-document-renderers/fig/scene-graph";
-import { buildEffectStack, findLayerBlurEffect, renderShapeEffectStack } from "./effect-stack";
+import { buildEffectStack, buildLayerBlurCapturedContentEffectStack, findLayerBlurEffect, renderShapeEffectStack } from "./effect-stack";
 
 const DROP_SHADOW: Effect = {
   type: "drop-shadow",
@@ -78,6 +78,8 @@ describe("buildEffectStack", () => {
 
     expect(stack.backgroundBlur).toBe(backgroundBlur);
     expect(stack.foregroundEffects).toEqual([DROP_SHADOW]);
+    expect(stack.foregroundDropShadows).toEqual([DROP_SHADOW]);
+    expect(stack.foregroundInnerShadows).toEqual([]);
     expect(stack.allEffects).toEqual([backgroundBlur, DROP_SHADOW]);
   });
 
@@ -90,6 +92,8 @@ describe("buildEffectStack", () => {
     expect(a).toBe(b);
     expect(a.allEffects.length).toBe(0);
     expect(a.foregroundEffects.length).toBe(0);
+    expect(a.foregroundDropShadows.length).toBe(0);
+    expect(a.foregroundInnerShadows.length).toBe(0);
     expect(a.backgroundBlur).toBeNull();
     expect(a.layerBlur).toBeNull();
   });
@@ -107,6 +111,29 @@ describe("buildEffectStack", () => {
   it("aliases foregroundEffects to allEffects when no background-blur exists, avoiding a redundant filter allocation", () => {
     const stack = buildEffectStack([DROP_SHADOW, INNER_SHADOW]);
     expect(stack.foregroundEffects).toBe(stack.allEffects);
+    expect(stack.foregroundDropShadows).toEqual([DROP_SHADOW]);
+    expect(stack.foregroundInnerShadows).toEqual([INNER_SHADOW]);
+  });
+
+  it("builds the canonical layer-blur captured-content stack from the same source effects", () => {
+    const backgroundBlur: Effect = { type: "background-blur", radius: 12 };
+    const layerBlur: Effect = { type: "layer-blur", radius: 8 };
+    const effects: readonly Effect[] = [backgroundBlur, DROP_SHADOW, layerBlur, INNER_SHADOW];
+    const captured = buildLayerBlurCapturedContentEffectStack(effects);
+
+    expect(captured.allEffects).toEqual([DROP_SHADOW, INNER_SHADOW]);
+    expect(captured.foregroundDropShadows).toEqual([DROP_SHADOW]);
+    expect(captured.foregroundInnerShadows).toEqual([INNER_SHADOW]);
+    expect(captured.backgroundBlur).toBeNull();
+    expect(captured.layerBlur).toBeNull();
+  });
+
+  it("uses the original effect stack when there is no active layer blur pass", () => {
+    const effects: readonly Effect[] = [DROP_SHADOW, INNER_SHADOW];
+    const stack = buildEffectStack(effects);
+    const captured = buildLayerBlurCapturedContentEffectStack(effects, stack);
+
+    expect(captured).toBe(stack);
   });
 });
 

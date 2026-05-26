@@ -1,12 +1,18 @@
 /** @file Fill property section. */
+import { memo } from "react";
+import { sameKiwiNodeExceptTransform } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { FillSectionView } from "@higma-editor-kernel/ui/property-sections";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { paintList, paintToView } from "./paint-domain";
 import { usePaintEditor } from "./usePaintEditor";
 
+type FillSectionProps = {
+  readonly node: FigNode;
+};
+
 /** Render Kiwi fill paints as editable property controls. */
-export function FillSection({ node }: { readonly node: FigNode }) {
+function FillSectionContent({ node }: FillSectionProps) {
   const fills = paintList(node, "fill");
   const editor = usePaintEditor("fill");
   return (
@@ -23,3 +29,9 @@ export function FillSection({ node }: { readonly node: FigNode }) {
     </section>
   );
 }
+
+function sameFillSectionProps(left: FillSectionProps, right: FillSectionProps): boolean {
+  return sameKiwiNodeExceptTransform(left.node, right.node);
+}
+
+export const FillSection = memo(FillSectionContent, sameFillSectionProps);

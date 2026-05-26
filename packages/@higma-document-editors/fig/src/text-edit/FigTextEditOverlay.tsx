@@ -27,7 +27,6 @@ import {
 } from "@higma-editor-kernel/core/text-edit";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { derivedTextDataWithoutVisualPayload } from "@higma-document-models/fig/domain";
 import {
   resolveTextLayout,
   textLayoutToCursorLayout,
@@ -35,6 +34,7 @@ import {
   type TextFontResolver,
 } from "@higma-document-renderers/fig/text";
 import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../context/FigEditorContext";
+import { readKiwiTextCharacters, writeKiwiTextCharacters } from "./kiwi-text-characters";
 
 export type FigTextEditOverlayProps = {
   readonly node: FigNode;
@@ -74,30 +74,6 @@ const svgOverlayStyle: CSSProperties = {
   overflow: "visible",
   zIndex: 2,
 };
-
-function readTextCharacters(node: FigNode): string {
-  if (typeof node.textData?.characters === "string") {
-    return node.textData.characters;
-  }
-  if (typeof node.characters === "string") {
-    return node.characters;
-  }
-  throw new Error("FigTextEditOverlay requires Kiwi TEXT characters");
-}
-
-function writeTextCharacters(node: FigNode, characters: string): FigNode {
-  const hasTextData = node.textData !== undefined;
-  const hasRootCharacters = typeof node.characters === "string";
-  if (!hasTextData && !hasRootCharacters) {
-    throw new Error("FigTextEditOverlay cannot update a TEXT node without characters storage");
-  }
-  return {
-    ...node,
-    characters: hasRootCharacters ? characters : node.characters,
-    textData: hasTextData ? { ...node.textData, characters } : node.textData,
-    derivedTextData: derivedTextDataWithoutVisualPayload(node.derivedTextData),
-  };
-}
 
 function buildTextBodyFromCharacters(characters: string): TextBodyLike {
   return {
@@ -169,7 +145,7 @@ export function FigTextEditOverlay({
     throw new Error("FigTextEditOverlay requires a Kiwi node guid");
   }
   const guid = node.guid;
-  const currentText = readTextCharacters(node);
+  const currentText = readKiwiTextCharacters(node);
   const initialTextLengthRef = useRef(currentText.length);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -251,7 +227,7 @@ export function FigTextEditOverlay({
 
   const handleChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>): void => {
     const nextText = event.currentTarget.value;
-    updateNode(guid, (current) => writeTextCharacters(current, nextText), FIG_NODE_MUTATION_SOURCE.textEdit);
+    updateNode(guid, (current) => writeKiwiTextCharacters(current, nextText), FIG_NODE_MUTATION_SOURCE.textEdit);
     requestAnimationFrame(updateSelection);
   }, [guid, updateNode, updateSelection]);
 

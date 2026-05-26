@@ -31,6 +31,7 @@ import {
   guidToString,
   isFigGuid,
   type FigKiwiDocumentIndex,
+  writeFigKiwiTextDataCharacters,
 } from "../domain";
 import { resolveInstanceLayout } from "./constraints";
 import { kiwiSymbolOverrideCarriesGeometry } from "./kiwi-override-geometry";
@@ -765,35 +766,12 @@ function resolveAssignedTextData(
   existingTextData: FigKiwiTextData | undefined,
   textValue: NonNullable<FigComponentPropAssignment["value"]["textValue"]>,
 ): FigKiwiTextData {
-  const next: MutableFigKiwiTextData = {
-    ...(existingTextData ?? { characters: "" }),
-    characters: textValue.characters,
-    lines: textValue.lines ?? existingTextData?.lines,
-  };
-  const characterStyleIDs = next.characterStyleIDs;
-  if (!textDataStyleIDsMatchAssignedText(characterStyleIDs, textValue.characters)) {
-    delete next.characterStyleIDs;
-    delete next.styleOverrideTable;
+  const next = writeFigKiwiTextDataCharacters(existingTextData, textValue.characters);
+  if (textValue.lines === undefined) {
+    return next;
   }
-  return next;
+  return { ...next, lines: textValue.lines };
 }
-
-function textDataStyleIDsMatchAssignedText(
-  characterStyleIDs: readonly number[] | undefined,
-  characters: string,
-): boolean {
-  if (characterStyleIDs === undefined || characterStyleIDs.length === 0) {
-    return true;
-  }
-  if (characterStyleIDs.length === characters.length) {
-    return true;
-  }
-  return characterStyleIDs.length === [...characters].length;
-}
-
-type MutableFigKiwiTextData = {
-  -readonly [K in keyof FigKiwiTextData]: FigKiwiTextData[K];
-};
 
 function applyVisibleAssignment(
   node: MutableFigNode,
@@ -1111,7 +1089,7 @@ function scaleDerivedTextData(
       width: baseline.width * scale,
       lineY: baseline.lineY * scale,
       lineHeight: baseline.lineHeight * scale,
-      lineAscent: baseline.lineAscent * scale,
+      lineAscent: scaleOptionalDerivedTextMetric(baseline.lineAscent, scale),
     })),
     glyphs: data.glyphs?.map((glyph) => ({
       ...glyph,
@@ -1135,6 +1113,13 @@ function scaleDerivedTextData(
     })),
     truncatedHeight: data.truncatedHeight === undefined ? undefined : data.truncatedHeight * scale,
   };
+}
+
+function scaleOptionalDerivedTextMetric(value: number | undefined, scale: number): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value * scale;
 }
 
 function scaleVector<T extends { readonly x: number; readonly y: number }>(

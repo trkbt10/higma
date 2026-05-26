@@ -1,8 +1,11 @@
 /** @file SceneGraph SVG renderer viewport tests. */
-import { renderSceneGraphToSvg, formatRenderTreeToSvg } from "./scene-renderer";
-import { createNodeId, type FrameNode, type GroupNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
+import { renderSceneGraphToSvg, formatRenderTreeToSvg, formatRenderTreeToSvgElement } from "./scene-renderer";
+import { createNodeId, resolveRenderTree, type FrameNode, type GroupNode, type PathNode, type SceneGraph, type RectNode, type RenderTree } from "@higma-document-renderers/fig/scene-graph";
 import { createPngImage, readPng, writePng, type PngImage } from "@higma-codecs/png";
 import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
+import { serializeSvgNode } from "./element-primitives";
+
+const SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 
 function createPngBytes(size: { readonly width: number; readonly height: number }, rgb = 128): Uint8Array {
   const image = createPngImage(size);
@@ -56,6 +59,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [frame],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -104,17 +108,19 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [frame],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
     expect(svg).toContain('<path d="M24 0L202 0C215.255 0 226 10.7452 226 24');
     expect(svg).toContain('style="mix-blend-mode:color-dodge"');
-    expect(svg).toContain('style="mix-blend-mode:plus-darker"');
+    expect(svg).toContain('fill="#f7f7f7"');
+    expect(svg).not.toContain('style="mix-blend-mode:plus-darker"');
     expect(svg).not.toContain('<rect x="0" y="0" width="226" height="48" rx="24" fill="#333333"');
   });
 
-  it("preserves node-level blend mode on a single-fill rect without other wrapper reasons", () => {
+  it("projects browser-unsupported plus-darker node blend to normal on a single-fill rect", () => {
     const rectNode: RectNode = {
       type: "rect",
       id: createNodeId("node-level-linear-burn"),
@@ -140,12 +146,65 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [rectNode],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
-    expect(svg).toContain('style="mix-blend-mode:plus-darker"');
+    expect(svg).not.toContain('style="mix-blend-mode:plus-darker"');
     expect(svg).toContain('<rect x="0" y="0" width="6" height="9" fill="#000000" fill-opacity="0.1"');
+  });
+
+  it("formats LINEAR_DODGE and LINEAR_BURN effect blend modes as browser-valid normal SVG filter modes", () => {
+    const rectNode: RectNode = {
+      type: "rect",
+      id: createNodeId("effect-linear-blend"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [
+        {
+          type: "drop-shadow",
+          offset: { x: 0, y: 2 },
+          radius: 8,
+          color: { r: 1, g: 1, b: 1, a: 0.5 },
+          blendMode: "plus-lighter",
+          showShadowBehindNode: true,
+        },
+        {
+          type: "inner-shadow",
+          offset: { x: 0, y: 1 },
+          radius: 4,
+          color: { r: 0, g: 0, b: 0, a: 0.5 },
+          blendMode: "plus-darker",
+        },
+      ],
+      width: 24,
+      height: 24,
+      fills: [{ type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 32,
+      height: 32,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [rectNode],
+      },
+      version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+
+    expect(svg).toContain('mode="normal"');
+    expect(svg).not.toContain('mode="plus-lighter"');
+    expect(svg).not.toContain('mode="plus-darker"');
+    expect(svg).not.toContain('operator="arithmetic" k2="1" k3="1"');
   });
 
   it("preserves rounded path-surface multi-fill layers as paths", () => {
@@ -195,6 +254,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [frame],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -254,6 +314,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [strokedPath],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -317,6 +378,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [strokedRectPath],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -370,6 +432,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [strokedPath],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -409,6 +472,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -454,6 +518,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -493,6 +558,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -544,6 +610,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -590,6 +657,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -622,6 +690,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -674,6 +743,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
@@ -737,12 +807,85 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
 
     expect(svg).toMatch(/<clipPath[^>]*id="group-clip-/);
     expect(svg).toMatch(/<g clip-path="url\(#group-clip-/);
     expect(svg).toContain('<path d="M0 0H40V20H0Z"');
+  });
+
+  it("preserves a single masked GROUP child without a parent clip so descendant filters keep unclipped source pixels", () => {
+    const maskContent: RectNode = {
+      type: "rect",
+      id: createNodeId("mask-content"),
+      transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+      opacity: 1,
+      visible: true,
+      effects: [],
+      width: 30,
+      height: 30,
+      fills: [{ type: "solid", color: { r: 1, g: 1, b: 1, a: 1 }, opacity: 1 }],
+    };
+    const sceneGraph: SceneGraph = {
+      width: 80,
+      height: 80,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "group",
+          id: createNodeId("clipped-group"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          clip: { type: "rect", width: 20, height: 20 },
+          children: [{
+            type: "group",
+            id: createNodeId("masked-child"),
+            transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+            opacity: 1,
+            visible: true,
+            effects: [],
+            mask: {
+              maskId: maskContent.id,
+              maskType: "ALPHA",
+              maskContent,
+            },
+            children: [{
+              type: "rect",
+              id: createNodeId("filtered-child"),
+              transform: { m00: 1, m01: 0, m02: -4, m10: 0, m11: 1, m12: 0 },
+              opacity: 1,
+              visible: true,
+              effects: [{ type: "layer-blur", radius: 4 }],
+              width: 16,
+              height: 16,
+              fills: [{ type: "solid", color: { r: 0, g: 0, b: 1, a: 1 }, opacity: 1 }],
+            }],
+          }],
+        }],
+      },
+      version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
+    };
+
+    const svg = renderSceneGraphToSvg(sceneGraph) as string;
+    const maskDefinitionIndex = svg.indexOf("<defs><mask");
+    const maskedChildGroupIndex = svg.indexOf('<g mask="url(#mask-');
+    const maskedChildGroupSource = svg.slice(maskedChildGroupIndex);
+
+    expect(maskDefinitionIndex).toBeGreaterThanOrEqual(0);
+    expect(maskedChildGroupIndex).toBeGreaterThanOrEqual(0);
+    expect(maskDefinitionIndex).toBeLessThan(maskedChildGroupIndex);
+    expect(maskedChildGroupSource).not.toContain("<defs><mask");
+    expect(svg).not.toContain('<g clip-path="url(#group-clip-');
   });
 
   it("exports a viewport-local SVG viewBox while preserving world-space content", () => {
@@ -770,6 +913,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -779,6 +923,43 @@ describe("renderSceneGraphToSvg viewport", () => {
     expect(svg).toContain('viewBox="0 0 300 200"');
     expect(svg).toContain('<rect x="120" y="40" width="12" height="8" fill="#000000"');
     expect(svg).toContain('fill="none"');
+  });
+
+  it("keeps viewport projection as a structured SVG group before the Figma export string boundary", () => {
+    const sceneGraph: SceneGraph = {
+      width: 300,
+      height: 200,
+      viewport: { x: -120, y: -40, width: 300, height: 200 },
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [{
+          type: "rect",
+          id: createNodeId("world-origin-rect"),
+          transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 },
+          opacity: 1,
+          visible: true,
+          effects: [],
+          width: 12,
+          height: 8,
+          fills: [{ type: "solid", color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1 }],
+        }],
+      },
+      version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
+    };
+
+    const root = formatRenderTreeToSvgElement(resolveRenderTree(sceneGraph));
+    const svg = serializeSvgNode(root);
+
+    expect(svg).toContain('viewBox="0 0 300 200"');
+    expect(svg).toContain('<g transform="translate(120 40)">');
+    expect(svg).toContain('<rect x="0" y="0" width="12" height="8" fill="#000000"');
+    expect(svg).not.toContain('<rect x="120" y="40" width="12" height="8"');
   });
 
   it("rounds path coordinates by viewport-local magnitude", () => {
@@ -820,6 +1001,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -859,6 +1041,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -905,6 +1088,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -952,6 +1136,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1206,6 +1391,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1255,6 +1441,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1334,6 +1521,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1415,6 +1603,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1462,6 +1651,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1529,6 +1719,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1585,6 +1776,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1652,6 +1844,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1699,6 +1892,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         }],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;
@@ -1742,6 +1936,7 @@ describe("renderSceneGraphToSvg viewport", () => {
         children: [clippedGroup],
       },
       version: 1,
+      sourceDocumentReference: SVG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     };
 
     const svg = renderSceneGraphToSvg(sceneGraph) as string;

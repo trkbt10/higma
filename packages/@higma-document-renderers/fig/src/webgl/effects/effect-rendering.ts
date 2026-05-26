@@ -2,16 +2,20 @@
 
 import type { AffineMatrix } from "@higma-primitives/path";
 import {
-  buildEffectStack,
   renderShapeEffectStack,
+  resolveBrowserRenderedFigmaExportEffectBlendMode,
   type BackgroundBlurEffect,
+  type BlendMode,
   type Color,
-  type Effect,
+  type DropShadowEffect,
+  type InnerShadowEffect,
+  type ResolvedEffectStack,
 } from "@higma-document-renderers/fig/scene-graph";
 import { drawSolidFill, type GLContext } from "../fill/fill-renderer";
-import type { EffectsRendererInstance } from "./effects-renderer";
+import { resolveConsecutiveInnerShadowBlurSourceRuns, type EffectsRendererInstance } from "./effects-renderer";
 import { resolveEffectBackingScale } from "./effect-scale";
 import type { WebGLEffectRenderRegion } from "./effect-render-region";
+import { shouldRenderWebGLBlurFramebufferPass } from "./blur-framebuffer-pass-decision";
 
 export type WebGLEffectRenderingParams = {
   readonly getGlContext: () => GLContext;
@@ -22,14 +26,20 @@ export type WebGLEffectRenderingParams = {
   readonly outputFramebuffer: () => WebGLFramebuffer | null;
   readonly backdropFramebuffer: () => WebGLFramebuffer | null;
   readonly isClipStencilRequired: () => boolean;
+  readonly recordEffectPass?: (
+    pass: "background-blur" | "drop-shadow" | "inner-shadow",
+    elapsedMs: number,
+  ) => void;
+  readonly recordInnerShadowBlurSourceCount?: (count: number) => void;
 };
 
 export type VertexShapeEffectParams = {
-  readonly effects: readonly Effect[];
+  readonly stack: ResolvedEffectStack;
   readonly hasVisibleContent: boolean;
   readonly region: WebGLEffectRenderRegion;
   readonly vertices: Float32Array;
   readonly transform: AffineMatrix;
+  readonly resolvedNodeOpacity: number;
   readonly renderContent: () => void;
   readonly renderStroke: () => void;
 };
@@ -43,34 +53,56 @@ export type WebGLEffectRendering = {
   }) => void;
   readonly renderVertexShapeEffectStack: (params: VertexShapeEffectParams) => void;
   readonly renderDropShadows: (params: {
-    readonly effects: readonly Effect[];
+    readonly effects: readonly DropShadowEffect[];
     readonly region: WebGLEffectRenderRegion;
     readonly vertices: Float32Array;
     readonly transform: AffineMatrix;
+    readonly resolvedNodeOpacity: number;
+  }) => void;
+  readonly renderDropShadowsWithSilhouette: (params: {
+    readonly effects: readonly DropShadowEffect[];
+    readonly region: WebGLEffectRenderRegion;
+    readonly transform: AffineMatrix;
+    readonly resolvedNodeOpacity: number;
+    readonly renderSilhouette: () => void;
+  }) => void;
+  readonly renderInnerShadowsWithSilhouette: (params: {
+    readonly effects: readonly InnerShadowEffect[];
+    readonly region: WebGLEffectRenderRegion;
+    readonly transform: AffineMatrix;
+    readonly resolvedNodeOpacity: number;
+    readonly renderSilhouette: () => void;
   }) => void;
   readonly renderInnerShadows: (params: {
-    readonly effects: readonly Effect[];
+    readonly effects: readonly InnerShadowEffect[];
     readonly region: WebGLEffectRenderRegion;
     readonly vertices: Float32Array;
     readonly transform: AffineMatrix;
+    readonly resolvedNodeOpacity: number;
   }) => void;
-  readonly renderDropShadowsStencil: (params: {
-    readonly effects: readonly Effect[];
+  readonly renderBlendedShapeContent: (params: {
+    readonly blendMode: BlendMode;
     readonly region: WebGLEffectRenderRegion;
-    /**
-     * TrueType-winding earcut silhouette of the path. Pre-tessellated
-     * by the caller (the geometry cache) so the drop-shadow pipeline
-     * never re-flattens curves per shadow effect, per frame.
-     */
-    readonly silhouetteVertices: Float32Array;
-    readonly transform: AffineMatrix;
+    readonly renderContent: () => void;
   }) => void;
 };
 
 const WHITE: Color = { r: 1, g: 1, b: 1, a: 1 };
 
+function dropShadowStackRequiresTransparentFilterBackdrop(
+  effects: readonly DropShadowEffect[],
+): boolean {
+  return effects.some((effect) => resolveBrowserRenderedFigmaExportEffectBlendMode(effect.blendMode) !== "normal");
+}
+
 /** Create WebGL effect operations that consume the shared effect-stack schema. */
 export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): WebGLEffectRendering {
+  function invalidateStateAfterRawEffectRendererCall(): void {
+    const ctx = params.getGlContext();
+    ctx.glState.invalidate();
+    ctx.vertexBuffers.invalidateArrayBufferBinding();
+  }
+
   function renderBackgroundBlurMask(
     { effect, region, vertices, transform }: {
       readonly effect: BackgroundBlurEffect;
@@ -79,6 +111,14 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
       readonly transform: AffineMatrix;
     },
   ): void {
+    if (!shouldRenderWebGLBlurFramebufferPass({
+      radius: effect.radius,
+      transform,
+      pixelRatio: params.pixelRatio(),
+    })) {
+      return;
+    }
+    const start = performance.now();
     params.effectsRenderer.renderBackgroundBlur({
       canvasWidth: params.canvasWidth(),
       canvasHeight: params.canvasHeight(),
@@ -98,108 +138,225 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
         });
       },
     });
-    // Effects renderer mutated stencil/blend state through raw GL.
-    // Drop our cached values so the next set-via-cache actually writes.
-    params.getGlContext().glState.invalidate();
+    params.recordEffectPass?.("background-blur", performance.now() - start);
+    invalidateStateAfterRawEffectRendererCall();
   }
 
   function renderDropShadows(
-    { effects, region, vertices, transform }: {
-      readonly effects: readonly Effect[];
+    { effects, region, vertices, transform, resolvedNodeOpacity }: {
+      readonly effects: readonly DropShadowEffect[];
       readonly region: WebGLEffectRenderRegion;
       readonly vertices: Float32Array;
       readonly transform: AffineMatrix;
+      readonly resolvedNodeOpacity: number;
     },
   ): void {
-    for (const effect of effects) {
-      if (effect.type !== "drop-shadow") { continue; }
+    renderDropShadowsWithSilhouette({
+      effects,
+      region,
+      transform,
+      resolvedNodeOpacity,
+      renderSilhouette: () => {
+        drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
+      },
+    });
+  }
 
+  function renderDropShadowsWithSilhouette(
+    { effects, region, transform, resolvedNodeOpacity, renderSilhouette }: {
+      readonly effects: readonly DropShadowEffect[];
+      readonly region: WebGLEffectRenderRegion;
+      readonly transform: AffineMatrix;
+      readonly resolvedNodeOpacity: number;
+      readonly renderSilhouette: () => void;
+    },
+  ): void {
+    if (dropShadowStackRequiresTransparentFilterBackdrop(effects)) {
+      renderDropShadowStackInTransparentFilterBackdrop({
+        effects,
+        region,
+        transform,
+        resolvedNodeOpacity,
+        renderSilhouette,
+      });
+      return;
+    }
+    const canvasWidth = params.canvasWidth();
+    const canvasHeight = params.canvasHeight();
+    const worldToBacking = resolveEffectBackingScale(transform, params.pixelRatio());
+    const outputFramebuffer = params.outputFramebuffer();
+    const backdropFramebuffer = params.backdropFramebuffer();
+    const requireClipStencil = params.isClipStencilRequired();
+    for (const effect of effects) {
+      const start = performance.now();
       params.effectsRenderer.renderDropShadow({
-        canvasWidth: params.canvasWidth(),
-        canvasHeight: params.canvasHeight(),
+        canvasWidth,
+        canvasHeight,
         region,
         effect,
-        worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
-        outputFramebuffer: params.outputFramebuffer(),
-        backdropFramebuffer: params.backdropFramebuffer(),
-        renderSilhouette: () => {
-          drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
-        },
+        resolvedNodeOpacity,
+        worldToBacking,
+        outputFramebuffer,
+        backdropFramebuffer,
+        requireClipStencil,
+        renderSilhouette,
       });
-      params.getGlContext().glState.invalidate();
+      params.recordEffectPass?.("drop-shadow", performance.now() - start);
+      invalidateStateAfterRawEffectRendererCall();
+    }
+  }
+
+  function renderDropShadowStackInTransparentFilterBackdrop(
+    { effects, region, transform, resolvedNodeOpacity, renderSilhouette }: {
+      readonly effects: readonly DropShadowEffect[];
+      readonly region: WebGLEffectRenderRegion;
+      readonly transform: AffineMatrix;
+      readonly resolvedNodeOpacity: number;
+      readonly renderSilhouette: () => void;
+    },
+  ): void {
+    const canvasWidth = params.canvasWidth();
+    const canvasHeight = params.canvasHeight();
+    const outputFramebuffer = params.outputFramebuffer();
+    const requireClipStencil = params.isClipStencilRequired();
+    const worldToBacking = resolveEffectBackingScale(transform, params.pixelRatio());
+    const capture = params.effectsRenderer.beginLayerCapture({ canvasWidth, canvasHeight, region });
+    invalidateStateAfterRawEffectRendererCall();
+    try {
+      for (const effect of effects) {
+        const start = performance.now();
+        params.effectsRenderer.renderDropShadow({
+          canvasWidth,
+          canvasHeight,
+          region,
+          effect,
+          resolvedNodeOpacity,
+          worldToBacking,
+          outputFramebuffer: capture.framebuffer.fbo,
+          backdropFramebuffer: capture.framebuffer.fbo,
+          requireClipStencil: false,
+          renderSilhouette,
+        });
+        params.recordEffectPass?.("drop-shadow", performance.now() - start);
+        invalidateStateAfterRawEffectRendererCall();
+      }
+      params.effectsRenderer.blitLayerWithOpacity({
+        canvasWidth,
+        canvasHeight,
+        region,
+        sourceFramebuffer: capture.framebuffer,
+        opacity: 1,
+        outputFramebuffer,
+        requireClipStencil,
+      });
+      invalidateStateAfterRawEffectRendererCall();
+    } finally {
+      params.effectsRenderer.releaseLayerCapture(capture);
     }
   }
 
   function renderInnerShadows(
-    { effects, region, vertices, transform }: {
-      readonly effects: readonly Effect[];
+    { effects, region, vertices, transform, resolvedNodeOpacity }: {
+      readonly effects: readonly InnerShadowEffect[];
       readonly region: WebGLEffectRenderRegion;
       readonly vertices: Float32Array;
       readonly transform: AffineMatrix;
+      readonly resolvedNodeOpacity: number;
     },
   ): void {
-    for (const effect of effects) {
-      if (effect.type !== "inner-shadow") { continue; }
-
-      params.effectsRenderer.renderInnerShadow({
-        canvasWidth: params.canvasWidth(),
-        canvasHeight: params.canvasHeight(),
-        region,
-        effect,
-        worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
-        outputFramebuffer: params.outputFramebuffer(),
-        backdropFramebuffer: params.backdropFramebuffer(),
-        renderSilhouette: () => {
-          drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
-        },
-      });
-      params.getGlContext().glState.invalidate();
-    }
+    renderInnerShadowsWithSilhouette({
+      effects,
+      region,
+      transform,
+      resolvedNodeOpacity,
+      renderSilhouette: () => {
+        drawSolidFill({ ctx: params.getGlContext(), vertices, color: WHITE, transform, opacity: 1 });
+      },
+    });
   }
 
-  function renderDropShadowsStencil(
-    { effects, region, silhouetteVertices, transform }: {
-      readonly effects: readonly Effect[];
+  function renderInnerShadowsWithSilhouette(
+    { effects, region, transform, resolvedNodeOpacity, renderSilhouette }: {
+      readonly effects: readonly InnerShadowEffect[];
       readonly region: WebGLEffectRenderRegion;
-      readonly silhouetteVertices: Float32Array;
       readonly transform: AffineMatrix;
+      readonly resolvedNodeOpacity: number;
+      readonly renderSilhouette: () => void;
     },
   ): void {
-    for (const effect of effects) {
-      if (effect.type !== "drop-shadow") { continue; }
-
-      if (silhouetteVertices.length === 0) { continue; }
-      params.effectsRenderer.renderDropShadow({
-        canvasWidth: params.canvasWidth(),
-        canvasHeight: params.canvasHeight(),
-        region,
-        effect,
-        worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
-        outputFramebuffer: params.outputFramebuffer(),
-        backdropFramebuffer: params.backdropFramebuffer(),
-        renderSilhouette: () => {
-          drawSolidFill({ ctx: params.getGlContext(), vertices: silhouetteVertices, color: WHITE, transform, opacity: 1 });
-        },
-      });
-      params.getGlContext().glState.invalidate();
+    if (effects.length === 0) {
+      return;
     }
+    params.recordInnerShadowBlurSourceCount?.(resolveConsecutiveInnerShadowBlurSourceRuns(effects).length);
+    const start = performance.now();
+    params.effectsRenderer.renderInnerShadows({
+      canvasWidth: params.canvasWidth(),
+      canvasHeight: params.canvasHeight(),
+      region,
+      effects,
+      resolvedNodeOpacity,
+      worldToBacking: resolveEffectBackingScale(transform, params.pixelRatio()),
+      outputFramebuffer: params.outputFramebuffer(),
+      backdropFramebuffer: params.backdropFramebuffer(),
+      requireClipStencil: params.isClipStencilRequired(),
+      renderSilhouette,
+    });
+    const elapsedPerEffect = (performance.now() - start) / effects.length;
+    effects.forEach(() => {
+      params.recordEffectPass?.("inner-shadow", elapsedPerEffect);
+    });
+    invalidateStateAfterRawEffectRendererCall();
+  }
+
+  function renderBlendedShapeContent(
+    { blendMode, region, renderContent }: {
+      readonly blendMode: BlendMode;
+      readonly region: WebGLEffectRenderRegion;
+      readonly renderContent: () => void;
+    },
+  ): void {
+    params.effectsRenderer.renderBlendedSolidShape({
+      canvasWidth: params.canvasWidth(),
+      canvasHeight: params.canvasHeight(),
+      region,
+      color: WHITE,
+      opacity: 1,
+      blendMode,
+      outputFramebuffer: params.outputFramebuffer(),
+      backdropFramebuffer: params.backdropFramebuffer(),
+      requireClipStencil: params.isClipStencilRequired(),
+      renderShape: () => {
+        invalidateStateAfterRawEffectRendererCall();
+        renderContent();
+      },
+    });
+    invalidateStateAfterRawEffectRendererCall();
   }
 
   function renderVertexShapeEffectStack(
-    { effects, hasVisibleContent, region, vertices, transform, renderContent, renderStroke }: VertexShapeEffectParams,
+    {
+      stack,
+      hasVisibleContent,
+      region,
+      vertices,
+      transform,
+      resolvedNodeOpacity,
+      renderContent,
+      renderStroke,
+    }: VertexShapeEffectParams,
   ): void {
     renderShapeEffectStack({
-      stack: buildEffectStack(effects),
+      stack,
       hasVisibleContent,
       renderBackgroundBlur: (effect) => {
         renderBackgroundBlurMask({ effect, region, vertices, transform });
       },
-      renderDropShadows: (sourceEffects) => {
-        renderDropShadows({ effects: sourceEffects, region, vertices, transform });
+      renderDropShadows: (dropShadowEffects) => {
+        renderDropShadows({ effects: dropShadowEffects, region, vertices, transform, resolvedNodeOpacity });
       },
       renderContent,
-      renderInnerShadows: (sourceEffects) => {
-        renderInnerShadows({ effects: sourceEffects, region, vertices, transform });
+      renderInnerShadows: (innerShadowEffects) => {
+        renderInnerShadows({ effects: innerShadowEffects, region, vertices, transform, resolvedNodeOpacity });
       },
       renderStroke,
     });
@@ -209,7 +366,9 @@ export function createWebGLEffectRendering(params: WebGLEffectRenderingParams): 
     renderBackgroundBlurMask,
     renderVertexShapeEffectStack,
     renderDropShadows,
+    renderDropShadowsWithSilhouette,
+    renderInnerShadowsWithSilhouette,
     renderInnerShadows,
-    renderDropShadowsStencil,
+    renderBlendedShapeContent,
   };
 }

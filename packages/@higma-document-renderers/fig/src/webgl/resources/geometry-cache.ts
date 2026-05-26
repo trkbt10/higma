@@ -1,13 +1,18 @@
-/** @file WebGL geometry cache keyed by RenderTree node identity. */
+/** @file WebGL geometry cache keyed by RenderTree node object references. */
 
-import type { Fill, PathContour } from "@higma-document-renderers/fig/scene-graph";
-import type { RenderPathNode, RenderTextNode } from "../../scene-graph";
+import type { BlendMode, ClipPathShape, PathContour, StrokeShape } from "@higma-document-renderers/fig/scene-graph";
+import type { RenderPathNode, RenderTextGlyphs, RenderTextNode } from "../../scene-graph";
 import {
   generateEllipseVertices,
   generateRectVertices,
   tessellateContours,
 } from "../tessellation/tessellation";
-import { tessellatePathStroke } from "../tessellation/stroke-tessellation";
+import {
+  tessellateEllipseStroke,
+  tessellatePathStroke,
+  tessellateRectAlignedStroke,
+  tessellateRectStroke,
+} from "../tessellation/stroke-tessellation";
 import { generateCoverQuad, prepareFanTriangles, type Bounds as StencilBounds } from "../tessellation/stencil-fill";
 import { svgPathDToContours } from "../tessellation/path-contours";
 import {
@@ -30,10 +35,9 @@ type PathGeometry = {
   readonly backgroundMaskVertices: Float32Array;
   /**
    * TrueType-winding earcut silhouette used by drop-shadow stencils.
-   * `tessellateContours(..., autoDetectWinding=false)` is intentionally
-   * different from `backgroundMaskVertices` (which auto-detects),
-   * so we precompute both alongside the parsed contours instead of
-   * re-flattening every drop-shadow draw.
+   * This is kept separate from fill-plan geometry because SVG filter
+   * SourceAlpha for these vector effects follows the authored path
+   * silhouette, not every per-contour fill override expansion.
    */
   readonly dropShadowSilhouetteVertices: Float32Array;
   /**
@@ -53,7 +57,7 @@ type PathGeometry = {
  */
 export type PathFillInstructionGeometry = {
   readonly fillRule: WebGLPathFillRule;
-  readonly fills: readonly Fill[];
+  readonly fillOverride: WebGLPathFillInstruction["fillOverride"];
   readonly contours: readonly PathContour[];
   readonly prepared: NonNullable<ReturnType<typeof prepareFanTriangles>>;
   readonly coverQuad: Float32Array;
@@ -77,6 +81,7 @@ type PathFillPlanGeometry = {
 export type TextGlyphRunGeometry = {
   readonly fillColor: string;
   readonly fillOpacity: number;
+  readonly blendMode?: BlendMode;
   readonly contours: readonly PathContour[];
   readonly vertices: Float32Array;
   readonly prepared: ReturnType<typeof prepareFanTriangles>;
@@ -89,6 +94,40 @@ type TextGlyphGeometry = {
 export type WebGLGeometryCache = {
   readonly getRectVertices: (width: number, height: number, cornerRadius?: CornerRadius, cornerSmoothing?: number) => Float32Array;
   readonly getEllipseVertices: (params: { readonly cx: number; readonly cy: number; readonly rx: number; readonly ry: number }) => Float32Array;
+  readonly getRectStrokeVertices: (params: {
+    readonly width: number;
+    readonly height: number;
+    readonly cornerRadius?: CornerRadius;
+    readonly strokeWidth: number;
+    readonly dashPattern?: readonly number[];
+  }) => Float32Array;
+  readonly getRectAlignedStrokeVertices: (params: {
+    readonly width: number;
+    readonly height: number;
+    readonly cornerRadius?: CornerRadius;
+    readonly strokeWidth: number;
+    readonly align: "INSIDE" | "OUTSIDE";
+  }) => Float32Array;
+  readonly getEllipseStrokeVertices: (params: {
+    readonly cx: number;
+    readonly cy: number;
+    readonly rx: number;
+    readonly ry: number;
+    readonly strokeWidth: number;
+    readonly dashPattern?: readonly number[];
+  }) => Float32Array;
+  readonly getPathContourStrokeVertices: (params: {
+    readonly contours: readonly PathContour[];
+    readonly strokeWidth: number;
+    readonly dashPattern?: readonly number[];
+  }) => Float32Array;
+  readonly getStrokeShapeStrokeVertices: (params: {
+    readonly shape: StrokeShape;
+    readonly strokeWidth: number;
+    readonly dashPattern?: readonly number[];
+  }) => Float32Array;
+  readonly getStrokeShapeStencilVertices: (shape: StrokeShape) => Float32Array;
+  readonly getClipPathShapeVertices: (shape: ClipPathShape) => Float32Array;
   readonly getPathGeometry: (node: RenderPathNode) => PathGeometry;
   readonly getPathFillPlanGeometry: (node: RenderPathNode) => PathFillPlanGeometry;
   readonly getTextGlyphGeometry: (node: RenderTextNode) => TextGlyphGeometry;
@@ -101,27 +140,14 @@ export type WebGLGeometryCache = {
   readonly dispose: () => void;
 };
 
-const MAX_GEOMETRY_CACHE_ENTRIES = 2048;
-
 function getCachedGeometry<T>(cache: Map<string, T>, key: string, create: () => T): T {
   const cached = cache.get(key);
   if (cached) {
     return cached;
   }
   const value = create();
-  if (cache.size >= MAX_GEOMETRY_CACHE_ENTRIES) {
-    deleteOldestGeometryCacheEntry(cache);
-  }
   cache.set(key, value);
   return value;
-}
-
-function deleteOldestGeometryCacheEntry<T>(cache: Map<string, T>): void {
-  const firstKey = cache.keys().next().value;
-  if (typeof firstKey !== "string") {
-    return;
-  }
-  cache.delete(firstKey);
 }
 
 function cornerRadiusCacheKey(cornerRadius: CornerRadius | undefined): string {
@@ -135,6 +161,99 @@ function pathStrokeCacheKey(
   },
 ): string {
   return `${strokeWidth}\u001e${dashPattern?.join(",") ?? ""}`;
+}
+
+function strokeShapeDependencyKey(shape: StrokeShape): string {
+  switch (shape.kind) {
+    case "rect":
+      return JSON.stringify([
+        "rect",
+        shape.width,
+        shape.height,
+        shape.cornerRadius ?? null,
+        shape.cornerSmoothing ?? null,
+      ]);
+    case "ellipse":
+      return JSON.stringify([
+        "ellipse",
+        shape.cx,
+        shape.cy,
+        shape.rx,
+        shape.ry,
+      ]);
+    case "path":
+      return JSON.stringify([
+        "path",
+        shape.paths.map((path) => [path.d, path.fillRule ?? "nonzero"]),
+      ]);
+  }
+}
+
+function clipPathShapeDependencyKey(shape: ClipPathShape): string {
+  switch (shape.kind) {
+    case "rect":
+      return JSON.stringify([
+        "rect",
+        shape.x,
+        shape.y,
+        shape.width,
+        shape.height,
+        shape.rx ?? null,
+        shape.ry ?? null,
+      ]);
+    case "ellipse":
+      return JSON.stringify([
+        "ellipse",
+        shape.cx,
+        shape.cy,
+        shape.rx,
+        shape.ry,
+      ]);
+    case "path":
+      return JSON.stringify([
+        "path",
+        shape.d,
+        shape.fillRule ?? "nonzero",
+      ]);
+  }
+}
+
+function pathContoursStrokeCacheKey(
+  { strokeWidth, dashPattern }: {
+    readonly strokeWidth: number;
+    readonly dashPattern?: readonly number[];
+  },
+): string {
+  return pathStrokeCacheKey({ strokeWidth, dashPattern });
+}
+
+function requireRenderTextGlyphContent(node: RenderTextNode): RenderTextGlyphs {
+  if (node.content.mode !== "glyphs") {
+    throw new Error(`WebGL text glyph geometry cache requires glyph content for text node ${node.id}`);
+  }
+  return node.content;
+}
+
+function clipPathRectRadius(shape: Extract<ClipPathShape, { readonly kind: "rect" }>): number | undefined {
+  if (shape.rx === undefined) {
+    return shape.ry;
+  }
+  if (shape.ry === undefined || shape.ry === shape.rx) {
+    return shape.rx;
+  }
+  throw new Error(`WebGL clip-path rect has unsupported elliptical corner radii rx=${shape.rx} ry=${shape.ry}`);
+}
+
+function translateVertices(vertices: Float32Array, dx: number, dy: number): Float32Array {
+  if (dx === 0 && dy === 0) {
+    return vertices;
+  }
+  const translated = new Float32Array(vertices.length);
+  for (let i = 0; i < vertices.length; i += 2) {
+    translated[i] = vertices[i] + dx;
+    translated[i + 1] = vertices[i + 1] + dy;
+  }
+  return translated;
 }
 
 function contoursElementSize(
@@ -163,7 +282,7 @@ function buildPathFillInstructionGeometry(
   }
   return {
     fillRule: instruction.fillRule,
-    fills: instruction.fills,
+    fillOverride: instruction.fillOverride,
     contours: instruction.contours,
     prepared,
     coverQuad: generateCoverQuad(prepared.bounds),
@@ -179,6 +298,13 @@ function buildPathFillInstructionGeometry(
 export function createWebGLGeometryCache(): WebGLGeometryCache {
   const rectVertices = new Map<string, Float32Array>();
   const ellipseVertices = new Map<string, Float32Array>();
+  const rectStrokeVertices = new Map<string, Float32Array>();
+  const rectAlignedStrokeVertices = new Map<string, Float32Array>();
+  const ellipseStrokeVertices = new Map<string, Float32Array>();
+  const pathContourStrokeVertices = new WeakMap<readonly PathContour[], Map<string, Float32Array>>();
+  const strokeShapeStrokeVertices = new Map<string, Float32Array>();
+  const strokeShapeStencilVertices = new Map<string, Float32Array>();
+  const clipPathShapeVertices = new Map<string, Float32Array>();
   const pathGeometry = new WeakMap<RenderPathNode, PathGeometry>();
   const pathFillPlanGeometry = new WeakMap<RenderPathNode, PathFillPlanGeometry>();
   const pathStrokeVertices = new WeakMap<RenderPathNode, Map<string, Float32Array>>();
@@ -201,6 +327,134 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
       );
     },
 
+    getRectStrokeVertices({ width: widthValue, height: heightValue, cornerRadius, strokeWidth, dashPattern }) {
+      return getCachedGeometry(
+        rectStrokeVertices,
+        `${widthValue}:${heightValue}:${cornerRadiusCacheKey(cornerRadius)}:${pathStrokeCacheKey({ strokeWidth, dashPattern })}`,
+        () => tessellateRectStroke({
+          w: widthValue,
+          h: heightValue,
+          cornerRadius,
+          strokeWidth,
+          dashPattern,
+        }),
+      );
+    },
+
+    getRectAlignedStrokeVertices({ width: widthValue, height: heightValue, cornerRadius, strokeWidth, align }) {
+      return getCachedGeometry(
+        rectAlignedStrokeVertices,
+        `${widthValue}:${heightValue}:${cornerRadiusCacheKey(cornerRadius)}:${strokeWidth}:${align}`,
+        () => tessellateRectAlignedStroke({
+          w: widthValue,
+          h: heightValue,
+          cornerRadius,
+          strokeWidth,
+          align,
+        }),
+      );
+    },
+
+    getEllipseStrokeVertices({ cx, cy, rx, ry, strokeWidth, dashPattern }) {
+      return getCachedGeometry(
+        ellipseStrokeVertices,
+        `${cx}:${cy}:${rx}:${ry}:${pathStrokeCacheKey({ strokeWidth, dashPattern })}`,
+        () => tessellateEllipseStroke({ cx, cy, rx, ry, strokeWidth, dashPattern }),
+      );
+    },
+
+    getPathContourStrokeVertices({ contours, strokeWidth, dashPattern }) {
+      const cache = pathContourStrokeVertices.get(contours) ?? new Map<string, Float32Array>();
+      if (!pathContourStrokeVertices.has(contours)) {
+        pathContourStrokeVertices.set(contours, cache);
+      }
+      return getCachedGeometry(
+        cache,
+        pathContoursStrokeCacheKey({ strokeWidth, dashPattern }),
+        () => tessellatePathStroke(contours, strokeWidth, { dashPattern }),
+      );
+    },
+
+    getStrokeShapeStrokeVertices({ shape, strokeWidth, dashPattern }) {
+      return getCachedGeometry(
+        strokeShapeStrokeVertices,
+        `${strokeShapeDependencyKey(shape)}\u001e${pathStrokeCacheKey({ strokeWidth, dashPattern })}`,
+        () => {
+          switch (shape.kind) {
+            case "rect":
+              return tessellateRectStroke({
+                w: shape.width,
+                h: shape.height,
+                cornerRadius: shape.cornerRadius,
+                strokeWidth,
+                dashPattern,
+              });
+            case "ellipse":
+              return tessellateEllipseStroke({
+                cx: shape.cx,
+                cy: shape.cy,
+                rx: shape.rx,
+                ry: shape.ry,
+                strokeWidth,
+                dashPattern,
+              });
+            case "path":
+              return new Float32Array(0);
+          }
+        },
+      );
+    },
+
+    getStrokeShapeStencilVertices(shape) {
+      return getCachedGeometry(
+        strokeShapeStencilVertices,
+        strokeShapeDependencyKey(shape),
+        () => {
+          switch (shape.kind) {
+            case "rect":
+              return generateRectVertices(shape.width, shape.height, shape.cornerRadius, shape.cornerSmoothing);
+            case "ellipse":
+              return generateEllipseVertices({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
+            case "path": {
+              const contours: PathContour[] = shape.paths.flatMap((path) => svgPathDToContours({
+                d: path.d,
+                windingRule: path.fillRule ?? "nonzero",
+              }));
+              return tessellateContours(contours, 0.25, true);
+            }
+          }
+        },
+      );
+    },
+
+    getClipPathShapeVertices(shape) {
+      return getCachedGeometry(
+        clipPathShapeVertices,
+        clipPathShapeDependencyKey(shape),
+        () => {
+          switch (shape.kind) {
+            case "rect": {
+              const cornerRadius = clipPathRectRadius(shape);
+              return translateVertices(
+                generateRectVertices(shape.width, shape.height, cornerRadius),
+                shape.x,
+                shape.y,
+              );
+            }
+            case "ellipse":
+              return generateEllipseVertices({ cx: shape.cx, cy: shape.cy, rx: shape.rx, ry: shape.ry });
+            case "path": {
+              const contours = svgPathDToContours({
+                d: shape.d,
+                windingRule: shape.fillRule ?? "nonzero",
+              });
+              return tessellateContours(contours, 0.25, true);
+            }
+          }
+        },
+      );
+    },
+
     getPathGeometry(node) {
       const cached = pathGeometry.get(node);
       if (cached) {
@@ -212,7 +466,7 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
       }));
       const usesEvenOddFill = parsedContours.some((contour) => contour.windingRule === "evenodd");
       const prepared = prepareFanTriangles(parsedContours, 0.25, !usesEvenOddFill);
-      const value: PathGeometry = {
+      const value = {
         parsedContours,
         prepared,
         coverQuad: prepared ? generateCoverQuad(prepared.bounds) : null,
@@ -232,24 +486,17 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
       }
       // Build via the SoT plan builder so per-contour fill overrides /
       // fill-rule resolution stay consistent with the SVG renderer.
-      // The plan would re-parse `paths[i].d` on every render if called
-      // from the hot loop; doing it once per node here is the whole
-      // point of the cache.
       const plan = createWebGLPathFillPlan({
         paths: node.paths,
-        sourceFills: node.sourceFills,
       });
       const instructions: PathFillInstructionGeometry[] = [];
       for (const instruction of plan) {
-        if (instruction.fills.length === 0) {
-          continue;
-        }
         const built = buildPathFillInstructionGeometry(instruction);
         if (built) {
           instructions.push(built);
         }
       }
-      const value: PathFillPlanGeometry = { instructions };
+      const value = { instructions };
       pathFillPlanGeometry.set(node, value);
       return value;
     },
@@ -259,18 +506,17 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
       if (cached) {
         return cached;
       }
-      if (node.content.mode !== "glyphs") {
-        throw new Error(`WebGL text glyph geometry cache requires glyph content for text node ${node.id}`);
-      }
+      const glyphContent = requireRenderTextGlyphContent(node);
       // One tessellation pass per fill-run keeps WebGL aligned with the
       // SVG path emitter (which also outputs one <path> per run). The
       // renderer iterates these runs and submits a stencil-fill draw
       // call per run with the run's fillColor / fillOpacity.
-      const runs: TextGlyphRunGeometry[] = node.content.runs.map((run) => {
+      const runs: TextGlyphRunGeometry[] = glyphContent.runs.map((run) => {
         const contours = svgPathDToContours({ d: run.d });
         return {
           fillColor: run.fillColor,
           fillOpacity: run.fillOpacity,
+          blendMode: run.blendMode,
           contours,
           vertices: tessellateContours(contours, 0.1, true),
           // Use the single-shared-anchor fan mode for glyph contours.
@@ -297,7 +543,7 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
           prepared: prepareFanTriangles(contours, 0.025, true),
         };
       });
-      const value: TextGlyphGeometry = { runs };
+      const value = { runs };
       textGlyphGeometry.set(node, value);
       return value;
     },
@@ -317,6 +563,12 @@ export function createWebGLGeometryCache(): WebGLGeometryCache {
     dispose() {
       rectVertices.clear();
       ellipseVertices.clear();
+      rectStrokeVertices.clear();
+      rectAlignedStrokeVertices.clear();
+      ellipseStrokeVertices.clear();
+      strokeShapeStrokeVertices.clear();
+      strokeShapeStencilVertices.clear();
+      clipPathShapeVertices.clear();
     },
   };
 }

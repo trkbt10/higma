@@ -3,12 +3,24 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
-import { FigEditorProvider } from "../context/FigEditorContext";
+import { createFigEditorStore, FigEditorStoreProvider } from "../context/FigEditorContext";
 import { sectionDocument, sectionNode, sectionPage } from "../panels/sections/section-specimen";
 import { FigInspectorOverlay } from "./FigInspectorOverlay";
 
+function renderFigInspectorOverlayWithFigEditorStore(context: ReturnType<typeof createFigDocumentContextFromNodeChanges>): string {
+  const store = createFigEditorStore({ context });
+  try {
+    return renderToStaticMarkup(createElement(FigEditorStoreProvider, {
+      store,
+      children: createElement(FigInspectorOverlay),
+    }));
+  } finally {
+    store.dispose();
+  }
+}
+
 describe("FigInspectorOverlay", () => {
-  it("renders overlay boxes from Kiwi node bounds", () => {
+  it("waits for renderer-derived node bounds before rendering overlay boxes", () => {
     const page = sectionPage();
     if (page.guid === undefined) {
       throw new Error("FigInspectorOverlay spec page is missing guid");
@@ -23,12 +35,9 @@ describe("FigInspectorOverlay", () => {
       images: new Map(),
       metadata: null,
     });
-    const html = renderToStaticMarkup(createElement(FigEditorProvider, {
-      context,
-      children: createElement(FigInspectorOverlay),
-    }));
+    const html = renderFigInspectorOverlayWithFigEditorStore(context);
 
     expect(html).toContain('data-inspector-overlay="true"');
-    expect(html).toContain("<rect");
+    expect(html).not.toContain("<rect");
   });
 });

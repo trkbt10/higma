@@ -34,15 +34,18 @@ function createEmptyFrame(): FigNode {
 
 describe("renderFigToSvg exportSettings plumbing", () => {
   it("accepts an explicit exportSettings.colorProfile and renders without throwing", async () => {
+    const document = indexFigKiwiDocument([]);
     const result = await renderFigToSvg([createEmptyFrame()], {
       width: 10,
       height: 10,
       viewport: { x: 0, y: 0, width: 10, height: 10 },
+      sourceDocumentReference: document,
+      sourceRevision: 0,
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
       symbolResolver: createSymbolResolver({
-        document: indexFigKiwiDocument([]),
+        document,
       }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       exportSettings: { colorProfile: "SRGB" },
@@ -51,6 +54,7 @@ describe("renderFigToSvg exportSettings plumbing", () => {
   });
 
   it("throws fail-fast when an unsupported `displayP3IccProfile` is requested without bytes", async () => {
+    const document = indexFigKiwiDocument([]);
     // Routing the option through the resolver is what surfaces
     // the P3-without-ICC fail-fast guard
     // for callers that omit the ICC bytes. Reaching this throw confirms
@@ -60,11 +64,13 @@ describe("renderFigToSvg exportSettings plumbing", () => {
       width: 10,
       height: 10,
       viewport: { x: 0, y: 0, width: 10, height: 10 },
+      sourceDocumentReference: document,
+      sourceRevision: 0,
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
       symbolResolver: createSymbolResolver({
-        document: indexFigKiwiDocument([]),
+        document,
       }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       exportSettings: { colorProfile: "DISPLAY_P3_V4" },

@@ -11,6 +11,7 @@ export type FigKiwiDocumentIndex = {
   readonly nodeChanges: readonly FigNode[];
   readonly roots: readonly FigNode[];
   readonly nodesByGuid: ReadonlyMap<string, FigNode>;
+  readonly nodeIndexByGuid: ReadonlyMap<string, number>;
   readonly childrenByParent: ReadonlyMap<string, readonly FigNode[]>;
   readonly childrenOf: (node: FigNode) => readonly FigNode[];
 };
@@ -34,12 +35,14 @@ function parentPosition(node: FigNode): string {
  */
 export function indexFigKiwiDocument(nodeChanges: readonly FigNode[]): FigKiwiDocumentIndex {
   const nodesByGuid = new Map<string, FigNode>();
-  for (const node of nodeChanges) {
+  const nodeIndexByGuid = new Map<string, number>();
+  nodeChanges.forEach((node, index) => {
     const key = nodeGuidKey(node);
     if (key !== undefined) {
       nodesByGuid.set(key, node);
+      nodeIndexByGuid.set(key, index);
     }
-  }
+  });
 
   const mutableChildrenByParent = new Map<string, FigNode[]>();
   for (const node of nodeChanges) {
@@ -80,7 +83,7 @@ export function indexFigKiwiDocument(nodeChanges: readonly FigNode[]): FigKiwiDo
     return childrenByParent.get(key) ?? EMPTY_CHILDREN;
   };
 
-  return { nodeChanges, roots, nodesByGuid, childrenByParent, childrenOf };
+  return { nodeChanges, roots, nodesByGuid, nodeIndexByGuid, childrenByParent, childrenOf };
 }
 
 /**

@@ -13,12 +13,14 @@ import { renderSceneGraphToSvg } from "./scene-renderer";
 import type { SceneGraph, FrameNode, SceneNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+const ANGULAR_GRADIENT_SPEC_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 
 function makeSceneGraph(children: readonly SceneNode[]): SceneGraph {
   return {
     width: 120,
     height: 120,
     version: 1,
+    sourceDocumentReference: ANGULAR_GRADIENT_SPEC_SOURCE_DOCUMENT_REFERENCE,
     root: {
       type: "group", id: "root" as SceneNodeId,
       name: "root", transform: IDENTITY, opacity: 1, visible: true,

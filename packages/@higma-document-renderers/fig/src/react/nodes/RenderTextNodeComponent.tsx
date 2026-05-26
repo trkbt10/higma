@@ -43,6 +43,9 @@ function formatLineTextContent(node: RenderTextNode): ReactNode {
   if (node.content.mode !== "lines") {
     throw new Error("formatLineTextContent requires line text content");
   }
+  if (node.fillColor === undefined) {
+    throw new Error(`React text line renderer requires base text run fill for text node ${node.id}`);
+  }
   const body = (
     <FigTextLines
       textLineLayout={node.content.layout}

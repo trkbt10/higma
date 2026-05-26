@@ -36,8 +36,7 @@ export type NodeCategoryConfig = {
  *     shape:     { color: "#22c55e", label: "Shape" },
  *     text:      { color: "#f97316", label: "Text" },
  *   },
- *   getCategory: (nodeType) => figNodeTypeMap[nodeType] ?? "unknown",
- *   fallback: { color: "#94a3b8", label: "Unknown" },
+ *   getCategory: (nodeType) => figNodeTypeMap[nodeType],
  * };
  * ```
  */
@@ -50,15 +49,9 @@ export type NodeCategoryRegistry = {
 
   /**
    * Resolve a node type string to a category ID.
-   * Must return a key present in `categories`, or any string
-   * that falls back to `fallback`.
+   * Must return a key present in `categories`.
    */
   readonly getCategory: (nodeType: string) => string;
-
-  /**
-   * Fallback configuration for unrecognized node types.
-   */
-  readonly fallback: NodeCategoryConfig;
 };
 
 // =============================================================================
@@ -122,21 +115,25 @@ export type InspectorTreeNode = {
 // Helpers
 // =============================================================================
 
-/**
- * Resolve the color for a node type using the registry.
- * Convenience function that avoids repeating the fallback logic.
- */
-export function resolveNodeColor(registry: NodeCategoryRegistry, nodeType: string): string {
+function requireNodeCategoryConfig(registry: NodeCategoryRegistry, nodeType: string): NodeCategoryConfig {
   const categoryId = registry.getCategory(nodeType);
-  return registry.categories[categoryId]?.color ?? registry.fallback.color;
+  const category = registry.categories[categoryId];
+  if (category === undefined) {
+    throw new Error(`NodeCategoryRegistry returned missing category "${categoryId}" for node type "${nodeType}"`);
+  }
+  return category;
+}
+
+/** Resolve the color for a node type using the registry. */
+export function resolveNodeColor(registry: NodeCategoryRegistry, nodeType: string): string {
+  return requireNodeCategoryConfig(registry, nodeType).color;
 }
 
 /**
  * Resolve the label for a node type using the registry.
  */
 export function resolveNodeLabel(registry: NodeCategoryRegistry, nodeType: string): string {
-  const categoryId = registry.getCategory(nodeType);
-  return registry.categories[categoryId]?.label ?? registry.fallback.label;
+  return requireNodeCategoryConfig(registry, nodeType).label;
 }
 
 /**

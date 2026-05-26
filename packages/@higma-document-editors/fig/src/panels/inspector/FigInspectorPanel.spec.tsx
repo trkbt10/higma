@@ -3,9 +3,21 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
-import { FigEditorProvider } from "../../context/FigEditorContext";
+import { createFigEditorStore, FigEditorStoreProvider } from "../../context/FigEditorContext";
 import { sectionDocument, sectionNode, sectionPage } from "../sections/section-specimen";
 import { FigInspectorPanel } from "./FigInspectorPanel";
+
+function renderFigInspectorPanelWithFigEditorStore(context: ReturnType<typeof createFigDocumentContextFromNodeChanges>): string {
+  const store = createFigEditorStore({ context });
+  try {
+    return renderToStaticMarkup(createElement(FigEditorStoreProvider, {
+      store,
+      children: createElement(FigInspectorPanel),
+    }));
+  } finally {
+    store.dispose();
+  }
+}
 
 describe("FigInspectorPanel", () => {
   it("renders the Kiwi inspector tree and legend", () => {
@@ -23,10 +35,7 @@ describe("FigInspectorPanel", () => {
       images: new Map(),
       metadata: null,
     });
-    const html = renderToStaticMarkup(createElement(FigEditorProvider, {
-      context,
-      children: createElement(FigInspectorPanel),
-    }));
+    const html = renderFigInspectorPanelWithFigEditorStore(context);
 
     expect(html).toContain("Container");
     expect(html).toContain("Inspectable Frame");

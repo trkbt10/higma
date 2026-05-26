@@ -41,7 +41,11 @@ import {
 } from "@higma-document-io/fig";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
-import { createFigFamilyRenderOptions, useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+import {
+  createFigFamilyRenderOptions,
+  useFigSceneGraph,
+} from "@higma-figma-runtime/react-renderer";
+import type { KiwiSceneGraphMutation } from "@higma-document-renderers/fig/scene-graph";
 import { computePageBounds, type PageBounds } from "./page-bounds";
 import { computeNodeBounds, indexBoundsById, type NodeBounds } from "./geometry/node-bounds";
 import { findNodeAtPoint } from "./geometry/hit-test";
@@ -944,6 +948,11 @@ type FigStageContentProps = {
 };
 
 const MIN_RENDER_DIM = 1;
+const INITIAL_VSC_VIEWER_KIWI_DOCUMENT_MUTATION: KiwiSceneGraphMutation = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
 
 function FigStageContent({
   page,
@@ -981,6 +990,8 @@ function FigStageContent({
     viewportY: worldY,
     viewportWidth: Math.max(MIN_RENDER_DIM, worldW),
     viewportHeight: Math.max(MIN_RENDER_DIM, worldH),
+    kiwiDocumentMutation: INITIAL_VSC_VIEWER_KIWI_DOCUMENT_MUTATION,
+    pruneToViewport: false,
     resources,
   });
 
@@ -992,6 +1003,7 @@ function FigStageContent({
       <WebGLViewport
         sceneGraph={sceneGraph}
         renderOptions={renderOptions}
+        kiwiDocumentMutation={INITIAL_VSC_VIEWER_KIWI_DOCUMENT_MUTATION}
         viewportScale={viewport.scale}
       />
       <HoverOverlay

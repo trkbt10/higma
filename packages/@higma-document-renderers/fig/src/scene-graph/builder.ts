@@ -325,8 +325,12 @@ export type BuildSceneGraphOptions = {
   readonly images: ReadonlyMap<string, FigPackageImage>;
   /** Canvas size. */
   readonly canvasSize: { width: number; height: number };
-  /** World-space window to render into the output canvas. */
+  /** World-space region to render into the output canvas. */
   readonly viewport: { x: number; y: number; width: number; height: number };
+  /** Source document object reference for renderer resource invalidation. */
+  readonly sourceDocumentReference: object;
+  /** Monotonic source document revision used by renderer resource caches. */
+  readonly sourceRevision: number;
   /** Symbol resolver for INSTANCE resolution. */
   readonly symbolResolver: SymbolResolver;
   /** Parent/child view over the Kiwi document. */
@@ -350,6 +354,8 @@ export type BuildSceneGraphOptions = {
    * outlines. Pass `undefined` when the caller has no synchronous font cache.
    */
   readonly textFontResolver: TextFontResolver | undefined;
+  /** Source FigNodes whose cached SceneNodes must not be reused for this build. */
+  readonly cacheInvalidatedSources?: WeakSet<FigNode>;
 };
 
 /**
@@ -366,6 +372,7 @@ type BuildContext = {
   readonly textFontResolver: TextFontResolver | undefined;
   readonly variableModeBySetMap?: FigKiwiVariableModeBySetMap;
   readonly previousCache?: SceneGraphBuildCache;
+  readonly cacheInvalidatedSources?: WeakSet<FigNode>;
   readonly nextNodesBySource: WeakMap<FigNode, SceneNode>;
   /**
    * Identity set of render-surface root FigNodes. It starts with the
@@ -1107,7 +1114,7 @@ function withNodeVariableModeBySetMap(ctx: BuildContext, node: FigNode): BuildCo
 
 function buildNode(node: FigNode, ctx: BuildContext): SceneNode | null {
   const cached = ctx.previousCache?.nodesBySource.get(node);
-  if (cached) {
+  if (cached && !ctx.cacheInvalidatedSources?.has(node)) {
     ctx.nextNodesBySource.set(node, cached);
     return cached;
   }
@@ -1320,6 +1327,7 @@ function wrapWithMask(
   return {
     type: "group",
     id: createNodeId(`masked-group-${ctx.nodeCounter++}`),
+    rendererStructure: { kind: "mask-wrapper" },
     transform: IDENTITY,
     opacity: 1,
     visible: true,
@@ -1366,6 +1374,7 @@ export function buildSceneGraphWithCache(
     warnings: options.warnings,
     textFontResolver: options.textFontResolver,
     previousCache,
+    cacheInvalidatedSources: options.cacheInvalidatedSources,
     nextNodesBySource,
     exportRoots,
     nodeCounter: 0,
@@ -1381,7 +1390,8 @@ export function buildSceneGraphWithCache(
       height: options.canvasSize.height,
       viewport: options.viewport,
       root,
-      version: 1,
+      sourceDocumentReference: options.sourceDocumentReference,
+      version: options.sourceRevision,
     },
     cache: { nodesBySource: nextNodesBySource, root },
   };

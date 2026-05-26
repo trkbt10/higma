@@ -31,6 +31,18 @@ import type { AffineMatrix } from "@higma-primitives/path";
 
 const IDENTITY: AffineMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 
+type VertexPoint = {
+  readonly x: number;
+  readonly y: number;
+};
+
+function flatVertexPoints(vertices: ArrayLike<number>): readonly VertexPoint[] {
+  return Array.from({ length: vertices.length / 2 }, (_, index) => ({
+    x: vertices[index * 2],
+    y: vertices[index * 2 + 1],
+  }));
+}
+
 function makeTextNode(overrides: Partial<TextNode> = {}): TextNode {
   return {
     type: "text",
@@ -529,31 +541,21 @@ describe("Text tessellation pipeline", () => {
       // hole). Probe the four corner band cells: each must contain at
       // least one tessellated vertex.
       const v = result.glyphVertices;
-      let topBand = 0;
-      let bottomBand = 0;
-      let leftBand = 0;
-      let rightBand = 0;
-      for (let i = 0; i < v.length; i += 2) {
-        const x = v[i];
-        const y = v[i + 1];
-        if (y <= 4) { topBand++; }
-        if (y >= 10) { bottomBand++; }
-        if (x <= 4) { leftBand++; }
-        if (x >= 10) { rightBand++; }
-      }
-      expect(topBand).toBeGreaterThan(0);
-      expect(bottomBand).toBeGreaterThan(0);
-      expect(leftBand).toBeGreaterThan(0);
-      expect(rightBand).toBeGreaterThan(0);
+      const points = flatVertexPoints(v);
+      const bandCounts = points.reduce((acc, { x, y }) => ({
+        topBand: acc.topBand + (y <= 4 ? 1 : 0),
+        bottomBand: acc.bottomBand + (y >= 10 ? 1 : 0),
+        leftBand: acc.leftBand + (x <= 4 ? 1 : 0),
+        rightBand: acc.rightBand + (x >= 10 ? 1 : 0),
+      }), { topBand: 0, bottomBand: 0, leftBand: 0, rightBand: 0 });
+      expect(bandCounts.topBand).toBeGreaterThan(0);
+      expect(bandCounts.bottomBand).toBeGreaterThan(0);
+      expect(bandCounts.leftBand).toBeGreaterThan(0);
+      expect(bandCounts.rightBand).toBeGreaterThan(0);
       // And no vertex should fall strictly inside the hole (4 < x < 10
       // && 4 < y < 10) — a degenerate fan there would mean the hole
       // got filled.
-      let insideHole = 0;
-      for (let i = 0; i < v.length; i += 2) {
-        if (v[i] > 4 && v[i] < 10 && v[i + 1] > 4 && v[i + 1] < 10) {
-          insideHole++;
-        }
-      }
+      const insideHole = points.filter(({ x, y }) => x > 4 && x < 10 && y > 4 && y < 10).length;
       expect(insideHole).toBe(0);
     });
 
@@ -601,26 +603,19 @@ describe("Text tessellation pipeline", () => {
       // hole and dropping the rings as orphans — the "0" then
       // rasterised as a tiny solid blob INSIDE the hole region.
       const v = result.glyphVertices;
-      let topBand = 0;
-      let bottomBand = 0;
-      let leftBand = 0;
-      let rightBand = 0;
-      let insideHole = 0;
-      for (let i = 0; i < v.length; i += 2) {
-        const x = v[i];
-        const y = v[i + 1];
-        if (x < 20 || x > 34) { continue; } // ignore peso glyph region
-        if (y <= 4) { topBand++; }
-        if (y >= 10) { bottomBand++; }
-        if (x <= 24) { leftBand++; }
-        if (x >= 30) { rightBand++; }
-        if (x > 24 && x < 30 && y > 4 && y < 10) { insideHole++; }
-      }
-      expect(topBand).toBeGreaterThan(0);
-      expect(bottomBand).toBeGreaterThan(0);
-      expect(leftBand).toBeGreaterThan(0);
-      expect(rightBand).toBeGreaterThan(0);
-      expect(insideHole).toBe(0);
+      const zeroGlyphPoints = flatVertexPoints(v).filter(({ x }) => x >= 20 && x <= 34);
+      const zeroGlyphCounts = zeroGlyphPoints.reduce((acc, { x, y }) => ({
+        topBand: acc.topBand + (y <= 4 ? 1 : 0),
+        bottomBand: acc.bottomBand + (y >= 10 ? 1 : 0),
+        leftBand: acc.leftBand + (x <= 24 ? 1 : 0),
+        rightBand: acc.rightBand + (x >= 30 ? 1 : 0),
+        insideHole: acc.insideHole + (x > 24 && x < 30 && y > 4 && y < 10 ? 1 : 0),
+      }), { topBand: 0, bottomBand: 0, leftBand: 0, rightBand: 0, insideHole: 0 });
+      expect(zeroGlyphCounts.topBand).toBeGreaterThan(0);
+      expect(zeroGlyphCounts.bottomBand).toBeGreaterThan(0);
+      expect(zeroGlyphCounts.leftBand).toBeGreaterThan(0);
+      expect(zeroGlyphCounts.rightBand).toBeGreaterThan(0);
+      expect(zeroGlyphCounts.insideHole).toBe(0);
     });
   });
 
@@ -793,22 +788,16 @@ describe("Text tessellation pipeline", () => {
       // Probe four corner cells of the outer ring — all must have
       // tessellated coverage. If the outer was orphan-dropped, none
       // of these would receive vertices.
-      let cornerTopLeft = 0;
-      let cornerTopRight = 0;
-      let cornerBottomLeft = 0;
-      let cornerBottomRight = 0;
-      for (let i = 0; i < vertices.length; i += 2) {
-        const x = vertices[i];
-        const y = vertices[i + 1];
-        if (x <= 4 && y <= 4) { cornerTopLeft++; }
-        if (x >= 16 && y <= 4) { cornerTopRight++; }
-        if (x <= 4 && y >= 16) { cornerBottomLeft++; }
-        if (x >= 16 && y >= 16) { cornerBottomRight++; }
-      }
-      expect(cornerTopLeft).toBeGreaterThan(0);
-      expect(cornerTopRight).toBeGreaterThan(0);
-      expect(cornerBottomLeft).toBeGreaterThan(0);
-      expect(cornerBottomRight).toBeGreaterThan(0);
+      const cornerCounts = flatVertexPoints(vertices).reduce((acc, { x, y }) => ({
+        cornerTopLeft: acc.cornerTopLeft + (x <= 4 && y <= 4 ? 1 : 0),
+        cornerTopRight: acc.cornerTopRight + (x >= 16 && y <= 4 ? 1 : 0),
+        cornerBottomLeft: acc.cornerBottomLeft + (x <= 4 && y >= 16 ? 1 : 0),
+        cornerBottomRight: acc.cornerBottomRight + (x >= 16 && y >= 16 ? 1 : 0),
+      }), { cornerTopLeft: 0, cornerTopRight: 0, cornerBottomLeft: 0, cornerBottomRight: 0 });
+      expect(cornerCounts.cornerTopLeft).toBeGreaterThan(0);
+      expect(cornerCounts.cornerTopRight).toBeGreaterThan(0);
+      expect(cornerCounts.cornerBottomLeft).toBeGreaterThan(0);
+      expect(cornerCounts.cornerBottomRight).toBeGreaterThan(0);
     });
 
     // Edge case: a glyph set with no holes at all. The

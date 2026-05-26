@@ -1,4 +1,4 @@
-/** @file WebGL texture resource identities. */
+/** @file WebGL texture resource keys. */
 
 import type { FigmaExportColorProfile } from "@higma-codecs/raster";
 
@@ -28,7 +28,7 @@ function textureColorManagementKey(colorManagement: TextureColorManagement): str
   return "color:unmanaged";
 }
 
-/** Build the domain identity for an image texture. */
+/** Build the domain key for an image texture. */
 export function imageTextureResource(imageHash: string, colorManagement: TextureColorManagement): ImageTextureResource {
   if (imageHash.length === 0) {
     throw new Error("imageTextureResource requires a non-empty image hash");

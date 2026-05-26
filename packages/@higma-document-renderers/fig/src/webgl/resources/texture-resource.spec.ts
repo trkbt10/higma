@@ -1,4 +1,4 @@
-/** @file WebGL texture resource identity tests. */
+/** @file WebGL texture resource key tests. */
 
 import { imageTextureResource } from "./texture-resource";
 

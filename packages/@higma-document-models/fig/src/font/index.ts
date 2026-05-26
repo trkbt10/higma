@@ -77,6 +77,7 @@ export {
 // same-file resolution
 export {
   type FontPlatform,
+  type BrowserFontPlatformDetectionHost,
   fontPlatformFromNodePlatform,
   detectBrowserFontPlatform,
   physicalFamilyAliasesFor,
@@ -84,7 +85,12 @@ export {
 } from "./physical-aliases";
 
 // Font resolver (Figma fontRef → CSS font stack)
-export { createFontResolver, createBrowserAvailabilityChecker, type FontResolverInstance } from "./resolver";
+export {
+  createFontResolver,
+  createBrowserAvailabilityChecker,
+  type BrowserFontAvailabilityCheckerHost,
+  type FontResolverInstance,
+} from "./resolver";
 
 // Font cache
 export { createFontCache, type FontCache, createCachingFontLoader, type CachingFontLoader } from "./cache";

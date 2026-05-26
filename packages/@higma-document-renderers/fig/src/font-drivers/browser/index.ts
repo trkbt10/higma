@@ -6,5 +6,13 @@
  * - CSS Font Loading API (availability check only)
  */
 
-export { createBrowserFontLoader, isBrowserFontLoaderSupported } from "./browser-loader";
-export { createCssFontLoader, isCssFontLoaderSupported } from "./css-font-loader";
+export {
+  createBrowserFontLoader,
+  isBrowserFontLoaderSupported,
+  type BrowserFontLoaderGlobalThisHost,
+} from "./browser-loader";
+export {
+  createCssFontLoader,
+  isCssFontLoaderSupported,
+  type CssFontLoaderGlobalThisHost,
+} from "./css-font-loader";

@@ -5,13 +5,14 @@
  * and multi-pass rendering.
  */
 
-import { resolveFigmaBlurStdDeviation, type BackgroundBlurEffect, type BlendMode, type DropShadowEffect, type InnerShadowEffect, type LayerBlurEffect } from "@higma-document-renderers/fig/scene-graph";
+import { resolveBrowserRenderedFigmaExportCssBlendMode, resolveBrowserRenderedFigmaExportEffectBlendMode, resolveFigmaBlurStdDeviation, type BackgroundBlurEffect, type BlendMode, type DropShadowEffect, type InnerShadowEffect, type LayerBlurEffect } from "@higma-document-renderers/fig/scene-graph";
 import type { Framebuffer } from "../resources/framebuffer";
 import { createFramebuffer, createFramebufferWithStencil, deleteFramebuffer, bindFramebuffer } from "../resources/framebuffer";
 import { CLIP_STENCIL_BIT, FILL_STENCIL_MASK } from "../tessellation/stencil-fill";
 import { applyEffectOffsetScale, type EffectBackingScale } from "./effect-scale";
 import {
   expandWebGLEffectRenderRegionForShaderSampling,
+  intersectWebGLEffectRenderRegions,
   resolveWebGLEffectBackdropCopyRegion,
   type WebGLEffectRenderRegion,
 } from "./effect-render-region";
@@ -36,6 +37,7 @@ export const gaussianBlurFragmentShader = `
   uniform vec2 u_direction;
   uniform vec2 u_texelSize;
   uniform float u_radius;
+  uniform float u_premultipliedInput;
 
   varying vec2 v_texCoord;
 
@@ -58,8 +60,13 @@ export const gaussianBlurFragmentShader = `
       float weight = exp(invTwoSigmaSq * d * d);
       vec2 offset = u_direction * u_texelSize * d;
       vec4 s = texture2D(u_texture, v_texCoord + offset);
-      // Premultiply: prevent transparent-black from darkening the blur
-      s.rgb *= s.a;
+      // Straight-alpha inputs must be premultiplied before filtering to
+      // prevent transparent-black halos. Framebuffer captures/backdrops are
+      // already premultiplied by WebGL blending, so multiplying those again
+      // would darken background blur and layer blur output.
+      if (u_premultipliedInput < 0.5) {
+        s.rgb *= s.a;
+      }
       color += s * weight;
       totalWeight += weight;
     }
@@ -72,6 +79,23 @@ export const gaussianBlurFragmentShader = `
     gl_FragColor = color;
   }
 `;
+
+const EIGHT_BIT_HALF_STEP = 0.5 / 255;
+
+/** Return whether the integer-sampled WebGL Gaussian kernel can change an adjacent 8-bit sample. */
+export function shouldRunWebGLGaussianBlurForSigma(sigma: number): boolean {
+  if (!Number.isFinite(sigma)) {
+    throw new Error(`WebGL Gaussian blur sigma must be finite, got ${sigma}`);
+  }
+  if (sigma < 0) {
+    throw new Error(`WebGL Gaussian blur sigma must be non-negative, got ${sigma}`);
+  }
+  if (sigma === 0) {
+    return false;
+  }
+  const adjacentSampleWeight = Math.exp(-0.5 / (sigma * sigma));
+  return adjacentSampleWeight >= EIGHT_BIT_HALF_STEP;
+}
 
 export const alphaMorphologyFragmentShader = `
   precision mediump float;
@@ -108,6 +132,19 @@ export const alphaMorphologyFragmentShader = `
     }
 
     gl_FragColor = vec4(resultColor, resultAlpha);
+  }
+`;
+
+export const alphaBinarizeFragmentShader = `
+  precision mediump float;
+
+  uniform sampler2D u_texture;
+
+  varying vec2 v_texCoord;
+
+  void main() {
+    float alpha = clamp(texture2D(u_texture, v_texCoord).a * 127.0, 0.0, 1.0);
+    gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
   }
 `;
 
@@ -216,9 +253,22 @@ export const blendShadowFragmentShader = `
     if (u_blendMode == 13) { return setLum(setSat(backdrop, sat(source)), lum(backdrop)); }
     if (u_blendMode == 14) { return setLum(source, lum(backdrop)); }
     if (u_blendMode == 15) { return setLum(backdrop, lum(source)); }
-    if (u_blendMode == 16) { return max(vec3(0.0), backdrop + source - 1.0); }
-    if (u_blendMode == 17) { return min(vec3(1.0), backdrop + source); }
+    if (u_blendMode == 16) { return min(vec3(1.0), backdrop + source); }
     return source;
+  }
+
+  vec3 straightColor(vec4 color) {
+    if (color.a <= 0.0001) { return vec3(0.0); }
+    return color.rgb / color.a;
+  }
+
+  vec4 plusLighterComposite(vec3 backdropColor, float backdropAlpha, vec3 sourceColor, float sourceAlpha) {
+    float outputAlpha = min(1.0, sourceAlpha + backdropAlpha);
+    vec3 premultipliedOutput = min(vec3(1.0), sourceColor * sourceAlpha + backdropColor * backdropAlpha);
+    if (outputAlpha <= 0.0001) {
+      return vec4(0.0);
+    }
+    return vec4(premultipliedOutput / outputAlpha, outputAlpha);
   }
 
   void main() {
@@ -229,8 +279,134 @@ export const blendShadowFragmentShader = `
       alpha = alpha * (1.0 - shapeAlpha);
     }
     float sourceAlpha = alpha * u_color.a;
-    vec3 blended = blendColor(backdrop.rgb, u_color.rgb);
-    gl_FragColor = vec4(mix(backdrop.rgb, blended, sourceAlpha), max(backdrop.a, sourceAlpha));
+    vec3 backdropColor = straightColor(backdrop);
+    vec3 sourceColor = u_color.rgb;
+    if (u_blendMode == 16) {
+      gl_FragColor = plusLighterComposite(backdropColor, backdrop.a, sourceColor, sourceAlpha);
+      return;
+    }
+    vec3 blendedColor = blendColor(backdropColor, sourceColor);
+    float outputAlpha = sourceAlpha + backdrop.a * (1.0 - sourceAlpha);
+    vec3 premultipliedOutput =
+      sourceColor * sourceAlpha * (1.0 - backdrop.a) +
+      backdropColor * backdrop.a * (1.0 - sourceAlpha) +
+      blendedColor * sourceAlpha * backdrop.a;
+    if (outputAlpha <= 0.0001) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+    gl_FragColor = vec4(premultipliedOutput / outputAlpha, outputAlpha);
+  }
+`;
+
+export const blendContentFragmentShader = `
+  precision mediump float;
+
+  uniform sampler2D u_sourceTexture;
+  uniform sampler2D u_backdropTexture;
+  uniform int u_blendMode;
+  uniform float u_sourcePremultipliedInput;
+
+  varying vec2 v_texCoord;
+
+  float lum(vec3 c) {
+    return dot(c, vec3(0.3, 0.59, 0.11));
+  }
+
+  vec3 clipColor(vec3 c) {
+    float l = lum(c);
+    float n = min(min(c.r, c.g), c.b);
+    float x = max(max(c.r, c.g), c.b);
+    if (n < 0.0) { c = l + ((c - l) * l) / (l - n); }
+    if (x > 1.0) { c = l + ((c - l) * (1.0 - l)) / (x - l); }
+    return c;
+  }
+
+  vec3 setLum(vec3 c, float l) {
+    return clipColor(c + (l - lum(c)));
+  }
+
+  float sat(vec3 c) {
+    return max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
+  }
+
+  vec3 setSat(vec3 c, float s) {
+    float minC = min(min(c.r, c.g), c.b);
+    float maxC = max(max(c.r, c.g), c.b);
+    if (maxC > minC) {
+      return (c - minC) * s / (maxC - minC);
+    }
+    return vec3(0.0);
+  }
+
+  vec3 blendColor(vec3 backdrop, vec3 source) {
+    if (u_blendMode == 1) { return backdrop * source; }
+    if (u_blendMode == 2) { return backdrop + source - backdrop * source; }
+    if (u_blendMode == 3) { return min(backdrop, source); }
+    if (u_blendMode == 4) { return max(backdrop, source); }
+    if (u_blendMode == 5) {
+      return mix(2.0 * backdrop * source, 1.0 - 2.0 * (1.0 - backdrop) * (1.0 - source), step(0.5, backdrop));
+    }
+    if (u_blendMode == 6) {
+      return min(vec3(1.0), backdrop / max(vec3(0.001), 1.0 - source));
+    }
+    if (u_blendMode == 7) {
+      return 1.0 - min(vec3(1.0), (1.0 - backdrop) / max(vec3(0.001), source));
+    }
+    if (u_blendMode == 8) {
+      return mix(2.0 * backdrop * source, 1.0 - 2.0 * (1.0 - backdrop) * (1.0 - source), step(0.5, source));
+    }
+    if (u_blendMode == 9) {
+      return (1.0 - 2.0 * source) * backdrop * backdrop + 2.0 * source * backdrop;
+    }
+    if (u_blendMode == 10) { return abs(backdrop - source); }
+    if (u_blendMode == 11) { return backdrop + source - 2.0 * backdrop * source; }
+    if (u_blendMode == 12) { return setLum(setSat(source, sat(backdrop)), lum(backdrop)); }
+    if (u_blendMode == 13) { return setLum(setSat(backdrop, sat(source)), lum(backdrop)); }
+    if (u_blendMode == 14) { return setLum(source, lum(backdrop)); }
+    if (u_blendMode == 15) { return setLum(backdrop, lum(source)); }
+    if (u_blendMode == 16) { return min(vec3(1.0), backdrop + source); }
+    return source;
+  }
+
+  vec3 straightColor(vec4 color) {
+    if (color.a <= 0.0001) { return vec3(0.0); }
+    return color.rgb / color.a;
+  }
+
+  vec4 plusLighterComposite(vec3 backdropColor, float backdropAlpha, vec3 sourceColor, float sourceAlpha) {
+    float outputAlpha = min(1.0, sourceAlpha + backdropAlpha);
+    vec3 premultipliedOutput = min(vec3(1.0), sourceColor * sourceAlpha + backdropColor * backdropAlpha);
+    if (outputAlpha <= 0.0001) {
+      return vec4(0.0);
+    }
+    return vec4(premultipliedOutput / outputAlpha, outputAlpha);
+  }
+
+  void main() {
+    vec4 backdrop = texture2D(u_backdropTexture, v_texCoord);
+    vec4 source = texture2D(u_sourceTexture, v_texCoord);
+    float sourceAlpha = source.a;
+    vec3 backdropColor = straightColor(backdrop);
+    vec3 sourceColor = source.rgb;
+    if (u_sourcePremultipliedInput > 0.5 && sourceAlpha > 0.0001) {
+      sourceColor = source.rgb / sourceAlpha;
+    }
+    if (u_blendMode == 16) {
+      gl_FragColor = plusLighterComposite(backdropColor, backdrop.a, sourceColor, sourceAlpha);
+      return;
+    }
+    vec3 blendedColor = blendColor(backdropColor, sourceColor);
+    float outputAlpha = sourceAlpha + backdrop.a * (1.0 - sourceAlpha);
+    vec3 premultipliedOutput =
+      sourceColor * sourceAlpha * (1.0 - backdrop.a) +
+      backdropColor * backdrop.a * (1.0 - sourceAlpha) +
+      blendedColor * sourceAlpha * backdrop.a;
+    if (outputAlpha <= 0.0001) {
+      gl_FragColor = vec4(0.0);
+      return;
+    }
+    gl_FragColor = vec4(premultipliedOutput / outputAlpha, outputAlpha);
   }
 `;
 
@@ -238,7 +414,7 @@ export const blendShadowFragmentShader = `
  * Inner shadow compositing shader.
  *
  * Uses two textures: the original shape silhouette and the blurred silhouette.
- * Shadow mask = shapeAlpha * (1 - blurredAlpha_at_offset).
+ * Shadow mask = shapeAlpha - blurredAlpha_at_offset.
  * This produces color only at the inner edges of the shape where the shifted
  * blurred silhouette doesn't fully cover.
  */
@@ -256,7 +432,7 @@ export const innerShadowFragmentShader = `
   void main() {
     float shapeAlpha = texture2D(u_shapeTexture, v_texCoord).a;
     float blurredAlpha = texture2D(u_blurredTexture, v_texCoord + u_offset * u_texelSize).a;
-    float shadowMask = shapeAlpha * (1.0 - blurredAlpha);
+    float shadowMask = max(shapeAlpha - blurredAlpha, 0.0);
     gl_FragColor = vec4(u_color.rgb, u_color.a * shadowMask);
   }
 `;
@@ -269,15 +445,40 @@ export const blitFragmentShader = `
 
   uniform sampler2D u_texture;
   uniform float u_opacity;
+  uniform float u_premultipliedInput;
 
   varying vec2 v_texCoord;
 
   void main() {
     vec4 texel = texture2D(u_texture, v_texCoord);
-    // Apply opacity to alpha channel only — RGB stays unchanged.
-    // This matches SVG's <g opacity="X"> which reduces layer visibility
-    // without darkening the colors.
-    gl_FragColor = vec4(texel.rgb, texel.a * u_opacity);
+    vec3 color = texel.rgb;
+    if (u_premultipliedInput > 0.5 && texel.a > 0.0001) {
+      color = texel.rgb / texel.a;
+    }
+    gl_FragColor = vec4(color, texel.a * u_opacity);
+  }
+`;
+
+export const regionCopyVertexShader = `
+  attribute vec2 a_position;
+  attribute vec2 a_texCoord;
+  varying vec2 v_texCoord;
+
+  void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+    v_texCoord = a_texCoord;
+  }
+`;
+
+export const regionCopyFragmentShader = `
+  precision mediump float;
+
+  uniform sampler2D u_texture;
+
+  varying vec2 v_texCoord;
+
+  void main() {
+    gl_FragColor = texture2D(u_texture, v_texCoord);
   }
 `;
 
@@ -289,26 +490,114 @@ type BeginWebGLEffectLayerCaptureParams = {
   readonly region: WebGLEffectRenderRegion;
 };
 
+export type InnerShadowBlurSourceRun = {
+  readonly radius: number;
+  readonly spread: number;
+  readonly effects: readonly InnerShadowEffect[];
+};
+
+export type WebGLEffectLayerCapture = {
+  readonly framebuffer: Framebuffer;
+  readonly depth: number;
+};
+
+export type WebGLTextureAlphaMode = "premultiplied" | "straight";
+
+/** Resolve final WebGL shadow alpha from Kiwi/Figma effect alpha and RenderTree opacity. */
+export function resolveWebGLEffectCompositeAlpha(
+  effectColorAlpha: number,
+  resolvedNodeOpacity: number,
+): number {
+  if (!Number.isFinite(effectColorAlpha) || effectColorAlpha < 0 || effectColorAlpha > 1) {
+    throw new Error(`WebGL effect color alpha must be finite within [0, 1], got ${effectColorAlpha}`);
+  }
+  if (!Number.isFinite(resolvedNodeOpacity) || resolvedNodeOpacity < 0 || resolvedNodeOpacity > 1) {
+    throw new Error(`WebGL effect resolved node opacity must be finite within [0, 1], got ${resolvedNodeOpacity}`);
+  }
+  return effectColorAlpha * resolvedNodeOpacity;
+}
+
+/** Group adjacent inner-shadow effects that can share one spread and blur source. */
+export function resolveConsecutiveInnerShadowBlurSourceRuns(
+  effects: readonly InnerShadowEffect[],
+): readonly InnerShadowBlurSourceRun[] {
+  return effects.reduce<readonly InnerShadowBlurSourceRun[]>((runs, effect) => {
+    const radius = requireFiniteNonNegativeInnerShadowRadius(effect.radius);
+    const spread = resolveInnerShadowSpreadForBlurSource(effect);
+    const previous = runs.at(-1);
+    if (previous !== undefined && previous.radius === radius && previous.spread === spread) {
+      return [
+        ...runs.slice(0, -1),
+        {
+          ...previous,
+          effects: [...previous.effects, effect],
+        },
+      ];
+    }
+    return [
+      ...runs,
+      {
+        radius,
+        spread,
+        effects: [effect],
+      },
+    ];
+  }, []);
+}
+
+function requireFiniteNonNegativeInnerShadowRadius(radius: number): number {
+  if (!Number.isFinite(radius) || radius < 0) {
+    throw new Error(`WebGL inner shadow radius must be finite and non-negative, got ${radius}`);
+  }
+  return radius;
+}
+
+function resolveInnerShadowSpreadForBlurSource(effect: InnerShadowEffect): number {
+  const spread = effect.spread ?? 0;
+  if (!Number.isFinite(spread)) {
+    throw new Error(`WebGL inner shadow spread must be finite when present, got ${spread}`);
+  }
+  return spread;
+}
+
 /** Effects renderer instance */
 export type EffectsRendererInstance = {
-  renderDropShadow(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: DropShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }): void;
-  renderInnerShadow(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }): void;
-  renderBackgroundBlur(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: BackgroundBlurEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderMask: () => void }): void;
-  beginLayerCapture(params: BeginWebGLEffectLayerCaptureParams): Framebuffer;
-  endLayerCaptureAndBlur(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: LayerBlurEffect; worldToBacking: EffectBackingScale }): void;
-  /** Blit the captured layer framebuffer to screen with the given opacity and no blur. */
-  blitLayerWithOpacity(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; opacity: number }): void;
+  /** Compile all effect shader programs before the first interactive frame. */
+  precompileShaders(): void;
+  /** Allocate effect render targets for the current WebGL backing surface before the draw frame. */
+  prepareSurface(params: { readonly canvasWidth: number; readonly canvasHeight: number }): void;
+  /** Restrict effect output to the current renderer-owned redraw region. */
+  setRendererOutputRegion(region: WebGLEffectRenderRegion | null): void;
+  renderDropShadow(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly effect: DropShadowEffect; readonly resolvedNodeOpacity: number; readonly worldToBacking: EffectBackingScale; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean; readonly renderSilhouette: () => void }): void;
+  renderInnerShadow(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly effect: InnerShadowEffect; readonly resolvedNodeOpacity: number; readonly worldToBacking: EffectBackingScale; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean; readonly renderSilhouette: () => void }): void;
+  renderInnerShadows(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly effects: readonly InnerShadowEffect[]; readonly resolvedNodeOpacity: number; readonly worldToBacking: EffectBackingScale; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean; readonly renderSilhouette: () => void }): void;
+  renderBackgroundBlur(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly effect: BackgroundBlurEffect; readonly worldToBacking: EffectBackingScale; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean; readonly renderMask: () => void }): void;
+  renderBlendedSolidShape(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }; readonly opacity: number; readonly blendMode: BlendMode; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean; readonly renderShape: () => void }): void;
+  blendCapturedLayer(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly sourceFramebuffer: Framebuffer; readonly blendMode: BlendMode; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean }): void;
+  beginLayerCapture(params: BeginWebGLEffectLayerCaptureParams): WebGLEffectLayerCapture;
+  releaseLayerCapture(capture: WebGLEffectLayerCapture): void;
+  endLayerCaptureAndBlur(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; sourceFramebuffer: Framebuffer; effect: LayerBlurEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean }): void;
+  /** Blit the captured layer framebuffer to the current renderer output with the given opacity and no blur. */
+  blitLayerWithOpacity(params: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; sourceFramebuffer: Framebuffer; opacity: number; outputFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean }): void;
+  /** Copy one source framebuffer region into a different renderer output region without blending. */
+  copyFramebufferRegionToRegion(params: { readonly canvasWidth: number; readonly canvasHeight: number; readonly sourceRegion: WebGLEffectRenderRegion; readonly targetRegion: WebGLEffectRenderRegion; readonly sourceFramebuffer: Framebuffer; readonly outputFramebuffer: WebGLFramebuffer | null }): void;
   /**
    * Apply a Gaussian blur to a framebuffer. `radius` is in **backing-buffer
    * pixels** — callers must have already multiplied by the world→backing
    * length scale (see `EffectBackingScale.lengthScale`).
    */
-  applyGaussianBlur(source: Framebuffer, radius: number, region: WebGLEffectRenderRegion): Framebuffer;
+  applyGaussianBlur(params: {
+    readonly source: Framebuffer;
+    readonly radius: number;
+    readonly region: WebGLEffectRenderRegion;
+    readonly inputAlphaMode: WebGLTextureAlphaMode;
+  }): Framebuffer;
   dispose(): void;
 };
 
-function blendModeToShaderCode(blendMode: BlendMode | undefined): number {
-  switch (blendMode) {
+function cssBlendModeToShaderCode(blendMode: BlendMode | undefined): number {
+  const browserBlendMode = resolveBrowserRenderedFigmaExportCssBlendMode(blendMode);
+  switch (browserBlendMode) {
     case "multiply": return 1;
     case "screen": return 2;
     case "darken": return 3;
@@ -324,10 +613,17 @@ function blendModeToShaderCode(blendMode: BlendMode | undefined): number {
     case "saturation": return 13;
     case "color": return 14;
     case "luminosity": return 15;
-    case "plus-darker": return 16;
-    case "plus-lighter": return 17;
+    case "plus-lighter": return 16;
     default: return 0;
   }
+}
+
+function effectBlendModeToShaderCode(blendMode: BlendMode | undefined): number {
+  const effectBlendMode = resolveBrowserRenderedFigmaExportEffectBlendMode(blendMode);
+  if (effectBlendMode === "normal") {
+    return 0;
+  }
+  return cssBlendModeToShaderCode(effectBlendMode);
 }
 
 /**
@@ -336,16 +632,38 @@ function blendModeToShaderCode(blendMode: BlendMode | undefined): number {
 export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendererInstance {
   const blurProgram = { value: null as WebGLProgram | null };
   const morphologyProgram = { value: null as WebGLProgram | null };
+  const alphaBinarizeProgram = { value: null as WebGLProgram | null };
   const compositeProgram = { value: null as WebGLProgram | null };
   const blendShadowProgram = { value: null as WebGLProgram | null };
+  const blendContentProgram = { value: null as WebGLProgram | null };
   const innerShadowProgram = { value: null as WebGLProgram | null };
   const blitProgram = { value: null as WebGLProgram | null };
+  const regionCopyProgram = { value: null as WebGLProgram | null };
   const fullscreenQuad = { value: null as WebGLBuffer | null };
+  const regionCopyQuad = { value: null as WebGLBuffer | null };
   const tempFBO1 = { value: null as Framebuffer | null };
   const tempFBO2 = { value: null as Framebuffer | null };
   const shapeFBO = { value: null as Framebuffer | null };
-  const layerFBO = { value: null as Framebuffer | null };
+  const layerCaptureFramebuffers = { value: [] as Framebuffer[] };
+  const activeLayerCaptureDepth = { value: 0 };
   const backdropFBO = { value: null as Framebuffer | null };
+  const rendererOutputRegion = { value: null as WebGLEffectRenderRegion | null };
+  const uniformLocationCache = new WeakMap<WebGLProgram, Map<string, WebGLUniformLocation>>();
+  const attribLocationCache = new WeakMap<WebGLProgram, Map<string, number>>();
+  const scissorState = {
+    enabled: false,
+    box: { x: 0, y: 0, width: 0, height: 0 },
+  };
+
+  type EffectScissorState = {
+    readonly enabled: boolean;
+    readonly box: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    };
+  };
 
   function compileShader(label: string, type: number, source: string): WebGLShader {
     const shader = gl.createShader(type);
@@ -388,13 +706,17 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     return program;
   }
 
-  function ensureResources(width: number, height: number): void {
+  function ensureEffectShaders(): void {
     if (!blurProgram.value) {
       blurProgram.value = compileProgram("gaussian blur", gaussianBlurVertexShader, gaussianBlurFragmentShader);
     }
 
     if (!morphologyProgram.value) {
       morphologyProgram.value = compileProgram("alpha morphology", gaussianBlurVertexShader, alphaMorphologyFragmentShader);
+    }
+
+    if (!alphaBinarizeProgram.value) {
+      alphaBinarizeProgram.value = compileProgram("alpha binarize", gaussianBlurVertexShader, alphaBinarizeFragmentShader);
     }
 
     if (!compositeProgram.value) {
@@ -405,9 +727,33 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       blendShadowProgram.value = compileProgram("shadow blend", compositeVertexShader, blendShadowFragmentShader);
     }
 
+    if (!blendContentProgram.value) {
+      blendContentProgram.value = compileProgram("content blend", compositeVertexShader, blendContentFragmentShader);
+    }
+
+    if (!innerShadowProgram.value) {
+      innerShadowProgram.value = compileProgram("inner shadow", compositeVertexShader, innerShadowFragmentShader);
+    }
+
+    if (!blitProgram.value) {
+      blitProgram.value = compileProgram("blit", compositeVertexShader, blitFragmentShader);
+    }
+
+    if (!regionCopyProgram.value) {
+      regionCopyProgram.value = compileProgram("region copy", regionCopyVertexShader, regionCopyFragmentShader);
+    }
+
     if (!fullscreenQuad.value) {
       fullscreenQuad.value = createFullscreenQuadBuffer();
     }
+
+    if (!regionCopyQuad.value) {
+      regionCopyQuad.value = createRegionCopyQuadBuffer();
+    }
+  }
+
+  function ensureResources(width: number, height: number): void {
+    ensureEffectShaders();
 
     // Recreate FBOs if size changed
     if (!tempFBO1.value || tempFBO1.value.width !== width || tempFBO1.value.height !== height) {
@@ -421,21 +767,33 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
   function ensureShapeFBO(width: number, height: number): void {
     if (!shapeFBO.value || shapeFBO.value.width !== width || shapeFBO.value.height !== height) {
       deleteFramebufferIfPresent(shapeFBO.value);
-      shapeFBO.value = createFramebuffer(gl, width, height);
+      shapeFBO.value = createFramebufferWithStencil(gl, width, height);
     }
   }
 
   function ensureInnerShadowProgram(): void {
-    if (!innerShadowProgram.value) {
-      innerShadowProgram.value = compileProgram("inner shadow", compositeVertexShader, innerShadowFragmentShader);
-    }
+    ensureEffectShaders();
   }
 
-  function ensureLayerFBO(width: number, height: number): void {
-    if (!layerFBO.value || layerFBO.value.width !== width || layerFBO.value.height !== height) {
-      deleteFramebufferIfPresent(layerFBO.value);
-      layerFBO.value = createFramebufferWithStencil(gl, width, height);
+  function ensureLayerCaptureFramebuffer(width: number, height: number, depth: number): Framebuffer {
+    const existing = layerCaptureFramebuffers.value[depth];
+    if (existing !== undefined && existing.width === width && existing.height === height) {
+      return existing;
     }
+    if (existing !== undefined) {
+      deleteFramebuffer(gl, existing);
+    }
+    const framebuffer = createFramebufferWithStencil(gl, width, height);
+    layerCaptureFramebuffers.value[depth] = framebuffer;
+    return framebuffer;
+  }
+
+  function releaseLayerCapture(capture: WebGLEffectLayerCapture): void {
+    const expectedDepth = activeLayerCaptureDepth.value - 1;
+    if (capture.depth !== expectedDepth) {
+      throw new Error(`WebGL effects renderer layer capture release order is invalid: expected depth ${expectedDepth}, got ${capture.depth}`);
+    }
+    activeLayerCaptureDepth.value = expectedDepth;
   }
 
   function ensureBackdropFBO(width: number, height: number): void {
@@ -466,8 +824,107 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     return buffer;
   }
 
+  function createRegionCopyQuadBuffer(): WebGLBuffer {
+    const buffer = gl.createBuffer();
+    if (buffer === null) {
+      throw new Error("WebGL effects renderer failed to allocate region copy quad buffer");
+    }
+    return buffer;
+  }
+
   function bindEffectOutputFramebuffer(framebuffer: WebGLFramebuffer | null): void {
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  }
+
+  function programUniformLocations(program: WebGLProgram): Map<string, WebGLUniformLocation> {
+    const cached = uniformLocationCache.get(program);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const locations = new Map<string, WebGLUniformLocation>();
+    uniformLocationCache.set(program, locations);
+    return locations;
+  }
+
+  function programAttribLocations(program: WebGLProgram): Map<string, number> {
+    const cached = attribLocationCache.get(program);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const locations = new Map<string, number>();
+    attribLocationCache.set(program, locations);
+    return locations;
+  }
+
+  function requireUniformLocation(program: WebGLProgram, name: string): WebGLUniformLocation {
+    const locations = programUniformLocations(program);
+    const cached = locations.get(name);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const location = gl.getUniformLocation(program, name);
+    if (location === null) {
+      throw new Error(`WebGL effects renderer shader uniform "${name}" is not active`);
+    }
+    locations.set(name, location);
+    return location;
+  }
+
+  function requireAttribLocation(program: WebGLProgram, name: string): number {
+    const locations = programAttribLocations(program);
+    const cached = locations.get(name);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const location = gl.getAttribLocation(program, name);
+    if (location < 0) {
+      throw new Error(`WebGL effects renderer shader attribute "${name}" is not active`);
+    }
+    locations.set(name, location);
+    return location;
+  }
+
+  function snapshotEffectScissorState(): EffectScissorState {
+    return {
+      enabled: scissorState.enabled,
+      box: { ...scissorState.box },
+    };
+  }
+
+  function setEffectScissorEnabled(enabled: boolean): void {
+    if (scissorState.enabled === enabled) {
+      return;
+    }
+    if (enabled) {
+      gl.enable(gl.SCISSOR_TEST);
+    } else {
+      gl.disable(gl.SCISSOR_TEST);
+    }
+    scissorState.enabled = enabled;
+  }
+
+  function setEffectScissorBox(region: WebGLEffectRenderRegion): void {
+    const box = scissorState.box;
+    if (
+      box.x === region.x &&
+      box.y === region.y &&
+      box.width === region.width &&
+      box.height === region.height
+    ) {
+      return;
+    }
+    gl.scissor(region.x, region.y, region.width, region.height);
+    scissorState.box = {
+      x: region.x,
+      y: region.y,
+      width: region.width,
+      height: region.height,
+    };
+  }
+
+  function restoreEffectScissorState(state: EffectScissorState): void {
+    setEffectScissorBox(state.box);
+    setEffectScissorEnabled(state.enabled);
   }
 
   function copyFramebufferToBackdrop(
@@ -475,13 +932,13 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     canvasHeight: number,
     region: WebGLEffectRenderRegion,
     sourceFramebuffer: WebGLFramebuffer | null,
+    restoreFramebuffer: WebGLFramebuffer | null,
   ): Framebuffer {
     ensureBackdropFBO(canvasWidth, canvasHeight);
-    const copyRegion = resolveWebGLEffectBackdropCopyRegion(region);
+    const copyRegion = resolveWebGLEffectBackdropCopyRegion(webGLEffectShaderSamplingRegion(region, canvasWidth, canvasHeight, EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS));
     if (copyRegion === null) {
       return backdropFBO.value!;
     }
-    const restoreFramebuffer = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
     bindFramebuffer(gl, backdropFBO.value!);
     gl.colorMask(true, true, true, true);
     gl.clearColor(0, 0, 0, 0);
@@ -511,9 +968,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
   }
 
   function ensureBlitProgram(): void {
-    if (!blitProgram.value) {
-      blitProgram.value = compileProgram("blit", compositeVertexShader, blitFragmentShader);
-    }
+    ensureEffectShaders();
   }
 
   function requireProgram(program: WebGLProgram | null, label: string): WebGLProgram {
@@ -528,29 +983,82 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       throw new Error("WebGL effects renderer fullscreen quad buffer is not initialized");
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, fullscreenQuad.value);
-    const posLoc = gl.getAttribLocation(program, "a_position");
+    const posLoc = requireAttribLocation(program, "a_position");
     gl.enableVertexAttribArray(posLoc);
     gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  function regionCopyQuadVertices({
+    canvasWidth,
+    canvasHeight,
+    sourceRegion,
+    targetRegion,
+    sourceFramebuffer,
+  }: {
+    readonly canvasWidth: number;
+    readonly canvasHeight: number;
+    readonly sourceRegion: WebGLEffectRenderRegion;
+    readonly targetRegion: WebGLEffectRenderRegion;
+    readonly sourceFramebuffer: Framebuffer;
+  }): Float32Array {
+    const targetLeft = (targetRegion.x / canvasWidth) * 2 - 1;
+    const targetRight = ((targetRegion.x + targetRegion.width) / canvasWidth) * 2 - 1;
+    const targetBottom = (targetRegion.y / canvasHeight) * 2 - 1;
+    const targetTop = ((targetRegion.y + targetRegion.height) / canvasHeight) * 2 - 1;
+    const sourceLeft = sourceRegion.x / sourceFramebuffer.width;
+    const sourceRight = (sourceRegion.x + sourceRegion.width) / sourceFramebuffer.width;
+    const sourceBottom = sourceRegion.y / sourceFramebuffer.height;
+    const sourceTop = (sourceRegion.y + sourceRegion.height) / sourceFramebuffer.height;
+    return new Float32Array([
+      targetLeft, targetBottom, sourceLeft, sourceBottom,
+      targetRight, targetBottom, sourceRight, sourceBottom,
+      targetLeft, targetTop, sourceLeft, sourceTop,
+      targetRight, targetTop, sourceRight, sourceTop,
+    ]);
+  }
+
+  function drawRegionCopyQuad(
+    program: WebGLProgram,
+    vertices: Float32Array,
+  ): void {
+    if (regionCopyQuad.value === null) {
+      throw new Error("WebGL effects renderer region copy quad buffer is not initialized");
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, regionCopyQuad.value);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STREAM_DRAW);
+    const positionLocation = requireAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 16, 0);
+    const textureCoordinateLocation = requireAttribLocation(program, "a_texCoord");
+    gl.enableVertexAttribArray(textureCoordinateLocation);
+    gl.vertexAttribPointer(textureCoordinateLocation, 2, gl.FLOAT, false, 16, 8);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  function currentRendererOutputEffectRegion(region: WebGLEffectRenderRegion): WebGLEffectRenderRegion | null {
+    if (rendererOutputRegion.value === null) {
+      return region;
+    }
+    return intersectWebGLEffectRenderRegions(region, rendererOutputRegion.value);
   }
 
   function withEffectRegion<T>(
     region: WebGLEffectRenderRegion,
     operation: () => T,
   ): T {
-    const previousEnabled = gl.isEnabled(gl.SCISSOR_TEST);
-    const previousBox = gl.getParameter(gl.SCISSOR_BOX) as Int32Array;
-    gl.enable(gl.SCISSOR_TEST);
-    gl.scissor(region.x, region.y, region.width, region.height);
+    const previous = snapshotEffectScissorState();
+    const effectiveRegion = currentRendererOutputEffectRegion(region);
+    setEffectScissorEnabled(true);
+    if (effectiveRegion === null) {
+      setEffectScissorBox({ x: 0, y: 0, width: 0, height: 0 });
+    } else {
+      setEffectScissorBox(effectiveRegion);
+    }
     try {
       return operation();
     } finally {
-      if (previousEnabled) {
-        gl.scissor(previousBox[0], previousBox[1], previousBox[2], previousBox[3]);
-        gl.enable(gl.SCISSOR_TEST);
-      } else {
-        gl.disable(gl.SCISSOR_TEST);
-      }
+      restoreEffectScissorState(previous);
     }
   }
 
@@ -589,43 +1097,50 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     });
   }
 
-  function withStencilDisabled<T>(operation: () => T): T {
-    const wasStencilEnabled = gl.isEnabled(gl.STENCIL_TEST);
+  function withStencilDisabled<T>(restoreStencilTest: boolean, operation: () => T): T {
     gl.disable(gl.STENCIL_TEST);
     try {
       return operation();
     } finally {
-      if (wasStencilEnabled) {
+      if (restoreStencilTest) {
         gl.enable(gl.STENCIL_TEST);
       }
     }
   }
 
-  function withBlendDisabled<T>(operation: () => T): T {
-    const wasBlendEnabled = gl.isEnabled(gl.BLEND);
+  function withBlendDisabled<T>(restoreBlend: boolean, operation: () => T): T {
     gl.disable(gl.BLEND);
     try {
       return operation();
     } finally {
-      if (wasBlendEnabled) {
+      if (restoreBlend) {
         gl.enable(gl.BLEND);
       }
     }
   }
 
   function drawBlurPass(
-    { sourceTexture, width, height, dirX, dirY, radius }: { sourceTexture: WebGLTexture; width: number; height: number; dirX: number; dirY: number; radius: number }
+    { sourceTexture, width, height, dirX, dirY, radius, inputAlphaMode }: {
+      sourceTexture: WebGLTexture;
+      width: number;
+      height: number;
+      dirX: number;
+      dirY: number;
+      radius: number;
+      inputAlphaMode: WebGLTextureAlphaMode;
+    }
   ): void {
     const program = requireProgram(blurProgram.value, "gaussian blur");
     gl.useProgram(program);
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
-    gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
+    gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
 
-    gl.uniform2f(gl.getUniformLocation(program, "u_direction"), dirX, dirY);
-    gl.uniform2f(gl.getUniformLocation(program, "u_texelSize"), 1.0 / width, 1.0 / height);
-    gl.uniform1f(gl.getUniformLocation(program, "u_radius"), radius);
+    gl.uniform2f(requireUniformLocation(program, "u_direction"), dirX, dirY);
+    gl.uniform2f(requireUniformLocation(program, "u_texelSize"), 1.0 / width, 1.0 / height);
+    gl.uniform1f(requireUniformLocation(program, "u_radius"), radius);
+    gl.uniform1f(requireUniformLocation(program, "u_premultipliedInput"), inputAlphaMode === "premultiplied" ? 1 : 0);
 
     drawFullscreenQuad(program);
   }
@@ -633,12 +1148,38 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
   function renderEffectFramebufferRegionIntoTemporaryFramebuffer(
     source: Framebuffer,
     region: WebGLEffectRenderRegion,
+    requireClipStencil: boolean,
   ): Framebuffer {
+    const target = source === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
+    copyEffectFramebufferRegion({
+      source,
+      target,
+      region,
+      premultipliedInput: true,
+      restoreStencilTest: requireClipStencil,
+    });
+
+    bindFramebuffer(gl, null);
+    return target;
+  }
+
+  function copyEffectFramebufferRegion({
+    source,
+    target,
+    region,
+    premultipliedInput,
+    restoreStencilTest,
+  }: {
+    readonly source: Framebuffer;
+    readonly target: Framebuffer;
+    readonly region: WebGLEffectRenderRegion;
+    readonly premultipliedInput: boolean;
+    readonly restoreStencilTest: boolean;
+  }): void {
     ensureResources(source.width, source.height);
     ensureBlitProgram();
-    const target = source === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
 
-    withStencilDisabled(() => {
+    withStencilDisabled(restoreStencilTest, () => {
       gl.colorMask(true, true, true, true);
       gl.clearColor(0, 0, 0, 0);
       clearWebGLEffectFramebufferRegion({
@@ -654,23 +1195,75 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, source.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
-      gl.uniform1f(gl.getUniformLocation(program, "u_opacity"), 1.0);
-      withBlendDisabled(() => {
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+      gl.uniform1f(requireUniformLocation(program, "u_opacity"), 1.0);
+      gl.uniform1f(requireUniformLocation(program, "u_premultipliedInput"), premultipliedInput ? 1.0 : 0.0);
+      withBlendDisabled(true, () => {
+        withEffectRegion(region, () => {
+          drawFullscreenQuad(program);
+        });
+      });
+    });
+  }
+
+  function replaceFramebufferRegionWithBinarizedAlpha({
+    framebuffer,
+    region,
+    restoreStencilTest,
+  }: {
+    readonly framebuffer: Framebuffer;
+    readonly region: WebGLEffectRenderRegion;
+    readonly restoreStencilTest: boolean;
+  }): void {
+    ensureResources(framebuffer.width, framebuffer.height);
+    const program = requireProgram(alphaBinarizeProgram.value, "alpha binarize");
+    const target = framebuffer === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
+
+    withStencilDisabled(restoreStencilTest, () => {
+      gl.colorMask(true, true, true, true);
+      gl.clearColor(0, 0, 0, 0);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: target,
+        canvasWidth: framebuffer.width,
+        canvasHeight: framebuffer.height,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT,
+        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+      });
+
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, framebuffer.texture);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+      withBlendDisabled(true, () => {
         withEffectRegion(region, () => {
           drawFullscreenQuad(program);
         });
       });
     });
 
-    bindFramebuffer(gl, null);
-    return target;
+    copyEffectFramebufferRegion({
+      source: target,
+      target: framebuffer,
+      region,
+      premultipliedInput: false,
+      restoreStencilTest,
+    });
   }
 
-  function applyGaussianBlur(source: Framebuffer, radius: number, region: WebGLEffectRenderRegion): Framebuffer {
+  function applyGaussianBlurWithStencilRestore(
+    source: Framebuffer,
+    radius: number,
+    region: WebGLEffectRenderRegion,
+    restoreStencilTest: boolean,
+    inputAlphaMode: WebGLTextureAlphaMode,
+  ): Framebuffer {
     ensureResources(source.width, source.height);
 
     const sigmaTotal = resolveFigmaBlurStdDeviation(radius);
+    if (!shouldRunWebGLGaussianBlurForSigma(sigmaTotal)) {
+      return source;
+    }
     const maxSigmaPerPass = 3;
     const numPasses = Math.max(1, Math.ceil(sigmaTotal / maxSigmaPerPass));
     const sigmaPerPass = sigmaTotal / Math.sqrt(numPasses);
@@ -678,11 +1271,13 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     const width = source.width;
     const height = source.height;
     const currentSourceRef = { value: source as Framebuffer };
+    const currentInputAlphaMode = { value: inputAlphaMode };
 
-    withStencilDisabled(() => {
+    withStencilDisabled(restoreStencilTest, () => {
       for (let p = 0; p < numPasses; p++) {
         const horizontalTarget = currentSourceRef.value === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
         const verticalTarget = horizontalTarget === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
+        const horizontalInputAlphaMode = currentInputAlphaMode.value;
 
         gl.colorMask(true, true, true, true);
         gl.clearColor(0, 0, 0, 0);
@@ -695,7 +1290,15 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
           paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
         });
         withEffectRegion(region, () => {
-          drawBlurPass({ sourceTexture: currentSourceRef.value.texture, width, height, dirX: 1, dirY: 0, radius: sigmaPerPass });
+          drawBlurPass({
+            sourceTexture: currentSourceRef.value.texture,
+            width,
+            height,
+            dirX: 1,
+            dirY: 0,
+            radius: sigmaPerPass,
+            inputAlphaMode: horizontalInputAlphaMode,
+          });
         });
 
         gl.colorMask(true, true, true, true);
@@ -709,28 +1312,57 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
           paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
         });
         withEffectRegion(region, () => {
-          drawBlurPass({ sourceTexture: horizontalTarget.texture, width, height, dirX: 0, dirY: 1, radius: sigmaPerPass });
+          drawBlurPass({
+            sourceTexture: horizontalTarget.texture,
+            width,
+            height,
+            dirX: 0,
+            dirY: 1,
+            radius: sigmaPerPass,
+            inputAlphaMode: "straight",
+          });
         });
 
         currentSourceRef.value = verticalTarget;
+        currentInputAlphaMode.value = "straight";
       }
     });
 
     bindFramebuffer(gl, null);
 
-    return tempFBO2.value!;
+    return currentSourceRef.value;
   }
 
-  function applyAlphaMorphology(source: Framebuffer, spread: number, region: WebGLEffectRenderRegion): Framebuffer {
+  function applyGaussianBlur({
+    source,
+    radius,
+    region,
+    inputAlphaMode,
+  }: {
+    readonly source: Framebuffer;
+    readonly radius: number;
+    readonly region: WebGLEffectRenderRegion;
+    readonly inputAlphaMode: WebGLTextureAlphaMode;
+  }): Framebuffer {
+    return applyGaussianBlurWithStencilRestore(source, radius, region, false, inputAlphaMode);
+  }
+
+  function applyAlphaMorphologyWithStencilRestore(
+    source: Framebuffer,
+    spread: number,
+    region: WebGLEffectRenderRegion,
+    restoreStencilTest: boolean,
+  ): Framebuffer {
     ensureResources(source.width, source.height);
     if (spread === 0) { return source; }
     const program = requireProgram(morphologyProgram.value, "alpha morphology");
+    const target = source === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
 
-    withStencilDisabled(() => {
+    withStencilDisabled(restoreStencilTest, () => {
       gl.colorMask(true, true, true, true);
       gl.clearColor(0, 0, 0, 0);
       clearWebGLEffectFramebufferRegion({
-        framebuffer: tempFBO1.value!,
+        framebuffer: target,
         canvasWidth: source.width,
         canvasHeight: source.height,
         region,
@@ -741,17 +1373,17 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, source.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
-      gl.uniform2f(gl.getUniformLocation(program, "u_texelSize"), 1.0 / source.width, 1.0 / source.height);
-      gl.uniform1f(gl.getUniformLocation(program, "u_radius"), Math.abs(spread));
-      gl.uniform1f(gl.getUniformLocation(program, "u_operator"), spread > 0 ? 1 : 0);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+      gl.uniform2f(requireUniformLocation(program, "u_texelSize"), 1.0 / source.width, 1.0 / source.height);
+      gl.uniform1f(requireUniformLocation(program, "u_radius"), Math.abs(spread));
+      gl.uniform1f(requireUniformLocation(program, "u_operator"), spread > 0 ? 1 : 0);
       withEffectRegion(region, () => {
         drawFullscreenQuad(program);
       });
     });
 
     bindFramebuffer(gl, null);
-    return tempFBO1.value!;
+    return target;
   }
 
   function applyEffectSpread(
@@ -759,17 +1391,350 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     spread: number | undefined,
     worldToBacking: EffectBackingScale,
     region: WebGLEffectRenderRegion,
+    restoreStencilTest: boolean,
   ): Framebuffer {
     if (spread === undefined || spread === 0) {
       return source;
     }
-    return applyAlphaMorphology(source, spread * worldToBacking.lengthScale, region);
+    return applyAlphaMorphologyWithStencilRestore(source, spread * worldToBacking.lengthScale, region, restoreStencilTest);
+  }
+
+  function applyInnerShadowSpread(
+    source: Framebuffer,
+    spread: number | undefined,
+    worldToBacking: EffectBackingScale,
+    region: WebGLEffectRenderRegion,
+    restoreStencilTest: boolean,
+  ): Framebuffer {
+    if (spread === undefined || spread === 0) {
+      return source;
+    }
+    return applyAlphaMorphologyWithStencilRestore(source, -spread * worldToBacking.lengthScale, region, restoreStencilTest);
+  }
+
+  function prepareInnerShadowSilhouette(
+    { canvasWidth, canvasHeight, region, renderSilhouette }: {
+      readonly canvasWidth: number;
+      readonly canvasHeight: number;
+      readonly region: WebGLEffectRenderRegion;
+      readonly renderSilhouette: () => void;
+    },
+  ): void {
+    ensureResources(canvasWidth, canvasHeight);
+    ensureShapeFBO(canvasWidth, canvasHeight);
+    ensureInnerShadowProgram();
+
+    gl.viewport(0, 0, canvasWidth, canvasHeight);
+    gl.clearColor(0, 0, 0, 0);
+    clearWebGLEffectFramebufferRegion({
+      framebuffer: shapeFBO.value!,
+      canvasWidth,
+      canvasHeight,
+      region,
+      clearBits: gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT,
+      paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+    });
+    withEffectRegion(region, renderSilhouette);
+    replaceFramebufferRegionWithBinarizedAlpha({
+      framebuffer: shapeFBO.value!,
+      region,
+      restoreStencilTest: false,
+    });
+  }
+
+  function resolvePreparedInnerShadowBlurSource(
+    { effect, worldToBacking, region, requireClipStencil }: {
+      readonly effect: InnerShadowEffect;
+      readonly worldToBacking: EffectBackingScale;
+      readonly region: WebGLEffectRenderRegion;
+      readonly requireClipStencil: boolean;
+    },
+  ): Framebuffer {
+    const spreadSource = applyInnerShadowSpread(shapeFBO.value!, effect.spread, worldToBacking, region, requireClipStencil);
+    if (effect.radius > 0) {
+      return applyGaussianBlurWithStencilRestore(
+        spreadSource,
+        effect.radius * worldToBacking.lengthScale,
+        region,
+        requireClipStencil,
+        "premultiplied",
+      );
+    }
+    return spreadSource;
+  }
+
+  function renderPreparedInnerShadow(
+    { canvasWidth, canvasHeight, region, effect, resolvedNodeOpacity, worldToBacking, blurredSourceFramebuffer, outputFramebuffer, backdropFramebuffer }: {
+      readonly canvasWidth: number;
+      readonly canvasHeight: number;
+      readonly region: WebGLEffectRenderRegion;
+      readonly effect: InnerShadowEffect;
+      readonly resolvedNodeOpacity: number;
+      readonly worldToBacking: EffectBackingScale;
+      readonly blurredSourceFramebuffer: Framebuffer;
+      readonly outputFramebuffer: WebGLFramebuffer | null;
+      readonly backdropFramebuffer: WebGLFramebuffer | null;
+    },
+  ): void {
+    const resolvedEffectAlpha = resolveWebGLEffectCompositeAlpha(effect.color.a, resolvedNodeOpacity);
+
+    bindEffectOutputFramebuffer(outputFramebuffer);
+    gl.viewport(0, 0, canvasWidth, canvasHeight);
+
+    const program = requireProgram(innerShadowProgram.value, "inner shadow");
+
+    // Same world→backing-pixel offset conversion as drop shadow above.
+    const offsetBacking = applyEffectOffsetScale(worldToBacking, effect.offset.x, effect.offset.y);
+
+    const blendModeCode = effectBlendModeToShaderCode(effect.blendMode);
+    if (blendModeCode !== 0) {
+      const maskTarget = blurredSourceFramebuffer === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
+      gl.viewport(0, 0, canvasWidth, canvasHeight);
+      gl.clearColor(0, 0, 0, 0);
+      clearWebGLEffectFramebufferRegion({
+        framebuffer: maskTarget,
+        canvasWidth,
+        canvasHeight,
+        region,
+        clearBits: gl.COLOR_BUFFER_BIT,
+        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+      });
+      gl.useProgram(program);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
+      gl.uniform1i(requireUniformLocation(program, "u_shapeTexture"), 0);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, blurredSourceFramebuffer.texture);
+      gl.uniform1i(requireUniformLocation(program, "u_blurredTexture"), 1);
+
+      gl.uniform4f(requireUniformLocation(program, "u_color"), 1, 1, 1, 1);
+      gl.uniform2f(
+        requireUniformLocation(program, "u_offset"),
+        -offsetBacking.x,
+        offsetBacking.y
+      );
+      gl.uniform2f(
+        requireUniformLocation(program, "u_texelSize"),
+        1.0 / canvasWidth,
+        1.0 / canvasHeight
+      );
+      withEffectRegion(region, () => {
+        drawFullscreenQuad(program);
+      });
+
+      bindEffectOutputFramebuffer(outputFramebuffer);
+      gl.viewport(0, 0, canvasWidth, canvasHeight);
+      const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer, outputFramebuffer);
+      bindEffectOutputFramebuffer(outputFramebuffer);
+      const blendProgram = requireProgram(blendShadowProgram.value, "inner shadow blend");
+      gl.useProgram(blendProgram);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, maskTarget.texture);
+      gl.uniform1i(requireUniformLocation(blendProgram, "u_shadowTexture"), 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
+      gl.uniform1i(requireUniformLocation(blendProgram, "u_shapeTexture"), 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, backdrop.texture);
+      gl.uniform1i(requireUniformLocation(blendProgram, "u_backdropTexture"), 2);
+      gl.uniform4f(requireUniformLocation(blendProgram, "u_color"), effect.color.r, effect.color.g, effect.color.b, resolvedEffectAlpha);
+      gl.uniform2f(requireUniformLocation(blendProgram, "u_offset"), 0, 0);
+      gl.uniform2f(requireUniformLocation(blendProgram, "u_texelSize"), 1.0 / canvasWidth, 1.0 / canvasHeight);
+      gl.uniform1f(requireUniformLocation(blendProgram, "u_clipInside"), 0);
+      gl.uniform1i(requireUniformLocation(blendProgram, "u_blendMode"), blendModeCode);
+      gl.disable(gl.BLEND);
+      withEffectRegion(region, () => {
+        drawFullscreenQuad(blendProgram);
+      });
+      gl.enable(gl.BLEND);
+      gl.activeTexture(gl.TEXTURE0);
+      return;
+    }
+
+    gl.useProgram(program);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
+    gl.uniform1i(requireUniformLocation(program, "u_shapeTexture"), 0);
+
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, blurredSourceFramebuffer.texture);
+    gl.uniform1i(requireUniformLocation(program, "u_blurredTexture"), 1);
+
+    gl.uniform4f(
+      requireUniformLocation(program, "u_color"),
+      effect.color.r, effect.color.g, effect.color.b, resolvedEffectAlpha
+    );
+
+    gl.uniform2f(
+      requireUniformLocation(program, "u_offset"),
+      -offsetBacking.x,
+      offsetBacking.y
+    );
+
+    gl.uniform2f(
+      requireUniformLocation(program, "u_texelSize"),
+      1.0 / canvasWidth,
+      1.0 / canvasHeight
+    );
+
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(
+      gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
+      gl.ONE, gl.ONE_MINUS_SRC_ALPHA
+    );
+    withEffectRegion(region, () => {
+      drawFullscreenQuad(program);
+    });
+
+    gl.activeTexture(gl.TEXTURE0);
+  }
+
+  function renderBlendedShapeContent(
+    { canvasWidth, canvasHeight, region, blendMode, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderContent }: {
+      readonly canvasWidth: number;
+      readonly canvasHeight: number;
+      readonly region: WebGLEffectRenderRegion;
+      readonly blendMode: BlendMode;
+      readonly outputFramebuffer: WebGLFramebuffer | null;
+      readonly backdropFramebuffer: WebGLFramebuffer | null;
+      readonly requireClipStencil: boolean;
+      readonly renderContent: () => void;
+    },
+  ): void {
+    const blendModeCode = cssBlendModeToShaderCode(blendMode);
+    if (blendModeCode === 0) {
+      renderContent();
+      return;
+    }
+    ensureResources(canvasWidth, canvasHeight);
+    ensureShapeFBO(canvasWidth, canvasHeight);
+
+    gl.viewport(0, 0, canvasWidth, canvasHeight);
+    gl.colorMask(true, true, true, true);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clearStencil(0);
+    clearWebGLEffectFramebufferRegion({
+      framebuffer: shapeFBO.value!,
+      canvasWidth,
+      canvasHeight,
+      region,
+      clearBits: gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT,
+      paddingInBackingPixels: 0,
+    });
+    withStencilDisabled(requireClipStencil, () => {
+      withBlendDisabled(true, () => {
+        bindFramebuffer(gl, shapeFBO.value!);
+        withEffectRegion(region, renderContent);
+      });
+    });
+
+    const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer, outputFramebuffer);
+    bindEffectOutputFramebuffer(outputFramebuffer);
+    gl.viewport(0, 0, canvasWidth, canvasHeight);
+    if (requireClipStencil) {
+      gl.enable(gl.STENCIL_TEST);
+      gl.stencilMask(0x00);
+      gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    } else {
+      gl.disable(gl.STENCIL_TEST);
+    }
+
+    const program = requireProgram(blendContentProgram.value, "content blend");
+    gl.useProgram(program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
+    gl.uniform1i(requireUniformLocation(program, "u_sourceTexture"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, backdrop.texture);
+    gl.uniform1i(requireUniformLocation(program, "u_backdropTexture"), 1);
+    gl.uniform1i(requireUniformLocation(program, "u_blendMode"), blendModeCode);
+    gl.uniform1f(requireUniformLocation(program, "u_sourcePremultipliedInput"), 0.0);
+    gl.disable(gl.BLEND);
+    withEffectRegion(region, () => {
+      drawFullscreenQuad(program);
+    });
+    gl.enable(gl.BLEND);
+    if (!requireClipStencil) {
+      gl.disable(gl.STENCIL_TEST);
+    }
+    gl.activeTexture(gl.TEXTURE0);
+  }
+
+  function blendCapturedLayer(
+    { canvasWidth, canvasHeight, region, sourceFramebuffer, blendMode, outputFramebuffer, backdropFramebuffer, requireClipStencil }: {
+      readonly canvasWidth: number;
+      readonly canvasHeight: number;
+      readonly region: WebGLEffectRenderRegion;
+      readonly sourceFramebuffer: Framebuffer;
+      readonly blendMode: BlendMode;
+      readonly outputFramebuffer: WebGLFramebuffer | null;
+      readonly backdropFramebuffer: WebGLFramebuffer | null;
+      readonly requireClipStencil: boolean;
+    },
+  ): void {
+    const blendModeCode = cssBlendModeToShaderCode(blendMode);
+    if (blendModeCode === 0) {
+      throw new Error(`blendCapturedLayer requires a browser-rendered non-normal blend mode, got ${blendMode}`);
+    }
+    ensureResources(canvasWidth, canvasHeight);
+
+    const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer, outputFramebuffer);
+    bindEffectOutputFramebuffer(outputFramebuffer);
+    gl.viewport(0, 0, canvasWidth, canvasHeight);
+    if (requireClipStencil) {
+      gl.enable(gl.STENCIL_TEST);
+      gl.stencilMask(0x00);
+      gl.stencilFunc(gl.EQUAL, CLIP_STENCIL_BIT, CLIP_STENCIL_BIT);
+      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+    } else {
+      gl.disable(gl.STENCIL_TEST);
+    }
+
+    const program = requireProgram(blendContentProgram.value, "captured layer blend");
+    gl.useProgram(program);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sourceFramebuffer.texture);
+    gl.uniform1i(requireUniformLocation(program, "u_sourceTexture"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, backdrop.texture);
+    gl.uniform1i(requireUniformLocation(program, "u_backdropTexture"), 1);
+    gl.uniform1i(requireUniformLocation(program, "u_blendMode"), blendModeCode);
+    gl.uniform1f(requireUniformLocation(program, "u_sourcePremultipliedInput"), 1.0);
+    gl.disable(gl.BLEND);
+    withEffectRegion(region, () => {
+      drawFullscreenQuad(program);
+    });
+    gl.enable(gl.BLEND);
+    if (!requireClipStencil) {
+      gl.disable(gl.STENCIL_TEST);
+    }
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   return {
+    precompileShaders(): void {
+      ensureEffectShaders();
+    },
+
+    prepareSurface({ canvasWidth, canvasHeight }: { readonly canvasWidth: number; readonly canvasHeight: number }): void {
+      ensureResources(canvasWidth, canvasHeight);
+      ensureShapeFBO(canvasWidth, canvasHeight);
+      ensureLayerCaptureFramebuffer(canvasWidth, canvasHeight, 0);
+      ensureBackdropFBO(canvasWidth, canvasHeight);
+    },
+
+    setRendererOutputRegion(region: WebGLEffectRenderRegion | null): void {
+      rendererOutputRegion.value = region;
+    },
+
     renderDropShadow(
-      { canvasWidth, canvasHeight, region, effect, worldToBacking, outputFramebuffer, backdropFramebuffer, renderSilhouette }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: DropShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }
+      { canvasWidth, canvasHeight, region, effect, resolvedNodeOpacity, worldToBacking, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderSilhouette }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: DropShadowEffect; resolvedNodeOpacity: number; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderSilhouette: () => void }
     ): void {
+      const resolvedEffectAlpha = resolveWebGLEffectCompositeAlpha(effect.color.a, resolvedNodeOpacity);
       ensureResources(canvasWidth, canvasHeight);
       ensureShapeFBO(canvasWidth, canvasHeight);
 
@@ -780,15 +1745,26 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         canvasWidth,
         canvasHeight,
         region,
-        clearBits: gl.COLOR_BUFFER_BIT,
+        clearBits: gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT,
         paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
       });
       withEffectRegion(region, renderSilhouette);
+      replaceFramebufferRegionWithBinarizedAlpha({
+        framebuffer: shapeFBO.value!,
+        region,
+        restoreStencilTest: requireClipStencil,
+      });
 
-      const spreadSource = applyEffectSpread(shapeFBO.value!, effect.spread, worldToBacking, region);
+      const spreadSource = applyEffectSpread(shapeFBO.value!, effect.spread, worldToBacking, region, requireClipStencil);
       const resultFBORef = { value: undefined as Framebuffer | undefined };
       if (effect.radius > 0) {
-        resultFBORef.value = applyGaussianBlur(spreadSource, effect.radius * worldToBacking.lengthScale, region);
+        resultFBORef.value = applyGaussianBlurWithStencilRestore(
+          spreadSource,
+          effect.radius * worldToBacking.lengthScale,
+          region,
+          requireClipStencil,
+          "premultiplied",
+        );
       } else {
         resultFBORef.value = spreadSource;
       }
@@ -803,41 +1779,41 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       // the silhouette at the shadow's source position, x is negated.
       const offsetBacking = applyEffectOffsetScale(worldToBacking, effect.offset.x, effect.offset.y);
 
-      const blendModeCode = blendModeToShaderCode(effect.blendMode);
+      const blendModeCode = effectBlendModeToShaderCode(effect.blendMode);
       if (blendModeCode !== 0) {
-        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer);
+        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer, outputFramebuffer);
         bindEffectOutputFramebuffer(outputFramebuffer);
         const programForBlend = requireProgram(blendShadowProgram.value, "drop shadow blend");
         gl.useProgram(programForBlend);
 
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, resultFBORef.value.texture);
-        gl.uniform1i(gl.getUniformLocation(programForBlend, "u_shadowTexture"), 0);
+        gl.uniform1i(requireUniformLocation(programForBlend, "u_shadowTexture"), 0);
 
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
-        gl.uniform1i(gl.getUniformLocation(programForBlend, "u_shapeTexture"), 1);
+        gl.uniform1i(requireUniformLocation(programForBlend, "u_shapeTexture"), 1);
 
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, backdrop.texture);
-        gl.uniform1i(gl.getUniformLocation(programForBlend, "u_backdropTexture"), 2);
+        gl.uniform1i(requireUniformLocation(programForBlend, "u_backdropTexture"), 2);
 
         gl.uniform4f(
-          gl.getUniformLocation(programForBlend, "u_color"),
-          effect.color.r, effect.color.g, effect.color.b, effect.color.a
+          requireUniformLocation(programForBlend, "u_color"),
+          effect.color.r, effect.color.g, effect.color.b, resolvedEffectAlpha
         );
         gl.uniform2f(
-          gl.getUniformLocation(programForBlend, "u_offset"),
+          requireUniformLocation(programForBlend, "u_offset"),
           -offsetBacking.x,
           offsetBacking.y
         );
         gl.uniform2f(
-          gl.getUniformLocation(programForBlend, "u_texelSize"),
+          requireUniformLocation(programForBlend, "u_texelSize"),
           1.0 / canvasWidth,
           1.0 / canvasHeight
         );
-        gl.uniform1f(gl.getUniformLocation(programForBlend, "u_clipInside"), 1);
-        gl.uniform1i(gl.getUniformLocation(programForBlend, "u_blendMode"), blendModeCode);
+        gl.uniform1f(requireUniformLocation(programForBlend, "u_clipInside"), effect.showShadowBehindNode === false ? 1 : 0);
+        gl.uniform1i(requireUniformLocation(programForBlend, "u_blendMode"), blendModeCode);
 
         gl.disable(gl.BLEND);
         withEffectRegion(region, () => {
@@ -853,29 +1829,29 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, resultFBORef.value.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
 
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_shapeTexture"), 1);
+      gl.uniform1i(requireUniformLocation(program, "u_shapeTexture"), 1);
 
       gl.uniform4f(
-        gl.getUniformLocation(program, "u_color"),
-        effect.color.r, effect.color.g, effect.color.b, effect.color.a
+        requireUniformLocation(program, "u_color"),
+        effect.color.r, effect.color.g, effect.color.b, resolvedEffectAlpha
       );
 
       gl.uniform2f(
-        gl.getUniformLocation(program, "u_offset"),
+        requireUniformLocation(program, "u_offset"),
         -offsetBacking.x,
         offsetBacking.y
       );
 
       gl.uniform2f(
-        gl.getUniformLocation(program, "u_texelSize"),
+        requireUniformLocation(program, "u_texelSize"),
         1.0 / canvasWidth,
         1.0 / canvasHeight
       );
-      gl.uniform1f(gl.getUniformLocation(program, "u_clipInside"), effect.showShadowBehindNode === false ? 1 : 0);
+      gl.uniform1f(requireUniformLocation(program, "u_clipInside"), effect.showShadowBehindNode === false ? 1 : 0);
 
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(
@@ -889,145 +1865,78 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     renderInnerShadow(
-      { canvasWidth, canvasHeight, region, effect, worldToBacking, outputFramebuffer, backdropFramebuffer, renderSilhouette }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: InnerShadowEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; renderSilhouette: () => void }
+      { canvasWidth, canvasHeight, region, effect, resolvedNodeOpacity, worldToBacking, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderSilhouette }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: InnerShadowEffect; resolvedNodeOpacity: number; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderSilhouette: () => void }
     ): void {
-      ensureResources(canvasWidth, canvasHeight);
-      ensureShapeFBO(canvasWidth, canvasHeight);
-      ensureInnerShadowProgram();
-
-      gl.viewport(0, 0, canvasWidth, canvasHeight);
-      gl.clearColor(0, 0, 0, 0);
-      clearWebGLEffectFramebufferRegion({
-        framebuffer: shapeFBO.value!,
+      prepareInnerShadowSilhouette({ canvasWidth, canvasHeight, region, renderSilhouette });
+      const blurredSourceFramebuffer = resolvePreparedInnerShadowBlurSource({
+        effect,
+        worldToBacking,
+        region,
+        requireClipStencil,
+      });
+      renderPreparedInnerShadow({
         canvasWidth,
         canvasHeight,
         region,
-        clearBits: gl.COLOR_BUFFER_BIT,
-        paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
+        effect,
+        resolvedNodeOpacity,
+        worldToBacking,
+        blurredSourceFramebuffer,
+        outputFramebuffer,
+        backdropFramebuffer,
       });
-      withEffectRegion(region, renderSilhouette);
+    },
 
-      const spreadSource = applyEffectSpread(shapeFBO.value!, effect.spread, worldToBacking, region);
-      const blurredFBORef = { value: undefined as Framebuffer | undefined };
-      if (effect.radius > 0) {
-        blurredFBORef.value = applyGaussianBlur(spreadSource, effect.radius * worldToBacking.lengthScale, region);
-      } else {
-        blurredFBORef.value = spreadSource;
-      }
-
-      bindEffectOutputFramebuffer(outputFramebuffer);
-      gl.viewport(0, 0, canvasWidth, canvasHeight);
-
-      const program = requireProgram(innerShadowProgram.value, "inner shadow");
-
-      // Same world→backing-pixel offset conversion as drop shadow above.
-      const offsetBacking = applyEffectOffsetScale(worldToBacking, effect.offset.x, effect.offset.y);
-
-      const blendModeCode = blendModeToShaderCode(effect.blendMode);
-      if (blendModeCode !== 0) {
-        const maskTarget = blurredFBORef.value === tempFBO1.value ? tempFBO2.value! : tempFBO1.value!;
-        gl.viewport(0, 0, canvasWidth, canvasHeight);
-        gl.clearColor(0, 0, 0, 0);
-        clearWebGLEffectFramebufferRegion({
-          framebuffer: maskTarget,
-          canvasWidth,
-          canvasHeight,
-          region,
-          clearBits: gl.COLOR_BUFFER_BIT,
-          paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
-        });
-        gl.useProgram(program);
-
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
-        gl.uniform1i(gl.getUniformLocation(program, "u_shapeTexture"), 0);
-
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, blurredFBORef.value.texture);
-        gl.uniform1i(gl.getUniformLocation(program, "u_blurredTexture"), 1);
-
-        gl.uniform4f(gl.getUniformLocation(program, "u_color"), 1, 1, 1, 1);
-        gl.uniform2f(
-          gl.getUniformLocation(program, "u_offset"),
-          -offsetBacking.x,
-          offsetBacking.y
-        );
-        gl.uniform2f(
-          gl.getUniformLocation(program, "u_texelSize"),
-          1.0 / canvasWidth,
-          1.0 / canvasHeight
-        );
-        withEffectRegion(region, () => {
-          drawFullscreenQuad(program);
-        });
-
-        bindEffectOutputFramebuffer(outputFramebuffer);
-        gl.viewport(0, 0, canvasWidth, canvasHeight);
-        const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer);
-        bindEffectOutputFramebuffer(outputFramebuffer);
-        const blendProgram = requireProgram(blendShadowProgram.value, "inner shadow blend");
-        gl.useProgram(blendProgram);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, maskTarget.texture);
-        gl.uniform1i(gl.getUniformLocation(blendProgram, "u_shadowTexture"), 0);
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
-        gl.uniform1i(gl.getUniformLocation(blendProgram, "u_shapeTexture"), 1);
-        gl.activeTexture(gl.TEXTURE2);
-        gl.bindTexture(gl.TEXTURE_2D, backdrop.texture);
-        gl.uniform1i(gl.getUniformLocation(blendProgram, "u_backdropTexture"), 2);
-        gl.uniform4f(gl.getUniformLocation(blendProgram, "u_color"), effect.color.r, effect.color.g, effect.color.b, effect.color.a);
-        gl.uniform2f(gl.getUniformLocation(blendProgram, "u_offset"), 0, 0);
-        gl.uniform2f(gl.getUniformLocation(blendProgram, "u_texelSize"), 1.0 / canvasWidth, 1.0 / canvasHeight);
-        gl.uniform1f(gl.getUniformLocation(blendProgram, "u_clipInside"), 0);
-        gl.uniform1i(gl.getUniformLocation(blendProgram, "u_blendMode"), blendModeCode);
-        gl.disable(gl.BLEND);
-        withEffectRegion(region, () => {
-          drawFullscreenQuad(blendProgram);
-        });
-        gl.enable(gl.BLEND);
-        gl.activeTexture(gl.TEXTURE0);
+    renderInnerShadows(
+      { canvasWidth, canvasHeight, region, effects, resolvedNodeOpacity, worldToBacking, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderSilhouette }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effects: readonly InnerShadowEffect[]; resolvedNodeOpacity: number; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; backdropFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean; renderSilhouette: () => void }
+    ): void {
+      if (effects.length === 0) {
         return;
       }
-
-      gl.useProgram(program);
-
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, shapeFBO.value!.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_shapeTexture"), 0);
-
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, blurredFBORef.value.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_blurredTexture"), 1);
-
-      gl.uniform4f(
-        gl.getUniformLocation(program, "u_color"),
-        effect.color.r, effect.color.g, effect.color.b, effect.color.a
-      );
-
-      gl.uniform2f(
-        gl.getUniformLocation(program, "u_offset"),
-        -offsetBacking.x,
-        offsetBacking.y
-      );
-
-      gl.uniform2f(
-        gl.getUniformLocation(program, "u_texelSize"),
-        1.0 / canvasWidth,
-        1.0 / canvasHeight
-      );
-
-      gl.enable(gl.BLEND);
-      gl.blendFuncSeparate(
-        gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA,
-        gl.ONE, gl.ONE_MINUS_SRC_ALPHA
-      );
-      withEffectRegion(region, () => {
-        drawFullscreenQuad(program);
-      });
-
-      gl.activeTexture(gl.TEXTURE0);
+      prepareInnerShadowSilhouette({ canvasWidth, canvasHeight, region, renderSilhouette });
+      for (const run of resolveConsecutiveInnerShadowBlurSourceRuns(effects)) {
+        const representativeEffect = run.effects[0];
+        if (representativeEffect === undefined) {
+          throw new Error("WebGL inner shadow blur source run contains no effects");
+        }
+        const blurredSourceFramebuffer = resolvePreparedInnerShadowBlurSource({
+          effect: representativeEffect,
+          worldToBacking,
+          region,
+          requireClipStencil,
+        });
+        for (const effect of run.effects) {
+          renderPreparedInnerShadow({
+            canvasWidth,
+            canvasHeight,
+            region,
+            effect,
+            resolvedNodeOpacity,
+            worldToBacking,
+            blurredSourceFramebuffer,
+            outputFramebuffer,
+            backdropFramebuffer,
+          });
+        }
+      }
     },
+
+    renderBlendedSolidShape(
+      { canvasWidth, canvasHeight, region, blendMode, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderShape }: { readonly canvasWidth: number; readonly canvasHeight: number; readonly region: WebGLEffectRenderRegion; readonly color: { readonly r: number; readonly g: number; readonly b: number; readonly a: number }; readonly opacity: number; readonly blendMode: BlendMode; readonly outputFramebuffer: WebGLFramebuffer | null; readonly backdropFramebuffer: WebGLFramebuffer | null; readonly requireClipStencil: boolean; readonly renderShape: () => void }
+    ): void {
+      renderBlendedShapeContent({
+        canvasWidth,
+        canvasHeight,
+        region,
+        blendMode,
+        outputFramebuffer,
+        backdropFramebuffer,
+        requireClipStencil,
+        renderContent: renderShape,
+      });
+    },
+
+    blendCapturedLayer,
 
     renderBackgroundBlur(
       { canvasWidth, canvasHeight, region, effect, worldToBacking, outputFramebuffer, backdropFramebuffer, requireClipStencil, renderMask }: {
@@ -1037,8 +1946,14 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer);
-      const blurred = applyGaussianBlur(backdrop, effect.radius * worldToBacking.lengthScale, region);
+      const backdrop = copyFramebufferToBackdrop(canvasWidth, canvasHeight, region, backdropFramebuffer, outputFramebuffer);
+      const blurred = applyGaussianBlurWithStencilRestore(
+        backdrop,
+        effect.radius * worldToBacking.lengthScale,
+        region,
+        false,
+        "premultiplied",
+      );
 
       bindEffectOutputFramebuffer(outputFramebuffer);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
@@ -1063,8 +1978,9 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.useProgram(program);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, blurred.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
-      gl.uniform1f(gl.getUniformLocation(program, "u_opacity"), 1.0);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+      gl.uniform1f(requireUniformLocation(program, "u_opacity"), 1.0);
+      gl.uniform1f(requireUniformLocation(program, "u_premultipliedInput"), 0.0);
       gl.disable(gl.BLEND);
       withEffectRegion(region, () => {
         drawFullscreenQuad(program);
@@ -1091,8 +2007,10 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       );
     },
 
-    beginLayerCapture({ canvasWidth, canvasHeight, region }: BeginWebGLEffectLayerCaptureParams): Framebuffer {
-      ensureLayerFBO(canvasWidth, canvasHeight);
+    beginLayerCapture({ canvasWidth, canvasHeight, region }: BeginWebGLEffectLayerCaptureParams): WebGLEffectLayerCapture {
+      const depth = activeLayerCaptureDepth.value;
+      const framebuffer = ensureLayerCaptureFramebuffer(canvasWidth, canvasHeight, depth);
+      activeLayerCaptureDepth.value = depth + 1;
 
       gl.viewport(0, 0, canvasWidth, canvasHeight);
       gl.disable(gl.STENCIL_TEST);
@@ -1101,7 +2019,7 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       gl.clearColor(0, 0, 0, 0);
       gl.clearStencil(0);
       clearWebGLEffectFramebufferRegion({
-        framebuffer: layerFBO.value!,
+        framebuffer,
         canvasWidth,
         canvasHeight,
         region,
@@ -1109,18 +2027,26 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
         paddingInBackingPixels: EFFECT_SHADER_SAMPLE_PADDING_IN_BACKING_PIXELS,
       });
 
-      return layerFBO.value!;
+      return { framebuffer, depth };
     },
 
+    releaseLayerCapture,
+
     endLayerCaptureAndBlur(
-      { canvasWidth, canvasHeight, region, effect, worldToBacking }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; effect: LayerBlurEffect; worldToBacking: EffectBackingScale }
+      { canvasWidth, canvasHeight, region, sourceFramebuffer, effect, worldToBacking, outputFramebuffer, requireClipStencil }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; sourceFramebuffer: Framebuffer; effect: LayerBlurEffect; worldToBacking: EffectBackingScale; outputFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      const blurred = applyGaussianBlur(layerFBO.value!, effect.radius * worldToBacking.lengthScale, region);
+      const blurred = applyGaussianBlurWithStencilRestore(
+        sourceFramebuffer,
+        effect.radius * worldToBacking.lengthScale,
+        region,
+        requireClipStencil,
+        "premultiplied",
+      );
 
-      bindFramebuffer(gl, null);
+      bindEffectOutputFramebuffer(outputFramebuffer);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
 
       const program = requireProgram(blitProgram.value, "layer blur blit");
@@ -1128,8 +2054,9 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, blurred.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
-      gl.uniform1f(gl.getUniformLocation(program, "u_opacity"), 1.0);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+      gl.uniform1f(requireUniformLocation(program, "u_opacity"), 1.0);
+      gl.uniform1f(requireUniformLocation(program, "u_premultipliedInput"), 0.0);
 
       // gaussianBlurFragmentShader returns straight-alpha RGBA: it blurs in
       // premultiplied space, then un-premultiplies before writing. The blit
@@ -1152,14 +2079,14 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
     },
 
     blitLayerWithOpacity(
-      { canvasWidth, canvasHeight, region, opacity }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; opacity: number }
+      { canvasWidth, canvasHeight, region, sourceFramebuffer, opacity, outputFramebuffer, requireClipStencil }: { canvasWidth: number; canvasHeight: number; region: WebGLEffectRenderRegion; sourceFramebuffer: Framebuffer; opacity: number; outputFramebuffer: WebGLFramebuffer | null; requireClipStencil: boolean }
     ): void {
       ensureResources(canvasWidth, canvasHeight);
       ensureBlitProgram();
 
-      const copied = renderEffectFramebufferRegionIntoTemporaryFramebuffer(layerFBO.value!, region);
+      const copied = renderEffectFramebufferRegionIntoTemporaryFramebuffer(sourceFramebuffer, region, requireClipStencil);
 
-      bindFramebuffer(gl, null);
+      bindEffectOutputFramebuffer(outputFramebuffer);
       gl.viewport(0, 0, canvasWidth, canvasHeight);
 
       const program = requireProgram(blitProgram.value, "group opacity blit");
@@ -1167,8 +2094,9 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, copied.texture);
-      gl.uniform1i(gl.getUniformLocation(program, "u_texture"), 0);
-      gl.uniform1f(gl.getUniformLocation(program, "u_opacity"), opacity);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+      gl.uniform1f(requireUniformLocation(program, "u_opacity"), opacity);
+      gl.uniform1f(requireUniformLocation(program, "u_premultipliedInput"), 0.0);
 
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(
@@ -1186,20 +2114,54 @@ export function createEffectsRenderer(gl: WebGLRenderingContext): EffectsRendere
       );
     },
 
+    copyFramebufferRegionToRegion(
+      { canvasWidth, canvasHeight, sourceRegion, targetRegion, sourceFramebuffer, outputFramebuffer }: { readonly canvasWidth: number; readonly canvasHeight: number; readonly sourceRegion: WebGLEffectRenderRegion; readonly targetRegion: WebGLEffectRenderRegion; readonly sourceFramebuffer: Framebuffer; readonly outputFramebuffer: WebGLFramebuffer | null }
+    ): void {
+      ensureResources(canvasWidth, canvasHeight);
+      const program = requireProgram(regionCopyProgram.value, "region copy");
+      const vertices = regionCopyQuadVertices({
+        canvasWidth,
+        canvasHeight,
+        sourceRegion,
+        targetRegion,
+        sourceFramebuffer,
+      });
+
+      bindEffectOutputFramebuffer(outputFramebuffer);
+      gl.viewport(0, 0, canvasWidth, canvasHeight);
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, sourceFramebuffer.texture);
+      gl.uniform1i(requireUniformLocation(program, "u_texture"), 0);
+
+      gl.disable(gl.BLEND);
+      gl.disable(gl.STENCIL_TEST);
+      withEffectRegion(targetRegion, () => {
+        drawRegionCopyQuad(program, vertices);
+      });
+      gl.enable(gl.BLEND);
+    },
+
     applyGaussianBlur,
 
     dispose(): void {
       if (blurProgram.value) {gl.deleteProgram(blurProgram.value);}
       if (morphologyProgram.value) {gl.deleteProgram(morphologyProgram.value);}
       if (compositeProgram.value) {gl.deleteProgram(compositeProgram.value);}
+      if (alphaBinarizeProgram.value) {gl.deleteProgram(alphaBinarizeProgram.value);}
       if (blendShadowProgram.value) {gl.deleteProgram(blendShadowProgram.value);}
+      if (blendContentProgram.value) {gl.deleteProgram(blendContentProgram.value);}
       if (innerShadowProgram.value) {gl.deleteProgram(innerShadowProgram.value);}
       if (blitProgram.value) {gl.deleteProgram(blitProgram.value);}
+      if (regionCopyProgram.value) {gl.deleteProgram(regionCopyProgram.value);}
       if (fullscreenQuad.value) {gl.deleteBuffer(fullscreenQuad.value);}
+      if (regionCopyQuad.value) {gl.deleteBuffer(regionCopyQuad.value);}
       if (tempFBO1.value) {deleteFramebuffer(gl, tempFBO1.value);}
       if (tempFBO2.value) {deleteFramebuffer(gl, tempFBO2.value);}
       if (shapeFBO.value) {deleteFramebuffer(gl, shapeFBO.value);}
-      if (layerFBO.value) {deleteFramebuffer(gl, layerFBO.value);}
+      for (const framebuffer of layerCaptureFramebuffers.value) {
+        deleteFramebuffer(gl, framebuffer);
+      }
       if (backdropFBO.value) {deleteFramebuffer(gl, backdropFBO.value);}
     },
   };

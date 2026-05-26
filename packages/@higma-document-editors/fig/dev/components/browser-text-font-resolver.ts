@@ -1,12 +1,16 @@
 /** @file Browser font access boundary for dev Fig rendering/editing. */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { figDocumentResources, type FigDocumentContext } from "@higma-document-io/fig";
-import { collectFontQueries, createCachingFontLoader, fontQueryKey, preloadFonts, type FontQuery } from "@higma-document-models/fig/font";
+import {
+  collectFontQueries,
+  createCachingFontLoader,
+  detectBrowserFontPlatform,
+  fontQueryKey,
+  preloadFonts,
+  type FontQuery,
+} from "@higma-document-models/fig/font";
 import { createBrowserFontLoader, isBrowserFontLoaderSupported } from "@higma-document-renderers/fig/font-drivers/browser";
 import { createCachedTextFontResolver, type TextFontResolver } from "@higma-document-renderers/fig/text";
-
-const browserFontLoader = createBrowserFontLoader();
-const fontLoader = createCachingFontLoader(browserFontLoader);
 
 export type BrowserTextFontResolverState = {
   readonly supported: boolean;
@@ -21,13 +25,24 @@ type BrowserTextFontPreloadState = {
   readonly ready: boolean;
 };
 
+function createBrowserTextFontLoaderRuntime() {
+  const browserFontLoader = createBrowserFontLoader({
+    host: globalThis,
+    platform: detectBrowserFontPlatform(globalThis),
+  });
+  return {
+    browserFontLoader,
+    fontLoader: createCachingFontLoader(browserFontLoader),
+  };
+}
+
 function collectContextFontQueries(context: FigDocumentContext) {
   const resources = figDocumentResources(context);
   return collectFontQueries({
     roots: context.document.nodeChanges,
     symbolResolver: context.symbolResolver,
     childrenOf: resources.childrenOf,
-  }).fontResolverQueries;
+  }).textLayoutFontResolverQueries;
 }
 
 function toError(reason: unknown): Error {
@@ -43,8 +58,14 @@ function fontPreloadKey(queries: readonly FontQuery[]): string {
 
 /** Create the dev text font resolver from browser-local fonts declared by the Kiwi document. */
 export function useBrowserTextFontResolver(context: FigDocumentContext): BrowserTextFontResolverState {
-  const [supported] = useState(() => isBrowserFontLoaderSupported());
-  const [granted, setGranted] = useState(() => browserFontLoader.hasPermission());
+  const [supported] = useState(() => isBrowserFontLoaderSupported(globalThis));
+  const runtime = useMemo(() => {
+    if (!supported) {
+      return undefined;
+    }
+    return createBrowserTextFontLoaderRuntime();
+  }, [supported]);
+  const [granted, setGranted] = useState(() => runtime?.browserFontLoader.hasPermission() ?? false);
   const [error, setError] = useState<Error | null>(null);
   const queries = useMemo(() => {
     if (!granted) {
@@ -52,7 +73,10 @@ export function useBrowserTextFontResolver(context: FigDocumentContext): Browser
     }
     return collectContextFontQueries(context);
   }, [context, granted]);
+  const queriesRef = useRef(queries);
+  queriesRef.current = queries;
   const preloadKey = useMemo(() => fontPreloadKey(queries), [queries]);
+  const loadedPreloadKeyRef = useRef<string | null>(granted ? null : preloadKey);
   const [preloadState, setPreloadState] = useState<BrowserTextFontPreloadState>(() => ({
     key: preloadKey,
     ready: !granted,
@@ -61,19 +85,40 @@ export function useBrowserTextFontResolver(context: FigDocumentContext): Browser
 
   useEffect(() => {
     if (!granted) {
+      loadedPreloadKeyRef.current = preloadKey;
       setPreloadState({ key: preloadKey, ready: true });
+      setError(null);
+      return;
+    }
+    if (loadedPreloadKeyRef.current === preloadKey) {
+      setPreloadState((previous) => {
+        if (previous.key === preloadKey && previous.ready) {
+          return previous;
+        }
+        return { key: preloadKey, ready: true };
+      });
       setError(null);
       return;
     }
 
     const cancelled = { value: false };
-    setPreloadState({ key: preloadKey, ready: false });
+    if (runtime === undefined) {
+      setError(new Error("Browser font resolver requires Local Font Access support before preloading"));
+      return;
+    }
+    setPreloadState((previous) => {
+      if (previous.key === preloadKey && !previous.ready) {
+        return previous;
+      }
+      return { key: preloadKey, ready: false };
+    });
     setError(null);
-    void preloadFonts({ queries, loader: fontLoader }).then(
+    void preloadFonts({ queries: queriesRef.current, loader: runtime.fontLoader }).then(
       () => {
         if (cancelled.value) {
           return;
         }
+        loadedPreloadKeyRef.current = preloadKey;
         setPreloadState({ key: preloadKey, ready: true });
       },
       (reason: unknown) => {
@@ -86,18 +131,21 @@ export function useBrowserTextFontResolver(context: FigDocumentContext): Browser
     return () => {
       cancelled.value = true;
     };
-  }, [granted, preloadKey, queries]);
+  }, [granted, preloadKey, runtime]);
 
   const requestAccess = useCallback((): void => {
     const run = async (): Promise<void> => {
-      await fontLoader.listFontFamilies();
-      if (!browserFontLoader.hasPermission()) {
+      if (runtime === undefined) {
+        throw new Error("Browser font resolver requires Local Font Access support before requesting fonts");
+      }
+      await runtime.fontLoader.listFontFamilies();
+      if (!runtime.browserFontLoader.hasPermission()) {
         throw new Error("Browser font access was requested but permission was not granted");
       }
       setGranted(true);
     };
     void run().catch((reason: unknown) => setError(toError(reason)));
-  }, []);
+  }, [runtime]);
 
   if (error !== null) {
     throw error;
@@ -107,8 +155,11 @@ export function useBrowserTextFontResolver(context: FigDocumentContext): Browser
     if (!ready) {
       return undefined;
     }
-    return createCachedTextFontResolver(fontLoader);
-  }, [ready]);
+    if (runtime === undefined) {
+      return undefined;
+    }
+    return createCachedTextFontResolver(runtime.fontLoader);
+  }, [ready, runtime]);
 
   return {
     supported,

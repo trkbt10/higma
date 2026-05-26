@@ -120,11 +120,14 @@ async function renderOne(
   if (!frame.size) {
     throw new Error("renderOne: frame has no size");
   }
+  const resources = figDocumentResources(ctx);
   const result = await renderFigToSvg([frame], {
     width: frame.size.x,
     height: frame.size.y,
     viewport: requireFigNodeViewport(frame, "renderFrames"),
-    ...figDocumentResources(ctx),
+    ...resources,
+    sourceDocumentReference: resources.document,
+    sourceRevision: 0,
     fontLoader,
   });
   const svg = String(result.svg);

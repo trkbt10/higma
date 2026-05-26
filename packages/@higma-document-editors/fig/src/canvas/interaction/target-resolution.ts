@@ -1,24 +1,26 @@
 /** @file Canvas hit target resolution. */
 import type { FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
 import type { FigGuid } from "@higma-document-models/fig/types";
-import type { NodeBounds, PointLike } from "./bounds";
-import { findDeepestBoundsAtPoint } from "./bounds";
+import type { SceneGraphNodeBounds } from "@higma-document-renderers/fig/scene-graph";
+import type { PointLike } from "./rendered-node-bounds";
+import { findDeepestBoundsAtPoint } from "./rendered-node-bounds";
 import { resolveNodeGuidFromCanvasId } from "./selection-resolution";
 
 export type ResolveCanvasInteractionTargetOptions = {
   readonly document: FigKiwiDocumentIndex;
-  readonly itemBounds: readonly NodeBounds[];
-  readonly hitId: string;
+  readonly itemBounds: readonly SceneGraphNodeBounds[];
   readonly point: PointLike;
 };
 
-/** Resolve the deepest node at a page point, falling back to the browser hit id only when no bound contains the point. */
+/** Resolve the deepest renderer-derived node bounds at a page point. */
 export function resolveInteractionTargetGuid({
   document,
   itemBounds,
-  hitId,
   point,
 }: ResolveCanvasInteractionTargetOptions): FigGuid {
   const deepest = findDeepestBoundsAtPoint(itemBounds, point);
-  return resolveNodeGuidFromCanvasId(document, deepest?.id ?? hitId);
+  if (deepest === undefined) {
+    throw new Error(`resolveInteractionTargetGuid: no rendered SceneGraph bounds contain point (${point.x}, ${point.y})`);
+  }
+  return resolveNodeGuidFromCanvasId(document, deepest.id);
 }

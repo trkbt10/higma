@@ -148,6 +148,8 @@ async function generateSnapshots(scope: string) {
     const pageResult = await renderCanvas(canvas, {
       width: 1200,
       height: 800,
+      sourceDocumentReference: resources.document,
+      sourceRevision: 0,
       blobs: resources.blobs,
       images: resources.images,
       childrenOf: resources.childrenOf,
@@ -174,6 +176,8 @@ async function generateSnapshots(scope: string) {
         width,
         height,
         viewport: getNodeViewport(child, width, height),
+        sourceDocumentReference: resources.document,
+        sourceRevision: 0,
         blobs: resources.blobs,
         images: resources.images,
         childrenOf: resources.childrenOf,

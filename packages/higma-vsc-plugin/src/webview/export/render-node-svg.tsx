@@ -24,9 +24,10 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import {
-  FigFamilyPageRendererFromResources,
+  FigFamilyPageRenderer,
   createFigFamilyRenderOptions,
 } from "@higma-figma-runtime/react-renderer";
+import { createKiwiSceneGraphPipeline, type KiwiSceneGraphMutation } from "@higma-document-renderers/fig/scene-graph";
 import { figDocumentResources, type FigDocumentContext } from "@higma-document-io/fig";
 import { guidToString } from "@higma-document-models/fig/domain";
 import { readKiwiTransform } from "@higma-document-models/fig/matrix";
@@ -48,6 +49,12 @@ export type RenderNodeSvgArgs = {
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
 };
 
+const INITIAL_VSC_EXPORT_KIWI_DOCUMENT_MUTATION: KiwiSceneGraphMutation = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
+
 
 
 
@@ -61,6 +68,22 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
   const localAabb = aabbOfTransformedRect(transform, size.x, size.y);
   const width = Math.max(1, localAabb.width);
   const height = Math.max(1, localAabb.height);
+  const sceneGraph = createKiwiSceneGraphPipeline().resolve({
+    page,
+    nodes: [node],
+    canvasWidth: width,
+    canvasHeight: height,
+    viewportX: localAabb.x,
+    viewportY: localAabb.y,
+    viewportWidth: width,
+    viewportHeight: height,
+    kiwiDocumentMutation: INITIAL_VSC_EXPORT_KIWI_DOCUMENT_MUTATION,
+    pruneToViewport: true,
+    resources: figDocumentResources(args.context),
+  });
+  if (sceneGraph === null) {
+    throw new Error(`VSC fig SVG export could not build SceneGraph for Kiwi node ${guidToString(node.guid)}`);
+  }
 
   const host = window.document.createElement("div");
   host.style.position = "fixed";
@@ -76,16 +99,8 @@ export async function renderNodeToSvg(args: RenderNodeSvgArgs): Promise<Rendered
   try {
     flushSync(() => {
       root.render(
-        <FigFamilyPageRendererFromResources
-          page={page}
-          nodes={[node]}
-          canvasWidth={width}
-          canvasHeight={height}
-          viewportX={localAabb.x}
-          viewportY={localAabb.y}
-          viewportWidth={width}
-          viewportHeight={height}
-          resources={figDocumentResources(args.context)}
+        <FigFamilyPageRenderer
+          sceneGraph={sceneGraph}
           renderOptions={args.renderOptions}
         />,
       );

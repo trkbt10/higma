@@ -25,6 +25,7 @@ import type { AffineMatrix } from "@higma-primitives/path";
 // =============================================================================
 
 const IDENTITY: AffineMatrix = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+const RESOLVE_RENDER_TREE_SPEC_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 
 function makeSceneGraph(children: GroupNode["children"], viewport?: SceneGraph["viewport"]): SceneGraph {
   return {
@@ -41,6 +42,7 @@ function makeSceneGraph(children: GroupNode["children"], viewport?: SceneGraph["
       children,
     },
     version: 1,
+    sourceDocumentReference: RESOLVE_RENDER_TREE_SPEC_SOURCE_DOCUMENT_REFERENCE,
   };
 }
 
@@ -114,7 +116,6 @@ describe("resolveRenderTree — text fill SoT", () => {
     expect(node.type).toBe("text");
     expect(node.fillColor).toBe("#112233");
     expect(node.fillOpacity).toBe(0.75);
-    expect(node.sourceFillOpacity).toBe(0.75);
     expect(node.content.mode).toBe("glyphs");
     if (node.content.mode !== "glyphs") {
       return;
@@ -123,6 +124,25 @@ describe("resolveRenderTree — text fill SoT", () => {
       fillColor: "#112233",
       fillOpacity: 0.75,
     });
+  });
+
+  it("throws when renderable text content has no base text run", () => {
+    const node: TextNode = {
+      ...makeGlyphText("line-text-without-runs"),
+      glyphContours: undefined,
+      runs: [],
+      textLineLayout: {
+        lines: [{ text: "A", x: 0, y: 10 }],
+        fontFamily: "Inter",
+        fontSize: 16,
+        lineHeight: 20,
+        textAnchor: "start",
+      },
+    };
+
+    expect(() => resolveRenderTree(makeSceneGraph([node]))).toThrow(
+      "resolveRenderTree: text node line-text-without-runs has renderable text content but no base text run",
+    );
   });
 
   it("omits a TEXT clip when glyph contours fit inside the text box", () => {
@@ -1284,7 +1304,7 @@ describe("resolveRenderTree — drop shadow z-order", () => {
     expect(clipDef.transform).toBe("matrix(1,0,0,1,40,40)");
   });
 
-  it("puts frame surface shadows on the background instead of the child wrapper", () => {
+  it("puts frame surface shadows on the frame node instead of the child wrapper", () => {
     const frame: FrameNode = {
       type: "frame",
       id: createNodeId("frame-shadow"),
@@ -1310,7 +1330,7 @@ describe("resolveRenderTree — drop shadow z-order", () => {
 
     const node = tree.children[0] as RenderFrameNode;
     expect(node.wrapper.filterAttr).toBeUndefined();
-    expect(node.background?.filterAttr).toMatch(/^url\(#filter-/);
+    expect(node.surfaceFilterAttr).toMatch(/^url\(#filter-/);
     const filterDefs = node.defs.filter((d) => d.type === "filter");
     expect(filterDefs).toHaveLength(1);
   });

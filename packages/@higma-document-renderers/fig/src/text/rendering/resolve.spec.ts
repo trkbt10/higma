@@ -684,6 +684,102 @@ describe("resolveTextRendering font outlines", () => {
       .toThrow('Text layout cursor conversion requires per-character widths for "Edited"');
   });
 
+  it("uses Kiwi baseline position as the ascender metric when lineAscent is omitted", () => {
+    const resolution = resolveTextLayout({
+      ...BASE_TEXT_NODE,
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "24px Objectivity Bold",
+        fontSize: 24,
+        lineHeight: { value: 36, units: { value: 0, name: "PIXELS" } },
+      },
+      derivedTextData: {
+        baselines: [{
+          position: { x: 0, y: 17.808000564575195 },
+          width: 260.90625,
+          lineY: 0,
+          lineHeight: 36,
+          firstCharacter: 0,
+          endCharacter: 21,
+        }],
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 0, y: 17.808000564575195 },
+          fontSize: 24,
+          firstCharacter: 0,
+          advance: 15.0390625,
+        }],
+      },
+    }, { blobs: [] });
+
+    expect(resolution.layout.ascenderRatio).toBeCloseTo(17.808000564575195 / 24, 5);
+    expect(resolution.layout.lines[0]?.y).toBeCloseTo(17.808000564575195, 5);
+    expect(resolution.layout.lines[0]?.width).toBeCloseTo(260.90625, 5);
+  });
+
+  it("keeps Kiwi derived line metrics for truncated glyph text without requiring local font metrics", () => {
+    const resolution = resolveTextLayout({
+      ...BASE_TEXT_NODE,
+      textTruncation: { value: 1, name: "ENDING" },
+      textData: {
+        ...BASE_TEXT_NODE.textData,
+        characters: "ABCDE",
+      },
+      derivedTextData: {
+        truncationStartIndex: 2,
+        truncatedHeight: 20,
+        baselines: [{
+          position: { x: 0, y: 14 },
+          width: 50,
+          lineY: 0,
+          lineHeight: 20,
+          lineAscent: 14,
+          firstCharacter: 0,
+          endCharacter: 5,
+        }],
+        glyphs: [{
+          commandsBlob: 0,
+          position: { x: 0, y: 14 },
+          fontSize: 20,
+          firstCharacter: 0,
+          advance: 10,
+        }, {
+          commandsBlob: 0,
+          position: { x: 10, y: 14 },
+          fontSize: 20,
+          firstCharacter: 1,
+          advance: 10,
+        }, {
+          commandsBlob: 0,
+          position: { x: 20, y: 14 },
+          fontSize: 20,
+          firstCharacter: 2,
+          advance: 10,
+        }, {
+          commandsBlob: 0,
+          position: { x: 30, y: 14 },
+          fontSize: 20,
+          firstCharacter: 3,
+          advance: 10,
+        }, {
+          commandsBlob: 0,
+          position: { x: 40, y: 14 },
+          fontSize: 20,
+          firstCharacter: 4,
+          advance: 10,
+        }],
+        fontMetaData: [{
+          key: { family: "Unit Test Sans", style: "Regular" },
+          fontLineHeight: 1,
+        }],
+      },
+    }, { blobs: [] });
+
+    expect(resolution.truncation?.startIndex).toBe(2);
+    expect(resolution.layout.lines[0]?.text).toBe("ABCDE");
+    expect(resolution.layout.lines[0]?.charWidths).toEqual([10, 10, 10, 10, 10]);
+  });
+
   it("threads resolved character widths into cursor-facing layout", () => {
     const rendering = resolveTextRendering({
       ...BASE_TEXT_NODE,

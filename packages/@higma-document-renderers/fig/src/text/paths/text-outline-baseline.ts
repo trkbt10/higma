@@ -7,11 +7,7 @@
  * projection so they do not drift by choosing separate y-coordinate rules.
  */
 
-
-
-
-
-
+/** Project a text-layout baseline onto Figma SVG-export outline coordinates. */
 export function figmaTextOutlineBaselineY(baselineY: number): number {
   if (!Number.isFinite(baselineY)) {
     throw new Error("figma-text-outline-baseline: baselineY must be finite");

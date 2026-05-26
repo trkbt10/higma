@@ -678,6 +678,26 @@ function resolveDerivedLayoutLines(
   throw new Error("text-resolve:derived-line-metrics:requires-font-or-glyph-advances");
 }
 
+function shouldUseKiwiDerivedLayoutLinesForTruncatedText(dtd: FigDerivedTextData | undefined): boolean {
+  return Array.isArray(dtd?.baselines) && dtd.baselines.length > 0;
+}
+
+function resolveExplicitTextLayoutLines(params: {
+  readonly dtd: FigDerivedTextData | undefined;
+  readonly props: ExtractedTextProps;
+  readonly displayProps: ExtractedTextProps;
+  readonly truncation: TextTruncation | undefined;
+  readonly measureCharWidths: ((text: string) => readonly number[]) | undefined;
+}): readonly TextLayoutSourceLine[] | undefined {
+  if (params.truncation === undefined) {
+    return resolveDerivedLayoutLines(params.dtd, params.displayProps, params.measureCharWidths);
+  }
+  if (shouldUseKiwiDerivedLayoutLinesForTruncatedText(params.dtd)) {
+    return resolveDerivedLayoutLines(params.dtd, params.props, params.measureCharWidths);
+  }
+  return undefined;
+}
+
 /**
  * Resolve font metrics from Figma's fontMetaData.
  *
@@ -698,15 +718,76 @@ function resolveFontMetrics(dtd: FigDerivedTextData | undefined): ResolvedFontMe
     return undefined;
   }
   const baseline = dtd?.baselines?.[0];
-  if (!baseline || typeof baseline.lineAscent !== "number" || baseline.lineAscent <= 0) {
+  if (!baseline) {
+    return undefined;
+  }
+  const lineAscent = readDerivedBaselineLineAscent(baseline);
+  if (lineAscent === undefined) {
     return undefined;
   }
   return {
     fontFamily: m.key?.family,
     fontWeight: m.fontWeight,
     fontLineHeight: lh,
-    ascenderRatio: baseline.lineAscent / (baseline.lineHeight / lh),
+    ascenderRatio: lineAscent / (baseline.lineHeight / lh),
   };
+}
+
+function readDerivedBaselineLineAscent(
+  baseline: NonNullable<FigDerivedTextData["baselines"]>[number],
+): number | undefined {
+  if (typeof baseline.lineAscent === "number" && Number.isFinite(baseline.lineAscent) && baseline.lineAscent > 0) {
+    return baseline.lineAscent;
+  }
+  if (
+    typeof baseline.position?.y !== "number" ||
+    !Number.isFinite(baseline.position.y) ||
+    typeof baseline.lineY !== "number" ||
+    !Number.isFinite(baseline.lineY)
+  ) {
+    return undefined;
+  }
+  const lineAscent = baseline.position.y - baseline.lineY;
+  if (!Number.isFinite(lineAscent) || lineAscent <= 0) {
+    return undefined;
+  }
+  return lineAscent;
+}
+
+function readDerivedMetricEmSize(
+  dtd: FigDerivedTextData | undefined,
+  props: ExtractedTextProps,
+): number | undefined {
+  const baseline = dtd?.baselines?.[0];
+  const fontLineHeight = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
+  if (
+    fontLineHeight !== undefined &&
+    typeof baseline?.lineHeight === "number" &&
+    Number.isFinite(baseline.lineHeight) &&
+    baseline.lineHeight > 0
+  ) {
+    return baseline.lineHeight / fontLineHeight;
+  }
+  if (Number.isFinite(props.fontSize) && props.fontSize > 0) {
+    return props.fontSize;
+  }
+  return undefined;
+}
+
+function resolveDerivedAscenderRatio(
+  dtd: FigDerivedTextData | undefined,
+  props: ExtractedTextProps,
+): number | undefined {
+  const baseline = dtd?.baselines?.[0];
+  if (baseline === undefined) {
+    return undefined;
+  }
+  const lineAscent = readDerivedBaselineLineAscent(baseline);
+  const emSize = readDerivedMetricEmSize(dtd, props);
+  if (lineAscent === undefined || emSize === undefined || emSize <= 0) {
+    return undefined;
+  }
+  return lineAscent / emSize;
 }
 
 /**
@@ -721,6 +802,10 @@ function resolveTextAscenderRatio(
   const metrics = resolveFontMetrics(dtd);
   if (metrics) {
     return metrics.ascenderRatio;
+  }
+  const derivedAscenderRatio = resolveDerivedAscenderRatio(dtd, props);
+  if (derivedAscenderRatio !== undefined) {
+    return derivedAscenderRatio;
   }
   const font = ctx.fontResolver?.(props.font);
   if (font) {
@@ -742,7 +827,7 @@ function resolveTextDescenderRatio(
   ctx: ResolveTextContext,
 ): number {
   const dtd = node.derivedTextData as FigDerivedTextData | undefined;
-  const derivedDescenderRatio = resolveDerivedDescenderRatio(dtd);
+  const derivedDescenderRatio = resolveDerivedDescenderRatio(dtd, props);
   if (derivedDescenderRatio !== undefined) {
     return derivedDescenderRatio;
   }
@@ -756,30 +841,32 @@ function resolveTextDescenderRatio(
   throw new Error(`Text layout requires descender metrics for font "${props.font.family}"`);
 }
 
-function resolveDerivedDescenderRatio(dtd: FigDerivedTextData | undefined): number | undefined {
+function resolveDerivedDescenderRatio(
+  dtd: FigDerivedTextData | undefined,
+  props: ExtractedTextProps,
+): number | undefined {
   const baseline = dtd?.baselines?.[0];
+  if (baseline === undefined) {
+    return undefined;
+  }
+  const lineAscent = readDerivedBaselineLineAscent(baseline);
   if (
-    baseline === undefined ||
-    typeof baseline.lineAscent !== "number" ||
+    lineAscent === undefined ||
     typeof baseline.lineHeight !== "number" ||
-    baseline.lineHeight <= 0 ||
-    baseline.lineAscent < 0
+    !Number.isFinite(baseline.lineHeight) ||
+    baseline.lineHeight <= 0
   ) {
     return undefined;
   }
-  // `FigDerivedBaseline` carries `lineAscent` and `lineHeight` but
-  // not an explicit descender — Kiwi defines descender = lineHeight
-  // − lineAscent because Figma's line box wraps the baseline by
-  // exactly the descender below it.
-  const derivedDescent = baseline.lineHeight - baseline.lineAscent;
-  if (derivedDescent <= 0) {
+  const derivedDescent = baseline.lineHeight - lineAscent;
+  if (!Number.isFinite(derivedDescent) || derivedDescent < 0) {
     return undefined;
   }
-  const lh = readPositiveFontLineHeight(dtd?.fontMetaData?.[0]?.fontLineHeight);
-  if (lh === undefined) {
+  const emSize = readDerivedMetricEmSize(dtd, props);
+  if (emSize === undefined || emSize <= 0) {
     return undefined;
   }
-  return derivedDescent / (baseline.lineHeight / lh);
+  return derivedDescent / emSize;
 }
 
 /**
@@ -1028,7 +1115,13 @@ function resolveTextLayoutFromProps(
   const descenderRatio = resolveTextDescenderRatio(node, props, ctx);
   const displayProps = resolveDisplayProps(props, truncation);
   const measureCharWidths = buildLineMeasurer(displayProps, ctx);
-  const explicitLines = truncation ? undefined : resolveDerivedLayoutLines(dtd, displayProps, measureCharWidths);
+  const explicitLines = resolveExplicitTextLayoutLines({
+    dtd,
+    props,
+    displayProps,
+    truncation,
+    measureCharWidths,
+  });
   const layout = computeTextLayout({
     props: displayProps,
     lines: explicitLines,

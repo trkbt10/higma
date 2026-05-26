@@ -5,7 +5,7 @@
 import { detectWeight, snapFontWeight, getWeightName } from "./weight";
 import { detectStyle, isItalic, isOblique, isSlanted } from "./style";
 import { detectFontCategory, getDefaultFontStack, COMMON_FONT_MAPPINGS, isGenericCssFontFamily } from "./mappings";
-import { createFontResolver } from "./resolver";
+import { createBrowserAvailabilityChecker, createFontResolver } from "./resolver";
 
 const availableChecker = {
   isAvailable: () => true,
@@ -271,5 +271,31 @@ describe("FontResolver", () => {
 
     expect(() => resolver.resolve({ family: "Inter", style: "Regular" }))
       .toThrow("Font resolver resolve() received async availability for Inter; use resolveAsync()");
+  });
+});
+
+describe("createBrowserAvailabilityChecker", () => {
+  it("uses document.fonts from the explicit host", () => {
+    const calls: string[] = [];
+    const checker = createBrowserAvailabilityChecker({
+      document: {
+        fonts: {
+          check(font: string, text?: string): boolean {
+            calls.push(`${font}|${text}`);
+            return font === "16px \"Inter\"";
+          },
+        },
+      },
+    });
+
+    expect(checker.isAvailable("Inter")).toBe(true);
+    expect(calls).toEqual([
+      "16px \"Inter\"|ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+    ]);
+  });
+
+  it("throws when the explicit host has no CSS Font Loading API", () => {
+    expect(() => createBrowserAvailabilityChecker({}))
+      .toThrow("Browser font availability checker requires host.document.fonts");
   });
 });

@@ -10,6 +10,8 @@ import type { FigPackageImage, FigPackageMetadata } from "@higma-figma-container
 import type { FigmaKiwiCanvas } from "@higma-figma-runtime/kiwi-canvas";
 import {
   EMPTY_FIG_STYLE_REGISTRY,
+  getNodeType,
+  guidToString,
   indexFigKiwiDocument,
 } from "@higma-document-models/fig/domain";
 import {
@@ -54,6 +56,9 @@ export type FigDocumentContext = {
   /** Explicit additional Kiwi sources used by resolver/registry construction. */
   readonly kiwiSourceDocuments: readonly FigDocumentContextKiwiSourceDocument[];
 
+  /** Indexed lookup views for explicit additional Kiwi sources. */
+  readonly kiwiSourceDocumentIndexes: readonly FigKiwiDocumentIndex[];
+
   /** Package metadata when available. */
   readonly metadata: FigPackageMetadata | null;
 };
@@ -88,6 +93,17 @@ export type CreateFigDocumentContextFromNodeChangesOptions = {
 export type ReplaceFigDocumentContextNodeChangesOptions = {
   readonly context: FigDocumentContext;
   readonly nodeChanges: LoadedFigFile["nodeChanges"];
+};
+
+export type FigDocumentContextNodeContentEdit = {
+  readonly before: LoadedFigFile["nodeChanges"][number];
+  readonly after: LoadedFigFile["nodeChanges"][number];
+};
+
+export type ReplaceFigDocumentContextTransformOnlyNodeChangesOptions = {
+  readonly context: FigDocumentContext;
+  readonly nodeChanges: LoadedFigFile["nodeChanges"];
+  readonly changes: readonly FigDocumentContextNodeContentEdit[];
 };
 
 export type AddFigDocumentBlobOptions = {
@@ -188,6 +204,59 @@ export function replaceFigDocumentContextNodeChanges({
 }
 
 /**
+ * Re-index Kiwi nodeChanges after edits whose only node field change is
+ * `transform`. The Kiwi document index and SymbolResolver are rebuilt from the
+ * edited document; style registry and explicit source indexes are retained
+ * because transform does not participate in style lookup construction.
+ */
+export function replaceFigDocumentContextNodeChangesAfterTransformOnlyEdit({
+  context,
+  nodeChanges,
+  changes,
+}: ReplaceFigDocumentContextTransformOnlyNodeChangesOptions): FigDocumentContext {
+  assertTransformOnlyNodeContentEdits(changes);
+  const document = indexFigKiwiDocument(nodeChanges);
+  const loaded = loadedFigFileWithNodeChanges(context, nodeChanges);
+  const result = {
+    document,
+    symbolResolver: createSymbolResolver({
+      document,
+      symbolSourceDocuments: context.kiwiSourceDocumentIndexes,
+      blobs: context.blobs,
+    }),
+    styleRegistry: context.styleRegistry,
+    blobs: context.blobs,
+    images: context.images,
+    kiwiSourceDocuments: context.kiwiSourceDocuments,
+    kiwiSourceDocumentIndexes: context.kiwiSourceDocumentIndexes,
+    metadata: context.metadata,
+  };
+  if (loaded === undefined) {
+    return result;
+  }
+  return {
+    ...result,
+    loaded,
+  };
+}
+
+function loadedFigFileWithNodeChanges(
+  context: FigDocumentContext,
+  nodeChanges: LoadedFigFile["nodeChanges"],
+): LoadedFigFile | undefined {
+  if (context.loaded === undefined) {
+    return undefined;
+  }
+  return {
+    ...context.loaded,
+    nodeChanges,
+    blobs: context.blobs,
+    images: context.images,
+    metadata: context.metadata,
+  };
+}
+
+/**
  * Append one binary blob to the Kiwi document resources and re-index the
  * same nodeChanges with the new resource set.
  */
@@ -267,10 +336,10 @@ function createFigDocumentContextFromSource(source: FigDocumentContextSource): F
   const document = indexFigKiwiDocument(source.nodeChanges);
   const kiwiSourceDocuments = source.kiwiSourceDocuments ?? [];
   assertKiwiSourceBlobTables(source.blobs, kiwiSourceDocuments);
-  const symbolSourceDocuments = kiwiSourceDocuments.map((kiwiSource) => indexFigKiwiDocument(kiwiSource.nodeChanges));
-  const documentSources = [document, ...symbolSourceDocuments];
+  const kiwiSourceDocumentIndexes = kiwiSourceDocuments.map((kiwiSource) => indexFigKiwiDocument(kiwiSource.nodeChanges));
+  const documentSources = [document, ...kiwiSourceDocumentIndexes];
   const styleRegistry = buildContextStyleRegistry(documentSources);
-  const symbolResolver = createSymbolResolver({ document, symbolSourceDocuments, blobs: source.blobs });
+  const symbolResolver = createSymbolResolver({ document, symbolSourceDocuments: kiwiSourceDocumentIndexes, blobs: source.blobs });
   const images = mergeKiwiSourceImages(source.images, kiwiSourceDocuments);
 
   return {
@@ -281,8 +350,57 @@ function createFigDocumentContextFromSource(source: FigDocumentContextSource): F
     blobs: source.blobs,
     images,
     kiwiSourceDocuments,
+    kiwiSourceDocumentIndexes,
     metadata: source.metadata,
   };
+}
+
+function assertTransformOnlyNodeContentEdits(
+  changes: readonly FigDocumentContextNodeContentEdit[],
+): void {
+  if (changes.length === 0) {
+    throw new Error("FigDocumentContext transform-only replacement requires at least one changed Kiwi node");
+  }
+  for (const change of changes) {
+    assertTransformOnlyNodeContentEdit(change);
+  }
+}
+
+function assertTransformOnlyNodeContentEdit({
+  before,
+  after,
+}: FigDocumentContextNodeContentEdit): void {
+  if (before.guid === undefined || after.guid === undefined) {
+    throw new Error("FigDocumentContext transform-only replacement requires GUID-bearing Kiwi nodes");
+  }
+  if (guidToString(before.guid) !== guidToString(after.guid)) {
+    throw new Error("FigDocumentContext transform-only replacement must not change Kiwi node guid");
+  }
+  if (getNodeType(before) !== getNodeType(after)) {
+    throw new Error("FigDocumentContext transform-only replacement must not change Kiwi node type");
+  }
+  if (!sameFigNodeExceptTransform(before, after)) {
+    throw new Error(`FigDocumentContext transform-only replacement received non-transform edit for ${guidToString(before.guid)}`);
+  }
+}
+
+function sameFigNodeExceptTransform(
+  before: LoadedFigFile["nodeChanges"][number],
+  after: LoadedFigFile["nodeChanges"][number],
+): boolean {
+  const keys = new Set<keyof LoadedFigFile["nodeChanges"][number]>([
+    ...Object.keys(before) as (keyof LoadedFigFile["nodeChanges"][number])[],
+    ...Object.keys(after) as (keyof LoadedFigFile["nodeChanges"][number])[],
+  ]);
+  for (const key of keys) {
+    if (key === "transform") {
+      continue;
+    }
+    if (before[key] !== after[key]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function buildContextStyleRegistry(documents: readonly FigKiwiDocumentIndex[]): FigStyleRegistry {

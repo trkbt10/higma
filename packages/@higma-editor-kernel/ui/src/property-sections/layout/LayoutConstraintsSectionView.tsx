@@ -15,7 +15,7 @@ import { ConstraintAnchorGrid } from "../../operations";
 export type StackPositioningId = "AUTO" | "ABSOLUTE";
 export type StackSizingId = "FIXED" | "RESIZE_TO_FIT" | "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE";
 export type ConstraintTypeId = "MIN" | "CENTER" | "MAX" | "STRETCH" | "SCALE";
-export type StackCounterAlignId = "MIN" | "CENTER" | "MAX" | "STRETCH" | "BASELINE";
+export type StackCounterAlignId = "MIN" | "CENTER" | "MAX" | "STRETCH" | "AUTO" | "BASELINE";
 
 export type LayoutConstraintsSectionViewProps = {
   readonly positioning: StackPositioningId;
@@ -54,7 +54,8 @@ export const CONSTRAINT_OPTIONS: readonly SelectOption<ConstraintTypeId>[] = [
 ];
 
 export const ALIGN_SELF_OPTIONS: readonly SelectOption<StackCounterAlignId>[] = [
-  { value: "MIN", label: "Auto" },
+  { value: "AUTO", label: "Auto" },
+  { value: "MIN", label: "Min" },
   { value: "CENTER", label: "Center" },
   { value: "MAX", label: "Max" },
   { value: "STRETCH", label: "Stretch" },

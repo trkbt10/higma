@@ -1,4 +1,6 @@
 /** @file Stroke property section. */
+import { memo } from "react";
+import { sameKiwiNodeExceptTransform } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import {
   StrokeSectionView,
@@ -21,6 +23,10 @@ import {
 } from "./paint-domain";
 import { usePaintEditor } from "./usePaintEditor";
 
+type StrokeSectionProps = {
+  readonly node: FigNode;
+};
+
 function strokeWeightValue(node: FigNode): number {
   if (typeof node.strokeWeight === "number") {
     return node.strokeWeight;
@@ -36,7 +42,7 @@ function parseStrokeDashes(value: readonly number[]): readonly number[] {
 }
 
 /** Render Kiwi stroke paints and stroke scalar controls. */
-export function StrokeSection({ node }: { readonly node: FigNode }) {
+function StrokeSectionContent({ node }: StrokeSectionProps) {
   const { updateSelectedNodes } = useFigEditor();
   const strokes = paintList(node, "stroke");
   const editor = usePaintEditor("stroke");
@@ -64,3 +70,9 @@ export function StrokeSection({ node }: { readonly node: FigNode }) {
     </section>
   );
 }
+
+function sameStrokeSectionProps(left: StrokeSectionProps, right: StrokeSectionProps): boolean {
+  return sameKiwiNodeExceptTransform(left.node, right.node);
+}
+
+export const StrokeSection = memo(StrokeSectionContent, sameStrokeSectionProps);

@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { runCli } from "@higma-tools/fig-to-web";
 import type { CapturedBreakpoint } from "@higma-tools/web-to-fig/web-source";
 import { comparePng, type ComparisonOutcome } from "@higma-codecs/png-compare";
-import { startStaticPreview, type StaticPreview } from "./preview-server";
+import { startStaticPreview } from "./preview-server";
 import { renderPreview, type RenderedPreviewFrame } from "./render-preview";
 
 export type VerifiedBreakpoint = {
@@ -38,6 +38,23 @@ export type VerificationReport = {
   readonly source: string;
   readonly results: readonly VerifiedBreakpoint[];
 };
+
+async function renderFidelityPreview(
+  outDir: string,
+  captures: readonly CapturedBreakpoint[],
+  options: VerifyOptions,
+): Promise<readonly RenderedPreviewFrame[]> {
+  const preview = await startStaticPreview(outDir);
+  try {
+    return await renderPreview({
+      baseUrl: preview.url,
+      captures,
+      devicePixelRatio: options.devicePixelRatio ?? 1,
+    });
+  } finally {
+    await preview.stop();
+  }
+}
 
 export type VerifyOptions = {
   /** pixelmatch threshold in [0,1]. Default 0.1. */
@@ -73,7 +90,6 @@ export async function verifyFidelity(
   const workDir = await mkdtemp(join(tmpdir(), "web-fig-roundtrip-verify-"));
   const figPath = join(workDir, "input.fig");
   const outDir = join(workDir, "out");
-  let preview: StaticPreview | undefined;
   try {
     await writeFile(figPath, figBytes);
     await runCli(
@@ -115,12 +131,7 @@ export async function verifyFidelity(
         error: (msg) => process.stderr.write(`${msg}\n`),
       },
     );
-    preview = await startStaticPreview(outDir);
-    const rendered = await renderPreview({
-      baseUrl: preview.url,
-      captures,
-      devicePixelRatio: options.devicePixelRatio ?? 1,
-    });
+    const rendered = await renderFidelityPreview(outDir, captures, options);
     const results: VerifiedBreakpoint[] = [];
     for (const cap of captures) {
       const frame = rendered.find((f) => f.breakpoint === cap.breakpoint.name);
@@ -141,9 +152,6 @@ export async function verifyFidelity(
     }
     return { source, results };
   } finally {
-    if (preview !== undefined) {
-      await preview.stop();
-    }
     await rm(workDir, { recursive: true, force: true });
   }
 }

@@ -30,6 +30,7 @@ import {
   resolvePathBackedRectShapePrimitive,
   resolvePathContourRectPrimitive,
   resolveRectShapePrimitive,
+  resolveBrowserRenderedFigmaExportCssBlendMode,
   type RenderTree,
   type RenderNode,
   type BlendMode,
@@ -97,9 +98,10 @@ import {
   type SvgAttributeValue,
   type SvgAttributes,
   EMPTY_SVG,
+  serializeSvgNode,
 } from "./element-primitives";
-import type { SvgString } from "./primitives";
-import { serializeFigmaExportSvg } from "./figma-export-precision";
+import { unsafeSvg, type SvgString } from "./primitives";
+import { applyFigmaExportSvgPrecision } from "./figma-export-precision";
 import { projectFigmaExportTransforms } from "./figma-export-transform-projection";
 
 // =============================================================================
@@ -107,7 +109,7 @@ import { projectFigmaExportTransforms } from "./figma-export-transform-projectio
 // =============================================================================
 
 const DATA_IMAGE_URI_PREFIX = "data:image/";
-let svgImageAssetGeneration = 0;
+const SVG_IMAGE_ASSET_GENERATION_COUNTER = { value: 0 };
 
 type SvgImageAsset = {
   readonly id: string;
@@ -610,7 +612,8 @@ function wrapperAttrsForFilterMode(
   // is therefore never inferred here; filters already define their own SVG
   // offscreen pipeline via <filter>.
   const parts: string[] = [];
-  if (w.blendMode) {parts.push(`mix-blend-mode:${w.blendMode}`);}
+  const projectedBlendMode = blendModeStyle(w.blendMode);
+  if (projectedBlendMode) {parts.push(projectedBlendMode);}
   const style = parts.length > 0 ? parts.join(";") : undefined;
   return {
     transform: w.transform,
@@ -740,7 +743,11 @@ function uniformCornerRadius(cr: CornerRadius | undefined): number | undefined {
 // =============================================================================
 
 function blendModeStyle(bm: BlendMode | undefined): string | undefined {
-  return bm ? `mix-blend-mode:${bm}` : undefined;
+  const browserBlendMode = resolveBrowserRenderedFigmaExportCssBlendMode(bm);
+  if (browserBlendMode === undefined) {
+    return undefined;
+  }
+  return `mix-blend-mode:${browserBlendMode}`;
 }
 
 function directShapeStyleWithNodeBlend(
@@ -884,7 +891,7 @@ function formatFrameSurfaceShape(
 }
 
 function frameSurfaceNeedsPathBackedShape(node: RenderFrameNode): boolean {
-  return node.background?.filterAttr !== undefined || node.wrapper.filterAttr !== undefined;
+  return node.surfaceFilterAttr !== undefined || node.wrapper.filterAttr !== undefined;
 }
 
 function formatPathContourElement(
@@ -1368,7 +1375,7 @@ function wrapOptionalBlendMode(node: SvgNode, blendMode: BlendMode | undefined):
  * All shape nodes (rect, ellipse, path, frame) share the same final assembly:
  * 1. Prepend defs
  * 2. Emit background blur before the foreground pixels when present
- * 3. Keep foreground filters off the background blur
+ * 3. Keep surface filters off the background blur
  * 4. Wrap in <g> with wrapper attrs
  *
  * This prevents scattered backgroundBlur/defs handling across every formatter.
@@ -1428,7 +1435,11 @@ function formatGroupNode(node: RenderGroupNode): SvgNode {
   if (defsStr !== EMPTY_SVG) { parts.push(defsStr); }
   parts.push(...clippedChildren);
 
-  return g(wrapperAttrs(node), ...parts);
+  const attrs = wrapperAttrs(node);
+  if (attrs.mask !== undefined && defsStr !== EMPTY_SVG) {
+    return { kind: "fragment", children: [defsStr, g(attrs, ...clippedChildren)] };
+  }
+  return g(attrs, ...parts);
 }
 
 function formatGroupChildren(node: RenderGroupNode, children: readonly SvgNode[]): readonly SvgNode[] {
@@ -1456,12 +1467,11 @@ function formatFrameNode(node: RenderFrameNode): SvgNode {
   const bgBlurPart = formatOptionalBackgroundBlur(node.backgroundBlur);
   const childElements = node.children.map(formatNode);
   const childClipId = node.omitChildClip ? undefined : node.childClipId;
+  foregroundParts.push(...formatFrameSurfaceEffectGroup(node, bgFillParts));
   if (childClipId && childElements.length > 0) {
-    const clippedFrameContent = clipSvgChildren(childClipId, [...bgFillParts, ...childElements]);
-    foregroundParts.push(...formatFrameSurfaceEffectGroup(node, [clippedFrameContent]));
-    foregroundParts.push(...bgStrokeParts);
+    foregroundParts.push(clipSvgChildren(childClipId, childElements), ...bgStrokeParts);
   } else {
-    foregroundParts.push(...formatFrameSurfaceEffectGroup(node, [...bgFillParts, ...childElements]), ...bgStrokeParts);
+    foregroundParts.push(...childElements, ...bgStrokeParts);
   }
 
   return assembleFrameNode(node, defsParts, bgBlurPart, foregroundParts);
@@ -1517,7 +1527,7 @@ function formatFrameSurfaceEffectGroup(
   node: RenderFrameNode,
   surfaceParts: readonly SvgNode[],
 ): readonly SvgNode[] {
-  const filterAttr = node.background?.filterAttr;
+  const filterAttr = node.surfaceFilterAttr;
   if (filterAttr === undefined || surfaceParts.length === 0) {
     return surfaceParts;
   }
@@ -1637,7 +1647,7 @@ function nodeWrapperShapeRendering(node: RenderNodeBase): Pick<SvgPaintAttrs, "s
 }
 
 function frameBackgroundShapeRendering(node: RenderFrameNode): Pick<SvgPaintAttrs, "shape-rendering"> {
-  if (node.background?.filterAttr === undefined || !hasDropShadowEffect(node.source.effects)) {
+  if (node.surfaceFilterAttr === undefined || !hasDropShadowEffect(node.source.effects)) {
     return {};
   }
   if (node.childClipId !== undefined && !node.omitChildClip) {
@@ -1663,35 +1673,49 @@ function clipSvgContent(content: SvgNode, clipId: string | undefined): SvgNode {
 }
 
 function clipSvgChildren(clipId: string, children: readonly SvgNode[]): SvgNode {
-  const liftedMask = liftSingleMaskGroupAcrossClip(clipId, children);
-  if (liftedMask !== undefined) {
-    return liftedMask;
+  const singleMaskedChild = preserveSingleMaskedChildWithoutParentClip(children);
+  if (singleMaskedChild !== undefined) {
+    return singleMaskedChild;
   }
   return g({ "clip-path": `url(#${clipId})` }, ...children);
 }
 
-function liftSingleMaskGroupAcrossClip(clipId: string, children: readonly SvgNode[]): SvgNode | undefined {
+function preserveSingleMaskedChildWithoutParentClip(children: readonly SvgNode[]): SvgNode | undefined {
   if (children.length !== 1) {
     return undefined;
   }
   const child = children[0];
-  if (child.kind !== "element" || child.name !== "g") {
+  if (child.kind === "fragment") {
+    return preserveFragmentWithSingleMaskedContent(child);
+  }
+  if (!isMaskOnlyGroupElement(child)) {
     return undefined;
   }
-  const maskAttr = child.attrs.mask;
+  return child;
+}
+
+function preserveFragmentWithSingleMaskedContent(child: Extract<SvgNode, { readonly kind: "fragment" }>): SvgNode | undefined {
+  const { contentChildren } = splitDefsFromContent(child.children);
+  if (contentChildren.length !== 1) {
+    return undefined;
+  }
+  const maskedContent = contentChildren[0];
+  if (!isMaskOnlyGroupElement(maskedContent)) {
+    return undefined;
+  }
+  return child;
+}
+
+function isMaskOnlyGroupElement(node: SvgNode): node is SvgElementNode {
+  if (node.kind !== "element" || node.name !== "g") {
+    return false;
+  }
+  const maskAttr = node.attrs.mask;
   if (typeof maskAttr !== "string") {
-    return undefined;
+    return false;
   }
-  const nonMaskAttrs = definedSvgAttributeNames(child.attrs).filter((name) => name !== "mask");
-  if (nonMaskAttrs.length > 0) {
-    return undefined;
-  }
-  const { defChildren, contentChildren } = splitDefsFromContent(child.children);
-  return g(
-    { mask: maskAttr },
-    ...defChildren,
-    g({ "clip-path": `url(#${clipId})` }, ...contentChildren),
-  );
+  const nonMaskAttrs = definedSvgAttributeNames(node.attrs).filter((name) => name !== "mask");
+  return nonMaskAttrs.length === 0;
 }
 
 function splitDefsFromContent(children: readonly SvgNode[]): {
@@ -1818,6 +1842,9 @@ function formatTextNode(node: RenderTextNode): SvgNode {
   const fb = node.content.layout;
   if (fb.lines.length === 0) {
     return EMPTY_SVG;
+  }
+  if (node.fillColor === undefined) {
+    throw new Error(`SVG text line renderer requires base text run fill for text node ${node.id}`);
   }
 
   const textAnchor = textAnchorValue(fb.textAnchor);
@@ -2245,8 +2272,8 @@ function coerceCornerRadius(cr: CornerRadius | undefined): readonly [number, num
 }
 
 function createSvgImageAssetRegistry(): SvgImageAssetRegistry {
-  const generation = svgImageAssetGeneration;
-  svgImageAssetGeneration += 1;
+  const generation = SVG_IMAGE_ASSET_GENERATION_COUNTER.value;
+  SVG_IMAGE_ASSET_GENERATION_COUNTER.value += 1;
   return {
     generation,
     byKey: new Map(),
@@ -2425,19 +2452,9 @@ export function formatRenderTreeToSvgElement(
     );
   }
   // No root-level `<g clip-path>` wrapper. Figma's own SVG exporter
-  // relies on (a) the `viewBox` attribute for visual clipping and
-  // (b) callers pruning off-canvas subtrees before render.
+  // relies on the `viewBox` attribute for visual clipping.
   //
-  // We mirror that here for two reasons:
-  //
-  //   1. SoT alignment — `pruneSceneGraphToViewport` already drops
-  //      every subtree whose world-space bbox lies entirely outside
-  //      the viewport (with a 64-unit safety pad for effect halos)
-  //      *before* the render tree is built, so a defensive
-  //      root-level clip-path was double-protection that no longer
-  //      pulled weight.
-  //
-  //   2. resvg `<g clip-path>` quirk — every `<g clip-path="url(#…)">`
+  // resvg `<g clip-path>` quirk — every `<g clip-path="url(#…)">`
   //      isolates its descendants for compositing, so any inner
   //      `mix-blend-mode:…` paint blends against a transparent
   //      backdrop instead of the actual page background. The App
@@ -2458,11 +2475,28 @@ export function formatRenderTreeToSvgElement(
     },
     ...svgChildren,
   );
-  const projected = projectFigmaExportTransforms(built);
-  if (projected.kind !== "element" || projected.name !== "svg") {
+  if (built.kind !== "element" || built.name !== "svg") {
     throw new Error("formatRenderTreeToSvgElement requires an SVG root element");
   }
-  return hoistSvgImageAssets(projected);
+  return hoistSvgImageAssets(built);
+}
+
+/**
+ * Format a RenderTree to the structured SVG element used at the Figma SVG export boundary.
+ */
+export function formatRenderTreeToFigmaExportSvgElement(
+  renderTree: RenderTree,
+  options?: FormatRenderTreeToSvgOptions,
+): SvgElementNode {
+  const projected = projectFigmaExportTransforms(formatRenderTreeToSvgElement(renderTree, options));
+  if (projected.kind !== "element" || projected.name !== "svg") {
+    throw new Error("formatRenderTreeToFigmaExportSvgElement requires an SVG root element");
+  }
+  const precise = applyFigmaExportSvgPrecision(projected);
+  if (precise.kind !== "element" || precise.name !== "svg") {
+    throw new Error("formatRenderTreeToFigmaExportSvgElement requires a precise SVG root element");
+  }
+  return precise;
 }
 
 /**
@@ -2475,7 +2509,7 @@ export function formatRenderTreeToSvg(
   renderTree: RenderTree,
   options?: FormatRenderTreeToSvgOptions,
 ): SvgString {
-  return serializeFigmaExportSvg(formatRenderTreeToSvgElement(renderTree, options));
+  return unsafeSvg(serializeSvgNode(formatRenderTreeToFigmaExportSvgElement(renderTree, options)));
 }
 
 function formatSvgNumber(value: number): string {

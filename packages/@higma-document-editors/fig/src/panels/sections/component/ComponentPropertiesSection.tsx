@@ -1,15 +1,23 @@
 /** @file Component property controls over Kiwi INSTANCE fields. */
-import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import { memo } from "react";
+import {
+  getNodeType,
+  guidToString,
+  sameKiwiNodeExceptTransform,
+} from "@higma-document-models/fig/domain";
 import type {
-  FigComponentPropAssignment,
   FigComponentPropDef,
   FigComponentPropValue,
   FigGuid,
   FigNode,
 } from "@higma-document-models/fig/types";
 import {
+  readFigEditorResolvedComponentProperties,
+  writeFigEditorComponentPropertyAssignment,
+  type FigEditorResolvedComponentProperty,
+} from "../../../editor-commands/fig-editor-component-property-command";
+import {
   ComponentPropertiesSectionView,
-  type ComponentPropertyTypeId,
   type ComponentPropertyValueView,
   type ResolvedComponentPropertyView,
 } from "@higma-editor-kernel/ui/property-sections";
@@ -17,11 +25,8 @@ import type { SelectOption } from "@higma-editor-kernel/ui/types";
 import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 
-type ResolvedComponentProperty = {
-  readonly def: FigComponentPropDef;
-  readonly type: ComponentPropertyTypeId;
-  readonly value: FigComponentPropValue;
-  readonly isOverridden: boolean;
+type ComponentPropertiesSectionProps = {
+  readonly node: FigNode;
 };
 
 function requireGuid(value: FigGuid | undefined, owner: string): FigGuid {
@@ -33,71 +38,6 @@ function requireGuid(value: FigGuid | undefined, owner: string): FigGuid {
 
 function requireDefId(def: FigComponentPropDef): FigGuid {
   return requireGuid(def.id, "Component property definition");
-}
-
-function requireDefName(def: FigComponentPropDef): string {
-  if (def.name === undefined) {
-    throw new Error(`Component property definition ${guidToString(requireDefId(def))} is missing name`);
-  }
-  return def.name;
-}
-
-function componentPropertyType(def: FigComponentPropDef): ComponentPropertyTypeId {
-  const name = def.type?.name;
-  switch (name) {
-    case "BOOL":
-    case "TEXT":
-    case "NUMBER":
-    case "INSTANCE_SWAP":
-    case "VARIANT":
-    case "COLOR":
-    case "IMAGE":
-    case "SLOT":
-      return name;
-    case undefined:
-      throw new Error(`Component property definition ${guidToString(requireDefId(def))} is missing type`);
-    default:
-      throw new Error(`Unsupported component property type ${name}`);
-  }
-}
-
-function assignmentForDef(
-  assignments: readonly FigComponentPropAssignment[],
-  defID: FigGuid,
-): FigComponentPropAssignment | undefined {
-  const defKey = guidToString(defID);
-  return assignments.find((assignment) => guidToString(assignment.defID) === defKey);
-}
-
-function resolvedValueForDef(
-  def: FigComponentPropDef,
-  assignment: FigComponentPropAssignment | undefined,
-): FigComponentPropValue {
-  if (assignment !== undefined) {
-    return assignment.value;
-  }
-  if (def.initialValue === undefined) {
-    throw new Error(`Component property definition ${guidToString(requireDefId(def))} is missing initialValue`);
-  }
-  return def.initialValue;
-}
-
-function resolveComponentProperties(
-  symbol: FigNode,
-  instance: FigNode,
-): readonly ResolvedComponentProperty[] {
-  const defs = symbol.componentPropDefs ?? [];
-  const assignments = instance.componentPropAssignments ?? [];
-  return defs.map((def) => {
-    const defID = requireDefId(def);
-    const assignment = assignmentForDef(assignments, defID);
-    return {
-      def,
-      type: componentPropertyType(def),
-      value: resolvedValueForDef(def, assignment),
-      isOverridden: assignment !== undefined,
-    };
-  });
 }
 
 function boolValue(value: FigComponentPropValue, def: FigComponentPropDef): boolean {
@@ -125,16 +65,16 @@ function numberValue(value: FigComponentPropValue, def: FigComponentPropDef): nu
   throw new Error(`NUMBER component property ${guidToString(requireDefId(def))} requires numberValue or floatValue`);
 }
 
-function referenceValue(value: FigComponentPropValue, def: FigComponentPropDef): string {
+function referenceValue(value: FigComponentPropValue, property: FigEditorResolvedComponentProperty): string {
   const guid = value.guidValue;
   if (guid === undefined) {
-    throw new Error(`${componentPropertyType(def)} component property ${guidToString(requireDefId(def))} requires guidValue`);
+    throw new Error(`${property.resolvedDef.type} component property ${guidToString(property.resolvedDef.id)} requires guidValue`);
   }
   return guidToString(guid);
 }
 
-function toValueView(property: ResolvedComponentProperty): ComponentPropertyValueView {
-  switch (property.type) {
+function toValueView(property: FigEditorResolvedComponentProperty): ComponentPropertyValueView {
+  switch (property.resolvedDef.type) {
     case "BOOL":
       return { kind: "bool", value: boolValue(property.value, property.def) };
     case "TEXT":
@@ -146,15 +86,15 @@ function toValueView(property: ResolvedComponentProperty): ComponentPropertyValu
     case "COLOR":
     case "IMAGE":
     case "SLOT":
-      return { kind: "reference", value: referenceValue(property.value, property.def) };
+      return { kind: "reference", value: referenceValue(property.value, property) };
   }
 }
 
-function toPropertyView(property: ResolvedComponentProperty): ResolvedComponentPropertyView {
+function toPropertyView(property: FigEditorResolvedComponentProperty): ResolvedComponentPropertyView {
   return {
-    id: guidToString(requireDefId(property.def)),
-    name: requireDefName(property.def),
-    type: property.type,
+    id: guidToString(property.resolvedDef.id),
+    name: property.resolvedDef.name,
+    type: property.resolvedDef.type,
     value: toValueView(property),
     isOverridden: property.isOverridden,
   };
@@ -184,34 +124,6 @@ function componentPropValueFromView(
   }
 }
 
-function writeComponentAssignment(
-  node: FigNode,
-  defID: FigGuid,
-  value: FigComponentPropValue,
-): FigNode {
-  if (getNodeType(node) !== "INSTANCE") {
-    throw new Error("Component property assignment updates require an INSTANCE node");
-  }
-  const defKey = guidToString(defID);
-  const assignments = node.componentPropAssignments ?? [];
-  const hasAssignment = assignments.some((assignment) => guidToString(assignment.defID) === defKey);
-  if (!hasAssignment) {
-    return {
-      ...node,
-      componentPropAssignments: [...assignments, { defID, value }],
-    };
-  }
-  return {
-    ...node,
-    componentPropAssignments: assignments.map((assignment) => {
-      if (guidToString(assignment.defID) !== defKey) {
-        return assignment;
-      }
-      return { defID, value };
-    }),
-  };
-}
-
 function symbolOptions(nodes: readonly FigNode[]): readonly SelectOption<string>[] {
   return nodes
     .filter((candidate) => getNodeType(candidate) === "SYMBOL")
@@ -221,30 +133,33 @@ function symbolOptions(nodes: readonly FigNode[]): readonly SelectOption<string>
     }));
 }
 
-function requireDefByKey(defs: readonly FigComponentPropDef[], key: string): FigComponentPropDef {
-  const def = defs.find((candidate) => guidToString(requireDefId(candidate)) === key);
-  if (def === undefined) {
-    throw new Error(`Component property definition ${key} is not present on the resolved SYMBOL`);
+function requirePropertyByKey(
+  properties: readonly FigEditorResolvedComponentProperty[],
+  key: string,
+): FigEditorResolvedComponentProperty {
+  const property = properties.find((candidate) => guidToString(requireDefId(candidate.def)) === key);
+  if (property === undefined) {
+    throw new Error(`Component property definition ${key} is not present on the resolved INSTANCE property set`);
   }
-  return def;
+  return property;
 }
 
 /** Render component-instance properties from the document SymbolResolver. */
-export function ComponentPropertiesSection({ node }: { readonly node: FigNode }) {
-  const { context, updateNode } = useFigEditor();
+function ComponentPropertiesSectionContent({ node }: ComponentPropertiesSectionProps) {
+  const editor = useFigEditor();
+  const { context, updateNode } = editor;
   if (getNodeType(node) !== "INSTANCE") {
     return null;
   }
-  const resolution = context.symbolResolver.resolveReferences(node);
-  const symbol = resolution.effectiveSymbol?.node;
-  if (symbol === undefined) {
+  const model = readFigEditorResolvedComponentProperties(editor, node);
+  if (model === undefined) {
     return null;
   }
-  const properties = resolveComponentProperties(symbol, node);
+  const symbol = model.symbol.node;
+  const properties = model.properties;
   if (properties.length === 0) {
     return null;
   }
-  const defs = symbol.componentPropDefs ?? [];
   const options = symbolOptions(context.document.nodeChanges);
   return (
     <section style={sectionStyle}>
@@ -255,12 +170,24 @@ export function ComponentPropertiesSection({ node }: { readonly node: FigNode })
         referenceOptions={options}
         instanceSwapOptions={options}
         onValueChange={(propertyId, value) => {
-          const def = requireDefByKey(defs, propertyId);
-          const defID = requireDefId(def);
+          const property = requirePropertyByKey(properties, propertyId);
+          const defID = requireDefId(property.def);
           const nextValue = componentPropValueFromView(value, context.document.nodesByGuid);
-          updateNode(node.guid, (current) => writeComponentAssignment(current, defID, nextValue), FIG_NODE_MUTATION_SOURCE.propertyPanel);
+          updateNode(node.guid, (current) => writeFigEditorComponentPropertyAssignment(current, defID, nextValue), FIG_NODE_MUTATION_SOURCE.propertyPanel);
         }}
       />
     </section>
   );
 }
+
+function sameComponentPropertiesSectionProps(
+  left: ComponentPropertiesSectionProps,
+  right: ComponentPropertiesSectionProps,
+): boolean {
+  return sameKiwiNodeExceptTransform(left.node, right.node);
+}
+
+export const ComponentPropertiesSection = memo(
+  ComponentPropertiesSectionContent,
+  sameComponentPropertiesSectionProps,
+);

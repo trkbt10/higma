@@ -21,14 +21,24 @@
  */
 
 import { Fragment, createElement, memo, useMemo, useRef, type ReactNode } from "react";
-import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
+import {
+  translateSceneGraphNode,
+  type SceneGraph,
+  type SceneGraphNodeTranslation,
+} from "@higma-document-renderers/fig/scene-graph";
 import type { SceneGraphRenderOptions } from "../scene-graph";
 import {
-  resolveRenderTreeIncremental,
+  resolveRenderTreeWithReferenceReuse,
   type RenderTree,
-  type RenderTreeResolutionCache,
+  type RenderTreeReferenceReuseState,
 } from "../scene-graph";
-import { applyFigmaExportSvgPrecision, formatRenderTreeToSvgElement, type SvgAttributeValue, type SvgAttributes, type SvgNode } from "../svg";
+import {
+  formatRenderTreeToFigmaExportSvgElement,
+  formatRenderTreeToSvgElement,
+  type SvgAttributeValue,
+  type SvgAttributes,
+  type SvgNode,
+} from "../svg";
 import { RenderNodeComponent } from "./nodes/RenderNodeComponent";
 
 // =============================================================================
@@ -38,6 +48,7 @@ import { RenderNodeComponent } from "./nodes/RenderNodeComponent";
 type FigSceneRendererProps = {
   /** The scene graph to render (will be resolved to RenderTree internally) */
   readonly sceneGraph: SceneGraph;
+  readonly sceneGraphNodeTranslation?: SceneGraphNodeTranslation;
   readonly renderOptions?: SceneGraphRenderOptions;
 };
 
@@ -54,6 +65,10 @@ type FigRenderTreeSvgRendererProps = FigRenderTreeRendererProps & {
   readonly rootProps?: SvgReactAttributes;
 };
 
+type FigSceneFigmaExportSvgRendererProps = FigSceneSvgRendererProps;
+
+type FigRenderTreeFigmaExportSvgRendererProps = FigRenderTreeSvgRendererProps;
+
 type SvgReactAttributeValue = Exclude<SvgAttributeValue, undefined>;
 
 type SvgReactStyle = Record<string, string>;
@@ -62,7 +77,7 @@ type SvgReactAttribute = SvgReactAttributeValue | SvgReactStyle;
 
 type SvgReactAttributes = Record<string, SvgReactAttribute | undefined>;
 
-const CSS_CLASS_BACKED_BLEND_MODE_STYLES = ".higma-svg-blend-plus-darker{mix-blend-mode:plus-darker}.higma-svg-blend-plus-lighter{mix-blend-mode:plus-lighter}";
+const CSS_CLASS_BACKED_BLEND_MODE_STYLES = ".higma-svg-blend-plus-lighter{mix-blend-mode:plus-lighter}";
 
 type ReactSvgStyleConversion = {
   readonly style?: SvgReactStyle;
@@ -121,9 +136,6 @@ function parseSvgStyleDeclaration(declaration: string): readonly [string, string
 function classBackedBlendModeClass(property: string, value: string): string | undefined {
   if (property !== "mix-blend-mode") {
     return undefined;
-  }
-  if (value === "plus-darker") {
-    return "higma-svg-blend-plus-darker";
   }
   if (value === "plus-lighter") {
     return "higma-svg-blend-plus-lighter";
@@ -266,7 +278,7 @@ function svgNodeNeedsCssClassBackedBlendMode(node: SvgNode): boolean {
     return node.children.some(svgNodeNeedsCssClassBackedBlendMode);
   }
   const style = node.attrs.style;
-  if (typeof style === "string" && /mix-blend-mode:\s*plus-(?:darker|lighter)/u.test(style)) {
+  if (typeof style === "string" && /mix-blend-mode:\s*plus-lighter/u.test(style)) {
     return true;
   }
   return node.children.some(svgNodeNeedsCssClassBackedBlendMode);
@@ -311,12 +323,22 @@ function cssClassBackedBlendModeStyleElements(node: SvgNode): readonly ReactNode
   return [createElement("style", { key: "css-class-backed-blend-mode" }, CSS_CLASS_BACKED_BLEND_MODE_STYLES)];
 }
 
+function resolveReactRendererSceneGraphInput(
+  sceneGraph: SceneGraph,
+  sceneGraphNodeTranslation: SceneGraphNodeTranslation | undefined,
+): SceneGraph {
+  if (sceneGraphNodeTranslation === undefined) {
+    return sceneGraph;
+  }
+  return translateSceneGraphNode(sceneGraph, sceneGraphNodeTranslation);
+}
+
 /**
  * Render a pre-resolved RenderTree through the structured SVG formatter SoT.
  */
 function FigRenderTreeSvgRendererImpl({ renderTree, rootProps }: FigRenderTreeSvgRendererProps) {
   return useMemo(
-    () => svgRootNodeToReact(applyFigmaExportSvgPrecision(formatRenderTreeToSvgElement(renderTree)), rootProps),
+    () => svgRootNodeToReact(formatRenderTreeToSvgElement(renderTree), rootProps),
     [renderTree, rootProps],
   );
 }
@@ -324,17 +346,30 @@ function FigRenderTreeSvgRendererImpl({ renderTree, rootProps }: FigRenderTreeSv
 export const FigRenderTreeSvgRenderer = memo(FigRenderTreeSvgRendererImpl);
 
 /**
+ * Render a pre-resolved RenderTree through the Figma SVG export boundary.
+ */
+function FigRenderTreeFigmaExportSvgRendererImpl({ renderTree, rootProps }: FigRenderTreeFigmaExportSvgRendererProps) {
+  return useMemo(
+    () => svgRootNodeToReact(formatRenderTreeToFigmaExportSvgElement(renderTree), rootProps),
+    [renderTree, rootProps],
+  );
+}
+
+export const FigRenderTreeFigmaExportSvgRenderer = memo(FigRenderTreeFigmaExportSvgRendererImpl);
+
+/**
  * Render a SceneGraph as React SVG elements.
  *
  * Resolves the SceneGraph to a RenderTree internally, then renders.
  */
-function FigSceneRendererImpl({ sceneGraph, renderOptions }: FigSceneRendererProps) {
-  const cacheRef = useRef<RenderTreeResolutionCache | undefined>(undefined);
+function FigSceneRendererImpl({ sceneGraph, sceneGraphNodeTranslation, renderOptions }: FigSceneRendererProps) {
+  const referenceReuseStateRef = useRef<RenderTreeReferenceReuseState | undefined>(undefined);
   const renderTree = useMemo(() => {
-    const result = resolveRenderTreeIncremental(sceneGraph, cacheRef.current, renderOptions);
-    cacheRef.current = result.cache;
+    const renderInputSceneGraph = resolveReactRendererSceneGraphInput(sceneGraph, sceneGraphNodeTranslation);
+    const result = resolveRenderTreeWithReferenceReuse(renderInputSceneGraph, referenceReuseStateRef.current, renderOptions);
+    referenceReuseStateRef.current = result.referenceReuseState;
     return result.renderTree;
-  }, [sceneGraph, renderOptions]);
+  }, [sceneGraph, sceneGraphNodeTranslation, renderOptions]);
 
   return <FigRenderTreeRenderer renderTree={renderTree} />;
 }
@@ -342,17 +377,40 @@ function FigSceneRendererImpl({ sceneGraph, renderOptions }: FigSceneRendererPro
 export const FigSceneRenderer = memo(FigSceneRendererImpl);
 
 /**
- * Render a SceneGraph as the same structured SVG tree used by the string exporter.
+ * Render a SceneGraph as structured SVG DOM before the Figma export boundary.
  */
-function FigSceneSvgRendererImpl({ sceneGraph, renderOptions, rootProps }: FigSceneSvgRendererProps) {
-  const cacheRef = useRef<RenderTreeResolutionCache | undefined>(undefined);
+function FigSceneSvgRendererImpl({ sceneGraph, sceneGraphNodeTranslation, renderOptions, rootProps }: FigSceneSvgRendererProps) {
+  const referenceReuseStateRef = useRef<RenderTreeReferenceReuseState | undefined>(undefined);
   const renderTree = useMemo(() => {
-    const result = resolveRenderTreeIncremental(sceneGraph, cacheRef.current, renderOptions);
-    cacheRef.current = result.cache;
+    const renderInputSceneGraph = resolveReactRendererSceneGraphInput(sceneGraph, sceneGraphNodeTranslation);
+    const result = resolveRenderTreeWithReferenceReuse(renderInputSceneGraph, referenceReuseStateRef.current, renderOptions);
+    referenceReuseStateRef.current = result.referenceReuseState;
     return result.renderTree;
-  }, [sceneGraph, renderOptions]);
+  }, [sceneGraph, sceneGraphNodeTranslation, renderOptions]);
 
   return <FigRenderTreeSvgRenderer renderTree={renderTree} rootProps={rootProps} />;
 }
 
 export const FigSceneSvgRenderer = memo(FigSceneSvgRendererImpl);
+
+/**
+ * Render a SceneGraph through the Figma SVG export boundary.
+ */
+function FigSceneFigmaExportSvgRendererImpl({
+  sceneGraph,
+  sceneGraphNodeTranslation,
+  renderOptions,
+  rootProps,
+}: FigSceneFigmaExportSvgRendererProps) {
+  const referenceReuseStateRef = useRef<RenderTreeReferenceReuseState | undefined>(undefined);
+  const renderTree = useMemo(() => {
+    const renderInputSceneGraph = resolveReactRendererSceneGraphInput(sceneGraph, sceneGraphNodeTranslation);
+    const result = resolveRenderTreeWithReferenceReuse(renderInputSceneGraph, referenceReuseStateRef.current, renderOptions);
+    referenceReuseStateRef.current = result.referenceReuseState;
+    return result.renderTree;
+  }, [sceneGraph, sceneGraphNodeTranslation, renderOptions]);
+
+  return <FigRenderTreeFigmaExportSvgRenderer renderTree={renderTree} rootProps={rootProps} />;
+}
+
+export const FigSceneFigmaExportSvgRenderer = memo(FigSceneFigmaExportSvgRendererImpl);

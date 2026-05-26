@@ -9,16 +9,22 @@
  * preload + ascender pipeline would throw with
  * `font "SF Pro" ... is not available via the configured loader`.
  *
- * The tests fake `window.queryLocalFonts` so the loader can be
- * exercised without granting real Local Font Access permission. The
- * fixture fonts are produced by `synthesizeFontBytes` so opentype.js
- * actually parses them and we get a real `LoadedFont` back.
+ * The tests pass an explicit globalThis-like host whose
+ * `queryLocalFonts` method is backed by a per-test catalogue, so the
+ * loader can be exercised without granting real Local Font Access
+ * permission. The fixture fonts are produced by `synthesizeFontBytes`
+ * so opentype.js actually parses them and we get a real `LoadedFont`
+ * back.
  */
 
 // @vitest-environment node
 
 import { Font, Glyph, Path } from "opentype.js";
-import { createBrowserFontLoader } from "./browser-loader";
+import {
+  createBrowserFontLoader,
+  isBrowserFontLoaderSupported,
+  type BrowserFontLoaderGlobalThisHost,
+} from "./browser-loader";
 
 // =============================================================================
 // Local test font synthesiser
@@ -63,39 +69,22 @@ type FakeFontData = {
   blob(): Promise<Blob>;
 };
 
-type WindowMock = {
-  queryLocalFonts(options?: { postscriptNames?: string[] }): Promise<FakeFontData[]>;
+const catalogueState: { value: readonly FakeFontData[] } = { value: [] };
+
+const fontLoaderHost: BrowserFontLoaderGlobalThisHost = {
+  queryLocalFonts: async () => catalogueState.value.slice(),
 };
 
-const windowState: { value: WindowMock | undefined } = { value: undefined };
-
 beforeEach(() => {
-  windowState.value = undefined;
-  // `createBrowserFontLoader` checks `typeof window !== "undefined"`.
-  // Each test installs a fake `window` with a per-test catalogue;
-  // `afterEach` tears it back down so the global stays clean across
-  // tests.
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    get(): WindowMock | undefined {
-      return windowState.value;
-    },
-  });
-});
-
-afterEach(() => {
-  windowState.value = undefined;
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: undefined,
-    writable: true,
-  });
+  catalogueState.value = [];
 });
 
 function installCatalogue(catalogue: readonly FakeFontData[]): void {
-  windowState.value = {
-    queryLocalFonts: async () => catalogue.slice(),
-  };
+  catalogueState.value = catalogue;
+}
+
+function createTestBrowserFontLoader(platform: "darwin" | "linux" | "win32" | "unknown") {
+  return createBrowserFontLoader({ host: fontLoaderHost, platform });
 }
 
 function fakeFont(params: {
@@ -126,6 +115,18 @@ function fakeFont(params: {
   };
 }
 
+describe("isBrowserFontLoaderSupported — explicit globalThis host", () => {
+  it("reads Local Font Access support from the passed host", () => {
+    expect(isBrowserFontLoaderSupported(fontLoaderHost)).toBe(true);
+    expect(isBrowserFontLoaderSupported({})).toBe(false);
+  });
+
+  it("rejects loader construction when the explicit host has no Local Font Access API", () => {
+    expect(() => createBrowserFontLoader({ host: {}, platform: "unknown" }))
+      .toThrow("Browser font loader requires host.queryLocalFonts");
+  });
+});
+
 describe("createBrowserFontLoader — direct resolution (platform-agnostic surface)", () => {
   it("returns the matching face when the requested family is in the catalogue", async () => {
     installCatalogue([
@@ -135,7 +136,7 @@ describe("createBrowserFontLoader — direct resolution (platform-agnostic surfa
     // Inter is not aliased on any platform; this test exercises the
     // raw direct-match path. Explicit platform: "unknown" makes the
     // intent obvious — no alias chain participation expected.
-    const loader = createBrowserFontLoader({ platform: "unknown" });
+    const loader = createTestBrowserFontLoader("unknown");
 
     const result = await loader.loadFont({ family: "Inter", weight: 700, style: "normal" });
     expect(result).toBeDefined();
@@ -148,7 +149,7 @@ describe("createBrowserFontLoader — direct resolution (platform-agnostic surfa
     // unrelated face. The renderer's text path treats `undefined` as
     // a hard error, which is the desired loud signal.
     installCatalogue([fakeFont({ family: "Inter", style: "Regular" })]);
-    const loader = createBrowserFontLoader({ platform: "unknown" });
+    const loader = createTestBrowserFontLoader("unknown");
 
     const result = await loader.loadFont({ family: "Cursed Type", weight: 400, style: "normal" });
     expect(result).toBeUndefined();
@@ -156,10 +157,10 @@ describe("createBrowserFontLoader — direct resolution (platform-agnostic surfa
 
   it("exposes the bound platform on the returned instance for diagnostics", async () => {
     installCatalogue([]);
-    expect(createBrowserFontLoader({ platform: "darwin" }).platform).toBe("darwin");
-    expect(createBrowserFontLoader({ platform: "linux" }).platform).toBe("linux");
-    expect(createBrowserFontLoader({ platform: "win32" }).platform).toBe("win32");
-    expect(createBrowserFontLoader({ platform: "unknown" }).platform).toBe("unknown");
+    expect(createTestBrowserFontLoader("darwin").platform).toBe("darwin");
+    expect(createTestBrowserFontLoader("linux").platform).toBe("linux");
+    expect(createTestBrowserFontLoader("win32").platform).toBe("win32");
+    expect(createTestBrowserFontLoader("unknown").platform).toBe("unknown");
   });
 });
 
@@ -175,7 +176,7 @@ describe("createBrowserFontLoader — physical alias resolution (darwin only)", 
       fakeFont({ family: "System Font", style: "Regular" }),
       fakeFont({ family: "System Font", style: "Bold" }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "darwin" });
+    const loader = createTestBrowserFontLoader("darwin");
 
     const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
     expect(result).toBeDefined();
@@ -190,7 +191,7 @@ describe("createBrowserFontLoader — physical alias resolution (darwin only)", 
 
   it("[darwin] resolves 'SF Pro Display' through the same alias chain", async () => {
     installCatalogue([fakeFont({ family: "System Font", style: "Regular" })]);
-    const loader = createBrowserFontLoader({ platform: "darwin" });
+    const loader = createTestBrowserFontLoader("darwin");
 
     const result = await loader.loadFont({ family: "SF Pro Display", weight: 400, style: "normal" });
     expect(result).toBeDefined();
@@ -206,7 +207,7 @@ describe("createBrowserFontLoader — physical alias resolution (darwin only)", 
       fakeFont({ family: "SF Pro", style: "Regular", postscriptName: "SFPro-Regular" }),
       fakeFont({ family: "System Font", style: "Regular", postscriptName: ".SFNS-Regular" }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "darwin" });
+    const loader = createTestBrowserFontLoader("darwin");
 
     const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
     expect(result).toBeDefined();
@@ -218,7 +219,7 @@ describe("createBrowserFontLoader — physical alias resolution (darwin only)", 
     // callers that ask "do we have SF Pro?" before constructing a
     // FontQuery don't get a misleading `false` on macOS.
     installCatalogue([fakeFont({ family: "System Font", style: "Regular" })]);
-    const loader = createBrowserFontLoader({ platform: "darwin" });
+    const loader = createTestBrowserFontLoader("darwin");
 
     expect(await loader.isFontAvailable("SF Pro")).toBe(true);
   });
@@ -239,7 +240,7 @@ describe("createBrowserFontLoader — per-platform fail-fast", () => {
       fakeFont({ family: "System Font", style: "Regular" }),
       fakeFont({ family: "Inter", style: "Regular" }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "linux" });
+    const loader = createTestBrowserFontLoader("linux");
 
     const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
     expect(result).toBeUndefined();
@@ -247,7 +248,7 @@ describe("createBrowserFontLoader — per-platform fail-fast", () => {
 
   it("[linux] isFontAvailable('SF Pro') is false even when 'System Font' is indexed", async () => {
     installCatalogue([fakeFont({ family: "System Font", style: "Regular" })]);
-    const loader = createBrowserFontLoader({ platform: "linux" });
+    const loader = createTestBrowserFontLoader("linux");
 
     expect(await loader.isFontAvailable("SF Pro")).toBe(false);
   });
@@ -260,7 +261,7 @@ describe("createBrowserFontLoader — per-platform fail-fast", () => {
       fakeFont({ family: "Segoe UI", style: "Regular" }),
       fakeFont({ family: "Arial", style: "Regular" }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "win32" });
+    const loader = createTestBrowserFontLoader("win32");
 
     const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
     expect(result).toBeUndefined();
@@ -270,7 +271,7 @@ describe("createBrowserFontLoader — per-platform fail-fast", () => {
     // Same shape as the linux test — different platform, same
     // contract: the macOS alias must not bleed into Windows.
     installCatalogue([fakeFont({ family: "System Font", style: "Regular" })]);
-    const loader = createBrowserFontLoader({ platform: "win32" });
+    const loader = createTestBrowserFontLoader("win32");
 
     const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
     expect(result).toBeUndefined();
@@ -282,7 +283,7 @@ describe("createBrowserFontLoader — per-platform fail-fast", () => {
     // not assume any platform-specific alias chain. The "unknown"
     // bucket is the safe default for unaudited hosts.
     installCatalogue([fakeFont({ family: "System Font", style: "Regular" })]);
-    const loader = createBrowserFontLoader({ platform: "unknown" });
+    const loader = createTestBrowserFontLoader("unknown");
 
     const result = await loader.loadFont({ family: "SF Pro", weight: 400, style: "normal" });
     expect(result).toBeUndefined();
@@ -296,7 +297,7 @@ describe("createBrowserFontLoader — variant selection priority", () => {
       fakeFont({ family: "Inter", style: "Bold", postscriptName: "Inter-Bold" }),
       fakeFont({ family: "Inter", style: "Medium", postscriptName: "Inter-Medium" }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "unknown" });
+    const loader = createTestBrowserFontLoader("unknown");
 
     // Weight 600 sits halfway between Medium (500) and Bold (700);
     // the sort is `|requested - actual|` and Medium / Bold tie at
@@ -316,7 +317,7 @@ describe("createBrowserFontLoader — variant selection priority", () => {
       fakeFont({ family: "Inter", style: "Italic", postscriptName: "Inter-Italic" }),
       fakeFont({ family: "Inter", style: "Bold Italic", postscriptName: "Inter-BoldItalic" }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "unknown" });
+    const loader = createTestBrowserFontLoader("unknown");
 
     // Italic + 400 should reach Inter-Italic (style match, weight 0
     // delta) over Inter-Regular (style miss, weight 0 delta) or
@@ -337,7 +338,7 @@ describe("createBrowserFontLoader — variant selection priority", () => {
         },
       }),
     ]);
-    const loader = createBrowserFontLoader({ platform: "unknown" });
+    const loader = createTestBrowserFontLoader("unknown");
 
     await loader.loadFont({ family: "Inter", weight: 400, style: "normal" });
     await loader.loadFont({ family: "Inter", weight: 500, style: "normal" });

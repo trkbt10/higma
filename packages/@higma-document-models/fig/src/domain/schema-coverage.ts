@@ -166,7 +166,7 @@ export const KIWI_NODECHANGE_HANDLING: Readonly<Record<string, KiwiFieldHandling
   "isC2": { kind: "mapped", to: "isC2" },
   "publishedVersion": { kind: "mapped", to: "publishedVersion" },
   "originComponentKey": { kind: "mapped", to: "originComponentKey" },
-  "componentPropDefs": { kind: "mapped", to: "componentPropDefs", note: "SymbolResolver and emitters consume Kiwi componentPropDefs directly." },
+  "componentPropDefs": { kind: "mapped", to: "componentPropDefs", note: "SymbolResolver consumes Kiwi componentPropDefs for variant metadata; editor component-property UI resolves parentPropDefId through resolveFigComponentPropDef so inheritance remains owner-node scoped." },
   "componentPropRefs": { kind: "mapped", to: "componentPropRefs", note: "SymbolResolver and emitters consume Kiwi componentPropRefs directly." },
   "variantPropSpecs": { kind: "mapped", to: "variantPropSpecs" },
   "symbolData": { kind: "mapped", to: "symbolData", note: "SymbolResolver reads symbolData.symbolID and symbolData.symbolOverrides directly, including INSTANCE-swap overriddenSymbolID payloads." },

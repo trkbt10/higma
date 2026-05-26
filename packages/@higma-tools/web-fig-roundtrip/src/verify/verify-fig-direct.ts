@@ -33,6 +33,7 @@ export type DirectVerifyOptions = {
   readonly threshold?: number;
 };
 
+/** Render a `.fig` directly through the WebGL renderer and compare it with captured screenshots. */
 export async function verifyFigDirect(
   source: string,
   figBytes: Uint8Array,

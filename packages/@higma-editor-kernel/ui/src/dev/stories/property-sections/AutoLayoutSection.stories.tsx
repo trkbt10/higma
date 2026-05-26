@@ -6,6 +6,7 @@ import {
   type AutoLayoutPadding,
   type AutoLayoutPaddingSide,
   type StackAlignId,
+  type StackJustifyId,
   type StackModeId,
 } from "../../../property-sections";
 import type { ComponentEntry, Story } from "../../types";
@@ -14,9 +15,9 @@ type State = {
   mode: StackModeId;
   gap: number;
   padding: AutoLayoutPadding;
-  primaryAlign: StackAlignId;
+  primaryAlign: StackJustifyId;
   counterAlign: StackAlignId;
-  alignContent: StackAlignId;
+  alignContent: StackJustifyId;
   counterGap: number;
   wrap: boolean;
   reverseZ: boolean;

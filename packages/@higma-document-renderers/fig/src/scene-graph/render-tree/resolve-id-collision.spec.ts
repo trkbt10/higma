@@ -23,6 +23,7 @@ import type { SceneGraph, EllipseNode, SceneNodeId, SceneNode } from "@higma-doc
 import type { RenderTree, RenderNode } from "./types";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
+const RESOLVE_ID_COLLISION_SPEC_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 
 function makeEllipseWithOutsideStroke(id: string): EllipseNode {
   return {
@@ -52,6 +53,7 @@ function makeSceneGraph(nodes: readonly SceneNode[]): SceneGraph {
     width: 20,
     height: 20,
     version: 1,
+    sourceDocumentReference: RESOLVE_ID_COLLISION_SPEC_SOURCE_DOCUMENT_REFERENCE,
     root: {
       type: "group", id: "root" as SceneNodeId, name: "root",
       transform: IDENTITY, opacity: 1, visible: true,

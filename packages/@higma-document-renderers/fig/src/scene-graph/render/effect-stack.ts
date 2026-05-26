@@ -2,7 +2,9 @@
 
 import type {
   BackgroundBlurEffect,
+  DropShadowEffect,
   Effect,
+  InnerShadowEffect,
   LayerBlurEffect,
 } from "@higma-document-renderers/fig/scene-graph";
 
@@ -10,18 +12,24 @@ export type ShapeEffectStackParams = {
   readonly stack: ResolvedEffectStack;
   readonly hasVisibleContent: boolean;
   readonly renderBackgroundBlur?: (effect: BackgroundBlurEffect) => void;
-  readonly renderDropShadows: (effects: readonly Effect[]) => void;
+  readonly renderDropShadows: (effects: readonly DropShadowEffect[]) => void;
   readonly renderContent: () => void;
-  readonly renderInnerShadows: (effects: readonly Effect[]) => void;
+  readonly renderInnerShadows: (effects: readonly InnerShadowEffect[]) => void;
   readonly renderStroke: () => void;
 };
 
 export type ResolvedEffectStack = {
   readonly allEffects: readonly Effect[];
   readonly foregroundEffects: readonly Effect[];
+  readonly foregroundDropShadows: readonly DropShadowEffect[];
+  readonly foregroundInnerShadows: readonly InnerShadowEffect[];
   readonly backgroundBlur: BackgroundBlurEffect | null;
   readonly layerBlur: LayerBlurEffect | null;
 };
+
+export type FrameSurfaceFilterEffect =
+  | DropShadowEffect
+  | InnerShadowEffect;
 
 /** Return the first active layer blur effect in declaration order. */
 export function findLayerBlurEffect(effects: readonly Effect[]): LayerBlurEffect | null {
@@ -51,9 +59,13 @@ export function findBackgroundBlurEffect(effects: readonly Effect[]): Background
  * `buildEffectStack` profiles during pan/zoom.
  */
 const EMPTY_EFFECTS: readonly Effect[] = Object.freeze([]);
+const EMPTY_DROP_SHADOWS: readonly DropShadowEffect[] = Object.freeze([]);
+const EMPTY_INNER_SHADOWS: readonly InnerShadowEffect[] = Object.freeze([]);
 const EMPTY_EFFECT_STACK: ResolvedEffectStack = Object.freeze({
   allEffects: EMPTY_EFFECTS,
   foregroundEffects: EMPTY_EFFECTS,
+  foregroundDropShadows: EMPTY_DROP_SHADOWS,
+  foregroundInnerShadows: EMPTY_INNER_SHADOWS,
   backgroundBlur: null,
   layerBlur: null,
 });
@@ -62,8 +74,8 @@ const EMPTY_EFFECT_STACK: ResolvedEffectStack = Object.freeze({
  * Per-frame pan/zoom rerenders hand the same `node.source.effects`
  * array back into `buildEffectStack` for every visible node. The
  * resolved stack is a pure function of that array, so we memoise on
- * its identity. WeakMap entries release when the underlying scene
- * node is garbage-collected.
+ * the array object reference. WeakMap entries release when the
+ * underlying scene node is garbage-collected.
  */
 const effectStackCache = new WeakMap<readonly Effect[], ResolvedEffectStack>();
 
@@ -77,14 +89,41 @@ export function buildEffectStack(effects: readonly Effect[]): ResolvedEffectStac
     return cached;
   }
   const backgroundBlur = findBackgroundBlurEffect(effects);
+  const foregroundEffects = resolveForegroundEffects(effects, backgroundBlur);
   const stack: ResolvedEffectStack = {
     allEffects: effects,
-    foregroundEffects: resolveForegroundEffects(effects, backgroundBlur),
+    foregroundEffects,
+    foregroundDropShadows: foregroundEffects.filter((effect): effect is DropShadowEffect => effect.type === "drop-shadow"),
+    foregroundInnerShadows: foregroundEffects.filter((effect): effect is InnerShadowEffect => effect.type === "inner-shadow"),
     backgroundBlur,
     layerBlur: findLayerBlurEffect(effects),
   };
   effectStackCache.set(effects, stack);
   return stack;
+}
+
+/** Build the canonical effect stack for content captured before applying a layer blur pass. */
+export function buildLayerBlurCapturedContentEffectStack(
+  effects: readonly Effect[],
+  stack: ResolvedEffectStack = buildEffectStack(effects),
+): ResolvedEffectStack {
+  if (stack.layerBlur === null) {
+    return stack;
+  }
+  return buildEffectStack(effects.filter((effect) => (
+    effect.type !== "background-blur" &&
+    effect.type !== "layer-blur"
+  )));
+}
+
+/** Resolve the source effects applied to the rendered surface of a FRAME. */
+export function resolveFrameSurfaceFilterEffects(
+  stack: ResolvedEffectStack,
+): readonly FrameSurfaceFilterEffect[] {
+  return stack.foregroundEffects.filter((effect): effect is FrameSurfaceFilterEffect => (
+    effect.type === "drop-shadow" ||
+    effect.type === "inner-shadow"
+  ));
 }
 
 /**
@@ -113,15 +152,14 @@ export function renderShapeEffectStack(params: ShapeEffectStackParams): void {
   // skip the shadow callbacks entirely — invoking them just so the
   // body can iterate an empty array is a per-node closure call we
   // can elide.
-  const hasForegroundEffects = stack.foregroundEffects.length > 0;
-  if (hasForegroundEffects && params.hasVisibleContent) {
-    params.renderDropShadows(stack.foregroundEffects);
+  if (stack.foregroundDropShadows.length > 0 && params.hasVisibleContent) {
+    params.renderDropShadows(stack.foregroundDropShadows);
   }
 
   params.renderContent();
 
-  if (hasForegroundEffects && params.hasVisibleContent) {
-    params.renderInnerShadows(stack.foregroundEffects);
+  if (stack.foregroundInnerShadows.length > 0 && params.hasVisibleContent) {
+    params.renderInnerShadows(stack.foregroundInnerShadows);
   }
 
   params.renderStroke();

@@ -28,11 +28,7 @@ export function FigWebGLViewportLoadingOverlay({ status }: FigWebGLViewportLoadi
     return null;
   }
   return (
-    <div
-      style={overlayStyle}
-      data-webgl-loading="true"
-      data-webgl-loading-phase={status.phase}
-    >
+    <div style={overlayStyle}>
       <progress
         aria-label="WebGL resource preparation progress"
         aria-valuemin={0}

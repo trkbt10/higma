@@ -25,6 +25,14 @@ type ResolvedFontResolverConfig = {
   readonly availabilityChecker: FontAvailabilityChecker;
 };
 
+export type BrowserFontAvailabilityCheckerHost = {
+  readonly document?: {
+    readonly fonts?: {
+      check(font: string, text?: string): boolean;
+    };
+  };
+};
+
 const DEFAULT_FONT_STACK: readonly string[] = [];
 
 const DEFAULT_CONFIG = {
@@ -133,17 +141,23 @@ export function createFontResolver(config: FontResolverConfig): FontResolverInst
   };
 }
 
-/** Browser font availability checker using CSS Font Loading API. */
-export function createBrowserAvailabilityChecker(): FontAvailabilityChecker {
+function requireBrowserFontAvailabilityFonts(host: BrowserFontAvailabilityCheckerHost) {
+  const fonts = host.document?.fonts;
+  if (fonts === undefined) {
+    throw new Error("Browser font availability checker requires host.document.fonts");
+  }
+  return fonts;
+}
+
+/** Browser font availability checker using CSS Font Loading API from an explicit host. */
+export function createBrowserAvailabilityChecker(host: BrowserFontAvailabilityCheckerHost): FontAvailabilityChecker {
+  const fonts = requireBrowserFontAvailabilityFonts(host);
   return {
     isAvailable(family: string): boolean | Promise<boolean> {
-      if (typeof document === "undefined" || !document.fonts) {
-        throw new Error("Browser font availability requires document.fonts");
-      }
       // Probe a representative ASCII range so the browser actually consults
       // a glyph table rather than returning "yes" on metric-only matches.
       const testString = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      return document.fonts.check(`16px "${family}"`, testString);
+      return fonts.check(`16px "${family}"`, testString);
     },
   };
 }

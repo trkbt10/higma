@@ -1,8 +1,13 @@
 /** @file Fig node property panel over Kiwi nodes. */
 import type { CSSProperties, ReactNode } from "react";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import type { FigNode } from "@higma-document-models/fig/types";
 import { InlineRenameInput } from "@higma-editor-kernel/ui";
-import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../context/FigEditorContext";
+import {
+  FIG_NODE_MUTATION_SOURCE,
+  useFigEditorSelector,
+  type FigEditorContextValue,
+} from "../../context/FigEditorContext";
 import { PositionSection } from "../sections/appearance/PositionSection";
 import { SizeSection } from "../sections/appearance/SizeSection";
 import { RotationSection } from "../sections/appearance/RotationSection";
@@ -55,6 +60,12 @@ const bodyStyle: CSSProperties = {
   gap: 0,
 };
 
+type PropertyPanelSnapshot = {
+  readonly primaryNode: FigNode | undefined;
+  readonly selectedNodes: readonly FigNode[];
+  readonly updateNode: FigEditorContextValue["updateNode"];
+};
+
 export const sectionStyle: CSSProperties = {
   padding: "10px 12px",
   borderBottom: "1px solid #e2e8f0",
@@ -97,9 +108,33 @@ export const inputStyle: CSSProperties = {
   font: "12px system-ui, sans-serif",
 };
 
+function selectPropertyPanelSnapshot(editor: FigEditorContextValue): PropertyPanelSnapshot {
+  return {
+    primaryNode: editor.primaryNode,
+    selectedNodes: editor.selectedNodes,
+    updateNode: editor.updateNode,
+  };
+}
+
+function samePropertyPanelSelectedNodes(left: readonly FigNode[], right: readonly FigNode[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((node, index) => node === right[index]);
+}
+
+function samePropertyPanelSnapshot(left: PropertyPanelSnapshot, right: PropertyPanelSnapshot): boolean {
+  return left.primaryNode === right.primaryNode &&
+    samePropertyPanelSelectedNodes(left.selectedNodes, right.selectedNodes) &&
+    left.updateNode === right.updateNode;
+}
+
 /** Render editable properties for the primary selected Kiwi node. */
 export function PropertyPanel() {
-  const { primaryNode, selectedNodes, updateNode } = useFigEditor();
+  const { primaryNode, selectedNodes, updateNode } = useFigEditorSelector(
+    selectPropertyPanelSnapshot,
+    samePropertyPanelSnapshot,
+  );
   const operationDomain = useFigOperationDomain();
   const propertyMutationDisabled = !allowsFigUserOperation(operationDomain, "update-property");
   if (primaryNode === undefined) {

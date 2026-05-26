@@ -30,19 +30,55 @@ const sceneGraph: SceneGraph = {
   },
 };
 
+const INITIAL_KIWI_DOCUMENT_MUTATION = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
+
 describe("FigWebGLViewportLayer", () => {
   it("composes the WebGL canvas with preparation status UI", () => {
     const html = renderToStaticMarkup(
       createElement(FigWebGLViewportLayer, {
         sceneGraph,
+        kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+        surfaceWidth: sceneGraph.width,
+        surfaceHeight: sceneGraph.height,
         viewportScale: 1,
+        surface: {
+          surfaceKey: "spec-webgl-surface",
+          kind: "viewport",
+          label: "Spec WebGL surface",
+        },
       }),
     );
 
     expect(html).toContain("<canvas");
-    expect(html).toContain("data-webgl-ready=\"false\"");
-    expect(html).toContain("data-webgl-loading=\"true\"");
-    expect(html).toContain("data-webgl-loading-phase=\"scheduled\"");
+    expect(html).toContain("role=\"img\"");
+    expect(html).toContain("aria-label=\"Spec WebGL surface\"");
+    expect(html).toContain("aria-busy=\"true\"");
     expect(html).toContain("WebGL resource preparation progress");
+  });
+
+  it("does not move stale canvas pixels during viewport panning", () => {
+    const html = renderToStaticMarkup(
+      createElement(FigWebGLViewportLayer, {
+        sceneGraph,
+        kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+        surfaceWidth: sceneGraph.width,
+        surfaceHeight: sceneGraph.height,
+        viewportScale: 1,
+        viewportRevision: 1,
+        viewportInteractionActive: true,
+        surface: {
+          surfaceKey: "spec-webgl-surface-pan",
+          kind: "viewport",
+          label: "Spec WebGL panning surface",
+        },
+      }),
+    );
+
+    expect(html).not.toContain("translate3d");
+    expect(html).not.toContain("will-change");
   });
 });

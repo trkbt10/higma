@@ -48,7 +48,30 @@ export { WRAPPER_ATTRS_FIELDS } from "./types";
 // Resolver
 export {
   resolveRenderTree,
-  resolveRenderTreeIncremental,
-  type RenderTreeResolutionCache,
-  type RenderTreeResolutionResult,
+  resolveRenderTreeWithReferenceReuse,
+  type RenderTreeReferenceReuseState,
+  type RenderTreeReferenceReuseResult,
 } from "./resolve";
+
+export {
+  boundsIntersect,
+  boundsUnion,
+  canRenderContainerOpacityWithInheritedOpacity,
+  canSkipFrameChildClipBecauseChildVisualSubtreesCannotReachClipBoundary,
+  getClipShapeLocalBounds,
+  getRenderFrameLocalSurfaceFilterInputBounds,
+  getRenderNodeLocalAuthoredBounds,
+  getRenderNodeLocalBounds,
+  getRenderNodeLocalFrameChildClipBounds,
+  RENDER_NODE_SOURCE_TRANSFORMS,
+  renderNodeIntersectsViewport,
+  resolveRenderNodeLocalSourceEffectInputBounds,
+  resolveRenderNodeLocalSubtreeVisualBounds,
+  resolveRenderNodeOutputBoundsAffectedByTranslatedNode,
+  transformBounds,
+  type Bounds,
+  type RenderNodeTranslatedOutputBounds,
+  type RenderNodeVisualTransform,
+  type ViewportIntersectionOptions,
+  type ViewportRect,
+} from "./render-node-visual-coverage";

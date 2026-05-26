@@ -16,13 +16,29 @@ import {
   TextBoxIcon,
   UndoIcon,
 } from "@higma-editor-kernel/ui/icons";
-import { FIG_NODE_MUTATION_SOURCE, useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
+import {
+  FIG_NODE_MUTATION_SOURCE,
+  useFigEditorSelector,
+  type FigCreationMode,
+  type FigEditorContextValue,
+} from "../context/FigEditorContext";
 import { useExportFig } from "../hooks/use-export-fig";
 
 type ToolButtonSpec = {
   readonly mode: FigCreationMode;
   readonly label: string;
   readonly icon: ReactNode;
+};
+
+type FigEditorToolbarSnapshot = {
+  readonly creationMode: FigCreationMode;
+  readonly selectedGuidCount: number;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly setCreationMode: FigEditorContextValue["setCreationMode"];
+  readonly undo: FigEditorContextValue["undo"];
+  readonly redo: FigEditorContextValue["redo"];
+  readonly deleteSelectedNodes: FigEditorContextValue["deleteSelectedNodes"];
 };
 
 const toolbarStyle: CSSProperties = {
@@ -61,18 +77,48 @@ function formatExportStatus(size: number | undefined): string | undefined {
   return `Exported ${size.toLocaleString()} bytes`;
 }
 
+function selectFigEditorToolbarSnapshot(editor: FigEditorContextValue): FigEditorToolbarSnapshot {
+  return {
+    creationMode: editor.creationMode,
+    selectedGuidCount: editor.selectedGuids.length,
+    canUndo: editor.canUndo,
+    canRedo: editor.canRedo,
+    setCreationMode: editor.setCreationMode,
+    undo: editor.undo,
+    redo: editor.redo,
+    deleteSelectedNodes: editor.deleteSelectedNodes,
+  };
+}
+
+function sameFigEditorToolbarSnapshot(
+  left: FigEditorToolbarSnapshot,
+  right: FigEditorToolbarSnapshot,
+): boolean {
+  return left.creationMode === right.creationMode &&
+    left.selectedGuidCount === right.selectedGuidCount &&
+    left.canUndo === right.canUndo &&
+    left.canRedo === right.canRedo &&
+    left.setCreationMode === right.setCreationMode &&
+    left.undo === right.undo &&
+    left.redo === right.redo &&
+    left.deleteSelectedNodes === right.deleteSelectedNodes;
+}
+
 /** Render creation and selection tools for the Fig editor. */
 export function FigEditorToolbar() {
   const {
     creationMode,
     setCreationMode,
-    selectedGuids,
+    selectedGuidCount,
     canUndo,
     canRedo,
     undo,
     redo,
     deleteSelectedNodes,
-  } = useFigEditor();
+  } = useFigEditorSelector(
+    selectFigEditorToolbarSnapshot,
+    sameFigEditorToolbarSnapshot,
+  );
   const { downloadContext, isExporting, lastResult, error } = useExportFig();
   const exportStatus = error?.message ?? formatExportStatus(lastResult?.size);
   return (
@@ -106,7 +152,7 @@ export function FigEditorToolbar() {
       <ToolbarButton
         icon={<DeleteIcon size={16} aria-hidden={false} />}
         label="Delete"
-        disabled={selectedGuids.length === 0}
+        disabled={selectedGuidCount === 0}
         onClick={() => deleteSelectedNodes(FIG_NODE_MUTATION_SOURCE.toolbar)}
         size="md"
       />

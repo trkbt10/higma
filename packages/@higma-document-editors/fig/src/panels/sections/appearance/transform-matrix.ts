@@ -1,7 +1,6 @@
 /** @file Transform field operations for Kiwi nodes. */
-import { readKiwiTransform } from "@higma-document-models/fig/matrix";
+import { extractRotationDegrees, readKiwiTransform } from "@higma-document-models/fig/matrix";
 import type { FigMatrix } from "@higma-document-models/fig/types";
-import { extractRotationDeg } from "../../../context/fig-editor/rotation";
 
 /** Return transform translation X/Y with schema identity values applied. */
 export function readTransformPosition(transform: FigMatrix | undefined): { readonly x: number; readonly y: number } {
@@ -11,7 +10,7 @@ export function readTransformPosition(transform: FigMatrix | undefined): { reado
 
 /** Return transform rotation in degrees. */
 export function readTransformRotation(transform: FigMatrix | undefined): number {
-  return extractRotationDeg(readKiwiTransform(transform));
+  return extractRotationDegrees(readKiwiTransform(transform));
 }
 
 /** Set transform translation while preserving current affine basis. */

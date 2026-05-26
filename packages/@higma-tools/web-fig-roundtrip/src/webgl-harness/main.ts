@@ -28,44 +28,46 @@ if (preCtx === null) {
   console.error("[harness] failed to acquire WebGL context");
 }
 
+function decodeBase64Uint8Array(base64: string): Uint8Array {
+  return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+}
+
+function restoreNestedUint8Arrays(value: unknown): void {
+  if (value === null || typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(restoreNestedUint8Arrays);
+    return;
+  }
+  restoreUint8Arrays(value as Record<string, unknown>);
+}
+
 /**
  * The verifier base64-encodes every `Uint8Array` field before calling
  * `JSON.stringify`. Walk the parsed scene graph in-place and flip each
  * `{ __base64: "..." }` back to a `Uint8Array`.
  */
 function restoreUint8Arrays(node: Record<string, unknown>): void {
-  for (const key of Object.keys(node)) {
-    const val = node[key];
-    if (val !== null && typeof val === "object") {
-      const obj = val as Record<string, unknown>;
-      if (typeof obj.__base64 === "string") {
-        const binary = atob(obj.__base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        node[key] = bytes;
-      } else if (Array.isArray(val)) {
-        for (const item of val) {
-          if (item !== null && typeof item === "object") {
-            restoreUint8Arrays(item as Record<string, unknown>);
-          }
-        }
-      } else {
-        restoreUint8Arrays(obj);
-      }
+  Object.keys(node).forEach((key) => {
+    const value = node[key];
+    if (value === null || typeof value !== "object") {
+      return;
     }
-  }
+    const record = value as Record<string, unknown>;
+    if (typeof record.__base64 === "string") {
+      node[key] = decodeBase64Uint8Array(record.__base64);
+      return;
+    }
+    restoreNestedUint8Arrays(value);
+  });
 }
 
 type RGBA = { readonly r: number; readonly g: number; readonly b: number; readonly a: number };
 
-declare global {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-definitions -- ambient Window augmentation
-  interface Window {
-    renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
-  }
-}
+type WebGLHarnessGlobalThis = typeof globalThis & {
+  renderSceneGraph?: (json: string, pixelRatio?: number, backgroundColor?: RGBA) => Promise<string>;
+};
 
 const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
 
@@ -84,7 +86,9 @@ const DEFAULT_BACKGROUND: RGBA = { r: 1, g: 1, b: 1, a: 1 };
  */
 const SUPERSAMPLING_FACTOR = 2;
 
-window.renderSceneGraph = async (
+const webGLHarnessGlobalThis = globalThis as WebGLHarnessGlobalThis;
+
+webGLHarnessGlobalThis.renderSceneGraph = async (
   json: string,
   pixelRatio: number = 1,
   backgroundColor: RGBA = DEFAULT_BACKGROUND,

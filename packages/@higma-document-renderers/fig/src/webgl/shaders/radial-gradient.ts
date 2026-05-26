@@ -19,8 +19,7 @@ export const radialGradientVertexShader = `
 export const radialGradientFragmentShader = `
   precision mediump float;
 
-  uniform vec2 u_center;
-  uniform float u_radius;
+  uniform mat3 u_objectToGradient;
   uniform vec4 u_stops[8];
   uniform vec4 u_stopAlphas[8];
   uniform int u_stopCount;
@@ -31,9 +30,9 @@ export const radialGradientFragmentShader = `
   varying vec2 v_localPosition;
 
   void main() {
-    vec2 localPos = (v_localPosition - u_elementOrigin) / u_elementSize;
-    float dist = length(localPos - u_center);
-    float t = clamp(dist / max(u_radius, 0.001), 0.0, 1.0);
+    vec2 objectPosition = (v_localPosition - u_elementOrigin) / u_elementSize;
+    vec2 gradientPosition = (u_objectToGradient * vec3(objectPosition, 1.0)).xy;
+    float t = clamp(length(gradientPosition - vec2(0.5, 0.5)) / 0.5, 0.0, 1.0);
 
     vec3 color = u_stops[0].yzw;
     float alpha = u_stopAlphas[0].x;

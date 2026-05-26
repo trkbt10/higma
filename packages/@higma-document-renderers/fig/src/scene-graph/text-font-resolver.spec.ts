@@ -103,13 +103,16 @@ function makeWrappingTextNode(): FigNode {
 }
 
 function buildOptions(textFontResolver: BuildSceneGraphOptions["textFontResolver"]): BuildSceneGraphOptions {
+  const document = indexFigKiwiDocument([]);
   return {
     blobs: [],
     images: new Map(),
     canvasSize: { width: 300, height: 200 },
     viewport: { x: 0, y: 0, width: 300, height: 200 },
+    sourceDocumentReference: document,
+    sourceRevision: 0,
     symbolResolver: createSymbolResolver({
-      document: indexFigKiwiDocument([]),
+      document,
     }),
     childrenOf: () => [],
     styleRegistry: EMPTY_FIG_STYLE_REGISTRY,

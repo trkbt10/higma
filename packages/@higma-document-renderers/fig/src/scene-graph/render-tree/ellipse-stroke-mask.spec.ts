@@ -12,11 +12,14 @@
 import { resolveRenderTree } from "./resolve";
 import type { SceneGraph, EllipseNode, SceneNode, SceneNodeId } from "@higma-document-renderers/fig/scene-graph";
 
+const ELLIPSE_STROKE_MASK_SPEC_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
+
 function makeSceneGraph(nodes: readonly SceneNode[]): SceneGraph {
   return {
     width: 100,
     height: 100,
     version: 1,
+    sourceDocumentReference: ELLIPSE_STROKE_MASK_SPEC_SOURCE_DOCUMENT_REFERENCE,
     root: { type: "group", id: "root" as SceneNodeId, name: "root", transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 }, opacity: 1, visible: true, effects: [], blendMode: undefined, children: nodes },
   };
 }

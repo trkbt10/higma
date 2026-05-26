@@ -102,6 +102,7 @@ export type EditorCanvasProps = {
   readonly onZoomModeChange: (mode: ZoomMode) => void;
   readonly onDisplayZoomChange?: (zoom: number) => void;
   readonly onViewportChange?: (viewport: ViewportTransform, context: EditorCanvasViewportContentContext) => void;
+  readonly onViewportInteractionChange?: (active: boolean) => void;
   readonly initialViewportPlacement?: InitialViewportPlacement;
   readonly initialViewportMargin?: number;
   /**
@@ -279,10 +280,9 @@ const HitAreaLayer = memo(function HitAreaLayer({
 }: HitAreaLayerProps) {
   return (
     <>
-      {itemBounds.map((b) => (
-        <g key={`hit-${b.id}`} transform={getRotationTransform(b)}>
+      {itemBounds.map((b, index) => (
+        <g key={`hit-${index}-${b.id}`} transform={getRotationTransform(b)}>
           <rect
-            data-editor-canvas-item-id={b.id}
             role={getItemAriaLabel ? "button" : undefined}
             aria-label={getItemAriaLabel?.(b.id)}
             x={b.x}
@@ -295,7 +295,6 @@ const HitAreaLayer = memo(function HitAreaLayer({
             onDoubleClick={(e) => onItemDoubleClick(b.id, e)}
             onPointerDown={(e) => onItemPointerDown(b.id, e)}
             onContextMenu={(e) => onItemContextMenu(b.id, e)}
-            data-shape-id={b.id}
           />
         </g>
       ))}
@@ -321,6 +320,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
     onZoomModeChange,
     onDisplayZoomChange,
     onViewportChange,
+    onViewportInteractionChange,
     initialViewportPlacement,
     initialViewportMargin,
     clampFn,
@@ -396,6 +396,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   useEffect(() => {
     onViewportChange?.(viewport, { viewport, viewportSize, rulerThickness });
   }, [viewport, viewportSize, rulerThickness, onViewportChange]);
+
+  useEffect(() => {
+    onViewportInteractionChange?.(isPanning);
+  }, [isPanning, onViewportInteractionChange]);
 
   // Register wheel handler (non-passive for preventDefault)
   useEffect(() => {
@@ -503,9 +507,9 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
   // --- Item event handlers ---
   const handleItemPointerDown = useCallback(
     (id: string, e: React.PointerEvent) => {
+      e.stopPropagation();
       const latest = latestItemHandlers.current;
       if (!latest.onItemPointerDown) {return;}
-      e.stopPropagation();
       e.preventDefault(); // Suppress browser text selection during drag
       const coords = latest.makeCoordsFromEvent(e);
       if (!coords) {return;}
@@ -521,9 +525,9 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
 
   const handleItemClick = useCallback(
     (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
       const latest = latestItemHandlers.current;
       if (!latest.onItemClick) {return;}
-      e.stopPropagation();
       const coords = latest.makeCoordsFromEvent(e);
       if (coords) {latest.onItemClick(id, coords, e);}
     },
@@ -532,10 +536,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
 
   const handleItemDoubleClick = useCallback(
     (id: string, e: React.MouseEvent) => {
-      const latest = latestItemHandlers.current;
-      if (!latest.onItemDoubleClick) {return;}
       e.stopPropagation();
       e.preventDefault();
+      const latest = latestItemHandlers.current;
+      if (!latest.onItemDoubleClick) {return;}
       const coords = latest.makeCoordsFromEvent(e);
       if (coords) {latest.onItemDoubleClick(id, coords, e);}
     },
@@ -544,10 +548,10 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
 
   const handleItemContextMenu = useCallback(
     (id: string, e: React.MouseEvent) => {
-      const latest = latestItemHandlers.current;
-      if (!latest.onItemContextMenu) {return;}
       e.preventDefault();
       e.stopPropagation();
+      const latest = latestItemHandlers.current;
+      if (!latest.onItemContextMenu) {return;}
       const coords = latest.makeCoordsFromEvent(e);
       if (coords) {latest.onItemContextMenu(id, coords, e);}
     },
@@ -594,8 +598,6 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
         ignoreNextClickRef.current = false;
         return;
       }
-      const target = e.target as HTMLElement | null;
-      if (target?.closest("[data-shape-id]")) {return;}
       if (!onCanvasClick) {return;}
       const coords = makeCoordsFromEvent(e);
       if (coords) {onCanvasClick(coords, e);}
@@ -612,9 +614,6 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       }
 
       if (e.button !== 0) {return;}
-
-      const target = e.target as HTMLElement | null;
-      if (target?.closest("[data-shape-id]")) {return;}
 
       const coords = makeCoordsFromEvent(e);
       if (!coords) {return;}
@@ -682,14 +681,16 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       }
 
       const current = marqueeRef.current;
-      if (current) {
-        const page = screenToPage(e.clientX, e.clientY);
-        if (page) {
-          const next: MarqueeState = { ...current, currentX: page.pageX, currentY: page.pageY };
-          marqueeRef.current = next;
-          setMarquee(next);
-        }
+      if (!current) {
+        return;
       }
+      const page = screenToPage(e.clientX, e.clientY);
+      if (!page) {
+        return;
+      }
+      const next: MarqueeState = { ...current, currentX: page.pageX, currentY: page.pageY };
+      marqueeRef.current = next;
+      setMarquee(next);
     },
     [isPanning, handlePanMove, screenToPage],
   );
@@ -842,6 +843,7 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
       <svg
         ref={svgRef}
         style={svgStyle}
+        aria-label="Editor canvas viewport"
         aria-hidden={svgAriaHidden ? "true" : undefined}
         onClick={handleSvgClick}
         onPointerDown={handleSvgPointerDown}
@@ -860,14 +862,16 @@ export const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(fu
             {children}
 
             {/* Hit areas for items */}
-            <HitAreaLayer
-              itemBounds={itemBounds}
-              getItemAriaLabel={getItemAriaLabel}
-              onItemClick={handleItemClick}
-              onItemDoubleClick={handleItemDoubleClick}
-              onItemPointerDown={handleItemPointerDown}
-              onItemContextMenu={handleItemContextMenu}
-            />
+            {!isPanning && (
+              <HitAreaLayer
+                itemBounds={itemBounds}
+                getItemAriaLabel={getItemAriaLabel}
+                onItemClick={handleItemClick}
+                onItemDoubleClick={handleItemDoubleClick}
+                onItemPointerDown={handleItemPointerDown}
+                onItemContextMenu={handleItemContextMenu}
+              />
+            )}
 
             {/* Selection boxes (computed from selectedIds + itemBounds + drag) */}
             <g style={selectionChromeStyle}>

@@ -3,12 +3,9 @@
 import { createNodeId, type SceneGraph } from "../scene-graph";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } as const;
+const FRAME_SURFACE_EFFECT_CLIP_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 
-
-
-
-
-
+/** Create a minimal SceneGraph covering FRAME surface effects and child clipping. */
 export function createFrameSurfaceEffectClipSceneGraph(): SceneGraph {
   return {
     width: 80,
@@ -53,5 +50,6 @@ export function createFrameSurfaceEffectClipSceneGraph(): SceneGraph {
       }],
     },
     version: 1,
+    sourceDocumentReference: FRAME_SURFACE_EFFECT_CLIP_SOURCE_DOCUMENT_REFERENCE,
   };
 }

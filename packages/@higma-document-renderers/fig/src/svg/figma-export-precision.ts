@@ -2,8 +2,8 @@
  * @file Figma SVG export numeric precision serialization.
  *
  * Figma's SVG exporter quantizes numeric geometry by exported viewport
- * position. This module applies that export-boundary serialization while
- * serializing the structured SVG element tree produced by scene-renderer.
+ * position. This module applies that export-boundary serialization to
+ * the structured SVG element tree produced by scene-renderer.
  */
 
 import { unsafeSvg, type SvgString } from "./primitives";
@@ -53,10 +53,6 @@ export function serializeFigmaExportSvg(root: SvgNode): SvgString {
 
 /**
  * Apply Figma-compatible export precision to a structured SVG tree.
- *
- * React SVG rendering and string serialization both consume this same
- * structured result, so DOM-backed editor pixels and exported SVG text
- * do not diverge on coordinate quantization.
  */
 export function applyFigmaExportSvgPrecision(root: SvgNode): SvgNode {
   if (root.kind !== "element" || root.name !== "svg") {

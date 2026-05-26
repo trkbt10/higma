@@ -61,6 +61,21 @@ describe("resolveEffectBackingScale", () => {
     expect(scale.m00).toBeCloseTo(-1);
     expect(scale.m11).toBeCloseTo(1);
   });
+
+  it("throws when pixel ratio is not a positive finite backing-buffer scale", () => {
+    expect(() => resolveEffectBackingScale(IDENTITY, Number.NaN)).toThrow(
+      "Effect backing scale pixelRatio must be finite and positive",
+    );
+    expect(() => resolveEffectBackingScale(IDENTITY, 0)).toThrow(
+      "Effect backing scale pixelRatio must be finite and positive",
+    );
+  });
+
+  it("throws when transform scale components are not finite", () => {
+    expect(() => resolveEffectBackingScale({ ...IDENTITY, m00: Number.POSITIVE_INFINITY }, 1)).toThrow(
+      "Effect backing scale transform linear components must be finite",
+    );
+  });
 });
 
 describe("applyEffectOffsetScale", () => {

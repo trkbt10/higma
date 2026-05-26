@@ -85,6 +85,8 @@ export async function emitFigmaSvgForFrame(
     width: exportViewport.width,
     height: exportViewport.height,
     viewport: exportViewport,
+    sourceDocumentReference: resources.document,
+    sourceRevision: 0,
     blobs: resources.blobs,
     images: resources.images,
     childrenOf: resources.childrenOf,

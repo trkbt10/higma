@@ -1,7 +1,8 @@
 /** @file Position property section. */
+import { PositionSectionView } from "@higma-editor-kernel/ui/property-sections";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
-import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
+import { sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
 import { readTransformPosition, setTransformPosition } from "./transform-matrix";
 
 /** Render position controls backed by the Kiwi transform matrix. */
@@ -15,30 +16,26 @@ export function PositionSection({ node }: { readonly node: FigNode }) {
   return (
     <section style={sectionStyle}>
       <div style={sectionTitleStyle}>Position</div>
-      <div style={fieldGridStyle}>
-        <PropertyField label="X">
-          <input
-            style={inputStyle}
-            type="number"
-            value={position.x}
-            onChange={(event) => updateNode(guid, (current) => ({
+      <PositionSectionView
+        x={position.x}
+        y={position.y}
+        onChange={(field, value) => {
+          switch (field) {
+            case "x":
+              updateNode(guid, (current) => ({
               ...current,
-              transform: setTransformPosition(current.transform, Number(event.currentTarget.value), readTransformPosition(current.transform).y),
-            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
-          />
-        </PropertyField>
-        <PropertyField label="Y">
-          <input
-            style={inputStyle}
-            type="number"
-            value={position.y}
-            onChange={(event) => updateNode(guid, (current) => ({
+                transform: setTransformPosition(current.transform, value, readTransformPosition(current.transform).y),
+              }), FIG_NODE_MUTATION_SOURCE.propertyPanel);
+              return;
+            case "y":
+              updateNode(guid, (current) => ({
               ...current,
-              transform: setTransformPosition(current.transform, readTransformPosition(current.transform).x, Number(event.currentTarget.value)),
-            }), FIG_NODE_MUTATION_SOURCE.propertyPanel)}
-          />
-        </PropertyField>
-      </div>
+                transform: setTransformPosition(current.transform, readTransformPosition(current.transform).x, value),
+              }), FIG_NODE_MUTATION_SOURCE.propertyPanel);
+              return;
+          }
+        }}
+      />
     </section>
   );
 }

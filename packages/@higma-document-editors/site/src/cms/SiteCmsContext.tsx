@@ -109,6 +109,16 @@ function assertDraftId(id: string, label: string): void {
   }
 }
 
+function assertSelectableItem(activeCollection: SiteCollection | null, itemId: string | null): void {
+  if (itemId === null) {
+    return;
+  }
+  if (!activeCollection) {
+    throw new Error("Cannot select an item without an active collection");
+  }
+  assertItemExists(activeCollection, itemId);
+}
+
 export type SiteCmsProviderProps = {
   readonly children: ReactNode;
   readonly onFieldEditsChange?: (edits: readonly SiteCmsFieldEdit[]) => void;
@@ -156,12 +166,7 @@ export function SiteCmsProvider({ children, onFieldEditsChange }: SiteCmsProvide
   }, [collections]);
 
   const setActiveItemId = useCallback((itemId: string | null) => {
-    if (itemId !== null) {
-      if (!activeCollection) {
-        throw new Error("Cannot select an item without an active collection");
-      }
-      assertItemExists(activeCollection, itemId);
-    }
+    assertSelectableItem(activeCollection, itemId);
     dispatch({ type: "set-active-item", itemId });
   }, [activeCollection]);
 

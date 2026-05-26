@@ -1,8 +1,20 @@
 /** @file WebGL scissor region derived from the shared effect bounds SoT. */
 
-import { resolveEffectBounds, type Effect, type RenderFrameNode, type RenderNode } from "../../scene-graph";
-import { getRenderNodeLocalBounds, transformBounds, type Bounds } from "../scene/render-culling";
-import { pathContoursBoundingBox } from "@higma-primitives/path";
+import {
+  resolveEffectBounds,
+  getClipShapeLocalBounds,
+  getRenderFrameLocalSurfaceFilterInputBounds,
+  resolveRenderNodeLocalSourceEffectInputBounds,
+  resolveRenderNodeLocalSubtreeVisualBounds,
+  transformBounds,
+  type Effect,
+  type RenderFrameNode,
+  type RenderNode,
+  type Bounds,
+  type RenderBackgroundBlur,
+  type RenderNodeVisualTransform,
+  type ResolvedEffectStack,
+} from "../../scene-graph";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 export type WebGLEffectRenderRegion = {
@@ -44,15 +56,6 @@ type ResolveWebGLEffectRenderRegionParams = {
   readonly pixelRatio: number;
 };
 
-function boundsUnion(a: Bounds, b: Bounds): Bounds {
-  return {
-    minX: Math.min(a.minX, b.minX),
-    minY: Math.min(a.minY, b.minY),
-    maxX: Math.max(a.maxX, b.maxX),
-    maxY: Math.max(a.maxY, b.maxY),
-  };
-}
-
 function localEffectBoundsToBounds(bounds: LocalEffectBounds): Bounds {
   return {
     minX: bounds.x,
@@ -68,6 +71,33 @@ function boundsToLocalEffectBounds(bounds: Bounds): LocalEffectBounds {
     y: bounds.minY,
     width: bounds.maxX - bounds.minX,
     height: bounds.maxY - bounds.minY,
+  };
+}
+
+function localEffectBoundsToWebGLRenderRegion({
+  localBounds,
+  transform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly localBounds: LocalEffectBounds;
+  readonly transform: AffineMatrix;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  const ratio = requirePositivePixelRatio(pixelRatio);
+  const screenBounds = transformBounds(localEffectBoundsToBounds(localBounds), transform);
+  const backingMinX = clampFloor(screenBounds.minX * ratio, 0, canvasWidth);
+  const backingMaxX = clampCeil(screenBounds.maxX * ratio, 0, canvasWidth);
+  const backingMinY = clampFloor(screenBounds.minY * ratio, 0, canvasHeight);
+  const backingMaxY = clampCeil(screenBounds.maxY * ratio, 0, canvasHeight);
+  return {
+    x: backingMinX,
+    y: canvasHeight - backingMaxY,
+    width: Math.max(0, backingMaxX - backingMinX),
+    height: Math.max(0, backingMaxY - backingMinY),
   };
 }
 
@@ -112,6 +142,26 @@ export function resolveWebGLEffectBackdropCopyRegion(
   };
 }
 
+/** Intersect two WebGL backing-buffer regions in bottom-left scissor space. */
+export function intersectWebGLEffectRenderRegions(
+  left: WebGLEffectRenderRegion,
+  right: WebGLEffectRenderRegion,
+): WebGLEffectRenderRegion | null {
+  const x = Math.max(left.x, right.x);
+  const y = Math.max(left.y, right.y);
+  const maxX = Math.min(left.x + left.width, right.x + right.width);
+  const maxY = Math.min(left.y + left.height, right.y + right.height);
+  if (maxX <= x || maxY <= y) {
+    return null;
+  }
+  return {
+    x,
+    y,
+    width: maxX - x,
+    height: maxY - y,
+  };
+}
+
 /** Expand a backing-buffer region to cover texels read by effect shaders outside the draw scissor. */
 export function expandWebGLEffectRenderRegionForShaderSampling({
   region,
@@ -132,65 +182,170 @@ export function expandWebGLEffectRenderRegionForShaderSampling({
   };
 }
 
-function renderNodeChildren(node: RenderNode): readonly RenderNode[] {
-  switch (node.type) {
-    case "group":
-    case "frame":
-      return node.children;
-    case "rect":
-    case "ellipse":
-    case "path":
-    case "text":
-    case "image":
-      return [];
+/** Resolve the WebGL backing-buffer region occupied by a RenderNode's source input. */
+export function resolveWebGLRenderNodeSourceInputRegion({
+  node,
+  transform,
+  visualTransform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly node: RenderNode;
+  readonly transform: AffineMatrix;
+  readonly visualTransform: RenderNodeVisualTransform;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  const sourceEffectInputBounds = resolveRenderNodeLocalSourceEffectInputBounds({ node, visualTransform });
+  if (sourceEffectInputBounds === null) {
+    throw new Error(`WebGL render region cannot resolve source input bounds for node ${node.id}`);
   }
+  return localEffectBoundsToWebGLRenderRegion({
+    localBounds: boundsToLocalEffectBounds(sourceEffectInputBounds),
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
 }
 
-function renderNodeLocalSubtreeBounds(node: RenderNode): Bounds | null {
-  const ownBounds = getRenderNodeLocalBounds(node);
-  const childBounds = renderNodeChildren(node)
-    .map((child) => {
-      const bounds = renderNodeLocalSubtreeBounds(child);
-      if (bounds === null) {
-        return null;
-      }
-      return transformBounds(bounds, child.source.transform);
-    })
-    .filter((bounds): bounds is Bounds => bounds !== null);
-  const allBounds = ownBounds === null ? childBounds : [ownBounds, ...childBounds];
-  if (allBounds.length === 0) {
-    return null;
-  }
-  return allBounds.slice(1).reduce(boundsUnion, allBounds[0]);
+/** Resolve the WebGL backing-buffer region occupied by a prepared paint-blend instruction. */
+export function resolveWebGLLocalPaintBlendRegion({
+  localBounds,
+  transform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly localBounds: LocalEffectBounds;
+  readonly transform: AffineMatrix;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  return localEffectBoundsToWebGLRenderRegion({
+    localBounds,
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
 }
 
-/** Resolve the local content bounds used when a whole RenderNode is captured for an effect. */
-export function resolveRenderNodeLocalEffectBounds(node: RenderNode): LocalEffectBounds {
-  const bounds = renderNodeLocalSubtreeBounds(node);
-  if (bounds === null) {
-    throw new Error(`WebGL effect render region cannot resolve local bounds for node ${node.id}`);
+/** Resolve the WebGL backing-buffer region consumed by a RenderNode effect-stack pass. */
+export function resolveWebGLRenderNodeEffectStackOutputRegion({
+  node,
+  effectStack,
+  transform,
+  visualTransform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly node: RenderNode;
+  readonly effectStack: ResolvedEffectStack;
+  readonly transform: AffineMatrix;
+  readonly visualTransform: RenderNodeVisualTransform;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  const sourceEffectInputBounds = resolveRenderNodeLocalSourceEffectInputBounds({ node, visualTransform });
+  if (sourceEffectInputBounds === null) {
+    throw new Error(`WebGL effect render region cannot resolve effect-stack input bounds for node ${node.id}`);
   }
-  return boundsToLocalEffectBounds(bounds);
+  return resolveWebGLEffectRenderRegion({
+    localBounds: boundsToLocalEffectBounds(sourceEffectInputBounds),
+    effects: effectStack.allEffects,
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
 }
 
-/** Resolve the local FRAME surface bounds used by SVG surface filters. */
-export function resolveRenderFrameSurfaceLocalEffectBounds(node: RenderFrameNode): LocalEffectBounds {
-  switch (node.sourceSurfaceShape.type) {
-    case "rect":
-      return {
-        x: 0,
-        y: 0,
-        width: node.sourceSurfaceShape.width,
-        height: node.sourceSurfaceShape.height,
-      };
-    case "path": {
-      const bbox = pathContoursBoundingBox(node.sourceSurfaceShape.contours);
-      if (bbox === undefined) {
-        throw new Error(`WebGL effect render region cannot resolve surface path bounds for frame ${node.id}`);
-      }
-      return { x: bbox.x, y: bbox.y, width: bbox.w, height: bbox.h };
-    }
+/** Resolve the WebGL backing-buffer region occupied by the Kiwi-authored FRAME surface. */
+export function resolveWebGLRenderFrameSurfaceRegion({
+  node,
+  transform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly node: RenderFrameNode;
+  readonly transform: AffineMatrix;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  return localEffectBoundsToWebGLRenderRegion({
+    localBounds: boundsToLocalEffectBounds(getClipShapeLocalBounds(node.sourceSurfaceShape)),
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
+}
+
+/** Resolve the WebGL backing-buffer region occupied by a RenderTree background-blur instruction. */
+export function resolveWebGLRenderBackgroundBlurRegion({
+  backgroundBlur,
+  transform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly backgroundBlur: RenderBackgroundBlur;
+  readonly transform: AffineMatrix;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  return localEffectBoundsToWebGLRenderRegion({
+    localBounds: backgroundBlur.backdropBounds,
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
+}
+
+/** Resolve the WebGL backing-buffer region consumed by a FRAME surface filter instruction. */
+export function resolveWebGLRenderFrameSurfaceFilterRegion({
+  node,
+  frameSurfaceFilterStack,
+  transform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly node: RenderFrameNode;
+  readonly frameSurfaceFilterStack: ResolvedEffectStack;
+  readonly transform: AffineMatrix;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  if (node.surfaceFilterAttr === undefined) {
+    throw new Error(`WebGL frame surface filter region requires surfaceFilterAttr for node ${node.id}`);
   }
+  const inputBounds = getRenderFrameLocalSurfaceFilterInputBounds(node);
+  if (inputBounds === null) {
+    throw new Error(`WebGL frame surface filter region cannot resolve surface input bounds for node ${node.id}`);
+  }
+  if (frameSurfaceFilterStack.allEffects.length === 0) {
+    throw new Error(`WebGL frame surface filter region requires surface filter effects for node ${node.id}`);
+  }
+  return resolveWebGLEffectRenderRegion({
+    localBounds: boundsToLocalEffectBounds(inputBounds),
+    effects: frameSurfaceFilterStack.allEffects,
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
 }
 
 /**
@@ -199,7 +354,7 @@ export function resolveRenderFrameSurfaceLocalEffectBounds(node: RenderFrameNode
  * scissor space, while the input transform and bounds are in renderer
  * top-left screen coordinates.
  */
-export function resolveWebGLEffectRenderRegion({
+function resolveWebGLEffectRenderRegion({
   localBounds,
   effects,
   transform,
@@ -207,17 +362,41 @@ export function resolveWebGLEffectRenderRegion({
   canvasHeight,
   pixelRatio,
 }: ResolveWebGLEffectRenderRegionParams): WebGLEffectRenderRegion {
-  const ratio = requirePositivePixelRatio(pixelRatio);
   const effectBounds = resolveEffectBounds(effects, localBounds);
-  const screenBounds = transformBounds(localEffectBoundsToBounds(effectBounds), transform);
-  const backingMinX = clampFloor(screenBounds.minX * ratio, 0, canvasWidth);
-  const backingMaxX = clampCeil(screenBounds.maxX * ratio, 0, canvasWidth);
-  const backingMinY = clampFloor(screenBounds.minY * ratio, 0, canvasHeight);
-  const backingMaxY = clampCeil(screenBounds.maxY * ratio, 0, canvasHeight);
-  return {
-    x: backingMinX,
-    y: canvasHeight - backingMaxY,
-    width: Math.max(0, backingMaxX - backingMinX),
-    height: Math.max(0, backingMaxY - backingMinY),
-  };
+  return localEffectBoundsToWebGLRenderRegion({
+    localBounds: effectBounds,
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
+}
+
+/** Resolve the WebGL backing-buffer region occupied by a RenderNode subtree's visual output. */
+export function resolveWebGLRenderNodeSubtreeVisualOutputRegion({
+  node,
+  transform,
+  visualTransform,
+  canvasWidth,
+  canvasHeight,
+  pixelRatio,
+}: {
+  readonly node: RenderNode;
+  readonly transform: AffineMatrix;
+  readonly visualTransform: RenderNodeVisualTransform;
+  readonly canvasWidth: number;
+  readonly canvasHeight: number;
+  readonly pixelRatio: number;
+}): WebGLEffectRenderRegion {
+  const bounds = resolveRenderNodeLocalSubtreeVisualBounds({ node, visualTransform });
+  if (bounds === null) {
+    throw new Error(`WebGL effect render region cannot resolve local visual output bounds for node ${node.id}`);
+  }
+  return localEffectBoundsToWebGLRenderRegion({
+    localBounds: boundsToLocalEffectBounds(bounds),
+    transform,
+    canvasWidth,
+    canvasHeight,
+    pixelRatio,
+  });
 }

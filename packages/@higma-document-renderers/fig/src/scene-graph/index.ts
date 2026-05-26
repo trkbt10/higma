@@ -12,26 +12,41 @@ export {
 } from "./builder";
 
 export {
-  pruneSceneGraphToViewport,
-} from "./viewport-prune";
+  readSceneGraphNodeChildren,
+  replaceSceneGraphNodeChildren,
+  sceneGraphNodeOwnsChildren,
+  type SceneGraphNodeWithChildren,
+} from "./scene-graph-node-children";
 
-// Diff
 export {
-  diffSceneGraphs,
-  hasDiffOps,
-  type DiffOp,
-  type AddOp,
-  type RemoveOp,
-  type UpdateOp,
-  type ReorderOp,
-  type SceneGraphDiff,
-} from "./diff";
+  createKiwiSceneGraphPipeline,
+  type KiwiSceneGraphMutation,
+  type KiwiSceneGraphMutationScope,
+  type KiwiSceneGraphPipeline,
+  type KiwiSceneGraphPipelineInput,
+} from "./kiwi-scene-graph-pipeline";
+
+export {
+  findSceneGraphNode,
+  replaceSceneGraphNodeTransform,
+  translateSceneGraphNode,
+  translateSceneNodeTransform,
+  type SceneGraphNodeTranslation,
+} from "./translate-scene-node";
+
+export {
+  flattenSceneGraphNodeBounds,
+  translateSceneGraphNodeBounds,
+  type SceneGraphBoundsLike,
+  type SceneGraphNodeBounds,
+} from "./node-bounds";
 
 // Render — shared SoT for SceneGraph → SVG attribute resolution
 // Both SVG string and React renderers MUST consume these exclusively.
 export {
   colorToHex,
   uint8ArrayToBase64,
+  resolveBrowserRenderedFigmaExportCssBlendMode,
   resolveFill,
   resolveFillWithRenderSettings,
   resolveTopFill,
@@ -40,9 +55,12 @@ export {
   resolveStrokeResult,
   resolveEffects,
   resolveEffectBounds,
+  resolveBrowserRenderedFigmaExportEffectBlendMode,
   resolveFigmaBlurStdDeviation,
   buildEffectStack,
+  buildLayerBlurCapturedContentEffectStack,
   renderShapeEffectStack,
+  resolveFrameSurfaceFilterEffects,
   finalizeGradientDefs,
   finalizeImagePatternDefs,
   finalizeImagePatternDefsWithRenderSettings,
@@ -70,12 +88,14 @@ export {
   type ResolvedStrokeResult,
   type ResolvedFilter,
   type ResolvedFilterPrimitive,
+  type FrameSurfaceFilterEffect,
   type ResolvedEffectStack,
   type ShapeEffectStackParams,
   type ElementSize,
   type FigmaImageResamplingSettings,
   type FigmaPdfImageQuality,
   type FigmaRenderExportSettings,
+  type RenderExportSettingsCacheKey,
   type ResolvedFigmaRenderExportSettings,
   type SvgMaskElementAttrs,
   type SvgMaskPresentation,
@@ -83,6 +103,7 @@ export {
   type SvgStrokeMaskElementAttrs,
   type IdGenerator,
   type SceneGraphRenderOptions,
+  type BrowserRenderedFigmaExportCssBlendMode,
   type PathContourRectSize,
   type RectShapePrimitive,
 } from "./render";
@@ -90,10 +111,25 @@ export {
 // RenderTree — intermediate representation for SVG/React/WebGL backends
 export {
   resolveRenderTree,
-  resolveRenderTreeIncremental,
+  resolveRenderTreeWithReferenceReuse,
+  boundsIntersect,
+  boundsUnion,
+  canRenderContainerOpacityWithInheritedOpacity,
+  canSkipFrameChildClipBecauseChildVisualSubtreesCannotReachClipBoundary,
+  getClipShapeLocalBounds,
+  getRenderFrameLocalSurfaceFilterInputBounds,
+  getRenderNodeLocalAuthoredBounds,
+  getRenderNodeLocalBounds,
+  getRenderNodeLocalFrameChildClipBounds,
+  RENDER_NODE_SOURCE_TRANSFORMS,
+  renderNodeIntersectsViewport,
+  resolveRenderNodeLocalSourceEffectInputBounds,
+  resolveRenderNodeLocalSubtreeVisualBounds,
+  resolveRenderNodeOutputBoundsAffectedByTranslatedNode,
+  transformBounds,
   type RenderTree,
-  type RenderTreeResolutionCache,
-  type RenderTreeResolutionResult,
+  type RenderTreeReferenceReuseState,
+  type RenderTreeReferenceReuseResult,
   type RenderNode,
   type RenderNodeBase,
   type RenderGroupNode,
@@ -129,6 +165,11 @@ export {
   type StrokeRendering,
   type StrokeShape,
   type RenderTextGlyphRun,
+  type Bounds,
+  type RenderNodeTranslatedOutputBounds,
+  type RenderNodeVisualTransform,
+  type ViewportIntersectionOptions,
+  type ViewportRect,
 } from "./render-tree";
 
 // Converters

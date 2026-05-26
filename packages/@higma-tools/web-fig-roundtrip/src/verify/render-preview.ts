@@ -32,6 +32,7 @@ export type RenderPreviewOptions = {
   readonly waitForFontsMs?: number;
 };
 
+/** Render every captured breakpoint through the generated fig-to-web preview. */
 export async function renderPreview(options: RenderPreviewOptions): Promise<readonly RenderedPreviewFrame[]> {
   const playwright = await importPlaywright();
   const browser = await playwright.chromium.launch();

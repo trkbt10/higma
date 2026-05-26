@@ -36,6 +36,7 @@ export type StaticPreview = {
   readonly stop: () => Promise<void>;
 };
 
+/** Serve one generated preview directory over HTTP until the returned stop function is called. */
 export async function startStaticPreview(rootDir: string): Promise<StaticPreview> {
   const root = resolve(rootDir);
   const server: Server = createServer((req, res) => {

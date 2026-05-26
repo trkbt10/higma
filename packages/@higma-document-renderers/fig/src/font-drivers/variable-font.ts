@@ -159,45 +159,9 @@ function clampOpsz(axis: OpentypeVariationAxis, value: number): number {
   return Math.min(axis.maxValue, Math.max(axis.minValue, value));
 }
 
-/**
- * Marker checked by `setVariationOpticalSize` to recognise a Font
- * built by `wrapFontWithVariation`. Avoids `instanceof`, which would
- * leak the renderer's class hierarchy into consumers, and lets the
- * type stay structural-only — `text/paths/opentype-paths.ts` and any
- * other callsite simply asks "is this a Font I can tune optical size
- * on?".
- */
-const VARIATION_VIEW_MARKER: unique symbol = Symbol("variation-font-view");
-
-/**
- * Tell a Font wrapped by `wrapFontWithVariation` to apply the given
- * `opsz` (CSS-pixel font-size) for subsequent glyph-path requests.
- * No-op when the Font isn't a variation view, so callers can call it
- * unconditionally and it's free for static fonts.
- *
- * Modern CSS browsers default to `font-optical-sizing: auto`, feeding
- * the rendered `font-size` value into the `opsz` axis. The renderer
- * has to mirror that or per-character glyph widths drift from the
- * captured screenshot (small text gets too wide, large text too
- * narrow). The `opsz` axis is clamped to the font's declared range.
- */
-function isVariationFontView(font: AbstractFont): font is AbstractFont & {
-  readonly [VARIATION_VIEW_MARKER]: VariationFontView;
-} {
-  const candidate = font as unknown as { readonly [VARIATION_VIEW_MARKER]?: unknown };
-  const view = candidate[VARIATION_VIEW_MARKER];
-  return typeof view === "object" && view !== null && typeof (view as VariationFontView).setOpticalSize === "function";
-}
-
-
-
-
-
-
+/** Apply renderer font-size to a variation-font view's optical-size axis. */
 export function setVariationOpticalSize(font: AbstractFont, fontSizePx: number): void {
-  if (isVariationFontView(font)) {
-    font[VARIATION_VIEW_MARKER].setOpticalSize(fontSizePx);
-  }
+  font.setOpticalSize?.(fontSizePx);
 }
 
 /**
@@ -260,173 +224,96 @@ export function wrapFontWithVariation(
       "wrapFontWithVariation: Font does not expose a `variation` API — only opentype.js >=1.3 variable fonts are supported.",
     );
   }
-  return new VariationFontView(shape, variationApi, variation, axes);
+  return createVariationFontView(shape, variationApi, variation, axes);
 }
 
-/**
- * View over a Font that re-routes per-glyph path extraction through
- * the variation API. Implements `AbstractFont` so the renderer's
- * existing glyph-walking loop in
- * `text/paths/opentype-paths.ts` consumes it without any changes.
- */
-class VariationFontView implements AbstractFont {
-  readonly unitsPerEm: number;
-  readonly ascender: number;
-  readonly descender: number;
-  readonly tables?: AbstractFont["tables"];
-  readonly [VARIATION_VIEW_MARKER]: VariationFontView;
-
-  private readonly inner: OpentypeFontShape;
-  private readonly variationApi: OpentypeVariationApi;
-  private variation: Record<string, number>;
-  private readonly axes: readonly OpentypeVariationAxis[];
+function createVariationFontView(
+  inner: OpentypeFontShape,
+  variationApi: OpentypeVariationApi,
+  initialVariation: Readonly<Record<string, number>>,
+  axes: readonly OpentypeVariationAxis[],
+): AbstractFont {
+  const variation: Record<string, number> = { ...initialVariation };
   // Memoise variation-applied glyph views per character. opentype.js
   // path interpolation is the hot path during text rendering — a
   // single line of `"Example Domain"` produces a dozen lookups, every
   // multi-line paragraph repeats common characters, and
-  // `text-comprehensive` walks tens of thousands of glyphs. Without
-  // memoisation the renderer times out at >5s on what was previously
-  // a sub-second test.
-  private readonly cache: Map<string, VariationGlyphView> = new Map();
-
-  constructor(
-    inner: OpentypeFontShape,
-    variationApi: OpentypeVariationApi,
-    variation: Readonly<Record<string, number>>,
-    axes: readonly OpentypeVariationAxis[],
-  ) {
-    this.inner = inner;
-    this.variationApi = variationApi;
-    this.variation = { ...variation };
-    this.axes = axes;
-    this.unitsPerEm = inner.unitsPerEm;
-    this.ascender = inner.ascender;
-    this.descender = inner.descender;
-    this.tables = inner.tables;
-    this[VARIATION_VIEW_MARKER] = this;
-  }
-
-  /**
-   * Drive the `opsz` (optical size) axis from the rendered font-size
-   * via `coreTextOpticalSizeForFontSize`, then discard any cached
-   * glyph views so subsequent `charToGlyph` calls re-derive the path
-   * under the new optical-size point. Called by the path renderer at
-   * the top of each text run because optical size is a per-render
-   * concern (the same `LoadedFont` is reused for tiny captions and
-   * large headings within one page).
-   *
-   * The mapping is empirically calibrated against Chromium-on-macOS,
-   * which delegates to CoreText for `font-optical-sizing: auto`. The
-   * CSS Fonts L4 mapping (`opsz = font-size-pt`) is the spec target,
-   * but Chromium-on-macOS reaches a different `opsz` point per
-   * font-size — measured per-glyph advance widths landed the
-   * effective `opsz` between the CSS-spec `pt` value and the file's
-   * default, with a saturating curve above ~20px. See
-   * `coreTextOpticalSizeForFontSize` for the table.
-   *
-   * No-op when the font has no `opsz` axis (e.g. SF Mono's variable
-   * variant only carries `wght`); leaves the axis at its current value
-   * otherwise.
-   */
-  setOpticalSize(fontSizePx: number): void {
-    const opszAxis = this.axes.find((a) => a.tag === "opsz");
+  // `text-comprehensive` walks tens of thousands of glyphs.
+  const cache = new Map<string, AbstractGlyph>();
+  const setOpticalSize = (fontSizePx: number): void => {
+    const opszAxis = axes.find((axis) => axis.tag === "opsz");
     if (opszAxis === undefined) {
       return;
     }
     const target = clampOpsz(opszAxis, coreTextOpticalSizeForFontSize(fontSizePx));
-    if (this.variation.opsz === target) {
+    if (variation.opsz === target) {
       return;
     }
-    this.variation.opsz = target;
-    this.cache.clear();
-  }
-
-  charToGlyph(char: string): AbstractGlyph {
-    const cached = this.cache.get(char);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const rawGlyph = this.inner.charToGlyph(char);
-    const view = new VariationGlyphView(rawGlyph, this.variationApi, this.variation, this.unitsPerEm);
-    this.cache.set(char, view);
-    return view;
-  }
-
-  /**
-   * Delegate kerning lookup to the inner opentype.js Font. The
-   * variation axes don't influence pair-adjustment values (kerning is
-   * a glyph-pair geometry hint, not an outline interpolation), so the
-   * inner Font's table is the SoT and the wrapper just forwards.
-   */
-  getKerningValue(leftGlyph: AbstractGlyph, rightGlyph: AbstractGlyph): number {
-    const inner = this.inner.getKerningValue;
-    if (typeof inner !== "function") {
-      return 0;
-    }
-    return inner.call(this.inner, leftGlyph, rightGlyph);
-  }
-
-  getPath(text: string, x: number, y: number, fontSize: number, options?: { letterSpacing?: number }): FontPath {
-    // The renderer doesn't actually call `font.getPath` for path
-    // extraction — it walks per-glyph — but `AbstractFont` requires
-    // the method for other consumers (text measurer). Delegate to the
-    // inner Font's high-level path because opentype.js's own
-    // `getPath` already honours variation when an axis map is
-    // threaded through via `defaultRenderOptions.variation`. We
-    // therefore set the variation here as a transient default.
-    const inner = this.inner as { defaultRenderOptions?: { variation?: Readonly<Record<string, number>> } };
-    const previous = inner.defaultRenderOptions?.variation;
-    inner.defaultRenderOptions = { ...(inner.defaultRenderOptions ?? {}), variation: this.variation };
-    try {
-      return this.inner.getPath(text, x, y, fontSize, options);
-    } finally {
-      if (previous === undefined) {
-        delete inner.defaultRenderOptions?.variation;
-      } else {
-        inner.defaultRenderOptions = { ...(inner.defaultRenderOptions ?? {}), variation: previous };
+    variation.opsz = target;
+    cache.clear();
+  };
+  return {
+    unitsPerEm: inner.unitsPerEm,
+    ascender: inner.ascender,
+    descender: inner.descender,
+    ...(inner.tables === undefined ? {} : { tables: inner.tables }),
+    setOpticalSize,
+    charToGlyph: (char) => {
+      const cached = cache.get(char);
+      if (cached !== undefined) {
+        return cached;
       }
-    }
-  }
+      const rawGlyph = inner.charToGlyph(char);
+      const view = createVariationGlyphView(rawGlyph, variationApi, variation, inner.unitsPerEm);
+      cache.set(char, view);
+      return view;
+    },
+    getKerningValue: (leftGlyph, rightGlyph) => {
+      const innerKerning = inner.getKerningValue;
+      if (typeof innerKerning !== "function") {
+        return 0;
+      }
+      return innerKerning.call(inner, leftGlyph, rightGlyph);
+    },
+    getPath: (text, x, y, fontSize, options) => {
+      // The renderer doesn't actually call `font.getPath` for path
+      // extraction — it walks per-glyph — but `AbstractFont` requires
+      // the method for other consumers. Delegate to opentype.js's
+      // high-level path after threading the current variation map.
+      const fontWithDefaults = inner as { defaultRenderOptions?: { variation?: Readonly<Record<string, number>> } };
+      const previous = fontWithDefaults.defaultRenderOptions?.variation;
+      fontWithDefaults.defaultRenderOptions = { ...(fontWithDefaults.defaultRenderOptions ?? {}), variation };
+      try {
+        return inner.getPath(text, x, y, fontSize, options);
+      } finally {
+        if (previous === undefined) {
+          delete fontWithDefaults.defaultRenderOptions?.variation;
+        } else {
+          fontWithDefaults.defaultRenderOptions = { ...(fontWithDefaults.defaultRenderOptions ?? {}), variation: previous };
+        }
+      }
+    },
+  };
 }
 
-class VariationGlyphView implements AbstractGlyph {
-  readonly index: number;
-  readonly advanceWidth: number | undefined;
-
-  private readonly variation: Readonly<Record<string, number>>;
-  private readonly unitsPerEm: number;
-  // Cache the variation-applied transform from the constructor. The
-  // renderer reads `advanceWidth` first (in
-  // `calculateMixedFontTextWidth`) and then `getPath` (in the same
-  // glyph-walking loop), so the same transform is requested twice in
-  // immediate succession. Computing it once and reusing the path
-  // for `getPath` cuts variation cost in half — important for
-  // long-form pages where opentype.js's interpolation dominates
-  // render time.
-  private readonly cachedPath: FontPath;
-
-  constructor(
-    rawGlyph: AbstractGlyph,
-    variationApi: OpentypeVariationApi,
-    variation: Readonly<Record<string, number>>,
-    unitsPerEm: number,
-  ) {
-    this.variation = variation;
-    this.unitsPerEm = unitsPerEm;
-    this.index = rawGlyph.index;
-    const transform = variationApi.getTransform(rawGlyph, variation);
-    this.advanceWidth = transform.advanceWidth;
-    this.cachedPath = transform.path;
-  }
-
-  getPath(x: number, y: number, fontSize: number): FontPath {
-    // `getTransform` already accounted for `variation`; we only need
-    // to position and scale the cached path. opentype.js paths are
-    // y-up in font units; the renderer treats `y` as the y-down
-    // baseline, so the scale step flips y.
-    const scale = fontSize / this.unitsPerEm;
-    return scaleAndTranslatePath(this.cachedPath, x, y, scale);
-  }
+function createVariationGlyphView(
+  rawGlyph: AbstractGlyph,
+  variationApi: OpentypeVariationApi,
+  variation: Readonly<Record<string, number>>,
+  unitsPerEm: number,
+): AbstractGlyph {
+  // Cache the variation-applied transform at creation. The renderer
+  // reads `advanceWidth` first and then `getPath`, so reusing one
+  // transform halves the hot-path interpolation work.
+  const transform = variationApi.getTransform(rawGlyph, variation);
+  return {
+    index: rawGlyph.index,
+    advanceWidth: transform.advanceWidth,
+    getPath: (x, y, fontSize) => {
+      const scale = fontSize / unitsPerEm;
+      return scaleAndTranslatePath(transform.path, x, y, scale);
+    },
+  };
 }
 
 /**

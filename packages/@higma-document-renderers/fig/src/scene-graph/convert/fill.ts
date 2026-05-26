@@ -52,6 +52,7 @@ function resolvePaintColor(paint: FigPaint & { readonly color: FigColor }, subje
   return paint.color;
 }
 
+/** Resolve a solid paint into scene color plus paint-opacity multiplication. */
 export function resolveSolidPaintSceneAlpha(
   paint: FigPaint & { readonly color: FigColor },
   subject: string,

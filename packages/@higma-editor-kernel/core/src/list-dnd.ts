@@ -69,19 +69,21 @@ export function isValidGapDrop<TId>(dragState: ListDragState<TId>, gapIndex: num
     return false;
   }
 
-  // Check for contiguous selection — only then check for no-op
-  const isContiguous = draggingIndices.every((idx, i) => i === 0 || idx === draggingIndices[i - 1] + 1);
-
-  if (isContiguous) {
-    const firstDragging = draggingIndices[0];
-    const lastDragging = draggingIndices[draggingIndices.length - 1];
-    // Gap immediately before first or after last = no movement
-    if (gapIndex === firstDragging || gapIndex === lastDragging + 1) {
-      return false;
-    }
+  if (isNoopContiguousGapDrop(draggingIndices, gapIndex)) {
+    return false;
   }
 
   return true;
+}
+
+function isNoopContiguousGapDrop(draggingIndices: readonly number[], gapIndex: number): boolean {
+  const isContiguous = draggingIndices.every((idx, i) => i === 0 || idx === draggingIndices[i - 1] + 1);
+  if (!isContiguous) {
+    return false;
+  }
+  const firstDragging = draggingIndices[0];
+  const lastDragging = draggingIndices[draggingIndices.length - 1];
+  return gapIndex === firstDragging || gapIndex === lastDragging + 1;
 }
 
 /**

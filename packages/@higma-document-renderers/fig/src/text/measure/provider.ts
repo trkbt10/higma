@@ -24,7 +24,7 @@ function requireCanvasMetric(value: number | undefined, metric: string, family: 
   throw new Error(`Canvas text measurement requires ${metric} metrics for font "${family}"`);
 }
 
-function requireCanvasAscent(metrics: TextMetrics, family: string): number {
+function requireCanvasAscent(metrics: CanvasTextMetrics, family: string): number {
   return requireCanvasMetric(
     metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent,
     "ascent",
@@ -32,7 +32,7 @@ function requireCanvasAscent(metrics: TextMetrics, family: string): number {
   );
 }
 
-function requireCanvasDescent(metrics: TextMetrics, family: string): number {
+function requireCanvasDescent(metrics: CanvasTextMetrics, family: string): number {
   return requireCanvasMetric(
     metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent,
     "descent",
@@ -40,25 +40,25 @@ function requireCanvasDescent(metrics: TextMetrics, family: string): number {
   );
 }
 
-/**
- * Minimal interface for canvas context text measurement
- */
-type TextMeasureContext = {
-  font: string;
-  measureText(text: string): TextMetrics;
+export type CanvasTextMetrics = {
+  readonly width: number;
+  readonly actualBoundingBoxAscent?: number;
+  readonly actualBoundingBoxDescent?: number;
+  readonly fontBoundingBoxAscent?: number;
+  readonly fontBoundingBoxDescent?: number;
 };
 
-function createTextMeasureContext(): TextMeasureContext | null {
-  if (typeof document !== "undefined") {
-    const canvas = document.createElement("canvas");
-    return canvas.getContext("2d");
-  }
-  if (typeof OffscreenCanvas !== "undefined") {
-    const canvas = new OffscreenCanvas(1, 1);
-    return canvas.getContext("2d");
-  }
-  return null;
-}
+/**
+ * Minimal interface for canvas context text measurement.
+ */
+export type CanvasTextMeasureContext = {
+  font: string;
+  measureText(text: string): CanvasTextMetrics;
+};
+
+export type CanvasMeasurementProviderInput = {
+  readonly context: CanvasTextMeasureContext;
+};
 
 /**
  * Build CSS font string from font spec.
@@ -99,32 +99,12 @@ function adjustForLetterSpacing(
  * Uses the Canvas 2D API for text measurement.
  * Works in browser and Node.js (with canvas package).
  */
-export function createCanvasMeasurementProvider(): MeasurementProvider {
-  const contextRef = { value: null as TextMeasureContext | null };
-
-  function getContext(): TextMeasureContext {
-    if (contextRef.value) {
-      return contextRef.value;
-    }
-
-    contextRef.value = createTextMeasureContext();
-
-    if (!contextRef.value) {
-      throw new Error(
-        "Canvas context not available. " +
-          "Use a different measurement provider in non-browser environments."
-      );
-    }
-
-    return contextRef.value;
-  }
-
+export function createCanvasMeasurementProvider({ context }: CanvasMeasurementProviderInput): MeasurementProvider {
   return {
     measureText(text: string, spec: FontSpec): TextMeasurement {
-      const ctx = getContext();
-      ctx.font = buildFontString(spec);
+      context.font = buildFontString(spec);
 
-      const metrics = ctx.measureText(text);
+      const metrics = context.measureText(text);
 
       const width = adjustForLetterSpacing(
         metrics.width,
@@ -143,26 +123,23 @@ export function createCanvasMeasurementProvider(): MeasurementProvider {
     },
 
     measureCharWidths(text: string, spec: FontSpec): readonly number[] {
-      const ctx = getContext();
-      ctx.font = buildFontString(spec);
+      context.font = buildFontString(spec);
 
-      const widths: number[] = [];
       const letterSpacing = spec.letterSpacing ?? 0;
-
-      for (let i = 0; i < text.length; i++) {
-        const char = text[i];
-        const charWidth = ctx.measureText(char).width;
-        widths.push(i < text.length - 1 ? charWidth + letterSpacing : charWidth);
-      }
-
-      return widths;
+      return Array.from({ length: text.length }, (_entry, index) => {
+        const char = text[index];
+        const charWidth = context.measureText(char).width;
+        if (index < text.length - 1) {
+          return charWidth + letterSpacing;
+        }
+        return charWidth;
+      });
     },
 
     getFontMetrics(spec: FontSpec): FontMetrics {
-      const ctx = getContext();
-      ctx.font = buildFontString(spec);
+      context.font = buildFontString(spec);
 
-      const metrics = ctx.measureText("Xg");
+      const metrics = context.measureText("Xg");
 
       const ascender = requireCanvasAscent(metrics, spec.font.family);
       const descender = requireCanvasDescent(metrics, spec.font.family);

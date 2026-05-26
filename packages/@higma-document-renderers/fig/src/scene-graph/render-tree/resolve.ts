@@ -30,13 +30,13 @@ import {
   resolveTopFillWithRenderSettings,
   resolveStrokeResult,
   resolveEffects,
-  resolveEffectBounds,
   finalizeGradientDefs,
   finalizeImagePatternDefsWithRenderSettings,
   resolveFigmaRenderExportSettings,
   resolveFigmaBlurStdDeviation,
   renderExportSettingsCacheKey,
   buildEffectStack,
+  resolveFrameSurfaceFilterEffects,
   type IdGenerator,
   type ResolvedFill,
   type ResolvedFilter,
@@ -62,6 +62,14 @@ import {
 } from "@higma-primitives/path";
 import { createRenderTreeIdGenerator } from "./id-generator";
 import { buildClipShape } from "./clip-shape";
+import {
+  getRenderNodeLocalAuthoredBounds,
+  getRenderNodeLocalFrameChildClipBounds,
+  RENDER_NODE_SOURCE_TRANSFORMS,
+  resolveRenderNodeLocalSubtreeVisualBounds,
+  transformBounds,
+  type Bounds,
+} from "./render-node-visual-coverage";
 
 /**
  * Decimal precision for path `d` coordinates held in the RenderTree.
@@ -208,7 +216,6 @@ function resolveFrameBackground(
   node: FrameNode,
   hasFills: boolean,
   strokeRendering: StrokeRendering | undefined,
-  filterAttr: string | undefined,
   ids: IdGenerator,
   defs: RenderDef[],
   exportSettings: ResolvedFigmaRenderExportSettings,
@@ -222,75 +229,10 @@ function resolveFrameBackground(
     fill: fillResult,
     fillLayers,
     strokeRendering,
-    filterAttr,
   };
 }
 
-type LocalBox = {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-};
-
-type AffineMatrix2x3 = {
-  readonly m00: number; readonly m01: number; readonly m02: number;
-  readonly m10: number; readonly m11: number; readonly m12: number;
-};
-
-const IDENTITY_AFFINE: AffineMatrix2x3 = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 const GEOMETRY_FLOAT_EPSILON = 1e-4;
-
-function composeAffine(parent: AffineMatrix2x3, child: AffineMatrix2x3): AffineMatrix2x3 {
-  return {
-    m00: parent.m00 * child.m00 + parent.m01 * child.m10,
-    m01: parent.m00 * child.m01 + parent.m01 * child.m11,
-    m02: parent.m00 * child.m02 + parent.m01 * child.m12 + parent.m02,
-    m10: parent.m10 * child.m00 + parent.m11 * child.m10,
-    m11: parent.m10 * child.m01 + parent.m11 * child.m11,
-    m12: parent.m10 * child.m02 + parent.m11 * child.m12 + parent.m12,
-  };
-}
-
-function transformLocalBox(box: LocalBox, m: AffineMatrix2x3): LocalBox {
-  const xs = [
-    m.m00 * box.x + m.m01 * box.y + m.m02,
-    m.m00 * (box.x + box.w) + m.m01 * box.y + m.m02,
-    m.m00 * box.x + m.m01 * (box.y + box.h) + m.m02,
-    m.m00 * (box.x + box.w) + m.m01 * (box.y + box.h) + m.m02,
-  ];
-  const ys = [
-    m.m10 * box.x + m.m11 * box.y + m.m12,
-    m.m10 * (box.x + box.w) + m.m11 * box.y + m.m12,
-    m.m10 * box.x + m.m11 * (box.y + box.h) + m.m12,
-    m.m10 * (box.x + box.w) + m.m11 * (box.y + box.h) + m.m12,
-  ];
-  const xMin = Math.min(...xs);
-  const xMax = Math.max(...xs);
-  const yMin = Math.min(...ys);
-  const yMax = Math.max(...ys);
-  return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
-}
-
-function unionLocalBox(a: LocalBox, b: LocalBox): LocalBox {
-  const xMin = Math.min(a.x, b.x);
-  const yMin = Math.min(a.y, b.y);
-  const xMax = Math.max(a.x + a.w, b.x + b.w);
-  const yMax = Math.max(a.y + a.h, b.y + b.h);
-  return { x: xMin, y: yMin, w: xMax - xMin, h: yMax - yMin };
-}
-
-function isLocalBox(box: LocalBox | undefined): box is LocalBox {
-  return box !== undefined;
-}
-
-function mergeLocalBoxes(boxes: readonly LocalBox[]): LocalBox | undefined {
-  const first = boxes[0];
-  if (first === undefined) {
-    return undefined;
-  }
-  return boxes.slice(1).reduce((acc, box) => unionLocalBox(acc, box), first);
-}
 
 function roundedRectRadiiFromPathClip(
   clip: Extract<ClipShape, { readonly type: "path" }>,
@@ -358,27 +300,54 @@ function nearlyEqual(a: number, b: number): boolean {
   return Math.abs(a - b) <= GEOMETRY_FLOAT_EPSILON;
 }
 
-function frameClipCropsChildren(node: FrameNode): boolean {
-  return node.children
-    .map((child) => sceneNodeClipLocalBoxRecursive(child, IDENTITY_AFFINE))
-    .filter(isLocalBox)
-    .some((box) => !frameClipContainsLocalBox(node, box));
+function frameClipCropsChildren(node: FrameNode, children: readonly RenderNode[]): boolean {
+  return children
+    .map((child) => transformedRenderNodeFrameChildClipBounds(child))
+    .filter((bounds): bounds is Bounds => bounds !== null)
+    .some((bounds) => !frameClipContainsBounds(node, bounds));
 }
 
-function frameClipContainsLocalBox(node: FrameNode, box: LocalBox): boolean {
+function transformedRenderNodeAuthoredBounds(node: RenderNode): Bounds | null {
+  const bounds = getRenderNodeLocalAuthoredBounds(node);
+  if (bounds === null) {
+    return null;
+  }
+  return transformBounds(bounds, node.source.transform);
+}
+
+function transformedRenderNodeFrameChildClipBounds(node: RenderNode): Bounds | null {
+  const bounds = getRenderNodeLocalFrameChildClipBounds(node);
+  if (bounds === null) {
+    return null;
+  }
+  return transformBounds(bounds, node.source.transform);
+}
+
+function transformedRenderNodeSubtreeVisualBounds(node: RenderNode): Bounds | null {
+  const bounds = resolveRenderNodeLocalSubtreeVisualBounds({
+    node,
+    visualTransform: RENDER_NODE_SOURCE_TRANSFORMS,
+  });
+  if (bounds === null) {
+    return null;
+  }
+  return transformBounds(bounds, node.source.transform);
+}
+
+function frameClipContainsBounds(node: FrameNode, bounds: Bounds): boolean {
   const clip = node.clip;
   if (clip === undefined) {
-    return frameRectContainsLocalBox(node.width, node.height, box);
+    return frameRectContainsBounds(node.width, node.height, bounds);
   }
   switch (clip.type) {
     case "rect":
-      return frameRectContainsLocalBox(clip.width, clip.height, box);
+      return frameRectContainsBounds(clip.width, clip.height, bounds);
     case "path": {
       const radii = roundedRectRadiiFromPathClip(clip, node.width, node.height);
       if (radii === undefined) {
         return false;
       }
-      return frameRectContainsLocalBox(node.width, node.height, box);
+      return frameRectContainsBounds(node.width, node.height, bounds);
     }
   }
 }
@@ -387,15 +356,15 @@ function frameClipContainsLocalBox(node: FrameNode, box: LocalBox): boolean {
 // Rounded corners stay on the frame surface/mask; children that only cover
 // the corner curve but remain inside the authored rectangle do not create a
 // child clip.
-function frameRectContainsLocalBox(
+function frameRectContainsBounds(
   width: number,
   height: number,
-  box: LocalBox,
+  bounds: Bounds,
 ): boolean {
-  return box.x >= -GEOMETRY_FLOAT_EPSILON
-    && box.y >= -GEOMETRY_FLOAT_EPSILON
-    && box.x + box.w <= width + GEOMETRY_FLOAT_EPSILON
-    && box.y + box.h <= height + GEOMETRY_FLOAT_EPSILON;
+  return bounds.minX >= -GEOMETRY_FLOAT_EPSILON
+    && bounds.minY >= -GEOMETRY_FLOAT_EPSILON
+    && bounds.maxX <= width + GEOMETRY_FLOAT_EPSILON
+    && bounds.maxY <= height + GEOMETRY_FLOAT_EPSILON;
 }
 
 function resolveFrameChildClipId(
@@ -418,7 +387,7 @@ function resolveFrameChildClipId(
   if (node.width <= 0 || node.height <= 0) {
     return undefined;
   }
-  if (!frameClipCropsChildren(node)) {
+  if (!frameClipCropsChildren(node, children)) {
     return undefined;
   }
   const childClipId = ids.getNextId("clip");
@@ -535,6 +504,27 @@ function resolveTextContent(node: TextNode): RenderTextNode["content"] {
   return { mode: "glyphs", runs: [] };
 }
 
+function textContentRequiresBaseRun(content: RenderTextNode["content"]): boolean {
+  if (content.mode === "glyphs") {
+    return content.runs.length > 0;
+  }
+  return content.layout.lines.length > 0;
+}
+
+function requireRenderableTextBaseRun(
+  node: TextNode,
+  content: RenderTextNode["content"],
+): TextNode["runs"][number] | undefined {
+  const baseRun = node.runs[0];
+  if (baseRun !== undefined) {
+    return baseRun;
+  }
+  if (!textContentRequiresBaseRun(content)) {
+    return undefined;
+  }
+  throw new Error(`resolveRenderTree: text node ${node.id} has renderable text content but no base text run`);
+}
+
 /**
  * Group glyph contours by which `TextRun` their `firstCharacter` falls
  * into and serialise per-run path data. Decorations always paint with
@@ -649,18 +639,11 @@ function colorToCssHex(color: { readonly r: number; readonly g: number; readonly
   return `#${toByte(color.r)}${toByte(color.g)}${toByte(color.b)}`;
 }
 
-function hexToSceneColor(hex: string): { readonly r: number; readonly g: number; readonly b: number; readonly a: number } {
-  const match = /^#([0-9a-f]{6})$/iu.exec(hex);
-  if (match === null) {
+function requireTextRunFillColor(hex: string): string {
+  if (!/^#[0-9a-f]{6}$/iu.test(hex)) {
     throw new Error(`resolveRenderTree: text run fillColor must be a six-digit hex color, got ${hex}`);
   }
-  const value = match[1];
-  return {
-    r: parseInt(value.slice(0, 2), 16) / 255,
-    g: parseInt(value.slice(2, 4), 16) / 255,
-    b: parseInt(value.slice(4, 6), 16) / 255,
-    a: 1,
-  };
+  return hex;
 }
 
 function resolveImageDataUri(node: ImageNode): string | undefined {
@@ -714,7 +697,7 @@ function resolveWrapper(
   const elementBounds = getNodeBounds(node);
   const transformStr = matrixToSvgTransform(node.transform);
   const effectStack = buildEffectStack(node.effects);
-  const filterSource = resolveFilterSource(node, effectStack.foregroundEffects);
+  const filterSource = resolveFilterSource(node, effectStack);
   const filterEffects = foregroundFilterEffectsWithBackdropRegion(effectStack, effectStack.foregroundEffects);
   const filterResult = resolveEffects(
     filterEffects,
@@ -742,9 +725,9 @@ function resolveWrapper(
 
 function resolveFilterSource(
   node: SceneNode,
-  effects: readonly Effect[],
+  effectStack: ResolvedEffectStack,
 ): "effect-shape" | undefined {
-  if (!effects.some((effect) => effect.type === "drop-shadow" || effect.type === "inner-shadow")) {
+  if (effectStack.foregroundDropShadows.length === 0 && effectStack.foregroundInnerShadows.length === 0) {
     return undefined;
   }
   if (nodeHasVisibleEffectSource(node)) {
@@ -809,18 +792,49 @@ function foregroundFilterEffectsWithBackdropRegion(
 }
 
 function resolveFrameSurfaceFilterAttr(
-  effects: readonly Effect[],
+  effectStack: ResolvedEffectStack,
   ids: IdGenerator,
   defs: RenderDef[],
   bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
 ): string | undefined {
-  const surfaceEffects = effects.filter((effect) => effect.type === "drop-shadow" || effect.type === "inner-shadow");
-  const filterResult = resolveEffects(surfaceEffects, ids, bounds);
+  const filterResult = resolveEffects(resolveFrameSurfaceFilterEffects(effectStack), ids, bounds);
   if (filterResult === undefined) {
     return undefined;
   }
   defs.push({ type: "filter", filter: filterResult });
   return filterResult.filterAttr;
+}
+
+function resolveOptionalFrameSurfaceFilterAttr({
+  effectStack,
+  ids,
+  defs,
+  bounds,
+  hasFrameSurfaceFilterSource,
+}: {
+  readonly effectStack: ResolvedEffectStack;
+  readonly ids: IdGenerator;
+  readonly defs: RenderDef[];
+  readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  readonly hasFrameSurfaceFilterSource: boolean;
+}): string | undefined {
+  if (!hasFrameSurfaceFilterSource) {
+    return undefined;
+  }
+  return resolveFrameSurfaceFilterAttr(effectStack, ids, defs, bounds);
+}
+
+function renderFrameHasSurfaceFilterSource({
+  hasFills,
+  strokeRendering,
+}: {
+  readonly hasFills: boolean;
+  readonly strokeRendering: StrokeRendering | undefined;
+}): boolean {
+  if (hasFills) {
+    return true;
+  }
+  return strokeRendering?.mode === "uniform";
 }
 
 // =============================================================================
@@ -905,7 +919,7 @@ function resolveMask(
     return undefined;
   }
   const contentRendering = resolveMaskContentRendering(node.mask.maskType, resolvedMaskContent);
-  const bounds = resolveMaskContentBounds(node.mask.maskContent, contentRendering);
+  const bounds = resolveMaskContentBounds(resolvedMaskContent, contentRendering);
   defs.push({
     type: "mask",
     id: maskId,
@@ -955,224 +969,29 @@ function renderMaskContentHasAuthoredPaint(node: RenderNode): boolean {
 }
 
 function resolveMaskContentBounds(
-  maskContent: SceneNode,
+  maskContent: RenderNode,
   contentRendering: RenderMaskContentRendering,
 ): { readonly x: number; readonly y: number; readonly width: number; readonly height: number } {
-  const box = resolveMaskContentBoundsBox(maskContent, contentRendering);
-  if (box === undefined) {
+  const bounds = resolveRenderMaskContentBounds(maskContent, contentRendering);
+  if (bounds === null) {
     throw new Error(`Mask source ${maskContent.id} has no measurable geometry for its SVG mask region`);
   }
-  return { x: box.x, y: box.y, width: box.w, height: box.h };
-}
-
-function resolveMaskContentBoundsBox(
-  maskContent: SceneNode,
-  contentRendering: RenderMaskContentRendering,
-): LocalBox | undefined {
-  if (contentRendering === "source-paint") {
-    return sceneNodeAuthoredLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
-  }
-  return sceneNodeVisualLocalBoxRecursive(maskContent, IDENTITY_AFFINE);
-}
-
-function sceneNodeAuthoredLocalBoxRecursive(
-  node: SceneNode,
-  parentTransform: AffineMatrix2x3,
-): LocalBox | undefined {
-  if (node.visible === false) { return undefined; }
-  const localBox = sceneNodeAuthoredLocalBox(node);
-  if (localBox === undefined) {
-    return undefined;
-  }
-  return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
-}
-
-function sceneNodeAuthoredLocalBox(node: SceneNode): LocalBox | undefined {
-  const own = sceneNodeOwnIntrinsicLocalBox(node);
-  if (node.type !== "frame" && node.type !== "group") {
-    return own;
-  }
-  const childBoxes = node.children
-    .map((child) => sceneNodeAuthoredLocalBoxRecursive(child, IDENTITY_AFFINE))
-    .filter(isLocalBox);
-  return mergeLocalBoxes([own, ...childBoxes].filter(isLocalBox));
-}
-
-function sceneNodeVisualLocalBoxRecursive(
-  node: SceneNode,
-  parentTransform: AffineMatrix2x3,
-): LocalBox | undefined {
-  if (node.visible === false) { return undefined; }
-  const localBox = sceneNodeVisualLocalBox(node);
-  if (localBox === undefined) {
-    return undefined;
-  }
-  return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
-}
-
-function sceneNodeClipLocalBoxRecursive(
-  node: SceneNode,
-  parentTransform: AffineMatrix2x3,
-): LocalBox | undefined {
-  if (node.visible === false) { return undefined; }
-  const localBox = sceneNodeClipLocalBox(node);
-  if (localBox === undefined) {
-    return undefined;
-  }
-  return transformLocalBox(localBox, composeAffine(parentTransform, node.transform));
-}
-
-function sceneNodeClipLocalBox(node: SceneNode): LocalBox | undefined {
-  const own = sceneNodeClipIntrinsicLocalBox(node);
-  if (node.type !== "frame" && node.type !== "group") {
-    return own;
-  }
-  const childBoxes = node.children
-    .map((child) => sceneNodeClipLocalBoxRecursive(child, IDENTITY_AFFINE))
-    .filter(isLocalBox);
-  return mergeLocalBoxes([own, ...childBoxes].filter(isLocalBox));
-}
-
-function sceneNodeClipIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
-  const own = sceneNodeOwnIntrinsicLocalBox(node);
-  const stroke = sceneNodeClipStrokeLocalBox(node);
-  return mergeLocalBoxes([own, stroke].filter(isLocalBox));
-}
-
-function sceneNodeVisualLocalBox(node: SceneNode): LocalBox | undefined {
-  const own = sceneNodeVisualIntrinsicLocalBox(node);
-  if (node.type !== "frame" && node.type !== "group") {
-    return own === undefined ? undefined : sceneNodeLocalBoxWithEffects(node, own);
-  }
-  const childBoxes = node.children
-    .map((child) => sceneNodeVisualLocalBoxRecursive(child, IDENTITY_AFFINE))
-    .filter(isLocalBox);
-  const merged = mergeLocalBoxes([own, ...childBoxes].filter(isLocalBox));
-  return merged === undefined ? undefined : sceneNodeLocalBoxWithEffects(node, merged);
-}
-
-function sceneNodeLocalBoxWithEffects(node: SceneNode, box: LocalBox): LocalBox {
-  const effectBounds = resolveEffectBounds(node.effects, { x: box.x, y: box.y, width: box.w, height: box.h });
-  return { x: effectBounds.x, y: effectBounds.y, w: effectBounds.width, h: effectBounds.height };
-}
-
-function sceneNodeVisualIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
-  const own = sceneNodeOwnIntrinsicLocalBox(node);
-  const stroke = sceneNodeStrokeLocalBox(node);
-  return mergeLocalBoxes([own, stroke].filter(isLocalBox));
-}
-
-function sceneNodeClipStrokeLocalBox(node: SceneNode): LocalBox | undefined {
-  if (node.type !== "path") {
-    return sceneNodeStrokeLocalBox(node);
-  }
-  if (node.stroke?.align === "INSIDE") {
-    return undefined;
-  }
-  return sceneNodeStrokeLocalBox(node);
-}
-
-function sceneNodeOwnIntrinsicLocalBox(node: SceneNode): LocalBox | undefined {
-  switch (node.type) {
-    case "frame":
-    case "rect":
-    case "image":
-    case "text":
-      return { x: 0, y: 0, w: node.width, h: node.height };
-    case "ellipse":
-      return { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
-    case "path": {
-      const bbox = pathContoursBoundingBox(node.contours);
-      if (bbox) {
-        return { x: bbox.x, y: bbox.y, w: bbox.w, h: bbox.h };
-      }
-      if (node.width !== undefined && node.height !== undefined) {
-        return { x: 0, y: 0, w: node.width, h: node.height };
-      }
-      return undefined;
-    }
-    case "group":
-      return undefined;
-  }
-}
-
-function sceneNodeStrokeLocalBox(node: SceneNode): LocalBox | undefined {
-  switch (node.type) {
-    case "frame":
-    case "rect": {
-      const own = { x: 0, y: 0, w: node.width, h: node.height };
-      return expandBoxForMaskStroke(own, node.stroke, node.individualStrokeWeights);
-    }
-    case "ellipse": {
-      const own = { x: node.cx - node.rx, y: node.cy - node.ry, w: node.rx * 2, h: node.ry * 2 };
-      return expandBoxForMaskStroke(own, node.stroke, undefined);
-    }
-    case "path": {
-      const strokeBox = node.strokeContours === undefined ? undefined : pathContoursBoundingBox(node.strokeContours);
-      if (strokeBox !== undefined) {
-        return { x: strokeBox.x, y: strokeBox.y, w: strokeBox.w, h: strokeBox.h };
-      }
-      const own = sceneNodeOwnIntrinsicLocalBox(node);
-      if (own === undefined) {
-        return undefined;
-      }
-      return expandBoxForMaskStroke(own, node.stroke, undefined);
-    }
-    case "image":
-    case "text":
-    case "group":
-      return undefined;
-  }
-}
-
-function expandBoxForMaskStroke(
-  box: LocalBox,
-  stroke: Stroke | undefined,
-  individualStrokeWeights: FrameNode["individualStrokeWeights"] | undefined,
-): LocalBox | undefined {
-  if (stroke === undefined) {
-    return undefined;
-  }
-  if (individualStrokeWeights !== undefined) {
-    return expandBoxByOutsets(box, {
-      top: strokeOutset(individualStrokeWeights.top, stroke.align),
-      right: strokeOutset(individualStrokeWeights.right, stroke.align),
-      bottom: strokeOutset(individualStrokeWeights.bottom, stroke.align),
-      left: strokeOutset(individualStrokeWeights.left, stroke.align),
-    });
-  }
-  const outset = strokeOutset(stroke.width, stroke.align);
-  return expandBoxByOutsets(box, { top: outset, right: outset, bottom: outset, left: outset });
-}
-
-function strokeOutset(width: number, align: Stroke["align"]): number {
-  if (width <= 0) {
-    return 0;
-  }
-  switch (align) {
-    case "INSIDE":
-      return 0;
-    case "OUTSIDE":
-      return width;
-    case "CENTER":
-    case undefined:
-      return width / 2;
-  }
-}
-
-function expandBoxByOutsets(
-  box: LocalBox,
-  outsets: { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number },
-): LocalBox | undefined {
-  if (outsets.top === 0 && outsets.right === 0 && outsets.bottom === 0 && outsets.left === 0) {
-    return undefined;
-  }
   return {
-    x: box.x - outsets.left,
-    y: box.y - outsets.top,
-    w: box.w + outsets.left + outsets.right,
-    h: box.h + outsets.top + outsets.bottom,
+    x: bounds.minX,
+    y: bounds.minY,
+    width: bounds.maxX - bounds.minX,
+    height: bounds.maxY - bounds.minY,
   };
+}
+
+function resolveRenderMaskContentBounds(
+  maskContent: RenderNode,
+  contentRendering: RenderMaskContentRendering,
+): Bounds | null {
+  if (contentRendering === "source-paint") {
+    return transformedRenderNodeAuthoredBounds(maskContent);
+  }
+  return transformedRenderNodeSubtreeVisualBounds(maskContent);
 }
 
 // =============================================================================
@@ -1560,7 +1379,6 @@ function resolveFrameNode(
   const { wrapper, effectStack } = resolveFrameWrapper(node, ids, defs);
   const clampedRadius = clampCornerRadius(node.cornerRadius, node.width, node.height);
   const surfaceBounds = sceneClipElementBounds(node.surfaceShape);
-  const surfaceFilterAttr = resolveFrameSurfaceFilterAttr(effectStack.foregroundEffects, ids, defs, surfaceBounds);
   const surfaceShape = sceneClipToFrameSurfaceShape(node.surfaceShape);
   const surfaceClipShape = sceneClipToClipPathShape(node.surfaceShape);
 
@@ -1568,8 +1386,16 @@ function resolveFrameNode(
   const hasFills = node.fills.length > 0;
 
   const strokeRendering = resolveFrameStrokeRendering(node, surfaceShape, ids, defs, surfaceClipShape);
-  const background = resolveFrameBackground(node, hasFills, strokeRendering, surfaceFilterAttr, ids, defs, exportSettings);
   const children = resolvedChildren ?? resolveChildren(node.children, ids, exportSettings);
+  const hasFrameSurfaceFilterSource = renderFrameHasSurfaceFilterSource({ hasFills, strokeRendering });
+  const surfaceFilterAttr = resolveOptionalFrameSurfaceFilterAttr({
+    effectStack,
+    ids,
+    defs,
+    bounds: surfaceBounds,
+    hasFrameSurfaceFilterSource,
+  });
+  const background = resolveFrameBackground(node, hasFills, strokeRendering, ids, defs, exportSettings);
   const childClipId = resolveFrameChildClipId(node, children, ids, defs, clampedRadius);
 
   // Finalize surface paint coordinates using the actual Kiwi surface,
@@ -1596,6 +1422,7 @@ function resolveFrameNode(
     defs,
     source: node,
     background,
+    surfaceFilterAttr,
     children,
     childClipId,
     width: node.width,
@@ -2015,12 +1842,11 @@ function resolvePathStrokeShape(
 function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: ResolvedFigmaRenderExportSettings): RenderTextNode {
   const defs: RenderDef[] = [];
   const { wrapper } = resolveWrapper(node, ids, defs);
-  const baseRun = node.runs[0];
-  const fillColor = baseRun?.fillColor ?? "#000000";
-  const fillOpacity = baseRun !== undefined && baseRun.fillOpacity < 1 ? baseRun.fillOpacity : undefined;
-
   const textClipId = resolveTextClipId(node, ids, defs);
   const content = resolveTextContent(node);
+  const baseRun = requireRenderableTextBaseRun(node, content);
+  const fillColor = baseRun === undefined ? undefined : requireTextRunFillColor(baseRun.fillColor);
+  const fillOpacity = baseRun !== undefined && baseRun.fillOpacity < 1 ? baseRun.fillOpacity : undefined;
 
   const mask = resolveMask(node, ids, defs, exportSettings);
 
@@ -2041,8 +1867,6 @@ function resolveTextNode(node: TextNode, ids: IdGenerator, exportSettings: Resol
     content,
     sourceGlyphContours: node.glyphContours,
     sourceDecorationContours: node.decorationContours,
-    sourceFillColor: hexToSceneColor(fillColor),
-    sourceFillOpacity: baseRun?.fillOpacity ?? 0,
     sourceTextLineLayout: node.textLineLayout,
     sourceTextAutoResize: node.textAutoResize,
     mask,
@@ -2150,23 +1974,20 @@ function resolveChildren(
 }
 
 // =============================================================================
-// Incremental resolution cache
+// Reference reuse state
 // =============================================================================
 
-type CachedRenderNode = {
-  readonly source: SceneNode;
-  readonly node: RenderNode;
-};
+type ReadonlyWeakMap<K extends object, V> = Pick<WeakMap<K, V>, "get" | "has">;
 
-export type RenderTreeResolutionCache = {
-  readonly nodesById: ReadonlyMap<string, CachedRenderNode>;
+export type RenderTreeReferenceReuseState = {
+  readonly nodesBySceneNode: ReadonlyWeakMap<SceneNode, RenderNode>;
   readonly rootChildren: readonly RenderNode[];
   readonly exportSettingsKey: RenderExportSettingsCacheKey;
 };
 
-export type RenderTreeResolutionResult = {
+export type RenderTreeReferenceReuseResult = {
   readonly renderTree: RenderTree;
-  readonly cache: RenderTreeResolutionCache;
+  readonly referenceReuseState: RenderTreeReferenceReuseState;
 };
 
 function renderChildrenEqual(a: readonly RenderNode[], b: readonly RenderNode[]): boolean {
@@ -2184,26 +2005,26 @@ function cachedContainerChildren(node: RenderNode): readonly RenderNode[] | unde
 }
 
 function cacheReusableForExportSettings(
-  previousCache: RenderTreeResolutionCache | undefined,
+  previousState: RenderTreeReferenceReuseState | undefined,
   cacheKey: RenderExportSettingsCacheKey,
-): RenderTreeResolutionCache | undefined {
-  if (previousCache === undefined) {
+): RenderTreeReferenceReuseState | undefined {
+  if (previousState === undefined) {
     return undefined;
   }
-  if (previousCache.exportSettingsKey !== cacheKey) {
+  if (previousState.exportSettingsKey !== cacheKey) {
     return undefined;
   }
-  return previousCache;
+  return previousState;
 }
 
-function cachedPreviousContainerChildren(previous: CachedRenderNode | undefined): readonly RenderNode[] | undefined {
+function cachedPreviousContainerChildren(previous: RenderNode | undefined): readonly RenderNode[] | undefined {
   if (previous === undefined) {
     return undefined;
   }
-  return cachedContainerChildren(previous.node);
+  return cachedContainerChildren(previous);
 }
 
-function resolveContainerNodeIncremental(
+function resolveContainerNodeWithResolvedChildren(
   node: GroupNode | FrameNode,
   ids: IdGenerator,
   children: readonly RenderNode[],
@@ -2293,65 +2114,69 @@ function markViewportRootChildClips(
   return marked;
 }
 
-function resolveNodeIncremental(
+function resolveNodeWithReferenceReuse(
   node: SceneNode,
   ids: IdGenerator,
-  previousCache: RenderTreeResolutionCache | undefined,
-  nextNodesById: Map<string, CachedRenderNode>,
+  previousState: RenderTreeReferenceReuseState | undefined,
+  nextNodesBySceneNode: WeakMap<SceneNode, RenderNode>,
   exportSettings: ResolvedFigmaRenderExportSettings,
 ): RenderNode | null {
   if (!node.visible) {
     return null;
   }
 
-  const previous = previousCache?.nodesById.get(node.id);
+  const previous = previousState?.nodesBySceneNode.get(node);
 
-  if (previous?.source === node) {
-    nextNodesById.set(node.id, previous);
-    return previous.node;
+  if (previous !== undefined) {
+    nextNodesBySceneNode.set(node, previous);
+    return previous;
   }
 
   if (node.type === "group" || node.type === "frame") {
-    return resolveContainerNodeWithIncrementalChildren(node, ids, previous, previousCache, nextNodesById, exportSettings);
+    return resolveContainerNodeWithReferenceReuse(node, ids, previous, previousState, nextNodesBySceneNode, exportSettings);
   }
 
   const resolved = resolveNode(node, ids, exportSettings);
   if (!resolved) {
     return null;
   }
-  nextNodesById.set(node.id, { source: node, node: resolved });
+  nextNodesBySceneNode.set(node, resolved);
   return resolved;
 }
 
-function resolveContainerNodeWithIncrementalChildren(
+function resolveContainerNodeWithReferenceReuse(
   node: GroupNode | FrameNode,
   ids: IdGenerator,
-  previous: CachedRenderNode | undefined,
-  previousCache: RenderTreeResolutionCache | undefined,
-  nextNodesById: Map<string, CachedRenderNode>,
+  previous: RenderNode | undefined,
+  previousState: RenderTreeReferenceReuseState | undefined,
+  nextNodesBySceneNode: WeakMap<SceneNode, RenderNode>,
   exportSettings: ResolvedFigmaRenderExportSettings,
 ): RenderNode {
-  const children = resolveChildrenIncremental(node.children, ids, previousCache, nextNodesById, exportSettings);
+  const children = resolveChildrenWithReferenceReuse(node.children, ids, previousState, nextNodesBySceneNode, exportSettings);
   const previousChildren = cachedPreviousContainerChildren(previous);
-  if (previous === undefined || previousChildren === undefined || !renderChildrenEqual(previousChildren, children)) {
-    const resolved = resolveContainerNodeIncremental(node, ids, children, exportSettings);
-    nextNodesById.set(node.id, { source: node, node: resolved });
+  if (
+    previous === undefined ||
+    previousChildren === undefined ||
+    !renderChildrenEqual(previousChildren, children)
+  ) {
+    const resolved = resolveContainerNodeWithResolvedChildren(node, ids, children, exportSettings);
+    nextNodesBySceneNode.set(node, resolved);
     return resolved;
   }
-  nextNodesById.set(node.id, previous);
-  return previous.node;
+  nextNodesBySceneNode.set(node, previous);
+  return previous;
 }
 
-function resolveChildrenIncremental(
+function resolveChildrenWithReferenceReuse(
   children: readonly SceneNode[],
   ids: IdGenerator,
-  previousCache: RenderTreeResolutionCache | undefined,
-  nextNodesById: Map<string, CachedRenderNode>,
+  previousState: RenderTreeReferenceReuseState | undefined,
+  nextNodesBySceneNode: WeakMap<SceneNode, RenderNode>,
   exportSettings: ResolvedFigmaRenderExportSettings,
 ): RenderNode[] {
   const result: RenderNode[] = [];
   for (const child of children) {
-    const resolved = resolveNodeIncremental(child, ids, previousCache, nextNodesById, exportSettings);
+    const resolved = resolveNodeWithReferenceReuse(child, ids, previousState, nextNodesBySceneNode, exportSettings);
     if (resolved) {
       result.push(resolved);
     }
@@ -2392,28 +2217,28 @@ export function resolveRenderTree(sceneGraph: SceneGraph, options?: SceneGraphRe
 /**
  * Resolve a SceneGraph while reusing RenderNode objects for unchanged nodes.
  *
- * The cache is explicit and caller-owned. This keeps standalone string
- * rendering deterministic while allowing the React editor path to preserve
- * RenderNode identity across partial document edits.
+ * The reference reuse state is explicit and caller-owned. This keeps
+ * standalone string rendering deterministic while allowing the interactive
+ * editor path to preserve RenderNode object references across partial document edits.
  */
-export function resolveRenderTreeIncremental(
+export function resolveRenderTreeWithReferenceReuse(
   sceneGraph: SceneGraph,
-  previousCache: RenderTreeResolutionCache | undefined,
+  previousState: RenderTreeReferenceReuseState | undefined,
   options?: SceneGraphRenderOptions,
-): RenderTreeResolutionResult {
+): RenderTreeReferenceReuseResult {
   const ids = createRenderTreeIdGenerator();
-  const nextNodesById = new Map<string, CachedRenderNode>();
+  const nextNodesBySceneNode = new WeakMap<SceneNode, RenderNode>();
   const exportSettings = resolveFigmaRenderExportSettings(options?.exportSettings);
   const cacheKey = renderExportSettingsCacheKey(exportSettings);
-  const reusablePreviousCache = cacheReusableForExportSettings(previousCache, cacheKey);
-  const resolvedChildren = resolveChildrenIncremental(sceneGraph.root.children, ids, reusablePreviousCache, nextNodesById, exportSettings);
+  const reusablePreviousState = cacheReusableForExportSettings(previousState, cacheKey);
+  const resolvedChildren = resolveChildrenWithReferenceReuse(sceneGraph.root.children, ids, reusablePreviousState, nextNodesBySceneNode, exportSettings);
   const viewport = sceneGraph.viewport ?? {
     x: 0,
     y: 0,
     width: sceneGraph.width,
     height: sceneGraph.height,
   };
-  const children = markViewportRootChildClips(resolvedChildren, viewport, reusablePreviousCache?.rootChildren);
+  const children = markViewportRootChildClips(resolvedChildren, viewport, reusablePreviousState?.rootChildren);
 
   return {
     renderTree: {
@@ -2422,6 +2247,6 @@ export function resolveRenderTreeIncremental(
       viewport,
       children,
     },
-    cache: { nodesById: nextNodesById, rootChildren: children, exportSettingsKey: cacheKey },
+    referenceReuseState: { nodesBySceneNode: nextNodesBySceneNode, rootChildren: children, exportSettingsKey: cacheKey },
   };
 }

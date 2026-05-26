@@ -120,9 +120,9 @@ export type TextRenderingGlyphs = {
    */
   readonly runs: readonly TextRun[];
   /**
-   * Fill of the base run, retained as a convenience for renderers that
-   * draw decorations (underlines, strikethroughs) which always pick up
-   * the base fill regardless of per-character overrides.
+   * Base run fill resolved from the same text-run SoT. Line-level
+   * decorations use this value because Figma does not apply
+   * per-character fill overrides to underline or strikethrough paint.
    */
   readonly fillColor: string;
   /** Fill alpha in [0, 1]. */

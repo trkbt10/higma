@@ -497,13 +497,15 @@ function getVisualBoundsForRange(args: {
   for (const span of args.line.spans) {
     const spanStart = offset;
     const spanEnd = offset + span.text.length;
-    if (spanEnd > rangeStart && spanStart < rangeEnd) {
-      if (span.fontSize > maxSize) {
-        maxSize = span.fontSize;
-        maxFamily = span.fontFamily;
-      }
-      hasSelection = true;
+    if (spanEnd <= rangeStart || spanStart >= rangeEnd) {
+      offset = spanEnd;
+      continue;
     }
+    if (span.fontSize > maxSize) {
+      maxSize = span.fontSize;
+      maxFamily = span.fontFamily;
+    }
+    hasSelection = true;
     offset = spanEnd;
   }
 
@@ -716,6 +718,47 @@ function getCharOffsetInSpan(span: LayoutSpanLike, targetX: number, ctx: CursorC
 // Selection Range Coordinates
 // =============================================================================
 
+function appendSelectionRectsForParagraph(args: {
+  readonly rects: SelectionRect[];
+  readonly para: LayoutParagraphLike | undefined;
+  readonly paragraphIndex: number;
+  readonly normalized: ReturnType<typeof normalizeTextSelection>;
+  readonly ctx: CursorCalculationContext;
+}): void {
+  const { rects, para, paragraphIndex, normalized, ctx } = args;
+  if (!para) {
+    return;
+  }
+  if (paragraphIndex === normalized.start.paragraphIndex) {
+    const paraLength = getParagraphTextLengthFromLayout(para);
+    rects.push(...getSelectionRectsInParagraph({ para, startOffset: normalized.start.charOffset, endOffset: paraLength, ctx }));
+    return;
+  }
+  if (paragraphIndex === normalized.end.paragraphIndex) {
+    rects.push(...getSelectionRectsInParagraph({ para, startOffset: 0, endOffset: normalized.end.charOffset, ctx }));
+    return;
+  }
+  const paraLength = getParagraphTextLengthFromLayout(para);
+  rects.push(...getSelectionRectsInParagraph({ para, startOffset: 0, endOffset: paraLength, ctx }));
+}
+
+function selectionRectsForSingleParagraph(args: {
+  readonly para: LayoutParagraphLike | undefined;
+  readonly normalized: ReturnType<typeof normalizeTextSelection>;
+  readonly ctx: CursorCalculationContext;
+}): readonly SelectionRect[] {
+  const { para, normalized, ctx } = args;
+  if (!para) {
+    return [];
+  }
+  return getSelectionRectsInParagraph({
+    para,
+    startOffset: normalized.start.charOffset,
+    endOffset: normalized.end.charOffset,
+    ctx,
+  });
+}
+
 /**
  * Get selection highlight rectangles for a text selection.
  * May return multiple rects for multi-line selections.
@@ -734,25 +777,21 @@ export function selectionToRects(
   if (!startCoords || !endCoords) { return rects; }
 
   if (normalized.start.paragraphIndex === normalized.end.paragraphIndex) {
-    const startPara = layoutResult.paragraphs[normalized.start.paragraphIndex];
-    if (startPara) {
-      rects.push(...getSelectionRectsInParagraph({ para: startPara, startOffset: normalized.start.charOffset, endOffset: normalized.end.charOffset, ctx }));
-    }
-  } else {
-    for (let pIdx = normalized.start.paragraphIndex; pIdx <= normalized.end.paragraphIndex; pIdx++) {
-      const para = layoutResult.paragraphs[pIdx];
-      if (!para) { continue; }
+    return selectionRectsForSingleParagraph({
+      para: layoutResult.paragraphs[normalized.start.paragraphIndex],
+      normalized,
+      ctx,
+    });
+  }
 
-      if (pIdx === normalized.start.paragraphIndex) {
-        const paraLength = getParagraphTextLengthFromLayout(para);
-        rects.push(...getSelectionRectsInParagraph({ para, startOffset: normalized.start.charOffset, endOffset: paraLength, ctx }));
-      } else if (pIdx === normalized.end.paragraphIndex) {
-        rects.push(...getSelectionRectsInParagraph({ para, startOffset: 0, endOffset: normalized.end.charOffset, ctx }));
-      } else {
-        const paraLength = getParagraphTextLengthFromLayout(para);
-        rects.push(...getSelectionRectsInParagraph({ para, startOffset: 0, endOffset: paraLength, ctx }));
-      }
-    }
+  for (let pIdx = normalized.start.paragraphIndex; pIdx <= normalized.end.paragraphIndex; pIdx++) {
+    appendSelectionRectsForParagraph({
+      rects,
+      para: layoutResult.paragraphs[pIdx],
+      paragraphIndex: pIdx,
+      normalized,
+      ctx,
+    });
   }
 
   return rects;

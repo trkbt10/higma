@@ -6,7 +6,14 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContext, figDocumentResources, findCanvases } from "@higma-document-io/fig";
+import { createKiwiSceneGraphPipeline, type KiwiSceneGraphMutation } from "@higma-document-renderers/fig/scene-graph";
 import { FigPageRenderer } from "./FigPageRenderer";
+
+const INITIAL_KIWI_DOCUMENT_MUTATION: KiwiSceneGraphMutation = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
 
 const SPEC_DIR = dirname(fileURLToPath(import.meta.url));
 const FIG_FILE = resolve(
@@ -21,7 +28,8 @@ describe("FigPageRenderer real fig fixture", () => {
     if (page === undefined) {
       throw new Error("FigPageRenderer realfig spec requires a CANVAS node");
     }
-    const html = renderToStaticMarkup(createElement(FigPageRenderer, {
+    const resources = figDocumentResources(context);
+    const sceneGraph = createKiwiSceneGraphPipeline().resolve({
       page,
       canvasWidth: 2400,
       canvasHeight: 600,
@@ -29,8 +37,19 @@ describe("FigPageRenderer real fig fixture", () => {
       viewportY: 0,
       viewportWidth: 2400,
       viewportHeight: 600,
+      kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+      showHiddenNodes: false,
+      resources,
+    });
+    if (sceneGraph === null) {
+      throw new Error("FigPageRenderer realfig spec requires a non-empty SceneGraph");
+    }
+    const html = renderToStaticMarkup(createElement(FigPageRenderer, {
+      sceneGraph,
+      kiwiDocumentMutation: INITIAL_KIWI_DOCUMENT_MUTATION,
+      surfaceWidth: 2400,
+      surfaceHeight: 600,
       viewportScale: 1,
-      resources: figDocumentResources(context),
     }));
 
     expect(html).toContain("<svg");

@@ -20,6 +20,8 @@ import {
   resolveTopFill,
   resolveStroke,
   resolveEffects,
+  resolveBrowserRenderedFigmaExportCssBlendMode,
+  resolveBrowserRenderedFigmaExportEffectBlendMode,
   colorToHex,
   type IdGenerator,
 } from "./index";
@@ -372,6 +374,18 @@ describe("Stroke resolution (shared SoT)", () => {
 // =============================================================================
 
 describe("Effects resolution (shared SoT)", () => {
+  it("projects Figma export CSS blend modes to browser-computed mix-blend-mode values", () => {
+    expect(resolveBrowserRenderedFigmaExportCssBlendMode("plus-darker")).toBeUndefined();
+    expect(resolveBrowserRenderedFigmaExportCssBlendMode("plus-lighter")).toBe("plus-lighter");
+    expect(resolveBrowserRenderedFigmaExportCssBlendMode("multiply")).toBe("multiply");
+  });
+
+  it("projects Figma export-only plus effect blend modes to browser-rendered normal mode", () => {
+    expect(resolveBrowserRenderedFigmaExportEffectBlendMode("plus-lighter")).toBe("normal");
+    expect(resolveBrowserRenderedFigmaExportEffectBlendMode("plus-darker")).toBe("normal");
+    expect(resolveBrowserRenderedFigmaExportEffectBlendMode("multiply")).toBe("multiply");
+  });
+
   it("returns undefined for empty effects", () => {
     const ids = createIdGenerator();
     const result = resolveEffects([], ids);
@@ -444,7 +458,7 @@ describe("Effects resolution (shared SoT)", () => {
     }
   });
 
-  it("resolves LINEAR_DODGE effect blend as Figma SVG plus-lighter", () => {
+  it("resolves LINEAR_DODGE effect blend as browser-valid Figma-export normal feBlend projection", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",
       offset: { x: 0, y: 2 },
@@ -460,12 +474,12 @@ describe("Effects resolution (shared SoT)", () => {
     const blend = result!.primitives[5];
     expect(blend.type).toBe("feBlend");
     if (blend.type === "feBlend") {
-      expect(blend.mode).toBe("plus-lighter");
+      expect(blend.mode).toBe("normal");
       expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
 
-  it("resolves LINEAR_BURN effect blend as Figma SVG plus-darker", () => {
+  it("resolves LINEAR_BURN effect blend as browser-valid Figma-export normal feBlend projection", () => {
     const effects: Effect[] = [{
       type: "drop-shadow",
       offset: { x: 0, y: 2 },
@@ -481,7 +495,7 @@ describe("Effects resolution (shared SoT)", () => {
     const blend = result!.primitives[5];
     expect(blend.type).toBe("feBlend");
     if (blend.type === "feBlend") {
-      expect(blend.mode).toBe("plus-darker");
+      expect(blend.mode).toBe("normal");
       expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
@@ -504,7 +518,7 @@ describe("Effects resolution (shared SoT)", () => {
     expect(result!.primitives[5].type).toBe("feBlend");
     const blend = result!.primitives[5];
     if (blend.type === "feBlend") {
-      expect(blend.mode).toBe("plus-lighter");
+      expect(blend.mode).toBe("normal");
       expect(blend.in2).toBe("BackgroundImageFix");
     }
   });
@@ -539,7 +553,7 @@ describe("Effects resolution (shared SoT)", () => {
     // Critical: the offset's input MUST be the binarised hardAlpha,
     // not the anti-aliased SourceAlpha. Operating on SourceAlpha here
     // bakes the source's anti-aliased edge into the offset sliver, and
-    // after feComposite "out" against hardAlpha the sliver retains the
+    // after feComposite "out" against hardAlpha the sliver keeps the
     // 0.5..0.99 AA values instead of a clean 1.0.
     const offsetPrim = result!.primitives[2];
     if (offsetPrim.type === "feOffset") {

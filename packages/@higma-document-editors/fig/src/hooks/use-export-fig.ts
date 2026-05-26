@@ -3,7 +3,7 @@
  */
 import { useCallback, useState } from "react";
 import { exportFig, type FigExportOptions, type FigExportResult } from "@higma-document-io/fig";
-import { useFigEditor } from "../context/FigEditorContext";
+import { useFigEditorSnapshotReader } from "../context/FigEditorContext";
 import {
   downloadFigExport,
   resolveFigExportFilename,
@@ -29,12 +29,13 @@ function errorFromUnknown(error: unknown): Error {
  * Export the current editor context without introducing a view-model layer.
  */
 export function useExportFig(): UseExportFigResult {
-  const { context } = useFigEditor();
+  const readEditorSnapshot = useFigEditorSnapshotReader();
   const [isExporting, setIsExporting] = useState(false);
   const [lastResult, setLastResult] = useState<FigExportResult | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
   const exportContext = useCallback(async (options?: FigExportOptions): Promise<FigExportResult> => {
+    const context = readEditorSnapshot().context;
     setIsExporting(true);
     setError(null);
     try {
@@ -48,16 +49,17 @@ export function useExportFig(): UseExportFigResult {
     } finally {
       setIsExporting(false);
     }
-  }, [context]);
+  }, [readEditorSnapshot]);
 
   const downloadContext = useCallback(async (
     environment: DownloadEnvironment,
     options?: FigExportOptions,
   ): Promise<FigExportResult> => {
+    const context = readEditorSnapshot().context;
     const result = await exportContext(options);
     downloadFigExport(result, resolveFigExportFilename(context.metadata), environment);
     return result;
-  }, [context.metadata, exportContext]);
+  }, [exportContext, readEditorSnapshot]);
 
   return { exportContext, downloadContext, isExporting, lastResult, error };
 }

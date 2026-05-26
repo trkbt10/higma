@@ -6,7 +6,14 @@
  */
 
 // Top-level renderers
-export { FigSceneRenderer, FigRenderTreeRenderer, FigSceneSvgRenderer, FigRenderTreeSvgRenderer } from "./FigSceneRenderer";
+export {
+  FigSceneRenderer,
+  FigRenderTreeRenderer,
+  FigSceneSvgRenderer,
+  FigRenderTreeSvgRenderer,
+  FigSceneFigmaExportSvgRenderer,
+  FigRenderTreeFigmaExportSvgRenderer,
+} from "./FigSceneRenderer";
 
 // RenderTree-based node components
 export { RenderNodeComponent } from "./nodes/RenderNodeComponent";

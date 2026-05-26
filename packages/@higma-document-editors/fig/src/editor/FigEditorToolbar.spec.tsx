@@ -3,7 +3,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
-import { FigEditorProvider } from "../context/FigEditorContext";
+import { createFigEditorStore, FigEditorStoreProvider } from "../context/FigEditorContext";
 import { sectionDocument, sectionPage } from "../panels/sections/section-specimen";
 import { FigEditorToolbar } from "./FigEditorToolbar";
 
@@ -14,9 +14,14 @@ function renderToolbar(): string {
     images: new Map(),
     metadata: null,
   });
-  return renderToStaticMarkup(
-    createElement(FigEditorProvider, { context, children: createElement(FigEditorToolbar) }),
-  );
+  const store = createFigEditorStore({ context });
+  try {
+    return renderToStaticMarkup(
+      createElement(FigEditorStoreProvider, { store, children: createElement(FigEditorToolbar) }),
+    );
+  } finally {
+    store.dispose();
+  }
 }
 
 describe("FigEditorToolbar", () => {

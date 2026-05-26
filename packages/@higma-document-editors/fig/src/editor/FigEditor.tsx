@@ -2,7 +2,6 @@
  * @file Public Fig editor composition entry.
  */
 import { useMemo, type CSSProperties, type ReactNode } from "react";
-import type { FigDocumentContext } from "@higma-document-io/fig";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import {
   CanvasArea,
@@ -12,20 +11,25 @@ import {
 } from "@higma-editor-surfaces/controls/editor-shell";
 import { FigEditorCanvas } from "../canvas/FigEditorCanvas";
 import type { FigEditorRendererKind } from "../canvas/rendering/renderer-kind";
-import { FigEditorProvider } from "../context/FigEditorContext";
+import {
+  FigEditorStoreProvider,
+  type FigEditorStore,
+} from "../context/FigEditorContext";
 import { FigEditorToolbar } from "./FigEditorToolbar";
 import { PageListPanel } from "../panels/pages/PageListPanel";
 import { LayerPanel } from "../panels/layers/LayerPanel";
 import { PropertyPanel } from "../panels/properties/PropertyPanel";
 
-export type FigEditorProps = {
-  readonly context: FigDocumentContext;
+type FigEditorShellProps = {
   readonly renderer?: FigEditorRendererKind;
   readonly textFontResolver?: TextFontResolver;
   readonly children?: ReactNode;
   readonly style?: CSSProperties;
   readonly panels?: EditorPanel[];
-  readonly onContextChange?: (context: FigDocumentContext) => void;
+};
+
+export type FigEditorProps = FigEditorShellProps & {
+  readonly store: FigEditorStore;
 };
 
 function LeftPanelContent() {
@@ -84,21 +88,23 @@ function FigEditorContent({
  * Full Kiwi-backed Fig editor shell.
  */
 export function FigEditor({
-  context,
   renderer,
   textFontResolver,
   children,
   style,
   panels,
-  onContextChange,
+  store,
 }: FigEditorProps) {
+  const content = (
+    <div style={{ width: "100%", height: "100%", ...style }}>
+      <FigEditorContent renderer={renderer} textFontResolver={textFontResolver} panels={panels}>
+        {children}
+      </FigEditorContent>
+    </div>
+  );
   return (
-    <FigEditorProvider context={context} onContextChange={onContextChange}>
-      <div style={{ width: "100%", height: "100%", ...style }}>
-        <FigEditorContent renderer={renderer} textFontResolver={textFontResolver} panels={panels}>
-          {children}
-        </FigEditorContent>
-      </div>
-    </FigEditorProvider>
+    <FigEditorStoreProvider store={store}>
+      {content}
+    </FigEditorStoreProvider>
   );
 }

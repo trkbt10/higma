@@ -57,8 +57,8 @@ function calculateMixedFontTextWidth(
   const spacing = letterSpacing ?? 0;
   const widthRef = { value: 0 };
   const opszApplied = new Set<AbstractFont>();
-  let previousFont: AbstractFont | undefined;
-  let previousGlyph: AbstractGlyph | undefined;
+  const previousFontRef = { value: undefined as AbstractFont | undefined };
+  const previousGlyphRef = { value: undefined as AbstractGlyph | undefined };
   for (let i = 0; i < text.length; i++) {
     const font = fontForCharacter(sourceStart + i);
     if (!opszApplied.has(font)) {
@@ -73,13 +73,13 @@ function calculateMixedFontTextWidth(
     // Fold the previous/current pair-adjustment into the cursor so the
     // emitted line matches the browser's kerned width — measure stays
     // tied to paint via `extractGlyphPathContours` below.
-    widthRef.value += pairAdjustment(previousFont, font, previousGlyph, glyph) * scale;
+    widthRef.value += pairAdjustment(previousFontRef.value, font, previousGlyphRef.value, glyph) * scale;
     widthRef.value += advanceWidth * scale;
     if (i < text.length - 1) {
       widthRef.value += spacing;
     }
-    previousFont = font;
-    previousGlyph = glyph;
+    previousFontRef.value = font;
+    previousGlyphRef.value = glyph;
   }
   return widthRef.value;
 }
@@ -155,8 +155,8 @@ function extractGlyphPathContours(
   const spacing = letterSpacing ?? 0;
   const cursor = { x: getAlignmentOffset(align, totalWidth, x) };
   const contours: GlyphContour[] = [];
-  let previousFont: AbstractFont | undefined;
-  let previousGlyph: AbstractGlyph | undefined;
+  const previousFontRef = { value: undefined as AbstractFont | undefined };
+  const previousGlyphRef = { value: undefined as AbstractGlyph | undefined };
   for (let i = 0; i < text.length; i++) {
     const font = fontForCharacter(sourceStart + i);
     const scale = fontSize / font.unitsPerEm;
@@ -165,7 +165,7 @@ function extractGlyphPathContours(
     // glyph so the painted outline starts at the kerned position
     // (matching what `calculateMixedFontTextWidth` already folded into
     // the total run width).
-    cursor.x += pairAdjustment(previousFont, font, previousGlyph, glyph) * scale;
+    cursor.x += pairAdjustment(previousFontRef.value, font, previousGlyphRef.value, glyph) * scale;
     const path = glyph.getPath(cursor.x, figmaTextOutlineBaselineY(y), fontSize);
     const commands = convertQuadraticsToCubic(path.commands);
     if (commands.length > 0) {
@@ -175,8 +175,8 @@ function extractGlyphPathContours(
     if (i < text.length - 1) {
       cursor.x += spacing;
     }
-    previousFont = font;
-    previousGlyph = glyph;
+    previousFontRef.value = font;
+    previousGlyphRef.value = glyph;
   }
   return contours;
 }

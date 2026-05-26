@@ -26,7 +26,11 @@ import {
   UnknownShapeIcon,
   VisibleIcon,
 } from "@higma-editor-kernel/ui/icons";
-import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../context/FigEditorContext";
+import {
+  FIG_NODE_MUTATION_SOURCE,
+  useFigEditorSelector,
+  type FigEditorContextValue,
+} from "../../context/FigEditorContext";
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
 import { getLayerNodePresentation } from "./layer-node-presentation";
@@ -35,6 +39,19 @@ import styles from "./LayerPanel.module.css";
 const ICON_SIZE = 14;
 const DISCLOSURE_SIZE = 18;
 const ROW_INDENT_PX = 14;
+
+type SelectLayerNode = FigEditorContextValue["selectNodeGuid"];
+type UpdateLayerNode = FigEditorContextValue["updateNode"];
+type LayerChildrenOf = FigEditorContextValue["context"]["document"]["childrenOf"];
+
+type LayerPanelSnapshot = {
+  readonly activePage: FigEditorContextValue["activePage"];
+  readonly context: FigEditorContextValue["context"];
+  readonly selectedGuids: readonly FigGuid[];
+  readonly selectNodeGuid: SelectLayerNode;
+  readonly updateNode: UpdateLayerNode;
+  readonly kiwiDocumentMutation: FigEditorContextValue["kiwiDocumentMutation"];
+};
 
 function requireGuid(node: FigNode): FigGuid {
   if (node.guid === undefined) {
@@ -91,6 +108,76 @@ function includeSelectedAncestorKeys(
     return expandedIds;
   }
   return next;
+}
+
+function selectLayerPanelSnapshot(editor: FigEditorContextValue): LayerPanelSnapshot {
+  return {
+    activePage: editor.activePage,
+    context: editor.context,
+    selectedGuids: editor.selectedGuids,
+    selectNodeGuid: editor.selectNodeGuid,
+    updateNode: editor.updateNode,
+    kiwiDocumentMutation: editor.kiwiDocumentMutation,
+  };
+}
+
+function sameLayerPanelSelectedGuids(left: readonly FigGuid[], right: readonly FigGuid[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((guid, index) => {
+    const candidate = right[index];
+    if (candidate === undefined) {
+      return false;
+    }
+    return guidToString(guid) === guidToString(candidate);
+  });
+}
+
+function sameLayerPanelParentIndex(left: FigNode["parentIndex"], right: FigNode["parentIndex"]): boolean {
+  if (left === undefined || right === undefined) {
+    return left === right;
+  }
+  return guidToString(left.guid) === guidToString(right.guid) && left.position === right.position;
+}
+
+function sameLayerPanelPresentation(left: FigNode | undefined, right: FigNode | undefined): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+  return left.name === right.name &&
+    left.visible === right.visible &&
+    getNodeType(left) === getNodeType(right) &&
+    sameLayerPanelParentIndex(left.parentIndex, right.parentIndex);
+}
+
+function sameLayerPanelKiwiContextForMutation(
+  left: LayerPanelSnapshot,
+  right: LayerPanelSnapshot,
+): boolean {
+  if (left.context === right.context) {
+    return true;
+  }
+  if (right.kiwiDocumentMutation.scope !== "node-content") {
+    return false;
+  }
+  return right.kiwiDocumentMutation.changedGuidKeys.every((key) => (
+    sameLayerPanelPresentation(
+      left.context.document.nodesByGuid.get(key),
+      right.context.document.nodesByGuid.get(key),
+    )
+  ));
+}
+
+function sameLayerPanelSnapshot(left: LayerPanelSnapshot, right: LayerPanelSnapshot): boolean {
+  return left.activePage === right.activePage &&
+    sameLayerPanelSelectedGuids(left.selectedGuids, right.selectedGuids) &&
+    left.selectNodeGuid === right.selectNodeGuid &&
+    left.updateNode === right.updateNode &&
+    sameLayerPanelKiwiContextForMutation(left, right);
 }
 
 function nodeIcon(node: FigNode): ReactNode {
@@ -233,6 +320,9 @@ function renderChildLayerRows({
   canSelect,
   canMutate,
   toggleExpanded,
+  childrenOf,
+  selectNodeGuid,
+  updateNode,
 }: {
   readonly expanded: boolean;
   readonly children: readonly FigNode[];
@@ -242,6 +332,9 @@ function renderChildLayerRows({
   readonly canSelect: boolean;
   readonly canMutate: boolean;
   readonly toggleExpanded: (id: string) => void;
+  readonly childrenOf: LayerChildrenOf;
+  readonly selectNodeGuid: SelectLayerNode;
+  readonly updateNode: UpdateLayerNode;
 }): ReactNode {
   if (!expanded) {
     return null;
@@ -256,6 +349,9 @@ function renderChildLayerRows({
       canSelect={canSelect}
       canMutate={canMutate}
       toggleExpanded={toggleExpanded}
+      childrenOf={childrenOf}
+      selectNodeGuid={selectNodeGuid}
+      updateNode={updateNode}
     />
   ));
 }
@@ -268,6 +364,9 @@ function LayerRow({
   canSelect,
   canMutate,
   toggleExpanded,
+  childrenOf,
+  selectNodeGuid,
+  updateNode,
 }: {
   readonly node: FigNode;
   readonly depth: number;
@@ -276,12 +375,14 @@ function LayerRow({
   readonly canSelect: boolean;
   readonly canMutate: boolean;
   readonly toggleExpanded: (id: string) => void;
+  readonly childrenOf: LayerChildrenOf;
+  readonly selectNodeGuid: SelectLayerNode;
+  readonly updateNode: UpdateLayerNode;
 }) {
-  const { context, selectNodeGuid, updateNode } = useFigEditor();
   const guid = requireGuid(node);
   const id = nodeKey(node);
   const presentation = getLayerNodePresentation(node);
-  const children = context.document.childrenOf(node);
+  const children = childrenOf(node);
   const selected = selectedIds.has(id);
   const expanded = expandedIds.has(id);
   const visible = node.visible !== false;
@@ -365,6 +466,9 @@ function LayerRow({
         canSelect,
         canMutate,
         toggleExpanded,
+        childrenOf,
+        selectNodeGuid,
+        updateNode,
       })}
     </>
   );
@@ -372,7 +476,10 @@ function LayerRow({
 
 /** Render the active CANVAS node hierarchy. */
 export function LayerPanel() {
-  const { activePage, context, selectedGuids } = useFigEditor();
+  const { activePage, context, selectedGuids, selectNodeGuid, updateNode } = useFigEditorSelector(
+    selectLayerPanelSnapshot,
+    sameLayerPanelSnapshot,
+  );
   const operationDomain = useFigOperationDomain();
   const selectedAncestorKeys = useMemo(
     () => collectSelectedAncestorKeys(context.document.nodesByGuid, selectedGuids),
@@ -425,6 +532,9 @@ export function LayerPanel() {
             canSelect={canSelect}
             canMutate={canMutate}
             toggleExpanded={toggleExpanded}
+            childrenOf={context.document.childrenOf}
+            selectNodeGuid={selectNodeGuid}
+            updateNode={updateNode}
           />
         ))}
       </div>

@@ -10,33 +10,45 @@ import {
 } from "@higma-editor-surfaces/controls/canvas";
 import { ContextMenu, type MenuEntry } from "@higma-editor-kernel/ui/context-menu";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
-import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import { createFigFamilyRenderOptions, useFigSceneGraph } from "@higma-figma-runtime/react-renderer";
+import {
+  createNodeId,
+  flattenSceneGraphNodeBounds,
+  type SceneGraph,
+  type SceneGraphNodeTranslation,
+} from "@higma-document-renderers/fig/scene-graph";
 import type { TextFontResolver } from "@higma-document-renderers/fig/text";
 import type { BooleanOperationType } from "@higma-primitives/path";
 import type { FigGuid, FigNode, FigPaint } from "@higma-document-models/fig/types";
 import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
 import type { NodeSpec } from "@higma-document-io/fig/types";
-import type { FigDocumentResources } from "@higma-document-io/fig";
-import { FIG_NODE_MUTATION_SOURCE, useFigEditor, type FigCreationMode } from "../context/FigEditorContext";
-import { translateTransform } from "../context/fig-editor/matrix";
+import {
+  FIG_NODE_MUTATION_SOURCE,
+  useFigEditor,
+  useFigEditorSelectedFigNodeDragTransform,
+  type FigCreationMode,
+  type FigEditorKiwiDocumentMutation,
+} from "../context/FigEditorContext";
+import { translateFigEditorSelectedNodeDragBoundsList } from "../context/fig-editor-selected-node-drag-bounds";
 import { FigPageRenderer } from "./rendering/FigPageRenderer";
 import type { FigEditorRendererKind } from "./rendering/renderer-kind";
-import { flattenAllNodeBounds } from "./interaction/bounds";
 import {
   canvasIdsFromGuids,
-  resolveNodeGuidFromCanvasId,
   resolveSelectableMarqueeGuids,
 } from "./interaction/selection-resolution";
+import {
+  collectExplicitKiwiSourceDocumentGuidKeys,
+  filterRenderedNodeBoundsToPrimaryKiwiDocument,
+} from "./interaction/rendered-node-bounds";
 import { resolveInteractionTargetGuid } from "./interaction/target-resolution";
 import { resolveCanvasInteractionPolicy } from "./interaction/interaction-policy";
 import { exceedsThreshold } from "./interaction/drag-threshold";
 import { useFigKeyboard } from "./interaction/use-fig-keyboard";
-import { computeCanvasBoundsFromNodeBounds } from "./layout/canvas-bounds";
+import { computeCanvasBoundsFromSceneGraphNodeBounds } from "./layout/canvas-bounds";
 import type { LayoutBounds } from "./layout/layout-bounds";
-import { resolveViewportRenderWindow } from "./layout/viewport-render-window";
-import { filterNodeBoundsForViewport, filterRootNodesForViewport } from "./layout/viewport-node-visibility";
-import { resolveViewportRootSurfacePlan, type ViewportRootSurfacePlan } from "./layout/viewport-root-surface";
+import { resolveViewportRenderRegion } from "./layout/viewport-render-region";
+import { filterNodeBoundsForViewport } from "./layout/viewport-node-visibility";
 import { FigTextEditOverlay } from "../text-edit/FigTextEditOverlay";
 import {
   addVectorPathPoint,
@@ -119,6 +131,7 @@ type ContextMenuState = {
 
 const INITIAL_ZOOM_MODE: ZoomMode = "fit";
 const INITIAL_VIEWPORT_MARGIN = 48;
+const UNMEASURED_SCENE_GRAPH_SURFACE_SIZE = 0;
 const VECTOR_PATH_POINTER_DRAG_THRESHOLD_PX = 3;
 const VECTOR_PATH_CLOSE_TOLERANCE_PX = 8;
 const ACTIVE_PAGE_VECTOR_PATH_DRAFT_PARENT: VectorPathDraftParent = {
@@ -152,23 +165,25 @@ const canvasHostStyle: CSSProperties = {
   minHeight: 0,
   overflow: "hidden",
 };
-const viewportRootSurfacesStyle: CSSProperties = {
+const viewportSurfaceLayerStyle: CSSProperties = {
   position: "relative",
   width: "100%",
   height: "100%",
   overflow: "hidden",
   pointerEvents: "none",
 };
-function orderedViewportSurfaceStyle(index: number): CSSProperties {
-  return {
-    position: "absolute",
-    inset: 0,
-    zIndex: index,
-    pointerEvents: "none",
-  };
-}
+const viewportSurfaceStyle: CSSProperties = {
+  position: "absolute",
+  left: 0,
+  top: 0,
+  width: "100%",
+  height: "100%",
+  overflow: "hidden",
+  pointerEvents: "none",
+  lineHeight: 0,
+};
 
-type ViewportSurfaceRenderWindow = {
+type ViewportSurfaceRenderRegion = {
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -177,127 +192,109 @@ type ViewportSurfaceRenderWindow = {
   readonly surfaceHeight: number;
 };
 
-type ViewportRootSurfacesProps = {
-  readonly page: FigNode;
-  readonly nodes: readonly FigNode[];
-  readonly renderWindow: ViewportSurfaceRenderWindow;
+type ViewportSurfaceProps = {
+  readonly kiwiDocumentMutation: FigEditorKiwiDocumentMutation;
+  readonly renderRegion: ViewportSurfaceRenderRegion;
   readonly viewportScale: number;
   readonly viewportRevision: number;
-  readonly resources: FigDocumentResources;
+  readonly viewportInteractionActive: boolean;
+  readonly sceneGraphNodeTranslation?: SceneGraphNodeTranslation;
+  readonly sceneGraphInteractionRevision?: number;
+  readonly sceneGraphInteractionActive?: boolean;
+  readonly sceneGraph: SceneGraph | null;
   readonly renderOptions: ReturnType<typeof createFigFamilyRenderOptions>;
   readonly renderer: FigEditorRendererKind;
-  readonly textFontResolver: TextFontResolver | undefined;
   readonly webglInitializationDelayMs: number | undefined;
 };
 
-function requireViewportRootSurfaceGuid(node: FigNode): string {
-  if (node.guid === undefined) {
-    throw new Error(`FigEditorCanvas viewport root "${node.name ?? "(unnamed)"}" requires a Kiwi guid`);
-  }
-  return guidToString(node.guid);
-}
-
-function viewportBoundsFromRenderWindow(
-  renderWindow: ViewportSurfaceRenderWindow | null,
+function viewportBoundsFromRenderRegion(
+  renderRegion: ViewportSurfaceRenderRegion | null,
 ): LayoutBounds | null {
-  if (renderWindow === null) {
+  if (renderRegion === null) {
     return null;
   }
-  return { x: renderWindow.x, y: renderWindow.y, width: renderWindow.width, height: renderWindow.height };
+  return { x: renderRegion.x, y: renderRegion.y, width: renderRegion.width, height: renderRegion.height };
 }
 
-function rootViewportSurfaceStyle(plan: ViewportRootSurfacePlan): CSSProperties {
+
+function viewportWebGLSurfaceIdentity(renderer: FigEditorRendererKind) {
+  if (renderer !== "webgl") {
+    return undefined;
+  }
   return {
-    position: "absolute",
-    left: plan.cssBox.x,
-    top: plan.cssBox.y,
-    width: plan.cssBox.width,
-    height: plan.cssBox.height,
-    overflow: "hidden",
-    pointerEvents: "none",
-    lineHeight: 0,
+    surfaceKey: "fig-editor-webgl-viewport",
+    kind: "viewport" as const,
+    label: "Fig editor WebGL viewport surface",
   };
 }
 
-function renderViewportRootSurface({
-  page,
-  node,
-  renderWindow,
+function renderViewportSurface({
+  kiwiDocumentMutation,
+  renderRegion,
   viewportScale,
   viewportRevision,
-  resources,
+  viewportInteractionActive,
+  sceneGraphNodeTranslation,
+  sceneGraphInteractionRevision,
+  sceneGraphInteractionActive,
+  sceneGraph,
   renderOptions,
   renderer,
-  textFontResolver,
   webglInitializationDelayMs,
-}: Omit<ViewportRootSurfacesProps, "nodes"> & {
-  readonly node: FigNode;
-}) {
-  const plan = resolveViewportRootSurfacePlan({ node, renderWindow, viewportScale });
-  if (plan === undefined) {
-    return null;
-  }
+}: ViewportSurfaceProps) {
   return (
-    <div
-      style={rootViewportSurfaceStyle(plan)}
-      data-fig-editor-root-surface-content-guid={requireViewportRootSurfaceGuid(node)}
-    >
+    <div style={viewportSurfaceStyle}>
       <FigPageRenderer
-        page={page}
-        nodes={[node]}
-        canvasWidth={plan.canvasWidth}
-        canvasHeight={plan.canvasHeight}
-        viewportX={plan.viewport.x}
-        viewportY={plan.viewport.y}
-        viewportWidth={plan.viewport.width}
-        viewportHeight={plan.viewport.height}
+        kiwiDocumentMutation={kiwiDocumentMutation}
+        surfaceWidth={renderRegion.surfaceWidth}
+        surfaceHeight={renderRegion.surfaceHeight}
         viewportScale={viewportScale}
         viewportRevision={viewportRevision}
-        resources={resources}
+        viewportInteractionActive={viewportInteractionActive}
+        sceneGraphNodeTranslation={sceneGraphNodeTranslation}
+        sceneGraphInteractionRevision={sceneGraphInteractionRevision}
+        sceneGraphInteractionActive={sceneGraphInteractionActive}
+        sceneGraph={sceneGraph}
         renderOptions={renderOptions}
         renderer={renderer}
         host="html"
-        textFontResolver={textFontResolver}
         webglInitializationDelayMs={webglInitializationDelayMs}
+        webGLSurface={viewportWebGLSurfaceIdentity(renderer)}
       />
     </div>
   );
 }
 
-function ViewportRootSurfaces({
-  page,
-  nodes,
-  renderWindow,
+function ViewportSurface({
+  kiwiDocumentMutation,
+  renderRegion,
   viewportScale,
   viewportRevision,
-  resources,
+  viewportInteractionActive,
+  sceneGraphNodeTranslation,
+  sceneGraphInteractionRevision,
+  sceneGraphInteractionActive,
+  sceneGraph,
   renderOptions,
   renderer,
-  textFontResolver,
   webglInitializationDelayMs,
-}: ViewportRootSurfacesProps) {
+}: ViewportSurfaceProps) {
   return (
-    <div style={viewportRootSurfacesStyle} data-fig-editor-viewport-root-surfaces="">
-      {nodes.map((node, index) => (
-        <div
-          key={requireViewportRootSurfaceGuid(node)}
-          style={orderedViewportSurfaceStyle(index)}
-          data-fig-editor-root-surface-guid={requireViewportRootSurfaceGuid(node)}
-        >
-          {renderViewportRootSurface({
-            page,
-            node,
-            renderWindow,
-            viewportScale,
-            viewportRevision,
-            resources,
-            renderOptions,
-            renderer,
-            textFontResolver,
-            webglInitializationDelayMs,
-          })}
-        </div>
-      ))}
+    <div style={viewportSurfaceLayerStyle} role="group" aria-label="Fig editor viewport surface">
+      {renderViewportSurface({
+        kiwiDocumentMutation,
+        renderRegion,
+        viewportScale,
+        viewportRevision,
+        viewportInteractionActive,
+        sceneGraphNodeTranslation,
+        sceneGraphInteractionRevision,
+        sceneGraphInteractionActive,
+        sceneGraph,
+        renderOptions,
+        renderer,
+        webglInitializationDelayMs,
+      })}
     </div>
   );
 }
@@ -433,7 +430,8 @@ function createItemLabel(contextNodes: ReadonlyMap<string, FigNode>, id: string)
   if (node === undefined) {
     throw new Error(`FigEditorCanvas: item ${id} is not present in the Kiwi document`);
   }
-  return `Canvas node ${id}`;
+  const name = node.name === undefined ? "(unnamed)" : node.name;
+  return `Fig editor Kiwi node ${id}: ${name}`;
 }
 
 function svgElementPoint(
@@ -491,6 +489,7 @@ export function FigEditorCanvas({
 }: FigEditorCanvasProps) {
   const {
     context,
+    kiwiDocumentMutation,
     resources,
     activePage,
     selectedGuids,
@@ -504,7 +503,9 @@ export function FigEditorCanvas({
     setCreationMode,
     enterTextEdit,
     exitTextEdit,
+    setCanvasViewport,
     beginSelectedFigNodeDragTransform,
+    translateSelectedFigNodeDragTransform,
     endSelectedFigNodeDragTransform,
     updateNode,
     addNodeToActivePage,
@@ -513,49 +514,119 @@ export function FigEditorCanvas({
     undo,
     redo,
   } = useFigEditor();
+  const selectedFigNodeDragTransform = useFigEditorSelectedFigNodeDragTransform();
   if (activePage === undefined) {
     throw new Error("FigEditorCanvas requires a CANVAS node in the Kiwi document");
   }
 
   const pageChildren = useMemo(() => resources.childrenOf(activePage), [activePage, resources]);
-  const worldBounds = useMemo(
-    () => flattenAllNodeBounds(context.document, pageChildren),
-    [context.document, pageChildren],
+  const sceneGraphCanvasWidth = canvasWidth ?? UNMEASURED_SCENE_GRAPH_SURFACE_SIZE;
+  const sceneGraphCanvasHeight = canvasHeight ?? UNMEASURED_SCENE_GRAPH_SURFACE_SIZE;
+  const selectedIds = useMemo(() => canvasIdsFromGuids(selectedGuids), [selectedGuids]);
+  const selectedFigNodeDragSceneGraphTranslation = useMemo((): SceneGraphNodeTranslation | undefined => {
+    if (selectedFigNodeDragTransform === null) {
+      return undefined;
+    }
+    return {
+      nodeId: createNodeId(guidToString(selectedFigNodeDragTransform.guid)),
+      dx: selectedFigNodeDragTransform.dx,
+      dy: selectedFigNodeDragTransform.dy,
+    };
+  }, [selectedFigNodeDragTransform]);
+  const primaryId = selectedIds[0];
+  const [zoomMode, setZoomMode] = useState<ZoomMode>(INITIAL_ZOOM_MODE);
+  const [viewportRenderContext, setViewportRenderContext] = useState<EditorCanvasViewportContentContext | null>(null);
+  const [viewportRevision, setViewportRevision] = useState(0);
+  const [viewportInteractionActive, setViewportInteractionActive] = useState(false);
+  const viewportScale = viewportRenderContext?.viewport.scale ?? 1;
+  const renderRegion = useMemo(
+    () => resolveViewportRenderRegion({ context: viewportRenderContext }),
+    [viewportRenderContext],
   );
+  const sceneGraphSurfaceWidth = renderRegion?.surfaceWidth ?? sceneGraphCanvasWidth;
+  const sceneGraphSurfaceHeight = renderRegion?.surfaceHeight ?? sceneGraphCanvasHeight;
+  const sceneGraphForEditorOverlay = useFigSceneGraph({
+    page: activePage,
+    nodes: pageChildren,
+    kiwiDocumentMutation,
+    canvasWidth: sceneGraphSurfaceWidth,
+    canvasHeight: sceneGraphSurfaceHeight,
+    viewportX: renderRegion?.x ?? 0,
+    viewportY: renderRegion?.y ?? 0,
+    viewportWidth: renderRegion?.width ?? sceneGraphCanvasWidth,
+    viewportHeight: renderRegion?.height ?? sceneGraphCanvasHeight,
+    showHiddenNodes: false,
+    resources,
+    textFontResolver,
+  });
+  const baseWorldBounds = useMemo(() => {
+    if (sceneGraphForEditorOverlay === null) {
+      return [];
+    }
+    return flattenSceneGraphNodeBounds(sceneGraphForEditorOverlay);
+  }, [sceneGraphForEditorOverlay]);
+  const explicitSourceGuidKeys = useMemo(
+    () => collectExplicitKiwiSourceDocumentGuidKeys(context.kiwiSourceDocuments),
+    [context.kiwiSourceDocuments],
+  );
+  const basePrimaryWorldBounds = useMemo(() => filterRenderedNodeBoundsToPrimaryKiwiDocument({
+    document: context.document,
+    explicitSourceGuidKeys,
+    bounds: baseWorldBounds,
+    owner: "FigEditorCanvas",
+  }), [baseWorldBounds, context.document, explicitSourceGuidKeys]);
+  const worldBounds = useMemo(() => {
+    if (selectedFigNodeDragTransform === null) {
+      return baseWorldBounds;
+    }
+    return translateFigEditorSelectedNodeDragBoundsList(
+      context.document.nodesByGuid,
+      baseWorldBounds,
+      {
+        draggedGuidKey: guidToString(selectedFigNodeDragTransform.guid),
+        dx: selectedFigNodeDragTransform.dx,
+        dy: selectedFigNodeDragTransform.dy,
+      },
+    );
+  }, [baseWorldBounds, context.document.nodesByGuid, selectedFigNodeDragTransform]);
+  const primaryWorldBounds = useMemo(() => {
+    if (selectedFigNodeDragTransform === null) {
+      return basePrimaryWorldBounds;
+    }
+    return translateFigEditorSelectedNodeDragBoundsList(
+      context.document.nodesByGuid,
+      basePrimaryWorldBounds,
+      {
+        draggedGuidKey: guidToString(selectedFigNodeDragTransform.guid),
+        dx: selectedFigNodeDragTransform.dx,
+        dy: selectedFigNodeDragTransform.dy,
+      },
+    );
+  }, [basePrimaryWorldBounds, context.document.nodesByGuid, selectedFigNodeDragTransform]);
   const extents = useMemo(() => {
-    const computed = computeCanvasBoundsFromNodeBounds(worldBounds);
+    const computed = computeCanvasBoundsFromSceneGraphNodeBounds(worldBounds);
     return {
       ...computed,
       width: canvasWidth ?? computed.width,
       height: canvasHeight ?? computed.height,
     };
   }, [canvasHeight, canvasWidth, worldBounds]);
-  const selectedIds = useMemo(() => canvasIdsFromGuids(selectedGuids), [selectedGuids]);
-  const primaryId = selectedIds[0];
-  const [zoomMode, setZoomMode] = useState<ZoomMode>(INITIAL_ZOOM_MODE);
-  const [viewportRenderContext, setViewportRenderContext] = useState<EditorCanvasViewportContentContext | null>(null);
-  const [viewportRevision, setViewportRevision] = useState(0);
-  const viewportScale = viewportRenderContext?.viewport.scale ?? 1;
-  const renderWindow = useMemo(
-    () => resolveViewportRenderWindow({ context: viewportRenderContext }),
-    [viewportRenderContext],
+  const viewportBounds = useMemo(() => viewportBoundsFromRenderRegion(renderRegion), [renderRegion]);
+  const baseVisiblePrimaryWorldBounds = useMemo(
+    () => filterNodeBoundsForViewport({
+      bounds: basePrimaryWorldBounds,
+      viewport: viewportBounds,
+      selectedNodeGuidKeys: selectedIds,
+    }),
+    [basePrimaryWorldBounds, selectedIds, viewportBounds],
   );
-  const viewportBounds = useMemo(() => viewportBoundsFromRenderWindow(renderWindow), [renderWindow]);
   const visibleItemBounds = useMemo(
     () => filterNodeBoundsForViewport({
-      bounds: worldBounds,
+      bounds: primaryWorldBounds,
       viewport: viewportBounds,
-      retainedIds: selectedIds,
+      selectedNodeGuidKeys: selectedIds,
     }),
-    [selectedIds, viewportBounds, worldBounds],
-  );
-  const viewportPageChildren = useMemo(
-    () => filterRootNodesForViewport({
-      nodes: pageChildren,
-      bounds: worldBounds,
-      viewport: viewportBounds,
-    }),
-    [pageChildren, viewportBounds, worldBounds],
+    [primaryWorldBounds, selectedIds, viewportBounds],
   );
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [vectorPathDraftSession, setVectorPathDraftSession] = useState<VectorPathDraftSession | null>(null);
@@ -577,8 +648,8 @@ export function FigEditorCanvas({
     if (primaryId === undefined) {
       return undefined;
     }
-    return worldBounds.find((item) => item.id === primaryId);
-  }, [primaryId, worldBounds]);
+    return primaryWorldBounds.find((item) => item.id === primaryId);
+  }, [primaryId, primaryWorldBounds]);
   const primaryEditableVectorPaths = useMemo(
     () => policy.canEditPath ? resolveEditableVectorPaths(primaryNode) : undefined,
     [policy.canEditPath, primaryNode],
@@ -676,6 +747,20 @@ export function FigEditorCanvas({
     _viewport: EditorCanvasViewportContentContext["viewport"],
     nextContext: EditorCanvasViewportContentContext,
   ): void => {
+    setCanvasViewport({
+      viewport: {
+        translateX: nextContext.viewport.translateX,
+        translateY: nextContext.viewport.translateY,
+        scale: nextContext.viewport.scale,
+      },
+      viewportSize: {
+        width: nextContext.viewportSize.width,
+        height: nextContext.viewportSize.height,
+      },
+      rulerThickness: nextContext.rulerThickness,
+      visibleNodeBounds: baseVisiblePrimaryWorldBounds,
+      renderedNodeBounds: basePrimaryWorldBounds,
+    });
     setViewportRenderContext((previous) => {
       if (
         previous !== null
@@ -691,7 +776,33 @@ export function FigEditorCanvas({
       setViewportRevision((previousRevision) => previousRevision + 1);
       return nextContext;
     });
-  }, []);
+  }, [basePrimaryWorldBounds, baseVisiblePrimaryWorldBounds, setCanvasViewport]);
+
+  useEffect(() => {
+    if (viewportRenderContext === null) {
+      return;
+    }
+    setCanvasViewport({
+      viewport: {
+        translateX: viewportRenderContext.viewport.translateX,
+        translateY: viewportRenderContext.viewport.translateY,
+        scale: viewportRenderContext.viewport.scale,
+      },
+      viewportSize: {
+        width: viewportRenderContext.viewportSize.width,
+        height: viewportRenderContext.viewportSize.height,
+      },
+      rulerThickness: viewportRenderContext.rulerThickness,
+      visibleNodeBounds: baseVisiblePrimaryWorldBounds,
+      renderedNodeBounds: basePrimaryWorldBounds,
+    });
+  }, [basePrimaryWorldBounds, baseVisiblePrimaryWorldBounds, setCanvasViewport, viewportRenderContext]);
+
+  useEffect(() => {
+    return () => {
+      setCanvasViewport(undefined);
+    };
+  }, [setCanvasViewport]);
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent): void => {
@@ -794,11 +905,11 @@ export function FigEditorCanvas({
       }), undefined);
     };
 
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
+    globalThis.addEventListener("pointermove", handlePointerMove);
+    globalThis.addEventListener("pointerup", handlePointerUp);
     return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+      globalThis.removeEventListener("pointermove", handlePointerMove);
+      globalThis.removeEventListener("pointerup", handlePointerUp);
     };
   }, [pointFromPointerEvent, publishVectorPathDraftResult]);
 
@@ -826,8 +937,7 @@ export function FigEditorCanvas({
     }
     const guid = resolveInteractionTargetGuid({
       document: context.document,
-      itemBounds: worldBounds,
-      hitId: id,
+      itemBounds: primaryWorldBounds,
       point,
     });
     const node = context.document.nodesByGuid.get(guidToString(guid));
@@ -863,10 +973,10 @@ export function FigEditorCanvas({
     placeVectorPathDraftPoint,
     selectNodeGuid,
     textEdit.type,
-    worldBounds,
+    primaryWorldBounds,
   ]);
 
-  const handleItemClick = useCallback((id: string, coords: CanvasPageCoords): void => {
+  const handleItemClick = useCallback((_id: string, coords: CanvasPageCoords): void => {
     if (!policy.canSelect) {
       return;
     }
@@ -876,40 +986,48 @@ export function FigEditorCanvas({
     if (coords.addToSelection || coords.toggle) {
       return;
     }
-    selectNodeGuid(resolveNodeGuidFromCanvasId(context.document, id));
-  }, [context.document, policy.canEditPath, policy.canSelect, selectNodeGuid]);
+    const point = worldPoint(coords);
+    selectNodeGuid(resolveInteractionTargetGuid({
+      document: context.document,
+      itemBounds: primaryWorldBounds,
+      point,
+    }));
+  }, [context.document, policy.canEditPath, policy.canSelect, primaryWorldBounds, selectNodeGuid]);
 
-  const handleItemDoubleClick = useCallback((id: string, _coords: CanvasPageCoords): void => {
+  const handleItemDoubleClick = useCallback((_id: string, coords: CanvasPageCoords): void => {
     if (!policy.canSelect || policy.canEditPath) {
       return;
     }
-    const guid = resolveNodeGuidFromCanvasId(context.document, id);
+    const guid = resolveInteractionTargetGuid({
+      document: context.document,
+      itemBounds: primaryWorldBounds,
+      point: worldPoint(coords),
+    });
     const node = context.document.nodesByGuid.get(guidToString(guid));
     if (node === undefined) {
-      throw new Error(`FigEditorCanvas: node ${id} is not present for double-click`);
+      throw new Error(`FigEditorCanvas: node ${guidToString(guid)} is not present for double-click`);
     }
     if (getNodeType(node) !== "TEXT") {
       return;
     }
     enterTextEdit(guid);
-  }, [context.document, enterTextEdit, policy.canEditPath, policy.canSelect]);
+  }, [context.document, enterTextEdit, policy.canEditPath, policy.canSelect, primaryWorldBounds]);
 
-  const handleItemContextMenu = useCallback((id: string, coords: CanvasPageCoords): void => {
+  const handleItemContextMenu = useCallback((_id: string, coords: CanvasPageCoords): void => {
     if (!policy.canSelect) {
       return;
     }
     const point = worldPoint(coords);
     const guid = resolveInteractionTargetGuid({
       document: context.document,
-      itemBounds: worldBounds,
-      hitId: id,
+      itemBounds: primaryWorldBounds,
       point,
     });
     if (!selectedGuids.some((selected) => guidToString(selected) === guidToString(guid))) {
       selectNodeGuid(guid);
     }
     setContextMenu({ kind: "boolean", x: coords.clientX, y: coords.clientY });
-  }, [context.document, policy.canSelect, selectNodeGuid, selectedGuids, worldBounds]);
+  }, [context.document, policy.canSelect, primaryWorldBounds, selectNodeGuid, selectedGuids]);
 
   const closeContextMenu = useCallback((): void => {
     setContextMenu(null);
@@ -1231,12 +1349,9 @@ export function FigEditorCanvas({
     if (!session.transformed) {
       beginSelectedFigNodeDragTransform();
     }
-    updateNode(session.guid, (node) => ({
-      ...node,
-      transform: translateTransform(node.transform, dx, dy),
-    }), FIG_NODE_MUTATION_SOURCE.editorCanvasSelectedFigNodeDrag);
+    translateSelectedFigNodeDragTransform(session.guid, dx, dy);
     moveSessionRef.current = { ...session, startX: point.x, startY: point.y, transformed: true };
-  }, [beginSelectedFigNodeDragTransform, updateNode]);
+  }, [beginSelectedFigNodeDragTransform, translateSelectedFigNodeDragTransform]);
 
   const handleItemDragEnd = useCallback((coords: CanvasPageCoords): void => {
     const creationSession = creationDragSessionRef.current;
@@ -1316,7 +1431,7 @@ export function FigEditorCanvas({
     if (getNodeType(node) !== "TEXT") {
       throw new Error(`FigEditorCanvas: active text edit node ${key} is not TEXT`);
     }
-    const bounds = worldBounds.find((item) => item.id === key);
+    const bounds = primaryWorldBounds.find((item) => item.id === key);
     if (bounds === undefined) {
       throw new Error(`FigEditorCanvas: active text edit node ${key} has no canvas bounds`);
     }
@@ -1339,42 +1454,45 @@ export function FigEditorCanvas({
         onExit={exitTextEdit}
       />
     );
-  }, [context.document.nodesByGuid, exitTextEdit, extents.height, extents.width, resources.styleRegistry, textEdit, textFontResolver, worldBounds]);
+  }, [context.document.nodesByGuid, exitTextEdit, extents.height, extents.width, primaryWorldBounds, resources.styleRegistry, textEdit, textFontResolver]);
 
   const rendererNode = useMemo(() => {
-    if (renderWindow === null) {
+    if (renderRegion === null) {
       return undefined;
     }
     const renderOptions = createFigFamilyRenderOptions(context);
     return (
-      <ViewportRootSurfaces
-        page={activePage}
-        nodes={viewportPageChildren}
-        renderWindow={renderWindow}
+      <ViewportSurface
+        kiwiDocumentMutation={kiwiDocumentMutation}
+        renderRegion={renderRegion}
         viewportScale={viewportScale}
         viewportRevision={viewportRevision}
-        resources={resources}
+        viewportInteractionActive={viewportInteractionActive}
+        sceneGraphNodeTranslation={selectedFigNodeDragSceneGraphTranslation}
+        sceneGraphInteractionRevision={selectedFigNodeDragTransform?.revision}
+        sceneGraphInteractionActive={selectedFigNodeDragTransform !== null}
+        sceneGraph={sceneGraphForEditorOverlay}
         renderOptions={renderOptions}
         renderer={renderer}
-        textFontResolver={textFontResolver}
         webglInitializationDelayMs={webglInitializationDelayMs}
       />
     );
   }, [
-    activePage,
     context,
-    renderWindow,
+    kiwiDocumentMutation,
+    renderRegion,
     renderer,
-    resources,
-    textFontResolver,
-    viewportPageChildren,
+    selectedFigNodeDragSceneGraphTranslation,
+    selectedFigNodeDragTransform,
+    sceneGraphForEditorOverlay,
     viewportRevision,
+    viewportInteractionActive,
     viewportScale,
     webglInitializationDelayMs,
   ]);
 
   return (
-    <div data-fig-editor-canvas="" style={{ ...canvasHostStyle, ...style }}>
+    <div role="region" aria-label="Fig editor canvas" style={{ ...canvasHostStyle, ...style }}>
       <EditorCanvas
         ref={canvasRef}
         canvasWidth={extents.width}
@@ -1382,6 +1500,7 @@ export function FigEditorCanvas({
         zoomMode={zoomMode}
         onZoomModeChange={setZoomMode}
         onViewportChange={handleViewportChange}
+        onViewportInteractionChange={setViewportInteractionActive}
         initialViewportPlacement="top"
         initialViewportMargin={INITIAL_VIEWPORT_MARGIN}
         showRulers

@@ -245,7 +245,14 @@ function uint8ArrayReplacer(_key: string, value: unknown): unknown {
 export async function captureWebGL(page: Page, sceneGraph: SceneGraph): Promise<Buffer> {
   const json = JSON.stringify(sceneGraph, uint8ArrayReplacer);
   const dataUrl = await page.evaluate(async (sgJson: string) => {
-    return await window.renderSceneGraph(sgJson);
+    const webGLHarnessGlobalThis = globalThis as typeof globalThis & {
+      renderSceneGraph?: (json: string) => Promise<string>;
+    };
+    const renderSceneGraph = webGLHarnessGlobalThis.renderSceneGraph;
+    if (renderSceneGraph === undefined) {
+      throw new Error("captureWebGL requires globalThis.renderSceneGraph");
+    }
+    return await renderSceneGraph(sgJson);
   }, json);
   const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
   return Buffer.from(base64, "base64");

@@ -33,7 +33,7 @@ import type { FontLoader, FontQuery } from "@higma-document-models/fig/font";
 import { collectFontQueries, fontQueryKey, preloadFonts } from "@higma-document-models/fig/font";
 import { createCachedTextFontResolver, type TextFontResolver } from "../text";
 import type { SymbolResolver } from "@higma-document-models/fig/symbols";
-import { buildSceneGraph, pruneSceneGraphToViewport, resolveRenderTree, type FigmaRenderExportSettings } from "../scene-graph";
+import { buildSceneGraph, resolveRenderTree, type FigmaRenderExportSettings } from "../scene-graph";
 import { formatRenderTreeToSvg } from "./scene-renderer";
 
 // =============================================================================
@@ -53,6 +53,10 @@ export type FigSvgRenderOptions = {
   readonly height: number;
   /** World-space viewport rendered into the supplied canvas dimensions. */
   readonly viewport: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  /** Source document object reference for renderer resource invalidation. */
+  readonly sourceDocumentReference: object;
+  /** Monotonic source document revision for renderer cache invalidation. */
+  readonly sourceRevision: number;
   /** Binary blobs from the parsed .fig file (required for path geometry). */
   readonly blobs: readonly FigBlob[];
   /** Image map from the parsed .fig file (required for IMAGE paints). */
@@ -144,6 +148,8 @@ export async function renderFigToSvg(
     images,
     canvasSize: { width, height },
     viewport: options.viewport,
+    sourceDocumentReference: options.sourceDocumentReference,
+    sourceRevision: options.sourceRevision,
     symbolResolver: options.symbolResolver,
     childrenOf: options.childrenOf,
     showHiddenNodes: options.showHiddenNodes === true,
@@ -152,16 +158,7 @@ export async function renderFigToSvg(
     textFontResolver,
   });
 
-  // Drop subtrees whose world-space bbox lies entirely outside the
-  // viewport. The visible output is unchanged (the root viewport clip
-  // already hides those subtrees), but the pruned SVG is one to two
-  // orders of magnitude smaller for documents with off-viewport
-  // content, and downstream rasterisers (notably resvg) no longer
-  // panic on masked subtrees translated past the viewport. See
-  // `viewport-prune.ts` for the SoT docstring.
-  const prunedSceneGraph = pruneSceneGraphToViewport(sceneGraph);
-
-  const renderTree = resolveRenderTree(prunedSceneGraph, { exportSettings: options.exportSettings });
+  const renderTree = resolveRenderTree(sceneGraph, { exportSettings: options.exportSettings });
   const svgOutput: SvgString = formatRenderTreeToSvg(renderTree, {
     backgroundColor: options.backgroundColor,
   });

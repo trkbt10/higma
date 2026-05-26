@@ -94,11 +94,14 @@ export function createNodeRenderer(ctx: FigDocumentContext): NodeRenderer {
     if (missing) {
       throw new Error(`createNodeRenderer: structure references font "${missing}" which the host font loader cannot resolve`);
     }
+    const resources = figDocumentResources(ctx);
     const result = await renderFigToSvg([node], {
       width: node.size.x,
       height: node.size.y,
       viewport: requireFigNodeViewport(node, "createNodeRenderer.render"),
-      ...figDocumentResources(ctx),
+      ...resources,
+      sourceDocumentReference: resources.document,
+      sourceRevision: 0,
       fontLoader,
     });
     const svg = String(result.svg);

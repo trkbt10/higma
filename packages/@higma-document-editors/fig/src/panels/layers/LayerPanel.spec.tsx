@@ -3,9 +3,21 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createFigDocumentContextFromNodeChanges } from "@higma-document-io/fig";
-import { FigEditorProvider } from "../../context/FigEditorContext";
+import { createFigEditorStore, FigEditorStoreProvider } from "../../context/FigEditorContext";
 import { sectionDocument, sectionNode, sectionPage } from "../sections/section-specimen";
 import { LayerPanel } from "./LayerPanel";
+
+function renderLayerPanelWithFigEditorStore(context: ReturnType<typeof createFigDocumentContextFromNodeChanges>): string {
+  const store = createFigEditorStore({ context });
+  try {
+    return renderToStaticMarkup(createElement(FigEditorStoreProvider, {
+      store,
+      children: createElement(LayerPanel),
+    }));
+  } finally {
+    store.dispose();
+  }
+}
 
 describe("LayerPanel", () => {
   it("renders Kiwi child nodes through the layer row surface", () => {
@@ -23,10 +35,7 @@ describe("LayerPanel", () => {
       images: new Map(),
       metadata: null,
     });
-    const html = renderToStaticMarkup(createElement(FigEditorProvider, {
-      context,
-      children: createElement(LayerPanel),
-    }));
+    const html = renderLayerPanelWithFigEditorStore(context);
 
     expect(html).toContain("Layers");
     expect(html).toContain("Frame A");

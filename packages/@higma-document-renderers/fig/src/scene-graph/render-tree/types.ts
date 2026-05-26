@@ -43,7 +43,7 @@
  *    handling it in the resolver produces a compile error (never check).
  */
 
-import type { SceneNodeId, Fill, Stroke, PathContour, Color, TextLineLayout, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, ImageNode, BlendMode } from "@higma-document-renderers/fig/scene-graph";
+import type { SceneNodeId, Fill, Stroke, PathContour, TextLineLayout, SceneNode, GroupNode, FrameNode, RectNode, EllipseNode, PathNode, TextNode, ImageNode, BlendMode } from "@higma-document-renderers/fig/scene-graph";
 
 import type { TextAutoResize } from "@higma-document-renderers/fig/scene-graph";
 import type { FigMaskType } from "@higma-document-models/fig/types";
@@ -345,6 +345,12 @@ export type RenderFrameNode = RenderNodeBase<FrameNode> & {
   readonly type: "frame";
   /** Background rect (null if no fills) */
   readonly background: RenderFrameBackground | null;
+  /**
+   * Drop/inner shadow filter for the frame surface group.
+   * The group contains the frame background fill and uniform frame
+   * stroke. Children and non-uniform frame strokes render outside it.
+   */
+  readonly surfaceFilterAttr?: string;
   /** Children, optionally wrapped in a clip group */
   readonly children: readonly RenderNode[];
   /** Clip path ID for children (if clipsContent is true) */
@@ -448,8 +454,6 @@ export type RenderFrameBackground = {
   readonly fillLayers?: readonly ResolvedFillLayer[];
   /** Stroke rendering — single discriminated union replaces stroke/strokeLayers/strokeMaskId/individualStrokes */
   readonly strokeRendering?: StrokeRendering;
-  /** Drop/inner shadow filter for the frame surface only, not its children. */
-  readonly filterAttr?: string;
 };
 
 // -- Rect --
@@ -521,9 +525,8 @@ export type RenderTextNode = RenderNodeBase<TextNode> & {
   readonly type: "text";
   readonly width: number;
   readonly height: number;
-  /** Base fill (= the source `fill` colour) — used for decorations and as
-   * the default for line mode. Per-character fills live on `content.runs`. */
-  readonly fillColor: string;
+  /** Base text run fill used by the line-mode renderer. Per-character glyph fills live on `content.runs`. */
+  readonly fillColor?: string;
   readonly fillOpacity?: number;
   /** Clip path ID when textAutoResize is NONE or TRUNCATE */
   readonly textClipId?: string;
@@ -542,10 +545,6 @@ export type RenderTextNode = RenderNodeBase<TextNode> & {
   // Source data for WebGL
   readonly sourceGlyphContours?: readonly PathContour[];
   readonly sourceDecorationContours?: readonly PathContour[];
-  /** Base text run fill, retained for diagnostics and legacy WebGL state mirrors. */
-  readonly sourceFillColor: Color;
-  /** Base text run opacity. Glyph rendering consumes `content.runs[].fillOpacity` directly. */
-  readonly sourceFillOpacity: number;
   readonly sourceTextLineLayout?: TextLineLayout;
   readonly sourceTextAutoResize: TextAutoResize;
 };

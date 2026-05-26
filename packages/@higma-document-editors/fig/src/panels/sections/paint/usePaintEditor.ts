@@ -8,7 +8,7 @@ import type {
   PaintTypeId,
 } from "@higma-editor-kernel/ui/property-sections";
 import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
-import { createFigImageAsset } from "./image-asset";
+import { commitFigEditorSelectedPaintImageAsset } from "../../../editor-commands/fig-editor-image-paint-command";
 import {
   addGradientStop,
   addPaint,
@@ -40,7 +40,8 @@ export type PaintEditor = {
 
 /** Create paint mutators for the selected Kiwi nodes. */
 export function usePaintEditor(kind: PaintListKind): PaintEditor {
-  const { resources, updateSelectedNodes, updateSelectedNodesWithImages } = useFigEditor();
+  const editor = useFigEditor();
+  const { resources, updateSelectedNodes } = editor;
   const uploadTargetRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageOptions = [...resources.images.keys()].map((ref) => ({ value: ref, label: ref }));
@@ -80,22 +81,18 @@ export function usePaintEditor(kind: PaintListKind): PaintEditor {
       return;
     }
     void file.arrayBuffer().then((buffer) => {
-      const image = createFigImageAsset({
-        data: new Uint8Array(buffer),
-        mimeType: file.type,
-        fileName: file.name,
+      commitFigEditorSelectedPaintImageAsset({
+        editor,
+        input: {
+          data: new Uint8Array(buffer),
+          mimeType: file.type,
+          fileName: file.name,
+        },
+        target: { paintListKind: kind, paintIndex },
+        source: FIG_NODE_MUTATION_SOURCE.propertyPanel,
       });
-      updateSelectedNodesWithImages(
-        [image],
-        (node) => writePaintList(
-          node,
-          kind,
-          replacePaint(paintList(node, kind), paintIndex, (paint) => setImageHashHex(paint, image.ref)),
-        ),
-        FIG_NODE_MUTATION_SOURCE.propertyPanel,
-      );
     });
-  }, [kind, updateSelectedNodesWithImages]);
+  }, [editor, kind]);
 
   const handlers: PaintItemHandlers = {
     onTypeChange: (index: number, type: PaintTypeId) => updatePaint(index, (paint) => setPaintType(paint, type)),

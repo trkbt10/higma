@@ -14,7 +14,7 @@ describe("layout bounds operations", () => {
     expect(layoutBoundsBottom(bounds)).toBe(47);
   });
 
-  it("treats edge contact as visible for hit-area culling", () => {
+  it("treats edge contact as visible for hit-area visibility", () => {
     expect(layoutBoundsTouchOrOverlap(
       { x: 0, y: 0, width: 10, height: 10 },
       { x: 10, y: 10, width: 4, height: 4 },

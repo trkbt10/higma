@@ -3,12 +3,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildSceneGraph, createNodeId, type FrameNode, type GroupNode, type RectNode, type SceneGraph } from "../scene-graph";
-import { FigSceneRenderer, FigSceneSvgRenderer } from "./FigSceneRenderer";
+import { FigSceneFigmaExportSvgRenderer, FigSceneRenderer, FigSceneSvgRenderer } from "./FigSceneRenderer";
 import { createKiwiRenderFixture } from "../testing/kiwi-render-fixture";
 import { createFrameSurfaceEffectClipSceneGraph } from "../testing/frame-surface-effect-clip-scene";
 
 const IDENTITY = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 const BLACK = { r: 0, g: 0, b: 0, a: 1 };
+const FIG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE = Object.freeze({});
 
 function renderSceneGraph(sceneGraph: SceneGraph): string {
   return renderToStaticMarkup(createElement("svg", null, createElement(FigSceneRenderer, { sceneGraph })));
@@ -16,6 +17,10 @@ function renderSceneGraph(sceneGraph: SceneGraph): string {
 
 function renderSceneGraphSvgRoot(sceneGraph: SceneGraph): string {
   return renderToStaticMarkup(createElement(FigSceneSvgRenderer, { sceneGraph }));
+}
+
+function renderSceneGraphFigmaExportSvgRoot(sceneGraph: SceneGraph): string {
+  return renderToStaticMarkup(createElement(FigSceneFigmaExportSvgRenderer, { sceneGraph }));
 }
 
 function requireFirstTag(html: string, tagName: string): string {
@@ -56,6 +61,7 @@ function sceneWithChildren(children: readonly SceneGraph["root"]["children"][num
     height: 100,
     viewport: { x: 0, y: 0, width: 100, height: 100 },
     version: 1,
+    sourceDocumentReference: FIG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
     root: {
       type: "group",
       id: createNodeId("root"),
@@ -79,6 +85,8 @@ function renderFixtureNodes(nodeNames: readonly string[]): string {
     images: fixture.resources.images,
     canvasSize: { width: 480, height: 320 },
     viewport: { x: 0, y: 0, width: 480, height: 320 },
+    sourceDocumentReference: fixture.document,
+    sourceRevision: 0,
     symbolResolver: fixture.resources.symbolResolver,
     childrenOf: fixture.resources.childrenOf,
     styleRegistry: fixture.resources.styleRegistry,
@@ -117,7 +125,7 @@ describe("FigSceneRenderer", () => {
     expect(html).toMatch(/style="mix-blend-mode:multiply"/);
   });
 
-  it("preserves node-level blend mode on a simple React SVG rect", () => {
+  it("projects browser-unsupported plus-darker node blend to normal on a simple React SVG rect", () => {
     const node: RectNode = {
       ...rectNode("node-level-linear-burn", 6, 9),
       blendMode: "plus-darker",
@@ -125,7 +133,7 @@ describe("FigSceneRenderer", () => {
     };
     const html = renderSceneGraph(sceneWithChildren([node]));
 
-    expect(html).toMatch(/style="mix-blend-mode:plus-darker"/);
+    expect(html).not.toContain("mix-blend-mode:plus-darker");
     expect(html).toMatch(/<rect[^>]+width="6"[^>]+height="9"/);
   });
 
@@ -151,16 +159,42 @@ describe("FigSceneRenderer", () => {
     expect(html).not.toContain("[object Object]");
   });
 
-  it("keeps CSS-class-backed plus-darker blend mode through the structured SVG React bridge", () => {
+  it("renders Figma export SVG coordinates only through the explicit export boundary", () => {
+    const sceneGraph: SceneGraph = {
+      width: 300,
+      height: 200,
+      viewport: { x: -120, y: -40, width: 300, height: 200 },
+      version: 1,
+      sourceDocumentReference: FIG_SCENE_RENDERER_SPEC_SOURCE_DOCUMENT_REFERENCE,
+      root: {
+        type: "group",
+        id: createNodeId("root"),
+        transform: IDENTITY,
+        opacity: 1,
+        visible: true,
+        effects: [],
+        children: [rectNode("world-origin-rect", 12, 8)],
+      },
+    };
+    const editorSvg = renderSceneGraphSvgRoot(sceneGraph);
+    const exportSvg = renderSceneGraphFigmaExportSvgRoot(sceneGraph);
+
+    expect(editorSvg).toContain('<g transform="translate(120 40)">');
+    expect(editorSvg).toContain('<rect x="0" y="0" width="12" height="8"');
+    expect(exportSvg).toContain('<rect x="120" y="40" width="12" height="8"');
+    expect(exportSvg).not.toContain('<g transform="translate(120 40)">');
+  });
+
+  it("keeps CSS-class-backed plus-lighter blend mode through the structured SVG React bridge", () => {
     const node: RectNode = {
-      ...rectNode("paint-level-linear-burn", 6, 9),
-      fills: [{ type: "solid", color: BLACK, opacity: 0.1, blendMode: "plus-darker" }],
+      ...rectNode("paint-level-linear-dodge", 6, 9),
+      fills: [{ type: "solid", color: BLACK, opacity: 0.1, blendMode: "plus-lighter" }],
     };
     const html = renderSceneGraphSvgRoot(sceneWithChildren([node]));
 
-    expect(html).toContain(".higma-svg-blend-plus-darker{mix-blend-mode:plus-darker}");
-    expect(html).toMatch(/class="higma-svg-blend-plus-darker"/);
-    expect(html).not.toContain('style="mix-blend-mode:plus-darker"');
+    expect(html).toContain(".higma-svg-blend-plus-lighter{mix-blend-mode:plus-lighter}");
+    expect(html).toMatch(/class="higma-svg-blend-plus-lighter"/);
+    expect(html).not.toContain('style="mix-blend-mode:plus-lighter"');
   });
 
   it("formats baked rounded frame surface paths through the shared rect primitive", () => {

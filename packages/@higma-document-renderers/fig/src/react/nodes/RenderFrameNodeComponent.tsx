@@ -17,22 +17,22 @@ import { PathContourShape } from "../primitives/path-contour-shape";
 
 type Props = { readonly node: RenderFrameNode };
 
+function renderFrameChildren(
+  node: RenderFrameNode,
+): ReactNode {
+  const childElements = node.children.map((child) => <RenderNodeComponent key={child.id} node={child} />);
+  const childClipId = node.omitChildClip ? undefined : node.childClipId;
+  if (childClipId && childElements.length > 0) {
+    return <g clipPath={`url(#${childClipId})`}>{childElements}</g>;
+  }
+  return childElements;
+}
+
 function renderFrameSurfaceContents(
   node: RenderFrameNode,
   uniformStroke: ReturnType<typeof getUniformStrokeAttrs>,
 ): ReactNode {
-  const childElements = node.children.map((child) => <RenderNodeComponent key={child.id} node={child} />);
-  const childClipId = node.omitChildClip ? undefined : node.childClipId;
-  const content = (
-    <>
-      {renderFrameBackgroundShape(node, uniformStroke)}
-      {childElements}
-    </>
-  );
-  if (childClipId && childElements.length > 0) {
-    return <g clipPath={`url(#${childClipId})`}>{content}</g>;
-  }
-  return content;
+  return renderFrameBackgroundShape(node, uniformStroke);
 }
 
 function renderFrameBackgroundShape(
@@ -72,7 +72,7 @@ function renderFrameMultiFillBackgroundShape(
 }
 
 function renderFrameSurfaceEffectGroup(node: RenderFrameNode, content: ReactNode): ReactNode {
-  const filterAttr = node.background?.filterAttr;
+  const filterAttr = node.surfaceFilterAttr;
   if (filterAttr === undefined) {
     return content;
   }
@@ -85,6 +85,7 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
   const uniformStroke = getUniformStrokeAttrs(sr);
   const surfaceContent = renderFrameSurfaceContents(node, uniformStroke);
   const surfaceEffectGroup = renderFrameSurfaceEffectGroup(node, surfaceContent);
+  const childContent = renderFrameChildren(node);
   const strokeContent = sr === undefined ? null : <StrokeRenderingElements sr={sr} />;
 
   if (node.backgroundBlur !== undefined) {
@@ -94,6 +95,7 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
         <BackgroundBlurElement blur={node.backgroundBlur} />
         <RenderForegroundFilter wrapper={node.wrapper}>
           {surfaceEffectGroup}
+          {childContent}
           {strokeContent}
         </RenderForegroundFilter>
       </RenderWrapper>
@@ -104,6 +106,7 @@ function RenderFrameNodeComponentImpl({ node }: Props) {
     <RenderWrapper wrapper={node.wrapper} mask={node.mask}>
       {defsEl}
       {surfaceEffectGroup}
+      {childContent}
       {strokeContent}
     </RenderWrapper>
   );

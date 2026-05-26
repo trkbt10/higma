@@ -10,7 +10,8 @@ import {
 } from "@higma-editor-surfaces/controls/canvas";
 import {
   createFigFamilyDocumentResources,
-  FigFamilyPageRendererFromResources,
+  FigFamilyPageRenderer,
+  useFigSceneGraph,
 } from "@higma-figma-runtime/react-renderer";
 import type { ZoomMode } from "@higma-editor-surfaces/controls/zoom";
 import { colorTokens } from "@higma-editor-kernel/ui/design-tokens";
@@ -31,6 +32,11 @@ const CANVAS_PADDING = 160;
 const MIN_CANVAS_SIZE = 320;
 const INITIAL_SITE_CANVAS_ZOOM: ZoomMode = 0.5;
 const INITIAL_SITE_CANVAS_MARGIN = 36;
+const INITIAL_SITE_FIG_KIWI_DOCUMENT_MUTATION = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+} as const);
 
 function createRegionExtents(regions: readonly SiteCanvasRegion[]): CanvasExtents {
   if (regions.length === 0) {
@@ -198,6 +204,19 @@ export function SiteEditorCanvas() {
   );
   const figSurface = figRenderSurface;
   const figResources = useMemo(() => createFigFamilyDocumentResources(figSurface.context), [figSurface.context]);
+  const figSceneGraph = useFigSceneGraph({
+    page: figSurface.page,
+    nodes: figSurface.nodes,
+    canvasWidth: extents.width,
+    canvasHeight: extents.height,
+    resources: figResources,
+    viewportX: -extents.offsetX,
+    viewportY: -extents.offsetY,
+    viewportWidth: extents.width,
+    viewportHeight: extents.height,
+    kiwiDocumentMutation: INITIAL_SITE_FIG_KIWI_DOCUMENT_MUTATION,
+    pruneToViewport: true,
+  });
   const renderRevision = useMemo(
     () => unitMoves.map((move) => `${move.unitId}:${move.deltaX}:${move.deltaY}`).join("|"),
     [unitMoves],
@@ -237,18 +256,10 @@ export function SiteEditorCanvas() {
     >
       <defs>{clipPath}</defs>
       <g clipPath="url(#site-active-breakpoint-clip)">
-        <FigFamilyPageRendererFromResources
+        <FigFamilyPageRenderer
           key={renderRevision}
-          page={figSurface.page}
-          nodes={figSurface.nodes}
-          canvasWidth={extents.width}
-          canvasHeight={extents.height}
-          resources={figResources}
+          sceneGraph={figSceneGraph}
           renderOptions={figSurface.renderOptions}
-          viewportX={-extents.offsetX}
-          viewportY={-extents.offsetY}
-          viewportWidth={extents.width}
-          viewportHeight={extents.height}
         />
       </g>
       <g>{unitOutlines}</g>

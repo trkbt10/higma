@@ -49,6 +49,7 @@ export {
 export {
   renderSceneGraphToSvg,
   formatRenderTreeToSvgElement,
+  formatRenderTreeToFigmaExportSvgElement,
   formatRenderTreeToSvg,
 } from "./scene-renderer";
 

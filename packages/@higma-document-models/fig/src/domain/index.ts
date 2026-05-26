@@ -44,6 +44,22 @@ export {
 } from "./kiwi-node";
 
 export {
+  sameKiwiNodeExceptTransform,
+} from "./kiwi-node-transform-change";
+
+export {
+  resolveFigComponentPropDef,
+  type FigComponentPropertyTypeName,
+  type ResolvedFigComponentPropDef,
+  type ResolveFigComponentPropDefOptions,
+} from "./component-property-definition";
+
+export {
+  figKiwiTextDataStyleIDsMatchCharacters,
+  writeFigKiwiTextDataCharacters,
+} from "./kiwi-text-data";
+
+export {
   derivedTextDataHasVisualPayload,
   derivedTextDataWithoutVisualPayload,
 } from "./derived-text-data";

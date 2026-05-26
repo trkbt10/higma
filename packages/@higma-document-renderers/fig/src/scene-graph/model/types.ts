@@ -92,7 +92,7 @@ export type LinearGradientFill = {
   readonly blendMode?: BlendMode;
   /**
    * Original Figma paint transform matrix.
-   * Preserved for accurate SVG gradientTransform generation.
+   * Preserved so every renderer consumes the same Kiwi-authored gradient direction.
    * When absent, start/end coordinates define the gradient direction directly.
    */
   readonly gradientTransform?: AffineMatrix;
@@ -107,8 +107,9 @@ export type RadialGradientFill = {
   readonly blendMode?: BlendMode;
   /**
    * Original Figma paint transform matrix.
-   * Required for elliptical and rotated radial gradients.
-   * The 2x2 rotation+scale part encodes the ellipse shape.
+   * Required for elliptical, rotated, and sheared radial gradients.
+   * WebGL consumes it directly as object→gradient space; SVG projects it
+   * into a user-space radial gradient transform.
    */
   readonly gradientTransform?: AffineMatrix;
 };
@@ -265,7 +266,7 @@ export type PathContour = {
  * Glyph annotation: the source-character index that a glyph outline
  * corresponds to. `firstCharacter` is `undefined` for contours that
  * don't map to a single source character (Figma's auto-inserted
- * ellipsis glyph, opentype fallback line contours). The run grouper
+ * ellipsis glyph, font-driver line contours). The run grouper
  * folds those into the base run.
  */
 export type GlyphCharacterIndex = {
@@ -410,6 +411,12 @@ export type SceneNodeBase = {
 
 export type GroupNode = SceneNodeBase & {
   readonly type: "group";
+  /**
+   * Renderer-created wrapper groups have no Kiwi node identity. They may
+   * affect rendering, but must not publish their own node bounds for
+   * editor selection or operation-surface access.
+   */
+  readonly rendererStructure?: { readonly kind: "mask-wrapper" };
   readonly children: readonly SceneNode[];
 };
 
@@ -536,13 +543,6 @@ export type TextNode = SceneNodeBase & {
    */
   readonly runs: readonly TextRun[];
   /**
-   * Base fill (= the runs[0] equivalent for unstyled text). Retained
-   * because decorations (underline, strikethrough) always paint with
-   * the base fill regardless of per-character overrides, and because
-   * the line-mode renderer that does not yet split per run uses this
-   * as its single fill.
-   */
-  /**
    * Stacked fill paints, in source paint-order. Each entry is one full
    * paint pass over every glyph; painter's-algorithm composition over
    * the list produces the final colour, matching Figma's own
@@ -613,7 +613,7 @@ export type SceneGraph = {
   readonly width: number;
   readonly height: number;
   /**
-   * World-space window shown by the output surface. `width`/`height` remain
+   * World-space region shown by the output surface. `width`/`height` remain
    * the surface size; `viewport` is the viewBox-style world rectangle.
    */
   readonly viewport?: {
@@ -624,6 +624,12 @@ export type SceneGraph = {
   };
   readonly backgroundColor?: Color;
   readonly root: GroupNode;
+  /**
+   * Source document object reference used by renderers for resource invalidation.
+   * Kiwi-backed renderers pass the indexed Kiwi document object so viewport
+   * motion cannot masquerade as a document edit.
+   */
+  readonly sourceDocumentReference: object;
   readonly defs?: readonly string[];
   readonly version: number;
 };

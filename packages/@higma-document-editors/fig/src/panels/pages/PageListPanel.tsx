@@ -14,13 +14,27 @@ import {
   type ListRowVisualState,
   type MenuEntry,
 } from "@higma-editor-kernel/ui";
-import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../context/FigEditorContext";
+import {
+  FIG_NODE_MUTATION_SOURCE,
+  useFigEditorSelector,
+  type FigEditorContextValue,
+} from "../../context/FigEditorContext";
 import { allowsFigUserOperation } from "../../context/fig-editor/user-operation";
 import { useFigOperationDomain } from "../../context/use-fig-operation-domain";
 
 type PageContextMenuState =
   | { readonly open: false }
   | { readonly open: true; readonly pageGuid: FigGuid; readonly pageKey: string; readonly x: number; readonly y: number };
+
+type PageListPanelSnapshot = {
+  readonly pages: readonly FigNode[];
+  readonly activePageGuid: FigGuid | undefined;
+  readonly setActivePageGuid: FigEditorContextValue["setActivePageGuid"];
+  readonly addPage: FigEditorContextValue["addPage"];
+  readonly renamePage: FigEditorContextValue["renamePage"];
+  readonly deletePage: FigEditorContextValue["deletePage"];
+  readonly movePage: FigEditorContextValue["movePage"];
+};
 
 const CLOSED_MENU: PageContextMenuState = { open: false };
 
@@ -60,6 +74,38 @@ function pageKey(page: FigNode): string {
   return guidToString(requirePageGuid(page));
 }
 
+function selectPageListPanelSnapshot(editor: FigEditorContextValue): PageListPanelSnapshot {
+  return {
+    pages: editor.pages,
+    activePageGuid: editor.activePageGuid,
+    setActivePageGuid: editor.setActivePageGuid,
+    addPage: editor.addPage,
+    renamePage: editor.renamePage,
+    deletePage: editor.deletePage,
+    movePage: editor.movePage,
+  };
+}
+
+function samePageListPanelPages(left: readonly FigNode[], right: readonly FigNode[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((page, index) => page === right[index]);
+}
+
+function samePageListPanelSnapshot(
+  left: PageListPanelSnapshot,
+  right: PageListPanelSnapshot,
+): boolean {
+  return samePageListPanelPages(left.pages, right.pages) &&
+    left.activePageGuid === right.activePageGuid &&
+    left.setActivePageGuid === right.setActivePageGuid &&
+    left.addPage === right.addPage &&
+    left.renamePage === right.renamePage &&
+    left.deletePage === right.deletePage &&
+    left.movePage === right.movePage;
+}
+
 /** Render and switch CANVAS pages. */
 export function PageListPanel() {
   const {
@@ -70,7 +116,10 @@ export function PageListPanel() {
     renamePage,
     deletePage,
     movePage,
-  } = useFigEditor();
+  } = useFigEditorSelector(
+    selectPageListPanelSnapshot,
+    samePageListPanelSnapshot,
+  );
   const [menu, setMenu] = useState<PageContextMenuState>(CLOSED_MENU);
   const renameHandlesRef = useRef<Map<string, InlineRenameInputHandle | null>>(new Map());
   const operationDomain = useFigOperationDomain();

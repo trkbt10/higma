@@ -2,14 +2,14 @@
 
 import { createShaderCache, type ShaderCache } from "../shaders";
 import { createTextureCache, type TextureCache } from "./texture-cache";
+import { createWebGLVertexBufferCache, type WebGLVertexBufferCache } from "./vertex-buffer-cache";
 import { createWebGLRenderTreeCache, type WebGLRenderTreeCache } from "../scene/render-tree-cache";
-import { createWebGLSceneResourceIdentityStore, type WebGLSceneResourceIdentityStore } from "./resource-identity";
 
 export type WebGLFigmaResourceContext = {
   readonly shaders: ShaderCache;
   readonly textures: TextureCache;
+  readonly vertexBuffers: WebGLVertexBufferCache;
   readonly renderTrees: WebGLRenderTreeCache;
-  readonly sceneResources: WebGLSceneResourceIdentityStore;
   readonly precompile: () => void;
   readonly dispose: () => void;
 };
@@ -18,20 +18,21 @@ export type WebGLFigmaResourceContext = {
 export function createWebGLFigmaResourceContext(gl: WebGLRenderingContext): WebGLFigmaResourceContext {
   const shaders = createShaderCache(gl);
   const textures = createTextureCache(gl);
-  const sceneResources = createWebGLSceneResourceIdentityStore();
-  const renderTrees = createWebGLRenderTreeCache(sceneResources);
+  const vertexBuffers = createWebGLVertexBufferCache(gl);
+  const renderTrees = createWebGLRenderTreeCache();
 
   return {
     shaders,
     textures,
+    vertexBuffers,
     renderTrees,
-    sceneResources,
     precompile(): void {
       shaders.precompileAll();
     },
     dispose(): void {
       shaders.dispose();
       textures.dispose();
+      vertexBuffers.dispose();
       renderTrees.clear();
     },
   };

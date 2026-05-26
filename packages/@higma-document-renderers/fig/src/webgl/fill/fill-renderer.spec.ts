@@ -2,9 +2,16 @@
  * @file Tests for WebGL fill UV calculations
  */
 
-import { bindPositionBufferVertices, computeImageUV, type GLContext } from "./fill-renderer";
+import {
+  bindPositionBufferVertices,
+  computeImageUV,
+  resolveWebGLRadialGradientObjectToGradientUniform,
+  type GLContext,
+} from "./fill-renderer";
 import type { ShaderCache } from "../shaders";
 import type { GLStateCache } from "../state/gl-state-cache";
+import type { WebGLVertexBufferCache } from "../resources/vertex-buffer-cache";
+import type { Fill } from "../../scene-graph";
 
 describe("computeImageUV", () => {
   it("marks FIT letterbox regions as transparent", () => {
@@ -88,36 +95,94 @@ describe("computeImageUV", () => {
   });
 });
 
+describe("resolveWebGLRadialGradientObjectToGradientUniform", () => {
+  function radialGradientFill(overrides: Partial<Extract<Fill, { readonly type: "radial-gradient" }>> = {}): Extract<Fill, { readonly type: "radial-gradient" }> {
+    return {
+      type: "radial-gradient",
+      center: { x: 0.5, y: 0.5 },
+      radius: 0.5,
+      stops: [
+        { position: 0, color: { r: 0, g: 0, b: 0, a: 1 } },
+        { position: 1, color: { r: 1, g: 1, b: 1, a: 1 } },
+      ],
+      opacity: 1,
+      ...overrides,
+    };
+  }
+
+  it("passes Kiwi radial gradientTransform to the shader without circular-radius reduction", () => {
+    const matrix = resolveWebGLRadialGradientObjectToGradientUniform(radialGradientFill({
+      gradientTransform: {
+        m00: 0.6633641123771667,
+        m01: 5.324599266052246,
+        m02: -5.35941219329834,
+        m10: -5.292078495025635,
+        m11: 0.6674402356147766,
+        m12: 5.053652763366699,
+      },
+    }));
+
+    expect(Array.from(matrix)).toEqual([
+      0.6633641123771667, -5.292078495025635, 0,
+      5.324599266052246, 0.6674402356147766, 0,
+      -5.35941219329834, 5.053652763366699, 1,
+    ]);
+  });
+
+  it("projects explicit center and radius to the same object-to-gradient matrix when Kiwi omitted gradientTransform", () => {
+    const matrix = resolveWebGLRadialGradientObjectToGradientUniform(radialGradientFill({
+      center: { x: 0.25, y: 0.75 },
+      radius: 0.25,
+    }));
+
+    expect(Array.from(matrix)).toEqual([
+      2, 0, 0,
+      0, 2, 0,
+      0, -1, 1,
+    ]);
+  });
+
+  it("rejects absent-transform radial gradients without a positive explicit radius", () => {
+    expect(() => resolveWebGLRadialGradientObjectToGradientUniform(radialGradientFill({ radius: 0 }))).toThrow(
+      "WebGL radial gradient requires positive radius when gradientTransform is absent",
+    );
+  });
+});
+
 describe("bindPositionBufferVertices", () => {
   type BindBufferCalls = {
-    readonly bindBuffer: number;
-    readonly bufferData: number;
+    readonly bindVertices: readonly Float32Array[];
   };
 
-  type GLBufferFake = Pick<WebGLRenderingContext, "ARRAY_BUFFER" | "DYNAMIC_DRAW" | "bindBuffer" | "bufferData">;
-
   function makeCtx(): { readonly ctx: GLContext; readonly calls: BindBufferCalls } {
-    const calls = { bindBuffer: 0, bufferData: 0 };
-    const fakeBuffer: WebGLBuffer = {} as WebGLBuffer;
+    const calls: { bindVertices: Float32Array[] } = { bindVertices: [] };
     const fakeShaders: ShaderCache = {} as ShaderCache;
-    const gl: GLBufferFake = {
-      ARRAY_BUFFER: 34962,
-      DYNAMIC_DRAW: 35048,
-      bindBuffer: () => { calls.bindBuffer += 1; },
-      bufferData: () => { calls.bufferData += 1; },
+    const vertexBuffers: WebGLVertexBufferCache = {
+      prepareStaticVertices: () => undefined,
+      synchronizePreparedRenderTreeVertexArrays: () => undefined,
+      bindVertices: (vertices) => {
+        calls.bindVertices.push(vertices);
+      },
+      invalidateArrayBufferBinding: () => undefined,
+      resetFrameMetrics: () => undefined,
+      getFrameMetrics: () => ({
+        dynamicBufferBindCount: 0,
+        dynamicBufferUploadCount: 0,
+        dynamicBufferUploadByteLength: 0,
+        staticBufferBindCount: 0,
+        staticBufferCreationCount: 0,
+        staticBufferUploadByteLength: 0,
+        staticBufferReleaseCount: 0,
+        staticBufferCount: 0,
+      }),
+      dispose: () => undefined,
     };
     const fakeGlState: GLStateCache = {} as GLStateCache;
     const ctx: GLContext = {
-      // The routine only touches `gl.ARRAY_BUFFER`, `gl.DYNAMIC_DRAW`,
-      // `gl.bindBuffer`, and `gl.bufferData`, so the structural subset
-      // we built above is the full contract — widening to
-      // `WebGLRenderingContext` keeps `GLContext`'s public shape intact
-      // for the spec's call site.
-      gl: gl as WebGLRenderingContext,
+      gl: {} as WebGLRenderingContext,
       shaders: fakeShaders,
       glState: fakeGlState,
-      positionBuffer: fakeBuffer,
-      positionBufferUpload: { value: null },
+      vertexBuffers,
       width: 100,
       height: 100,
       pixelRatio: 1,
@@ -125,22 +190,17 @@ describe("bindPositionBufferVertices", () => {
     return { ctx, calls };
   }
 
-  it("uploads when the vertex array is bound for the first time, and skips bufferData on a repeated upload of the same array", () => {
+  it("delegates repeated vertex arrays to the renderer-owned vertex buffer cache", () => {
     const { ctx, calls } = makeCtx();
     const verts = new Float32Array([0, 0, 1, 0, 1, 1]);
 
     bindPositionBufferVertices(ctx, verts);
     bindPositionBufferVertices(ctx, verts);
 
-    // Both calls bind the buffer (cheap, and effects rendering may
-    // have changed the bound buffer between draws), but the second
-    // call must skip the GPU upload — clip stencil rebuilds reuse
-    // the same cached `Float32Array` many times per frame.
-    expect(calls.bindBuffer).toBe(2);
-    expect(calls.bufferData).toBe(1);
+    expect(calls.bindVertices).toEqual([verts, verts]);
   });
 
-  it("re-uploads when the vertex array reference changes", () => {
+  it("delegates each vertex array reference without copying it", () => {
     const { ctx, calls } = makeCtx();
     const a = new Float32Array([0, 0, 1, 0, 1, 1]);
     const b = new Float32Array([0, 0, 2, 0, 2, 2]);
@@ -149,6 +209,6 @@ describe("bindPositionBufferVertices", () => {
     bindPositionBufferVertices(ctx, b);
     bindPositionBufferVertices(ctx, b);
 
-    expect(calls.bufferData).toBe(2);
+    expect(calls.bindVertices).toEqual([a, b, b]);
   });
 });

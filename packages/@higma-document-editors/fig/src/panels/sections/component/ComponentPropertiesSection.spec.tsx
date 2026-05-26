@@ -31,6 +31,37 @@ describe("ComponentPropertiesSection", () => {
     expect(renderSection(createElement(ComponentPropertiesSection, { node: rect }), [rect])).not.toContain("Component");
   });
 
+  it("renders properties inherited through Kiwi parentPropDefId", () => {
+    const frame = sectionNode("FRAME", {
+      guid: sectionGuid(9),
+      name: "Variant frame",
+      componentPropDefs: [{
+        id: sectionGuid(20),
+        name: "Time",
+        type: { value: 1, name: "TEXT" },
+        initialValue: { textValue: { characters: "9:41" } },
+      }],
+    });
+    const symbol = sectionNode("SYMBOL", {
+      guid: sectionGuid(10),
+      name: "Status bar",
+      parentIndex: { guid: frame.guid, position: "!" },
+      componentPropDefs: [{
+        id: sectionGuid(21),
+        parentPropDefId: sectionGuid(20),
+      }],
+    });
+    const instance = sectionNode("INSTANCE", {
+      guid: sectionGuid(11),
+      symbolData: { symbolID: symbol.guid },
+    });
+
+    const html = renderSection(createElement(ComponentPropertiesSection, { node: instance }), [frame, symbol, instance]);
+
+    expect(html).toContain("Time");
+    expect(html).toContain("9:41");
+  });
+
   it("does not render properties when the document SymbolResolver cannot resolve the INSTANCE symbol", () => {
     const instance = sectionNode("INSTANCE", {
       guid: sectionGuid(11),

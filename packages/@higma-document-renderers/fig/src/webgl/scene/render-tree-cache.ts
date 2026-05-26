@@ -3,45 +3,48 @@
  *
  * Two paths share this cache:
  *
- * 1. **Viewport-only rerenders** (pan / zoom). The editor swaps the
- *    `viewport` rectangle but hands back the same `scene.root`. We
- *    return the cached `RenderTree` with the new viewport / size,
- *    preserving every RenderNode reference downstream.
+ * 1. **Exact-root viewport rerenders**. When pan / zoom changes only
+ *    `scene.viewport` and keeps `scene.root` by reference, we return
+ *    the cached `RenderTree` with the new viewport / size, preserving
+ *    every RenderNode reference downstream.
  *
- * 2. **Document edits**. The editor produces a new `scene.root` (any
- *    mutation re-clones the root via `buildSceneGraphWithCache`), but
+ * 2. **Document edits**. Actual edits produce a new root, while the
+ *    editor keeps viewport movement on the same `scene.root`. In both cases
  *    `buildSceneGraphWithCache` keeps SceneNode references for every
- *    untouched node. We feed those references — and the previous
- *    resolution cache — to `resolveRenderTreeIncremental`, which keys
- *    its hits on `SceneNode` identity. Unchanged subtrees yield the
- *    same `RenderNode` instances they had last render, so every
- *    WeakMap cache keyed by RenderNode (path geometry, fill plan,
- *    local bounds, clip path vertices, effect stack…) stays warm
- *    across edits — only the edited subtree pays the resolve +
- *    tessellation cost.
+ *    untouched source FigNode. We feed the previous reference reuse
+ *    state to `resolveRenderTreeWithReferenceReuse`, which keys its
+ *    hits on `SceneNode` object reference. Unchanged subtrees
+ *    yield the same `RenderNode` instances they had last render, so
+ *    every WeakMap cache keyed by RenderNode (path geometry, fill
+ *    plan, local bounds, clip path vertices, effect stack…) stays
+ *    warm. Only the newly visible or edited subtree pays the resolve
+ *    and tessellation cost.
  */
 
 import type { SceneGraph } from "@higma-document-renderers/fig/scene-graph";
 import {
-  resolveRenderTreeIncremental,
+  renderExportSettingsCacheKey,
+  resolveFigmaRenderExportSettings,
+  resolveRenderTreeWithReferenceReuse,
   type RenderTree,
-  type RenderTreeResolutionCache,
+  type RenderTreeReferenceReuseState,
 } from "../../scene-graph";
 import type {
-  FigmaRenderExportSettings,
+  RenderExportSettingsCacheKey,
   SceneGraphRenderOptions,
 } from "../../scene-graph";
 import {
-  createWebGLSceneResourceIdentityStore,
-  type WebGLSceneResourceIdentityStore,
-  type WebGLSceneResourceKey,
-} from "../resources/resource-identity";
+  areWebGLSceneResourceReferenceKeysEqual,
+  createWebGLSceneResourceReferenceKey,
+  type WebGLSceneResourceReferenceKey,
+} from "../resources/scene-resource-reference-key";
 
 type RenderTreeCacheEntry = {
-  readonly resourceKey: WebGLSceneResourceKey;
+  readonly resourceKey: WebGLSceneResourceReferenceKey;
+  readonly sceneRoot: SceneGraph["root"];
   readonly tree: RenderTree;
-  readonly resolutionCache: RenderTreeResolutionCache;
-  readonly exportSettings: FigmaRenderExportSettings | undefined;
+  readonly referenceReuseState: RenderTreeReferenceReuseState;
+  readonly exportSettingsKey: RenderExportSettingsCacheKey;
 };
 
 function requireSceneViewport(scene: SceneGraph): NonNullable<SceneGraph["viewport"]> {
@@ -58,19 +61,22 @@ export type WebGLRenderTreeCache = {
 
 /**
  * Custom resolver injection hook used by tests. Production callers
- * go through the default `resolveRenderTreeIncremental` so SceneNode
- * identity across edits drives RenderNode reuse.
+ * go through the default `resolveRenderTreeWithReferenceReuse` so
+ * SceneNode object references across edits drive RenderNode reuse.
  */
-export type WebGLRenderTreeIncrementalResolver = (
+export type WebGLRenderTreeReferenceReuseResolver = (
   scene: SceneGraph,
-  previousCache: RenderTreeResolutionCache | undefined,
+  previousState: RenderTreeReferenceReuseState | undefined,
   options?: SceneGraphRenderOptions,
-) => { readonly renderTree: RenderTree; readonly cache: RenderTreeResolutionCache };
+) => { readonly renderTree: RenderTree; readonly referenceReuseState: RenderTreeReferenceReuseState };
+
+function sceneGraphRenderOptionsCacheKey(options: SceneGraphRenderOptions | undefined): RenderExportSettingsCacheKey {
+  return renderExportSettingsCacheKey(resolveFigmaRenderExportSettings(options?.exportSettings));
+}
 
 /** Create a cache that reuses resolved RenderTree nodes across viewport-only changes and document edits. */
 export function createWebGLRenderTreeCache(
-  sceneResources: WebGLSceneResourceIdentityStore = createWebGLSceneResourceIdentityStore(),
-  resolveIncremental: WebGLRenderTreeIncrementalResolver = resolveRenderTreeIncremental,
+  resolveWithReferenceReuse: WebGLRenderTreeReferenceReuseResolver = resolveRenderTreeWithReferenceReuse,
 ): WebGLRenderTreeCache {
   const current = { value: null as RenderTreeCacheEntry | null };
 
@@ -78,8 +84,9 @@ export function createWebGLRenderTreeCache(
     get(scene: SceneGraph, options?: SceneGraphRenderOptions): RenderTree {
       const viewport = requireSceneViewport(scene);
       const cached = current.value;
-      const resourceKey = sceneResources.get(scene);
-      const exportSettingsChanged = cached !== null && cached.exportSettings !== options?.exportSettings;
+      const resourceKey = createWebGLSceneResourceReferenceKey(scene);
+      const exportSettingsKey = sceneGraphRenderOptionsCacheKey(options);
+      const exportSettingsChanged = cached !== null && cached.exportSettingsKey !== exportSettingsKey;
 
       // Fast path: pan / zoom hands back the same `scene.root`, so
       // every RenderNode reference is already valid. Only the
@@ -87,25 +94,27 @@ export function createWebGLRenderTreeCache(
       if (
         cached
         && !exportSettingsChanged
-        && sceneResources.isEqual(cached.resourceKey, resourceKey)
+        && cached.sceneRoot === scene.root
+        && areWebGLSceneResourceReferenceKeysEqual(cached.resourceKey, resourceKey)
       ) {
         return { ...cached.tree, width: scene.width, height: scene.height, viewport };
       }
 
-      // Edit path: an edit changed the scene root. Resolve
-      // incrementally so SceneNode references that survived the
-      // edit yield their cached RenderNode references; downstream
+      // Edit path: an edit changed the scene root. Resolve with
+      // reference reuse so SceneNode references that survived the
+      // edit yield their previous RenderNode references; downstream
       // node-keyed WeakMaps (path geometry, bounds, fill plans, etc.)
       // stay warm for every untouched node. When the export settings
       // change we drop the previous cache so the resolver can't reuse
       // settings-sensitive intermediates.
-      const previousResolution = !cached || exportSettingsChanged ? undefined : cached.resolutionCache;
-      const resolved = resolveIncremental(scene, previousResolution, options);
+      const previousReferenceReuseState = !cached || exportSettingsChanged ? undefined : cached.referenceReuseState;
+      const resolved = resolveWithReferenceReuse(scene, previousReferenceReuseState, options);
       current.value = {
         resourceKey,
+        sceneRoot: scene.root,
         tree: resolved.renderTree,
-        resolutionCache: resolved.cache,
-        exportSettings: options?.exportSettings,
+        referenceReuseState: resolved.referenceReuseState,
+        exportSettingsKey,
       };
       return resolved.renderTree;
     },

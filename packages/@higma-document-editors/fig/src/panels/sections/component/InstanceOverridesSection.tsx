@@ -1,5 +1,6 @@
 /** @file INSTANCE override controls over Kiwi symbolData. */
-import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
+import { memo } from "react";
+import { getNodeType, guidToString, sameKiwiNodeExceptTransform } from "@higma-document-models/fig/domain";
 import type { FigGuid, FigKiwiSymbolOverride, FigNode } from "@higma-document-models/fig/types";
 import {
   InstanceOverridesSectionView,
@@ -13,6 +14,10 @@ type OverrideTarget = {
   readonly path: readonly FigGuid[];
   readonly node: FigNode;
   readonly label: string;
+};
+
+type InstanceOverridesSectionProps = {
+  readonly node: FigNode;
 };
 
 function sameGuid(left: FigGuid, right: FigGuid): boolean {
@@ -168,7 +173,7 @@ function requireTargetByKey(targets: readonly OverrideTarget[], key: string): Ov
 }
 
 /** Render INSTANCE self and descendant opacity overrides from SymbolResolver. */
-export function InstanceOverridesSection({ node }: { readonly node: FigNode }) {
+function InstanceOverridesSectionContent({ node }: InstanceOverridesSectionProps) {
   const { context, updateNode } = useFigEditor();
   if (getNodeType(node) !== "INSTANCE") {
     return null;
@@ -209,3 +214,15 @@ export function InstanceOverridesSection({ node }: { readonly node: FigNode }) {
     </section>
   );
 }
+
+function sameInstanceOverridesSectionProps(
+  left: InstanceOverridesSectionProps,
+  right: InstanceOverridesSectionProps,
+): boolean {
+  return sameKiwiNodeExceptTransform(left.node, right.node);
+}
+
+export const InstanceOverridesSection = memo(
+  InstanceOverridesSectionContent,
+  sameInstanceOverridesSectionProps,
+);

@@ -42,6 +42,14 @@ const rectStyle: React.CSSProperties = {
   pointerEvents: "all",
 };
 
+function requireResolvedNodeColor(colorMap: ReadonlyMap<string, string>, nodeType: string): string {
+  const color = colorMap.get(nodeType);
+  if (color === undefined) {
+    throw new Error(`BoundingBoxOverlay missing resolved category color for node type "${nodeType}"`);
+  }
+  return color;
+}
+
 /**
  * SVG overlay that renders interactive bounding box rectangles for each node.
  *
@@ -77,7 +85,7 @@ export function BoundingBoxOverlay({
       style={overlayStyle}
     >
       {boxes.map((box) => {
-        const color = colorMap.get(box.nodeType) ?? registry.fallback.color;
+        const color = requireResolvedNodeColor(colorMap, box.nodeType);
         const isHighlighted = box.nodeId === highlightedNodeId;
         const isHovered = box.nodeId === hoveredNodeId;
 

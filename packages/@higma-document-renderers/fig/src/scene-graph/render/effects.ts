@@ -17,10 +17,7 @@ import type { IdGenerator } from "./fill";
 /** SVG feColorMatrix `type` attribute values (see SVG spec). */
 export type FeColorMatrixType = "matrix" | "saturate" | "hueRotate" | "luminanceToAlpha";
 
-/**
- * SVG feBlend `mode` attribute values (CSS blend modes supported by SVG).
- * Intersection of SVG spec values and CSS <blend-mode> values.
- */
+/** SVG feBlend `mode` attribute values accepted by the browser SVG filter implementation. */
 export type FeBlendMode =
   | "normal"
   | "multiply"
@@ -37,9 +34,9 @@ export type FeBlendMode =
   | "hue"
   | "saturation"
   | "color"
-  | "luminosity"
-  | "plus-lighter"
-  | "plus-darker";
+  | "luminosity";
+
+type EffectFilterBlendMode = FeBlendMode;
 
 /** SVG feComposite `operator` attribute values. */
 export type FeCompositeOperator = "over" | "in" | "out" | "atop" | "xor" | "arithmetic";
@@ -114,7 +111,7 @@ export type ResolveEffectsOptions = {
 
 type PreparedInnerShadow = {
   readonly input: string;
-  readonly blendMode: FeBlendMode;
+  readonly blendMode: EffectFilterBlendMode;
 };
 
 // =============================================================================
@@ -122,14 +119,14 @@ type PreparedInnerShadow = {
 // =============================================================================
 
 /**
- * Resolve a SceneGraph blend token to the SVG filter blend mode emitted
- * by Figma's exporter.
+ * Resolve a SceneGraph effect blend token to the browser-valid filter blend
+ * mode that matches browser-rendered Figma SVG exports.
  */
-function resolveEffectFilterBlendMode(bm: BlendMode | undefined): FeBlendMode {
-  if (!bm) {
+export function resolveBrowserRenderedFigmaExportEffectBlendMode(blendMode: BlendMode | undefined): FeBlendMode {
+  if (!blendMode) {
     return "normal";
   }
-  switch (bm) {
+  switch (blendMode) {
     case "multiply":
     case "screen":
     case "darken":
@@ -145,11 +142,17 @@ function resolveEffectFilterBlendMode(bm: BlendMode | undefined): FeBlendMode {
     case "saturation":
     case "color":
     case "luminosity":
+      return blendMode;
     case "plus-lighter":
     case "plus-darker":
-      return bm;
+      // Figma's SVG exporter writes these CSS blend tokens into feBlend,
+      // but Chrome treats them as invalid SVG filter modes and renders the
+      // primitive with the initial `normal` mode. Emit that browser-valid
+      // projection explicitly so editor SVG output stays warning-free while
+      // matching the browser-rendered Figma export.
+      return "normal";
     default:
-      throw new Error(`Unsupported SVG filter blend mode "${bm}"`);
+      throw new Error(`Unsupported SVG filter blend mode "${blendMode}"`);
   }
 }
 
@@ -175,7 +178,7 @@ function resolvePositiveDirectionExpansion(isNormalBlend: boolean, totalExpansio
 function appendDropShadowBlend(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
-  readonly blendMode: FeBlendMode;
+  readonly blendMode: EffectFilterBlendMode;
   readonly input: string;
   readonly backdrop: string;
 }): string {
@@ -186,7 +189,7 @@ function appendDropShadowBlend(params: {
 
 function appendFilterBlendPrimitive(
   primitives: ResolvedFilterPrimitive[],
-  mode: FeBlendMode,
+  mode: EffectFilterBlendMode,
   input: string,
   backdrop: string,
   result: string,
@@ -209,7 +212,7 @@ function appendBackgroundImageFix(params: {
 function appendDropShadowOverBackdrop(params: {
   readonly primitives: ResolvedFilterPrimitive[];
   readonly ids: IdGenerator;
-  readonly blendMode: FeBlendMode;
+  readonly blendMode: EffectFilterBlendMode;
   readonly input: string;
   readonly currentBackdrop: string | undefined;
 }): string {
@@ -384,7 +387,7 @@ export function resolveEffects(
     switch (effect.type) {
       case "drop-shadow": {
         const isSharp = effect.radius === 0 && (!effect.spread || effect.spread === 0);
-        const blendMode = resolveEffectFilterBlendMode(effect.blendMode);
+        const blendMode = resolveBrowserRenderedFigmaExportEffectBlendMode(effect.blendMode);
 
         if (isSharp) {
           // Sharp drop-shadow recipe (Figma's exact SVG export shape, used
@@ -398,7 +401,7 @@ export function resolveEffects(
           //   2. **hardAlpha (not SourceAlpha) is offset**. Using
           //      SourceAlpha here would bake the source's anti-aliased
           //      edge into the offset sliver — after feComposite "out"
-          //      against the binarised hardAlpha, the sliver retains
+          //      against the binarised hardAlpha, the sliver keeps
           //      the 0.5..0.99 AA values instead of a clean 1.0, so the
           //      tinted shadow ends up ~30-50% transparent at the very
           //      pixels Figma draws at full opacity. Operating on
@@ -583,7 +586,7 @@ export function resolveEffects(
         );
         innerShadows.push({
           input: tintedResult,
-          blendMode: resolveEffectFilterBlendMode(effect.blendMode),
+          blendMode: resolveBrowserRenderedFigmaExportEffectBlendMode(effect.blendMode),
         });
         break;
       }

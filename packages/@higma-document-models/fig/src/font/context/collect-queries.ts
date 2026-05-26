@@ -6,8 +6,8 @@
  *
  * This is the single SoT for:
  *   - which font identities the Kiwi document references, and
- *   - which of those identities must be supplied by a font loader
- *     because Kiwi's derived text payload is not sufficient.
+ *   - which of those identities must be supplied by a font loader for
+ *     rendering or for recomputing editable text layout.
  * Anywhere else in the codebase that re-walks nodes to gather TEXT
  * fonts is duplicating this and will drift on edge cases (overrides,
  * INSTANCE recursion, symbol cycles).
@@ -58,6 +58,15 @@ export type CollectFontQueriesResult = {
    * fast on a missing font instead of silently estimating.
    */
   readonly fontResolverQueries: readonly FontQuery[];
+  /**
+   * Subset of `queries` that must be preloaded before an editor text
+   * overlay recomputes layout. Rendering may use Kiwi-derived glyphs
+   * without a font, but editing cannot reuse those glyphs after the
+   * character stream changes. Empty TEXT nodes with a font identity are
+   * included because cursor layout still needs ascender and descender
+   * metrics before the first inserted character.
+   */
+  readonly textLayoutFontResolverQueries: readonly FontQuery[];
 };
 
 /**
@@ -73,8 +82,10 @@ export type CollectFontQueriesResult = {
 export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQueriesResult {
   const seen = new Set<string>();
   const fontResolverSeen = new Set<string>();
+  const textLayoutFontResolverSeen = new Set<string>();
   const queries: FontQuery[] = [];
   const fontResolverQueries: FontQuery[] = [];
+  const textLayoutFontResolverQueries: FontQuery[] = [];
   const activeSymbols = new Set<string>();
 
   function pushQuery(q: FontQuery): void {
@@ -101,6 +112,18 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     fontResolverQueries.push(q);
   }
 
+  function pushTextLayoutFontResolverQuery(q: FontQuery): void {
+    if (q.family.length === 0) {
+      return;
+    }
+    const key = fontQueryKey(q);
+    if (textLayoutFontResolverSeen.has(key)) {
+      return;
+    }
+    textLayoutFontResolverSeen.add(key);
+    textLayoutFontResolverQueries.push(q);
+  }
+
   function collectTextNodeFonts(node: FontBearingNode): void {
     const baseFontName: FigFontName | undefined = node.textData?.fontName ?? node.fontName;
     const metadataFontName = node.derivedTextData?.fontMetaData?.[0]?.key?.family;
@@ -116,9 +139,14 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     for (const query of nodeQueries) {
       pushQuery(query);
     }
-    if (textNodeRequiresFontResolver(node)) {
+    if (textNodeRequiresRenderingFontResolver(node)) {
       for (const query of nodeQueries) {
         pushFontResolverQuery(query);
+      }
+    }
+    if (textNodeRequiresEditableTextLayoutFontResolver(node)) {
+      for (const query of nodeQueries) {
+        pushTextLayoutFontResolverQuery(query);
       }
     }
   }
@@ -180,10 +208,10 @@ export function collectFontQueries(input: CollectFontQueriesInput): CollectFontQ
     walk(root, input.childrenOf, undefined);
   }
 
-  return { queries, fontResolverQueries };
+  return { queries, fontResolverQueries, textLayoutFontResolverQueries };
 }
 
-function textNodeRequiresFontResolver(node: FontBearingNode): boolean {
+function textNodeRequiresRenderingFontResolver(node: FontBearingNode): boolean {
   if (textCharacters(node).length === 0) {
     return false;
   }
@@ -191,6 +219,12 @@ function textNodeRequiresFontResolver(node: FontBearingNode): boolean {
     return true;
   }
   return !hasKiwiTextRenderingPayload(node.derivedTextData);
+}
+
+function textNodeRequiresEditableTextLayoutFontResolver(node: FontBearingNode): boolean {
+  const baseFontName = node.textData?.fontName ?? node.fontName;
+  const metadataFontName = node.derivedTextData?.fontMetaData?.[0]?.key?.family;
+  return baseFontName !== undefined || metadataFontName !== undefined;
 }
 
 function textCharacters(node: FontBearingNode): string {

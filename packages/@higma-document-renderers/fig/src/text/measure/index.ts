@@ -27,6 +27,9 @@ export type {
 // Measurement provider
 export {
   createCanvasMeasurementProvider,
+  type CanvasMeasurementProviderInput,
+  type CanvasTextMeasureContext,
+  type CanvasTextMetrics,
 } from "./provider";
 
 // Line breaking

@@ -9,6 +9,7 @@ import type { ImagePaintFilter } from "@higma-codecs/raster";
 import { hasImagePaintFilter, resolveImagePaintFilterUniforms } from "@higma-codecs/raster";
 import type { ShaderCache } from "../shaders";
 import type { GLStateCache } from "../state/gl-state-cache";
+import type { WebGLVertexBufferCache } from "../resources/vertex-buffer-cache";
 import type { AffineMatrix } from "@higma-primitives/path";
 
 // =============================================================================
@@ -25,34 +26,19 @@ export type GLContext = {
    * during clip stencil rebuilds — short-circuit at the JS boundary.
    */
   readonly glState: GLStateCache;
-  readonly positionBuffer: WebGLBuffer;
-  /**
-   * Shared mutable ref tracking which `Float32Array` was last uploaded
-   * to `positionBuffer`. Used by `bindPositionBufferVertices` to skip
-   * redundant `gl.bufferData` calls when the same cached vertex array
-   * is re-bound (typical during clip-stencil rebuilds and back-to-back
-   * draws of cached geometry). Effects rendering uses its own buffers,
-   * so this tracker stays valid across the renderer's lifetime.
-   */
-  readonly positionBufferUpload: { value: Float32Array | null };
+  readonly vertexBuffers: WebGLVertexBufferCache;
   readonly width: number;
   readonly height: number;
   readonly pixelRatio: number;
 };
 
 /**
- * Bind `positionBuffer` and upload `vertices` only when the upload
- * differs from the last one. Caller is still responsible for
- * `enableVertexAttribArray` + `vertexAttribPointer`.
+ * Bind a WebGL vertex buffer for `vertices`. The cache promotes repeated
+ * RenderTree geometry arrays to static GPU buffers and keeps one-off arrays
+ * on its dynamic buffer.
  */
 export function bindPositionBufferVertices(ctx: GLContext, vertices: Float32Array): void {
-  const { gl, positionBuffer, positionBufferUpload } = ctx;
-  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-  if (positionBufferUpload.value === vertices) {
-    return;
-  }
-  gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
-  positionBufferUpload.value = vertices;
+  ctx.vertexBuffers.bindVertices(vertices);
 }
 
 // =============================================================================
@@ -186,38 +172,42 @@ export type DiamondGradientFillParams = {
 };
 
 /**
- * Compute the effective gradient (center, radius) in object-bbox space
- * by applying the gradient's `transform` matrix to the unit-gradient
- * (cx=0.5, cy=0.5, r=0.5) shape. Mirrors `radialGradientAttrs` in
- * `paint/svg-gradient-transform.ts` (the SVG SoT), but expressed in
- * normalised [0..1] coordinates because the WebGL shader treats
- * `localPos` as bbox-normalised.
+ * Resolve the matrix consumed by the radial-gradient shader.
  *
- * For circular gradients with rotation+uniform-scale the result is
- * exact. For elliptical gradients (m00 ≠ m11 or non-zero off-diagonals
- * with unequal magnitudes) the shader still treats the gradient as a
- * single-radius circle — the major-axis radius is used. The SVG SoT
- * already handles full ellipses via its `translate.rotate.scale`
- * gradientTransform composition; matching that on the WebGL side would
- * require passing a 2×3 matrix uniform and computing the inverse in
- * the shader. That's left for a follow-up; the current fixtures only
- * exercise circular gradients with translate+uniform-scale.
+ * Kiwi `paint.transform` maps normalised object coordinates into
+ * Figma radial-gradient coordinates. The shader consumes that matrix
+ * directly and samples distance from Figma's canonical centre
+ * `(0.5, 0.5)` with radius `0.5`. When Kiwi did not author a transform,
+ * the RenderTree fill's explicit `center` and `radius` fields define
+ * the same object→gradient mapping.
  */
-function bakedRadialCenterRadius(
+export function resolveWebGLRadialGradientObjectToGradientUniform(
   fill: Extract<Fill, { type: "radial-gradient" }>,
-): { readonly cx: number; readonly cy: number; readonly r: number } {
+): Float32Array {
   const t = fill.gradientTransform;
-  if (!t) {
-    return { cx: fill.center.x, cy: fill.center.y, r: fill.radius };
+  if (t !== undefined) {
+    return affineToGLUniform(t);
   }
-  // Unit gradient: cx=0.5, cy=0.5, r=0.5. After applying T:
-  //   center_obj = T * (0.5, 0.5)
-  //   primary-axis end = T * (1.0, 0.5) → axis vector (m00, m10) × 0.5
-  //   radius = |axis| = 0.5 * sqrt(m00² + m10²)
-  const cx = t.m00 * 0.5 + t.m01 * 0.5 + t.m02;
-  const cy = t.m10 * 0.5 + t.m11 * 0.5 + t.m12;
-  const r = 0.5 * Math.hypot(t.m00, t.m10);
-  return { cx, cy, r };
+  if (!Number.isFinite(fill.radius) || fill.radius <= 0) {
+    throw new Error(`WebGL radial gradient requires positive radius when gradientTransform is absent, got ${fill.radius}`);
+  }
+  const scale = 0.5 / fill.radius;
+  return affineToGLUniform({
+    m00: scale,
+    m01: 0,
+    m02: 0.5 - fill.center.x * scale,
+    m10: 0,
+    m11: scale,
+    m12: 0.5 - fill.center.y * scale,
+  });
+}
+
+function affineToGLUniform(transform: AffineMatrix): Float32Array {
+  return new Float32Array([
+    transform.m00, transform.m10, 0,
+    transform.m01, transform.m11, 0,
+    transform.m02, transform.m12, 1,
+  ]);
 }
 
 /** Draw a radial gradient fill using WebGL */
@@ -230,10 +220,8 @@ export function drawRadialGradientFill(
   const programName = "radialGradient";
   shaders.useProgram(programName);
 
-  const { cx, cy, r } = bakedRadialCenterRadius(fill);
   bindGradientGeometry({ ctx, programName, vertices, transform });
-  shaders.setUniform2f(programName, "u_center", cx, cy);
-  shaders.setUniform1f(programName, "u_radius", r);
+  shaders.setUniformMatrix3fv(programName, "u_objectToGradient", resolveWebGLRadialGradientObjectToGradientUniform(fill));
   shaders.setUniform2f(programName, "u_elementSize", elementSize.width, elementSize.height);
   shaders.setUniform2f(programName, "u_elementOrigin", elementSize.x ?? 0, elementSize.y ?? 0);
   shaders.setUniform1f(programName, "u_opacity", opacity * fill.opacity);

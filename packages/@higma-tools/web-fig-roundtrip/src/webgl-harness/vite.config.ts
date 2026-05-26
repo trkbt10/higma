@@ -3,8 +3,8 @@
  *
  * Mirrors the harness used by `@higma-document-renderers/fig`'s WebGL
  * parity tests — minimal page + WebGLFigmaRenderer entry point that
- * exposes a single `window.renderSceneGraph(json)` for the verifier
- * to call.
+ * exposes a single `globalThis.renderSceneGraph(json)` surface for
+ * the verifier to call.
  */
 import { defineConfig } from "vite";
 import path from "node:path";

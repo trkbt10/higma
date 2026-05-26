@@ -3,14 +3,14 @@
 import { indexFigKiwiDocument } from "@higma-document-models/fig/domain";
 import { NODE_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigGuid, FigNode } from "@higma-document-models/fig/types";
-import { flattenAllNodeBounds } from "./bounds";
+import type { SceneGraphNodeBounds } from "@higma-document-renderers/fig/scene-graph";
 import { resolveInteractionTargetGuid } from "./target-resolution";
 
 function guid(localID: number): FigGuid {
   return { sessionID: 71, localID };
 }
 
-function figNode(localID: number, parent: FigGuid | undefined, x: number, y: number, width: number, height: number): FigNode {
+function figNode(localID: number, parent: FigGuid | undefined): FigNode {
   return {
     guid: guid(localID),
     phase: { value: 0, name: "PAINT" },
@@ -19,39 +19,50 @@ function figNode(localID: number, parent: FigGuid | undefined, x: number, y: num
     parentIndex: parent === undefined ? undefined : { guid: parent, position: `${localID}` },
     visible: true,
     opacity: 1,
-    transform: { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y },
-    size: { x: width, y: height },
+  };
+}
+
+function bounds(id: string, rootId: string, x: number, y: number, width: number, height: number): SceneGraphNodeBounds {
+  return {
+    id,
+    rootId,
+    x,
+    y,
+    width,
+    height,
+    rotation: 0,
+    aabb: { x, y, width, height },
   };
 }
 
 describe("resolveInteractionTargetGuid", () => {
   it("chooses the deepest bounds containing the point", () => {
-    const parent = figNode(1, undefined, 100, 100, 140, 100);
-    const child = figNode(2, parent.guid, 20, 20, 40, 30);
+    const parent = figNode(1, undefined);
+    const child = figNode(2, parent.guid);
     const document = indexFigKiwiDocument([parent, child]);
-    const bounds = flattenAllNodeBounds(document, document.roots);
     const result = resolveInteractionTargetGuid({
       document,
-      itemBounds: bounds,
-      hitId: "71:1",
+      itemBounds: [
+        bounds("71:1", "71:1", 100, 100, 140, 100),
+        bounds("71:2", "71:1", 120, 120, 40, 30),
+      ],
       point: { x: 125, y: 125 },
     });
 
     expect(result).toEqual(child.guid);
   });
 
-  it("uses the browser hit id when the point is not inside a known bound", () => {
-    const parent = figNode(1, undefined, 100, 100, 140, 100);
-    const child = figNode(2, parent.guid, 20, 20, 40, 30);
+  it("throws when no renderer-derived bounds contain the point", () => {
+    const parent = figNode(1, undefined);
+    const child = figNode(2, parent.guid);
     const document = indexFigKiwiDocument([parent, child]);
-    const bounds = flattenAllNodeBounds(document, document.roots);
-    const result = resolveInteractionTargetGuid({
+    expect(() => resolveInteractionTargetGuid({
       document,
-      itemBounds: bounds,
-      hitId: "71:1",
+      itemBounds: [
+        bounds("71:1", "71:1", 100, 100, 140, 100),
+        bounds("71:2", "71:1", 120, 120, 40, 30),
+      ],
       point: { x: 10, y: 10 },
-    });
-
-    expect(result).toEqual(parent.guid);
+    })).toThrow("no rendered SceneGraph bounds contain point");
   });
 });

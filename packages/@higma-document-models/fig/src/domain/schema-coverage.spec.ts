@@ -136,7 +136,11 @@ describe("Kiwi NodeChange field coverage", () => {
     expect(KIWI_NODECHANGE_HANDLING.key).toMatchObject({ kind: "mapped", to: "FigNode.key" });
     expect(KIWI_NODECHANGE_HANDLING.fileAssetIds).toMatchObject({ kind: "mapped", to: "FigNode.fileAssetIds" });
     expect(KIWI_NODECHANGE_HANDLING.styleID).toMatchObject({ kind: "mapped", to: "FigNode.styleID" });
-    expect(KIWI_NODECHANGE_HANDLING.componentPropDefs).toMatchObject({ kind: "mapped", to: "componentPropDefs" });
+    expect(KIWI_NODECHANGE_HANDLING.componentPropDefs).toMatchObject({
+      kind: "mapped",
+      to: "componentPropDefs",
+      note: expect.stringContaining("parentPropDefId"),
+    });
     expect(KIWI_NODECHANGE_HANDLING.componentPropRefs).toMatchObject({ kind: "mapped", to: "componentPropRefs" });
     expect(KIWI_NODECHANGE_HANDLING.symbolData).toMatchObject({ kind: "mapped" });
     expect(KIWI_NODECHANGE_HANDLING.componentPropAssignments).toMatchObject({ kind: "mapped", to: "componentPropAssignments" });

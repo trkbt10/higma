@@ -101,15 +101,18 @@ function createEmptyFrameNode(): FigNode {
 
 describe("renderFigToSvg fontLoader", () => {
   it("preloads requested text fonts and renders font-backed glyph paths", async () => {
+    const document = indexFigKiwiDocument([]);
     const result = await renderFigToSvg([createTextNode()], {
       width: 120,
       height: 32,
       viewport: { x: 0, y: 0, width: 120, height: 32 },
+      sourceDocumentReference: document,
+      sourceRevision: 0,
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
       symbolResolver: createSymbolResolver({
-        document: indexFigKiwiDocument([]),
+        document,
       }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       backgroundColor: "#ffffff",
@@ -121,15 +124,18 @@ describe("renderFigToSvg fontLoader", () => {
   });
 
   it("does not synthesize purple dashed chrome for plain empty FRAME roots", async () => {
+    const document = indexFigKiwiDocument([]);
     const result = await renderFigToSvg([createEmptyFrameNode()], {
       width: 120,
       height: 80,
       viewport: { x: 0, y: 0, width: 120, height: 80 },
+      sourceDocumentReference: document,
+      sourceRevision: 0,
       blobs: [],
       images: new Map(),
       childrenOf: () => [],
       symbolResolver: createSymbolResolver({
-        document: indexFigKiwiDocument([]),
+        document,
       }),
       styleRegistry: EMPTY_FIG_STYLE_REGISTRY,
       backgroundColor: "#ffffff",

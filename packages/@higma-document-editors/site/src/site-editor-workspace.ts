@@ -12,11 +12,12 @@ import {
   createFigFamilyDocumentContext,
   createFigFamilyRenderOptions,
   type FigFamilyDocumentContext,
+  type FigFamilyNode,
   type FigFamilyPage,
   type FigFamilyRenderOptions,
+  readFigFamilyNodeGuidKey,
+  readFigFamilyNodeType,
 } from "@higma-figma-runtime/react-renderer";
-import { getNodeType, guidToString } from "@higma-document-models/fig/domain";
-import type { FigNode } from "@higma-document-models/fig/types";
 import {
   createSiteRenderPlan,
   type SiteBreakpointVariant,
@@ -62,7 +63,7 @@ export type SiteEditableUnit = {
 export type SiteFigRenderSurface = {
   readonly context: FigFamilyDocumentContext;
   readonly page: FigFamilyPage;
-  readonly nodes: readonly FigNode[];
+  readonly nodes: readonly FigFamilyNode[];
   readonly renderOptions?: FigFamilyRenderOptions;
 };
 
@@ -152,13 +153,10 @@ function readVariantNodeIds(options: SiteFigRenderSurfaceOptions | null): Readon
 
 function filterNodeForVariantIds(
   context: FigFamilyDocumentContext,
-  node: FigNode,
+  node: FigFamilyNode,
   variantNodeIds: ReadonlySet<string>,
-): FigNode | null {
-  if (node.guid === undefined) {
-    throw new Error(`Site fig render surface found node without guid: ${node.name ?? "(unnamed)"}`);
-  }
-  if (variantNodeIds.has(guidToString(node.guid))) {
+): FigFamilyNode | null {
+  if (variantNodeIds.has(readFigFamilyNodeGuidKey(node))) {
     return node;
   }
   const children = context.document.childrenOf(node).flatMap((child) => {
@@ -179,9 +177,9 @@ function filterNodeForVariantIds(
 
 function filterPageChildrenForVariants(
   context: FigFamilyDocumentContext,
-  children: readonly FigNode[],
+  children: readonly FigFamilyNode[],
   variantNodeIds: ReadonlySet<string> | null,
-): readonly FigNode[] {
+): readonly FigFamilyNode[] {
   if (!variantNodeIds) {
     return children;
   }
@@ -198,13 +196,13 @@ function filterPageChildrenForVariants(
   return filteredChildren;
 }
 
-function firstCanvas(context: FigFamilyDocumentContext): FigNode {
+function firstCanvas(context: FigFamilyDocumentContext): FigFamilyNode {
   for (const root of context.document.roots) {
-    if (getNodeType(root) !== "DOCUMENT") {
+    if (readFigFamilyNodeType(root) !== "DOCUMENT") {
       continue;
     }
     for (const canvas of context.document.childrenOf(root)) {
-      if (getNodeType(canvas) === "CANVAS") {
+      if (readFigFamilyNodeType(canvas) === "CANVAS") {
         return canvas;
       }
     }

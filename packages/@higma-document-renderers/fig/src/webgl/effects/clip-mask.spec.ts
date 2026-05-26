@@ -19,6 +19,7 @@ function makeMockGL(): { readonly gl: StencilFakeGL; readonly calls: string[] } 
   const calls: string[] = [];
   const gl: StencilFakeGL = {
     STENCIL_TEST: 2960,
+    SCISSOR_TEST: 3089,
     BLEND: 3042,
     STENCIL_BUFFER_BIT: 1024,
     ALWAYS: 519,

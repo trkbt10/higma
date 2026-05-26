@@ -6,18 +6,20 @@ export {
   type WebGLFigmaRendererInstance,
   type WebGLRendererOptions,
   type WebGLFigmaRendererMetrics,
+  type WebGLRenderFrameOptions,
+  type WebGLRenderFrameReason,
 } from "./renderer/renderer";
 
-// Resource context & identity
+// Resource context and source document reference keys
 export {
   createWebGLFigmaResourceContext,
   type WebGLFigmaResourceContext,
 } from "./resources/resource-context";
 export {
-  createWebGLSceneResourceIdentityStore,
-  type WebGLSceneResourceIdentityStore,
-  type WebGLSceneResourceKey,
-} from "./resources/resource-identity";
+  areWebGLSceneResourceReferenceKeysEqual,
+  createWebGLSceneResourceReferenceKey,
+  type WebGLSceneResourceReferenceKey,
+} from "./resources/scene-resource-reference-key";
 export {
   createTextureCache,
   type TextureCache,
@@ -76,13 +78,6 @@ export {
 } from "./effects/effects-renderer";
 export { beginStencilClip, endStencilClip } from "./effects/clip-mask";
 
-// Scene state
-export {
-  createSceneState,
-  type SceneStateInstance,
-  type NodeGPUState,
-} from "./scene/scene-state";
-
 // Viewport backing-store policy
 export {
   resolveWebGLViewportPixelRatio,
@@ -92,3 +87,19 @@ export {
   getWebGLViewportPreparationStatus,
   type WebGLViewportPreparationStatus,
 } from "./scene/preparation-status";
+export {
+  createWebGLViewportRendererGlobalThisScheduler,
+  createWebGLViewportRendererController,
+  getInitialWebGLViewportRendererControllerSnapshot,
+  hasWebGLViewportRendererGlobalThisSchedulerHost,
+  resolveWebGLViewportRenderSchedulingDecision,
+  shouldNotifyWebGLViewportRendererSubscribers,
+  type WebGLViewportRendererGlobalThisSchedulerHost,
+  type WebGLViewportRendererController,
+  type WebGLViewportRendererControllerInput,
+  type WebGLViewportRendererControllerSnapshot,
+  type WebGLViewportSceneViewport,
+  type WebGLViewportRenderSchedulingDecision,
+  type WebGLViewportRenderSchedulingInput,
+  type WebGLViewportRendererScheduler,
+} from "./viewport/webgl-viewport-renderer-controller";

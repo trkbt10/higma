@@ -8,7 +8,7 @@
  * Both modes share the same .fig file loading pipeline.
  */
 
-import { useEffect, useMemo, useState, useCallback, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createEmptyFigDocument,
@@ -20,6 +20,8 @@ import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import type { EditorPanel } from "@higma-editor-surfaces/controls/editor-shell";
 import { Button, Select, Tabs, Toggle, injectCSSVariables, colorTokens, spacingTokens, fontTokens, radiusTokens } from "@higma-editor-kernel/ui";
 import { FigEditor } from "../src/editor/FigEditor";
+import type { FigEditorStore } from "../src/context/FigEditorContext";
+import { createGlobalThisPublishedFigEditorStore } from "../src/context/fig-editor-store-global-this-publication";
 import type { FigEditorRendererKind } from "../src/canvas/rendering/renderer-kind";
 import { PageListPanel } from "../src/panels/pages/PageListPanel";
 import { LayerPanel } from "../src/panels/layers/LayerPanel";
@@ -48,6 +50,11 @@ type LoadedFile = {
   readonly context: FigDocumentContext;
   readonly fileName: string;
   readonly sourceFileNames: readonly string[];
+};
+
+type LoadedEditorSession = LoadedFile & {
+  readonly store: FigEditorStore;
+  readonly dispose: () => void;
 };
 
 type LoadedFigFile = Awaited<ReturnType<typeof loadFigFile>>;
@@ -301,7 +308,7 @@ function renderFontAccessControl({
 }
 
 function LoadedDevShell({
-  loadedFile,
+  loadedEditorSession,
   mode,
   setMode,
   inspectorOverlayEnabled,
@@ -313,7 +320,7 @@ function LoadedDevShell({
   rendererDebugCaptureFrameOnly,
   onClose,
 }: {
-  readonly loadedFile: LoadedFile;
+  readonly loadedEditorSession: LoadedEditorSession;
   readonly mode: DevMode;
   readonly setMode: (mode: DevMode) => void;
   readonly inspectorOverlayEnabled: boolean;
@@ -325,13 +332,13 @@ function LoadedDevShell({
   readonly rendererDebugCaptureFrameOnly: boolean;
   readonly onClose: () => void;
 }) {
-  const fontResolverState = useBrowserTextFontResolver(loadedFile.context);
+  const fontResolverState = useBrowserTextFontResolver(loadedEditorSession.context);
   return (
     <div style={appStyle}>
       <header style={headerStyle}>
         <div style={headerLeftStyle}>
           <h1 style={titleStyle}>Fig Editor Dev</h1>
-          <span style={fileNameStyle}>{formatLoadedFileName(loadedFile)}</span>
+          <span style={fileNameStyle}>{formatLoadedFileName(loadedEditorSession)}</span>
         </div>
         <div style={headerRightStyle}>
           {mode === "editor" && (
@@ -364,7 +371,7 @@ function LoadedDevShell({
               <div style={mainStyle}>
                 <FigInspectorProvider>
                   <FigEditor
-                    context={loadedFile.context}
+                    store={loadedEditorSession.store}
                     panels={editorPanels}
                     renderer={editorRenderer}
                     textFontResolver={fontResolverState.resolver}
@@ -381,8 +388,8 @@ function LoadedDevShell({
             content: (
               <div style={mainStyle}>
                 <RendererDebugView
-                  key={`${loadedFile.fileName}:${debugFrameGuid ?? ""}:${editorRenderer}`}
-                  context={loadedFile.context}
+                  key={`${loadedEditorSession.fileName}:${debugFrameGuid ?? ""}:${editorRenderer}`}
+                  context={loadedEditorSession.context}
                   initialFrameGuid={debugFrameGuid}
                   initialRenderer={editorRenderer}
                   captureFrameOnly={rendererDebugCaptureFrameOnly}
@@ -437,8 +444,20 @@ function createLoadedFileFromInputs(inputs: readonly LoadedFigInput[]): LoadedFi
   };
 }
 
-async function createLoadedFile(files: readonly File[]): Promise<LoadedFile> {
-  return createLoadedFileFromInputs(await Promise.all(files.map(readLoadedFigFile)));
+function createLoadedEditorSession(loadedFile: LoadedFile): LoadedEditorSession {
+  const publishedStore = createGlobalThisPublishedFigEditorStore({
+    context: loadedFile.context,
+  });
+  return {
+    ...loadedFile,
+    store: publishedStore.store,
+    dispose: publishedStore.dispose,
+  };
+}
+
+async function readLoadedFileFromFiles(files: readonly File[]): Promise<LoadedFile> {
+  const loadedInputs = await Promise.all(files.map(readLoadedFigFile));
+  return createLoadedFileFromInputs(loadedInputs);
 }
 
 function formatLoadedFileName(loadedFile: LoadedFile): string {
@@ -568,7 +587,7 @@ async function readLoadedFigFileFromRouteInput(input: DevFigRouteInput): Promise
   };
 }
 
-async function createLoadedFileFromRoute(route: DevFileRoute): Promise<LoadedFile> {
+async function readLoadedFileFromRoute(route: DevFileRoute): Promise<LoadedFile> {
   const inputs = await Promise.all([
     readLoadedFigFileFromRouteInput(route.fig),
     ...route.sources.map(readLoadedFigFileFromRouteInput),
@@ -577,7 +596,8 @@ async function createLoadedFileFromRoute(route: DevFileRoute): Promise<LoadedFil
 }
 
 function App() {
-  const [loadedFile, setLoadedFile] = useState<LoadedFile | null>(null);
+  const loadedEditorSessionRef = useRef<LoadedEditorSession | null>(null);
+  const [loadedEditorSession, setLoadedEditorSession] = useState<LoadedEditorSession | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [mode, setMode] = useState<DevMode>("editor");
@@ -606,36 +626,56 @@ function App() {
     [],
   );
 
+  const replaceLoadedEditorSession = useCallback((nextLoadedFile: LoadedFile | null) => {
+    const currentLoadedEditorSession = loadedEditorSessionRef.current;
+    if (currentLoadedEditorSession !== null) {
+      currentLoadedEditorSession.dispose();
+    }
+    const nextLoadedEditorSession = nextLoadedFile === null ? null : createLoadedEditorSession(nextLoadedFile);
+    loadedEditorSessionRef.current = nextLoadedEditorSession;
+    setLoadedEditorSession(nextLoadedEditorSession);
+  }, []);
+
   const handleFiles = useCallback(async (files: readonly File[]) => {
     setIsLoading(true);
     setError(null);
     try {
-      setLoadedFile(await createLoadedFile(files));
+      replaceLoadedEditorSession(await readLoadedFileFromFiles(files));
       setDebugFrameGuid(undefined);
       setRendererDebugCaptureFrameOnly(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to parse file";
       setError(message);
-      setLoadedFile(null);
+      replaceLoadedEditorSession(null);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [replaceLoadedEditorSession]);
 
   const handleNewDocument = useCallback(() => {
     const context = createEmptyFigDocument("Page 1");
-    setLoadedFile({ context, fileName: "Untitled.fig", sourceFileNames: [] });
+    replaceLoadedEditorSession({
+      context,
+      fileName: "Untitled.fig",
+      sourceFileNames: [],
+    });
     setError(null);
     setDebugFrameGuid(undefined);
     setRendererDebugCaptureFrameOnly(false);
-  }, []);
+  }, [replaceLoadedEditorSession]);
 
   const handleClose = useCallback(() => {
-    setLoadedFile(null);
+    replaceLoadedEditorSession(null);
     setError(null);
     setDebugFrameGuid(undefined);
     setRendererDebugCaptureFrameOnly(false);
-  }, []);
+  }, [replaceLoadedEditorSession]);
+
+  useEffect(() => {
+    return () => {
+      replaceLoadedEditorSession(null);
+    };
+  }, [replaceLoadedEditorSession]);
 
   useEffect(() => {
     const cancellation = { cancelled: false };
@@ -644,11 +684,11 @@ function App() {
       setIsLoading(true);
       setError(null);
       try {
-        const route = readDevFileRoute(window.location.search);
+        const route = readDevFileRoute(globalThis.location.search);
         if (route === null) {
           return;
         }
-        const nextLoadedFile = await createLoadedFileFromRoute(route);
+        const nextLoadedFile = await readLoadedFileFromRoute(route);
         if (cancellation.cancelled) {
           return;
         }
@@ -656,14 +696,14 @@ function App() {
         setEditorRenderer(route.renderer);
         setDebugFrameGuid(route.frameGuid);
         setRendererDebugCaptureFrameOnly(route.captureFrameOnly);
-        setLoadedFile(nextLoadedFile);
+        replaceLoadedEditorSession(nextLoadedFile);
       } catch (e) {
         if (cancellation.cancelled) {
           return;
         }
         const message = e instanceof Error ? e.message : "Failed to parse routed file";
         setError(message);
-        setLoadedFile(null);
+        replaceLoadedEditorSession(null);
       } finally {
         if (!cancellation.cancelled) {
           setIsLoading(false);
@@ -675,10 +715,10 @@ function App() {
     return () => {
       cancellation.cancelled = true;
     };
-  }, []);
+  }, [replaceLoadedEditorSession]);
 
   // No file loaded: show drop zone
-  if (!loadedFile) {
+  if (loadedEditorSession === null) {
     return (
       <div style={appStyle}>
         <header style={headerStyle}>
@@ -701,7 +741,7 @@ function App() {
 
   return (
     <LoadedDevShell
-      loadedFile={loadedFile}
+      loadedEditorSession={loadedEditorSession}
       mode={mode}
       setMode={setMode}
       inspectorOverlayEnabled={inspectorOverlayEnabled}

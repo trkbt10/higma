@@ -15,7 +15,10 @@ export {
   type FigNodeCategory,
 } from "./fig-node-categories";
 export {
-  collectFigInspectorBoxes,
   figNodeToInspectorTree,
   type FigInspectorProjectionOptions,
 } from "./fig-inspector-projection";
+export {
+  collectFigInspectorBoxesFromRenderedNodeBounds,
+  type FigInspectorRenderedBoxesOptions,
+} from "./fig-inspector-rendered-boxes";

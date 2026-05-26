@@ -31,6 +31,7 @@
 export type GLStateSink = Pick<
   WebGLRenderingContext,
   | "STENCIL_TEST"
+  | "SCISSOR_TEST"
   | "BLEND"
   | "FRONT"
   | "BACK"

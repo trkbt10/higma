@@ -41,7 +41,6 @@ export const FIG_NODE_CATEGORY_REGISTRY: NodeCategoryRegistry = {
         return "shape";
     }
   },
-  fallback: { color: "#64748b", label: "Unknown" },
 };
 
 /** Classify a Kiwi node into the inspector's compact category set. */

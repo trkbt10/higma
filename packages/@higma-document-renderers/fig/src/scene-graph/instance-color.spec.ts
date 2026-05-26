@@ -39,6 +39,8 @@ function buildScene() {
     images: fixture.resources.images,
     canvasSize: { width: 1200, height: 800 },
     viewport: { x: 0, y: 0, width: 1200, height: 800 },
+    sourceDocumentReference: fixture.document,
+    sourceRevision: 0,
     symbolResolver: fixture.resources.symbolResolver,
     childrenOf: fixture.resources.childrenOf,
     styleRegistry: fixture.resources.styleRegistry,

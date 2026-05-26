@@ -18,7 +18,7 @@ import type {
   FigPaint,
   FigSolidPaint,
 } from "@higma-document-models/fig/types";
-import { FigEditorProvider } from "../../context/FigEditorContext";
+import { createFigEditorStore, FigEditorStoreProvider } from "../../context/FigEditorContext";
 
 const DOCUMENT_GUID: FigGuid = { sessionID: 80, localID: 0 };
 const PAGE_GUID: FigGuid = { sessionID: 80, localID: 1 };
@@ -96,6 +96,23 @@ export function sectionNode(
     rectangleCornerRadii: overrides.rectangleCornerRadii,
     stackMode: overrides.stackMode,
     stackSpacing: overrides.stackSpacing,
+    stackPadding: overrides.stackPadding,
+    stackVerticalPadding: overrides.stackVerticalPadding,
+    stackHorizontalPadding: overrides.stackHorizontalPadding,
+    stackPaddingRight: overrides.stackPaddingRight,
+    stackPaddingBottom: overrides.stackPaddingBottom,
+    stackPrimaryAlignItems: overrides.stackPrimaryAlignItems,
+    stackCounterAlignItems: overrides.stackCounterAlignItems,
+    stackPrimaryAlignContent: overrides.stackPrimaryAlignContent,
+    stackCounterAlignContent: overrides.stackCounterAlignContent,
+    stackCounterSpacing: overrides.stackCounterSpacing,
+    stackCounterSizing: overrides.stackCounterSizing,
+    stackWrap: overrides.stackWrap,
+    stackReverseZIndex: overrides.stackReverseZIndex,
+    stackPositioning: overrides.stackPositioning,
+    stackPrimarySizing: overrides.stackPrimarySizing,
+    stackChildAlignSelf: overrides.stackChildAlignSelf,
+    stackChildPrimaryGrow: overrides.stackChildPrimaryGrow,
     horizontalConstraint: overrides.horizontalConstraint,
     verticalConstraint: overrides.verticalConstraint,
     componentPropDefs: overrides.componentPropDefs,
@@ -113,7 +130,7 @@ export function sectionNode(
   };
 }
 
-/** Render a section inside FigEditorProvider using Kiwi nodeChanges. */
+/** Render a section inside FigEditorStoreProvider using Kiwi nodeChanges. */
 export function renderSection(element: ReactElement, nodeChanges: readonly FigNode[]): string {
   const context = createFigDocumentContextFromNodeChanges({
     nodeChanges: [sectionDocument(), sectionPage(), ...nodeChanges],
@@ -121,7 +138,12 @@ export function renderSection(element: ReactElement, nodeChanges: readonly FigNo
     images: new Map(),
     metadata: null,
   });
-  return renderToStaticMarkup(createElement(FigEditorProvider, { context, children: element }));
+  const store = createFigEditorStore({ context });
+  try {
+    return renderToStaticMarkup(createElement(FigEditorStoreProvider, { store, children: element }));
+  } finally {
+    store.dispose();
+  }
 }
 
 /** Return textData with explicit font fields. */

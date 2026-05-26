@@ -1,8 +1,13 @@
 /** @file Text node property section over Kiwi textData. */
-import { getNodeType } from "@higma-document-models/fig/domain";
+import { memo } from "react";
+import { getNodeType, sameKiwiNodeExceptTransform } from "@higma-document-models/fig/domain";
 import type { FigFontName, FigKiwiTextData, FigNode } from "@higma-document-models/fig/types";
 import { FIG_NODE_MUTATION_SOURCE, useFigEditor } from "../../../context/FigEditorContext";
 import { fieldGridStyle, inputStyle, PropertyField, sectionStyle, sectionTitleStyle } from "../../properties/PropertyPanel";
+
+type TextPropertiesSectionProps = {
+  readonly node: FigNode;
+};
 
 function requireTextData(node: FigNode): FigKiwiTextData {
   if (node.textData === undefined) {
@@ -30,7 +35,7 @@ function readTextFontName(node: FigNode): FigFontName {
 }
 
 /** Render text content and base font controls from Kiwi textData. */
-export function TextPropertiesSection({ node }: { readonly node: FigNode }) {
+function TextPropertiesSectionContent({ node }: TextPropertiesSectionProps) {
   const { updateNode } = useFigEditor();
   if (getNodeType(node) !== "TEXT") {
     return null;
@@ -105,3 +110,15 @@ export function TextPropertiesSection({ node }: { readonly node: FigNode }) {
     </section>
   );
 }
+
+function sameTextPropertiesSectionProps(
+  left: TextPropertiesSectionProps,
+  right: TextPropertiesSectionProps,
+): boolean {
+  return sameKiwiNodeExceptTransform(left.node, right.node);
+}
+
+export const TextPropertiesSection = memo(
+  TextPropertiesSectionContent,
+  sameTextPropertiesSectionProps,
+);

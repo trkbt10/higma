@@ -67,6 +67,17 @@ export function resolveEffectBackingScale(
   transform: AffineMatrix,
   pixelRatio: number,
 ): EffectBackingScale {
+  if (!Number.isFinite(pixelRatio) || pixelRatio <= 0) {
+    throw new Error(`Effect backing scale pixelRatio must be finite and positive, got ${pixelRatio}`);
+  }
+  if (
+    !Number.isFinite(transform.m00) ||
+    !Number.isFinite(transform.m01) ||
+    !Number.isFinite(transform.m10) ||
+    !Number.isFinite(transform.m11)
+  ) {
+    throw new Error("Effect backing scale transform linear components must be finite");
+  }
   const det = Math.abs(transform.m00 * transform.m11 - transform.m01 * transform.m10);
   return {
     lengthScale: Math.sqrt(det) * pixelRatio,

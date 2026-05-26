@@ -11,11 +11,15 @@ function readNumberInput(value: string | number, label: string): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
+  if (typeof value !== "string") {
+    throw new Error(`Site property ${label} requires a finite number`);
+  }
+  if (value.trim() === "") {
+    throw new Error(`Site property ${label} requires a finite number`);
+  }
+  const parsed = Number(value);
+  if (Number.isFinite(parsed)) {
+    return parsed;
   }
   throw new Error(`Site property ${label} requires a finite number`);
 }

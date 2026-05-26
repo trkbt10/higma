@@ -106,6 +106,22 @@ type Args = {
   readonly threshold: number;
 };
 
+function requireArgumentValue(argv: readonly string[], index: number, optionName: string): string {
+  const value = argv[index + 1];
+  if (value === undefined) {
+    throw new Error(`${optionName} requires a value`);
+  }
+  return value;
+}
+
+function parseThresholdArgumentValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new Error(`--threshold must be in [0,1], got "${value}"`);
+  }
+  return parsed;
+}
+
 function parseArgs(argv: readonly string[]): Args {
   type Acc = {
     readonly only?: string;
@@ -123,21 +139,12 @@ function parseArgs(argv: readonly string[]): Args {
         return { ...acc, skip: acc.skip - 1 };
       }
       if (arg === "--case") {
-        const value = argv[idx + 1];
-        if (value === undefined) {
-          throw new Error("--case requires a value");
-        }
+        const value = requireArgumentValue(argv, idx, "--case");
         return { ...acc, only: value, skip: 1 };
       }
       if (arg === "--threshold") {
-        const value = argv[idx + 1];
-        if (value === undefined) {
-          throw new Error("--threshold requires a value");
-        }
-        const parsed = Number.parseFloat(value);
-        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-          throw new Error(`--threshold must be in [0,1], got "${value}"`);
-        }
+        const value = requireArgumentValue(argv, idx, "--threshold");
+        const parsed = parseThresholdArgumentValue(value);
         return { ...acc, threshold: parsed, skip: 1 };
       }
       return acc;
@@ -166,7 +173,6 @@ async function main(): Promise<void> {
   try {
     const reports: CaseReport[] = [];
     for (const caseName of cases) {
-      // eslint-disable-next-line no-await-in-loop -- harness is single-page, must serialise
       const report = await tryMeasureOne(harness, caseName, args.threshold, fontResolver);
       reports.push(report);
       printOne(report);

@@ -102,6 +102,7 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.queries).toEqual([]);
+    expect(result.textLayoutFontResolverQueries).toEqual([]);
   });
 
   it("collects base font from a single TEXT node", () => {
@@ -111,6 +112,7 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.queries).toEqual([{ family: "Inter", weight: 400, style: "normal" }]);
+    expect(result.textLayoutFontResolverQueries).toEqual([{ family: "Inter", weight: 400, style: "normal" }]);
   });
 
   it("does not require a TextFontResolver when Kiwi derived text carries metrics and glyphs", () => {
@@ -121,6 +123,7 @@ describe("collectFontQueries", () => {
     });
     expect(result.queries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
     expect(result.fontResolverQueries).toEqual([]);
+    expect(result.textLayoutFontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
   });
 
   it("requires a TextFontResolver when non-empty text has no Kiwi glyph payload", () => {
@@ -134,6 +137,7 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.fontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
+    expect(result.textLayoutFontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
   });
 
   it("requires a TextFontResolver when derived glyphs exist without line metrics", () => {
@@ -150,6 +154,7 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.fontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
+    expect(result.textLayoutFontResolverQueries).toEqual([{ family: "Poppins", weight: 400, style: "normal" }]);
   });
 
   it("collects base font from structured textData.fontName", () => {
@@ -162,6 +167,7 @@ describe("collectFontQueries", () => {
       childrenOf: () => [],
     });
     expect(result.queries).toEqual([{ family: "Roboto", weight: 700, style: "normal" }]);
+    expect(result.textLayoutFontResolverQueries).toEqual([{ family: "Roboto", weight: 700, style: "normal" }]);
   });
 
   it("dedupes identical family, weight, and style", () => {
