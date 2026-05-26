@@ -6,11 +6,18 @@
  */
 
 import { expect, test, type Page } from "@playwright/test";
+import {
+  doubleClickNode,
+  HELLO_TEXT,
+  WRAPPED_TEXT,
+} from "../shared/fig-editor-harness";
+import {
+  figEditorWebGLSurfaceByKey,
+  waitForFigEditorWebGLSurfacesSettled,
+  waitForFigEditorOperationSurface,
+} from "../fig-editor-operation-surface-driver/fig-editor-operation-surface-driver";
 
-const HELLO_TEXT = { pageX: 50, pageY: 50, width: 200, height: 30 };
-const HELLO_TEXT_GUID = "1:2";
-const WRAPPED_TEXT = { pageX: 260, pageY: 50, width: 60, height: 80 };
-const WRAPPED_TEXT_GUID = "1:16";
+const HELLO_TEXT_GUID = HELLO_TEXT.guidKey;
 
 test.use({ deviceScaleFactor: 2 });
 
@@ -23,13 +30,13 @@ test.describe("Fig editor WebGL text editing", () => {
   test("uses a WebGL canvas and transparent text-edit input", async ({ page }) => {
     const canvas = webGLCanvasForNode(page, HELLO_TEXT_GUID);
     await expect(canvas).toHaveCount(1);
-    await expect(canvas).toHaveAttribute("data-webgl-ready", "true");
+    await expect.poll(() => figEditorWebGLSurfaceByKey(page, "fig-editor-webgl-viewport").then((surface) => surface.ready)).toBe(true);
 
     const canvasMetrics = await canvas.evaluate((node) => ({
       ratio: node.width / node.clientWidth,
       backingPixels: node.width * node.height,
-      beforeEditPixels: node.toDataURL("image/png"),
     }));
+    const beforeEditMetrics = await readWebGLMetrics(page, HELLO_TEXT_GUID);
     expect(canvasMetrics.ratio).toBeGreaterThan(0);
     expect(canvasMetrics.backingPixels).toBeLessThanOrEqual(4_100_000);
 
@@ -37,22 +44,21 @@ test.describe("Fig editor WebGL text editing", () => {
     await page.locator("textarea").waitFor({ state: "attached" });
     await fillHiddenCanvasTextarea(page, "WebGL text\nwrap parity");
     await expect(webGLLoadingForNode(page, HELLO_TEXT_GUID)).toHaveCount(0);
-    expect(await canvasAlphaSum(page, HELLO_TEXT_GUID)).toBeGreaterThan(0);
     await expect.poll(
-      () => canvas.evaluate((node) => node.toDataURL("image/png")),
+      () => readWebGLMetrics(page, HELLO_TEXT_GUID).then((metrics) => metrics.renderCount),
       { timeout: 5_000 },
-    ).not.toBe(canvasMetrics.beforeEditPixels);
+    ).toBeGreaterThan(beforeEditMetrics.renderCount);
 
     const editorState = await page.evaluate(() => {
       const textarea = Array.from(document.querySelectorAll("textarea")).find((ta) => {
-        return window.getComputedStyle(ta).opacity === "0";
+        return globalThis.getComputedStyle(ta).opacity === "0";
       });
       if (!textarea) {
         return null;
       }
-      const style = window.getComputedStyle(textarea);
+      const style = globalThis.getComputedStyle(textarea);
       const textRect = textarea.getBoundingClientRect();
-      const canvas = document.querySelector("[data-fig-editor-root-surface-content-guid='1:2'] canvas");
+      const canvas = document.querySelector("canvas[aria-label='Fig editor WebGL viewport surface']");
       const canvasRect = canvas?.getBoundingClientRect();
       const serializeRect = (rect: DOMRect) => ({ x: rect.x, y: rect.y, width: rect.width, height: rect.height });
       return {
@@ -76,7 +82,7 @@ test.describe("Fig editor WebGL text editing", () => {
   });
 
   test("uses shared wrapped text selection layout over WebGL", async ({ page }) => {
-    await expect(webGLCanvasForNode(page, WRAPPED_TEXT_GUID)).toHaveAttribute("data-webgl-ready", "true");
+    await expect.poll(() => figEditorWebGLSurfaceByKey(page, "fig-editor-webgl-viewport").then((surface) => surface.ready)).toBe(true);
     await doubleClickNode(page, WRAPPED_TEXT);
     await page.locator("textarea").waitFor({ state: "attached" });
     await setHiddenCanvasTextareaSelection(page, 6, 11);
@@ -97,13 +103,16 @@ test.describe("Fig editor WebGL text editing", () => {
   });
 
   test("creates and edits a new WebGL text node with explicit font metrics", async ({ page }) => {
-    const beforeCanvasCount = await readyCanvasCount(page);
+    const beforeMetrics = await readWebGLMetrics(page);
 
     await createTextNodeByDrag(page);
     await page.locator("textarea").waitFor({ state: "attached" });
     await fillHiddenCanvasTextarea(page, "New WebGL text");
 
-    await expect.poll(() => readyCanvasCount(page), { timeout: 5_000 }).toBeGreaterThan(beforeCanvasCount);
+    await expect.poll(
+      () => readWebGLMetrics(page).then((metrics) => metrics.renderCount),
+      { timeout: 5_000 },
+    ).toBeGreaterThan(beforeMetrics.renderCount);
     await expect.poll(() => page.locator("textarea").inputValue()).toBe("New WebGL text");
   });
 });
@@ -112,19 +121,17 @@ test.describe("Fig editor WebGL initialization performance", () => {
   test("shows a loading layer while heavy WebGL initialization is pending", async ({ page }) => {
     await page.goto("/?renderer=webgl&webglInitializationDelayMs=3000");
 
-    const surface = webGLSurfaceForNode(page, HELLO_TEXT_GUID);
-    const canvas = surface.locator("canvas");
-    const loading = surface.locator("[data-webgl-loading='true']");
-    const progress = loading.getByRole("progressbar", { name: "WebGL resource preparation progress" });
-    await expect(loading).toBeVisible();
-    await expect(loading).toHaveAttribute("data-webgl-loading-phase", "scheduled");
-    await expect(loading).not.toHaveText("Preparing WebGL canvas");
+    const canvas = webGLCanvasForNode(page, HELLO_TEXT_GUID);
+    const progress = webGLLoadingForNode(page, HELLO_TEXT_GUID);
+    await expect(progress).toBeVisible();
     await expect(progress).toHaveAttribute("aria-valuemin", "0");
     await expect(progress).toHaveAttribute("aria-valuemax", "3");
-    await expect(canvas).toHaveAttribute("data-webgl-ready", "false");
+    await expect.poll(() => figEditorWebGLSurfaceByKey(page, "fig-editor-webgl-viewport").then((surface) => surface.ready)).toBe(false);
 
-    await expect(loading).toBeHidden({ timeout: 10_000 });
-    await expect(canvas).toHaveAttribute("data-webgl-ready", "true");
+    await expect(progress).toBeHidden({ timeout: 10_000 });
+    await expect.poll(() => figEditorWebGLSurfaceByKey(page, "fig-editor-webgl-viewport").then((surface) => surface.ready)).toBe(true);
+    await expect(canvas).toHaveCount(1);
+    await waitForFigEditorWebGLSurfacesSettled(page);
 
     const metrics = await readWebGLMetrics(page);
     expect(metrics.prepareCount).toBeGreaterThanOrEqual(1);
@@ -151,56 +158,29 @@ test.describe("Fig editor WebGL initialization performance", () => {
 
     const after = await readWebGLMetrics(page, HELLO_TEXT_GUID);
     await expect(webGLLoadingForNode(page, HELLO_TEXT_GUID)).toHaveCount(0);
-    expect(after.prepareCount).toBeLessThanOrEqual(before.prepareCount + 1);
+    expect(after.prepareCount).toBe(before.prepareCount);
     expect(after.lastRenderMs).toBeLessThan(100);
   });
 });
 
 async function waitForWebGLEditor(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () => {
-      const canvas = document.querySelector("canvas");
-      const hitArea = document.querySelector("rect[fill='transparent']");
-      return Boolean(canvas && hitArea && canvas.getAttribute("data-webgl-ready") === "true");
-    },
-    { timeout: 10_000 },
-  );
-}
-
-function webGLSurfaceForNode(page: Page, guid: string) {
-  return page.locator(`[data-fig-editor-root-surface-content-guid="${guid}"]`);
+  await waitForFigEditorOperationSurface(page);
+  await waitForFigEditorWebGLSurfacesSettled(page);
 }
 
 function webGLCanvasForNode(page: Page, guid: string) {
-  return webGLSurfaceForNode(page, guid).locator("canvas");
+  void guid;
+  return page.getByRole("img", { name: "Fig editor WebGL viewport surface" });
 }
 
 function webGLLoadingForNode(page: Page, guid: string) {
-  return webGLSurfaceForNode(page, guid).locator("[data-webgl-loading='true']");
+  void guid;
+  return page.getByRole("progressbar", { name: "WebGL resource preparation progress" });
 }
 
 async function waitForReadyWebGLCanvas(page: Page, guid: string): Promise<void> {
-  await expect(webGLCanvasForNode(page, guid)).toHaveAttribute("data-webgl-ready", "true", { timeout: 10_000 });
-}
-
-async function readyCanvasCount(page: Page): Promise<number> {
-  return page.locator("canvas[data-webgl-ready='true']").count();
-}
-
-async function canvasAlphaSum(page: Page, guid: string): Promise<number> {
-  return page.evaluate((guid) => {
-    const canvas = document.querySelector<HTMLCanvasElement>(`[data-fig-editor-root-surface-content-guid='${guid}'] canvas`);
-    if (!canvas) {
-      throw new Error(`WebGL canvas was not found for node ${guid}`);
-    }
-    const context = canvas.getContext("2d");
-    if (context === null) {
-      throw new Error(`WebGL canvas for node ${guid} does not expose a 2D context`);
-    }
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    const alphaIndexes = Array.from({ length: pixels.length / 4 }, (_item, index) => index * 4 + 3);
-    return alphaIndexes.reduce((sum, index) => sum + pixels[index], 0);
-  }, guid);
+  void guid;
+  await waitForFigEditorWebGLSurfacesSettled(page);
 }
 
 async function readWebGLMetrics(page: Page, guid = HELLO_TEXT_GUID): Promise<{
@@ -209,18 +189,16 @@ async function readWebGLMetrics(page: Page, guid = HELLO_TEXT_GUID): Promise<{
   readonly lastPrepareMs: number;
   readonly lastRenderMs: number;
 }> {
-  return page.evaluate((guid) => {
-    const canvas = document.querySelector(`[data-fig-editor-root-surface-content-guid='${guid}'] canvas`);
-    if (!canvas) {
-      throw new Error(`WebGL canvas was not found for node ${guid}`);
-    }
-    return {
-      prepareCount: Number(canvas.getAttribute("data-webgl-prepare-count")),
-      renderCount: Number(canvas.getAttribute("data-webgl-render-count")),
-      lastPrepareMs: Number(canvas.getAttribute("data-webgl-last-prepare-ms")),
-      lastRenderMs: Number(canvas.getAttribute("data-webgl-last-render-ms")),
-    };
-  }, guid);
+  const surface = await figEditorWebGLSurfaceByKey(page, "fig-editor-webgl-viewport");
+  if (surface.metrics === undefined) {
+    throw new Error(`WebGL renderer metrics are not published for node ${guid}`);
+  }
+  return {
+    prepareCount: surface.metrics.prepareCount,
+    renderCount: surface.metrics.renderCount,
+    lastPrepareMs: surface.metrics.lastPrepareMs,
+    lastRenderMs: surface.metrics.lastRenderMs,
+  };
 }
 
 async function panWebGLViewport(page: Page): Promise<void> {
@@ -243,21 +221,17 @@ async function switchWebGLViewportToFixedZoom(page: Page): Promise<void> {
 }
 
 async function resolveEditorViewportCenter(page: Page): Promise<{ readonly x: number; readonly y: number }> {
-  return page.evaluate(() => {
-    const svg = Array.from(document.querySelectorAll("svg")).find((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return rect.width > 500 && rect.height > 300;
-    }) ?? null;
-    if (!svg) {
-      throw new Error("Editor SVG viewport was not found");
-    }
-    const rect = svg.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  });
+  const canvas = page.locator("svg[aria-label='Editor canvas viewport']");
+  await expect(canvas).toBeVisible();
+  const rect = await canvas.boundingBox();
+  if (rect === null) {
+    throw new Error("Editor canvas viewport had no visible bounding box");
+  }
+  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
 
 async function createTextNodeByDrag(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Text" }).click();
+  await page.getByRole("button", { name: "Text", exact: true }).click();
   const start = await resolveEditorViewportPoint(page, { xRatio: 0.58, yRatio: 0.42 });
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
@@ -269,56 +243,19 @@ async function resolveEditorViewportPoint(
   page: Page,
   point: { readonly xRatio: number; readonly yRatio: number },
 ): Promise<{ readonly x: number; readonly y: number }> {
-  return page.evaluate(({ xRatio, yRatio }) => {
-    const svg = Array.from(document.querySelectorAll("svg")).find((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return rect.width > 500 && rect.height > 300;
-    }) ?? null;
-    if (!svg) {
-      throw new Error("Editor SVG viewport was not found");
-    }
-    const rect = svg.getBoundingClientRect();
-    return { x: rect.left + rect.width * xRatio, y: rect.top + rect.height * yRatio };
-  }, point);
-}
-
-async function doubleClickNode(
-  page: Page,
-  node: { readonly pageX: number; readonly pageY: number; readonly width: number; readonly height: number },
-): Promise<void> {
-  const center = await page.evaluate(
-    ({ pageX, pageY, width, height }) => {
-      const rect = Array.from(document.querySelectorAll<SVGRectElement>("rect[fill='transparent']")).find((candidate) => {
-        const x = Number(candidate.getAttribute("x"));
-        const y = Number(candidate.getAttribute("y"));
-        const candidateWidth = Number(candidate.getAttribute("width"));
-        const candidateHeight = Number(candidate.getAttribute("height"));
-        return (
-          Math.abs(x - pageX) < 1 &&
-          Math.abs(y - pageY) < 1 &&
-          Math.abs(candidateWidth - width) < 1 &&
-          Math.abs(candidateHeight - height) < 1
-        );
-      }) ?? null;
-      if (!rect) {
-        return null;
-      }
-      const bounds = rect.getBoundingClientRect();
-      return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
-    },
-    node,
-  );
-
-  if (!center) {
-    throw new Error(`Hit-area rect not found for node at (${node.pageX}, ${node.pageY})`);
+  const canvas = page.locator("svg[aria-label='Editor canvas viewport']");
+  await expect(canvas).toBeVisible();
+  const rect = await canvas.boundingBox();
+  if (rect === null) {
+    throw new Error("Editor canvas viewport had no visible bounding box");
   }
-  await page.mouse.dblclick(center.x, center.y);
+  return { x: rect.x + rect.width * point.xRatio, y: rect.y + rect.height * point.yRatio };
 }
 
 async function fillHiddenCanvasTextarea(page: Page, text: string): Promise<void> {
   await page.evaluate((value) => {
     const textarea = Array.from(document.querySelectorAll("textarea")).find((ta) => {
-      return window.getComputedStyle(ta).opacity === "0";
+      return globalThis.getComputedStyle(ta).opacity === "0";
     });
     if (!textarea) {
       throw new Error("Canvas text edit textarea was not found");
@@ -333,7 +270,7 @@ async function fillHiddenCanvasTextarea(page: Page, text: string): Promise<void>
 async function setHiddenCanvasTextareaSelection(page: Page, start: number, end: number): Promise<void> {
   await page.evaluate(({ startOffset, endOffset }) => {
     const textarea = Array.from(document.querySelectorAll("textarea")).find((ta) => {
-      return window.getComputedStyle(ta).opacity === "0";
+      return globalThis.getComputedStyle(ta).opacity === "0";
     });
     if (!textarea) {
       throw new Error("Canvas text edit textarea was not found");

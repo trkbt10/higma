@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 import {
   HELLO_TEXT,
   activeElementDiagnostics,
-  countCanvasHitAreas,
+  countCanvasVisibleNodes,
   doubleClickNode,
   focusCanvasTextarea,
   getCanvasTextareaValue,
@@ -29,7 +29,7 @@ test.describe("fig editor text edit focus ownership", () => {
   });
 
   test("full user flow keeps text input focused without manual focus calls", async ({ page }) => {
-    const hitAreasBefore = await countCanvasHitAreas(page);
+    const visibleNodesBefore = await countCanvasVisibleNodes(page);
 
     await doubleClickNode(page, HELLO_TEXT);
     await expect.poll(() => isCanvasTextEditActive(page)).toBe(true);
@@ -42,7 +42,7 @@ test.describe("fig editor text edit focus ownership", () => {
 
     await page.keyboard.press("Escape");
     await expect.poll(() => isCanvasTextEditActive(page)).toBe(false);
-    await expect.poll(() => countCanvasHitAreas(page)).toBe(hitAreasBefore);
+    await expect.poll(() => countCanvasVisibleNodes(page)).toBe(visibleNodesBefore);
   });
 
   test("active element after double-click is the hidden canvas textarea", async ({ page }) => {

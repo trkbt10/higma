@@ -7,7 +7,7 @@ import {
   STYLED_TEXT,
   canvasTextareaSelection,
   clickNode,
-  countCanvasHitAreas,
+  countCanvasVisibleNodes,
   doubleClickNode,
   focusCanvasTextarea,
   getCanvasTextareaValue,
@@ -83,11 +83,11 @@ test.describe("fig editor text edit lifecycle", () => {
   test("Delete key outside text edit deletes the selected node", async ({ page }) => {
     await clickNode(page, RECT);
     await expect.poll(() => isCanvasTextEditActive(page)).toBe(false);
-    const hitAreasBefore = await countCanvasHitAreas(page);
+    const visibleNodesBefore = await countCanvasVisibleNodes(page);
 
     await page.keyboard.press("Delete");
 
-    await expect.poll(() => countCanvasHitAreas(page)).toBeLessThan(hitAreasBefore);
+    await expect.poll(() => countCanvasVisibleNodes(page)).toBeLessThan(visibleNodesBefore);
   });
 
   test("double-click on rectangle does not enter text edit", async ({ page }) => {
@@ -100,7 +100,7 @@ test.describe("fig editor text edit lifecycle", () => {
 async function placeCanvasTextareaCaret(page: Page, offset: number): Promise<void> {
   await page.evaluate((selectionOffset) => {
     const hidden = Array.from(document.querySelectorAll("textarea")).find((textarea) => {
-      return window.getComputedStyle(textarea).opacity === "0";
+      return globalThis.getComputedStyle(textarea).opacity === "0";
     });
     if (hidden === undefined) {
       throw new Error("Canvas text edit textarea was not found");

@@ -4,15 +4,24 @@ import { expect, test, type Locator, type Page, type TestInfo } from "@playwrigh
 import { createPngImage, readPng, writePng } from "@higma-codecs/png";
 import pixelmatch from "pixelmatch";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import {
+  figEditorWebGLSurfaces,
+  figEditorNodeViewportPointByGuid,
+  waitForFigEditorOperationSurface,
+} from "../fig-editor-operation-surface-driver/fig-editor-operation-surface-driver";
+import type { FigEditorOperationSurfaceGlobalThis } from "../../../src/operation-surface/fig-editor-operation-surface-types";
+import {
+  hasMacOsSfProLocalFontFiles,
+  installMacOsSfProLocalFontAccess,
+} from "../shared/macos-sf-pro-local-font-access";
+import { discoverSourceBackedPair, resolveFixture, FIXTURE_DIR, loadExportArtifactEnv } from "../shared/real-fig-fixture-discovery";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FIXTURE_DIR = resolve(__dirname, "../../../dev/public/fig-fixtures.tmp");
-const IOS_PRIMARY = resolve(FIXTURE_DIR, "ios-app-store-template.fig");
-const IOS_SOURCE = resolve(FIXTURE_DIR, "ios-app-store-template-source.fig");
-const IOS_EXPORT_DARK_FRAMED = resolve(FIXTURE_DIR, "ios-export/iPhone/Framed-1.svg");
-const MACOS_SFNS_FONT = "/System/Library/Fonts/SFNS.ttf";
+const SOURCE_BACKED_PAIR = discoverSourceBackedPair();
+const EXPORT_ARTIFACT_ENV = loadExportArtifactEnv();
+const EXPORT_SVG_PATH = EXPORT_ARTIFACT_ENV.framedExportSvgPath !== undefined
+  ? resolve(FIXTURE_DIR, EXPORT_ARTIFACT_ENV.framedExportSvgPath)
+  : undefined;
 const DEEP_BLUE_INSTANCE_GUID = "2316:9650";
 const DEEP_BLUE_SYMBOL_GUID = "2316:20463";
 const DARK_FRAMED_GUID = "2316:9644";
@@ -21,29 +30,31 @@ const REAL_FIG_VISUAL_TEST_TIMEOUT_MS = 120_000;
 
 test.describe("real fig symbol resolution in the editor", () => {
   test.skip(
-    !existsSync(IOS_PRIMARY) || !existsSync(IOS_SOURCE) || !existsSync(IOS_EXPORT_DARK_FRAMED),
-    "requires local iOS fixture and export copies under dev/public/fig-fixtures.tmp",
+    SOURCE_BACKED_PAIR === undefined ||
+      !existsSync(resolveFixture(SOURCE_BACKED_PAIR.primary)) ||
+      !existsSync(resolveFixture(SOURCE_BACKED_PAIR.source)),
+    "requires a source-backed fixture pair under dev/public/fig-fixtures.tmp",
   );
   test.skip(
-    !existsSync(MACOS_SFNS_FONT),
-    "requires macOS SFNS.ttf for source-backed Figma export visual comparison",
+    !hasMacOsSfProLocalFontFiles(),
+    "requires macOS SFNS.ttf and SFNSRounded.ttf for source-backed reference export visual comparison",
   );
 
   for (const renderer of ["svg", "webgl"] as const) {
-    test(`resolves iPhone 17 Pro Deep Blue instance through source document in ${renderer}`, async ({ page }) => {
+    test(`resolves instance through source document in ${renderer}`, async ({ page }) => {
       test.setTimeout(60_000);
       const errors: string[] = [];
       page.on("pageerror", (error) => {
         errors.push(error.message);
       });
 
-      await openIosTemplate(page, renderer);
+      await openFixtureTemplate(page, renderer);
 
-      const diagnostics = page.locator(`[data-e2e-selected-guid="${DEEP_BLUE_INSTANCE_GUID}"]`);
-      await expect(diagnostics).toHaveAttribute("data-e2e-selected-type", "INSTANCE");
-      await expect(diagnostics).toHaveAttribute("data-e2e-effective-symbol-guid", DEEP_BLUE_SYMBOL_GUID);
-      await expect(diagnostics).toHaveAttribute("data-e2e-resolved-descendant-names", /Phone/);
-      await expect(diagnostics).toHaveAttribute("data-e2e-resolved-descendant-names", /Rim \+ Shading/);
+      await expect.poll(() => selectedSymbolResolution(page, DEEP_BLUE_INSTANCE_GUID)).toMatchObject({
+        instanceType: "INSTANCE",
+        effectiveSymbolGuidKey: DEEP_BLUE_SYMBOL_GUID,
+        hasResolvedDescendants: true,
+      });
       await expect(page.getByText(`INSTANCE · ${DEEP_BLUE_INSTANCE_GUID}`)).toBeVisible();
 
       expect(errors).toEqual([]);
@@ -53,38 +64,42 @@ test.describe("real fig symbol resolution in the editor", () => {
   test("keeps the real-file layer tree collapsed and expands descendants on demand", async ({ page }) => {
     test.setTimeout(60_000);
 
-    await openIosTemplate(page, "svg", { panel: "all", selectGuid: undefined });
+    await openFixtureTemplate(page, "svg", { panel: "all", selectGuid: undefined });
 
     const layers = page.getByRole("tree", { name: "Layers" });
-    await expect(layers.getByRole("treeitem", { name: /Framed/ }).first()).toBeVisible();
-    await expect(layers.getByRole("treeitem", { name: /iPhone 17 Pro Silver/ })).toHaveCount(0);
-
-    await layers.getByRole("button", { name: "Expand Framed" }).first().click();
-    await expect(layers.getByRole("treeitem", { name: /iPhone 17 Pro Silver/ }).first()).toBeVisible();
+    const expandButton = layers.getByRole("button", { name: /^Expand / }).first();
+    await expect(expandButton).toBeVisible({ timeout: 10_000 });
+    const treeitemCountBefore = await layers.getByRole("treeitem").count();
+    await expandButton.click();
+    await expect.poll(() => layers.getByRole("treeitem").count(), { timeout: 10_000 }).toBeGreaterThan(treeitemCountBefore);
   });
 
-  test("renders source-backed dark Framed pixels in the editor SVG viewport", async ({ page }) => {
+  test("renders source-backed framed pixels in the editor SVG viewport", async ({ page }) => {
     test.setTimeout(REAL_FIG_VISUAL_TEST_TIMEOUT_MS);
     await page.setViewportSize({ width: 3600, height: 1400 });
 
-    await openIosTemplate(page, "svg", { panel: "none", selectGuid: DARK_FRAMED_GUID });
+    await openFixtureTemplate(page, "svg", { panel: "none", selectGuid: DARK_FRAMED_GUID });
 
     const sourceBackedRatio = await selectedFrameDarkPixelRatio(page, DARK_FRAMED_GUID);
     expect(sourceBackedRatio).toBeGreaterThan(0.75);
   });
 
-  test("keeps source-backed dark Framed frame renderer pixels near the Figma export", async ({ page }, testInfo) => {
+  test("keeps source-backed frame renderer pixels near the reference export", async ({ page }, testInfo) => {
+    test.skip(EXPORT_SVG_PATH === undefined || !existsSync(EXPORT_SVG_PATH), "requires a framed export SVG artifact");
     test.setTimeout(REAL_FIG_VISUAL_TEST_TIMEOUT_MS);
     await page.setViewportSize({ width: 3600, height: 1400 });
 
-    await openIosFrame(page, "svg", DARK_FRAMED_GUID);
+    await openFixtureFrame(page, "svg", DARK_FRAMED_GUID);
 
-    const frame = page.locator("[data-e2e-frame-renderer] svg[data-fig-family-page-renderer]");
+    const frame = page.getByRole("region", {
+      name: `E2E frame renderer ${DARK_FRAMED_GUID}`,
+      exact: true,
+    }).locator("svg[aria-hidden='true']");
     const actualSvg = await frame.evaluate((element) => element.outerHTML);
-    const expectedSvg = readFileSync(IOS_EXPORT_DARK_FRAMED, "utf8");
+    const expectedSvg = readFileSync(EXPORT_SVG_PATH!, "utf8");
     const actual = readPng(await frame.screenshot({ scale: "css" }));
     const expected = await svgFixtureToBrowserScreenshotPng(page, {
-      path: IOS_EXPORT_DARK_FRAMED,
+      path: EXPORT_SVG_PATH!,
       width: actual.width,
       height: actual.height,
     });
@@ -101,38 +116,34 @@ test.describe("real fig symbol resolution in the editor", () => {
     expect(diff.ratio).toBeLessThanOrEqual(MAX_DARK_FRAMED_EXPORT_DIFF_RATIO);
   });
 
-  test("keeps source-backed dark Framed editor pixels near the Figma export", async ({ page }, testInfo) => {
+  test("keeps source-backed editor pixels near the reference export", async ({ page }, testInfo) => {
+    test.skip(EXPORT_SVG_PATH === undefined || !existsSync(EXPORT_SVG_PATH), "requires a framed export SVG artifact");
     test.setTimeout(REAL_FIG_VISUAL_TEST_TIMEOUT_MS);
     await page.setViewportSize({ width: 3600, height: 1400 });
 
-    await openIosTemplate(page, "svg", { panel: "none", selectGuid: undefined });
+    await openFixtureTemplate(page, "svg", { panel: "none", selectGuid: undefined });
 
-    const editorSurface = page.locator(`[data-fig-editor-root-surface-content-guid="${DARK_FRAMED_GUID}"]`);
-    const editorSvg = editorSurface.locator("svg[data-fig-family-page-renderer]");
+    const editorSurface = page.getByRole("group", {
+      name: "Fig editor viewport surface",
+      exact: true,
+    });
+    const editorSvg = editorSurface.locator("svg[aria-hidden='true']");
     const actualSvg = await editorSvg.evaluate((element) => element.outerHTML);
-    const expectedSvg = readFileSync(IOS_EXPORT_DARK_FRAMED, "utf8");
-    const hitAreaBox = await nodeHitAreaBox(page, DARK_FRAMED_GUID);
-    const surfaceBox = await requireLocatorBox(editorSurface, `editor surface ${DARK_FRAMED_GUID}`);
-    expectBoxPairNear(surfaceBox, hitAreaBox, DARK_FRAMED_GUID);
-    const clip = roundedClipForBox(surfaceBox, `editor surface ${DARK_FRAMED_GUID}`);
+    const expectedSvg = readFileSync(EXPORT_SVG_PATH!, "utf8");
+    const nodeScreenBox = await nodeScreenBoxByGuid(page, DARK_FRAMED_GUID);
+    const viewportSurfaceBox = await requireLocatorBox(editorSurface, "editor viewport surface");
+    const clip = roundedClipForBox(nodeScreenBox, `editor surface ${DARK_FRAMED_GUID}`);
     const editorPng = readPng(await page.screenshot({ clip }));
     const exportPng = await svgFixtureToProjectedEditorScreenshotPng(page, {
-      path: IOS_EXPORT_DARK_FRAMED,
-      surfaceBox,
+      path: EXPORT_SVG_PATH!,
+      surfaceBox: nodeScreenBox,
       clip,
     });
     const projectedActualPng = await svgMarkupToProjectedEditorScreenshotPng(page, {
       svg: actualSvg,
-      surfaceBox,
+      surfaceBox: viewportSurfaceBox,
       clip,
     });
-    const editorElementPng = readPng(await editorSurface.screenshot({ scale: "css" }));
-    const exportElementPng = await svgFixtureToBrowserScreenshotPng(page, {
-      path: IOS_EXPORT_DARK_FRAMED,
-      width: editorElementPng.width,
-      height: editorElementPng.height,
-    });
-    const elementDiff = comparePngs(editorElementPng, exportElementPng);
     const projectedActualToExportDiff = comparePngs(projectedActualPng, exportPng);
     const editorToProjectedActualDiff = comparePngs(editorPng, projectedActualPng);
     const diff = comparePngs(editorPng, exportPng);
@@ -145,14 +156,9 @@ test.describe("real fig symbol resolution in the editor", () => {
       actualSvg,
       expectedSvg,
       diagnostics: {
-        surfaceBox,
-        hitAreaBox,
+        viewportSurfaceBox,
+        nodeScreenBox,
         clip,
-        elementDiff: {
-          diffPixels: elementDiff.diffPixels,
-          totalPixels: elementDiff.totalPixels,
-          ratio: elementDiff.ratio,
-        },
         projectedActualToExportDiff: {
           diffPixels: projectedActualToExportDiff.diffPixels,
           totalPixels: projectedActualToExportDiff.totalPixels,
@@ -168,11 +174,45 @@ test.describe("real fig symbol resolution in the editor", () => {
     expect(diff.ratio).toBeLessThanOrEqual(MAX_DARK_FRAMED_EXPORT_DIFF_RATIO);
   });
 
+  test("keeps source-backed editor WebGL pixels near the reference export", async ({ page }, testInfo) => {
+    test.skip(EXPORT_SVG_PATH === undefined || !existsSync(EXPORT_SVG_PATH), "requires a framed export SVG artifact");
+    test.setTimeout(REAL_FIG_VISUAL_TEST_TIMEOUT_MS);
+    await page.setViewportSize({ width: 3600, height: 1400 });
+
+    await openFixtureTemplate(page, "webgl", { panel: "none", selectGuid: undefined });
+
+    const nodeScreenBox = await nodeScreenBoxByGuid(page, DARK_FRAMED_GUID);
+    const surfaceBox = nodeScreenBox;
+    const clip = roundedClipForBox(surfaceBox, `editor WebGL surface ${DARK_FRAMED_GUID}`);
+    const editorPng = readPng(await page.screenshot({ clip }));
+    const exportPng = await svgFixtureToProjectedEditorScreenshotPng(page, {
+      path: EXPORT_SVG_PATH!,
+      surfaceBox,
+      clip,
+    });
+    const diff = comparePngs(editorPng, exportPng);
+
+    await attachVisualDiffIfNeeded(testInfo, {
+      actual: editorPng,
+      expected: exportPng,
+      diff,
+      maxRatio: MAX_DARK_FRAMED_EXPORT_DIFF_RATIO,
+      expectedSvg: readFileSync(EXPORT_SVG_PATH!, "utf8"),
+      diagnostics: {
+        surfaceBox,
+        nodeScreenBox,
+        clip,
+        webglStats: await readWebGLVisualStats(page),
+      },
+    });
+    expect(diff.ratio).toBeLessThanOrEqual(MAX_DARK_FRAMED_EXPORT_DIFF_RATIO);
+  });
+
   test("exposes the primary-only external source gap as a visual regression", async ({ page }) => {
     test.setTimeout(REAL_FIG_VISUAL_TEST_TIMEOUT_MS);
     await page.setViewportSize({ width: 3600, height: 1400 });
 
-    await openIosTemplate(page, "svg", {
+    await openFixtureTemplate(page, "svg", {
       panel: "none",
       selectGuid: DARK_FRAMED_GUID,
       source: "primary-only",
@@ -183,43 +223,44 @@ test.describe("real fig symbol resolution in the editor", () => {
   });
 });
 
-type OpenIosTemplateOptions = {
+type OpenFixtureTemplateOptions = {
   readonly panel?: "property" | "all" | "none";
   readonly selectGuid?: string;
   readonly source?: "with-source" | "primary-only";
 };
 
-async function openIosTemplate(
+async function openFixtureTemplate(
   page: Page,
   renderer: "svg" | "webgl",
-  options: OpenIosTemplateOptions = {},
+  options: OpenFixtureTemplateOptions = {},
 ): Promise<void> {
-  await installMacOsSfProFontAccess(page);
+  await installMacOsSfProLocalFontAccess(page);
   const panel = options.panel ?? "property";
   const selectGuid = selectedGuidOption(options);
   const params = new URLSearchParams({
     renderer,
     panel,
     fontMode: "browser-real",
-    figUrl: fileUrl(IOS_PRIMARY),
+    figUrl: fileUrl(resolveFixture(SOURCE_BACKED_PAIR!.primary)),
   });
   if ((options.source ?? "with-source") === "with-source") {
-    params.set("sourceUrl", fileUrl(IOS_SOURCE));
+    params.set("sourceUrl", fileUrl(resolveFixture(SOURCE_BACKED_PAIR!.source)));
   }
   if (selectGuid !== undefined) {
     params.set("selectGuid", selectGuid);
   }
   await page.goto(`/?${params.toString()}`);
-  await page.waitForSelector("[data-fig-editor-canvas]", { timeout: 45_000 });
+  await page.getByRole("region", { name: "Fig editor canvas", exact: true }).waitFor({ timeout: 45_000 });
+  await waitForFigEditorOperationSurface(page);
   if (renderer === "webgl") {
-    await expect.poll(() => allWebGLSurfacesReady(page), { timeout: 45_000 }).toBe(true);
+    await expect.poll(() => allWebGLSurfacesSettled(page), { timeout: 45_000 }).toBe(true);
     return;
   }
-  await expect(page.locator("svg[data-fig-family-page-renderer]").first()).toBeVisible({ timeout: 45_000 });
+  await expect(page.locator("[role='group'][aria-label='Fig editor viewport surface'] svg[aria-hidden='true']").first()).toBeVisible({ timeout: 45_000 });
 }
 
-async function openIosFrame(page: Page, renderer: "svg" | "webgl", frameGuid: string): Promise<void> {
-  await installMacOsSfProFontAccess(page);
+async function openFixtureFrame(page: Page, renderer: "svg" | "webgl", frameGuid: string): Promise<void> {
+  await installMacOsSfProLocalFontAccess(page);
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   page.on("pageerror", (error) => {
@@ -234,13 +275,13 @@ async function openIosFrame(page: Page, renderer: "svg" | "webgl", frameGuid: st
     view: "frame",
     renderer,
     fontMode: "browser-real",
-    figUrl: fileUrl(IOS_PRIMARY),
-    sourceUrl: fileUrl(IOS_SOURCE),
+    figUrl: fileUrl(resolveFixture(SOURCE_BACKED_PAIR!.primary)),
+    sourceUrl: fileUrl(resolveFixture(SOURCE_BACKED_PAIR!.source)),
     frameGuid,
   });
   await page.goto(`/?${params.toString()}`);
   try {
-    await page.waitForSelector("[data-e2e-frame-renderer]", { timeout: 45_000 });
+    await page.getByRole("region", { name: `E2E frame renderer ${frameGuid}`, exact: true }).waitFor({ timeout: 45_000 });
   } catch (error) {
     const bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
     throw new Error(
@@ -249,18 +290,18 @@ async function openIosFrame(page: Page, renderer: "svg" | "webgl", frameGuid: st
     );
   }
   if (renderer === "webgl") {
-    await expect.poll(() => allWebGLSurfacesReady(page), { timeout: 45_000 }).toBe(true);
+    await expect.poll(() => allWebGLSurfacesSettled(page), { timeout: 45_000 }).toBe(true);
     return;
   }
   try {
     await page.waitForFunction(() => {
-      const frame = document.querySelector("[data-e2e-frame-renderer]");
+      const frame = document.querySelector("[role='region'][aria-label^='E2E frame renderer ']");
       const box = frame?.getBoundingClientRect();
       return box !== undefined && box.width > 0 && box.height > 0;
     }, null, { timeout: 45_000 });
   } catch (error) {
     const diagnostics = await page.evaluate(() => {
-      const frame = document.querySelector("[data-e2e-frame-renderer]");
+      const frame = document.querySelector("[role='region'][aria-label^='E2E frame renderer ']");
       const box = frame?.getBoundingClientRect();
       return {
         bodyText: document.body.innerText,
@@ -280,59 +321,51 @@ async function openIosFrame(page: Page, renderer: "svg" | "webgl", frameGuid: st
   }
 }
 
-async function installMacOsSfProFontAccess(page: Page): Promise<void> {
-  await page.context().grantPermissions(["local-fonts"], { origin: "http://localhost:5192" });
-  const sfnsBase64 = readFileSync(MACOS_SFNS_FONT).toString("base64");
-  await page.addInitScript((base64: string) => {
-    Object.defineProperty(window.navigator, "userAgent", {
-      configurable: true,
-      get(): string {
-        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-      },
-    });
-    function base64ToBytes(value: string): Uint8Array {
-      const binary = atob(value);
-      return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    }
-    const bytes = base64ToBytes(base64);
-    const fontData = ["Regular", "Semibold"].map((style) => ({
-      family: "System Font",
-      fullName: `System Font ${style}`,
-      postscriptName: style === "Regular" ? ".SFNS-Regular" : ".SFNS-Semibold",
-      style,
-      async blob(): Promise<Blob> {
-        const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        return new Blob([buffer], { type: "font/ttf" });
-      },
-    }));
-    Object.defineProperty(window, "queryLocalFonts", {
-      configurable: true,
-      writable: true,
-      value: async () => fontData,
-    });
-  }, sfnsBase64);
+async function allWebGLSurfacesSettled(page: Page): Promise<boolean> {
+  const surfaces = await figEditorWebGLSurfaces(page);
+  return surfaces.length > 0 && surfaces.every((surface) => (
+    surface.ready &&
+    surface.metrics !== undefined &&
+    surface.metrics.lastRenderFrameReason === "settled" &&
+    surface.canvasWidth > 0 &&
+    surface.canvasHeight > 0
+  ));
 }
 
-async function allWebGLSurfacesReady(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    const canvases = Array.from(document.querySelectorAll<HTMLCanvasElement>("[data-fig-editor-webgl-layer] canvas"));
-    if (canvases.length === 0) {
-      return false;
-    }
-    return canvases.every((canvas) => {
-      if (canvas.getAttribute("data-webgl-ready") !== "true") {
-        return false;
-      }
-      return canvas.offsetWidth > 0 && canvas.offsetHeight > 0;
-    });
-  });
+async function readWebGLVisualStats(page: Page): Promise<Record<string, boolean | number | string>> {
+  const surface = (await figEditorWebGLSurfaces(page))[0];
+  if (surface === undefined) {
+    throw new Error("readWebGLVisualStats requires a registered WebGL surface");
+  }
+  const metrics = surface.metrics;
+  if (metrics === undefined) {
+    throw new Error(`readWebGLVisualStats requires renderer metrics for ${surface.surfaceKey}`);
+  }
+  return {
+    surfaceKey: surface.surfaceKey,
+    ready: surface.ready,
+    statusPhase: surface.status.phase,
+    frameReason: metrics.lastRenderFrameReason,
+    prepareCount: metrics.prepareCount,
+    renderCount: metrics.renderCount,
+    renderedNodeCount: metrics.lastRenderedNodeCount,
+    renderedFrameCount: metrics.lastRenderedFrameCount,
+    renderedTextCount: metrics.lastRenderedTextCount,
+    renderedImageCount: metrics.lastRenderedImageCount,
+    imageDrawCount: metrics.lastImageDrawCount,
+    imageFillDrawCount: metrics.lastImageFillDrawCount,
+    imageNodeDrawCount: metrics.lastImageNodeDrawCount,
+    effectNodeCount: metrics.lastEffectNodeCount,
+    groupOpacityNodeCount: metrics.lastGroupOpacityNodeCount,
+    inheritedGroupOpacityNodeCount: metrics.lastInheritedGroupOpacityNodeCount,
+  };
 }
 
 function fileUrl(path: string): string {
   return `/@fs${path}`;
 }
 
-function selectedGuidOption(options: OpenIosTemplateOptions): string | undefined {
+function selectedGuidOption(options: OpenFixtureTemplateOptions): string | undefined {
   if ("selectGuid" in options) {
     return options.selectGuid;
   }
@@ -340,7 +373,7 @@ function selectedGuidOption(options: OpenIosTemplateOptions): string | undefined
 }
 
 async function selectedFrameDarkPixelRatio(page: Page, guid: string): Promise<number> {
-  const box = await nodeHitAreaBox(page, guid);
+  const box = await nodeScreenBoxByGuid(page, guid);
   const clip = {
     x: box.x + box.width * 0.1,
     y: box.y + box.height * 0.03,
@@ -365,16 +398,68 @@ function roundedClipForBox(
   return { x, y, width, height };
 }
 
-async function nodeHitAreaBox(
+async function selectedSymbolResolution(
+  page: Page,
+  guid: string,
+): Promise<{
+  readonly instanceType: string;
+  readonly effectiveSymbolGuidKey: string | undefined;
+  readonly hasResolvedDescendants: boolean;
+}> {
+  return page.evaluate((targetGuid) => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      throw new Error("globalThis.higmaFigEditor is not published");
+    }
+    const node = api.document.requireNode(targetGuid);
+    const resolution = api.document.symbolResolution(targetGuid);
+    return {
+      instanceType: node.type,
+      effectiveSymbolGuidKey: resolution.effectiveSymbolGuidKey,
+      hasResolvedDescendants: resolution.resolvedDescendantNames.length > 0,
+    };
+  }, guid);
+}
+
+async function nodeScreenBoxByGuid(
   page: Page,
   guid: string,
 ): Promise<{ readonly x: number; readonly y: number; readonly width: number; readonly height: number }> {
-  const hitArea = page.getByRole("button", { name: `Canvas node ${guid}` });
-  const box = await hitArea.boundingBox();
+  const topLeft = await nodeScreenPointByGuid(page, guid, { x: 0, y: 0 });
+  const bottomRight = await nodeScreenPointByGuid(page, guid, { x: 1, y: 1 });
+  const x = Math.min(topLeft.x, bottomRight.x);
+  const y = Math.min(topLeft.y, bottomRight.y);
+  return {
+    x,
+    y,
+    width: Math.abs(bottomRight.x - topLeft.x),
+    height: Math.abs(bottomRight.y - topLeft.y),
+  };
+}
+
+async function nodeScreenPointByGuid(
+  page: Page,
+  guid: string,
+  ratio: { readonly x: number; readonly y: number },
+): Promise<{ readonly x: number; readonly y: number }> {
+  const point = await figEditorNodeViewportPointByGuid(page, guid, ratio);
+  const viewport = await page.evaluate(() => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      throw new Error("globalThis.higmaFigEditor is not published");
+    }
+    return api.canvas.viewport();
+  });
+  const canvas = page.locator("svg[aria-label='Editor canvas viewport']");
+  await expect(canvas).toBeVisible();
+  const box = await canvas.boundingBox();
   if (box === null) {
-    throw new Error(`Canvas hit area ${guid} has no bounding box`);
+    throw new Error("Editor canvas viewport has no visible bounding box");
   }
-  return box;
+  return {
+    x: box.x + viewport.rulerThickness + point.viewportX,
+    y: box.y + viewport.rulerThickness + point.viewportY,
+  };
 }
 
 async function requireLocatorBox(
@@ -386,18 +471,6 @@ async function requireLocatorBox(
     throw new Error(`${label} has no bounding box`);
   }
   return box;
-}
-
-function expectBoxPairNear(
-  actual: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
-  expected: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
-  guid: string,
-): void {
-  const maxDelta = 0.75;
-  expect(Math.abs(actual.x - expected.x), `${guid} editor surface x`).toBeLessThanOrEqual(maxDelta);
-  expect(Math.abs(actual.y - expected.y), `${guid} editor surface y`).toBeLessThanOrEqual(maxDelta);
-  expect(Math.abs(actual.width - expected.width), `${guid} editor surface width`).toBeLessThanOrEqual(maxDelta);
-  expect(Math.abs(actual.height - expected.height), `${guid} editor surface height`).toBeLessThanOrEqual(maxDelta);
 }
 
 function darkPixelRatio(png: ReturnType<typeof readPng>): number {
@@ -586,13 +659,13 @@ async function attachVisualDiffIfNeeded(
   const metadataJson = JSON.stringify(metadata, null, 2);
   writeFileSync(testInfo.outputPath("visual-diff.json"), metadataJson);
   writeFileSync(testInfo.outputPath("actual-editor.png"), writePng(input.actual));
-  writeFileSync(testInfo.outputPath("expected-figma-export.png"), writePng(input.expected));
+  writeFileSync(testInfo.outputPath("expected-reference-export.png"), writePng(input.expected));
   writeFileSync(testInfo.outputPath("diff.png"), writePng(input.diff.image));
   if (input.actualSvg !== undefined) {
     writeFileSync(testInfo.outputPath("actual-editor.svg"), input.actualSvg);
   }
   if (input.expectedSvg !== undefined) {
-    writeFileSync(testInfo.outputPath("expected-figma-export.svg"), input.expectedSvg);
+    writeFileSync(testInfo.outputPath("expected-reference-export.svg"), input.expectedSvg);
   }
   await testInfo.attach("visual-diff.json", { body: metadataJson, contentType: "application/json" });
   if (input.diff.ratio <= input.maxRatio) {
@@ -600,7 +673,7 @@ async function attachVisualDiffIfNeeded(
   }
   await Promise.all([
     testInfo.attach("actual-editor.png", { body: writePng(input.actual), contentType: "image/png" }),
-    testInfo.attach("expected-figma-export.png", { body: writePng(input.expected), contentType: "image/png" }),
+    testInfo.attach("expected-reference-export.png", { body: writePng(input.expected), contentType: "image/png" }),
     testInfo.attach("diff.png", { body: writePng(input.diff.image), contentType: "image/png" }),
   ]);
 }

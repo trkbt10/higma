@@ -5,7 +5,7 @@
  * Locks the *environment-specific* unit of font resolution in real
  * Chromium:
  *
- *   - [darwin]    `window.queryLocalFonts` returns SFNS.ttf under
+ *   - [darwin]    `globalThis.queryLocalFonts` returns SFNS.ttf under
  *                 family "System Font" (the on-disk name-table
  *                 reality, verified separately by
  *                 `darwin-name-table-reality.spec.ts`). The
@@ -35,12 +35,22 @@
  * `addInitScript` runs before any page script, so both the
  * userAgent override (which `detectBrowserFontPlatform` reads at
  * loader construction) and the queryLocalFonts mock are in place
- * before `createBrowserFontLoader()` is first invoked.
+ * before `createBrowserFontLoader({ host: globalThis, ... })` is first invoked.
  */
 
 import { expect, test, type Page } from "@playwright/test";
+import {
+  doubleClickNode,
+  type NodeBounds,
+} from "../shared/fig-editor-harness";
+import {
+  figEditorWebGLSurfaces,
+  waitForFigEditorWebGLSurfacesSettled,
+  waitForFigEditorOperationSurface,
+} from "../fig-editor-operation-surface-driver/fig-editor-operation-surface-driver";
+import type { FigEditorOperationSurfaceGlobalThis } from "../../../src/operation-surface/fig-editor-operation-surface-types";
 
-const SF_PRO_NODE = { pageX: 50, pageY: 420, width: 240, height: 30 };
+const SF_PRO_NODE = { guidKey: "1:50", pageX: 50, pageY: 420, width: 240, height: 30 } satisfies NodeBounds;
 
 // =============================================================================
 // Synthetic font fixtures (base64-inlined to avoid a side fixture file)
@@ -113,7 +123,7 @@ async function installBrowserFontEnv(page: Page, platform: TestPlatform): Promis
   // prototype.
   await page.addInitScript((ua: string) => {
     try {
-      Object.defineProperty(window.navigator, "userAgent", {
+      Object.defineProperty(globalThis.navigator, "userAgent", {
         configurable: true,
         get(): string {
           return ua;
@@ -121,15 +131,16 @@ async function installBrowserFontEnv(page: Page, platform: TestPlatform): Promis
       });
     } catch (_overrideErr) {
       // If the override fails (locked descriptor), fall back to
-      // overlaying a fresh navigator object on `window`. The
-      // production loader only reads `navigator.userAgent`, so a
-      // shadowing assignment is enough. The original throw is
-      // intentionally discarded — it carries no information beyond
-      // "descriptor was locked", which the fallback already handles.
+      // overlaying a fresh navigator object on the JavaScript global
+      // object. The production loader only reads the explicit
+      // `host.navigator.userAgent`, so a shadowing assignment is
+      // enough. The original throw is intentionally discarded — it
+      // carries no information beyond "descriptor was locked", which
+      // the fallback already handles.
       void _overrideErr;
-      Object.defineProperty(window, "navigator", {
+      Object.defineProperty(globalThis, "navigator", {
         configurable: true,
-        value: { ...window.navigator, userAgent: ua },
+        value: { ...globalThis.navigator, userAgent: ua },
       });
     }
   }, userAgent);
@@ -161,7 +172,7 @@ async function installBrowserFontEnv(page: Page, platform: TestPlatform): Promis
     }
 
     const fakeFonts = fonts.map(makeFakeFace);
-    Object.defineProperty(window, "queryLocalFonts", {
+    Object.defineProperty(globalThis, "queryLocalFonts", {
       configurable: true,
       writable: true,
       value: async () => fakeFonts,
@@ -209,7 +220,7 @@ test.describe("Fig editor WebGL — SF Pro physical-alias regression", () => {
       await page.goto("/?renderer=webgl&fontMode=browser-real");
 
       // The editor will fail to render the SF Pro node and never
-      // reach `data-webgl-ready`. Poll for the expected error
+      // publish a ready WebGL surface. Poll for the expected error
       // diagnostic instead of waiting for ready state.
       await expect.poll(
         () => errors.page.some((m) => /requires glyph contours for text node|font "SF Pro"/.test(m)),
@@ -225,8 +236,8 @@ test.describe("Fig editor WebGL — SF Pro physical-alias regression", () => {
       // editor would have reached ready state and a screenshot
       // would show rendered SF-Pro-using text — neither of which
       // happens here.
-      const canvas = page.locator("canvas[data-webgl-ready='true']");
-      expect(await canvas.count()).toBe(0);
+      const readySurfaceCount = await readReadyWebGLSurfaceCountIfOperationSurfacePublished(page);
+      expect(readySurfaceCount).toBe(0);
     });
   }
 });
@@ -250,20 +261,26 @@ function attachErrorCapture(page: Page): ErrorCapture {
   return capture;
 }
 
+async function readReadyWebGLSurfaceCountIfOperationSurfacePublished(page: Page): Promise<number> {
+  const hasOperationSurface = await page.evaluate(() => {
+    return Boolean((globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor);
+  });
+  if (!hasOperationSurface) {
+    return 0;
+  }
+  return figEditorWebGLSurfaces(page).then((surfaces) => (
+    surfaces.filter((surface) => surface.ready).length
+  ));
+}
+
 async function waitForWebGLEditor(page: Page, errors: ErrorCapture): Promise<void> {
   try {
-    await page.waitForFunction(
-      () => {
-        const canvas = document.querySelector("canvas");
-        const hitArea = document.querySelector("rect[fill='transparent']");
-        return Boolean(canvas && hitArea && canvas.getAttribute("data-webgl-ready") === "true");
-      },
-      { timeout: 10_000 },
-    );
+    await waitForFigEditorOperationSurface(page);
+    await waitForFigEditorWebGLSurfacesSettled(page);
   } catch (timeoutErr) {
     // Surface accumulated console / page errors instead of the
-    // generic "waitForFunction timeout" — the WebGL canvas only
-    // reaches `data-webgl-ready` after every scene-graph build
+    // generic polling timeout — the WebGL surface only reaches
+    // ready after every scene-graph build
     // succeeds, so a font-resolution throw upstream of that would
     // hide its real diagnostic inside the timeout.
     const message = [
@@ -273,37 +290,4 @@ async function waitForWebGLEditor(page: Page, errors: ErrorCapture): Promise<voi
     ].join("\n");
     throw new Error(message, { cause: timeoutErr });
   }
-}
-
-async function doubleClickNode(
-  page: Page,
-  node: { readonly pageX: number; readonly pageY: number; readonly width: number; readonly height: number },
-): Promise<void> {
-  const center = await page.evaluate(
-    ({ pageX, pageY, width, height }) => {
-      const rect = Array.from(document.querySelectorAll<SVGRectElement>("rect[fill='transparent']")).find((candidate) => {
-        const x = Number(candidate.getAttribute("x"));
-        const y = Number(candidate.getAttribute("y"));
-        const candidateWidth = Number(candidate.getAttribute("width"));
-        const candidateHeight = Number(candidate.getAttribute("height"));
-        return (
-          Math.abs(x - pageX) < 1 &&
-          Math.abs(y - pageY) < 1 &&
-          Math.abs(candidateWidth - width) < 1 &&
-          Math.abs(candidateHeight - height) < 1
-        );
-      }) ?? null;
-      if (!rect) {
-        return null;
-      }
-      const bounds = rect.getBoundingClientRect();
-      return { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 };
-    },
-    node,
-  );
-
-  if (!center) {
-    throw new Error(`Hit-area rect not found for node at (${node.pageX}, ${node.pageY})`);
-  }
-  await page.mouse.dblclick(center.x, center.y);
 }
