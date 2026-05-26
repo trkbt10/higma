@@ -27,6 +27,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
+# Real-fig fixture export artifact config (contains copyrighted file paths)
+real-fig-export-artifacts.json
+
 # Scratch / probe output. Anything under .tmp/ or whose name starts
 # with `.tmp-` (e.g. .tmp-output/, .tmp-inspect.ts) is treated as
 # disposable workspace and never checked in.
