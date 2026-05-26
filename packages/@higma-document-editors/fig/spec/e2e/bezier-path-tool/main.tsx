@@ -96,13 +96,13 @@ function BezierPathToolHarness() {
       event.preventDefault();
       applyResult(applyVectorPathDraftOperation(sessionRef.current, { type: "commit" }));
     };
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("keydown", handleKeyDown);
+    globalThis.addEventListener("pointermove", handlePointerMove);
+    globalThis.addEventListener("pointerup", handlePointerUp);
+    globalThis.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("keydown", handleKeyDown);
+      globalThis.removeEventListener("pointermove", handlePointerMove);
+      globalThis.removeEventListener("pointerup", handlePointerUp);
+      globalThis.removeEventListener("keydown", handleKeyDown);
     };
   }, [applyResult, pointFromEvent]);
 
@@ -158,8 +158,8 @@ function BezierPathToolHarness() {
       moveHandleToPointer(moveEvent, movingSession);
     };
     const up = (upEvent: PointerEvent) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      globalThis.removeEventListener("pointermove", move);
+      globalThis.removeEventListener("pointerup", up);
       const movingSession = sessionRef.current;
       if (!movingSession) {
         return;
@@ -181,8 +181,8 @@ function BezierPathToolHarness() {
         moveHandleToPointer(upEvent, movingSession);
       }
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    globalThis.addEventListener("pointermove", move);
+    globalThis.addEventListener("pointerup", up);
   }, [applyResult, pointFromEvent]);
 
   const draft = session?.draft;

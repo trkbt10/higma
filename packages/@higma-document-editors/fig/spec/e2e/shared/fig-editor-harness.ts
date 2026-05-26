@@ -2,25 +2,35 @@
 /* eslint-disable jsdoc/require-jsdoc -- E2E helper names are the user-operation contract; per-helper JSDoc duplicates labels. */
 
 import { expect, type Page } from "@playwright/test";
+import {
+  figEditorNodeViewportPointByGuid,
+  waitForFigEditorOperationSurface,
+} from "../fig-editor-operation-surface-driver/fig-editor-operation-surface-driver";
+import type { FigEditorOperationSurfaceGlobalThis } from "../../../src/operation-surface/fig-editor-operation-surface-types";
 
-export type NodeBounds = {
+export type PageBounds = {
   readonly pageX: number;
   readonly pageY: number;
   readonly width: number;
   readonly height: number;
 };
 
-export const HELLO_TEXT = { pageX: 50, pageY: 50, width: 200, height: 30 } satisfies NodeBounds;
-export const STYLED_TEXT = { pageX: 260, pageY: 150, width: 220, height: 30 } satisfies NodeBounds;
-export const RECT = { pageX: 50, pageY: 310, width: 150, height: 80 } satisfies NodeBounds;
-export const ELLIPSE = { pageX: 130, pageY: 330, width: 120, height: 80 } satisfies NodeBounds;
-export const LINE = { pageX: 280, pageY: 455, width: 120, height: 40 } satisfies NodeBounds;
-export const VECTOR = { pageX: 330, pageY: 310, width: 120, height: 100 } satisfies NodeBounds;
-export const FRAME = { pageX: 520, pageY: 300, width: 220, height: 150 } satisfies NodeBounds;
-export const FRAME_CHILD = { pageX: 582, pageY: 350, width: 92, height: 58 } satisfies NodeBounds;
-export const FRAME_CHILD_VECTOR = { pageX: 646, pageY: 340, width: 58, height: 42 } satisfies NodeBounds;
-export const COVERING_GROUP = { pageX: 760, pageY: 300, width: 170, height: 120 } satisfies NodeBounds;
-export const GROUP_CHILD = { pageX: 784, pageY: 326, width: 90, height: 54 } satisfies NodeBounds;
+export type NodeBounds = PageBounds & {
+  readonly guidKey: string;
+};
+
+export const HELLO_TEXT = { guidKey: "1:2", pageX: 50, pageY: 50, width: 200, height: 30 } satisfies NodeBounds;
+export const WRAPPED_TEXT = { guidKey: "1:16", pageX: 260, pageY: 50, width: 60, height: 80 } satisfies NodeBounds;
+export const STYLED_TEXT = { guidKey: "1:24", pageX: 260, pageY: 150, width: 220, height: 30 } satisfies NodeBounds;
+export const RECT = { guidKey: "1:3", pageX: 50, pageY: 310, width: 150, height: 80 } satisfies NodeBounds;
+export const ELLIPSE = { guidKey: "1:4", pageX: 130, pageY: 330, width: 120, height: 80 } satisfies NodeBounds;
+export const LINE = { guidKey: "1:5", pageX: 280, pageY: 455, width: 120, height: 40 } satisfies NodeBounds;
+export const VECTOR = { guidKey: "1:6", pageX: 330, pageY: 310, width: 120, height: 100 } satisfies NodeBounds;
+export const FRAME = { guidKey: "1:9", pageX: 520, pageY: 300, width: 220, height: 150 } satisfies NodeBounds;
+export const FRAME_CHILD = { guidKey: "1:11", pageX: 582, pageY: 350, width: 92, height: 58 } satisfies NodeBounds;
+export const FRAME_CHILD_VECTOR = { guidKey: "1:12", pageX: 646, pageY: 340, width: 58, height: 42 } satisfies NodeBounds;
+export const COVERING_GROUP = { guidKey: "1:13", pageX: 760, pageY: 300, width: 170, height: 120 } satisfies NodeBounds;
+export const GROUP_CHILD = { guidKey: "1:14", pageX: 784, pageY: 326, width: 90, height: 54 } satisfies NodeBounds;
 
 
 
@@ -38,11 +48,16 @@ export async function openEditor(page: Page, query = ""): Promise<void> {
 
 
 export async function waitForEditor(page: Page): Promise<void> {
-  await page.waitForFunction(
-    () => Boolean(document.querySelector("svg[aria-hidden='true']") && document.querySelector("rect[fill='transparent']")),
-    undefined,
-    { timeout: 45_000 },
-  );
+  await waitForFigEditorOperationSurface(page);
+  await expect(page.locator("svg[aria-label='Editor canvas viewport']")).toBeVisible({ timeout: 45_000 });
+  await expect.poll(() => page.evaluate(() => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      return false;
+    }
+    api.canvas.viewport();
+    return true;
+  })).toBe(true);
 }
 
 
@@ -79,6 +94,11 @@ export async function clickNodeAt(
   await page.mouse.click(point.x, point.y);
 }
 
+export async function contextMenuNode(page: Page, node: NodeBounds): Promise<void> {
+  const center = await nodeScreenPoint(page, node, { x: 0.5, y: 0.5 });
+  await page.mouse.click(center.x, center.y, { button: "right" });
+}
+
 export async function clickPagePoint(
   page: Page,
   point: { readonly x: number; readonly y: number },
@@ -102,26 +122,19 @@ export async function pagePointToScreenPoint(
   page: Page,
   point: { readonly x: number; readonly y: number },
 ): Promise<{ readonly x: number; readonly y: number }> {
-  const screenPoint = await page.evaluate(({ x, y }) => {
-    const svg = document.querySelector<SVGSVGElement>("svg");
-    const viewportGroup = Array.from(document.querySelectorAll<SVGGElement>("svg g[transform]")).find((group) => {
-      const transform = group.getAttribute("transform") ?? "";
-      return transform.includes("scale(");
-    }) ?? null;
-    const matrix = viewportGroup?.getScreenCTM();
-    if (!svg || !matrix) {
-      return null;
+  const viewportPoint = await page.evaluate(({ x, y }) => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      throw new Error("globalThis.higmaFigEditor is not published");
     }
-    const svgPoint = svg.createSVGPoint();
-    svgPoint.x = x;
-    svgPoint.y = y;
-    const transformed = svgPoint.matrixTransform(matrix);
-    return { x: transformed.x, y: transformed.y };
+    const viewport = api.canvas.viewport();
+    return {
+      x: viewport.rulerThickness + viewport.viewport.translateX + x * viewport.viewport.scale,
+      y: viewport.rulerThickness + viewport.viewport.translateY + y * viewport.viewport.scale,
+    };
   }, point);
-  if (!screenPoint) {
-    throw new Error(`Could not map page point (${point.x}, ${point.y}) to screen coordinates`);
-  }
-  return screenPoint;
+  const canvasBox = await editorCanvasViewportSvgBoundingBox(page);
+  return { x: canvasBox.x + viewportPoint.x, y: canvasBox.y + viewportPoint.y };
 }
 
 
@@ -146,32 +159,19 @@ export async function nodeScreenPoint(
   node: NodeBounds,
   ratio: { readonly x: number; readonly y: number },
 ): Promise<{ readonly x: number; readonly y: number }> {
-  const point = await page.evaluate(
-    ({ pageX, pageY, width, height, ratioX, ratioY }) => {
-      const rect = Array.from(document.querySelectorAll<SVGRectElement>("rect[fill='transparent']")).find((candidate) => {
-        const x = Number(candidate.getAttribute("x"));
-        const y = Number(candidate.getAttribute("y"));
-        const candidateWidth = Number(candidate.getAttribute("width"));
-        const candidateHeight = Number(candidate.getAttribute("height"));
-        return (
-          Math.abs(x - pageX) < 1 &&
-          Math.abs(y - pageY) < 1 &&
-          Math.abs(candidateWidth - width) < 1 &&
-          Math.abs(candidateHeight - height) < 1
-        );
-      }) ?? null;
-      if (!rect) {
-        return null;
-      }
-      const bounds = rect.getBoundingClientRect();
-      return { x: bounds.left + bounds.width * ratioX, y: bounds.top + bounds.height * ratioY };
-    },
-    { ...node, ratioX: ratio.x, ratioY: ratio.y },
-  );
-  if (!point) {
-    throw new Error(`Hit-area rect not found for node at (${node.pageX}, ${node.pageY})`);
-  }
-  return point;
+  const point = await figEditorNodeViewportPointByGuid(page, node.guidKey, ratio);
+  const viewport = await page.evaluate(() => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      throw new Error("globalThis.higmaFigEditor is not published");
+    }
+    return api.canvas.viewport();
+  });
+  const canvasBox = await editorCanvasViewportSvgBoundingBox(page);
+  return {
+    x: canvasBox.x + viewport.rulerThickness + point.viewportX,
+    y: canvasBox.y + viewport.rulerThickness + point.viewportY,
+  };
 }
 
 
@@ -183,29 +183,29 @@ export async function nodeScreenRect(
   page: Page,
   node: NodeBounds,
 ): Promise<{ readonly left: number; readonly top: number; readonly width: number; readonly height: number }> {
-  const rect = await page.evaluate(({ pageX, pageY, width, height }) => {
-    const hitArea = Array.from(document.querySelectorAll<SVGRectElement>("rect[fill='transparent']")).find((candidate) => {
-      const x = Number(candidate.getAttribute("x"));
-      const y = Number(candidate.getAttribute("y"));
-      const candidateWidth = Number(candidate.getAttribute("width"));
-      const candidateHeight = Number(candidate.getAttribute("height"));
-      return (
-        Math.abs(x - pageX) < 1 &&
-        Math.abs(y - pageY) < 1 &&
-        Math.abs(candidateWidth - width) < 1 &&
-        Math.abs(candidateHeight - height) < 1
-      );
-    }) ?? null;
-    if (!hitArea) {
-      return null;
-    }
-    const bounds = hitArea.getBoundingClientRect();
-    return { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height };
-  }, node);
-  if (!rect) {
-    throw new Error(`Hit-area rect not found for node at (${node.pageX}, ${node.pageY})`);
+  const topLeft = await nodeScreenPoint(page, node, { x: 0, y: 0 });
+  const bottomRight = await nodeScreenPoint(page, node, { x: 1, y: 1 });
+  return {
+    left: topLeft.x,
+    top: topLeft.y,
+    width: bottomRight.x - topLeft.x,
+    height: bottomRight.y - topLeft.y,
+  };
+}
+
+async function editorCanvasViewportSvgBoundingBox(page: Page): Promise<{
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}> {
+  const canvasSvg = page.locator("svg[aria-label='Editor canvas viewport']");
+  await expect(canvasSvg).toBeVisible();
+  const box = await canvasSvg.boundingBox();
+  if (box === null) {
+    throw new Error("Editor canvas viewport SVG had no visible bounding box");
   }
-  return rect;
+  return box;
 }
 
 
@@ -476,6 +476,14 @@ export async function topmostAt(page: Page, point: { readonly x: number; readonl
 
 export async function selectionBoxPageBounds(page: Page): Promise<NodeBounds> {
   return page.evaluate(() => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      throw new Error("globalThis.higmaFigEditor is not published");
+    }
+    const selected = api.document.selectedNodes()[0];
+    if (selected === undefined) {
+      throw new Error("Selection box bounds require a selected Kiwi node");
+    }
     const rect = Array.from(document.querySelectorAll<SVGRectElement>("rect[vector-effect='non-scaling-stroke']")).find((candidate) => {
       return candidate.getAttribute("fill") === "none" && candidate.getAttribute("stroke") !== "transparent";
     }) ?? null;
@@ -483,6 +491,7 @@ export async function selectionBoxPageBounds(page: Page): Promise<NodeBounds> {
       throw new Error("Selection box was not found");
     }
     return {
+      guidKey: selected.guidKey,
       pageX: Number(rect.getAttribute("x")),
       pageY: Number(rect.getAttribute("y")),
       width: Number(rect.getAttribute("width")),
@@ -498,11 +507,11 @@ export async function selectionBoxPageBounds(page: Page): Promise<NodeBounds> {
 
 export async function renderedSvgMarkup(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const svg = document.querySelector<SVGSVGElement>("svg[aria-hidden='true']");
-    if (!svg) {
-      throw new Error("Rendered SVG tree was not found");
+    const svgs = Array.from(document.querySelectorAll<SVGSVGElement>("svg[aria-hidden='true']"));
+    if (svgs.length === 0) {
+      throw new Error("Rendered SVG trees were not found");
     }
-    return svg.outerHTML;
+    return svgs.map((svg) => svg.outerHTML).join("\n");
   });
 }
 
@@ -523,7 +532,7 @@ export function committedVectorPathStrokeCount(svg: string): number {
 export async function isCanvasTextEditActive(page: Page): Promise<boolean> {
   return await page.evaluate(() => {
     return Array.from(document.querySelectorAll("textarea")).some((textarea) => {
-      return window.getComputedStyle(textarea).opacity === "0";
+      return globalThis.getComputedStyle(textarea).opacity === "0";
     });
   });
 }
@@ -536,7 +545,7 @@ export async function isCanvasTextEditActive(page: Page): Promise<boolean> {
 export async function getCanvasTextareaValue(page: Page): Promise<string> {
   return page.evaluate(() => {
     const hidden = Array.from(document.querySelectorAll("textarea")).find((textarea) => {
-      return window.getComputedStyle(textarea).opacity === "0";
+      return globalThis.getComputedStyle(textarea).opacity === "0";
     });
     return hidden?.value ?? "";
   });
@@ -550,7 +559,7 @@ export async function getCanvasTextareaValue(page: Page): Promise<string> {
 export async function focusCanvasTextarea(page: Page): Promise<void> {
   await page.evaluate(() => {
     const hidden = Array.from(document.querySelectorAll("textarea")).find((textarea) => {
-      return window.getComputedStyle(textarea).opacity === "0";
+      return globalThis.getComputedStyle(textarea).opacity === "0";
     });
     hidden?.focus();
   });
@@ -564,7 +573,7 @@ export async function focusCanvasTextarea(page: Page): Promise<void> {
 export async function canvasTextareaSelection(page: Page): Promise<{ readonly start: number; readonly end: number } | null> {
   return page.evaluate(() => {
     const hidden = Array.from(document.querySelectorAll("textarea")).find((textarea) => {
-      return window.getComputedStyle(textarea).opacity === "0";
+      return globalThis.getComputedStyle(textarea).opacity === "0";
     });
     if (!hidden) {
       return null;
@@ -590,7 +599,7 @@ export async function activeElementDiagnostics(page: Page): Promise<{
     }
     return {
       tag: active.tagName,
-      opacity: window.getComputedStyle(active).opacity,
+      opacity: globalThis.getComputedStyle(active).opacity,
       textareaValue: active instanceof HTMLTextAreaElement ? active.value.substring(0, 30) : "not-textarea",
     };
   });
@@ -601,8 +610,14 @@ export async function activeElementDiagnostics(page: Page): Promise<{
 
 
 
-export async function countCanvasHitAreas(page: Page): Promise<number> {
-  return page.evaluate(() => document.querySelectorAll("rect[fill='transparent']").length);
+export async function countCanvasVisibleNodes(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const api = (globalThis as FigEditorOperationSurfaceGlobalThis).higmaFigEditor;
+    if (api === undefined) {
+      throw new Error("globalThis.higmaFigEditor is not published");
+    }
+    return api.canvas.visibleNodeBounds().length;
+  });
 }
 
 

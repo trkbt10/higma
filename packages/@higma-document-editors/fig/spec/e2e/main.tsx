@@ -1,9 +1,16 @@
 /** @file E2E test harness backed directly by Kiwi nodeChanges. */
 
-import { StrictMode, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { StrictMode, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createRoot } from "react-dom/client";
 import { injectCSSVariables } from "@higma-editor-kernel/ui/design-tokens";
-import { createFigFamilyRenderOptions } from "@higma-figma-runtime/react-renderer";
+import {
+  createFigFamilyRenderOptions,
+} from "@higma-figma-runtime/react-renderer";
+import {
+  createKiwiSceneGraphPipeline,
+  type KiwiSceneGraphMutation,
+} from "@higma-document-renderers/fig/scene-graph";
+import { FigSceneFigmaExportSvgRenderer } from "@higma-document-renderers/fig/react";
 import {
   createFigDocumentContextFromLoaded,
   createFigDocumentContextFromNodeChanges,
@@ -13,10 +20,14 @@ import {
 } from "@higma-document-io/fig";
 import { loadFigFile } from "@higma-document-io/fig/roundtrip";
 import type { FigPackageImage } from "@higma-figma-containers/package";
-import { FigEditorProvider, useFigEditor } from "../../src/context/FigEditorContext";
+import {
+  FigEditorStoreProvider,
+  useFigEditor,
+  type FigEditorStore,
+} from "../../src/context/FigEditorContext";
+import { createGlobalThisPublishedFigEditorStore } from "../../src/context/fig-editor-store-global-this-publication";
 import { FigEditorCanvas } from "../../src/canvas/FigEditorCanvas";
 import { FigPageRenderer } from "../../src/canvas/rendering/FigPageRenderer";
-import { flattenAllNodeBounds } from "../../src/canvas/interaction/bounds";
 import { FigEditorToolbar } from "../../src/editor/FigEditorToolbar";
 import { PropertyPanel } from "../../src/panels/properties/PropertyPanel";
 import { PageListPanel } from "../../src/panels/pages/PageListPanel";
@@ -31,6 +42,7 @@ import type {
 import {
   collectFontQueries,
   createCachingFontLoader,
+  detectBrowserFontPlatform,
   fontQueryKey,
   preloadFonts,
   type FontQuery,
@@ -75,6 +87,11 @@ const TEST_IMAGE_REF = "a1b2c3d4";
 const TEST_IMAGE_HASH_BYTES: readonly number[] = [0xa1, 0xb2, 0xc3, 0xd4];
 const TEXT_FILL_STYLE_GUID: FigGuid = { sessionID: 40, localID: 1 };
 const TEXT_FILL_STYLE_KEY = "e2e-text-fill-style";
+const INITIAL_E2E_FRAME_KIWI_DOCUMENT_MUTATION: KiwiSceneGraphMutation = Object.freeze({
+  revision: 0,
+  scope: "initial-load",
+  changedGuidKeys: [],
+});
 
 function createTestFontPath({ x, y, fontSize }: { readonly x: number; readonly y: number; readonly fontSize: number }): FontPath {
   const width = fontSize * 0.48;
@@ -131,8 +148,6 @@ const TEST_FONT: AbstractFont = {
 };
 
 const TEST_TEXT_FONT_RESOLVER: TextFontResolver = () => TEST_FONT;
-const BROWSER_FONT_LOADER = createCachingFontLoader(createBrowserFontLoader());
-const BROWSER_TEXT_FONT_RESOLVER = createCachedTextFontResolver(BROWSER_FONT_LOADER);
 
 type FontMode = "test" | "browser-real";
 
@@ -143,11 +158,27 @@ type BrowserFontPreloadState = {
   readonly ready: boolean;
 };
 
-type RouteContextState =
-  | { readonly type: "synthetic"; readonly context: FigDocumentContext }
-  | { readonly type: "loading" }
-  | { readonly type: "loaded"; readonly context: FigDocumentContext }
-  | { readonly type: "error"; readonly error: Error };
+type BrowserTextFontPreloadResult = {
+  readonly ready: boolean;
+  readonly textFontResolver: TextFontResolver | undefined;
+};
+
+type BrowserTextFontRuntime = {
+  readonly fontLoader: ReturnType<typeof createCachingFontLoader>;
+  readonly textFontResolver: TextFontResolver;
+};
+
+function createBrowserTextFontRuntime(): BrowserTextFontRuntime {
+  const browserFontLoader = createBrowserFontLoader({
+    host: globalThis,
+    platform: detectBrowserFontPlatform(globalThis),
+  });
+  const fontLoader = createCachingFontLoader(browserFontLoader);
+  return {
+    fontLoader,
+    textFontResolver: createCachedTextFontResolver(fontLoader),
+  };
+}
 
 type HarnessRoute = {
   readonly view: "editor" | "frame";
@@ -156,6 +187,22 @@ type HarnessRoute = {
   readonly selectedGuid?: FigGuid;
   readonly activePageGuid?: FigGuid;
   readonly frameGuid?: FigGuid;
+};
+
+type EditorHarnessSession = {
+  readonly context: FigDocumentContext;
+  readonly store: FigEditorStore;
+  readonly dispose: () => void;
+};
+
+type HarnessApplication = {
+  readonly route: HarnessRoute;
+  readonly context: FigDocumentContext;
+  readonly editorSession: EditorHarnessSession | undefined;
+  readonly renderer: FigEditorRendererKind;
+  readonly panelMode: PanelMode;
+  readonly fontMode: FontMode;
+  readonly webglInitializationDelayMs: number | undefined;
 };
 
 function resolveFontModeFromLocation(location: Location): FontMode {
@@ -248,6 +295,66 @@ async function createRoutedContext(route: HarnessRoute): Promise<FigDocumentCont
   return createFigDocumentContextFromLoaded(primary, {
     kiwiSourceDocuments: sources.map(kiwiSourceDocumentFromLoaded),
   });
+}
+
+function createContextForHarnessRoute(fontMode: FontMode, route: HarnessRoute): Promise<FigDocumentContext> {
+  if (route.figUrl === undefined) {
+    return Promise.resolve(createHarnessContext(fontMode));
+  }
+  return createRoutedContext(route);
+}
+
+function createEditorHarnessSession({
+  context,
+  activePageGuid,
+  selectedGuid,
+}: {
+  readonly context: FigDocumentContext;
+  readonly activePageGuid: FigGuid | undefined;
+  readonly selectedGuid: FigGuid | undefined;
+}): EditorHarnessSession {
+  const publishedStore = createGlobalThisPublishedFigEditorStore({
+    context,
+    initialActivePageGuid: activePageGuid,
+    initialSelectedGuids: selectedGuid === undefined ? undefined : [selectedGuid],
+  });
+  return {
+    context,
+    store: publishedStore.store,
+    dispose: publishedStore.dispose,
+  };
+}
+
+function createEditorHarnessSessionForRoute(
+  context: FigDocumentContext,
+  route: HarnessRoute,
+): EditorHarnessSession | undefined {
+  if (route.view === "frame") {
+    return undefined;
+  }
+  return createEditorHarnessSession({
+    context,
+    activePageGuid: route.activePageGuid,
+    selectedGuid: route.selectedGuid,
+  });
+}
+
+async function createHarnessApplication(location: Location): Promise<HarnessApplication> {
+  const route = readHarnessRoute(location);
+  const renderer = resolveRendererFromLocation(location);
+  const panelMode = resolvePanelModeFromLocation(location);
+  const webglInitializationDelayMs = resolveWebGLInitializationDelayMsFromLocation(location);
+  const fontMode = resolveFontModeFromLocation(location);
+  const context = await createContextForHarnessRoute(fontMode, route);
+  return {
+    route,
+    context,
+    editorSession: createEditorHarnessSessionForRoute(context, route),
+    renderer,
+    panelMode,
+    fontMode,
+    webglInitializationDelayMs,
+  };
 }
 
 function guid(localID: number, sessionID = 1): FigGuid {
@@ -1146,14 +1253,20 @@ function requiresBrowserTextFonts(mode: FontMode, renderer: FigEditorRendererKin
   return mode === "browser-real" && (renderer === "webgl" || renderer === "svg");
 }
 
-function selectTextFontResolver(mode: FontMode, browserFontsReady: boolean): TextFontResolver | undefined {
+function selectTextFontResolver(
+  mode: FontMode,
+  browserTextFontPreload: BrowserTextFontPreloadResult,
+): TextFontResolver | undefined {
   if (mode !== "browser-real") {
     return TEST_TEXT_FONT_RESOLVER;
   }
-  if (!browserFontsReady) {
+  if (!browserTextFontPreload.ready) {
     return undefined;
   }
-  return BROWSER_TEXT_FONT_RESOLVER;
+  if (browserTextFontPreload.textFontResolver === undefined) {
+    throw new Error("E2E harness browser-real font mode requires a preloaded browser text font resolver");
+  }
+  return browserTextFontPreload.textFontResolver;
 }
 
 function collectHarnessFontQueries(context: FigDocumentContext, route: HarnessRoute) {
@@ -1165,13 +1278,13 @@ function collectHarnessFontQueries(context: FigDocumentContext, route: HarnessRo
   }).fontResolverQueries;
 }
 
-function collectActivePageFontQueries(context: FigDocumentContext, activePage: FigNode) {
+function collectActivePageTextLayoutFontResolverQueries(context: FigDocumentContext, activePage: FigNode) {
   const resources = figDocumentResources(context);
   return collectFontQueries({
     roots: [activePage],
     symbolResolver: context.symbolResolver,
     childrenOf: resources.childrenOf,
-  }).fontResolverQueries;
+  }).textLayoutFontResolverQueries;
 }
 
 function routeFrameFontPreloadRoots(context: FigDocumentContext, route: HarnessRoute): readonly FigNode[] {
@@ -1197,102 +1310,6 @@ function requireRouteNode(context: FigDocumentContext, guid: FigGuid, owner: str
   return node;
 }
 
-function collectResolvedDescendantNames(
-  node: FigNode,
-  childrenOf: (node: FigNode) => readonly FigNode[],
-): readonly string[] {
-  const names = node.name === undefined ? [] : [node.name];
-  return [
-    ...names,
-    ...childrenOf(node).flatMap((child) => collectResolvedDescendantNames(child, childrenOf)),
-  ];
-}
-
-function collectResolvedInstanceNames(
-  node: FigNode,
-  context: FigDocumentContext,
-): string {
-  const resolved = context.symbolResolver.resolveInstance(node);
-  return [
-    ...collectResolvedDescendantNames(resolved.node, context.symbolResolver.childrenOfResolvedNode),
-    ...resolved.children.flatMap((child) => (
-      collectResolvedDescendantNames(child, context.symbolResolver.childrenOfResolvedNode)
-    )),
-  ].join("|");
-}
-
-function SelectedSymbolResolutionDiagnostics({
-  selectedGuid,
-}: {
-  readonly selectedGuid: FigGuid | undefined;
-}) {
-  const { activePage, context, resources } = useFigEditor();
-  if (selectedGuid === undefined) {
-    return null;
-  }
-  const selectedKey = guidToString(selectedGuid);
-  const node = context.document.nodesByGuid.get(selectedKey);
-  if (node === undefined) {
-    throw new Error(`E2E harness selected node ${selectedKey} is not present`);
-  }
-  if (activePage === undefined) {
-    throw new Error("E2E harness selected diagnostics require an active page");
-  }
-  const selectedBounds = flattenAllNodeBounds(context.document, resources.childrenOf(activePage))
-    .find((bounds) => bounds.id === selectedKey);
-  if (selectedBounds === undefined) {
-    throw new Error(`E2E harness selected node ${selectedKey} has no editor bounds`);
-  }
-  const nodeType = getNodeType(node);
-  const resolution = context.symbolResolver.resolveReferences(node);
-  const effectiveSymbolGuid = resolvedEffectiveSymbolGuid(resolution);
-  const resolvedDescendantNames = resolvedInstanceDescendantNames({
-    node,
-    nodeType,
-    context,
-    hasEffectiveSymbol: resolution.effectiveSymbol !== undefined,
-  });
-  return (
-    <div
-      hidden
-      data-e2e-selected-guid={selectedKey}
-      data-e2e-selected-type={nodeType}
-      data-e2e-selected-x={selectedBounds.x}
-      data-e2e-selected-y={selectedBounds.y}
-      data-e2e-selected-width={selectedBounds.width}
-      data-e2e-selected-height={selectedBounds.height}
-      data-e2e-effective-symbol-guid={effectiveSymbolGuid}
-      data-e2e-resolved-descendant-names={resolvedDescendantNames}
-    />
-  );
-}
-
-function resolvedEffectiveSymbolGuid(
-  resolution: ReturnType<FigDocumentContext["symbolResolver"]["resolveReferences"]>,
-): string {
-  if (resolution.effectiveSymbol === undefined) {
-    return "";
-  }
-  return guidToString(resolution.effectiveSymbol.guid);
-}
-
-function resolvedInstanceDescendantNames({
-  node,
-  nodeType,
-  context,
-  hasEffectiveSymbol,
-}: {
-  readonly node: FigNode;
-  readonly nodeType: string;
-  readonly context: FigDocumentContext;
-  readonly hasEffectiveSymbol: boolean;
-}): string {
-  if (nodeType !== "INSTANCE" || !hasEffectiveSymbol) {
-    return "";
-  }
-  return collectResolvedInstanceNames(node, context);
-}
-
 function useBrowserTextFontPreload({
   enabled,
   context,
@@ -1301,7 +1318,7 @@ function useBrowserTextFontPreload({
   readonly enabled: boolean;
   readonly context: FigDocumentContext | undefined;
   readonly route: HarnessRoute;
-}): boolean {
+}): BrowserTextFontPreloadResult {
   const queries = useMemo(() => {
     if (!enabled || context === undefined) {
       return [];
@@ -1315,7 +1332,7 @@ function useActivePageBrowserTextFontPreload({
   enabled,
 }: {
   readonly enabled: boolean;
-}): boolean {
+}): BrowserTextFontPreloadResult {
   const { activePage, context } = useFigEditor();
   const queries = useMemo(() => {
     if (!enabled) {
@@ -1324,7 +1341,7 @@ function useActivePageBrowserTextFontPreload({
     if (activePage === undefined) {
       throw new Error("E2E harness active-page font preload requires an active CANVAS");
     }
-    return collectActivePageFontQueries(context, activePage);
+    return collectActivePageTextLayoutFontResolverQueries(context, activePage);
   }, [activePage, context, enabled]);
   return useBrowserFontQueryPreload({ enabled, queries });
 }
@@ -1339,8 +1356,17 @@ function useBrowserFontQueryPreload({
 }: {
   readonly enabled: boolean;
   readonly queries: readonly FontQuery[];
-}): boolean {
+}): BrowserTextFontPreloadResult {
   const key = useMemo(() => browserFontPreloadKey(queries), [queries]);
+  const runtime = useMemo(() => {
+    if (!enabled) {
+      return undefined;
+    }
+    return createBrowserTextFontRuntime();
+  }, [enabled]);
+  const queriesRef = useRef(queries);
+  queriesRef.current = queries;
+  const loadedKeyRef = useRef<string | null>(enabled ? null : key);
   const [state, setState] = useState<BrowserFontPreloadState>(() => ({
     key,
     ready: !enabled,
@@ -1349,15 +1375,36 @@ function useBrowserFontQueryPreload({
 
   useEffect(() => {
     if (!enabled) {
+      loadedKeyRef.current = key;
       setState({ key, ready: true });
       return;
     }
+    if (loadedKeyRef.current === key) {
+      setState((previous) => {
+        if (previous.key === key && previous.ready) {
+          return previous;
+        }
+        return { key, ready: true };
+      });
+      setError(null);
+      return;
+    }
     const cancelled = { value: false };
-    setState({ key, ready: false });
+    if (runtime === undefined) {
+      setError(new Error("E2E harness browser-real font mode requires Local Font Access before preloading"));
+      return;
+    }
+    setState((previous) => {
+      if (previous.key === key && !previous.ready) {
+        return previous;
+      }
+      return { key, ready: false };
+    });
     setError(null);
-    void preloadFonts({ queries, loader: BROWSER_FONT_LOADER }).then(
+    void preloadFonts({ queries: queriesRef.current, loader: runtime.fontLoader }).then(
       () => {
         if (!cancelled.value) {
+          loadedKeyRef.current = key;
           setState({ key, ready: true });
         }
       },
@@ -1375,60 +1422,15 @@ function useBrowserFontQueryPreload({
     return () => {
       cancelled.value = true;
     };
-  }, [enabled, key, queries]);
+  }, [enabled, key, runtime]);
 
   if (error !== null) {
     throw error;
   }
-  return !enabled || (state.key === key && state.ready);
-}
-
-function useHarnessContext(fontMode: FontMode, route: HarnessRoute): RouteContextState {
-  const syntheticContext = useMemo(() => createHarnessContext(fontMode), [fontMode]);
-  const [state, setState] = useState<RouteContextState>(() => {
-    if (route.figUrl === undefined) {
-      return { type: "synthetic", context: syntheticContext };
-    }
-    return { type: "loading" };
-  });
-
-  useEffect(() => {
-    if (route.figUrl === undefined) {
-      setState({ type: "synthetic", context: syntheticContext });
-      return;
-    }
-    const cancellation = { cancelled: false };
-    setState({ type: "loading" });
-    void createRoutedContext(route).then(
-      (context) => {
-        if (!cancellation.cancelled) {
-          setState({ type: "loaded", context });
-        }
-      },
-      (reason: unknown) => {
-        if (cancellation.cancelled) {
-          return;
-        }
-        if (reason instanceof Error) {
-          setState({ type: "error", error: reason });
-          return;
-        }
-        setState({ type: "error", error: new Error(`E2E harness route load failed: ${String(reason)}`) });
-      },
-    );
-    return () => {
-      cancellation.cancelled = true;
-    };
-  }, [route, syntheticContext]);
-
-  return state;
-}
-
-function contextFromRouteState(state: RouteContextState): FigDocumentContext | undefined {
-  if (state.type === "synthetic" || state.type === "loaded") {
-    return state.context;
-  }
-  return undefined;
+  return {
+    ready: !enabled || (state.key === key && state.ready),
+    textFontResolver: runtime?.textFontResolver,
+  };
 }
 
 const frameOnlyContainerStyle: CSSProperties = {
@@ -1436,6 +1438,12 @@ const frameOnlyContainerStyle: CSSProperties = {
   backgroundColor: "transparent",
   lineHeight: 0,
 };
+
+const figmaExportFrameSvgRootProps = {
+  "aria-hidden": true,
+  pointerEvents: "none",
+  style: { display: "block", width: "100%", height: "100%" },
+} as const;
 
 const fontPreloadPendingStyle: CSSProperties = {
   minWidth: 0,
@@ -1468,23 +1476,60 @@ function FrameOnlyHarness({
     throw new Error(`E2E frame view requires size for frame ${frameKey}`);
   }
   const transformMatrix = readKiwiTransform(frame.transform);
+  const sceneGraph = createKiwiSceneGraphPipeline().resolve({
+    page,
+    nodes: [frame],
+    canvasWidth: size.x,
+    canvasHeight: size.y,
+    viewportX: transformMatrix.m02,
+    viewportY: transformMatrix.m12,
+    viewportWidth: size.x,
+    viewportHeight: size.y,
+    kiwiDocumentMutation: INITIAL_E2E_FRAME_KIWI_DOCUMENT_MUTATION,
+    showHiddenNodes: false,
+    resources,
+    textFontResolver,
+  });
+  if (sceneGraph === null) {
+    throw new Error(`E2E frame view cannot build SceneGraph for frame ${frameKey}`);
+  }
+  const renderOptions = createFigFamilyRenderOptions(context);
+  if (renderer === "svg") {
+    return (
+      <div
+        role="region"
+        aria-label={`E2E frame renderer ${frameKey}`}
+        style={{ ...frameOnlyContainerStyle, width: size.x, height: size.y }}
+      >
+        <FigSceneFigmaExportSvgRenderer
+          sceneGraph={sceneGraph}
+          renderOptions={renderOptions}
+          rootProps={figmaExportFrameSvgRootProps}
+        />
+      </div>
+    );
+  }
   return (
-    <div data-e2e-frame-renderer="" style={{ ...frameOnlyContainerStyle, width: size.x, height: size.y }}>
+    <div
+      role="region"
+      aria-label={`E2E frame renderer ${frameKey}`}
+      style={{ ...frameOnlyContainerStyle, width: size.x, height: size.y }}
+    >
       <FigPageRenderer
-        page={page}
-        nodes={[frame]}
-        canvasWidth={size.x}
-        canvasHeight={size.y}
-        viewportX={transformMatrix.m02}
-        viewportY={transformMatrix.m12}
-        viewportWidth={size.x}
-        viewportHeight={size.y}
+        sceneGraph={sceneGraph}
+        kiwiDocumentMutation={INITIAL_E2E_FRAME_KIWI_DOCUMENT_MUTATION}
+        surfaceWidth={size.x}
+        surfaceHeight={size.y}
         viewportScale={1}
-        resources={resources}
-        renderOptions={createFigFamilyRenderOptions(context)}
+        renderOptions={renderOptions}
         renderer={renderer}
         host="html"
-        textFontResolver={textFontResolver}
+        webGLSurface={{
+          surfaceKey: `e2e-frame-webgl:${frameKey}`,
+          kind: "root",
+          rootGuidKey: frameKey,
+          label: `E2E frame WebGL surface ${frameKey}`,
+        }}
       />
     </div>
   );
@@ -1521,14 +1566,14 @@ function FrameOnlyFontGate({
   readonly renderer: FigEditorRendererKind;
   readonly fontMode: FontMode;
 }) {
-  const browserFontsReady = useBrowserTextFontPreload({
+  const browserTextFontPreload = useBrowserTextFontPreload({
     enabled: requiresBrowserTextFonts(fontMode, renderer),
     context,
     route,
   });
-  const textFontResolver = selectTextFontResolver(fontMode, browserFontsReady);
-  if (requiresBrowserTextFonts(fontMode, renderer) && !browserFontsReady) {
-    return <div data-browser-font-preload="pending" />;
+  const textFontResolver = selectTextFontResolver(fontMode, browserTextFontPreload);
+  if (requiresBrowserTextFonts(fontMode, renderer) && !browserTextFontPreload.ready) {
+    return <div role="status" aria-label="Browser font preload pending" aria-busy="true" />;
   }
   return (
     <FrameOnlyHarness
@@ -1545,13 +1590,11 @@ function EditorHarness({
   panelMode,
   fontMode,
   webglInitializationDelayMs,
-  selectedGuid,
 }: {
   readonly renderer: FigEditorRendererKind;
   readonly panelMode: PanelMode;
   readonly fontMode: FontMode;
   readonly webglInitializationDelayMs: number | undefined;
-  readonly selectedGuid: FigGuid | undefined;
 }) {
   return (
     <div style={containerStyle}>
@@ -1570,7 +1613,6 @@ function EditorHarness({
           fontMode={fontMode}
           webglInitializationDelayMs={webglInitializationDelayMs}
         />
-        <SelectedSymbolResolutionDiagnostics selectedGuid={selectedGuid} />
         {(panelMode === "property" || panelMode === "all") && (
           <aside aria-label="Properties" style={propertyPanelStyle}>
             <PropertyPanel />
@@ -1590,12 +1632,19 @@ function EditorCanvasFontAware({
   readonly fontMode: FontMode;
   readonly webglInitializationDelayMs: number | undefined;
 }) {
-  const browserFontsReady = useActivePageBrowserTextFontPreload({
+  const browserTextFontPreload = useActivePageBrowserTextFontPreload({
     enabled: requiresBrowserTextFonts(fontMode, renderer),
   });
-  const textFontResolver = selectTextFontResolver(fontMode, browserFontsReady);
-  if (requiresBrowserTextFonts(fontMode, renderer) && !browserFontsReady) {
-    return <div data-browser-font-preload="pending" style={fontPreloadPendingStyle} />;
+  const textFontResolver = selectTextFontResolver(fontMode, browserTextFontPreload);
+  if (requiresBrowserTextFonts(fontMode, renderer) && !browserTextFontPreload.ready) {
+    return (
+      <div
+        role="status"
+        aria-label="Browser font preload pending"
+        aria-busy="true"
+        style={fontPreloadPendingStyle}
+      />
+    );
   }
   return (
     <FigEditorCanvas
@@ -1606,47 +1655,66 @@ function EditorCanvasFontAware({
   );
 }
 
-function App() {
-  const route = useMemo(() => readHarnessRoute(window.location), []);
-  const renderer = resolveRendererFromLocation(window.location);
-  const panelMode = resolvePanelModeFromLocation(window.location);
-  const webglInitializationDelayMs = resolveWebGLInitializationDelayMsFromLocation(window.location);
-  const fontMode = resolveFontModeFromLocation(window.location);
-  const contextState = useHarnessContext(fontMode, route);
-  if (contextState.type === "loading") {
-    return <div data-e2e-harness-state="loading" />;
-  }
-  if (contextState.type === "error") {
-    throw contextState.error;
-  }
-  const initialContext = contextFromRouteState(contextState);
-  if (initialContext === undefined) {
-    throw new Error("E2E harness reached ready state without a FigDocumentContext");
-  }
+function EditorHarnessWithOperationSurface({
+  editorSession,
+  renderer,
+  panelMode,
+  fontMode,
+  webglInitializationDelayMs,
+}: {
+  readonly editorSession: EditorHarnessSession;
+  readonly renderer: FigEditorRendererKind;
+  readonly panelMode: PanelMode;
+  readonly fontMode: FontMode;
+  readonly webglInitializationDelayMs: number | undefined;
+}) {
+  return (
+    <FigEditorStoreProvider store={editorSession.store}>
+      <EditorHarness
+        renderer={renderer}
+        panelMode={panelMode}
+        fontMode={fontMode}
+        webglInitializationDelayMs={webglInitializationDelayMs}
+      />
+    </FigEditorStoreProvider>
+  );
+}
+
+function App({
+  application,
+}: {
+  readonly application: HarnessApplication;
+}) {
+  const {
+    route,
+    context,
+    editorSession,
+    renderer,
+    panelMode,
+    fontMode,
+    webglInitializationDelayMs,
+  } = application;
   if (route.view === "frame") {
     return (
       <FrameOnlyFontGate
-        context={initialContext}
+        context={context}
         route={route}
         renderer={renderer}
         fontMode={fontMode}
       />
     );
   }
+  if (editorSession === undefined) {
+    throw new Error("E2E editor view requires an EditorHarnessSession");
+  }
   return (
-    <FigEditorProvider
-      context={initialContext}
-      initialActivePageGuid={route.activePageGuid}
-      initialSelectedGuids={route.selectedGuid === undefined ? undefined : [route.selectedGuid]}
-    >
-      <EditorHarness
-        renderer={renderer}
-        panelMode={panelMode}
-        fontMode={fontMode}
-        webglInitializationDelayMs={webglInitializationDelayMs}
-        selectedGuid={route.selectedGuid}
-      />
-    </FigEditorProvider>
+    <EditorHarnessWithOperationSurface
+      editorSession={editorSession}
+      renderer={renderer}
+      panelMode={panelMode}
+      fontMode={fontMode}
+      webglInitializationDelayMs={webglInitializationDelayMs}
+    />
   );
 }
 
@@ -1680,13 +1748,55 @@ function resolveWebGLInitializationDelayMsFromLocation(location: Location): numb
   return value;
 }
 
+function createHarnessLoadingElement(): HTMLElement {
+  const loadingElement = document.createElement("div");
+  loadingElement.setAttribute("role", "status");
+  loadingElement.setAttribute("aria-label", "E2E harness loading");
+  loadingElement.setAttribute("aria-busy", "true");
+  return loadingElement;
+}
+
+function bootErrorFromReason(reason: unknown): Error {
+  if (reason instanceof Error) {
+    return reason;
+  }
+  return new Error(`E2E harness boot failed with non-Error reason: ${String(reason)}`);
+}
+
+function BootError({
+  error,
+}: {
+  readonly error: Error;
+}) {
+  throw error;
+}
+
 const root = document.getElementById("root");
 if (root === null) {
   throw new Error("Root element #root not found");
 }
 
-createRoot(root).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+root.replaceChildren(createHarnessLoadingElement());
+
+void createHarnessApplication(globalThis.location).then(
+  (application) => {
+    root.replaceChildren();
+    globalThis.addEventListener("pagehide", () => {
+      application.editorSession?.dispose();
+    }, { once: true });
+    createRoot(root).render(
+      <StrictMode>
+        <App application={application} />
+      </StrictMode>,
+    );
+  },
+  (reason: unknown) => {
+    root.replaceChildren();
+    const error = bootErrorFromReason(reason);
+    createRoot(root).render(
+      <StrictMode>
+        <BootError error={error} />
+      </StrictMode>,
+    );
+  },
 );
