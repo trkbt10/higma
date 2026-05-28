@@ -38,7 +38,7 @@ import type {
 } from "@higma-document-models/fig/types";
 import { kiwiEnumName } from "@higma-document-models/fig/constants";
 import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/fig/domain";
-import { buildCssFontFamily } from "@higma-document-models/fig/font";
+import { buildCssFontFamily, detectWeight } from "@higma-document-models/fig/font";
 import { formatPx, round2, round3 } from "../../lib/css-format/numeric";
 import type { TokenIndex } from "../../tokens";
 import { effectsToBoxShadow } from "../../tokens";
@@ -1149,6 +1149,20 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   }
   if (!style.fontSize && fontSize !== undefined) {
     style.fontSize = formatPx(fontSize);
+  }
+  // Fall back to mapping the Figma style name (e.g. "Medium", "Bold",
+  // "Light Italic") to its CSS numeric weight when the token path
+  // didn't fire. Without this, an Inter Medium label renders at the
+  // browser default 400 instead of 500 and visibly diverges from the
+  // Figma export — most user-visible footer / caption text in real
+  // designs uses "Medium" or "SemiBold" with no typography token to
+  // hide the omission. `detectWeight` is the same SoT the renderer's
+  // font-loader uses to pick a face from the family.
+  if (!style.fontWeight && styleName) {
+    const weight = detectWeight(styleName);
+    if (weight !== undefined) {
+      style.fontWeight = String(weight);
+    }
   }
   // Authored line-height in PIXELS is the rendered per-line stride —
   // honour it verbatim. The derived-baseline path below addresses the

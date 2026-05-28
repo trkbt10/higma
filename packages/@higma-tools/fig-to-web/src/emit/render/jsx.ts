@@ -175,15 +175,39 @@ function parentContextOf(options: EmitOptions): ParentContext | undefined {
  * characters in `textData.characters`; the top-level `characters`
  * field is only populated for nodes built via the high-level
  * `addNode` builder, never for nodes loaded from real .fig binaries.
+ *
+ * Soft line-break characters (U+2028 LINE SEPARATOR and U+2029
+ * PARAGRAPH SEPARATOR) are folded to LF (U+000A) so CSS
+ * `white-space: pre-line` honours them. Figma's editor records a
+ * Shift-Enter as U+2028 (a Unicode line break), but browsers'
+ * line-break heuristics ignore U+2028 inside a normal `<span>` —
+ * the text would render on a single overflowing line even though
+ * the author asked for a paragraph break. Normalising to LF here
+ * is one place; the alternative (sprinkling `wordBreak` /
+ * `whiteSpace: pre` rules) handles fewer cases and surfaces the
+ * Unicode artefact in style instead of in the data.
  */
 function textCharacters(node: FigNode): string {
   if (typeof node.textData?.characters === "string") {
-    return node.textData.characters;
+    return normaliseSoftLineBreaks(node.textData.characters);
   }
   if (typeof node.characters === "string") {
-    return node.characters;
+    return normaliseSoftLineBreaks(node.characters);
   }
   return "";
+}
+
+function normaliseSoftLineBreaks(value: string): string {
+  // Figma stores Shift-Enter soft breaks as U+2028 LINE SEPARATOR
+  // (and U+2029 PARAGRAPH SEPARATOR for hard paragraph breaks).
+  // Browser layout treats those as invisible whitespace that does
+  // NOT trigger a line break inside white-space: pre-line, so we
+  // normalise both to LF up-front. Fast-exit when neither is present
+  // (the dominant case is plain text without soft breaks).
+  if (value.indexOf("\u2028") < 0 && value.indexOf("\u2029") < 0) {
+    return value;
+  }
+  return value.replace(/[\u2028\u2029]/g, "\n");
 }
 
 /**
