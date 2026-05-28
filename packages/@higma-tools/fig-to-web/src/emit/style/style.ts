@@ -41,7 +41,7 @@ import { guidToString, type FigKiwiDocumentIndex } from "@higma-document-models/
 import { buildCssFontFamily, detectWeight } from "@higma-document-models/fig/font";
 import { formatPx, round2, round3 } from "../../lib/css-format/numeric";
 import type { TokenIndex } from "../../tokens";
-import { effectsToBoxShadow } from "../../tokens";
+import { effectsToBoxShadow, effectsToTextShadow } from "../../tokens";
 import type { ImageResolver } from "./paint";
 import { paintsForText, paintsToBackgroundStyle } from "./paint";
 import type { InferenceResult, InferredInset, InferredLayout } from "../layout/infer-layout";
@@ -1012,8 +1012,26 @@ function applyVisuals(node: FigNode, inputs: StyleInputs, style: Record<string, 
     style.overflow = "hidden";
   }
 
+  if (isInstance) {
+    return;
+  }
+  // TEXT nodes need `text-shadow`, not `box-shadow` — the latter
+  // outlines the rectangular text box (and pollutes layout with
+  // an invisible drop offset), while CSS `text-shadow` traces
+  // the actual glyph outlines, matching Figma's DROP_SHADOW
+  // intent for TEXT (a glow halo on the catchcopy hero, in the
+  // validation file). `text-shadow` rejects the 4-value spread the
+  // shadow token table emits, so route TEXT through a dedicated
+  // `effectsToTextShadow` builder that drops the spread.
+  if (node.type?.name === "TEXT") {
+    const textShadow = effectsToTextShadow(node.effects);
+    if (textShadow) {
+      style.textShadow = textShadow;
+    }
+    return;
+  }
   const shadow = shadowValue(node, inputs.index);
-  if (shadow && !isInstance) {
+  if (shadow) {
     style.boxShadow = shadow;
   }
 }

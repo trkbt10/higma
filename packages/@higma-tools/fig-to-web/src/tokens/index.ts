@@ -15,4 +15,4 @@ export type {
 export { buildTokensFromFrames } from "./extract";
 export type { TokenBuildResult } from "./extract";
 export { tokensToCss } from "./css";
-export { effectsToBoxShadow } from "./effect";
+export { effectsToBoxShadow, effectsToTextShadow } from "./effect";

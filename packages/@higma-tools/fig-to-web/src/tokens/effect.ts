@@ -70,6 +70,43 @@ export function effectsToBoxShadow(effects: readonly FigEffect[] | undefined): s
   return segments.join(", ");
 }
 
+/** Convert one shadow effect to a single CSS text-shadow segment. */
+function textShadowToCss(effect: FigEffect): string | undefined {
+  const type = effectTypeName(effect);
+  // text-shadow has no INNER variant; INNER_SHADOW on TEXT is a no-op
+  // in CSS and would distort the glyph rendering with an outer halo.
+  if (type !== "DROP_SHADOW") {
+    return undefined;
+  }
+  if (effect.visible === false) {
+    return undefined;
+  }
+  const offsetX = effect.offset?.x ?? 0;
+  const offsetY = effect.offset?.y ?? 0;
+  const blur = effect.radius ?? 0;
+  const color = effect.color ?? { r: 0, g: 0, b: 0, a: 1 };
+  return `${formatPx(offsetX)} ${formatPx(offsetY)} ${formatPx(blur)} ${figColorToCss(color)}`;
+}
+
+/**
+ * Convert a TEXT node's `effects` array to a CSS `text-shadow` value.
+ * `text-shadow` has no spread component and no `inset` variant —
+ * use a dedicated formatter rather than reusing the box-shadow path
+ * (whose 4-value-plus-spread output is invalid for text-shadow).
+ */
+export function effectsToTextShadow(effects: readonly FigEffect[] | undefined): string | undefined {
+  if (!effects || effects.length === 0) {
+    return undefined;
+  }
+  const segments = effects
+    .map(textShadowToCss)
+    .filter((s): s is string => s !== undefined);
+  if (segments.length === 0) {
+    return undefined;
+  }
+  return segments.join(", ");
+}
+
 /** Walk the targeted subtrees and collect shadow tokens. */
 export function buildShadowTokens(
   usageNodes: readonly FigNode[],
