@@ -1336,16 +1336,33 @@ function resolveInstancePaintOverrides(
   context: EmitContext,
 ): Record<string, string> {
   const out: Record<string, string> = {};
+  // Shallow scope: paint / image / fontSize overrides only fire on
+  // descendants the outer SYMBOL body authored directly. Going deeper
+  // would let paint changes on nested INSTANCE descendants bubble up
+  // their token-level CSS vars (e.g. `--color-base-text`) onto the
+  // outer wrapper, where they bleed across the entire subtree.
   const baseByGuid = symbolDescendantsByGuid(symbolBase, context.source.document.childrenOf);
+  // Deep scope: visible-override detection has to reach descendants
+  // inside nested INSTANCE bodies because the override path is
+  // typically two levels deep (footer → footer-parts-bread → TEXT).
+  // The wrapper variable `--vis-<guid>` is guid-specific, so deep
+  // emission can't leak across siblings.
+  const deepBaseByGuid = symbolDescendantsByGuidScoped(
+    symbolBase,
+    context.source.document.childrenOf,
+    context.source.document,
+  );
   visitResolvedInstanceChildren(resolvedChildren, context, (resolvedNode) => {
-    const baseNode = baseByGuid.get(guidToString(resolvedNode.guid));
-    if (baseNode === undefined) {
-      return;
+    const shallowBase = baseByGuid.get(guidToString(resolvedNode.guid));
+    if (shallowBase !== undefined) {
+      collectChangedPaints(shallowBase, resolvedNode, context, out);
+      collectImageFillOverride(resolvedNode, context, out);
+      collectFontSizeOverride(shallowBase, resolvedNode, context, out);
     }
-    collectChangedPaints(baseNode, resolvedNode, context, out);
-    collectImageFillOverride(resolvedNode, context, out);
-    collectFontSizeOverride(baseNode, resolvedNode, context, out);
-    collectVisibleOverride(baseNode, resolvedNode, context, out);
+    const deepBase = deepBaseByGuid.get(guidToString(resolvedNode.guid));
+    if (deepBase !== undefined) {
+      collectVisibleOverride(deepBase, resolvedNode, context, out);
+    }
   });
   return out;
 }
