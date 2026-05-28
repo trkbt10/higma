@@ -638,6 +638,13 @@ export type StyleInputs = {
    * can switch the rendered size per INSTANCE.
    */
   readonly fontSizeOverrideTargets?: ReadonlySet<string>;
+  /**
+   * Descendant guids that any call site overrides the `visible` flag
+   * on. The SYMBOL body emits `display: var(--vis-<guid>, default)`
+   * so the wrapper can hide the slot when a call site set
+   * `visible: false`.
+   */
+  readonly visibleOverrideTargets?: ReadonlySet<string>;
 };
 
 /**
@@ -698,7 +705,28 @@ export function nodeToStyle(
   // descendants. The property is harmless on the `<span>` (TEXT) and
   // `<svg>` (vector) elements the emitter produces alongside `<div>`.
   style.boxSizing = "border-box";
+  applyVisibilityOverride(node, inputs, style);
   return style;
+}
+
+/**
+ * When the node's guid is in `visibleOverrideTargets`, route its
+ * `display` through `var(--vis-<guid>, <existing-display>)` so the
+ * wrapper CSS variable can hide the slot per INSTANCE call site.
+ * The current `style.display` (or `block` when unset) becomes the
+ * fallback for instances that don't override visibility.
+ */
+function applyVisibilityOverride(node: FigNode, inputs: StyleInputs, style: Record<string, string>): void {
+  const targets = inputs.visibleOverrideTargets;
+  if (!targets || targets.size === 0) {
+    return;
+  }
+  const key = `${node.guid.sessionID}:${node.guid.localID}`;
+  if (!targets.has(key)) {
+    return;
+  }
+  const fallback = style.display ?? "block";
+  style.display = `var(--vis-${node.guid.sessionID}-${node.guid.localID}, ${fallback})`;
 }
 
 /**
@@ -1159,13 +1187,19 @@ function applyTextStyle(node: FigNode, inputs: StyleInputs, style: Record<string
   // the authored box at any character — Figma's line-breaker doesn't
   // need ASCII whitespace or CJK-Unified-Ideograph boundaries to
   // split a run. Browsers default to `word-break: normal`, which
-  // refuses to break inside "Other Symbol" runs (e.g. U+25CB ○).
-  // Without `word-break: break-all` the placeholder strings made of
-  // ○ stay on one line and overflow the container, hiding the
-  // authored multi-line layout. Limit this to the HEIGHT auto-resize
-  // mode so we don't override word-breaking for normal prose.
-  if (!style.wordBreak && node.textAutoResize?.name === "HEIGHT") {
-    style.wordBreak = "break-all";
+  // refuses to break inside "Other Symbol" runs (e.g. U+25CB ○) but
+  // *does* break between CJK Unified Ideographs. Using
+  // `word-break: break-all` was too aggressive: it forced character-
+  // by-character break on real CJK prose too, breaking after every
+  // character instead of after a natural 助詞 boundary like Figma's
+  // layout.
+  //
+  // `overflow-wrap: anywhere` gives us both: the browser keeps its
+  // normal break-point heuristic (so CJK wraps the way Figma does)
+  // but falls through to any-character break when the line has no
+  // valid break point (the ○ placeholder case).
+  if (!style.overflowWrap && node.textAutoResize?.name === "HEIGHT") {
+    style.overflowWrap = "anywhere";
   }
 
   // Single-line text (baselines.length === 1) was rendered by Figma

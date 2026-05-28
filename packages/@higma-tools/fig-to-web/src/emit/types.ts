@@ -108,4 +108,13 @@ export type EmitRegistry = {
    * but not on the SYMBOL itself).
    */
   readonly fontSizeOverrideTargets: ReadonlySet<string>;
+  /**
+   * Descendant guids whose `visible` is overridden by some INSTANCE
+   * call site (typically toggled `false` to hide a slot the SYMBOL
+   * author leaves visible by default — e.g. card-news's photo
+   * rectangle on the news cards that ship without an image).
+   * SYMBOL bodies emit `display: var(--vis-<guid>, <default>)` so
+   * wrapper-level CSS can swap to `none` per call site.
+   */
+  readonly visibleOverrideTargets: ReadonlySet<string>;
 };

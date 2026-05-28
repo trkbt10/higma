@@ -152,6 +152,7 @@ function styleInputsOf(context: EmitContext): StyleInputs {
     textBoundGuids: textBoundGuidsOf(context.propBindings),
     imageFillOverrideTargets: context.registry.imageFillOverrideTargets,
     fontSizeOverrideTargets: context.registry.fontSizeOverrideTargets,
+    visibleOverrideTargets: context.registry.visibleOverrideTargets,
   };
 }
 
@@ -1344,8 +1345,38 @@ function resolveInstancePaintOverrides(
     collectChangedPaints(baseNode, resolvedNode, context, out);
     collectImageFillOverride(resolvedNode, context, out);
     collectFontSizeOverride(baseNode, resolvedNode, context, out);
+    collectVisibleOverride(baseNode, resolvedNode, context, out);
   });
   return out;
+}
+
+/**
+ * Emit `--vis-<guid>: none` on the wrapper when the resolved
+ * descendant is hidden (`visible: false`) but the SYMBOL author
+ * left it visible. The SYMBOL body picks this up via
+ * `display: var(--vis-<guid>, ...)` and the slot vanishes — the
+ * card-news photo rectangle in the validation file's news cards
+ * without a photo is the motivating case.
+ */
+function collectVisibleOverride(
+  baseNode: FigNode,
+  resolvedNode: FigNode,
+  context: EmitContext,
+  out: Record<string, string>,
+): void {
+  const guidStr = guidToString(resolvedNode.guid);
+  if (!context.registry.visibleOverrideTargets.has(guidStr)) {
+    return;
+  }
+  if (resolvedNode.visible !== false) {
+    return;
+  }
+  if (baseNode.visible === false) {
+    // The SYMBOL author already hid this descendant; no per-call-site
+    // override needed.
+    return;
+  }
+  out[`--vis-${resolvedNode.guid.sessionID}-${resolvedNode.guid.localID}`] = "none";
 }
 
 /**

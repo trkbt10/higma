@@ -925,8 +925,60 @@ export function buildRegistry(source: FigDocumentContext, frames: readonly FigNo
 
   const imageFillOverrideTargets = collectDocumentImageFillOverrideTargets(source, frames);
   const fontSizeOverrideTargets = collectDocumentFontSizeOverrideTargets(source, frames);
+  const visibleOverrideTargets = collectDocumentVisibleOverrideTargets(source, frames);
 
-  return { frames: frameRegistry, components: componentRegistry, imageFillOverrideTargets, fontSizeOverrideTargets };
+  return { frames: frameRegistry, components: componentRegistry, imageFillOverrideTargets, fontSizeOverrideTargets, visibleOverrideTargets };
+}
+
+/**
+ * Descendants any INSTANCE call site in the document toggles
+ * `visible` on. SYMBOL bodies emit `display: var(--vis-<guid>, ...)`
+ * so wrapper-level CSS can hide the slot per call site.
+ */
+export function collectDocumentVisibleOverrideTargets(
+  source: FigDocumentContext,
+  frames: readonly FigNode[],
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  const visited = new Set<string>();
+  function visit(node: FigNode): void {
+    if (node.type?.name === "INSTANCE") {
+      for (const override of node.symbolData?.symbolOverrides ?? []) {
+        if (typeof override.visible !== "boolean") {
+          continue;
+        }
+        const guids = override.guidPath?.guids;
+        if (!guids || guids.length === 0) {
+          continue;
+        }
+        const targetGuid = guids[guids.length - 1];
+        if (!targetGuid) {
+          continue;
+        }
+        out.add(guidToString(targetGuid));
+      }
+      const symbolGuid = node.symbolData?.symbolID;
+      if (symbolGuid) {
+        const key = guidToString(symbolGuid);
+        if (!visited.has(key)) {
+          visited.add(key);
+          const symbol = findNodeByGuid(source.document, symbolGuid);
+          if (symbol !== undefined) {
+            for (const child of source.document.childrenOf(symbol)) {
+              visit(child);
+            }
+          }
+        }
+      }
+    }
+    for (const child of source.document.childrenOf(node)) {
+      visit(child);
+    }
+  }
+  for (const frame of frames) {
+    visit(frame);
+  }
+  return out;
 }
 
 /**

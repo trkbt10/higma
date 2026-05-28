@@ -87,6 +87,7 @@ const EMPTY_REGISTRY: EmitRegistry = {
   components: new Map(),
   imageFillOverrideTargets: new Set(),
   fontSizeOverrideTargets: new Set(),
+  visibleOverrideTargets: new Set(),
 };
 const EMPTY_TOKEN_INDEX: TokenIndex = {
   colorIdForPaints: () => undefined,
