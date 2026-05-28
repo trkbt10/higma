@@ -2324,10 +2324,15 @@ type WebGLRendererVisibilityViewportCache = {
     if (!fillsRequirePaintBlend(fills)) {
       return undefined;
     }
+    // `resolveWebGLRenderFrameSurfaceRegion` works on
+    // `node.sourceSurfaceShape` (the FRAME's authored, transform-
+    // invariant surface) — unlike its sibling resolvers it does not
+    // consult the active visualTransform, so we deliberately omit it
+    // here. Passing it would only re-introduce the dead argument the
+    // signature change at the receiver flagged.
     const region = resolveWebGLRenderFrameSurfaceRegion({
       node,
       transform,
-      visualTransform: currentRenderNodeVisualTransform.value,
       canvasWidth: canvasBackingWidth(),
       canvasHeight: canvasBackingHeight(),
       pixelRatio: pixelRatioRef.value,

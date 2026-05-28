@@ -222,6 +222,8 @@ function emitOneViewportWrapper(opts: EmitOneWrapperOptions): {
     y: 0,
     width: viewport.box.width,
     height: viewport.box.height,
+    visible: true,
+    opacity: 1,
     clipsContent: true,
     fills: [{
       type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
@@ -441,6 +443,8 @@ function emitSymbolForNode(opts: WalkSymbolOptions): {
     y: opts.stackY,
     width: node.box.width,
     height: node.box.height,
+    visible: true,
+    opacity: 1,
   };
   const symbolResult = addNode({ state, context: opts.context, pageGuid, parentGuid: null, spec: symbolSpec });
   output.set(node.componentKey, symbolResult.nodeGuid);
@@ -506,6 +510,7 @@ function appendIRWithSharedSymbols(opts: AppendIRWithSymbolsOptions): FigDocumen
       width: opts.irNode.box.width,
       height: opts.irNode.box.height,
       visible: opts.irNode.visible,
+      opacity: 1,
       ...buildAbsoluteStackPositioning(opts.irNode.sizing.mode),
     };
     const result = addNode({

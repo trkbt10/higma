@@ -26,11 +26,12 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
+  type ImagePaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import { figImageHashHexToBytes } from "@higma-document-models/fig/domain";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, SCALE_MODE_VALUES } from "@higma-document-models/fig/constants";
-import type { FigColor, FigImageScaleMode, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor, FigImageScaleMode } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/image-scale-modes");
@@ -69,26 +70,19 @@ async function computeSha1Hex(data: Uint8Array): Promise<string> {
 
 const SCALE_MODES = ["STRETCH", "FIT", "FILL", "TILE"] as const;
 
-function imagePaint(imageHashHex: string, mode: FigImageScaleMode, scalingFactor?: number): FigPaint {
+function imagePaint(imageHashHex: string, mode: FigImageScaleMode, scalingFactor?: number): ImagePaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    type: "IMAGE",
     image: { hash: figImageHashHexToBytes(imageHashHex) },
-    imageScaleMode: { value: SCALE_MODE_VALUES[mode], name: mode },
+    imageScaleMode: mode,
     scale: scalingFactor,
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 async function generate(): Promise<void> {
@@ -132,6 +126,8 @@ async function generate(): Promise<void> {
       pageGuid,
       parentGuid: null,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "FRAME",
         name: `scale-${mode.toLowerCase()}`,
         x,
@@ -153,6 +149,8 @@ async function generate(): Promise<void> {
       pageGuid,
       parentGuid: frameResult.nodeGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "ROUNDED_RECTANGLE",
         name: `image-${mode.toLowerCase()}`,
         x: 20,

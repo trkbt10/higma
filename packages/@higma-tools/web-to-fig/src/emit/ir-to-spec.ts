@@ -11,14 +11,11 @@ import {
   irPaintToFig,
   resolveCornerRadius,
 } from "@higma-bridges/web-fig";
-import type { FigPaint, FigStrokeAlign, KiwiEnumValue } from "@higma-document-models/fig/types";
+import type { FigPaint, FigStrokeAlign } from "@higma-document-models/fig/types";
 import { fontQueryToStyleName, snapFontWeight } from "@higma-document-models/fig/font";
-import {
-  STROKE_ALIGN_VALUES,
-  TEXT_ALIGN_H_VALUES,
-  TEXT_ALIGN_V_VALUES,
-  type TextAlignHorizontal,
-  type TextAlignVertical,
+import type {
+  TextAlignHorizontal,
+  TextAlignVertical,
 } from "@higma-document-models/fig/constants";
 import type { TextStyleIR } from "@higma-bridges/web-fig";
 import { splitSubpathsRespectingFillRule } from "./split-subpaths";
@@ -151,33 +148,34 @@ function textSpec(node: NodeIR & { readonly kind: "text" }): TextNodeSpec {
  */
 function textAlignHToFig(
   value: TextStyleIR["textAlign"],
-): KiwiEnumValue<TextAlignHorizontal> {
+): TextAlignHorizontal {
   switch (value) {
     case "left":
-      return { value: TEXT_ALIGN_H_VALUES.LEFT, name: "LEFT" };
+      return "LEFT";
     case "center":
-      return { value: TEXT_ALIGN_H_VALUES.CENTER, name: "CENTER" };
+      return "CENTER";
     case "right":
-      return { value: TEXT_ALIGN_H_VALUES.RIGHT, name: "RIGHT" };
+      return "RIGHT";
     case "justify":
-      return { value: TEXT_ALIGN_H_VALUES.JUSTIFIED, name: "JUSTIFIED" };
+      return "JUSTIFIED";
   }
 }
 
 /**
  * Translate the IR's vertical text alignment (`top` / `center` /
- * `bottom`) into Figma's TextAlignVertical enum value.
+ * `bottom`) into Figma's TextAlignVertical enum name. The builder
+ * factory lifts the string to its Kiwi numeric tag on insertion.
  */
 function textAlignVToFig(
   value: TextStyleIR["textAlignVertical"],
-): KiwiEnumValue<TextAlignVertical> {
+): TextAlignVertical {
   switch (value) {
     case "top":
-      return { value: TEXT_ALIGN_V_VALUES.TOP, name: "TOP" };
+      return "TOP";
     case "center":
-      return { value: TEXT_ALIGN_V_VALUES.CENTER, name: "CENTER" };
+      return "CENTER";
     case "bottom":
-      return { value: TEXT_ALIGN_V_VALUES.BOTTOM, name: "BOTTOM" };
+      return "BOTTOM";
   }
 }
 
@@ -275,7 +273,7 @@ function strokeToFig(stroke: StrokeIR): FigPaint {
   return irPaintToFig(stroke.paint);
 }
 
-function strokeAlignToFig(strokes: readonly StrokeIR[]): KiwiEnumValue<FigStrokeAlign> | undefined {
+function strokeAlignToFig(strokes: readonly StrokeIR[]): FigStrokeAlign | undefined {
   if (strokes.length === 0) {
     return undefined;
   }
@@ -287,11 +285,11 @@ function strokeAlignToFig(strokes: readonly StrokeIR[]): KiwiEnumValue<FigStroke
   }
   switch (first) {
     case "inside":
-      return { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" };
+      return "INSIDE";
     case "outside":
-      return { value: STROKE_ALIGN_VALUES.OUTSIDE, name: "OUTSIDE" };
+      return "OUTSIDE";
     case "center":
-      return { value: STROKE_ALIGN_VALUES.CENTER, name: "CENTER" };
+      return "CENTER";
   }
 }
 

@@ -8,6 +8,7 @@
  */
 
 import { canvasHeaderRule } from "./canvas-header";
+import { displayFieldsRule } from "./display-fields";
 import { imageRefsRule } from "./image-refs";
 import { messageTypeRule } from "./message-type";
 import { parentRefsRule } from "./parent-refs";
@@ -26,6 +27,7 @@ export const FIG_LINT_RULES: readonly LintRule[] = [
   messageTypeRule,
   requiredNodesRule,
   shapeFieldsRule,
+  displayFieldsRule,
   visibleBlobsRule,
   parentRefsRule,
   imageRefsRule,

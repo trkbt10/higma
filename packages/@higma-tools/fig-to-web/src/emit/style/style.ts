@@ -1353,17 +1353,18 @@ function applyExplicitStack(
   }
 
   // `stackSpacing` is the *minimum* gap when the primary alignment
-  // is SPACE_BETWEEN / SPACE_EVENLY / SPACE_AROUND (Figma stores the
-  // residual spacing there but the CSS distribution algorithm
-  // computes its own gaps). Emitting `gap` alongside one of those
-  // justify modes adds the spacing twice, pushing children out of
-  // the container. Only emit `gap` for the packed (MIN / MAX /
-  // CENTER) alignments where authored spacing is what's painted.
+  // is SPACE_BETWEEN / SPACE_EVENLY (Figma stores the residual
+  // spacing there but the CSS distribution algorithm computes its
+  // own gaps). Emitting `gap` alongside one of those justify modes
+  // adds the spacing twice, pushing children out of the container.
+  // Only emit `gap` for the packed (MIN / MAX / CENTER) alignments
+  // where authored spacing is what's painted. `SPACE_AROUND` does
+  // not appear in `figma-schema.json`'s `StackJustify` enum, so it
+  // is not a possible value here.
   const primaryName = node.stackPrimaryAlignItems?.name;
   const isDistributedPrimary =
     primaryName === "SPACE_BETWEEN"
-    || primaryName === "SPACE_EVENLY"
-    || primaryName === "SPACE_AROUND";
+    || primaryName === "SPACE_EVENLY";
   if (
     typeof node.stackSpacing === "number"
     && node.stackSpacing > 0

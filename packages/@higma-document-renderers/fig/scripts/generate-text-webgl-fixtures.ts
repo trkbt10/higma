@@ -23,18 +23,16 @@ import {
   updateNode,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
 import type {
   FigColor,
   FigDerivedGlyph,
-  FigPaint,
 } from "@higma-document-models/fig/types";
-import { TEXT_ALIGN_H_VALUES } from "@higma-document-models/fig/constants";
 import {
   generateTextGlyphs,
   generateMultilineTextGlyphs,
@@ -63,8 +61,8 @@ function rgb(r: number, g: number, b: number): FigColor {
   return { r, g, b, a: 1 };
 }
 
-function solidPaint(color: FigColor): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 type Ctx = {
@@ -98,15 +96,6 @@ type TextOpts = {
  * `derivedTextData.glyphs[i].commandsBlob` points at the correct
  * `context.blobs[]` entry.
  */
-type TextAlignHName = "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
-
-function buildTextAlignHorizontal(
-  alignH: TextAlignHName | undefined,
-): { value: number; name: TextAlignHName } | undefined {
-  if (!alignH) {return undefined;}
-  return { value: TEXT_ALIGN_H_VALUES[alignH], name: alignH };
-}
-
 function addTextWithGlyphs(
   context: FigDocumentContext,
   pageGuid: FigGuid,
@@ -132,6 +121,8 @@ function addTextWithGlyphs(
     pageGuid,
     parentGuid: opts.parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "TEXT",
       name: opts.name,
       characters: opts.text,
@@ -143,7 +134,7 @@ function addTextWithGlyphs(
       y: opts.y,
       width: opts.width,
       height: opts.height,
-      textAlignHorizontal: buildTextAlignHorizontal(opts.alignH),
+      textAlignHorizontal: opts.alignH,
     },
   });
   return updateNode({
@@ -187,6 +178,8 @@ function addFrame(
     pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x,
@@ -449,6 +442,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid: f.id,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE", name: "bg-card",
           x: 10, y: 10, width: 180, height: 80,
           fills: [solidPaint(rgb(0.93, 0.93, 0.98))],
@@ -461,6 +456,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid: f.id,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ELLIPSE", name: "avatar",
           x: 20, y: 30, width: 40, height: 40,
           fills: [solidPaint(rgb(0.3, 0.5, 0.9))],

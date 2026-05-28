@@ -1,8 +1,26 @@
 /** @file NodeSpec to Kiwi FigNode construction. */
 
 import type { FigGuid, FigMatrix, FigNode } from "@higma-document-models/fig/types";
-import { NODE_TYPE_VALUES, NUMBER_UNITS_VALUES, type NodeType } from "@higma-document-models/fig/constants";
+import { BOOLEAN_OPERATION_VALUES } from "@higma-document-models/fig/boolean-operation";
+import {
+  LEADING_TRIM_VALUES,
+  NODE_TYPE_VALUES,
+  NUMBER_UNITS_VALUES,
+  STROKE_ALIGN_VALUES,
+  STROKE_CAP_VALUES,
+  STROKE_JOIN_VALUES,
+  TEXT_ALIGN_H_VALUES,
+  TEXT_ALIGN_V_VALUES,
+  TEXT_AUTO_RESIZE_VALUES,
+  TEXT_CASE_VALUES,
+  TEXT_DECORATION_VALUES,
+  TEXT_TRUNCATION_VALUES,
+  toEnumValue,
+  type NodeType,
+} from "@higma-document-models/fig/constants";
 import type { NodeSpec, TextNodeSpec } from "../types/spec-types";
+import { liftPaints } from "./paint-spec";
+import { liftEffects } from "./effect-spec";
 import { nextNodeGuid } from "@higma-document-models/fig/builder";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 
@@ -92,14 +110,14 @@ function baseNode(options: CreateNodeFromSpecOptions): FigNode {
     opacity: spec.opacity,
     transform: createTransform(spec.x, spec.y, spec.rotation),
     size: { x: spec.width, y: spec.height },
-    fillPaints: spec.fills,
-    strokePaints: spec.strokes,
+    fillPaints: liftPaints(spec.fills),
+    strokePaints: liftPaints(spec.strokes),
     strokeWeight: spec.strokeWeight,
-    strokeCap: spec.strokeCap,
-    strokeJoin: spec.strokeJoin,
-    strokeAlign: spec.strokeAlign,
+    strokeCap: toEnumValue(spec.strokeCap, STROKE_CAP_VALUES),
+    strokeJoin: toEnumValue(spec.strokeJoin, STROKE_JOIN_VALUES),
+    strokeAlign: toEnumValue(spec.strokeAlign, STROKE_ALIGN_VALUES),
     strokeDashes: spec.strokeDashes,
-    effects: spec.effects,
+    effects: liftEffects(spec.effects),
     stackPositioning: spec.stackPositioning,
     stackPrimarySizing: spec.stackPrimarySizing,
     stackCounterSizing: spec.stackCounterSizing,
@@ -145,7 +163,7 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode 
         rectangleCornerRadii: spec.type === "FRAME" ? spec.rectangleCornerRadii : undefined,
       };
     case "BOOLEAN_OPERATION":
-      return { ...node, booleanOperation: spec.booleanOperation };
+      return { ...node, booleanOperation: toEnumValue(spec.booleanOperation, BOOLEAN_OPERATION_VALUES) };
     case "ROUNDED_RECTANGLE":
       return {
         ...node,
@@ -154,7 +172,12 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode 
       };
     case "STAR":
     case "REGULAR_POLYGON":
-      return { ...node, pointCount: spec.pointCount };
+      // Persist the vertex count under `count` — the Kiwi schema's
+      // field name for STAR / REGULAR_POLYGON. The legacy `pointCount`
+      // alias on `FigNode` does not survive serialisation because the
+      // schema has no such field; writing the schema-aligned name
+      // keeps the value through the export → re-import round trip.
+      return { ...node, count: spec.pointCount };
     case "VECTOR":
       return { ...node, vectorPaths: spec.vectorPaths };
     case "TEXT": {
@@ -162,21 +185,46 @@ export function createNodeFromSpec(options: CreateNodeFromSpecOptions): FigNode 
       const fontName = requiredTextFontName(spec);
       const lineHeight = textLineHeightSpec(spec);
       const letterSpacing = textLetterSpacingSpec(spec.letterSpacing);
+      // Resolve enum-name spec inputs to their wire-format Kiwi
+      // values once, then mirror the result into both the top-level
+      // node AND the `textData` payload. Figma's own exports
+      // duplicate the truncation / leadingTrim / paragraph-* fields
+      // across the two scopes so the round-trip stays SoT-consistent
+      // — readers that consult only `textData` (the canonical
+      // paragraph-level store) AND readers that consult only the
+      // top-level FigNode (the layout-style mirror) both see the
+      // same value.
+      const textTruncation = toEnumValue(spec.textTruncation, TEXT_TRUNCATION_VALUES);
+      const leadingTrim = toEnumValue(spec.leadingTrim, LEADING_TRIM_VALUES);
+      const textCase = toEnumValue(spec.textCase, TEXT_CASE_VALUES);
+      const textDecoration = toEnumValue(spec.textDecoration, TEXT_DECORATION_VALUES);
+      const textAutoResize = toEnumValue(spec.textAutoResize, TEXT_AUTO_RESIZE_VALUES);
       return {
         ...node,
         fontSize,
         fontName,
         lineHeight,
         letterSpacing,
+        textTruncation,
+        leadingTrim,
+        paragraphSpacing: spec.paragraphSpacing,
+        paragraphIndent: spec.paragraphIndent,
         textData: {
           characters: spec.characters,
           fontSize,
           fontName,
           lineHeight,
           letterSpacing,
+          textTruncation,
+          leadingTrim,
+          paragraphSpacing: spec.paragraphSpacing,
+          paragraphIndent: spec.paragraphIndent,
+          textCase,
+          textDecoration,
+          textAutoResize,
         },
-        textAlignHorizontal: spec.textAlignHorizontal,
-        textAlignVertical: spec.textAlignVertical,
+        textAlignHorizontal: toEnumValue(spec.textAlignHorizontal, TEXT_ALIGN_H_VALUES),
+        textAlignVertical: toEnumValue(spec.textAlignVertical, TEXT_ALIGN_V_VALUES),
       };
     }
     case "INSTANCE":

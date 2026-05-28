@@ -23,59 +23,52 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
+  type EffectSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigEffect, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/effects");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "effects.fig");
 
-function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor, opacity = 1): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
 function dropShadow(
   ox: number, oy: number, radius: number,
   r = 0, g = 0, b = 0, a = 0.25,
-): FigEffect {
+): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    type: "DROP_SHADOW",
     visible: true,
     color: { r, g, b, a },
     offset: { x: ox, y: oy },
     radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 function innerShadow(
   ox: number, oy: number, radius: number,
   r = 0, g = 0, b = 0, a = 0.25,
-): FigEffect {
+): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
+    type: "INNER_SHADOW",
     visible: true,
     color: { r, g, b, a },
     offset: { x: ox, y: oy },
     radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function layerBlur(radius: number): FigEffect {
+function layerBlur(radius: number): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.FOREGROUND_BLUR, name: "FOREGROUND_BLUR" },
+    type: "FOREGROUND_BLUR",
     visible: true,
     radius,
   };
@@ -91,7 +84,7 @@ type EffectChild = {
   cornerRadius?: number;
   fill: { r: number; g: number; b: number };
   opacity?: number;
-  effects?: readonly FigEffect[];
+  effects?: readonly EffectSpec[];
 };
 
 type EffectFrameData = {
@@ -293,6 +286,7 @@ function addChild(
       pageGuid,
       parentGuid,
       spec: {
+        visible: true,
         type: "ROUNDED_RECTANGLE",
         name: child.name,
         x: child.x,
@@ -301,7 +295,7 @@ function addChild(
         height: child.height,
         fills: [fill],
         cornerRadius: child.cornerRadius,
-        opacity: child.opacity,
+        opacity: child.opacity ?? 1,
         effects: child.effects,
       },
     }).context;
@@ -312,6 +306,7 @@ function addChild(
     pageGuid,
     parentGuid,
     spec: {
+      visible: true,
       type: "ELLIPSE",
       name: child.name,
       x: child.x,
@@ -319,7 +314,7 @@ function addChild(
       width: child.width,
       height: child.height,
       fills: [fill],
-      opacity: child.opacity,
+      opacity: child.opacity ?? 1,
       effects: child.effects,
     },
   }).context;
@@ -360,6 +355,8 @@ async function generateEffectFixtures(): Promise<void> {
       pageGuid,
       parentGuid: null,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "FRAME",
         name: frameData.name,
         x: frameX,

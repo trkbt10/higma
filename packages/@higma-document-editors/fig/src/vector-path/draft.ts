@@ -1,7 +1,6 @@
 /** @file Domain object for continuous vector path drawing. */
 
 import type { FigGuid, FigMatrix } from "@higma-document-models/fig/types";
-import { PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { NodeSpec } from "@higma-document-io/fig/types";
 import {
   computeVectorPathPointBounds,
@@ -458,9 +457,11 @@ export function commitVectorPathDraftToNodeSpec(draft: VectorPathDraft): NodeSpe
     y: bounds.top,
     width: Math.max(1, bounds.right - bounds.left),
     height: Math.max(1, bounds.bottom - bounds.top),
+    opacity: 1,
+    visible: true,
     fills: [],
     strokes: [{
-      type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
+      type: "SOLID",
       color: { r: 0.15, g: 0.35, b: 0.95, a: 1 },
       opacity: 1,
       visible: true,

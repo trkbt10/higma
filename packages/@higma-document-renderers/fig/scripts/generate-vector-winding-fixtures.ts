@@ -23,13 +23,13 @@ import {
   updateNode,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_CAP_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigNode, FigPaint, FigStrokeCap } from "@higma-document-models/fig/types";
+import type { FigColor, FigNode } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/vector-winding");
@@ -41,14 +41,8 @@ const BLUE: FigColor = { r: 0.2, g: 0.4, b: 0.9, a: 1 };
 const RED: FigColor = { r: 0.9, g: 0.2, b: 0.2, a: 1 };
 const GREEN: FigColor = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 function fullEllipseArcData(innerRadius: number): NonNullable<FigNode["arcData"]> {
@@ -65,10 +59,6 @@ function arcData(
   innerRadius: number,
 ): NonNullable<FigNode["arcData"]> {
   return { startingAngle, endingAngle, innerRadius };
-}
-
-function strokeCapValue(name: FigStrokeCap): NonNullable<FigNode["strokeCap"]> {
-  return { value: STROKE_CAP_VALUES[name], name };
 }
 
 type Args = {
@@ -90,6 +80,8 @@ function addFrame(
     pageGuid: args.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: args.name,
       x: args.frameX,
@@ -112,6 +104,8 @@ function addEvenoddDonut(args: Args): Result {
     pageGuid: args.pageGuid,
     parentGuid: frame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "donut",
       x: 20,
@@ -138,6 +132,8 @@ function addEvenoddFullRing(args: Args): Result {
     pageGuid: args.pageGuid,
     parentGuid: frame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "ring",
       x: 20,
@@ -164,6 +160,8 @@ function addDonutWithStroke(args: Args): Result {
     pageGuid: args.pageGuid,
     parentGuid: frame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "donut-stroked",
       x: 20,
@@ -192,6 +190,8 @@ function addArcSemicircle(args: Args): Result {
     pageGuid: args.pageGuid,
     parentGuid: frame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "semicircle",
       x: 20,
@@ -221,6 +221,8 @@ function addArcDonutSegment(args: Args): Result {
     pageGuid: args.pageGuid,
     parentGuid: frame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "ring-segment",
       x: 20,
@@ -250,6 +252,8 @@ function addStrokeOnlyArc(args: Args): Result {
     pageGuid: args.pageGuid,
     parentGuid: frame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "progress-ring",
       x: 20,
@@ -259,6 +263,7 @@ function addStrokeOnlyArc(args: Args): Result {
       fills: [],
       strokes: [solidPaint(GREEN)],
       strokeWeight: 6,
+      strokeCap: "ROUND",
     },
   });
   const finalContext = updateNode({
@@ -266,7 +271,6 @@ function addStrokeOnlyArc(args: Args): Result {
     nodeGuid: shape.nodeGuid,
     update: (n) => ({
       ...n,
-      strokeCap: strokeCapValue("ROUND"),
       arcData: arcData((270 * Math.PI) / 180, (630 * Math.PI) / 180, 1),
     }),
   });

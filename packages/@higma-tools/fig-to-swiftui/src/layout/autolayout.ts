@@ -185,12 +185,13 @@ export function counterAlignmentForHStack(node: FigNode): SwiftAlignment {
       // Figma's BASELINE matches firstTextBaseline structurally, but the
       // SwiftAlignment IR only carries the four primary anchors so we map
       // BASELINE to `.top` (matching MIN) and document the limitation.
-      return "top";
-    case "STRETCH":
-      // SwiftUI HStack has no stretch alignment; children stretch via
-      // explicit `.frame(maxHeight: .infinity)` instead. The emitter picks
-      // `.top` and stretches each child's frame as a follow-up — giving
-      // the same visual outcome.
+      //
+      // Note: `STRETCH` is NOT a member of `StackAlign`
+      // (`figma-schema.json` typeId 35) so it cannot appear here.
+      // Children that stretch encode `stackChildAlignSelf=STRETCH`
+      // on each child (per `StackCounterAlign`, typeId 36), and the
+      // SwiftUI emitter handles that separately via
+      // `.frame(maxHeight: .infinity)`.
       return "top";
     case "MIN":
     default:
@@ -211,12 +212,15 @@ export function counterAlignmentForVStack(node: FigNode): SwiftAlignment {
       return "trailing";
     case "CENTER":
       return "center";
-    case "STRETCH":
-      // VStack lacks stretch — same approach as HStack STRETCH.
-      return "leading";
     case "BASELINE":
       // BASELINE on a VStack is a Figma-side artefact (cross-axis text
       // alignment is meaningful only on the row axis). Fall back to MIN.
+      //
+      // Note: `STRETCH` is NOT a member of `StackAlign`
+      // (`figma-schema.json` typeId 35), so it cannot appear here.
+      // Per-child STRETCH lives on `stackChildAlignSelf`
+      // (`StackCounterAlign`, typeId 36) and the SwiftUI emitter
+      // handles that separately.
       return "leading";
     case "MIN":
     default:

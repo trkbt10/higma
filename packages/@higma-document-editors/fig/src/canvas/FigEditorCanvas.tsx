@@ -349,6 +349,8 @@ function nodeSpecForCreation(
         y: rect.y,
         width: rect.width,
         height: rect.height,
+        opacity: 1,
+        visible: true,
         fills: [SOLID_WHITE],
         clipsContent: true,
       };
@@ -360,6 +362,8 @@ function nodeSpecForCreation(
         y: rect.y,
         width: rect.width,
         height: rect.height,
+        opacity: 1,
+        visible: true,
         fills: [SOLID_BLUE],
       };
     case "ellipse":
@@ -370,6 +374,8 @@ function nodeSpecForCreation(
         y: rect.y,
         width: rect.width,
         height: rect.height,
+        opacity: 1,
+        visible: true,
         fills: [SOLID_BLUE],
       };
     case "line":
@@ -380,6 +386,8 @@ function nodeSpecForCreation(
         y: rect.y,
         width: rect.width,
         height: 0,
+        opacity: 1,
+        visible: true,
         strokes: [SOLID_BLUE],
         strokeWeight: 2,
       };
@@ -392,6 +400,8 @@ function nodeSpecForCreation(
         width: rect.width,
         height: rect.height,
         pointCount: 5,
+        opacity: 1,
+        visible: true,
         fills: [SOLID_BLUE],
       };
     case "polygon":
@@ -403,6 +413,8 @@ function nodeSpecForCreation(
         width: rect.width,
         height: rect.height,
         pointCount: 6,
+        opacity: 1,
+        visible: true,
         fills: [SOLID_BLUE],
       };
     case "text":
@@ -413,6 +425,8 @@ function nodeSpecForCreation(
         y: rect.y,
         width: rect.width,
         height: rect.height,
+        opacity: 1,
+        visible: true,
         characters: "Text",
         fontFamily: "Inter",
         fontStyle: "Regular",

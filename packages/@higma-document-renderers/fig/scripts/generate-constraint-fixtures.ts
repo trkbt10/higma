@@ -30,11 +30,11 @@ import {
   requireCanvas,
   type FigDocumentContext,
   type KiwiChildLayoutFields,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { CONSTRAINT_TYPE_VALUES, type ConstraintType } from "@higma-document-models/fig/constants";
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/constraints");
@@ -57,8 +57,8 @@ const CHILD_H = 30;
 const INST_W = 160;
 const INST_H = 100;
 
-function solidPaint(color: FigColor): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 function constraintsFor(h: ConstraintType, v: ConstraintType): KiwiChildLayoutFields {
@@ -104,6 +104,8 @@ async function generate(): Promise<void> {
     const sym = addNode({
       state, context: acc, pageGuid: pageGuid1, parentGuid: null,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "SYMBOL",
         name: `Sym-${h}-${v}`,
         x: 0, y: -500 - (hi * 5 + vi) * 100,
@@ -114,6 +116,8 @@ async function generate(): Promise<void> {
     const child = addNode({
       state, context: sym.context, pageGuid: pageGuid1, parentGuid: sym.nodeGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "ROUNDED_RECTANGLE",
         name: "child",
         x: CHILD_X, y: CHILD_Y, width: CHILD_W, height: CHILD_H,
@@ -125,6 +129,8 @@ async function generate(): Promise<void> {
     const frame = addNode({
       state, context: child.context, pageGuid: pageGuid1, parentGuid: null,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "FRAME",
         name: `${h}-${v}`,
         x: vi * (frameW + gap), y: hi * (frameH + gap),
@@ -135,6 +141,8 @@ async function generate(): Promise<void> {
     const inst = addNode({
       state, context: frame.context, pageGuid: pageGuid1, parentGuid: frame.nodeGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "INSTANCE",
         name: `inst-${h}-${v}`,
         symbolId: sym.nodeGuid,
@@ -152,6 +160,8 @@ async function generate(): Promise<void> {
   const circleBg = addNode({
     state, context: afterCanvas1, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "CircleBG",
       x: 0, y: -200, width: 48, height: 48,
@@ -168,6 +178,8 @@ async function generate(): Promise<void> {
   const circleBgInner = addNode({
     state, context: docCBG1, pageGuid: pageGuid2, parentGuid: circleBgId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "inner-fill",
       x: 0, y: 0, width: 48, height: 48,
@@ -181,6 +193,8 @@ async function generate(): Promise<void> {
   const windowControl = addNode({
     state, context: circleBgInner.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "WindowControl",
       x: 0, y: -100, width: 44, height: 22,
@@ -191,6 +205,8 @@ async function generate(): Promise<void> {
   const wcInstBg = addNode({
     state, context: windowControl.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE",
       name: "BG",
       symbolId: circleBgId,
@@ -201,6 +217,8 @@ async function generate(): Promise<void> {
   const wcDot1 = addNode({
     state, context: wcInstBg.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "dot1",
       x: 10, y: 8, width: 6, height: 6,
@@ -210,6 +228,8 @@ async function generate(): Promise<void> {
   const wcDot2 = addNode({
     state, context: wcDot1.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "dot2",
       x: 19, y: 8, width: 6, height: 6,
@@ -219,6 +239,8 @@ async function generate(): Promise<void> {
   const wcDot3 = addNode({
     state, context: wcDot2.context, pageGuid: pageGuid2, parentGuid: windowControlId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "dot3",
       x: 28, y: 8, width: 6, height: 6,
@@ -230,6 +252,8 @@ async function generate(): Promise<void> {
   const fPill = addNode({
     state, context: wcDot3.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "circle-to-pill",
       x: 50, y: 50, width: 80, height: 50,
@@ -239,6 +263,8 @@ async function generate(): Promise<void> {
   const fPillInst = addNode({
     state, context: fPill.context, pageGuid: pageGuid2, parentGuid: fPill.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE",
       name: "control-pill",
       symbolId: windowControlId,
@@ -250,6 +276,8 @@ async function generate(): Promise<void> {
   const fWidePill = addNode({
     state, context: fPillInst.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "circle-to-wide-pill",
       x: 50, y: 120, width: 120, height: 50,
@@ -259,6 +287,8 @@ async function generate(): Promise<void> {
   const fWidePillInst = addNode({
     state, context: fWidePill.context, pageGuid: pageGuid2, parentGuid: fWidePill.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE",
       name: "control-wide",
       symbolId: windowControlId,
@@ -270,6 +300,8 @@ async function generate(): Promise<void> {
   const roundedBox = addNode({
     state, context: fWidePillInst.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "RoundedBox",
       x: 0, y: -300, width: 40, height: 40,
@@ -285,6 +317,8 @@ async function generate(): Promise<void> {
   const rbFill = addNode({
     state, context: rbWithRadius, pageGuid: pageGuid2, parentGuid: roundedBoxId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "bg-fill",
       x: 0, y: 0, width: 40, height: 40,
@@ -298,6 +332,8 @@ async function generate(): Promise<void> {
   const fGrowH = addNode({
     state, context: rbFill.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "rounded-grow-h",
       x: 50, y: 200, width: 140, height: 80,
@@ -307,6 +343,8 @@ async function generate(): Promise<void> {
   const fGrowHInst = addNode({
     state, context: fGrowH.context, pageGuid: pageGuid2, parentGuid: fGrowH.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "box-wide", symbolId: roundedBoxId,
       x: 20, y: 20, width: 100, height: 40,
     },
@@ -316,6 +354,8 @@ async function generate(): Promise<void> {
   const fGrowBoth = addNode({
     state, context: fGrowHInst.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "rounded-grow-both",
       x: 50, y: 300, width: 140, height: 100,
@@ -325,6 +365,8 @@ async function generate(): Promise<void> {
   const fGrowBothInst = addNode({
     state, context: fGrowBoth.context, pageGuid: pageGuid2, parentGuid: fGrowBoth.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "box-larger", symbolId: roundedBoxId,
       x: 20, y: 20, width: 100, height: 60,
     },
@@ -336,6 +378,8 @@ async function generate(): Promise<void> {
   const multiSym = addNode({
     state, context: fGrowBothInst.context, pageGuid: pageGuid3, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "MultiChild",
       x: 0, y: -200, width: 200, height: 100,
@@ -347,6 +391,8 @@ async function generate(): Promise<void> {
   const multiC1 = addNode({
     state, context: multiSym.context, pageGuid: pageGuid3, parentGuid: multiSymId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "bg",
       x: 0, y: 0, width: 200, height: 100,
@@ -359,6 +405,8 @@ async function generate(): Promise<void> {
   const multiC2 = addNode({
     state, context: multiC1.context, pageGuid: pageGuid3, parentGuid: multiSymId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "center-box",
       x: 70, y: 35, width: 60, height: 30,
@@ -371,6 +419,8 @@ async function generate(): Promise<void> {
   const multiC3 = addNode({
     state, context: multiC2.context, pageGuid: pageGuid3, parentGuid: multiSymId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "corner-badge",
       x: 170, y: 70, width: 20, height: 20,
@@ -383,6 +433,8 @@ async function generate(): Promise<void> {
   const multiF = addNode({
     state, context: multiC3.context, pageGuid: pageGuid3, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "multi-child-grow",
       x: 50, y: 50, width: 320, height: 180,
@@ -392,6 +444,8 @@ async function generate(): Promise<void> {
   const finalContext = addNode({
     state, context: multiF.context, pageGuid: pageGuid3, parentGuid: multiF.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE",
       name: "multi-inst",
       symbolId: multiSymId,

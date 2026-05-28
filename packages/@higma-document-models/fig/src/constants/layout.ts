@@ -81,6 +81,24 @@ export const STACK_COUNTER_ALIGN_VALUES = requireFigEnumTable("StackCounterAlign
 
 export type StackCounterAlign = "MIN" | "CENTER" | "MAX" | "STRETCH" | "AUTO" | "BASELINE";
 
+/**
+ * Counter-axis content distribution for wrapped auto-layout
+ * (`stackCounterAlignContent`).
+ *
+ * SoT: Figma's `StackCounterAlignContent` Kiwi enum (typeId 42).
+ * Only two values exist — `AUTO` (no special distribution) and
+ * `SPACE_BETWEEN` (distribute rows/columns with equal gaps). Modern
+ * Figma writes this slot when `stackWrap` is enabled; older fig
+ * files omit it (the omitted-field zero-default decodes back as
+ * `AUTO`, which is the documented default behaviour).
+ */
+export const STACK_COUNTER_ALIGN_CONTENT_VALUES = requireFigEnumTable("StackCounterAlignContent", [
+  "AUTO",
+  "SPACE_BETWEEN",
+]);
+
+export type StackCounterAlignContent = "AUTO" | "SPACE_BETWEEN";
+
 /** Stack positioning values — schema `StackPositioning`. */
 export const STACK_POSITIONING_VALUES = requireFigEnumTable("StackPositioning", [
   "AUTO",

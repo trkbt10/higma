@@ -27,13 +27,13 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/clips");
@@ -46,14 +46,8 @@ function rgb(r: number, g: number, b: number): FigColor {
   return { r, g, b, a: 1 };
 }
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 type Ctx = {
@@ -78,6 +72,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name,
       x,
@@ -109,6 +105,8 @@ function addRect(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name,
       x,
@@ -138,6 +136,8 @@ function addEllipse(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name,
       x,

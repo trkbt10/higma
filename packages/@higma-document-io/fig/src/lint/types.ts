@@ -47,6 +47,7 @@ export type LintRuleId =
   | "fig.message.type"
   | "fig.canvas.internal-only"
   | "fig.shape.stroke-fields"
+  | "fig.shape.display-fields"
   | "fig.shape.fill-geometry"
   | "fig.image.references"
   | "fig.parent.refs"

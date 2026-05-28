@@ -25,13 +25,13 @@ import {
   requireCanvas,
   type FigDocumentContext,
   type KiwiChildLayoutFields,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import { CONSTRAINT_TYPE_VALUES, type ConstraintType } from "@higma-document-models/fig/constants";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/constraint-edge-cases");
@@ -49,8 +49,8 @@ const IOS_ORANGE: FigColor = { r: 1, g: 0.584, b: 0, a: 1 };
 const IOS_PURPLE: FigColor = { r: 0.686, g: 0.322, b: 0.871, a: 1 };
 const IOS_GRAY_BG: FigColor = { r: 0.949, g: 0.949, b: 0.969, a: 1 };
 
-function solidPaint(color: FigColor): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 function constraintsFor(h: ConstraintType, v: ConstraintType): KiwiChildLayoutFields {
@@ -82,6 +82,8 @@ function addTestFrame(
   const r = addNode({
     state: ctx.state, context, pageGuid: ctx.pageGuid, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x, y: opts.y, width: opts.width, height: opts.height,
@@ -122,6 +124,8 @@ async function generate(): Promise<void> {
   const nestInner = addNode({
     state, context: r4.context, pageGuid: pageGuid1, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "NestInner",
       x: 0, y: -600, width: 160, height: 80,
@@ -137,6 +141,8 @@ async function generate(): Promise<void> {
   const niChild = addNode({
     state, context: d_nestInner, pageGuid: pageGuid1, parentGuid: nestInnerId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "inner-rect",
       x: 20, y: 20, width: 120, height: 40,
@@ -150,6 +156,8 @@ async function generate(): Promise<void> {
   const nestOuter = addNode({
     state, context: niChild.context, pageGuid: pageGuid1, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "NestOuter",
       x: 300, y: -600, width: 300, height: 200,
@@ -165,6 +173,8 @@ async function generate(): Promise<void> {
   const noInst = addNode({
     state, context: d_nestOuter, pageGuid: pageGuid1, parentGuid: nestOuterId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE",
       name: "inner-instance",
       symbolId: nestInnerId,
@@ -180,6 +190,8 @@ async function generate(): Promise<void> {
   const c1_f1_inst = addNode({
     state, context: c1_f1.context, pageGuid: pageGuid1, parentGuid: c1_f1.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "NestOuter-large", symbolId: nestOuterId,
       x: 10, y: 10, width: 400, height: 280,
     },
@@ -191,6 +203,8 @@ async function generate(): Promise<void> {
   const c1_f2_inst = addNode({
     state, context: c1_f2.context, pageGuid: pageGuid1, parentGuid: c1_f2.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "NestOuter-small", symbolId: nestOuterId,
       x: 10, y: 10, width: 200, height: 140,
     },
@@ -202,6 +216,8 @@ async function generate(): Promise<void> {
   const contextAfterC1 = addNode({
     state, context: c1_f3.context, pageGuid: pageGuid1, parentGuid: c1_f3.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "NestOuter-same", symbolId: nestOuterId,
       x: 10, y: 10, width: 300, height: 200,
     },
@@ -213,6 +229,8 @@ async function generate(): Promise<void> {
   const varBtnDefault = addNode({
     state, context: contextAfterC1, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "VarBtnDefault",
       x: 0, y: -600, width: 120, height: 48,
       fills: [solidPaint(IOS_BLUE)],
@@ -227,6 +245,7 @@ async function generate(): Promise<void> {
   const vbdLabel = addNode({
     state, context: d_vbd, pageGuid: pageGuid2, parentGuid: varBtnDefaultId,
     spec: {
+      visible: true,
       type: "ROUNDED_RECTANGLE", name: "label",
       x: 20, y: 12, width: 80, height: 24,
       fills: [solidPaint(WHITE)],
@@ -239,6 +258,8 @@ async function generate(): Promise<void> {
   const varBtnActive = addNode({
     state, context: vbdLabel.context, pageGuid: pageGuid2, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "VarBtnActive",
       x: 200, y: -600, width: 120, height: 48,
       fills: [solidPaint(IOS_GREEN)],
@@ -253,6 +274,7 @@ async function generate(): Promise<void> {
   const vbaLabel = addNode({
     state, context: d_vba, pageGuid: pageGuid2, parentGuid: varBtnActiveId,
     spec: {
+      visible: true,
       type: "ROUNDED_RECTANGLE", name: "label",
       x: 20, y: 12, width: 80, height: 24,
       fills: [solidPaint(WHITE)],
@@ -269,6 +291,8 @@ async function generate(): Promise<void> {
   const c2_f1_inst = addNode({
     state, context: c2_f1.context, pageGuid: pageGuid2, parentGuid: c2_f1.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "VarBtnDefault-wide", symbolId: varBtnDefaultId,
       x: 10, y: 10, width: 200, height: 60,
     },
@@ -281,6 +305,8 @@ async function generate(): Promise<void> {
   const c2_f2_inst = addNode({
     state, context: c2_f2.context, pageGuid: pageGuid2, parentGuid: c2_f2.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "VarBtnActive-wide", symbolId: varBtnDefaultId,
       x: 10, y: 10, width: 200, height: 60,
     },
@@ -297,6 +323,8 @@ async function generate(): Promise<void> {
   const c2_f3_def = addNode({
     state, context: c2_f3.context, pageGuid: pageGuid2, parentGuid: c2_f3.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "default-wide", symbolId: varBtnDefaultId,
       x: 10, y: 10, width: 200, height: 60,
     },
@@ -304,6 +332,8 @@ async function generate(): Promise<void> {
   const c2_f3_active = addNode({
     state, context: c2_f3_def.context, pageGuid: pageGuid2, parentGuid: c2_f3.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "active-wide", symbolId: varBtnDefaultId,
       x: 230, y: 10, width: 200, height: 60,
     },
@@ -319,6 +349,8 @@ async function generate(): Promise<void> {
   const ellipseBox = addNode({
     state, context: contextAfterC2, pageGuid: pageGuid3, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "EllipseBox",
       x: 0, y: -600, width: 200, height: 120,
       fills: [solidPaint(WHITE)],
@@ -333,6 +365,8 @@ async function generate(): Promise<void> {
   const ebCenter = addNode({
     state, context: d_eb, pageGuid: pageGuid3, parentGuid: ellipseBoxId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE", name: "center-ellipse",
       x: 70, y: 40, width: 60, height: 40,
       fills: [solidPaint(IOS_PURPLE)],
@@ -342,6 +376,7 @@ async function generate(): Promise<void> {
   const ebStretch = addNode({
     state, context: ebCenter.context, pageGuid: pageGuid3, parentGuid: ellipseBoxId,
     spec: {
+      visible: true,
       type: "ELLIPSE", name: "stretch-ellipse",
       x: 20, y: 20, width: 160, height: 80,
       fills: [solidPaint(IOS_ORANGE)],
@@ -353,6 +388,8 @@ async function generate(): Promise<void> {
   const ellipseScaleBox = addNode({
     state, context: ebStretch.context, pageGuid: pageGuid3, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "EllipseScaleBox",
       x: 300, y: -600, width: 200, height: 120,
       fills: [solidPaint(IOS_GRAY_BG)],
@@ -367,6 +404,8 @@ async function generate(): Promise<void> {
   const esChild = addNode({
     state, context: d_esb, pageGuid: pageGuid3, parentGuid: ellipseScaleBoxId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE", name: "scaled-ellipse",
       x: 50, y: 30, width: 100, height: 60,
       fills: [solidPaint(IOS_RED)],
@@ -380,6 +419,8 @@ async function generate(): Promise<void> {
   const c3_f1_inst = addNode({
     state, context: c3_f1.context, pageGuid: pageGuid3, parentGuid: c3_f1.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "EllipseBox-large", symbolId: ellipseBoxId,
       x: 10, y: 10, width: 300, height: 180,
     },
@@ -390,6 +431,8 @@ async function generate(): Promise<void> {
   const c3_f2_inst = addNode({
     state, context: c3_f2.context, pageGuid: pageGuid3, parentGuid: c3_f2.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "EllipseBox-small", symbolId: ellipseBoxId,
       x: 10, y: 10, width: 160, height: 100,
     },
@@ -400,6 +443,8 @@ async function generate(): Promise<void> {
   const c3_f3_inst = addNode({
     state, context: c3_f3.context, pageGuid: pageGuid3, parentGuid: c3_f3.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "EllipseScale-large", symbolId: ellipseScaleBoxId,
       x: 10, y: 10, width: 300, height: 180,
     },
@@ -410,6 +455,8 @@ async function generate(): Promise<void> {
   const contextAfterC3 = addNode({
     state, context: c3_f4.context, pageGuid: pageGuid3, parentGuid: c3_f4.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "EllipseBox-same", symbolId: ellipseBoxId,
       x: 10, y: 10, width: 200, height: 120,
     },
@@ -421,6 +468,8 @@ async function generate(): Promise<void> {
   const asymBox = addNode({
     state, context: contextAfterC3, pageGuid: pageGuid4, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "AsymBox",
       x: 0, y: -600, width: 200, height: 120,
       fills: [solidPaint(WHITE)],
@@ -435,6 +484,8 @@ async function generate(): Promise<void> {
   const abChild = addNode({
     state, context: d_ab, pageGuid: pageGuid4, parentGuid: asymBoxId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE", name: "asym-rect",
       x: 10, y: 15, width: 140, height: 70,
       fills: [solidPaint(IOS_RED)],
@@ -446,6 +497,8 @@ async function generate(): Promise<void> {
   const asymBoxWide = addNode({
     state, context: abChild.context, pageGuid: pageGuid4, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "AsymBoxWide",
       x: 300, y: -600, width: 300, height: 100,
       fills: [solidPaint(IOS_GRAY_BG)],
@@ -460,6 +513,8 @@ async function generate(): Promise<void> {
   const abwChild = addNode({
     state, context: d_abw, pageGuid: pageGuid4, parentGuid: asymBoxWideId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE", name: "wide-rect",
       x: 30, y: 10, width: 200, height: 50,
       fills: [solidPaint(IOS_GREEN)],
@@ -471,6 +526,8 @@ async function generate(): Promise<void> {
   const asymMulti = addNode({
     state, context: abwChild.context, pageGuid: pageGuid4, parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL", name: "AsymMultiChild",
       x: 600, y: -600, width: 240, height: 120,
       fills: [solidPaint(WHITE)],
@@ -485,6 +542,8 @@ async function generate(): Promise<void> {
   const amcChild1 = addNode({
     state, context: d_am, pageGuid: pageGuid4, parentGuid: asymMultiId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE", name: "left-rect",
       x: 10, y: 10, width: 100, height: 40,
       fills: [solidPaint(IOS_BLUE)],
@@ -495,6 +554,8 @@ async function generate(): Promise<void> {
   const amcChild2 = addNode({
     state, context: amcChild1.context, pageGuid: pageGuid4, parentGuid: asymMultiId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE", name: "right-rect",
       x: 130, y: 70, width: 100, height: 40,
       fills: [solidPaint(IOS_ORANGE)],
@@ -509,49 +570,63 @@ async function generate(): Promise<void> {
   });
   const c4_f1_inst = addNode({
     state, context: c4_f1.context, pageGuid: pageGuid4, parentGuid: c4_f1.frameId,
-    spec: { type: "INSTANCE", name: "AsymBox-large", symbolId: asymBoxId, x: 10, y: 10, width: 320, height: 200 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymBox-large", symbolId: asymBoxId, x: 10, y: 10, width: 320, height: 200 },
   });
   const c4_f2 = addTestFrame(ctx4, c4_f1_inst.context, {
     name: "asym-stretch-shrink", x: 420, y: 50, width: 140, height: 100, bg: IOS_GRAY_BG,
   });
   const c4_f2_inst = addNode({
     state, context: c4_f2.context, pageGuid: pageGuid4, parentGuid: c4_f2.frameId,
-    spec: { type: "INSTANCE", name: "AsymBox-small", symbolId: asymBoxId, x: 10, y: 10, width: 120, height: 80 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymBox-small", symbolId: asymBoxId, x: 10, y: 10, width: 120, height: 80 },
   });
   const c4_f3 = addTestFrame(ctx4, c4_f2_inst.context, {
     name: "asym-wide-grow", x: 50, y: 300, width: 420, height: 160, bg: WHITE,
   });
   const c4_f3_inst = addNode({
     state, context: c4_f3.context, pageGuid: pageGuid4, parentGuid: c4_f3.frameId,
-    spec: { type: "INSTANCE", name: "AsymBoxWide-large", symbolId: asymBoxWideId, x: 10, y: 10, width: 400, height: 140 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymBoxWide-large", symbolId: asymBoxWideId, x: 10, y: 10, width: 400, height: 140 },
   });
   const c4_f4 = addTestFrame(ctx4, c4_f3_inst.context, {
     name: "asym-wide-shrink", x: 500, y: 300, width: 220, height: 80, bg: WHITE,
   });
   const c4_f4_inst = addNode({
     state, context: c4_f4.context, pageGuid: pageGuid4, parentGuid: c4_f4.frameId,
-    spec: { type: "INSTANCE", name: "AsymBoxWide-small", symbolId: asymBoxWideId, x: 10, y: 10, width: 200, height: 60 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymBoxWide-small", symbolId: asymBoxWideId, x: 10, y: 10, width: 200, height: 60 },
   });
   const c4_f5 = addTestFrame(ctx4, c4_f4_inst.context, {
     name: "asym-multi-grow", x: 50, y: 490, width: 380, height: 200, bg: IOS_GRAY_BG,
   });
   const c4_f5_inst = addNode({
     state, context: c4_f5.context, pageGuid: pageGuid4, parentGuid: c4_f5.frameId,
-    spec: { type: "INSTANCE", name: "AsymMulti-large", symbolId: asymMultiId, x: 10, y: 10, width: 360, height: 180 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymMulti-large", symbolId: asymMultiId, x: 10, y: 10, width: 360, height: 180 },
   });
   const c4_f6 = addTestFrame(ctx4, c4_f5_inst.context, {
     name: "asym-multi-shrink", x: 460, y: 490, width: 200, height: 120, bg: IOS_GRAY_BG,
   });
   const c4_f6_inst = addNode({
     state, context: c4_f6.context, pageGuid: pageGuid4, parentGuid: c4_f6.frameId,
-    spec: { type: "INSTANCE", name: "AsymMulti-small", symbolId: asymMultiId, x: 10, y: 10, width: 180, height: 100 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymMulti-small", symbolId: asymMultiId, x: 10, y: 10, width: 180, height: 100 },
   });
   const c4_f7 = addTestFrame(ctx4, c4_f6_inst.context, {
     name: "asym-same-size", x: 50, y: 720, width: 220, height: 140, bg: WHITE,
   });
   const finalContext = addNode({
     state, context: c4_f7.context, pageGuid: pageGuid4, parentGuid: c4_f7.frameId,
-    spec: { type: "INSTANCE", name: "AsymBox-same", symbolId: asymBoxId, x: 10, y: 10, width: 200, height: 120 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "AsymBox-same", symbolId: asymBoxId, x: 10, y: 10, width: 200, height: 120 },
   }).context;
 
   if (!fs.existsSync(OUTPUT_DIR)) {

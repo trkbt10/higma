@@ -28,12 +28,12 @@ import {
   updateNode,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/mask-and-vector");
@@ -43,14 +43,8 @@ const FRAME_BG: FigColor = { r: 0.97, g: 0.97, b: 0.97, a: 1 };
 const PHOTO_FILL: FigColor = { r: 0.55, g: 0.75, b: 0.95, a: 1 };
 const VECTOR_FILL: FigColor = { r: 0.85, g: 0.4, b: 0.2, a: 1 };
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 type AddedFrame = {
@@ -74,6 +68,8 @@ function addFrame(
     pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name,
       x,
@@ -118,6 +114,8 @@ async function generate(): Promise<void> {
     pageGuid,
     parentGuid: maskFrame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "mask-shape",
       x: 40,
@@ -141,6 +139,8 @@ async function generate(): Promise<void> {
     pageGuid,
     parentGuid: maskFrame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "masked-photo",
       x: 20,
@@ -160,6 +160,8 @@ async function generate(): Promise<void> {
     pageGuid,
     parentGuid: vectorFrame.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "VECTOR",
       name: "vector-arrow",
       x: 40,

@@ -2,7 +2,25 @@
  * @file Fig format types
  */
 
-import type { StackWrap } from "./constants";
+import type {
+  ConstraintType,
+  LeadingTrim,
+  StackAlign,
+  StackCounterAlign,
+  StackCounterAlignContent,
+  StackJustify,
+  StackMode,
+  StackPositioning,
+  StackSizing,
+  StackWrap,
+  TextAlignHorizontal,
+  TextAlignVertical,
+  TextAutoResize,
+  TextCase,
+  TextDecoration,
+  TextTruncation,
+} from "./constants";
+import type { BooleanOperation } from "./boolean-operation";
 
 // =============================================================================
 // Kiwi Schema Types
@@ -113,8 +131,8 @@ export type FigTextStyleOverrideEntry = {
    */
   readonly styleIdForFill?: FigStyleId;
   readonly styleIdForStrokeFill?: FigStyleId;
-  readonly textDecoration?: KiwiEnumValue;
-  readonly textCase?: KiwiEnumValue;
+  readonly textDecoration?: KiwiEnumValue<TextDecoration>;
+  readonly textCase?: KiwiEnumValue<TextCase>;
   readonly lineHeight?: FigValueWithUnits;
   readonly letterSpacing?: FigValueWithUnits;
   readonly [key: string]: unknown;
@@ -134,9 +152,13 @@ export type FigKiwiTextData = {
   readonly fontSize?: number;
   readonly lineHeight?: FigValueWithUnits;
   readonly letterSpacing?: FigValueWithUnits;
-  readonly textAutoResize?: KiwiEnumValue;
-  readonly textTruncation?: KiwiEnumValue;
-  readonly leadingTrim?: KiwiEnumValue;
+  readonly textAutoResize?: KiwiEnumValue<TextAutoResize>;
+  readonly textTruncation?: KiwiEnumValue<TextTruncation>;
+  readonly leadingTrim?: KiwiEnumValue<LeadingTrim>;
+  /** Extra vertical space between paragraphs, in pixels (Kiwi `paragraphSpacing`). */
+  readonly paragraphSpacing?: number;
+  /** First-line indent applied to each paragraph, in pixels (Kiwi `paragraphIndent`). */
+  readonly paragraphIndent?: number;
   readonly fontVariations?: readonly { readonly axisTag: number; readonly axisValue: number }[];
   readonly hyperlink?: { readonly url?: string };
   /**
@@ -1460,8 +1482,15 @@ export type FigNode = {
   readonly cornerSmoothing?: number;
 
   // ---- AutoLayout (frame-level) ----
-  /** Stack (auto-layout) direction: VERTICAL or HORIZONTAL */
-  readonly stackMode?: KiwiEnumValue;
+  //
+  // Each enum-typed slot is parameterised with the canonical Kiwi
+  // string union per `figma-schema.json`. The schema is authored by
+  // Figma's own encoder; the binary fig file is the SoT, and the
+  // schema records the encoder's field → enum-type mapping. Changing
+  // any of these means re-running `requireFigEnumTable(...)` against
+  // the schema, then propagating the new union through this type.
+  /** Schema `NodeChange.stackMode` → `StackMode` (typeId 34). */
+  readonly stackMode?: KiwiEnumValue<StackMode>;
   /** Spacing between stack children (px) */
   readonly stackSpacing?: number;
   /** Padding: number (uniform) or per-side object */
@@ -1474,15 +1503,21 @@ export type FigNode = {
   readonly stackPaddingRight?: number;
   /** Bottom padding override */
   readonly stackPaddingBottom?: number;
-  /** Primary axis alignment */
-  readonly stackPrimaryAlignItems?: KiwiEnumValue;
-  /** Counter axis alignment */
-  readonly stackCounterAlignItems?: KiwiEnumValue;
-  /** Primary axis content distribution */
-  readonly stackPrimaryAlignContent?: KiwiEnumValue;
-  /** Counter axis content distribution (parallel to Primary; written by modern Figma when stackWrap is enabled). */
-  readonly stackCounterAlignContent?: KiwiEnumValue;
-  /** Whether children wrap to next line */
+  /** Schema `NodeChange.stackPrimaryAlignItems` → `StackJustify` (typeId 37). */
+  readonly stackPrimaryAlignItems?: KiwiEnumValue<StackJustify>;
+  /** Schema `NodeChange.stackCounterAlignItems` → `StackAlign` (typeId 35). */
+  readonly stackCounterAlignItems?: KiwiEnumValue<StackAlign>;
+  /**
+   * Phantom field — not declared in `figma-schema.json`. Real fig
+   * exports carry only `stackCounterAlignContent`; this slot is
+   * retained for back-compat with older builder code that wrote it
+   * but does not round-trip. Treat presence as a no-op until/unless
+   * the schema adds it.
+   */
+  readonly stackPrimaryAlignContent?: KiwiEnumValue<StackJustify>;
+  /** Schema `NodeChange.stackCounterAlignContent` → `StackCounterAlignContent` (typeId 42). */
+  readonly stackCounterAlignContent?: KiwiEnumValue<StackCounterAlignContent>;
+  /** Schema `NodeChange.stackWrap` → `StackWrap` (typeId 41). */
   readonly stackWrap?: KiwiEnumValue<StackWrap>;
   /** Spacing between wrapped rows/columns */
   readonly stackCounterSpacing?: number;
@@ -1498,24 +1533,24 @@ export type FigNode = {
   readonly gridRowsSizing?: FigGridTrackPositions;
 
   // ---- AutoLayout (child-level) ----
-  /** How this child is positioned in the parent stack (AUTO or ABSOLUTE) */
-  readonly stackPositioning?: KiwiEnumValue;
-  /** How this child sizes on primary axis (FIXED, HUG, FILL) */
-  readonly stackPrimarySizing?: KiwiEnumValue;
-  /** How this child sizes on counter axis (FIXED, HUG, FILL) */
-  readonly stackCounterSizing?: KiwiEnumValue;
-  /** Horizontal constraint for non-auto-layout positioning */
-  readonly horizontalConstraint?: KiwiEnumValue;
-  /** Vertical constraint for non-auto-layout positioning */
-  readonly verticalConstraint?: KiwiEnumValue;
-  /** AutoLayout child cross-axis alignment override (STRETCH, AUTO, etc.) */
-  readonly stackChildAlignSelf?: KiwiEnumValue;
+  /** Schema `NodeChange.stackPositioning` → `StackPositioning` (typeId 40). */
+  readonly stackPositioning?: KiwiEnumValue<StackPositioning>;
+  /** Schema `NodeChange.stackPrimarySizing` → `StackSize` (typeId 39); the TS surface uses the `StackSizing` alias. */
+  readonly stackPrimarySizing?: KiwiEnumValue<StackSizing>;
+  /** Schema `NodeChange.stackCounterSizing` → `StackSize` (typeId 39). */
+  readonly stackCounterSizing?: KiwiEnumValue<StackSizing>;
+  /** Schema `NodeChange.horizontalConstraint` → `ConstraintType` (typeId 16). */
+  readonly horizontalConstraint?: KiwiEnumValue<ConstraintType>;
+  /** Schema `NodeChange.verticalConstraint` → `ConstraintType` (typeId 16). */
+  readonly verticalConstraint?: KiwiEnumValue<ConstraintType>;
+  /** Schema `NodeChange.stackChildAlignSelf` → `StackCounterAlign` (typeId 36). */
+  readonly stackChildAlignSelf?: KiwiEnumValue<StackCounterAlign>;
   /** AutoLayout child primary-axis grow factor (0 = fixed, 1 = fill container) */
   readonly stackChildPrimaryGrow?: number;
 
   // ---- Boolean operation ----
-  /** Boolean operation type (UNION, SUBTRACT, INTERSECT, EXCLUDE) */
-  readonly booleanOperation?: KiwiEnumValue;
+  /** Schema `NodeChange.booleanOperation` → `BooleanOperation` (typeId 20). */
+  readonly booleanOperation?: KiwiEnumValue<BooleanOperation>;
 
   // ---- Symbol/Instance fields ----
   /** Symbol data for INSTANCE nodes (symbolID, overrides) */
@@ -1622,7 +1657,22 @@ export type FigNode = {
   readonly sectionContentsHidden?: boolean;
 
   // ---- Shape fields ----
-  /** Number of points for STAR and REGULAR_POLYGON nodes */
+  /**
+   * Number of points for STAR and REGULAR_POLYGON nodes — Kiwi
+   * schema field name. Parsed `.fig` files always populate `count`;
+   * `pointCount` is the legacy alias kept on this type for builder
+   * compatibility but is never written by Figma's exporter. Readers
+   * should prefer `count` and fall back to `pointCount`; writers must
+   * persist `count` (which actually survives the Kiwi binary round
+   * trip).
+   */
+  readonly count?: number;
+  /**
+   * Legacy alias for {@link count}. Builders / tests that emit
+   * `pointCount` produce a node whose value is dropped on serialise
+   * because the Kiwi schema has no such field name. New code must
+   * write `count` instead.
+   */
   readonly pointCount?: number;
   /** Inner radius ratio for STAR nodes (0-1 range, default 0.382) */
   readonly starInnerRadius?: number;
@@ -1648,24 +1698,28 @@ export type FigNode = {
   readonly fontSize?: number;
   /** Font family and style */
   readonly fontName?: FigFontName;
-  /** Horizontal text alignment */
-  readonly textAlignHorizontal?: KiwiEnumValue;
-  /** Vertical text alignment */
-  readonly textAlignVertical?: KiwiEnumValue;
-  /** Text auto-resize mode */
-  readonly textAutoResize?: KiwiEnumValue;
-  /** Text decoration (underline, strikethrough) */
-  readonly textDecoration?: KiwiEnumValue;
-  /** Text case transformation (UPPER, LOWER, TITLE, etc.) */
-  readonly textCase?: KiwiEnumValue;
+  /** Schema `NodeChange.textAlignHorizontal` → `TextAlignHorizontal` (typeId 21). */
+  readonly textAlignHorizontal?: KiwiEnumValue<TextAlignHorizontal>;
+  /** Schema `NodeChange.textAlignVertical` → `TextAlignVertical` (typeId 22). */
+  readonly textAlignVertical?: KiwiEnumValue<TextAlignVertical>;
+  /** Schema `NodeChange.textAutoResize` → `TextAutoResize` (typeId 30). */
+  readonly textAutoResize?: KiwiEnumValue<TextAutoResize>;
+  /** Schema `NodeChange.textDecoration` → `TextDecoration` (typeId 12). */
+  readonly textDecoration?: KiwiEnumValue<TextDecoration>;
+  /** Schema `NodeChange.textCase` → `TextCase` (typeId 11). */
+  readonly textCase?: KiwiEnumValue<TextCase>;
   /** Line height with units */
   readonly lineHeight?: FigValueWithUnits;
   /** Letter spacing with units */
   readonly letterSpacing?: FigValueWithUnits;
-  /** Text truncation mode (ENDING = ellipsis at end) */
-  readonly textTruncation?: KiwiEnumValue;
-  /** Leading trim mode (CAP_HEIGHT = trim to cap height) */
-  readonly leadingTrim?: KiwiEnumValue;
+  /** Schema `NodeChange.textTruncation` → `TextTruncation` (typeId 31). */
+  readonly textTruncation?: KiwiEnumValue<TextTruncation>;
+  /** Schema `NodeChange.leadingTrim` → `LeadingTrim` (typeId 14). */
+  readonly leadingTrim?: KiwiEnumValue<LeadingTrim>;
+  /** Extra vertical space inserted between paragraphs, in pixels. */
+  readonly paragraphSpacing?: number;
+  /** First-line indent applied to each paragraph, in pixels. */
+  readonly paragraphIndent?: number;
   /** Variable font axis values */
   readonly fontVariations?: readonly { readonly axisTag: number; readonly axisValue: number }[];
   /**

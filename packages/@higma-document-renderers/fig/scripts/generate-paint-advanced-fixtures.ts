@@ -26,17 +26,17 @@ import {
   updateNode,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
+  type GradientPaintSpec,
+  type EffectSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
 import type {
   FigColor,
-  FigEffect,
   FigGradientStop,
-  FigPaint,
 } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -50,8 +50,8 @@ const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 // Paint construction
 // =============================================================================
 
-function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor, opacity = 1): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
 /**
@@ -60,7 +60,7 @@ function solidPaint(color: FigColor, opacity = 1): FigPaint {
  * Matches the math in `demo-document.ts` so existing gradient
  * fixtures stay equivalent.
  */
-function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): FigPaint {
+function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): GradientPaintSpec {
   const rad = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -71,27 +71,25 @@ function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+    type: "GRADIENT_LINEAR",
     stops,
     transform: { m00: dx, m01: -dy, m02: endX, m10: dy, m11: dx, m12: endY },
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function radialGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
+function radialGradientPaint(stops: readonly FigGradientStop[]): GradientPaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
+    type: "GRADIENT_RADIAL",
     stops,
     transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function angularGradientPaint(stops: readonly FigGradientStop[], rotationDeg = 0): FigPaint {
+function angularGradientPaint(stops: readonly FigGradientStop[], rotationDeg = 0): GradientPaintSpec {
   // Angular gradients rotate around the shape centre; the on-disk
   // transform is the same shape-normalised matrix, just routed
   // through the angular path. Apply the rotation by rebuilding the
@@ -100,7 +98,7 @@ function angularGradientPaint(stops: readonly FigGradientStop[], rotationDeg = 0
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_ANGULAR, name: "GRADIENT_ANGULAR" },
+    type: "GRADIENT_ANGULAR",
     stops,
     transform: {
       m00: 0.5 * cos,
@@ -112,18 +110,16 @@ function angularGradientPaint(stops: readonly FigGradientStop[], rotationDeg = 0
     },
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function diamondGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
+function diamondGradientPaint(stops: readonly FigGradientStop[]): GradientPaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_DIAMOND, name: "GRADIENT_DIAMOND" },
+    type: "GRADIENT_DIAMOND",
     stops,
     transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -132,14 +128,13 @@ function dropShadowEffect(opts: {
   readonly offsetY: number;
   readonly radius: number;
   readonly color: FigColor;
-}): FigEffect {
+}): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    type: "DROP_SHADOW",
     visible: true,
     color: opts.color,
     offset: { x: opts.offsetX, y: opts.offsetY },
     radius: opts.radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -174,6 +169,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid: opts.parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x,
@@ -207,6 +204,8 @@ function addAngularGradientBasic({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "angular-circle",
       x: 20,
@@ -232,6 +231,8 @@ function addAngularGradientRect({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "angular-rounded",
       x: 20,
@@ -260,6 +261,8 @@ function addDiamondGradient({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "diamond-rect",
       x: 20,
@@ -286,6 +289,8 @@ function addMultiFillSolid({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "multi-solid",
       x: 20,
@@ -310,6 +315,8 @@ function addMultiFillGradient({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "multi-gradient",
       x: 20,
@@ -348,6 +355,8 @@ function addMaskBasic({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: inner.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "mask-circle",
       x: 0,
@@ -368,6 +377,8 @@ function addMaskBasic({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: inner.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "RECTANGLE",
       name: "masked-content",
       x: 0,
@@ -401,6 +412,8 @@ function addMaskRounded({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: inner.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "mask-shape",
       x: 0,
@@ -422,6 +435,8 @@ function addMaskRounded({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: inner.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "RECTANGLE",
       name: "masked-gradient",
       x: -20,
@@ -445,6 +460,8 @@ function addAngularGradientWithEffect({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "angular-shadowed",
       x: 30,

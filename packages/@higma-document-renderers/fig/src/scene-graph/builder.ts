@@ -636,12 +636,20 @@ function synthesizeContours(node: FigNode): DecodedContour[] {
       return [generateStarContour({
         width: w,
         height: h,
-        pointCount: node.pointCount ?? 5,
+        // Kiwi schema field is `count`; `pointCount` is the legacy
+        // alias kept on the type for builder compatibility. Real
+        // Figma exports always populate `count`. The fallback to
+        // `pointCount` keeps any hand-rolled FigNode that wrote to
+        // the alias working until it's migrated.
+        pointCount: node.count ?? node.pointCount ?? 5,
         // starInnerScale (newer format) takes precedence over starInnerRadius
         innerRadiusRatio: node.starInnerScale ?? node.starInnerRadius ?? 0.382,
       })];
     case "REGULAR_POLYGON":
-      return [generatePolygonContour(w, h, node.pointCount ?? 3)];
+      // Same `count` vs `pointCount` priority as STAR — Figma's wire
+      // format populates `count`; the alias is only there for
+      // backwards compatibility.
+      return [generatePolygonContour(w, h, node.count ?? node.pointCount ?? 3)];
     case "LINE":
       return [generateLineContour(w)];
     default:

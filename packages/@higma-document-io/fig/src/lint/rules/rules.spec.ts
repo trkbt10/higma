@@ -15,6 +15,7 @@
  */
 
 import { canvasHeaderRule } from "./canvas-header";
+import { displayFieldsRule } from "./display-fields";
 import { imageRefsRule } from "./image-refs";
 import { parentRefsRule } from "./parent-refs";
 import { requiredNodesRule } from "./required-nodes";
@@ -289,6 +290,66 @@ describe("shapeFieldsRule", () => {
 
   it("does not flag BOOLEAN_OPERATION nodes", () => {
     expect(runRule(shapeFieldsRule, emptyContext({ nodeChanges: [booleanOp()] }))).toEqual([]);
+  });
+});
+
+describe("displayFieldsRule", () => {
+  function frame(overrides: Partial<FigNode> = {}): FigNode {
+    return makeNode({ type: { value: 4, name: "FRAME" }, name: "frame", ...overrides });
+  }
+  function document(): FigNode {
+    return makeNode({ type: { value: 0, name: "DOCUMENT" }, name: "doc" });
+  }
+
+  it("emits two findings when both visible and opacity are absent", () => {
+    const findings = runRule(displayFieldsRule, emptyContext({ nodeChanges: [frame()] }));
+    expect(findings).toHaveLength(2);
+    const messages = findings.map((f) => f.message);
+    expect(messages.some((m) => m.includes("visible"))).toBe(true);
+    expect(messages.some((m) => m.includes("opacity"))).toBe(true);
+    for (const f of findings) {
+      expect(f.ruleId).toBe("fig.shape.display-fields");
+    }
+  });
+
+  it("emits one finding when only opacity is absent", () => {
+    const findings = runRule(displayFieldsRule, emptyContext({ nodeChanges: [frame({ visible: true })] }));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain("opacity");
+  });
+
+  it("emits one finding when only visible is absent", () => {
+    const findings = runRule(displayFieldsRule, emptyContext({ nodeChanges: [frame({ opacity: 1 })] }));
+    expect(findings).toHaveLength(1);
+    expect(findings[0].message).toContain("visible");
+  });
+
+  it("emits nothing when both fields are present", () => {
+    const findings = runRule(
+      displayFieldsRule,
+      emptyContext({ nodeChanges: [frame({ visible: true, opacity: 1 })] }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it("accepts visible: false (an intentionally hidden layer)", () => {
+    const findings = runRule(
+      displayFieldsRule,
+      emptyContext({ nodeChanges: [frame({ visible: false, opacity: 1 })] }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it("accepts opacity: 0 (an intentionally fully-transparent layer)", () => {
+    const findings = runRule(
+      displayFieldsRule,
+      emptyContext({ nodeChanges: [frame({ visible: true, opacity: 0 })] }),
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it("does not flag DOCUMENT — Figma's wire format omits display fields there", () => {
+    expect(runRule(displayFieldsRule, emptyContext({ nodeChanges: [document()] }))).toEqual([]);
   });
 });
 

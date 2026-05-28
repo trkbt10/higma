@@ -53,12 +53,16 @@ export {
   TEXT_AUTO_RESIZE_VALUES,
   TEXT_DECORATION_VALUES,
   TEXT_CASE_VALUES,
+  TEXT_TRUNCATION_VALUES,
+  LEADING_TRIM_VALUES,
   NUMBER_UNITS_VALUES,
   type TextAlignHorizontal,
   type TextAlignVertical,
   type TextAutoResize,
   type TextDecoration,
   type TextCase,
+  type TextTruncation,
+  type LeadingTrim,
   type NumberUnits,
 } from "./text";
 
@@ -69,6 +73,7 @@ export {
   STACK_JUSTIFY_VALUES,
   STACK_WRAP_VALUES,
   STACK_COUNTER_ALIGN_VALUES,
+  STACK_COUNTER_ALIGN_CONTENT_VALUES,
   STACK_POSITIONING_VALUES,
   STACK_SIZING_VALUES,
   CONSTRAINT_TYPE_VALUES,
@@ -79,6 +84,7 @@ export {
   type StackJustify,
   type StackWrap,
   type StackCounterAlign,
+  type StackCounterAlignContent,
   type StackPositioning,
   type StackSizing,
   type StackSizingInput,
@@ -100,3 +106,4 @@ export {
 
 // Kiwi enum values
 export { kiwiEnumName, toEnumValue, type EnumValue } from "./enum-value";
+

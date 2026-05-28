@@ -18,7 +18,7 @@ import type {
 } from "@higma-bridges/web-fig";
 import { pxLength } from "@higma-bridges/web-fig";
 import { asGradientPaint, asImagePaint, asSolidPaint, getPaintType } from "@higma-document-models/fig/color";
-import { TEXT_ALIGN_H_VALUES, TEXT_ALIGN_V_VALUES } from "@higma-document-models/fig/constants";
+import { asFigPaint } from "@higma-document-io/fig";
 import { irToSpecGraph } from "./ir-to-spec";
 
 const ZERO_BOX = { x: 0, y: 0, width: 100, height: 50 };
@@ -136,7 +136,7 @@ describe("irToSpecGraph — frame", () => {
       throw new Error();
     }
     expect(graph.spec.fills).toHaveLength(1);
-    const fill = graph.spec.fills![0]!;
+    const fill = asFigPaint(graph.spec.fills![0]!);
     expect(getPaintType(fill)).toBe("SOLID");
     const solid = asSolidPaint(fill);
     if (solid === undefined) {
@@ -155,7 +155,7 @@ describe("irToSpecGraph — frame", () => {
     if (graph.spec.type !== "FRAME") {
       throw new Error();
     }
-    const fill = graph.spec.fills![0]!;
+    const fill = asFigPaint(graph.spec.fills![0]!);
     expect(getPaintType(fill)).toBe("IMAGE");
     const image = asImagePaint(fill);
     if (image === undefined) {
@@ -182,7 +182,7 @@ describe("irToSpecGraph — frame", () => {
     if (graph.spec.type !== "FRAME") {
       throw new Error();
     }
-    const fill = graph.spec.fills![0]!;
+    const fill = asFigPaint(graph.spec.fills![0]!);
     expect(getPaintType(fill)).toBe("GRADIENT_LINEAR");
     const gradient = asGradientPaint(fill);
     if (gradient === undefined) {
@@ -362,8 +362,8 @@ describe("irToSpecGraph — text", () => {
     if (graph.spec.type !== "TEXT") {
       throw new Error();
     }
-    expect(graph.spec.textAlignHorizontal).toEqual({ value: TEXT_ALIGN_H_VALUES.LEFT, name: "LEFT" });
-    expect(graph.spec.textAlignVertical).toEqual({ value: TEXT_ALIGN_V_VALUES.TOP, name: "TOP" });
+    expect(graph.spec.textAlignHorizontal).toBe("LEFT");
+    expect(graph.spec.textAlignVertical).toBe("TOP");
   });
 
   it("encodes IR `textAlign: center` as Figma `textAlignHorizontal: CENTER`", () => {
@@ -384,7 +384,7 @@ describe("irToSpecGraph — text", () => {
     if (graph.spec.type !== "TEXT") {
       throw new Error();
     }
-    expect(graph.spec.textAlignHorizontal?.name).toBe("CENTER");
+    expect(graph.spec.textAlignHorizontal).toBe("CENTER");
   });
 
   it("encodes IR `textAlignVertical: center` as Figma `textAlignVertical: CENTER`", () => {
@@ -405,7 +405,7 @@ describe("irToSpecGraph — text", () => {
     if (graph.spec.type !== "TEXT") {
       throw new Error();
     }
-    expect(graph.spec.textAlignVertical?.name).toBe("CENTER");
+    expect(graph.spec.textAlignVertical).toBe("CENTER");
   });
 });
 

@@ -28,13 +28,13 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_ALIGN_VALUES, STROKE_CAP_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigNode, FigPaint, FigStrokeCap } from "@higma-document-models/fig/types";
+import type { FigColor, FigStrokeCap } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/stroke-styles");
@@ -45,18 +45,8 @@ const RECT_FILL: FigColor = { r: 0.92, g: 0.96, b: 1, a: 1 };
 const STROKE: FigColor = { r: 0.15, g: 0.3, b: 0.85, a: 1 };
 const LINE_COLOR: FigColor = { r: 0.85, g: 0.15, b: 0.15, a: 1 };
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
-}
-
-function strokeCapValue(name: FigStrokeCap): NonNullable<FigNode["strokeCap"]> {
-  return { value: STROKE_CAP_VALUES[name], name };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 type AddedFrame = {
@@ -80,6 +70,8 @@ function addStyledFrame(
     pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name,
       x,
@@ -121,6 +113,8 @@ async function generate(): Promise<void> {
     pageGuid,
     parentGuid: f1.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "dashed-uniform",
       x: 20,
@@ -130,7 +124,7 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 3,
-      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
+      strokeAlign: "INSIDE",
       strokeDashes: [8, 4],
       cornerRadius: 8,
     },
@@ -143,6 +137,8 @@ async function generate(): Promise<void> {
     pageGuid,
     parentGuid: f2.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "dashed-asymmetric",
       x: 20,
@@ -152,7 +148,7 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 3,
-      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
+      strokeAlign: "INSIDE",
       strokeDashes: [12, 6, 2, 6],
       cornerRadius: 8,
     },
@@ -165,6 +161,8 @@ async function generate(): Promise<void> {
     pageGuid,
     parentGuid: f3.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "dashed-tight",
       x: 20,
@@ -174,7 +172,7 @@ async function generate(): Promise<void> {
       fills: [solidPaint(RECT_FILL)],
       strokes: [solidPaint(STROKE)],
       strokeWeight: 2,
-      strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
+      strokeAlign: "INSIDE",
       strokeDashes: [2, 2],
       cornerRadius: 8,
     },
@@ -198,6 +196,8 @@ async function generate(): Promise<void> {
       pageGuid,
       parentGuid: frame.frameId,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "LINE",
         name: `line-${c.name}`,
         x: 20,
@@ -206,7 +206,7 @@ async function generate(): Promise<void> {
         height: 0,
         strokes: [solidPaint(LINE_COLOR)],
         strokeWeight: 4,
-        strokeCap: strokeCapValue(c.cap),
+        strokeCap: c.cap,
       },
     });
     return line.context;

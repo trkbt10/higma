@@ -28,16 +28,16 @@ import {
   requireCanvas,
   type FigDocumentContext,
   type KiwiChildLayoutFields,
+  type SolidPaintSpec,
+  type PaintSpec,
+  type EffectSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
 import type {
   FigColor,
-  FigEffect,
-  FigPaint,
 } from "@higma-document-models/fig/types";
 import {
   CONSTRAINT_TYPE_VALUES,
@@ -69,18 +69,17 @@ const DARK_BG: FigColor = { r: 0.11, g: 0.11, b: 0.118, a: 1 };
 // Shared construction
 // =============================================================================
 
-function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor, opacity = 1): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
-function dropShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): FigEffect {
+function dropShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    type: "DROP_SHADOW",
     visible: true,
     color,
     offset: { x: offsetX, y: offsetY },
     radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -138,6 +137,8 @@ function addSymbol(
     pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: opts.name,
       x: opts.x,
@@ -176,6 +177,8 @@ function addFrame(
     pageGuid,
     parentGuid: opts.parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x,
@@ -197,13 +200,13 @@ type RoundedOpts = {
   readonly y: number;
   readonly width: number;
   readonly height: number;
-  readonly fill?: FigPaint;
-  readonly fills?: readonly FigPaint[];
+  readonly fill?: PaintSpec;
+  readonly fills?: readonly PaintSpec[];
   readonly stroke?: FigColor;
   readonly strokeWeight?: number;
   readonly cornerRadius?: number;
   readonly opacity?: number;
-  readonly effects?: readonly FigEffect[];
+  readonly effects?: readonly EffectSpec[];
   readonly constraints?: KiwiChildLayoutFields;
 };
 
@@ -214,6 +217,7 @@ function addRoundedRect(context: FigDocumentContext, ctx: Ctx, pageGuid: FigGuid
     pageGuid,
     parentGuid: opts.parentGuid,
     spec: {
+      visible: true,
       type: "ROUNDED_RECTANGLE",
       name: opts.name,
       x: opts.x,
@@ -224,7 +228,7 @@ function addRoundedRect(context: FigDocumentContext, ctx: Ctx, pageGuid: FigGuid
       strokes: opts.stroke ? [solidPaint(opts.stroke)] : undefined,
       strokeWeight: opts.strokeWeight,
       cornerRadius: opts.cornerRadius,
-      opacity: opts.opacity,
+      opacity: opts.opacity ?? 1,
       effects: opts.effects,
       ...opts.constraints,
     },
@@ -250,6 +254,8 @@ function addEllipse(context: FigDocumentContext, ctx: Ctx, pageGuid: FigGuid, op
     pageGuid,
     parentGuid: opts.parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: opts.name,
       x: opts.x,
@@ -284,6 +290,7 @@ function addInstance(context: FigDocumentContext, ctx: Ctx, pageGuid: FigGuid, o
     pageGuid,
     parentGuid: opts.parentGuid,
     spec: {
+      visible: true,
       type: "INSTANCE",
       name: opts.name,
       symbolId: opts.symbolId,
@@ -292,7 +299,7 @@ function addInstance(context: FigDocumentContext, ctx: Ctx, pageGuid: FigGuid, o
       width: opts.width,
       height: opts.height,
       fills: opts.background ? [solidPaint(opts.background)] : undefined,
-      opacity: opts.opacity,
+      opacity: opts.opacity ?? 1,
       ...opts.constraints,
     },
   });

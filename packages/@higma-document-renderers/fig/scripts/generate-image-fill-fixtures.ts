@@ -35,19 +35,19 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
+  type ImagePaintSpec,
+  type EffectSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
 import { figImageHashHexToBytes } from "@higma-document-models/fig/domain";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES, SCALE_MODE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
 import type {
   FigColor,
-  FigEffect,
   FigImageScaleMode,
   FigImageTransform,
-  FigPaint,
 } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,24 +57,17 @@ const OUTPUT_FILE = path.join(OUTPUT_DIR, "image-fill.fig");
 const WHITE: FigColor = { r: 1, g: 1, b: 1, a: 1 };
 const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 
-function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor, opacity = 1): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
-function imagePaint(imageHashHex: string, opacity = 1): FigPaint {
+function imagePaint(imageHashHex: string, opacity = 1): ImagePaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    type: "IMAGE",
     image: { hash: figImageHashHexToBytes(imageHashHex) },
-    imageScaleMode: { value: SCALE_MODE_VALUES.FILL, name: "FILL" },
+    imageScaleMode: "FILL",
     opacity,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -95,26 +88,24 @@ function imagePaintWithTransform(
   scaleMode: FigImageScaleMode,
   imageTransform: FigImageTransform,
   opacity = 1,
-): FigPaint {
+): ImagePaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.IMAGE, name: "IMAGE" },
+    type: "IMAGE",
     image: { hash: figImageHashHexToBytes(imageHashHex) },
-    imageScaleMode: { value: SCALE_MODE_VALUES[scaleMode], name: scaleMode },
+    imageScaleMode: scaleMode,
     transform: imageTransform,
     opacity,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function dropShadow(ox: number, oy: number, radius: number, color: FigColor): FigEffect {
+function dropShadow(ox: number, oy: number, radius: number, color: FigColor): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    type: "DROP_SHADOW",
     visible: true,
     color,
     offset: { x: ox, y: oy },
     radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -161,6 +152,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name,
       x,
@@ -189,6 +182,8 @@ function addImageFillBasic({ context, ctx, frameX, frameY }: Args): FigDocumentC
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "image-rect",
       x: 20, y: 20, width: 120, height: 80,
@@ -206,6 +201,8 @@ function addImageFillWithShadow({ context, ctx, frameX, frameY }: Args): FigDocu
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "image-shadowed",
       x: 30, y: 30, width: 120, height: 80,
@@ -224,6 +221,8 @@ function addImageFillCircle({ context, ctx, frameX, frameY }: Args): FigDocument
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "image-avatar",
       x: 20, y: 20, width: 80, height: 80,
@@ -240,6 +239,8 @@ function addImageFillMulti({ context, ctx, frameX, frameY }: Args): FigDocumentC
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "solid-plus-image",
       x: 20, y: 20, width: 120, height: 80,
@@ -271,6 +272,8 @@ function addImageFillStretch({ context, ctx, frameX, frameY }: Args): FigDocumen
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "image-stretch",
       x: 20, y: 20, width: 120, height: 80,
@@ -303,6 +306,8 @@ function addImageFillCrop({ context, ctx, frameX, frameY }: Args): FigDocumentCo
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "image-crop",
       x: 20, y: 20, width: 120, height: 80,
@@ -327,6 +332,78 @@ function addImageFillCrop({ context, ctx, frameX, frameY }: Args): FigDocumentCo
  * of the CROP branch) so the solid paint stacked underneath shows
  * through — visually a portrait-on-coloured-card pattern.
  */
+/**
+ * STRETCH paint whose `imageTransform` is a pure rotation around the
+ * element centre. `paint.transform` maps element-uv → image-uv via
+ * `image_uv = M · element_uv`; rotating by +30° about (0.5, 0.5) sends
+ * the four element corners onto a rotated rectangle inside the unit
+ * image square. The renderer must therefore feed the rotated mapping
+ * into the SVG `<pattern>` (via `inv(paint.transform)`) and through
+ * fig-to-web's structural `<div><img/></div>` emit — `background-image`
+ * cannot rotate the source. This frame exercises that path end-to-end.
+ */
+function addImageFillCropRotated30({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-crop-rotated-30", frameX, frameY, 160, 160, WHITE);
+  const cos30 = Math.cos(Math.PI / 6);
+  const sin30 = Math.sin(Math.PI / 6);
+  return addNode({
+    state: ctx.state,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
+    spec: {
+      visible: true,
+      opacity: 1,
+      type: "ROUNDED_RECTANGLE",
+      name: "image-rotated-30",
+      x: 20, y: 20, width: 120, height: 120,
+      cornerRadius: 8,
+      fills: [
+        imagePaintWithTransform(ctx.imageHashHex, "STRETCH", {
+          // Rotation by +30° around the unit-square centre (0.5, 0.5).
+          m00: cos30, m01: -sin30, m02: 0.5 - 0.5 * cos30 + 0.5 * sin30,
+          m10: sin30, m11: cos30,  m12: 0.5 - 0.5 * sin30 - 0.5 * cos30,
+        }),
+      ],
+    },
+  }).context;
+}
+
+/**
+ * Same shape as {@link addImageFillCropRotated30} but a clean 90°
+ * rotation — the case that has historically tripped renderers (e.g.
+ * when m00 = cos(π/2) was treated as a tiny non-zero float and
+ * accidentally combined with the integer-perfect translation slots,
+ * producing a near-rotation with sub-pixel offsets). Locking it down
+ * here separates the "exact 90°" path from the general-rotation one.
+ */
+function addImageFillCropRotated90({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
+  const f = addFrame(ctx, context, "image-fill-crop-rotated-90", frameX, frameY, 160, 160, WHITE);
+  return addNode({
+    state: ctx.state,
+    context: f.context,
+    pageGuid: ctx.pageGuid,
+    parentGuid: f.frameId,
+    spec: {
+      visible: true,
+      opacity: 1,
+      type: "ROUNDED_RECTANGLE",
+      name: "image-rotated-90",
+      x: 20, y: 20, width: 120, height: 120,
+      cornerRadius: 8,
+      fills: [
+        // +90° rotation around (0.5, 0.5):
+        //   M = T(0.5, 0.5) · R(90°) · T(-0.5, -0.5)
+        //     = (0, -1, 1; 1, 0, 0)
+        imagePaintWithTransform(ctx.imageHashHex, "STRETCH", {
+          m00: 0, m01: -1, m02: 1,
+          m10: 1, m11: 0,  m12: 0,
+        }),
+      ],
+    },
+  }).context;
+}
+
 function addImageFillCropOffset({ context, ctx, frameX, frameY }: Args): FigDocumentContext {
   const f = addFrame(ctx, context, "image-fill-crop-offset", frameX, frameY, 160, 120, LIGHT_GRAY);
   return addNode({
@@ -335,6 +412,8 @@ function addImageFillCropOffset({ context, ctx, frameX, frameY }: Args): FigDocu
     pageGuid: ctx.pageGuid,
     parentGuid: f.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "solid-plus-crop",
       x: 20, y: 20, width: 120, height: 80,
@@ -393,6 +472,8 @@ async function generateImageFillFixtures(): Promise<void> {
     { name: "Image fill multi-layer", fn: addImageFillMulti },
     { name: "Image fill stretch (identity transform)", fn: addImageFillStretch },
     { name: "Image fill crop (STRETCH + transform)", fn: addImageFillCrop },
+    { name: "Image fill crop rotated +30° (STRETCH + rotation transform)", fn: addImageFillCropRotated30 },
+    { name: "Image fill crop rotated +90° (STRETCH + axis-aligned rotation)", fn: addImageFillCropRotated90 },
     { name: "Image fill crop with backdrop bleed-through", fn: addImageFillCropOffset },
   ];
 

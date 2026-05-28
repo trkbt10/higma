@@ -24,66 +24,53 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
+  type EffectSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigEffect, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/frame-properties");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "frame-properties.fig");
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
-function solidPaintWithOpacity(color: FigColor, opacity: number): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaintWithOpacity(color: FigColor, opacity: number): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
-function dropShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): FigEffect {
+function dropShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    type: "DROP_SHADOW",
     visible: true,
     color,
     offset: { x: offsetX, y: offsetY },
     radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function innerShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): FigEffect {
+function innerShadow(offsetX: number, offsetY: number, radius: number, color: FigColor): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
+    type: "INNER_SHADOW",
     visible: true,
     color,
     offset: { x: offsetX, y: offsetY },
     radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
 type AddFrameOptions = {
   fill?: { r: number; g: number; b: number };
-  fillPaint?: FigPaint;
+  fillPaint?: SolidPaintSpec;
   cornerRadius?: number;
   opacity?: number;
-  effects?: readonly FigEffect[];
+  effects?: readonly EffectSpec[];
   stroke?: { r: number; g: number; b: number; a: number };
   strokeWeight?: number;
 };
@@ -100,7 +87,7 @@ type AddedFrame = {
   readonly frameX: number;
 };
 
-function frameFills(opts: AddFrameOptions | undefined): FigPaint[] {
+function frameFills(opts: AddFrameOptions | undefined): SolidPaintSpec[] {
   if (opts?.fillPaint) {
     return [opts.fillPaint];
   }
@@ -125,7 +112,7 @@ function addFrame(
 ): AddedFrame {
   const { context, state, pageGuid, name, width, height, frameX, buildFn, opts } = args;
   const fills = frameFills(opts);
-  const strokes: FigPaint[] = opts?.stroke ? [solidPaint(opts.stroke)] : [];
+  const strokes: SolidPaintSpec[] = opts?.stroke ? [solidPaint(opts.stroke)] : [];
 
   const added = addNode({
     state,
@@ -133,6 +120,7 @@ function addFrame(
     pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
       type: "FRAME",
       name,
       x: frameX,
@@ -143,7 +131,7 @@ function addFrame(
       strokes,
       strokeWeight: opts?.strokeWeight,
       effects: opts?.effects,
-      opacity: opts?.opacity,
+      opacity: opts?.opacity ?? 1,
       clipsContent: true,
       cornerRadius: opts?.cornerRadius,
     },
@@ -193,6 +181,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "inner",
           x: 20,
@@ -222,6 +212,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "overflow",
           x: -25,
@@ -237,6 +229,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "content",
           x: 25,
@@ -266,6 +260,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "FRAME",
           name: "inner-frame",
           x: 20,
@@ -282,6 +278,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid: inner.nodeGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "deep-rect",
           x: 40,
@@ -311,6 +309,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "shadow-rect",
           x: 20,
@@ -327,6 +327,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "plain-rect",
           x: 130,
@@ -356,6 +358,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "opacity-child-a",
           x: 10,
@@ -372,6 +376,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "opacity-child-b",
           x: 55,
@@ -402,6 +408,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "drop-shadow-child",
           x: 35,
@@ -436,6 +444,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "inner-shadow-child",
           x: 30,
@@ -470,6 +480,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "stroke-child",
           x: 30,
@@ -505,6 +517,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "rect-a",
           x: 10,
@@ -520,6 +534,7 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
           type: "ROUNDED_RECTANGLE",
           name: "rect-b",
           x: 60,
@@ -550,6 +565,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "FRAME",
           name: "level-1",
           x: 10,
@@ -567,6 +584,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid: level1.nodeGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "FRAME",
           name: "level-2",
           x: 20,
@@ -584,6 +603,8 @@ async function generate(): Promise<void> {
         pageGuid,
         parentGuid: level2.nodeGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: "deep-overflow",
           x: -30,

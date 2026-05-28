@@ -417,12 +417,11 @@ function hasVisibleStroke(node: FigNode): boolean {
  * default.
  *
  * Figma's default counter-axis alignment is MIN when
- * `stackCounterAlignItems` is unset. STRETCH on the parent is encoded
- * in Figma as per-child `stackChildAlignSelf=STRETCH`; the parent enum
- * itself does not carry STRETCH (see
- * `STACK_COUNTER_ALIGN_VALUES` doc comment in document-models). A
- * STRETCH that does land on the parent enum (legacy data) is treated
- * as `fill` here.
+ * `stackCounterAlignItems` is unset. STRETCH on the parent is
+ * encoded in Figma as per-child `stackChildAlignSelf=STRETCH`; the
+ * parent enum `StackAlign` (`figma-schema.json` typeId 35) does not
+ * carry STRETCH at all — that lives on `StackCounterAlign` (typeId
+ * 36, `stackChildAlignSelf`-only).
  */
 export function counterAlignmentForBoxContainer(node: FigNode): CounterAlignment {
   const name = node.stackCounterAlignItems?.name;
@@ -431,9 +430,6 @@ export function counterAlignmentForBoxContainer(node: FigNode): CounterAlignment
       return "end";
     case "CENTER":
       return "center";
-    case "STRETCH":
-      // Legacy data — see header comment.
-      return "fill";
     case "BASELINE":
       // Godot's BoxContainer has no baseline alignment. BASELINE on a
       // VBoxContainer is meaningless; on an HBoxContainer it would

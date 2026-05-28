@@ -26,24 +26,18 @@ import {
   type FigDocumentContext,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_CAP_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
+import type { SolidPaintSpec } from "@higma-document-io/fig";
 
-import type { FigColor, FigNode, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor, FigNode } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/shapes");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "shapes.fig");
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 type ShapeChild = {
@@ -56,6 +50,7 @@ type ShapeChild = {
   fill?: { r: number; g: number; b: number };
   stroke?: { r: number; g: number; b: number };
   strokeWeight?: number;
+  strokeAlign?: "INSIDE" | "OUTSIDE" | "CENTER";
   arcStart?: number;
   arcEnd?: number;
   innerRadius?: number;
@@ -84,13 +79,34 @@ function ellipseArcData(child: ShapeChild): NonNullable<FigNode["arcData"]> {
   };
 }
 
-function strokeCapValue(
-  name: ShapeChild["strokeCap"],
-): FigNode["strokeCap"] {
-  if (name === undefined) {
-    return undefined;
+/**
+ * Stroke fields below pass plain string names through to the
+ * builder. The builder lifts each to its Kiwi `value` once in
+ * `createNodeFromSpec`, so this script no longer mirrors the
+ * `STROKE_*_VALUES` tables or types `FigNode["strokeAlign"]` etc.
+ * itself.
+ */
+
+/**
+ * Inject `cornerRadius` directly onto the node when the spec API
+ * does not expose it. `PolygonNodeSpec` and `StarNodeSpec` omit
+ * `cornerRadius` even though the Kiwi schema accepts it on those
+ * nodes, so we patch it post-addNode. Returns the same context when
+ * no radius is requested.
+ */
+function injectCornerRadius(
+  context: FigDocumentContext,
+  nodeGuid: FigGuid,
+  cornerRadius: number | undefined,
+): FigDocumentContext {
+  if (cornerRadius === undefined || cornerRadius <= 0) {
+    return context;
   }
-  return { value: STROKE_CAP_VALUES[name], name };
+  return updateNode({
+    context,
+    nodeGuid,
+    update: (n) => ({ ...n, cornerRadius }),
+  });
 }
 
 const SHAPE_FRAMES: ShapeFrameData[] = [
@@ -251,6 +267,92 @@ const SHAPE_FRAMES: ShapeFrameData[] = [
       },
     ],
   },
+  // Polygon + INSIDE stroke + cornerRadius — the configuration the
+  // SVG renderer used to flatten to an axis-aligned `<rect rx>`
+  // because the strokeshape branch over-promoted `kind:"rect"` for
+  // any path node carrying a `cornerRadius`. count=3..6 walks the
+  // shape axis; the corner-radius and stroke alignment are fixed so
+  // a future drift is isolated to the polygon side.
+  {
+    name: "polygon-tri-stroke-cornered", width: 120, height: 120, background: "#ffffff",
+    children: [
+      {
+        type: "polygon", name: "tri",
+        x: 20, y: 20, width: 80, height: 80,
+        sides: 3, cornerRadius: 6,
+        stroke: { r: 0.29, g: 0.73, b: 0.74 },
+        strokeWeight: 2, strokeAlign: "INSIDE",
+      },
+    ],
+  },
+  {
+    name: "polygon-diamond-stroke-cornered", width: 120, height: 120, background: "#ffffff",
+    children: [
+      {
+        type: "polygon", name: "diamond",
+        x: 20, y: 20, width: 80, height: 80,
+        sides: 4, cornerRadius: 6,
+        stroke: { r: 0.29, g: 0.73, b: 0.74 },
+        strokeWeight: 2, strokeAlign: "INSIDE",
+      },
+    ],
+  },
+  {
+    name: "polygon-penta-stroke-cornered", width: 120, height: 120, background: "#ffffff",
+    children: [
+      {
+        type: "polygon", name: "penta",
+        x: 20, y: 20, width: 80, height: 80,
+        sides: 5, cornerRadius: 6,
+        stroke: { r: 0.29, g: 0.73, b: 0.74 },
+        strokeWeight: 2, strokeAlign: "INSIDE",
+      },
+    ],
+  },
+  {
+    name: "polygon-hex-stroke-cornered", width: 120, height: 120, background: "#ffffff",
+    children: [
+      {
+        type: "polygon", name: "hex",
+        x: 20, y: 20, width: 80, height: 80,
+        sides: 6, cornerRadius: 6,
+        stroke: { r: 0.29, g: 0.73, b: 0.74 },
+        strokeWeight: 2, strokeAlign: "INSIDE",
+      },
+    ],
+  },
+  // Star + INSIDE stroke + cornerRadius. Star has its own
+  // strokeshape path in the renderer; the polygon regression's
+  // root cause (PathNode + cornerRadius) is shared and worth
+  // exercising on this type too.
+  {
+    name: "star-stroke-cornered", width: 120, height: 120, background: "#ffffff",
+    children: [
+      {
+        type: "star", name: "star",
+        x: 20, y: 20, width: 80, height: 80,
+        points: 5, starInnerRadius: 0.4, cornerRadius: 3,
+        stroke: { r: 0.29, g: 0.73, b: 0.74 },
+        strokeWeight: 2, strokeAlign: "INSIDE",
+      },
+    ],
+  },
+  // OUTSIDE-stroke polygon — control case for the strokeshape
+  // branch that handles OUTSIDE differently. Without an explicit
+  // counter-example here, an INSIDE-only test would not catch a
+  // regression that silently flips alignment.
+  {
+    name: "polygon-hex-stroke-outside", width: 140, height: 140, background: "#ffffff",
+    children: [
+      {
+        type: "polygon", name: "hex",
+        x: 30, y: 30, width: 80, height: 80,
+        sides: 6, cornerRadius: 4,
+        stroke: { r: 0.29, g: 0.73, b: 0.74 },
+        strokeWeight: 2, strokeAlign: "OUTSIDE",
+      },
+    ],
+  },
 ];
 
 function hexToColor(hex: string): FigColor {
@@ -285,6 +387,8 @@ function addShapeChild(
       const r = addNode({
         state, context, pageGuid, parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ELLIPSE",
           name: child.name,
           x: child.x, y: child.y,
@@ -309,13 +413,15 @@ function addShapeChild(
       const r = addNode({
         state, context, pageGuid, parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "LINE",
           name: child.name,
           x: child.x, y: child.y,
           width: child.width, height: 0,
           strokes,
           strokeWeight: child.strokeWeight,
-          strokeCap: strokeCapValue(child.strokeCap),
+          strokeCap: child.strokeCap,
           strokeDashes: child.dashPattern,
           rotation: child.rotation !== undefined ? (child.rotation * Math.PI) / 180 : undefined,
         },
@@ -323,36 +429,54 @@ function addShapeChild(
       return r.context;
     }
     case "star": {
-      return addNode({
+      const strokes = child.stroke ? [solidPaint(rgbToColor(child.stroke))] : undefined;
+      const result = addNode({
         state, context, pageGuid, parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "STAR",
           name: child.name,
           x: child.x, y: child.y,
           width: child.width, height: child.height,
           fills,
+          strokes,
+          strokeWeight: strokes ? (child.strokeWeight ?? 1) : undefined,
+          strokeAlign: strokes ? (child.strokeAlign ?? "INSIDE") : undefined,
+          strokeJoin: strokes ? "MITER" : undefined,
           pointCount: child.points,
           starInnerRadius: child.starInnerRadius,
         },
-      }).context;
+      });
+      return injectCornerRadius(result.context, result.nodeGuid, child.cornerRadius);
     }
     case "polygon": {
-      return addNode({
+      const strokes = child.stroke ? [solidPaint(rgbToColor(child.stroke))] : undefined;
+      const result = addNode({
         state, context, pageGuid, parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "REGULAR_POLYGON",
           name: child.name,
           x: child.x, y: child.y,
           width: child.width, height: child.height,
           fills,
+          strokes,
+          strokeWeight: strokes ? (child.strokeWeight ?? 1) : undefined,
+          strokeAlign: strokes ? (child.strokeAlign ?? "INSIDE") : undefined,
+          strokeJoin: strokes ? "MITER" : undefined,
           pointCount: child.sides,
         },
-      }).context;
+      });
+      return injectCornerRadius(result.context, result.nodeGuid, child.cornerRadius);
     }
     case "rect": {
       return addNode({
         state, context, pageGuid, parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: child.name,
           x: child.x, y: child.y,
@@ -397,6 +521,8 @@ async function generateShapeFixtures(): Promise<void> {
     const frameResult = addNode({
       state, context: acc, pageGuid, parentGuid: null,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "FRAME",
         name: frameData.name,
         x: frameX, y: frameY,

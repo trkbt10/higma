@@ -1286,9 +1286,18 @@ describe("resolveRenderTree — stroke layers", () => {
     if (strokeRendering === undefined) {
       throw new Error("expected diamond polygon to produce stroke rendering");
     }
-    // The strokeShape must NOT be `kind:"rect"` — the rect-stroke
+    // Only the `masked` and `layers` modes carry a `shape` slot —
+    // `uniform` and `geometry` do not. The diamond polygon's INSIDE
+    // stroke must land in one of the shape-carrying modes, and the
+    // shape it carries must NOT be `kind:"rect"` (the rect-stroke
     // emitter would otherwise draw an axis-aligned `<rect rx=5>` over
-    // the diamond's actual outline.
+    // the diamond's actual outline). `"shape" in …` narrows the union
+    // without an unsafe cast.
+    if (!("shape" in strokeRendering)) {
+      throw new Error(
+        `diamond polygon strokeRendering unexpectedly landed in mode="${strokeRendering.mode}" (no shape carried)`,
+      );
+    }
     expect(strokeRendering.shape.kind).toBe("path");
   });
 

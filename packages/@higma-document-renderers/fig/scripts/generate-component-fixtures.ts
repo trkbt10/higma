@@ -26,9 +26,9 @@ import {
   requireCanvas,
   type FigDocumentContext,
   type KiwiStackLayoutFields,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import {
   STACK_ALIGN_VALUES,
@@ -37,7 +37,7 @@ import {
 } from "@higma-document-models/fig/constants";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/components");
@@ -51,8 +51,8 @@ function rgb(r: number, g: number, b: number): FigColor {
   return { r, g, b, a: 1 };
 }
 
-function solidPaint(color: FigColor): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 type StackMode = "HORIZONTAL" | "VERTICAL";
@@ -135,6 +135,8 @@ async function generateComponentFixtures(): Promise<void> {
     pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "Button",
       x: 50,
@@ -159,6 +161,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: buttonSymbol.context, pageGuid: ctx.pageGuid,
     parentGuid: buttonSymbolId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "bg",
       x: 0, y: 0, width: 120, height: 40,
@@ -172,6 +176,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: buttonBg.context, pageGuid: ctx.pageGuid,
     parentGuid: buttonSymbolId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "TEXT",
       name: "label",
       characters: "Click Me",
@@ -190,6 +196,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: buttonText.context, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "instance-single",
       x: 50, y: 150, width: 160, height: 80,
@@ -201,6 +209,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: frame1.context, pageGuid: ctx.pageGuid,
     parentGuid: frame1.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "Button Instance", symbolId: buttonSymbolId,
       x: 20, y: 20, width: 120, height: 40,
     },
@@ -213,6 +223,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: instance1.context, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "instance-multi",
       x: 50, y: 250, width: 160, height: 160,
@@ -227,6 +239,8 @@ async function generateComponentFixtures(): Promise<void> {
       state: ctx.state, context: acc, pageGuid: ctx.pageGuid,
       parentGuid: frame2.nodeGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "INSTANCE", name: `Button ${i + 1}`, symbolId: buttonSymbolId,
         x: 20, y: 20 + i * 50, width: 120, height: 40,
       },
@@ -241,6 +255,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: frame2Filled, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "instance-override-fill",
       x: 50, y: 430, width: 300, height: 80,
@@ -255,6 +271,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: frame3.context, pageGuid: ctx.pageGuid,
     parentGuid: frame3.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "Original", symbolId: buttonSymbolId,
       x: 20, y: 20, width: 120, height: 40,
     },
@@ -266,6 +284,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: f3Inst1.context, pageGuid: ctx.pageGuid,
     parentGuid: frame3.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "Red Override", symbolId: buttonSymbolId,
       x: 160, y: 20, width: 120, height: 40,
       fills: [solidPaint(rgb(0.9, 0.2, 0.2))],
@@ -279,6 +299,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: f3Inst2.context, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "Card",
       x: 250, y: 50, width: 180, height: 100,
@@ -300,6 +322,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: cardSymbolRounded, pageGuid: ctx.pageGuid,
     parentGuid: cardSymbolId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "TEXT",
       name: "title",
       characters: "Card Title",
@@ -316,6 +340,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: cardTitle.context, pageGuid: ctx.pageGuid,
     parentGuid: cardSymbolId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "action", symbolId: buttonSymbolId,
       x: 16, y: 44, width: 120, height: 40,
     },
@@ -328,6 +354,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: nestedButton.context, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "instance-nested",
       x: 250, y: 150, width: 220, height: 140,
@@ -339,6 +367,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: frame4.context, pageGuid: ctx.pageGuid,
     parentGuid: frame4.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "INSTANCE", name: "Card Instance", symbolId: cardSymbolId,
       x: 20, y: 20, width: 180, height: 100,
     },
@@ -351,6 +381,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: cardInst.context, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "instance-in-autolayout",
       x: 250, y: 310, width: 400, height: 80,
@@ -368,6 +400,8 @@ async function generateComponentFixtures(): Promise<void> {
       state: ctx.state, context: acc, pageGuid: ctx.pageGuid,
       parentGuid: frame5.nodeGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "INSTANCE", name: `Action ${i + 1}`, symbolId: buttonSymbolId,
         x: 20 + i * 130, y: 20, width: 100, height: 40,
         ...{ stackChildPrimaryGrow: 1 },
@@ -383,6 +417,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: frame5Filled, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "Icon",
       x: 500, y: 50, width: 24, height: 24,
@@ -403,6 +439,8 @@ async function generateComponentFixtures(): Promise<void> {
     state: ctx.state, context: iconSymbolRounded, pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "instance-icons",
       x: 250, y: 410, width: 200, height: 60,
@@ -420,6 +458,8 @@ async function generateComponentFixtures(): Promise<void> {
       state: ctx.state, context: acc, pageGuid: ctx.pageGuid,
       parentGuid: frame6.nodeGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "INSTANCE", name: `icon-${i + 1}`, symbolId: iconSymbolId,
         x: 18 + i * 32, y: 18, width: 24, height: 24,
       },

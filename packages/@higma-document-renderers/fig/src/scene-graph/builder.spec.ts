@@ -3,7 +3,7 @@
 import { buildSceneGraph } from "./builder";
 import { renderSceneGraphToSvg } from "../svg";
 import { encodeSvgPathBlob } from "@higma-document-models/fig/node-factory";
-import { STACK_COUNTER_ALIGN_VALUES, STACK_MODE_VALUES, STROKE_ALIGN_VALUES, STYLE_TYPE_VALUES } from "@higma-document-models/fig/constants";
+import { STACK_ALIGN_VALUES, STACK_MODE_VALUES, STROKE_ALIGN_VALUES, STYLE_TYPE_VALUES, toEnumValue } from "@higma-document-models/fig/constants";
 import type { FigNode } from "@higma-document-models/fig/types";
 import type {
   EllipseNode,
@@ -125,8 +125,8 @@ describe("buildSceneGraph", () => {
         width: 402,
         height: 48,
       }),
-      stackMode: { value: STACK_MODE_VALUES.HORIZONTAL, name: "HORIZONTAL" },
-      stackCounterAlignItems: { value: STACK_COUNTER_ALIGN_VALUES.CENTER, name: "CENTER" },
+      stackMode: toEnumValue("HORIZONTAL", STACK_MODE_VALUES),
+      stackCounterAlignItems: toEnumValue("CENTER", STACK_ALIGN_VALUES),
       stackSpacing: 8,
       stackVerticalPadding: 10,
       stackHorizontalPadding: 20,

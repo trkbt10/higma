@@ -20,7 +20,7 @@ import {
   createFigBuilderStateFromDocument,
   type FigBuilderState,
 } from "@higma-document-models/fig/builder";
-import { createBooleanOperationEnum } from "@higma-document-models/fig/boolean-operation";
+import { pathOpToWireOp } from "@higma-document-models/fig/boolean-operation";
 import {
   getNodeType,
   guidToString,
@@ -1344,7 +1344,9 @@ export function createFigEditorStore({
         y: frame.y,
         width: frame.width,
         height: frame.height,
-        booleanOperation: createBooleanOperationEnum(operation),
+        opacity: 1,
+        visible: true,
+        booleanOperation: pathOpToWireOp(operation),
       },
     });
     const selectedKeys = state.selectedGuids.map(guidKey);

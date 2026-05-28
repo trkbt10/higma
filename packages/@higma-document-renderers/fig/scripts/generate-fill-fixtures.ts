@@ -18,9 +18,11 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type PaintSpec,
+  type SolidPaintSpec,
+  type GradientPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES, STROKE_ALIGN_VALUES, STROKE_CAP_VALUES, STROKE_JOIN_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
@@ -28,21 +30,14 @@ import type {
   FigColor,
   FigGradientStop,
   FigNode,
-  FigPaint,
 } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/fills");
 const OUTPUT_FILE = path.join(OUTPUT_DIR, "fills.fig");
 
-function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor, opacity = 1): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
 /**
@@ -50,7 +45,7 @@ function solidPaint(color: FigColor, opacity = 1): FigPaint {
  * space → normalized object space (0..1, 0..1). `angleDeg=0` ⇒
  * left-to-right, `90` ⇒ top-to-bottom (Figma convention).
  */
-function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): FigPaint {
+function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): GradientPaintSpec {
   const rad = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -61,10 +56,9 @@ function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+    type: "GRADIENT_LINEAR",
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops,
     transform: { m00: dx, m01: -dy, m02: endX, m10: dy, m11: dx, m12: endY },
   };
@@ -79,12 +73,11 @@ function radialGradientPaint(
   centerY: number,
   radius: number,
   stops: readonly FigGradientStop[],
-): FigPaint {
+): GradientPaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
+    type: "GRADIENT_RADIAL",
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops,
     transform: { m00: radius, m01: 0, m02: centerX, m10: 0, m11: radius, m12: centerY },
   };
@@ -98,7 +91,7 @@ type FillChild = {
   width: number;
   height: number;
   cornerRadius?: number;
-  fill?: FigPaint;
+  fill?: PaintSpec;
   strokeData?: {
     color: { r: number; g: number; b: number };
     weight: number;
@@ -119,14 +112,14 @@ type FillFrameData = {
 
 type FillStrokeData = NonNullable<FillChild["strokeData"]>;
 
-const SOLID_RED: FigPaint = solidPaint({ r: 0.9, g: 0.2, b: 0.2, a: 1 });
-const SOLID_GREEN: FigPaint = solidPaint({ r: 0.2, g: 0.8, b: 0.3, a: 1 });
-const SOLID_BLUE: FigPaint = solidPaint({ r: 0.2, g: 0.4, b: 0.9, a: 1 });
-const SOLID_BLACK: FigPaint = solidPaint({ r: 0, g: 0, b: 0, a: 1 });
-const SOLID_WHITE: FigPaint = solidPaint({ r: 1, g: 1, b: 1, a: 1 });
-const SOLID_PURPLE: FigPaint = solidPaint({ r: 0.5, g: 0.2, b: 0.8, a: 1 });
-const SOLID_PURPLE_50: FigPaint = solidPaint({ r: 0.5, g: 0.2, b: 0.8, a: 1 }, 0.5);
-const SOLID_LIGHT_GRAY: FigPaint = solidPaint({ r: 0.9, g: 0.9, b: 0.9, a: 1 });
+const SOLID_RED: PaintSpec = solidPaint({ r: 0.9, g: 0.2, b: 0.2, a: 1 });
+const SOLID_GREEN: PaintSpec = solidPaint({ r: 0.2, g: 0.8, b: 0.3, a: 1 });
+const SOLID_BLUE: PaintSpec = solidPaint({ r: 0.2, g: 0.4, b: 0.9, a: 1 });
+const SOLID_BLACK: PaintSpec = solidPaint({ r: 0, g: 0, b: 0, a: 1 });
+const SOLID_WHITE: PaintSpec = solidPaint({ r: 1, g: 1, b: 1, a: 1 });
+const SOLID_PURPLE: PaintSpec = solidPaint({ r: 0.5, g: 0.2, b: 0.8, a: 1 });
+const SOLID_PURPLE_50: PaintSpec = solidPaint({ r: 0.5, g: 0.2, b: 0.8, a: 1 }, 0.5);
+const SOLID_LIGHT_GRAY: PaintSpec = solidPaint({ r: 0.9, g: 0.9, b: 0.9, a: 1 });
 
 const FILL_FRAMES: FillFrameData[] = [
   {
@@ -329,7 +322,7 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   };
 }
 
-function buildStrokeList(strokeData: FillChild["strokeData"]): FigPaint[] {
+function buildStrokeList(strokeData: FillChild["strokeData"]): PaintSpec[] {
   if (!strokeData) {return [];}
   return [solidPaint({ ...strokeData.color, a: 1 })];
 }
@@ -341,13 +334,15 @@ function addFillChild(
   parentGuid: ReturnType<typeof addNode>["nodeGuid"],
   child: FillChild,
 ): FigDocumentContext {
-  const fills: FigPaint[] = child.fill ? [child.fill] : [];
-  const strokes: FigPaint[] = buildStrokeList(child.strokeData);
+  const fills: PaintSpec[] = child.fill ? [child.fill] : [];
+  const strokes: PaintSpec[] = buildStrokeList(child.strokeData);
 
   const type = child.shape === "rect" ? "ROUNDED_RECTANGLE" : "ELLIPSE";
   const r = addNode({
     state, context, pageGuid, parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type,
       name: child.name,
       x: child.x, y: child.y,
@@ -355,35 +350,17 @@ function addFillChild(
       fills,
       strokes,
       strokeWeight: child.strokeData?.weight,
-      strokeCap: strokeCapValue(child.strokeData?.cap),
-      strokeJoin: strokeJoinValue(child.strokeData?.join),
-      strokeAlign: strokeAlignValue(child.strokeData?.align),
+      // The builder lifts these plain string names to their Kiwi
+      // `value` entries inside `createNodeFromSpec`. This script no
+      // longer mirrors the `STROKE_*_VALUES` tables.
+      strokeCap: child.strokeData?.cap,
+      strokeJoin: child.strokeData?.join,
+      strokeAlign: child.strokeData?.align,
       strokeDashes: child.strokeData?.dash,
       cornerRadius: child.shape === "rect" ? child.cornerRadius : undefined,
     },
   });
   return r.context;
-}
-
-function strokeCapValue(name: FillStrokeData["cap"]): FigNode["strokeCap"] {
-  if (name === undefined) {
-    return undefined;
-  }
-  return { value: STROKE_CAP_VALUES[name], name };
-}
-
-function strokeJoinValue(name: FillStrokeData["join"]): FigNode["strokeJoin"] {
-  if (name === undefined) {
-    return undefined;
-  }
-  return { value: STROKE_JOIN_VALUES[name], name };
-}
-
-function strokeAlignValue(name: FillStrokeData["align"]): FigNode["strokeAlign"] {
-  if (name === undefined) {
-    return undefined;
-  }
-  return { value: STROKE_ALIGN_VALUES[name], name };
 }
 
 async function generateFillFixtures(): Promise<void> {
@@ -416,6 +393,8 @@ async function generateFillFixtures(): Promise<void> {
     const frameResult = addNode({
       state, context: acc, pageGuid, parentGuid: null,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "FRAME",
         name: frameData.name,
         x: frameX, y: frameY,

@@ -59,6 +59,8 @@ function buildContextWithFrame(
       y,
       width,
       height,
+      visible: true,
+      opacity: 1,
     },
   });
   return { context: step.context, frameGuid: step.nodeGuid };

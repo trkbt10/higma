@@ -28,17 +28,17 @@ import {
   updateNode,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
+  type GradientPaintSpec,
+  type EffectSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, EFFECT_TYPE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
 import type {
   FigColor,
-  FigEffect,
   FigGradientStop,
-  FigPaint,
 } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,11 +59,11 @@ const LIGHT_GRAY: FigColor = { r: 0.95, g: 0.95, b: 0.95, a: 1 };
 // Paint construction
 // =============================================================================
 
-function solidPaint(color: FigColor, opacity = 1): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor, opacity = 1): SolidPaintSpec {
+  return { type: "SOLID", color, opacity, visible: true };
 }
 
-function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): FigPaint {
+function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]): GradientPaintSpec {
   const rad = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -74,34 +74,32 @@ function linearGradientPaint(angleDeg: number, stops: readonly FigGradientStop[]
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+    type: "GRADIENT_LINEAR",
     stops,
     transform: { m00: dx, m01: -dy, m02: endX, m10: dy, m11: dx, m12: endY },
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function radialGradientPaint(stops: readonly FigGradientStop[]): FigPaint {
+function radialGradientPaint(stops: readonly FigGradientStop[]): GradientPaintSpec {
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_RADIAL, name: "GRADIENT_RADIAL" },
+    type: "GRADIENT_RADIAL",
     stops,
     transform: { m00: 0.5, m01: 0, m02: 0.5, m10: 0, m11: 0.5, m12: 0.5 },
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function gradientBlueToGreen(): FigPaint {
+function gradientBlueToGreen(): GradientPaintSpec {
   return linearGradientPaint(0, [
     { position: 0, color: { r: 0.2, g: 0.4, b: 0.9, a: 1 } },
     { position: 1, color: { r: 0.2, g: 0.8, b: 0.5, a: 1 } },
   ]);
 }
 
-function gradientSunset(): FigPaint {
+function gradientSunset(): GradientPaintSpec {
   return linearGradientPaint(135, [
     { position: 0, color: { r: 1.0, g: 0.4, b: 0.3, a: 1 } },
     { position: 0.5, color: { r: 0.9, g: 0.2, b: 0.5, a: 1 } },
@@ -109,14 +107,14 @@ function gradientSunset(): FigPaint {
   ]);
 }
 
-function gradientRadialGlow(): FigPaint {
+function gradientRadialGlow(): GradientPaintSpec {
   return radialGradientPaint([
     { position: 0, color: { r: 1.0, g: 1.0, b: 0.8, a: 1 } },
     { position: 1, color: { r: 0.9, g: 0.5, b: 0.1, a: 1 } },
   ]);
 }
 
-function gradientVertical(): FigPaint {
+function gradientVertical(): GradientPaintSpec {
   return linearGradientPaint(90, [
     { position: 0, color: { r: 0.95, g: 0.95, b: 1.0, a: 1 } },
     { position: 1, color: { r: 0.7, g: 0.7, b: 0.9, a: 1 } },
@@ -132,14 +130,13 @@ function dropShadowEffect(opts: {
   readonly offsetY: number;
   readonly radius: number;
   readonly color: FigColor;
-}): FigEffect {
+}): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.DROP_SHADOW, name: "DROP_SHADOW" },
+    type: "DROP_SHADOW",
     visible: true,
     color: opts.color,
     offset: { x: opts.offsetX, y: opts.offsetY },
     radius: opts.radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
@@ -148,36 +145,18 @@ function innerShadowEffect(opts: {
   readonly offsetY: number;
   readonly radius: number;
   readonly color: FigColor;
-}): FigEffect {
+}): EffectSpec {
   return {
-    type: { value: EFFECT_TYPE_VALUES.INNER_SHADOW, name: "INNER_SHADOW" },
+    type: "INNER_SHADOW",
     visible: true,
     color: opts.color,
     offset: { x: opts.offsetX, y: opts.offsetY },
     radius: opts.radius,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
   };
 }
 
-function layerBlurEffect(radius: number): FigEffect {
-  return { type: { value: EFFECT_TYPE_VALUES.FOREGROUND_BLUR, name: "FOREGROUND_BLUR" }, visible: true, radius };
-}
-
-// =============================================================================
-// BooleanOperation enum (canonical schema values)
-// =============================================================================
-
-type BooleanOp = "UNION" | "INTERSECT" | "SUBTRACT" | "XOR";
-
-const BOOLEAN_OPERATION_VALUES: Record<BooleanOp, number> = {
-  UNION: 0,
-  INTERSECT: 1,
-  SUBTRACT: 2,
-  XOR: 3,
-};
-
-function booleanOperationEnum(op: BooleanOp): { value: number; name: BooleanOp } {
-  return { value: BOOLEAN_OPERATION_VALUES[op], name: op };
+function layerBlurEffect(radius: number): EffectSpec {
+  return { type: "FOREGROUND_BLUR", visible: true, radius };
 }
 
 // =============================================================================
@@ -210,6 +189,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x,
@@ -239,6 +220,8 @@ function addGradientRadius({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "rounded-gradient",
       x: 20,
@@ -260,6 +243,8 @@ function addGradientRadiusPill({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "pill-gradient",
       x: 20,
@@ -281,6 +266,8 @@ function addGradientRadiusCard({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "card-gradient",
       x: 20,
@@ -302,6 +289,8 @@ function addGradientDropShadow({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "gradient-shadowed",
       x: 25,
@@ -324,6 +313,8 @@ function addGradientInnerShadow({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "gradient-inner-shadow",
       x: 30,
@@ -346,6 +337,8 @@ function addGradientMultiEffect({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "gradient-multi-fx",
       x: 30,
@@ -372,6 +365,8 @@ function addGradientBlur({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "gradient-blur",
       x: 30,
@@ -393,6 +388,8 @@ function addGradientStrokeRadius({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "grad-stroke-rounded",
       x: 20,
@@ -416,6 +413,8 @@ function addSolidStrokeRadiusShadow({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "bordered-shadowed",
       x: 25,
@@ -440,13 +439,15 @@ function addBooleanGradient({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "BOOLEAN_OPERATION",
       name: "gradient-union",
       x: 30,
       y: 25,
       width: 140,
       height: 100,
-      booleanOperation: booleanOperationEnum("UNION"),
+      booleanOperation: "UNION",
       fills: [gradientSunset()],
     },
   });
@@ -455,14 +456,18 @@ function addBooleanGradient({ context, ctx, x, y }: Args): Result {
     context: bo.context,
     pageGuid: ctx.pageGuid,
     parentGuid: bo.nodeGuid,
-    spec: { type: "ROUNDED_RECTANGLE", name: "base", x: 0, y: 15, width: 100, height: 70, cornerRadius: 10 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ROUNDED_RECTANGLE", name: "base", x: 0, y: 15, width: 100, height: 70, cornerRadius: 10 },
   });
   const child2 = addNode({
     state: ctx.state,
     context: child1.context,
     pageGuid: ctx.pageGuid,
     parentGuid: bo.nodeGuid,
-    spec: { type: "ELLIPSE", name: "circle", x: 60, y: 0, width: 70, height: 70 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ELLIPSE", name: "circle", x: 60, y: 0, width: 70, height: 70 },
   });
   return { context: child2.context };
 }
@@ -475,13 +480,15 @@ function addBooleanGradientShadow({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "BOOLEAN_OPERATION",
       name: "gradient-subtract",
       x: 40,
       y: 35,
       width: 120,
       height: 90,
-      booleanOperation: booleanOperationEnum("SUBTRACT"),
+      booleanOperation: "SUBTRACT",
       fills: [gradientBlueToGreen()],
     },
   });
@@ -490,14 +497,18 @@ function addBooleanGradientShadow({ context, ctx, x, y }: Args): Result {
     context: bo.context,
     pageGuid: ctx.pageGuid,
     parentGuid: bo.nodeGuid,
-    spec: { type: "ROUNDED_RECTANGLE", name: "outer", x: 0, y: 0, width: 120, height: 90, cornerRadius: 12 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ROUNDED_RECTANGLE", name: "outer", x: 0, y: 0, width: 120, height: 90, cornerRadius: 12 },
   });
   const child2 = addNode({
     state: ctx.state,
     context: child1.context,
     pageGuid: ctx.pageGuid,
     parentGuid: bo.nodeGuid,
-    spec: { type: "ELLIPSE", name: "hole", x: 40, y: 25, width: 40, height: 40 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ELLIPSE", name: "hole", x: 40, y: 25, width: 40, height: 40 },
   });
   return { context: child2.context };
 }
@@ -510,13 +521,15 @@ function addBooleanRoundedOperands({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "BOOLEAN_OPERATION",
       name: "rounded-subtract",
       x: 30,
       y: 25,
       width: 140,
       height: 100,
-      booleanOperation: booleanOperationEnum("SUBTRACT"),
+      booleanOperation: "SUBTRACT",
       fills: [solidPaint(BLUE)],
     },
   });
@@ -525,14 +538,18 @@ function addBooleanRoundedOperands({ context, ctx, x, y }: Args): Result {
     context: bo.context,
     pageGuid: ctx.pageGuid,
     parentGuid: bo.nodeGuid,
-    spec: { type: "ROUNDED_RECTANGLE", name: "outer-rounded", x: 0, y: 0, width: 140, height: 100, cornerRadius: 20 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ROUNDED_RECTANGLE", name: "outer-rounded", x: 0, y: 0, width: 140, height: 100, cornerRadius: 20 },
   });
   const child2 = addNode({
     state: ctx.state,
     context: child1.context,
     pageGuid: ctx.pageGuid,
     parentGuid: bo.nodeGuid,
-    spec: { type: "ROUNDED_RECTANGLE", name: "inner-rounded", x: 20, y: 20, width: 100, height: 60, cornerRadius: 10 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ROUNDED_RECTANGLE", name: "inner-rounded", x: 20, y: 20, width: 100, height: 60, cornerRadius: 10 },
   });
   return { context: child2.context };
 }
@@ -545,6 +562,8 @@ function addInstanceDecorationInherit({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "CardSymbol",
       x: x - 200,
@@ -565,6 +584,8 @@ function addInstanceDecorationInherit({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: sym.nodeGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "bg",
       x: 0,
@@ -589,14 +610,18 @@ function addInstanceDecorationInherit({ context, ctx, x, y }: Args): Result {
     context: frame.context,
     pageGuid: ctx.pageGuid,
     parentGuid: frame.id,
-    spec: { type: "INSTANCE", name: "inherited", symbolId: sym.nodeGuid, x: 10, y: 20, width: 140, height: 80 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "inherited", symbolId: sym.nodeGuid, x: 10, y: 20, width: 140, height: 80 },
   });
   const inst2 = addNode({
     state: ctx.state,
     context: inst1.context,
     pageGuid: ctx.pageGuid,
     parentGuid: frame.id,
-    spec: { type: "INSTANCE", name: "inherited-2", symbolId: sym.nodeGuid, x: 170, y: 20, width: 140, height: 80 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "inherited-2", symbolId: sym.nodeGuid, x: 170, y: 20, width: 140, height: 80 },
   });
   return { context: inst2.context };
 }
@@ -608,6 +633,8 @@ function addInstanceGradientOverride({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "SYMBOL",
       name: "ButtonSymbol",
       x: x - 200,
@@ -627,7 +654,9 @@ function addInstanceGradientOverride({ context, ctx, x, y }: Args): Result {
     context: symWithRadius,
     pageGuid: ctx.pageGuid,
     parentGuid: sym.nodeGuid,
-    spec: { type: "ROUNDED_RECTANGLE", name: "btn-bg", x: 0, y: 0, width: 120, height: 44, cornerRadius: 8, fills: [solidPaint(BLUE)] },
+    spec: {
+  visible: true,
+  opacity: 1, type: "ROUNDED_RECTANGLE", name: "btn-bg", x: 0, y: 0, width: 120, height: 44, cornerRadius: 8, fills: [solidPaint(BLUE)] },
   });
   const frame = addFrame(symChild.context, ctx, null, {
     name: "instance-gradient-override",
@@ -642,14 +671,18 @@ function addInstanceGradientOverride({ context, ctx, x, y }: Args): Result {
     context: frame.context,
     pageGuid: ctx.pageGuid,
     parentGuid: frame.id,
-    spec: { type: "INSTANCE", name: "solid-default", symbolId: sym.nodeGuid, x: 15, y: 28, width: 120, height: 44 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "solid-default", symbolId: sym.nodeGuid, x: 15, y: 28, width: 120, height: 44 },
   });
   const inst2 = addNode({
     state: ctx.state,
     context: inst1.context,
     pageGuid: ctx.pageGuid,
     parentGuid: frame.id,
-    spec: { type: "INSTANCE", name: "gradient-override", symbolId: sym.nodeGuid, x: 160, y: 28, width: 120, height: 44 },
+    spec: {
+  visible: true,
+  opacity: 1, type: "INSTANCE", name: "gradient-override", symbolId: sym.nodeGuid, x: 160, y: 28, width: 120, height: 44 },
   });
   return { context: inst2.context };
 }
@@ -671,6 +704,8 @@ function addClipGradient({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: clip.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "overflow-gradient",
       x: -20,
@@ -699,6 +734,8 @@ function addClipShadow({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: clip.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "near-edge",
       x: 30,
@@ -721,6 +758,8 @@ function addRealisticCard({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "card-body",
       x: 20,
@@ -751,6 +790,8 @@ function addRealisticBadge({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "badge",
       x: 20,
@@ -776,6 +817,8 @@ function addRealisticAvatar({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name: "avatar",
       x: 20,
@@ -802,6 +845,8 @@ function addGradientOpacity({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: "bg-solid",
       x: 20,
@@ -817,6 +862,7 @@ function addGradientOpacity({ context, ctx, x, y }: Args): Result {
     pageGuid: ctx.pageGuid,
     parentGuid: f.id,
     spec: {
+      visible: true,
       type: "ROUNDED_RECTANGLE",
       name: "gradient-overlay",
       x: 40,

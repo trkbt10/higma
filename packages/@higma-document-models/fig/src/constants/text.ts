@@ -80,3 +80,29 @@ export const NUMBER_UNITS_VALUES = requireFigEnumTable("NumberUnits", [
 ]);
 
 export type NumberUnits = "RAW" | "PIXELS" | "PERCENT";
+
+/**
+ * Text truncation values — schema `TextTruncation`. `ENDING` wraps
+ * within the bounding box then truncates with an ellipsis when the
+ * box runs out of vertical space; `DISABLED` allows the text to
+ * overflow without an indicator.
+ */
+export const TEXT_TRUNCATION_VALUES = requireFigEnumTable("TextTruncation", [
+  "DISABLED",
+  "ENDING",
+]);
+
+export type TextTruncation = "DISABLED" | "ENDING";
+
+/**
+ * Vertical leading trim values — schema `LeadingTrim`. `CAP_HEIGHT`
+ * crops the empty space above the cap line and below the baseline so
+ * the bounding box matches the visual extent of the glyphs (Figma's
+ * "Vertical trim: cap height to baseline" toggle).
+ */
+export const LEADING_TRIM_VALUES = requireFigEnumTable("LeadingTrim", [
+  "NONE",
+  "CAP_HEIGHT",
+]);
+
+export type LeadingTrim = "NONE" | "CAP_HEIGHT";

@@ -32,13 +32,13 @@ import {
   requireCanvas,
   type FigDocumentContext,
   type KiwiStackLayoutFields,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 import {
   STACK_ALIGN_VALUES,
   STACK_JUSTIFY_VALUES,
@@ -70,14 +70,8 @@ function hexColor(hex: string, alpha: number = 1): FigColor {
   return { r, g, b, a: alpha };
 }
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 // =============================================================================
@@ -386,6 +380,8 @@ function addTestCase(
     pageGuid: ctx.pageGuid,
     parentGuid: null,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: testCase.name,
       x,
@@ -404,6 +400,8 @@ function addTestCase(
       pageGuid: ctx.pageGuid,
       parentGuid: frame.nodeGuid as FigGuid,
       spec: {
+        visible: true,
+        opacity: 1,
         type: "ROUNDED_RECTANGLE",
         name: child.name,
         x: child.x,

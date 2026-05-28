@@ -20,13 +20,13 @@ import {
   type FigDocumentContext,
   type KiwiStackLayoutFields,
   type KiwiChildLayoutFields,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 import type { FigGridTrackPositions } from "@higma-document-models/fig/types";
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 import {
   STACK_ALIGN_VALUES,
   STACK_COUNTER_ALIGN_VALUES,
@@ -51,8 +51,8 @@ const GREEN: FigColor = { r: 0.302, g: 0.898, b: 0.302, a: 1 };
 const ORANGE: FigColor = { r: 1, g: 0.584, b: 0, a: 1 };
 const PURPLE: FigColor = { r: 0.56, g: 0.33, b: 0.86, a: 1 };
 
-function solidPaint(color: FigColor): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 // =============================================================================
@@ -369,6 +369,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x,
@@ -410,6 +412,8 @@ function addRect(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ROUNDED_RECTANGLE",
       name: spec.name,
       x: spec.x,
@@ -1005,6 +1009,8 @@ function addPhaseBFixtures(context: FigDocumentContext, ctx: Ctx): FigDocumentCo
     pageGuid: ctx.pageGuid,
     parentGuid: stretch.frameId,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: "stretch-child",
       x: 0,

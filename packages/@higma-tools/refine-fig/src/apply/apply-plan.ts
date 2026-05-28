@@ -14,6 +14,7 @@ import {
   STROKE_ALIGN_VALUES,
   STROKE_JOIN_VALUES,
   STYLE_TYPE_VALUES,
+  toEnumValue,
 } from "@higma-document-models/fig/constants";
 import {
   createFigBuilderStateFromDocument,
@@ -84,8 +85,8 @@ const CREATED_PHASE = { value: 0, name: "CREATED" } as const;
 const NORMAL_BLEND = { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } as const;
 const REQUIRED_SHAPE_STROKE_FIELDS = {
   strokeWeight: 0,
-  strokeAlign: { value: STROKE_ALIGN_VALUES.INSIDE, name: "INSIDE" },
-  strokeJoin: { value: STROKE_JOIN_VALUES.MITER, name: "MITER" },
+  strokeAlign: toEnumValue("INSIDE", STROKE_ALIGN_VALUES),
+  strokeJoin: toEnumValue("MITER", STROKE_JOIN_VALUES),
 } as const;
 
 type MutableApplySummary = {

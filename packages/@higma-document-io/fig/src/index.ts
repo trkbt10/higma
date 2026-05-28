@@ -14,6 +14,28 @@ export type {
   BaseNodeSpec,
   KiwiStackLayoutFields,
   KiwiChildLayoutFields,
+  PaintSpec,
+  SolidPaintSpec,
+  GradientPaintSpec,
+  ImagePaintSpec,
+  EffectSpec,
+  RequiredNodeDisplayField,
+} from "./types";
+
+// Paint / effect spec helpers. `asFigPaint` lifts a spec-form entry
+// in `NodeSpec.fills` / `NodeSpec.strokes` to the wire-format
+// `FigPaint` (callers that want to use the paint accessors in
+// `@higma-document-models/fig/color`).
+export { asFigPaint, isPaintSpec, paintSpecToFig } from "./node-ops/paint-spec";
+export { isEffectSpec, effectSpecToFig } from "./node-ops/effect-spec";
+
+// SoT for "every non-DOCUMENT FigNode carries these display fields";
+// spec types and lint rules both reference these names so the contract
+// stays in lockstep.
+export {
+  REQUIRED_NODE_DISPLAY_FIELDS,
+  DEFAULT_DISPLAY_FIELDS,
+  nodeRequiresDisplayFields,
 } from "./types";
 
 // Context

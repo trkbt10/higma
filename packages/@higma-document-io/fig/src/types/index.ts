@@ -30,4 +30,16 @@ export type {
   InstanceNodeSpec,
   KiwiStackLayoutFields,
   KiwiChildLayoutFields,
+  PaintSpec,
+  SolidPaintSpec,
+  GradientPaintSpec,
+  ImagePaintSpec,
+  EffectSpec,
 } from "./spec-types";
+
+export {
+  REQUIRED_NODE_DISPLAY_FIELDS,
+  DEFAULT_DISPLAY_FIELDS,
+  nodeRequiresDisplayFields,
+  type RequiredNodeDisplayField,
+} from "./required-fields";

@@ -27,13 +27,13 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type SolidPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/composite");
@@ -56,33 +56,11 @@ const COLORS = {
   bgGray: { r: 0.95, g: 0.95, b: 0.95, a: 1 } satisfies FigColor,
 } as const;
 
-function solidPaint(color: FigColor): FigPaint {
-  return { type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" }, color, opacity: 1, visible: true, blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" } };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
-// =============================================================================
-// BooleanOperation enum
-//
-// Pinned to Figma's canonical `BooleanOperation` Kiwi enum:
-// UNION = 0, INTERSECT = 1, SUBTRACT = 2, XOR = 3.
-// The XOR alias `EXCLUDE` was a fig-file builder convention — the
-// schema only knows XOR, so we keep the schema names here. The two
-// labels render identically (Figma displays "Exclude" for XOR in its
-// UI).
-// =============================================================================
-
-type BooleanOp = "UNION" | "INTERSECT" | "SUBTRACT" | "XOR";
-
-const BOOLEAN_OPERATION_VALUES: Record<BooleanOp, number> = {
-  UNION: 0,
-  INTERSECT: 1,
-  SUBTRACT: 2,
-  XOR: 3,
-};
-
-function booleanOperationEnum(op: BooleanOp): { value: number; name: BooleanOp } {
-  return { value: BOOLEAN_OPERATION_VALUES[op], name: op };
-}
+import type { BooleanOperation } from "@higma-document-models/fig/boolean-operation";
 
 // =============================================================================
 // Frame and boolean construction
@@ -115,6 +93,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name: opts.name,
       x: opts.x,
@@ -134,12 +114,12 @@ function addBoolean(
   parentGuid: FigGuid,
   opts: {
     readonly name: string;
-    readonly operation: BooleanOp;
+    readonly operation: BooleanOperation;
     readonly x: number;
     readonly y: number;
     readonly width: number;
     readonly height: number;
-    readonly fill?: FigPaint;
+    readonly fill?: SolidPaintSpec;
     readonly opacity?: number;
   },
 ): AddedFrame {
@@ -149,15 +129,16 @@ function addBoolean(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
       type: "BOOLEAN_OPERATION",
       name: opts.name,
       x: opts.x,
       y: opts.y,
       width: opts.width,
       height: opts.height,
-      booleanOperation: booleanOperationEnum(opts.operation),
+      booleanOperation: opts.operation,
       fills: opts.fill ? [opts.fill] : undefined,
-      opacity: opts.opacity,
+      opacity: opts.opacity ?? 1,
     },
   });
   return { context: r.context, id: r.nodeGuid };
@@ -183,7 +164,9 @@ function addChild(
         context,
         pageGuid: ctx.pageGuid,
         parentGuid,
-        spec: { type: "RECTANGLE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
+        spec: {
+      visible: true,
+      opacity: 1, type: "RECTANGLE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
       }).context;
     case "ROUNDED":
       return addNode({
@@ -192,6 +175,8 @@ function addChild(
         pageGuid: ctx.pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "ROUNDED_RECTANGLE",
           name: child.name,
           x: child.x,
@@ -207,7 +192,9 @@ function addChild(
         context,
         pageGuid: ctx.pageGuid,
         parentGuid,
-        spec: { type: "ELLIPSE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
+        spec: {
+      visible: true,
+      opacity: 1, type: "ELLIPSE", name: child.name, x: child.x, y: child.y, width: child.w, height: child.h },
       }).context;
     case "STAR":
       return addNode({
@@ -216,6 +203,8 @@ function addChild(
         pageGuid: ctx.pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "STAR",
           name: child.name,
           x: child.x,
@@ -233,6 +222,8 @@ function addChild(
         pageGuid: ctx.pageGuid,
         parentGuid,
         spec: {
+          visible: true,
+          opacity: 1,
           type: "REGULAR_POLYGON",
           name: child.name,
           x: child.x,
@@ -258,12 +249,12 @@ function buildWithChildren(
   frameSize: { w: number; h: number; background: FigColor },
   bool: {
     name: string;
-    operation: BooleanOp;
+    operation: BooleanOperation;
     x: number;
     y: number;
     w: number;
     h: number;
-    fill?: FigPaint;
+    fill?: SolidPaintSpec;
     opacity?: number;
   },
   children: readonly ChildShape[],
@@ -482,7 +473,7 @@ function addMultipleBooleans({ context, ctx, x, y }: Args): Result {
 
   type Group = {
     name: string;
-    op: BooleanOp;
+    op: BooleanOperation;
     bx: number;
     fill: FigColor;
     children: readonly ChildShape[];

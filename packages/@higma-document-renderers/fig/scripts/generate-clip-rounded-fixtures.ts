@@ -23,13 +23,15 @@ import {
   exportFig,
   requireCanvas,
   type FigDocumentContext,
+  type PaintSpec,
+  type SolidPaintSpec,
+  type GradientPaintSpec,
 } from "@higma-document-io/fig";
 import { createFigBuilderState } from "@higma-document-models/fig/builder";
-import { BLEND_MODE_VALUES, PAINT_TYPE_VALUES } from "@higma-document-models/fig/constants";
 import type { FigBuilderState } from "@higma-document-models/fig/builder";
 import type { FigGuid } from "@higma-document-models/fig/types";
 
-import type { FigColor, FigGradientStop, FigPaint } from "@higma-document-models/fig/types";
+import type { FigColor, FigGradientStop } from "@higma-document-models/fig/types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, "../fixtures/clip-rounded");
@@ -41,14 +43,8 @@ const BLUE: FigColor = { r: 0.2, g: 0.4, b: 0.9, a: 1 };
 const RED: FigColor = { r: 0.9, g: 0.2, b: 0.2, a: 1 };
 const GREEN: FigColor = { r: 0.2, g: 0.7, b: 0.3, a: 1 };
 
-function solidPaint(color: FigColor): FigPaint {
-  return {
-    type: { value: PAINT_TYPE_VALUES.SOLID, name: "SOLID" },
-    color,
-    opacity: 1,
-    visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
-  };
+function solidPaint(color: FigColor): SolidPaintSpec {
+  return { type: "SOLID", color, opacity: 1, visible: true };
 }
 
 /**
@@ -61,7 +57,7 @@ function solidPaint(color: FigColor): FigPaint {
 function linearGradientPaint(
   angleDeg: number,
   stops: readonly FigGradientStop[],
-): FigPaint {
+): GradientPaintSpec {
   const rad = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -72,10 +68,9 @@ function linearGradientPaint(
   const dx = startX - endX;
   const dy = startY - endY;
   return {
-    type: { value: PAINT_TYPE_VALUES.GRADIENT_LINEAR, name: "GRADIENT_LINEAR" },
+    type: "GRADIENT_LINEAR",
     opacity: 1,
     visible: true,
-    blendMode: { value: BLEND_MODE_VALUES.NORMAL, name: "NORMAL" },
     stops,
     transform: {
       m00: dx,
@@ -111,6 +106,8 @@ function addFrame(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "FRAME",
       name,
       x,
@@ -134,7 +131,7 @@ function addRect(
   y: number,
   w: number,
   h: number,
-  fill: FigPaint,
+  fill: PaintSpec,
 ): FigDocumentContext {
   return addNode({
     state: ctx.state,
@@ -142,6 +139,8 @@ function addRect(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "RECTANGLE",
       name,
       x,
@@ -170,6 +169,8 @@ function addEllipse(
     pageGuid: ctx.pageGuid,
     parentGuid,
     spec: {
+      visible: true,
+      opacity: 1,
       type: "ELLIPSE",
       name,
       x,
