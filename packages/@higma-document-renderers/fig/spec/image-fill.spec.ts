@@ -9,10 +9,11 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { detectFeatures, countShapeElements, getSvgSize } from "./helpers/svg-feature-detect";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
+import { indexFigKiwiDocument, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
+import { describeFixtureVisualBinding } from "./helpers/fixture-visual-binding";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "../fixtures/image-fill");
@@ -54,8 +55,9 @@ async function loadFigFile(): Promise<ParsedData> {
   }
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
-  const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
-  const canvases = findNodesByType(roots, "CANVAS");
+  const document = indexFigKiwiDocument(parsed.nodeChanges);
+  const nodeMap = document.nodesByGuid;
+  const canvases = findNodesByType(document, "CANVAS");
   const layers = new Map<string, LayerInfo>();
   for (const canvas of canvases) {
     for (const child of canvas.children ?? []) {
@@ -116,4 +118,11 @@ describe("Image Fill Rendering", () => {
       }
     });
   }
+});
+
+describeFixtureVisualBinding({
+  id: "image-fill",
+  fixtureRoot: FIXTURES_DIR,
+  figFileName: "image-fill.fig",
+  maxDiffPercent: 1.0,
 });

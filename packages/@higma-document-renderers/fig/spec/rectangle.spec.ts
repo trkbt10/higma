@@ -5,10 +5,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
+import { indexFigKiwiDocument, findNodesByType, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
+import { describeFixtureVisualBinding } from "./helpers/fixture-visual-binding";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "../fixtures/rectangle");
 const ACTUAL_DIR = path.join(FIXTURES_DIR, "actual");
@@ -47,8 +48,9 @@ async function loadFigFile(): Promise<ParsedData> {
   }
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
-  const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
-  const canvases = findNodesByType(roots, "CANVAS");
+  const document = indexFigKiwiDocument(parsed.nodeChanges);
+  const nodeMap = document.nodesByGuid;
+  const canvases = findNodesByType(document, "CANVAS");
   const layers = new Map<string, LayerInfo>();
   for (const canvas of canvases) {
     for (const child of canvas.children ?? []) {
@@ -126,4 +128,15 @@ describe("Rectangle Rendering", () => {
       expect(rendered.total).toBeGreaterThan(0);
     });
   }
+});
+
+// Pixel-level binding against `actual/*.svg` baselines. Pure axis-
+// aligned rectangle layers should hit ~0% diff after AA exclusion;
+// the 1.0% cap absorbs the residual rasteriser-edge noise on
+// rotated / dashed variants.
+describeFixtureVisualBinding({
+  id: "rectangle",
+  fixtureRoot: FIXTURES_DIR,
+  figFileName: "rectangle.fig",
+  maxDiffPercent: 1.0,
 });

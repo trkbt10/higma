@@ -17,7 +17,7 @@ import { Resvg } from "@resvg/resvg-js";
 import pixelmatch from "pixelmatch";
 import { readPng, createPngImage } from "@higma-codecs/png";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, findNodesByType } from "@higma-document-models/fig/domain";
+import { indexFigKiwiDocument, findNodesByType } from "@higma-document-models/fig/domain";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
 
@@ -48,8 +48,9 @@ async function loadFixture(): Promise<ParsedFixture> {
   }
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
-  const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
-  const canvases = findNodesByType(roots, "CANVAS");
+  const document = indexFigKiwiDocument(parsed.nodeChanges);
+  const nodeMap = document.nodesByGuid;
+  const canvases = findNodesByType(document, "CANVAS");
 
   const frames = new Map<string, FrameFixture>();
   for (const canvas of canvases) {

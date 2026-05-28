@@ -13,7 +13,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFigFile } from "@higma-document-io/fig/parser";
 import {
-  buildNodeTree,
+  indexFigKiwiDocument,
   findNodesByType,
   getNodeType,
   type FigBlob,
@@ -74,9 +74,10 @@ async function loadFigFile(): Promise<ParsedData> {
 
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
-  const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
+  const document = indexFigKiwiDocument(parsed.nodeChanges);
+  const nodeMap = document.nodesByGuid;
 
-  const canvases = findNodesByType(roots, "CANVAS");
+  const canvases = findNodesByType(document, "CANVAS");
 
   const layers = new Map<string, LayerInfo>();
 

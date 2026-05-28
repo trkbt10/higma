@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFigFile } from "@higma-document-io/fig/parser";
-import { buildNodeTree, type FigBlob } from "@higma-document-models/fig/domain";
+import { indexFigKiwiDocument, type FigBlob } from "@higma-document-models/fig/domain";
 import type { FigPackageImage } from "@higma-figma-containers/package";
 import type { FigNode } from "@higma-document-models/fig/types";
 import { renderCanvas } from "../src/svg/renderer";
@@ -88,9 +88,10 @@ async function loadFigFile(): Promise<ParsedData> {
 
   const data = fs.readFileSync(FIG_FILE);
   const parsed = await parseFigFile(new Uint8Array(data));
-  const { roots, nodeMap } = buildNodeTree(parsed.nodeChanges);
+  const document = indexFigKiwiDocument(parsed.nodeChanges);
+  const nodeMap = document.nodesByGuid;
 
-  const canvases = roots
+  const canvases = document.roots
     .flatMap((r) => r.children ?? [])
     .filter((n) => {
       const d = n as Record<string, unknown>;
@@ -113,7 +114,7 @@ async function loadFigFile(): Promise<ParsedData> {
 
   // If no canvases found, try direct children of roots
   if (layers.size === 0) {
-    for (const root of roots) {
+    for (const root of document.roots) {
       for (const child of root.children ?? []) {
         const nodeData = child as Record<string, unknown>;
         const type = (nodeData.type as { name: string })?.name;
