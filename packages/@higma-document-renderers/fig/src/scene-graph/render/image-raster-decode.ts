@@ -4,9 +4,9 @@ import { readPng, readPngMetadata, type PngImage, type PngImageMetadata } from "
 import { decode as decodeJpeg } from "jpeg-js";
 import {
   extractJpegIccProfile,
-  identifySupportedIccProfile,
-  type FigmaExportColorProfile,
+  recognizeImagePixelColorSpace,
   type IccProfile,
+  type ImagePixelColorSpace,
 } from "@higma-codecs/raster";
 
 export type DecodedRasterImage = {
@@ -67,20 +67,31 @@ function isPngMimeType(mimeType: string): boolean {
 
 function resolveRasterSourceProfileFromMetadata(
   metadata: Pick<PngImageMetadata, "iccProfile" | "srgbIntent">,
-): FigmaExportColorProfile {
+): ImagePixelColorSpace {
   if (metadata.iccProfile) {
-    return identifySupportedIccProfile(metadata.iccProfile);
+    return recognizeImagePixelColorSpace(metadata.iccProfile);
   }
+  // No ICC payload — the codec layer treats absent profile as
+  // sRGB-encoded pixels (matching the PNG `sRGB` chunk + the
+  // browser-default fallback for ICC-less JPEG). `srgbIntent`
+  // explicitly confirms that interpretation when present.
   if (metadata.srgbIntent !== undefined) {
-    return "SRGB";
+    return { kind: "managed", profile: "SRGB" };
   }
-  return "SRGB";
+  return { kind: "managed", profile: "SRGB" };
 }
 
-const encodedRasterSourceProfileCache = new WeakMap<Uint8Array, FigmaExportColorProfile>();
+const encodedRasterSourceProfileCache = new WeakMap<Uint8Array, ImagePixelColorSpace>();
 
-/** Resolve source color profile from encoded image metadata without decoding pixels. */
-export function resolveEncodedRasterSourceProfile(data: Uint8Array, mimeType: string): FigmaExportColorProfile {
+/**
+ * Resolve source pixel-space classification from encoded image
+ * metadata without decoding pixels. `untagged` means the file
+ * carries an ICC profile that does not describe a pixel encoding
+ * (e.g. an LG monitor calibration profile attached by macOS) —
+ * the caller must treat the pixel bytes as untagged sRGB-equivalent
+ * and skip colour conversion for them, matching browser behaviour.
+ */
+export function resolveEncodedRasterSourceProfile(data: Uint8Array, mimeType: string): ImagePixelColorSpace {
   const cached = encodedRasterSourceProfileCache.get(data);
   if (cached !== undefined) {
     return cached;
@@ -90,7 +101,7 @@ export function resolveEncodedRasterSourceProfile(data: Uint8Array, mimeType: st
   return resolved;
 }
 
-function resolveUncachedEncodedRasterSourceProfile(data: Uint8Array, mimeType: string): FigmaExportColorProfile {
+function resolveUncachedEncodedRasterSourceProfile(data: Uint8Array, mimeType: string): ImagePixelColorSpace {
   if (isPngMimeType(mimeType)) {
     return resolveRasterSourceProfileFromMetadata(readPngMetadata(data));
   }
@@ -100,15 +111,25 @@ function resolveUncachedEncodedRasterSourceProfile(data: Uint8Array, mimeType: s
   throw new Error(`IMAGE color management requires PNG or JPEG image data, got ${mimeType}`);
 }
 
-/** Resolve an image's managed source profile using explicit metadata. */
-export function resolveManagedRasterSourceProfile(image: DecodedRasterImage): FigmaExportColorProfile {
+/**
+ * Resolve a decoded image's pixel-space classification.
+ *
+ * Returns `{ kind: "untagged" }` when the embedded ICC profile is a
+ * device-tag profile (display / camera calibration) rather than a
+ * pixel encoding. The fill pipeline interprets that as "the embedded
+ * profile is metadata about where the image came from, not how the
+ * pixels are encoded" — colour conversion is skipped for that image
+ * and the pixel bytes pass through unchanged, matching what every
+ * browser does with the same file.
+ */
+export function resolveManagedRasterSourceProfile(image: DecodedRasterImage): ImagePixelColorSpace {
   if (image.iccProfile) {
-    return identifySupportedIccProfile(image.iccProfile);
+    return recognizeImagePixelColorSpace(image.iccProfile);
   }
   if (image.srgbIntent !== undefined) {
-    return "SRGB";
+    return { kind: "managed", profile: "SRGB" };
   }
-  return "SRGB";
+  return { kind: "managed", profile: "SRGB" };
 }
 
 /** Returns PNG metadata fields that can be preserved when re-encoding RGBA pixels. */

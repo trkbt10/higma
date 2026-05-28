@@ -347,16 +347,25 @@ function resolveImageRasterData(
     return cached;
   }
   const image = decodeRasterImage(data, mimeType);
-  const sourceProfile = targetProfile ? resolveManagedRasterSourceProfile(image) : undefined;
-  const requiresColorConversion = !!(targetProfile && sourceProfile !== targetProfile);
+  const sourceSpace = targetProfile ? resolveManagedRasterSourceProfile(image) : undefined;
+  // `untagged` images carry an ICC payload that does not describe a
+  // pixel encoding (e.g. macOS attaches the LG monitor's display
+  // calibration profile to a JPEG when the user drops a photo into
+  // Figma). The pixel bytes themselves are sRGB-equivalent — every
+  // browser strips the profile and renders the bytes verbatim. We
+  // mirror that here: no per-pixel conversion, but the paint-filter
+  // pass still runs because that is a separate operation.
+  const requiresColorConversion = !!(
+    targetProfile && sourceSpace && sourceSpace.kind === "managed" && sourceSpace.profile !== targetProfile
+  );
   const filtered = hasFilter || requiresColorConversion ? new Uint8Array(image.data) : image.data;
-  if (targetProfile && sourceProfile && sourceProfile !== targetProfile) {
+  if (requiresColorConversion && sourceSpace?.kind === "managed" && targetProfile) {
     for (let i = 0; i < filtered.length; i += 4) {
       const rgb = convertRgbColorProfile({
         r: filtered[i] / 255,
         g: filtered[i + 1] / 255,
         b: filtered[i + 2] / 255,
-      }, sourceProfile, targetProfile);
+      }, sourceSpace.profile, targetProfile);
       filtered[i] = byteFromUnit(rgb.r);
       filtered[i + 1] = byteFromUnit(rgb.g);
       filtered[i + 2] = byteFromUnit(rgb.b);
@@ -405,7 +414,16 @@ function encodedRasterAlreadyMatchesTarget(
   if (targetProfile === undefined) {
     return false;
   }
-  return resolveEncodedRasterSourceProfile(data, mimeType) === targetProfile;
+  const sourceSpace = resolveEncodedRasterSourceProfile(data, mimeType);
+  // `untagged` images need no conversion regardless of target — the
+  // pixel bytes are treated as the target space (matching what the
+  // browser would show), so the encoded data can be passed through
+  // unchanged. `managed` images bypass conversion only when source
+  // and target colour space are already the same.
+  if (sourceSpace.kind === "untagged") {
+    return true;
+  }
+  return sourceSpace.profile === targetProfile;
 }
 
 /**
