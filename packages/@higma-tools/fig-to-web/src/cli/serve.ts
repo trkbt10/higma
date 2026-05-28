@@ -11,7 +11,7 @@
  * No directory traversal: requested paths are resolved against the
  * output dir and rejected if they escape it.
  */
-import { resolve, join, extname } from "node:path";
+import { resolve, join, extname, sep } from "node:path";
 import { stat } from "node:fs/promises";
 
 declare const Bun: undefined | {
@@ -45,7 +45,7 @@ function contentTypeFor(path: string): string {
 function isInside(root: string, candidate: string): boolean {
   const r = resolve(root);
   const c = resolve(candidate);
-  return c === r || c.startsWith(`${r}/`);
+  return c === r || c.startsWith(`${r}${sep}`);
 }
 
 async function fileExists(path: string): Promise<boolean> {
